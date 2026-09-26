@@ -370,6 +370,8 @@ const shellAPI = {
     setIgnoreMouse: (ignore: boolean): void => ipcRenderer.send('shell:hud:ignore-mouse', ignore),
     moveBy: (delta: { x: number; y: number; width: number; height: number }): Promise<void> =>
       ipcRenderer.invoke('shell:move-hud', delta),
+    beginMove: (): Promise<void> => ipcRenderer.invoke('shell:hud:begin-move'),
+    endMove: (): Promise<void> => ipcRenderer.invoke('shell:hud:end-move'),
     setBounds: (bounds: { x?: number; y?: number; width?: number; height?: number }): Promise<void> =>
       ipcRenderer.invoke('shell:set-hud-bounds', bounds),
     resetLayout: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('shell:hud:reset-layout'),
