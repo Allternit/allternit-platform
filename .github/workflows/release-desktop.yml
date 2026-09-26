@@ -486,15 +486,10 @@ jobs:
           Copy-Item $bin.FullName surfaces\allternit-desktop\resources\bin\whisper-cli.exe
           Get-Item surfaces\allternit-desktop\resources\bin\whisper-cli.exe | Select-Object Name,Length
 
-      - name: Build allternit-mux sidecar (Windows)
-        # gizzi auto-spawns this for /pty. Staged as resources/bin/allternit-mux.exe.
-        shell: bash
-        run: |
-          cargo build --release -p allternit-mux --target x86_64-pc-windows-msvc
-          mkdir -p surfaces/allternit-desktop/resources/bin
-          cp target/x86_64-pc-windows-msvc/release/allternit-mux.exe \
-             surfaces/allternit-desktop/resources/bin/allternit-mux.exe
-          ls -lh surfaces/allternit-desktop/resources/bin/allternit-mux.exe
+      # No allternit-mux on Windows: its API is a Unix socket (tokio UnixListener)
+      # and gizzi's /pty integration dials that socket, so a Windows build would
+      # not compile and could not be used. prepare-mux / verify-packaged-resources
+      # skip it on win32 to match.
 
       - name: Build open-connector sidecar bundle
         # services/open-connector is a plain npm project excluded from the
