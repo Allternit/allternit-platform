@@ -25,7 +25,7 @@ import {
  * Enabled by default. Priority chain (first defined wins):
  *   1. GIZZI_CODE_DISABLE_AUTO_MEMORY env var (1/true → OFF, 0/false → ON)
  *   2. GIZZI_CODE_SIMPLE (--bare) → OFF
- *   3. CCR without persistent storage → OFF (no GIZZI_CODE_REMOTE_MEMORY_DIR)
+ *   3. CCR without persistent storage → OFF (no GIZZI_CODE_REMOTE_MEMORY_DIR / GIZZI_REMOTE_MEMORY_DIR)
  *   4. autoMemoryEnabled in settings.json (supports project-level opt-out)
  *   5. Default: enabled
  */
@@ -45,7 +45,7 @@ export function isAutoMemoryEnabled(): boolean {
   }
   if (
     isEnvTruthy(process.env.GIZZI_CODE_REMOTE) &&
-    !process.env.GIZZI_CODE_REMOTE_MEMORY_DIR
+    !getRemoteMemoryDirOverride()
   ) {
     return false
   }
@@ -79,15 +79,29 @@ export function isExtractModeActive(): boolean {
 }
 
 /**
+ * Remote memory dir override. Both env names are honored in both memdir
+ * copies (this one and the runtime src/memdir one): GIZZI_CODE_REMOTE_MEMORY_DIR
+ * wins, GIZZI_REMOTE_MEMORY_DIR is the legacy fallback still set by CCR and
+ * forwarded to teammates by spawnUtils.
+ */
+export function getRemoteMemoryDirOverride(): string | undefined {
+  return (
+    process.env.GIZZI_CODE_REMOTE_MEMORY_DIR ??
+    process.env.GIZZI_REMOTE_MEMORY_DIR
+  )
+}
+
+/**
  * Returns the base directory for persistent memory storage.
  * Resolution order:
- *   1. GIZZI_CODE_REMOTE_MEMORY_DIR env var (explicit override, set in CCR)
+ *   1. GIZZI_CODE_REMOTE_MEMORY_DIR / GIZZI_REMOTE_MEMORY_DIR env var (explicit override, set in CCR)
  *   2. ~/.gizzi (default config home)
  *   3. ~/.claude (read-only legacy fallback when it holds existing memories)
  */
 export function getMemoryBaseDir(): string {
-  if (process.env.GIZZI_CODE_REMOTE_MEMORY_DIR) {
-    return process.env.GIZZI_CODE_REMOTE_MEMORY_DIR
+  const remoteOverride = getRemoteMemoryDirOverride()
+  if (remoteOverride) {
+    return remoteOverride
   }
   const gizziDir = (process.env.GIZZI_CONFIG_DIR ?? join(homedir(), '.gizzi')).normalize('NFC')
   const legacyDir = getGizziConfigHomeDir()
