@@ -67,6 +67,16 @@ describe.runIf(posix)('spawnSidecar', () => {
     expect(await until(() => !alive())).toBe(true);
   });
 
+  it('leaves the child\'s own stdin to the caller (MCP stdio protocol)', async () => {
+    const child = spawnSidecar('cat', [], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const echoed = new Promise<string>((resolve) => child.stdout!.once('data', (d: Buffer) => resolve(d.toString())));
+    child.stdin!.write('ping\n');
+    expect(await echoed).toBe('ping\n');
+    const exited = new Promise((resolve) => child.once('exit', resolve));
+    child.stdin!.end();
+    await exited;
+  });
+
   it('keeps spawn()\'s native ENOENT for a missing absolute binary', async () => {
     const child = spawnSidecar('/nonexistent/allternit-sidecar', []);
     const err = await new Promise<NodeJS.ErrnoException>((resolve) => child.once('error', resolve));

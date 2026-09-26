@@ -34,10 +34,10 @@ export function onParentExit(callback: () => void): void {
 
 // Twin of surfaces/allternit-desktop/src/main/process-lifeline.ts — keep the
 // shim identical. The watcher sits in the child's process group (so -$$ can
-// never name a reused group), blocks in read(2) on a pipe from us, and on EOF
-// (we died, or the child exited and we closed it) sweeps the group.
+// never name a reused group), blocks in read(2) on a pipe from us on fd 3
+// (the child's own stdin is untouched), and on EOF (we died, or the child
+// exited and we closed it) sweeps the group.
 const LIFELINE_SHIM = `
-exec 3<&0
 (
   trap '' TERM INT HUP
   while read -r _; do :; done
@@ -45,7 +45,7 @@ exec 3<&0
   sleep 5
   kill -KILL -$$ 2>/dev/null
 ) <&3 >/dev/null 2>&1 &
-exec "$@" </dev/null 3<&-
+exec "$@" 3<&-
 `
 
 /**
@@ -62,14 +62,15 @@ export function spawnOwnedChild(
   if (process.platform === "win32" || (isAbsolute(command) && !isExecutable(command))) {
     return spawn(command, args, options)
   }
-  const [, stdout, stderr] = normalizeStdio(options.stdio)
+  const [stdin, stdout, stderr] = normalizeStdio(options.stdio)
   const proc = spawn("/bin/sh", ["-c", LIFELINE_SHIM, "gizzi-lifeline", command, ...args], {
     ...options,
-    stdio: ["pipe", stdout, stderr],
+    stdio: [stdin, stdout, stderr, "pipe"],
     detached: true,
   })
-  proc.stdin?.on("error", () => {})
-  proc.once("exit", () => proc.stdin?.destroy())
+  const lifeline = proc.stdio[3] as import("node:stream").Duplex | null
+  lifeline?.on("error", () => {})
+  proc.once("exit", () => lifeline?.destroy())
   return proc
 }
 

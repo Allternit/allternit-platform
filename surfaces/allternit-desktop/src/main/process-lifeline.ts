@@ -7,7 +7,7 @@
  * relaunch stacked another copy.
  *
  * The child is started through a tiny /bin/sh shim that forks a watcher
- * blocked on a stdin pipe from us, then `exec`s the real command in place.
+ * blocked on a pipe from us (fd 3), then `exec`s the real command in place.
  * The pid, signals, and exit code/signal seen by the caller are the real
  * child's, exactly as with a plain spawn(). When this process dies for any
  * reason — including SIGKILL — the kernel closes the pipe, the watcher reads
@@ -25,14 +25,13 @@ import type { ChildProcess, SpawnOptions, StdioOptions } from 'node:child_proces
 import * as fs from 'fs';
 import * as path from 'path';
 
-// $1.. is the real command. fd 3 carries the lifeline pipe into the
-// watcher; the exec'd command gets /dev/null on stdin, as with 'ignore'. The
-// watcher is a member of the child's process group, so that group id cannot
+// $1.. is the real command. fd 3 is the lifeline pipe: only the watcher
+// keeps it, so the command's own stdin stays whatever the caller asked for
+// (MCP stdio servers keep their protocol pipe). The watcher is a member of the child's process group, so that group id cannot
 // be reused while it waits: signalling -$$ only ever reaches this sidecar's
 // tree, including grandchildren a start script left behind after the
 // manager killed only the leader.
 const LIFELINE_SHIM = `
-exec 3<&0
 (
   trap '' TERM INT HUP
   while read -r _; do :; done
@@ -40,7 +39,7 @@ exec 3<&0
   sleep 5
   kill -KILL -$$ 2>/dev/null
 ) <&3 >/dev/null 2>&1 &
-exec "$@" </dev/null 3<&-
+exec "$@" 3<&-
 `;
 
 export function spawnSidecar(
@@ -57,18 +56,19 @@ export function spawnSidecar(
   const [target, targetArgs] = options.shell
     ? ['/bin/sh', ['-c', [command, ...args].join(' ')]]
     : [command, [...args]];
-  const [, stdout, stderr] = normalizeStdio(options.stdio);
+  const [stdin, stdout, stderr] = normalizeStdio(options.stdio);
 
   const proc = spawn('/bin/sh', ['-c', LIFELINE_SHIM, 'allternit-lifeline', target, ...targetArgs], {
     ...options,
     shell: false,
-    stdio: ['pipe', stdout, stderr],
+    stdio: [stdin, stdout, stderr, 'pipe'],
     // Always its own process group: the watcher's group kill depends on it.
     detached: true,
   });
   // Never written. Closing it after exit releases the watcher without a kill.
-  proc.stdin?.on('error', () => {});
-  proc.once('exit', () => proc.stdin?.destroy());
+  const lifeline = proc.stdio[3] as import('node:stream').Duplex | null;
+  lifeline?.on('error', () => {});
+  proc.once('exit', () => lifeline?.destroy());
   return proc;
 }
 
