@@ -195,8 +195,15 @@ def exe_path(pid):
         if line.startswith("n/"):
             return line[1:]
     return ""
+# comm= is the full executable path, spaces included (app bundles like
+# "Allternit Desktop Preview.app"), which splitting args on spaces breaks.
+COMM = {}
+for line in sh("ps", "-axo", "pid=,comm=").splitlines():
+    pid_s, _, comm = line.strip().partition(" ")
+    if pid_s.isdigit():
+        COMM[int(pid_s)] = comm.strip()
 for pid, started, args in procs:
-    first = args.split(" ")[0]
+    first = COMM.get(pid) or args.split(" ")[0]
     is_bin = bool(re.search(r"gizzi(-code)?$", first))
     is_dev = first.rsplit("/", 1)[-1] in ("bun", "node") and "gizzi-code/src/cli/main.ts" in args
     if not (is_bin or is_dev):
@@ -208,10 +215,14 @@ for pid, started, args in procs:
     if m and cur_brew and m.group(1) != cur_brew:
         note = f"OLD — Homebrew is now {cur_brew}; restart this session to pick it up"
         problems.append(f"gizzi pid {pid} runs old Homebrew {m.group(1)} (current {cur_brew})")
+    elif ".app/Contents/Resources/bin/" in exe:
+        app_name = re.search(r"([^/]+\.app)/Contents", exe).group(1)
+        sub = args[len(first):].strip().split(" ")[0] if args.startswith(first) else ""
+        note = f"sidecar of {app_name} ({sub or 'main'})"
     elif "main.ts" in args:
         cwd = sh("lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn").split("\nn")[-1].lstrip("n")
         note = f"dev source in {cwd}"
-    print(f"    pid {pid} since {started}: {exe[-70:]} {note}")
+    print(f"    pid {pid} since {started}: {note or exe[-70:]}")
 if not running_any:
     print("    none")
 
@@ -265,9 +276,12 @@ if not arts:
     print("    none")
 if installed_build and top_dmg and str(top_dmg) not in installed_build:
     problems.append(f"installed Desktop is build {installed_build}, newest local build is b{top_dmg} — install it once verified, or delete it; never keep both")
-running_app = [a for _, _, a in procs if "Allternit Desktop.app/Contents/MacOS" in a and "Helper" not in a]
-for a in running_app[:1]:
-    print(f"  running          {a.split(' --')[0][-80:]}")
+running_apps = sorted({m.group(1) for pid, _, _ in procs
+                       for m in [re.search(r"/([^/]*Allternit Desktop[^/]*\.app)/Contents/MacOS/", COMM.get(pid, ""))] if m and "Helper" not in m.group(1)})
+for name in running_apps:
+    print(f"  running          {name}")
+if not running_apps:
+    print("  running          none")
 
 # ---------------------------------------------------------------- verdict
 print("\n== VERDICT")
