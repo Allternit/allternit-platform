@@ -109,6 +109,9 @@ export class FabricWorkerManager {
       // (the api's own operator key); file tools confine to these grants.
       ...(options.operatorKey ? { ALLTERNIT_OPERATOR_API_KEY: options.operatorKey } : {}),
       ALLTERNIT_WORKER_TRUSTED_FOLDERS: JSON.stringify(options.trustedFolders ?? []),
+      // The worker stops itself when the stdin pipe below hits EOF, i.e.
+      // when this process dies without reaping it.
+      GIZZI_PARENT_LIFELINE: 'stdin',
     };
     // The token never reaches logs: we log everything except the env.
     log.info(`[FabricWorker] Spawning fabric worker (${binaryPath}) against ${apiUrl}`);
@@ -117,7 +120,8 @@ export class FabricWorkerManager {
 
     const proc = spawn(binaryPath, ['fabric-worker'], {
       env,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      // stdin is the parent lifeline: never written, never closed by us.
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.proc = proc;
     let readinessSeen = false;
