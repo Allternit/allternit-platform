@@ -257,6 +257,12 @@ pub struct ProviderSummary {
     /// The frontend derives a real logo from this domain via a favicon
     /// service rather than Allternit hosting/curating per-connector art.
     pub homepage_url: Option<String>,
+    /// `categories` from the provider definition (first is primary).
+    pub categories: Vec<String>,
+    /// `description`, when the provider has one (few do).
+    pub description: Option<String>,
+    /// Action names, in catalog order, for tool lists and summaries.
+    pub tool_names: Vec<String>,
 }
 
 /// Sidecar `GET /api/providers`, reduced to a slim per-service map and cached
@@ -307,6 +313,31 @@ pub async fn provider_summaries() -> Result<Arc<HashMap<String, ProviderSummary>
                 .get("homepageUrl")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
+            let categories: Vec<String> = p
+                .get("categories")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                .unwrap_or_default();
+            let description = p
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            let tool_names: Vec<String> = p
+                .get("actions")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| {
+                            x.get("name")
+                                .or_else(|| x.get("id"))
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
             // Expose under the Allternit catalog spelling when one exists.
             // Also keep the sidecar's own spelling so an Allternit id that
             // happens to equal the sidecar service id is still reachable
@@ -325,6 +356,9 @@ pub async fn provider_summaries() -> Result<Arc<HashMap<String, ProviderSummary>
                         executable_actions,
                         display_name: display_name.clone(),
                         homepage_url: homepage_url.clone(),
+                        categories: categories.clone(),
+                        description: description.clone(),
+                        tool_names: tool_names.clone(),
                     },
                 );
             }

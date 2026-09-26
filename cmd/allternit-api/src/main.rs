@@ -1295,6 +1295,7 @@ async fn main() {
     // Windows has no SIGTERM/SIGINT delivery to services, so it listens for
     // Ctrl+C / CTRL_CLOSE_EVENT instead (console ctrl handler).
     const DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
+    const FORCE_EXIT_AFTER_DRAIN: Duration = Duration::from_secs(5);
     let (server_shutdown_tx, server_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {
         #[cfg(unix)]
@@ -1322,11 +1323,22 @@ async fn main() {
         let _ = shutdown_tx.send(());
         tokio::time::sleep(DRAIN_TIMEOUT).await;
         let _ = server_shutdown_tx.send(());
+        // Graceful shutdown waits for every open connection, and the UI's
+        // event streams never close on their own, so the process would
+        // linger with no listener and the desktop could not respawn it.
+        tokio::time::sleep(FORCE_EXIT_AFTER_DRAIN).await;
+        warn!("Open connections outlived the drain; exiting");
+        std::process::exit(0);
     });
 
     match listener {
         Some(listener) => {
-            axum::serve(listener, app)
+            // Peer addresses let the rate limiter tell the desktop's own
+            // loopback UI apart from LAN/public callers (0.0.0.0 bind).
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
                 .with_graceful_shutdown(async {
                     let _ = server_shutdown_rx.await;
                 })

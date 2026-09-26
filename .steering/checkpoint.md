@@ -1,3 +1,23 @@
+# Checkpoint — session/backend-fixes
+
+## Goal
+Three gateway fixes: B1 stale defaultModel repair (config.rs), B2 tasks client-id + flexible metadata + idempotent create (task_routes.rs), B3 memory recall 500 (V183 migration cherry-pick + non-fatal entity section + migration-stack test).
+
+## Just did
+- B1: completed prior session's uncommitted diff in cmd/allternit-api/src/config.rs — stale ollama//lmstudio/ default_model replaced with claude-cli/claude-sonnet-4-6 and persisted via save_user_config; gizzi-mirror None-case unchanged.
+- B2: CreateTaskRequest gained #[serde(default)] id: Option<String>; metadata widened to Option<serde_json::Value> (stringified into the TEXT column); create_task uses client id when present, INSERT ... ON CONFLICT(id) DO NOTHING then SELECT (200 existing / 201 created). cloud-api finding: cmd/allternit-cloud-api/src/db/cowork_models.rs CreateTaskRequest is a different struct (no metadata field, no id), no deny_unknown_fields anywhere in cmd/allternit-cloud-api → serde ignores unknown fields; no change needed.
+- B3: V183 was free on origin/main (prev max V182) → cherry-picked fa2160e47 from session/memory-entities-summary (landed here as 6f00c3fec; blob identical, clean merge for the sibling branch). recall() entity section wrapped in non-fatal closure (warn + skip). Added migration-stack test migration_stack_adds_memory_entities_summary via DbHandle::new_memory().
+- Verify: `cargo test -p allternit-api` → 1294 passed / 1 failed; the failure `aci_code::tests::host_paths_outside_the_sandbox_are_refused` is PRE-EXISTING on origin/main (lookbehind regex `(?<!...)~[/']` never compiles in Rust's regex crate, scan_patterns silently skips it; test+pattern both born in b2cfc30f3; aci_code.rs untouched by this session). New migration-stack test passes.
+- Deviation (sanctioned by orchestrator): CommRails WIH DAG skipped — CLI not on PATH, build cost.
+
+## Next
+cargo build --release -p allternit-api (running), then lifecycle: commit/push/PR/merge/ledger/cleanup/discipline-check.
+
+## Open questions
+None.
+
+---
+
 # Checkpoint — session/subsfab-p3
 
 ## Goal

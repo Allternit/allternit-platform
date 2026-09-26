@@ -675,6 +675,24 @@ const store = new Store<StoreSchema>({
 
 const desktopCompanion = installDesktopCompanion({ origin: () => activePlatformUrl, main: () => mainWindow, preload: join(__dirname, '../preload/index.js') });
 
+/**
+ * Bring the main window up, recreating it if it was closed. With the desktop
+ * companion (pet) window always open, "no windows" is never true after the
+ * main window closes, so `mainWindow?.show()` alone left the app with no way
+ * back from the Dock or tray.
+ */
+function showOrReopenMainWindow(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+  log.info('[Main] Main window was closed; reopening');
+  mainWindow = createMainWindow();
+  mainWindow.loadURL(activePlatformUrl);
+}
+
 function createMainWindow(): BrowserWindow {
   let bounds = store.get('windowBounds');
   
@@ -1837,8 +1855,7 @@ function createTray(): void {
       if (mainWindow?.isVisible()) {
         mainWindow.hide();
       } else {
-        mainWindow?.show();
-        mainWindow?.focus();
+        showOrReopenMainWindow();
       }
     }
   });
@@ -1863,7 +1880,7 @@ async function updateTrayMenu(): Promise<void> {
   permItem = {
     label: hasIssue ? '⚠️ Check Permissions' : allOk ? '✅ Permissions OK' : '🔍 Check Permissions',
     click: async () => {
-      mainWindow?.show();
+      showOrReopenMainWindow();
       const status = await checkPermissions();
       store.set('permissions.lastStatus', { ...status, checkedAt: new Date().toISOString() });
       mainWindow?.webContents.send('permission-guide:status', status);
@@ -1888,7 +1905,7 @@ async function updateTrayMenu(): Promise<void> {
       },
     },
     ...(permItem ? [permItem, { type: 'separator' as const }] : []),
-    { label: 'Show Window', click: () => mainWindow?.show() },
+    { label: 'Show Window', click: () => showOrReopenMainWindow() },
     { label: 'Show Desktop Pet', click: () => desktopCompanion.show() },
     { label: 'Desktop Pet Settings…', click: () => desktopCompanion.settings() },
     { label: 'Reset Pet Position', click: () => desktopCompanion.reset() },
@@ -2290,7 +2307,7 @@ app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       initializeAppOnce();
     } else {
-      mainWindow?.show();
+      showOrReopenMainWindow();
     }
   });
 
@@ -2377,9 +2394,42 @@ async function handoffInFlightToCloud(): Promise<void> {
   }
 }
 
-app.on('before-quit', async () => {
-  // Electron does not await this handler. Reap gizzi before any await or it
-  // survives quit (spawned detached, ppid 1).
+// Electron does not await before-quit, so an async handler that awaits
+// before reaping lets the process exit with gizzi-code still running
+// (spawned detached, reparented to launchd). Hold the first quit, run the
+// full cleanup under a deadline, then quit for real.
+const QUIT_CLEANUP_DEADLINE_MS = 10_000;
+let quitCleanup: Promise<void> | null = null;
+let quitCleanupDone = false;
+
+function runQuitCleanup(): Promise<void> {
+  quitCleanup ??= Promise.race([
+    shutdownAllServices().catch((err) => log.error('[Main] quit cleanup failed', err)),
+    new Promise<void>((resolve) => setTimeout(() => {
+      log.warn(`[Main] quit cleanup exceeded ${QUIT_CLEANUP_DEADLINE_MS}ms; quitting anyway`);
+      resolve();
+    }, QUIT_CLEANUP_DEADLINE_MS)),
+  ]).finally(() => {
+    // Idempotent: guarantees the reap even if the deadline won the race.
+    gizziManager.stop({ reapExternal: true });
+    quitCleanupDone = true;
+  });
+  return quitCleanup;
+}
+
+app.on('before-quit', (event) => {
+  if (quitCleanupDone) return;
+  event.preventDefault();
+  (app as unknown as { isQuitting?: boolean }).isQuitting = true;
+  void runQuitCleanup().then(() => app.quit());
+});
+
+app.on('will-quit', () => {
+  // Last line of defence for exits that skipped before-quit's cleanup.
+  gizziManager.stop({ reapExternal: true });
+});
+
+async function shutdownAllServices(): Promise<void> {
   await handoffInFlightToCloud();
   gizziManager.stop({ reapExternal: true });
   try {
@@ -2418,7 +2468,7 @@ app.on('before-quit', async () => {
   }
   // Ensure any floating permission-guide overlay is torn down before quit
   dismissGuide();
-});
+}
 
 // ============================================================================
 // IPC Handlers
@@ -2550,7 +2600,9 @@ ipcMain.handle('app:check-for-updates', async () => {
     return { ok: false, reason: 'check-failed', message: String(error) } as const;
   }
 });
-handleGuarded('app:install-update', () => {
+handleGuarded('app:install-update', async () => {
+  // Clean up first so before-quit does not cancel the updater's own quit.
+  await runQuitCleanup();
   autoUpdater.quitAndInstall();
 });
 // Preload uses sendSync at module load; handle() only answers invoke().
@@ -3373,7 +3425,7 @@ ipcMain.handle('window:set-bounds', (_event, bounds: Partial<{ x: number; y: num
 
 ipcMain.handle('window:center', () => { mainWindow?.center(); });
 ipcMain.handle('window:hide', () => { mainWindow?.hide(); });
-ipcMain.handle('window:show', () => { mainWindow?.show(); });
+ipcMain.handle('window:show', () => { showOrReopenMainWindow(); });
 ipcMain.handle('window:minimize-to-tray', () => { mainWindow?.hide(); });
 ipcMain.on('mini-window:hide', () => { miniWindow?.hide(); });
 ipcMain.on('mini-window:toggle', () => toggleMiniWindow());

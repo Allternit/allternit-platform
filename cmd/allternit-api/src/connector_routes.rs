@@ -886,6 +886,12 @@ fn merge_sidecar(
                 if let Some(homepage) = &p.homepage_url {
                     obj.insert("base_url".to_string(), json!(homepage));
                 }
+                // Tool names for the directory's Tools list; curated entries
+                // that already carry full `tools` keep them.
+                if !obj.contains_key("tools") && !p.tool_names.is_empty() {
+                    obj.insert("toolNames".to_string(), json!(p.tool_names));
+                    obj.insert("toolCount".to_string(), json!(p.tool_names.len()));
+                }
             }
             None if sv.providers.is_none() => {
                 obj.insert(
@@ -970,10 +976,41 @@ fn synthesize_sidecar_catalog_entry(
     json!({
         "id": id,
         "name": p.display_name,
-        "category": "Open Connector",
-        "description": format!("{} — via the vendored open-connector catalog (not in Allternit's original 181-entry list).", p.display_name),
+        "category": p.categories.first().cloned().unwrap_or_else(|| "Other".to_string()),
+        "categories": p.categories,
+        "description": p
+            .description
+            .clone()
+            .unwrap_or_else(|| summarize_tools(&p.display_name, &p.tool_names)),
         "status": "available",
     })
+}
+
+/// One-line description from a provider's first actions, for the many
+/// catalog providers that ship none: "Get catalog SKU, list orders, and
+/// create an order." Falls back to a plain "Connect <name>." line.
+fn summarize_tools(display_name: &str, tool_names: &[String]) -> String {
+    let mut phrases: Vec<String> = Vec::new();
+    for name in tool_names {
+        let base = name.rsplit('.').next().unwrap_or(name);
+        let phrase = base.replace(['_', '-'], " ").trim().to_lowercase();
+        if phrase.is_empty() || phrases.contains(&phrase) {
+            continue;
+        }
+        phrases.push(phrase);
+        if phrases.len() == 3 {
+            break;
+        }
+    }
+    let joined = match phrases.len() {
+        0 => return format!("Connect {display_name} to Allternit."),
+        1 => phrases[0].clone(),
+        2 => format!("{} and {}", phrases[0], phrases[1]),
+        _ => format!("{}, {}, and {}", phrases[0], phrases[1], phrases[2]),
+    };
+    let mut chars = joined.chars();
+    let first = chars.next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
+    format!("{first}{} in {display_name}.", chars.as_str())
 }
 
 /// Every sidecar provider not already present in the legacy 181-entry catalog
@@ -2777,6 +2814,37 @@ fn urlencoding(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn summarize_tools_reads_like_a_description() {
+        let names = vec![
+            "firstbase.get_catalog_sku".to_string(),
+            "firstbase.list_orders".to_string(),
+            "firstbase.create_order".to_string(),
+            "firstbase.cancel_order".to_string(),
+        ];
+        assert_eq!(
+            summarize_tools("Firstbase", &names),
+            "Get catalog sku, list orders, and create order in Firstbase."
+        );
+        assert_eq!(summarize_tools("Acme", &[]), "Connect Acme to Allternit.");
+    }
+
+    #[test]
+    fn synthesized_entry_uses_catalog_category_and_description() {
+        let p = crate::open_connector_proxy::ProviderSummary {
+            auth_types: vec!["api_key".into()],
+            executable_actions: 1,
+            display_name: "Firstbase".into(),
+            homepage_url: Some("https://www.firstbase.com".into()),
+            categories: vec!["Productivity".into()],
+            description: None,
+            tool_names: vec!["firstbase.list_orders".into()],
+        };
+        let e = synthesize_sidecar_catalog_entry("firstbase", &p);
+        assert_eq!(e["category"], "Productivity");
+        assert_eq!(e["description"], "List orders in Firstbase.");
+    }
     use axum::body::Body;
     use axum::http::Request;
     use http_body_util::BodyExt;
