@@ -412,3 +412,12 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
     };
   }
 }
+
+// Adapter-package convention (P3 activation): the gateway worker pool
+// instantiates adapters through a zero-arg `createAdapter()` (or default
+// export) found at <adapter dir>/adapter.ts.
+export function createAdapter(): ChatGPTWebAdapter {
+  return new ChatGPTWebAdapter();
+}
+
+export default createAdapter;
