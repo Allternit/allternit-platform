@@ -4,10 +4,21 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import { spawnSidecar } from './process-lifeline.js';
 
 const posix = process.platform !== 'win32';
-const lifelineModule = path.join(path.dirname(fileURLToPath(import.meta.url)), 'process-lifeline.ts');
+const lifelineSource = path.join(path.dirname(fileURLToPath(import.meta.url)), 'process-lifeline.ts');
+
+/** The helper as plain ESM, loadable by a bare `node` child (CI runs Node 20, no TS). */
+function transpiledLifeline(dir: string): string {
+  const out = path.join(dir, 'process-lifeline.mjs');
+  const { outputText } = ts.transpileModule(fs.readFileSync(lifelineSource, 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  });
+  fs.writeFileSync(out, outputText);
+  return out;
+}
 
 function groupMembers(pgid: number): string[] {
   try {
@@ -49,7 +60,9 @@ describe.runIf(posix)('spawnSidecar', () => {
   });
 
   it('takes the sidecar down when the parent dies without cleanup', async () => {
-    const pidFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'lifeline-')), 'pid');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lifeline-'));
+    const lifelineModule = transpiledLifeline(dir);
+    const pidFile = path.join(dir, 'pid');
     const parent = spawn(process.execPath, ['--input-type=module', '-e', `
       const { spawnSidecar } = await import(${JSON.stringify(lifelineModule)});
       const { writeFileSync } = await import('fs');
@@ -65,7 +78,7 @@ describe.runIf(posix)('spawnSidecar', () => {
 
     const alive = () => { try { process.kill(sidecarPid, 0); return true; } catch { return false; } };
     expect(await until(() => !alive())).toBe(true);
-  });
+  }, 15_000);
 
   it('leaves the child\'s own stdin to the caller (MCP stdio protocol)', async () => {
     const child = spawnSidecar('cat', [], { stdio: ['pipe', 'pipe', 'pipe'] });
