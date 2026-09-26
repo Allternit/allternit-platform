@@ -426,50 +426,58 @@ pub fn recall(
         }
     }
 
-    // 2. Search entities
-    let mut entity_stmt = conn.prepare(
-        "SELECT id, entity_id, name, type, summary, last_updated
-         FROM memory_entities
-         WHERE user_id = ?1 AND (agent_id IS NULL OR agent_id = ?2 OR ?2 IS NULL)
-         ORDER BY last_updated DESC
-         LIMIT 30",
-    )?;
+    // 2. Search entities — non-fatal: a legacy/partial entities schema (e.g.
+    // a missing `summary` column on a DB that predates the repair migration)
+    // must not fail the whole recall; facts and observations still return.
+    let entity_section = (|| -> Result<(), MemoryKernelError> {
+        let mut entity_stmt = conn.prepare(
+            "SELECT id, entity_id, name, type, summary, last_updated
+             FROM memory_entities
+             WHERE user_id = ?1 AND (agent_id IS NULL OR agent_id = ?2 OR ?2 IS NULL)
+             ORDER BY last_updated DESC
+             LIMIT 30",
+        )?;
 
-    let entity_rows = entity_stmt.query_map(params![user_id, agent_id], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, Option<String>>(4)?,
-            row.get::<_, String>(5)?,
-        ))
-    })?;
+        let entity_rows = entity_stmt.query_map(params![user_id, agent_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, String>(5)?,
+            ))
+        })?;
 
-    for row in entity_rows.flatten() {
-        let (id, entity_id, name, etype, summary, updated) = row;
-        let search_text = format!("{} {} {}", name, etype, summary.as_deref().unwrap_or("")).to_lowercase();
-        let match_count = words.iter().filter(|&w| search_text.contains(&w[1..w.len() - 1])).count();
-        let score = if words.is_empty() {
-            0.5
-        } else {
-            (match_count as f64 / words.len().max(1) as f64) * 0.9
-        };
+        for row in entity_rows.flatten() {
+            let (id, entity_id, name, etype, summary, updated) = row;
+            let search_text = format!("{} {} {}", name, etype, summary.as_deref().unwrap_or("")).to_lowercase();
+            let match_count = words.iter().filter(|&w| search_text.contains(&w[1..w.len() - 1])).count();
+            let score = if words.is_empty() {
+                0.5
+            } else {
+                (match_count as f64 / words.len().max(1) as f64) * 0.9
+            };
 
-        if score > 0.1 || words.is_empty() {
-            results.push(RecallResult {
-                id,
-                item_type: "entity".to_string(),
-                score,
-                content: format!("[Entity: {} ({})] {}", name, etype, summary.as_deref().unwrap_or("")),
-                metadata: serde_json::json!({
-                    "entity_id": entity_id,
-                    "name": name,
-                    "type": etype,
-                }),
-                timestamp: updated,
-            });
+            if score > 0.1 || words.is_empty() {
+                results.push(RecallResult {
+                    id,
+                    item_type: "entity".to_string(),
+                    score,
+                    content: format!("[Entity: {} ({})] {}", name, etype, summary.as_deref().unwrap_or("")),
+                    metadata: serde_json::json!({
+                        "entity_id": entity_id,
+                        "name": name,
+                        "type": etype,
+                    }),
+                    timestamp: updated,
+                });
+            }
         }
+        Ok(())
+    })();
+    if let Err(err) = entity_section {
+        tracing::warn!(error = %err, "memory recall: skipping entity section");
     }
 
     // 3. Search observations (fallback/recent context)
@@ -742,5 +750,17 @@ mod tests {
     fn local_embedding_has_configured_dimensions() {
         let emb = generate_local_embedding("hello world", EMBEDDING_DIM);
         assert_eq!(emb.len(), EMBEDDING_DIM);
+    }
+
+    #[test]
+    fn migration_stack_adds_memory_entities_summary() {
+        // Boots the full embedded migration chain on a scratch DB and asserts
+        // the V183 repair landed: memory_entities.summary must be selectable.
+        let db = DbHandle::new_memory().expect("migration stack should boot");
+        let conn = db.connect().expect("connect");
+        let mut stmt = conn
+            .prepare("SELECT summary FROM memory_entities LIMIT 1")
+            .expect("memory_entities.summary must exist after migrations");
+        let _ = stmt.query([]).expect("summary select should run");
     }
 }
