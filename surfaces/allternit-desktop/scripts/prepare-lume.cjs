@@ -123,8 +123,20 @@ async function main() {
     ? args
     : (process.platform === 'darwin' ? [process.arch === 'arm64' ? 'arm64' : 'x64'] : []);
   if (archs.length === 0) return;
+  let staged = 0;
   for (const arch of archs) {
-    await fetchArch(arch);
+    try {
+      await fetchArch(arch);
+      staged += 1;
+    } catch (err) {
+      // CUA ships darwin-arm64 only; an x64 404 must not fail the release —
+      // the x64 package goes without lume (same capability as pre-Lume
+      // releases). arm64 failing still fails the build via staged === 0.
+      console.warn(`[prepare-lume] WARN: ${arch} unavailable (${err.message}); continuing without it`);
+    }
+  }
+  if (staged === 0) {
+    throw new Error('no lume arch could be staged');
   }
   // Unpackaged allternit-api looks for lume next to itself in resources/bin.
   if (process.platform === 'darwin') {

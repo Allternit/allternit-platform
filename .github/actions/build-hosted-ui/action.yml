@@ -18,7 +18,11 @@ runs:
 
     - name: Link this public repo as OSS package source
       shell: bash
-      run: ln -sfn "$GITHUB_WORKSPACE" .hosted-ui/.oss-platform
+      # Windows git-bash `ln -sfn` cannot overwrite an existing directory
+      # ("cannot overwrite directory") — remove any stale path first.
+      run: |
+        rm -rf .hosted-ui/.oss-platform
+        ln -sfn "$GITHUB_WORKSPACE" .hosted-ui/.oss-platform
 
     - name: Build workspace static export
       shell: bash
