@@ -18,11 +18,17 @@ runs:
 
     - name: Link this public repo as OSS package source
       shell: bash
-      # Windows git-bash `ln -sfn` cannot overwrite an existing directory
-      # ("cannot overwrite directory") — remove any stale path first.
+      # Windows git-bash `ln -s` has no native symlink privileges on runners
+      # and fails with "cannot overwrite directory". Use an NTFS junction
+      # (no admin needed; Node/pnpm traverse junctions transparently).
       run: |
         rm -rf .hosted-ui/.oss-platform
-        ln -sfn "$GITHUB_WORKSPACE" .hosted-ui/.oss-platform
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          WIN_WS=$(cygpath -w "$GITHUB_WORKSPACE")
+          (cd .hosted-ui && cmd //c "mklink /J .oss-platform \"$WIN_WS\"")
+        else
+          ln -sfn "$GITHUB_WORKSPACE" .hosted-ui/.oss-platform
+        fi
 
     - name: Build workspace static export
       shell: bash
