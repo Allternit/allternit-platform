@@ -74,4 +74,19 @@ describe("boot", () => {
     });
     expect(gateway.servers).toHaveLength(1);
   });
+
+  it("wires the worker layer (pool + supervisor + drain) without launching anything at boot", async () => {
+    gateway = await boot({
+      env: { SUBS_GATEWAY_STATE_DIR: dir },
+      keychain: fakeKeychain(),
+      logger: () => {},
+    });
+    expect(typeof gateway.pool.runtimeFor).toBe("function");
+    expect(typeof gateway.supervisor.isReady).toBe("function");
+    // Activation is lazy: no account → no runtime, no browser.
+    expect(gateway.pool.runtimeFor({ provider: "none", account_id: "none" })).toBeNull();
+    // close() stops the drain and shuts the pool down cleanly.
+    await gateway.close();
+    gateway = null;
+  });
 });

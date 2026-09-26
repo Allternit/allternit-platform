@@ -26,6 +26,7 @@ import { SseHub } from "../src/events/sse.js";
 import { createServer, type GatewayDeps } from "../src/http/server.js";
 import type { AdapterRegistry } from "../src/adapters/registry.js";
 import type { Scheduler } from "../src/queue/scheduler.js";
+import type { WorkerPool } from "../src/worker/pool.js";
 import type { CapabilityRouter } from "@allternit/subscription-fabric-contracts";
 import type { KeychainBackend } from "../src/security/keychain.js";
 import { openDatabase, type Db } from "../src/store/db.js";
@@ -55,7 +56,7 @@ export interface TestDeps extends GatewayDeps {
 
 export function makeDeps(
   stateDir: string,
-  opts: { fetchImpl?: typeof fetch; scheduler?: Scheduler; adapterRegistry?: AdapterRegistry; router?: CapabilityRouter } = {}
+  opts: { fetchImpl?: typeof fetch; scheduler?: Scheduler; adapterRegistry?: AdapterRegistry; router?: CapabilityRouter; pool?: WorkerPool } = {}
 ): TestDeps {
   const config: Config = loadConfig({ SUBS_GATEWAY_STATE_DIR: stateDir });
   const db: Db = openDatabase(":memory:");
@@ -81,6 +82,7 @@ export function makeDeps(
     router: opts.router,
     scheduler: opts.scheduler,
     adapterRegistry: opts.adapterRegistry,
+    pool: opts.pool,
     version: "0.1.0-test",
   });
   return {
