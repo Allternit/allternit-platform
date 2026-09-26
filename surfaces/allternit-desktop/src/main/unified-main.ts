@@ -20,6 +20,7 @@ import Store from 'electron-store';
 import log from 'electron-log';
 import { updateElectronApp } from 'update-electron-app';
 import fixPath from 'fix-path';
+import { installDesktopCompanion } from './desktop-companion.js';
 import { backendManager } from './backend-manager.js';
 import { officeEngineManager } from './office-engine-manager.js';
 import { fabricWorkerManager, type FabricWorkerState } from './fabric-worker-manager.js';
@@ -672,6 +673,8 @@ const store = new Store<StoreSchema>({
 // Main Window
 // ============================================================================
 
+const desktopCompanion = installDesktopCompanion({ origin: () => activePlatformUrl, main: () => mainWindow, preload: join(__dirname, '../preload/index.js') });
+
 function createMainWindow(): BrowserWindow {
   let bounds = store.get('windowBounds');
   
@@ -715,6 +718,7 @@ function createMainWindow(): BrowserWindow {
   // finished loading (cold-start file associations, app-menu clicks).
   window.webContents.on('did-finish-load', () => {
     flushPendingOfficeDeliveries();
+    desktopCompanion.start();
   });
 
   // Route operator + cloud-api calls through the allternit-api custom protocol.
@@ -1885,6 +1889,9 @@ async function updateTrayMenu(): Promise<void> {
     },
     ...(permItem ? [permItem, { type: 'separator' as const }] : []),
     { label: 'Show Window', click: () => mainWindow?.show() },
+    { label: 'Show Desktop Pet', click: () => desktopCompanion.show() },
+    { label: 'Desktop Pet Settings…', click: () => desktopCompanion.settings() },
+    { label: 'Reset Pet Position', click: () => desktopCompanion.reset() },
     {
       // Opens the popped-out Allternit Office window (the ACI rail's bottom
       // tab) — the renderer routes the 'launcher' target there.
