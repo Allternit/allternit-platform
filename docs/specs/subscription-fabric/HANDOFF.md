@@ -1,64 +1,142 @@
-# Handoff — Subscription Capability Fabric
+# HANDOFF — Subscription Capability Fabric, 2026-09-26 late session
 
-**Date:** 2026-09-26
-**From:** Kimi session (context exhausted)
-**To:** Fresh Kimi session
-**Owner:** Eoj
+> Written for session-continuation. This REPLACES the previous HANDOFF.md (everything it
+> described through P3 merge is DONE). Repo: `Gizziio/allternit-platform`, shared checkout
+> `~/Desktop/allternit-workspace/allternit` (on main). Specs: `docs/specs/subscription-fabric/`
+> (reading order: SPEC.md → HARDENING.md (binding) → IMPLEMENTATION_PLAN.md → REVIEW_CLAUDE.md (normative)).
 
----
+## 1. Where the program is
 
-## 1. What this is
+Merged to `origin/main` tonight (all attested in `agent-ledger/`, all verified):
+- Docs+P0 contracts (#735), P1 gateway (#738), P2 adapter SDK (#742), P3 worker+chatgpt-web+CLI (#751),
+  **P4 real router+quota pools+observability+subs model catalog (#753)**, **NUL hygiene + gate (#754)**.
+- `origin/main` @ `5fb680ccd` (plus whatever the parallel gizzi-tui-parity session lands).
+- Test baselines: subscription-gateway **221/221**, adapter-sdk 68/68, cli **48/48**, contracts 12-variant
+  AdapterEvent. Provider-name-literal grep must stay empty outside `adapters/chatgpt-web/`.
 
-Allternit **Subscription Capability Fabric**: a normalized, provider-agnostic capability layer that turns paid consumer AI subscriptions (ChatGPT, Claude, Kimi — later Gemini etc.) into addressable entitlements that Allternit Bots/Threads invoke programmatically. Bots request capabilities; the fabric chooses entitlements; adapters execute them; artifacts come back normalized (SPEC §44 invariant).
+**Remaining plan phases: P5 (kimi-web/claude-web + MCP surface), P6 (gemini-web declarative proof),
+P7 ("Allternit Sessions" machine). Eoj explicitly deprioritized these — the P3 manual gate is the mission.**
 
-Origin doc: `~/Downloads/ALLTERNIT_SUBSCRIPTION_CAPABILITY_FABRIC.md` (copied here as `SPEC.md`).
+## 2. The mission: P3 manual gate (human-driven by design)
 
-## 2. Where everything lives
+Goal: Eoj logs into ChatGPT through the gateway; a real task runs; crash-reconcile proven. The script
+(from `services/subscription-gateway/adapters/chatgpt-web/README.md`):
 
-Worktree: `~/Desktop/allternit-workspace/allternit-session-subsfab` (branch `session/subsfab`, cut from `origin/main` @ `b1bf20057`).
-All docs in `docs/specs/subscription-fabric/`:
+```bash
+cd ~/Desktop/allternit-workspace/allternit && git pull --ff-only && pnpm install
+# gateway must be running (see §4 for the working invocation)
+allternit subs connect chatgpt    # Sessions window opens → Eoj logs in by hand → probe READY
+allternit subs status             # expect ready
+allternit task run chat.create --prompt "Say hello" --wait     # SSE stream
+kill -9 <gateway pid>             # mid-stream or restart after; reconcile adopts or flags
+                                  # submission_ambiguous — never double-submits (verify in ChatGPT UI)
+allternit task run image.generate --prompt "a small red circle on white" --wait
+                                  # artifact row + sha256 + quarantine xattr
+```
 
-| File | What it is |
-|---|---|
-| `SPEC.md` | Original architecture lock (terminology, phases, interfaces) |
-| `HARDENING.md` | **Binding amendments — supersedes SPEC.md on conflict.** Decisions D1–D15, critical fixes A1–A10, schemas S1–S7 summary, extensibility X1–X7, MVP cuts C, progress/completion P (D11–D12), surface matrix §M |
-| `IMPLEMENTATION_PLAN.md` | Stack/placement, full file layout, phases P0–P7 with per-phase verify gates, testing strategy, risk register |
-| `REVIEW_CLAUDE.md` | Claude's architecture review (accepted in full; normative TypeScript schemas/interfaces in §S1–S7, §A1–A2 — transcribe these in P0) |
-| `DESKTOP_BRIDGE_RESEARCH.md` | Web-researched desktop-automation stack (CDP-first, Windows guest, fallback ladder, caveats) |
-| `REVIEW_TASK_CLAUDE.md` / `REVIEW_TASK_CHATGPT.md` | The review briefs used (ChatGPT one unused — codex quota was exhausted; can rerun for a second opinion) |
+**Gate state right now (snapshot at handoff):**
+- Gateway HAS run on this machine once: `~/.allternit/subscriptions/` exists (state.db + WAL, gateway.sock
+  mode 0600), cli-token issued in macOS Keychain (`security find-generic-password -s
+  com.allternit.subscription-gateway -a cli-token -w`). Account row exists: `96d4ccb2-808e-4c78-b68f-64fff059d069`,
+  health `auth_required`. That state is reusable — do NOT delete the state dir.
+- **Gate blocker (being fixed):** `POST /v1/accounts` only wrote the row; `main.ts` never activated workers,
+  so no Sessions window ever opened. The activation PR (below) is the fix.
 
-**Git state: everything is UNTRACKED and UNMERGED on `session/subsfab`.** Per repo AGENTS.md ("merge before you leave"), approved work must be committed → PR → merged to `origin/main` (merge commit, not squash), then shared checkout fast-forwarded, attestation in `agent-ledger/`, worktree teardown. Eoj has NOT yet approved the docs — confirm with him before merging.
+## 3. The activation PR — in flight, your first decision
 
-## 3. Decisions locked (don't re-litigate)
+Worktree: `~/Desktop/allternit-workspace/allternit-session-subsfab-activate`, branch
+`session/subsfab-activate` (cut from `5fb680ccd`, pushed? NO — not pushed yet, no commits yet).
+Task brief (complete, self-contained): `docs/specs/subscription-fabric/p3/P3_ACTIVATION_TASK.md` in that
+worktree. Scope: `src/worker/pool.ts` (WorkerPool + injectable Launcher, probe→health mapping, Critical #5
+no-auto-retry), `POST /v1/accounts/:id/connect`, `src/worker/drain.ts` (lane drain → runAttempt with P4
+`requeueAfterFailure` wired via `WorkerDeps.dispatch`), `main.ts` wiring, CLI `subs connect` = create+connect,
+tests (pool/connect-endpoint/drain/boot/CLI), NOTES sentinel `P3_ACTIVATION_NOTES.md`.
 
-- **Stack:** TypeScript/Node ≥20, pnpm. Daemon = `services/subscription-gateway/`; contracts + adapter SDK in `platform/packages/`; CLI subcommands in existing `cmd/allternit`. SQLite (better-sqlite3, pinned 13.0.3), state at `~/.allternit/subscriptions/`. UDS default, TCP 7788 optional+token-always (7788 verified collision-free; add to `docs/Operations/QUICK_REFERENCE.md` port table in P1).
-- **Adapter contract is streaming** (`AsyncIterable<AdapterEvent>`), **at-most-once submission** with `markSubmitted()` + crash `reconcile()` (no blind resubmit, ever), **detached watches** for long provider-side tasks.
-- **Progress streaming (D11) and push completion (D12) are v1 requirements**: scrape native provider progress + 15s heartbeats; durable per-caller outbox + CommRails/desktop/MCP notify. Callers never poll.
-- **Model picker naming (D13):** `subs/<provider>:<model_class>` (e.g. `subs/chatgpt:reasoning`), registered via the same provider-registry path gizzi-code uses for CLI-subscription OAuth.
-- **Quota (A4):** pool-based (`QuotaPool` per provider/account/pool), `observed_model` downgrade detection, unknown pools stay eligible above metered lanes, cooldown ladder, circuit breaker → `ui_drift`.
-- **Two adapter lanes (D14):** web default, **desktop apps as committed geo-block-resilient fallback lane**. Desktop bridge is **CDP-first** (Electron `--remote-debugging-port`; Kimi/Tauri via WebView2 env flag) on a **Windows guest image** → UIA (FlaUI/pywinauto) → vision agents (Agent S2/UI-TARS-desktop) as last resort. Research in `DESKTOP_BRIDGE_RESEARCH.md`.
-- **Containment (D15):** fabric NEVER runs on the user's daily driver. One managed "Allternit Sessions" machine image, three provisioning tiers: **T1 Hosted** (user's Allternit cloud VPS allotment), **T2 BYOC** (user's own machine via `cmd/allternit-node`), **T3 Local-contained** (local VM via `drivers/apple-vf`/`firecracker` or bot-desktop-sandbox). Settings → Sessions Computer panel in the desktop app shows it in every tier.
-- **Security:** gateway sole owner of browser profiles; real Chrome, human pacing (ChatGPT 150 / Claude 80 / Kimi 60 tasks/day defaults); challenge → halt worker + human, never auto-retry; keychain-held secrets; structurally local/single-tenant only (refuses boot without keychain).
-- **Gates:** publish/external side effects always human-approved (D9); refusals never auto-shopped (D7); thread migration asks interactive, waits background (D8); metered fallback opt-in per task (off by default).
-- **Extensibility (X):** adapter SDK + selector registry with drift telemetry + `DeclarativeChatAdapter` — Gemini is the designated proof (P6: `gemini-web` with NO `adapter.ts`).
-- **`chatgpt-image` lane migrates onto the fabric** (D6, one automation identity per account) in P3.
-- Owner accepted ToS risk for his own accounts; do not relitigate. Legal review flagged before ever offering the desktop lane commercially.
+Executor: **alive in tmux session `ao-subsfab-activate`** (regular kimi `--yolo` via
+`zsh -ic` wrapper — OPENROUTER keys live only in ~/.zshrc). At handoff: `pool.ts` written, 8-item todo on
+item 1, ~54% context, no commits. It is SLOWER than tonight's earlier executors but progressing.
 
-## 4. Repo grounding (verified paths)
+**Your options, in order of speed:**
+1. `tmux attach -t ao-subsfab-activate` and watch. If it's still moving, let it finish; then do the normal
+   independent review (build + `CI=1 pnpm -F subscription-gateway test` + literal grep + NUL gate) →
+   commit → push → PR → merge `--merge` → attest → teardown (recipe in §6).
+2. If it stalls (pane dead or >20 min no motion): kill the pane, take over in the worktree yourself. The
+   brief is precise; pool.ts is a starting reference. Land it the same way.
+3. Fastest (Eoj-approved path if he says so): skip review depth for this one PR — functional check only,
+   merge, restart gateway, run the gate. The repo rules allow Eoj to waive; say he did.
 
-- Reuse: `@allternit/browser-tools` (Playwright/CDP), `@allternit/replies-contract` + `replies-reducer` (streaming vocab), `bot_desktop_queue.rs` queue pattern, `bot_events` ledger (V180), `content_artifacts` (V148), `llm_gateway/provider_routing.rs` (metered fallback boundary — do NOT duplicate), `bb_threads.provider_thread_id`, `provider_routes.rs` subscription-connect UX, office-pptx/xlsx/docx packages (artifact rendering).
-- Port discipline: 8013 = installed Desktop; dev default 18013; never export `ALLTERNIT_API_PORT=8013`.
-- Naming: always "Subscription Gateway" — "gateway" is overloaded in this repo.
+## 4. Environment facts that will bite you if ignored (all learned the hard way tonight)
 
-## 5. What happens next (in order)
+- **Run the gateway with tsx, not node**: plain `node dist/main.js` dies on extensionless ESM imports
+  from the contracts package (`ERR_MODULE_NOT_FOUND`). Working invocation:
+  `cd services/subscription-gateway && pnpm exec tsx src/main.ts` (or `pnpm -F subscription-gateway dev`
+  = tsx watch). 
+- **CLI the same way**: `node cmd/cli/bin/allternit.js` fails on Node 26 (`assert` JSON-import syntax).
+  Use `cd cmd/cli && pnpm exec tsx src/index.ts <cmd>` (e.g. `... src/index.ts subs status`).
+- **A stale gateway may still be running from THIS session** (started ~11:43 via tsx, pre-activation code,
+  holds the UDS socket). Find it: `pgrep -f "tsx src/main.ts"`. Kill before starting a new gateway —
+  two gateways cannot share `gateway.sock`. (It was background task `bash-gntqc9t0` in the old session;
+  if that session is dead, use pkill.)
+- **NEVER run `playwright install`** — the chromium CDN hard-stalls on this network. Tests use system
+  Chrome (`channel: "chrome"`, installed) via the SDK helper; unit tests fake the launcher entirely.
+- **Worktree git commits pass a steering commit-gate that takes ~3 min each** — a pane sitting at
+  `git commit` is NOT stalled. Approving permission prompts: `tmux send-keys -t ao-<slug> "2"` (session-approve).
+- **NUL-byte trap**: `grep $'\x00'` CANNOT detect NULs (bash expands it to an empty pattern = matches
+  everything). Real check: `perl -ne 'if (/\x00/) { ... }'` or watch for `Bin` in git diff / `file` saying
+  "data". `scripts/check-fabric-sources-clean.sh` (wired into the gateway test script) is the durable gate.
+- **Repo rules**: session worktrees only (never edit the shared checkout's source; other live sessions own
+  its dirty files — `git-discipline-check.sh` FAIL on those is PRE-EXISTING, do not "fix" it). pnpm only.
+  Merge = merge commit (`gh pr merge <n> --merge`), attest after (`STEER_GUARD_OFF=1 git ...` in the shared
+  checkout), delete session branch local+remote, `rm -rf node_modules dist` in the worktree before
+  `git worktree remove --force`. CARGO_TARGET_DIR shared-target rule if you touch Rust (you shouldn't).
+- **The ao-* recipe**: `ao-spawn <slug> <worktree> "zsh -ic 'exec kimi --yolo'"` → trust prompt:
+  `tmux send-keys -t ao-<slug> Enter` → one `ao-send` line pointing at the task file → `ao-watch <slug>
+  <notes-path> 3600 20` (background, disable_timeout) → review independently, never trust NOTES.
 
-1. **Eoj reviews the docs.** Open items for him: approve/amend HARDENING decisions; then commit + PR + merge per repo lifecycle (this session left them unmerged deliberately).
-2. Optional: rerun the ChatGPT second opinion — codex quota resets ~2:29 AM; brief is `REVIEW_TASK_CHATGPT.md`, output `REVIEW_CHATGPT.md`. Orchestrate via `ao-spawn` (skill: agent-orchestrator; `ao-doctor` first). Claude ran headless: `claude -p "$(cat TASK)" --dangerously-skip-permissions; touch <sentinel>`. Watch with `ao-watch`; note the known PANE-DEAD race — check the review file itself before concluding failure.
-3. **Start P0** (contracts package) per `IMPLEMENTATION_PLAN.md` §2 — fully scoped; transcribe REVIEW_CLAUDE.md §S1–S7/A1–A2 into zod + TS. Each phase = one session worktree + one reviewable PR. Consider orchestrating implementation via the agent-orchestrator skill (Gate 0: `allternit-commrails plan new` if the CLI is on PATH — it wasn't in the previous session).
+## 5. After the activation PR merges — gate runbook
 
-## 6. Gotchas from the previous session
+1. `cd ~/Desktop/allternit-workspace/allternit && git pull --ff-only`, kill any old gateway (§4), restart
+   from merged main via tsx (§4). Verify: socket exists, keychain token readable, `subs status` answers.
+2. `pnpm exec tsx src/index.ts subs connect chatgpt` (from cmd/cli). **Eoj logs in by hand in the window.**
+   `subs status` → health `ready`. (If it stays `auth_required`, the window is open waiting — that is by design.)
+3. `task run chat.create --prompt "Say hello in exactly three words" --wait` — expect SSE stream + completed.
+4. `kill -9` the gateway mid-task (or rerun a second task immediately after kill), restart, check the task
+   lands `adopted` (thread recovered) or `submission_ambiguous` (flagged, NOT resubmitted) — verify no
+   duplicate message in the ChatGPT UI. This is the Critical #2 proof.
+5. `task run image.generate --prompt "..." --wait` — artifact row with sha256 in
+   `~/.allternit/subscriptions/artifacts/<sha2>/<sha>`, quarantine xattr set (`com.apple.quarantine`).
+6. Gate verdict → ledger attestation (honest: pass/fail per step, selector failures listed verbatim).
 
-- The repo's AGENTS.md mandates session worktrees, pnpm-only, `CARGO_TARGET_DIR=~/Desktop/allternit-workspace/.shared-target`, disk gate, and `scripts/git-discipline-check.sh` PASS at session end.
-- agy (Antigravity) shows a folder-trust prompt on spawn — press Enter via `tmux send-keys -t <session> Enter` before `ao-send`. (agy and codex were both quota-maxed on 2026-09-25.)
-- `allternit-commrails` / `wih` were NOT on PATH in the previous session; the DAG gate was skipped (≤2-step justification). Check again.
-- Do not create review/task files in the shared checkout — that mistake was made and cleaned up once already.
+**Expectation setting (from P3_PHASE_2_NOTES):** chatgpt-web selectors are v1-unverified against the real
+UI. Probe/task failures on selector mismatch are a LIKELY outcome — that is the gate working: capture the
+exact failure (adapter events / gateway log), and the gate verdict names the selectors needing repair
+(small follow-up PR). `image.generate` runs inline (not detached) in v1; `chat.continue` dispatcher unwired;
+disconnect kill-switch (§A6.9) unbuilt — all documented deferrals, not gate blockers.
+
+## 6. Landing recipe (same as tonight's 7 PRs)
+
+Executor commits (conventional) → your review: `pnpm install` in worktree, `pnpm -F subscription-gateway
+build`, `CI=1 pnpm -F subscription-gateway test`, `pnpm -F @allternit/cli build`, `CI=1 pnpm -F @allternit/cli
+test`, literal grep, scope check, `file` on every new source file (must say text, not data) → push →
+`gh pr create` (real summary + evidence) → `gh pr merge <n> --merge` → shared checkout `git pull --ff-only`
+→ write `agent-ledger/summaries/YYYY-MM-DD-HHMM-<slug>-...md` + LEDGER.md line, commit
+`docs(ledger): attestation for session/<slug>` with `STEER_GUARD_OFF=1`, push → `ao-kill <slug>` →
+`rm -rf node_modules dist` in worktree → `git worktree remove --force` → branch -D local + `git push origin
+--delete`. `scripts/git-discipline-check.sh` FAILs on the shared checkout's PRE-EXISTING dirty files from
+other live sessions — document as pre-existing, do not touch those files.
+
+## 7. Standing hard gates for fabric packages
+
+- Provider-literal grep `chatgpt|claude|kimi|gemini|grok|deepseek|openai|anthropic` — empty in
+  contracts/SDK/gateway-core/CLI src+test; exception: `adapters/chatgpt-web/` only.
+- Never promise production results from untested prompts; audit-before-quote for Tier C; money and client
+  comms human-approved (irrelevant here but standing).
+- Port discipline: gateway UDS `~/.allternit/subscriptions/gateway.sock`; TCP 127.0.0.1:7788 registered.
+
+## 8. If the gate PASSES
+
+Next session candidates (Eoj's call, in plan order): P5 kimi-web (chat + presentation→pptx, the D11/D12
+detached-progress proof) + claude-web + MCP surface; P6 gemini-web declarative proof; P7 the "Allternit
+Sessions" machine tiers; D6 media-router repoint at the gateway (waits on gate stability). The Rust-side
+picker merge (gateway catalog → `/api/v1/models` in cmd/allternit-api) is a small fetch+concat job now that
+`/v1/catalog` has shape parity (see P4_PHASE_2_NOTES.md).
