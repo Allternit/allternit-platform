@@ -77,10 +77,11 @@ export function revokeToken(db: Db, tokenId: string): void {
 }
 
 // CLI bootstrap (§A6.2): the `allternit` CLI authenticates with a `cli` caller
-// token the gateway issues at first boot and stores in the keychain under
-// account `cli-token`; the CLI reads it back with `security
-// find-generic-password`. Re-issued when the keychain entry is missing or no
-// longer verifies (fresh DB).
+// token the gateway issues at first boot and stores in the configured secret
+// store under account `cli-token`; the CLI uses SUBS_GATEWAY_TOKEN or reads
+// the store back (macOS Keychain via `security find-generic-password`, or the
+// 0600 file on Sessions machines). Re-issued when the stored entry is missing
+// or no longer verifies (fresh DB).
 export const CLI_TOKEN_ACCOUNT = "cli-token";
 
 export function ensureCliToken(
