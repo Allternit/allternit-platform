@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { defaultAdaptersDir } from "./adapters/registry.js";
+import type { KeychainBackendKind } from "./security/keychain.js";
 
 export interface TcpConfig {
   enabled: boolean;
@@ -18,6 +19,9 @@ export interface Config {
   // Adapter package dir (manifest.yaml per adapter); default resolved from the
   // package layout, overridable for tests.
   adaptersDir: string;
+  // D3/D15 secret-store backend: macOS Keychain (default) or a 0600 file
+  // under stateDir on Sessions machines. Env: SUBS_GATEWAY_KEYCHAIN.
+  keychainBackend: KeychainBackendKind;
   tcp: TcpConfig;
   policyPath: string;
   policy: Record<string, string>;
@@ -91,12 +95,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const policy = existsSync(policyPath)
     ? parsePolicyFile(readFileSync(policyPath, "utf8"))
     : {};
+  const keychainEnv = env[`${ENV_PREFIX}KEYCHAIN`];
+  if (keychainEnv !== undefined && keychainEnv !== "file" && keychainEnv !== "keychain") {
+    throw new Error(
+      `${ENV_PREFIX}KEYCHAIN must be "file" or "keychain", got ${JSON.stringify(keychainEnv)}`
+    );
+  }
   return {
     stateDir,
     dbPath: join(stateDir, "state.db"),
     artifactsDir: join(stateDir, "artifacts"),
     udsPath: join(stateDir, "gateway.sock"),
     adaptersDir: env[`${ENV_PREFIX}ADAPTERS_DIR`] ?? defaultAdaptersDir(),
+    keychainBackend: keychainEnv ?? "keychain",
     tcp: {
       enabled: env[`${ENV_PREFIX}TCP`] === "1",
       host: env[`${ENV_PREFIX}TCP_HOST`] ?? "127.0.0.1",

@@ -1,5 +1,5 @@
-// Boot — order matters: config → keychain gate (D3: refuse without it) →
-// store+migrations → events/http wiring → UDS (+TCP if enabled) → log binds.
+// Boot — order matters: config → secret-store gate (D3/D15: refuse without
+// it) → store+migrations → events/http wiring → UDS (+TCP if enabled) → log binds.
 import { readFileSync } from "node:fs";
 import type { Server } from "node:http";
 import { homedir } from "node:os";
@@ -16,6 +16,7 @@ import { Notifier } from "./events/notify.js";
 import {
   KeychainUnavailable,
   requireKeychain,
+  selectKeychainBackend,
   type KeychainBackend,
 } from "./security/keychain.js";
 import { ensureCliToken } from "./security/tokens.js";
@@ -64,7 +65,10 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
 
   let keychain: KeychainBackend;
   try {
-    keychain = requireKeychain(deps.keychain);
+    keychain = requireKeychain(
+      deps.keychain ??
+        selectKeychainBackend({ kind: config.keychainBackend, stateDir: config.stateDir })
+    );
   } catch (err) {
     if (err instanceof KeychainUnavailable) {
       logger(`subscription-gateway: ${err.message}`);
@@ -75,10 +79,11 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
 
   const db = openDatabase(config.dbPath);
 
-  // CLI auth bootstrap (§A6.2): issue + keychain-store the cli-token once;
-  // the CLI reads it via `security find-generic-password`.
+  // CLI auth bootstrap (§A6.2): issue + store the cli-token once in the
+  // configured secret store; the CLI uses SUBS_GATEWAY_TOKEN or reads the
+  // store back (macOS Keychain item / Sessions-machine file).
   const cliToken = ensureCliToken(db, keychain);
-  if (cliToken.issued) logger("subscription-gateway: issued cli-token (stored in keychain)");
+  if (cliToken.issued) logger("subscription-gateway: issued cli-token (stored in secret store)");
 
   // §A7 — adapter registry: manifests validated at boot; invalid = loud fail.
   const adapterRegistry = loadAdapterRegistry(config.adaptersDir);
