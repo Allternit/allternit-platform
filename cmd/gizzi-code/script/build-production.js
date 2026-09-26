@@ -174,6 +174,13 @@ const bundlePlugin = {
                 candidates = [resolve("src", relativePath)];
             } else if (["services", "state", "hooks", "commands"].includes(head)) {
                 candidates = subtreeBases(head, rel);
+            } else if (head === "memdir") {
+                // src/shared/memdir/* were empty auto-generated shims that
+                // shadowed the real src/memdir/* implementations via the
+                // fallback below (wrong memory paths in the binary; broke the
+                // build once getAutoMemPathFor was imported). Pin memdir to
+                // the real tree.
+                candidates = [resolve("src/memdir", rel)];
             } else if (head === "shared") {
                 candidates = [resolve("src/shared", rel)];
             } else if (head === "runtime") {
