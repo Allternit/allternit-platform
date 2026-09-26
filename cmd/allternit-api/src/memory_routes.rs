@@ -1054,8 +1054,12 @@ async fn retain_turn_v2_handler(
         payload.session_id.as_deref(),
         &payload.role,
         &payload.content,
+        payload.explicit,
     ) {
-        Ok(id) => (StatusCode::OK, Json(json!({"observation_id": id, "status": "retained"}))),
+        Ok((id, facts)) => (
+            StatusCode::OK,
+            Json(json!({"observation_id": id, "status": "retained", "facts": facts})),
+        ),
         Err(e) => {
             tracing::warn!("Retain turn error: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()})))

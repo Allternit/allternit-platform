@@ -86,6 +86,10 @@ pub struct RetainTurnRequest {
     pub session_id: Option<String>,
     pub role: String,
     pub content: String,
+    /// The user asked to remember `content` as written (Settings → Memory),
+    /// so it is stored as one fact instead of going through extraction.
+    #[serde(default)]
+    pub explicit: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -277,34 +281,122 @@ pub fn record_observation(
     Ok(id)
 }
 
-/// Simple heuristic fact extraction (extracts concise sentence declarations).
-pub fn extract_facts_heuristic(content: &str) -> Vec<String> {
-    let mut facts = Vec::new();
+/// Openers of first-person statements that describe the user durably
+/// (who they are, what they use or prefer). Lowercased, matched as prefixes.
+const SELF_DISCLOSURE_OPENERS: &[&str] = &[
+    "i am ", "i'm ", "i work", "i live", "i use ", "i mostly use", "i prefer", "i like ",
+    "i love ", "i hate ", "i dislike", "i don't like", "i do not like", "i always",
+    "i usually", "i never", "i have ", "i've been", "i was born", "i run ", "i own ",
+    "i build", "i manage", "i lead", "i study", "i speak", "i'm based", "my ", "we use ",
+    "we are ", "we're ", "our ", "call me ",
+];
+
+/// First-person openers that are requests or musings, not facts about the user.
+const NON_FACT_OPENERS: &[&str] = &[
+    "i'm wondering", "i am wondering", "i'm curious", "i am curious", "i'm trying",
+    "i am trying", "i'm looking for", "i am looking for", "i'm asking", "i am asking",
+    "i'm not sure", "i am not sure", "i have a question", "i have no idea", "my question",
+    "i'm going to", "i am going to", "i'm getting", "i am getting",
+];
+
+/// Explicit memory requests; the text after the marker is kept as the fact.
+const REMEMBER_MARKERS: &[&str] = &[
+    "please remember that ", "please remember ", "remember that ", "remember: ",
+    "note that i ", "for future reference, ",
+];
+
+/// Split text into sentences on line breaks and terminal punctuation.
+fn split_sentences(content: &str) -> Vec<String> {
+    let mut out = Vec::new();
     for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
+        let mut current = String::new();
+        let chars: Vec<char> = line.chars().collect();
+        for (i, c) in chars.iter().enumerate() {
+            current.push(*c);
+            let at_boundary = matches!(c, '.' | '!' | '?')
+                && chars.get(i + 1).map_or(true, |n| n.is_whitespace());
+            if at_boundary {
+                out.push(std::mem::take(&mut current));
+            }
+        }
+        if !current.trim().is_empty() {
+            out.push(current);
+        }
+    }
+    out.into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// A sentence that looks like markup, code, or a link dump rather than prose.
+fn looks_structured(s: &str) -> bool {
+    s.contains('|')
+        || s.contains("```")
+        || s.contains("**")
+        || s.contains("http://")
+        || s.contains("https://")
+        || s.contains('{')
+        || s.contains('`')
+        || s.starts_with('#')
+        || s.starts_with('>')
+}
+
+/// Normalise a kept sentence: bullet stripped, capitalised, one full stop.
+fn tidy_fact(s: &str) -> String {
+    let s = s.trim_start_matches(|c| c == '-' || c == '*' || c == '•').trim();
+    let s = s.trim_end_matches(|c| c == '.' || c == '!' || c == ' ');
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(first) => format!("{}{}.", first.to_uppercase(), chars.as_str()),
+        None => String::new(),
+    }
+}
+
+/// Extract durable facts about the user from a message the user wrote.
+///
+/// Keeps first-person self-descriptions ("I work in Rust", "My team uses
+/// Linear") and explicit requests to remember something. Questions,
+/// instructions to the assistant, test prompts, and markup are dropped, so a
+/// chat turn is never stored verbatim as a memory. Only call this on text the
+/// user authored: assistant replies describe the world, not the user.
+pub fn extract_facts_heuristic(content: &str) -> Vec<String> {
+    let mut facts: Vec<String> = Vec::new();
+    for sentence in split_sentences(content) {
+        let clean = sentence.trim_start_matches(|c| c == '-' || c == '*' || c == '•').trim();
+        if clean.ends_with('?') || looks_structured(clean) {
             continue;
         }
-
-        // Check for bullet items or key statements
-        let clean = trimmed.trim_start_matches(|c| c == '-' || c == '*' || c == '•').trim();
-        if clean.len() > 10 && clean.len() < 300 {
-            // Heuristic filter: captures declarative sentences or key points
-            if clean.contains(" is ")
-                || clean.contains(" are ")
-                || clean.contains(" preference")
-                || clean.contains(" decided")
-                || clean.contains(" uses ")
-                || clean.contains(" configured")
-                || clean.contains(" created")
-                || clean.starts_with("User:")
-                || clean.starts_with("Goal:")
-            {
-                facts.push(clean.to_string());
-            }
+        let lower = clean.to_lowercase().replace('\u{2019}', "'");
+        let candidate = if let Some(marker) = REMEMBER_MARKERS.iter().find(|m| lower.starts_with(*m)) {
+            // "note that i ..." keeps the "I"; the others drop the marker.
+            let keep_from = if *marker == "note that i " { marker.len() - 2 } else { marker.len() };
+            clean[keep_from..].to_string()
+        } else if SELF_DISCLOSURE_OPENERS.iter().any(|o| lower.starts_with(o))
+            && !NON_FACT_OPENERS.iter().any(|o| lower.starts_with(o))
+        {
+            clean.to_string()
+        } else {
+            continue;
+        };
+        let len = candidate.chars().count();
+        if !(8..=240).contains(&len) {
+            continue;
+        }
+        let fact = tidy_fact(&candidate);
+        if !facts.iter().any(|f| f.eq_ignore_ascii_case(&fact)) {
+            facts.push(fact);
         }
     }
     facts
+}
+
+/// Save an explicit memory ("remember this" in Settings) as one fact, as
+/// written, without the chat-turn filter.
+pub fn explicit_fact(content: &str) -> Option<String> {
+    let trimmed = content.trim();
+    let len = trimmed.chars().count();
+    (1..=500).contains(&len).then(|| tidy_fact(trimmed)).filter(|f| !f.is_empty())
 }
 
 /// Persist extracted facts linked to an observation and index embeddings for semantic recall.
@@ -319,6 +411,16 @@ pub fn persist_facts(
     let mut persisted = Vec::new();
 
     for fact in facts {
+        // The same fact restated in a later turn is not a new memory.
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM memory_facts
+             WHERE user_id = ?1 AND lower(fact) = lower(?2) AND valid_until IS NULL)",
+            params![user_id, fact],
+            |row| row.get(0),
+        )?;
+        if exists {
+            continue;
+        }
         let fact_id = format!("fact_{}", Uuid::new_v4().simple());
         conn.execute(
             "INSERT INTO memory_facts (id, user_id, agent_id, fact, confidence, source_observation_id)
@@ -344,7 +446,9 @@ pub fn persist_facts(
     Ok(persisted)
 }
 
-/// Retain an agent/user turn: logs an observation and automatically extracts facts.
+/// Retain an agent/user turn: logs an observation and extracts facts about
+/// the user from what the user wrote. Assistant and tool turns are kept as
+/// observations only. Returns the observation id and how many facts were saved.
 pub fn retain_turn(
     db: &DbHandle,
     user_id: &str,
@@ -352,16 +456,55 @@ pub fn retain_turn(
     session_id: Option<&str>,
     role: &str,
     content: &str,
-) -> Result<String, MemoryKernelError> {
-    let kind = format!("turn_{}", role);
+    explicit: bool,
+) -> Result<(String, usize), MemoryKernelError> {
+    let kind = if explicit { "explicit_memory".to_string() } else { format!("turn_{}", role) };
     let obs_id = record_observation(db, user_id, agent_id, session_id, &kind, content, Some(role))?;
 
-    let facts = extract_facts_heuristic(content);
-    if !facts.is_empty() {
-        let _ = persist_facts(db, user_id, agent_id, &obs_id, &facts);
-    }
+    let facts = if explicit {
+        explicit_fact(content).into_iter().collect()
+    } else if role == "user" {
+        extract_facts_heuristic(content)
+    } else {
+        Vec::new()
+    };
+    let saved = if facts.is_empty() {
+        0
+    } else {
+        persist_facts(db, user_id, agent_id, &obs_id, &facts).map(|p| p.len()).unwrap_or(0)
+    };
 
-    Ok(obs_id)
+    Ok((obs_id, saved))
+}
+
+/// Remove facts the old extractor made from raw chat turns: anything taken
+/// from an assistant turn or a session dream, and user-turn facts that the
+/// current extractor would not produce. Explicit memories are left alone.
+/// Idempotent; runs at startup.
+pub fn prune_turn_derived_facts(db: &DbHandle) -> Result<usize, MemoryKernelError> {
+    let conn = db.connect()?;
+    let mut stmt = conn.prepare(
+        "SELECT f.id, f.fact, o.kind FROM memory_facts f
+         JOIN memory_observations o ON o.id = f.source_observation_id
+         WHERE o.kind IN ('turn_user', 'turn_assistant', 'turn_tool', 'turn_system', 'dream_extraction')",
+    )?;
+    let rows: Vec<(String, String, String)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        .collect::<Result<_, _>>()?;
+    let mut removed = 0;
+    for (id, fact, kind) in rows {
+        let keep = kind == "turn_user" && extract_facts_heuristic(&fact).len() == 1
+            && extract_facts_heuristic(&fact)[0].eq_ignore_ascii_case(&tidy_fact(&fact));
+        if keep {
+            continue;
+        }
+        conn.execute(
+            "DELETE FROM memory_embeddings WHERE target_type = 'fact' AND target_id = ?1",
+            params![id],
+        )?;
+        removed += conn.execute("DELETE FROM memory_facts WHERE id = ?1", params![id])?;
+    }
+    Ok(removed)
 }
 
 /// Recall memories matching a query across facts, entities, and recent observations.
@@ -738,12 +881,74 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_facts_heuristic() {
-        let text = "Goal: Build a high-performance bot.\n- The agent uses Rust for its memory kernel.\nRandom line here.\n- User: John Doe is the primary administrator.";
-        let facts = extract_facts_heuristic(text);
-        assert!(facts.len() >= 2);
-        assert!(facts.iter().any(|f| f.contains("Rust")));
-        assert!(facts.iter().any(|f| f.contains("John Doe")));
+    fn extracts_first_person_facts() {
+        let facts = extract_facts_heuristic(
+            "I'm a product designer in Austin. My team uses Linear for tracking. Can you help me plan a sprint?",
+        );
+        assert_eq!(facts, vec!["I'm a product designer in Austin.", "My team uses Linear for tracking."]);
+    }
+
+    #[test]
+    fn keeps_explicit_remember_requests() {
+        let facts = extract_facts_heuristic("Please remember that invoices go out on the 1st.");
+        assert_eq!(facts, vec!["Invoices go out on the 1st."]);
+    }
+
+    #[test]
+    fn drops_questions_instructions_and_replies() {
+        // Real turns the old extractor stored as "facts".
+        for turn in [
+            "Reply with just Ready. This is a quick-chat connection check; do not use tools.",
+            "What is 17 times 23? Answer in one line.",
+            "Bitcoin is currently trading at roughly **$84,000 USD** (around $83,900).",
+            "| **Ease of use** | Steepest learning curve; console and IAM are dense |",
+            "I'm wondering which cloud is cheapest.",
+            "Goal: Build a high-performance bot.",
+        ] {
+            assert!(extract_facts_heuristic(turn).is_empty(), "stored: {turn}");
+        }
+    }
+
+    #[test]
+    fn explicit_fact_is_kept_as_written() {
+        assert_eq!(explicit_fact("  prefers dark mode ").as_deref(), Some("Prefers dark mode."));
+        assert_eq!(explicit_fact("   "), None);
+    }
+
+    fn test_db() -> DbHandle {
+        DbHandle::new_memory().expect("memory db")
+    }
+
+    #[test]
+    fn assistant_turns_yield_no_facts_and_repeats_are_deduped() {
+        let db = test_db();
+        let (_, n) = retain_turn(&db, "u1", None, None, "assistant", "My name is Claude and I am helpful.", false).unwrap();
+        assert_eq!(n, 0);
+        let (_, n) = retain_turn(&db, "u1", None, None, "user", "I work in Rust.", false).unwrap();
+        assert_eq!(n, 1);
+        let (_, n) = retain_turn(&db, "u1", None, None, "user", "i work in rust", false).unwrap();
+        assert_eq!(n, 0);
+        let (_, n) = retain_turn(&db, "u1", None, None, "user", "Prefers dark mode", true).unwrap();
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn prune_removes_legacy_turn_facts_only() {
+        let db = test_db();
+        let obs_user = record_observation(&db, "u1", None, None, "turn_user", "x", Some("user")).unwrap();
+        let obs_asst = record_observation(&db, "u1", None, None, "turn_assistant", "x", Some("assistant")).unwrap();
+        let obs_explicit = record_observation(&db, "u1", None, None, "explicit_memory", "x", Some("user")).unwrap();
+        persist_facts(&db, "u1", None, &obs_user, &["What is 17 times 23? Answer in one line.".into()]).unwrap();
+        persist_facts(&db, "u1", None, &obs_user, &["I work in Rust.".into()]).unwrap();
+        persist_facts(&db, "u1", None, &obs_asst, &["Bitcoin is trading at $84,000.".into()]).unwrap();
+        persist_facts(&db, "u1", None, &obs_explicit, &["Prefers dark mode.".into()]).unwrap();
+
+        assert_eq!(prune_turn_derived_facts(&db).unwrap(), 2);
+        let left: Vec<String> = list_facts(&db, "u1", None, 50).unwrap().into_iter().map(|f| f.fact).collect();
+        assert_eq!(left.len(), 2);
+        assert!(left.contains(&"I work in Rust.".to_string()));
+        assert!(left.contains(&"Prefers dark mode.".to_string()));
+        assert_eq!(prune_turn_derived_facts(&db).unwrap(), 0);
     }
 
     #[test]
