@@ -3,6 +3,7 @@ import path from "path"
 import os from "os"
 import { Config } from "@/runtime/context/config/config"
 import { Instance } from "@/runtime/context/project/instance"
+import { State } from "@/runtime/context/project/state"
 import { NamedError } from "@allternit/gizzi-util/error.js"
 import { ConfigMarkdown } from "@/runtime/context/config/markdown"
 import { Log } from "@/shared/util/log"
@@ -77,7 +78,7 @@ export namespace Skill {
   type Candidate = Info & { order: number }
   type Root = { path: string; source: Source; label: string }
 
-  export const state = Instance.state(async () => {
+  const scan = async () => {
     const candidates: Candidate[] = []
     const scannedRoots: Root[] = []
     let order = 0
@@ -186,7 +187,8 @@ export namespace Skill {
     }
 
     if (!Flag.GIZZI_DISABLE_EXTERNAL_SKILLS) {
-      for (const brand of [".claude", ".agents", ".openclaw"]) {
+      // ".allternit" is where the Allternit app writes skills (Customize → Skills).
+      for (const brand of [".claude", ".agents", ".openclaw", ".allternit"]) {
         await scanRoot({ path: path.join(Global.Path.home, brand, "skills"), source: "user", label: brand })
       }
       for await (const found of Filesystem.up({
@@ -258,7 +260,14 @@ export namespace Skill {
       roots: scannedRoots,
       dirs: [...new Set(Object.values(skills).filter((item) => !item.builtin).map((item) => path.dirname(item.location)))],
     }
-  })
+  }
+
+  export const state = Instance.state(scan)
+
+  /** Rescan skill roots (after a skill is installed or removed on disk). */
+  export function reload() {
+    State.forget(scan)
+  }
 
   export async function get(name: string) {
     const catalog = await state()
