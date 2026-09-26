@@ -1201,3 +1201,4 @@ Cross-compiled gizzi-code-win32-x64 from macOS (`bun build --target=win32-x64` �
 - 2026-09-26 release: gizzi-code v2.1.2 PUBLISHED+deployed via brew (CI run 36270290512 green); desktop v1.1.2 CI in flight (run 36272297013, tag a2ff240f8) — install steps staged in summaries/2026-09-26-2130-gizzi-tui-parity-release-v212-desktop-v112.md
 
 - 2026-09-26 Codex: [HUD push recovery](summaries/2026-09-26-1736-resume-hud-push-codex.md) — UI #86 and native #779 merged; shared main synced; 8 HUD tests passed.
+- 2026-09-26 Claude Code: [gizzi TUI color + own config + build hygiene + gizzi-code 2.1.3](summaries/2026-09-26-1715-gizzi-tui-color-claude-code-color-builds-2.1.3.md) — PRs #762 #763 #773 #774 #776 #780 #782; 2.1.3 on npm/GitHub/Homebrew (tap 607714f); build-state.sh + guard-build.sh; 16 stale binaries pruned; Desktop 2.1.3 sidecar pending owner decision.
