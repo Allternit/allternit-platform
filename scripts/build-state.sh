@@ -108,10 +108,12 @@ rel_tag = tags[0] if tags else None
 if rel_tag:
     rel_sha = sh("git", "-C", str(SHARED), "rev-list", "-n1", rel_tag)
     rel_date = sh("git", "-C", str(SHARED), "log", "-1", "--format=%cd", "--date=format:%Y-%m-%d %H:%M", rel_tag)
-    ahead = sh("git", "-C", str(SHARED), "rev-list", "--count", f"{rel_tag}..origin/main", "--", "cmd/gizzi-code")
+    # Only changes that alter the shipped binary count (not packaging/docs).
+    ahead = sh("git", "-C", str(SHARED), "rev-list", "--count", "--no-merges", f"{rel_tag}..origin/main", "--",
+               "cmd/gizzi-code/src", "cmd/gizzi-code/package.json", "cmd/gizzi-code/packages", "cmd/gizzi-code/script/build-production.js")
     print(f"  latest release   {rel_tag} @ {short(rel_sha)} ({rel_date})")
     if ahead and ahead != "0":
-        print(f"  unreleased       {ahead} gizzi-code commits on main since {rel_tag} — the official channels are behind main")
+        print(f"  unreleased       {ahead} commit(s) changing the gizzi-code binary since {rel_tag} — the official channels are behind main")
 rel_ver = rel_tag.split("/v")[-1] if rel_tag else None
 
 brew_json = sh("brew", "info", "--json=v2", "gizzi-code", timeout=60) if shutil.which("brew") else ""
