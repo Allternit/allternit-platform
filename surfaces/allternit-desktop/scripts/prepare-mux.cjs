@@ -4,6 +4,9 @@
  *
  * If a release job already lipo'd/copied the binary here, this is a no-op.
  * Otherwise cargo-build --release -p allternit-mux for the host and copy.
+ *
+ * Skipped on Windows: the mux API is a Unix socket and gizzi's /pty
+ * integration dials it, so there is nothing a Windows build could serve.
  */
 
 'use strict';
@@ -59,6 +62,10 @@ function cargoBuild() {
 }
 
 function main() {
+  if (process.platform === 'win32') {
+    log('skipped on Windows (Unix-socket daemon)');
+    return;
+  }
   if (alreadyStaged()) {
     log(`already staged ${dest}`);
     return;

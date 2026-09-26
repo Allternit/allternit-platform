@@ -31,7 +31,6 @@ const localEngineName = process.platform === 'win32' ? 'allternit-local-engine.e
 const gizziName = process.platform === 'win32' ? 'gizzi-code.exe' : 'gizzi-code';
 const voiceName = process.platform === 'win32' ? 'allternit-voice-service.exe' : 'allternit-voice-service';
 const whisperName = process.platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli';
-const muxName = process.platform === 'win32' ? 'allternit-mux.exe' : 'allternit-mux';
 
 const required = [
   {
@@ -59,11 +58,16 @@ const required = [
     label: 'whisper-cli (local STT engine)',
     buildStep: 'services/voice/build-whisper.sh (via scripts/build-desktop.sh)',
   },
-  {
-    path: path.join(resourcesDir, 'bin', muxName),
-    label: 'allternit-mux (PTY daemon gizzi auto-spawns for /pty)',
-    buildStep: 'npm run prepare:mux (or scripts/build-desktop.sh)',
-  },
+  // allternit-mux is Unix-only (its API is a Unix socket), so Windows ships without it.
+  ...(process.platform === 'win32'
+    ? []
+    : [
+        {
+          path: path.join(resourcesDir, 'bin', 'allternit-mux'),
+          label: 'allternit-mux (PTY daemon gizzi auto-spawns for /pty)',
+          buildStep: 'npm run prepare:mux (or scripts/build-desktop.sh)',
+        },
+      ]),
   {
     path: path.join(resourcesDir, 'platform', 'index.html'),
     label: 'Platform static export',
