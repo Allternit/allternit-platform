@@ -28,6 +28,11 @@ export namespace State {
     }
   }
 
+  /** Drop one cached state (every instance) so the next access re-runs `init`. */
+  export function forget(init: unknown) {
+    for (const entries of recordsByKey.values()) entries.delete(init)
+  }
+
   export async function dispose(key: string) {
     const entries = recordsByKey.get(key)
     if (!entries) return

@@ -56,6 +56,26 @@ export function SkillRoutes() {
       async (c) => c.json({ skills: await Skill.all(), collisions: await Skill.collisions(), roots: await Skill.roots() }),
     )
 
+    // ── Rescan skill roots ───────────────────────────────────
+    .post(
+      "/reload",
+      describeRoute({
+        summary: "Reload skills",
+        description: "Rescan skill directories, e.g. after a skill was installed on disk.",
+        operationId: "skill.reload",
+        responses: {
+          200: {
+            description: "Skills reloaded",
+            content: { "application/json": { schema: resolver(z.object({ count: z.number() })) } },
+          },
+        },
+      }),
+      async (c) => {
+        Skill.reload()
+        return c.json({ count: (await Skill.all()).length })
+      },
+    )
+
     // ── Add skill from URL ───────────────────────────────────
     .post(
       "/add",

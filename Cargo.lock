@@ -238,6 +238,7 @@ dependencies = [
  "hostname",
  "http-body-util",
  "image",
+ "include_dir",
  "jsonwebtoken",
  "md5",
  "once_cell",
