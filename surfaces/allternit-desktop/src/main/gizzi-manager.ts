@@ -137,6 +137,9 @@ export class GizziManager {
       ...(config.apiToken ? { ALLTERNIT_API_TOKEN: config.apiToken } : {}),
       ...(config.runtimeId ? { GIZZI_RUNTIME_ID: config.runtimeId } : {}),
       GIZZI_PLATFORM_API_URL: URLS.CLOUD_API,
+      // gizzi shuts down when the stdin pipe below hits EOF, i.e. when this
+      // process dies without reaping it (crash, force quit).
+      GIZZI_PARENT_LIFELINE: 'stdin',
       ...(config.extraEnv ?? {}),
     };
 
@@ -172,7 +175,8 @@ export class GizziManager {
     }
     const proc = spawn(binaryPath, serveArgs, {
       env,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      // stdin is the parent lifeline: never written, never closed by us.
+      stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
       // Own process group so stop() can reap gizzi and its session children
       // without signalling Electron.
