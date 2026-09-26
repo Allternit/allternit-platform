@@ -22,13 +22,18 @@ function buildProgram(): Command {
 
 // SubsClient speaks HTTP over the gateway's unix socket, so the mock is a real
 // UDS server plus SUBS_GATEWAY_STATE_DIR/SUBS_GATEWAY_TOKEN env overrides.
+// Routes may be keyed by bare URL or by "METHOD URL" (method wins); when
+// `calls` is given, every request is recorded as "METHOD URL".
 async function withGateway(
   routes: Record<string, unknown>,
   fn: () => Promise<unknown>,
+  calls?: string[],
 ): Promise<string> {
   const dir = mkdtempSync(join(tmpdir(), 'subs-cmd-test-'));
   const server = http.createServer((req, res) => {
-    const body = routes[req.url ?? ''];
+    const key = `${req.method} ${req.url}`;
+    calls?.push(key);
+    const body = routes[key] ?? routes[req.url ?? ''];
     if (body === undefined) {
       res.writeHead(404, { 'content-type': 'application/json' });
       res.end('{"error":"not found"}');
@@ -214,4 +219,53 @@ test('subs status degrades to empty pools/stats when the gateway predates those 
   assert.equal(rows.length, 1);
   assert.deepEqual(rows[0].pools, []);
   assert.deepEqual(rows[0].adapter_stats, []);
+});
+
+test('subs connect creates the account then drives the connect endpoint', async () => {
+  const created = {
+    account_id: 'acct-9',
+    provider: 'prov-a',
+    label: 'prov-a',
+    plan: null,
+    session_health: 'auth_required',
+    enabled: true,
+  };
+  const calls: string[] = [];
+  const out = await withGateway(
+    {
+      'GET /v1/accounts': [],
+      'POST /v1/accounts': created,
+      'POST /v1/accounts/acct-9/connect': created,
+    },
+    () => buildProgram().parseAsync(['node', 'allternit', 'subs', 'connect', 'prov-a']),
+    calls,
+  );
+  assert.deepEqual(calls, [
+    'GET /v1/accounts',
+    'POST /v1/accounts',
+    'POST /v1/accounts/acct-9/connect',
+  ]);
+  assert.equal(JSON.parse(out).account_id, 'acct-9');
+});
+
+test('subs connect reuses an existing enabled account instead of creating a duplicate', async () => {
+  const existing = {
+    account_id: 'acct-1',
+    provider: 'prov-a',
+    label: 'Work',
+    plan: 'plus',
+    session_health: 'ready',
+    enabled: true,
+  };
+  const calls: string[] = [];
+  const out = await withGateway(
+    {
+      'GET /v1/accounts': [existing],
+      'POST /v1/accounts/acct-1/connect': existing,
+    },
+    () => buildProgram().parseAsync(['node', 'allternit', 'subs', 'connect', 'prov-a']),
+    calls,
+  );
+  assert.deepEqual(calls, ['GET /v1/accounts', 'POST /v1/accounts/acct-1/connect']);
+  assert.equal(JSON.parse(out).account_id, 'acct-1');
 });
