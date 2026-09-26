@@ -1,6 +1,6 @@
-// /v1/accounts — connect placeholder (real browser flows are P3). Connect
-// creates the row with session_health: auth_required and a needs_user ledger
-// entry. Bots never hold accounts:manage — enforced at token issue (§A6.2).
+// /v1/accounts — create/list/status/disconnect plus P3 connect: activating an
+// account's lane (launch + probe) through the worker pool. Bots never hold
+// accounts:manage — enforced at token issue (§A6.2).
 import { randomUUID } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
@@ -73,6 +73,45 @@ export function accountsRouter(deps: GatewayDeps): Router {
     });
     res.status(201).json(account);
   });
+
+  router.post(
+    "/v1/accounts/:id/connect",
+    requireScope("accounts:manage"),
+    async (req: Request, res: Response) => {
+      const account = getAccount(deps.db, req.params.id);
+      if (!account) {
+        res.status(404).json({ error: "account_not_found", account_id: req.params.id });
+        return;
+      }
+      if (!account.enabled) {
+        res.status(409).json({ error: "account_disabled", account_id: account.account_id });
+        return;
+      }
+      if (!deps.pool) {
+        res.status(503).json({ error: "worker_unavailable" });
+        return;
+      }
+      // P3 — the activation seam: reconcile-first, launch the Sessions window
+      // once (idempotent), then a non-spending probe. The returned account's
+      // session_health is the probe outcome (ready / auth_required /
+      // challenge_presented / ui_drift / provider_down); auth walls and
+      // challenges leave the window open for the human and are never retried
+      // here — re-POST to re-drive the probe after an interactive login.
+      try {
+        await deps.pool.activate({
+          provider: account.provider,
+          account_id: account.account_id,
+        });
+      } catch (err) {
+        res.status(502).json({
+          error: "activation_failed",
+          detail: err instanceof Error ? err.message : String(err),
+        });
+        return;
+      }
+      res.json(getAccount(deps.db, req.params.id));
+    }
+  );
 
   router.post(
     "/v1/accounts/:id/disconnect",

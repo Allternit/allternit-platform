@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Express } from "express";
-import { loadConfig, type Config } from "./config.js";
+import { loadConfig, stallTimeoutFor, type Config } from "./config.js";
 import { loadAdapterRegistry, type AdapterRegistry } from "./adapters/registry.js";
 import { openDatabase, type Db } from "./store/db.js";
 import { EventLog } from "./events/log.js";
@@ -22,6 +22,12 @@ import { ensureCliToken } from "./security/tokens.js";
 import { closeServer, createServer, listenTcp, listenUds } from "./http/server.js";
 import { createScheduler } from "./queue/scheduler.js";
 import { FabricRouter } from "./router/resolve.js";
+import type { DispatchDeps } from "./router/dispatch.js";
+import { WorkerSupervisor } from "./worker/supervisor.js";
+import { WorkerPool } from "./worker/pool.js";
+import { startDrain } from "./worker/drain.js";
+import { createWatchScheduler } from "./worker/detach.js";
+import { createActivityTracker } from "./worker/progress.js";
 
 export interface BootDeps {
   env?: NodeJS.ProcessEnv;
@@ -41,6 +47,8 @@ export interface RunningGateway {
   hub: SseHub;
   notifier: Notifier;
   adapterRegistry: AdapterRegistry;
+  supervisor: WorkerSupervisor;
+  pool: WorkerPool;
   close(): Promise<void>;
 }
 
@@ -87,6 +95,34 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
   });
   log.setNotifier(notifier);
 
+  // P3 activation — the worker layer: one supervisor (reconcile-first per
+  // lane), one pool (per-lane browser runtimes, lazy — nothing launches at
+  // boot), and the drain that turns scheduler enqueues into runAttempt calls.
+  // The supervisor reaches pool runtimes through closures because reconcile
+  // only runs at activate() time, after both exist.
+  const scheduler = createScheduler();
+  const router = new FabricRouter();
+  let pool!: WorkerPool;
+  const supervisor = new WorkerSupervisor({
+    db,
+    scheduler,
+    adapters: (adapterId) => pool.adapterFor(adapterId),
+    log,
+    makeReconcileCtx: (attempt, adapter) => pool.reconcileCtx(attempt, adapter),
+    stallTimeoutS: (capability) => stallTimeoutFor(config, capability),
+  });
+  pool = new WorkerPool({
+    db,
+    registry: adapterRegistry,
+    supervisor,
+    profilesDir: config.stateDir,
+    log,
+    logger,
+  });
+  const watchScheduler = createWatchScheduler();
+  const activity = createActivityTracker();
+  const dispatch: DispatchDeps = { db, registry: adapterRegistry, router, scheduler };
+
   const app = createServer({
     db,
     config,
@@ -95,9 +131,10 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
     outbox,
     hub,
     notifier,
-    router: new FabricRouter(),
-    scheduler: createScheduler(),
+    router,
+    scheduler,
     adapterRegistry,
+    pool,
     version: packageVersion(),
   });
 
@@ -111,6 +148,23 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
     );
   }
 
+  // Drain after HTTP is up: queued tasks start flowing to ready lanes.
+  const stopDrain = startDrain({
+    db,
+    scheduler,
+    pool,
+    makeWorkerDeps: () => ({
+      db,
+      log,
+      artifactsDir: config.artifactsDir,
+      supervisor,
+      watchScheduler,
+      activity,
+      dispatch,
+    }),
+    logger,
+  });
+
   return {
     config,
     db,
@@ -121,7 +175,12 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
     hub,
     notifier,
     adapterRegistry,
+    supervisor,
+    pool,
     async close() {
+      stopDrain();
+      supervisor.shutdown();
+      await pool.shutdown();
       await notifier.drain();
       await Promise.all(servers.map((s) => closeServer(s)));
       db.pragma("wal_checkpoint(TRUNCATE)");

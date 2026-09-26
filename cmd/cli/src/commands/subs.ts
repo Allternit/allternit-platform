@@ -156,15 +156,27 @@ export function createSubsCommand(): Command {
       .option('--label <label>', 'account label')
       .action(function (this: Command, provider: string, options: { label?: string }) {
         return run(this, async () => {
-          const account = await new SubsClient().requestOk('POST', '/v1/accounts', {
-            provider,
-            label: options.label ?? provider,
-          });
-          process.stderr.write(
-            'Account created. Log in in the Sessions window that the gateway brings forward; ' +
-              'health flips to ready once the probe passes.\n',
-          );
-          return account;
+          const client = new SubsClient();
+          // Create-if-absent, then connect: one motion from the README flow.
+          // Re-running after an interactive login re-drives the probe.
+          const accounts = await client.requestOk<AccountRow[]>('GET', '/v1/accounts');
+          let account = accounts.find((a) => a.provider === provider && a.enabled);
+          if (!account) {
+            account = await client.requestOk<AccountRow>('POST', '/v1/accounts', {
+              provider,
+              label: options.label ?? provider,
+            });
+            process.stderr.write(
+              'Account created. Log in in the Sessions window that the gateway brings forward; ' +
+                'health flips to ready once the probe passes.\n',
+            );
+          } else {
+            process.stderr.write(
+              'Using the existing account. Log in in the Sessions window that the gateway brings forward; ' +
+                'health flips to ready once the probe passes.\n',
+            );
+          }
+          return client.requestOk('POST', `/v1/accounts/${account.account_id}/connect`, {});
         });
       }),
   );
