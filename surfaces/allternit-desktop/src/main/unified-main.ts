@@ -673,7 +673,19 @@ const store = new Store<StoreSchema>({
 // Main Window
 // ============================================================================
 
-const desktopCompanion = installDesktopCompanion({ origin: () => activePlatformUrl, main: () => mainWindow, preload: join(__dirname, '../preload/index.js') });
+const desktopCompanion = installDesktopCompanion({
+  origin: () => activePlatformUrl,
+  main: () => mainWindow,
+  preload: join(__dirname, '../preload/index.js'),
+  openHud: (agentId) => openHudForCompanion(agentId),
+  closeHud: () => hideHudWindow(),
+  moveHudWithPet: (dx, dy) => {
+    if (hudCompanionAgentId === undefined || !hudWindow || hudWindow.isDestroyed() || !hudWindow.isVisible()) return false;
+    const bounds = hudWindow.getBounds();
+    hudWindow.setPosition(bounds.x + dx, bounds.y + dy);
+    return true;
+  },
+});
 
 function createMainWindow(): BrowserWindow {
   let bounds = store.get('windowBounds');
@@ -2036,6 +2048,7 @@ app.on('second-instance', (_event, argv) => {
   if (officeFile) openOfficeWithFile(officeFile);
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
     mainWindow.focus();
   }
 });
@@ -2687,9 +2700,41 @@ ipcMain.handle('shell:open-office-window', () => {
 // of the primary display, inspired by Hermes Desktop's HUD windowing profile.
 // The default shape is a wide, short bar so the composer dominates, matching
 // Hermes' 620×320 bottom-band layout.
-const HUD_WIDTH = 720;
+const HUD_WIDTH = 620;
 const HUD_HEIGHT = 220;
 const HUD_BOTTOM_MARGIN = 72;
+let hudCompanionAgentId: string | null | undefined;
+function showHudWindow(): void {
+  if (!hudWindow || hudWindow.isDestroyed()) return;
+  hudWindow.show();
+  hudWindow.focus();
+  hudWindow.moveTop();
+  if (hudCompanionAgentId !== undefined) desktopCompanion.attachPetToHud(hudWindow.getBounds());
+  pushHudState();
+}
+
+function hideHudWindow(): void {
+  if (hudWindow && !hudWindow.isDestroyed()) hudWindow.hide();
+  desktopCompanion.detachPetFromHud();
+  pushHudState();
+}
+
+function hudUrl(): string {
+  const url = new URL('/hud', activePlatformUrl);
+  if (hudCompanionAgentId !== undefined) url.searchParams.set('companion', hudCompanionAgentId ?? 'first');
+  return url.toString();
+}
+
+function openHudForCompanion(agentId: string | null): void {
+  if (hudCompanionAgentId === agentId && hudWindow && !hudWindow.isDestroyed() && hudWindow.isVisible()) {
+    hideHudWindow();
+    return;
+  }
+  const changed = hudCompanionAgentId !== agentId;
+  hudCompanionAgentId = agentId;
+  if (changed && hudWindow && !hudWindow.isDestroyed()) void hudWindow.loadURL(hudUrl());
+  openHudWindow();
+}
 
 function computeHudBounds() {
   const { width: screenW, height: screenH } = screen.getPrimaryDisplay().workAreaSize;
@@ -2768,21 +2813,16 @@ function createHudWindow(): BrowserWindow {
 function openHudWindow(): void {
   log.info('[HUD] openHudWindow called', { activePlatformUrl });
   if (hudWindow && !hudWindow.isDestroyed()) {
-    const url = new URL('/hud', activePlatformUrl).toString();
-    log.info('[HUD] Reusing existing HUD window:', url);
-    void hudWindow.loadURL(url);
-    hudWindow.show();
-    hudWindow.focus();
-    hudWindow.moveTop();
-    pushHudState();
+    log.info('[HUD] Reusing existing HUD window:', hudWindow.webContents.getURL());
+    showHudWindow();
     return;
   }
 
   log.info('[HUD] Creating new floating HUD window');
   hudWindow = createHudWindow();
+  showHudWindow();
 
   log.info('[HUD] HUD window created', { id: hudWindow.id, bounds: hudWindow.getBounds(), visible: hudWindow.isVisible() });
-
   hudWindow.webContents.setWindowOpenHandler(({ url }) => {
     void openExternalAllowlisted(url);
     return { action: 'deny' };
@@ -2798,10 +2838,7 @@ function openHudWindow(): void {
   });
   hudWindow.once('ready-to-show', () => {
     log.info('[HUD] HUD window ready-to-show');
-    hudWindow?.show();
-    hudWindow?.focus();
-    hudWindow?.moveTop();
-    pushHudState();
+    if (hudWindow?.isVisible()) showHudWindow();
   });
   hudWindow.on('closed', () => {
     log.info('[HUD] HUD window closed');
@@ -2809,11 +2846,12 @@ function openHudWindow(): void {
       annotationWindow.close();
     }
     hudWindow = null;
-    pushHudState();
+    hideHudWindow();
   });
-  const hudUrl = new URL('/hud', activePlatformUrl).toString();
-  log.info('[HUD] Loading HUD window URL:', hudUrl);
-  void hudWindow.loadURL(hudUrl);
+  hudWindow.on('move', () => { if (hudCompanionAgentId !== undefined && hudWindow) desktopCompanion.attachPetToHud(hudWindow.getBounds()); });
+  hudWindow.on('resize', () => { if (hudCompanionAgentId !== undefined && hudWindow) desktopCompanion.attachPetToHud(hudWindow.getBounds()); });
+  log.info('[HUD] Loading HUD window URL:', hudUrl());
+  void hudWindow.loadURL(hudUrl());
 }
 
 function toggleHudWindow(): void {
@@ -2821,52 +2859,54 @@ function toggleHudWindow(): void {
   if (hudWindow && !hudWindow.isDestroyed()) {
     if (hudWindow.isVisible() && hudWindow.isFocused()) {
       log.info('[HUD] HUD is visible and focused — hiding');
-      hudWindow.hide();
-      pushHudState();
+      hideHudWindow();
       return;
     }
     log.info('[HUD] HUD exists — showing and focusing');
-    hudWindow.show();
-    hudWindow.focus();
-    hudWindow.moveTop();
-    pushHudState();
+    showHudWindow();
     return;
   }
   openHudWindow();
 }
 
-ipcMain.handle('shell:open-hud', openHudWindow);
+ipcMain.handle('shell:open-hud', () => { hudCompanionAgentId = undefined; openHudWindow(); });
 ipcMain.handle('shell:close-hud', () => {
   // Hide, not close: the HUD is a persistent panel and closing it would tear
   // down its webContents and lose composer state.
   if (hudWindow && !hudWindow.isDestroyed()) {
-    hudWindow.hide();
-    pushHudState();
+    hideHudWindow();
   }
 });
 ipcMain.handle('shell:toggle-hud', toggleHudWindow);
 ipcMain.handle('shell:show-hud', () => {
   if (hudWindow && !hudWindow.isDestroyed()) {
-    hudWindow.show();
-    hudWindow.focus();
-    hudWindow.moveTop();
-    pushHudState();
+    showHudWindow();
   } else {
     openHudWindow();
   }
 });
+let hudMoveOrigin: { cursorX: number; cursorY: number; x: number; y: number; width: number; height: number } | null = null;
+ipcMain.handle('shell:hud:begin-move', () => {
+  if (!hudWindow || hudWindow.isDestroyed()) return;
+  const cursor = screen.getCursorScreenPoint();
+  const bounds = hudWindow.getBounds();
+  hudMoveOrigin = { cursorX: cursor.x, cursorY: cursor.y, ...bounds };
+  hudWindow.setIgnoreMouseEvents(false);
+});
+ipcMain.handle('shell:hud:end-move', () => { hudMoveOrigin = null; });
 ipcMain.handle('shell:move-hud', (_event, delta: { dx?: number; dy?: number; x?: number; y?: number; width?: number; height?: number }) => {
   // Two renderer call sites send different shapes: HudApp's drag handler
   // sends {dx, dy}; composer-drag sends {x, y, width, height} deltas. Accept
   // both, and only apply a size change when width/height are provided.
   if (!hudWindow || hudWindow.isDestroyed()) return;
-  const dx = Number(delta?.dx ?? delta?.x ?? 0);
-  const dy = Number(delta?.dy ?? delta?.y ?? 0);
+  const cursor = hudMoveOrigin ? screen.getCursorScreenPoint() : null;
+  const dx = cursor && hudMoveOrigin ? cursor.x - hudMoveOrigin.cursorX : Number(delta?.dx ?? delta?.x ?? 0);
+  const dy = cursor && hudMoveOrigin ? cursor.y - hudMoveOrigin.cursorY : Number(delta?.dy ?? delta?.y ?? 0);
   const [currentWidth, currentHeight] = hudWindow.getSize();
   const width = delta?.width !== undefined ? Number(delta.width) : currentWidth;
   const height = delta?.height !== undefined ? Number(delta.height) : currentHeight;
   if (![dx, dy, width, height].every(Number.isFinite)) return;
-  const [x, y] = hudWindow.getPosition();
+  const [x, y] = hudMoveOrigin ? [hudMoveOrigin.x, hudMoveOrigin.y] : hudWindow.getPosition();
   // setBounds (not setPosition) keeps a transparent frameless window from
   // drifting on Windows per Electron frameless-transparent quirks.
   const wasResizable = hudWindow.isResizable();

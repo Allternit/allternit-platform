@@ -23,7 +23,7 @@ vi.mock('electron', () => ({
     getBounds() { return this.bounds; }
     setBounds(bounds: any) { this.bounds = bounds; }
     setPosition(x: number, y: number) { this.bounds = { ...this.bounds, x, y }; }
-    show() { this.visible = true; } showInactive() { this.visible = true; } hide() { this.visible = false; } focus() {}
+    show() { this.visible = true; } showInactive() { this.visible = true; } hide() { this.visible = false; } focus() {} moveTop() {}
   },
 }));
 import { installDesktopCompanion } from './desktop-companion.js';
@@ -31,6 +31,26 @@ import { installDesktopCompanion } from './desktop-companion.js';
 function sender(win: any) { return { sender: win.webContents, senderFrame: win.webContents.mainFrame }; }
 beforeEach(() => { mocks.windows.length = 0; mocks.handlers.clear(); mocks.events.clear(); });
 describe('desktop companion windows', () => {
+  it('opens the bot HUD and keeps the pet anchored and scaled as HUD bounds change', () => {
+    const openHud = vi.fn();
+    const manager = installDesktopCompanion({ origin: () => 'http://localhost:8013', main: () => null, preload: '/preload.js', openHud });
+    manager.start();
+    const pet = mocks.windows[0];
+    mocks.handlers.get('companion:update')!(sender(pet), { agentId: 'bot-1' });
+    mocks.handlers.get('companion:open')!(sender(pet), 'chat');
+    expect(openHud).toHaveBeenCalledWith('bot-1');
+    expect(mocks.windows).toHaveLength(1);
+    manager.attachPetToHud({ x: 200, y: 260, width: 600, height: 300 });
+    expect(pet.getBounds()).toMatchObject({ x: 688, y: 192, width: 88, height: 88 });
+    manager.attachPetToHud({ x: 400, y: 350, width: 800, height: 400 });
+    expect(pet.getBounds()).toMatchObject({ x: 1064, y: 258, width: 112, height: 112 });
+    mocks.handlers.get('companion:update')!(sender(pet), { agentId: 'bot-2' });
+    expect(pet.getBounds()).toMatchObject({ x: 1064, y: 258, width: 112, height: 112 });
+    mocks.handlers.get('companion:update')!(sender(pet), { size: 120 });
+    expect(pet.getBounds()).toMatchObject({ x: 1064, y: 258, width: 112, height: 112 });
+    manager.detachPetFromHud();
+    expect(pet.getBounds().y).toBeGreaterThan(500);
+  });
   it('uses an independent transparent pet and separate quick chat window', async () => {
     const manager = installDesktopCompanion({ origin: () => 'http://localhost:8013', main: () => null, preload: '/preload.js' });
     manager.start(); const pet = mocks.windows[0];

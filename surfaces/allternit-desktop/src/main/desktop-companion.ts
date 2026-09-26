@@ -9,13 +9,14 @@ export interface CompanionState {
   position?: { x: number; y: number };
 }
 
-export function installDesktopCompanion(options: { origin: () => string; main: () => BrowserWindow | null; preload: string }) {
+export function installDesktopCompanion(options: { origin: () => string; main: () => BrowserWindow | null; preload: string; openHud?: (agentId: string | null) => void; closeHud?: () => void; moveHudWithPet?: (dx: number, dy: number) => boolean }) {
   const settings = new Store<CompanionState>({ name: 'desktop-companion', defaults: { enabled: true, size: 80, agentId: null, panel: 'chat' } });
   let pet: BrowserWindow | null = null;
   let chat: BrowserWindow | null = null;
   const ready = new WeakSet<BrowserWindow>();
-  let drag: { x: number; y: number; left: number; top: number } | null = null;
+  let drag: { x: number; y: number; lastX: number; lastY: number; left: number; top: number } | null = null;
   let quitting = false;
+  let attachedHudBounds: Electron.Rectangle | null = null;
   const state = () => settings.store;
   const owned = (event: IpcMainEvent | IpcMainInvokeEvent) => [pet, chat, options.main()].some(win =>
     win && !win.isDestroyed() && win.webContents === event.sender && event.senderFrame === event.sender.mainFrame,
@@ -43,6 +44,25 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
       x: Math.round(clamp(p.x + p.width - width, area.x + 12, area.x + area.width - width - 12)),
       y: Math.round(clamp(p.y - height - 8, area.y + 12, area.y + area.height - height - 12)),
     });
+  }
+  function attachPetToHud(bounds: Electron.Rectangle) {
+    attachedHudBounds = { ...bounds };
+    if (!pet || pet.isDestroyed() || !state().enabled) return;
+    const nextSize = clamp(Math.round(bounds.width * 0.12), 48, 160);
+    if (state().size !== nextSize) settings.set('size', nextSize);
+    const side = nextSize + 16;
+    const area = screen.getDisplayMatching(bounds).workArea;
+    pet.setBounds({
+      width: side, height: side,
+      x: Math.round(clamp(bounds.x + bounds.width - side - 24, area.x, area.x + area.width - side)),
+      y: Math.round(clamp(bounds.y - side + 20, area.y, area.y + area.height - side)),
+    });
+    pet.moveTop();
+    broadcast();
+  }
+  function detachPetFromHud() {
+    attachedHudBounds = null;
+    if (pet && !pet.isDestroyed()) pet.setBounds(petBounds());
   }
   function makeWindow(kind: 'pet' | 'chat') {
     const win = new BrowserWindow({
@@ -86,21 +106,28 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
   function showPanel(panel: 'chat' | 'settings' = 'chat') {
     settings.set('panel', panel);
     ensurePet();
+    if (panel === 'chat' && options.openHud) {
+      chat?.hide();
+      options.openHud(state().agentId);
+      broadcast();
+      return;
+    }
     if (!chat || chat.isDestroyed()) {
       chat = makeWindow('chat');
     } else if (ready.has(chat)) { placeChat(); chat.show(); chat.focus(); }
     broadcast();
   }
   function update(patch: Partial<CompanionState>) {
+    const geometryChanged = typeof patch.enabled === 'boolean' || typeof patch.size === 'number' && Number.isFinite(patch.size);
     if (typeof patch.enabled === 'boolean') settings.set('enabled', patch.enabled);
     if (typeof patch.size === 'number' && Number.isFinite(patch.size)) settings.set('size', clamp(Math.round(patch.size), 48, 160));
     if (patch.agentId === null || typeof patch.agentId === 'string' && patch.agentId.length <= 200) settings.set('agentId', patch.agentId);
-    if (state().enabled) { ensurePet().setBounds(petBounds()); if (pet && ready.has(pet)) pet.showInactive(); }
+    if (state().enabled) { ensurePet(); if (geometryChanged) { if (attachedHudBounds) attachPetToHud(attachedHudBounds); else pet?.setBounds(petBounds()); } if (pet && ready.has(pet)) pet.showInactive(); }
     else { pet?.hide(); if (state().panel !== 'settings') chat?.hide(); }
     placeChat(); broadcast();
     return state();
   }
-  function reset() { settings.delete('position'); pet?.setBounds(petBounds(true)); placeChat(); broadcast(); return state(); }
+  function reset() { settings.delete('position'); if (attachedHudBounds) attachPetToHud(attachedHudBounds); else pet?.setBounds(petBounds(true)); placeChat(); broadcast(); return state(); }
   function handle(name: string, fn: (event: IpcMainInvokeEvent, value: any) => unknown) {
     ipcMain.handle(name, (event, value) => { if (!owned(event)) throw new Error('Untrusted companion sender'); return fn(event, value); });
   }
@@ -108,7 +135,7 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
   handle('companion:update', (_event, patch) => update(patch && typeof patch === 'object' ? patch : {}));
   handle('companion:reset', () => reset());
   handle('companion:open', (_event, panel) => showPanel(panel === 'settings' ? 'settings' : 'chat'));
-  handle('companion:close', () => chat?.hide());
+  handle('companion:close', () => { chat?.hide(); options.closeHud?.(); });
   handle('companion:menu', () => {
     Menu.buildFromTemplate([
       { label: 'Quick chat', click: () => showPanel() },
@@ -121,9 +148,19 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
   ipcMain.on('companion:drag', (event, phase: string) => {
     if (!pet || event.sender !== pet.webContents || !owned(event)) return;
     const cursor = screen.getCursorScreenPoint();
-    if (phase === 'start') { const b = pet.getBounds(); drag = { x: cursor.x, y: cursor.y, left: b.x, top: b.y }; }
-    if (phase === 'move' && drag) { pet.setPosition(drag.left + cursor.x - drag.x, drag.top + cursor.y - drag.y); placeChat(); }
-    if (phase === 'end') { drag = null; const b = pet.getBounds(); settings.set('position', { x: b.x, y: b.y }); pet.setBounds(petBounds()); placeChat(); }
+    if (phase === 'start') { const b = pet.getBounds(); drag = { x: cursor.x, y: cursor.y, lastX: cursor.x, lastY: cursor.y, left: b.x, top: b.y }; }
+    if (phase === 'move' && drag) {
+      const movedHud = options.moveHudWithPet?.(cursor.x - drag.lastX, cursor.y - drag.lastY);
+      drag.lastX = cursor.x; drag.lastY = cursor.y;
+      if (!movedHud) { pet.setPosition(drag.left + cursor.x - drag.x, drag.top + cursor.y - drag.y); placeChat(); }
+    }
+    if (phase === 'end') {
+      drag = null;
+      const b = pet.getBounds();
+      settings.set('position', { x: b.x, y: b.y });
+      if (!options.moveHudWithPet?.(0, 0)) pet.setBounds(petBounds());
+      placeChat();
+    }
   });
   ipcMain.on('companion:height', (event, height: number) => {
     if (chat && event.sender === chat.webContents && owned(event) && Number.isFinite(height)) placeChat(height);
@@ -136,5 +173,5 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
     screen.on('display-removed', repair); screen.on('display-metrics-changed', repair);
   });
   app.on('before-quit', () => { quitting = true; });
-  return { start: () => { if (state().enabled) ensurePet(); }, show: () => update({ enabled: true }), settings: () => showPanel('settings'), reset };
+  return { start: () => { if (state().enabled) ensurePet(); }, show: () => update({ enabled: true }), settings: () => showPanel('settings'), reset, attachPetToHud, detachPetFromHud };
 }
