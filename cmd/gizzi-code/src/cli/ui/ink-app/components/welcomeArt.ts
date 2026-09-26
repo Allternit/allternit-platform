@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Startup-screen art: the Architectural Sentinel mascot and the GIZZI
  * block wordmark, as data, so WelcomeBox can animate them (beacon pulse,
