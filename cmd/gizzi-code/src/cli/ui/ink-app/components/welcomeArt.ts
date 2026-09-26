@@ -4,22 +4,21 @@
  * block wordmark, as data, so WelcomeBox can animate them (beacon pulse,
  * eye blink, shimmer sweep) without hardcoding frames inline.
  *
- * Palette matches the orb/welcome identity: sand body, coral accents,
- * structural brown legs, near-black eyes.
+ * Colors are theme keys, matching the orb spinner: ink body (the theme's
+ * `text`, so it reads on light and dark terminals), coral `gizzi` accents,
+ * `inactive` legs. The beacon color is passed in because it animates.
  */
 
-export const SAND = '#D4B08C'
-export const CORAL = '#D97757'
-export const CORAL_BRIGHT = '#F09878'
-export const STRUCTURAL = '#8F6F56'
-export const EYE = '#111318'
+export const INK = 'text'
+export const CORAL = 'gizzi'
+export const LEGS = 'inactive'
 
 export type ArtSegment = [text: string, color: string]
 export type ArtRow = ArtSegment[]
 
 /**
  * Sentinel rows with animatable slots. `beacon` (row 0) pulses between
- * CORAL and CORAL_BRIGHT; the eyes in row 3 swap to '─' during a blink.
+ * coral and its shimmer; the eyes in row 3 swap to '─' during a blink.
  */
 export function sentinelRows({
   beaconColor,
@@ -31,13 +30,13 @@ export function sentinelRows({
   const eyes = blinking ? '─    ─' : '●    ●'
   return [
     [['      ▄▄       ', beaconColor]],
-    [['   ▄▄▄  ▄▄▄    ', SAND]],
-    [[' ▄██████████▄  ', SAND]],
-    [[' █  ', SAND], [eyes, EYE], ['  █ ', SAND]],
-    [[' █  ', SAND], ['A : / /', CORAL], [' █ ', SAND]],
-    [['  ▀████████▀   ', SAND]],
-    [['   █ █  █ █    ', STRUCTURAL]],
-    [['   ▀ ▀  ▀ ▀    ', STRUCTURAL]],
+    [['   ▄▄▄  ▄▄▄    ', INK]],
+    [[' ▄██████████▄  ', INK]],
+    [[' █  ', INK], [eyes, INK], ['  █ ', INK]],
+    [[' █  ', INK], ['A : / /', CORAL], [' █ ', INK]],
+    [['  ▀████████▀   ', INK]],
+    [['   █ █  █ █    ', LEGS]],
+    [['   ▀ ▀  ▀ ▀    ', LEGS]],
   ]
 }
 

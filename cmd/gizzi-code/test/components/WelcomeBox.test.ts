@@ -2,7 +2,6 @@ import { describe, test, expect } from "bun:test"
 import { WelcomeBox } from "../../src/cli/ui/ink-app/components/WelcomeBox"
 import {
   CORAL,
-  CORAL_BRIGHT,
   WORDMARK_ROWS,
   WORDMARK_WIDTH,
   sentinelRows,
@@ -32,7 +31,16 @@ describe("welcomeArt", () => {
   })
 
   test("beacon row takes the animated color", () => {
-    const rows = sentinelRows({ beaconColor: CORAL_BRIGHT, blinking: false })
-    expect(rows[0][0][1]).toBe(CORAL_BRIGHT)
+    const rows = sentinelRows({ beaconColor: "rgb(245,149,117)", blinking: false })
+    expect(rows[0][0][1]).toBe("rgb(245,149,117)")
+  })
+
+  test("static parts use theme keys, not hardcoded colors", () => {
+    const rows = sentinelRows({ beaconColor: CORAL, blinking: false })
+    for (const row of rows.slice(1)) {
+      for (const [, color] of row) {
+        expect(color).not.toMatch(/^#|^rgb/)
+      }
+    }
   })
 })
