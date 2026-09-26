@@ -5,11 +5,24 @@ import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
 import path from "path"
 import fs from "fs/promises"
+import os from "os"
 
 // Disable built-in skill packs for all tests in this file so that count
 // assertions (toBe(1), toEqual([])) are not affected by the bundled domain skills.
-beforeAll(() => { process.env.GIZZI_DISABLE_BUILTIN_SKILLS = "true" })
-afterAll(() => { delete process.env.GIZZI_DISABLE_BUILTIN_SKILLS })
+// Point "home" at an empty temp dir by default: otherwise the developer's
+// real ~/.claude, ~/.agents, and ~/.allternit skills leak into every count.
+let isolatedHome = ""
+const priorHome = process.env.GIZZI_TEST_HOME
+beforeAll(async () => {
+  process.env.GIZZI_DISABLE_BUILTIN_SKILLS = "true"
+  isolatedHome = await fs.mkdtemp(path.join(os.tmpdir(), "gizzi-skill-home-"))
+  process.env.GIZZI_TEST_HOME = isolatedHome
+})
+afterAll(async () => {
+  delete process.env.GIZZI_DISABLE_BUILTIN_SKILLS
+  process.env.GIZZI_TEST_HOME = priorHome
+  await fs.rm(isolatedHome, { recursive: true, force: true })
+})
 
 async function createGlobalSkill(homeDir: string) {
   const skillDir = path.join(homeDir, ".claude", "skills", "global-test-skill")
@@ -394,4 +407,31 @@ description: A skill in the .gizzi/skills directory.
       expect(dirs.length).toBe(3)
     },
   })
+})
+
+test("loads skills the Allternit app installed in ~/.allternit/skills and picks up new ones on reload", async () => {
+  await using tmp = await tmpdir({ git: true })
+  const originalHome = process.env.GIZZI_TEST_HOME
+  process.env.GIZZI_TEST_HOME = tmp.path
+  const write = (name: string) =>
+    Bun.write(
+      path.join(tmp.path, ".allternit", "skills", name, "SKILL.md"),
+      `---\nname: ${name}\ndescription: Installed from Customize.\n---\n\n# ${name}\n`,
+    )
+  try {
+    await write("customize-skill")
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        expect((await Skill.all()).map((s) => s.name)).toEqual(["customize-skill"])
+        // Installed while running: invisible until the roots are rescanned.
+        await write("second-skill")
+        expect((await Skill.all()).length).toBe(1)
+        Skill.reload()
+        expect((await Skill.all()).map((s) => s.name).sort()).toEqual(["customize-skill", "second-skill"])
+      },
+    })
+  } finally {
+    process.env.GIZZI_TEST_HOME = originalHome
+  }
 })
