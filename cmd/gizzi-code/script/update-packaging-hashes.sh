@@ -71,8 +71,9 @@ replace() {
 
 # Placeholders are only present on a fresh template. After the first fill,
 # rewrite the live hash fields so a version bump cannot ship stale  SHA256s.
-python3 - "$hash_file" "$ROOT" <<'PY'
+python3 - "$hash_file" "$ROOT" "$VERSION" <<'PY'
 import pathlib, re, sys
+version = sys.argv[3]
 hashes = {}
 for line in pathlib.Path(sys.argv[1]).read_text().splitlines():
     if not line.strip():
@@ -108,6 +109,49 @@ if scoop.exists() and "windows-x64" in hashes:
 winget = root / "cli-package/install/winget/Allternit.GizziCode.yaml"
 if winget.exists() and "windows-x64" in hashes:
     winget.write_text(re.sub(r'(InstallerSha256:\s*)[0-9a-fA-F]{64}', rf'\g<1>{hashes["windows-x64"].upper()}', winget.read_text(), count=1))
+
+# Versions must move with the hashes: new hashes on old version URLs make
+# every manifest fail its checksum (they sat at 2.0.5 with newer hashes).
+def sub_version(path: pathlib.Path, pattern: str) -> None:
+    if path.exists():
+        path.write_text(re.sub(pattern, rf'\g<1>{version}\g<2>', path.read_text(), count=1, flags=re.M))
+
+sub_version(root / "packaging/homebrew/gizzi-code.rb", r'^(\s*version ")[^"]+(")')
+sub_version(root / "cli-package/install/gizzi.rb", r'^(\s*version ")[^"]+(")')
+if scoop.exists():
+    text = scoop.read_text()
+    m = re.search(r'"version"\s*:\s*"([^"]+)"', text)
+    old = m.group(1) if m else None
+    # The live url pins a version too (only autoupdate uses $version).
+    text = re.sub(r'(gizzi-code/v)\d+\.\d+\.\d+(/gizzi-code-v)\d+\.\d+\.\d+', rf'\g<1>{version}\g<2>{version}', text)
+    if old and old != version:
+        text = text.replace(f'"version": "{old}"', f'"version": "{version}"')
+    scoop.write_text(text)
+sub_version(root / "packaging/arch/PKGBUILD", r'^(pkgver=)[^\n]+()')
+if winget.exists():
+    text = winget.read_text()
+    m = re.search(r'^PackageVersion:\s*(\S+)', text, flags=re.M)
+    if m and m.group(1) != version:
+        # Every reference (installer URL, release notes, description) follows.
+        text = text.replace(m.group(1), version)
+    winget.write_text(text)
+
+import datetime
+rpm = root / "packaging/rpm/gizzi-code.spec"
+if rpm.exists():
+    text = rpm.read_text()
+    m = re.search(r'^Version:\s*(\S+)', text, flags=re.M)
+    if m and m.group(1) != version:
+        text = re.sub(r'^(Version:\s*)\S+', rf'\g<1>{version}', text, count=1, flags=re.M)
+        text = re.sub(r'^(Release:\s*)\d+', r'\g<1>1', text, count=1, flags=re.M)
+        stamp = datetime.date.today().strftime("%a %b %d %Y")
+        entry = f"* {stamp} Allternit Technologies <team@allternit.io> - {version}-1\n- Update to {version}\n\n"
+        text = text.replace("%changelog\n", "%changelog\n" + entry, 1)
+    rpm.write_text(text)
+
+deb = root / "packaging/debian/DEBIAN/control"
+if deb.exists():
+    deb.write_text(re.sub(r'^(Version:\s*)\S+', rf'\g<1>{version}', deb.read_text(), count=1, flags=re.M))
 
 arch = root / "packaging/arch/PKGBUILD"
 if arch.exists():

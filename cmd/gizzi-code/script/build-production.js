@@ -355,7 +355,9 @@ const GIZZI_CHANNEL = process.env.GIZZI_CHANNEL || "production";
 const BUILD_SHA = await (async () => {
     try {
         const sha = (await $`git rev-parse HEAD`.quiet().text()).trim();
-        const dirty = (await $`git status --porcelain -- .`.quiet().text()).trim() !== "";
+        // Tracked source only: CI's install/SDK steps leave generated and
+        // untracked files behind that don't change what the binary contains.
+        const dirty = (await $`git status --porcelain --untracked-files=no -- src package.json`.quiet().text()).trim() !== "";
         return dirty ? `${sha}-dirty` : sha;
     } catch {
         return process.env.GITHUB_SHA || "unknown";

@@ -1,10 +1,12 @@
 Name:           gizzi-code
-Version:        2.0.7
+Version:        2.1.3
 Release:        1%{?dist}
 Summary:        AI-powered terminal interface for the Allternit ecosystem
 
 License:        Apache-2.0
 URL:            https://docs.gizziio.com
+# Glob/Grep use rg on PATH (gizzi-code does not statically link ripgrep)
+Requires:       ripgrep
 # Binary release asset (version-named tarball, tag gizzi-code/v%{version})
 Source0:        https://github.com/Gizziio/allternit-platform/releases/download/gizzi-code/v%{version}/gizzi-code-v%{version}-linux-x64.tar.gz
 
@@ -27,6 +29,9 @@ install -m 755 gizzi-code %{buildroot}/usr/local/bin/gizzi-code
 /usr/local/bin/gizzi-code
 
 %changelog
+* Sat Sep 26 2026 Allternit Technologies <team@allternit.io> - 2.1.3-1
+- Update to 2.1.3
+
 * Sat Sep 06 2026 Allternit Technologies <team@allternit.io> - 2.0.7-1
 - Update to 2.0.7; onboarding auto-picks default brain
 
