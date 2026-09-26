@@ -9,7 +9,7 @@
  * honestly until the gateway is up.
  */
 
-import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
+import { execFileSync, type ChildProcess } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +17,7 @@ import { dirname } from 'node:path';
 import { app } from 'electron';
 import log from 'electron-log';
 import { PORTS, URLS } from './config.js';
+import { spawnSidecar } from './process-lifeline.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -153,7 +154,7 @@ export class AcuGatewayManager {
     this.stopping = false;
     this.childDied = false;
     log.info(`[AcuGateway] Starting ${spec.command} ${spec.args.join(' ')} (cwd ${spec.cwd})`);
-    this.child = spawn(spec.command, spec.args, {
+    this.child = spawnSidecar(spec.command, spec.args, {
       cwd: spec.cwd,
       env: { ...process.env, ...spec.extraEnv },
       stdio: ['ignore', 'pipe', 'pipe'],
