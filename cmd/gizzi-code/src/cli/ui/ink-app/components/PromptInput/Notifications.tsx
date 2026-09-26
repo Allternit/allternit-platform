@@ -140,6 +140,17 @@ function _temp2() {
 function _temp(s) {
   return s.notifications;
 }
+/**
+ * The login notice is about the Allternit first-party key. Provider-prefixed
+ * models (`openrouter/...`, `kimi-cli/...`, `local-mlx/...`) authenticate
+ * with their own provider, so a missing first-party key is irrelevant to them.
+ */
+export function usesFirstPartyAuth(model: string | null | undefined): boolean {
+  if (!model) return true;
+  const slash = model.indexOf('/');
+  if (slash <= 0) return true;
+  return model.slice(0, slash) === 'allternit';
+}
 function NotificationContent({
   ideSelection,
   mcpClients,
@@ -225,7 +236,7 @@ function NotificationContent({
             ({apiKeyHelperSlow})
           </Text>
         </Box>}
-      {(apiKeyStatus === 'invalid' || apiKeyStatus === 'missing') && <Box>
+      {(apiKeyStatus === 'invalid' || apiKeyStatus === 'missing') && usesFirstPartyAuth(mainLoopModel) && <Box>
           <Text color="error" wrap="truncate">
             {isEnvTruthy(process.env.GIZZI_CODE_REMOTE) ? 'Authentication error · Try again' : 'Not logged in · Run /login'}
           </Text>

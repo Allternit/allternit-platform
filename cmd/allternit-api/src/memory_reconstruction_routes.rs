@@ -337,10 +337,22 @@ fn run_dream_extraction(
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
 
+        // Only what the user wrote can yield facts about the user.
         let mut event_texts = Vec::new();
         for row in rows {
             let (event_type, data) = row?;
-            event_texts.push(format!("{event_type}: {data}"));
+            let value: serde_json::Value = serde_json::from_str(&data).unwrap_or(json!(null));
+            let from_user = event_type.contains("user")
+                || value.get("role").and_then(|r| r.as_str()) == Some("user");
+            if !from_user {
+                continue;
+            }
+            let text = ["content", "text", "message"]
+                .iter()
+                .find_map(|k| value.get(*k).and_then(|v| v.as_str()));
+            if let Some(text) = text {
+                event_texts.push(text.to_string());
+            }
         }
 
         let combined = event_texts.join("\n");
