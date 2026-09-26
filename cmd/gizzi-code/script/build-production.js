@@ -348,10 +348,24 @@ const define = {
 // consumers run "npm view/install <PACKAGE_URL>". The machine-readable install
 // manifest for the website lives at https://install.gizziio.com/version.json.
 const GIZZI_CHANNEL = process.env.GIZZI_CHANNEL || "production";
+// Source commit, embedded verbatim so scripts/build-state.sh can tell which
+// commit any copy of the binary (dist/, desktop resources/bin, Homebrew) was
+// built from by grepping for `GIZZI_BUILD_SHA = "<sha>"`. "-dirty" marks a
+// build from uncommitted changes.
+const BUILD_SHA = await (async () => {
+    try {
+        const sha = (await $`git rev-parse HEAD`.quiet().text()).trim();
+        const dirty = (await $`git status --porcelain -- .`.quiet().text()).trim() !== "";
+        return dirty ? `${sha}-dirty` : sha;
+    } catch {
+        return process.env.GITHUB_SHA || "unknown";
+    }
+})();
 let injectionCode = `
+var GIZZI_BUILD_SHA = "${BUILD_SHA}";
 var GIZZI_VERSION = "${VERSION}";
 var GIZZI_CHANNEL = "${GIZZI_CHANNEL}";
-var MACRO = ${JSON.stringify({ VERSION, CHANNEL: GIZZI_CHANNEL, PACKAGE_URL: "@allternit/gizzi-code", BUILD_TIME: new Date().toISOString() })};
+var MACRO = ${JSON.stringify({ VERSION, CHANNEL: GIZZI_CHANNEL, PACKAGE_URL: "@allternit/gizzi-code", BUILD_TIME: new Date().toISOString(), BUILD_SHA })};
 `;
 if (migrations.length > 0) {
     injectionCode += `var GIZZI_MIGRATIONS = ${JSON.stringify(migrations)};\n`;
