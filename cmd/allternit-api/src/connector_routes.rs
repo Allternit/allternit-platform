@@ -990,8 +990,20 @@ fn synthesize_sidecar_catalog_entry(
 /// catalog providers that ship none: "Get catalog SKU, list orders, and
 /// create an order." Falls back to a plain "Connect <name>." line.
 fn summarize_tools(display_name: &str, tool_names: &[String]) -> String {
+    // Lead with what the connector reads; "Delete object, …" is a poor
+    // first impression for a storage service that also lists and searches.
+    const READ_VERBS: &[&str] = &["search", "list", "get", "read", "find", "fetch", "query", "retrieve", "view", "lookup"];
+    let is_read = |name: &String| {
+        let base = name.rsplit('.').next().unwrap_or(name).to_lowercase();
+        READ_VERBS.iter().any(|v| base.starts_with(v))
+    };
+    let ordered: Vec<&String> = tool_names
+        .iter()
+        .filter(|n| is_read(n))
+        .chain(tool_names.iter().filter(|n| !is_read(n)))
+        .collect();
     let mut phrases: Vec<String> = Vec::new();
-    for name in tool_names {
+    for name in ordered {
         let base = name.rsplit('.').next().unwrap_or(name);
         let phrase = base.replace(['_', '-'], " ").trim().to_lowercase();
         if phrase.is_empty() || phrases.contains(&phrase) {
@@ -2826,6 +2838,16 @@ mod tests {
         assert_eq!(
             summarize_tools("Firstbase", &names),
             "Get catalog sku, list orders, and create order in Firstbase."
+        );
+        let storage = vec![
+            "s3.delete_object".to_string(),
+            "s3.generate_presigned_url".to_string(),
+            "s3.list_objects".to_string(),
+            "s3.get_object".to_string(),
+        ];
+        assert_eq!(
+            summarize_tools("AWS S3", &storage),
+            "List objects, get object, and delete object in AWS S3."
         );
         assert_eq!(summarize_tools("Acme", &[]), "Connect Acme to Allternit.");
     }
