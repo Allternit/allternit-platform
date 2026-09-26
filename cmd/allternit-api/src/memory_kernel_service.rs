@@ -630,6 +630,22 @@ pub fn list_observations(
 }
 
 /// List recent facts.
+/// Delete one of the user's facts and its embedding. Returns whether a row was removed.
+pub fn delete_fact(db: &DbHandle, user_id: &str, fact_id: &str) -> Result<bool, MemoryKernelError> {
+    let conn = db.connect()?;
+    let removed = conn.execute(
+        "DELETE FROM memory_facts WHERE id = ?1 AND user_id = ?2",
+        params![fact_id, user_id],
+    )?;
+    if removed > 0 {
+        conn.execute(
+            "DELETE FROM memory_embeddings WHERE user_id = ?1 AND target_type = 'fact' AND target_id = ?2",
+            params![user_id, fact_id],
+        )?;
+    }
+    Ok(removed > 0)
+}
+
 pub fn list_facts(
     db: &DbHandle,
     user_id: &str,
