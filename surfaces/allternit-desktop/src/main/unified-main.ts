@@ -675,6 +675,24 @@ const store = new Store<StoreSchema>({
 
 const desktopCompanion = installDesktopCompanion({ origin: () => activePlatformUrl, main: () => mainWindow, preload: join(__dirname, '../preload/index.js') });
 
+/**
+ * Bring the main window up, recreating it if it was closed. With the desktop
+ * companion (pet) window always open, "no windows" is never true after the
+ * main window closes, so `mainWindow?.show()` alone left the app with no way
+ * back from the Dock or tray.
+ */
+function showOrReopenMainWindow(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+  log.info('[Main] Main window was closed; reopening');
+  mainWindow = createMainWindow();
+  mainWindow.loadURL(activePlatformUrl);
+}
+
 function createMainWindow(): BrowserWindow {
   let bounds = store.get('windowBounds');
   
@@ -1837,8 +1855,7 @@ function createTray(): void {
       if (mainWindow?.isVisible()) {
         mainWindow.hide();
       } else {
-        mainWindow?.show();
-        mainWindow?.focus();
+        showOrReopenMainWindow();
       }
     }
   });
@@ -1863,7 +1880,7 @@ async function updateTrayMenu(): Promise<void> {
   permItem = {
     label: hasIssue ? '⚠️ Check Permissions' : allOk ? '✅ Permissions OK' : '🔍 Check Permissions',
     click: async () => {
-      mainWindow?.show();
+      showOrReopenMainWindow();
       const status = await checkPermissions();
       store.set('permissions.lastStatus', { ...status, checkedAt: new Date().toISOString() });
       mainWindow?.webContents.send('permission-guide:status', status);
@@ -1888,7 +1905,7 @@ async function updateTrayMenu(): Promise<void> {
       },
     },
     ...(permItem ? [permItem, { type: 'separator' as const }] : []),
-    { label: 'Show Window', click: () => mainWindow?.show() },
+    { label: 'Show Window', click: () => showOrReopenMainWindow() },
     { label: 'Show Desktop Pet', click: () => desktopCompanion.show() },
     { label: 'Desktop Pet Settings…', click: () => desktopCompanion.settings() },
     { label: 'Reset Pet Position', click: () => desktopCompanion.reset() },
@@ -2290,7 +2307,7 @@ app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       initializeAppOnce();
     } else {
-      mainWindow?.show();
+      showOrReopenMainWindow();
     }
   });
 
@@ -3408,7 +3425,7 @@ ipcMain.handle('window:set-bounds', (_event, bounds: Partial<{ x: number; y: num
 
 ipcMain.handle('window:center', () => { mainWindow?.center(); });
 ipcMain.handle('window:hide', () => { mainWindow?.hide(); });
-ipcMain.handle('window:show', () => { mainWindow?.show(); });
+ipcMain.handle('window:show', () => { showOrReopenMainWindow(); });
 ipcMain.handle('window:minimize-to-tray', () => { mainWindow?.hide(); });
 ipcMain.on('mini-window:hide', () => { miniWindow?.hide(); });
 ipcMain.on('mini-window:toggle', () => toggleMiniWindow());
