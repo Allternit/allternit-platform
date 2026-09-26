@@ -91,6 +91,22 @@ function copyExport(src, dest, label) {
   log(`${label} static export ready at ${dest}`);
 }
 
+function checkCompanionExport(dir) {
+  const entry = path.join(dir, 'companion.html');
+  if (!fs.existsSync(entry)) {
+    throw new Error(`Desktop companion entry is missing: ${entry}. Build the allternit-ai workspace with its companion.html entry.`);
+  }
+  const html = fs.readFileSync(entry, 'utf8');
+  if (!html.includes('data-desktop-companion="true"')) {
+    throw new Error(`Desktop companion entry is invalid: ${entry}`);
+  }
+  for (const [, asset] of html.matchAll(/(?:src|href)="\/(assets\/[^"?#]+)"/g)) {
+    if (!fs.existsSync(path.join(dir, asset))) {
+      throw new Error(`Desktop companion asset is missing: ${asset}`);
+    }
+  }
+}
+
 function checkRequiredBinaries() {
   // Fail fast if the gizzi-code brain binary is missing. A packaged app without it
   // throws at runtime ("gizzi-code binary not found" in GizziManager) — catch that
@@ -202,6 +218,7 @@ function main() {
     buildEnv.VITE_CLERK_PUBLISHABLE_KEY = clerkKey;
   }
   runBuild(platformDir, 'build', buildEnv);
+  checkCompanionExport(path.join(platformDir, 'dist'));
   copyExport(path.join(platformDir, 'dist'), platformResourcesDir, 'Workspace UI');
 }
 

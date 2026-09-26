@@ -70,6 +70,11 @@ const required = [
     buildStep: 'npm run prepare:platform-static (or scripts/build-desktop.sh)',
   },
   {
+    path: path.join(resourcesDir, 'platform', 'companion.html'),
+    label: 'Desktop companion entry',
+    buildStep: 'Build the allternit-ai workspace with its companion.html entry, then npm run prepare:platform-static',
+  },
+  {
     path: path.join(resourcesDir, 'computer-use', 'acu', 'launch.py'),
     label: 'ACU computer-use gateway (launch.py)',
     buildStep: 'npm run prepare:acu-gateway',

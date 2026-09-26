@@ -881,3 +881,21 @@ declare global {
 }
 
 console.log('[preload] Allternit Desktop preload loaded.');
+
+// Small, purpose-specific bridge for the independent desktop companion windows.
+contextBridge.exposeInMainWorld('allternitCompanion', {
+  getState: () => ipcRenderer.invoke('companion:get'),
+  update: (patch: { enabled?: boolean; size?: number; agentId?: string | null }) => ipcRenderer.invoke('companion:update', patch),
+  resetPosition: () => ipcRenderer.invoke('companion:reset'),
+  open: (panel: 'chat' | 'settings' = 'chat') => ipcRenderer.invoke('companion:open', panel),
+  close: () => ipcRenderer.invoke('companion:close'),
+  menu: () => ipcRenderer.invoke('companion:menu'),
+  drag: (phase: 'start' | 'move' | 'end') => ipcRenderer.send('companion:drag', phase),
+  setHeight: (height: number) => ipcRenderer.send('companion:height', height),
+  ignoreMouse: (ignore: boolean) => ipcRenderer.send('companion:ignore-mouse', ignore),
+  onState: (callback: (state: unknown) => void) => {
+    const listener = (_event: IpcRendererEvent, state: unknown) => callback(state);
+    ipcRenderer.on('companion:state', listener);
+    return () => ipcRenderer.removeListener('companion:state', listener);
+  },
+});
