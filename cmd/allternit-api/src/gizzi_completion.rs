@@ -58,9 +58,12 @@ async fn run(
         .unwrap_or_default();
 
     // Create a temporary session.
+    // No `surface`: the app's session lists only show sessions tagged with
+    // their own surface (chat/cowork/code), so an untagged internal session
+    // never appears in the user's Recents. Tagging it "chat" leaked every
+    // memory extraction and lesson generation into the chat rail.
     let create_payload = json!({
         "title": "Allternit internal completion",
-        "surface": "chat",
         "model": { "providerID": provider_id, "modelID": model_id },
     });
 
