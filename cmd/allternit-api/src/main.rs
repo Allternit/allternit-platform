@@ -256,13 +256,6 @@ async fn main() {
     let db = DbHandle::new(db_path.clone()).expect("Failed to initialize SQLite database");
     info!("Database ready at {}", db_path.display());
 
-    // Facts the old extractor copied from raw chat turns are not memories.
-    match allternit_api::memory_kernel_service::prune_turn_derived_facts(&db) {
-        Ok(0) => {}
-        Ok(n) => info!("Memory: removed {n} facts copied from raw chat turns"),
-        Err(e) => warn!("Memory: prune of turn-derived facts failed: {e}"),
-    }
-
     // Shared gateway state (P2.9): with GATEWAY_SHARED_STATE=sqlite, failover
     // cooldowns and gateway rate-limit counters live in SQLite so multiple
     // replicas steer/throttle identically. Default off: in-memory behavior.

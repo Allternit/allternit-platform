@@ -22,26 +22,6 @@ pub async fn complete(
     system: Option<&str>,
     model: Option<&(String, String)>,
 ) -> Option<String> {
-    run(prompt, system, model, false).await
-}
-
-/// Like [`complete`], but deletes the temporary Gizzi session afterwards, so
-/// background work (memory extraction runs after every user turn) never
-/// leaves sessions in the user's history.
-pub async fn complete_ephemeral(
-    prompt: &str,
-    system: Option<&str>,
-    model: Option<&(String, String)>,
-) -> Option<String> {
-    run(prompt, system, model, true).await
-}
-
-async fn run(
-    prompt: &str,
-    system: Option<&str>,
-    model: Option<&(String, String)>,
-    delete_after: bool,
-) -> Option<String> {
     let gizzi = crate::APP_CONFIG
         .get()
         .map(|c| c.terminal_server_url())
@@ -87,29 +67,8 @@ async fn run(
         }
     };
 
-    let session_id = session.get("id")?.as_str()?.to_string();
+    let session_id = session.get("id")?.as_str()?;
     info!(session_id, model = %model_label, "Created Gizzi completion session");
-    let text = collect(&client, &gizzi, &session_id, prompt, system).await;
-    if delete_after {
-        if let Err(err) = client
-            .delete(format!("{}/v1/session/{}", gizzi, session_id))
-            .send()
-            .await
-        {
-            warn!(error = %err, session_id, "Failed to delete temporary Gizzi session");
-        }
-    }
-    text
-}
-
-/// Send the prompt into an existing session and collect the reply text.
-async fn collect(
-    client: &Client,
-    gizzi: &str,
-    session_id: &str,
-    prompt: &str,
-    system: Option<&str>,
-) -> Option<String> {
 
     // Subscribe to events before sending the message.
     let event_resp = match client
