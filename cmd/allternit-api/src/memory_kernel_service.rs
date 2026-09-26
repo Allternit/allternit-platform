@@ -156,7 +156,7 @@ fn load_memory_target(
     match target_type {
         "fact" => conn
             .query_row(
-                "SELECT id, fact, confidence, valid_from, source_observation_id FROM memory_facts WHERE id = ?1",
+                "SELECT id, fact, confidence, valid_from, source_observation_id FROM memory_facts WHERE id = ?1 AND valid_until IS NULL",
                 params![target_id],
                 |row| {
                     Ok(RecallResult {
@@ -399,6 +399,23 @@ pub fn explicit_fact(content: &str) -> Option<String> {
     (1..=500).contains(&len).then(|| tidy_fact(trimmed)).filter(|f| !f.is_empty())
 }
 
+/// Text that looks like it carries a credential. Such text is never stored
+/// as a memory, whichever path produced it.
+pub fn mentions_secret(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    const MARKERS: &[&str] = &[
+        "password", "passcode", "passwd", "api key", "api_key", "apikey", "secret key",
+        "access token", "private key", "seed phrase", "recovery phrase", "ssn",
+        "social security", "card number", "cvv", "pin is", "pin code",
+    ];
+    MARKERS.iter().any(|m| lower.contains(m))
+        || lower.split_whitespace().any(|w| {
+            let w = w.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_');
+            ["sk-", "ghp_", "gho_", "xoxb-", "xoxp-", "akia"].iter().any(|p| w.starts_with(p))
+                || (w.len() >= 13 && w.len() <= 19 && w.chars().all(|c| c.is_ascii_digit()))
+        })
+}
+
 /// Persist extracted facts linked to an observation and index embeddings for semantic recall.
 pub fn persist_facts(
     db: &DbHandle,
@@ -411,6 +428,9 @@ pub fn persist_facts(
     let mut persisted = Vec::new();
 
     for fact in facts {
+        if mentions_secret(fact) {
+            continue;
+        }
         // The same fact restated in a later turn is not a new memory.
         let exists: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM memory_facts
@@ -480,9 +500,19 @@ pub fn retain_turn(
 /// Remove facts the old extractor made from raw chat turns: anything taken
 /// from an assistant turn or a session dream, and user-turn facts that the
 /// current extractor would not produce. Explicit memories are left alone.
-/// Idempotent; runs at startup.
+/// Runs once, at the first startup after upgrade.
 pub fn prune_turn_derived_facts(db: &DbHandle) -> Result<usize, MemoryKernelError> {
     let conn = db.connect()?;
+    // One-time: later facts from user turns may be model-written, which the
+    // rule-based check below would wrongly reject.
+    let done: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM memory_maintenance WHERE key = 'prune_turn_facts_v1')",
+        [],
+        |row| row.get(0),
+    )?;
+    if done {
+        return Ok(0);
+    }
     let mut stmt = conn.prepare(
         "SELECT f.id, f.fact, o.kind FROM memory_facts f
          JOIN memory_observations o ON o.id = f.source_observation_id
@@ -504,6 +534,7 @@ pub fn prune_turn_derived_facts(db: &DbHandle) -> Result<usize, MemoryKernelErro
         )?;
         removed += conn.execute("DELETE FROM memory_facts WHERE id = ?1", params![id])?;
     }
+    conn.execute("INSERT INTO memory_maintenance (key) VALUES ('prune_turn_facts_v1')", [])?;
     Ok(removed)
 }
 
@@ -530,6 +561,7 @@ pub fn recall(
         "SELECT id, fact, confidence, valid_from, source_observation_id
          FROM memory_facts
          WHERE user_id = ?1 AND (agent_id IS NULL OR agent_id = ?2 OR ?2 IS NULL)
+           AND valid_until IS NULL
          ORDER BY valid_from DESC
          LIMIT 50",
     )?;
@@ -800,6 +832,7 @@ pub fn list_facts(
         "SELECT id, user_id, agent_id, fact, confidence, valid_from, valid_until, source_observation_id
          FROM memory_facts
          WHERE user_id = ?1 AND (agent_id IS NULL OR agent_id = ?2 OR ?2 IS NULL)
+           AND valid_until IS NULL
          ORDER BY valid_from DESC
          LIMIT ?3",
     )?;
@@ -907,6 +940,18 @@ mod tests {
         ] {
             assert!(extract_facts_heuristic(turn).is_empty(), "stored: {turn}");
         }
+    }
+
+    #[test]
+    fn secrets_are_never_stored() {
+        let db = test_db();
+        for text in ["My password is hunter2.", "My key is sk-abc123def", "My card is 4111111111111111"] {
+            let (_, n) = retain_turn(&db, "u1", None, None, "user", text, false).unwrap();
+            assert_eq!(n, 0, "stored: {text}");
+            let (_, n) = retain_turn(&db, "u1", None, None, "user", text, true).unwrap();
+            assert_eq!(n, 0, "stored explicit: {text}");
+        }
+        assert!(!mentions_secret("I work in Rust and TypeScript."));
     }
 
     #[test]

@@ -1047,6 +1047,38 @@ async fn retain_turn_v2_handler(
         }
     };
 
+    // User turns: record now, extract in the background with the model
+    // (memory_extraction), so the chat never waits on memory.
+    if payload.role == "user" && !payload.explicit {
+        return match crate::memory_kernel_service::record_observation(
+            &state.db,
+            &user.user_id,
+            payload.agent_id.as_deref(),
+            payload.session_id.as_deref(),
+            "turn_user",
+            &payload.content,
+            Some("user"),
+        ) {
+            Ok(id) => {
+                tokio::spawn(crate::memory_extraction::extract_and_reconcile(
+                    state.db.clone(),
+                    user.user_id.clone(),
+                    payload.agent_id.clone(),
+                    id.clone(),
+                    payload.content.clone(),
+                ));
+                (
+                    StatusCode::OK,
+                    Json(json!({"observation_id": id, "status": "retained", "extraction": "queued"})),
+                )
+            }
+            Err(e) => {
+                tracing::warn!("Retain turn error: {}", e);
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()})))
+            }
+        };
+    }
+
     match crate::memory_kernel_service::retain_turn(
         &state.db,
         &user.user_id,
