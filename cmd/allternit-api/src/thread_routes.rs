@@ -84,6 +84,7 @@ pub fn thread_router() -> Router<Arc<AppState>> {
         .route("/threads/:id/deps", put(set_deps))
         .route("/threads/:id/events", get(thread_events))
         .route("/projects/:project_id/bots", get(get_team).put(put_team))
+        .route("/bot-projects", get(bot_projects))
 }
 
 // ─── Wire types ─────────────────────────────────────────────────────────────
@@ -978,6 +979,63 @@ async fn set_deps(
     }
 }
 
+/// Bot projects for the Bots launch: every project with a bot team (or
+/// tagged `metadata.kind = "bots"`), its team, and live thread counts per
+/// panel group — "Cloud pricing launch · 1 waiting · 1 working".
+pub fn bot_project_overview(db: &DbHandle, user_id: &str) -> rusqlite::Result<Vec<Value>> {
+    let conn = db.connect()?;
+    let mut stmt = conn.prepare(
+        "SELECT p.id, p.title, p.description, p.metadata, p.updated_at,
+                (SELECT MAX(t.last_activity_at) FROM bot_threads t WHERE t.project_id = p.id AND t.incognito = 0)
+         FROM cowork_projects p
+         WHERE p.user_id = ?1
+           AND (EXISTS (SELECT 1 FROM project_bots b WHERE b.project_id = p.id)
+                OR json_extract(p.metadata, '$.kind') = 'bots')",
+    )?;
+    let projects: Vec<(String, String, Option<String>, Option<String>, Option<String>, Option<String>)> = stmt
+        .query_map(params![user_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))?
+        .filter_map(Result::ok)
+        .collect();
+    let mut out = Vec::with_capacity(projects.len());
+    for (id, title, description, metadata, updated, last_thread) in projects {
+        let mut team_stmt = conn.prepare("SELECT bot_id FROM project_bots WHERE project_id = ?1 ORDER BY added_at")?;
+        let team: Vec<String> = team_stmt.query_map(params![id], |r| r.get(0))?.filter_map(Result::ok).collect();
+        let mut counts = json!({ "waiting": 0, "working": 0, "queued": 0, "idle": 0, "resolved": 0 });
+        let mut c_stmt = conn.prepare("SELECT status, COUNT(*) FROM bot_threads WHERE project_id = ?1 AND incognito = 0 GROUP BY status")?;
+        for row in c_stmt.query_map(params![id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))? {
+            let (status, n) = row?;
+            let g = group_of(&status);
+            counts[g] = json!(counts[g].as_i64().unwrap_or(0) + n);
+        }
+        let meta: Value = metadata.and_then(|m| serde_json::from_str(&m).ok()).unwrap_or(Value::Null);
+        let activity = match (last_thread, updated) {
+            (Some(a), Some(b)) => Some(if a > b { a } else { b }),
+            (a, b) => a.or(b),
+        };
+        out.push(json!({
+            "id": id,
+            "title": title,
+            "description": description,
+            "botIds": team,
+            "counts": counts,
+            "lastActivityAt": activity,
+            "archived": meta.get("archived").and_then(Value::as_bool).unwrap_or(false),
+            "favorite": meta.get("favorite").and_then(Value::as_bool).unwrap_or(false),
+        }));
+    }
+    out.sort_by(|a, b| b["lastActivityAt"].as_str().cmp(&a["lastActivityAt"].as_str()));
+    Ok(out)
+}
+
+async fn bot_projects(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>) -> Response {
+    let db = state.db.clone();
+    let uid = user.user_id.clone();
+    match blocking(move || bot_project_overview(&db, &uid)).await {
+        Ok(projects) => Json(json!({ "projects": projects })).into_response(),
+        Err(r) => r,
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct EventsQuery {
     pub limit: Option<i64>,
@@ -1284,6 +1342,39 @@ mod tests {
         assert_eq!(v["thread"]["group"], "resolved");
         let (_, open) = call(&state, "GET", "/threads", "user-a", None).await;
         assert!(open["threads"].as_array().unwrap().iter().all(|t| t["id"] != json!(a.id)), "resolved hidden by default");
+    }
+
+    #[tokio::test]
+    async fn bot_project_overview_counts_threads_by_group() {
+        let state = setup("overview").await;
+        state
+            .db
+            .connect()
+            .unwrap()
+            .execute(
+                "INSERT INTO cowork_projects (id, user_id, title, metadata) VALUES
+                   ('p1', 'user-a', 'Cloud pricing launch', NULL),
+                   ('p2', 'user-a', 'Plain chat project', NULL),
+                   ('p3', 'user-a', 'Empty bots project', '{\"kind\":\"bots\"}')",
+                [],
+            )
+            .unwrap();
+        let rt = FakeRt::default();
+        for (title, status) in [("Economics", "needs_you"), ("Research", "working"), ("Page", "queued"), ("SDK", "done")] {
+            let mut b = body(title);
+            b.project_id = Some("p1".into());
+            b.status = Some(status.into());
+            create(&state.db, &rt, "user-a", b).await.unwrap();
+        }
+        let (s, v) = call(&state, "GET", "/bot-projects", "user-a", None).await;
+        assert_eq!(s, StatusCode::OK);
+        let projects = v["projects"].as_array().unwrap();
+        let titles: Vec<&str> = projects.iter().map(|p| p["title"].as_str().unwrap()).collect();
+        assert!(titles.contains(&"Cloud pricing launch") && titles.contains(&"Empty bots project"));
+        assert!(!titles.contains(&"Plain chat project"), "projects without a bot team stay out");
+        let p1 = projects.iter().find(|p| p["id"] == "p1").unwrap();
+        assert_eq!(p1["botIds"], json!(["bot-1"]));
+        assert_eq!(p1["counts"], json!({"waiting": 1, "working": 1, "queued": 1, "idle": 0, "resolved": 1}));
     }
 
     #[tokio::test]
