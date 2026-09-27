@@ -1,5 +1,34 @@
 # Changelog
 
+## 2.1.4 (2026-09-26)
+
+Claude Code's interactive features, turned on and working with any provider.
+
+### Added
+- `/buddy`: hatch a terminal companion that sits beside the prompt and reacts
+  to the session (`/buddy pet`, `/buddy mute`, `/buddy unmute`).
+- Ctrl+R opens a searchable prompt-history picker.
+- Scheduled prompts: the CronCreate, CronDelete and CronList tools run a
+  prompt on a cron schedule for the rest of the session.
+- A recap of the session when you come back to the terminal after being away.
+- Auto permission mode: a classifier approves safe actions and blocks
+  destructive ones, with a reason. Offered for Claude models called directly
+  through Anthropic.
+- Memory extraction, message actions, quick open, an Auto option in `/theme`,
+  ultrathink, token budgets, rich MCP output, clipboard image paste, hook
+  prompts, compaction reminders, and the Explore and Plan agents.
+
+### Fixed
+- Interactive-only features (`/context`, file history, memory extraction)
+  were silently off in the TUI.
+- Bash permission checks failed outside bypass mode.
+- Background model calls (recap, compaction, memory, buddy) failed with "Not
+  logged in" when the model came from another provider. They now use the
+  same provider as the main conversation.
+- `small_model` in gizzi.json was ignored. Background calls use it when its
+  provider has a key, and otherwise fall back to the main model.
+- A failed production build no longer leaves `bunfig.toml` deleted.
+
 ## 2.1.3 (2026-09-26)
 
 Color in every terminal, gizzi's own config file, and build traceability.
