@@ -37,13 +37,16 @@ export function HighlightedThinkingText({
 
     return t8;
   }
+  // Pointer and text sit in a row so wrapped lines align under the text,
+  // not under the pointer.
+  const pointer = <Box flexShrink={0}><Text color={pointerColor}>{figures.pointer} </Text></Box>;
   const triggers = isUltrathinkEnabled() ? findThinkingTriggerPositions(text) : [];
   if (triggers.length === 0) {
     return (
-      <Text>
-        <Text color={pointerColor}>{figures.pointer} </Text>
+      <Box flexDirection="row">
+        {pointer}
         <Text color="text">{text}</Text>
-      </Text>
+      </Box>
     );
   }
   const parts: React.ReactNode[] = [];
@@ -60,9 +63,5 @@ export function HighlightedThinkingText({
   if (cursor < text.length) {
     parts.push(<Text key={`plain-${cursor}`} color="text">{text.slice(cursor)}</Text>);
   }
-  const t2 = <Text color={pointerColor}>{figures.pointer} </Text>;
-
-  const t3 = <Text>{t2}{parts}</Text>;
-
-  return t3;
+  return <Box flexDirection="row">{pointer}<Text>{parts}</Text></Box>;
 }

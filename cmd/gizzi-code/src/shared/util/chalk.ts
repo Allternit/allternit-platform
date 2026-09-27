@@ -187,6 +187,16 @@ function bg(red: number, green: number, blue: number): string {
   return nearest < 8 ? `4${nearest}` : `10${nearest - 8}`
 }
 
+/**
+ * Full SGR escape for an RGB color at the current color level (truecolor,
+ * nearest 256-cube, or nearest 16), or '' when color is off. For renderers
+ * that build raw ANSI strings instead of going through chalk.rgb().
+ */
+export function rgbSgr(red: number, green: number, blue: number, background = false): string {
+  if (currentLevel() === 0) return ''
+  return `\x1b[${background ? bg(red, green, blue) : fg(red, green, blue)}m`
+}
+
 function parseHex(color: string): [number, number, number] {
   let value = color.replace(/^#/, '')
   if (value.length === 3) {

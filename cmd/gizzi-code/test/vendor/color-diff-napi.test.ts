@@ -1,4 +1,5 @@
-import { describe, test, expect } from "bun:test"
+import { describe, test, expect, beforeAll, afterAll } from "bun:test"
+import chalk from "../../src/shared/util/chalk"
 import {
   ColorDiff,
   ColorFile,
@@ -8,6 +9,16 @@ import {
 import { tokenizeLine, resolveLanguage, mapThemeName, wrapSpans } from "../../src/vendor/color-diff-napi/syntax"
 import { StructuredDiff } from "../../src/cli/ui/ink-app/components/StructuredDiff"
 import { HighlightedCode } from "../../src/cli/ui/ink-app/components/HighlightedCode"
+
+// Colors follow the terminal's level; pin truecolor (tests run without a TTY).
+let savedLevel = 0
+beforeAll(() => {
+  savedLevel = chalk.level
+  chalk.level = 3
+})
+afterAll(() => {
+  chalk.level = savedLevel
+})
 
 const ANSI_RE = /\x1b\[[0-9;?]*[a-zA-Z]/g
 const stripAnsi = (s: string) => s.replace(ANSI_RE, "")
@@ -59,11 +70,15 @@ describe("color-diff-napi vendor shim", () => {
     for (const l of lines!) {
       expect(printableLen(l)).toBeLessThanOrEqual(80)
     }
-    // Gutter: marker + space + 2-digit number + space = 6 cells for lines 10-11.
-    // Context lines show the new-file number; removed lines the old-file number.
-    expect(stripAnsi(lines![0]!).startsWith("  10 ")).toBe(true)
-    expect(stripAnsi(lines![1]!).startsWith("- 11 ")).toBe(true)
-    expect(stripAnsi(lines![2]!).startsWith("+ 11 ")).toBe(true)
+    // Gutter (Claude Code layout): 2-digit number + space + marker + space =
+    // 5 cells for lines 10-11. Context lines show the new-file number; removed
+    // lines the old-file number.
+    expect(stripAnsi(lines![0]!).startsWith("10   ")).toBe(true)
+    expect(stripAnsi(lines![1]!).startsWith("11 - ")).toBe(true)
+    expect(stripAnsi(lines![2]!).startsWith("11 + ")).toBe(true)
+    // The gutter carries the row tint, marker in the theme's diff word color.
+    expect(lines![1]!.startsWith("\x1b[48;2;122;41;54m\x1b[38;2;179;89;107m11 - ")).toBe(true)
+    expect(lines![2]!.startsWith("\x1b[48;2;34;92;43m\x1b[38;2;56;166;96m11 + ")).toBe(true)
     // Diff background tints (dark theme: added rgb(34,92,43), removed rgb(122,41,54)).
     expect(lines![1]).toContain("48;2;122;41;54")
     expect(lines![2]).toContain("48;2;34;92;43")
@@ -98,6 +113,25 @@ describe("color-diff-napi vendor shim", () => {
     for (const l of lines) expect(l).toContain("48;2;34;92;43")
     // Continuation rows have a blank gutter.
     expect(stripAnsi(lines[1]!).startsWith("    ")).toBe(true)
+  })
+
+  test("render() follows the terminal color level", () => {
+    const patch = { oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ["-const x = 1;", "+const y = 2;"] }
+    try {
+      // Apple Terminal before macOS 26: 256 colors, never 24-bit.
+      chalk.level = 2
+      const l256 = new ColorDiff(patch, null, "a.ts", "").render("dark", 80, false)!
+      expect(l256.join("")).not.toContain("38;2;")
+      expect(l256.join("")).not.toContain("48;2;")
+      expect(l256[1]).toContain("48;5;")
+      // Color off: plain text, same layout.
+      chalk.level = 0
+      const plain = new ColorDiff(patch, null, "a.ts", "").render("dark", 80, false)!
+      expect(plain.join("")).not.toContain("\x1b[")
+      expect(plain).toEqual(["1 - const x = 1;", "1 + const y = 2;"])
+    } finally {
+      chalk.level = 3
+    }
   })
 
   test("render() handles no-newline marker lines", () => {
