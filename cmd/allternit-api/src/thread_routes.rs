@@ -528,7 +528,20 @@ impl ThreadRuntime for GizziRuntime {
             return None;
         }
         let prompt = format!("Objective: {objective}\n\nConversation so far:\n{transcript}");
-        let raw = crate::gizzi_completion::complete_ephemeral(&prompt, Some(CHECKPOINT_SYSTEM), None).await?;
+        // Write the checkpoint on the thread's own bot model, not the
+        // platform default (which may be an unconfigured provider).
+        let model: Option<(String, String)> = self.db.connect().ok().and_then(|c| {
+            c.query_row(
+                "SELECT a.provider, a.model FROM bot_thread_sessions s
+                 JOIN bot_threads t ON t.id = s.thread_id JOIN agents a ON a.id = t.bot_id
+                 WHERE s.session_id = ?1",
+                params![session_id],
+                |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?)),
+            )
+            .ok()
+            .and_then(|(p, m)| p.zip(m).filter(|(p, m)| !p.is_empty() && !m.is_empty()))
+        });
+        let raw = crate::gizzi_completion::complete_ephemeral(&prompt, Some(CHECKPOINT_SYSTEM), model.as_ref()).await?;
         parse_checkpoint(&raw)
     }
 }
