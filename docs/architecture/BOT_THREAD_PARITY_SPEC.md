@@ -444,3 +444,78 @@ model (the one live-catalog picker; can't pick an invalid provider).
 Create returns immediately and opens the bot's first thread; the computer
 provisions in the background with visible status (atomic-create rule kept).
 Everything skipped is editable later in the Config tab.
+
+---
+
+## 8. Work plan (tracked)
+
+Status: `[x]` done · `[~]` in progress · `[ ]` not started. Every task ships
+backend + wiring + UI together, is verified with tests, and UI tasks are
+checked live in a main Desktop build (one-current-build rule).
+
+### P0 — Stabilize what's broken (§7.1)
+- [~] P0.1 Create bot accepts any catalog provider (B1) — allternit-ai #105
+- [~] P0.2 Mascot selectable (B2) — allternit-ai #105
+- [~] P0.3 Edit bot keeps the bot (B3) — platform #794 (config merge) + allternit-ai #105 (isBot)
+- [~] P0.4 Computer window loads the real bot (B4) — allternit-ai #105
+- [~] P0.5 Webhook triggers reachable (B5) — platform #794
+- [ ] P0.6 Live verify P0.1–P0.5 in the next main Desktop build
+
+### P1 — Converge (no duplicate systems)
+- [ ] P1.1 Routines: retire `bot-routine.service.ts` + `use-routine-timer.ts`; Bot Home, rail, composer, team import, presence read/write Automation Tasks (`agent_id`); one-time import of browser-stored routines; monitor mode as an Automation routine config using `shell.exec` (B9)
+- [ ] P1.2 Canonical thread pin stored on the bot (server), not localStorage
+- [ ] P1.3 Bot memory on server scopes (`/cowork/memory`, principal = bot); `bot-memory-store.ts` becomes a cache
+- [ ] P1.4 One model source per thread/bot; unavailable models dimmed with the reason (B7)
+- [ ] P1.5 Gizzi (and any pre-atomic bot) gets its computer on first use (B8)
+- [ ] P1.6 A:// SDK: TypeScript client + types over the existing HTTP surface (principals, intents, runs/jobs, approvals, DAG, memory grants); Rust types from `allternit-cowork-runtime`
+
+### P2 — Design pass (sign-off before any P3 UI)
+- [ ] P2.1 Target mocks, annotated against the reference frames: Project home (coordinator + Threads panel), Thread view (todo card, rip/New divider, steer composer, nested subagents), Thread inspector, Bot detail (header + 6 tabs), Create bot (one screen), group-chat @thread
+- [ ] P2.2 Eoj sign-off; mocks become the acceptance screenshots for P3
+
+### P3 — Thread object + Threads UI
+- [ ] P3.1 `bot_threads` + `bot_thread_sessions` tables and API; kinds standing/task; incognito flag
+- [ ] P3.2 Migrate existing bot sessions into threads (generation 1)
+- [ ] P3.3 Per-model context budget → checkpoint → new generation (handoff); compaction within a generation
+- [ ] P3.4 Thread status + `thread.*` events on the ledger; per-thread operational state rolled up per bot
+- [ ] P3.5 Threads panel (groups, rows, k/n ring, artifact badge)
+- [ ] P3.6 Thread view (breadcrumb, todo card, rip dividers, provenance, steer composer, model pill)
+- [ ] P3.7 Thread inspector (Activity, Subagents, Artifacts, Memory, Computer, Details)
+- [ ] P3.8 Rail regrouping + Project home replaces "The roster" and Bot Hub (B10)
+- [ ] P3.9 Bot detail rebuild: split `BotHomeView.tsx` into header + Threads · Routines · Memory · Computer · Performance · Config (§7.2)
+- [ ] P3.10 Create bot one-screen flow (§7.3)
+- [ ] P3.11 Incognito asks
+
+### P4 — Bots run their own threads
+- [ ] P4.1 Fabric jobs targeting a bot principal load the bot's prompt, model, tools, memory, computer
+- [ ] P4.2 Placement per bot / per thread: this Mac, Allternit cloud, own server
+- [ ] P4.3 Steer and interrupt a running thread
+- [ ] P4.4 Routine runs = new generation in their standing thread; spin-off task threads
+
+### P5 — Coordinator fan-out (A://)
+- [ ] P5.1 Al plan loop → task graph through the A:// SDK (deterministic assignment, dependency gating)
+- [ ] P5.2 Fan-out to threads; "Sent to N threads" receipts; live thread chips
+- [ ] P5.3 Follow-up routing ("Sent to one thread") and thread pills with hover cards
+- [ ] P5.4 Decision cards; completion synthesis back to the project chat
+- [ ] P5.5 Fan-out (intent graph) view from the canonical DAG
+- [ ] P5.6 Goal loop / WIH / rails DAGs read from the canonical graph
+
+### P6 — @mention threads
+- [ ] P6.1 `@Bot` in chat / group chat starts a task thread inline with a live task list
+- [ ] P6.2 External channels (email / phone / Slack-style) enter as threads
+
+### P7 — Subagents and memory
+- [ ] P7.1 Compressed subagent result contract; transcript on expand
+- [ ] P7.2 Subagent → thread promotion
+- [ ] P7.3 Memory scopes (global / project / bot / thread / subagent) + promotion API + `memory.promoted`
+- [ ] P7.4 Scheduled memory curation per bot
+
+### P8 — Governance
+- [ ] P8.1 Per-bot spend limit; per-thread budget from the plan
+- [ ] P8.2 Task log (who asked, what ran, result)
+- [ ] P8.3 Tool/connector scoping per surface or channel; admin audit
+
+### P9 — Other surfaces
+- [ ] P9.1 PWA (FabricBotMode) on the Threads components
+- [ ] P9.2 iOS on the thread object model
+- [ ] P9.3 `gizzi bot threads` / `gizzi thread steer`
