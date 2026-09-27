@@ -199,14 +199,6 @@ jobs:
           mkdir -p "$PKG_DIR"
           cp "$BIN" "$PKG_DIR/"
           export BIN_BASENAME=$(basename "$BIN")
-          # Vendored ripgrep next to the binary (<pkg>/vendor/ripgrep/<arch>-<os>/):
-          # gizzi-code does not statically link rg, so Glob/Grep need it.
-          RG_LAYOUT="${NODE_CPU}-${NODE_OS}"
-          RG_FILE=rg; [ "$NODE_OS" = "win32" ] && RG_FILE=rg.exe
-          test -f "vendor/ripgrep/${RG_LAYOUT}/${RG_FILE}"
-          mkdir -p "$PKG_DIR/vendor/ripgrep/${RG_LAYOUT}"
-          cp "vendor/ripgrep/${RG_LAYOUT}/${RG_FILE}" "$PKG_DIR/vendor/ripgrep/${RG_LAYOUT}/"
-          chmod +x "$PKG_DIR/vendor/ripgrep/${RG_LAYOUT}/${RG_FILE}"
           node -e '
             const fs = require("fs");
             const pkg = {
@@ -216,7 +208,7 @@ jobs:
               license: "MIT",
               os: [process.env.NODE_OS],
               cpu: [process.env.NODE_CPU],
-              files: [process.env.BIN_BASENAME, "vendor"],
+              files: [process.env.BIN_BASENAME],
               repository: {
                 type: "git",
                 url: "https://github.com/Gizziio/allternit-platform.git",

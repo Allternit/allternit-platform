@@ -86,10 +86,6 @@ pub struct RetainTurnRequest {
     pub session_id: Option<String>,
     pub role: String,
     pub content: String,
-    /// The user asked to remember `content` as written (Settings → Memory),
-    /// so it is stored as one fact instead of going through extraction.
-    #[serde(default)]
-    pub explicit: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -156,7 +152,7 @@ fn load_memory_target(
     match target_type {
         "fact" => conn
             .query_row(
-                "SELECT id, fact, confidence, valid_from, source_observation_id FROM memory_facts WHERE id = ?1 AND valid_until IS NULL",
+                "SELECT id, fact, confidence, valid_from, source_observation_id FROM memory_facts WHERE id = ?1",
                 params![target_id],
                 |row| {
                     Ok(RecallResult {
@@ -281,139 +277,34 @@ pub fn record_observation(
     Ok(id)
 }
 
-/// Openers of first-person statements that describe the user durably
-/// (who they are, what they use or prefer). Lowercased, matched as prefixes.
-const SELF_DISCLOSURE_OPENERS: &[&str] = &[
-    "i am ", "i'm ", "i work", "i live", "i use ", "i mostly use", "i prefer", "i like ",
-    "i love ", "i hate ", "i dislike", "i don't like", "i do not like", "i always",
-    "i usually", "i never", "i have ", "i've been", "i was born", "i run ", "i own ",
-    "i build", "i manage", "i lead", "i study", "i speak", "i'm based", "my ", "we use ",
-    "we are ", "we're ", "our ", "call me ",
-];
-
-/// First-person openers that are requests or musings, not facts about the user.
-const NON_FACT_OPENERS: &[&str] = &[
-    "i'm wondering", "i am wondering", "i'm curious", "i am curious", "i'm trying",
-    "i am trying", "i'm looking for", "i am looking for", "i'm asking", "i am asking",
-    "i'm not sure", "i am not sure", "i have a question", "i have no idea", "my question",
-    "i'm going to", "i am going to", "i'm getting", "i am getting",
-];
-
-/// Explicit memory requests; the text after the marker is kept as the fact.
-const REMEMBER_MARKERS: &[&str] = &[
-    "please remember that ", "please remember ", "remember that ", "remember: ",
-    "note that i ", "for future reference, ",
-];
-
-/// Split text into sentences on line breaks and terminal punctuation.
-fn split_sentences(content: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for line in content.lines() {
-        let mut current = String::new();
-        let chars: Vec<char> = line.chars().collect();
-        for (i, c) in chars.iter().enumerate() {
-            current.push(*c);
-            let at_boundary = matches!(c, '.' | '!' | '?')
-                && chars.get(i + 1).map_or(true, |n| n.is_whitespace());
-            if at_boundary {
-                out.push(std::mem::take(&mut current));
-            }
-        }
-        if !current.trim().is_empty() {
-            out.push(current);
-        }
-    }
-    out.into_iter()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect()
-}
-
-/// A sentence that looks like markup, code, or a link dump rather than prose.
-fn looks_structured(s: &str) -> bool {
-    s.contains('|')
-        || s.contains("```")
-        || s.contains("**")
-        || s.contains("http://")
-        || s.contains("https://")
-        || s.contains('{')
-        || s.contains('`')
-        || s.starts_with('#')
-        || s.starts_with('>')
-}
-
-/// Normalise a kept sentence: bullet stripped, capitalised, one full stop.
-fn tidy_fact(s: &str) -> String {
-    let s = s.trim_start_matches(|c| c == '-' || c == '*' || c == '•').trim();
-    let s = s.trim_end_matches(|c| c == '.' || c == '!' || c == ' ');
-    let mut chars = s.chars();
-    match chars.next() {
-        Some(first) => format!("{}{}.", first.to_uppercase(), chars.as_str()),
-        None => String::new(),
-    }
-}
-
-/// Extract durable facts about the user from a message the user wrote.
-///
-/// Keeps first-person self-descriptions ("I work in Rust", "My team uses
-/// Linear") and explicit requests to remember something. Questions,
-/// instructions to the assistant, test prompts, and markup are dropped, so a
-/// chat turn is never stored verbatim as a memory. Only call this on text the
-/// user authored: assistant replies describe the world, not the user.
+/// Simple heuristic fact extraction (extracts concise sentence declarations).
 pub fn extract_facts_heuristic(content: &str) -> Vec<String> {
-    let mut facts: Vec<String> = Vec::new();
-    for sentence in split_sentences(content) {
-        let clean = sentence.trim_start_matches(|c| c == '-' || c == '*' || c == '•').trim();
-        if clean.ends_with('?') || looks_structured(clean) {
+    let mut facts = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
             continue;
         }
-        let lower = clean.to_lowercase().replace('\u{2019}', "'");
-        let candidate = if let Some(marker) = REMEMBER_MARKERS.iter().find(|m| lower.starts_with(*m)) {
-            // "note that i ..." keeps the "I"; the others drop the marker.
-            let keep_from = if *marker == "note that i " { marker.len() - 2 } else { marker.len() };
-            clean[keep_from..].to_string()
-        } else if SELF_DISCLOSURE_OPENERS.iter().any(|o| lower.starts_with(o))
-            && !NON_FACT_OPENERS.iter().any(|o| lower.starts_with(o))
-        {
-            clean.to_string()
-        } else {
-            continue;
-        };
-        let len = candidate.chars().count();
-        if !(8..=240).contains(&len) {
-            continue;
-        }
-        let fact = tidy_fact(&candidate);
-        if !facts.iter().any(|f| f.eq_ignore_ascii_case(&fact)) {
-            facts.push(fact);
+
+        // Check for bullet items or key statements
+        let clean = trimmed.trim_start_matches(|c| c == '-' || c == '*' || c == '•').trim();
+        if clean.len() > 10 && clean.len() < 300 {
+            // Heuristic filter: captures declarative sentences or key points
+            if clean.contains(" is ")
+                || clean.contains(" are ")
+                || clean.contains(" preference")
+                || clean.contains(" decided")
+                || clean.contains(" uses ")
+                || clean.contains(" configured")
+                || clean.contains(" created")
+                || clean.starts_with("User:")
+                || clean.starts_with("Goal:")
+            {
+                facts.push(clean.to_string());
+            }
         }
     }
     facts
-}
-
-/// Save an explicit memory ("remember this" in Settings) as one fact, as
-/// written, without the chat-turn filter.
-pub fn explicit_fact(content: &str) -> Option<String> {
-    let trimmed = content.trim();
-    let len = trimmed.chars().count();
-    (1..=500).contains(&len).then(|| tidy_fact(trimmed)).filter(|f| !f.is_empty())
-}
-
-/// Text that looks like it carries a credential. Such text is never stored
-/// as a memory, whichever path produced it.
-pub fn mentions_secret(text: &str) -> bool {
-    let lower = text.to_lowercase();
-    const MARKERS: &[&str] = &[
-        "password", "passcode", "passwd", "api key", "api_key", "apikey", "secret key",
-        "access token", "private key", "seed phrase", "recovery phrase", "ssn",
-        "social security", "card number", "cvv", "pin is", "pin code",
-    ];
-    MARKERS.iter().any(|m| lower.contains(m))
-        || lower.split_whitespace().any(|w| {
-            let w = w.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_');
-            ["sk-", "ghp_", "gho_", "xoxb-", "xoxp-", "akia"].iter().any(|p| w.starts_with(p))
-                || (w.len() >= 13 && w.len() <= 19 && w.chars().all(|c| c.is_ascii_digit()))
-        })
 }
 
 /// Persist extracted facts linked to an observation and index embeddings for semantic recall.
@@ -428,19 +319,6 @@ pub fn persist_facts(
     let mut persisted = Vec::new();
 
     for fact in facts {
-        if mentions_secret(fact) {
-            continue;
-        }
-        // The same fact restated in a later turn is not a new memory.
-        let exists: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM memory_facts
-             WHERE user_id = ?1 AND lower(fact) = lower(?2) AND valid_until IS NULL)",
-            params![user_id, fact],
-            |row| row.get(0),
-        )?;
-        if exists {
-            continue;
-        }
         let fact_id = format!("fact_{}", Uuid::new_v4().simple());
         conn.execute(
             "INSERT INTO memory_facts (id, user_id, agent_id, fact, confidence, source_observation_id)
@@ -466,9 +344,7 @@ pub fn persist_facts(
     Ok(persisted)
 }
 
-/// Retain an agent/user turn: logs an observation and extracts facts about
-/// the user from what the user wrote. Assistant and tool turns are kept as
-/// observations only. Returns the observation id and how many facts were saved.
+/// Retain an agent/user turn: logs an observation and automatically extracts facts.
 pub fn retain_turn(
     db: &DbHandle,
     user_id: &str,
@@ -476,66 +352,16 @@ pub fn retain_turn(
     session_id: Option<&str>,
     role: &str,
     content: &str,
-    explicit: bool,
-) -> Result<(String, usize), MemoryKernelError> {
-    let kind = if explicit { "explicit_memory".to_string() } else { format!("turn_{}", role) };
+) -> Result<String, MemoryKernelError> {
+    let kind = format!("turn_{}", role);
     let obs_id = record_observation(db, user_id, agent_id, session_id, &kind, content, Some(role))?;
 
-    let facts = if explicit {
-        explicit_fact(content).into_iter().collect()
-    } else if role == "user" {
-        extract_facts_heuristic(content)
-    } else {
-        Vec::new()
-    };
-    let saved = if facts.is_empty() {
-        0
-    } else {
-        persist_facts(db, user_id, agent_id, &obs_id, &facts).map(|p| p.len()).unwrap_or(0)
-    };
-
-    Ok((obs_id, saved))
-}
-
-/// Remove facts the old extractor made from raw chat turns: anything taken
-/// from an assistant turn or a session dream, and user-turn facts that the
-/// current extractor would not produce. Explicit memories are left alone.
-/// Runs once, at the first startup after upgrade.
-pub fn prune_turn_derived_facts(db: &DbHandle) -> Result<usize, MemoryKernelError> {
-    let conn = db.connect()?;
-    // One-time: later facts from user turns may be model-written, which the
-    // rule-based check below would wrongly reject.
-    let done: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM memory_maintenance WHERE key = 'prune_turn_facts_v1')",
-        [],
-        |row| row.get(0),
-    )?;
-    if done {
-        return Ok(0);
+    let facts = extract_facts_heuristic(content);
+    if !facts.is_empty() {
+        let _ = persist_facts(db, user_id, agent_id, &obs_id, &facts);
     }
-    let mut stmt = conn.prepare(
-        "SELECT f.id, f.fact, o.kind FROM memory_facts f
-         JOIN memory_observations o ON o.id = f.source_observation_id
-         WHERE o.kind IN ('turn_user', 'turn_assistant', 'turn_tool', 'turn_system', 'dream_extraction')",
-    )?;
-    let rows: Vec<(String, String, String)> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
-        .collect::<Result<_, _>>()?;
-    let mut removed = 0;
-    for (id, fact, kind) in rows {
-        let keep = kind == "turn_user" && extract_facts_heuristic(&fact).len() == 1
-            && extract_facts_heuristic(&fact)[0].eq_ignore_ascii_case(&tidy_fact(&fact));
-        if keep {
-            continue;
-        }
-        conn.execute(
-            "DELETE FROM memory_embeddings WHERE target_type = 'fact' AND target_id = ?1",
-            params![id],
-        )?;
-        removed += conn.execute("DELETE FROM memory_facts WHERE id = ?1", params![id])?;
-    }
-    conn.execute("INSERT INTO memory_maintenance (key) VALUES ('prune_turn_facts_v1')", [])?;
-    Ok(removed)
+
+    Ok(obs_id)
 }
 
 /// Recall memories matching a query across facts, entities, and recent observations.
@@ -561,7 +387,6 @@ pub fn recall(
         "SELECT id, fact, confidence, valid_from, source_observation_id
          FROM memory_facts
          WHERE user_id = ?1 AND (agent_id IS NULL OR agent_id = ?2 OR ?2 IS NULL)
-           AND valid_until IS NULL
          ORDER BY valid_from DESC
          LIMIT 50",
     )?;
@@ -601,58 +426,50 @@ pub fn recall(
         }
     }
 
-    // 2. Search entities — non-fatal: a legacy/partial entities schema (e.g.
-    // a missing `summary` column on a DB that predates the repair migration)
-    // must not fail the whole recall; facts and observations still return.
-    let entity_section = (|| -> Result<(), MemoryKernelError> {
-        let mut entity_stmt = conn.prepare(
-            "SELECT id, entity_id, name, type, summary, last_updated
-             FROM memory_entities
-             WHERE user_id = ?1 AND (agent_id IS NULL OR agent_id = ?2 OR ?2 IS NULL)
-             ORDER BY last_updated DESC
-             LIMIT 30",
-        )?;
+    // 2. Search entities
+    let mut entity_stmt = conn.prepare(
+        "SELECT id, entity_id, name, type, summary, last_updated
+         FROM memory_entities
+         WHERE user_id = ?1 AND (agent_id IS NULL OR agent_id = ?2 OR ?2 IS NULL)
+         ORDER BY last_updated DESC
+         LIMIT 30",
+    )?;
 
-        let entity_rows = entity_stmt.query_map(params![user_id, agent_id], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, Option<String>>(4)?,
-                row.get::<_, String>(5)?,
-            ))
-        })?;
+    let entity_rows = entity_stmt.query_map(params![user_id, agent_id], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, Option<String>>(4)?,
+            row.get::<_, String>(5)?,
+        ))
+    })?;
 
-        for row in entity_rows.flatten() {
-            let (id, entity_id, name, etype, summary, updated) = row;
-            let search_text = format!("{} {} {}", name, etype, summary.as_deref().unwrap_or("")).to_lowercase();
-            let match_count = words.iter().filter(|&w| search_text.contains(&w[1..w.len() - 1])).count();
-            let score = if words.is_empty() {
-                0.5
-            } else {
-                (match_count as f64 / words.len().max(1) as f64) * 0.9
-            };
+    for row in entity_rows.flatten() {
+        let (id, entity_id, name, etype, summary, updated) = row;
+        let search_text = format!("{} {} {}", name, etype, summary.as_deref().unwrap_or("")).to_lowercase();
+        let match_count = words.iter().filter(|&w| search_text.contains(&w[1..w.len() - 1])).count();
+        let score = if words.is_empty() {
+            0.5
+        } else {
+            (match_count as f64 / words.len().max(1) as f64) * 0.9
+        };
 
-            if score > 0.1 || words.is_empty() {
-                results.push(RecallResult {
-                    id,
-                    item_type: "entity".to_string(),
-                    score,
-                    content: format!("[Entity: {} ({})] {}", name, etype, summary.as_deref().unwrap_or("")),
-                    metadata: serde_json::json!({
-                        "entity_id": entity_id,
-                        "name": name,
-                        "type": etype,
-                    }),
-                    timestamp: updated,
-                });
-            }
+        if score > 0.1 || words.is_empty() {
+            results.push(RecallResult {
+                id,
+                item_type: "entity".to_string(),
+                score,
+                content: format!("[Entity: {} ({})] {}", name, etype, summary.as_deref().unwrap_or("")),
+                metadata: serde_json::json!({
+                    "entity_id": entity_id,
+                    "name": name,
+                    "type": etype,
+                }),
+                timestamp: updated,
+            });
         }
-        Ok(())
-    })();
-    if let Err(err) = entity_section {
-        tracing::warn!(error = %err, "memory recall: skipping entity section");
     }
 
     // 3. Search observations (fallback/recent context)
@@ -813,22 +630,6 @@ pub fn list_observations(
 }
 
 /// List recent facts.
-/// Delete one of the user's facts and its embedding. Returns whether a row was removed.
-pub fn delete_fact(db: &DbHandle, user_id: &str, fact_id: &str) -> Result<bool, MemoryKernelError> {
-    let conn = db.connect()?;
-    let removed = conn.execute(
-        "DELETE FROM memory_facts WHERE id = ?1 AND user_id = ?2",
-        params![fact_id, user_id],
-    )?;
-    if removed > 0 {
-        conn.execute(
-            "DELETE FROM memory_embeddings WHERE user_id = ?1 AND target_type = 'fact' AND target_id = ?2",
-            params![user_id, fact_id],
-        )?;
-    }
-    Ok(removed > 0)
-}
-
 pub fn list_facts(
     db: &DbHandle,
     user_id: &str,
@@ -840,7 +641,6 @@ pub fn list_facts(
         "SELECT id, user_id, agent_id, fact, confidence, valid_from, valid_until, source_observation_id
          FROM memory_facts
          WHERE user_id = ?1 AND (agent_id IS NULL OR agent_id = ?2 OR ?2 IS NULL)
-           AND valid_until IS NULL
          ORDER BY valid_from DESC
          LIMIT ?3",
     )?;
@@ -922,86 +722,12 @@ mod tests {
     }
 
     #[test]
-    fn extracts_first_person_facts() {
-        let facts = extract_facts_heuristic(
-            "I'm a product designer in Austin. My team uses Linear for tracking. Can you help me plan a sprint?",
-        );
-        assert_eq!(facts, vec!["I'm a product designer in Austin.", "My team uses Linear for tracking."]);
-    }
-
-    #[test]
-    fn keeps_explicit_remember_requests() {
-        let facts = extract_facts_heuristic("Please remember that invoices go out on the 1st.");
-        assert_eq!(facts, vec!["Invoices go out on the 1st."]);
-    }
-
-    #[test]
-    fn drops_questions_instructions_and_replies() {
-        // Real turns the old extractor stored as "facts".
-        for turn in [
-            "Reply with just Ready. This is a quick-chat connection check; do not use tools.",
-            "What is 17 times 23? Answer in one line.",
-            "Bitcoin is currently trading at roughly **$84,000 USD** (around $83,900).",
-            "| **Ease of use** | Steepest learning curve; console and IAM are dense |",
-            "I'm wondering which cloud is cheapest.",
-            "Goal: Build a high-performance bot.",
-        ] {
-            assert!(extract_facts_heuristic(turn).is_empty(), "stored: {turn}");
-        }
-    }
-
-    #[test]
-    fn secrets_are_never_stored() {
-        let db = test_db();
-        for text in ["My password is hunter2.", "My key is sk-abc123def", "My card is 4111111111111111"] {
-            let (_, n) = retain_turn(&db, "u1", None, None, "user", text, false).unwrap();
-            assert_eq!(n, 0, "stored: {text}");
-            let (_, n) = retain_turn(&db, "u1", None, None, "user", text, true).unwrap();
-            assert_eq!(n, 0, "stored explicit: {text}");
-        }
-        assert!(!mentions_secret("I work in Rust and TypeScript."));
-    }
-
-    #[test]
-    fn explicit_fact_is_kept_as_written() {
-        assert_eq!(explicit_fact("  prefers dark mode ").as_deref(), Some("Prefers dark mode."));
-        assert_eq!(explicit_fact("   "), None);
-    }
-
-    fn test_db() -> DbHandle {
-        DbHandle::new_memory().expect("memory db")
-    }
-
-    #[test]
-    fn assistant_turns_yield_no_facts_and_repeats_are_deduped() {
-        let db = test_db();
-        let (_, n) = retain_turn(&db, "u1", None, None, "assistant", "My name is Claude and I am helpful.", false).unwrap();
-        assert_eq!(n, 0);
-        let (_, n) = retain_turn(&db, "u1", None, None, "user", "I work in Rust.", false).unwrap();
-        assert_eq!(n, 1);
-        let (_, n) = retain_turn(&db, "u1", None, None, "user", "i work in rust", false).unwrap();
-        assert_eq!(n, 0);
-        let (_, n) = retain_turn(&db, "u1", None, None, "user", "Prefers dark mode", true).unwrap();
-        assert_eq!(n, 1);
-    }
-
-    #[test]
-    fn prune_removes_legacy_turn_facts_only() {
-        let db = test_db();
-        let obs_user = record_observation(&db, "u1", None, None, "turn_user", "x", Some("user")).unwrap();
-        let obs_asst = record_observation(&db, "u1", None, None, "turn_assistant", "x", Some("assistant")).unwrap();
-        let obs_explicit = record_observation(&db, "u1", None, None, "explicit_memory", "x", Some("user")).unwrap();
-        persist_facts(&db, "u1", None, &obs_user, &["What is 17 times 23? Answer in one line.".into()]).unwrap();
-        persist_facts(&db, "u1", None, &obs_user, &["I work in Rust.".into()]).unwrap();
-        persist_facts(&db, "u1", None, &obs_asst, &["Bitcoin is trading at $84,000.".into()]).unwrap();
-        persist_facts(&db, "u1", None, &obs_explicit, &["Prefers dark mode.".into()]).unwrap();
-
-        assert_eq!(prune_turn_derived_facts(&db).unwrap(), 2);
-        let left: Vec<String> = list_facts(&db, "u1", None, 50).unwrap().into_iter().map(|f| f.fact).collect();
-        assert_eq!(left.len(), 2);
-        assert!(left.contains(&"I work in Rust.".to_string()));
-        assert!(left.contains(&"Prefers dark mode.".to_string()));
-        assert_eq!(prune_turn_derived_facts(&db).unwrap(), 0);
+    fn test_extract_facts_heuristic() {
+        let text = "Goal: Build a high-performance bot.\n- The agent uses Rust for its memory kernel.\nRandom line here.\n- User: John Doe is the primary administrator.";
+        let facts = extract_facts_heuristic(text);
+        assert!(facts.len() >= 2);
+        assert!(facts.iter().any(|f| f.contains("Rust")));
+        assert!(facts.iter().any(|f| f.contains("John Doe")));
     }
 
     #[test]
@@ -1016,17 +742,5 @@ mod tests {
     fn local_embedding_has_configured_dimensions() {
         let emb = generate_local_embedding("hello world", EMBEDDING_DIM);
         assert_eq!(emb.len(), EMBEDDING_DIM);
-    }
-
-    #[test]
-    fn migration_stack_adds_memory_entities_summary() {
-        // Boots the full embedded migration chain on a scratch DB and asserts
-        // the V183 repair landed: memory_entities.summary must be selectable.
-        let db = DbHandle::new_memory().expect("migration stack should boot");
-        let conn = db.connect().expect("connect");
-        let mut stmt = conn
-            .prepare("SELECT summary FROM memory_entities LIMIT 1")
-            .expect("memory_entities.summary must exist after migrations");
-        let _ = stmt.query([]).expect("summary select should run");
     }
 }

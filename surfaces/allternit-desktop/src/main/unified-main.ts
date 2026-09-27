@@ -2407,42 +2407,9 @@ async function handoffInFlightToCloud(): Promise<void> {
   }
 }
 
-// Electron does not await before-quit, so an async handler that awaits
-// before reaping lets the process exit with gizzi-code still running
-// (spawned detached, reparented to launchd). Hold the first quit, run the
-// full cleanup under a deadline, then quit for real.
-const QUIT_CLEANUP_DEADLINE_MS = 10_000;
-let quitCleanup: Promise<void> | null = null;
-let quitCleanupDone = false;
-
-function runQuitCleanup(): Promise<void> {
-  quitCleanup ??= Promise.race([
-    shutdownAllServices().catch((err) => log.error('[Main] quit cleanup failed', err)),
-    new Promise<void>((resolve) => setTimeout(() => {
-      log.warn(`[Main] quit cleanup exceeded ${QUIT_CLEANUP_DEADLINE_MS}ms; quitting anyway`);
-      resolve();
-    }, QUIT_CLEANUP_DEADLINE_MS)),
-  ]).finally(() => {
-    // Idempotent: guarantees the reap even if the deadline won the race.
-    gizziManager.stop({ reapExternal: true });
-    quitCleanupDone = true;
-  });
-  return quitCleanup;
-}
-
-app.on('before-quit', (event) => {
-  if (quitCleanupDone) return;
-  event.preventDefault();
-  (app as unknown as { isQuitting?: boolean }).isQuitting = true;
-  void runQuitCleanup().then(() => app.quit());
-});
-
-app.on('will-quit', () => {
-  // Last line of defence for exits that skipped before-quit's cleanup.
-  gizziManager.stop({ reapExternal: true });
-});
-
-async function shutdownAllServices(): Promise<void> {
+app.on('before-quit', async () => {
+  // Electron does not await this handler. Reap gizzi before any await or it
+  // survives quit (spawned detached, ppid 1).
   await handoffInFlightToCloud();
   gizziManager.stop({ reapExternal: true });
   try {
@@ -2481,7 +2448,7 @@ async function shutdownAllServices(): Promise<void> {
   }
   // Ensure any floating permission-guide overlay is torn down before quit
   dismissGuide();
-}
+});
 
 // ============================================================================
 // IPC Handlers
@@ -2613,9 +2580,7 @@ ipcMain.handle('app:check-for-updates', async () => {
     return { ok: false, reason: 'check-failed', message: String(error) } as const;
   }
 });
-handleGuarded('app:install-update', async () => {
-  // Clean up first so before-quit does not cancel the updater's own quit.
-  await runQuitCleanup();
+handleGuarded('app:install-update', () => {
   autoUpdater.quitAndInstall();
 });
 // Preload uses sendSync at module load; handle() only answers invoke().

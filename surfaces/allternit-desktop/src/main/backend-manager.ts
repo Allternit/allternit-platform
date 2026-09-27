@@ -14,7 +14,7 @@
  */
 
 import { app } from 'electron';
-import { execFileSync, ChildProcess } from 'child_process';
+import { spawn, execFileSync, ChildProcess } from 'child_process';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -24,7 +24,6 @@ import { dirname } from 'node:path';
 import log from 'electron-log';
 import { PORTS, URLS, webhookReceiverUrl } from './config.js';
 import { resolveApiDataDir } from './desktop-data-dir.js';
-import { spawnSidecar } from './process-lifeline.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -282,7 +281,7 @@ export class BackendManager {
     loadIncusHostEnv(env);
 
     log.info(`[BackendManager] Starting allternit-api on port ${API_PORT} from ${binaryPath}`);
-    const spawned = spawnSidecar(binaryPath, developmentCargoProject ? ['run', '--manifest-path', path.join(developmentCargoProject, 'Cargo.toml')] : [], {
+    const spawned = spawn(binaryPath, developmentCargoProject ? ['run', '--manifest-path', path.join(developmentCargoProject, 'Cargo.toml')] : [], {
       cwd: developmentCargoProject ?? undefined,
       env,
       stdio: ['ignore', 'pipe', 'pipe'],

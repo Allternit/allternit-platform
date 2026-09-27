@@ -3,12 +3,11 @@
  * Manages SurrealDB + Open Notebook backend lifecycle without Docker.
  */
 
-import { ChildProcess } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
 import { PORTS, notebookUrl } from './config.js';
-import { spawnSidecar } from './process-lifeline.js';
 
 const DATA_DIR = path.join(os.homedir(), '.allternit', 'services', 'open-notebook');
 const BIN_DIR = path.join(os.homedir(), '.allternit', 'bin');
@@ -31,7 +30,7 @@ export class NotebookManager {
     }
 
     // Start via the start script (manages both SurrealDB + FastAPI)
-    this.backendProcess = spawnSidecar('bash', [START_SCRIPT], {
+    this.backendProcess = spawn('bash', [START_SCRIPT], {
       detached: false,
       stdio: ['ignore', 'pipe', 'pipe'],
     });

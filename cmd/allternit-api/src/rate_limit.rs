@@ -104,14 +104,6 @@ async fn rate_limit_middleware_inner(
     if crate::auth::verify_desktop_access_token(request.headers(), &state.config) {
         return Ok(next.run(request).await);
     }
-    // The desktop UI's renderer windows (main, companion, HUD) call the API
-    // with the user's session, not the spawn-time secret, so without this
-    // they all share the 600 RPM public cap and startup bursts get 429s.
-    // Only a desktop-spawned kernel (secret configured) exempts callers on
-    // this machine; LAN and public peers stay limited.
-    if state.config.desktop_access_token().is_some() && is_loopback_peer(&request) {
-        return Ok(next.run(request).await);
-    }
 
     let user = match request.extensions().get::<AuthUser>().cloned() {
         Some(user) => user,
@@ -135,13 +127,6 @@ async fn rate_limit_middleware_inner(
     }
 
     Ok(next.run(request).await)
-}
-
-fn is_loopback_peer(request: &Request) -> bool {
-    request
-        .extensions()
-        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-        .is_some_and(|info| info.0.ip().is_loopback())
 }
 
 /// Read the organization's `api_rate_limit_rpm` override, if one exists.
@@ -480,48 +465,6 @@ mod tests {
             .to_str()
             .unwrap();
         assert!(!retry_after.is_empty());
-    }
-
-    #[tokio::test]
-    async fn desktop_kernel_exempts_loopback_peers_only() {
-        let _guard = crate::test_helpers::computer_use_dir_test_lock();
-        std::env::set_var("ALLTERNIT_DESKTOP_ACCESS_TOKEN", "desktop-secret");
-
-        let temp = tempfile::tempdir().unwrap();
-        let state = crate::test_helpers::app_state(temp.path()).await;
-        {
-            let conn = state.db.connect().unwrap();
-            conn.execute(
-                "INSERT INTO organizations (id, name, api_rate_limit_rpm)
-                 VALUES ('org-loopback', 'Loopback Org', 1)",
-                [],
-            )
-            .unwrap();
-        }
-        let app = Router::new()
-            .route("/test", get(|| async { StatusCode::NO_CONTENT }))
-            .layer(axum::middleware::from_fn_with_state(state, rate_limit_middleware));
-
-        fn from_peer(ip: [u8; 4]) -> Request<Body> {
-            Request::builder()
-                .method("GET")
-                .uri("/test")
-                .extension(test_user(Some("org-loopback")))
-                .extension(axum::extract::ConnectInfo(std::net::SocketAddr::from((ip, 50000))))
-                .body(Body::empty())
-                .unwrap()
-        }
-
-        for i in 0..5 {
-            let resp = app.clone().oneshot(from_peer([127, 0, 0, 1])).await.unwrap();
-            assert_eq!(resp.status(), StatusCode::NO_CONTENT, "loopback request {i} should skip the cap");
-        }
-        let first = app.clone().oneshot(from_peer([192, 168, 1, 20])).await.unwrap();
-        assert_eq!(first.status(), StatusCode::NO_CONTENT);
-        let second = app.clone().oneshot(from_peer([192, 168, 1, 20])).await.unwrap();
-        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS, "LAN peers stay limited");
-
-        std::env::remove_var("ALLTERNIT_DESKTOP_ACCESS_TOKEN");
     }
 
     #[tokio::test]

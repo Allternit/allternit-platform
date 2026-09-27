@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 from contracts.codec import transaction_from_dict
 from core.canonical_runtime import CanonicalRuntimeError, StaleResourceStateError
@@ -43,8 +43,12 @@ from providers.playwright_canonical import PlaywrightCanonicalProvider
 from providers.accessibility_canonical import AccessibilityCanonicalProvider
 from providers.cua_driver_canonical import CuaDriverCanonicalProvider
 from providers.cua_driver_transport import CuaDriverTransport
+from providers.agent_desktop_canonical import AgentDesktopCanonicalProvider
+from providers.agent_desktop_transport import AgentDesktopTransport
 from providers.cdp_canonical import CDPCanonicalProvider
 from providers.extension_canonical import ExtensionCanonicalProvider
+from providers.droidrun_canonical import DroidRunCanonicalProvider
+from providers.phone_harness_canonical import PhoneHarnessCanonicalProvider
 try:
     from .session_manager import session_manager
 except ImportError:  # Legacy direct-script gateway launch.
@@ -171,6 +175,26 @@ async def _initialize_providers() -> None:
             "message": str(error),
         }
     try:
+        phone_harness_provider = PhoneHarnessCanonicalProvider(_state_dir / "artifacts")
+        if await phone_harness_provider._driver.health_check():
+            await service.register(phone_harness_provider)
+            _provider_diagnostics["mobile.phone.canonical"] = {"available": True, "driver": phone_harness_provider._driver.name}
+        else:
+            # Register the provider anyway so the manifest is visible, but mark it
+            # as waiting on a connected iOS device / macOS mirroring session.
+            await service.register(phone_harness_provider)
+            _provider_diagnostics["mobile.phone.canonical"] = {
+                "available": False,
+                "reason": "ios_device_or_macos_mirroring_unavailable",
+                "driver": phone_harness_provider._driver.name,
+            }
+    except Exception as error:
+        _provider_diagnostics["mobile.phone.canonical"] = {
+            "available": False,
+            "reason": "phone_harness_registration_failed",
+            "message": str(error),
+        }
+    try:
         transport = await CuaDriverTransport.discover()
         if transport is None:
             _provider_diagnostics["desktop.cua-driver"] = {
@@ -198,6 +222,54 @@ async def _initialize_providers() -> None:
         _provider_diagnostics["desktop.cua-driver"] = {
             "available": False,
             "reason": "cua_driver_discovery_failed",
+            "message": str(error),
+        }
+    try:
+        transport = await AgentDesktopTransport.discover()
+        if transport is None:
+            _provider_diagnostics["desktop.agent-desktop.canonical"] = {
+                "available": False,
+                "reason": "agent_desktop_not_installed",
+            }
+        else:
+            installation = await transport.version()
+            version = (
+                installation.get("data", {}).get("version", "unknown")
+                if isinstance(installation, dict)
+                else "unknown"
+            )
+            await service.register(
+                AgentDesktopCanonicalProvider(
+                    transport,
+                    _state_dir / "artifacts",
+                    version=version,
+                    authority=_environments,
+                    backend=_environment_backends.backend("allternit.host"),
+                )
+            )
+            _provider_diagnostics["desktop.agent-desktop.canonical"] = {
+                "available": True,
+                "executable": transport.executable,
+                "version": version,
+            }
+    except Exception as error:
+        _provider_diagnostics["desktop.agent-desktop.canonical"] = {
+            "available": False,
+            "reason": "agent_desktop_discovery_failed",
+            "message": str(error),
+        }
+    try:
+        droidrun_provider = DroidRunCanonicalProvider()
+        await service.register(droidrun_provider)
+        _environment_backends.register(droidrun_provider)
+        _provider_diagnostics["mobile.droidrun.canonical"] = {
+            "available": True,
+            "note": "registration succeeded; operational only when mobilerun_core and adb are available",
+        }
+    except Exception as error:
+        _provider_diagnostics["mobile.droidrun.canonical"] = {
+            "available": False,
+            "reason": "droidrun_registration_failed",
             "message": str(error),
         }
 
@@ -235,25 +307,6 @@ class ShadowResultRequest(BaseModel):
 class TransactionRequest(BaseModel):
     provider_id: str = "browser.playwright.canonical"
     transaction: Dict[str, Any]
-
-
-class HistoryStatusRequest(BaseModel):
-    model_config = {"extra": "forbid"}
-
-
-class HistoryQueryRequest(BaseModel):
-    model_config = {"extra": "forbid"}
-    limit: int = Field(default=50, ge=1, le=200)
-    session_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
-    since_sequence: Optional[int] = Field(default=None, ge=1)
-    until_sequence: Optional[int] = Field(default=None, ge=1)
-
-    @model_validator(mode="after")
-    def check_sequence_bounds(self):
-        if self.since_sequence is not None and self.until_sequence is not None:
-            if self.since_sequence > self.until_sequence:
-                raise ValueError("since_sequence must not exceed until_sequence")
-        return self
 
 
 class ApprovalGrantRequest(BaseModel):
@@ -406,6 +459,18 @@ class StreamNegotiationRequest(BaseModel):
 
 class NativePermissionPlanRequest(BaseModel):
     permission: str
+
+
+class HistoryStatusRequest(BaseModel):
+    provider_id: str = "desktop.cua-driver"
+
+
+class HistoryQueryRequest(BaseModel):
+    provider_id: str = "desktop.cua-driver"
+    limit: Optional[int] = Field(default=None, ge=1, le=200)
+    session_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    since_sequence: Optional[int] = Field(default=None, ge=1)
+    until_sequence: Optional[int] = Field(default=None, ge=1)
 
 
 def _http_error(error: Exception) -> HTTPException:
@@ -988,16 +1053,21 @@ async def execute_mobile_action(environment_id: str, body: MobileActionRequest) 
     try:
         _require_agent_lease(environment_id, body.lease_id, body.holder_id)
         environment = _environments.get_environment(environment_id)
-        if environment.os != "android":
-            raise ValueError("Mobile actions require an Android environment")
         operation_approvals.consume(
             body.approval_id, environment_id=environment_id, holder_id=body.holder_id,
             operation=f"mobile.{body.action}", payload=body.arguments,
         )
-        await _environment_backends.provider_operation(
-            environment_id, "mobile_action", body.action, body.arguments,
-        )
-        return {"action": body.action, "delivered": True, "verified": False}
+        if environment.os == "android":
+            await _environment_backends.provider_operation(
+                environment_id, "mobile_action", body.action, body.arguments,
+            )
+            return {"action": body.action, "delivered": True, "verified": False}
+        if environment.os == "ios":
+            await ensure_initialized()
+            phone_provider = service.provider("mobile.phone.canonical")
+            result = await phone_provider.mobile_action(body.action, body.arguments)
+            return {"action": body.action, "delivered": True, "verified": False, **result}
+        raise ValueError(f"Mobile actions not supported for environment os={environment.os!r}")
     except Exception as error:
         raise _http_error(error) from error
 
@@ -1013,39 +1083,6 @@ async def grant_operation_approval(body: OperationApprovalRequest) -> Dict[str, 
             approved_by=body.approved_by, ttl_seconds=body.ttl_seconds,
         )
         return asdict(grant)
-    except Exception as error:
-        raise _http_error(error) from error
-
-
-def _cua_provider() -> CuaDriverCanonicalProvider:
-    try:
-        provider = service.provider("desktop.cua-driver")
-    except ProviderNotFoundError as error:
-        raise ProviderNotFoundError("desktop.cua-driver") from error
-    if not isinstance(provider, CuaDriverCanonicalProvider):
-        raise ProviderNotFoundError("desktop.cua-driver")
-    return provider
-
-
-@router.post("/history/status")
-async def history_status(body: HistoryStatusRequest) -> Dict[str, Any]:
-    await ensure_initialized()
-    try:
-        return await _cua_provider().history_status()
-    except Exception as error:
-        raise _http_error(error) from error
-
-
-@router.post("/history/query")
-async def history_query(body: HistoryQueryRequest) -> Dict[str, Any]:
-    await ensure_initialized()
-    try:
-        return await _cua_provider().history_query(
-            limit=body.limit,
-            session_id=body.session_id,
-            since_sequence=body.since_sequence,
-            until_sequence=body.until_sequence,
-        )
     except Exception as error:
         raise _http_error(error) from error
 
@@ -1109,23 +1146,61 @@ async def cleanup_expired_environments() -> Dict[str, int]:
     return _environments.cleanup_expired()
 
 
-async def history_preflight_for_task(_task: str) -> Optional[Dict[str, Any]]:
-    """Deterministic history preflight: status then bounded query.
+def _cua_history_provider(provider_id: str) -> CuaDriverCanonicalProvider:
+    """Return a CUA driver provider if it advertises history tools."""
+    try:
+        provider = service.provider(provider_id)
+    except ProviderNotFoundError as error:
+        raise _http_error(error) from error
+    manifest = next((m for m in service.capabilities() if m.provider_id == provider_id), None)
+    if manifest is None or "history_status" not in manifest.tools or "history_query" not in manifest.tools:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "history_not_available",
+                "message": "CUA Driver Computer History is not available or not admitted for this provider",
+                "provider_id": provider_id,
+            },
+        )
+    if not isinstance(provider, CuaDriverCanonicalProvider):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "provider_not_cua_driver",
+                "message": "History is only supported by the CUA driver provider",
+                "provider_id": provider_id,
+            },
+        )
+    return provider
 
-    Returns a dict with `status` and `events`, or None when history is unavailable
-    or not useful. Swallows errors so the planning loop can continue without history.
-    """
+
+@router.post("/history/status")
+async def history_status(body: HistoryStatusRequest) -> Dict[str, Any]:
     await ensure_initialized()
     try:
-        provider = _cua_provider()
-        status = await provider.history_status()
-        if not (status.get("supported") and status.get("admitted") and status.get("enabled")):
-            return None
-        query = await provider.history_query(limit=50)
-        return {"status": status, "events": query.get("events", [])}
-    except Exception as exc:
-        logger.debug("History preflight skipped: %s", exc)
-        return None
+        provider = _cua_history_provider(body.provider_id)
+        return await provider.history_status()
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise _http_error(error) from error
+
+
+@router.post("/history/query")
+async def history_query(body: HistoryQueryRequest) -> Dict[str, Any]:
+    await ensure_initialized()
+    try:
+        provider = _cua_history_provider(body.provider_id)
+        return await provider.history_query(
+            limit=body.limit,
+            session_id=body.session_id,
+            since_sequence=body.since_sequence,
+            until_sequence=body.until_sequence,
+        )
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise _http_error(error) from error
 
 
 async def shutdown_canonical_service() -> None:

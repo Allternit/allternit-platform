@@ -25,7 +25,7 @@ _API_SOCKET_TEMPLATE = "/tmp/allternit-firecracker-{sandbox_id}.socket"
 _DEFAULT_KERNEL = "/var/lib/allternit/firecracker/vmlinux"
 _DEFAULT_ROOTFS = "/var/lib/allternit/firecracker/rootfs.ext4"
 
-# Guest agent connectivity (see research/FIRECRACKER-GUEST-AGENT-VNC-SPEC.md
+# Guest agent connectivity (see docs/research/FIRECRACKER-GUEST-AGENT-VNC-SPEC.md
 # and drivers/firecracker-guest-agent/). Firecracker exposes vsock as one
 # host-side Unix socket per VM; which guest port you reach is selected per
 # connection via Firecracker's documented "CONNECT <port>\n" / "OK <n>\n"
@@ -194,7 +194,7 @@ class FirecrackerSandbox(BaseSandbox):
         return False
 
     # ------------------------------------------------------------------
-    # Guest agent transport (see research/FIRECRACKER-GUEST-AGENT-VNC-SPEC.md)
+    # Guest agent transport (see docs/research/FIRECRACKER-GUEST-AGENT-VNC-SPEC.md)
     # ------------------------------------------------------------------
 
     async def _vsock_connect(self, guest_port: int) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:

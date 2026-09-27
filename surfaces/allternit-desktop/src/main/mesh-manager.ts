@@ -22,7 +22,7 @@
  */
 
 import { app, ipcMain } from 'electron';
-import { type ChildProcess } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { dirname } from 'node:path';
@@ -30,7 +30,6 @@ import { fileURLToPath } from 'node:url';
 import log from 'electron-log';
 import { authManager } from './auth-manager.js';
 import { URLS } from './config.js';
-import { spawnSidecar } from './process-lifeline.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -264,7 +263,7 @@ class MeshManager {
       '--reverse', target,
     ];
     log.info(`[Mesh] Spawning mesh-node sidecar for ${target}`, { binary, dataDir });
-    const proc = spawnSidecar(binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const proc = spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
     try {
       const { ip, port } = await this.waitReady(proc);

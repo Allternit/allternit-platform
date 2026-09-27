@@ -17,7 +17,6 @@ import { deleteAllMiniAppSecrets, getMiniAppSecretEnvironment, listMiniAppSecret
 import { sandboxCommand, type MiniAppSandboxPermissions } from './mini-app-sandbox.js';
 import { startMiniAppPolicyProxy, type MiniAppPolicyProxy } from './mini-app-policy-proxy.js';
 import { buildOAuthEnv, collectOAuthProviders } from './mini-app-oauth-inject.js';
-import { spawnSidecar } from './process-lifeline.js';
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -523,7 +522,7 @@ export async function startMiniApp(
     return { success: false, error: command.error };
   }
 
-  const proc = spawnSidecar(command.binary, command.args, {
+  const proc = spawn(command.binary, command.args, {
     env: {
       ...processEnvironment(config),
       ...(proxy?.environment || {}),
@@ -532,6 +531,7 @@ export async function startMiniApp(
     },
     cwd: config.workingDirectory,
     shell: !config.dynamic,
+    detached: false,
   });
 
   proc.stdout?.on('data', (chunk: Buffer) => {

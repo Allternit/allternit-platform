@@ -141,14 +141,6 @@ function checkScriptExistence(workflowText) {
     'services/local-engine/Cargo.toml',
     'cmd/allternit-api/Cargo.toml',
     'cmd/gizzi-code/script/build-production.js',
-    // Vendored ripgrep copied next to the gizzi-code sidecar (desktop) and
-    // into the npm platform packages: gizzi-code doesn't statically link rg,
-    // so without these Glob/Grep fail in shipped builds.
-    'cmd/gizzi-code/vendor/ripgrep/arm64-darwin/rg',
-    'cmd/gizzi-code/vendor/ripgrep/x64-darwin/rg',
-    'cmd/gizzi-code/vendor/ripgrep/x64-linux/rg',
-    'cmd/gizzi-code/vendor/ripgrep/arm64-linux/rg',
-    'cmd/gizzi-code/vendor/ripgrep/x64-win32/rg.exe',
   ];
   for (const p of implicit) referenced.add(p);
 

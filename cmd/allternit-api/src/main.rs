@@ -256,13 +256,6 @@ async fn main() {
     let db = DbHandle::new(db_path.clone()).expect("Failed to initialize SQLite database");
     info!("Database ready at {}", db_path.display());
 
-    // Facts the old extractor copied from raw chat turns are not memories.
-    match allternit_api::memory_kernel_service::prune_turn_derived_facts(&db) {
-        Ok(0) => {}
-        Ok(n) => info!("Memory: removed {n} facts copied from raw chat turns"),
-        Err(e) => warn!("Memory: prune of turn-derived facts failed: {e}"),
-    }
-
     // Shared gateway state (P2.9): with GATEWAY_SHARED_STATE=sqlite, failover
     // cooldowns and gateway rate-limit counters live in SQLite so multiple
     // replicas steer/throttle identically. Default off: in-memory behavior.
@@ -1296,7 +1289,6 @@ async fn main() {
     // Windows has no SIGTERM/SIGINT delivery to services, so it listens for
     // Ctrl+C / CTRL_CLOSE_EVENT instead (console ctrl handler).
     const DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
-    const FORCE_EXIT_AFTER_DRAIN: Duration = Duration::from_secs(5);
     let (server_shutdown_tx, server_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {
         #[cfg(unix)]
@@ -1324,22 +1316,11 @@ async fn main() {
         let _ = shutdown_tx.send(());
         tokio::time::sleep(DRAIN_TIMEOUT).await;
         let _ = server_shutdown_tx.send(());
-        // Graceful shutdown waits for every open connection, and the UI's
-        // event streams never close on their own, so the process would
-        // linger with no listener and the desktop could not respawn it.
-        tokio::time::sleep(FORCE_EXIT_AFTER_DRAIN).await;
-        warn!("Open connections outlived the drain; exiting");
-        std::process::exit(0);
     });
 
     match listener {
         Some(listener) => {
-            // Peer addresses let the rate limiter tell the desktop's own
-            // loopback UI apart from LAN/public callers (0.0.0.0 bind).
-            axum::serve(
-                listener,
-                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-            )
+            axum::serve(listener, app)
                 .with_graceful_shutdown(async {
                     let _ = server_shutdown_rx.await;
                 })

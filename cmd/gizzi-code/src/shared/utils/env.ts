@@ -1,8 +1,9 @@
 import memoize from 'lodash-es/memoize.js'
+import { homedir } from 'os'
 import { join } from 'path'
 import { fileSuffixForOauthConfig } from '@/constants/oauth.js'
 import { isRunningWithBun } from './bundledMode.js'
-import { getGizziConfigHomeDir, isEnvTruthy } from './envUtils.js'
+import { getLegacyClaudeHomeDir, isEnvTruthy } from './envUtils.js'
 import { findExecutable } from './findExecutable.js'
 import { getFsImplementation } from './fsOperations.js'
 import { which } from './which.js'
@@ -10,12 +11,18 @@ import { which } from './which.js'
 type Platform = 'win32' | 'darwin' | 'linux'
 
 // Config and data paths
-// gizzi's global config (theme, onboarding, project trust, model) lives in
-// its own home, never in Claude Code's ~/.claude.json: sharing that file let
-// each app overwrite the other's state. Deliberately no import from the
-// Claude file — gizzi starts fresh (owner decision 2026-09-26).
 export const getGlobalClaudeFile = memoize((): string => {
-  return join(getGizziConfigHomeDir(), `.config${fileSuffixForOauthConfig()}.json`)
+  // Legacy fallback for backwards compatibility
+  if (
+    getFsImplementation().existsSync(
+      join(getLegacyClaudeHomeDir(), '.config.json'),
+    )
+  ) {
+    return join(getLegacyClaudeHomeDir(), '.config.json')
+  }
+
+  const filename = `.claude${fileSuffixForOauthConfig()}.json`
+  return join(process.env.CLAUDE_CONFIG_DIR || homedir(), filename)
 })
 
 const hasInternetAccess = memoize(async (): Promise<boolean> => {
