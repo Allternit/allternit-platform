@@ -133,7 +133,7 @@ const forkCmd = feature('FORK_SUBAGENT')
   ? safeRequire('./commands/fork/index.js')?.default
   : null
 const buddy = feature('BUDDY')
-  ? safeRequire('./commands/buddy/index.js')?.default
+  ? require('./commands/buddy/index.js').default
   : null
 /* eslint-enable @typescript-eslint/no-require-imports */
 import think from './commands/think/index.js'

@@ -1,4 +1,5 @@
 import { GrowthBook } from '@growthbook/growthbook'
+import { gizziGateDefault } from '../../../constants/gizziGates.js'
 import { isEqual, memoize } from 'lodash-es'
 import {
   getIsNonInteractiveSession,
@@ -670,6 +671,7 @@ async function getFeatureValueInternal<T>(
   defaultValue: T,
   logExposure: boolean,
 ): Promise<T> {
+  defaultValue = gizziGateDefault(feature, defaultValue)
   // Check env var overrides first (for eval harnesses)
   const overrides = getEnvOverrides()
   if (overrides && feature in overrides) {
@@ -733,6 +735,7 @@ export function getFeatureValue_CACHED_MAY_BE_STALE<T>(
   feature: string,
   defaultValue: T,
 ): T {
+  defaultValue = gizziGateDefault(feature, defaultValue)
   // Check env var overrides first (for eval harnesses)
   const overrides = getEnvOverrides()
   if (overrides && feature in overrides) {

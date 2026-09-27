@@ -40,9 +40,10 @@ import { getTaskListId, listTasks } from '../utils/tasks.js'
 import { getAgentName, getTeamName, isTeammate } from '../utils/teammate.js'
 
 /* eslint-disable @typescript-eslint/no-require-imports */
-const extractMemoriesModule = feature('EXTRACT_MEMORIES')
-  ? (require('../services/extractMemories/extractMemories.js') as typeof import('../services/extractMemories/extractMemories.js'))
-  : null
+// Required lazily at the call site: a top-level require here lands inside an
+// import cycle and yields a partially initialized module (exports undefined).
+const getExtractMemoriesModule = () =>
+  require('../services/extractMemories/extractMemories.js') as typeof import('../services/extractMemories/extractMemories.js')
 const jobClassifierModule = feature('TEMPLATES')
   ? (require('../jobs/classifier.js') as typeof import('../jobs/classifier.js'))
   : null
@@ -147,7 +148,7 @@ export async function* handleStopHooks(
       // Fire-and-forget in both interactive and non-interactive. For -p/SDK,
       // print.ts drains the in-flight promise after flushing the response
       // but before gracefulShutdownSync (see drainPendingExtraction).
-      void extractMemoriesModule!.executeExtractMemories(
+      void getExtractMemoriesModule().executeExtractMemories(
         stopHookContext,
         toolUseContext.appendSystemMessage,
       )

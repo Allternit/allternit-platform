@@ -141,6 +141,7 @@ function checkScriptExistence(workflowText) {
     'services/local-engine/Cargo.toml',
     'cmd/allternit-api/Cargo.toml',
     'cmd/gizzi-code/script/build-production.js',
+    'cmd/gizzi-code/script/features.mjs', // compile-time feature() flags
     // Vendored ripgrep copied next to the gizzi-code sidecar (desktop) and
     // into the npm platform packages: gizzi-code doesn't statically link rg,
     // so without these Glob/Grep fail in shipped builds.

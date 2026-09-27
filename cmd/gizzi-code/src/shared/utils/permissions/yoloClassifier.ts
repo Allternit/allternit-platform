@@ -54,20 +54,19 @@ function txtRequire(mod: string | { default: string }): string {
 }
 
 const BASE_PROMPT: string = feature('TRANSCRIPT_CLASSIFIER')
-  ? txtRequire(require('./yolo-classifier-prompts/auto_mode_system_prompt.txt'))
+  ? txtRequire(require('../../../cli/ui/ink-app/utils/permissions/yolo-classifier-prompts/auto_mode_system_prompt.txt'))
   : ''
 
 // External template is loaded separately so it's available for
 // `claude auto-mode defaults` even in ant builds. Ant builds use
 // permissions_anthropic.txt at runtime but should dump external defaults.
 const EXTERNAL_PERMISSIONS_TEMPLATE: string = feature('TRANSCRIPT_CLASSIFIER')
-  ? txtRequire(require('./yolo-classifier-prompts/permissions_external.txt'))
+  ? txtRequire(require('../../../cli/ui/ink-app/utils/permissions/yolo-classifier-prompts/permissions_external.txt'))
   : ''
 
-const ANTHROPIC_PERMISSIONS_TEMPLATE: string =
-  feature('TRANSCRIPT_CLASSIFIER') && process.env.USER_TYPE === 'ant'
-    ? txtRequire(require('./yolo-classifier-prompts/permissions_anthropic.txt'))
-    : ''
+// gizzi has no internal-user template: every build classifies with the
+// external rules (users customize them via settings.autoMode).
+const ANTHROPIC_PERMISSIONS_TEMPLATE: string = EXTERNAL_PERMISSIONS_TEMPLATE
 /* eslint-enable custom-rules/no-process-env-top-level, @typescript-eslint/no-require-imports */
 
 function isUsingExternalPermissions(): boolean {
@@ -259,7 +258,8 @@ const yoloClassifierResponseSchema = lazySchema(() =>
   }),
 )
 
-export const YOLO_CLASSIFIER_TOOL_NAME = 'classify_result'
+import { YOLO_CLASSIFIER_TOOL_NAME } from './classifierToolName.js'
+export { YOLO_CLASSIFIER_TOOL_NAME }
 
 const YOLO_CLASSIFIER_TOOL_SCHEMA: BetaToolUnion = {
   type: 'custom',

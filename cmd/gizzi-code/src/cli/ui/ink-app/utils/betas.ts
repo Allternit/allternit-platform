@@ -190,8 +190,12 @@ export function modelSupportsAutoMode(model: string): boolean {
       if (/claude-(opus|sonnet|haiku)-4(?!-[6-9])/.test(m)) return false
       return true
     }
-    // External allowlist (firstParty already checked above).
-    return /^claude-(opus|sonnet)-4-6/.test(m)
+    // External allowlist (firstParty already checked above): Opus/Sonnet 4.6+
+    // and later families. Matched on the raw ID too — canonicalization
+    // collapses unknown versions like claude-opus-5-5 to "claude-opus", and
+    // gizzi model IDs may carry a provider prefix ("anthropic/…").
+    const supported = /claude-(opus|sonnet|fable)-(4-[6-9]|[5-9])/
+    return supported.test(m) || supported.test(rawLower)
   }
   return false
 }

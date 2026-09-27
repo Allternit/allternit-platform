@@ -5,9 +5,10 @@ import { initMagicDocs } from '../services/MagicDocs/magicDocs.js'
 import { initSkillImprovement } from './hooks/skillImprovement.js'
 
 /* eslint-disable @typescript-eslint/no-require-imports */
-const extractMemoriesModule = feature('EXTRACT_MEMORIES')
-  ? (require('../services/extractMemories/extractMemories.js') as typeof import('../services/extractMemories/extractMemories.js'))
-  : null
+// Required lazily at the call site: a top-level require here lands inside an
+// import cycle and yields a partially initialized module (exports undefined).
+const getExtractMemoriesModule = () =>
+  require('../services/extractMemories/extractMemories.js') as typeof import('../services/extractMemories/extractMemories.js')
 const registerProtocolModule = feature('LODESTONE')
   ? (require('./deepLink/registerProtocol.js') as typeof import('./deepLink/registerProtocol.js'))
   : null
@@ -33,7 +34,7 @@ export function startBackgroundHousekeeping(): void {
   void initMagicDocs()
   void initSkillImprovement()
   if (feature('EXTRACT_MEMORIES')) {
-    extractMemoriesModule!.initExtractMemories()
+    getExtractMemoriesModule().initExtractMemories()
   }
   initAutoDream()
   void autoUpdateMarketplacesAndPluginsInBackground()
