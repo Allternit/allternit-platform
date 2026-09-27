@@ -332,6 +332,11 @@ fn load(db: &DbHandle, id: &str) -> rusqlite::Result<Option<Stored>> {
     }
 }
 
+/// Load a thread view by id (no owner check — callers already scoped it).
+pub fn load_view(db: &DbHandle, id: &str) -> rusqlite::Result<Option<ThreadView>> {
+    Ok(load(db, id)?.map(|s| s.view))
+}
+
 fn generations(db: &DbHandle, id: &str) -> rusqlite::Result<Vec<GenerationView>> {
     let conn = db.connect()?;
     let mut stmt = conn.prepare(
@@ -846,6 +851,20 @@ async fn patch_thread(
     .await;
     match res {
         Ok(Some(s)) => {
+            // A thread reaching review/done may unblock queued dependents.
+            if matches!(s.view.status.as_str(), "review" | "done") {
+                if let Some(project_id) = s.view.project_id.clone() {
+                    let ready = crate::coordinator_routes::ready_dependents(&state.db, &project_id, &s.view.id);
+                    if !ready.is_empty() {
+                        let st = state.clone();
+                        let uid = user.user_id.clone();
+                        tokio::spawn(async move {
+                            let rt = crate::coordinator_routes::GizziCoordinator { state: st.clone() };
+                            crate::coordinator_routes::start_threads(&st.db, &rt, &uid, &project_id, ready).await;
+                        });
+                    }
+                }
+            }
             if let (Some(status), false) = (status_changed, s.view.incognito) {
                 let event = if before.group == "resolved" && s.view.group != "resolved" { "thread.resumed" } else { event_for_status(&status) };
                 ledger(
