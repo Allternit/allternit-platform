@@ -1748,6 +1748,29 @@ pub(crate) async fn seed_session_message(session_id: &str, text: &str) -> Result
         .map_err(|_| "gizzi refused the checkpoint message".to_string())
 }
 
+/// A session's recent transcript as plain "Role: text" lines, newest last,
+/// capped at `max_chars` (oldest lines dropped first). Used to write a
+/// thread checkpoint before moving it to a fresh context window.
+pub(crate) async fn session_transcript(session_id: &str, max_chars: usize) -> Result<String, String> {
+    let client = gizzi_client(&HeaderMap::new());
+    let path = format!("/v1/session/{}/message", urlencoding::encode(session_id));
+    let messages = gizzi_json::<Vec<GizziMessage>>(&client, reqwest::Method::GET, &path, None)
+        .await
+        .map_err(|_| "gizzi refused the transcript read".to_string())?;
+    let mut lines: Vec<String> = messages
+        .iter()
+        .filter_map(|m| {
+            let text = extract_message_content(&m.parts);
+            (!text.trim().is_empty()).then(|| format!("{}: {}", if m.info.role == "user" { "User" } else { "Bot" }, text.trim()))
+        })
+        .collect();
+    let mut total: usize = lines.iter().map(|l| l.len() + 1).sum();
+    while total > max_chars && lines.len() > 1 {
+        total -= lines.remove(0).len() + 1;
+    }
+    Ok(lines.join("\n"))
+}
+
 /// Whether a gizzi session still exists (a pinned thread can be deleted from
 /// another client; delivery then falls back instead of failing forever).
 pub(crate) async fn bot_session_exists(session_id: &str) -> bool {
