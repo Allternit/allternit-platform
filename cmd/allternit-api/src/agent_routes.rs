@@ -2229,11 +2229,14 @@ fn apply_agent_update(
     let vm_operator = body.vm_operator.clone();
     let config_from_body = body.config.clone();
 
-    // Merge autonomous primitives into config. If the request didn't send a
-    // config, read the existing one so the merge doesn't clobber it.
+    // Merge autonomous primitives into config. The body's config is merged
+    // key-by-key over the stored one — never a wholesale replace. Edit bot
+    // sends `config: {botProfile, avatar}`; replacing wiped `isBot`,
+    // `botBrain`, `vmOperator` and every other key, turning the bot back
+    // into a plain agent ("Bot not found." after Save).
     let merged_config = if has_primitives || config_from_body.is_some() {
-        let base_config = config_from_body.or_else(|| {
-            conn.query_row(
+        let stored_config: Option<serde_json::Value> = conn
+            .query_row(
                 "SELECT config FROM agents WHERE id = ?1 AND user_id = ?2",
                 params![id, user_id],
                 |row| {
@@ -2242,8 +2245,15 @@ fn apply_agent_update(
                 },
             )
             .ok()
-            .flatten()
-        });
+            .flatten();
+        let base_config = match (stored_config, config_from_body) {
+            (Some(serde_json::Value::Object(mut stored)), Some(serde_json::Value::Object(patch))) => {
+                stored.extend(patch);
+                Some(serde_json::Value::Object(stored))
+            }
+            (stored, None) => stored,
+            (_, body) => body,
+        };
         merge_autonomous_primitives_into_config(
             base_config,
             is_bot,
@@ -4836,6 +4846,43 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{payload}");
         assert_eq!(payload["agent"]["is_bot"], false);
+    }
+
+    #[tokio::test]
+    async fn patch_agent_partial_config_keeps_other_keys() {
+        // Edit bot sends only {botProfile, avatar} in config; the stored
+        // isBot / botBrain keys must survive or the bot stops being a bot.
+        let temp = beta_test::temp_dir("patch-config-merge");
+        let state = beta_test::test_app_state(&temp).await;
+        let router = agent_router().with_state(state);
+        let id = create_agent(&router, &full_agent_body("Config Merge"), "user-a").await;
+
+        let (status, payload) = send_json(
+            &router,
+            "PATCH",
+            &format!("/agents/{id}"),
+            &json!({"config": {"isBot": true, "botBrain": {"mode": "allternit_cloud"}}}),
+            "user-a",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{payload}");
+
+        let (status, payload) = send_json(
+            &router,
+            "PATCH",
+            &format!("/agents/{id}"),
+            &json!({"config": {"botProfile": {"displayName": "Gizzi"}, "avatar": {"type": "mascot"}}}),
+            "user-a",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{payload}");
+
+        let (_, payload) = get_json(&router, &format!("/agents/{id}"), "user-a").await;
+        let config = &payload["agent"]["config"];
+        assert_eq!(config["isBot"], true, "{config}");
+        assert_eq!(config["botBrain"]["mode"], "allternit_cloud", "{config}");
+        assert_eq!(config["botProfile"]["displayName"], "Gizzi", "{config}");
+        assert_eq!(config["avatar"]["type"], "mascot", "{config}");
     }
 
     #[tokio::test]
