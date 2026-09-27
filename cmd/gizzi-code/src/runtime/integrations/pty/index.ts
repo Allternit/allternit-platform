@@ -80,7 +80,7 @@ export namespace Pty {
       }
     }
     spawnAttempt ??= (async () => {
-      const { spawn } = await import("node:child_process")
+      const { spawnOwnedChild } = await import("../../util/parent-lifeline")
       const { mkdirSync } = await import("node:fs")
       const execDir = dirname(process.execPath)
       const platformArch = `${process.platform}-${process.arch}`
@@ -102,13 +102,12 @@ export namespace Pty {
       for (const bin of candidates) {
         if (!(await Bun.file(bin).exists())) continue
         try {
-          const child = spawn(bin, ["serve"], {
+          const child = spawnOwnedChild(bin, ["serve"], {
             env: {
               ...process.env,
               ALLTERNIT_MUX_STATE_DIR: muxStateDir(),
               ALLTERNIT_MUX_SOCKET: muxSocketPath(),
             },
-            detached: process.platform !== "win32",
             stdio: "ignore",
           })
           // Bun reports a failed exec on the child's error event, not sync.
@@ -167,15 +166,31 @@ export namespace Pty {
     nextLine(): Promise<string> {
       if (this.pending.length) return Promise.resolve(this.pending.shift()!)
       return new Promise((resolve, reject) => {
+        // Detach all three on settle: watchExit calls this in a loop on one
+        // long-lived socket, and leftover error/close listeners grew without
+        // bound (MaxListenersExceededWarning, steady memory growth in serve).
+        const cleanup = () => {
+          this.sock.off("data", onData)
+          this.sock.off("error", onError)
+          this.sock.off("close", onClose)
+        }
         const onData = () => {
           if (this.pending.length) {
-            this.sock.off("data", onData)
+            cleanup()
             resolve(this.pending.shift()!)
           }
         }
+        const onError = (err: Error) => {
+          cleanup()
+          reject(err)
+        }
+        const onClose = () => {
+          cleanup()
+          reject(new Error("mux socket closed"))
+        }
         this.sock.on("data", onData)
-        this.sock.once("error", reject)
-        this.sock.once("close", () => reject(new Error("mux socket closed")))
+        this.sock.on("error", onError)
+        this.sock.on("close", onClose)
       })
     }
 

@@ -1,0 +1,10 @@
+# bun test resolves node_modules before tsconfig paths. `@allternit/sdk` in
+# this workspace is the platform SDK (sdk/allternit-sdk), not gizzi-sdk.
+# Point the Messages client at the in-tree gizzi-sdk so smoke tests resolve.
+[alias]
+"@allternit/gizzi-sdk/providers/allternit" = "./packages/sdk/src/providers/allternit/index.ts"
+"@allternit/gizzi-sdk/providers/allternit/error" = "./packages/sdk/src/providers/allternit/error.ts"
+"@allternit/gizzi-sdk/providers/allternit/streaming.mjs" = "./packages/sdk/src/providers/allternit/streaming.ts"
+"@allternit/gizzi-sdk/providers/allternit/resources/index.mjs" = "./packages/sdk/src/providers/allternit/resources/index.ts"
+"@allternit/gizzi-sdk/providers/allternit/resources/messages.mjs" = "./packages/sdk/src/providers/allternit/resources/messages/index.ts"
+"@allternit/gizzi-sdk/providers/allternit/resources/beta/messages/messages.mjs" = "./packages/sdk/src/providers/allternit/resources/beta/messages/index.ts"

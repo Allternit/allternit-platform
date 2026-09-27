@@ -22,6 +22,26 @@ pub async fn complete(
     system: Option<&str>,
     model: Option<&(String, String)>,
 ) -> Option<String> {
+    run(prompt, system, model, false).await
+}
+
+/// Like [`complete`], but deletes the temporary Gizzi session afterwards, so
+/// background work (memory extraction runs after every user turn) never
+/// leaves sessions in the user's history.
+pub async fn complete_ephemeral(
+    prompt: &str,
+    system: Option<&str>,
+    model: Option<&(String, String)>,
+) -> Option<String> {
+    run(prompt, system, model, true).await
+}
+
+async fn run(
+    prompt: &str,
+    system: Option<&str>,
+    model: Option<&(String, String)>,
+    delete_after: bool,
+) -> Option<String> {
     let gizzi = crate::APP_CONFIG
         .get()
         .map(|c| c.terminal_server_url())
@@ -38,9 +58,12 @@ pub async fn complete(
         .unwrap_or_default();
 
     // Create a temporary session.
+    // No `surface`: the app's session lists only show sessions tagged with
+    // their own surface (chat/cowork/code), so an untagged internal session
+    // never appears in the user's Recents. Tagging it "chat" leaked every
+    // memory extraction and lesson generation into the chat rail.
     let create_payload = json!({
         "title": "Allternit internal completion",
-        "surface": "chat",
         "model": { "providerID": provider_id, "modelID": model_id },
     });
 
@@ -67,8 +90,29 @@ pub async fn complete(
         }
     };
 
-    let session_id = session.get("id")?.as_str()?;
+    let session_id = session.get("id")?.as_str()?.to_string();
     info!(session_id, model = %model_label, "Created Gizzi completion session");
+    let text = collect(&client, &gizzi, &session_id, prompt, system).await;
+    if delete_after {
+        if let Err(err) = client
+            .delete(format!("{}/v1/session/{}", gizzi, session_id))
+            .send()
+            .await
+        {
+            warn!(error = %err, session_id, "Failed to delete temporary Gizzi session");
+        }
+    }
+    text
+}
+
+/// Send the prompt into an existing session and collect the reply text.
+async fn collect(
+    client: &Client,
+    gizzi: &str,
+    session_id: &str,
+    prompt: &str,
+    system: Option<&str>,
+) -> Option<String> {
 
     // Subscribe to events before sending the message.
     let event_resp = match client
