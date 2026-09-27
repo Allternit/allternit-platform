@@ -197,7 +197,8 @@ export function isEphemeralToolProgress(dataType: unknown): boolean {
   return typeof dataType === 'string' && EPHEMERAL_PROGRESS_TYPES.has(dataType)
 }
 
-export { getProjectDir, getProjectsDir } from './projectDir.js'
+import { getProjectDir, getProjectsDir } from './projectDir.js'
+export { getProjectDir, getProjectsDir }
 
 export function getTranscriptPath(): string {
   const projectDir = getSessionProjectDir() ?? getProjectDir(getOriginalCwd())

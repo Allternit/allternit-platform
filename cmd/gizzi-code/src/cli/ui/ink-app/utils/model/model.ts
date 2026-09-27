@@ -5,6 +5,7 @@
  * literals with process.env.USER_TYPE === 'ant' for Bun to remove the codenames
  * during dead code elimination
  */
+import { getLocalProviderConfig } from '../../services/api/localModel.js'
 import { readFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
@@ -38,20 +39,23 @@ export type ModelName = string
 export type ModelSetting = ModelName | ModelAlias | null
 
 /**
- * Read the runtime gizzi.json config (e.g. ~/.config/gizzi-code/gizzi.json)
- * and return its top-level model field, if any. This bridges the Ink UI
- * settings path with the runtime provider config so a local model set in
- * gizzi.json is picked up as the main-loop model.
+ * Read a top-level model field from the runtime gizzi.json config
+ * (e.g. ~/.config/gizzi-code/gizzi.json). This bridges the Ink UI settings
+ * path with the runtime provider config so models set in gizzi.json are
+ * picked up by the TUI.
  */
-function getRuntimeConfigModel(): ModelName | undefined {
+function getRuntimeConfigField(
+  field: 'model' | 'small_model',
+): ModelName | undefined {
   try {
     const configDir =
       process.env.GIZZI_CONFIG_DIR ?? join(homedir(), '.config', 'gizzi-code')
     const configPath = join(configDir, 'gizzi.json')
     const raw = readFileSync(configPath, 'utf-8')
     const parsed = JSON.parse(raw)
-    if (parsed && typeof parsed.model === 'string' && parsed.model.length > 0) {
-      return parsed.model
+    const value = parsed?.[field]
+    if (typeof value === 'string' && value.length > 0) {
+      return value
     }
   } catch {
     // Runtime config missing or unreadable — fall back to normal settings path.
@@ -59,8 +63,34 @@ function getRuntimeConfigModel(): ModelName | undefined {
   return undefined
 }
 
+function getRuntimeConfigModel(): ModelName | undefined {
+  return getRuntimeConfigField('model')
+}
+
+/**
+ * Model for background side calls (away recap, memory extraction, companion).
+ * gizzi.json's small_model wins over the Anthropic Haiku default — a
+ * non-Anthropic setup has no Haiku to call.
+ */
 export function getSmallFastModel(): ModelName {
-  return process.env.ANTHROPIC_SMALL_FAST_MODEL || getDefaultHaikuModel()
+  if (process.env.ANTHROPIC_SMALL_FAST_MODEL) {
+    return process.env.ANTHROPIC_SMALL_FAST_MODEL
+  }
+  const small = getRuntimeConfigField('small_model')
+  if (small && isUsableProviderModel(small)) return small
+  // No usable small model: a gizzi.json provider main model is the one model
+  // known to work here (Haiku needs Anthropic credentials this setup may lack).
+  const main = getRuntimeConfigModel()
+  if (main && isUsableProviderModel(main)) return main
+  return getDefaultHaikuModel()
+}
+
+/** A gizzi.json provider model whose endpoint has the credentials it needs. */
+function isUsableProviderModel(model: ModelName): boolean {
+  const resolved = getLocalProviderConfig(model)
+  if (!resolved) return false
+  const { authType, apiKey } = resolved.config
+  return authType === 'none' || Boolean(apiKey)
 }
 
 export function isNonCustomOpusModel(model: ModelName): boolean {
