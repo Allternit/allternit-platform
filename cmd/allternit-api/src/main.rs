@@ -123,7 +123,7 @@ use allternit_api::web_proxy_routes::web_proxy_router;
 use allternit_api::webhook_routes::webhook_router;
 use allternit_api::webhook_subscription_routes::webhook_subscription_router;
 use allternit_api::webhook_trigger_routes::{
-    webhook_trigger_public_router, webhook_trigger_router,
+    webhook_trigger_protected_router, webhook_trigger_public_router,
 };
 use allternit_api::workflow_routes::workflow_router;
 use allternit_api::workspace_routes::workspace_router;
@@ -255,6 +255,13 @@ async fn main() {
     let db_path = data_dir.join("allternit.db");
     let db = DbHandle::new(db_path.clone()).expect("Failed to initialize SQLite database");
     info!("Database ready at {}", db_path.display());
+
+    // Facts the old extractor copied from raw chat turns are not memories.
+    match allternit_api::memory_kernel_service::prune_turn_derived_facts(&db) {
+        Ok(0) => {}
+        Ok(n) => info!("Memory: removed {n} facts copied from raw chat turns"),
+        Err(e) => warn!("Memory: prune of turn-derived facts failed: {e}"),
+    }
 
     // Shared gateway state (P2.9): with GATEWAY_SHARED_STATE=sqlite, failover
     // cooldowns and gateway rate-limit counters live in SQLite so multiple
@@ -847,7 +854,9 @@ async fn main() {
         .merge(beta_deployment_router())
         .merge(beta_work_router())
         .merge(webhook_subscription_router())
-        .merge(webhook_trigger_router())
+        // Protected surface only: `webhook_trigger_router()` is the test
+        // helper and already nests `/api/v1`, which doubled the live path.
+        .merge(webhook_trigger_protected_router())
         .merge(beta_memory_store_router())
         .merge(memory_reconstruction_router())
         .merge(allternit_api::memory_notes_routes::memory_notes_router())
@@ -888,6 +897,8 @@ async fn main() {
         .merge(allternit_api::tag_routes::tag_router())
         .merge(inference_router_router())
         .merge(bot_event_router())
+        .merge(allternit_api::thread_routes::thread_router())
+        .merge(allternit_api::coordinator_routes::coordinator_router())
         .merge(model_training_router())
         .merge(photon_router())
         .merge(allternit_api::enterprise_auth::router())
@@ -1134,6 +1145,8 @@ async fn main() {
     #[cfg(unix)]
     let combined = combined.nest("/terminal", terminal_router());
     let mut app = combined.with_state(state.clone());
+    // Automation Tasks routines with execution_domain = 'local' run here.
+    allternit_api::routine_local_scheduler::spawn(state.clone());
 
     // Mount cowork scheduler routes if scheduler is active. These routes
     // create/update/delete schedules and self-gate nothing, so they must be
@@ -1289,6 +1302,7 @@ async fn main() {
     // Windows has no SIGTERM/SIGINT delivery to services, so it listens for
     // Ctrl+C / CTRL_CLOSE_EVENT instead (console ctrl handler).
     const DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
+    const FORCE_EXIT_AFTER_DRAIN: Duration = Duration::from_secs(5);
     let (server_shutdown_tx, server_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {
         #[cfg(unix)]
@@ -1316,11 +1330,22 @@ async fn main() {
         let _ = shutdown_tx.send(());
         tokio::time::sleep(DRAIN_TIMEOUT).await;
         let _ = server_shutdown_tx.send(());
+        // Graceful shutdown waits for every open connection, and the UI's
+        // event streams never close on their own, so the process would
+        // linger with no listener and the desktop could not respawn it.
+        tokio::time::sleep(FORCE_EXIT_AFTER_DRAIN).await;
+        warn!("Open connections outlived the drain; exiting");
+        std::process::exit(0);
     });
 
     match listener {
         Some(listener) => {
-            axum::serve(listener, app)
+            // Peer addresses let the rate limiter tell the desktop's own
+            // loopback UI apart from LAN/public callers (0.0.0.0 bind).
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
                 .with_graceful_shutdown(async {
                     let _ = server_shutdown_rx.await;
                 })

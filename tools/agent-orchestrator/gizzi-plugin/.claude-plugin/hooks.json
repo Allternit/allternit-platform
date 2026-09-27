@@ -41,6 +41,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Bash|shell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .steering/bin/guard-build.sh",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [

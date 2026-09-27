@@ -15,6 +15,8 @@
 - Quitting Preview.app (1.1.1 build 3703, pre-#770) left 8 sidecars orphaned under launchd; killed by hand. The installed 1.1.3 has the #770 lifeline watchers on every sidecar. I did not re-test quit-reaping on 1.1.3 because another session was using the app.
 - Another session relaunched the installed app on CDP 9223 mid-verification. The first probe of `/v1/skill/reload` hit the earlier instance and 404'd; the probe against the current instance returned 200.
 
+- **My attestation commit 850a31905 also committed the shared checkout's stale staged index**: `git add <ledger files>` + `git commit` took everything already staged, reverting 86 files of merged work. joe-33 restored them in platform #787 (ed7c6ebb1); I checked each file: 0 still reverted, and my LEDGER.md change was only my own line. Rule going forward: never commit in the shared checkout; make direct-on-main ledger commits from a clean worktree on origin/main, and check `git diff --cached --stat` first.
+
 ## Deferred
 - #91 not verified live in Desktop — needs merge + next full Desktop build.
 - Rest of W6: session title menu, right panel, tool toggles, Settings → Cowork; W5 Bot Schedule entry; W8 ACI icon; coordinator audit spec; ACI specs.

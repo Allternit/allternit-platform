@@ -19,7 +19,7 @@ import { TEAM_CREATE_TOOL_NAME } from '../../tools/TeamCreateTool/constants.js'
 import { TEAM_DELETE_TOOL_NAME } from '../../tools/TeamDeleteTool/constants.js'
 import { TODO_WRITE_TOOL_NAME } from '../../tools/TodoWriteTool/constants.js'
 import { TOOL_SEARCH_TOOL_NAME } from '../../tools/ToolSearchTool/prompt.js'
-import { YOLO_CLASSIFIER_TOOL_NAME } from './yoloClassifier.js'
+import { YOLO_CLASSIFIER_TOOL_NAME } from './classifierToolName.js'
 
 /**
  * Tools that are safe and don't need any classifier checking.

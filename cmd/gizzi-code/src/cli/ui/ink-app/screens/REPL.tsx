@@ -381,6 +381,7 @@ const WebBrowserPanelModule = feature('WEB_BROWSER_TOOL') ? require('../tools/We
 import { IssueFlagBanner } from '../components/PromptInput/IssueFlagBanner';
 import { useIssueFlagBanner } from '../hooks/useIssueFlagBanner';
 import { CompanionSprite, CompanionFloatingBubble, MIN_COLS_FOR_FULL_SPRITE } from '../buddy/CompanionSprite';
+import { fireCompanionObserver } from '../buddy/observer';
 import { DevBar } from '../components/DevBar';
 // Session manager removed - using AppState now
 import type { RemoteSessionConfig } from '../remote/RemoteSessionManager';
@@ -5059,7 +5060,11 @@ export function REPL({
               {isFullscreenEnvEnabled() && <PromptInputQueuedCommands />}
             </>} bottom={<Box flexDirection={feature('BUDDY') && companionNarrow ? 'column' : 'row'} width="100%" alignItems={feature('BUDDY') && companionNarrow ? undefined : 'flex-end'}>
               {feature('BUDDY') && companionNarrow && isFullscreenEnvEnabled() && companionVisible ? <CompanionSprite /> : null}
-              <Box flexDirection="column" flexGrow={1}>
+              {/* Row mode: basis 0 so the prompt column takes exactly the width
+                  the companion sprite/bubble leave. An auto basis comes from its
+                  width="100%" children, which resolve against the previous width,
+                  so the column never narrows and the bubble paints over it. */}
+              <Box flexDirection="column" flexGrow={1} flexBasis={feature('BUDDY') && companionNarrow ? undefined : 0}>
                 {permissionStickyFooter}
                 {/* Immediate local-jsx commands (/btw, /sandbox, /assistant,
                   /issue) render here, NOT inside scrollable. They stay mounted

@@ -39,7 +39,8 @@
 // Mesh is strictly additive: any join failure (missing binaries, expired or
 // single-use auth key, unreachable control server) rejects start(), and the
 // caller logs it and keeps serving without mesh.
-import { spawn, execFile, type ChildProcess } from "node:child_process"
+import { execFile, type ChildProcess } from "node:child_process"
+import { spawnOwnedChild } from "@/runtime/util/parent-lifeline"
 import { existsSync } from "node:fs"
 import os from "node:os"
 import { dirname, join } from "node:path"
@@ -234,7 +235,7 @@ export namespace Mesh {
         ...(opts.authKey ? ["--auth-key", opts.authKey] : []),
       ]
       log.info("spawning mesh-node sidecar", { bin, control, port, authKey: !!opts.authKey })
-      const proc = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] })
+      const proc = spawnOwnedChild(bin, args, { stdio: ["ignore", "pipe", "pipe"] })
       child = proc
 
       let settled = false
@@ -373,7 +374,7 @@ export namespace Mesh {
           const sock = join(Global.Path.data, "tailscaled.sock")
           const state = join(Global.Path.data, "tailscaled.state")
           log.info("no system tailscaled reachable; spawning userspace tailscaled", { bin: daemon, sock })
-          const proc = spawn(
+          const proc = spawnOwnedChild(
             daemon,
             [`--tun=userspace-networking`, `--state=${state}`, `--socket=${sock}`],
             { stdio: ["ignore", "pipe", "pipe"] },

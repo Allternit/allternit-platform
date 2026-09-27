@@ -748,7 +748,7 @@ fn fold_operational_state(
     }
 }
 
-async fn verify_bot_ownership(state: &AppState, user_id: &str, bot_id: &str) -> bool {
+pub(crate) async fn verify_bot_ownership(state: &AppState, user_id: &str, bot_id: &str) -> bool {
     let db = state.db.clone();
     let bot_id = bot_id.to_string();
     let user_id = user_id.to_string();

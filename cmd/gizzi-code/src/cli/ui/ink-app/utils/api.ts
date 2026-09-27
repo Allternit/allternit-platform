@@ -43,6 +43,7 @@ import {
   normalizePatternsToPath,
 } from './permissions/filesystem.js'
 import { countFilesRoundedRg } from './ripgrep.js'
+import { getCwd } from './cwd.js'
 import { jsonStringify } from './slowOperations.js'
 import type { SystemPrompt } from './systemPromptType.js'
 import { getToolSchemaCache } from './toolSchemaCache.js'

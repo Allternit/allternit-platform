@@ -19,10 +19,10 @@ export function FooterStatusBadges({ messages }: { messages?: import('../../type
   // Two rows, right-aligned: cwd + model on top, context bottom-right.
   // Single-row crowds the context readout off screen on narrow terminals.
   return (
-    <Box flexDirection="column" alignItems="flex-end" flexShrink={0}>
-      <Box gap={1}>
-        <Text dimColor wrap="truncate">{cwdDisplay}</Text>
-        <Text color="magenta" wrap="truncate">{metrics.model}</Text>
+    <Box flexDirection="column" alignItems="flex-end" flexShrink={1}>
+      <Box gap={1} flexShrink={1}>
+        <Box flexShrink={0}><Text dimColor>{cwdDisplay}</Text></Box>
+        <Text color="gizzi" wrap="truncate-start">{metrics.model}</Text>
       </Box>
       <Text dimColor wrap="truncate">{contextText}</Text>
     </Box>

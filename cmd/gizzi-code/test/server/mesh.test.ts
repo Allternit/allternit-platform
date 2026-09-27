@@ -45,6 +45,7 @@ exec tail -f /dev/null
 let home: string
 let fakebin: string
 let nodeBin: string
+let nodeFake: string
 let record: string
 let originalPath: string | undefined
 const previousFlag: Record<string, string | undefined> = {}
@@ -88,6 +89,12 @@ beforeAll(async () => {
   // target file is created/removed per test to simulate present/missing.
   nodeBin = path.join(home, "bin", "mesh-node")
   await fs.mkdir(path.dirname(nodeBin), { recursive: true })
+  // The fake is written once, here; tests only link/unlink nodeBin. Writing
+  // an executable right before spawning it races on Linux (ETXTBSY when a
+  // concurrent fork still holds the write fd), which made mesh-node fail to
+  // start and test (c) flaky in CI.
+  nodeFake = path.join(home, "mesh-node-fake")
+  await writeExec(nodeFake, MESH_NODE_FAKE)
   process.env.GIZZI_MESH_NODE_BIN = nodeBin
   process.env.GIZZI_TAILSCALE_BIN = path.join(fakebin, "tailscale")
   process.env.GIZZI_TAILSCALED_BIN = path.join(fakebin, "tailscaled")
@@ -138,7 +145,7 @@ afterAll(async () => {
 
 describe("Mesh join precedence", () => {
   test("(a) sidecar wins over a reachable system tailscaled; tailscale CLI is never invoked", async () => {
-    await writeExec(nodeBin, MESH_NODE_FAKE)
+    await fs.symlink(nodeFake, nodeBin)
     await Bun.write(record, "")
     // A system tailscaled logged into a FOREIGN (personal) tailnet.
     process.env.FAKE_TS_STATUS_CODE = "0"
@@ -171,7 +178,7 @@ describe("Mesh join precedence", () => {
   })
 
   test("(c) sidecar present but join fails -> attach fallback with a warning", async () => {
-    await writeExec(nodeBin, MESH_NODE_FAKE)
+    await fs.symlink(nodeFake, nodeBin)
     await Bun.write(record, "")
     process.env.FAKE_NODE_FAIL = "1"
     process.env.FAKE_TS_STATUS_CODE = "0"
@@ -190,7 +197,7 @@ describe("Mesh join precedence", () => {
   })
 
   test("(d) no auth key -> mesh skipped with a hint; no binary is invoked", async () => {
-    await writeExec(nodeBin, MESH_NODE_FAKE)
+    await fs.symlink(nodeFake, nodeBin)
     await Bun.write(record, "")
     process.env.FAKE_TS_STATUS_CODE = "0"
     process.env.FAKE_TS_IP = "100.99.0.5"

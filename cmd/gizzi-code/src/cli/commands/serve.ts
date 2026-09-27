@@ -8,6 +8,7 @@ import { init as initGlobal } from "@/runtime/context/global"
 import { assertSafeServerExposure } from "@/cli/server-exposure"
 import { ProcessRegistry } from "@/runtime/process-registry"
 import { Sidecar } from "@/runtime/sidecar"
+import { onParentExit } from "@/runtime/util/parent-lifeline"
 
 export const ServeCommand = cmd({
   command: "serve",
@@ -89,6 +90,8 @@ export const ServeCommand = cmd({
       }
       shuttingDown = true
       process.stderr.write(`gizzi server received ${signal}; shutting down\n`)
+      // A wedged server.stop() must not turn a shutdown into a leak.
+      setTimeout(() => process.exit(1), 10_000).unref()
       ProcessRegistry.killAll()
       void Sidecar.stop().catch(() => {})
       server
@@ -104,6 +107,7 @@ export const ServeCommand = cmd({
     if (process.platform !== "win32") {
       process.on("SIGHUP", () => shutdown("SIGHUP"))
     }
+    onParentExit(() => shutdown("parent-exit"))
     await new Promise(() => {})
   },
 })

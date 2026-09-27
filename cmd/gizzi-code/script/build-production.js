@@ -11,6 +11,10 @@
  *   bun run build:production              # Build for current platform
  *   bun run build:production --all        # Build for all platforms
  *   bun run build:production --target=darwin-x64  # Build for specific target
+ *   bun run build:production --bundle-only   # Stop after the JS bundle (no compile)
+ *
+ * Compile-time feature() flags come from script/features.mjs
+ * (GIZZI_FEATURES_EXTRA=FOO,BAR adds more for an experiment).
  *
  * Two-step approach:
  * 1. Bundle with plugin to single JS file
@@ -19,11 +23,12 @@
 import { $ } from "bun";
 import { createHash } from "crypto";
 import { mkdir, rename, copyFile, readdir } from "fs/promises";
-import { existsSync } from "fs";
+import { existsSync, renameSync } from "fs";
 import { devNull } from "os";
 import { dirname, resolve } from "path";
 import { copyNativeAssets } from "./native-assets.mjs";
 import { patchEsmAsyncWrappers } from "./patch-esm-async.js";
+import { resolveFeatures } from "./features.mjs";
 const TARGETS = [
     { platform: "darwin", arch: "arm64", suffix: "", target: "bun-darwin-arm64" },
     { platform: "darwin", arch: "x64", suffix: "", target: "bun-darwin-x64" },
@@ -36,6 +41,7 @@ const args = {
     all: process.argv.includes("--all"),
     target: process.argv.find((a) => a.startsWith("--target="))?.split("=")[1],
     outfile: process.argv.find((a) => a.startsWith("--outfile="))?.split("=")[1],
+    bundleOnly: process.argv.includes("--bundle-only"),
 };
 // Determine which targets to build
 function getTargetsToBuild() {
@@ -339,6 +345,20 @@ if (await Bun.file(BUNFIG_ORIG).exists()) {
     await rename(BUNFIG_ORIG, BUNFIG_BACKUP);
     bunfigWasMoved = true;
 }
+// A failed or interrupted build must not leave bunfig.toml moved aside (it
+// shows up as a deleted tracked file and breaks `bun test` aliases). The exit
+// handler covers every process.exit() path; signals route through it.
+process.on("exit", () => {
+    if (bunfigWasMoved && existsSync(BUNFIG_BACKUP)) {
+        renameSync(BUNFIG_BACKUP, BUNFIG_ORIG);
+    }
+});
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+    process.on(sig, () => process.exit(130));
+}
+// Compile-time `feature()` flags (see script/features.mjs).
+const FEATURES = resolveFeatures();
+console.log(`   Features (${FEATURES.length}): ${FEATURES.join(", ")}`);
 // Shared defines for the bundler
 const define = {
     "process.env.NODE_ENV": '"production"',
@@ -380,6 +400,7 @@ const workerBundleResult = await Bun.build({
     sourcemap: "none",
     minify: { whitespace: true, syntax: false, identifiers: false },
     define,
+    features: FEATURES,
     conditions: ["browser"],
     external: ["electron", "chromium-bidi/*", "playwright-core/*"],
     plugins: [wasmEmbedPlugin, textEmbedPlugin, bundlePlugin],
@@ -402,6 +423,7 @@ const bundleResult = await Bun.build({
         ...define,
         "GIZZI_WORKER_CODE": JSON.stringify(workerCode),
     },
+    features: FEATURES,
     conditions: ["browser"],
     external: ["electron", "chromium-bidi/*", "playwright-core/*"],
     plugins: [wasmEmbedPlugin, textEmbedPlugin, bundlePlugin],
@@ -429,6 +451,12 @@ const { code: patchedBundleCode, patched } = patchEsmAsyncWrappers(bundleCode);
 if (patched > 0) {
     await Bun.write(BUNDLE_FILE, patchedBundleCode);
     console.log(`   ✓ Patched ${patched} async ESM wrappers (Bun circular-dep workaround)`);
+}
+if (args.bundleOnly) {
+    if (bunfigWasMoved && await Bun.file(BUNFIG_BACKUP).exists()) {
+        await rename(BUNFIG_BACKUP, BUNFIG_ORIG);
+    }
+    process.exit(0);
 }
 console.log("");
 console.log("🔨 Step 2: Compiling binaries...");

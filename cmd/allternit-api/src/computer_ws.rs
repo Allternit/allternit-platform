@@ -1573,6 +1573,13 @@ fn proxy_client() -> &'static reqwest::Client {
 
 /// ANY /api/v1/computers/:id/proxy/*path — forward to the guest port the
 /// owner opted into. Auth'd; every request is audit-logged.
+/// The forwarded Host must look loopback-shaped to the guest service: A6.1
+/// guards (e.g. the subscription gateway) reject any other Host, and reqwest
+/// would otherwise derive `mail.news...:port` from the upstream URL.
+pub(crate) fn upstream_guest_host(guest_port: u16) -> String {
+    format!("127.0.0.1:{}", guest_port)
+}
+
 async fn proxy_forward(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -1647,7 +1654,9 @@ async fn proxy_forward(
         url.push_str(query);
     }
 
-    let mut upstream = proxy_client().request(method.clone(), &url);
+    let mut upstream = proxy_client()
+        .request(method.clone(), &url)
+        .header(header::HOST, upstream_guest_host(config.port));
     for (name, value) in headers.iter() {
         if is_hop_by_hop(name.as_str()) {
             continue;
@@ -2229,10 +2238,18 @@ mod tests {
     }
 
     #[test]
+    fn proxy_forward_uses_loopback_shaped_guest_host() {
+        // The subscription gateway's A6.1 host guard only accepts loopback
+        // Hosts with no port or the arrived-on port; the forwarded Host must
+        // be 127.0.0.1:<guest_port>, never the Incus host the URL derives.
+        assert_eq!(upstream_guest_host(7788), "127.0.0.1:7788");
+        assert!(is_hop_by_hop("host"));
+    }
+
+    #[test]
     fn proxy_enable_validation() {
         // Valid cases.
-        assert_eq!(validate_proxy_config(8080, None).unwrap(), vec!["*"]);
-        assert_eq!(
+        assert_eq!(validate_proxy_config(8080, None).unwrap(), vec!["*"]);        assert_eq!(
             validate_proxy_config(1, Some(vec!["/api".to_string()])).unwrap(),
             vec!["/api"]
         );

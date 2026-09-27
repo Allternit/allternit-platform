@@ -841,6 +841,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn protected_router_mounted_once_under_api_v1() {
+        // main.rs nests its v1 routes under `/api/v1`; mounting the test
+        // helper there doubled the prefix and the UI got the SPA page back.
+        let temp = temp_dir("mount");
+        let state = test_app_state(&temp).await;
+        let app = Router::new()
+            .nest("/api/v1", webhook_trigger_protected_router())
+            .with_state(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/webhook-triggers")
+                    .extension(test_user("user-a", Some("org-a")))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[tokio::test]
     async fn rejects_invalid_execution_mode() {
         let temp = temp_dir("validation");
         let state = test_app_state(&temp).await;

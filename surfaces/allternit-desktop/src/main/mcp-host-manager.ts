@@ -12,6 +12,7 @@ import * as path from 'node:path';
 import * as child_process from 'node:child_process';
 import { app, BrowserWindow } from 'electron';
 import log from 'electron-log';
+import { spawnSidecar } from './process-lifeline.js';
 
 // ── Config shape (Claude Desktop compatible) ─────────────────────────────────
 
@@ -152,7 +153,9 @@ class McpHostManager {
     this.servers.set(id, entry);
 
     try {
-      const proc = child_process.spawn(config.command, config.args ?? [], {
+      // MCP only says a client *should* close stdin; not every server exits
+      // on EOF, so they get the same lifeline as other sidecars.
+      const proc = spawnSidecar(config.command, config.args ?? [], {
         env: { ...process.env, ...(config.env ?? {}) } as NodeJS.ProcessEnv,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,

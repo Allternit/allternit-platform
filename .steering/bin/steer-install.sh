@@ -77,6 +77,24 @@ EOF
   ok "added session-worktree + guard hooks to $KIMI_HOME/config.toml"
 fi
 
+if [ -f "$KIMI_HOME/config.toml" ] && grep -q 'guard-build\.sh' "$KIMI_HOME/config.toml"; then
+  skip "build guard already registered in $KIMI_HOME/config.toml"
+else
+  mkdir -p "$KIMI_HOME"; touch "$KIMI_HOME/config.toml"
+  cat >> "$KIMI_HOME/config.toml" <<'EOF'
+
+# Build guard: gizzi-code / Desktop builds, releases and installs require a
+# fresh scripts/build-state.sh run and no concurrent build of the same product
+# (AGENTS.md "one current build" commandment).
+[[hooks]]
+event = "PreToolUse"
+matcher = "Bash"
+command = "bash .steering/bin/guard-build.sh"
+timeout = 10
+EOF
+  ok "added build guard to $KIMI_HOME/config.toml"
+fi
+
 if [ -f "$KIMI_HOME/config.toml" ] && grep -q 'git-discipline-gate\.sh' "$KIMI_HOME/config.toml"; then
   skip "git-discipline gate already registered in $KIMI_HOME/config.toml"
 else
@@ -113,6 +131,7 @@ gate_entry = {"type": "command", "command": "bash .steering/bin/git-discipline-g
 commit_gate_entry = {"type": "command", "command": "bash .steering/bin/steer-pre-commit-gate.sh", "timeout": 600}
 wt_entry = {"type": "command", "command": "bash .steering/bin/session-worktree.sh", "timeout": 10}
 guard_entry = {"type": "command", "command": "bash .steering/bin/guard-main-checkout.sh", "timeout": 10}
+build_guard_entry = {"type": "command", "command": "bash .steering/bin/guard-build.sh", "timeout": 10}
 cfg = {"hooks": {}}
 if os.path.exists(path):
     with open(path) as f:
@@ -120,7 +139,8 @@ if os.path.exists(path):
     cfg.setdefault("hooks", {})
 changed = False
 for event, entry, matcher in (("Stop", stop_entry, None), ("PreToolUse", commit_gate_entry, "Bash|shell"),
-                              ("UserPromptSubmit", wt_entry, None), ("PreToolUse", guard_entry, "Bash|shell")):
+                              ("UserPromptSubmit", wt_entry, None), ("PreToolUse", guard_entry, "Bash|shell"),
+                              ("PreToolUse", build_guard_entry, "Bash|shell")):
     groups = cfg["hooks"].setdefault(event, [])
     if any(entry["command"].split()[-1] in h.get("command", "")
            for g in groups for h in g.get("hooks", [])):

@@ -24,7 +24,7 @@ import {
   bypassRefusedAsRootMessage,
   tuiPermissionModeEnv,
 } from './utils/permissions/tuiPermissionStartup'
-import { setCwdState, setOriginalCwd, setSessionTrustAccepted, switchSession } from './bootstrap/state'
+import { setCwdState, setIsInteractive, setOriginalCwd, setSessionTrustAccepted, switchSession } from './bootstrap/state'
 import { asSessionId } from './types/ids'
 import { Log } from '../../../shared/util/log'
 import { registerRailsPeer } from '../../../runtime/gizzi-core/services/railsPeer.js'
@@ -37,6 +37,11 @@ export async function tui(options?: any): Promise<void> {
   setOriginalCwd(currentCwd)
   setCwdState(currentCwd)
   setSessionTrustAccepted(true)
+  // The TUI is the interactive session. Without this every
+  // getIsNonInteractiveSession() check reads true (the state default) and
+  // silently disables interactive-only features: /context, file history,
+  // fork subagent, memory extraction, etc.
+  setIsInteractive(true)
 
   // Honor -s/--session (e.g. `gizzi bot chat <name>` launches the TUI on the
   // bot's pinned canonical session): point the ink session id at the pinned

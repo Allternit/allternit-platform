@@ -1111,7 +1111,12 @@ function layoutNode(
     // Same-generation check covers fresh-mounted (dirty) nodes during
     // virtual scroll — the dirty chain invokes them ≥2^depth times, first
     // call writes cache, rest hit: 105k visits → ~10k for 1593-node tree.
-    if (node._cN > 0 && (sameGen || !node.isDirty_)) {
+    // MEASURE calls only: entries hold w/h, not child positions. Children sit
+    // where the LAST layout pass put them, which the _hasL check above already
+    // covers; a layout-pass hit on any other entry skips STEP 5 and leaves
+    // them at positions computed for different inputs (the buddy bubble
+    // narrowing the prompt column left the footer painted at its old width).
+    if (node._cN > 0 && !performLayout && (sameGen || !node.isDirty_)) {
       const cIn = node._cIn!
       for (let i = 0; i < node._cN; i++) {
         const o = i * 8

@@ -1623,6 +1623,139 @@ async fn get_native_origin(headers: HeaderMap, Path(id): Path<String>) -> Respon
     .await
 }
 
+// ─── Server-initiated bot turns (routine_local_scheduler) ───────────────────
+//
+// A scheduled routine has no browser request behind it, so it cannot go
+// through the HTTP handlers above. These are the same gizzi calls the
+// handlers make; gizzi auth comes from the server's own env (GIZZI_PASSWORD),
+// never from a forwarded user token.
+
+/// Model for a server-initiated turn: the thread's stored model (what the
+/// user picked), else the bot's own `agents.provider/model`, else the
+/// platform default — a routine never silently changes the bot's brain.
+fn bot_turn_model(db: &DbHandle, session_id: &str, bot_id: &str) -> serde_json::Value {
+    let stored = db.get_session_metadata(session_id).ok().flatten();
+    let has_model = stored.as_ref().map_or(false, |bag| {
+        bag.get("model").map_or(false, |m| m.is_object()) || bag.get("modelID").is_some()
+    });
+    if has_model {
+        return select_model(stored.as_ref());
+    }
+    let agent_model = db.connect().ok().and_then(|conn| {
+        conn.query_row(
+            "SELECT provider, model FROM agents WHERE id = ?1",
+            params![bot_id],
+            |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+        )
+        .ok()
+    });
+    if let Some((Some(provider_id), Some(model_id))) = agent_model {
+        if !provider_id.is_empty() && !model_id.is_empty() {
+            return json!(GizziModelRef { provider_id, model_id, auth_profile_id: None });
+        }
+    }
+    select_model(None)
+}
+
+/// Create a bot's canonical chat session from the server side. Mirrors
+/// `create_session` for an agent-bound chat and stamps the same metadata the
+/// web client does, so every surface lists it as the bot's thread.
+pub(crate) async fn create_bot_session(db: &DbHandle, bot_id: &str, bot_name: &str) -> Result<String, String> {
+    create_bot_thread_session(db, bot_id, bot_name, "Bot Chat", true, None).await
+}
+
+/// Create a gizzi session for one of a bot's threads. `canonical` tags it
+/// `botCanonicalFor` (the bot's main thread); otherwise `botThreadOf`, like
+/// the web client's "+ New thread". `thread_id` links it to `bot_threads`.
+pub(crate) async fn create_bot_thread_session(
+    db: &DbHandle,
+    bot_id: &str,
+    bot_name: &str,
+    title: &str,
+    canonical: bool,
+    thread_id: Option<&str>,
+) -> Result<String, String> {
+    let client = gizzi_client(&HeaderMap::new());
+    let (provider_id, model_id) = AppConfig::load().default_model();
+    let mut payload = serde_json::Map::new();
+    payload.insert("title".to_string(), json!(title));
+    payload.insert("surface".to_string(), json!(normalize_surface_for_gizzi("chat")));
+    payload.insert("agentID".to_string(), json!(bot_id));
+    payload.insert("model".to_string(), json!(GizziModelRef { provider_id, model_id, auth_profile_id: None }));
+    if let Some(harness) = resolve_agent_harness(db, bot_id).await {
+        payload.insert("harness".to_string(), harness);
+    }
+    let session = gizzi_json::<GizziSessionInfo>(
+        &client,
+        reqwest::Method::POST,
+        "/v1/session",
+        Some(serde_json::Value::Object(payload)),
+    )
+    .await
+    .map_err(|_| "gizzi runtime refused session create".to_string())?;
+    let _ = db.set_session_origin_surface(&session.id, "chat");
+    let mut bag = json!({
+        "isBot": true,
+        "sessionMode": "agent",
+        "agentId": bot_id,
+        "agentName": bot_name,
+        "botName": bot_name,
+    });
+    bag[if canonical { "botCanonicalFor" } else { "botThreadOf" }] = json!(bot_id);
+    if let Some(id) = thread_id {
+        bag["threadId"] = json!(id);
+    }
+    let _ = db.set_session_metadata(&session.id, &bag);
+    Ok(session.id)
+}
+
+/// Run one user turn in a session and return the assistant's text.
+pub(crate) async fn send_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str, text: &str) -> Result<String, String> {
+    let client = gizzi_client(&HeaderMap::new());
+    let path = format!("/v1/session/{}/message", urlencoding::encode(session_id));
+    let payload = json!({
+        "parts": [{ "type": "text", "text": text }],
+        "model": bot_turn_model(db, session_id, bot_id),
+    });
+    match gizzi_json::<GizziMessage>(&client, reqwest::Method::POST, &path, Some(payload)).await {
+        Ok(message) => {
+            if let Some(error) = message.info.error.as_ref().and_then(|e| e.message.clone()) {
+                return Err(error);
+            }
+            Ok(extract_message_content(&message.parts))
+        }
+        Err(response) => {
+            let status = response.status();
+            let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+                .await
+                .map(|b| String::from_utf8_lossy(&b).to_string())
+                .unwrap_or_default();
+            Err(format!("gizzi turn failed ({status}): {body}"))
+        }
+    }
+}
+
+/// Add a user-role message to a session without running a turn (gizzi
+/// `noReply`). Used to seed a fresh context generation with the thread's
+/// checkpoint.
+pub(crate) async fn seed_session_message(session_id: &str, text: &str) -> Result<(), String> {
+    let client = gizzi_client(&HeaderMap::new());
+    let path = format!("/v1/session/{}/message", urlencoding::encode(session_id));
+    let payload = json!({ "parts": [{ "type": "text", "text": text }], "noReply": true });
+    gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(payload))
+        .await
+        .map(|_| ())
+        .map_err(|_| "gizzi refused the checkpoint message".to_string())
+}
+
+/// Whether a gizzi session still exists (a pinned thread can be deleted from
+/// another client; delivery then falls back instead of failing forever).
+pub(crate) async fn bot_session_exists(session_id: &str) -> bool {
+    let client = gizzi_client(&HeaderMap::new());
+    let path = format!("/v1/session/{}", urlencoding::encode(session_id));
+    gizzi_json::<GizziSessionInfo>(&client, reqwest::Method::GET, &path, None).await.is_ok()
+}
+
 #[cfg(test)]
 mod surface_normalize_tests {
     use super::normalize_surface_for_gizzi;

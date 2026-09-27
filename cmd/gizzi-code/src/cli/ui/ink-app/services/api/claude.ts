@@ -1,4 +1,8 @@
 // @ts-nocheck
+import {
+  isLocalProviderModel,
+  queryLocalModelWithStreaming,
+} from './localModel.js'
 import type {
   BetaContentBlock,
   BetaContentBlockParam,
@@ -711,7 +715,7 @@ export async function queryModelWithoutStreaming({
   // logAPISuccessAndDuration gets called (which happens after all yields)
   let assistantMessage: AssistantMessage | undefined
   for await (const message of withStreamingVCR(messages, async function* () {
-    yield* queryModel(
+    yield* queryModelRouted(
       messages,
       systemPrompt,
       thinkingConfig,
@@ -754,7 +758,7 @@ export async function* queryModelWithStreaming({
   void
 > {
   return yield* withStreamingVCR(messages, async function* () {
-    yield* queryModel(
+    yield* queryModelRouted(
       messages,
       systemPrompt,
       thinkingConfig,
@@ -763,6 +767,30 @@ export async function* queryModelWithStreaming({
       options,
     )
   })
+}
+
+/**
+ * Models configured as gizzi.json providers ("openrouter/…", "omlx/…") go to
+ * that provider's OpenAI-compatible endpoint; everything else to the
+ * Anthropic API. Routing here (not only in the main loop's query deps) keeps
+ * side calls — away recap, memory extraction, compaction, companion — working
+ * on non-Anthropic setups instead of failing with "Not logged in".
+ */
+async function* queryModelRouted(
+  ...args: Parameters<typeof queryModel>
+): ReturnType<typeof queryModel> {
+  const [messages, systemPrompt, , tools, signal, options] = args
+  if (isLocalProviderModel(options.model)) {
+    yield* queryLocalModelWithStreaming({
+      messages,
+      systemPrompt,
+      tools,
+      signal,
+      options,
+    })
+    return
+  }
+  yield* queryModel(...args)
 }
 
 /**

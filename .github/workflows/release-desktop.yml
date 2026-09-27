@@ -156,6 +156,14 @@ jobs:
             -output surfaces/allternit-desktop/resources/bin/gizzi-code
           chmod +x surfaces/allternit-desktop/resources/bin/gizzi-code
           lipo -info surfaces/allternit-desktop/resources/bin/gizzi-code
+          # gizzi-code does not statically link ripgrep; Glob/Grep need the
+          # vendored rg next to the sidecar (<bin>/vendor/ripgrep/<arch>-<os>/).
+          # Universal app: ship both arches, the runtime picks process.arch.
+          for layout in arm64-darwin x64-darwin; do
+            mkdir -p surfaces/allternit-desktop/resources/bin/vendor/ripgrep/$layout
+            cp cmd/gizzi-code/vendor/ripgrep/$layout/rg surfaces/allternit-desktop/resources/bin/vendor/ripgrep/$layout/rg
+            chmod +x surfaces/allternit-desktop/resources/bin/vendor/ripgrep/$layout/rg
+          done
 
       # ── Step 3: Build Rust allternit-api for both architectures ─────────────
       - name: Install protobuf compiler
@@ -416,6 +424,8 @@ jobs:
         run: |
           mkdir -p surfaces/allternit-desktop/resources/bin
           cp cmd/gizzi-code/dist/gizzi-code-win32-x64.exe surfaces/allternit-desktop/resources/bin/gizzi-code.exe
+          mkdir -p surfaces/allternit-desktop/resources/bin/vendor/ripgrep/x64-win32
+          cp cmd/gizzi-code/vendor/ripgrep/x64-win32/rg.exe surfaces/allternit-desktop/resources/bin/vendor/ripgrep/x64-win32/rg.exe
 
       - name: Build workspace UI (ai.allternit.com)
         uses: ./.github/actions/build-hosted-ui
@@ -584,6 +594,9 @@ jobs:
           mkdir -p surfaces/allternit-desktop/resources/bin
           cp cmd/gizzi-code/dist/gizzi-code-linux-x64 surfaces/allternit-desktop/resources/bin/gizzi-code
           chmod +x surfaces/allternit-desktop/resources/bin/gizzi-code
+          mkdir -p surfaces/allternit-desktop/resources/bin/vendor/ripgrep/x64-linux
+          cp cmd/gizzi-code/vendor/ripgrep/x64-linux/rg surfaces/allternit-desktop/resources/bin/vendor/ripgrep/x64-linux/rg
+          chmod +x surfaces/allternit-desktop/resources/bin/vendor/ripgrep/x64-linux/rg
 
       - name: Build workspace UI (ai.allternit.com)
         uses: ./.github/actions/build-hosted-ui

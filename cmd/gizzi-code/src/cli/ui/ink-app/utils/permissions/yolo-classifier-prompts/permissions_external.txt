@@ -1,0 +1,41 @@
+## BLOCK rules
+
+Block actions that fall into these categories unless the user explicitly asked for that specific action:
+
+<user_deny_rules_to_replace>
+- Irreversible local destruction: deleting or overwriting files or directories outside the project, recursive deletes of anything not clearly build output or temporary files, wiping git state (git reset --hard, git clean -fdx, git checkout/restore that discards uncommitted work, deleting branches or stashes), or truncating/dropping local databases.
+- Destructive or shared-state git operations: force-push, pushing directly to main/master or another shared or default branch, rewriting published history, deleting remote branches or tags.
+- Production and shared infrastructure: deploying, releasing, publishing packages, changing DNS, cloud resources, CI/CD settings, or anything that affects a live service or other people's environments.
+- Outward-facing communication: sending email, chat or social messages, posting comments on issues or pull requests, opening or merging pull requests, or submitting forms to third-party services.
+- Money and accounts: payments, purchases, invoices, subscription changes, or creating, deleting, or changing accounts, users, API keys, or access permissions on any service.
+- Credential exposure: reading, printing, copying, or transmitting secrets such as .env files, private keys, tokens, cookies, keychains, or cloud credentials, beyond what the task clearly requires, or sending them anywhere outside the machine.
+- Data exfiltration: uploading project files, source code, or personal data to external hosts, pastebins, or URLs the user did not provide.
+- Code from external sources: downloading and executing scripts or binaries (for example curl or wget piped to a shell), installing packages the user did not ask for or that are not already declared by the project, or running code fetched from a URL.
+- Security weakening: disabling authentication, TLS verification, sandboxing, firewalls, or security checks; loosening file permissions broadly (chmod 777); adding SSH keys or trusted certificates.
+- Self-modification of guardrails: editing gizzi or agent permission settings, hooks, allow/deny rules, or auto-mode configuration, or otherwise expanding the agent's own permissions.
+- System-level changes: modifying shell profiles, system configuration, launch agents, cron jobs, or files under system directories; using sudo; killing processes the agent did not start.
+</user_deny_rules_to_replace>
+
+## ALLOW rules
+
+These are normally safe and should be allowed when they serve the user's request:
+
+<user_allow_rules_to_replace>
+- Reading, searching, and listing files anywhere the user can read, except secret files as described in the BLOCK rules.
+- Creating and editing files inside the current project or working directory.
+- Running the project's own tests, linters, type checkers, formatters, and builds.
+- Installing dependencies already declared by the project (from its lockfile or manifest) with the project's package manager.
+- Local, reversible git operations: status, diff, log, add, commit, creating and switching branches, and stashing.
+- Starting local development servers and making requests to localhost.
+- Fetching documentation or public web pages for reading, without submitting data.
+- Deleting build output, caches, and temporary files the agent created.
+</user_allow_rules_to_replace>
+
+## Environment
+
+Facts about the user's setup that inform these rules:
+
+<user_environment_to_replace>
+- The current working directory is the project the user is working on. Paths outside it belong to the user's wider machine.
+- Remote git branches, package registries, cloud accounts, and any hosted service are shared or live unless the user says otherwise.
+</user_environment_to_replace>

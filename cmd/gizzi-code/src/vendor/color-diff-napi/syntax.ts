@@ -7,6 +7,8 @@
  * RawAnsi paths in StructuredDiff / HighlightedCode work in compiled builds.
  */
 
+import { rgbSgr } from '@/shared/util/chalk'
+
 export type TokenType =
   | 'keyword'
   | 'string'
@@ -329,6 +331,9 @@ export type DiffPalette = {
   removed: Rgb
   addedDim: Rgb
   removedDim: Rgb
+  /** Gutter marker/number colors on tinted rows (theme diff*Word). */
+  addedWord: Rgb
+  removedWord: Rgb
   /** true → emit SGR palette colors instead of truecolor (dark-ansi/light-ansi themes) */
   ansi: boolean
   tokens: TokenPalette
@@ -348,11 +353,11 @@ export function mapThemeName(themeName: string): {
     // Values mirror src/cli/ui/ink-app/utils/theme.ts diff backgrounds.
     ...(lightTokens
       ? daltonized
-        ? { added: [153, 204, 255] as Rgb, removed: [255, 204, 204] as Rgb, addedDim: [209, 231, 253] as Rgb, removedDim: [255, 233, 233] as Rgb }
-        : { added: [105, 219, 124] as Rgb, removed: [255, 168, 180] as Rgb, addedDim: [199, 225, 203] as Rgb, removedDim: [253, 210, 216] as Rgb }
+        ? { added: [153, 204, 255] as Rgb, removed: [255, 204, 204] as Rgb, addedDim: [209, 231, 253] as Rgb, removedDim: [255, 233, 233] as Rgb, addedWord: [51, 102, 204] as Rgb, removedWord: [153, 51, 51] as Rgb }
+        : { added: [105, 219, 124] as Rgb, removed: [255, 168, 180] as Rgb, addedDim: [199, 225, 203] as Rgb, removedDim: [253, 210, 216] as Rgb, addedWord: [47, 157, 68] as Rgb, removedWord: [209, 69, 75] as Rgb }
       : daltonized
-        ? { added: [0, 68, 102] as Rgb, removed: [102, 0, 0] as Rgb, addedDim: [62, 81, 91] as Rgb, removedDim: [62, 44, 44] as Rgb }
-        : { added: [34, 92, 43] as Rgb, removed: [122, 41, 54] as Rgb, addedDim: [71, 88, 74] as Rgb, removedDim: [105, 72, 77] as Rgb }),
+        ? { added: [0, 68, 102] as Rgb, removed: [102, 0, 0] as Rgb, addedDim: [62, 81, 91] as Rgb, removedDim: [62, 44, 44] as Rgb, addedWord: [0, 119, 179] as Rgb, removedWord: [179, 0, 0] as Rgb }
+        : { added: [34, 92, 43] as Rgb, removed: [122, 41, 54] as Rgb, addedDim: [71, 88, 74] as Rgb, removedDim: [105, 72, 77] as Rgb, addedWord: [56, 166, 96] as Rgb, removedWord: [179, 89, 107] as Rgb }),
   }
   const syntaxThemeName = lightTokens ? 'light-plus' : 'dark-plus'
   return { palette, syntaxThemeName }
@@ -365,19 +370,22 @@ export function mapThemeName(themeName: string): {
 export const ANSI_RESET = '\x1b[0m'
 const SGR_DIM = '\x1b[2m'
 
-export function hexToRgbString(hex: string): string {
-  const int = parseInt(hex.replace('#', ''), 16)
-  return `${(int >> 16) & 255};${(int >> 8) & 255};${int & 255}`
-}
-
 function fgFor(type: TokenType, tokens: TokenPalette, ansi: boolean): string {
   const hex = tokens[type] ?? tokens.plain
   if (!hex) return ''
-  return ansi ? `\x1b[${type === 'comment' ? '32' : '37'}m` : `\x1b[38;2;${hexToRgbString(hex)}m`
+  if (ansi) return `\x1b[${type === 'comment' ? '32' : '37'}m`
+  const int = parseInt(hex.replace('#', ''), 16)
+  // Follows the terminal's color level (256 colors in Apple Terminal before
+  // macOS 26, truecolor elsewhere) like the rest of the TUI.
+  return rgbSgr((int >> 16) & 255, (int >> 8) & 255, int & 255)
+}
+
+export function fgAnsi(rgb: Rgb, ansi: boolean, fallback: string): string {
+  return ansi ? fallback : rgbSgr(rgb[0], rgb[1], rgb[2])
 }
 
 export function bgAnsi(rgb: Rgb, ansi: boolean): string {
-  return ansi ? '\x1b[42m' : `\x1b[48;2;${rgb[0]};${rgb[1]};${rgb[2]}m`
+  return ansi ? '\x1b[42m' : rgbSgr(rgb[0], rgb[1], rgb[2], true)
 }
 
 export type StyledSpan = { text: string; fg?: string; bg?: string; dim?: boolean }
