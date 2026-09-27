@@ -5060,7 +5060,11 @@ export function REPL({
               {isFullscreenEnvEnabled() && <PromptInputQueuedCommands />}
             </>} bottom={<Box flexDirection={feature('BUDDY') && companionNarrow ? 'column' : 'row'} width="100%" alignItems={feature('BUDDY') && companionNarrow ? undefined : 'flex-end'}>
               {feature('BUDDY') && companionNarrow && isFullscreenEnvEnabled() && companionVisible ? <CompanionSprite /> : null}
-              <Box flexDirection="column" flexGrow={1}>
+              {/* Row mode: basis 0 so the prompt column takes exactly the width
+                  the companion sprite/bubble leave. An auto basis comes from its
+                  width="100%" children, which resolve against the previous width,
+                  so the column never narrows and the bubble paints over it. */}
+              <Box flexDirection="column" flexGrow={1} flexBasis={feature('BUDDY') && companionNarrow ? undefined : 0}>
                 {permissionStickyFooter}
                 {/* Immediate local-jsx commands (/btw, /sandbox, /assistant,
                   /issue) render here, NOT inside scrollable. They stay mounted

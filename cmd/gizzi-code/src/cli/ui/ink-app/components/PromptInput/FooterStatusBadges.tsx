@@ -21,7 +21,7 @@ export function FooterStatusBadges({ messages }: { messages?: import('../../type
   return (
     <Box flexDirection="column" alignItems="flex-end" flexShrink={1}>
       <Box gap={1} flexShrink={1}>
-        <Text dimColor wrap="truncate">{cwdDisplay}</Text>
+        <Box flexShrink={0}><Text dimColor>{cwdDisplay}</Text></Box>
         <Text color="gizzi" wrap="truncate-start">{metrics.model}</Text>
       </Box>
       <Text dimColor wrap="truncate">{contextText}</Text>
