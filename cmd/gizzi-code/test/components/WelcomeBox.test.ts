@@ -39,6 +39,18 @@ describe("header mark", () => {
   })
 })
 
+describe("GIZZI CODE wordmark", () => {
+  test("is three rows tall, fixed width, with one coral core", async () => {
+    const { wordmarkRows, WORDMARK_WIDTH } = await import("../../src/cli/ui/ink-app/components/welcomeArt")
+    const rows = wordmarkRows()
+    expect(rows).toHaveLength(3)
+    expect(WORDMARK_WIDTH).toBe(51)
+    for (const row of rows) expect(row.map(([t]) => t).join("")).toHaveLength(51)
+    const coral = rows.flat().filter(([, fg, bg]) => fg === CORAL || bg === CORAL)
+    expect(coral.map(([t]) => t).join("")).toHaveLength(1)
+  })
+})
+
 describe("gizzi buddy sprite", () => {
   test("every pose fills the 12x5 companion slot", async () => {
     const { gizziBuddyRows, GIZZI_BUDDY_WIDTH } = await import("../../src/cli/ui/ink-app/buddy/gizziSprite")

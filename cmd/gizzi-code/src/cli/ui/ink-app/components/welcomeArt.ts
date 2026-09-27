@@ -38,6 +38,35 @@ export function headerMarkRows({ blinking }: { blinking: boolean }): ArtRow[] {
 }
 
 /**
+ * The approved GIZZI CODE block wordmark (Allternit Assets/Brand/Gizzi/
+ * wordmark/gizzi-code-wordmark.svg): A:// matrix letterforms, one-block
+ * letter gap, three-block word gap, coral core in the G. One block per pixel
+ * with half blocks, so it is three rows tall, matching the header mark.
+ */
+const WORDMARK_LETTERS: Record<string, string[]> = {
+  G: ['.XXX.', 'X....', 'X.CXX', 'X...X', '.XXX.'],
+  I: ['XXX', '.X.', '.X.', '.X.', 'XXX'],
+  Z: ['XXXXX', '...X.', '..X..', '.X...', 'XXXXX'],
+  C: ['.XXXX', 'X....', 'X....', 'X....', '.XXXX'],
+  O: ['.XXX.', 'X...X', 'X...X', 'X...X', '.XXX.'],
+  D: ['XXXX.', 'X...X', 'X...X', 'X...X', 'XXXX.'],
+  E: ['XXXXX', 'X....', 'XXXX.', 'X....', 'XXXXX'],
+}
+const wordPixels = (word: string) =>
+  [0, 1, 2, 3, 4].map(r => word.split('').map(ch => WORDMARK_LETTERS[ch]![r]).join('.'))
+// Blank top pixel row: the letters line up with the mark's head, 6 rows = 3 cells.
+const WORDMARK_PIXELS = ['', ...[0, 1, 2, 3, 4].map(r => wordPixels('GIZZI')[r] + '...' + wordPixels('CODE')[r])].map(
+  (row, _, all) => row.padEnd(all[1]!.length, '.'),
+)
+
+export const WORDMARK_WIDTH = WORDMARK_PIXELS[0]!.length
+
+/** GIZZI CODE wordmark rows: ink in the theme text color, coral core. */
+export function wordmarkRows(): ArtRow[] {
+  return renderPixelArt(WORDMARK_PIXELS, p => (p === 'X' ? 'text' : p === 'C' ? CORAL : undefined))
+}
+
+/**
  * Two pixel rows per terminal cell with half blocks. `colorOf` maps a pixel
  * char to a theme color (undefined = empty). An optional text `mark` is
  * drawn bold coral on the face panel at a cell row/column.
