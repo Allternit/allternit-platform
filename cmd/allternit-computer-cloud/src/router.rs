@@ -674,7 +674,9 @@ mod tests {
             ),
         }));
         let driver = IncusDriver::new(Arc::new(substrate), "127.0.0.1");
-        let host = driver.pool().hosts()[0].vnc_host.clone();
+        // Single-host pools are keyed by the synthetic name "legacy"; the URL
+        // must use the driver-level fallback host, not that name.
+        assert_eq!(driver.pool().hosts()[0].vnc_host, "legacy");
         let router = SubstrateRouter::new(Some(Arc::new(driver)), None);
         let handle = ExecutionHandle {
             id: ExecutionId::new(),
@@ -688,11 +690,13 @@ mod tests {
 
         // Before the forwarding fix this hit the trait default and 501'd with
         // NotSupported{"guest service url"}; it must reach the Incus driver.
+        // The URL must be the reachable fallback host ("127.0.0.1"), never
+        // the synthetic pool name "legacy".
         let url = router
             .guest_service_url(&handle, 6010)
             .await
             .expect("router forwards guest_service_url to the substrate driver");
-        assert_eq!(url, format!("http://{host}:36010"));
+        assert_eq!(url, "http://127.0.0.1:36010");
     }
 
     #[tokio::test]

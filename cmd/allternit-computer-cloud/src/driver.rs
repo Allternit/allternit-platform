@@ -301,6 +301,19 @@ impl IncusDriver {
         self.pool.host_for_handle(handle).substrate.clone()
     }
 
+    /// Hostname clients should use to reach proxy/VNC ports for this host.
+    /// Single-host pools built by `from_url` carry the synthetic pool name
+    /// ("legacy") as the host url, and `IncusHost::new` derives vnc_host from
+    /// that name — which clients cannot resolve. Fall back to the
+    /// driver-level vnc host (e.g. INCUS_VNC_HOST) in that case.
+    fn reachable_host(&self, host: &IncusHost) -> String {
+        if host.url.starts_with("http://") || host.url.starts_with("https://") {
+            host.vnc_host.clone()
+        } else {
+            self.vnc_host.clone()
+        }
+    }
+
     fn bot_id_from_tenant(tenant: &TenantId) -> String {
         tenant
             .0
@@ -568,11 +581,7 @@ impl ExecutionDriver for IncusDriver {
             .ok_or_else(|| DriverError::InternalError {
                 message: format!("no VNC port allocated for {}", native_id),
             })?;
-        let vnc_host = self
-            .pool
-            .host_for_handle(handle)
-            .vnc_host
-            .clone();
+        let vnc_host = self.reachable_host(&self.pool.host_for_handle(handle));
         Ok(Some(DesktopEndpoint {
             url: format!("tcp://{}:{}", vnc_host, port),
             protocol: DesktopProtocol::Vnc,
@@ -872,18 +881,19 @@ impl ExecutionDriver for IncusDriver {
     ) -> Result<String, DriverError> {
         let native_id = native_id(handle)?;
         let host = self.pool.host_for_handle(handle);
+        let reachable = self.reachable_host(&host);
         // Reuse an existing proxy device for this guest port when one exists.
         if let Some(port) = self
             .existing_proxy_port(&host.substrate, native_id, guest_port)
             .await
         {
-            return Ok(format!("http://{}:{}", host.vnc_host, port));
+            return Ok(format!("http://{}:{}", reachable, port));
         }
         let device_name = format!("svc{}", guest_port);
         let port = self
             .expose_port_on(&host.substrate, native_id, &device_name, guest_port)
             .await?;
-        Ok(format!("http://{}:{}", host.vnc_host, port))
+        Ok(format!("http://{}:{}", reachable, port))
     }
 }
 
@@ -1243,13 +1253,13 @@ mod phase_two_http_tests {
                 "svc6010": {"type":"proxy","listen":"tcp:0.0.0.0:36010","connect":"tcp:127.0.0.1:6010"}
             }}}),
         )]);
-        // The reachable host is derived from the substrate URL config.
-        let host = driver.pool.hosts()[0].vnc_host.clone();
+        // The reachable host comes from the driver-level fallback, not the
+        // synthetic single-host pool name ("legacy").
         let url = driver
             .guest_service_url(&handle(), 6010)
             .await
             .expect("guest service url");
-        assert_eq!(url, format!("http://{host}:36010"));
+        assert_eq!(url, "http://127.0.0.1:36010");
         let calls = calls.lock().unwrap();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].0, reqwest::Method::GET);
@@ -1267,12 +1277,11 @@ mod phase_two_http_tests {
             ),
             (200, json!({})),
         ]);
-        let host = driver.pool.hosts()[0].vnc_host.clone();
         let url = driver
             .guest_service_url(&handle(), 6010)
             .await
             .expect("guest service url");
-        assert_eq!(url, format!("http://{host}:30000"));
+        assert_eq!(url, "http://127.0.0.1:30000");
         let calls = calls.lock().unwrap();
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[1].0, reqwest::Method::PATCH);
