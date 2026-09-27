@@ -8,14 +8,18 @@ describe("WelcomeBox", () => {
   })
 })
 
-describe("header lockup", () => {
-  test("reserves the lockup image in image-capable terminals, typed name elsewhere", async () => {
-    const { setInlineImageProtocolForTest, inlineImagePlaceholder } = await import("../../src/cli/ui/ink-app/ink/inlineImage")
-    const { GIZZI_LOCKUP_ASPECT } = await import("../../src/cli/ui/ink-app/components/gizziLockupImage")
-    setInlineImageProtocolForTest("kitty")
-    expect(inlineImagePlaceholder("t-lockup", "AAAA", Math.round(GIZZI_LOCKUP_ASPECT * 2))).toHaveLength(23)
+describe("header images", () => {
+  test("mark block reserves cols x rows; wordmark one row; nothing without image support", async () => {
+    const { setInlineImageProtocolForTest, inlineImageBlock, inlineImagePlaceholder, inlineImageCellOutput } = await import("../../src/cli/ui/ink-app/ink/inlineImage")
+    const { stringWidth } = await import("../../src/cli/ui/ink-app/ink/stringWidth")
+    setInlineImageProtocolForTest("iterm")
+    const block = inlineImageBlock("t-mark", "AAAA", 6, 3)!
+    expect(block).toHaveLength(3)
+    for (const row of block) expect(stringWidth(row)).toBe(6)
+    expect(inlineImageCellOutput(block[0]![0]!)).toContain("width=6;height=3;")
+    expect(inlineImagePlaceholder("t-wm", "AAAA", 20)!).toHaveLength(20)
     setInlineImageProtocolForTest(null)
-    expect(inlineImagePlaceholder("t-lockup-none", "AAAA", 23)).toBeNull()
+    expect(inlineImageBlock("t-mark-none", "AAAA", 6, 3)).toBeNull()
     setInlineImageProtocolForTest(undefined)
   })
 })

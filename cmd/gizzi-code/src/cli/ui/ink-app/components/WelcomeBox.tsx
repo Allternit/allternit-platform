@@ -1,11 +1,12 @@
 // @ts-nocheck
 /**
- * Startup header, sized like Claude Code's: three lines of text. The first is
- * the GIZZI CODE lockup (Brand/Gizzi/lockup: mark + wordmark) as an image
- * scaled to one text row, then the version. Terminals that can't show inline
- * images (Apple Terminal, tmux) get the name set as type instead: bold caps
- * with the G in coral for the wordmark's core. Then the model and the working
- * directory. No box, no animation.
+ * Startup header, sized like Claude Code's. In terminals that show inline
+ * images (iTerm2, WezTerm, Ghostty, Kitty): the Gizzi mark (Brand/Gizzi/mark)
+ * three rows tall on the left; beside it, the GIZZI CODE wordmark
+ * (Brand/Gizzi/wordmark) one text row tall with the version, then the model
+ * and the working directory. Elsewhere (Apple Terminal, tmux) the three text
+ * lines alone, with the name set as type: bold caps, coral G for the
+ * wordmark's core. No box, no animation.
  */
 import * as React from 'react'
 import { Box, Text } from '../ink'
@@ -13,35 +14,47 @@ import { useMainLoopModel } from '../hooks/useMainLoopModel'
 import { renderModelSetting } from '../utils/model/model'
 import { getLogoDisplayData } from '../utils/logoV2Utils'
 import { useTheme } from './design-system/ThemeProvider'
-import { inlineImagePlaceholder } from '../ink/inlineImage'
+import { inlineImageBlock, inlineImagePlaceholder } from '../ink/inlineImage'
 import { CORAL } from './welcomeArt'
 import {
-  GIZZI_LOCKUP_ASPECT,
-  GIZZI_LOCKUP_PNG_DARK_INK,
-  GIZZI_LOCKUP_PNG_LIGHT_INK,
+  GIZZI_MARK_ASPECT,
+  GIZZI_MARK_PNG_DARK_INK,
+  GIZZI_MARK_PNG_LIGHT_INK,
+  GIZZI_WORDMARK_ASPECT,
+  GIZZI_WORDMARK_PNG_DARK_INK,
+  GIZZI_WORDMARK_PNG_LIGHT_INK,
 } from './gizziLockupImage'
 
-// A terminal cell is about twice as tall as wide, so a one-row image spans
-// aspect * 2 columns.
-const LOCKUP_COLS = Math.round(GIZZI_LOCKUP_ASPECT * 2)
+// A terminal cell is about twice as tall as wide: an image `rows` tall spans
+// aspect * rows * 2 columns.
+const MARK_ROWS = 3
+const MARK_COLS = Math.round(GIZZI_MARK_ASPECT * MARK_ROWS * 2)
+const WORDMARK_COLS = Math.round(GIZZI_WORDMARK_ASPECT * 2)
 
 export function WelcomeBox(): React.ReactNode {
   const model = useMainLoopModel()
   const modelDisplayName = renderModelSetting(model)
   const { version, cwd } = getLogoDisplayData()
   const [themeName] = useTheme()
-  const lightTheme = String(themeName).startsWith('light')
-  const lockup = inlineImagePlaceholder(
-    lightTheme ? 'gizzi-lockup-dark-ink' : 'gizzi-lockup-light-ink',
-    lightTheme ? GIZZI_LOCKUP_PNG_DARK_INK : GIZZI_LOCKUP_PNG_LIGHT_INK,
-    LOCKUP_COLS,
+  const light = String(themeName).startsWith('light')
+  const ink = light ? 'dark-ink' : 'light-ink'
+  const mark = inlineImageBlock(
+    `gizzi-mark-${ink}`,
+    light ? GIZZI_MARK_PNG_DARK_INK : GIZZI_MARK_PNG_LIGHT_INK,
+    MARK_COLS,
+    MARK_ROWS,
+  )
+  const wordmark = inlineImagePlaceholder(
+    `gizzi-wordmark-${ink}`,
+    light ? GIZZI_WORDMARK_PNG_DARK_INK : GIZZI_WORDMARK_PNG_LIGHT_INK,
+    WORDMARK_COLS,
   )
 
-  return (
-    <Box flexDirection="column" paddingLeft={1} marginBottom={1}>
+  const text = (
+    <Box flexDirection="column" flexShrink={1}>
       <Text>
-        {lockup !== null ? (
-          <Text>{lockup}</Text>
+        {wordmark !== null ? (
+          <Text>{wordmark}</Text>
         ) : (
           <>
             <Text bold={true} color={CORAL}>G</Text>
@@ -52,6 +65,17 @@ export function WelcomeBox(): React.ReactNode {
       </Text>
       <Text dimColor={true} wrap="truncate-end">{modelDisplayName}</Text>
       <Text dimColor={true} wrap="truncate-start">{cwd}</Text>
+    </Box>
+  )
+
+  return (
+    <Box flexDirection="row" paddingLeft={1} marginBottom={1}>
+      {mark !== null && (
+        <Box flexDirection="column" flexShrink={0} marginRight={2}>
+          {mark.map((row, i) => <Text key={i}>{row}</Text>)}
+        </Box>
+      )}
+      {text}
     </Box>
   )
 }

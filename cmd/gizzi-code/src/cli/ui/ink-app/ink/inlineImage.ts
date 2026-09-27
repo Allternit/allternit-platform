@@ -80,6 +80,18 @@ export function inlineImagePlaceholder(key: string, pngBase64: string, cols: num
   return head + INLINE_IMAGE_FILLER.repeat(cols - 1)
 }
 
+/**
+ * Placeholder rows for a multi-row image: the first row starts with the head
+ * (the terminal draws the whole `cols` x `rows` image from there); every other
+ * cell is a filler so later rows skip the image's cells without printing.
+ * Null when the terminal can't show images.
+ */
+export function inlineImageBlock(key: string, pngBase64: string, cols: number, rows: number): string[] | null {
+  const first = inlineImagePlaceholder(key, pngBase64, cols, rows)
+  if (first === null) return null
+  return [first, ...Array.from({ length: rows - 1 }, () => INLINE_IMAGE_FILLER.repeat(cols))]
+}
+
 /** What the writer emits for a cell char: the image/cursor sequence, or the char itself. */
 export function inlineImageCellOutput(char: string): string {
   if (char === INLINE_IMAGE_FILLER) return CUF
