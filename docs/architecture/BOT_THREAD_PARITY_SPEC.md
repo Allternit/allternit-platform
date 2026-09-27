@@ -459,11 +459,11 @@ checked live in a main Desktop build (one-current-build rule).
 - [x] P0.3 Edit bot keeps the bot (B3) — platform #794 (config merge) + allternit-ai #105 (isBot)
 - [x] P0.4 Computer window loads the real bot (B4) — allternit-ai #105
 - [x] P0.5 Webhook triggers reachable (B5) — platform #794
-- [~] P0.6 Live verify P0.1–P0.5 in the next main Desktop build (Agent B building from ai 9cdebeeb / platform b2a71fd67)
+- [x] P0.6 Live verify P0.1–P0.5 in the next main Desktop build (Agent B building from ai 9cdebeeb / platform b2a71fd67)
 
 ### P1 — Converge (no duplicate systems)
-- [~] P1.1 (platform #796, allternit-ai #109) Routines: retire `bot-routine.service.ts` + `use-routine-timer.ts`; Bot Home, rail, composer, team import, presence read/write Automation Tasks (`agent_id`); one-time import of browser-stored routines; monitor mode as an Automation routine config using `shell.exec` (B9)
-- [~] P1.2 (same PRs) Canonical thread pin stored on the bot (server), not localStorage
+- [x] P1.1 (platform #796, allternit-ai #109; live-verified on b3914) Routines: retire `bot-routine.service.ts` + `use-routine-timer.ts`; Bot Home, rail, composer, team import, presence read/write Automation Tasks (`agent_id`); one-time import of browser-stored routines; monitor mode as an Automation routine config using `shell.exec` (B9)
+- [x] P1.2 (same PRs) Canonical thread pin stored on the bot (server), not localStorage
 - [ ] P1.3 Bot memory on server scopes (`/cowork/memory`, principal = bot); `bot-memory-store.ts` becomes a cache
 - [ ] P1.4 One model source per thread/bot; unavailable models dimmed with the reason (B7)
 - [ ] P1.5 Gizzi (and any pre-atomic bot) gets its computer on first use (B8)
@@ -475,21 +475,21 @@ checked live in a main Desktop build (one-current-build rule).
 - [x] P2.2 Eoj signed off 2026-09-27 ("I love the mock up"); mocks are the acceptance screenshots for P3
 
 ### P3 — Thread object + Threads UI
-- [ ] P3.1 `bot_threads` + `bot_thread_sessions` tables and API; kinds standing/task; incognito flag
-- [ ] P3.2 Migrate existing bot sessions into threads (generation 1)
+- [x] P3.1 (#797) `bot_threads` + `bot_thread_sessions` tables and API; kinds standing/task; incognito flag
+- [x] P3.2 (#797, lazy sync) Migrate existing bot sessions into threads (generation 1)
 - [ ] P3.3 Per-model context budget → checkpoint → new generation (handoff); compaction within a generation
-- [ ] P3.4 Thread status + `thread.*` events on the ledger; per-thread operational state rolled up per bot
-- [ ] P3.5 Threads panel (groups, rows, k/n ring, artifact badge)
-- [ ] P3.6 Thread view (breadcrumb, todo card, rip dividers, provenance, steer composer, model pill)
-- [ ] P3.7 Thread inspector (Activity, Subagents, Artifacts, Memory, Computer, Details)
-- [ ] P3.8 Rail regrouping + **Bots launch** (no project open: "What should the team work on?" composer to Al, team strip with live status, projects with waiting/working counts, standing threads, first-run create-bot block) and **Project home** (inside a project) replace "The roster" and Bot Hub (B10). No template gallery, no Chat/Cowork/Bots dock on the Bots launch
+- [x] P3.4 (#797, #798) Thread status + `thread.*` events on the ledger; per-thread operational state rolled up per bot
+- [x] P3.5 (allternit-ai #114) Threads panel (groups, rows, k/n ring, artifact badge)
+- [~] P3.6 (allternit-ai #114: bar, rip, plan card; provenance + steer placeholder + model pill next) Thread view (breadcrumb, todo card, rip dividers, provenance, steer composer, model pill)
+- [x] P3.7 (allternit-ai #118) Thread inspector (Activity, Subagents, Artifacts, Memory, Computer, Details)
+- [~] P3.8 (platform #799, allternit-ai #121: Bots launch + project migration; rail regrouping + Project home coordinator chat + bot project page on server next) Rail regrouping + **Bots launch** (no project open: "What should the team work on?" composer to Al, team strip with live status, projects with waiting/working counts, standing threads, first-run create-bot block) and **Project home** (inside a project) replace "The roster" and Bot Hub (B10). No template gallery, no Chat/Cowork/Bots dock on the Bots launch
 - [ ] P3.9 Bot detail rebuild: split `BotHomeView.tsx` into header + Threads · Routines · Memory · Computer · Performance · Config (§7.2)
 - [ ] P3.10 Create bot one-screen flow (§7.3)
 - [ ] P3.11 Incognito asks
-- [ ] P3.12 Extract the deck (artifact-mode picker, plugins, starter pills, template gallery) from `ChatComposer` into one shared component; no second copy
-- [ ] P3.13 Cowork launch is the deck's native home: full deck + artifact template gallery; "Put a team on it" hands off to the Bots launch as a new project. Chat launch keeps its deck; the Chat/Cowork/Bots switcher stays on Chat and Cowork composers only
+- [x] P3.12 (Agent B, allternit-ai #116) Extract the deck (artifact-mode picker, plugins, starter pills, template gallery) from `ChatComposer` into one shared component; no second copy
+- [x] P3.13 (Agent B, allternit-ai #116) Cowork launch is the deck's native home: full deck + artifact template gallery; "Put a team on it" hands off to the Bots launch as a new project. Chat launch keeps its deck; the Chat/Cowork/Bots switcher stays on Chat and Cowork composers only
 - [ ] P3.14 Thread composer gets the compact deck (mode ▾ · plugins ▾ · model); artifacts made in a thread open in Cowork
-- [ ] P3.15 Templates on the Bots launch by progressive disclosure: level 0 = three "Start from a team" cards with a mini plan graph; level 1 = "Browse templates" panel with **Teams** (orchestration use cases: bots + plan with dependencies, "uses your Scout · adds Pixel") and **Bots** (single-bot marketplace; opens Create bot prefilled, nothing created until confirmed). Visual bar: the mockup, not a card grid of icons
+- [~] P3.15 (allternit-ai #121; Hire prefill with P3.10) Templates on the Bots launch by progressive disclosure: level 0 = three "Start from a team" cards with a mini plan graph; level 1 = "Browse templates" panel with **Teams** (orchestration use cases: bots + plan with dependencies, "uses your Scout · adds Pixel") and **Bots** (single-bot marketplace; opens Create bot prefilled, nothing created until confirmed). Visual bar: the mockup, not a card grid of icons
 
 ### P4 — Bots run their own threads
 - [ ] P4.1 Fabric jobs targeting a bot principal load the bot's prompt, model, tools, memory, computer
