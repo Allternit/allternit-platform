@@ -69,6 +69,10 @@ import { SandboxManager } from '../../utils/sandbox/sandbox-adapter.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
 import { windowsPathToPosixPath } from '../../utils/windowsPaths.js'
 import type { BashToolInput } from './BashTool.js'
+// BashTool imports this module, so it is required lazily at use time (a
+// top-level import would be undefined inside the cycle).
+/* eslint-disable-next-line @typescript-eslint/no-require-imports */
+const getBashTool = () => require('./BashTool.js').BashTool as typeof import('./BashTool.js').BashTool
 import { BASH_TOOL_NAME } from './toolName.js'
 import {
   bashCommandIsSafeAsync_DEPRECATED,
@@ -80,6 +84,7 @@ import { checkSedConstraints } from './sedValidation.js'
 import {
   ANT_ONLY_SAFE_ENV_VARS,
   SAFE_ENV_VARS,
+  stripCommentLines,
   stripSafeWrappers,
 } from './stripSafeWrappers.js'
 
@@ -705,7 +710,7 @@ function matchingRulesForInput(
 ) {
   const denyRuleByContents = getRuleByContentsForTool(
     toolPermissionContext,
-    BashTool,
+    getBashTool(),
     'deny',
   )
   // SECURITY: Deny/ask rules use aggressive env var stripping so that
@@ -719,7 +724,7 @@ function matchingRulesForInput(
 
   const askRuleByContents = getRuleByContentsForTool(
     toolPermissionContext,
-    BashTool,
+    getBashTool(),
     'ask',
   )
   const matchingAskRules = filterRulesByContentsMatchingInput(
@@ -731,7 +736,7 @@ function matchingRulesForInput(
 
   const allowRuleByContents = getRuleByContentsForTool(
     toolPermissionContext,
-    BashTool,
+    getBashTool(),
     'allow',
   )
   const matchingAllowRules = filterRulesByContentsMatchingInput(
@@ -937,7 +942,7 @@ export const bashToolCheckPermission = (
   }
 
   // 7. Check read-only rules
-  if (BashTool.isReadOnly(input)) {
+  if (getBashTool().isReadOnly(input)) {
     return {
       behavior: 'allow',
       updatedInput: input,

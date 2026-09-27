@@ -110,7 +110,8 @@ if rel_tag:
     rel_date = sh("git", "-C", str(SHARED), "log", "-1", "--format=%cd", "--date=format:%Y-%m-%d %H:%M", rel_tag)
     # Only changes that alter the shipped binary count (not packaging/docs).
     ahead = sh("git", "-C", str(SHARED), "rev-list", "--count", "--no-merges", f"{rel_tag}..origin/main", "--",
-               "cmd/gizzi-code/src", "cmd/gizzi-code/package.json", "cmd/gizzi-code/packages", "cmd/gizzi-code/script/build-production.js")
+               "cmd/gizzi-code/src", "cmd/gizzi-code/package.json", "cmd/gizzi-code/packages", "cmd/gizzi-code/script/build-production.js",
+               "cmd/gizzi-code/script/features.mjs")
     print(f"  latest release   {rel_tag} @ {short(rel_sha)} ({rel_date})")
     if ahead and ahead != "0":
         print(f"  unreleased       {ahead} commit(s) changing the gizzi-code binary since {rel_tag} — the official channels are behind main")

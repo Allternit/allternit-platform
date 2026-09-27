@@ -65,10 +65,9 @@ const EXTERNAL_PERMISSIONS_TEMPLATE: string = feature('TRANSCRIPT_CLASSIFIER')
   ? txtRequire(require('./yolo-classifier-prompts/permissions_external.txt'))
   : ''
 
-const ANTHROPIC_PERMISSIONS_TEMPLATE: string =
-  feature('TRANSCRIPT_CLASSIFIER') && process.env.USER_TYPE === 'ant'
-    ? txtRequire(require('./yolo-classifier-prompts/permissions_anthropic.txt'))
-    : ''
+// gizzi has no internal-user template: every build classifies with the
+// external rules (users customize them via settings.autoMode).
+const ANTHROPIC_PERMISSIONS_TEMPLATE: string = EXTERNAL_PERMISSIONS_TEMPLATE
 /* eslint-enable custom-rules/no-process-env-top-level, @typescript-eslint/no-require-imports */
 
 function isUsingExternalPermissions(): boolean {
@@ -260,7 +259,8 @@ const yoloClassifierResponseSchema = lazySchema(() =>
   }),
 )
 
-export const YOLO_CLASSIFIER_TOOL_NAME = 'classify_result'
+import { YOLO_CLASSIFIER_TOOL_NAME } from './classifierToolName.js'
+export { YOLO_CLASSIFIER_TOOL_NAME }
 
 const YOLO_CLASSIFIER_TOOL_SCHEMA: BetaToolUnion = {
   type: 'custom',

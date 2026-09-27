@@ -64,10 +64,18 @@ echo
 # the run fails after SMOKE_TIMEOUT_SECONDS (default 900s).
 SMOKE_TIMEOUT_SECONDS="${SMOKE_TIMEOUT_SECONDS:-900}"
 
+# Test with the same compile-time feature() flags the binaries ship with
+# (script/features.mjs); without them every feature() is false under bun test.
+feature_args=()
+while IFS= read -r f; do
+  [ -n "$f" ] && feature_args+=("--feature=$f")
+done < <(bun -e 'import("./script/features.mjs").then(m => console.log(m.resolveFeatures().join("\n")))')
+echo "features: ${#feature_args[@]}"
+
 if command -v timeout >/dev/null 2>&1; then
-  timeout "$SMOKE_TIMEOUT_SECONDS" bun test --preload ./test/preload.ts --timeout 30000 "${entries[@]}"
+  timeout "$SMOKE_TIMEOUT_SECONDS" bun test "${feature_args[@]}" --preload ./test/preload.ts --timeout 30000 "${entries[@]}"
 else
-  perl -e 'alarm shift; exec @ARGV' -- "$SMOKE_TIMEOUT_SECONDS" bun test --preload ./test/preload.ts --timeout 30000 "${entries[@]}"
+  perl -e 'alarm shift; exec @ARGV' -- "$SMOKE_TIMEOUT_SECONDS" bun test "${feature_args[@]}" --preload ./test/preload.ts --timeout 30000 "${entries[@]}"
 fi
 rc=$?
 

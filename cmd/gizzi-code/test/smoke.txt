@@ -110,3 +110,4 @@ test/commands/uninstall-plan.test.ts
 test/automation/cron-supervision.test.ts
 test/shared/gizziEnv.test.ts
 test/telemetry/gizziUsageTelemetry.test.ts
+test/tui-feature-flags.test.ts

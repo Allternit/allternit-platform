@@ -36,12 +36,14 @@ const SleepTool =
   feature('PROACTIVE') || feature('KAIROS')
     ? safeRequire('./tools/SleepTool/SleepTool.js')?.SleepTool
     : null
+// Static require() so the bundler includes these (safeRequire's variable
+// path is invisible to it and resolves to null in compiled binaries).
 const cronTools = feature('AGENT_TRIGGERS')
   ? [
-      safeRequire('./tools/ScheduleCronTool/CronCreateTool.js')?.CronCreateTool,
-      safeRequire('./tools/ScheduleCronTool/CronDeleteTool.js')?.CronDeleteTool,
-      safeRequire('./tools/ScheduleCronTool/CronListTool.js')?.CronListTool,
-    ].filter(Boolean)
+      require('./tools/ScheduleCronTool/CronCreateTool.js').CronCreateTool,
+      require('./tools/ScheduleCronTool/CronDeleteTool.js').CronDeleteTool,
+      require('./tools/ScheduleCronTool/CronListTool.js').CronListTool,
+    ]
   : []
 const RemoteTriggerTool = feature('AGENT_TRIGGERS_REMOTE')
   ? safeRequire('./tools/RemoteTriggerTool/RemoteTriggerTool.js')
@@ -130,7 +132,8 @@ export { REPL_ONLY_TOOLS }
 /* eslint-disable @typescript-eslint/no-require-imports */
 const getPowerShellTool = () => {
   if (!isPowerShellToolEnabled()) return null
-  return safeRequire('./tools/PowerShellTool/PowerShellTool.js')?.PowerShellTool
+  // Static require (not safeRequire) so the bundler includes the tool.
+  return require('./tools/PowerShellTool/PowerShellTool.js').PowerShellTool
 }
 /* eslint-enable @typescript-eslint/no-require-imports */
 

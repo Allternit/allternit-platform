@@ -154,6 +154,11 @@ const getDeferredToolTokenCount = memoize(
 )
 
 /**
+ * Default model patterns that do not support tool_reference blocks.
+ */
+const DEFAULT_UNSUPPORTED_MODEL_PATTERNS = ['haiku']
+
+/**
  * Get the list of model patterns that do NOT support tool_reference.
  * Can be configured via GrowthBook for live updates without code changes.
  */
