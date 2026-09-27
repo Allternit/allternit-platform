@@ -317,6 +317,19 @@ fn previous_output(db: &DbHandle, routine_id: &str) -> Option<String> {
     .ok()
 }
 
+/// Routine delivery text. gizzi recognises the `[routine: <label>]` prefix
+/// (`runtime/bots/bot-routines.ts` ROUTINE_MARKER_PREFIX) and keeps the turn
+/// quiet — no first-response preamble — the same as CLI bot routines.
+pub fn routine_turn(label: &str, body: &str) -> String {
+    // Bot routines are named "[bot:<name>] <title>"; the marker carries the title.
+    let label = match (label.starts_with("[bot:"), label.find(']')) {
+        (true, Some(end)) => label[end + 1..].trim(),
+        _ => label.trim(),
+    };
+    let label = if label.is_empty() { "routine" } else { label };
+    format!("[routine: {label}] {body}")
+}
+
 pub enum Trigger {
     Schedule,
     Startup,
@@ -360,13 +373,13 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
                 return Ok(("no change".to_string(), "skipped"));
             }
             monitor_hash = Some(hash);
-            format!("[bot:{}] {}\n\n{}", bot.name, r.name, out)
+            routine_turn(&r.name, &out)
         } else {
             let mut instruction = instruction_of(r);
             if let Some(prev) = previous_output(db, &r.id) {
                 instruction = format!("{instruction}\n\nPrevious run output:\n{}", truncate(&prev, PREVIOUS_OUTPUT_CAP));
             }
-            format!("[bot:{}] {}\n\n{}", bot.name, r.name, instruction)
+            routine_turn(&r.name, &instruction)
         };
         let session = resolve_thread(db, driver, agent_id, bot).await?;
         session_used = Some(session.clone());
@@ -626,6 +639,8 @@ mod tests {
         let later = next_run("cron", "0 9 * * *", t, false).unwrap();
         assert!(later > t && later - t <= chrono::Duration::days(1));
         assert_eq!(fnv1a_hex("a"), "e40c292c");
+        assert_eq!(routine_turn("[bot:Ledger] Month close", "x"), "[routine: Month close] x");
+        assert_eq!(routine_turn("Weekly report", "x"), "[routine: Weekly report] x");
     }
 
     #[tokio::test]
@@ -643,7 +658,7 @@ mod tests {
 
         let turns = d.turns.lock().unwrap().clone();
         assert_eq!(turns[0].0, "sess-0");
-        assert!(turns[0].1.starts_with("[bot:Ledger] Routine r1\n\nSummarize the close"));
+        assert_eq!(turns[0].1, "[routine: Routine r1] Summarize the close");
         assert_eq!(bot_info(&state.db, "bot-1").unwrap().pinned_thread.as_deref(), Some("sess-0"));
         assert_eq!(runs(&state, "r1"), vec!["succeeded"]);
         assert_eq!(events(&state), vec!["routine.completed"]);
@@ -652,7 +667,7 @@ mod tests {
         run_due(&state.db, &d, now).await;
         let turns = d.turns.lock().unwrap().clone();
         assert_eq!(turns[1].0, "sess-0", "reuses the pin");
-        assert!(turns[1].1.contains("Previous run output:\ndone: [bot:Ledger] Routine r1"));
+        assert!(turns[1].1.contains("Previous run output:\ndone: [routine: Routine r1]"));
         assert_eq!(d.creates.load(Ordering::SeqCst), 1);
     }
 
