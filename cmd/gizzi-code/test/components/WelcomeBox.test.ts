@@ -1,12 +1,6 @@
 import { describe, test, expect } from "bun:test"
 import { WelcomeBox } from "../../src/cli/ui/ink-app/components/WelcomeBox"
-import {
-  CORAL,
-  EYE,
-  HEADER_MARK_HEIGHT,
-  HEADER_MARK_WIDTH,
-  headerMarkRows,
-} from "../../src/cli/ui/ink-app/components/welcomeArt"
+import { CORAL, EYE } from "../../src/cli/ui/ink-app/components/welcomeArt"
 
 describe("WelcomeBox", () => {
   test("exports a component", () => {
@@ -14,28 +8,15 @@ describe("WelcomeBox", () => {
   })
 })
 
-describe("header mark", () => {
-  test("is three rows tall and a fixed width", () => {
-    const rows = headerMarkRows({ blinking: false })
-    expect(rows).toHaveLength(HEADER_MARK_HEIGHT)
-    expect(HEADER_MARK_HEIGHT).toBe(3)
-    for (const row of rows) expect(row.map(([t]) => t).join("")).toHaveLength(HEADER_MARK_WIDTH)
-  })
-
-  test("blink closes the eyes into the face panel", () => {
-    const colors = (rows: any) => rows.flatMap((r: any) => r.flatMap(([, fg, bg]: any) => [fg, bg]))
-    expect(colors(headerMarkRows({ blinking: false }))).toContain(EYE)
-    expect(colors(headerMarkRows({ blinking: true }))).not.toContain(EYE)
-  })
-
-  test("uses theme keys, not hardcoded colors", () => {
-    for (const row of headerMarkRows({ blinking: false })) {
-      for (const [, fg, bg] of row) {
-        expect(fg).not.toMatch(/^#|^rgb/)
-        expect(bg ?? "").not.toMatch(/^#|^rgb/)
-      }
-    }
-    expect(CORAL).toBe("gizzi")
+describe("header lockup", () => {
+  test("reserves the lockup image in image-capable terminals, typed name elsewhere", async () => {
+    const { setInlineImageProtocolForTest, inlineImagePlaceholder } = await import("../../src/cli/ui/ink-app/ink/inlineImage")
+    const { GIZZI_LOCKUP_ASPECT } = await import("../../src/cli/ui/ink-app/components/gizziLockupImage")
+    setInlineImageProtocolForTest("kitty")
+    expect(inlineImagePlaceholder("t-lockup", "AAAA", Math.round(GIZZI_LOCKUP_ASPECT * 2))).toHaveLength(23)
+    setInlineImageProtocolForTest(null)
+    expect(inlineImagePlaceholder("t-lockup-none", "AAAA", 23)).toBeNull()
+    setInlineImageProtocolForTest(undefined)
   })
 })
 

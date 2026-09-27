@@ -1,9 +1,6 @@
 /**
- * Startup header art: the Gizzi mark (Allternit Assets/Brand/Gizzi/mark,
- * compact form) drawn small, three terminal rows tall, beside inline
- * "Gizzi Code vX" text. Kept deliberately unobtrusive, like Claude Code's
- * header glyph. Colors are theme keys (gizziSand / gizziVisor / gizziEye /
- * gizzi coral).
+ * Gizzi pixel-art support shared by the buddy sprite: theme color keys
+ * (gizziSand / gizziVisor / gizziEye / gizzi coral) and a half-block renderer.
  */
 
 export const CORAL = 'gizzi'
@@ -14,28 +11,6 @@ export const EYE = 'gizziEye'
 /** [text, foreground, background?] */
 export type ArtSegment = [text: string, color: string, bg?: string]
 export type ArtRow = ArtSegment[]
-
-// Pixel map (two pixel rows per cell): . empty, B beacon, T sand, V face
-// panel, E eye, C coral nose. Beacon, ear pods, head with side hands, face
-// panel, eyes, nose.
-const HEADER_PIXELS = [
-  '.....BB.....',
-  '..TTT..TTT..',
-  '.TTTTTTTTTT.',
-  'TTVEVVVVEVTT',
-  '.TVVVVCVVVT.',
-  '..TTTTTTTT..',
-]
-
-export const HEADER_MARK_WIDTH = HEADER_PIXELS[0]!.length
-export const HEADER_MARK_HEIGHT = HEADER_PIXELS.length / 2
-
-/** Header mark rows; while `blinking` the eyes close into the face panel. */
-export function headerMarkRows({ blinking }: { blinking: boolean }): ArtRow[] {
-  const colorOf = (p: string): string | undefined =>
-    p === 'B' || p === 'C' ? CORAL : p === 'T' ? SAND : p === 'V' ? VISOR : p === 'E' ? (blinking ? VISOR : EYE) : undefined
-  return renderPixelArt(HEADER_PIXELS, colorOf)
-}
 
 /**
  * Two pixel rows per terminal cell with half blocks. `colorOf` maps a pixel

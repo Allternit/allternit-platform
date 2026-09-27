@@ -1,83 +1,57 @@
 // @ts-nocheck
 /**
- * Startup header, sized like Claude Code's: the small Gizzi mark (three rows)
- * beside three lines of text. The name is the GIZZI CODE wordmark image
- * (Brand/Gizzi/wordmark) scaled to one text row, in terminals that show
- * inline images (iTerm2, WezTerm, Ghostty, Kitty); elsewhere it is set as type,
- * bold caps with the G in coral for the wordmark's core. Then the version, the
- * model, and the working directory. No box. The mark blinks now and then;
- * static under prefersReducedMotion.
+ * Startup header, sized like Claude Code's: three lines of text. The first is
+ * the GIZZI CODE lockup (Brand/Gizzi/lockup: mark + wordmark) as an image
+ * scaled to one text row, then the version. Terminals that can't show inline
+ * images (Apple Terminal, tmux) get the name set as type instead: bold caps
+ * with the G in coral for the wordmark's core. Then the model and the working
+ * directory. No box, no animation.
  */
 import * as React from 'react'
-import { Box, Text, useAnimationFrame } from '../ink'
+import { Box, Text } from '../ink'
 import { useMainLoopModel } from '../hooks/useMainLoopModel'
-import { useSettings } from '../hooks/useSettings'
 import { renderModelSetting } from '../utils/model/model'
 import { getLogoDisplayData } from '../utils/logoV2Utils'
-import { CORAL, headerMarkRows } from './welcomeArt'
 import { useTheme } from './design-system/ThemeProvider'
 import { inlineImagePlaceholder } from '../ink/inlineImage'
+import { CORAL } from './welcomeArt'
 import {
-  GIZZI_WORDMARK_ASPECT,
-  GIZZI_WORDMARK_PNG_DARK_INK,
-  GIZZI_WORDMARK_PNG_LIGHT_INK,
-} from './gizziWordmarkImage'
+  GIZZI_LOCKUP_ASPECT,
+  GIZZI_LOCKUP_PNG_DARK_INK,
+  GIZZI_LOCKUP_PNG_LIGHT_INK,
+} from './gizziLockupImage'
 
-// A terminal cell is about twice as tall as wide, so a one-row image of the
-// wordmark spans aspect * 2 columns.
-const WORDMARK_COLS = Math.round(GIZZI_WORDMARK_ASPECT * 2)
-
-const TICK_MS = 200
-const BLINK_PERIOD_MS = 5200
-const BLINK_LENGTH_MS = 180
+// A terminal cell is about twice as tall as wide, so a one-row image spans
+// aspect * 2 columns.
+const LOCKUP_COLS = Math.round(GIZZI_LOCKUP_ASPECT * 2)
 
 export function WelcomeBox(): React.ReactNode {
   const model = useMainLoopModel()
   const modelDisplayName = renderModelSetting(model)
   const { version, cwd } = getLogoDisplayData()
-  const settings = useSettings()
-  const reducedMotion = settings.prefersReducedMotion ?? false
-  const [animRef, time] = useAnimationFrame(reducedMotion ? null : TICK_MS)
-  const blinking = !reducedMotion && time % BLINK_PERIOD_MS > BLINK_PERIOD_MS - BLINK_LENGTH_MS
-  const mark = headerMarkRows({ blinking })
   const [themeName] = useTheme()
   const lightTheme = String(themeName).startsWith('light')
-  const wordmarkImage = inlineImagePlaceholder(
-    lightTheme ? 'gizzi-wordmark-dark-ink' : 'gizzi-wordmark-light-ink',
-    lightTheme ? GIZZI_WORDMARK_PNG_DARK_INK : GIZZI_WORDMARK_PNG_LIGHT_INK,
-    WORDMARK_COLS,
+  const lockup = inlineImagePlaceholder(
+    lightTheme ? 'gizzi-lockup-dark-ink' : 'gizzi-lockup-light-ink',
+    lightTheme ? GIZZI_LOCKUP_PNG_DARK_INK : GIZZI_LOCKUP_PNG_LIGHT_INK,
+    LOCKUP_COLS,
   )
-  const lines = [
-    <Text key="name">
-      {wordmarkImage !== null ? (
-        <Text>{wordmarkImage}</Text>
-      ) : (
-        <>
-          <Text bold={true} color={CORAL}>G</Text>
-          <Text bold={true}>IZZI CODE</Text>
-        </>
-      )}
-      <Text dimColor={true}> v{version}</Text>
-    </Text>,
-    <Text key="model" dimColor={true} wrap="truncate-end">{modelDisplayName}</Text>,
-    <Text key="cwd" dimColor={true} wrap="truncate-start">{cwd}</Text>,
-  ]
 
   return (
-    <Box ref={animRef} flexDirection="column" paddingLeft={1} marginBottom={1}>
-      {mark.map((segments, i) => (
-        <Box key={i} flexDirection="row">
-          <Text>
-            {segments.map(([text, color, bg], j) => (
-              <Text key={j} color={color || undefined} backgroundColor={bg}>
-                {text}
-              </Text>
-            ))}
-          </Text>
-          <Text>{'   '}</Text>
-          <Box flexShrink={1}>{lines[i]}</Box>
-        </Box>
-      ))}
+    <Box flexDirection="column" paddingLeft={1} marginBottom={1}>
+      <Text>
+        {lockup !== null ? (
+          <Text>{lockup}</Text>
+        ) : (
+          <>
+            <Text bold={true} color={CORAL}>G</Text>
+            <Text bold={true}>IZZI CODE</Text>
+          </>
+        )}
+        <Text dimColor={true}> v{version}</Text>
+      </Text>
+      <Text dimColor={true} wrap="truncate-end">{modelDisplayName}</Text>
+      <Text dimColor={true} wrap="truncate-start">{cwd}</Text>
     </Box>
   )
 }
