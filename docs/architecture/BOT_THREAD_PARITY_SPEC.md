@@ -454,19 +454,20 @@ backend + wiring + UI together, is verified with tests, and UI tasks are
 checked live in a main Desktop build (one-current-build rule).
 
 ### P0 — Stabilize what's broken (§7.1)
-- [~] P0.1 Create bot accepts any catalog provider (B1) — allternit-ai #105
-- [~] P0.2 Mascot selectable (B2) — allternit-ai #105
-- [~] P0.3 Edit bot keeps the bot (B3) — platform #794 (config merge) + allternit-ai #105 (isBot)
-- [~] P0.4 Computer window loads the real bot (B4) — allternit-ai #105
-- [~] P0.5 Webhook triggers reachable (B5) — platform #794
-- [ ] P0.6 Live verify P0.1–P0.5 in the next main Desktop build
+- [x] P0.1 Create bot accepts any catalog provider (B1) — allternit-ai #105
+- [x] P0.2 Mascot selectable (B2) — allternit-ai #105
+- [x] P0.3 Edit bot keeps the bot (B3) — platform #794 (config merge) + allternit-ai #105 (isBot)
+- [x] P0.4 Computer window loads the real bot (B4) — allternit-ai #105
+- [x] P0.5 Webhook triggers reachable (B5) — platform #794
+- [~] P0.6 Live verify P0.1–P0.5 in the next main Desktop build (Agent B building from ai 9cdebeeb / platform b2a71fd67)
 
 ### P1 — Converge (no duplicate systems)
-- [ ] P1.1 Routines: retire `bot-routine.service.ts` + `use-routine-timer.ts`; Bot Home, rail, composer, team import, presence read/write Automation Tasks (`agent_id`); one-time import of browser-stored routines; monitor mode as an Automation routine config using `shell.exec` (B9)
-- [ ] P1.2 Canonical thread pin stored on the bot (server), not localStorage
+- [~] P1.1 (platform #796, allternit-ai #109) Routines: retire `bot-routine.service.ts` + `use-routine-timer.ts`; Bot Home, rail, composer, team import, presence read/write Automation Tasks (`agent_id`); one-time import of browser-stored routines; monitor mode as an Automation routine config using `shell.exec` (B9)
+- [~] P1.2 (same PRs) Canonical thread pin stored on the bot (server), not localStorage
 - [ ] P1.3 Bot memory on server scopes (`/cowork/memory`, principal = bot); `bot-memory-store.ts` becomes a cache
 - [ ] P1.4 One model source per thread/bot; unavailable models dimmed with the reason (B7)
 - [ ] P1.5 Gizzi (and any pre-atomic bot) gets its computer on first use (B8)
+- [ ] P1.7 Converge the other browser-side schedulers (`lib/agents/agent-cron-scheduler.ts`, `lib/agents/scheduled-jobs.runner.ts`) onto Automation Tasks + the local scheduler, same as P1.1
 - [ ] P1.6 A:// SDK: TypeScript client + types over the existing HTTP surface (principals, intents, runs/jobs, approvals, DAG, memory grants); Rust types from `allternit-cowork-runtime`
 
 ### P2 — Design pass (sign-off before any P3 UI)
