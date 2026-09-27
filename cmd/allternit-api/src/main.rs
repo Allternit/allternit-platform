@@ -898,6 +898,7 @@ async fn main() {
         .merge(inference_router_router())
         .merge(bot_event_router())
         .merge(allternit_api::thread_routes::thread_router())
+        .merge(allternit_api::coordinator_routes::coordinator_router())
         .merge(model_training_router())
         .merge(photon_router())
         .merge(allternit_api::enterprise_auth::router())
