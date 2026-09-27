@@ -48,8 +48,9 @@ pub fn coordinator_router() -> Router<Arc<AppState>> {
 
 /// Everything the coordinator needs from the outside world.
 pub trait CoordinatorRuntime: ThreadRuntime {
-    /// One-shot planning completion; `None` when the model is unavailable.
-    fn plan(&self, system: &str, prompt: &str) -> impl Future<Output = Option<String>> + Send;
+    /// One-shot planning completion on `model` (provider, model) when given,
+    /// else the platform default; `None` when the model is unavailable.
+    fn plan(&self, system: &str, prompt: &str, model: Option<(String, String)>) -> impl Future<Output = Option<String>> + Send;
     /// Run a turn in a thread's session; returns the bot's reply text.
     fn send_turn(&self, session_id: &str, bot_id: &str, text: &str) -> impl Future<Output = Result<String, String>> + Send;
 }
@@ -68,8 +69,8 @@ impl ThreadRuntime for GizziCoordinator {
 }
 
 impl CoordinatorRuntime for GizziCoordinator {
-    async fn plan(&self, system: &str, prompt: &str) -> Option<String> {
-        crate::gizzi_completion::complete_ephemeral(prompt, Some(system), None).await
+    async fn plan(&self, system: &str, prompt: &str, model: Option<(String, String)>) -> Option<String> {
+        crate::gizzi_completion::complete_ephemeral(prompt, Some(system), model.as_ref()).await
     }
     async fn send_turn(&self, session_id: &str, bot_id: &str, text: &str) -> Result<String, String> {
         crate::agent_session_routes::send_bot_turn(&self.state.db, session_id, bot_id, text).await
@@ -234,7 +235,13 @@ pub fn fallback_step(team: &[TeamBot], message: &str) -> Option<ValidStep> {
         words.iter().filter(|w| hay.contains(w.as_str())).count()
     };
     let bot = team.iter().max_by_key(|b| score(b))?;
-    let title: String = message.split_whitespace().take(6).collect::<Vec<_>>().join(" ");
+    let title: String = message
+        .split_whitespace()
+        .take(6)
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_end_matches(|c: char| matches!(c, '.' | ',' | ';' | ':' | '!' | '?'))
+        .to_string();
     Some(ValidStep {
         key: "request".into(),
         title: if title.is_empty() { "Request".into() } else { title },
@@ -325,6 +332,23 @@ fn truncate(s: &str, cap: usize) -> String {
     format!("{}…", cut.trim_end())
 }
 
+/// The first team bot's own (provider, model), when it has one.
+pub fn team_model(db: &DbHandle, team: &[TeamBot]) -> Option<(String, String)> {
+    let conn = db.connect().ok()?;
+    team.iter().find_map(|b| {
+        conn.query_row(
+            "SELECT provider, model FROM agents WHERE id = ?1",
+            params![b.id],
+            |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?)),
+        )
+        .ok()
+        .and_then(|(p, m)| match (p, m) {
+            (Some(p), Some(m)) if !p.is_empty() && !m.is_empty() => Some((p, m)),
+            _ => None,
+        })
+    })
+}
+
 // ─── Coordinate ─────────────────────────────────────────────────────────────
 
 #[derive(Debug)]
@@ -348,8 +372,12 @@ pub async fn coordinate<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user_id: &
     }
     let open = open_threads(db, project_id).map_err(|e| e.to_string())?;
 
+    // Plan on a model the team already runs on — the platform default may
+    // be a provider that isn't set up (live check 2026-09-27: every plan fell
+    // back because the default pointed at an unconfigured provider).
+    let model = team_model(db, &team);
     let proposal = rt
-        .plan(PLANNER_SYSTEM, &planner_prompt(&title, &team, &open, message))
+        .plan(PLANNER_SYSTEM, &planner_prompt(&title, &team, &open, message), model)
         .await
         .as_deref()
         .and_then(parse_proposal);
@@ -610,7 +638,7 @@ mod tests {
     }
 
     impl CoordinatorRuntime for Fake {
-        async fn plan(&self, _s: &str, _p: &str) -> Option<String> {
+        async fn plan(&self, _s: &str, _p: &str, _m: Option<(String, String)>) -> Option<String> {
             self.plan.lock().unwrap().clone()
         }
         async fn send_turn(&self, s: &str, _b: &str, t: &str) -> Result<String, String> {
@@ -665,6 +693,8 @@ mod tests {
         assert_eq!(p, Proposal::Answer { reply: "Monday.".into() });
         let f = fallback_step(&team(), "Work out our finance numbers for Q4").unwrap();
         assert_eq!(f.bot_id, "ledger");
+        let t = fallback_step(&team(), "Reply with the single word OK.").unwrap();
+        assert_eq!(t.title, "Reply with the single word OK");
     }
 
     #[tokio::test]
@@ -732,6 +762,13 @@ mod tests {
         *rt.plan.lock().unwrap() = Some(json!({"action": "route", "reply": "x", "threadId": "not-a-thread"}).to_string());
         let out3 = coordinate(&state.db, &rt, "u", "p1", "Another request").await.unwrap();
         assert_eq!(out3.reply["payload"]["kind"], "fanout");
+    }
+
+    #[tokio::test]
+    async fn planner_runs_on_the_team_bots_model() {
+        let state = setup("model").await;
+        let team = load_team(&state.db, "p1", "u").unwrap();
+        assert_eq!(team_model(&state.db, &team), Some(("p".to_string(), "m".to_string())));
     }
 
     #[tokio::test]
