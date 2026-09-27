@@ -66,14 +66,28 @@ export function gizziRows({
 }): ArtRow[] {
   const colorOf = (p: string): string | undefined =>
     p === 'B' ? beaconColor : p === 'T' ? SAND : p === 'V' ? VISOR : p === 'E' ? (blinking ? VISOR : EYE) : undefined
+  return renderPixelArt(GIZZI_PIXELS, colorOf, { row: MARK_ROW, col: MARK_COL, text: MARK })
+}
+
+/**
+ * Two pixel rows per terminal cell with half blocks. `colorOf` maps a pixel
+ * char to a theme color (undefined = empty). An optional text `mark` is
+ * drawn bold coral on the face panel at a cell row/column.
+ */
+export function renderPixelArt(
+  pixels: string[],
+  colorOf: (p: string) => string | undefined,
+  mark?: { row: number; col: number; text: string },
+): ArtRow[] {
+  const width = pixels[0]!.length
   const rows: ArtRow[] = []
-  for (let r = 0; r < GIZZI_HEIGHT; r++) {
-    const top = GIZZI_PIXELS[r * 2]!
-    const bottom = GIZZI_PIXELS[r * 2 + 1]!
+  for (let r = 0; r < pixels.length / 2; r++) {
+    const top = pixels[r * 2]!
+    const bottom = pixels[r * 2 + 1]!
     const cells: ArtSegment[] = []
-    for (let c = 0; c < GIZZI_WIDTH; c++) {
-      if (r === MARK_ROW && c >= MARK_COL && c < MARK_COL + MARK.length) {
-        cells.push([MARK[c - MARK_COL]!, CORAL, VISOR])
+    for (let c = 0; c < width; c++) {
+      if (mark && r === mark.row && c >= mark.col && c < mark.col + mark.text.length) {
+        cells.push([mark.text[c - mark.col]!, CORAL, VISOR])
         continue
       }
       const t = colorOf(top[c]!)
@@ -95,37 +109,40 @@ export function gizziRows({
   return rows
 }
 
-/** 5-row block wordmark, one string per row, letters joined by one space. */
-const LETTERS: Record<string, string[]> = {
-  G: [
-    ' ████ ',
-    '██    ',
-    '██ ███',
-    '██  ██',
-    ' ████ ',
-  ],
-  I: [
-    '██████',
-    '  ██  ',
-    '  ██  ',
-    '  ██  ',
-    '██████',
-  ],
-  Z: [
-    '██████',
-    '   ██ ',
-    '  ██  ',
-    ' ██   ',
-    '██████',
-  ],
+/**
+ * The approved GIZZI block wordmark (Allternit Assets/Brand/Gizzi/wordmark/),
+ * same matrix system as A://TERNIT: 5x5 block letters, one block column gap,
+ * coral core in the G crossbar. Each block is one ■ followed by a space so the
+ * blocks read square with visible gaps in a 1:2 terminal cell.
+ */
+const LETTER_GRIDS: Record<string, string[]> = {
+  G: ['.XXX.', 'X....', 'X.CXX', 'X...X', '.XXX.'],
+  I: ['XXX', '.X.', '.X.', '.X.', 'XXX'],
+  Z: ['XXXXX', '...X.', '..X..', '.X...', 'XXXXX'],
 }
 
 export const WORDMARK_WORD = 'GIZZI'
+export const WORDMARK_BLOCK = '■'
 
-export const WORDMARK_ROWS: string[] = [0, 1, 2, 3, 4].map(row =>
+const GRID_ROWS: string[] = [0, 1, 2, 3, 4].map(row =>
   WORDMARK_WORD.split('')
-    .map(ch => LETTERS[ch][row])
-    .join(' '),
+    .map(ch => LETTER_GRIDS[ch]![row])
+    .join('.'),
 )
 
-export const WORDMARK_WIDTH = WORDMARK_ROWS[0].length
+/** Rendered rows: block → "■ ", gap → "  ", trailing space trimmed to a fixed width. */
+export const WORDMARK_ROWS: string[] = GRID_ROWS.map(row =>
+  row
+    .split('')
+    .map(ch => (ch === '.' ? '  ' : `${WORDMARK_BLOCK} `))
+    .join('')
+    .slice(0, row.length * 2 - 1),
+)
+
+export const WORDMARK_WIDTH = WORDMARK_ROWS[0]!.length
+
+/** Row and string index of the coral core block. */
+export const WORDMARK_CORE = (() => {
+  const row = GRID_ROWS.findIndex(r => r.includes('C'))
+  return { row, col: GRID_ROWS[row]!.indexOf('C') * 2 }
+})()

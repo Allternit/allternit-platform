@@ -2707,3 +2707,4 @@ src/cli/ui/ink-app/utils/postCommitAttribution.ts
 src/shared/utils/postCommitAttribution.ts
 src/cli/ui/ink-app/services/skillSearch/prefetch.ts
 src/shared/tools/VerifyPlanExecutionTool/constants.ts
+src/cli/ui/ink-app/buddy/sprites.ts

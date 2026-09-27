@@ -1,8 +1,8 @@
 // @ts-nocheck
 /**
  * Animated startup welcome box. One rounded box: the Gizzi mascot
- * (beacon pulse + periodic blink) beside the coral GIZZI block
- * wordmark (shimmer sweep), then a welcome line, tips, and info
+ * (beacon pulse + periodic blink) beside the GIZZI block wordmark
+ * (ink blocks, coral core, shimmer sweep), then a welcome line, tips, and info
  * fields (Directory / Session / Model / Version). Everything collapses
  * to a static frame under prefersReducedMotion.
  */
@@ -16,7 +16,8 @@ import { getSessionId } from '../bootstrap/state.js'
 import { useTheme } from './design-system/ThemeProvider'
 import { getTheme } from '../utils/theme'
 import { interpolateColor, parseRGB, toRGBColor } from './Spinner/utils'
-import { CORAL, GIZZI_HEIGHT, WORDMARK_ROWS, WORDMARK_WIDTH, gizziRows } from './welcomeArt'
+import { CORAL, GIZZI_HEIGHT, GIZZI_WIDTH, WORDMARK_CORE, WORDMARK_ROWS, WORDMARK_WIDTH, gizziRows } from './welcomeArt'
+import { useTerminalSize } from '../hooks/useTerminalSize'
 
 // Wordmark rows sit vertically centered beside the mascot.
 const WORDMARK_TOP = Math.floor((GIZZI_HEIGHT - WORDMARK_ROWS.length) / 2)
@@ -41,27 +42,41 @@ function Field({ label, value }: { label: string; value: string }) {
   )
 }
 
+// Ink blocks follow the theme's text color; the G's core block stays coral.
+const INK = 'text'
+
 function WordmarkRow({
   text,
+  row,
   sweepCenter,
   base,
   shimmer,
 }: {
   text: string
+  row: number
   sweepCenter: number | null
-  base: { r: number; g: number; b: number }
+  base: { r: number; g: number; b: number } | null
   shimmer: { r: number; g: number; b: number }
 }) {
-  if (sweepCenter === null) {
-    return <Text color={CORAL}>{text}</Text>
+  const coreCol = row === WORDMARK_CORE.row ? WORDMARK_CORE.col : -1
+  if (sweepCenter === null || base === null) {
+    if (coreCol < 0) return <Text color={INK}>{text}</Text>
+    return (
+      <Text>
+        <Text color={INK}>{text.slice(0, coreCol)}</Text>
+        <Text color={CORAL}>{text[coreCol]}</Text>
+        <Text color={INK}>{text.slice(coreCol + 1)}</Text>
+      </Text>
+    )
   }
   return (
     <Text>
       {text.split('').map((ch, i) => {
+        if (i === coreCol) return <Text key={i} color={CORAL}>{ch}</Text>
         const intensity = Math.max(0, 1 - Math.abs(i - sweepCenter) / SWEEP_WINDOW)
         const color =
           ch === ' ' || intensity <= 0
-            ? CORAL
+            ? INK
             : toRGBColor(interpolateColor(base, shimmer, intensity))
         return (
           <Text key={i} color={color}>
@@ -83,6 +98,10 @@ export function WelcomeBox(): React.ReactNode {
   const [themeName] = useTheme()
   const theme = getTheme(themeName)
   const coralRGB = parseRGB(theme.gizzi) ?? CORAL_RGB
+  const inkRGB = parseRGB(theme.text)
+  const { columns } = useTerminalSize()
+  // Mascot + gap + wordmark + box border/padding; drop the wordmark when it can't fit.
+  const showWordmark = columns >= GIZZI_WIDTH + 3 + WORDMARK_WIDTH + 4
   const coralBrightRGB = parseRGB(theme.gizziShimmer) ?? CORAL_BRIGHT_RGB
   const [animRef, time] = useAnimationFrame(reducedMotion ? null : TICK_MS)
   const t = reducedMotion ? 0 : time
@@ -112,14 +131,15 @@ export function WelcomeBox(): React.ReactNode {
                 </Text>
               ))}
             </Text>
-            {i >= WORDMARK_TOP && i < WORDMARK_TOP + WORDMARK_ROWS.length && (
+            {showWordmark && i >= WORDMARK_TOP && i < WORDMARK_TOP + WORDMARK_ROWS.length && (
               <Text>{'   '}</Text>
             )}
-            {i >= WORDMARK_TOP && i < WORDMARK_TOP + WORDMARK_ROWS.length && (
+            {showWordmark && i >= WORDMARK_TOP && i < WORDMARK_TOP + WORDMARK_ROWS.length && (
               <WordmarkRow
                 text={WORDMARK_ROWS[i - WORDMARK_TOP]}
+                row={i - WORDMARK_TOP}
                 sweepCenter={sweepCenter}
-                base={coralRGB}
+                base={inkRGB}
                 shimmer={coralBrightRGB}
               />
             )}

@@ -10,16 +10,19 @@ import { getGlobalConfig } from '../utils/config';
 import { isFullscreenActive } from '../utils/fullscreen';
 import type { Theme } from '../utils/theme';
 import { getCompanion } from './companion';
-import { renderFace, renderSprite, spriteFrameCount } from './sprites';
+import { gizziBuddyRows, type GizziPose } from './gizziSprite';
+import { SAND, VISOR, EYE } from '../components/welcomeArt';
 import { RARITY_COLORS } from './types';
 const TICK_MS = 500;
 const BUBBLE_SHOW = 20; // ticks → ~10s at 500ms
 const FADE_WINDOW = 6; // last ~3s the bubble dims so you know it's about to go
 const PET_BURST_MS = 2500; // how long hearts float after /buddy pet
 
-// Idle sequence: mostly rest (frame 0), occasional fidget (frames 1-2), rare blink.
-// Sequence indices map to sprite frames; -1 means "blink on frame 0".
-const IDLE_SEQUENCE = [0, 0, 0, 0, 1, 0, 0, 0, -1, 0, 0, 2, 0, 0, 0];
+// Idle sequence: mostly rest, an occasional glance up at the beacon, a rare
+// blink and wink (the Gizzi mark's animation states).
+const IDLE_SEQUENCE: GizziPose[] = ['idle', 'idle', 'idle', 'idle', 'glance', 'glance', 'idle', 'idle', 'blink', 'idle', 'idle', 'wink', 'idle', 'idle', 'idle'];
+// Excited (speaking or petted): look around quickly.
+const EXCITED_SEQUENCE: GizziPose[] = ['idle', 'glance', 'idle', 'wink'];
 
 // Hearts float up-and-out over 5 ticks (~2.5s). Prepended above the sprite.
 const H = figures.heart;
@@ -155,33 +158,20 @@ export function CompanionSprite(): React.ReactNode {
     return <Box paddingX={1} alignSelf="flex-end">
         <Text>
           {petting && <Text color="autoAccept">{figures.heart} </Text>}
-          <Text bold color={color}>
-            {renderFace(companion)}
-          </Text>{' '}
+          <Text color={SAND}>▐</Text>
+          <Text color={EYE} backgroundColor={VISOR}>■ ■</Text>
+          <Text color={SAND}>▌</Text>{' '}
           <Text italic dimColor={!focused && !reaction} bold={focused} inverse={focused && !reaction} color={reaction ? fading ? 'inactive' : color : focused ? color : undefined}>
             {label}
           </Text>
         </Text>
       </Box>;
   }
-  const frameCount = spriteFrameCount(companion.species);
   const heartFrame = petting ? PET_HEARTS[petAge % PET_HEARTS.length] : null;
-  let spriteFrame: number;
-  let blink = false;
-  if (reaction || petting) {
-    // Excited: cycle all fidget frames fast
-    spriteFrame = tick % frameCount;
-  } else {
-    const step = IDLE_SEQUENCE[tick % IDLE_SEQUENCE.length]!;
-    if (step === -1) {
-      spriteFrame = 0;
-      blink = true;
-    } else {
-      spriteFrame = step % frameCount;
-    }
-  }
-  const body = renderSprite(companion, spriteFrame).map(line => blink ? line.replaceAll(companion.eye, '-') : line);
-  const sprite = heartFrame ? [heartFrame, ...body] : body;
+  const excited = reaction !== undefined || petting;
+  const pose = excited ? EXCITED_SEQUENCE[tick % EXCITED_SEQUENCE.length]! : IDLE_SEQUENCE[tick % IDLE_SEQUENCE.length]!;
+  // The beacon pulses while Gizzi is excited.
+  const body = gizziBuddyRows(pose, excited && tick % 2 === 1 ? 'gizziShimmer' : 'gizzi');
 
   // Name row doubles as hint row — unfocused shows dim name + ↓ discovery,
   // focused shows inverse name. The enter-to-open hint lives in
@@ -189,8 +179,9 @@ export function CompanionSprite(): React.ReactNode {
   // sprite doesn't jump up when selected. flexShrink=0 stops the
   // inline-bubble row wrapper from squeezing the sprite to fit.
   const spriteColumn = <Box flexDirection="column" flexShrink={0} alignItems="center" width={colWidth}>
-      {sprite.map((line, i) => <Text key={i} color={i === 0 && heartFrame ? 'autoAccept' : color}>
-          {line}
+      {heartFrame && <Text color="autoAccept">{heartFrame}</Text>}
+      {body.map((segments, i) => <Text key={i}>
+          {segments.map(([text, fg, bg], j) => <Text key={j} color={fg || undefined} backgroundColor={bg}>{text}</Text>)}
         </Text>)}
       <Text italic bold={focused} dimColor={!focused} color={focused ? color : undefined} inverse={focused}>
         {focused ? ` ${companion.name} ` : companion.name}
