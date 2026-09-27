@@ -1,11 +1,12 @@
 // @ts-nocheck
 /**
  * Startup header, sized like Claude Code's: the small Gizzi mark (three rows)
- * beside three lines of text. The name is the GIZZI CODE wordmark set at text
- * size: bold caps with the G in coral for the wordmark's coral core (the block
- * letters can't be drawn legibly in one row). Then the version, the model, and
- * the working directory. No box. The mark blinks now and then; static under
- * prefersReducedMotion.
+ * beside three lines of text. The name is the GIZZI CODE wordmark image
+ * (Brand/Gizzi/wordmark) scaled to one text row, in terminals that show
+ * inline images (iTerm2, WezTerm, Ghostty, Kitty); elsewhere it is set as type,
+ * bold caps with the G in coral for the wordmark's core. Then the version, the
+ * model, and the working directory. No box. The mark blinks now and then;
+ * static under prefersReducedMotion.
  */
 import * as React from 'react'
 import { Box, Text, useAnimationFrame } from '../ink'
@@ -14,6 +15,17 @@ import { useSettings } from '../hooks/useSettings'
 import { renderModelSetting } from '../utils/model/model'
 import { getLogoDisplayData } from '../utils/logoV2Utils'
 import { CORAL, headerMarkRows } from './welcomeArt'
+import { useTheme } from './design-system/ThemeProvider'
+import { inlineImagePlaceholder } from '../ink/inlineImage'
+import {
+  GIZZI_WORDMARK_ASPECT,
+  GIZZI_WORDMARK_PNG_DARK_INK,
+  GIZZI_WORDMARK_PNG_LIGHT_INK,
+} from './gizziWordmarkImage'
+
+// A terminal cell is about twice as tall as wide, so a one-row image of the
+// wordmark spans aspect * 2 columns.
+const WORDMARK_COLS = Math.round(GIZZI_WORDMARK_ASPECT * 2)
 
 const TICK_MS = 200
 const BLINK_PERIOD_MS = 5200
@@ -28,10 +40,23 @@ export function WelcomeBox(): React.ReactNode {
   const [animRef, time] = useAnimationFrame(reducedMotion ? null : TICK_MS)
   const blinking = !reducedMotion && time % BLINK_PERIOD_MS > BLINK_PERIOD_MS - BLINK_LENGTH_MS
   const mark = headerMarkRows({ blinking })
+  const [themeName] = useTheme()
+  const lightTheme = String(themeName).startsWith('light')
+  const wordmarkImage = inlineImagePlaceholder(
+    lightTheme ? 'gizzi-wordmark-dark-ink' : 'gizzi-wordmark-light-ink',
+    lightTheme ? GIZZI_WORDMARK_PNG_DARK_INK : GIZZI_WORDMARK_PNG_LIGHT_INK,
+    WORDMARK_COLS,
+  )
   const lines = [
     <Text key="name">
-      <Text bold={true} color={CORAL}>G</Text>
-      <Text bold={true}>IZZI CODE</Text>
+      {wordmarkImage !== null ? (
+        <Text>{wordmarkImage}</Text>
+      ) : (
+        <>
+          <Text bold={true} color={CORAL}>G</Text>
+          <Text bold={true}>IZZI CODE</Text>
+        </>
+      )}
       <Text dimColor={true}> v{version}</Text>
     </Text>,
     <Text key="model" dimColor={true} wrap="truncate-end">{modelDisplayName}</Text>,
