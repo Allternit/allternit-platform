@@ -244,6 +244,15 @@ for app in apps:
     print(f"  installed        {v} build {b} · last changed {fmt(dt.datetime.fromtimestamp(newest_inside))}  {app}")
     if app.name == "Allternit Desktop.app":
         installed_build, installed_ver = b, v
+        # Builds made with an explicit ALLTERNIT_BUILD_SUFFIX before build-local.cjs
+        # derived the number from it carry a timestamp CFBundleVersion; the
+        # bundled build-info.json still records the real -b<N> suffix.
+        try:
+            suffix = json.loads((app / "Contents/Resources/build-info.json").read_text()).get("buildSuffix") or ""
+            if suffix:
+                installed_build = f"{b} ({suffix})"
+        except (OSError, ValueError):
+            pass
         if dtags:
             rel = dtags[0].split("-v")[-1]
             vkey = lambda x: [int(n) for n in re.findall(r"\d+", x)[:3]]
