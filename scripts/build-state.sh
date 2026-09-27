@@ -247,6 +247,15 @@ for app in apps:
         # Builds made with an explicit ALLTERNIT_BUILD_SUFFIX before build-local.cjs
         # derived the number from it carry a timestamp CFBundleVersion; the
         # bundled build-info.json still records the real -b<N> suffix.
+        # A UI swapped into platform/ after packaging never came from a build
+        # (the one-current-build rule bans in-place patching): flag it.
+        res = app / "Contents/Resources"
+        try:
+            ui_at = (res / "platform/index.html").stat().st_mtime
+            if ui_at - (res / "app.asar").stat().st_mtime > 600:
+                problems.append(f"installed Desktop UI was patched in place at {fmt(dt.datetime.fromtimestamp(ui_at))} (platform/ newer than the packaged app) — it matches no build; reinstall from a full Desktop build and find the session that rsync'd it")
+        except OSError:
+            pass
         try:
             suffix = json.loads((app / "Contents/Resources/build-info.json").read_text()).get("buildSuffix") or ""
             if suffix:
