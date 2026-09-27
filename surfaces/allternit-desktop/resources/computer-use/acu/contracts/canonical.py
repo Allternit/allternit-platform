@@ -27,7 +27,6 @@ class OperatingSystem(str, Enum):
     WINDOWS = "windows"
     LINUX = "linux"
     ANDROID = "android"
-    IOS = "ios"
 
 
 class Isolation(str, Enum):

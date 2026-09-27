@@ -10,6 +10,8 @@
  * NO_COLOR > TERM=dumb > isTTY.
  */
 
+import { release } from 'node:os'
+
 export interface ChalkShim {
   (text: unknown): string
   /** Color support level: 0 = none, 1 = 16 colors, 2 = 256, 3 = truecolor. */
@@ -208,7 +210,50 @@ function detectLevel(): number {
   }
   if (process.env.NO_COLOR !== undefined) return 0
   if (process.env.TERM === 'dumb') return 0
-  return process.stdout?.isTTY ? 3 : 0
+  if (!process.stdout?.isTTY) return 0
+  return detectTTYLevel(process.env, process.platform, osRelease())
+}
+
+function osRelease(): string {
+  try {
+    return release()
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Color depth of an interactive terminal, following supports-color (which
+ * upstream chalk uses). Truecolor is only claimed when the terminal says so:
+ * Apple Terminal before macOS 26 misparses `38;2;r;g;b` and renders the text
+ * in the default color, which made the whole TUI gray there.
+ */
+export function detectTTYLevel(
+  env: Record<string, string | undefined>,
+  platform: string,
+  release: string,
+): number {
+  if (platform === 'win32') return 3
+  const colorterm = env.COLORTERM?.toLowerCase()
+  if (colorterm === 'truecolor' || colorterm === '24bit') return 3
+  const term = env.TERM?.toLowerCase() ?? ''
+  if (/kitty|ghostty|wezterm|alacritty|truecolor|direct/.test(term)) return 3
+  switch (env.TERM_PROGRAM) {
+    case 'iTerm.app':
+    case 'WezTerm':
+    case 'ghostty':
+    case 'WarpTerminal':
+      return 3
+    case 'Apple_Terminal': {
+      // Terminal.app gained 24-bit color in macOS 26 (Darwin 25).
+      const darwinMajor = parseInt(release.split('.')[0] ?? '', 10)
+      return platform === 'darwin' && darwinMajor >= 25 ? 3 : 2
+    }
+  }
+  if (/-256(color)?$/.test(term)) return 2
+  if (/^screen|^xterm|^vt100|^vt220|^rxvt|color|ansi|cygwin|linux/.test(term)) return 1
+  if (env.COLORTERM) return 1
+  return term ? 1 : 0
 }
 
 let level = detectLevel()

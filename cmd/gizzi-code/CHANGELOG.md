@@ -1,5 +1,35 @@
 # Changelog
 
+## 2.1.3 (2026-09-26)
+
+Color in every terminal, gizzi's own config file, and build traceability.
+
+### Fixed
+- The TUI rendered gray in Apple Terminal (macOS 14 and earlier): gizzi sent
+  24-bit color to every terminal. Color depth now follows the terminal's
+  capabilities — 24-bit where supported, 256 colors in Apple Terminal before
+  macOS 26, 16 colors for basic terminals.
+- The permission-mode hint in the footer (`⏵⏵ bypass permissions on …`) is no
+  longer cut off; the cwd/model/context badges shorten first.
+- "Not logged in · Run /login" no longer shows when the model is from another
+  provider (`openrouter/…`, `kimi-cli/…`, `local-mlx/…`).
+- Sidecar `serve`/`fabric-worker` processes and MCP stdio servers no longer
+  outlive the process that started them.
+- Glob and Grep failed in installed builds (the binary re-launched itself
+  looking for an embedded ripgrep it doesn't have). gizzi now uses the
+  ripgrep shipped next to it (Desktop, npm) or `rg` on PATH (Homebrew
+  installs it as a dependency).
+
+### Changed
+- gizzi keeps its global config (theme, onboarding, project trust, model) in
+  `~/.gizzi/.config.json` (or `$GIZZI_CONFIG_DIR/.config.json`) instead of
+  sharing Claude Code's `~/.claude.json`. The first launch after upgrading
+  starts from defaults: pick your model again with `/model`.
+- Welcome box uses theme colors: coral border and wordmark, ink mascot with
+  coral accents (was a fixed sand color).
+- Production binaries embed the commit they were built from
+  (`GIZZI_BUILD_SHA`).
+
 ## 2.0.9 (2026-09-14)
 
 Grok-style agent dashboard and session-info polish.
