@@ -1,14 +1,9 @@
 /**
- * Startup-screen art: the Gizzi mascot and the GIZZI block wordmark, as
- * data, so WelcomeBox can animate them (beacon pulse, eye blink, shimmer
- * sweep) without hardcoding frames inline.
- *
- * The mascot is the brand Gizzi (Allternit Assets/Brand/Gizzi/static/
- * gizzi-mascot.svg) drawn on a 20x20 pixel grid, two pixels per terminal
- * cell with half blocks: coral beacon, ear pods, sand body with side
- * hands, darker face panel with square eyes, coral "A://" mark, four legs.
- * Colors are theme keys (gizziSand / gizziVisor / gizziEye / gizzi); the
- * beacon color is passed in because it animates.
+ * Startup header art: the Gizzi mark (Allternit Assets/Brand/Gizzi/mark,
+ * compact form) drawn small, three terminal rows tall, beside inline
+ * "Gizzi Code vX" text. Kept deliberately unobtrusive, like Claude Code's
+ * header glyph. Colors are theme keys (gizziSand / gizziVisor / gizziEye /
+ * gizzi coral).
  */
 
 export const CORAL = 'gizzi'
@@ -20,53 +15,26 @@ export const EYE = 'gizziEye'
 export type ArtSegment = [text: string, color: string, bg?: string]
 export type ArtRow = ArtSegment[]
 
-// Pixel map: . empty, B beacon, T sand, V face panel, E eye.
-const GIZZI_PIXELS = [
-  '.........BB.........',
-  '....................',
-  '....TTTT....TTTT....',
-  '....................',
-  '....TTTTTTTTTTTT....',
-  '...TTTTTTTTTTTTTT...',
-  '...TTVVVVVVVVVVTT...',
-  '...TVVVVVVVVVVVVT...',
-  '...TVVEEVVVVEEVVT...',
-  '..TTVVEEVVVVEEVVTT..',
-  '.TTTVVVVVVVVVVVVTTT.',
-  '..TTVVVVVVVVVVVVTT..',
-  '..TTVVVVVVVVVVVVTT..',
-  '...TTVVVVVVVVVVTT...',
-  '....TTTTTTTTTTTT....',
-  '....TTTTTTTTTTTT....',
-  '.....TTTTTTTTTT.....',
-  '....TT.TT..TT.TT....',
-  '....TT.TT..TT.TT....',
-  '....TT.TT..TT.TT....',
+// Pixel map (two pixel rows per cell): . empty, B beacon, T sand, V face
+// panel, E eye, C coral nose. Beacon, ear pods, head with side hands, face
+// panel, eyes, nose.
+const HEADER_PIXELS = [
+  '.....BB.....',
+  '..TTT..TTT..',
+  '.TTTTTTTTTT.',
+  'TTVEVVVVEVTT',
+  '.TVVVVCVVVT.',
+  '..TTTTTTTT..',
 ]
 
-export const GIZZI_WIDTH = GIZZI_PIXELS[0]!.length
-export const GIZZI_HEIGHT = GIZZI_PIXELS.length / 2
+export const HEADER_MARK_WIDTH = HEADER_PIXELS[0]!.length
+export const HEADER_MARK_HEIGHT = HEADER_PIXELS.length / 2
 
-/** Cell row of the eyes (pixel rows 8-9) and of the "A://" mark. */
-export const EYE_ROW = 4
-const MARK_ROW = 5
-const MARK = 'A://'
-const MARK_COL = (GIZZI_WIDTH - MARK.length) / 2
-
-/**
- * Gizzi rows with animatable slots: the beacon (row 0) takes `beaconColor`;
- * while `blinking` the eyes close into the face panel.
- */
-export function gizziRows({
-  beaconColor,
-  blinking,
-}: {
-  beaconColor: string
-  blinking: boolean
-}): ArtRow[] {
+/** Header mark rows; while `blinking` the eyes close into the face panel. */
+export function headerMarkRows({ blinking }: { blinking: boolean }): ArtRow[] {
   const colorOf = (p: string): string | undefined =>
-    p === 'B' ? beaconColor : p === 'T' ? SAND : p === 'V' ? VISOR : p === 'E' ? (blinking ? VISOR : EYE) : undefined
-  return renderPixelArt(GIZZI_PIXELS, colorOf, { row: MARK_ROW, col: MARK_COL, text: MARK })
+    p === 'B' || p === 'C' ? CORAL : p === 'T' ? SAND : p === 'V' ? VISOR : p === 'E' ? (blinking ? VISOR : EYE) : undefined
+  return renderPixelArt(HEADER_PIXELS, colorOf)
 }
 
 /**
@@ -108,41 +76,3 @@ export function renderPixelArt(
   }
   return rows
 }
-
-/**
- * The approved GIZZI block wordmark (Allternit Assets/Brand/Gizzi/wordmark/),
- * same matrix system as A://TERNIT: 5x5 block letters, one block column gap,
- * coral core in the G crossbar. Each block is one ■ followed by a space so the
- * blocks read square with visible gaps in a 1:2 terminal cell.
- */
-const LETTER_GRIDS: Record<string, string[]> = {
-  G: ['.XXX.', 'X....', 'X.CXX', 'X...X', '.XXX.'],
-  I: ['XXX', '.X.', '.X.', '.X.', 'XXX'],
-  Z: ['XXXXX', '...X.', '..X..', '.X...', 'XXXXX'],
-}
-
-export const WORDMARK_WORD = 'GIZZI'
-export const WORDMARK_BLOCK = '■'
-
-const GRID_ROWS: string[] = [0, 1, 2, 3, 4].map(row =>
-  WORDMARK_WORD.split('')
-    .map(ch => LETTER_GRIDS[ch]![row])
-    .join('.'),
-)
-
-/** Rendered rows: block → "■ ", gap → "  ", trailing space trimmed to a fixed width. */
-export const WORDMARK_ROWS: string[] = GRID_ROWS.map(row =>
-  row
-    .split('')
-    .map(ch => (ch === '.' ? '  ' : `${WORDMARK_BLOCK} `))
-    .join('')
-    .slice(0, row.length * 2 - 1),
-)
-
-export const WORDMARK_WIDTH = WORDMARK_ROWS[0]!.length
-
-/** Row and string index of the coral core block. */
-export const WORDMARK_CORE = (() => {
-  const row = GRID_ROWS.findIndex(r => r.includes('C'))
-  return { row, col: GRID_ROWS[row]!.indexOf('C') * 2 }
-})()

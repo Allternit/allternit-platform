@@ -2,14 +2,10 @@ import { describe, test, expect } from "bun:test"
 import { WelcomeBox } from "../../src/cli/ui/ink-app/components/WelcomeBox"
 import {
   CORAL,
-  WORDMARK_ROWS,
-  WORDMARK_WIDTH,
   EYE,
-  EYE_ROW,
-  GIZZI_HEIGHT,
-  GIZZI_WIDTH,
-  VISOR,
-  gizziRows,
+  HEADER_MARK_HEIGHT,
+  HEADER_MARK_WIDTH,
+  headerMarkRows,
 } from "../../src/cli/ui/ink-app/components/welcomeArt"
 
 describe("WelcomeBox", () => {
@@ -18,54 +14,28 @@ describe("WelcomeBox", () => {
   })
 })
 
-describe("welcomeArt", () => {
-  test("wordmark rows share a consistent width", () => {
-    expect(WORDMARK_ROWS).toHaveLength(5)
-    for (const row of WORDMARK_ROWS) {
-      expect(row.length).toBe(WORDMARK_WIDTH)
-    }
-  })
-
-  test("gizzi rows are a fixed-size grid", () => {
-    const rows = gizziRows({ beaconColor: CORAL, blinking: false })
-    expect(rows).toHaveLength(GIZZI_HEIGHT)
-    for (const row of rows) {
-      expect(row.map(([t]) => t).join("")).toHaveLength(GIZZI_WIDTH)
-    }
-    // The coral A:// mark sits on the face panel.
-    expect(rows.some(row => row.some(([t, fg, bg]) => t === "A://" && fg === CORAL && bg === VISOR))).toBe(true)
+describe("header mark", () => {
+  test("is three rows tall and a fixed width", () => {
+    const rows = headerMarkRows({ blinking: false })
+    expect(rows).toHaveLength(HEADER_MARK_HEIGHT)
+    expect(HEADER_MARK_HEIGHT).toBe(3)
+    for (const row of rows) expect(row.map(([t]) => t).join("")).toHaveLength(HEADER_MARK_WIDTH)
   })
 
   test("blink closes the eyes into the face panel", () => {
-    const colors = (rows: any) => rows[EYE_ROW].flatMap(([, fg, bg]: any) => [fg, bg])
-    expect(colors(gizziRows({ beaconColor: CORAL, blinking: false }))).toContain(EYE)
-    expect(colors(gizziRows({ beaconColor: CORAL, blinking: true }))).not.toContain(EYE)
+    const colors = (rows: any) => rows.flatMap((r: any) => r.flatMap(([, fg, bg]: any) => [fg, bg]))
+    expect(colors(headerMarkRows({ blinking: false }))).toContain(EYE)
+    expect(colors(headerMarkRows({ blinking: true }))).not.toContain(EYE)
   })
 
-  test("beacon row takes the animated color", () => {
-    const rows = gizziRows({ beaconColor: "rgb(245,149,117)", blinking: false })
-    expect(rows[0].some(([, fg]) => fg === "rgb(245,149,117)")).toBe(true)
-  })
-
-  test("static parts use theme keys, not hardcoded colors", () => {
-    const rows = gizziRows({ beaconColor: CORAL, blinking: false })
-    for (const row of rows.slice(1)) {
+  test("uses theme keys, not hardcoded colors", () => {
+    for (const row of headerMarkRows({ blinking: false })) {
       for (const [, fg, bg] of row) {
         expect(fg).not.toMatch(/^#|^rgb/)
         expect(bg ?? "").not.toMatch(/^#|^rgb/)
       }
     }
-  })
-})
-
-describe("GIZZI block wordmark", () => {
-  test("uses the approved block letters with one coral core in the G", async () => {
-    const { WORDMARK_ROWS, WORDMARK_CORE, WORDMARK_BLOCK } = await import("../../src/cli/ui/ink-app/components/welcomeArt")
-    expect(WORDMARK_ROWS).toHaveLength(5)
-    // G I Z Z I with one-block gaps: 25 grid columns, two cells each.
-    expect(WORDMARK_ROWS[0]).toHaveLength(49)
-    expect(WORDMARK_ROWS[WORDMARK_CORE.row]![WORDMARK_CORE.col]).toBe(WORDMARK_BLOCK)
-    expect(WORDMARK_CORE).toEqual({ row: 2, col: 4 })
+    expect(CORAL).toBe("gizzi")
   })
 })
 
