@@ -16,7 +16,8 @@
 import fs from "fs/promises"
 import path from "path"
 import os from "os"
-import matter from "gray-matter"
+import { ConfigMarkdown } from "@/runtime/context/config/markdown"
+import { Log } from "@/shared/util/log"
 import type {
   ClaudePlugin,
   ClaudePluginCommand,
@@ -156,6 +157,18 @@ async function loadManifest(root: string): Promise<ClaudePluginManifest | null> 
   return raw as ClaudePluginManifest
 }
 
+const log = Log.create({ service: "claude-plugin" })
+
+// One malformed file must not take down every plugin: skip it and warn.
+function parseFrontmatter(text: string, source: string) {
+  try {
+    return ConfigMarkdown.parseText(text)
+  } catch (err) {
+    log.warn("skipping file with invalid frontmatter", { source, error: String(err) })
+    return null
+  }
+}
+
 async function loadCommands(root: string, pluginName: string): Promise<ClaudePluginCommand[]> {
   const commandsDir = path.join(root, "commands")
   if (!(await exists(commandsDir))) return []
@@ -164,7 +177,8 @@ async function loadCommands(root: string, pluginName: string): Promise<ClaudePlu
   for (const file of files) {
     const source = path.join(commandsDir, file)
     const text = await fs.readFile(source, "utf8")
-    const parsed = matter(text)
+    const parsed = parseFrontmatter(text, source)
+    if (!parsed) continue
     const data = parsed.data as Record<string, unknown>
     let allowedTools: string[] | undefined
     if (data["allowed-tools"] !== undefined) {
@@ -197,7 +211,8 @@ async function loadSkills(root: string, pluginName: string): Promise<ClaudePlugi
     const skillFile = path.join(skillDir, "SKILL.md")
     if (!(await exists(skillFile))) continue
     const text = await fs.readFile(skillFile, "utf8")
-    const parsed = matter(text)
+    const parsed = parseFrontmatter(text, skillFile)
+    if (!parsed) continue
     const data = parsed.data as Record<string, unknown>
     if (!data.name || !data.description) continue
     skills.push({

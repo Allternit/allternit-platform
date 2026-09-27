@@ -38,8 +38,8 @@ export namespace ConfigMarkdown {
         continue
       }
 
-      // match key: value pattern
-      const kvMatch = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$/)
+      // match key: value pattern (Claude Code keys are hyphenated: argument-hint)
+      const kvMatch = line.match(/^([a-zA-Z_][a-zA-Z0-9_-]*)\s*:\s*(.*)$/)
       if (!kvMatch) {
         result.push(line)
         continue
@@ -54,8 +54,9 @@ export namespace ConfigMarkdown {
         continue
       }
 
-      // if value contains a colon, convert to block scalar
-      if (value.includes(":")) {
+      // if value contains a colon or isn't valid YAML on its own (e.g.
+      // `argument-hint: [system] [--source <path>]`), convert to block scalar
+      if (value.includes(":") || !validScalarLine(line)) {
         result.push(`${key}: |-`)
         result.push(`  ${value}`)
         continue
@@ -66,6 +67,25 @@ export namespace ConfigMarkdown {
 
     const processed = result.join("\n")
     return content.replace(frontmatter, () => processed)
+  }
+
+  function validScalarLine(line: string) {
+    try {
+      matter(`---\n${line}\n---\n`)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  // Parse frontmatter from text, retrying with fallbackSanitization. Throws
+  // when neither parses.
+  export function parseText(template: string) {
+    try {
+      return matter(template)
+    } catch {
+      return matter(fallbackSanitization(template))
+    }
   }
 
   export async function parse(filePath: string) {
