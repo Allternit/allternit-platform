@@ -227,3 +227,21 @@ describe("ConfigMarkdown: frontmatter has weird model id", async () => {
     expect(result.content.trim()).toBe("Strictly follow da rules")
   })
 })
+
+describe("ConfigMarkdown: Claude Code command with an unquoted bracket hint", () => {
+  // Claude Code accepts this; strict YAML reads `[system]` as a flow sequence
+  // and fails on the text after it.
+  const template = `---
+description: Start here — say what you want done
+argument-hint: [system] [--source <path>]
+allowed-tools: [Read, Grep]
+---
+Body`
+
+  test("parseText falls back and keeps the hint as a string", () => {
+    const result = ConfigMarkdown.parseText(template)
+    expect(result.data["argument-hint"]).toBe("[system] [--source <path>]")
+    expect(result.data["allowed-tools"]).toEqual(["Read", "Grep"])
+    expect(result.content.trim()).toBe("Body")
+  })
+})
