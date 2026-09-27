@@ -1661,10 +1661,24 @@ fn bot_turn_model(db: &DbHandle, session_id: &str, bot_id: &str) -> serde_json::
 /// `create_session` for an agent-bound chat and stamps the same metadata the
 /// web client does, so every surface lists it as the bot's thread.
 pub(crate) async fn create_bot_session(db: &DbHandle, bot_id: &str, bot_name: &str) -> Result<String, String> {
+    create_bot_thread_session(db, bot_id, bot_name, "Bot Chat", true, None).await
+}
+
+/// Create a gizzi session for one of a bot's threads. `canonical` tags it
+/// `botCanonicalFor` (the bot's main thread); otherwise `botThreadOf`, like
+/// the web client's "+ New thread". `thread_id` links it to `bot_threads`.
+pub(crate) async fn create_bot_thread_session(
+    db: &DbHandle,
+    bot_id: &str,
+    bot_name: &str,
+    title: &str,
+    canonical: bool,
+    thread_id: Option<&str>,
+) -> Result<String, String> {
     let client = gizzi_client(&HeaderMap::new());
     let (provider_id, model_id) = AppConfig::load().default_model();
     let mut payload = serde_json::Map::new();
-    payload.insert("title".to_string(), json!("Bot Chat"));
+    payload.insert("title".to_string(), json!(title));
     payload.insert("surface".to_string(), json!(normalize_surface_for_gizzi("chat")));
     payload.insert("agentID".to_string(), json!(bot_id));
     payload.insert("model".to_string(), json!(GizziModelRef { provider_id, model_id, auth_profile_id: None }));
@@ -1680,17 +1694,18 @@ pub(crate) async fn create_bot_session(db: &DbHandle, bot_id: &str, bot_name: &s
     .await
     .map_err(|_| "gizzi runtime refused session create".to_string())?;
     let _ = db.set_session_origin_surface(&session.id, "chat");
-    let _ = db.set_session_metadata(
-        &session.id,
-        &json!({
-            "isBot": true,
-            "sessionMode": "agent",
-            "agentId": bot_id,
-            "agentName": bot_name,
-            "botName": bot_name,
-            "botCanonicalFor": bot_id,
-        }),
-    );
+    let mut bag = json!({
+        "isBot": true,
+        "sessionMode": "agent",
+        "agentId": bot_id,
+        "agentName": bot_name,
+        "botName": bot_name,
+    });
+    bag[if canonical { "botCanonicalFor" } else { "botThreadOf" }] = json!(bot_id);
+    if let Some(id) = thread_id {
+        bag["threadId"] = json!(id);
+    }
+    let _ = db.set_session_metadata(&session.id, &bag);
     Ok(session.id)
 }
 
@@ -1718,6 +1733,19 @@ pub(crate) async fn send_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str,
             Err(format!("gizzi turn failed ({status}): {body}"))
         }
     }
+}
+
+/// Add a user-role message to a session without running a turn (gizzi
+/// `noReply`). Used to seed a fresh context generation with the thread's
+/// checkpoint.
+pub(crate) async fn seed_session_message(session_id: &str, text: &str) -> Result<(), String> {
+    let client = gizzi_client(&HeaderMap::new());
+    let path = format!("/v1/session/{}/message", urlencoding::encode(session_id));
+    let payload = json!({ "parts": [{ "type": "text", "text": text }], "noReply": true });
+    gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(payload))
+        .await
+        .map(|_| ())
+        .map_err(|_| "gizzi refused the checkpoint message".to_string())
 }
 
 /// Whether a gizzi session still exists (a pinned thread can be deleted from
