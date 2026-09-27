@@ -1,6 +1,7 @@
-# HANDOFF — Subscription Capability Fabric, 2026-09-26 cloud gate in progress
+# HANDOFF — Subscription Capability Fabric, 2026-09-26/27 cloud gate in progress
 
-> Written for session-continuation. State as of ~18:00 CDT 2026-09-26. Repo:
+> Written for session-continuation. State as of ~22:30 CDT 2026-09-26 (§8
+> continuation). Repo:
 > `Gizziio/allternit-platform`, shared checkout `~/Desktop/allternit-workspace/allternit`
 > (update this file in the shared checkout, commit direct on main with
 > `STEER_GUARD_OFF=1`, push — precedent: commits 5d3e51367/e036f0dbc).
@@ -191,3 +192,121 @@
   LOCAL API's DB (`~/.allternit/allternit-api.db`) — deleting at Incus level
   orphans them; prefer `POST /computers/<id>/delete` (approval-gated).
 - `/tmp/sessions-gate/` is gate scratch — delete at closeout.
+
+
+## 8. HANDOFF — 2026-09-27 ~23:00 CDT (kimi session_9b89b1a3) — gate live, Eoj login is next
+
+THIS SECTION IS CURRENT STATE. §0–§7 remain context. Five blockers fixed
+and merged tonight; the P3 gate is running end-to-end except the ChatGPT
+login, which is Eoj-driven and was in progress when this was written.
+
+### 8.1 Landed tonight (all merged to origin/main, merge commits)
+
+- **PR #785 / f1d7100f1** — SubstrateRouter forwards `guest_service_url`
+  (the §6 blocker; was the ONLY trait method not forwarded). +2 tests.
+- **PR #786 / 1c4f7ed86** — restored PR #769's secret-store backend
+  (FileKeychainBackend, SUBS_GATEWAY_KEYCHAIN=file|keychain) after
+  attestation commit 850a31905 committed a stale session tree and reverted
+  it (plus 87 other files). typecheck + keychain tests 13/13.
+- **PR #787 / ed7c6ebb1** (parallel session) — restored the remaining
+  850a31905 damage. Main is now fully healed from that incident.
+- **PR #789 / 1046ba101** — guest_service_url + get_desktop_endpoint
+  return a REACHABLE host: single-host pools keyed by the synthetic name
+  "legacy" produced http://legacy:<port>; now falls back to the
+  driver-level vnc host (INCUS_VNC_HOST). 104/104 crate tests.
+- **PR #791 / a203ece63** — proxy_forward sets Host: 127.0.0.1:<guest_port>
+  (reqwest derived mail.news...:<port> after hop-by-hop stripping; the
+  gateway's A6.1 host guard 403'd forbidden_host). computer_ws 19/19.
+
+### 8.2 Live infrastructure (all running NOW)
+
+- **Scratch allternit-api on :18013** — built from worktree
+  `~/Desktop/allternit-workspace/allternit-session-kimi-router-gsu`
+  (branch `session/kimi-proxy-host`, code = a203ece63). Background cargo
+  run; log `/tmp/sessions-gate/api18013.log`. Env: ALLTERNIT_API_PORT=18013,
+  ALLTERNIT_DATA_DIR=/tmp/subs-scratch-api (scratch DB — the gate computer
+  `computer-e0cc21e903e843b7b2b65de9da471404` lives in ITS sqlite),
+  ALLTERNIT_DESKTOP_ACCESS_TOKEN in `/tmp/sessions-gate/.scratch-tok`,
+  ALLTERNIT_DESKTOP_WS_SECRET in `/tmp/sessions-gate/.wssecret`,
+  Incus env from `~/.allternit/incus-host.env`. Incus instance:
+  `allternit-user-local-dev-user-3f36464696e542c7b75cd76676f6fefa`
+  (2c/4GB/20GB, golden image, running, created THROUGH 18013).
+- **Gateway in the guest** — healthy on UDS; TCP 0.0.0.0:7788. cli-token:
+  `sgw_gDJpb1joEW1cux4UfuR0MEjh3Bm8U1D9cnTlO6GH100` (also in guest
+  /var/lib/subs-gateway/keychain.json). Adapter chatgpt-web live:
+  chat.create / chat.continue / image.generate, provider id `chatgpt`.
+- **Proxy lane PROVEN**: proxy enabled on guest port 7788 (Incus device
+  svc7788, host port 30010); `GET :18013/api/v1/computers/<id>/proxy/v1/health`
+  with platform headers + `Authorization: Bearer <cli-token>` returns
+  `{"ok":true}` from the Mac. This is the drive path for all gate calls.
+- **Installed API on :8013** (Desktop sidecar) still fronts the OLD guest
+  `computer-9bd5cfe494a140d182645e645039f74b` — REDUNDANT; delete via
+  `POST :8013/api/v1/computers/computer-9bd5cfe494a140d182645e645039f74b/delete`
+  (gated; Eoj approval). Its Desktop token: re-extract per §2 (the API
+  restarts — PID changes; Desktop was launched this session).
+- Gate scratch: `/tmp/sessions-gate/` (bundles, tokens, proxy logs, the
+  node/python proxy experiments — delete at closeout).
+
+### 8.3 Gate progress (§6.4 steps)
+
+1. `subs connect chatgpt` — DONE through the proxy lane:
+   `POST .../proxy/v1/accounts {provider:"chatgpt", label:"eoj-gate"}` →
+   account_id `2bf94d24-02a4-4947-8afb-f56cfe01a85a`,
+   session_health `auth_required`. Guest browser will need the login.
+2. **ChatGPT login — IN PROGRESS, Eoj drives.** Writable noVNC:
+   mint `POST :18013/api/v1/computers/<id>/ws-token {"purpose":"vnc","read_only":false}`
+   (gated; relay per §4 with the scratch token), then Eoj opens
+   `http://127.0.0.1:18013/embed/computers/<id>?token=<ws-token>`
+   (the viewer page passes the query token to /ws/computers/<id>/vnc;
+   ws handshake TTL 300s — mint fresh, reconnects keep the session).
+   Fallbacks per §6.3: screenshot + gated mouse|keyboard one-shots.
+3. THEN: `GET .../proxy/v1/accounts/2bf94d24-.../status` → expect
+   session_health ready → `POST .../proxy/v1/tasks {"capability":"chat.create","prompt":"Say hello in exactly three words"}`
+   → poll `GET .../proxy/v1/tasks/<id>` → verify text in ChatGPT UI (Eoj).
+4. kill -9 adoption: kill the gateway worker mid-task (in-guest
+   `pkill -f worker` or the adapter process — capture exact pid from the
+   guest), restart, expect adopted / submission_ambiguous, NO double
+   submit (Eoj verifies in the ChatGPT UI).
+5. `POST .../proxy/v1/tasks {"capability":"image.generate",...}` →
+   artifact + sha256 + quarantine per §6.4.
+6. Closeout per §6.5: verdict attestation (honest pass/fail per step),
+   stop (not delete) the computer, kill the scratch API, delete old guest,
+   `rm -rf /tmp/sessions-gate /tmp/subs-scratch-api`, ledger + discipline,
+   tear down worktrees `allternit-session-kimi-router-gsu` (branches
+   session/kimi-router-gsu, session/kimi-restore-keychain,
+   session/kimi-vnc-host-fallback, session/kimi-proxy-host — all merged,
+   delete local+remote). Eoj may want to keep the new guest up for the
+   next gate session instead — his call.
+
+### 8.4 Traps learned tonight (all binding; §7 traps still apply too)
+
+1. `git archive origin/main -- ... > gateway.tar.gz` writes an
+   UNCOMPRESSED tar (pax_glob magic). ALWAYS `git archive --format=tar.gz`.
+2. Incus files API 404s ("Execution not found" envelope) when the target
+   parent dir does not exist — `mkdir -p` in the guest BEFORE upload.
+3. Relay approvals: `/api/aci/handoff/<id>/approve` (NOT /api/v1) — §4.
+   On 18013 the relay works with the scratch token exactly as on 8013.
+4. Uploads/shell/proxy-enable/writable-ws-token are gated; polls of
+   already-approved identical actions sometimes pass ungated (hash-based).
+   Approve and redeem within the 300s grant TTL.
+5. macOS system python3 (LibreSSL) cannot TLS-handshake the VPS — use
+   node/curl for ad-hoc Incus proxying.
+6. The Desktop API (:8013) token goes stale on every API restart —
+   always re-extract (§2 commands).
+7. Scratch API needs ALLTERNIT_DESKTOP_WS_SECRET set or ws-token/embed-token
+   return "desktop ws not configured" (or use ALLTERNIT_LOCAL_DEV_BYPASS=true).
+8. **Shared checkout is NOT synced**: its AGENTS.md carries an uncommitted
+   stale edit (removes the "one current build" commandment) from another
+   session; `git pull --ff-only` aborts on it. Do not clobber blindly —
+   inspect `git diff AGENTS.md` there first. All tonight's merges are on
+   origin/main; fresh worktrees from origin/main are correct.
+9. 850a31905 incident is CLOSED (healed by #786+#787), but the pattern —
+   attestation commits sweeping in stale-tree state — is live; run
+   `scripts/git-discipline-check.sh` and eyeball `git show --stat` of any
+   docs(ledger) commit that touches non-docs files.
+
+### 8.5 Eoj's standing roles (unchanged)
+
+Approve each gated action as prompted; drive the ChatGPT login in the
+streamed display; verify no-double-submit and the chat text in the ChatGPT
+UI. Nothing client-facing ships from this gate.
