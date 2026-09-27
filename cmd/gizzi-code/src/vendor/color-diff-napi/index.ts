@@ -9,11 +9,14 @@ import {
   ANSI_RESET,
   bgAnsi,
   emitSpans,
+  fgAnsi,
+  SGR_DIM,
   highlightSpans,
   mapThemeName,
   resolveLanguage,
   wrapSpans,
 } from './syntax.js'
+import chalk from '@/shared/util/chalk'
 
 /** Minimal shape of a `diff` package StructuredPatchHunk. */
 interface StructuredPatchHunkLike {
@@ -254,10 +257,10 @@ export class ColorDiff {
 
   /**
    * Render a structured diff hunk as ANSI-highlighted lines, wrapped to
-   * `width`. Reproduces the original NAPI binding's layout: a gutter of
-   * `marker + space + right-aligned line number + space` (padded to the max
-   * line-number width + 3), added/removed lines tinted with the theme's diff
-   * background colors, and syntax-highlighted content. Returns null in
+   * `width`. Matches Claude Code's layout: a gutter of `right-aligned line
+   * number + space + marker + space` (max line-number width + 3), tinted with
+   * the row's diff background and the marker in the theme's diff word color;
+   * context gutters are dim. Content is syntax-highlighted. Returns null in
    * color-math mode or when the render inputs are unusable, in which case
    * callers fall back to their React fallback renderer.
    */
@@ -286,9 +289,13 @@ export class ColorDiff {
     let oldLine = patch.oldStart;
     let newLine = patch.newStart;
 
+    const addedGutter = addedBg + fgAnsi(palette.addedWord, palette.ansi, '\x1b[92m');
+    const removedGutter = removedBg + fgAnsi(palette.removedWord, palette.ansi, '\x1b[91m');
     const blankGutter = ' '.repeat(gutterWidth);
-    const gutter = (marker: string, num: number | null) =>
-      marker + ' ' + (num === null ? ' '.repeat(digits) : String(num).padStart(digits)) + ' ';
+    const gutter = (marker: string, num: number | null, style: string) => {
+      const text = (num === null ? ' '.repeat(digits) : String(num).padStart(digits)) + ' ' + marker + ' ';
+      return style ? style + text + ANSI_RESET : text;
+    };
 
     for (const raw of patch.lines) {
       if (typeof raw !== 'string') continue;
@@ -318,7 +325,9 @@ export class ColorDiff {
         // edge, matching the React fallback's Box background behaviour.
         const pad = bg ? contentWidth - rows[i]!.reduce((n, s) => n + s.text.length, 0) : 0;
         const padSpan = pad > 0 && bg ? [{ text: ' '.repeat(pad), bg }] : [];
-        out.push((i === 0 ? gutter(marker === '+' || marker === '-' || marker === ' ' ? marker : ' ', num) : blankGutter) + emitSpans([...rows[i]!, ...padSpan]));
+        const style = marker === '+' ? addedGutter : marker === '-' ? removedGutter : chalk.level > 0 ? SGR_DIM : '';
+        const g = gutter(i === 0 && (marker === '+' || marker === '-') ? marker : ' ', i === 0 ? num : null, style);
+        out.push(g + emitSpans([...rows[i]!, ...padSpan]));
       }
     }
     return out;
