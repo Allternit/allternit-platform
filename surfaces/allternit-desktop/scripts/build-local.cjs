@@ -33,6 +33,9 @@ if (
 const extraArgs = [];
 if (process.env.ALLTERNIT_BUILD_SUFFIX) {
   const pkg = require(path.join(__dirname, '..', 'package.json'));
+  // An explicit -b<N> suffix carries the build number; without this the
+  // bundle version fell back to a timestamp and never matched the DMG name.
+  height ??= /^-b(\d+)$/.exec(process.env.ALLTERNIT_BUILD_SUFFIX)?.[1] ?? null;
   const buildVersion = process.env.ALLTERNIT_BUILD_VERSION || `${pkg.version}.${height ?? Date.now()}`;
   extraArgs.push(`-c.buildVersion=${buildVersion}`);
   try {
