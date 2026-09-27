@@ -123,7 +123,7 @@ use allternit_api::web_proxy_routes::web_proxy_router;
 use allternit_api::webhook_routes::webhook_router;
 use allternit_api::webhook_subscription_routes::webhook_subscription_router;
 use allternit_api::webhook_trigger_routes::{
-    webhook_trigger_public_router, webhook_trigger_router,
+    webhook_trigger_protected_router, webhook_trigger_public_router,
 };
 use allternit_api::workflow_routes::workflow_router;
 use allternit_api::workspace_routes::workspace_router;
@@ -854,7 +854,9 @@ async fn main() {
         .merge(beta_deployment_router())
         .merge(beta_work_router())
         .merge(webhook_subscription_router())
-        .merge(webhook_trigger_router())
+        // Protected surface only: `webhook_trigger_router()` is the test
+        // helper and already nests `/api/v1`, which doubled the live path.
+        .merge(webhook_trigger_protected_router())
         .merge(beta_memory_store_router())
         .merge(memory_reconstruction_router())
         .merge(allternit_api::memory_notes_routes::memory_notes_router())
