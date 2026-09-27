@@ -345,15 +345,16 @@ if (await Bun.file(BUNFIG_ORIG).exists()) {
     await rename(BUNFIG_ORIG, BUNFIG_BACKUP);
     bunfigWasMoved = true;
 }
-// An interrupted build must not leave bunfig.toml moved aside (it shows up as
-// a deleted tracked file and breaks `bun test` aliases).
+// A failed or interrupted build must not leave bunfig.toml moved aside (it
+// shows up as a deleted tracked file and breaks `bun test` aliases). The exit
+// handler covers every process.exit() path; signals route through it.
+process.on("exit", () => {
+    if (bunfigWasMoved && existsSync(BUNFIG_BACKUP)) {
+        renameSync(BUNFIG_BACKUP, BUNFIG_ORIG);
+    }
+});
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-    process.on(sig, () => {
-        if (bunfigWasMoved && existsSync(BUNFIG_BACKUP)) {
-            renameSync(BUNFIG_BACKUP, BUNFIG_ORIG);
-        }
-        process.exit(130);
-    });
+    process.on(sig, () => process.exit(130));
 }
 // Compile-time `feature()` flags (see script/features.mjs).
 const FEATURES = resolveFeatures();
