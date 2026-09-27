@@ -470,8 +470,8 @@ checked live in a main Desktop build (one-current-build rule).
 - [ ] P1.6 A:// SDK: TypeScript client + types over the existing HTTP surface (principals, intents, runs/jobs, approvals, DAG, memory grants); Rust types from `allternit-cowork-runtime`
 
 ### P2 — Design pass (sign-off before any P3 UI)
-- [ ] P2.1 Target mocks, annotated against the reference frames: Project home (coordinator + Threads panel), Thread view (todo card, rip/New divider, steer composer, nested subagents), Thread inspector, Bot detail (header + 6 tabs), Create bot (one screen), group-chat @thread
-- [ ] P2.2 Eoj sign-off; mocks become the acceptance screenshots for P3
+- [x] P2.1 Target mocks (https://claude.ai/artifact/TrCk8AYYVxhFA6DdFoejqy, v2 adds Bots launch), annotated against the reference frames: Project home (coordinator + Threads panel), Thread view (todo card, rip/New divider, steer composer, nested subagents), Thread inspector, Bot detail (header + 6 tabs), Create bot (one screen), group-chat @thread
+- [x] P2.2 Eoj signed off 2026-09-27 ("I love the mock up"); mocks are the acceptance screenshots for P3
 
 ### P3 — Thread object + Threads UI
 - [ ] P3.1 `bot_threads` + `bot_thread_sessions` tables and API; kinds standing/task; incognito flag
@@ -481,7 +481,7 @@ checked live in a main Desktop build (one-current-build rule).
 - [ ] P3.5 Threads panel (groups, rows, k/n ring, artifact badge)
 - [ ] P3.6 Thread view (breadcrumb, todo card, rip dividers, provenance, steer composer, model pill)
 - [ ] P3.7 Thread inspector (Activity, Subagents, Artifacts, Memory, Computer, Details)
-- [ ] P3.8 Rail regrouping + Project home replaces "The roster" and Bot Hub (B10)
+- [ ] P3.8 Rail regrouping + **Bots launch** (no project open: "What should the team work on?" composer to Al, team strip with live status, projects with waiting/working counts, standing threads, first-run create-bot block) and **Project home** (inside a project) replace "The roster" and Bot Hub (B10). No template gallery, no Chat/Cowork/Bots dock on the Bots launch
 - [ ] P3.9 Bot detail rebuild: split `BotHomeView.tsx` into header + Threads · Routines · Memory · Computer · Performance · Config (§7.2)
 - [ ] P3.10 Create bot one-screen flow (§7.3)
 - [ ] P3.11 Incognito asks
