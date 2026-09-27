@@ -7,6 +7,9 @@ export type Theme = {
   bashBorder: string
   gizzi: string
   gizziShimmer: string // Lighter Gizzi coral for shimmer
+  gizziSand: string // Gizzi mascot body (brand #D4B08C)
+  gizziVisor: string // Gizzi mascot face panel
+  gizziEye: string // Gizzi mascot eyes
   systemSpinner: string
   systemSpinnerShimmer: string
   permission: string
@@ -118,6 +121,9 @@ const lightTheme: Theme = {
   bashBorder: 'rgb(255,0,135)', // Vibrant pink
   gizzi: 'rgb(217,119,87)', // Gizzi coral #D97757
   gizziShimmer: 'rgb(245,149,117)', // Lighter Gizzi coral for shimmer effect
+  gizziSand: 'rgb(212,176,140)', // Gizzi sand #D4B08C
+  gizziVisor: 'rgb(181,151,121)', // sand under the 16% ink face panel
+  gizziEye: 'rgb(17,19,24)', // #111318
   systemSpinner: 'rgb(87,105,247)', // Medium blue for system spinner
   systemSpinnerShimmer: 'rgb(117,135,255)', // Lighter blue for system spinner shimmer
   permission: 'rgb(87,105,247)', // Medium blue
@@ -200,6 +206,9 @@ const lightAnsiTheme: Theme = {
   bashBorder: 'ansi:magenta',
   gizzi: 'ansi:redBright',
   gizziShimmer: 'ansi:yellowBright',
+  gizziSand: 'ansi:yellow',
+  gizziVisor: 'ansi:white',
+  gizziEye: 'ansi:black',
   systemSpinner: 'ansi:blue',
   systemSpinnerShimmer: 'ansi:blueBright',
   permission: 'ansi:blue',
@@ -281,6 +290,9 @@ const darkAnsiTheme: Theme = {
   bashBorder: 'ansi:magentaBright',
   gizzi: 'ansi:redBright',
   gizziShimmer: 'ansi:yellowBright',
+  gizziSand: 'ansi:yellow',
+  gizziVisor: 'ansi:white',
+  gizziEye: 'ansi:black',
   systemSpinner: 'ansi:blueBright',
   systemSpinnerShimmer: 'ansi:blueBright',
   permission: 'ansi:blueBright',
@@ -362,6 +374,9 @@ const lightDaltonizedTheme: Theme = {
   bashBorder: 'rgb(0,102,204)', // Blue instead of pink
   gizzi: 'rgb(255,153,51)', // Orange adjusted for deuteranopia
   gizziShimmer: 'rgb(255,183,101)', // Lighter orange for shimmer effect
+  gizziSand: 'rgb(212,176,140)', // Gizzi sand #D4B08C
+  gizziVisor: 'rgb(181,151,121)', // sand under the 16% ink face panel
+  gizziEye: 'rgb(17,19,24)', // #111318
   systemSpinner: 'rgb(51,102,255)', // Bright blue for system spinner
   systemSpinnerShimmer: 'rgb(101,152,255)', // Lighter bright blue for system spinner shimmer
   permission: 'rgb(51,102,255)', // Bright blue
@@ -443,6 +458,9 @@ const darkTheme: Theme = {
   bashBorder: 'rgb(253,93,177)', // Bright pink
   gizzi: 'rgb(217,119,87)', // Gizzi coral #D97757
   gizziShimmer: 'rgb(235,159,127)', // Lighter Gizzi coral for shimmer effect
+  gizziSand: 'rgb(212,176,140)', // Gizzi sand #D4B08C
+  gizziVisor: 'rgb(181,151,121)', // sand under the 16% ink face panel
+  gizziEye: 'rgb(17,19,24)', // #111318
   systemSpinner: 'rgb(147,165,255)', // Blue for system spinner
   systemSpinnerShimmer: 'rgb(177,195,255)', // Lighter blue for system spinner shimmer
   permission: 'rgb(177,185,249)', // Light blue-purple
@@ -524,6 +542,9 @@ const darkDaltonizedTheme: Theme = {
   bashBorder: 'rgb(51,153,255)', // Bright blue
   gizzi: 'rgb(255,153,51)', // Orange adjusted for deuteranopia
   gizziShimmer: 'rgb(255,183,101)', // Lighter orange for shimmer effect
+  gizziSand: 'rgb(212,176,140)', // Gizzi sand #D4B08C
+  gizziVisor: 'rgb(181,151,121)', // sand under the 16% ink face panel
+  gizziEye: 'rgb(17,19,24)', // #111318
   systemSpinner: 'rgb(153,204,255)', // Light blue for system spinner
   systemSpinnerShimmer: 'rgb(183,224,255)', // Lighter blue for system spinner shimmer
   permission: 'rgb(153,204,255)', // Light blue

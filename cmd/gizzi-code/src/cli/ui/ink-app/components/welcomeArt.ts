@@ -1,75 +1,75 @@
 /**
- * Startup-screen art: the Architectural Sentinel mascot and the GIZZI
- * block wordmark, as data, so WelcomeBox can animate them (beacon pulse,
- * eye blink, shimmer sweep) without hardcoding frames inline.
- *
- * Colors are theme keys, matching the orb spinner: ink body (the theme's
- * `text`, so it reads on light and dark terminals), coral `gizzi` accents,
- * `inactive` legs. The beacon color is passed in because it animates.
+ * Gizzi pixel-art support shared by the buddy sprite: theme color keys
+ * (gizziSand / gizziVisor / gizziEye / gizzi coral) and a half-block renderer.
  */
 
-export const INK = 'text'
 export const CORAL = 'gizzi'
-export const LEGS = 'inactive'
+export const SAND = 'gizziSand'
+export const VISOR = 'gizziVisor'
+export const EYE = 'gizziEye'
 
-export type ArtSegment = [text: string, color: string]
+/** [text, foreground, background?] */
+export type ArtSegment = [text: string, color: string, bg?: string]
 export type ArtRow = ArtSegment[]
 
 /**
- * Sentinel rows with animatable slots. `beacon` (row 0) pulses between
- * coral and its shimmer; the eyes in row 3 swap to '─' during a blink.
+ * Text-only header mark, for terminals that can't show inline images: the
+ * official Gizzi mark (Brand/Gizzi/mark) drawn in half blocks, four rows tall.
+ * Ink in the theme text color, coral beacon and nose, face panel left open.
  */
-export function sentinelRows({
-  beaconColor,
-  blinking,
-}: {
-  beaconColor: string
-  blinking: boolean
-}): ArtRow[] {
-  const eyes = blinking ? '─    ─' : '●    ●'
-  return [
-    [['      ▄▄       ', beaconColor]],
-    [['   ▄▄▄  ▄▄▄    ', INK]],
-    [[' ▄██████████▄  ', INK]],
-    [[' █  ', INK], [eyes, INK], ['  █ ', INK]],
-    [[' █  ', INK], ['A : / /', CORAL], [' █ ', INK]],
-    [['  ▀████████▀   ', INK]],
-    [['   █ █  █ █    ', LEGS]],
-    [['   ▀ ▀  ▀ ▀    ', LEGS]],
-  ]
+const TEXT_MARK_PIXELS = [
+  '.....BB.....',
+  '..TTT..TTT..',
+  '.TTTTTTTTTT.',
+  'TT.E....E.TT',
+  'TT.E..C.E.TT',
+  '.T........T.',
+  '..TTTTTTTT..',
+  '..T.T..T.T..',
+]
+
+export function textMarkRows(): ArtRow[] {
+  return renderPixelArt(TEXT_MARK_PIXELS, p =>
+    p === 'B' || p === 'C' ? CORAL : p === 'T' || p === 'E' ? 'text' : undefined,
+  )
 }
 
-/** 5-row block wordmark, one string per row, letters joined by one space. */
-const LETTERS: Record<string, string[]> = {
-  G: [
-    ' ████ ',
-    '██    ',
-    '██ ███',
-    '██  ██',
-    ' ████ ',
-  ],
-  I: [
-    '██████',
-    '  ██  ',
-    '  ██  ',
-    '  ██  ',
-    '██████',
-  ],
-  Z: [
-    '██████',
-    '   ██ ',
-    '  ██  ',
-    ' ██   ',
-    '██████',
-  ],
+/**
+ * Two pixel rows per terminal cell with half blocks. `colorOf` maps a pixel
+ * char to a theme color (undefined = empty). An optional text `mark` is
+ * drawn bold coral on the face panel at a cell row/column.
+ */
+export function renderPixelArt(
+  pixels: string[],
+  colorOf: (p: string) => string | undefined,
+  mark?: { row: number; col: number; text: string },
+): ArtRow[] {
+  const width = pixels[0]!.length
+  const rows: ArtRow[] = []
+  for (let r = 0; r < pixels.length / 2; r++) {
+    const top = pixels[r * 2]!
+    const bottom = pixels[r * 2 + 1]!
+    const cells: ArtSegment[] = []
+    for (let c = 0; c < width; c++) {
+      if (mark && r === mark.row && c >= mark.col && c < mark.col + mark.text.length) {
+        cells.push([mark.text[c - mark.col]!, CORAL, VISOR])
+        continue
+      }
+      const t = colorOf(top[c]!)
+      const b = colorOf(bottom[c]!)
+      if (!t && !b) cells.push([' ', ''])
+      else if (t && b) cells.push(t === b ? ['█', t] : ['▀', t, b])
+      else if (t) cells.push(['▀', t!])
+      else cells.push(['▄', b!])
+    }
+    // Merge runs with the same styling.
+    const row: ArtRow = []
+    for (const cell of cells) {
+      const last = row[row.length - 1]
+      if (last && last[1] === cell[1] && last[2] === cell[2]) last[0] += cell[0]
+      else row.push([...cell] as ArtSegment)
+    }
+    rows.push(row)
+  }
+  return rows
 }
-
-export const WORDMARK_WORD = 'GIZZI'
-
-export const WORDMARK_ROWS: string[] = [0, 1, 2, 3, 4].map(row =>
-  WORDMARK_WORD.split('')
-    .map(ch => LETTERS[ch][row])
-    .join(' '),
-)
-
-export const WORDMARK_WIDTH = WORDMARK_ROWS[0].length

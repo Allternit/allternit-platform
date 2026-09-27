@@ -1,11 +1,6 @@
 import { describe, test, expect } from "bun:test"
 import { WelcomeBox } from "../../src/cli/ui/ink-app/components/WelcomeBox"
-import {
-  CORAL,
-  WORDMARK_ROWS,
-  WORDMARK_WIDTH,
-  sentinelRows,
-} from "../../src/cli/ui/ink-app/components/welcomeArt"
+import { CORAL, EYE } from "../../src/cli/ui/ink-app/components/welcomeArt"
 
 describe("WelcomeBox", () => {
   test("exports a component", () => {
@@ -13,34 +8,53 @@ describe("WelcomeBox", () => {
   })
 })
 
-describe("welcomeArt", () => {
-  test("wordmark rows share a consistent width", () => {
-    expect(WORDMARK_ROWS).toHaveLength(5)
-    for (const row of WORDMARK_ROWS) {
-      expect(row.length).toBe(WORDMARK_WIDTH)
+describe("header images", () => {
+  test("mark block reserves cols x rows; wordmark one row; nothing without image support", async () => {
+    const { setInlineImageProtocolForTest, inlineImageBlock, inlineImagePlaceholder, inlineImageCellOutput } = await import("../../src/cli/ui/ink-app/ink/inlineImage")
+    const { stringWidth } = await import("../../src/cli/ui/ink-app/ink/stringWidth")
+    setInlineImageProtocolForTest("iterm")
+    const block = inlineImageBlock("t-mark", "AAAA", 6, 3)!
+    expect(block).toHaveLength(3)
+    for (const row of block) expect(stringWidth(row)).toBe(6)
+    expect(inlineImageCellOutput(block[0]![0]!)).toContain("width=6;height=3;")
+    expect(inlineImagePlaceholder("t-wm", "AAAA", 20)!).toHaveLength(20)
+    setInlineImageProtocolForTest(null)
+    expect(inlineImageBlock("t-mark-none", "AAAA", 6, 3)).toBeNull()
+    setInlineImageProtocolForTest(undefined)
+  })
+})
+
+describe("text-only header mark", () => {
+  test("four rows, 12 wide, ink in the text color with coral beacon and nose", async () => {
+    const { textMarkRows } = await import("../../src/cli/ui/ink-app/components/welcomeArt")
+    const rows = textMarkRows()
+    expect(rows).toHaveLength(4)
+    for (const row of rows) expect(row.map(([t]) => t).join("")).toHaveLength(12)
+    const colors = new Set(rows.flat().flatMap(([, fg, bg]) => [fg, bg]).filter(Boolean))
+    expect([...colors].sort()).toEqual(["gizzi", "text"])
+  })
+})
+
+describe("gizzi buddy sprite", () => {
+  test("every pose fills the 12x5 companion slot", async () => {
+    const { gizziBuddyRows, GIZZI_BUDDY_WIDTH } = await import("../../src/cli/ui/ink-app/buddy/gizziSprite")
+    expect(GIZZI_BUDDY_WIDTH).toBe(12)
+    for (const pose of ["idle", "blink", "glance", "wink"] as const) {
+      const rows = gizziBuddyRows(pose)
+      expect(rows).toHaveLength(5)
+      for (const row of rows) expect(row.map(([t]) => t).join("")).toHaveLength(12)
     }
   })
 
-  test("sentinel blink swaps the eye glyphs", () => {
-    const open = sentinelRows({ beaconColor: CORAL, blinking: false })
-    const shut = sentinelRows({ beaconColor: CORAL, blinking: true })
-    const eyes = (rows: any) => rows[3][1][0]
-    expect(eyes(open)).toContain("●")
-    expect(eyes(shut)).toContain("─")
-    expect(eyes(shut)).not.toContain("●")
+  test("blink hides the eyes; the other poses show them", async () => {
+    const { gizziBuddyRows } = await import("../../src/cli/ui/ink-app/buddy/gizziSprite")
+    const hasEye = (pose: any) => gizziBuddyRows(pose).some(r => r.some(([, fg, bg]) => fg === EYE || bg === EYE))
+    expect(hasEye("blink")).toBe(false)
+    for (const pose of ["idle", "glance", "wink"]) expect(hasEye(pose)).toBe(true)
   })
 
-  test("beacon row takes the animated color", () => {
-    const rows = sentinelRows({ beaconColor: "rgb(245,149,117)", blinking: false })
-    expect(rows[0][0][1]).toBe("rgb(245,149,117)")
-  })
-
-  test("static parts use theme keys, not hardcoded colors", () => {
-    const rows = sentinelRows({ beaconColor: CORAL, blinking: false })
-    for (const row of rows.slice(1)) {
-      for (const [, color] of row) {
-        expect(color).not.toMatch(/^#|^rgb/)
-      }
-    }
+  test("the beacon takes the pulse color", async () => {
+    const { gizziBuddyRows } = await import("../../src/cli/ui/ink-app/buddy/gizziSprite")
+    expect(gizziBuddyRows("idle", "gizziShimmer")[0]!.some(([, fg]) => fg === "gizziShimmer")).toBe(true)
   })
 })

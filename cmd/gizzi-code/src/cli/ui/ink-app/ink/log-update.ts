@@ -29,6 +29,7 @@ import {
   setScrollRegion,
 } from './termio/csi.js'
 import { LINK_END, link as oscLink } from './termio/osc.js'
+import { inlineImageCellOutput } from './inlineImage'
 
 type State = {
   previousOutput: string
@@ -90,7 +91,7 @@ export class LogUpdate {
             line += ansiCodesToString(styleDiff)
             currentStyles = cellStyles
           }
-          line += cell.char
+          line += inlineImageCellOutput(cell.char)
         }
       }
       // Close any open hyperlink before resetting styles
@@ -748,7 +749,7 @@ function writeCellWithStyleStr(
     diff.push({ type: 'cursorTo', col: px + 1 })
   }
 
-  diff.push({ type: 'stdout', content: cell.char })
+  diff.push({ type: 'stdout', content: inlineImageCellOutput(cell.char) })
 
   // Force terminal cursor to correct column after the emoji.
   if (needsCompensation) {

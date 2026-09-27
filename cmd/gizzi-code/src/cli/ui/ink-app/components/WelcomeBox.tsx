@@ -1,135 +1,87 @@
 // @ts-nocheck
 /**
- * Animated startup welcome box. One rounded box: the Architectural
- * Sentinel (beacon pulse + periodic blink) beside the coral GIZZI block
- * wordmark (shimmer sweep), then a welcome line, tips, and info
- * fields (Directory / Session / Model / Version). Everything collapses
- * to a static frame under prefersReducedMotion.
+ * Startup header, sized like Claude Code's. In terminals that show inline
+ * images (iTerm2, WezTerm, Ghostty, Kitty): the Gizzi mark (Brand/Gizzi/mark)
+ * three rows tall on the left; beside it, the GIZZI CODE wordmark
+ * (Brand/Gizzi/wordmark) one text row tall with the version, then the model
+ * and the working directory. Elsewhere (Apple Terminal, tmux) the mark is
+ * drawn in half blocks, four rows tall, and the name is set as type: bold
+ * caps, coral G for the wordmark's core. No box, no animation.
  */
 import * as React from 'react'
-import { Box, Text, useAnimationFrame } from '../ink'
+import { Box, Text } from '../ink'
 import { useMainLoopModel } from '../hooks/useMainLoopModel'
-import { useSettings } from '../hooks/useSettings'
 import { renderModelSetting } from '../utils/model/model'
 import { getLogoDisplayData } from '../utils/logoV2Utils'
-import { getSessionId } from '../bootstrap/state.js'
 import { useTheme } from './design-system/ThemeProvider'
-import { getTheme } from '../utils/theme'
-import { interpolateColor, parseRGB, toRGBColor } from './Spinner/utils'
-import { CORAL, WORDMARK_ROWS, WORDMARK_WIDTH, sentinelRows } from './welcomeArt'
+import { inlineImageBlock, inlineImagePlaceholder } from '../ink/inlineImage'
+import { CORAL, textMarkRows } from './welcomeArt'
+import {
+  GIZZI_MARK_ASPECT,
+  GIZZI_MARK_PNG_DARK_INK,
+  GIZZI_MARK_PNG_LIGHT_INK,
+  GIZZI_WORDMARK_ASPECT,
+  GIZZI_WORDMARK_PNG_DARK_INK,
+  GIZZI_WORDMARK_PNG_LIGHT_INK,
+} from './gizziLockupImage'
 
-const TICK_MS = 120
-const BLINK_PERIOD_MS = 3800
-const BLINK_LENGTH_MS = 160
-const SWEEP_PERIOD_MS = 3000
-const SWEEP_LENGTH_MS = 900
-const SWEEP_WINDOW = 3
-
-// Fallbacks for themes whose colors aren't rgb() strings (the ansi themes).
-const CORAL_RGB = { r: 0xd9, g: 0x77, b: 0x57 }
-const CORAL_BRIGHT_RGB = { r: 0xf5, g: 0x95, b: 0x75 }
-
-function Field({ label, value }: { label: string; value: string }) {
-  return (
-    <Text>
-      <Text dimColor={true}>{label}: </Text>
-      <Text>{value}</Text>
-    </Text>
-  )
-}
-
-function WordmarkRow({
-  text,
-  sweepCenter,
-  base,
-  shimmer,
-}: {
-  text: string
-  sweepCenter: number | null
-  base: { r: number; g: number; b: number }
-  shimmer: { r: number; g: number; b: number }
-}) {
-  if (sweepCenter === null) {
-    return <Text color={CORAL}>{text}</Text>
-  }
-  return (
-    <Text>
-      {text.split('').map((ch, i) => {
-        const intensity = Math.max(0, 1 - Math.abs(i - sweepCenter) / SWEEP_WINDOW)
-        const color =
-          ch === ' ' || intensity <= 0
-            ? CORAL
-            : toRGBColor(interpolateColor(base, shimmer, intensity))
-        return (
-          <Text key={i} color={color}>
-            {ch}
-          </Text>
-        )
-      })}
-    </Text>
-  )
-}
+// A terminal cell is about twice as tall as wide: an image `rows` tall spans
+// aspect * rows * 2 columns.
+const MARK_ROWS = 3
+const MARK_COLS = Math.round(GIZZI_MARK_ASPECT * MARK_ROWS * 2)
+const WORDMARK_COLS = Math.round(GIZZI_WORDMARK_ASPECT * 2)
 
 export function WelcomeBox(): React.ReactNode {
   const model = useMainLoopModel()
   const modelDisplayName = renderModelSetting(model)
   const { version, cwd } = getLogoDisplayData()
-  const sessionId = getSessionId()
-  const settings = useSettings()
-  const reducedMotion = settings.prefersReducedMotion ?? false
   const [themeName] = useTheme()
-  const theme = getTheme(themeName)
-  const coralRGB = parseRGB(theme.gizzi) ?? CORAL_RGB
-  const coralBrightRGB = parseRGB(theme.gizziShimmer) ?? CORAL_BRIGHT_RGB
-  const [animRef, time] = useAnimationFrame(reducedMotion ? null : TICK_MS)
-  const t = reducedMotion ? 0 : time
-  const beaconColor = reducedMotion
-    ? CORAL
-    : toRGBColor(
-        interpolateColor(coralRGB, coralBrightRGB, (Math.sin(t / 600) + 1) / 2),
-      )
-  const blinking = !reducedMotion && t % BLINK_PERIOD_MS > BLINK_PERIOD_MS - BLINK_LENGTH_MS
-  const sweepPhase = t % SWEEP_PERIOD_MS
-  const sweepCenter =
-    !reducedMotion && sweepPhase < SWEEP_LENGTH_MS
-      ? -SWEEP_WINDOW + ((WORDMARK_WIDTH + SWEEP_WINDOW * 2) * sweepPhase) / SWEEP_LENGTH_MS
-      : null
+  const light = String(themeName).startsWith('light')
+  const ink = light ? 'dark-ink' : 'light-ink'
+  const mark = inlineImageBlock(
+    `gizzi-mark-${ink}`,
+    light ? GIZZI_MARK_PNG_DARK_INK : GIZZI_MARK_PNG_LIGHT_INK,
+    MARK_COLS,
+    MARK_ROWS,
+  )
+  const wordmark = inlineImagePlaceholder(
+    `gizzi-wordmark-${ink}`,
+    light ? GIZZI_WORDMARK_PNG_DARK_INK : GIZZI_WORDMARK_PNG_LIGHT_INK,
+    WORDMARK_COLS,
+  )
 
-  const mascot = sentinelRows({ beaconColor, blinking })
+  const text = (
+    <Box flexDirection="column" flexShrink={1}>
+      <Text>
+        {wordmark !== null ? (
+          <Text>{wordmark}</Text>
+        ) : (
+          <>
+            <Text bold={true} color={CORAL}>G</Text>
+            <Text bold={true}>IZZI CODE</Text>
+          </>
+        )}
+        <Text dimColor={true}> v{version}</Text>
+      </Text>
+      <Text dimColor={true} wrap="truncate-end">{modelDisplayName}</Text>
+      <Text dimColor={true} wrap="truncate-start">{cwd}</Text>
+    </Box>
+  )
 
   return (
-    <Box ref={animRef} flexDirection="column" borderStyle="round" borderColor={CORAL} paddingX={1} width="100%">
-      <Box flexDirection="column" marginBottom={1}>
-        {mascot.map((segments, i) => (
-          <Box key={i} flexDirection="row">
-            <Text>
-              {segments.map(([text, color], j) => (
-                <Text key={j} color={color}>
-                  {text}
-                </Text>
-              ))}
-            </Text>
-            {i >= 1 && i <= WORDMARK_ROWS.length && (
-              <Text>{'   '}</Text>
-            )}
-            {i >= 1 && i <= WORDMARK_ROWS.length && (
-              <WordmarkRow
-                text={WORDMARK_ROWS[i - 1]}
-                sweepCenter={sweepCenter}
-                base={coralRGB}
-                shimmer={coralBrightRGB}
-              />
-            )}
-          </Box>
-        ))}
+    <Box flexDirection="row" paddingLeft={1} marginBottom={1}>
+      <Box flexDirection="column" flexShrink={0} marginRight={2}>
+        {mark !== null
+          ? mark.map((row, i) => <Text key={i}>{row}</Text>)
+          : textMarkRows().map((segments, i) => (
+              <Text key={i}>
+                {segments.map(([t, color, bg], j) => (
+                  <Text key={j} color={color || undefined} backgroundColor={bg}>{t}</Text>
+                ))}
+              </Text>
+            ))}
       </Box>
-      <Text bold={true}>Welcome to Gizzi Code!</Text>
-      <Text dimColor={true}>/help for commands · /model to switch brains · shift+tab for permission modes</Text>
-      <Text> </Text>
-      <Field label="Directory" value={cwd} />
-      <Field label="Session" value={sessionId ?? ''} />
-      <Field label="Model" value={modelDisplayName} />
-      <Field label="Version" value={version} />
+      {text}
     </Box>
   )
 }

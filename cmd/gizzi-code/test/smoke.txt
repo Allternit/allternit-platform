@@ -112,3 +112,4 @@ test/shared/gizziEnv.test.ts
 test/telemetry/gizziUsageTelemetry.test.ts
 test/tui-feature-flags.test.ts
 test/vendor/color-diff-napi.test.ts
+test/components/inline-image.test.ts
