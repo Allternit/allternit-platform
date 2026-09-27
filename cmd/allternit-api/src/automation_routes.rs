@@ -89,6 +89,12 @@ pub struct Routine {
     pub max_retries: Option<i32>,
     pub created_at: String,
     pub updated_at: String,
+    /// Local scheduler cursor (V185); None for cloud routines and one-shots
+    /// that already ran.
+    #[serde(default)]
+    pub next_run_at: Option<String>,
+    #[serde(default)]
+    pub last_run_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -547,7 +553,7 @@ fn extract_daemon_job_id(res: &serde_json::Value) -> Option<String> {
 
 /// Convert a platform interval expression (e.g. "5m", "1h") into seconds.
 /// Returns `None` when the expression is not a recognised interval shorthand.
-fn parse_interval_seconds(expression: &str) -> Option<i64> {
+pub(crate) fn parse_interval_seconds(expression: &str) -> Option<i64> {
     let s = expression.trim();
     let num_end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
     if num_end == 0 {
@@ -890,7 +896,7 @@ async fn list_goal_children(
     let routines: Vec<Routine> = {
         let mut stmt = conn
             .prepare(
-                "SELECT id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, name, description, status, schedule_type, schedule_expression, timezone, execution_domain, config, tags, metadata, max_runs, timeout_seconds, max_retries, created_at, updated_at
+                "SELECT id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, name, description, status, schedule_type, schedule_expression, timezone, execution_domain, config, tags, metadata, max_runs, timeout_seconds, max_retries, created_at, updated_at, next_run_at, last_run_at
                  FROM routines WHERE goal_id = ?1 AND user_id = ?2 ORDER BY created_at DESC",
             )
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -956,6 +962,9 @@ fn row_to_routine(row: &rusqlite::Row) -> Result<Routine, rusqlite::Error> {
         max_retries: row.get(18)?,
         created_at: row.get(19)?,
         updated_at: row.get(20)?,
+        // Optional trailing columns: queries that omit them still map.
+        next_run_at: row.get::<_, Option<String>>(21).ok().flatten(),
+        last_run_at: row.get::<_, Option<String>>(22).ok().flatten(),
     })
 }
 
@@ -971,7 +980,7 @@ async fn list_routines(
 
     let mut stmt = conn
         .prepare(
-            "SELECT id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, name, description, status, schedule_type, schedule_expression, timezone, execution_domain, config, tags, metadata, max_runs, timeout_seconds, max_retries, created_at, updated_at
+            "SELECT id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, name, description, status, schedule_type, schedule_expression, timezone, execution_domain, config, tags, metadata, max_runs, timeout_seconds, max_retries, created_at, updated_at, next_run_at, last_run_at
              FROM routines WHERE user_id = ?1 ORDER BY created_at DESC",
         )
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -1025,6 +1034,8 @@ async fn create_routine(
         max_retries: req.max_retries,
         created_at: now.clone(),
         updated_at: now.clone(),
+        next_run_at: None,
+        last_run_at: None,
     };
 
     let daemon_job_id = if uses_cloud_scheduler(&routine.execution_domain)
@@ -1106,7 +1117,7 @@ async fn get_routine(
 
     let routine = conn
         .query_row(
-            "SELECT id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, name, description, status, schedule_type, schedule_expression, timezone, execution_domain, config, tags, metadata, max_runs, timeout_seconds, max_retries, created_at, updated_at
+            "SELECT id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, name, description, status, schedule_type, schedule_expression, timezone, execution_domain, config, tags, metadata, max_runs, timeout_seconds, max_retries, created_at, updated_at, next_run_at, last_run_at
              FROM routines WHERE id = ?1 AND user_id = ?2",
             [&id, &user.user_id],
             row_to_routine,
@@ -1175,7 +1186,13 @@ async fn update_routine(
             max_runs = COALESCE(?11, max_runs),
             timeout_seconds = COALESCE(?12, timeout_seconds),
             max_retries = COALESCE(?13, max_retries),
-            updated_at = ?14
+            updated_at = ?14,
+            -- Any schedule/status/domain change resets the local scheduler
+            -- cursor so it recomputes from the new definition; a new
+            -- schedule also re-arms a one-shot that already ran.
+            next_run_at = CASE WHEN ?3 IS NOT NULL OR ?4 IS NOT NULL OR ?5 IS NOT NULL OR ?7 IS NOT NULL
+                               THEN NULL ELSE next_run_at END,
+            last_run_at = CASE WHEN ?4 IS NOT NULL OR ?5 IS NOT NULL THEN NULL ELSE last_run_at END
          WHERE id = ?15 AND user_id = ?16",
         (
             req.name.as_ref(),
@@ -1333,8 +1350,26 @@ async fn run_routine(
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
     if !uses_cloud_scheduler(&execution_domain) {
-        warn!("routine {} is local-domain; run via local scheduler", id);
-        return Err(StatusCode::NOT_IMPLEMENTED);
+        // Local routines run on this API (routine_local_scheduler). Answer
+        // at once; the run lands in routine_runs and the bot's thread.
+        let routine = crate::routine_local_scheduler::get_routine(&state.db, &id)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?;
+        let guard = crate::routine_local_scheduler::FlightGuard::acquire(&id).ok_or(StatusCode::CONFLICT)?;
+        let user_id = user.user_id.clone();
+        let state = state.clone();
+        tokio::spawn(async move {
+            let _guard = guard;
+            let driver = crate::routine_local_scheduler::GizziDriver { state: state.clone() };
+            crate::routine_local_scheduler::execute(
+                &state.db,
+                &driver,
+                &routine,
+                crate::routine_local_scheduler::Trigger::Manual { user_id },
+            )
+            .await;
+        });
+        return Ok(Json(json!({ "status": "running", "routineId": id, "domain": "local" })));
     }
 
     let gizzi_job_id = gizzi_job_id.ok_or(StatusCode::BAD_REQUEST)?;
@@ -1905,7 +1940,7 @@ async fn list_local_schedules(
 
     let mut routines_stmt = conn
         .prepare(
-            "SELECT id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, name, description, status, schedule_type, schedule_expression, timezone, execution_domain, config, tags, metadata, max_runs, timeout_seconds, max_retries, created_at, updated_at
+            "SELECT id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, name, description, status, schedule_type, schedule_expression, timezone, execution_domain, config, tags, metadata, max_runs, timeout_seconds, max_retries, created_at, updated_at, next_run_at, last_run_at
              FROM routines WHERE user_id = ?1 AND execution_domain = 'local' ORDER BY updated_at DESC",
         )
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -2178,7 +2213,7 @@ mod tests {
 
         let mut routines_stmt = conn
             .prepare(
-                "SELECT id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, name, description, status, schedule_type, schedule_expression, timezone, execution_domain, config, tags, metadata, max_runs, timeout_seconds, max_retries, created_at, updated_at
+                "SELECT id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, name, description, status, schedule_type, schedule_expression, timezone, execution_domain, config, tags, metadata, max_runs, timeout_seconds, max_retries, created_at, updated_at, next_run_at, last_run_at
                  FROM routines WHERE user_id = ?1 AND execution_domain = 'local' ORDER BY updated_at DESC",
             )
             .unwrap();

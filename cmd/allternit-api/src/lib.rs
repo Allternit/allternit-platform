@@ -62,6 +62,7 @@ pub mod bot_desktop_snapshots;
 pub mod bot_desktop_admin;
 pub mod bot_desktop_stream;
 pub mod bot_event_routes;
+pub mod routine_local_scheduler;
 pub mod browser_history_service;
 pub mod procedural_memory_service;
 pub mod bot_desktop_templates;
