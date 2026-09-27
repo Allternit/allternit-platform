@@ -377,6 +377,15 @@ impl ExecutionDriver for SubstrateRouter {
         driver.get_desktop_endpoint(handle).await
     }
 
+    async fn guest_service_url(
+        &self,
+        handle: &ExecutionHandle,
+        guest_port: u16,
+    ) -> Result<String, DriverError> {
+        let driver = self.choose_handle_driver(handle)?;
+        driver.guest_service_url(handle, guest_port).await
+    }
+
     async fn get_desktop_endpoint_by_native_id(
         &self,
         native_id: &str,
@@ -604,6 +613,111 @@ mod tests {
                 );
             }
             _ => panic!("expected NotSupported for invalid provider/os pair"),
+        }
+    }
+
+    #[tokio::test]
+    async fn router_forwards_guest_service_url_to_handle_driver() {
+        use crate::substrate::{HttpClient, IncusSubstrate, SubstrateError};
+        use allternit_driver_interface::ExecutionId;
+        use serde_json::{json, Value};
+        use std::collections::HashMap;
+        use std::sync::{Arc, Mutex};
+
+        struct ScriptedClient {
+            responses: Mutex<std::collections::VecDeque<(u16, Value)>>,
+        }
+        #[async_trait]
+        impl HttpClient for ScriptedClient {
+            async fn request(
+                &self,
+                _method: reqwest::Method,
+                _path: &str,
+                _body: Option<Value>,
+            ) -> Result<(u16, Value), SubstrateError> {
+                Ok(self
+                    .responses
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .expect("unexpected HTTP request"))
+            }
+            async fn request_bytes(
+                &self,
+                _: reqwest::Method,
+                _: &str,
+                _: Option<Value>,
+            ) -> Result<(u16, Vec<u8>), SubstrateError> {
+                panic!("unexpected bytes request")
+            }
+            async fn request_bytes_with_body(
+                &self,
+                _: reqwest::Method,
+                _: &str,
+                _: Vec<u8>,
+            ) -> Result<(u16, Vec<u8>), SubstrateError> {
+                panic!("unexpected bytes request")
+            }
+        }
+
+        // Existing proxy device for guest port 6010: the Incus driver answers
+        // with a single GET and no allocation PATCH.
+        let substrate = IncusSubstrate::with_client(Box::new(ScriptedClient {
+            responses: Mutex::new(
+                vec![(
+                    200,
+                    json!({"metadata":{"devices":{
+                        "svc6010": {"type":"proxy","listen":"tcp:0.0.0.0:36010","connect":"tcp:127.0.0.1:6010"}
+                    }}}),
+                )]
+                .into(),
+            ),
+        }));
+        let driver = IncusDriver::new(Arc::new(substrate), "127.0.0.1");
+        let host = driver.pool().hosts()[0].vnc_host.clone();
+        let router = SubstrateRouter::new(Some(Arc::new(driver)), None);
+        let handle = ExecutionHandle {
+            id: ExecutionId::new(),
+            tenant: TenantId::new("user-test").unwrap(),
+            driver_info: HashMap::from([
+                ("native_id".to_string(), "source".to_string()),
+                ("provider".to_string(), PROVIDER_INCUS.to_string()),
+            ]),
+            env_spec: Default::default(),
+        };
+
+        // Before the forwarding fix this hit the trait default and 501'd with
+        // NotSupported{"guest service url"}; it must reach the Incus driver.
+        let url = router
+            .guest_service_url(&handle, 6010)
+            .await
+            .expect("router forwards guest_service_url to the substrate driver");
+        assert_eq!(url, format!("http://{host}:36010"));
+    }
+
+    #[tokio::test]
+    async fn router_guest_service_url_without_driver_errors_from_routing() {
+        use allternit_driver_interface::ExecutionId;
+        use std::collections::HashMap;
+
+        let router = SubstrateRouter::new(None, None);
+        let mut env = EnvironmentSpec::default();
+        env.env_vars
+            .insert(OS_ENV_KEY.to_string(), "linux".to_string());
+        let handle = ExecutionHandle {
+            id: ExecutionId::new(),
+            tenant: TenantId::new("test").unwrap(),
+            driver_info: HashMap::new(),
+            env_spec: env,
+        };
+        let err = router.guest_service_url(&handle, 6010).await.unwrap_err();
+        match err {
+            DriverError::NotSupported { feature } => assert!(
+                !feature.contains("guest service url"),
+                "must surface the routing error, not the trait default: {}",
+                feature
+            ),
+            _ => panic!("expected NotSupported"),
         }
     }
 }
