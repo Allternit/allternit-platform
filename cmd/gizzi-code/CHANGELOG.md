@@ -27,6 +27,10 @@ Claude Code's interactive features, turned on and working with any provider.
   same provider as the main conversation.
 - `small_model` in gizzi.json was ignored. Background calls use it when its
   provider has a key, and otherwise fall back to the main model.
+- One Claude Code plugin command with frontmatter strict YAML rejects (such
+  as `argument-hint: [system] [--source <path>]`) stopped every plugin from
+  loading. gizzi now reads it as Claude Code does, and skips any file it
+  still can't parse.
 - A failed production build no longer leaves `bunfig.toml` deleted.
 
 ## 2.1.3 (2026-09-26)
