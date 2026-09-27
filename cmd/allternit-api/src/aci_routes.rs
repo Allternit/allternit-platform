@@ -393,8 +393,25 @@ fn first_policy_host(allowed_sites: &Option<serde_json::Value>) -> Option<String
 async fn aci_run(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
-    Json(body): Json<AciRunBody>,
+    Json(mut body): Json<AciRunBody>,
 ) -> impl IntoResponse {
+    // Settings → Cowork → Allowed sites: when the client sends none, the run
+    // uses the saved list. Filled before the action descriptor is hashed, so
+    // a retried run (same body, same settings) hashes identically.
+    if body.allowed_sites.is_none() {
+        let db = state.db.clone();
+        let user_id = user.user_id.clone();
+        let saved = tokio::task::spawn_blocking(move || {
+            db.connect()
+                .map(|conn| crate::cowork_preferences_routes::load_prefs(&conn, &user_id).allowed_sites)
+                .unwrap_or_default()
+        })
+        .await
+        .unwrap_or_default();
+        if !saved.is_empty() {
+            body.allowed_sites = Some(json!(saved));
+        }
+    }
     let goal = body.goal.trim().to_string();
     if goal.is_empty() {
         return (
