@@ -9,6 +9,10 @@ import platform
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Tuple
+
+
+class CuaDriverHistoryError(RuntimeError):
+    """History-specific error from the CUA Driver provider."""
 from uuid import uuid4
 
 from contracts.canonical import (
@@ -97,21 +101,26 @@ class CuaDriverCanonicalProvider:
         self._version = version
         self._state_tokens: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._state_order: list[str] = []
-        self._history_tools: Optional[tuple[str, ...]] = None
+        self._history_tools: Optional[Tuple[str, ...]] = None
 
-    async def _discover_history_tools(self) -> tuple[str, ...]:
-        if self._history_tools is not None:
-            return self._history_tools
+    async def _detect_history_tools(self) -> Tuple[str, ...]:
+        """Probe CUA Driver for Computer History support; cache the result.
+
+        History tools are advertised only when the driver reports the preview is
+        supported and admitted. Errors or unsupported platforms degrade to an
+        empty tool set so the provider remains usable without history.
+        """
         try:
             status = await self._transport.history_status()
         except CuaDriverCallError:
-            self._history_tools = ()
-            return self._history_tools
-        if isinstance(status, dict) and status.get("supported") and status.get("admitted"):
-            self._history_tools = ("history_status", "history_query")
-        else:
-            self._history_tools = ()
-        return self._history_tools
+            return ()
+        except Exception:
+            return ()
+        if not isinstance(status, dict):
+            return ()
+        if status.get("supported") is True and status.get("admitted") is True:
+            return ("history_status", "history_query")
+        return ()
 
     async def capabilities(self) -> CapabilityManifest:
         system = platform.system().lower()
@@ -121,7 +130,8 @@ class CuaDriverCanonicalProvider:
         # action-granular, advertise only the guarantee common to every action.
         strict = False
         modes = [ExecutionMode.FOREGROUND_ALLOWED.value]
-        history_tools = await self._discover_history_tools()
+        if self._history_tools is None:
+            self._history_tools = await self._detect_history_tools()
         return CapabilityManifest(
             provider_id=self.provider_id,
             provider_version=self._version,
@@ -133,7 +143,6 @@ class CuaDriverCanonicalProvider:
             ),
             observation_channels=("accessibility", "screenshot"),
             execution_modes=tuple(modes),
-            tools=history_tools,
             strict_background=strict,
             semantic_input=True,
             raw_input=True,
@@ -146,6 +155,7 @@ class CuaDriverCanonicalProvider:
                 "linux_background_raw_input_depends_on_display_route",
                 "tool_results_require_successor_verification",
             ),
+            tools=self._history_tools,
         )
 
     async def list_roots(self, pid: Optional[int] = None) -> Tuple[Root, ...]:
@@ -376,10 +386,24 @@ class CuaDriverCanonicalProvider:
             )
 
     async def history_status(self) -> Dict[str, Any]:
+        """Return CUA Driver Computer History operational status."""
         return await self._transport.history_status()
 
-    async def history_query(self, **kwargs: Any) -> Dict[str, Any]:
-        return await self._transport.history_query(**kwargs)
+    async def history_query(
+        self,
+        *,
+        limit: Optional[int] = None,
+        session_id: Optional[str] = None,
+        since_sequence: Optional[int] = None,
+        until_sequence: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Query a bounded, metadata-only slice of CUA Driver Computer History."""
+        return await self._transport.history_query(
+            limit=limit,
+            session_id=session_id,
+            since_sequence=since_sequence,
+            until_sequence=until_sequence,
+        )
 
     async def close(self) -> None:
         return None

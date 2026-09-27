@@ -86,7 +86,6 @@ test/util/format.test.ts
 test/util/glob.test.ts
 test/util/iife.test.ts
 test/util/lazy.test.ts
-test/util/parent-lifeline.test.ts
 test/util/lock.test.ts
 test/util/model-safety.test.ts
 test/util/provider-error.test.ts

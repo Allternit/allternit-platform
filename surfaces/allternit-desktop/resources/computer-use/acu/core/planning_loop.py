@@ -19,6 +19,7 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, AsyncIterator
 from datetime import datetime, timezone
 from enum import Enum
@@ -131,6 +132,35 @@ class PlanningLoopConfig:
     # carrying a `code` payload falls through to the whitelist/batch paths
     # unchanged.
     code_mode_enabled: bool = False
+    # SHADOW mode (core/element_table.py + core/decision_head.py): a fully
+    # local, non-generative policy head proposes a typed closed-set decision
+    # beside the LLM decide step. It proposes but NEVER acts: the plan, the
+    # executed action sequence, and every executed step are untouched — the
+    # head's answer is logged as a `shadow.decision` event only. Default off;
+    # off is byte-identical to a loop without a head.
+    shadow_head_enabled: bool = False
+    # Element-table cap fed to the shadow head (default matches the
+    # jev-ultrafast reference pattern).
+    shadow_head_max_elements: int = 250
+    # Optional DecisionHead instance (core/decision_head.py). When None and
+    # shadow_head_enabled is True, the default mlx-lm direct-logit head is
+    # built lazily (requires the optional `shadow-head` extra).
+    shadow_head: Optional[Any] = None
+    # Graft A (System One graft, cua jev-use recipe): append the reserved
+    # "reobserve"/"abstain" slots to the shadow operation question's option
+    # list, after the whitelist operations. They carry no target menus and
+    # are never executed. Default off — off is byte-identical to the
+    # pre-graft prompt.
+    shadow_reserved_slots: bool = False
+    # Graft B: render a [LAST ACTION] effect/escalation block (derived from
+    # the real outcome of the previously executed LLM step) into the shadow
+    # state text. Default off.
+    shadow_last_action: bool = False
+    # Live trace accumulation (JEV trace policy, docs/JEV_TRACE_POLICY.md):
+    # when set, every shadow decision is appended as one JSONL record to this
+    # path (core/trace_recorder.py), labeled from the previously EXECUTED LLM
+    # step. None = recording off, byte-identical to a loop without a recorder.
+    shadow_trace_path: Optional[str] = None
 
 
 @dataclass
@@ -192,6 +222,9 @@ LOOP_EVENTS = [
     "page.observed",
     "run.completed",
     "run.failed",
+    # Shadow policy head (core/decision_head.py): logged beside the LLM decide
+    # step, never acted on. Same "shadow" vocabulary as core/shadow_comparison.py.
+    "shadow.decision",
 ]
 
 
@@ -237,6 +270,17 @@ class PlanningLoop:
         self.code_client = code_client
         self._cancelled = False
         self._monitor_history: List[Dict[str, Any]] = []
+        # Shadow head per-run state: the previous step's element table, kept
+        # for the [SINCE LAST STEP] delta block. Reset at the start of every
+        # run() — consecutive runs on one loop instance must not leak deltas
+        # across the boundary.
+        self._shadow_prev_table: Optional[Any] = None
+        # Live trace recorder state (core/trace_recorder.py): constructed
+        # lazily on the first shadow decision of a run, closed at run end.
+        # Reset per run; recording failures disable it for the rest of the
+        # run with a warning, never a step failure.
+        self._shadow_trace_recorder: Optional[Any] = None
+        self._shadow_trace_disabled: bool = False
         # Auto page binding (deferral B): current URL observed from the
         # adapter after each step/batch; feeds the NEXT batch's descriptor.
         self._observed_url: Optional[str] = None
@@ -260,6 +304,26 @@ class PlanningLoop:
         error_msg: Optional[str] = None
         _consecutive_screenshots = 0
         model_turns = 0
+
+        # Shadow head per-run lifecycle: reset the element-table delta
+        # baseline and tell the head a new run began. Hooks are duck-typed
+        # (getattr) — heads without them (MockHead, MlxDirectLogitHead) are
+        # untouched. The identifier passed is the loop's session id, which
+        # carries the task identity for eval harnesses (e.g.
+        # "shadow-<task_id>" in core/shadow_eval.py).
+        self._shadow_prev_table = None
+        self._shadow_trace_recorder = None
+        self._shadow_trace_disabled = False
+        _shadow_head = self.config.shadow_head
+        if _shadow_head is not None:
+            _begin_run = getattr(_shadow_head, "begin_run", None)
+            if callable(_begin_run):
+                try:
+                    _begin_run(session_id)
+                except Exception as hook_err:
+                    logger.warning(
+                        "Shadow head begin_run failed: %s", hook_err
+                    )
 
         # Inject scratchpad context — strategy + skills + lessons from prior runs
         try:
@@ -442,6 +506,25 @@ class PlanningLoop:
                                        "ref_map": step.element_refs})
                     except Exception:
                         pass
+
+                # SHADOW head — local non-generative policy head proposes a
+                # typed closed-set decision beside the LLM plan (logged as a
+                # `shadow.decision` event). NEVER mutates ``plan`` and never
+                # affects the executed action sequence; failures degrade to a
+                # warning, never to a step failure.
+                if self.config.shadow_head_enabled:
+                    try:
+                        await self._run_shadow_head(
+                            step=step,
+                            task=augmented_task,
+                            run_id=run_id,
+                            step_num=step_num,
+                            prior_step=steps[-1] if steps else None,
+                        )
+                    except Exception as shadow_err:
+                        logger.warning(
+                            "Shadow head failed at step %s: %s", step_num, shadow_err
+                        )
 
                 # ACT phase — C2 code mode: when the run explicitly opted in
                 # AND the plan carries a code payload, ship it as ONE grant-
@@ -691,6 +774,7 @@ class PlanningLoop:
             stop_reason = StopReason.ERROR
 
         duration_ms = int(time.time() * 1000 - start_ms)
+        self._close_shadow_trace_recorder()
         status_map = {
             StopReason.DONE: "completed",
             StopReason.MAX_STEPS: "completed",
@@ -861,6 +945,308 @@ class PlanningLoop:
         except Exception as e:
             logger.warning("Screenshot capture failed: %s", e)
             return b""
+
+    async def _run_shadow_head(
+        self,
+        step: "LoopStep",
+        task: str,
+        run_id: str,
+        step_num: int,
+        prior_step: Optional["LoopStep"] = None,
+    ) -> None:
+        """Ask the shadow decision head for a typed closed-set proposal.
+
+        Builds the element table from this step's AX skeleton observation,
+        computes the per-step element delta against the previous step's table
+        ([SINCE LAST STEP] block — the canonical shadow state format), asks
+        the head one operation Choice plus speculative
+        ``<operation>_target`` Choices in a single pass, and attaches the
+        answer to the loop log as a ``shadow.decision`` event with head
+        latency and confidence. Purely observational: ``step``'s plan/action
+        fields and ``plan`` are never touched.
+
+        Optional grafts (both off by default, both eval-flag-gated in
+        ``PlanningLoopConfig``):
+
+        - ``shadow_reserved_slots``: the operation question's option list
+          gains the reserved ``reobserve``/``abstain`` slots after the
+          whitelist operations (System One graft A, cua jev-use recipe).
+          They get no target menus.
+        - ``shadow_last_action``: ``prior_step`` (the previously EXECUTED
+          LLM step, if any) renders as a [LAST ACTION] effect/escalation
+          block between [SINCE LAST STEP] and [OBSERVED ELEMENTS] (graft B).
+        """
+        from .element_table import (
+            RESERVED_SLOT_OPERATIONS,
+            RESERVED_SLOTS_INSTRUCTION,
+            build_element_table,
+            diff_tables,
+            render_delta_block,
+        )
+        from .decision_head import Question, build_default_head
+
+        tree = step.ax_tree_snapshot
+        if not tree:
+            logger.debug(
+                "Shadow head skipped at step %s: no AX observation on the step",
+                step_num,
+            )
+            return
+
+        table = build_element_table(
+            tree, max_elements=self.config.shadow_head_max_elements
+        )
+        operation_options = table.supported_operations()
+        if not operation_options:
+            logger.debug(
+                "Shadow head skipped at step %s: no closed-set operations in table",
+                step_num,
+            )
+            return
+
+        # Graft A: reserved reobserve/abstain slots, after the whitelist
+        # operations. They are proposal-only vocabulary — never whitelist
+        # methods, never executed, no target menus.
+        reserved_slots = bool(self.config.shadow_reserved_slots)
+        if reserved_slots:
+            operation_options = operation_options + [
+                slot for slot in RESERVED_SLOT_OPERATIONS
+                if slot not in operation_options
+            ]
+
+        # [SINCE LAST STEP]: delta vs the previous step's table. Step 1 of a
+        # run has no baseline; an identical table renders an explicit no-op
+        # line. Either way the block is ALWAYS present — it is part of the
+        # canonical shadow state format, and consecutive steps must not look
+        # interchangeable to the head.
+        if self._shadow_prev_table is None:
+            since_block = (
+                "[SINCE LAST STEP]\n"
+                "This is the first observed state; no prior step to compare."
+            )
+            delta_summary = {"added": 0, "removed": 0, "changed": 0,
+                             "text": "first observed state (no prior step)"}
+        else:
+            delta = diff_tables(self._shadow_prev_table, table)
+            since_block = render_delta_block(delta)
+            delta_counts = delta.counts()
+            delta_summary = {**delta_counts, "text": delta.one_line()}
+        self._shadow_prev_table = table
+
+        questions = [Question(name="operation", options=operation_options)]
+        for operation in operation_options:
+            # Reserved slots have no target menus — they mean "act later"
+            # (reobserve) or "don't act" (abstain), not "act on an element".
+            if operation in RESERVED_SLOT_OPERATIONS:
+                continue
+            targets = table.target_options(operation)
+            if len(targets) >= 2:
+                questions.append(Question(name=f"{operation}_target", options=targets))
+        # Goal/stuck gates (reference pattern): boolean closed-set checks in
+        # the same single pass, with per-option probabilities like everything
+        # else. Proposed only — the loop's own done/stall detection stays
+        # authoritative.
+        questions.append(Question(name="goal_satisfied", options=["true", "false"]))
+        questions.append(Question(name="stuck", options=["true", "false"]))
+
+        # Graft B: [LAST ACTION] effect/escalation block from the REAL outcome
+        # of the previously executed LLM step. This is a 2-way mapping of
+        # cua's 3-way effect contract (confirmed / suspected_noop /
+        # unverifiable) — the synthetic harness always knows whether the
+        # action succeeded, so there is no unverifiable case here. Step 1 of
+        # a run renders no block: nothing has executed yet.
+        last_action_block = ""
+        if self.config.shadow_last_action and prior_step is not None:
+            effect = "confirmed" if prior_step.action_succeeded else "suspected_noop"
+            last_lines = [
+                "[LAST ACTION]",
+                "operation: "
+                + (prior_step.action_type or "?")
+                + " target: "
+                + (prior_step.action_target or "(none)"),
+                f"effect: {effect}",
+            ]
+            if not prior_step.action_succeeded:
+                last_lines.append(
+                    "escalation: the previous action had no observed effect — "
+                    "consider reobserve or a different target."
+                )
+            last_action_block = "\n".join(last_lines)
+
+        head = self.config.shadow_head or build_default_head()
+        # The closed-set options must be visible in the prompt: the head reads
+        # per-option first-token logits at the final position, which is only a
+        # decision (not a vocabulary prior) when the model can condition on
+        # the options. Target lists are truncated for display only — the
+        # Question still carries the full closed set.
+        options_text = "\n".join(
+            f"{q.name}: {', '.join(list(q.options[:64]) + (['…'] if len(q.options) > 64 else []))}"
+            for q in questions
+        )
+        reserved_instruction = (
+            f"Reserved slots: {RESERVED_SLOTS_INSTRUCTION}\n\n"
+            if reserved_slots else ""
+        )
+        state_text = (
+            f"[TASK]\n{task}\n\n"
+            f"{since_block}\n\n"
+            + (f"{last_action_block}\n\n" if last_action_block else "")
+            + f"[OBSERVED ELEMENTS]\n{table.to_prompt_text()}\n\n"
+            f"[OPTIONS]\n{options_text}\n\n"
+            "[INSTRUCTIONS]\n"
+            "Choose the next browser operation, then the target element index "
+            "for each operation you would consider, using only the given "
+            "options.\n\n"
+            + reserved_instruction
+            +
+            # The readout happens at the final prompt position: the prompt
+            # must end where the answer begins, otherwise the per-option
+            # first-token logits measure a discourse prior instead of a
+            # decision (measured: constant answers across all states).
+            "The next browser operation is:"
+        )
+        decision = head.decide(state_text, questions)
+        decision.validate()
+
+        self._emit({
+            "type": "shadow.decision",
+            "run_id": run_id,
+            "step": step_num,
+            "head": decision.model_id,
+            "latency_ms": decision.latency_ms,
+            "element_count": len(table),
+            "pruned_count": table.pruned_count,
+            "decision": decision.to_dict(),
+        })
+
+        # Live trace accumulation (JEV trace policy): append one labeled
+        # record — the head's proposal plus the previously EXECUTED LLM step
+        # as the reference label. Off (None path) is byte-identical; failures
+        # degrade to a warning and disable recording, never a step failure.
+        if self.config.shadow_trace_path:
+            self._record_shadow_trace(
+                session_id=step.session_id,
+                run_id=run_id,
+                step_num=step_num,
+                state_text=state_text,
+                questions=questions,
+                decision=decision,
+                table=table,
+                prior_step=prior_step,
+            )
+
+        # Duck-typed trajectory hook: heads that keep their own per-run step
+        # history (KimiCliHead) receive this step's proposal plus its delta
+        # summary. Failures degrade to a warning, like the head itself.
+        _note_prior_step = getattr(head, "note_prior_step", None)
+        if callable(_note_prior_step):
+            try:
+                operation_choice = decision.choices.get("operation")
+                target_choice = None
+                if operation_choice is not None:
+                    target_choice = decision.choices.get(
+                        f"{operation_choice.chosen}_target"
+                    )
+                _note_prior_step(step_num, {
+                    "operation": (
+                        operation_choice.chosen if operation_choice else None
+                    ),
+                    "target": (
+                        target_choice.chosen if target_choice is not None else None
+                    ),
+                    "goal_satisfied": (
+                        decision.choices["goal_satisfied"].chosen
+                        if "goal_satisfied" in decision.choices else None
+                    ),
+                    "stuck": (
+                        decision.choices["stuck"].chosen
+                        if "stuck" in decision.choices else None
+                    ),
+                    "delta": delta_summary,
+                })
+            except Exception as hook_err:
+                logger.warning(
+                    "Shadow head note_prior_step failed at step %s: %s",
+                    step_num,
+                    hook_err,
+                )
+
+    def _record_shadow_trace(
+        self,
+        *,
+        session_id: str,
+        run_id: str,
+        step_num: int,
+        state_text: str,
+        questions: List[Any],
+        decision: Any,
+        table: Any,
+        prior_step: Optional["LoopStep"],
+    ) -> None:
+        """Append one live trace record via core/trace_recorder.py.
+
+        The record's reference label is ``prior_step`` — the previously
+        EXECUTED LLM step (same source as graft B's [LAST ACTION] block):
+        its operation folded to the head-menu vocabulary, its target
+        resolved against the current decision step's element table. Step 1
+        of a run has no prior executed step and records an empty gold.
+        """
+        if self._shadow_trace_disabled:
+            return
+        try:
+            if self._shadow_trace_recorder is None:
+                from .trace_recorder import TraceRecorder
+                self._shadow_trace_recorder = TraceRecorder(
+                    Path(self.config.shadow_trace_path)
+                )
+            # Eval harnesses prefix the session id with "shadow-" (the
+            # convention KimiCliHead's begin_run documents); the task
+            # identity for split labeling lives behind that prefix.
+            task_id = str(session_id or "")
+            if task_id.startswith("shadow-"):
+                task_id = task_id[len("shadow-"):]
+            self._shadow_trace_recorder.record({
+                "task_id": task_id,
+                "run_id": run_id,
+                "step": step_num,
+                "state_text": state_text,
+                "questions": [
+                    {"name": q.name, "options": [str(o) for o in q.options]}
+                    for q in questions
+                ],
+                "decision": decision.to_dict(),
+                "latency_ms": decision.latency_ms,
+                "table": table,
+                # The executed step's target is an element name/ref (the
+                # recorder resolves it via table.match_target) — never a
+                # typed value; only the typed text (action_params["text"])
+                # is free text and gets redacted at write time.
+                "prior_step": None if prior_step is None else {
+                    "action_type": prior_step.action_type,
+                    "action_target": prior_step.action_target,
+                    "text": (prior_step.action_params or {}).get("text"),
+                    "action_succeeded": prior_step.action_succeeded,
+                },
+                "ts": datetime.now(timezone.utc).isoformat(),
+            })
+        except Exception as trace_err:
+            # Degrade to a warning and stop retrying for this run — the
+            # same discipline as the shadow head itself.
+            self._shadow_trace_disabled = True
+            logger.warning(
+                "Shadow trace recording disabled after failure at step %s: %s",
+                step_num,
+                trace_err,
+            )
+
+    def _close_shadow_trace_recorder(self) -> None:
+        recorder = self._shadow_trace_recorder
+        self._shadow_trace_recorder = None
+        if recorder is not None:
+            try:
+                recorder.close()
+            except Exception as close_err:
+                logger.warning("Shadow trace recorder close failed: %s", close_err)
 
     async def _execute_action(self, action, session_id: str) -> Dict:
         """Execute a VisionAction through the adapter or executor."""

@@ -42,7 +42,6 @@ pub fn memory_router() -> Router<Arc<AppState>> {
         .route("/memory/v2/recall", post(recall_v2_handler))
         .route("/memory/v2/retain", post(retain_turn_v2_handler))
         .route("/memory/v2/facts", get(list_facts_v2_handler))
-        .route("/memory/v2/facts/:id", delete(delete_fact_v2_handler))
         .route("/memory/v2/entities", get(list_entities_v2_handler))
         .route("/memory/browser-history/visit", post(record_browser_visit_handler))
         .route("/memory/browser-history", get(list_browser_history_handler))
@@ -1047,38 +1046,6 @@ async fn retain_turn_v2_handler(
         }
     };
 
-    // User turns: record now, extract in the background with the model
-    // (memory_extraction), so the chat never waits on memory.
-    if payload.role == "user" && !payload.explicit {
-        return match crate::memory_kernel_service::record_observation(
-            &state.db,
-            &user.user_id,
-            payload.agent_id.as_deref(),
-            payload.session_id.as_deref(),
-            "turn_user",
-            &payload.content,
-            Some("user"),
-        ) {
-            Ok(id) => {
-                tokio::spawn(crate::memory_extraction::extract_and_reconcile(
-                    state.db.clone(),
-                    user.user_id.clone(),
-                    payload.agent_id.clone(),
-                    id.clone(),
-                    payload.content.clone(),
-                ));
-                (
-                    StatusCode::OK,
-                    Json(json!({"observation_id": id, "status": "retained", "extraction": "queued"})),
-                )
-            }
-            Err(e) => {
-                tracing::warn!("Retain turn error: {}", e);
-                (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()})))
-            }
-        };
-    }
-
     match crate::memory_kernel_service::retain_turn(
         &state.db,
         &user.user_id,
@@ -1086,12 +1053,8 @@ async fn retain_turn_v2_handler(
         payload.session_id.as_deref(),
         &payload.role,
         &payload.content,
-        payload.explicit,
     ) {
-        Ok((id, facts)) => (
-            StatusCode::OK,
-            Json(json!({"observation_id": id, "status": "retained", "facts": facts})),
-        ),
+        Ok(id) => (StatusCode::OK, Json(json!({"observation_id": id, "status": "retained"}))),
         Err(e) => {
             tracing::warn!("Retain turn error: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()})))
@@ -1154,30 +1117,6 @@ async fn list_facts_v2_handler(
         Ok(facts) => (StatusCode::OK, Json(json!({"facts": facts, "count": facts.len()}))),
         Err(e) => {
             tracing::warn!("List facts error: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()})))
-        }
-    }
-}
-
-async fn delete_fact_v2_handler(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    axum::extract::Path(id): axum::extract::Path<String>,
-) -> impl axum::response::IntoResponse {
-    let user = match get_user(&headers) {
-        Some(u) => u,
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"error": "Unauthorized"})),
-            )
-        }
-    };
-    match crate::memory_kernel_service::delete_fact(&state.db, &user.user_id, &id) {
-        Ok(true) => (StatusCode::OK, Json(json!({"deleted": id}))),
-        Ok(false) => (StatusCode::NOT_FOUND, Json(json!({"error": "Fact not found"}))),
-        Err(e) => {
-            tracing::warn!("Delete fact error: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()})))
         }
     }

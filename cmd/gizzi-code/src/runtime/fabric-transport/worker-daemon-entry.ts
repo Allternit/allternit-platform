@@ -18,7 +18,6 @@
  */
 
 import { runFabricWorker } from "./worker"
-import { onParentExit } from "../util/parent-lifeline"
 
 type Level = "info" | "warn" | "error"
 
@@ -45,7 +44,6 @@ function installSignalHandlers(): void {
   }
   process.on("SIGTERM", () => onSignal("SIGTERM"))
   process.on("SIGINT", () => onSignal("SIGINT"))
-  onParentExit(() => onSignal("parent-exit"))
 }
 
 installSignalHandlers()

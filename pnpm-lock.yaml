@@ -2834,6 +2834,8 @@ importers:
         specifier: ^9.3.0
         version: 9.3.0(encoding@0.1.13)
 
+  surfaces/allternit-desktop/resources/office-engine: {}
+
   surfaces/allternit-docs:
     dependencies:
       '@allternit/office-docs-app':

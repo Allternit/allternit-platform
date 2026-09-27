@@ -11,14 +11,13 @@
  */
 
 import { app } from 'electron';
-import { execFileSync, ChildProcess } from 'child_process';
+import { spawn, execFileSync, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 import log from 'electron-log';
 import { PORTS } from './config.js';
-import { spawnSidecar } from './process-lifeline.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -126,7 +125,7 @@ export class LocalEngineManager {
     };
 
     log.info(`[LocalEngine] Starting local-engine on port ${ENGINE_PORT} from ${binaryPath}`);
-    const spawned = spawnSidecar(binaryPath, developmentCargoProject ? ['run', '--manifest-path', path.join(developmentCargoProject, 'Cargo.toml')] : [], {
+    const spawned = spawn(binaryPath, developmentCargoProject ? ['run', '--manifest-path', path.join(developmentCargoProject, 'Cargo.toml')] : [], {
       cwd: developmentCargoProject ?? undefined,
       env,
       stdio: ['ignore', 'pipe', 'pipe'],

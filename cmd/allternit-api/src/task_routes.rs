@@ -42,10 +42,6 @@ pub struct Task {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CreateTaskRequest {
-    /// Optional client-supplied task id. When present, create is idempotent:
-    /// a conflicting id returns the existing row instead of an error.
-    #[serde(default)]
-    pub id: Option<String>,
     pub title: String,
     #[serde(default)]
     pub workspace_id: Option<String>,
@@ -61,10 +57,8 @@ pub struct CreateTaskRequest {
     pub due_date: Option<String>,
     #[serde(default)]
     pub tags: Option<String>,
-    /// Free-form metadata. The column is TEXT; strings are stored as-is and
-    /// object/array payloads are stringified into the same column.
     #[serde(default)]
-    pub metadata: Option<serde_json::Value>,
+    pub metadata: Option<String>,
     #[serde(default)]
     pub assignee_type: Option<String>,
     #[serde(default)]
@@ -226,10 +220,7 @@ async fn create_task(
         }
     };
 
-    let id = body
-        .id
-        .clone()
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let id = uuid::Uuid::new_v4().to_string();
     let conn = match state.db.connect() {
         Ok(c) => c,
         Err(e) => {
@@ -248,16 +239,10 @@ async fn create_task(
         _ => "50".to_string(),
     };
 
-    let metadata_str = body.metadata.as_ref().map(|v| match v {
-        serde_json::Value::String(s) => s.clone(),
-        other => serde_json::to_string(other).unwrap_or_default(),
-    });
-
     let result = conn.execute(
         "INSERT INTO tasks
           (id, user_id, workspace_id, title, description, status, priority, assignee_id, due_date, tags, metadata, assignee_type, assignee_name)
-          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-          ON CONFLICT(id) DO NOTHING",
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         rusqlite::params![
             &id,
             &user.user_id,
@@ -269,38 +254,25 @@ async fn create_task(
             body.assignee_id.as_deref().unwrap_or(""),
             body.due_date.as_deref().unwrap_or(""),
             body.tags.as_deref().unwrap_or(""),
-            metadata_str.as_deref().unwrap_or(""),
+            body.metadata.as_deref().unwrap_or(""),
             body.assignee_type.as_deref().unwrap_or(""),
             body.assignee_name.as_deref().unwrap_or(""),
         ],
     );
 
     match result {
-        Ok(inserted) => {
-            if inserted > 0 {
-                let _ = write_audit_log(
-                    &conn,
-                    &id,
-                    "create",
-                    "human",
-                    &user.user_id,
-                    Some(&serde_json::to_string(&body).unwrap_or_default()),
-                );
-            }
+        Ok(_) => {
+            let _ = write_audit_log(
+                &conn,
+                &id,
+                "create",
+                "human",
+                &user.user_id,
+                Some(&serde_json::to_string(&body).unwrap_or_default()),
+            );
             match get_task_by_id(&conn, &id) {
-                Ok(Some(task)) => {
-                    let status = if inserted > 0 {
-                        StatusCode::CREATED
-                    } else {
-                        StatusCode::OK
-                    };
-                    (status, Json(json!({ "task": task })))
-                }
-                _ if inserted > 0 => (StatusCode::CREATED, Json(json!({ "id": id }))),
-                _ => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": "Failed to load task"})),
-                ),
+                Ok(Some(task)) => (StatusCode::CREATED, Json(json!({ "task": task }))),
+                _ => (StatusCode::CREATED, Json(json!({ "id": id }))),
             }
         }
         Err(e) => {

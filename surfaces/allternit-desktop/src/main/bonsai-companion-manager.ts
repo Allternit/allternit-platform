@@ -15,7 +15,6 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import log from 'electron-log';
-import { spawnSidecar } from './process-lifeline.js';
 
 const BONSAI_PORT = 8000;
 const HEALTH_TIMEOUT_MS = 120_000;
@@ -198,7 +197,7 @@ export class BonsaiCompanionManager {
     }
 
     log.info('[Bonsai] starting companion server');
-    this.serverProc = spawnSidecar('bash', [path.join(scriptsDir, 'start.sh')], {
+    this.serverProc = spawn('bash', [path.join(scriptsDir, 'start.sh')], {
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });

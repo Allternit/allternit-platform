@@ -58,12 +58,6 @@ const getRipgrepConfig = memoize((): RipgrepConfig => {
   // custom build); plain `bun build --compile` binaries must use the vendored
   // binary above, which is why the vendored check comes first.
   if (isInBundledMode()) {
-    // No vendored rg next to the binary: prefer a system rg over embedded
-    // mode, which only works for builds that statically link ripgrep.
-    const { cmd: systemPath } = findExecutable('rg', [])
-    if (systemPath !== 'rg') {
-      return { mode: 'system', command: 'rg', args: [] }
-    }
     return {
       mode: 'embedded',
       command: process.execPath,

@@ -20,36 +20,21 @@ Default transport is a Unix domain socket at
 TCP `127.0.0.1:7788` is off unless `SUBS_GATEWAY_TCP=1` and still always
 requires a scoped bearer token.
 
-## Secret store (D3/D15)
+## Keychain requirement (D3)
 
-The daemon refuses to start without a writable local secret store: caller
-tokens and the at-rest master key live there, never in the database. Backend
-selection is `SUBS_GATEWAY_KEYCHAIN=file|keychain` (default `keychain`):
-
-- `keychain` — macOS Keychain, service `com.allternit.subscription-gateway`.
-  The default; with this backend boot still refuses anywhere the Keychain is
-  absent.
-- `file` — the keychain-equivalent store for "Allternit Sessions" machines
-  (D15: Linux/Windows guests have no macOS Keychain): a 0600 `keychain.json`
-  under the state dir, atomic writes. **Honest caveat:** values are plaintext
-  at rest, protected by filesystem permissions only — encrypt-at-rest via the
-  master key (§A6.3) is a follow-up, not shipped yet.
-
-Placement (D3-refined, HARDENING D15 — supersedes the original "never cloud"
-reading): the gateway runs single-tenant on an Allternit Sessions machine —
-T1 Hosted (the user's Allternit cloud allotment), T2 BYOC, or T3
-Local-contained — never multi-tenant, never uncontained in a daily-driver
-desktop session.
+The daemon refuses to start without access to the local macOS Keychain
+(service `com.allternit.subscription-gateway`): caller tokens and the at-rest
+master key live there, never in files. It must never run on cloud
+infrastructure — user sessions are never hosted server-side.
 
 ## CLI authentication
 
-At boot the gateway ensures a `cli` caller token exists: if the `cli-token`
-entry in the configured secret store is missing or no longer verifies against
-the tokens table, a fresh token is issued and stored. The `allternit` CLI
-authenticates with `SUBS_GATEWAY_TOKEN` if set (use this on Sessions
-machines), else reads the macOS Keychain item via
+At boot the gateway ensures a `cli` caller token exists: if the keychain item
+`cli-token` (service `com.allternit.subscription-gateway`) is missing or no
+longer verifies against the tokens table, a fresh token is issued and stored.
+The `allternit` CLI authenticates with `SUBS_GATEWAY_TOKEN` if set, else reads
+the keychain item via
 `security find-generic-password -s com.allternit.subscription-gateway -a cli-token -w`.
-With the `file` backend the entry lives in `<stateDir>/keychain.json`.
 
 ## Adapter registry
 

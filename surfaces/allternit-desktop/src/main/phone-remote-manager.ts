@@ -33,7 +33,6 @@ import * as path from 'path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 import log from 'electron-log';
-import { spawnSidecar } from './process-lifeline.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -172,7 +171,7 @@ export class PhoneRemoteManager {
     const out = fs.openSync(logFile, 'a');
     log.info(`[PhoneRemote] Starting phone-remote server: ${process.execPath} ${scriptPath} (log: ${logFile})`);
 
-    const proc = spawnSidecar(process.execPath, [scriptPath], {
+    const proc = spawn(process.execPath, [scriptPath], {
       env: {
         ...Object.fromEntries(
           Object.entries(process.env).filter(([, v]) => v !== undefined) as [string, string][]

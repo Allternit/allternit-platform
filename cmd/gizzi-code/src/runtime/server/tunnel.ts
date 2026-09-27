@@ -9,8 +9,7 @@
 // (pty/index.ts): env override → vendored siblings → PATH. The child is owned
 // by this process and killed on server shutdown (unlike the mux daemon, it
 // must not outlive us).
-import { type ChildProcess } from "node:child_process"
-import { spawnOwnedChild } from "@/runtime/util/parent-lifeline"
+import { spawn, type ChildProcess } from "node:child_process"
 import { existsSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { Log } from "@/shared/util/log"
@@ -73,7 +72,7 @@ export namespace Tunnel {
           : ["tunnel", "--url", `http://127.0.0.1:${port}`, "--no-autoupdate"]
       log.info("starting cloudflared tunnel", { bin, mode: opts.mode })
 
-      const proc = spawnOwnedChild(bin, args, {
+      const proc = spawn(bin, args, {
         stdio: ["ignore", "pipe", "pipe"],
       })
       child = proc

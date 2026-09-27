@@ -1202,3 +1202,4 @@ Cross-compiled gizzi-code-win32-x64 from macOS (`bun build --target=win32-x64` �
 
 - 2026-09-26 Codex: [HUD push recovery](summaries/2026-09-26-1736-resume-hud-push-codex.md) — UI #86 and native #779 merged; shared main synced; 8 HUD tests passed.
 - 2026-09-26 Claude Code: [gizzi TUI color + own config + build hygiene + gizzi-code 2.1.3](summaries/2026-09-26-1715-gizzi-tui-color-claude-code-color-builds-2.1.3.md) — PRs #762 #763 #773 #774 #776 #780 #782; 2.1.3 on npm/GitHub/Homebrew (tap 607714f); build-state.sh + guard-build.sh; 16 stale binaries pruned; Desktop 2.1.3 sidecar pending owner decision.
+- 2026-09-26 Claude Code: [Parity B — Desktop 1.1.3 install + Cowork deck](summaries/2026-09-26-2120-parity-b-claude-code-desktop-1.1.3-cowork-deck.md) — b3705 installed, Preview deleted, b3704 pruned; skill reload 200 + agentReloaded:true; PRs platform #784, ai #91 (tsc/3719 tests/build green; live check pending next Desktop build).

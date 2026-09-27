@@ -15,7 +15,7 @@
  * crash the app — the gateway already answers 502 when the engine is down.
  */
 
-import { ChildProcess } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +23,6 @@ import { dirname } from 'node:path';
 import { app } from 'electron';
 import log from 'electron-log';
 import { PORTS, officeEngineUrl } from './config.js';
-import { spawnSidecar } from './process-lifeline.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -186,7 +185,7 @@ export class OfficeEngineManager {
     }
 
     log.info(`[OfficeEngineManager] Starting office-engine on port ${this.port}: ${spec.command} ${spec.args.join(' ')}`);
-    this.child = spawnSidecar(spec.command, spec.args, {
+    this.child = spawn(spec.command, spec.args, {
       cwd: spec.cwd,
       env: {
         ...Object.fromEntries(

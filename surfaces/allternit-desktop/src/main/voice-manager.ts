@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 import log from 'electron-log';
 import { PORTS, URLS } from './config.js';
-import { spawnSidecar } from './process-lifeline.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HEALTH_TIMEOUT_MS = 90_000;
@@ -42,7 +41,7 @@ class VoiceManager {
     fs.mkdirSync(env.AUDIO_OUTPUT_DIR, { recursive: true });
 
     log.info(`[VoiceManager] Starting voice service: ${command.file} ${command.args.join(' ')}`);
-    this.proc = spawnSidecar(command.file, command.args, {
+    this.proc = spawn(command.file, command.args, {
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,

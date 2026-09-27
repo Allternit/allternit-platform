@@ -560,6 +560,71 @@ async def scratchpad_reflect(
 
 
 # ---------------------------------------------------------------------------
+# 12. history_status
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def history_status(
+    session_id: Optional[str] = None,
+    provider_id: Optional[str] = None,
+) -> dict:
+    """
+    Check whether CUA Driver Computer History is supported, admitted, and enabled.
+
+    session_id: optional session context (not passed to the driver).
+    provider_id: canonical provider to query; defaults to desktop.cua-driver.
+    Returns the full history status payload including health, retention, and quota.
+    """
+    return await _post(
+        "/v1/computer-use/canonical/history/status",
+        {
+            "provider_id": provider_id or "desktop.cua-driver",
+            "session_id": session_id or _DEFAULT_SESSION_ID,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# 13. history_query
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def history_query(
+    limit: Optional[int] = None,
+    session_id: Optional[str] = None,
+    since_sequence: Optional[int] = None,
+    until_sequence: Optional[int] = None,
+    provider_id: Optional[str] = None,
+) -> dict:
+    """
+    Query a bounded, metadata-only slice of CUA Driver Computer History.
+
+    Results are metadata-only CloudEvents and may enter model context. Use this
+    for continuation or recent-work requests, after calling history_status.
+
+    limit: max events to return (1-200, default 50 on the driver).
+    session_id: optional opaque history session ID to filter by.
+    since_sequence: inclusive lower sequence bound.
+    until_sequence: inclusive upper sequence bound.
+    provider_id: canonical provider to query; defaults to desktop.cua-driver.
+    """
+    body: dict[str, Any] = {
+        "provider_id": provider_id or "desktop.cua-driver",
+    }
+    if limit is not None:
+        body["limit"] = limit
+    if session_id is not None:
+        body["session_id"] = session_id
+    if since_sequence is not None:
+        body["since_sequence"] = since_sequence
+    if until_sequence is not None:
+        body["until_sequence"] = until_sequence
+    return await _post("/v1/computer-use/canonical/history/query", body)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 

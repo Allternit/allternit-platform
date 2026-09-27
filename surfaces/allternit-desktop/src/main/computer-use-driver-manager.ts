@@ -4,7 +4,6 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import log from 'electron-log';
-import { spawnSidecar } from './process-lifeline.js';
 
 export interface ComputerUseDriverStatus {
   available: boolean;
@@ -133,7 +132,7 @@ class ComputerUseDriverManager {
     if (process.platform === 'darwin') {
       args.splice(2, 0, '--host-bundle-id', 'com.allternit.desktop');
     }
-    const child = spawnSidecar(executable, args, { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    const child = spawn(executable, args, { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     this.child = child;
 
     child.stdout?.on('data', (data: Buffer) => log.info('[ComputerUseDriver]', data.toString().trim()));

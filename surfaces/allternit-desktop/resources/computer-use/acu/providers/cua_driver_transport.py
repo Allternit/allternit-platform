@@ -213,3 +213,45 @@ class CuaDriverTransport:
         if screenshot_out_file:
             command.extend(("--screenshot-out-file", screenshot_out_file))
         return await self._run(*command, timeout_seconds=timeout_seconds)
+
+    async def history_status(self) -> Dict[str, Any]:
+        """Return CUA Driver Computer History operational status."""
+        return await self.call("history_status", {})
+
+    async def history_query(
+        self,
+        *,
+        limit: Optional[int] = None,
+        session_id: Optional[str] = None,
+        since_sequence: Optional[int] = None,
+        until_sequence: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Query a bounded, metadata-only slice of CUA Driver Computer History.
+
+        Args match the CUA Driver agent integration RFC. Unknown fields are
+        rejected by the driver; this helper only forwards bounded, typed args.
+        """
+        arguments: Dict[str, Any] = {}
+        if limit is not None:
+            if not 1 <= limit <= 200:
+                raise ValueError("limit must be between 1 and 200")
+            arguments["limit"] = limit
+        if session_id is not None:
+            if not isinstance(session_id, str) or not (1 <= len(session_id) <= 128):
+                raise ValueError("session_id must be a string between 1 and 128 characters")
+            arguments["session_id"] = session_id
+        if since_sequence is not None:
+            if not isinstance(since_sequence, int) or since_sequence < 1:
+                raise ValueError("since_sequence must be an integer >= 1")
+            arguments["since_sequence"] = since_sequence
+        if until_sequence is not None:
+            if not isinstance(until_sequence, int) or until_sequence < 1:
+                raise ValueError("until_sequence must be an integer >= 1")
+            arguments["until_sequence"] = until_sequence
+        if (
+            since_sequence is not None
+            and until_sequence is not None
+            and since_sequence > until_sequence
+        ):
+            raise ValueError("since_sequence must not exceed until_sequence")
+        return await self.call("history_query", arguments)

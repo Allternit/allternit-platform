@@ -250,25 +250,10 @@ pub struct AppConfig {
     pub user: UserConfig,
 }
 
-/// Replacement for a stale local-provider default model: the desktop's
-/// flagship lane, matching the frontend fallback constant.
-pub(crate) const DESKTOP_FLAGSHIP_DEFAULT_MODEL: &str = "claude-cli/claude-sonnet-4-6";
-
-/// A saved default model pointing at a local-provider lane (`ollama/`,
-/// `lmstudio/`) is treated as stale: those entries are unservable through the
-/// cowork bridge and every session dies with ProviderModelNotFoundError.
-fn is_stale_local_default_model(model: &str) -> bool {
-    let model = model.trim();
-    model.starts_with("ollama/") || model.starts_with("lmstudio/")
-}
-
 impl AppConfig {
     /// Load company + user config from disk and apply env overrides.
     /// If the user config has no default model but the Gizzi runtime config
-    /// does, mirror it so the UI and API agree on which brain to use. A saved
-    /// default model on a local-provider lane (ollama/lmstudio) is stale — it
-    /// is replaced with the desktop flagship lane and persisted so the file
-    /// stops lying.
+    /// does, mirror it so the UI and API agree on which brain to use.
     pub fn load() -> Self {
         // One-time migration: if a brain was saved to the legacy (wrong) gizzi
         // config path, copy it to the file the gizzi runtime actually reads so
@@ -278,24 +263,10 @@ impl AppConfig {
         let company = load_company_config();
         let mut user = load_user_config();
 
-        match user.default_model.as_deref() {
-            Some(model) if is_stale_local_default_model(model) => {
-                warn!(
-                    stale_model = %model,
-                    replacement = %DESKTOP_FLAGSHIP_DEFAULT_MODEL,
-                    "Replacing stale local-provider default model"
-                );
-                user.default_model = Some(DESKTOP_FLAGSHIP_DEFAULT_MODEL.to_string());
-                if let Err(err) = save_user_config(&user) {
-                    warn!(error = %err, "Failed to persist repaired default model");
-                }
-            }
-            Some(_) => {}
-            None => {
-                if let Some(model) = read_gizzi_default_model() {
-                    info!(model = %model, "Mirroring Gizzi default model into user config");
-                    user.default_model = Some(model);
-                }
+        if user.default_model.is_none() {
+            if let Some(model) = read_gizzi_default_model() {
+                info!(model = %model, "Mirroring Gizzi default model into user config");
+                user.default_model = Some(model);
             }
         }
 

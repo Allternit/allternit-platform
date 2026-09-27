@@ -1,6 +1,5 @@
 import type { ChildProcess, ExecFileException } from 'child_process'
 import { execFile, spawn } from 'child_process'
-import { existsSync } from 'fs'
 import memoize from 'lodash-es/memoize.js'
 import { homedir } from 'os'
 import * as path from 'path'
@@ -45,22 +44,9 @@ const getRipgrepConfig = memoize((): RipgrepConfig => {
     }
   }
 
-  // Vendored ripgrep (gizzi-code layout): next to the compiled binary, or in
-  // the source tree when running from source.
-  const vendored = vendoredRipgrepPath()
-  if (vendored) {
-    return { mode: 'builtin', command: vendored, args: [] }
-  }
-
+  // In bundled (native) mode, ripgrep is statically compiled into bun-internal
+  // and dispatches based on argv[0]. We spawn ourselves with argv0='rg'.
   if (isInBundledMode()) {
-    // gizzi-code's `bun build --compile` binaries do NOT statically link
-    // ripgrep, so re-spawning ourselves with argv0='rg' just runs gizzi-code
-    // again and Glob/Grep fail. Prefer a system rg (Homebrew installs one as a
-    // formula dependency); embedded mode is only a last resort.
-    const { cmd: systemPath } = findExecutable('rg', [])
-    if (systemPath !== 'rg') {
-      return { mode: 'system', command: 'rg', args: [] }
-    }
     return {
       mode: 'embedded',
       command: process.execPath,
@@ -77,32 +63,6 @@ const getRipgrepConfig = memoize((): RipgrepConfig => {
 
   return { mode: 'builtin', command, args: [] }
 })
-
-/**
- * Vendored ripgrep binary if present on disk. Checks, in order:
- * 1. <execDir>/vendor/ripgrep/<arch>-<platform>/rg (compiled binary layout)
- * 2. <moduleDir>/vendor/ripgrep/<arch>-<platform>/rg (bundled-module layout)
- * 3. <pkgRoot>/vendor/ripgrep/<arch>-<platform>/rg (dev/source tree)
- */
-function vendoredRipgrepPath(): string | null {
-  const file = process.platform === 'win32' ? 'rg.exe' : 'rg'
-  const layoutDir = `${process.arch}-${process.platform}`
-  const moduleDir = path.dirname(__filename)
-  const candidates = [
-    path.resolve(path.dirname(process.execPath), 'vendor', 'ripgrep', layoutDir, file),
-    path.resolve(moduleDir, 'vendor', 'ripgrep', layoutDir, file),
-    // src/cli/ui/ink-app/utils -> package root
-    path.resolve(moduleDir, '..', '..', '..', '..', '..', 'vendor', 'ripgrep', layoutDir, file),
-  ]
-  for (const candidate of candidates) {
-    try {
-      if (existsSync(candidate)) return candidate
-    } catch {
-      // keep looking
-    }
-  }
-  return null
-}
 
 export function ripgrepCommand(): {
   rgPath: string

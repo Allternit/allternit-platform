@@ -29,12 +29,11 @@
  */
 
 import { app } from 'electron';
-import { ChildProcess } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import log from 'electron-log';
 import { URLS } from './config.js';
-import { spawnSidecar } from './process-lifeline.js';
 
 const ANNOUNCE_TIMEOUT_MS = 25_000;
 const HEALTH_TIMEOUT_MS = 15_000;
@@ -137,7 +136,7 @@ export class ConnectorSidecarManager {
     log.info(`[ConnectorSidecarManager] Starting open-connector (ephemeral port) from ${entryPath}`);
     this.status = 'starting';
 
-    const proc = spawnSidecar(process.execPath, [entryPath], {
+    const proc = spawn(process.execPath, [entryPath], {
       env,
       cwd: sidecarRoot,
       stdio: ['ignore', 'pipe', 'pipe'],
