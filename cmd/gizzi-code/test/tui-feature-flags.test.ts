@@ -78,7 +78,10 @@ describe('small model for side calls', () => {
     delete process.env.NOKEY_API_KEY
   })
   afterEach(() => {
-    process.env = { ...saved }
+    // Restore in place: reassigning process.env detaches it from the real
+    // environment, so later tests' env writes never reach child processes.
+    for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key]
+    Object.assign(process.env, saved)
     rmSync(dir, { recursive: true, force: true })
   })
   const writeConfig = (cfg: unknown) => writeFileSync(join(dir, 'gizzi.json'), JSON.stringify(cfg))
