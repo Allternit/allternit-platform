@@ -485,6 +485,10 @@ checked live in a main Desktop build (one-current-build rule).
 - [ ] P3.9 Bot detail rebuild: split `BotHomeView.tsx` into header + Threads · Routines · Memory · Computer · Performance · Config (§7.2)
 - [ ] P3.10 Create bot one-screen flow (§7.3)
 - [ ] P3.11 Incognito asks
+- [ ] P3.12 Extract the deck (artifact-mode picker, plugins, starter pills, template gallery) from `ChatComposer` into one shared component; no second copy
+- [ ] P3.13 Cowork launch is the deck's native home: full deck + artifact template gallery; "Put a team on it" hands off to the Bots launch as a new project. Chat launch keeps its deck; the Chat/Cowork/Bots switcher stays on Chat and Cowork composers only
+- [ ] P3.14 Thread composer gets the compact deck (mode ▾ · plugins ▾ · model); artifacts made in a thread open in Cowork
+- [ ] P3.15 Templates on the Bots launch by progressive disclosure: level 0 = three "Start from a team" cards with a mini plan graph; level 1 = "Browse templates" panel with **Teams** (orchestration use cases: bots + plan with dependencies, "uses your Scout · adds Pixel") and **Bots** (single-bot marketplace; opens Create bot prefilled, nothing created until confirmed). Visual bar: the mockup, not a card grid of icons
 
 ### P4 — Bots run their own threads
 - [ ] P4.1 Fabric jobs targeting a bot principal load the bot's prompt, model, tools, memory, computer
