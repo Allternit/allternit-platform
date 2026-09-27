@@ -80,7 +80,7 @@ once_cell = { workspace = true }
 rustls-pemfile = "2"
 
 # HTTP middleware
-tower-http = { workspace = true, features = ["fs", "cors"] }
+tower-http = { workspace = true, features = ["fs", "cors", "set-header"] }
 
 # Metrics
 prometheus = { workspace = true }
