@@ -82,6 +82,7 @@ pub fn thread_router() -> Router<Arc<AppState>> {
         .route("/threads/:id/usage", post(report_usage))
         .route("/threads/:id/handoff", post(handoff))
         .route("/threads/:id/deps", put(set_deps))
+        .route("/threads/:id/events", get(thread_events))
         .route("/projects/:project_id/bots", get(get_team).put(put_team))
 }
 
@@ -977,6 +978,51 @@ async fn set_deps(
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct EventsQuery {
+    pub limit: Option<i64>,
+}
+
+/// The thread's activity (its `thread.*`, `routine.*` and other ledger
+/// events), newest first — the inspector's Activity tab.
+async fn thread_events(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+    Query(q): Query<EventsQuery>,
+) -> Response {
+    let t = match owned(&state, &user, &id).await {
+        Ok(t) => t,
+        Err(r) => return r,
+    };
+    let db = state.db.clone();
+    let limit = q.limit.unwrap_or(100).clamp(1, 500);
+    let res = blocking(move || {
+        let conn = db.connect()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, seq, event_type, actor_type, actor_id, payload, session_id, occurred_at
+             FROM bot_events WHERE bot_id = ?1 AND thread_id = ?2 ORDER BY seq DESC LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![t.bot_id, t.id, limit], |r| {
+            Ok(json!({
+                "id": r.get::<_, String>(0)?,
+                "sequence": r.get::<_, i64>(1)?,
+                "type": r.get::<_, String>(2)?,
+                "actor": { "type": r.get::<_, String>(3)?, "id": r.get::<_, String>(4)? },
+                "payload": r.get::<_, String>(5).ok().and_then(|p| serde_json::from_str::<Value>(&p).ok()).unwrap_or(Value::Null),
+                "sessionId": r.get::<_, Option<String>>(6)?,
+                "occurredAt": r.get::<_, String>(7)?,
+            }))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<Value>>>()
+    })
+    .await;
+    match res {
+        Ok(events) => Json(json!({ "events": events })).into_response(),
+        Err(r) => r,
+    }
+}
+
 async fn get_team(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -1155,6 +1201,10 @@ mod tests {
             .map(Result::unwrap)
             .collect();
         assert_eq!(events, vec!["thread.created", "thread.needs_user"]);
+        let (s, ev) = call(&state, "GET", &format!("/threads/{}/events", t.id), "user-a", None).await;
+        assert_eq!(s, StatusCode::OK);
+        let types: Vec<&str> = ev["events"].as_array().unwrap().iter().map(|e| e["type"].as_str().unwrap()).collect();
+        assert_eq!(types, vec!["thread.needs_user", "thread.created"]);
     }
 
     #[tokio::test]
