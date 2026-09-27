@@ -396,8 +396,14 @@ fn preferred_adapter(browser: &str) -> &'static str {
 }
 
 /// gizzi permission patterns for a host (URL targets of the browser tool).
-pub fn site_patterns(host: &str) -> [String; 2] {
-    [format!("*://{host}/*"), format!("*://*.{host}/*")]
+/// gizzi's matcher is anchored, so the bare origin needs its own pattern.
+pub fn site_patterns(host: &str) -> [String; 4] {
+    [
+        format!("*://{host}"),
+        format!("*://{host}/*"),
+        format!("*://*.{host}"),
+        format!("*://*.{host}/*"),
+    ]
 }
 
 /// The gizzi global-config patch for these preferences: the browser tool's
