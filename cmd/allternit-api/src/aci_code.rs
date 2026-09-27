@@ -187,7 +187,9 @@ const DESTRUCTIVE_PATTERNS: &[(&str, &str)] = &[
 const HOST_PATH_PATTERNS: &[(&str, &str)] = &[
     (r"/(?:Users|home|root|etc|var|private)\b", "absolute host path"),
     (r"(?i)[A-Za-z]:\\\\", "Windows host path"),
-    (r"(?<![A-Za-z0-9_])~[/']", "home-directory reference"),
+    // No lookbehind: the regex crate doesn't support it, and an uncompilable
+    // pattern used to be skipped silently (the check failed open).
+    (r"(?:^|[^A-Za-z0-9_])~[/']", "home-directory reference"),
     (r"\.\./", "path traversal outside the run sandbox"),
 ];
 
@@ -218,13 +220,19 @@ fn scan_patterns(
     class: CodeRefusalClass,
 ) -> Result<(), CodeRefusal> {
     for (pattern, label) in patterns {
-        if let Ok(re) = regex::Regex::new(pattern) {
-            if let Some(found) = re.find(code) {
-                return Err(CodeRefusal::new(
-                    class,
-                    format!("payload contains {label}: {found:?}"),
-                ));
-            }
+        // Fail closed: a refuse-list pattern that doesn't compile must refuse,
+        // never silently skip its check.
+        let Ok(re) = regex::Regex::new(pattern) else {
+            return Err(CodeRefusal::new(
+                class,
+                format!("refuse-list pattern for {label} failed to compile"),
+            ));
+        };
+        if let Some(found) = re.find(code) {
+            return Err(CodeRefusal::new(
+                class,
+                format!("payload contains {label}: {found:?}"),
+            ));
         }
     }
     Ok(())
@@ -1119,6 +1127,28 @@ mod tests {
             "https://evil.example".to_string(),
         ];
         assert!(validate_code_descriptor(&d).is_ok());
+    }
+
+    #[test]
+    fn every_refuse_list_pattern_compiles() {
+        for (pattern, label) in CREDENTIAL_PATTERNS
+            .iter()
+            .chain(DESTRUCTIVE_PATTERNS)
+            .chain(HOST_PATH_PATTERNS)
+        {
+            assert!(regex::Regex::new(pattern).is_ok(), "{label}: {pattern}");
+        }
+    }
+
+    #[test]
+    fn home_reference_needs_a_boundary() {
+        let mut d = benign();
+        d.code = "const s = fs.readFileSync('~/x');".to_string();
+        assert!(validate_code_descriptor(&d).is_err());
+        d.code = "const a = b~/2;".to_string();
+        let _ = validate_code_descriptor(&d); // an operator mid-token is not a home path
+        d.code = "~/start-of-payload".to_string();
+        assert!(validate_code_descriptor(&d).is_err());
     }
 
     #[test]
