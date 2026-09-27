@@ -1,7 +1,7 @@
 // @ts-nocheck
 /**
- * Animated startup welcome box. One rounded box: the Architectural
- * Sentinel (beacon pulse + periodic blink) beside the coral GIZZI block
+ * Animated startup welcome box. One rounded box: the Gizzi mascot
+ * (beacon pulse + periodic blink) beside the coral GIZZI block
  * wordmark (shimmer sweep), then a welcome line, tips, and info
  * fields (Directory / Session / Model / Version). Everything collapses
  * to a static frame under prefersReducedMotion.
@@ -16,7 +16,10 @@ import { getSessionId } from '../bootstrap/state.js'
 import { useTheme } from './design-system/ThemeProvider'
 import { getTheme } from '../utils/theme'
 import { interpolateColor, parseRGB, toRGBColor } from './Spinner/utils'
-import { CORAL, WORDMARK_ROWS, WORDMARK_WIDTH, sentinelRows } from './welcomeArt'
+import { CORAL, GIZZI_HEIGHT, WORDMARK_ROWS, WORDMARK_WIDTH, gizziRows } from './welcomeArt'
+
+// Wordmark rows sit vertically centered beside the mascot.
+const WORDMARK_TOP = Math.floor((GIZZI_HEIGHT - WORDMARK_ROWS.length) / 2)
 
 const TICK_MS = 120
 const BLINK_PERIOD_MS = 3800
@@ -95,7 +98,7 @@ export function WelcomeBox(): React.ReactNode {
       ? -SWEEP_WINDOW + ((WORDMARK_WIDTH + SWEEP_WINDOW * 2) * sweepPhase) / SWEEP_LENGTH_MS
       : null
 
-  const mascot = sentinelRows({ beaconColor, blinking })
+  const mascot = gizziRows({ beaconColor, blinking })
 
   return (
     <Box ref={animRef} flexDirection="column" borderStyle="round" borderColor={CORAL} paddingX={1} width="100%">
@@ -103,18 +106,18 @@ export function WelcomeBox(): React.ReactNode {
         {mascot.map((segments, i) => (
           <Box key={i} flexDirection="row">
             <Text>
-              {segments.map(([text, color], j) => (
-                <Text key={j} color={color}>
+              {segments.map(([text, color, bg], j) => (
+                <Text key={j} color={color || undefined} backgroundColor={bg} bold={bg !== undefined && color === CORAL}>
                   {text}
                 </Text>
               ))}
             </Text>
-            {i >= 1 && i <= WORDMARK_ROWS.length && (
+            {i >= WORDMARK_TOP && i < WORDMARK_TOP + WORDMARK_ROWS.length && (
               <Text>{'   '}</Text>
             )}
-            {i >= 1 && i <= WORDMARK_ROWS.length && (
+            {i >= WORDMARK_TOP && i < WORDMARK_TOP + WORDMARK_ROWS.length && (
               <WordmarkRow
-                text={WORDMARK_ROWS[i - 1]}
+                text={WORDMARK_ROWS[i - WORDMARK_TOP]}
                 sweepCenter={sweepCenter}
                 base={coralRGB}
                 shimmer={coralBrightRGB}
