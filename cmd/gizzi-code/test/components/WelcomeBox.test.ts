@@ -24,6 +24,17 @@ describe("header images", () => {
   })
 })
 
+describe("text-only header mark", () => {
+  test("four rows, 12 wide, ink in the text color with coral beacon and nose", async () => {
+    const { textMarkRows } = await import("../../src/cli/ui/ink-app/components/welcomeArt")
+    const rows = textMarkRows()
+    expect(rows).toHaveLength(4)
+    for (const row of rows) expect(row.map(([t]) => t).join("")).toHaveLength(12)
+    const colors = new Set(rows.flat().flatMap(([, fg, bg]) => [fg, bg]).filter(Boolean))
+    expect([...colors].sort()).toEqual(["gizzi", "text"])
+  })
+})
+
 describe("gizzi buddy sprite", () => {
   test("every pose fills the 12x5 companion slot", async () => {
     const { gizziBuddyRows, GIZZI_BUDDY_WIDTH } = await import("../../src/cli/ui/ink-app/buddy/gizziSprite")

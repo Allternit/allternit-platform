@@ -4,9 +4,9 @@
  * images (iTerm2, WezTerm, Ghostty, Kitty): the Gizzi mark (Brand/Gizzi/mark)
  * three rows tall on the left; beside it, the GIZZI CODE wordmark
  * (Brand/Gizzi/wordmark) one text row tall with the version, then the model
- * and the working directory. Elsewhere (Apple Terminal, tmux) the three text
- * lines alone, with the name set as type: bold caps, coral G for the
- * wordmark's core. No box, no animation.
+ * and the working directory. Elsewhere (Apple Terminal, tmux) the mark is
+ * drawn in half blocks, four rows tall, and the name is set as type: bold
+ * caps, coral G for the wordmark's core. No box, no animation.
  */
 import * as React from 'react'
 import { Box, Text } from '../ink'
@@ -15,7 +15,7 @@ import { renderModelSetting } from '../utils/model/model'
 import { getLogoDisplayData } from '../utils/logoV2Utils'
 import { useTheme } from './design-system/ThemeProvider'
 import { inlineImageBlock, inlineImagePlaceholder } from '../ink/inlineImage'
-import { CORAL } from './welcomeArt'
+import { CORAL, textMarkRows } from './welcomeArt'
 import {
   GIZZI_MARK_ASPECT,
   GIZZI_MARK_PNG_DARK_INK,
@@ -70,11 +70,17 @@ export function WelcomeBox(): React.ReactNode {
 
   return (
     <Box flexDirection="row" paddingLeft={1} marginBottom={1}>
-      {mark !== null && (
-        <Box flexDirection="column" flexShrink={0} marginRight={2}>
-          {mark.map((row, i) => <Text key={i}>{row}</Text>)}
-        </Box>
-      )}
+      <Box flexDirection="column" flexShrink={0} marginRight={2}>
+        {mark !== null
+          ? mark.map((row, i) => <Text key={i}>{row}</Text>)
+          : textMarkRows().map((segments, i) => (
+              <Text key={i}>
+                {segments.map(([t, color, bg], j) => (
+                  <Text key={j} color={color || undefined} backgroundColor={bg}>{t}</Text>
+                ))}
+              </Text>
+            ))}
+      </Box>
       {text}
     </Box>
   )

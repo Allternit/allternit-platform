@@ -13,6 +13,28 @@ export type ArtSegment = [text: string, color: string, bg?: string]
 export type ArtRow = ArtSegment[]
 
 /**
+ * Text-only header mark, for terminals that can't show inline images: the
+ * official Gizzi mark (Brand/Gizzi/mark) drawn in half blocks, four rows tall.
+ * Ink in the theme text color, coral beacon and nose, face panel left open.
+ */
+const TEXT_MARK_PIXELS = [
+  '.....BB.....',
+  '..TTT..TTT..',
+  '.TTTTTTTTTT.',
+  'TT.E....E.TT',
+  'TT.E..C.E.TT',
+  '.T........T.',
+  '..TTTTTTTT..',
+  '..T.T..T.T..',
+]
+
+export function textMarkRows(): ArtRow[] {
+  return renderPixelArt(TEXT_MARK_PIXELS, p =>
+    p === 'B' || p === 'C' ? CORAL : p === 'T' || p === 'E' ? 'text' : undefined,
+  )
+}
+
+/**
  * Two pixel rows per terminal cell with half blocks. `colorOf` maps a pixel
  * char to a theme color (undefined = empty). An optional text `mark` is
  * drawn bold coral on the face panel at a cell row/column.
