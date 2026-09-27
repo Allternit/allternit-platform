@@ -1143,6 +1143,8 @@ async fn main() {
     #[cfg(unix)]
     let combined = combined.nest("/terminal", terminal_router());
     let mut app = combined.with_state(state.clone());
+    // Automation Tasks routines with execution_domain = 'local' run here.
+    allternit_api::routine_local_scheduler::spawn(state.clone());
 
     // Mount cowork scheduler routes if scheduler is active. These routes
     // create/update/delete schedules and self-gate nothing, so they must be
