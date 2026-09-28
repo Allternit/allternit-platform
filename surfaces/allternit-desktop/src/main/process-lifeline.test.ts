@@ -80,6 +80,35 @@ describe.runIf(posix)('spawnSidecar', () => {
     expect(await until(() => !alive())).toBe(true);
   }, 15_000);
 
+  it('takes the sidecar down when the parent closes the pipe during quit, then exits', async () => {
+    // Electron closes its fds during quit a moment before it exits. The
+    // watcher sees EOF with the parent still alive; it must wait for the
+    // exit, not give up (that leaked every sidecar on a normal quit).
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lifeline-'));
+    const lifelineModule = transpiledLifeline(dir);
+    const pidFile = path.join(dir, 'pid');
+    const parent = spawn(process.execPath, ['--input-type=module', '-e', `
+      const { spawnSidecar } = await import(${JSON.stringify(lifelineModule)});
+      const { writeFileSync } = await import('fs');
+      const c = spawnSidecar('sleep', ['30'], { stdio: ['ignore', 'ignore', 'ignore'] });
+      writeFileSync(${JSON.stringify(pidFile)}, String(c.pid));
+      setTimeout(() => c.stdio[3].destroy(), 300);
+      setTimeout(() => process.exit(0), 2500);
+      setInterval(() => {}, 1000);
+    `], { stdio: 'ignore' });
+    expect(await until(() => fs.existsSync(pidFile) && fs.readFileSync(pidFile, 'utf8') !== '', 5000)).toBe(true);
+    const sidecarPid = Number(fs.readFileSync(pidFile, 'utf8'));
+    const alive = () => { try { process.kill(sidecarPid, 0); return true; } catch { return false; } };
+
+    // Pipe closed, parent still running: the sidecar stays up.
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(alive()).toBe(true);
+
+    // Parent exits: the sidecar goes too.
+    await new Promise((resolve) => parent.once('exit', resolve));
+    expect(await until(() => !alive(), 8000)).toBe(true);
+  }, 20_000);
+
   it('leaves the child\'s own stdin to the caller (MCP stdio protocol)', async () => {
     const child = spawnSidecar('cat', [], { stdio: ['pipe', 'pipe', 'pipe'] });
     const echoed = new Promise<string>((resolve) => child.stdout!.once('data', (d: Buffer) => resolve(d.toString())));
