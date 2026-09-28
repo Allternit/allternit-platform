@@ -1649,3 +1649,20 @@ async fn test_connector_broker_sessions() {
     ).expect_err("critical capability needs approval");
     assert_eq!(blocked.code, TransportErrorCode::ApprovalRequired);
 }
+
+/// A bot's Memory tab can forget an entry; only the owning user's rows go.
+#[tokio::test]
+async fn test_memory_delete_is_user_scoped() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut conn = open(&tmp.path().join("mem-del.db"));
+    sqlite_store::apply_store_ddl(&mut conn).unwrap();
+    let mine = sqlite_store::store_memory_entry(
+        &mut conn, "user-1", None, None, "Ledger never moves money", "fact",
+        None, None, Some("a://local/bot/ledger"), &[],
+    ).unwrap();
+    assert!(!sqlite_store::delete_memory_entry(&conn, "user-2", &mine).unwrap(), "another user can't forget it");
+    assert!(sqlite_store::delete_memory_entry(&conn, "user-1", &mine).unwrap());
+    assert!(!sqlite_store::delete_memory_entry(&conn, "user-1", &mine).unwrap(), "already gone");
+    let left = sqlite_store::search_memory_entries(&conn, "user-1", Some("a://local/bot/ledger"), None, 50, 0).unwrap();
+    assert!(left.is_empty());
+}
