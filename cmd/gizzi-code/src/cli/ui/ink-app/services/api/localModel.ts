@@ -238,6 +238,54 @@ function toolsToOpenAI(
   })
 }
 
+/**
+ * The model id the endpoint actually serves. Servers like mlx_lm.server
+ * expose whatever path/name they were started with, and will try to download
+ * from HuggingFace if we send a bare short id.
+ */
+const servedModelIds = new Map<string, string>()
+
+async function resolveServedModelId(
+  baseURL: string,
+  apiKey: string | undefined,
+  modelId: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const cacheKey = `${baseURL}\n${modelId}`
+  const cached = servedModelIds.get(cacheKey)
+  if (cached) return cached
+  let resolvedModelId = modelId
+  try {
+    const modelsRes = await fetch(`${baseURL}/models`, {
+      method: 'GET',
+      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+      signal,
+    })
+    if (modelsRes.ok) {
+      const modelsJson = (await modelsRes.json()) as { data?: { id: string }[] }
+      // mlx_lm.server lists every mlx-compatible model in the whole HF
+      // cache, not just the loaded one — the actually-running --model only
+      // appears as an absolute-path entry. Sending data[0] makes the server
+      // try to download a random cached model from HuggingFace, which fails
+      // offline with "Unable to connect. Is the computer able to access the
+      // url?" (503). Prefer the absolute-path entry; then an exact/basename
+      // match for the configured id; data[0] only as last resort.
+      const list = modelsJson.data ?? []
+      const served =
+        list.find((m) => m.id?.startsWith('/'))?.id ??
+        list.find((m) => m.id === modelId || m.id?.endsWith('/' + modelId))?.id ??
+        list[0]?.id
+      if (served) {
+        resolvedModelId = served
+        servedModelIds.set(cacheKey, served)
+      }
+    }
+  } catch {
+    // keep configured modelId as fallback
+  }
+  return resolvedModelId
+}
+
 export async function* queryLocalModelWithStreaming({
   messages,
   systemPrompt,
@@ -289,37 +337,7 @@ export async function* queryLocalModelWithStreaming({
     `[LocalModel] streaming ${provider}/${modelId} via ${baseURL}/chat/completions`,
   )
 
-  // Resolve the real model id served by the local endpoint. Servers like
-  // mlx_lm.server expose whatever path/name they were started with, and will
-  // try to download from HuggingFace if we send a bare short id.
-  let resolvedModelId = modelId
-  try {
-    const modelsRes = await fetch(`${baseURL}/models`, {
-      method: 'GET',
-      headers: config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {},
-      signal,
-    })
-    if (modelsRes.ok) {
-      const modelsJson = (await modelsRes.json()) as { data?: { id: string }[] }
-      // mlx_lm.server lists every mlx-compatible model in the whole HF
-      // cache, not just the loaded one — the actually-running --model only
-      // appears as an absolute-path entry. Sending data[0] makes the server
-      // try to download a random cached model from HuggingFace, which fails
-      // offline with "Unable to connect. Is the computer able to access the
-      // url?" (503). Prefer the absolute-path entry; then an exact/basename
-      // match for the configured id; data[0] only as last resort.
-      const list = modelsJson.data ?? []
-      const served =
-        list.find((m) => m.id?.startsWith('/'))?.id ??
-        list.find((m) => m.id === modelId || m.id?.endsWith('/' + modelId))?.id ??
-        list[0]?.id
-      if (served) {
-        resolvedModelId = served
-      }
-    }
-  } catch {
-    // keep configured modelId as fallback
-  }
+  const resolvedModelId = await resolveServedModelId(baseURL, config.apiKey, modelId, signal)
 
   // Normalize to strict user/assistant alternation: local templates like
   // Gemma3 reject system/tool roles ("Conversation roles must alternate...").
@@ -598,5 +616,147 @@ export async function* queryLocalModelWithStreaming({
       apiError: 'local_model_error',
       error: 'local_model_error',
     })
+  }
+}
+
+
+/**
+ * One non-streaming call for sideQuery (auto mode's classifier, permission
+ * explainer, session search…) to a provider-prefixed model, returned in the
+ * Messages API shape sideQuery's callers read: text and tool_use blocks,
+ * stop_reason, usage. Anthropic tool definitions and tool_choice map onto
+ * OpenAI function tools; thinking has no equivalent and is left out.
+ */
+export async function sideQueryLocalModel(opts: {
+  model: string
+  system: Array<{ type: 'text'; text: string }>
+  messages: ReadonlyArray<{ role: 'user' | 'assistant'; content: unknown }>
+  tools?: Array<{ name?: string; description?: string; input_schema?: unknown }>
+  tool_choice?: { type: string; name?: string }
+  max_tokens: number
+  temperature?: number
+  stop_sequences?: string[]
+  /** Reasoning budget, or false to ask the provider to skip reasoning. */
+  thinking?: number | false
+  signal?: AbortSignal
+}) {
+  const resolved = getLocalProviderConfig(opts.model)
+  if (!resolved) {
+    throw new Error(`Model '${opts.model}' is not configured as a provider in ~/.config/gizzi-code/gizzi.json.`)
+  }
+  const { provider, modelId, config } = resolved
+  const providerBlock = (readGizziConfig()?.provider as Record<string, unknown> | undefined)?.[provider]
+  await LocalModelServer.ensure({ providerID: provider, modelID: modelId }, providerBlock)
+  const servedModelId = await resolveServedModelId(config.baseURL, config.apiKey, modelId, opts.signal)
+
+  const system = opts.system.map(b => b.text).filter(Boolean).join('\n\n')
+  const messages = normalizeRoleAlternation([
+    ...(system ? [{ role: 'system', content: system }] : []),
+    ...opts.messages.map(m => ({ role: m.role, content: flattenContentToText(m.content as Parameters<typeof flattenContentToText>[0]) })),
+  ])
+  const tools = (opts.tools ?? [])
+    .filter(t => typeof t.name === 'string')
+    .map(t => ({
+      type: 'function',
+      function: { name: t.name, description: t.description ?? '', parameters: t.input_schema ?? { type: 'object' } },
+    }))
+
+  const body: Record<string, unknown> = {
+    model: servedModelId,
+    messages,
+    max_tokens: opts.max_tokens,
+    ...(opts.temperature !== undefined && { temperature: opts.temperature }),
+    ...(opts.stop_sequences?.length && { stop: opts.stop_sequences }),
+    // OpenRouter's reasoning control; other OpenAI-compatible servers ignore it.
+    ...(opts.thinking === false && { reasoning: { enabled: false } }),
+    ...(typeof opts.thinking === 'number' && { reasoning: { max_tokens: opts.thinking } }),
+  }
+  if (tools.length > 0) {
+    body.tools = tools
+    const choice = opts.tool_choice
+    if (choice?.type === 'tool' && choice.name) {
+      body.tool_choice = { type: 'function', function: { name: choice.name } }
+    } else if (choice?.type === 'any') {
+      body.tool_choice = 'required'
+    } else if (choice?.type === 'none') {
+      body.tool_choice = 'none'
+    }
+  }
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (config.apiKey && config.authType !== 'none') headers.Authorization = `Bearer ${config.apiKey}`
+  type Completion = {
+    id?: string
+    choices?: Array<{
+      finish_reason?: string
+      message?: {
+        content?: string | null
+        reasoning?: string | null
+        tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }>
+      }
+    }>
+    usage?: { prompt_tokens?: number; completion_tokens?: number }
+  }
+  const complete = async (): Promise<Completion> => {
+    const response = await fetch(`${config.baseURL}/chat/completions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: opts.signal,
+    })
+    if (!response.ok) {
+      const text = await response.text().catch(() => '')
+      throw new Error(`Provider error ${response.status} from ${provider}: ${text.slice(0, 500)}`)
+    }
+    return (await response.json()) as Completion
+  }
+
+  let json = await complete()
+  // Reasoning models that can't switch reasoning off can spend the whole
+  // budget thinking and stop before answering (finish_reason "length", no
+  // text or tool call). Retry once with room to answer.
+  const cutOff = (j: Completion) => {
+    const c = j.choices?.[0]
+    return c?.finish_reason === 'length' && !c.message?.content && !c.message?.tool_calls?.length
+  }
+  if (cutOff(json)) {
+    body.max_tokens = Math.min(opts.max_tokens + 16_384, 32_768)
+    body.reasoning = { effort: 'low' }
+    json = await complete()
+  }
+  const choice = json.choices?.[0]
+  const content: Array<Record<string, unknown>> = []
+  if (choice?.message?.content) content.push({ type: 'text', text: choice.message.content, citations: null })
+  for (const call of choice?.message?.tool_calls ?? []) {
+    let input: unknown = {}
+    try {
+      input = JSON.parse(call.function?.arguments || '{}')
+    } catch {
+      // Unparseable arguments: an empty input fails the caller's schema check.
+    }
+    content.push({ type: 'tool_use', id: call.id || `toolu_${randomUUID()}`, name: call.function?.name ?? '', input })
+  }
+  const finish = choice?.finish_reason
+  return {
+    id: json.id || `msg_${randomUUID()}`,
+    type: 'message',
+    role: 'assistant',
+    model: opts.model,
+    content,
+    stop_reason:
+      content.some(b => b.type === 'tool_use') || finish === 'tool_calls'
+        ? 'tool_use'
+        : finish === 'length'
+          ? 'max_tokens'
+          : finish === 'stop' && opts.stop_sequences?.length
+            ? 'stop_sequence'
+            : 'end_turn',
+    stop_sequence: null,
+    usage: {
+      input_tokens: json.usage?.prompt_tokens ?? 0,
+      output_tokens: json.usage?.completion_tokens ?? 0,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    },
   }
 }

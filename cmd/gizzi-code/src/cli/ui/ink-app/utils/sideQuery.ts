@@ -22,6 +22,7 @@ import { logEvent } from '../services/analytics/index.js'
 import type { AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS } from '../services/analytics/metadata.js'
 import { getAPIMetadata } from '../services/api/claude.js'
 import { getAllternitClient } from '../services/api/client.js'
+import { isLocalProviderModel, sideQueryLocalModel } from '../services/api/localModel.js'
 import { getModelBetas, modelSupportsStructuredOutputs } from './betas.js'
 import { computeFingerprint } from './fingerprint.js'
 import { normalizeModelStringForAPI } from './model/model.js'
@@ -126,6 +127,35 @@ export async function sideQuery(opts: SideQueryOptions): Promise<BetaMessage> {
     thinking,
     stop_sequences,
   } = opts
+
+  // Provider-prefixed models (openrouter/…, local-mlx/…) go to their
+  // OpenAI-compatible endpoint, like the main loop, so side queries (auto
+  // mode's classifier included) run on whichever model is chosen.
+  if (isLocalProviderModel(model)) {
+    const start = Date.now()
+    const response = (await sideQueryLocalModel({
+      model,
+      system: Array.isArray(system) ? system : system ? [{ type: 'text', text: system }] : [],
+      messages,
+      tools: tools as Array<{ name?: string; description?: string; input_schema?: unknown }> | undefined,
+      tool_choice,
+      max_tokens,
+      temperature,
+      stop_sequences,
+      thinking,
+      signal,
+    })) as unknown as BetaMessage
+    logEvent('tengu_api_success', {
+      querySource:
+        opts.querySource as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+      model: model as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+      durationMsIncludingRetries: Date.now() - start,
+    })
+    setLastApiCompletionTimestamp(Date.now())
+    return response
+  }
 
   const client = await getAllternitClient({
     maxRetries,

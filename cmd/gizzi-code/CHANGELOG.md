@@ -25,6 +25,12 @@
   meta+j inside it returns to gizzi. Needs tmux for the shell to persist.
 
 ### Changed
+- Auto mode works with whichever model you choose, not only Claude on the
+  Anthropic API. Its safety classifier runs on the same model, through that
+  model's provider (OpenRouter, local servers). Reasoning is switched off
+  for the check so it answers quickly; a reasoning model that can't switch
+  it off gets one retry with room to answer. If the check fails, the action
+  is blocked.
 - Tool cards put the arguments beside the tool name, as in Claude Code:
   "Update(src/math.ts)" on one line with the orb.
 - The spinner shows the elapsed time from the start, and the token count as
