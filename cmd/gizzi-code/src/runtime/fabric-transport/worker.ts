@@ -178,7 +178,9 @@ export async function runFabricWorker(opts: RunFabricWorkerOptions = {}): Promis
 
     log("info", "worker.claimed", { job_id: grant.job_id, lease_generation: grant.lease_generation })
     const steps: string[] = Array.isArray(grant.payload?.steps) ? (grant.payload.steps as string[]) : []
-    const agentic = grant.payload?.agentic as { task?: string; model?: string; max_steps?: number; max_tokens?: number } | undefined
+    const agentic = grant.payload?.agentic as
+      | { task?: string; model?: string; system?: string; bot_id?: string; max_steps?: number; max_tokens?: number }
+      | undefined
     const stepResults: Array<{ step: number; code: number }> = []
     let heartbeat: ReturnType<typeof setInterval> | null = null
     let failed = false
@@ -219,7 +221,7 @@ export async function runFabricWorker(opts: RunFabricWorkerOptions = {}): Promis
                 lease_generation: grant.lease_generation,
                 success,
                 summary,
-                outputs: { worker: "a://principal/gizzi", agentic: true, ...outputs },
+                outputs: { worker: "a://principal/gizzi", agentic: true, ...(agentic.bot_id ? { bot_id: agentic.bot_id } : {}), ...outputs },
               }),
             }).then(() => {}).catch(() => {}),
           // P3.1: render + attach a finished document to this run.
@@ -240,6 +242,7 @@ export async function runFabricWorker(opts: RunFabricWorkerOptions = {}): Promis
                 return { ok: false, detail: (e as Error).message }
               }),
           log,
+          system: agentic.system,
           maxSteps: agentic.max_steps,
           maxTokens: agentic.max_tokens,
         })

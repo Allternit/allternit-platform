@@ -819,12 +819,25 @@ pub struct ConnectorSessionQuery {
 async fn submit_intent(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(envelope): Json<allternit_cowork_runtime::IntentEnvelope>,
+    Json(mut envelope): Json<allternit_cowork_runtime::IntentEnvelope>,
 ) -> Result<Json<allternit_cowork_runtime::IntentSubmission>, ErrorResponse> {
     let user = crate::auth::get_user(&headers).ok_or_else(|| ErrorResponse {
         error: "authentication required to submit intents".to_string(),
         code: 401,
     })?;
+    // A job for one of the user's bots runs as that bot (P4.1).
+    if let Some(target) = envelope.target.clone() {
+        if let Some((bot_id, payload)) = crate::agent_session_routes::bot_job_payload(
+            &state.db,
+            &user.user_id,
+            &target,
+            &envelope.action.description,
+            envelope.action.payload.as_ref(),
+        ) {
+            tracing::info!(intent = %envelope.intent_id, bot = %bot_id, "intent targets a bot; running it as the bot");
+            envelope.action.payload = Some(payload);
+        }
+    }
     let mut conn = state.db.connect().map_err(db_error)?;
     // The owner is stamped on the run at creation (V142/V169 scoping), so
     // intent-created runs are listable and job-postable like any other run.

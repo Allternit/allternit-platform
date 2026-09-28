@@ -39,6 +39,12 @@ export interface AgenticDeps {
   }) => Promise<{ ok: boolean; detail: string }>
   log: (level: "info" | "warn" | "error", event: string, fields?: Record<string, unknown>) => void
   fetchImpl?: typeof fetch
+  /**
+   * The bot's own instructions (identity, standing instructions, memory)
+   * when the job targets a bot principal (spec P4.1). Prepended to the
+   * worker rules, which still bind: grants and the step budget don't move.
+   */
+  system?: string
   maxSteps?: number
   maxTokens?: number
 }
@@ -226,6 +232,7 @@ export async function runAgenticLoop(task: string, deps: AgenticDeps): Promise<v
     {
       role: "system",
       content:
+        (deps.system?.trim() ? `${deps.system.trim()}\n\n# Worker rules\n\n` : "") +
         "You are an agentic worker executing a delegated task. Use tools to inspect and " +
         "modify files. You may only write inside the granted folders. Finish with a short " +
         `summary of what you did. Granted folders: ${deps.grants.join(", ") || "none"}.`,
