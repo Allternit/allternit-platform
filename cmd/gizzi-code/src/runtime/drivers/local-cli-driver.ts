@@ -23,6 +23,7 @@ import type {
   RuntimeDriver,
   TaskHandle,
 } from "@/runtime/runtime-driver"
+import { acpMcpServers, claudeSessionFlags, codexMcpConfig, withInstructions } from "@/runtime/drivers/cli-session-flags"
 import { attachmentsToAcpContent } from "./attachments"
 import { RuntimeService, RuntimeNotFoundError, type RegisteredRuntime } from "@/runtime/runtime-service"
 import { ExecutionLogService } from "@/runtime/execution-log"
@@ -150,6 +151,8 @@ export class LocalCliDriver implements RuntimeDriver {
     const argv = adapter.buildArgv(baseCmd, message, {
       cwd: task?.cwd,
       taskId: handle.taskId,
+      systemPrompt: task?.systemPrompt,
+      mcp: task?.mcp,
     })
 
     let failed = false
@@ -942,7 +945,7 @@ export class LocalCliDriver implements RuntimeDriver {
     const acp = new ClientSideConnection(() => client as any, stream)
 
     try {
-      await acp.initialize({
+      const init = await acp.initialize({
         protocolVersion: PROTOCOL_VERSION,
         clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
         clientInfo: { name: "Allternit", version: "1.0.0" },
@@ -950,10 +953,10 @@ export class LocalCliDriver implements RuntimeDriver {
 
       const session = await acp.newSession({
         cwd: taskCwd,
-        mcpServers: [],
+        mcpServers: acpMcpServers(task?.mcp, (init as { agentCapabilities?: unknown })?.agentCapabilities) as any,
       })
 
-      const promptText = task?.prompt ?? ""
+      const promptText = withInstructions(task?.prompt ?? "", task?.systemPrompt)
       const attachmentBlocks = task?.attachments?.length
         ? attachmentsToAcpContent(task.attachments)
         : []
@@ -1279,9 +1282,11 @@ export class LocalCliDriver implements RuntimeDriver {
 
       notify("initialized", {})
 
+      const mcpConfig = codexMcpConfig(this.tasks.get(handle.taskId)?.mcp)
       const thread = (await request("thread/start", {
         cwd: cwd || process.cwd(),
         developerInstructions: systemPrompt,
+        ...(mcpConfig ? { config: mcpConfig } : {}),
       })) as { threadId?: string }
       const threadId = thread.threadId
       if (!threadId) throw new Error("codex app-server did not return a threadId")
@@ -1360,7 +1365,7 @@ interface CliAdapter {
   buildArgv(
     baseCmd: string[],
     message: string,
-    ctx: { cwd?: string; taskId: string },
+    ctx: { cwd?: string; taskId: string; systemPrompt?: string; mcp?: AgentTask["mcp"] },
   ): string[]
 }
 
@@ -1381,7 +1386,7 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
   // Anthropic gizzi-code — stream-json.
   "claude-cli": {
     mode: "stream-json",
-    buildArgv: ([command], _message, _ctx) => {
+    buildArgv: ([command], _message, ctx) => {
       return [
         command,
         "-p",
@@ -1390,6 +1395,7 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
         "--verbose",
         "--permission-mode", "bypassPermissions",
         "--disallowedTools", "AskUserQuestion",
+        ...claudeSessionFlags(ctx),
         ...modelFlag(PROVIDER_ENV_KEYS["claude-cli"]?.model ? process.env[PROVIDER_ENV_KEYS["claude-cli"]!.model!] : undefined),
       ]
     },

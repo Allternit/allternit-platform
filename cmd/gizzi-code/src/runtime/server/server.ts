@@ -47,6 +47,7 @@ import { QuestionRoutes } from "@/runtime/server/routes/question"
 import { PaneBrowserRoutes } from "@/runtime/server/routes/pane-browser"
 import { PaneArtifactRoutes } from "@/runtime/server/routes/pane-artifact"
 import { PaneRenderRoutes } from "@/runtime/server/routes/pane-render"
+import { CliBridgeRoutes } from "@/runtime/server/routes/cli-bridge"
 import { PermissionRoutes } from "@/runtime/server/routes/permission"
 import { GlobalRoutes } from "@/runtime/server/routes/global"
 import { CritiqueRoutes } from "@/runtime/server/routes/critique"
@@ -392,6 +393,7 @@ export namespace Server {
         .route("/pane-browser", PaneBrowserRoutes())
         .route("/pane-artifact", PaneArtifactRoutes())
         .route("/pane-render", PaneRenderRoutes())
+        .route("/cli-bridge", CliBridgeRoutes())
         .route("/provider", ProviderRoutes())
         .route("/sidecar", SidecarRoutes())
         .route("/", FileRoutes())

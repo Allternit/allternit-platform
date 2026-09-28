@@ -14,6 +14,10 @@ import { RuntimeDriverFactory } from "@/runtime/runtime-driver-factory"
 import { resolveTaskSessionID } from "@/runtime/session/stream-context"
 import { Log } from "@/shared/util/log"
 import { Token } from "@/shared/util/token"
+import { CliBridge } from "@/runtime/integrations/cli-bridge"
+import { extractSystemText } from "@/runtime/providers/adapters/loaders/system-text"
+import { Server } from "@/runtime/server/server"
+import { Instance } from "@/runtime/context/project/instance"
 
 const log = Log.create({ service: "subprocess-lm" })
 
@@ -61,13 +65,20 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
     }
 
     const { runtime, driver } = await RuntimeDriverFactory.resolveCli(this.providerID)
+    const sessionID = resolveTaskSessionID(options?.headers)
     const task = await driver.assign({
       taskId: generateTaskId(),
       prompt: message,
+      // The session's instructions (mode contract, artifact-session note…)
+      // go to the CLI as its system prompt; without them it only sees the
+      // last user message.
+      systemPrompt: extractSystemText(options.prompt ?? []) || undefined,
       // The CLI executes its own tools opaquely; the session id lets the
       // driver's ACP permission requests gate through the session's
       // PermissionNext policy instead of auto-approving.
-      sessionID: resolveTaskSessionID(options?.headers),
+      sessionID,
+      // gizzi's session tools (pane document, pane browser, media) over MCP.
+      mcp: sessionID ? bridgeConfig(sessionID) : undefined,
     })
 
     const stream = new ReadableStream<LanguageModelV2StreamPart>({
@@ -227,6 +238,15 @@ function emptyStream(rawPrompt: unknown) {
       },
     }),
     rawCall: { rawPrompt, rawSettings: {} as Record<string, unknown> },
+  }
+}
+
+function bridgeConfig(sessionID: string) {
+  try {
+    return CliBridge.serverConfig({ baseURL: Server.url(), sessionID, directory: Instance.directory })
+  } catch (error) {
+    log.warn("cli bridge unavailable", { error: error instanceof Error ? error.message : String(error) })
+    return undefined
   }
 }
 
