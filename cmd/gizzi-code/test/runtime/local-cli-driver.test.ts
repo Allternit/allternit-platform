@@ -101,6 +101,23 @@ describe("LocalCliDriver adapter registry", () => {
   })
 })
 
+test("Codex app-server thread/start uses result.thread.id", async () => {
+  const { codexThreadId } = await import("@/runtime/drivers/local-cli-driver")
+  expect(codexThreadId({ thread: { id: "thr_123", sessionId: "thr_123" } })).toBe("thr_123")
+  expect(codexThreadId({ threadId: "old-shape" })).toBeUndefined()
+})
+
+test("Codex discovery uses the installed CLI model catalog", async () => {
+  const { parseCodexModels } = await import("@/runtime/providers/discovery/subprocess")
+  expect(parseCodexModels(JSON.stringify({ models: [
+    { slug: "gpt-6-astra", display_name: "GPT-6-Astra", context_window: 272000 },
+    { slug: "gpt-5.6-sol", display_name: "GPT-5.6-Sol", context_window: 200000 },
+  ] }))).toEqual([
+    { id: "gpt-6-astra", name: "GPT-6-Astra", context: 272000, output: 32768 },
+    { id: "gpt-5.6-sol", name: "GPT-5.6-Sol", context: 200000, output: 32768 },
+  ])
+})
+
 describe("acpPermissionFor — ACP tool → gizzi permission mapping", () => {
   test("read-only tools map to the read permission", async () => {
     const { acpPermissionFor } = await import("@/runtime/drivers/local-cli-driver")

@@ -171,7 +171,15 @@ export class LocalCliDriver implements RuntimeDriver {
       } else if (adapter.mode === "acp") {
         yield* this.runAcp(handle, argv, task?.cwd, env)
       } else if (adapter.mode === "codex-app-server") {
-        yield* this.runCodexAppServer(handle, argv, message, task?.cwd, task?.systemPrompt, env)
+        for await (const event of this.runCodexAppServer(handle, argv, message, task?.cwd, task?.systemPrompt, env, task?.model)) {
+          if (event.type === "error" || (event.type === "finish" && event.finishReason === "error")) failed = true
+          yield event
+        }
+        if (failed) {
+          const failedEv = { type: "status", status: "failed" } as AgentEvent
+          yield failedEv
+          await this.logEvent(handle.taskId, failedEv)
+        }
       } else if (adapter.mode === "one-shot-json") {
         yield* this.runOneShotJson(handle, argv, { cwd: task?.cwd, env: env })
       } else if (adapter.mode === "one-shot-text") {
@@ -1055,6 +1063,7 @@ export class LocalCliDriver implements RuntimeDriver {
     cwd?: string,
     systemPrompt?: string,
     env?: Record<string, string>,
+    model?: string,
   ): AsyncIterable<AgentEvent> {
     log.info("spawning codex app-server subprocess", {
       taskId: handle.taskId,
@@ -1106,6 +1115,7 @@ export class LocalCliDriver implements RuntimeDriver {
     }
 
     const events: AgentEvent[] = []
+    const streamedMessages = new Set<string>()
     let done = false
     let notifyYield = () => {}
     let finished = false
@@ -1201,6 +1211,15 @@ export class LocalCliDriver implements RuntimeDriver {
             const method = msg.method
             const params = (msg.params ?? {}) as Record<string, unknown>
 
+            if (method === "item/agentMessage/delta") {
+              const delta = params.delta
+              if (typeof delta === "string" && delta) {
+                streamedMessages.add(String(params.itemId ?? ""))
+                pushEvent({ type: "text_delta", delta })
+              }
+              continue
+            }
+
             if (method === "turn/started" || method === "codex/event") {
               const event = params.event as Record<string, unknown> | undefined
               if (method === "turn/started" || event?.type === "task_started") {
@@ -1212,9 +1231,9 @@ export class LocalCliDriver implements RuntimeDriver {
             if (method === "item/completed") {
               const reasoning = codexReasoningText(params)
               if (reasoning) pushEvent({ type: "reasoning_delta", delta: reasoning })
-              const agentMessage = params.agentMessage as Record<string, unknown> | undefined
-              if (agentMessage) {
-                const text = extractCodexText(agentMessage)
+              const item = params.item as Record<string, unknown> | undefined
+              if (item?.type === "agentMessage" && !streamedMessages.has(String(item.id ?? ""))) {
+                const text = extractCodexText(item)
                 if (text) pushEvent({ type: "text_delta", delta: text })
               }
               continue
@@ -1263,7 +1282,12 @@ export class LocalCliDriver implements RuntimeDriver {
             if (method === "turn/completed") {
               finished = true
               done = true
-              pushEvent({ type: "finish", finishReason: "stop", usage: zeroUsage() })
+              const turn = params.turn as Record<string, unknown> | undefined
+              if (turn?.status === "failed") {
+                const detail = (turn.error as Record<string, unknown> | undefined)?.message
+                pushEvent({ type: "error", error: new Error(String(detail || "Codex turn failed")) })
+              }
+              pushEvent({ type: "finish", finishReason: turn?.status === "completed" ? "stop" : "error", usage: zeroUsage() })
               continue
             }
           } catch {
@@ -1287,11 +1311,12 @@ export class LocalCliDriver implements RuntimeDriver {
       const mcpConfig = codexMcpConfig(this.tasks.get(handle.taskId)?.mcp)
       const thread = (await request("thread/start", {
         cwd: cwd || process.cwd(),
+        ...(model ? { model } : {}),
         developerInstructions: systemPrompt,
         ...(mcpConfig ? { config: mcpConfig } : {}),
-      })) as { threadId?: string }
-      const threadId = thread.threadId
-      if (!threadId) throw new Error("codex app-server did not return a threadId")
+      })) as unknown
+      const threadId = codexThreadId(thread)
+      if (!threadId) throw new Error("codex app-server did not return thread.id")
 
       await request("turn/start", {
         threadId,
@@ -1996,6 +2021,15 @@ interface JsonRpcMessage {
   params?: Record<string, unknown>
   result?: unknown
   error?: unknown
+}
+
+/** Codex app-server nests the id in the returned thread object. */
+export function codexThreadId(result: unknown): string | undefined {
+  if (!result || typeof result !== "object") return undefined
+  const thread = (result as { thread?: unknown }).thread
+  if (!thread || typeof thread !== "object") return undefined
+  const id = (thread as { id?: unknown }).id
+  return typeof id === "string" && id ? id : undefined
 }
 
 /**

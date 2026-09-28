@@ -19,6 +19,16 @@ import type { DiscoveredProvider, DiscoveredModel } from "./index"
 
 const execFileAsync = promisify(execFile)
 
+export function parseCodexModels(stdout: string): DiscoveredModel[] {
+  const catalog = JSON.parse(stdout) as { models?: Array<{ slug?: string; display_name?: string; context_window?: number }> }
+  return (catalog.models ?? []).filter((model) => model.slug).map((model) => ({
+    id: model.slug!,
+    name: model.display_name || model.slug!,
+    context: model.context_window || 272000,
+    output: 32768,
+  }))
+}
+
 /**
  * Per-provider environment overrides matching the Multica Go runtime.
  *
@@ -294,10 +304,7 @@ export const SUBPROCESS_PROVIDERS: SubprocessSpec[] = [
     icon: "codex",
     cmd: "codex",
     probe: { args: ["--version"], expect: /codex/i },
-    models: [
-      { id: "codex-mini-latest", name: "Codex Mini Latest", context: 1047576, output: 32768 },
-      { id: "codex-latest",      name: "Codex Latest",      context: 1047576, output: 32768 },
-    ],
+    models: [{ id: "gpt-6-astra", name: "GPT-6-Astra", context: 272000, output: 32768 }],
   },
 
   // ── Google Gemini ─────────────────────────────────────────────────────────
@@ -667,6 +674,15 @@ export async function discoverSubprocessProviders(): Promise<DiscoveredProvider[
       if (!alive) return
 
       let models = spec.models
+      if (spec.id === "codex-cli") {
+        try {
+          const { stdout } = await execFileAsync(binPath, ["debug", "models"], { timeout: 5000 })
+          const available = parseCodexModels(stdout)
+          if (available.length > 0) models = available
+        } catch {
+          // Older Codex versions may not expose debug models; keep the fallback.
+        }
+      }
       if (spec.id === "ollama-cli" && models.length === 0) {
         models = await probeOllamaModels(binPath)
       }
