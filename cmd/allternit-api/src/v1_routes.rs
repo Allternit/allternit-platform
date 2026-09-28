@@ -872,6 +872,22 @@ fn tool_frames_for_part(
 ///    field (kept separate from the user's message text).
 /// 3. Subscribe to gizzi's SSE event stream.
 /// 4. POST the message to gizzi /v1/session/:id/message.
+/// Where a streamed part delta goes, by the part's declared type.
+#[derive(Debug, PartialEq, Eq)]
+enum DeltaRoute {
+    Text,
+    Thinking,
+    Drop,
+}
+
+fn delta_route(part_type: &str) -> DeltaRoute {
+    match part_type {
+        "text" => DeltaRoute::Text,
+        "reasoning" => DeltaRoute::Thinking,
+        _ => DeltaRoute::Drop,
+    }
+}
+
 /// 5. Filter message.part.delta events for this session and convert to
 ///    the content_block_delta SSE format the frontend expects.
 /// 6. Close the stream when session.status becomes idle.
@@ -1389,6 +1405,9 @@ async fn agent_chat_bridge(
         // declaration arrives, so an early reasoning delta can never leak
         // into the reply as text.
         let mut known_parts = std::collections::HashSet::<String>::new();
+        // Parts whose deltas are visible reply text. Tool parts also stream
+        // deltas (the model's tool-call input); those are not reply text.
+        let mut text_parts = std::collections::HashSet::<String>::new();
         let mut pending_deltas: Vec<(String, String)> = Vec::new();
         // callID → whether its tool_use start / final frame went out, so each
         // tool call reaches the client as exactly one start and one end.
@@ -1504,12 +1523,18 @@ async fn agent_chat_bridge(
                         if part_type == "reasoning" && !part_id.is_empty() {
                             reasoning_parts.insert(part_id.to_string());
                         }
+                        if part_type == "text" && !part_id.is_empty() {
+                            text_parts.insert(part_id.to_string());
+                        }
                         if !part_id.is_empty() && known_parts.insert(part_id.to_string()) {
                             let is_reasoning = part_type == "reasoning";
                             let (ready, held): (Vec<_>, Vec<_>) =
                                 pending_deltas.drain(..).partition(|(id, _)| id == part_id);
                             pending_deltas = held;
                             for (_, delta_text) in ready {
+                                if delta_route(part_type) == DeltaRoute::Drop {
+                                    continue;
+                                }
                                 if !is_reasoning {
                                     saw_text = true;
                                     reply_text.push_str(&delta_text);
@@ -1613,6 +1638,10 @@ async fn agent_chat_bridge(
                             // Reasoning part → thinking delta (the frontend's
                             // thought stream), not visible reply text.
                             yield Ok(Event::default().data(delta_frame(&msg_id, part_id, delta_text, true).to_string()));
+                        } else if !text_parts.contains(part_id) {
+                            // A tool (or other non-text) part's delta, e.g. the
+                            // model's streamed tool-call input: shown through
+                            // the tool frames, never as reply text.
                         } else {
                             saw_text = true;
                             reply_text.push_str(&delta_text);
@@ -1853,6 +1882,16 @@ async fn body_to_bytes(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn only_text_part_deltas_are_reply_text() {
+        // Seen live: a Cloud model's streamed tool-call input rendered as
+        // reply text ({"index":0,"id":"call_…","function":{…}}).
+        assert_eq!(super::delta_route("text"), super::DeltaRoute::Text);
+        assert_eq!(super::delta_route("reasoning"), super::DeltaRoute::Thinking);
+        assert_eq!(super::delta_route("tool"), super::DeltaRoute::Drop);
+        assert_eq!(super::delta_route("step-start"), super::DeltaRoute::Drop);
+    }
     use super::*;
 
     #[test]
