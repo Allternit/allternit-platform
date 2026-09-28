@@ -3,6 +3,7 @@ import { shell } from 'electron';
 import {
   assertTrustedSender,
   configureSecurity,
+  displayMediaHandler,
   isTrustedAppUrl,
   openExternalAllowlisted,
 } from './security.js';
@@ -74,5 +75,24 @@ describe('isTrustedAppUrl / assertTrustedSender', () => {
       getAppOrigins: () => [APP_ORIGIN, DEV_ORIGIN],
     });
     expect(isTrustedAppUrl(DEV_ORIGIN)).toBe(true);
+  });
+});
+
+describe('displayMediaHandler', () => {
+  beforeEach(configure);
+  const sources = [
+    { id: 'screen:2', display_id: '2', name: 'Side' },
+    { id: 'screen:1', display_id: '1', name: 'Main' },
+  ] as never[];
+  const handler = displayMediaHandler({ getSources: async () => sources, primaryDisplayId: () => '1' });
+  const ask = (securityOrigin: string) =>
+    new Promise<unknown>((resolve) => handler({ securityOrigin, frame: null, videoRequested: true, audioRequested: false, userGesture: false }, resolve));
+
+  it('gives app pages the primary screen', async () => {
+    expect(await ask('http://127.0.0.1:8013')).toEqual({ video: sources[1] });
+  });
+
+  it('gives web pages nothing', async () => {
+    expect(await ask('https://evil.example.com')).toEqual({});
   });
 });

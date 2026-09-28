@@ -72,7 +72,7 @@ export namespace Config {
 
     // Config loading order (low -> high precedence): https://docs.gizziio.com
     // 1) Remote .well-known/gizzi (org defaults)
-    // 2) Global config (~/.config/gizzi/gizzi.json{,c})
+    // 2) Global config (~/.config/gizzi-code/gizzi.json{,c})
     // 3) Custom config (GIZZI_CONFIG)
     // 4) Project config (gizzi.json{,c})
     // 5) .gizzi directories (.gizzi/agents/, .gizzi/commands/, .gizzi/plugins/, .gizzi/gizzi.json{,c})

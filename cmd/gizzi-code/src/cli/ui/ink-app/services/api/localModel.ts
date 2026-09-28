@@ -22,6 +22,9 @@ import type {
 } from '../../types/message.js'
 import type { Options } from './claude.js'
 
+// Stream index for the reasoning block: clear of choice and tool-call indexes.
+const THINKING_BLOCK_INDEX = 1_000_000
+
 type LocalProviderConfig = {
   baseURL: string
   apiKey?: string
@@ -378,6 +381,19 @@ export async function* queryLocalModelWithStreaming({
     let usage = { input_tokens: 0, output_tokens: 0 }
     let firstChunk = true
     const start = Date.now()
+    // Reasoning (OpenRouter `reasoning`, vLLM/DeepSeek `reasoning_content`)
+    // streams as a thinking block, so the spinner shows "thinking" and counts
+    // its tokens the way Claude Code does. It never becomes reply text: some
+    // servers send `content: ""` beside it, others `content: null`.
+    let thinkingOpen = false
+    function* closeThinking() {
+      if (!thinkingOpen) return
+      thinkingOpen = false
+      yield {
+        type: 'stream_event',
+        event: { type: 'content_block_stop', index: THINKING_BLOCK_INDEX },
+      }
+    }
     let ttftMs: number | undefined
 
     while (true) {
@@ -419,8 +435,32 @@ export async function* queryLocalModelWithStreaming({
             }
           }
 
-          const textDelta = delta.content ?? delta.reasoning
+          const reasoningDelta = delta.reasoning ?? delta.reasoning_content
+          if (typeof reasoningDelta === 'string' && reasoningDelta) {
+            if (!thinkingOpen) {
+              thinkingOpen = true
+              yield {
+                type: 'stream_event',
+                event: {
+                  type: 'content_block_start',
+                  index: THINKING_BLOCK_INDEX,
+                  content_block: { type: 'thinking', thinking: '' },
+                },
+              }
+            }
+            yield {
+              type: 'stream_event',
+              event: {
+                type: 'content_block_delta',
+                index: THINKING_BLOCK_INDEX,
+                delta: { type: 'thinking_delta', thinking: reasoningDelta },
+              },
+            }
+          }
+
+          const textDelta = delta.content
           if (textDelta) {
+            yield* closeThinking()
             let block = contentBlocks.get(index)
             if (!block || block.type !== 'text') {
               block = { type: 'text', text: '' }
@@ -447,6 +487,7 @@ export async function* queryLocalModelWithStreaming({
           }
 
           if (Array.isArray(delta.tool_calls)) {
+            if (delta.tool_calls.length > 0) yield* closeThinking()
             for (const tc of delta.tool_calls) {
               const idx = tc.index ?? index
               let block = contentBlocks.get(idx)
@@ -493,6 +534,7 @@ export async function* queryLocalModelWithStreaming({
       }
     }
 
+    yield* closeThinking()
     for (const [index] of contentBlocks) {
       yield {
         type: 'stream_event',

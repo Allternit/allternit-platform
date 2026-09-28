@@ -5,8 +5,8 @@
 
 import { writeFile, readFile, mkdir, access, constants } from 'fs/promises'
 import { join } from 'path'
-import { homedir } from 'os'
 import { log } from '../runtime/util/log.js'
+import { GlobalPaths } from '../runtime/context/global/paths.js'
 
 export type UserType = 'anonymous' | 'authenticated' | 'admin' | 'ant' | 'beta'
 
@@ -54,8 +54,10 @@ let currentSession: SessionData | null = null
 let preferencesCache: UserPreferences | null = null
 
 // Config directory
+// ~/.config/gizzi-code. Files from the pre-rename ~/.config/gizzi are copied
+// here by Global.init().
 function getConfigDir(): string {
-  return join(homedir(), '.config', 'gizzi')
+  return GlobalPaths.config
 }
 
 function getSessionFilePath(): string {
@@ -322,12 +324,6 @@ export default {
   getSessionItem,
   setSessionItem,
   removeSessionItem,
-}
-
-/** Per-project transcript directory, keyed by a slugified cwd. */
-export function getProjectDir(cwd: string): string {
-  const slug = cwd.replace(/[^a-zA-Z0-9]/g, '-')
-  return join(homedir(), '.config', 'gizzi', 'projects', slug)
 }
 
 // Merge-by-re-export: complete counterpart (local exports win on conflict)
