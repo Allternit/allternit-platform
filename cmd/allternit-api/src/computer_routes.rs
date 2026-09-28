@@ -154,6 +154,7 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/computers", get(list_computers).post(create_computer))
         .route("/computers/quota", get(get_computer_quota))
+        .route("/computers/this-device", post(register_this_device))
         .route("/computers/:id", get(get_computer).patch(update_computer))
         .route(
             "/computers/:id/resize",
@@ -1220,6 +1221,144 @@ fn sync_cloud_desktop_from_sandbox(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// This computer (ACI P4): the Mac running Allternit Desktop, listed with the
+// other computers as kind `local`, provider `host`. It isn't a VM: there's
+// nothing to start, stop, clone or delete, and its screen is read through the
+// computer-use gateway (ACU), not a VM driver.
+// ---------------------------------------------------------------------------
+
+pub(crate) const THIS_DEVICE_PROVIDER: &str = "host";
+
+pub(crate) fn is_this_device(computer: &ComputerResponse) -> bool {
+    computer.kind == ComputerKind::Local && computer.provider == THIS_DEVICE_PROVIDER
+}
+
+fn refuse_on_this_device(computer: &ComputerResponse) -> Option<Response> {
+    is_this_device(computer).then(|| {
+        (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "this_device",
+                "message": "This is the computer running Allternit. It can't be started, stopped, cloned or deleted here, and agents use it through computer use.",
+            })),
+        )
+            .into_response()
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct ThisDeviceBody {
+    id: String,
+    name: String,
+    platform: String,
+}
+
+/// POST /computers/this-device — record this Mac as a computer. Only the
+/// desktop app itself may call it (the local API's spawn-time secret, not
+/// relayed from another device), because it claims "the computer I run on".
+async fn register_this_device(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<ThisDeviceBody>,
+) -> Response {
+    let relayed = headers.get(crate::cowork_devices_routes::RELAYED_HEADER).is_some();
+    if relayed || !crate::auth::verify_desktop_access_token(&headers, &state.config) {
+        return error_response(StatusCode::FORBIDDEN, "only the desktop app can register the computer it runs on");
+    }
+    let device_id = body.id.trim().to_string();
+    if device_id.is_empty() || device_id.len() > 128 {
+        return error_response(StatusCode::BAD_REQUEST, "invalid device id");
+    }
+    let name: String = body.name.trim().chars().take(80).collect();
+    let os = match body.platform.as_str() {
+        "macOS" => "macos",
+        "Windows" => "windows",
+        "Linux" => "linux",
+        other => other,
+    }
+    .to_string();
+    let db = state.db.clone();
+    let owner = user.user_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = db.connect()?;
+        let existing: Option<String> = conn
+            .query_row(
+                "SELECT id FROM computers WHERE kind = 'local' AND provider = ?1 AND owner_type = 'user'
+                 AND owner_id = ?2 AND native_id = ?3 AND status != 'deleted'",
+                rusqlite::params![THIS_DEVICE_PROVIDER, owner, device_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let id = match existing {
+            Some(id) => {
+                conn.execute(
+                    "UPDATE computers SET name = ?2, os = ?3, status = 'running', last_activity_at = CURRENT_TIMESTAMP WHERE id = ?1",
+                    rusqlite::params![id, name, os],
+                )?;
+                id
+            }
+            None => {
+                let id = format!("cmp_{}", uuid::Uuid::new_v4().simple());
+                conn.execute(
+                    "INSERT INTO computers (id, kind, provider, status, owner_type, owner_id, name, os, native_id, billing_source)
+                     VALUES (?1, 'local', ?2, 'running', 'user', ?3, ?4, ?5, ?6, 'free')",
+                    rusqlite::params![id, THIS_DEVICE_PROVIDER, owner, name, os, device_id],
+                )?;
+                id
+            }
+        };
+        Ok::<_, rusqlite::Error>(id)
+    })
+    .await;
+    let id = match result {
+        Ok(Ok(id)) => id,
+        Ok(Err(e)) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        Err(_) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+    };
+    match fetch_computer(&state, &user, &id).await {
+        Ok(Some(computer)) => Json(computer).into_response(),
+        Ok(None) => error_response(StatusCode::NOT_FOUND, "computer not found"),
+        Err(resp) => resp,
+    }
+}
+
+/// This computer's screen, through the computer-use gateway's direct mode.
+async fn this_device_screenshot(state: &Arc<AppState>, computer_id: &str) -> Response {
+    let acu = state.config.acu_url();
+    let body = json!({
+        "mode": "direct",
+        "session_id": format!("computer-{computer_id}"),
+        "target_scope": "desktop",
+        "actions": [{ "kind": "screenshot" }],
+        "options": { "record": false, "approval_policy": "never" },
+    });
+    let response = match reqwest::Client::new()
+        .post(format!("{}/v1/computer-use/execute", acu.trim_end_matches('/')))
+        .timeout(std::time::Duration::from_secs(20))
+        .json(&body)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return error_response(StatusCode::BAD_GATEWAY, format!("computer use is unreachable: {e}")),
+    };
+    let result: Value = match response.json().await {
+        Ok(v) => v,
+        Err(e) => return error_response(StatusCode::BAD_GATEWAY, format!("computer use sent a bad reply: {e}")),
+    };
+    let b64 = result
+        .pointer("/result/screenshot_b64")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+    let Some(png) = b64.and_then(|b| BASE64_STANDARD.decode(b).ok()) else {
+        let reason = result.get("error").and_then(|v| v.as_str()).unwrap_or("no screenshot came back — check Screen Recording permission");
+        return error_response(StatusCode::BAD_GATEWAY, reason.to_string());
+    };
+    (StatusCode::OK, [(header::CONTENT_TYPE, "image/png")], Bytes::from(png)).into_response()
+}
+
 async fn computer_screenshot(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -1231,6 +1370,9 @@ async fn computer_screenshot(
         Err(resp) => return resp,
     };
     touch_computer_activity(&state.db, &id);
+    if is_this_device(&computer) {
+        return this_device_screenshot(&state, &id).await;
+    }
     let bot_id = computer.bot_id.as_deref();
     let record = match computer_sandbox(&state, &computer) {
         Ok(Some(r)) => r,
@@ -1595,6 +1737,9 @@ async fn computer_mouse(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(resp) => return resp,
     };
+    if let Some(resp) = refuse_on_this_device(&computer) {
+        return resp;
+    }
     if let Err(resp) = control_gate(&state, &id, &user_holder(&user, &headers)).await {
         return resp;
     }
@@ -1635,6 +1780,9 @@ async fn computer_keyboard(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(resp) => return resp,
     };
+    if let Some(resp) = refuse_on_this_device(&computer) {
+        return resp;
+    }
     if let Err(resp) = control_gate(&state, &id, &user_holder(&user, &headers)).await {
         return resp;
     }
@@ -1675,6 +1823,9 @@ async fn computer_shell(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(resp) => return resp,
     };
+    if let Some(resp) = refuse_on_this_device(&computer) {
+        return resp;
+    }
     if let Err(resp) = control_gate(&state, &id, &user_holder(&user, &headers)).await {
         return resp;
     }
@@ -1718,6 +1869,9 @@ async fn computer_upload_file(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(resp) => return resp,
     };
+    if let Some(resp) = refuse_on_this_device(&computer) {
+        return resp;
+    }
     touch_computer_activity(&state.db, &id);
     let sandbox_id = match computer.native_id.as_deref() {
         Some(id) => id,
@@ -1765,6 +1919,9 @@ async fn computer_download_file(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(resp) => return resp,
     };
+    if let Some(resp) = refuse_on_this_device(&computer) {
+        return resp;
+    }
     touch_computer_activity(&state.db, &id);
     let sandbox_id = match computer.native_id.as_deref() {
         Some(id) => id,
@@ -1836,6 +1993,9 @@ async fn restart_computer(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(e) => return e,
     };
+    if let Some(resp) = refuse_on_this_device(&computer) {
+        return resp.into_response();
+    }
     touch_computer_activity(&state.db, &id);
     if !matches!(
         computer.kind,
@@ -1869,6 +2029,9 @@ pub(crate) async fn start_computer(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(resp) => return resp,
     };
+    if let Some(resp) = refuse_on_this_device(&computer) {
+        return resp.into_response();
+    }
     touch_computer_activity(&state.db, &id);
 
     match computer.kind {
@@ -1936,6 +2099,9 @@ pub(crate) async fn stop_computer(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(resp) => return resp,
     };
+    if let Some(resp) = refuse_on_this_device(&computer) {
+        return resp.into_response();
+    }
 
     stop_computer_inner(&state, &computer).await
 }
@@ -2021,6 +2187,9 @@ async fn delete_computer(
         Ok(None) => return StatusCode::NO_CONTENT.into_response(),
         Err(resp) => return resp,
     };
+    if let Some(resp) = refuse_on_this_device(&computer) {
+        return resp;
+    }
 
     match computer.kind {
         ComputerKind::CloudDesktop | ComputerKind::Local => {
@@ -2111,6 +2280,9 @@ async fn session_end_computer(
         Ok(None) => return StatusCode::NO_CONTENT.into_response(),
         Err(resp) => return resp,
     };
+    if let Some(resp) = refuse_on_this_device(&computer) {
+        return resp;
+    }
 
     match computer.kind {
         ComputerKind::CloudDesktop | ComputerKind::Local => {
@@ -2301,6 +2473,9 @@ async fn snapshot_driver_and_handle(
     let c = fetch_computer(state, user, id)
         .await?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "computer not found"))?;
+    if let Some(resp) = refuse_on_this_device(&c) {
+        return Err(resp);
+    }
     let native_id = c
         .native_id
         .as_deref()
@@ -2433,6 +2608,23 @@ mod tests {
         ));
         assert!(matches!(status_from_str("error"), ComputerStatus::Error));
         assert!(matches!(status_from_str("unknown"), ComputerStatus::Error));
+    }
+
+    #[test]
+    fn this_device_refuses_vm_lifecycle() {
+        let mut computer: ComputerResponse = serde_json::from_value(serde_json::json!({
+            "id": "cmp_1", "kind": "local", "provider": "host", "status": "running",
+            "owner_type": "user", "owner_id": "u", "bot_id": null, "session_id": null,
+            "name": "Studio", "os": "macos", "cpu_cores": null, "memory_mb": null,
+            "disk_mb": null, "region": null, "host": null, "native_id": "desktop-1",
+            "template_id": null, "billing_source": "free", "created_at": "", "updated_at": "",
+            "idle_timeout_secs": null, "last_activity_at": null, "group_id": null
+        })).expect("computer json");
+        assert!(is_this_device(&computer));
+        assert_eq!(refuse_on_this_device(&computer).map(|r| r.status()), Some(StatusCode::CONFLICT));
+        computer.provider = "tart".into();
+        assert!(!is_this_device(&computer));
+        assert!(refuse_on_this_device(&computer).is_none());
     }
 
     #[test]
@@ -2789,6 +2981,9 @@ pub(crate) async fn resize_computer(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(e) => return e,
     };
+    if let Some(resp) = refuse_on_this_device(&computer) {
+        return resp.into_response();
+    }
     if let Err((code, message)) = validate_resize(&req, computer.status) {
         return error_response(code, message);
     }
@@ -2918,6 +3113,9 @@ pub(crate) async fn clone_computer(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(e) => return e,
     };
+    if let Some(resp) = refuse_on_this_device(&source) {
+        return resp.into_response();
+    }
     if source.kind != ComputerKind::CloudDesktop {
         return error_response(
             StatusCode::NOT_IMPLEMENTED,
