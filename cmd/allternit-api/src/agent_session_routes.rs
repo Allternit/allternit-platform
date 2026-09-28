@@ -171,6 +171,14 @@ struct SendMessageBody {
     role: Option<String>,
     thinking: Option<String>,
     metadata: Option<serde_json::Value>,
+    /// Record the message in the session without starting a model turn
+    /// (e.g. a note typed in ACI's operator panel while a run is going).
+    #[serde(rename = "noReply", default)]
+    no_reply: Option<bool>,
+    /// Where the text was typed (e.g. "aci"). Stored on the text part's
+    /// metadata so the chat can label it; absent for the session composer.
+    #[serde(default)]
+    source: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1086,7 +1094,7 @@ async fn send_message(
     Path(session_id): Path<String>,
     Json(body): Json<SendMessageBody>,
 ) -> impl IntoResponse {
-    let role = body.role.unwrap_or_else(|| "user".to_string());
+    let role = body.role.clone().unwrap_or_else(|| "user".to_string());
     if role != "user" {
         return Json(json!({
             "id": format!("local-{}", uuid::Uuid::new_v4()),
@@ -1101,20 +1109,28 @@ async fn send_message(
 
     let client = gizzi_client(&headers);
     let path = format!("/v1/session/{}/message", urlencoding::encode(&session_id));
-    let payload = json!({
-        "parts": [
-            {
-                "type": "text",
-                "text": body.text,
-            }
-        ],
-        "model": select_model(body.metadata.as_ref()),
-    });
+    let payload = send_message_payload(&body);
 
     match gizzi_json::<GizziMessage>(&client, reqwest::Method::POST, &path, Some(payload)).await {
         Ok(message) => Json(transform_message(message)).into_response(),
         Err(response) => response,
     }
+}
+
+/// The gizzi `/v1/session/:id/message` body for a user message.
+fn send_message_payload(body: &SendMessageBody) -> serde_json::Value {
+    let mut part = json!({ "type": "text", "text": body.text });
+    if let Some(source) = body.source.as_deref().filter(|s| !s.is_empty()) {
+        part["metadata"] = json!({ "source": source });
+    }
+    let mut payload = json!({
+        "parts": [part],
+        "model": select_model(body.metadata.as_ref()),
+    });
+    if body.no_reply == Some(true) {
+        payload["noReply"] = json!(true);
+    }
+    payload
 }
 
 async fn abort_session(
@@ -1611,6 +1627,34 @@ async fn spawn_native_session(Json(body): Json<SpawnNativeBody>) -> Response {
             Json(json!({ "error": format!("{bin} spawn timed out") })),
         )
             .into_response(),
+    }
+}
+
+#[cfg(test)]
+mod send_message_payload_tests {
+    use super::{send_message_payload, SendMessageBody};
+
+    fn body(json: serde_json::Value) -> SendMessageBody {
+        serde_json::from_value(json).unwrap()
+    }
+
+    #[test]
+    fn plain_message_starts_a_turn() {
+        let payload = send_message_payload(&body(serde_json::json!({ "text": "hi" })));
+        assert!(payload.get("noReply").is_none());
+        assert!(payload["parts"][0].get("metadata").is_none());
+        assert_eq!(payload["parts"][0]["text"], "hi");
+    }
+
+    #[test]
+    fn aci_note_is_recorded_without_a_turn() {
+        let payload = send_message_payload(&body(serde_json::json!({
+            "text": "Skip venues without parking.",
+            "noReply": true,
+            "source": "aci",
+        })));
+        assert_eq!(payload["noReply"], true);
+        assert_eq!(payload["parts"][0]["metadata"]["source"], "aci");
     }
 }
 
