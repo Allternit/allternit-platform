@@ -55,16 +55,12 @@ describe('auto mode', () => {
     expect(rules.environment.length).toBeGreaterThan(0)
   })
 
-  test('model allowlist covers current Claude models only', () => {
+  test('works with whichever model is chosen', () => {
     expect(modelSupportsAutoMode('claude-opus-5-5')).toBe(true)
-    expect(modelSupportsAutoMode('claude-sonnet-4-6')).toBe(true)
-    expect(modelSupportsAutoMode('claude-fable-5-1')).toBe(true)
-    expect(modelSupportsAutoMode('anthropic/claude-opus-5-5')).toBe(true)
-    expect(modelSupportsAutoMode('claude-sonnet-4-5')).toBe(false)
-    expect(modelSupportsAutoMode('claude-haiku-4-5-20251001')).toBe(false)
-    // OpenRouter IDs route through a provider the classifier can't call.
-    expect(modelSupportsAutoMode('openrouter/anthropic/claude-sonnet-4.6')).toBe(false)
-    expect(modelSupportsAutoMode('openrouter/~deepseek/deepseek-flash-latest')).toBe(false)
+    expect(modelSupportsAutoMode('claude-haiku-4-5-20251001')).toBe(true)
+    expect(modelSupportsAutoMode('openrouter/z-ai/glm-4.7-flash')).toBe(true)
+    expect(modelSupportsAutoMode('local-mlx/gemma')).toBe(true)
+    expect(modelSupportsAutoMode('')).toBe(false)
   })
 })
 
