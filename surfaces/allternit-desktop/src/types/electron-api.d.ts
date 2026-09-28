@@ -152,6 +152,8 @@ export interface AppAPI {
   checkForUpdates(): Promise<{ ok: boolean; reason?: string; message?: string }>;
   installUpdate(): Promise<void>;
   onUpdateStatus(handler: (status: UpdateStatus) => void): () => void;
+  /** Record this computer as a trusted Cowork device. */
+  registerDevice(): Promise<boolean>;
   /** This computer in Settings → Cowork devices; null for an untrusted frame. */
   deviceInfo: { id: string; name: string; platform: string; kind: 'desktop' } | null;
 }

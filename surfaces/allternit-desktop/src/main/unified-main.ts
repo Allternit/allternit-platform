@@ -1236,6 +1236,7 @@ async function initializeBundledMode(): Promise<void> {
     serviceState.api = { status: 'up', detail: `Connected on ${URLS.API}` };
     serviceState.gateway = { status: 'up', detail: `Connected on ${URLS.API}` };
     pushServiceState();
+    void registerThisComputer();
     store.set('backend.lastLocalVersion', PLATFORM_MANIFEST.backend.version);
 
     // Step 2.5 — managed Fabric Transport worker (consumer-packaged Cowork
@@ -3061,6 +3062,37 @@ ipcMain.on('device:info', (event) => {
     event.returnValue = null;
   }
 });
+
+/**
+ * Settings → Cowork devices: record this computer as trusted. Only main holds
+ * the local API's spawn-time secret (backend-manager), and the API trusts a
+ * desktop registration only when that secret is present, so a renderer
+ * request can't do it. Runs once the backend is up and again from the
+ * renderer after sign-in (`device:register`).
+ */
+async function registerThisComputer(): Promise<boolean> {
+  const session = authManager.getSessionSnapshot();
+  if (!session || !backendManager.getDesktopAccessToken()) return false;
+  try {
+    const response = await fetch(`${URLS.API}/api/v1/cowork/devices/register`, {
+      method: 'POST',
+      headers: {
+        ...backendManager.getLocalAuthHeaders(session.userId),
+        'x-allternit-user-email': session.userEmail,
+        ...coworkDeviceHeaders(coworkDevice),
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(coworkDevice),
+    });
+    if (!response.ok) log.warn(`[Cowork] Registering this computer failed (${response.status})`);
+    return response.ok;
+  } catch (error) {
+    log.warn('[Cowork] Registering this computer failed:', error);
+    return false;
+  }
+}
+
+handleGuarded('device:register', () => registerThisComputer());
 
 handleGuarded('links:set-open-in-app', (_event, enabled: unknown) => {
   openLinksInApp = enabled === true;
