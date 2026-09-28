@@ -1479,6 +1479,20 @@ export namespace Config {
             .describe("Token buffer for compaction. Leaves enough window to avoid overflow during compaction."),
         })
         .optional(),
+      handoff: z
+        .object({
+          auto: z
+            .boolean()
+            .optional()
+            .describe("Hand off to a fresh context window between turns once the window is past the threshold (default: true)"),
+          threshold: z
+            .number()
+            .min(0.3)
+            .max(0.95)
+            .optional()
+            .describe("Share of the usable window that triggers a handoff (default: 0.7)"),
+        })
+        .optional(),
       experimental: z
         .object({
           disable_paste_summary: z.boolean().optional(),

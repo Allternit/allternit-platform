@@ -66,6 +66,8 @@ export namespace Session {
       projectID: row.project_id,
       directory: row.directory,
       parentID: row.parent_id ?? undefined,
+      continuesFrom: row.continues_from ?? undefined,
+      handoff: row.handoff ?? undefined,
       title: row.title,
       version: row.version,
       summary,
@@ -110,6 +112,8 @@ export namespace Session {
       id: info.id,
       project_id: info.projectID,
       parent_id: info.parentID,
+      continues_from: info.continuesFrom ?? null,
+      handoff: info.handoff ?? null,
       slug: info.slug,
       directory: info.directory,
       title: info.title,
@@ -163,6 +167,17 @@ export namespace Session {
       projectID: z.string(),
       directory: z.string(),
       parentID: Identifier.schema("session").optional(),
+      /** Lineage: the session this one continues after a context handoff. */
+      continuesFrom: Identifier.schema("session").optional(),
+      /** Set once this session handed off to a fresh context window. */
+      handoff: z
+        .object({
+          sessionID: Identifier.schema("session"),
+          reason: z.string(),
+          at: z.number(),
+          baton: z.unknown().optional(),
+        })
+        .optional(),
       summary: z
         .object({
           additions: z.number(),
@@ -428,6 +443,7 @@ export namespace Session {
     defaultModel?: Info["defaultModel"]
     defaultModelSource?: Info["defaultModelSource"]
     sourceRef?: Info["sourceRef"]
+    continuesFrom?: string
   }) {
     const result: Info = {
       id: Identifier.descending("session", input.id),
@@ -444,6 +460,7 @@ export namespace Session {
       defaultModel: input.defaultModel,
       defaultModelSource: input.defaultModelSource,
       sourceRef: input.sourceRef,
+      continuesFrom: input.continuesFrom,
       time: {
         created: Date.now(),
         updated: Date.now(),
@@ -618,6 +635,22 @@ export namespace Session {
     },
   )
 
+  /** Mark a session as handed off to its successor (context handoff). */
+  export function setHandoff(input: { sessionID: string; handoff: NonNullable<Info["handoff"]> }) {
+    return Database.use((db) => {
+      const row = db
+        .update(SessionTable)
+        .set({ handoff: input.handoff, time_updated: Date.now() })
+        .where(eq(SessionTable.id, input.sessionID))
+        .returning()
+        .get()
+      if (!row) throw new NotFoundError({ message: `Session not found: ${input.sessionID}` })
+      const info = fromRow(row)
+      Database.effect(() => Bus.publish(Event.Updated, { info }))
+      return info
+    })
+  }
+
   export const setRevert = fn(
     z.object({
       sessionID: Identifier.schema("session"),
@@ -730,6 +763,8 @@ export namespace Session {
     }
     if (input?.roots) {
       conditions.push(isNull(SessionTable.parent_id))
+      // A handed-off session lives on as its lineage head; list the head only.
+      conditions.push(isNull(SessionTable.handoff))
     }
     if (input?.start) {
       conditions.push(gte(SessionTable.time_updated, input.start))
@@ -774,6 +809,8 @@ export namespace Session {
     }
     if (input?.roots) {
       conditions.push(isNull(SessionTable.parent_id))
+      // A handed-off session lives on as its lineage head; list the head only.
+      conditions.push(isNull(SessionTable.handoff))
     }
     if (input?.start) {
       conditions.push(gte(SessionTable.time_updated, input.start))

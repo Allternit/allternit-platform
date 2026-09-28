@@ -66,6 +66,12 @@ impl ThreadRuntime for GizziCoordinator {
     async fn seed(&self, session_id: &str, text: &str) -> Result<(), String> {
         crate::agent_session_routes::seed_session_message(session_id, text).await
     }
+    async fn handoff(&self, session_id: &str, reason: &str, context: &str, baton: Option<Value>) -> Result<(String, Value), String> {
+        crate::thread_routes::GizziRuntime { db: self.state.db.clone() }.handoff(session_id, reason, context, baton).await
+    }
+    async fn successors(&self, session_id: &str) -> Vec<(String, String, Value)> {
+        crate::thread_routes::GizziRuntime { db: self.state.db.clone() }.successors(session_id).await
+    }
 }
 
 impl CoordinatorRuntime for GizziCoordinator {
@@ -634,6 +640,9 @@ mod tests {
         }
         async fn seed(&self, _s: &str, _t: &str) -> Result<(), String> {
             Ok(())
+        }
+        async fn handoff(&self, _s: &str, _r: &str, _c: &str, _b: Option<Value>) -> Result<(String, Value), String> {
+            Err("the coordinator does not hand off".into())
         }
     }
 
