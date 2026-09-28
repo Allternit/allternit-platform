@@ -122,9 +122,11 @@ function sdkPage(lease: ExecutionContext["page"]): Page {
 export interface ChatGPTWebOptions {
   // D5 — temp-chat ON by default for stateless chat.create tasks.
   tempChat?: boolean;
-  // image.generate navigates to a fresh regular chat first (default true;
-  // fixture tests that load a page directly pass false).
-  freshImageChat?: boolean;
+  // chat.create and image.generate start from the origin root — a fresh,
+  // regular new chat — instead of whatever the lane page is showing (a
+  // previous task's thread, or a temp chat). Default true; fixture tests that
+  // load a page directly pass false.
+  freshChat?: boolean;
 }
 
 export type ChatGPTWebConfigOverrides = Partial<DeclarativeChatConfig>;
@@ -153,10 +155,16 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
           yield gate;
           return;
         }
-      } else if (this.opts.tempChat !== false && !task.thread_id) {
-        // D5: temporary chat is for STATELESS tasks only. A task on a fabric
-        // thread must land in a reopenable chat so chat.continue can follow.
-        await this.enableTempChat(ctx);
+      } else {
+        // Never type into the page as left by the previous task: a chat.create
+        // there would land in that task's thread (live: a stateless prompt
+        // appended to a mapped fabric thread) or in its temp chat.
+        await this.openFreshChat(ctx);
+        if (this.opts.tempChat !== false && !task.thread_id) {
+          // D5: temporary chat is for STATELESS tasks only. A task on a fabric
+          // thread must land in a reopenable chat so chat.continue can follow.
+          await this.enableTempChat(ctx);
+        }
       }
       yield* super.execute(task, ctx);
     } catch (err) {
@@ -199,6 +207,13 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
       await toggle.first().click();
     }
     return true;
+  }
+
+  private async openFreshChat(ctx: ExecutionContext): Promise<void> {
+    if (this.opts.freshChat === false) return;
+    await sdkPage(ctx.page).goto(this.manifest.origins[0] ?? "https://chatgpt.com/", {
+      waitUntil: "domcontentloaded",
+    });
   }
 
   // D5 — click the temp-chat toggle unless already on; plans without the
@@ -309,11 +324,7 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
     // Image generation is unavailable in temporary chats (provider rule), so
     // image tasks always start a fresh regular chat — they land in history
     // (thread reuse/cleanup is a separate, planned policy).
-    if (this.opts.freshImageChat !== false) {
-      await page.goto(this.manifest.origins[0] ?? "https://chatgpt.com/", {
-        waitUntil: "domcontentloaded",
-      });
-    }
+    await this.openFreshChat(ctx);
 
     // §A3.4 — a vanished entry point is UI drift (§A9 fold: provider_ui_changed).
     if (!(await this.enableImageMode(ctx))) {
