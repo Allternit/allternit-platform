@@ -254,6 +254,19 @@ describe("execute e2e against fixtures", () => {
     await page.close();
   }, 30000);
 
+  it("chat.create on a fabric thread stays out of temp chat (D5: temp is for stateless tasks only)", async () => {
+    const adapter = new ChatGPTWebAdapter({}, FAST);
+    const page = await fixturePage("complete");
+    const { ctx } = makeCtx(page, adapter, makeAttempt());
+    const task = { ...makeTask("chat.create"), thread_id: "fab-1" };
+    for await (const _e of adapter.execute(task, ctx)) {
+      // drain
+    }
+    expect(await page.evaluate(() => document.body.dataset.tempChat)).toBeUndefined();
+    expect(await page.evaluate(() => document.body.dataset.submitted)).toBe("true");
+    await page.close();
+  }, 30000);
+
   it("chat.create on a challenge fixture → needs_user, no submit (Critical #5)", async () => {
     const adapter = new ChatGPTWebAdapter({}, FAST);
     const page = await fixturePage("challenge");

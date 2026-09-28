@@ -153,7 +153,9 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
           yield gate;
           return;
         }
-      } else if (this.opts.tempChat !== false) {
+      } else if (this.opts.tempChat !== false && !task.thread_id) {
+        // D5: temporary chat is for STATELESS tasks only. A task on a fabric
+        // thread must land in a reopenable chat so chat.continue can follow.
         await this.enableTempChat(ctx);
       }
       yield* super.execute(task, ctx);

@@ -13,6 +13,7 @@ import type {
   TaskResult,
   TaskRouting,
   TaskStatus,
+  ThreadMapping,
 } from "@allternit/subscription-fabric-contracts";
 import type { Db } from "./db.js";
 
@@ -809,3 +810,84 @@ export function listRouteRejections(db: Db, limit: number): RouteRejectionRow[] 
     )
     .all(limit) as RouteRejectionRow[];
 }
+
+// ---------------------------------------------------------------------------
+// thread_mappings (§S6 / HARDENING #7) — fabric thread → provider thread,
+// 1:N with epochs; the last_turn_fingerprint feeds the adapter's divergence
+// check before chat.continue submits.
+// ---------------------------------------------------------------------------
+
+function mappingFromRow(row: Record<string, unknown>): ThreadMapping {
+  return row as unknown as ThreadMapping;
+}
+
+export function getActiveThreadMapping(db: Db, threadId: string): ThreadMapping | null {
+  const row = db
+    .prepare(
+      "SELECT * FROM thread_mappings WHERE thread_id = ? AND status = 'active' ORDER BY epoch DESC LIMIT 1"
+    )
+    .get(threadId) as Record<string, unknown> | undefined;
+  return row ? mappingFromRow(row) : null;
+}
+
+export interface ThreadTurn {
+  thread_id: string;
+  provider: string;
+  account_id: string;
+  adapter_id: string;
+  provider_thread_id: string;
+  provider_url: string;
+  last_turn_fingerprint: string;
+  model_class: string | null;
+  on_divergence?: ThreadMapping["on_divergence"];
+}
+
+// A completed turn: the same provider thread advances the active mapping;
+// a different one (new chat, other account) retires it and opens epoch+1.
+export function recordThreadTurn(db: Db, turn: ThreadTurn, now = new Date().toISOString()): ThreadMapping {
+  const active = getActiveThreadMapping(db, turn.thread_id);
+  if (
+    active &&
+    active.provider_thread_id === turn.provider_thread_id &&
+    active.account_id === turn.account_id
+  ) {
+    db.prepare(
+      "UPDATE thread_mappings SET last_turn_fingerprint = ?, last_synced_turn_index = last_synced_turn_index + 1, provider_url = ?, last_used_at = ? WHERE mapping_id = ?"
+    ).run(turn.last_turn_fingerprint, turn.provider_url, now, active.mapping_id);
+    return getActiveThreadMapping(db, turn.thread_id)!;
+  }
+  if (active) {
+    db.prepare("UPDATE thread_mappings SET status = 'migrated', last_used_at = ? WHERE mapping_id = ?").run(
+      now,
+      active.mapping_id
+    );
+  }
+  const epoch =
+    ((db.prepare("SELECT MAX(epoch) AS e FROM thread_mappings WHERE thread_id = ?").get(turn.thread_id) as {
+      e: number | null;
+    }).e ?? 0) + 1;
+  db.prepare(
+    `INSERT INTO thread_mappings (mapping_id, thread_id, epoch, provider, account_id, adapter_id,
+      provider_thread_id, provider_project_id, provider_url, last_synced_turn_index,
+      last_turn_fingerprint, model_class, status, on_divergence, context_transfer_from,
+      created_at, last_used_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 1, ?, ?, 'active', ?, ?, ?, ?)`
+  ).run(
+    randomUUID(),
+    turn.thread_id,
+    epoch,
+    turn.provider,
+    turn.account_id,
+    turn.adapter_id,
+    turn.provider_thread_id,
+    turn.provider_url,
+    turn.last_turn_fingerprint,
+    turn.model_class,
+    turn.on_divergence ?? "fail",
+    active ? active.mapping_id : null,
+    now,
+    now
+  );
+  return getActiveThreadMapping(db, turn.thread_id)!;
+}
+

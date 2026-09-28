@@ -30,6 +30,7 @@ import {
   getTask,
   insertAttempt,
   listArtifactsForTask,
+  recordThreadTurn,
   updateAttempt,
   updateTaskStatus,
 } from "../store/queries.js";
@@ -254,12 +255,16 @@ export async function runAttempt(deps: WorkerDeps, req: RunRequest): Promise<Run
   };
 
   // Shared event path for the interactive stream and detached resume streams.
+  let providerUrl: string | null = null;
   const handleEvent = (event: AdapterEvent): RunOutcome | null => {
     deps.onEvent?.(req.taskId, event);
     deps.supervisor?.heartbeat(req.taskId);
     appendAdapterEvent(log, task, event, deps.activity);
 
     switch (event.t) {
+      case "submitted":
+        providerUrl = event.provider_url;
+        return null;
       case "reply":
       case "progress":
       case "progress.heartbeat":
@@ -327,6 +332,23 @@ export async function runAttempt(deps: WorkerDeps, req: RunRequest): Promise<Run
         recordPoolSuccess(db, poolKey, now);
         recordLocalUse(db, poolKey, now);
         recordAdapterSuccess(db, manifest.adapter_id, manifest.adapter_version, now);
+        // §S6 — a threaded chat turn maps (or advances) the fabric thread to
+        // the provider thread; the fingerprint is the same sha256 of the
+        // extracted last assistant turn that readThread computes, so the next
+        // chat.continue can detect divergence.
+        const threadId = ctx.attempt.provider_thread_id;
+        if (task.thread_id && threadId && task.capability.startsWith("chat.") && event.text !== undefined) {
+          recordThreadTurn(db, {
+            thread_id: task.thread_id,
+            provider: manifest.provider,
+            account_id: req.accountId,
+            adapter_id: manifest.adapter_id,
+            provider_thread_id: threadId,
+            provider_url: providerUrl && providerUrl.includes(threadId) ? providerUrl : `${manifest.origins[0] ?? ""}`,
+            last_turn_fingerprint: createHash("sha256").update(event.text).digest("hex"),
+            model_class: typeof task.options.model_class === "string" ? task.options.model_class : null,
+          });
+        }
         const status = event.outcome === "success" ? "completed" : "partial";
         setStatus(status, {
           completedAt: new Date().toISOString(),
