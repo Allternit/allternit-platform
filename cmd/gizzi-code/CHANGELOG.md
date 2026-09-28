@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- Tool cards show the Allternit orb instead of "● done": it moves while the
+  tool runs (searching, writing or working) and settles when it's done.
+- Every turn ends with one line, "▞▪▚ Gizzi forged for 3.5s · model · …":
+  the duration and the run stats are no longer printed twice.
+
+### Fixed
+- The mesh auth key was passed on the command line, where any local user
+  could read it. It now reaches mesh-node through its environment and
+  `tailscale up` through a private file.
+- When the mesh sidecar failed, falling back to tailscale could hang for
+  about five seconds.
+
 ## 2.1.4 (2026-09-28)
 
 Claude Code's interactive features working with any provider, your

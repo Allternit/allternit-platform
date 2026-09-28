@@ -216,7 +216,9 @@ describe("providerQuota bridge", () => {
     expect(quotaProviderSupported("kimi-cli")).toBe(true)
     expect(quotaProviderSupported("openrouter")).toBe(true)
     expect(quotaProviderSupported("anthropic")).toBe(false)
-    expect(quotaProviderSupported("claude-cli")).toBe(false)
+    // claude-cli and codex-cli gained quota readers in P3.17 (#821).
+    expect(quotaProviderSupported("claude-cli")).toBe(true)
+    expect(quotaProviderSupported("codex-cli")).toBe(true)
   })
 
   test("quotaChipForProvider returns the n/a marker for providers with no quota API, with no network", async () => {
