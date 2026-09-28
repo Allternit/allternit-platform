@@ -731,6 +731,68 @@ pub async fn do_handoff<R: ThreadRuntime>(db: &DbHandle, rt: &R, user_id: &str, 
     load(db, id).map_err(|e| e.to_string())?.map(|s| s.view).ok_or_else(|| "thread vanished".into())
 }
 
+/// A conversation arriving from outside (email, phone, a chat channel) is
+/// a thread (P6.2): the same conversation key continues its open thread,
+/// a new one starts a task thread for the bot. Returns the thread's session.
+pub async fn channel_thread<R: ThreadRuntime>(
+    db: &DbHandle,
+    rt: &R,
+    bot_id: &str,
+    channel: &str,
+    key: &str,
+    title: &str,
+    objective: &str,
+) -> Result<String, String> {
+    let (owner, open): (Option<String>, Option<(String, Option<String>)>) = {
+        let conn = db.connect().map_err(|e| e.to_string())?;
+        let owner = conn
+            .query_row("SELECT user_id FROM agents WHERE id = ?1", params![bot_id], |r| r.get::<_, String>(0))
+            .ok();
+        let open = conn
+            .query_row(
+                "SELECT id, current_session_id FROM bot_threads
+                 WHERE bot_id = ?1 AND json_extract(origin, '$.channelKey') = ?2
+                   AND status NOT IN ('done', 'failed')
+                 ORDER BY updated_at DESC LIMIT 1",
+                params![bot_id, key],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+            )
+            .ok();
+        (owner, open)
+    };
+    if let Some((_, Some(session))) = open {
+        return Ok(session);
+    }
+    let user_id = owner.ok_or("that bot doesn't exist")?;
+    let body: CreateThreadBody = serde_json::from_value(json!({
+        "botId": bot_id,
+        "title": title,
+        "kind": "task",
+        "objective": objective,
+        "createdBy": channel,
+        "origin": { "channel": channel, "channelKey": key },
+    }))
+    .map_err(|e| e.to_string())?;
+    create(db, rt, &user_id, body)
+        .await?
+        .current_session_id
+        .ok_or_else(|| "the thread has no session".into())
+}
+
+/// "Re: Fwd: Pricing" → "pricing": one conversation, whatever the prefixes.
+pub fn conversation_subject(subject: &str) -> String {
+    let mut s = subject.trim();
+    loop {
+        let lower = s.to_ascii_lowercase();
+        let cut = ["re:", "fw:", "fwd:", "aw:"].iter().find(|p| lower.starts_with(*p)).map(|p| p.len());
+        match cut {
+            Some(n) => s = s[n..].trim_start(),
+            None => break,
+        }
+    }
+    s.to_lowercase()
+}
+
 /// A routine's run (P4.4): its own standing thread, not the bot's main chat;
 /// each run after the first starts a fresh generation whose checkpoint
 /// carries the last run forward. Returns the session the run goes to.
@@ -1702,6 +1764,29 @@ mod tests {
         let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
         let v: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(v[0]["content"], "from ses_remote1 with Bearer atok_1");
+    }
+
+    #[tokio::test]
+    async fn an_email_conversation_is_one_thread_until_it_is_done() {
+        let state = setup("email").await;
+        let rt = FakeRt::default();
+        assert_eq!(conversation_subject("Re: Fwd: RE: H100 pricing"), "h100 pricing");
+        let key = format!("email:dana@acme.com:{}", conversation_subject("H100 pricing"));
+        let s1 = channel_thread(&state.db, &rt, "bot-1", "email", &key, "H100 pricing", "What's your H100 rate?").await.unwrap();
+        let again = format!("email:dana@acme.com:{}", conversation_subject("Re: H100 pricing"));
+        let s2 = channel_thread(&state.db, &rt, "bot-1", "email", &again, "Re: H100 pricing", "And annual?").await.unwrap();
+        assert_eq!(s1, s2, "a reply continues the same thread");
+        let (created_by, status): (String, String) = state
+            .db
+            .connect()
+            .unwrap()
+            .query_row("SELECT created_by, status FROM bot_threads WHERE current_session_id = ?1", params![s1], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!(created_by, "email");
+        state.db.connect().unwrap().execute("UPDATE bot_threads SET status = 'done' WHERE current_session_id = ?1", params![s1]).unwrap();
+        let s3 = channel_thread(&state.db, &rt, "bot-1", "email", &key, "H100 pricing", "New question").await.unwrap();
+        assert_ne!(s3, s1, "after it's done, a new email starts a new thread");
+        let _ = status;
     }
 
     #[tokio::test]
