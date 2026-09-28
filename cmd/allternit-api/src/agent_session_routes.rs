@@ -2016,6 +2016,50 @@ fn bot_turn_model(db: &DbHandle, session_id: &str, bot_id: &str) -> serde_json::
     select_model(None)
 }
 
+/// The bot an A:// target principal names, when it is one of `user_id`'s
+/// bots: its registered principal, or the stable local `a://local/bot/<id>`.
+pub(crate) fn bot_for_principal(db: &DbHandle, user_id: &str, target: &str) -> Option<String> {
+    let conn = db.connect().ok()?;
+    conn.query_row(
+        "SELECT id FROM agents WHERE user_id = ?1 AND is_bot = 1
+           AND (principal_id = ?2 OR 'a://local/bot/' || id = ?2)
+         LIMIT 1",
+        params![user_id, target],
+        |r| r.get::<_, String>(0),
+    )
+    .ok()
+}
+
+/// Spec P4.1: a fabric job aimed at a bot runs as that bot. The job payload
+/// becomes an agentic job carrying the bot's instructions and memory
+/// (`bot_turn_system`) and its model, so whichever worker claims it — this
+/// Mac, the cloud, the user's server — works as the bot. A payload that
+/// already says how to run (`steps`, `agentic`) is left alone.
+pub(crate) fn bot_job_payload(db: &DbHandle, user_id: &str, target: &str, description: &str, payload: Option<&serde_json::Value>) -> Option<(String, serde_json::Value)> {
+    if payload.is_some_and(|p| p.get("steps").is_some() || p.get("agentic").is_some()) {
+        return None;
+    }
+    let bot_id = bot_for_principal(db, user_id, target)?;
+    let (provider, model): (Option<String>, Option<String>) = db
+        .connect()
+        .ok()?
+        .query_row("SELECT provider, model FROM agents WHERE id = ?1", params![bot_id], |r| Ok((r.get(0)?, r.get(1)?)))
+        .ok()?;
+    let task = payload
+        .and_then(|p| p.get("message").or_else(|| p.get("task")))
+        .and_then(serde_json::Value::as_str)
+        .filter(|t| !t.trim().is_empty())
+        .unwrap_or(description)
+        .to_string();
+    let mut agentic = json!({ "task": task, "bot_id": bot_id, "system": bot_turn_system(db, "", &bot_id) });
+    if let (Some(p), Some(m)) = (provider.filter(|p| !p.is_empty()), model.filter(|m| !m.is_empty())) {
+        agentic["model"] = json!(format!("{p}/{m}"));
+    }
+    let mut out = payload.cloned().filter(serde_json::Value::is_object).unwrap_or_else(|| json!({}));
+    out["agentic"] = agentic;
+    Some((bot_id, out))
+}
+
 /// Budget for saved bot memory in a server-started turn's instructions.
 const BOT_MEMORY_CHARS: usize = 6000;
 
@@ -2332,6 +2376,22 @@ mod tests {
         db.set_session_metadata("s2", &json!({"systemPrompt": "Price at 35% for this launch."})).unwrap();
         assert!(bot_turn_system(&db, "s2", "b1").unwrap().contains("Price at 35% for this launch."));
         assert!(bot_turn_system(&db, "s1", "missing").is_none());
+
+        // P4.1: a fabric job aimed at the bot runs as the bot.
+        conn.execute("UPDATE agents SET is_bot = 1 WHERE id = 'b1'", []).unwrap();
+        let (bot, payload) = bot_job_payload(&db, "u1", "a://local/bot/b1", "Close September", None).unwrap();
+        assert_eq!(bot, "b1");
+        assert_eq!(payload["agentic"]["task"], "Close September");
+        assert_eq!(payload["agentic"]["model"], "claude-cli/sonnet");
+        assert!(payload["agentic"]["system"].as_str().unwrap().contains("- Margin target is 35%"));
+        let (_, with_msg) = bot_job_payload(&db, "u1", "a://local/bot/b1", "d", Some(&json!({"message": "Price H100", "k": 1}))).unwrap();
+        assert_eq!((with_msg["agentic"]["task"].as_str(), with_msg["k"].as_i64()), (Some("Price H100"), Some(1)));
+        conn.execute("UPDATE agents SET principal_id = 'a://workspace/acme/bot/ledger' WHERE id = 'b1'", []).unwrap();
+        assert!(bot_job_payload(&db, "u1", "a://workspace/acme/bot/ledger", "d", None).is_some());
+        // Not the owner, not a bot, or already a runnable payload: untouched.
+        assert!(bot_job_payload(&db, "u2", "a://local/bot/b1", "d", None).is_none());
+        assert!(bot_job_payload(&db, "u1", "a://workspace/acme/principal/al", "d", None).is_none());
+        assert!(bot_job_payload(&db, "u1", "a://local/bot/b1", "d", Some(&json!({"steps": ["ls"]}))).is_none());
     }
 
     #[test]
