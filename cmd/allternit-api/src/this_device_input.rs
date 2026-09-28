@@ -19,10 +19,6 @@ const INSTALLED_CUA_DRIVER: &str = "/Applications/CuaDriver.app/Contents/MacOS/c
 /// A Cua Driver tool call: tool name and its arguments.
 pub type DriverCall = (&'static str, Value);
 
-fn desktop_target() -> Value {
-    json!({ "kind": "desktop", "display_id": "primary" })
-}
-
 /// Map a mouse request onto a driver call in screen coordinates.
 pub fn mouse_call(input: &MouseInput) -> Result<DriverCall, String> {
     let xy = || match (input.x, input.y) {
@@ -33,10 +29,7 @@ pub fn mouse_call(input: &MouseInput) -> Result<DriverCall, String> {
     match input.action.as_str() {
         "move" => {
             let (x, y) = xy()?;
-            Ok((
-                "move_cursor",
-                json!({ "scope": "desktop", "target": desktop_target(), "x": x, "y": y }),
-            ))
+            Ok(("move_cursor", json!({ "scope": "desktop", "x": x, "y": y })))
         }
         "click" | "rightclick" | "doubleclick" => {
             let (x, y) = xy()?;
@@ -149,6 +142,16 @@ fn driver_command() -> Option<(String, Vec<String>)> {
     Some((path, flags))
 }
 
+/// True when a driver reply is a result, not a refusal. Refusals are either
+/// plain text ("Missing required integer field: pid") or JSON with `code`
+/// ("invalid_action_target"), and both exit 0.
+pub fn driver_accepted(stdout: &[u8]) -> bool {
+    match serde_json::from_slice::<Value>(stdout) {
+        Ok(Value::Object(map)) => !map.contains_key("code"),
+        _ => false,
+    }
+}
+
 /// Run one driver call and answer the route.
 pub async fn run(call: Result<DriverCall, String>) -> Response {
     let (tool, args) = match call {
@@ -176,7 +179,11 @@ pub async fn run(call: Result<DriverCall, String>) -> Response {
         .kill_on_drop(true)
         .output();
     match tokio::time::timeout(std::time::Duration::from_secs(10), output).await {
-        Ok(Ok(out)) if out.status.success() => Json(json!({ "success": true })).into_response(),
+        // The driver exits 0 on refusals too; only a JSON result without an
+        // error `code` is a success.
+        Ok(Ok(out)) if out.status.success() && driver_accepted(&out.stdout) => {
+            Json(json!({ "success": true })).into_response()
+        }
         Ok(Ok(out)) => {
             let stderr = String::from_utf8_lossy(&out.stderr);
             let stdout = String::from_utf8_lossy(&out.stdout);
@@ -237,6 +244,25 @@ mod tests {
         assert_eq!(args["button"], "right");
         assert!(mouse_call(&mouse("click", None, Some(2))).is_err());
         assert!(mouse_call(&mouse("mousedown", Some(1), Some(2))).is_err());
+    }
+
+    #[test]
+    fn moves_are_screen_wide_without_a_target() {
+        // `target` together with `scope: desktop` is refused as
+        // invalid_action_target; scope alone routes through global input.
+        let (tool, args) = mouse_call(&mouse("move", Some(4), Some(5))).unwrap();
+        assert_eq!(tool, "move_cursor");
+        assert_eq!(args, json!({ "scope": "desktop", "x": 4, "y": 5 }));
+    }
+
+    #[test]
+    fn driver_refusals_are_failures() {
+        assert!(driver_accepted(
+            br#"{"route":"global_input","effect":"unverifiable"}"#
+        ));
+        assert!(!driver_accepted(br#"{"code":"invalid_action_target"}"#));
+        assert!(!driver_accepted(b"Missing required integer field: pid"));
+        assert!(!driver_accepted(b""));
     }
 
     #[test]
