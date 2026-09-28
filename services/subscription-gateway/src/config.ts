@@ -34,6 +34,11 @@ export interface Config {
   // boot; unset and undetected → POST /v1/accounts/:id/login answers 501.
   // Env: SUBS_GATEWAY_LOGIN_BROWSER.
   loginBrowser: string | null;
+  // Image-chat history policy: image tasks run in this provider project
+  // (null = no project, plain new chats) and reuse one chat per account until
+  // it holds `max` images. Env: SUBS_GATEWAY_IMAGE_PROJECT (default
+  // "Allternit"; empty disables), SUBS_GATEWAY_IMAGE_CHAT_MAX (default 20).
+  imageChats: { project: string | null; max: number };
 }
 
 const ENV_PREFIX = "SUBS_GATEWAY_";
@@ -102,6 +107,13 @@ export function stallTimeoutFor(config: Config, capability: string): number {
   );
 }
 
+function positiveInt(raw: string | undefined, fallback: number, name: string): number {
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) throw new Error(`${name} must be a positive integer, got ${JSON.stringify(raw)}`);
+  return n;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const stateDir = expandHome(
     env[`${ENV_PREFIX}STATE_DIR`] ?? "~/.allternit/subscriptions/"
@@ -133,5 +145,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     stallTimeouts: stallTimeoutsFromPolicy(policy),
     apiBase: env[`${ENV_PREFIX}API_BASE`] ?? "http://127.0.0.1:18013",
     loginBrowser: env[`${ENV_PREFIX}LOGIN_BROWSER`] ?? detectFirefox(),
+    imageChats: {
+      project: (env[`${ENV_PREFIX}IMAGE_PROJECT`] ?? "Allternit").trim() || null,
+      max: positiveInt(env[`${ENV_PREFIX}IMAGE_CHAT_MAX`], 20, `${ENV_PREFIX}IMAGE_CHAT_MAX`),
+    },
   };
 }

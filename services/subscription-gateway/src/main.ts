@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Express } from "express";
+import type { RedactingLogger } from "@allternit/subscription-fabric-contracts";
 import { loadConfig, stallTimeoutFor, type Config } from "./config.js";
 import { loadAdapterRegistry, type AdapterRegistry } from "./adapters/registry.js";
 import { openDatabase, type Db } from "./store/db.js";
@@ -57,6 +58,13 @@ export interface RunningGateway {
 function packageVersion(): string {
   const raw = readFileSync(new URL("../package.json", import.meta.url), "utf8");
   return (JSON.parse(raw) as { version?: string }).version ?? "0.1.0";
+}
+
+// Adapter ctx.log → the gateway's line log (the worker redacts first).
+function lineLogger(line: (l: string) => void): RedactingLogger {
+  const emit = (level: string) => (message: string, fields?: Record<string, unknown>) =>
+    line(`subscription-gateway: adapter ${level}: ${message}${fields ? ` ${JSON.stringify(fields)}` : ""}`);
+  return { debug: () => {}, info: emit("info"), warn: emit("warn"), error: emit("error") };
 }
 
 export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
@@ -176,6 +184,8 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
       watchScheduler,
       activity,
       dispatch,
+      imageChats: config.imageChats,
+      logger: lineLogger(logger),
     }),
     logger,
   });
