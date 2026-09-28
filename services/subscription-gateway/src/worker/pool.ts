@@ -353,6 +353,9 @@ export function createPlaywrightLauncher(deps: PlaywrightLauncherDeps): Launcher
     const context: BrowserContext = await chromium.launchPersistentContext(userDataDir, {
       channel: "chrome",
       headless: false,
+      // After a crash or kill -9 Chrome otherwise floats a "Restore pages?"
+      // bubble over the provider page on every relaunch.
+      args: ["--hide-crash-restore-bubble"],
     });
     try {
       if (deps.sessionImport) {
