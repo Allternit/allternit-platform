@@ -1676,15 +1676,19 @@ async fn get_memory(
 }
 
 /// The principal that owns a bot's memory: its A:// principal when it has
-/// one, else a stable local id. `None` when the bot isn't the user's.
+/// one, else a stable local id (bots that only exist on this device, like
+/// the packaged Gizzi, have no agents row). `None` when the id belongs to
+/// another user's bot. Entries stay user-scoped either way.
 pub(crate) fn bot_memory_principal(conn: &rusqlite::Connection, user_id: &str, bot_id: &str) -> rusqlite::Result<Option<String>> {
+    let local = || format!("a://local/bot/{bot_id}");
     match conn.query_row(
-        "SELECT principal_id FROM agents WHERE id = ?1 AND user_id = ?2",
-        rusqlite::params![bot_id, user_id],
-        |r| r.get::<_, Option<String>>(0),
+        "SELECT user_id, principal_id FROM agents WHERE id = ?1",
+        rusqlite::params![bot_id],
+        |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
     ) {
-        Ok(p) => Ok(Some(p.filter(|p| !p.is_empty()).unwrap_or_else(|| format!("a://local/bot/{bot_id}")))),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Ok((owner, _)) if owner != user_id => Ok(None),
+        Ok((_, p)) => Ok(Some(p.filter(|p| !p.is_empty()).unwrap_or_else(local))),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(Some(local())),
         Err(e) => Err(e),
     }
 }
@@ -2665,6 +2669,11 @@ mod tests {
         assert_eq!(bot_memory_principal(&conn, "u1", "b1").unwrap().as_deref(), Some("a://workspace/ws/bot/b1"));
         assert_eq!(bot_memory_principal(&conn, "u1", "b2").unwrap().as_deref(), Some("a://local/bot/b2"));
         assert_eq!(bot_memory_principal(&conn, "u2", "b1").unwrap(), None, "not your bot");
+        assert_eq!(
+            bot_memory_principal(&conn, "u1", "local-agent-9").unwrap().as_deref(),
+            Some("a://local/bot/local-agent-9"),
+            "device-only bots still get their own memory"
+        );
     }
 
     #[test]
