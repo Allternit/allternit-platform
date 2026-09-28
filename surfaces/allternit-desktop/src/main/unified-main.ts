@@ -3085,7 +3085,19 @@ async function registerThisComputer(): Promise<boolean> {
       body: JSON.stringify(coworkDevice),
     });
     if (!response.ok) log.warn(`[Cowork] Registering this computer failed (${response.status})`);
-    return response.ok;
+    // The same Mac as a computer (ACI P4): sessions show it as their
+    // computer, and control / hand-offs apply to it like any other.
+    const computer = await fetch(`${URLS.API}/api/v1/computers/this-device`, {
+      method: 'POST',
+      headers: {
+        ...backendManager.getLocalAuthHeaders(session.userId),
+        'x-allternit-user-email': session.userEmail,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(coworkDevice),
+    });
+    if (!computer.ok) log.warn(`[Computers] Registering this computer failed (${computer.status})`);
+    return response.ok && computer.ok;
   } catch (error) {
     log.warn('[Cowork] Registering this computer failed:', error);
     return false;
