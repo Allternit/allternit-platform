@@ -283,6 +283,16 @@ export const AgentCompatRoutes = () =>
               session_id: props.sessionID ?? null,
               questions: props.questions ?? null,
             }
+          case "pane_browser.requested":
+            return {
+              type: "pane_browser_requested",
+              request_id: props.id ?? null,
+              session_id: props.sessionID ?? null,
+              action: props.action ?? null,
+              target: props.target ?? null,
+              text: props.text ?? null,
+              time: props.time ?? null,
+            }
           case "message.part.updated":
             return {
               type: "part_updated",
