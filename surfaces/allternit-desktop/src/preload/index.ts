@@ -244,6 +244,27 @@ const appAPI = {
     ipcRenderer.on('app:update-status', listener);
     return () => ipcRenderer.removeListener('app:update-status', listener);
   },
+  /** This computer in Settings → Cowork devices (stable id, host name, OS). */
+  deviceInfo: ipcRenderer.sendSync('device:info') as {
+    id: string;
+    name: string;
+    platform: string;
+    kind: 'desktop';
+  } | null,
+};
+
+// ─── Links ──────────────────────────────────────────────────────────────────
+// Settings → Cowork "Open links in the built-in browser": the renderer mirrors
+// the saved preference to main, and main hands external links back here
+// instead of the system browser while it's on.
+
+const linksAPI = {
+  setOpenInApp: (enabled: boolean): Promise<void> => ipcRenderer.invoke('links:set-open-in-app', enabled),
+  onOpenInApp: (callback: (url: string) => void): (() => void) => {
+    const listener = (_: IpcRendererEvent, url: string) => callback(url);
+    ipcRenderer.on('links:open-in-app', listener);
+    return () => ipcRenderer.removeListener('links:open-in-app', listener);
+  },
 };
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
@@ -826,6 +847,7 @@ const allternitDesktopAPI = {
   store: storeAPI,
   state: stateAPI,
   app: appAPI,
+  links: linksAPI,
   auth: authAPI,
   devicePairing: devicePairingAPI,
   mesh: meshAPI,

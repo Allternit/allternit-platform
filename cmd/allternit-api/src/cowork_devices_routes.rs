@@ -32,6 +32,10 @@ use crate::AppState;
 pub const DEVICE_ID_HEADER: &str = "x-allternit-device-id";
 pub const DEVICE_NAME_HEADER: &str = "x-allternit-device-name";
 pub const DEVICE_PLATFORM_HEADER: &str = "x-allternit-device-platform";
+/// Set by the desktop's cloud relay on every request it forwards from another
+/// device. Relayed requests carry the desktop access token (the relay brokers
+/// auth), so without this marker every phone would pass as "this computer".
+pub const RELAYED_HEADER: &str = "x-allternit-relayed";
 
 const MAX_NAME_LEN: usize = 80;
 const KINDS: [&str; 3] = ["desktop", "browser", "mobile"];
@@ -175,8 +179,11 @@ async fn register_device(
     let platform: String = body.platform.trim().chars().take(32).collect();
     // Only a request carrying the desktop access token (the local app itself)
     // is trusted on registration; a browser can't self-trust by claiming
-    // kind = "desktop".
-    let auto_trust = body.kind == "desktop" && crate::auth::verify_desktop_access_token(&headers, &state.config);
+    // kind = "desktop", and neither can a device reaching us over the relay
+    // (which carries the desktop token on its behalf).
+    let auto_trust = body.kind == "desktop"
+        && headers.get(RELAYED_HEADER).is_none()
+        && crate::auth::verify_desktop_access_token(&headers, &state.config);
 
     let db = state.db.clone();
     let result = tokio::task::spawn_blocking(move || {
@@ -278,8 +285,9 @@ pub fn check_device(conn: &rusqlite::Connection, user_id: &str, headers: &Header
     if !crate::cowork_preferences_routes::load_prefs(conn, user_id).require_trusted_devices {
         return Ok(DeviceCheck::Allowed);
     }
-    // The local app's own calls (desktop access token) are this computer.
-    if desktop_token {
+    // The local app's own calls (desktop access token) are this computer —
+    // unless the desktop relay forwarded them from another device.
+    if desktop_token && headers.get(RELAYED_HEADER).is_none() {
         return Ok(DeviceCheck::Allowed);
     }
     let Some(id) = header(headers, DEVICE_ID_HEADER).filter(|id| valid_device_id(id)) else {
@@ -410,6 +418,19 @@ mod tests {
         require(&conn, true);
         assert_eq!(check_device(&conn, "u", &headers(None), false).unwrap(), DeviceCheck::Unidentified);
         assert_eq!(check_device(&conn, "u", &headers(None), true).unwrap(), DeviceCheck::Allowed);
+    }
+
+    #[test]
+    fn relayed_requests_do_not_pass_as_this_computer() {
+        let conn = db();
+        require(&conn, true);
+        let mut h = headers(Some("phone-device-0002"));
+        h.insert(RELAYED_HEADER, "1".parse().unwrap());
+        // The relay attaches the desktop token, but the device is still checked.
+        assert_eq!(check_device(&conn, "u", &h, true).unwrap(), DeviceCheck::Untrusted);
+        let mut anonymous = headers(None);
+        anonymous.insert(RELAYED_HEADER, "1".parse().unwrap());
+        assert_eq!(check_device(&conn, "u", &anonymous, true).unwrap(), DeviceCheck::Unidentified);
     }
 
     #[test]
