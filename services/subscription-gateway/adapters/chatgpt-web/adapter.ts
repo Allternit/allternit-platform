@@ -35,7 +35,12 @@ import {
 
 // ChatGPT first routes a new chat to a provisional /c/local-… id before the
 // server id arrives; that one is not reopenable, so it never matches.
-export const THREAD_URL_PATTERN = /^https:\/\/chatgpt\.com\/c\/(?!local-)([\w-]+)/;
+// Project chats live under /g/<project>/c/<id>; the id is the same thread id.
+export const THREAD_URL_PATTERN = /^https:\/\/chatgpt\.com\/(?:g\/[\w-]+\/)?c\/(?!local-)([\w-]+)/;
+const PROJECT_PAGE_PATTERN = /^https:\/\/chatgpt\.com\/g\/[\w-]+\/project/;
+// Marks images already in a reused chat so only this run's images are
+// watched and captured.
+const SEEN_ATTR = "data-allternit-seen";
 
 export function loadManifest(): AdapterManifest {
   const raw = yamlLoad(
@@ -216,6 +221,83 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
     });
   }
 
+  // Image-chat policy. options.image_chat_url: the account's active image
+  // chat (reused unless it is gone). options.image_project: the provider
+  // project a new image chat opens in (created on first use). Neither → a
+  // plain new chat. freshChat: false (fixture pages) skips navigation.
+  // Returns true when it reopened an existing chat.
+  private async openImageChat(task: Task, ctx: ExecutionContext): Promise<boolean> {
+    if (this.opts.freshChat === false) return false;
+    const page = sdkPage(ctx.page);
+    const origin = this.manifest.origins[0] ?? "https://chatgpt.com";
+    const chatUrl = typeof task.options.image_chat_url === "string" ? task.options.image_chat_url : null;
+    const chatId = chatUrl && chatUrl.startsWith(`${origin}/`) ? threadIdFromUrl(chatUrl, THREAD_URL_PATTERN) : null;
+    if (chatUrl && chatId) {
+      await page.goto(chatUrl, { waitUntil: "domcontentloaded" });
+      if (threadIdFromUrl(page.url(), THREAD_URL_PATTERN) === chatId) {
+        await this.waitForThreadRender(ctx);
+        await this.waitForGalleryStable(ctx);
+        return true;
+      }
+      ctx.log.warn("image chat is gone; opening a new one", { image_chat_url: chatUrl });
+    }
+    const project = typeof task.options.image_project === "string" ? task.options.image_project.trim() : "";
+    await this.openFreshChat(ctx);
+    if (project && !(await this.openProject(ctx, project))) {
+      ctx.log.warn("image project unavailable; using a plain new chat", { project });
+      await this.openFreshChat(ctx);
+    }
+    return false;
+  }
+
+  // Sidebar Projects section → the named project, created when missing
+  // (live UI 2026-09-28: section[data-app-action-sidebar-section-heading=
+  // Projects], hover-revealed "Add new project", dialog "Create project").
+  // Ends on the project page, whose composer starts a chat in the project.
+  private async openProject(ctx: ExecutionContext, name: string): Promise<boolean> {
+    const page = sdkPage(ctx.page);
+    const resolver = ctx.selectors as SdkSelectorResolver;
+    const section = await resolver.tryResolveLocator("projects_section");
+    if (!section) return false;
+    const link = section.first().getByRole("link", { name, exact: true });
+    if ((await link.count()) > 0) {
+      await ctx.pacing.beforeAction();
+      await link.first().click();
+    } else {
+      const create = await resolver.tryResolveLocator("project_create");
+      if (!create) return false;
+      await section.first().hover();
+      await ctx.pacing.beforeAction();
+      await create.first().click({ force: true });
+      const dialog = page.getByRole("dialog", { name: /create project/i });
+      const nameBox = dialog.getByRole("textbox", { name: /project name/i });
+      if ((await nameBox.count()) === 0) return false;
+      await nameBox.fill(name);
+      await ctx.pacing.beforeAction();
+      await dialog.getByRole("button", { name: /^create project$/i }).click();
+    }
+    for (let i = 0; i < 60; i++) {
+      if (PROJECT_PAGE_PATTERN.test(page.url())) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  }
+
+  // A reused chat renders earlier images lazily; mark them only once the
+  // gallery count holds, or a late one would pass for this run's image.
+  private async waitForGalleryStable(ctx: ExecutionContext, capMs = 10000): Promise<void> {
+    const page = sdkPage(ctx.page);
+    const resolver = ctx.selectors as SdkSelectorResolver;
+    let last = -1;
+    for (let waited = 0; waited < capMs; waited += 500) {
+      const gallery = await resolver.tryResolveLocator("image_result");
+      const count = gallery ? await gallery.locator("img").count() : 0;
+      if (count === last) return;
+      last = count;
+      await page.waitForTimeout(500);
+    }
+  }
+
   // D5 — click the temp-chat toggle unless already on; plans without the
   // toggle just run in normal history (documented in README).
   private async enableTempChat(ctx: ExecutionContext): Promise<void> {
@@ -341,9 +423,17 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
     }
 
     // Image generation is unavailable in temporary chats (provider rule), so
-    // image tasks always start a fresh regular chat — they land in history
-    // (thread reuse/cleanup is a separate, planned policy).
-    await this.openFreshChat(ctx);
+    // image tasks run in regular chats — organized by the image-chat policy:
+    // the account's active image chat, else a new chat in the project.
+    const reused = await this.openImageChat(task, ctx);
+    // In a reused chat, everything already on the page belongs to earlier runs.
+    const gallery0 = reused ? await resolver.tryResolveLocator("image_result") : null;
+    if (gallery0) {
+      await gallery0.locator("img").evaluateAll((els, attr) => {
+        for (const el of els) el.setAttribute(attr, "1");
+      }, SEEN_ATTR);
+    }
+    const NEW_IMG = `img:not([${SEEN_ATTR}])`;
 
     // §A3.4 — a vanished entry point is UI drift (§A9 fold: provider_ui_changed).
     if (!(await this.enableImageMode(ctx))) {
@@ -395,7 +485,7 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
       const gallery = await resolver.tryResolveLocator("image_result");
       if (!gallery) return false;
       const state = await gallery
-        .locator("img")
+        .locator(NEW_IMG)
         .evaluateAll((els) =>
           els.map((el) => {
             const i = el as HTMLImageElement;
@@ -439,7 +529,7 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
         return;
       }
       const container = await resolver.tryResolveLocator("image_result");
-      const tiles = container ? await container.locator("img").count() : 0;
+      const tiles = container ? await container.locator(NEW_IMG).count() : 0;
       if (tiles > seenTiles) {
         seenTiles = tiles;
         yield {
@@ -464,11 +554,12 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
       provider: this.manifest.provider,
       allowedOrigins: this.manifest.origins,
       key: "image_result",
+      imgSelector: NEW_IMG,
     });
     const container = await resolver.tryResolveLocator("image_result");
     const ids: Array<string | null> = container
       ? await container
-          .locator("img")
+          .locator(NEW_IMG)
           .evaluateAll((els) => els.map((el) => el.getAttribute("data-artifact-id")))
       : [];
     for (const [i, f] of result.files.entries()) {

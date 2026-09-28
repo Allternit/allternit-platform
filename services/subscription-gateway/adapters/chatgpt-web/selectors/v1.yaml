@@ -127,3 +127,14 @@ image_menu_item:
   critical: false
   strategies:
     - { text: /^create image$/i }
+# Projects (live UI 2026-09-28, image-chat policy): sidebar section + the
+# hover-revealed "Add new project" button that opens dialog "Create project".
+projects_section:
+  critical: false
+  strategies:
+    - { css: "section[data-app-action-sidebar-section-heading='Projects']" }
+project_create:
+  critical: false
+  strategies:
+    - { css: "button[data-app-action-sidebar-project-create]" }
+    - { role: button, name: /add new project|new project/i }

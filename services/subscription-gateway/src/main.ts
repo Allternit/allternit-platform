@@ -176,6 +176,7 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
       watchScheduler,
       activity,
       dispatch,
+      imageChats: config.imageChats,
     }),
     logger,
   });

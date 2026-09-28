@@ -891,3 +891,80 @@ export function recordThreadTurn(db: Db, turn: ThreadTurn, now = new Date().toIS
   return getActiveThreadMapping(db, turn.thread_id)!;
 }
 
+
+// ---------------------------------------------------------------------------
+// image_chats — image-chat history policy: one reusable image chat per
+// (provider, account) inside the configured project, rotated at a max count.
+// ---------------------------------------------------------------------------
+
+export interface ImageChat {
+  chat_id: string;
+  provider: string;
+  account_id: string;
+  provider_thread_id: string;
+  provider_url: string;
+  project: string | null;
+  image_count: number;
+  status: "active" | "full";
+  created_at: string;
+  last_used_at: string;
+}
+
+export function getActiveImageChat(db: Db, provider: string, accountId: string): ImageChat | null {
+  const row = db
+    .prepare(
+      "SELECT * FROM image_chats WHERE provider = ? AND account_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1"
+    )
+    .get(provider, accountId) as ImageChat | undefined;
+  return row ?? null;
+}
+
+export interface ImageChatUse {
+  provider: string;
+  account_id: string;
+  provider_thread_id: string;
+  provider_url: string;
+  project: string | null;
+  images: number;
+}
+
+// A finished image task: the same chat advances its count (and its URL — a
+// project chat's canonical URL is learned on reuse); a different chat retires
+// the active one and becomes active. Reaching `max` marks the chat full, so
+// the next image task opens a new chat.
+export function recordImageChatUse(
+  db: Db,
+  use: ImageChatUse,
+  max: number,
+  now = new Date().toISOString()
+): ImageChat {
+  const active = getActiveImageChat(db, use.provider, use.account_id);
+  if (active && active.provider_thread_id === use.provider_thread_id) {
+    const count = active.image_count + use.images;
+    db.prepare(
+      "UPDATE image_chats SET image_count = ?, provider_url = ?, status = ?, last_used_at = ? WHERE chat_id = ?"
+    ).run(count, use.provider_url, count >= max ? "full" : "active", now, active.chat_id);
+    return db.prepare("SELECT * FROM image_chats WHERE chat_id = ?").get(active.chat_id) as ImageChat;
+  }
+  if (active) {
+    db.prepare("UPDATE image_chats SET status = 'full', last_used_at = ? WHERE chat_id = ?").run(now, active.chat_id);
+  }
+  const chatId = randomUUID();
+  db.prepare(
+    `INSERT INTO image_chats (chat_id, provider, account_id, provider_thread_id, provider_url, project,
+      image_count, status, created_at, last_used_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    chatId,
+    use.provider,
+    use.account_id,
+    use.provider_thread_id,
+    use.provider_url,
+    use.project,
+    use.images,
+    use.images >= max ? "full" : "active",
+    now,
+    now
+  );
+  return db.prepare("SELECT * FROM image_chats WHERE chat_id = ?").get(chatId) as ImageChat;
+}

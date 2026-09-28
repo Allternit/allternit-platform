@@ -23,6 +23,7 @@ import {
   ChatGPTWebAdapter,
   isProfileLockError,
   resolveDivergence,
+  THREAD_URL_PATTERN,
   userTurnFingerprint,
   type ChatGPTWebConfigOverrides,
 } from "../adapters/chatgpt-web/adapter.js";
@@ -379,6 +380,132 @@ describe("execute e2e against fixtures", () => {
     expect(kinds[kinds.length - 1]).toBe("done");
     await page.close();
   }, 30000);
+
+  // Live UI shape (2026-09-28) for the image-chat policy: sidebar Projects
+  // section, composer "+" → "Create image", images as blob: gallery tiles.
+  const GEN_PNG =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+  const OLD_PNG =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+  function imageApp(opts: { oldImage?: boolean; projects?: "link" | "create" }): string {
+    const projects =
+      opts.projects === "link"
+        ? `<section data-app-action-sidebar-section-heading="Projects"><a href="/g/g-p-abc-allternit/project">Allternit</a></section>`
+        : opts.projects === "create"
+          ? `<section data-app-action-sidebar-section-heading="Projects"><span>Projects</span>
+               <button data-app-action-sidebar-project-create aria-label="Add new project" id="np">+</button></section>`
+          : "";
+    const old = opts.oldImage
+      ? `<div data-user-message-bubble="true">old prompt</div><div data-conversation-role="assistant">
+           <div data-testid="generated-image-gallery"><button data-testid="generated-image-preview">
+           <img alt="old" src="data:image/png;base64,${OLD_PNG}"></button></div></div>`
+      : "";
+    return `<nav>${projects}</nav><div id="dlg"></div><main><div id="thread">${old}</div>
+      <button aria-label="Open profile menu">me</button>
+      <div data-composer-body>
+        <button aria-label="Add files and more" id="plus">+</button><span id="chips"></span>
+        <div role="textbox" aria-label="Ask ChatGPT" contenteditable="true"></div>
+        <button aria-label="Send" type="submit" id="send">Send</button>
+      </div>
+      <div id="menu" hidden><div id="create">Create image</div></div></main>
+      <script>
+        const np = document.getElementById("np");
+        if (np) np.onclick = () => {
+          dlg.innerHTML = '<div role="dialog" aria-label="Create project"><input aria-label="Project name"><button id="cp">Create project</button></div>';
+          cp.onclick = () => {
+            window.__created = dlg.querySelector("input").value;
+            dlg.innerHTML = "";
+            history.pushState({}, "", "/g/g-p-abc-allternit/project");
+          };
+        };
+        plus.onclick = () => { menu.hidden = false; };
+        create.onclick = () => { menu.hidden = true; chips.innerHTML = '<button aria-label="Remove Create image">Create image</button>'; };
+        send.onclick = () => {
+          thread.insertAdjacentHTML("beforeend", '<div data-user-message-bubble="true">p</div><div data-conversation-role="assistant"></div>');
+          setTimeout(() => {
+            const bytes = Uint8Array.from(atob("${GEN_PNG}"), (c) => c.charCodeAt(0));
+            const src = URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
+            const turns = thread.querySelectorAll("[data-conversation-role]");
+            turns[turns.length - 1].innerHTML =
+              '<div data-testid="generated-image-gallery"><button data-testid="generated-image-preview"><img alt="Generated image 1" src="' + src + '"></button></div>';
+            chips.innerHTML = "";
+          }, 400);
+        };
+      </script>`;
+  }
+  async function imagePage(html: string, gone?: string): Promise<Page> {
+    const page = await browser.newPage();
+    await page.route("https://chatgpt.com/**", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body:
+          gone && route.request().url().endsWith(gone)
+            ? `<script>history.replaceState({}, "", "/");</script>${html}`
+            : html,
+      })
+    );
+    return page;
+  }
+  async function runImageTask(page: Page, options: Record<string, unknown>) {
+    // The lane page is already on the provider when a task starts.
+    await page.goto("https://chatgpt.com/");
+    const adapter = new ChatGPTWebAdapter({}, FAST);
+    const { ctx } = makeCtx(page, adapter, makeAttempt());
+    const events: AdapterEvent[] = [];
+    for await (const e of adapter.execute(makeTask("image.generate", options), ctx)) events.push(e);
+    return events;
+  }
+
+  it("image chat reuse: captures only this run's image, not the chat's earlier ones", async () => {
+    const page = await imagePage(imageApp({ oldImage: true }));
+    const events = await runImageTask(page, { image_chat_url: "https://chatgpt.com/c/img-chat-1" });
+    const kinds = events.map((e) => e.t);
+    expect(kinds).not.toContain("error");
+    expect(page.url()).toBe("https://chatgpt.com/c/img-chat-1");
+    expect(kinds.filter((k) => k === "artifact.ready")).toHaveLength(1);
+    // The captured image is this run's (GEN_PNG), not the chat's earlier one.
+    const { createHash } = await import("node:crypto");
+    const genSha = createHash("sha256").update(Buffer.from(GEN_PNG, "base64")).digest("hex");
+    const ready = events.find((e) => e.t === "artifact.ready");
+    expect(ready && ready.t === "artifact.ready" && ready.ref.provider_artifact_id).toBe(genSha.slice(0, 16));
+    await page.close();
+  }, 30000);
+
+  it("image project missing → created via the sidebar dialog, image runs in it", async () => {
+    const page = await imagePage(imageApp({ projects: "create" }));
+    const events = await runImageTask(page, { image_project: "Allternit" });
+    expect(events.map((e) => e.t)).not.toContain("error");
+    expect(await page.evaluate(() => (window as unknown as { __created?: string }).__created)).toBe("Allternit");
+    expect(page.url()).toBe("https://chatgpt.com/g/g-p-abc-allternit/project");
+    expect(events.filter((e) => e.t === "artifact.ready")).toHaveLength(1);
+    await page.close();
+  }, 30000);
+
+  it("image project present → opened from the sidebar link", async () => {
+    const page = await imagePage(imageApp({ projects: "link" }));
+    const events = await runImageTask(page, { image_project: "Allternit" });
+    expect(events.map((e) => e.t)).not.toContain("error");
+    expect(page.url()).toBe("https://chatgpt.com/g/g-p-abc-allternit/project");
+    await page.close();
+  }, 30000);
+
+  it("image chat gone → falls back to a new chat in the project", async () => {
+    const page = await imagePage(imageApp({ projects: "link" }), "/c/deleted-chat");
+    const events = await runImageTask(page, {
+      image_chat_url: "https://chatgpt.com/c/deleted-chat",
+      image_project: "Allternit",
+    });
+    expect(events.map((e) => e.t)).not.toContain("error");
+    expect(page.url()).toBe("https://chatgpt.com/g/g-p-abc-allternit/project");
+    expect(events.filter((e) => e.t === "artifact.ready")).toHaveLength(1);
+    await page.close();
+  }, 30000);
+
+  it("THREAD_URL_PATTERN reads project chat URLs", () => {
+    expect(THREAD_URL_PATTERN.exec("https://chatgpt.com/g/g-p-abc-allternit/c/6aba-1")?.[1]).toBe("6aba-1");
+    expect(THREAD_URL_PATTERN.exec("https://chatgpt.com/c/6aba-2")?.[1]).toBe("6aba-2");
+    expect(THREAD_URL_PATTERN.exec("https://chatgpt.com/g/g-p-abc-allternit/project")).toBeNull();
+  });
 
   it("chat.continue waits for a navigated thread to render before the divergence read", async () => {
     const adapter = new ChatGPTWebAdapter({ freshChat: false }, FAST);

@@ -12,6 +12,16 @@ origin root (a new regular chat), never reusing the page the previous task
 left — otherwise a prompt lands in that task's thread or temp chat.
 `freshChat: false` is for fixture tests that load a page directly.
 
+**Image chats:** image generation cannot run in a temporary chat, so image
+tasks follow the gateway's image-chat policy: they run inside the ChatGPT
+project `options.image_project` (created in the sidebar on first use) and
+reuse the account's active image chat `options.image_chat_url` until the
+gateway rotates it (`SUBS_GATEWAY_IMAGE_PROJECT`, default "Allternit", empty
+disables; `SUBS_GATEWAY_IMAGE_CHAT_MAX`, default 20 images per chat). In a
+reused chat only this run's images are watched and captured. A deleted chat
+falls back to a new chat in the project; a plan without Projects falls back
+to a plain new chat.
+
 **Temp chat (D5):** a stateless `chat.create` (no `thread_id`) clicks the
 temporary-chat toggle by default (`new ChatGPTWebAdapter({ tempChat: false })`
 or future per-account policy to opt out); a threaded one stays in a regular,

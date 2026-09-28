@@ -106,6 +106,9 @@ export interface CaptureImagesOptions {
   // data: URLs are inline content and need no network.
   allowedOrigins: string[];
   key?: string; // pack key locating the image container; default "response"
+  // Which images inside the container to take (default "img") — e.g. only
+  // the ones a reused chat did not already show.
+  imgSelector?: string;
 }
 
 export interface CaptureImagesResult {
@@ -132,7 +135,7 @@ export async function captureImages(
 ): Promise<CaptureImagesResult> {
   const container = await resolver.tryResolveLocator(opts.key ?? "response");
   if (!container) return { files: [], skipped: [] };
-  const imgs = await container.locator("img").all();
+  const imgs = await container.locator(opts.imgSelector ?? "img").all();
   const files: ArtifactFile[] = [];
   const skipped: Array<{ url: string; reason: string }> = [];
 

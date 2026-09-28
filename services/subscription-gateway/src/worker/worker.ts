@@ -31,6 +31,8 @@ import {
   insertAttempt,
   listArtifactsForTask,
   recordThreadTurn,
+  getActiveImageChat,
+  recordImageChatUse,
   updateAttempt,
   updateTaskStatus,
 } from "../store/queries.js";
@@ -64,6 +66,9 @@ export interface WorkerDeps {
   // router.onAttemptFailed: re-routable failures re-queue the task onto the
   // next candidate's lane; "stop"/no-route leaves it failed (dispatch.ts).
   dispatch?: DispatchDeps;
+  // Image-chat history policy (config.imageChats): image.generate runs in
+  // `project` and reuses the account's active image chat until `max` images.
+  imageChats?: { project: string | null; max: number };
 }
 
 export interface RunRequest {
@@ -271,6 +276,22 @@ export async function runAttempt(deps: WorkerDeps, req: RunRequest): Promise<Run
     return { kind: "terminal", status: "failed" };
   };
 
+  // Image-chat policy: hand the adapter the project and the account's active
+  // image chat (caller-set options win). Not persisted on the task.
+  const imageChats = task.capability === "image.generate" ? deps.imageChats : undefined;
+  const withImageChat = (t: Task): Task => {
+    if (!imageChats) return t;
+    const active = getActiveImageChat(db, manifest.provider, req.accountId);
+    return {
+      ...t,
+      options: {
+        ...(imageChats.project ? { image_project: imageChats.project } : {}),
+        ...(active ? { image_chat_url: active.provider_url } : {}),
+        ...t.options,
+      },
+    };
+  };
+
   // Shared event path for the interactive stream and detached resume streams.
   let providerUrl: string | null = null;
   const handleEvent = (event: AdapterEvent): RunOutcome | null => {
@@ -366,6 +387,23 @@ export async function runAttempt(deps: WorkerDeps, req: RunRequest): Promise<Run
             model_class: typeof task.options.model_class === "string" ? task.options.model_class : null,
           });
         }
+        if (imageChats && threadId && artifactIds.length > 0) {
+          recordImageChatUse(
+            db,
+            {
+              provider: manifest.provider,
+              account_id: req.accountId,
+              provider_thread_id: threadId,
+              provider_url:
+                providerUrl && providerUrl.includes(threadId)
+                  ? providerUrl
+                  : `${manifest.origins[0] ?? ""}/c/${threadId}`,
+              project: imageChats.project,
+              images: artifactIds.length,
+            },
+            imageChats.max
+          );
+        }
         const status = event.outcome === "success" ? "completed" : "partial";
         setStatus(status, {
           completedAt: new Date().toISOString(),
@@ -432,7 +470,7 @@ export async function runAttempt(deps: WorkerDeps, req: RunRequest): Promise<Run
   };
 
   try {
-    const outcome = await consume(req.adapter.execute(task, ctx));
+    const outcome = await consume(req.adapter.execute(withImageChat(task), ctx));
     const noTerminal = "adapter stream ended without a terminal event";
     const final =
       outcome ??
