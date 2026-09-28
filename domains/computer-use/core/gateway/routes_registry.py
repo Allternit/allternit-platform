@@ -562,6 +562,20 @@ ROUTE_REGISTRY: List[RouteDescriptor] = [
         tags=["planning"],
     ),
     RouteDescriptor(
+        route_id="computer_use_steer",
+        method="POST",
+        path="/v1/computer-use/runs/{run_id}/steer",
+        description="Send the user's guidance to a running planning loop; it reads it before its next step.",
+        request_fields=[
+            FieldDescriptor("run_id", "str", "Run ID (path parameter)", required=True),
+            FieldDescriptor("text", "str", "The guidance", required=True),
+        ],
+        response_fields=[
+            FieldDescriptor("accepted", "bool", "Whether the run took it", required=True),
+        ],
+        tags=["planning"],
+    ),
+    RouteDescriptor(
         route_id="computer_use_approve",
         method="POST",
         path="/v1/computer-use/runs/{run_id}/approve",

@@ -170,6 +170,8 @@ class RunState:
         self.approval_future: Optional[asyncio.Future] = None
         self.approval_timed_out: bool = False
         self.cancel_event: asyncio.Event = asyncio.Event()
+        # The live PlanningLoop, so steering can reach it (set while it runs).
+        self.planning_loop: Optional[Any] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -430,6 +432,10 @@ class ApproveBody(BaseModel):
     comment: str = ""
 
 
+class SteerBody(BaseModel):
+    text: str
+
+
 class RecordBody(BaseModel):
     session_id: str
     action: Literal["start", "append", "stop"] = "start"
@@ -608,6 +614,8 @@ async def _execute_non_claude_path(
         history_preflight=history_preflight_for_task,
         ledger=ledger,
     )
+
+    run_state.planning_loop = planning_loop
 
     # Hook cancel_event into the loop
     async def _cancel_watcher() -> None:
@@ -1092,6 +1100,26 @@ async def approve_run(run_id: str, body: ApproveBody) -> Dict[str, Any]:
 
     future.set_result({"decision": body.decision, "comment": body.comment})
     return {"run_id": run_id, "decision": body.decision, "acknowledged": True}
+
+
+@router.post("/runs/{run_id}/steer")
+async def steer_run(run_id: str, body: SteerBody) -> Dict[str, Any]:
+    """Guidance from the user for a running planning loop, read before its next step."""
+    state = _run_store.get(run_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    loop = getattr(state, "planning_loop", None)
+    if loop is None or state.status not in ("running", "awaiting_approval"):
+        raise HTTPException(status_code=409, detail="Run is not taking guidance")
+    if not loop.steer(body.text):
+        raise HTTPException(status_code=409, detail="Nothing to send, or the run has ended")
+    await _run_store.push_event(run_id, {
+        "event_type": "run.steer.received",
+        "run_id": run_id,
+        "message": "Guidance received",
+        "data": {"text": body.text.strip()[:2000]},
+    })
+    return {"run_id": run_id, "accepted": True}
 
 
 @router.post("/runs/{run_id}/cancel")
