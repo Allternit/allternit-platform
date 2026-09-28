@@ -16,6 +16,7 @@ import { UI } from "@/cli/ui"
 import * as prompts from "@clack/prompts"
 import { bootstrap } from "@/cli/bootstrap"
 import { RunCommand } from "@/cli/commands/run"
+import { BotThreadsCommand } from "@/cli/commands/thread"
 import { TuiThreadCommand } from "@/cli/ui/ink-app/thread"
 import { describeSchedule } from "@/runtime/automation/cron/parser"
 import {
@@ -620,6 +621,7 @@ export const BotCommand = cmd({
       .command(BotCloneCommand)
       .command(BotDeleteCommand)
       .command(BotChatCommand)
+      .command(BotThreadsCommand)
       .command(BotRoutineCommand),
   handler: async () => {},
 })
