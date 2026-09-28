@@ -10,7 +10,6 @@ import { type ConnectorTextBlock, isConnectorTextBlock } from '../types/connecto
 import type { Attachment } from '../utils/attachments';
 import type { AssistantMessage, AttachmentMessage as AttachmentMessageType, CollapsedReadSearchGroup as CollapsedReadSearchGroupType, ContentBlock, GroupedToolUseMessage as GroupedToolUseMessageType, MessageContent, NormalizedUserMessage, ProgressMessage, SystemMessage } from '../types/message';
 import { type AdvisorBlock, isAdvisorBlock } from '../utils/advisor';
-import { isFullscreenEnvEnabled } from '../utils/fullscreen';
 import { logError } from '../utils/log';
 import type { buildMessageLookups } from '../utils/messages';
 import { CompactSummary } from './CompactSummary';
@@ -129,10 +128,9 @@ function MessageImpl({
     case "system":
       {
         if (message.subtype === "compact_boundary") {
-          if (isFullscreenEnvEnabled()) {
-            return null;
-          }
-          const t2 = <CompactBoundaryMessage />;
+          // Drawn in fullscreen too: the earlier conversation stays in
+          // scrollback above the rip there.
+          const t2 = <CompactBoundaryMessage metadata={message.compactMetadata} timestamp={message.timestamp} />;
 
           return t2;
         }
