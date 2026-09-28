@@ -40,9 +40,11 @@
   copied into `~/.config/gizzi-code` once. The old folder isn't changed.
 
 ### Fixed
-- Replies now stream as they're written. Every request, including the
-  model provider's, went through an internal relay that waited for the
-  whole response, so a reply appeared in one piece at the end.
+- Replies now stream as they're written. Every web request, the model
+  provider's included, went through the terminal app's internal relay,
+  which waited for the whole response and returned it as text: a reply
+  appeared in one piece at the end, and images and other binary downloads
+  came back corrupted. Only requests to gizzi's own server use it now.
 - With OpenRouter and other OpenAI-compatible providers, the spinner shows
   a model's reasoning live ("Reconciling… (7s · ↓ 192 tokens · thinking)").
   The reasoning was dropped before, and on some servers it could have
@@ -59,10 +61,6 @@
   `tailscale up` through a private file.
 - When the mesh sidecar failed, falling back to tailscale could hang for
   about five seconds.
-- The terminal app sent every web request through its background worker,
-  which returned each response as text. Images and other binary downloads
-  came back corrupted, and streamed responses were held until they
-  finished. Only requests to gizzi's own server go through the worker now.
 - The terminal panel's shell kept running after gizzi was killed or
   crashed. It now closes whenever gizzi exits.
 - After returning from an external editor or shell, most of the screen
