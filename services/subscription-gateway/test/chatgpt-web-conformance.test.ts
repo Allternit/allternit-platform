@@ -380,6 +380,39 @@ describe("execute e2e against fixtures", () => {
     await page.close();
   }, 30000);
 
+  it("chat.continue waits for a navigated thread to render before the divergence read", async () => {
+    const adapter = new ChatGPTWebAdapter({ freshChat: false }, FAST);
+    const { readFileSync } = await import("node:fs");
+    const completeHtml = readFileSync(join(FIXTURES_DIR, "complete.html"), "utf8");
+    const probe = await fixturePage("complete");
+    const { ctx: probeCtx } = makeCtx(probe, adapter, makeAttempt());
+    const snapshot = await adapter.readThread("thread-late", probeCtx);
+    await probe.close();
+
+    // Live shape: the load event fires before the SPA renders the turns.
+    const page = await browser.newPage();
+    await page.route("https://chatgpt.com/**", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: `<body></body><script>setTimeout(() => {
+          document.open(); document.write(${JSON.stringify(completeHtml).replace(/<\//g, "<\\/")}); document.close();
+        }, 600);</script>`,
+      })
+    );
+    const { ctx } = makeCtx(page, adapter, makeAttempt());
+    const events: AdapterEvent[] = [];
+    for await (const e of adapter.execute(
+      makeTask("chat.continue", {
+        provider_thread_id: "thread-late",
+        last_turn_fingerprint: snapshot.last_turn_fingerprint,
+      }),
+      ctx
+    )) events.push(e);
+    expect(events.map((e) => e.t)).not.toContain("error");
+    expect(events[events.length - 1].t).toBe("done");
+    await page.close();
+  }, 30000);
+
   it("chat.continue: fingerprint match proceeds; mismatch with fail policy errors; fork asks", async () => {
     const adapter = new ChatGPTWebAdapter({ freshChat: false }, FAST);
     const { readFileSync } = await import("node:fs");

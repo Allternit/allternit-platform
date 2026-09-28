@@ -256,6 +256,7 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
     if (threadIdFromUrl(page.url(), THREAD_URL_PATTERN) !== providerThreadId) {
       await page.goto(`https://chatgpt.com/c/${providerThreadId}`);
     }
+    await this.waitForThreadRender(ctx);
     const snapshot = await this.readThread(providerThreadId, ctx);
     const expected =
       typeof task.options.last_turn_fingerprint === "string"
@@ -288,6 +289,24 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
       };
     }
     return null;
+  }
+
+  // A navigated thread renders its turns after the load event (live: reading
+  // it straight away found no "response"). Wait until assistant turns exist
+  // and their count holds across two samples; readThread then reports what
+  // the provider really shows (and throws — not_sent, retryable — if still
+  // nothing after the cap).
+  private async waitForThreadRender(ctx: ExecutionContext, capMs = 15000): Promise<void> {
+    const page = sdkPage(ctx.page);
+    const resolver = ctx.selectors as SdkSelectorResolver;
+    let last = -1;
+    for (let waited = 0; waited < capMs; waited += 250) {
+      const turns = await resolver.tryResolveLocator("response");
+      const count = turns ? await turns.count() : 0;
+      if (count > 0 && count === last) return;
+      last = count;
+      await page.waitForTimeout(250);
+    }
   }
 
   // image.generate — same composer, image entry point, captureImages → sink.
