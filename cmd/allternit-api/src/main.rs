@@ -904,6 +904,7 @@ async fn main() {
         .merge(inference_router_router())
         .merge(bot_event_router())
         .merge(allternit_api::thread_routes::thread_router())
+        .merge(allternit_api::memory_curation::memory_curation_router())
         .merge(allternit_api::coordinator_routes::coordinator_router())
         .merge(model_training_router())
         .merge(photon_router())
@@ -1153,6 +1154,8 @@ async fn main() {
     let mut app = combined.with_state(state.clone());
     // Automation Tasks routines with execution_domain = 'local' run here.
     allternit_api::routine_local_scheduler::spawn(state.clone());
+    // Bots' saved memory is tidied weekly on their own model (P7.4).
+    allternit_api::memory_curation::spawn_weekly(state.clone());
 
     // Mount cowork scheduler routes if scheduler is active. These routes
     // create/update/delete schedules and self-gate nothing, so they must be
