@@ -269,6 +269,28 @@ describe("artifacts + capabilities", () => {
     expect(res.headers["x-artifact-sha256"]).toBe(createHash("sha256").update(PNG).digest("hex"));
   });
 
+  it("GET /v1/artifacts/:id/preview renders raster images inline, sandboxed", async () => {
+    const id = await storedPng();
+    const res = await request(deps.app)
+      .get(`/v1/artifacts/${id}/preview`)
+      .set("authorization", `Bearer ${token(["artifacts:read"])}`);
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toBe("image/png");
+    expect(res.headers["content-disposition"]).toBe(`inline; filename="${id}.png"`);
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+    expect(res.headers["content-security-policy"]).toContain("sandbox");
+  });
+
+  it("preview refuses non-raster types (415)", async () => {
+    const id = await storedPng();
+    deps.db.prepare("UPDATE artifacts SET mime_type = 'image/svg+xml' WHERE artifact_id = ?").run(id);
+    const res = await request(deps.app)
+      .get(`/v1/artifacts/${id}/preview`)
+      .set("authorization", `Bearer ${token(["artifacts:read"])}`);
+    expect(res.status).toBe(415);
+    expect(res.body.error).toBe("preview_unsupported");
+  });
+
   it("download needs artifacts:read; unknown → 404", async () => {
     const id = await storedPng();
     const denied = await request(deps.app)
