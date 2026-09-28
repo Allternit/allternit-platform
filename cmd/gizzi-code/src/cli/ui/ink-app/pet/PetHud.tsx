@@ -258,7 +258,7 @@ export function PetHud({ onDone }: Props): React.ReactNode {
   });
 
   const incognito = tab === 'incognito';
-  const signInHint = expired ? 'Your Allternit sign-in was rejected. Run `gizzi login` to sign in again.' : 'Run `gizzi login` to use your Allternit bots.';
+  const signInHint = expired ? 'Your Allternit sign-in was rejected. Run `gizzi login` to sign in again (approve it in Allternit Desktop).' : 'Run `gizzi login` and approve it in Allternit Desktop to use your bots.';
   const status = tab === 'incognito'
     ? online ? 'not saved' : 'not saved · on this Mac'
     : connection === 'connecting' ? 'connecting…'

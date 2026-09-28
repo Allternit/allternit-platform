@@ -315,9 +315,16 @@ function RunTelemetryMessage({
   if (isBriefOnly) {
     return null;
   }
+  // One closing line per turn: the settled orb, "Gizzi forged for 3.5s",
+  // then the run stats. The duration lives here, not on a second line.
+  const [verb] = useState(_temp4);
+  const showTurnDuration = getGlobalConfig().showTurnDuration ?? true;
+  const forged = showTurnDuration && message.durationMs !== undefined && message.durationMs > 0
+    ? `Gizzi ${verb.toLowerCase()} for ${formatDuration(message.durationMs)}`
+    : null;
   const line = buildRunTelemetryLine({
     model: message.modelDisplay,
-    durationMs: message.durationMs,
+    durationMs: forged ? undefined : message.durationMs,
     inputTokens: message.inputTokens,
     outputTokens: message.outputTokens,
     usageEstimated: message.usageEstimated,
@@ -327,13 +334,13 @@ function RunTelemetryMessage({
     contextEstimated: message.contextEstimated,
     quotaChip: message.quotaChip
   });
-  if (!line) {
+  if (!line && !forged) {
     return null;
   }
   const t1 = addMargin ? 1 : 0;
-  const t2 = <Box minWidth={2} />;
+  const t2 = forged ? <OrbMark /> : <Box minWidth={2} />;
 
-  const t3 = <Text dimColor={true}>{line}</Text>;
+  const t3 = <Text dimColor={true}>{[forged, line].filter(Boolean).join(' · ')}</Text>;
 
   const t4 = <Box flexDirection="row" marginTop={t1} backgroundColor={bg} width="100%">{t2}{t3}</Box>;
 

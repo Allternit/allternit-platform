@@ -1,6 +1,6 @@
 # Maintainer: Allternit Technologies <team@allternit.io>
 pkgname=gizzi-code
-pkgver=2.1.3
+pkgver=2.1.4
 pkgrel=1
 pkgdesc="AI-powered terminal interface for the Allternit ecosystem"
 arch=('x86_64' 'aarch64')
@@ -9,8 +9,8 @@ license=('Apache-2.0')
 depends=('ripgrep')  # Glob/Grep use rg on PATH (not statically linked)
 # Release assets are version-named tarballs (tag gizzi-code/v${pkgver})
 source=("https://github.com/Gizziio/allternit-platform/releases/download/gizzi-code/v${pkgver}/gizzi-code-v${pkgver}-linux-${CARCH}.tar.gz")
-sha256sums_x86_64=('4019da06d62671e685a0009d1174a5a3247db3e40a0dac9c4f397650aa0d8785')
-sha256sums_aarch64=('7f019f52453c125a109d2db28c22268a1bdf2901d68812bed683e188a7de865c')
+sha256sums_x86_64=('f39de556fb28d5a81e0ba74c8cc7337e7a526a11f11b18a70f56df23b68a4235')
+sha256sums_aarch64=('a249640a198ae27db6419038061052fb1c28f317e2c7c6649aedd6ab40afe29f')
 
 package() {
   install -Dm755 gizzi-code "$pkgdir/usr/bin/gizzi-code"

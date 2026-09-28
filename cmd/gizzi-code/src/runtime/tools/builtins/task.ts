@@ -1,4 +1,5 @@
 import { Tool } from "@/runtime/tools/builtins/tool"
+import { RESULT_INSTRUCTION, subagentResult } from "./subagent-result"
 import DESCRIPTION from "@/runtime/tools/builtins/task.txt"
 import z from "zod/v4"
 import { Session } from "@/runtime/session"
@@ -184,7 +185,7 @@ export const TaskTool = Tool.define<typeof parameters, TaskMetadata>("task", asy
           payload: { agent: agent.name, childSessionID: session.id },
         })
         try {
-          let result = await runTurn(params.prompt)
+          let result = await runTurn(`${params.prompt}\n${RESULT_INSTRUCTION}`)
           throwIfSubagentMessageFailed(result)
           let text = result.parts.findLast((x) => x.type === "text")?.text ?? ""
           const summaryPolicy = agent.summaryPolicy
@@ -269,7 +270,13 @@ export const TaskTool = Tool.define<typeof parameters, TaskMetadata>("task", asy
         }
       }
 
-      const text = await runTask()
+      const raw = await runTask()
+      // P7.1: the parent gets a compact result card; the full run is the
+      // child session (the transcript, one click away).
+      const { result: card, body: text } = subagentResult(
+        raw,
+        await MessageV2.filterCompacted(MessageV2.stream(session.id)).catch(() => []),
+      )
 
       const output = [
         `task_id: ${session.id} (for resuming to continue this task if needed)`,
@@ -284,6 +291,7 @@ export const TaskTool = Tool.define<typeof parameters, TaskMetadata>("task", asy
         metadata: {
           sessionId: session.id,
           model,
+          result: card,
         },
         output,
       }

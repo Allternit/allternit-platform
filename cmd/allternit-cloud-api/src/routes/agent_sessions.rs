@@ -54,11 +54,12 @@ pub fn routes() -> Router<Arc<ApiState>> {
         )
         .route("/api/v1/agent-sessions/:id/abort", post(abort_session))
         // Replies the app sends back to the node's gizzi runtime: answers to
-        // in-chat questions, and pane_browser / pane_artifact results.
+        // in-chat questions, and pane_browser / pane_artifact / pane_render results.
         .route("/api/v1/questions/:id/reply", post(reply_question))
         .route("/api/v1/questions/:id/reject", post(reject_question))
         .route("/api/v1/pane-browser/:id/reply", post(reply_pane_browser))
         .route("/api/v1/pane-artifact/:id/reply", post(reply_pane_artifact))
+        .route("/api/v1/pane-render/:id/reply", post(reply_pane_render))
         .route("/api/v1/agent-sessions/:id/revert", post(revert_session))
         .route(
             "/api/v1/agent-sessions/:id/unrevert",
@@ -200,6 +201,15 @@ async fn reply_pane_artifact(
     body: Bytes,
 ) -> Result<Response, ApiError> {
     relay_agent_sessions_request(&state, &headers, "POST", format!("/api/v1/pane-artifact/{id}/reply"), &body).await
+}
+
+async fn reply_pane_render(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    relay_agent_sessions_request(&state, &headers, "POST", format!("/api/v1/pane-render/{id}/reply"), &body).await
 }
 
 async fn send_message(

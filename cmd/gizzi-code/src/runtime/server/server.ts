@@ -46,6 +46,7 @@ import { errors } from "@/runtime/server/error"
 import { QuestionRoutes } from "@/runtime/server/routes/question"
 import { PaneBrowserRoutes } from "@/runtime/server/routes/pane-browser"
 import { PaneArtifactRoutes } from "@/runtime/server/routes/pane-artifact"
+import { PaneRenderRoutes } from "@/runtime/server/routes/pane-render"
 import { PermissionRoutes } from "@/runtime/server/routes/permission"
 import { GlobalRoutes } from "@/runtime/server/routes/global"
 import { CritiqueRoutes } from "@/runtime/server/routes/critique"
@@ -390,6 +391,7 @@ export namespace Server {
         .route("/question", QuestionRoutes())
         .route("/pane-browser", PaneBrowserRoutes())
         .route("/pane-artifact", PaneArtifactRoutes())
+        .route("/pane-render", PaneRenderRoutes())
         .route("/provider", ProviderRoutes())
         .route("/sidecar", SidecarRoutes())
         .route("/", FileRoutes())
@@ -494,6 +496,7 @@ export namespace Server {
             .route("/question", QuestionRoutes())
             .route("/pane-browser", PaneBrowserRoutes())
             .route("/pane-artifact", PaneArtifactRoutes())
+            .route("/pane-render", PaneRenderRoutes())
             .route("/file", FileRoutes())
             .route("/user", UserRoutes())
             .route("/pty", PtyRoutes())
