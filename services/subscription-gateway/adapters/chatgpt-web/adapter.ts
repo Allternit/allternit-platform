@@ -385,11 +385,13 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
         threadId = threadIdFromUrl(page.url(), THREAD_URL_PATTERN);
         if (threadId !== null) await ctx.markSubmitted(threadId);
       }
-      const { complete } = await tracker.pollOnce();
-      // Image turns have no Stop button while rendering, so text-side
-      // completion alone fires early: also require loaded, unchanged images.
+      const { signals } = await tracker.pollOnce();
+      // Image turns show no Stop button while rendering (text-side signals
+      // fire early) and no Send button once done (the chat rule's send
+      // signal never fires): finish on loaded, unchanged images with no
+      // stop/streaming indicator and stable text.
       const imagesDone = await imagesSettled();
-      if (complete && imagesDone) break;
+      if (imagesDone && signals.stop_absent && signals.streaming_absent && signals.stable) break;
       if (tracker.stalled(stallTimeoutS) && !imagesChangedRecently()) {
         yield {
           t: "error",

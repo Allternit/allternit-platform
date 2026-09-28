@@ -327,7 +327,7 @@ describe("execute e2e against fixtures", () => {
                 const src = URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
                 thread.querySelector("[data-conversation-role]").innerHTML =
                   '<div data-testid="generated-image-gallery"><button data-testid="generated-image-preview"><img alt="Generated image 1" src="' + src + '"></button></div>';
-                send.disabled = true;
+                send.remove(); // live UI: no Send button after an image reply
               }, 150);
             };
           </script>`,
