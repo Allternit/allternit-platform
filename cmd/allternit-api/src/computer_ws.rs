@@ -433,6 +433,7 @@ async fn validate_vnc_ws_request(
         ));
     }
     require_driver(state)?;
+    let read_only = read_only_unless_controller(state, &computer.id, &claims.user_id, read_only).await;
     Ok((computer, read_only))
 }
 
@@ -774,55 +775,81 @@ async fn computer_vnc_ws_handler(
 /// logged) since read-only can no longer be enforced there. Approval/ACI
 /// gating on the control surfaces is untouched — this route is
 /// view-or-control streaming only.
+/// Where a computer's VNC server is, and the guest password the proxy
+/// answers for (None = transparent pipe; the viewer handles auth).
+///
+/// Remote machines paired over Fabric (`provider = fabric`) expose VNC on
+/// the mesh at `<host>:5900`; the API reaches that through desktop main's
+/// mesh bridge. Everything else comes from the VM driver.
+async fn resolve_vnc_target(state: &Arc<AppState>, computer: &ComputerResponse) -> Option<(String, Option<String>)> {
+    if computer.provider == crate::mesh_bridge::FABRIC_PROVIDER {
+        let host = computer.host.clone().filter(|h| !h.is_empty())?;
+        let target = format!("{host}:{}", crate::mesh_bridge::NODE_VNC_PORT);
+        return match crate::mesh_bridge::loopback_for(&target).await {
+            Ok(address) => Some((address, None)),
+            Err(e) => {
+                warn!(computer_id = %computer.id, %target, error = %e, "couldn't reach the remote computer over the mesh");
+                None
+            }
+        };
+    }
+    let driver = require_driver(state).ok()?;
+    let sandbox_id = computer
+        .native_id
+        .clone()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| computer.id.clone());
+    let endpoint = match driver.get_desktop_endpoint_by_native_id(&sandbox_id).await {
+        Ok(Some(ep)) => ep,
+        Ok(None) => {
+            warn!(computer_id = %computer.id, %sandbox_id, "no desktop endpoint found");
+            return None;
+        }
+        Err(e) => {
+            error!(error = %e, computer_id = %computer.id, %sandbox_id, "failed to resolve desktop endpoint");
+            return None;
+        }
+    };
+    if !matches!(endpoint.protocol, allternit_driver_interface::DesktopProtocol::Vnc) {
+        warn!(protocol = ?endpoint.protocol, "only raw VNC over TCP is supported for WebSocket proxy");
+        return None;
+    }
+    let Some(tcp_addr) = crate::bot_desktop_stream::parse_tcp_addr(&endpoint.url) else {
+        error!(url = %endpoint.url, "could not parse VNC URL as TCP address");
+        return None;
+    };
+    Some((tcp_addr, endpoint.token.clone().filter(|t| !t.is_empty())))
+}
+
+/// One controller per computer: a viewer who doesn't hold control (someone
+/// else does) watches read-only.
+async fn read_only_unless_controller(state: &Arc<AppState>, computer_id: &str, user_id: &str, read_only: bool) -> bool {
+    if read_only {
+        return true;
+    }
+    let db = state.db.clone();
+    let (id, uid) = (computer_id.to_string(), user_id.to_string());
+    let lease = tokio::task::spawn_blocking(move || {
+        db.connect()
+            .ok()
+            .and_then(|conn| crate::computer_control_lease::current(&conn, &id, chrono::Utc::now().timestamp()).ok().flatten())
+            .map(|lease| !(lease.holder.kind == crate::computer_control_lease::HolderKind::User && lease.holder.id == uid))
+    })
+    .await
+    .ok()
+    .flatten();
+    lease.unwrap_or(false)
+}
+
 async fn handle_vnc_socket(
     socket: WebSocket,
     state: Arc<AppState>,
     computer: ComputerResponse,
     read_only: bool,
 ) {
-    let driver = match require_driver(&state) {
-        Ok(d) => d,
-        Err(_) => {
-            let _ = socket.close().await;
-            return;
-        }
-    };
-    let sandbox_id = computer
-        .native_id
-        .clone()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| computer.id.clone());
-
-    let endpoint = match driver.get_desktop_endpoint_by_native_id(&sandbox_id).await {
-        Ok(Some(ep)) => ep,
-        Ok(None) => {
-            warn!(computer_id = %computer.id, %sandbox_id, "no desktop endpoint found");
-            let _ = socket.close().await;
-            return;
-        }
-        Err(e) => {
-            error!(error = %e, computer_id = %computer.id, %sandbox_id, "failed to resolve desktop endpoint");
-            let _ = socket.close().await;
-            return;
-        }
-    };
-
-    if !matches!(
-        endpoint.protocol,
-        allternit_driver_interface::DesktopProtocol::Vnc
-    ) {
-        warn!(protocol = ?endpoint.protocol, "only raw VNC over TCP is supported for WebSocket proxy");
+    let Some((tcp_addr, vnc_password)) = resolve_vnc_target(&state, &computer).await else {
         let _ = socket.close().await;
         return;
-    }
-
-    let tcp_addr = match crate::bot_desktop_stream::parse_tcp_addr(&endpoint.url) {
-        Some(addr) => addr,
-        None => {
-            error!(url = %endpoint.url, "could not parse VNC URL as TCP address");
-            let _ = socket.close().await;
-            return;
-        }
     };
 
     info!(computer_id = %computer.id, %tcp_addr, read_only, "Opening VNC WebSocket proxy");
@@ -847,7 +874,6 @@ async fn handle_vnc_socket(
     // receives, including proxy-injected ones (the upstream type-2 choice and
     // the DES response are written from the tcp->ws task), or its handshake
     // states desynchronize and it starts eating real client messages.
-    let vnc_password = endpoint.token.clone().filter(|t| !t.is_empty());
     struct VncCodec {
         auth: Option<crate::vnc_auth::VncAuthInterceptor>,
         ro_filter: Option<crate::vnc_readonly::RfbReadOnlyFilter>,

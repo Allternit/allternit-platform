@@ -83,6 +83,7 @@ pub mod cloud_agents_routes;
 pub mod compliance_routes;
 pub mod computer_control;
 pub mod computer_control_lease;
+pub mod mesh_bridge;
 pub mod computer_routes;
 pub mod computer_groups;
 pub mod computer_idle;
