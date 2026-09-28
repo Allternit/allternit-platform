@@ -9,7 +9,7 @@ import { createScheduler, type Scheduler } from "../src/queue/scheduler.js";
 import { WorkerSupervisor, type WorkerKey } from "../src/worker/supervisor.js";
 import { runAttempt } from "../src/worker/worker.js";
 import { openDatabase, type Db } from "../src/store/db.js";
-import { getTask, insertAttempt, insertTask, updateAttempt } from "../src/store/queries.js";
+import { getTask, insertAttempt, insertTask, updateAttempt, updateTaskStatus } from "../src/store/queries.js";
 import {
   cleanupDir,
   dummyCtx,
@@ -349,6 +349,13 @@ describe("supervisor restart recovery (§A8)", () => {
     expect(final?.error?.retryable).toBe(false);
     expect(final?.error?.detail).toContain("fw-thread-9");
     expect(final?.attempts[0].ended_at).not.toBeNull();
+  });
+
+  it("restart: a task left in streaming is an orphan too", async () => {
+    orphan("task-orphan-stream", "acknowledged");
+    updateTaskStatus(db, "task-orphan-stream", "streaming");
+    await restartSupervisor().ensureWorker(KEY);
+    expect(getTask(db, "task-orphan-stream")?.status).toBe("failed");
   });
 
   it("restart: an in-flight not_sent attempt fails as stalled and IS retryable", async () => {

@@ -33,7 +33,9 @@ import {
   type SdkSelectorResolver,
 } from "@allternit/subscription-adapter-sdk";
 
-export const THREAD_URL_PATTERN = /^https:\/\/chatgpt\.com\/c\/([\w-]+)/;
+// ChatGPT first routes a new chat to a provisional /c/local-… id before the
+// server id arrives; that one is not reopenable, so it never matches.
+export const THREAD_URL_PATTERN = /^https:\/\/chatgpt\.com\/c\/(?!local-)([\w-]+)/;
 
 export function loadManifest(): AdapterManifest {
   const raw = yamlLoad(

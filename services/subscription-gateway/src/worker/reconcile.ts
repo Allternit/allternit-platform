@@ -167,8 +167,9 @@ export async function reconcileAttempts(
       if (deps.filter && adapter && adapter.manifest.provider !== deps.filter.provider) continue;
       if (deps.isLive?.(task_id)) continue;
       const task = getTask(db, task_id);
-      // detached tasks are owned by the watch scheduler, not a live attempt.
-      if (!task || task.status !== "running") continue;
+      // In flight = running/streaming. provider_running (detached) is owned
+      // by the watch scheduler, not a live attempt.
+      if (!task || (task.status !== "running" && task.status !== "streaming")) continue;
       const now = new Date().toISOString();
       const error = interruptedError(
         state,

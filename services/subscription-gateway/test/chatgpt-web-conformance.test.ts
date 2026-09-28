@@ -461,3 +461,14 @@ describe("reconcile outcome mapping (Critical #2)", () => {
     await page.close();
   }, 30000);
 });
+
+describe("chatgpt-web THREAD_URL_PATTERN (live UI, P3 gate)", () => {
+  it("ignores the provisional /c/local-… id and matches the server id", async () => {
+    const { THREAD_URL_PATTERN } = await import("../adapters/chatgpt-web/adapter.js");
+    const { threadIdFromUrl } = await import("@allternit/subscription-adapter-sdk");
+    expect(threadIdFromUrl("https://chatgpt.com/c/local-chatgpt:abc?temporary-chat=true", THREAD_URL_PATTERN)).toBeNull();
+    expect(
+      threadIdFromUrl("https://chatgpt.com/c/6ab9e2e2-cdbc-83ea-92e3-91624aaa1e57?temporary-chat=true", THREAD_URL_PATTERN)
+    ).toBe("6ab9e2e2-cdbc-83ea-92e3-91624aaa1e57");
+  });
+});
