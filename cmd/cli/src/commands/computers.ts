@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { createReadStream } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { ApiClient } from '../api-client.js';
+import { pairCommand, serveCommand } from './computer-pair.js';
 
 type GlobalOptions = { apiUrl: string; token?: string; json?: boolean };
 
@@ -429,7 +430,10 @@ function createScreenshotCommand(name: string, description: string): Command {
 }
 
   return new Command('computers')
-    .description('Manage Allternit computers (cloud desktops, local VMs, and deferred kinds)')
+    .alias('computer')
+    .description('Manage Allternit computers (cloud desktops, local VMs, your paired machines)')
+    .addCommand(pairCommand())
+    .addCommand(serveCommand())
     .addCommand(create)
     .addCommand(list)
     .addCommand(lifecycleCommand('get', 'GET', '', 'Get a computer by id'))
