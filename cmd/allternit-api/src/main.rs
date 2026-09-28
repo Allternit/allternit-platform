@@ -1214,11 +1214,24 @@ async fn main() {
     let app = if app_config.local_dev_bypass() {
         // Dev-bypass mode keeps the legacy permissive mirror-any-origin
         // behavior; no gate is installed.
+        info!("CORS: local dev bypass — mirroring any request Origin (no origin gate)");
         app.layer(allternit_api::cors::cors_layer_from_config(&app_config))
     } else {
-        app.layer(allternit_api::cors::cors_layer_from_config(&app_config))
+        // Resolve the allowlist once so the layer and the gate agree and any
+        // malformed ALLTERNIT_ALLOWED_ORIGINS entries are warned about once.
+        let origins = app_config.cors_origins();
+        info!(
+            "CORS: effective origin allowlist ({}): {}",
+            origins.len(),
+            origins
+                .iter()
+                .map(|o| o.to_str().unwrap_or("<non-ascii>"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        app.layer(allternit_api::cors::cors_layer(false, origins.clone()))
             .layer(axum::middleware::from_fn_with_state(
-                allternit_api::cors::CorsGateState::new(app_config.cors_origins()),
+                allternit_api::cors::CorsGateState::new(origins),
                 allternit_api::cors::origin_gate,
             ))
     };

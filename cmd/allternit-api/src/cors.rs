@@ -9,7 +9,12 @@
 //!   (`Access-Control-Allow-Origin` mirrors the request origin). Intended only
 //!   for local development.
 //! - Otherwise — an explicit origin allowlist: `ALLTERNIT_CORS_ORIGINS`
-//!   (comma-separated) when set, else [`DEFAULT_ALLOWED_ORIGINS`]. Requests
+//!   (comma-separated) when set, else [`DEFAULT_ALLOWED_ORIGINS`]; plus the
+//!   API's own loopback origins for its listen port (see [`self_origins`] —
+//!   pages the API serves itself, e.g. the `/embed/computers/:id` viewer,
+//!   send their own `Origin` on the VNC websocket upgrade); plus any exact
+//!   origins ADDED via [`EXTRA_ALLOWED_ORIGINS_ENV`]
+//!   (`ALLTERNIT_ALLOWED_ORIGINS`, see [`parse_extra_origins`]). Requests
 //!   without an `Origin` header always pass (non-browser clients such as the
 //!   packaged desktop launcher, git, curl, and service-to-service calls).
 //!   Requests with a disallowed `Origin` are rejected with 403 by
@@ -62,6 +67,99 @@ pub const DEFAULT_ALLOWED_ORIGINS: &[&str] = &[
     "http://localhost:3013",
     "http://127.0.0.1:3013",
 ];
+
+/// Env var that ADDS exact origins to the allowlist (on top of the defaults
+/// or `ALLTERNIT_CORS_ORIGINS`), e.g.
+/// `ALLTERNIT_ALLOWED_ORIGINS=http://127.0.0.1:18013,http://127.0.0.1:18014`.
+/// Entries must be exact `scheme://host[:port]` origins — no wildcards, no
+/// paths; see [`normalize_origin`].
+pub const EXTRA_ALLOWED_ORIGINS_ENV: &str = "ALLTERNIT_ALLOWED_ORIGINS";
+
+/// Normalize one configured origin to the exact serialization browsers send
+/// in the `Origin` header (`scheme://host[:port]`, lowercase host, default
+/// port omitted). Only `http`/`https` origins with a host are accepted;
+/// wildcards, userinfo, paths (other than a bare trailing `/`), queries, and
+/// fragments are rejected so an entry can never widen into a pattern.
+pub fn normalize_origin(raw: &str) -> Result<String, String> {
+    let raw = raw.trim();
+    if raw.contains('*') {
+        return Err("wildcards are not allowed; list exact origins".into());
+    }
+    let url = url::Url::parse(raw).map_err(|e| format!("not a URL: {e}"))?;
+    if url.scheme() != "http" && url.scheme() != "https" {
+        return Err(format!("scheme must be http or https, got {:?}", url.scheme()));
+    }
+    if url.host_str().map_or(true, str::is_empty) {
+        return Err("missing host".into());
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("userinfo is not allowed in an origin".into());
+    }
+    if url.path() != "/" || url.query().is_some() || url.fragment().is_some() {
+        return Err("an origin has no path, query, or fragment".into());
+    }
+    Ok(url.origin().ascii_serialization())
+}
+
+/// Parse the comma-separated [`EXTRA_ALLOWED_ORIGINS_ENV`] value into
+/// normalized exact origins. Malformed entries are skipped with a warning —
+/// they never fail startup and never widen the allowlist.
+pub fn parse_extra_origins(raw: Option<&str>) -> Vec<HeaderValue> {
+    let Some(raw) = raw else { return Vec::new() };
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .filter_map(|entry| {
+            match normalize_origin(entry).and_then(|o| {
+                HeaderValue::from_str(&o).map_err(|e| format!("invalid header value: {e}"))
+            }) {
+                Ok(v) => Some(v),
+                Err(reason) => {
+                    tracing::warn!(
+                        env = EXTRA_ALLOWED_ORIGINS_ENV,
+                        origin = entry,
+                        %reason,
+                        "ignoring malformed allowed origin"
+                    );
+                    None
+                }
+            }
+        })
+        .collect()
+}
+
+/// The API's own loopback origins for its listen port. Pages the API serves
+/// itself (the `/embed/computers/:id` viewer) open a websocket back to the
+/// API, and browsers always attach `Origin` to websocket upgrades — so on a
+/// non-default port (the dev default is 18013, not the listed 8013) the
+/// viewer was rejected by its own server without these.
+pub fn self_origins(api_port: u16) -> Vec<HeaderValue> {
+    ["localhost", "127.0.0.1"]
+        .iter()
+        .filter_map(|host| HeaderValue::from_str(&format!("http://{host}:{api_port}")).ok())
+        .collect()
+}
+
+/// Compose the effective allowlist: `base` (defaults or
+/// `ALLTERNIT_CORS_ORIGINS`), then the API's own origins, then the extra
+/// env-configured origins — deduplicated, order preserved.
+pub fn effective_allowed_origins(
+    base: Vec<HeaderValue>,
+    api_port: u16,
+    extra_raw: Option<&str>,
+) -> Vec<HeaderValue> {
+    let mut out: Vec<HeaderValue> = Vec::new();
+    for origin in base
+        .into_iter()
+        .chain(self_origins(api_port))
+        .chain(parse_extra_origins(extra_raw))
+    {
+        if !out.contains(&origin) {
+            out.push(origin);
+        }
+    }
+    out
+}
 
 /// Parse a comma-separated origin list (as stored in `ALLTERNIT_CORS_ORIGINS`)
 /// into header values. Empty entries and values that are not valid header
@@ -353,6 +451,125 @@ mod tests {
                     .body(axum::body::Body::empty())
                     .unwrap(),
             )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    fn strs(values: &[HeaderValue]) -> Vec<&str> {
+        values.iter().map(|v| v.to_str().unwrap()).collect()
+    }
+
+    #[test]
+    fn defaults_unchanged_without_extra_env() {
+        let effective = effective_allowed_origins(parse_allowed_origins(None), 8013, None);
+        // 8013 is already a default, so nothing is appended.
+        assert_eq!(strs(&effective), DEFAULT_ALLOWED_ORIGINS.to_vec());
+        assert_eq!(DEFAULT_ALLOWED_ORIGINS.len(), 16);
+    }
+
+    #[test]
+    fn extra_env_adds_exact_origins() {
+        let effective = effective_allowed_origins(
+            parse_allowed_origins(None),
+            8013,
+            Some("http://127.0.0.1:18013, http://127.0.0.1:18014/"),
+        );
+        let values = strs(&effective);
+        assert!(values.contains(&"http://127.0.0.1:18013"));
+        assert!(values.contains(&"http://127.0.0.1:18014"));
+        // Additive: every default is still present.
+        for d in DEFAULT_ALLOWED_ORIGINS {
+            assert!(values.contains(d), "missing default {d}");
+        }
+        assert_eq!(values.len(), DEFAULT_ALLOWED_ORIGINS.len() + 2);
+        // Exact, not "any loopback port".
+        assert!(!values.contains(&"http://127.0.0.1:18015"));
+    }
+
+    #[test]
+    fn extra_env_normalizes_origins() {
+        let values = parse_extra_origins(Some("HTTP://LocalHost:18013,https://Example.com:443"));
+        assert_eq!(strs(&values), vec!["http://localhost:18013", "https://example.com"]);
+    }
+
+    #[test]
+    fn malformed_extra_entries_are_ignored() {
+        let values = parse_extra_origins(Some(concat!(
+            "*, http://*:18013, http://127.0.0.1:*, 127.0.0.1:18013, ftp://127.0.0.1:21, ",
+            "http://127.0.0.1:18013/embed, http://127.0.0.1:18013?x=1, http://u:p@127.0.0.1:1, ",
+            "not a url, http://127.0.0.1:18014",
+        )));
+        assert_eq!(strs(&values), vec!["http://127.0.0.1:18014"]);
+        assert!(normalize_origin("http://127.0.0.1:18013/embed").is_err());
+        assert!(normalize_origin("*").is_err());
+        assert!(parse_extra_origins(None).is_empty());
+        assert!(parse_extra_origins(Some(" , ")).is_empty());
+    }
+
+    #[test]
+    fn api_own_origin_is_allowed_on_non_default_port() {
+        let effective = effective_allowed_origins(parse_allowed_origins(None), 18013, None);
+        let values = strs(&effective);
+        assert!(values.contains(&"http://127.0.0.1:18013"));
+        assert!(values.contains(&"http://localhost:18013"));
+        // Also when ALLTERNIT_CORS_ORIGINS replaces the defaults.
+        let replaced = effective_allowed_origins(
+            parse_allowed_origins(Some("https://platform.allternit.com")),
+            18013,
+            None,
+        );
+        assert_eq!(
+            strs(&replaced),
+            vec![
+                "https://platform.allternit.com",
+                "http://localhost:18013",
+                "http://127.0.0.1:18013",
+            ]
+        );
+    }
+
+    fn origin_request(origin: &str) -> Request {
+        Request::builder()
+            .uri("/health")
+            .header(header::ORIGIN, origin)
+            .body(axum::body::Body::empty())
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn embed_viewer_ws_origin_passes_gate_on_non_default_port() {
+        // The embed page served by an API on :18013 opens its VNC websocket
+        // with `Origin: http://127.0.0.1:18013`; its own server must admit it.
+        let origins = effective_allowed_origins(parse_allowed_origins(None), 18013, None);
+        let res = app(false, origins.clone())
+            .oneshot(origin_request("http://127.0.0.1:18013"))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        // Before the fix (defaults only) the same request was rejected.
+        let res = app(false, parse_allowed_origins(None))
+            .oneshot(origin_request("http://127.0.0.1:18013"))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+        // A different loopback port stays rejected.
+        let res = app(false, origins)
+            .oneshot(origin_request("http://127.0.0.1:18099"))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn extra_env_origin_passes_gate() {
+        let origins = effective_allowed_origins(
+            parse_allowed_origins(None),
+            8013,
+            Some("http://127.0.0.1:18014"),
+        );
+        let res = app(false, origins)
+            .oneshot(origin_request("http://127.0.0.1:18014"))
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
