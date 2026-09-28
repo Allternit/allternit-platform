@@ -3364,7 +3364,11 @@ export function REPL({
         // Skip if user aborted or if in loop mode (too noisy between ticks)
         // Defer if swarm teammates are still running (show when they finish)
         const turnDurationMs = Date.now() - loadingStartTimeRef.current - totalPausedMsRef.current;
-        if ((turnDurationMs > 30000 || budgetInfo !== undefined) && !abortController.signal.aborted && !proactiveActive) {
+        // The per-turn telemetry line below carries the duration ("Gizzi
+        // forged for 3.5s · …") on every turn, so the separate duration line
+        // only appears when that line won't (brief mode) or for token budgets.
+        const telemetryLineShown = shouldQuery && !abortController.signal.aborted && !proactiveActive && !store.getState().isBriefOnly;
+        if ((turnDurationMs > 30000 || budgetInfo !== undefined) && !(telemetryLineShown && budgetInfo === undefined) && !abortController.signal.aborted && !proactiveActive) {
           const hasRunningSwarmAgents = getAllInProcessTeammateTasks(store.getState().tasks).some(t => t.status === 'running');
           if (hasRunningSwarmAgents) {
             // Only record start time on the first deferred turn
