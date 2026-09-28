@@ -46,19 +46,28 @@ export function setInlineImageProtocolForTest(p: InlineImageProtocol | null | un
 const heads = new Map<string, string>()
 const byKey = new Map<string, string>()
 
-function escapeFor(p: InlineImageProtocol, pngBase64: string, cols: number, rows: number): string {
+// Kitty image ids: a high base so gizzi's images don't collide with other
+// programs' in the same terminal. One placement per image (p=1), so drawing
+// the head again moves the image instead of leaving a copy behind.
+const KITTY_ID_BASE = 0x47a000
+function kittyId(head: string): number {
+  return KITTY_ID_BASE + head.charCodeAt(0) - HEAD_BASE
+}
+
+function escapeFor(p: InlineImageProtocol, pngBase64: string, cols: number, rows: number, id: number): string {
   if (p === 'iterm') {
     const size = Math.floor((pngBase64.length * 3) / 4)
     return `\x1b]1337;File=inline=1;size=${size};width=${cols};height=${rows};preserveAspectRatio=1;doNotMoveCursor=1:${pngBase64}\x07`
   }
-  // Kitty: PNG (f=100), transmit+display (a=T), c x r cells, C=1 keeps the
-  // cursor still, q=2 silences replies. Payload chunked at 4096 bytes.
+  // Kitty: PNG (f=100), transmit+display (a=T) as image i / placement p=1,
+  // c x r cells, C=1 keeps the cursor still, q=2 silences replies. Payload
+  // chunked at 4096 bytes.
   let out = ''
   for (let i = 0; i < pngBase64.length; i += 4096) {
     const chunk = pngBase64.slice(i, i + 4096)
     const more = i + 4096 < pngBase64.length ? 1 : 0
     out += i === 0
-      ? `\x1b_Gf=100,a=T,c=${cols},r=${rows},C=1,q=2,m=${more};${chunk}\x1b\\`
+      ? `\x1b_Gf=100,a=T,i=${id},p=1,c=${cols},r=${rows},C=1,q=2,m=${more};${chunk}\x1b\\`
       : `\x1b_Gm=${more};${chunk}\x1b\\`
   }
   return out
@@ -75,9 +84,21 @@ export function inlineImagePlaceholder(key: string, pngBase64: string, cols: num
   if (!head) {
     head = String.fromCharCode(HEAD_BASE + byKey.size)
     byKey.set(key, head)
-    heads.set(head, SAVE + escapeFor(p, pngBase64, cols, rows) + RESTORE + CUF)
+    heads.set(head, SAVE + escapeFor(p, pngBase64, cols, rows, kittyId(head)) + RESTORE + CUF)
   }
   return head + INLINE_IMAGE_FILLER.repeat(cols - 1)
+}
+
+/**
+ * The sequence that takes a registered image off the screen, for an image in
+ * a live region that can disappear (the pet). Kitty keeps a placement until
+ * it's deleted; iTerm2 images are cell content, overwritten like text, so
+ * there's nothing to send. Empty when nothing is needed.
+ */
+export function inlineImageClear(key: string): string {
+  const head = byKey.get(key)
+  if (!head || inlineImageProtocol() !== 'kitty') return ''
+  return `\x1b_Ga=d,d=I,i=${kittyId(head)},q=2\x1b\\`
 }
 
 /**

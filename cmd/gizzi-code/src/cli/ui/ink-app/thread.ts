@@ -40,9 +40,19 @@ declare global {
 
 type RpcClient = ReturnType<typeof Rpc.client<rpc>>
 
-function createWorkerFetch(client: RpcClient): typeof fetch {
+export const WORKER_ORIGIN = "http://gizzi.internal"
+
+/**
+ * fetch for the TUI process: requests to the in-process server
+ * (WORKER_ORIGIN) go over RPC to the worker; everything else is a normal
+ * fetch. tui() installs this as globalThis.fetch, and the RPC carries bodies
+ * as text, so sending other hosts through it would garble binary responses
+ * (e.g. a bot's avatar image) and buffer streamed ones.
+ */
+export function createWorkerFetch(client: Pick<RpcClient, "call">, direct: typeof fetch = globalThis.fetch): typeof fetch {
   const fn = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const request = new Request(input, init)
+    if (new URL(request.url).origin !== WORKER_ORIGIN) return direct(request)
     const body = request.body ? await request.text() : undefined
     try {
       const result = await client.call("fetch", {
@@ -319,7 +329,7 @@ export const TuiThreadCommand = cmd({
       } else {
         // Use direct RPC communication (no HTTP)
         Log.Default.info("tui: using direct rpc")
-        url = "http://gizzi.internal"
+        url = WORKER_ORIGIN
         customFetch = createWorkerFetch(client)
         events = createEventSource(client)
       }

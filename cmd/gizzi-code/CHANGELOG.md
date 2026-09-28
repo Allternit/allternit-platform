@@ -10,6 +10,9 @@
   `limits.land_at` pauses before the next turn fails. `/resume-now`
   continues sooner, on the model with the most limit left when one is
   suggested. Sending a prompt yourself takes over.
+- A pet bot with an image avatar shows that image in iTerm2, WezTerm,
+  Ghostty and Kitty. Other terminals (Apple Terminal, tmux) still show
+  Gizzi.
 - After a conversation moves to a fresh context window, you can read the
   earlier one in the terminal, as in Desktop. In the pet HUD's Thread view,
   ↑ scrolls back and, past the rip, loads the earlier window in place. A
@@ -56,6 +59,10 @@
   `tailscale up` through a private file.
 - When the mesh sidecar failed, falling back to tailscale could hang for
   about five seconds.
+- The terminal app sent every web request through its background worker,
+  which returned each response as text. Images and other binary downloads
+  came back corrupted, and streamed responses were held until they
+  finished. Only requests to gizzi's own server go through the worker now.
 - The terminal panel's shell kept running after gizzi was killed or
   crashed. It now closes whenever gizzi exits.
 - After returning from an external editor or shell, most of the screen

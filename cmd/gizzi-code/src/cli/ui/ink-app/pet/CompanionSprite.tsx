@@ -13,6 +13,8 @@ import { getCompanion } from './companion';
 import type { GizziPose } from './gizziSprite';
 import { petBotRows, petFaceColors } from './botSprite';
 import { refreshPetBots, useCurrentPetBot } from './petBots';
+import { AVATAR_COLS, AVATAR_ROWS, useAvatarPng } from './avatarImage';
+import { inlineImageBlock, inlineImageClear, inlineImageProtocol } from '../ink/inlineImage';
 const TICK_MS = 500;
 const BUBBLE_SHOW = 20; // ticks → ~10s at 500ms
 const FADE_WINDOW = 6; // last ~3s the bubble dims so you know it's about to go
@@ -77,6 +79,18 @@ function SpeechBubble(t0) {
 
   return t9;
 }
+/**
+ * A bot's image avatar drawn as an inline image in the sprite's cells. Kitty
+ * and Ghostty keep an image on screen until it's deleted, so it's taken down
+ * when the pet stops showing it (narrow terminal, muted, another bot).
+ */
+function AvatarImage({ imageKey, rows }: { imageKey: string; rows: string[] }): React.ReactNode {
+  useEffect(() => () => {
+    const clear = inlineImageClear(imageKey);
+    if (clear) process.stdout.write(clear);
+  }, [imageKey]);
+  return <>{rows.map((row, i) => <Text key={i}>{row}</Text>)}</>;
+}
 export const MIN_COLS_FOR_FULL_SPRITE = 100;
 const SPRITE_BODY_WIDTH = 12;
 const NAME_ROW_PAD = 2; // focused state wraps name in spaces: ` name `
@@ -107,7 +121,10 @@ export function CompanionSprite(): React.ReactNode {
   const focused = useAppState(s => s.footerSelection === 'companion');
   const setAppState = useSetAppState();
   // Re-render when the worn bot changes (HUD pick, Desktop pet, roster load).
-  useCurrentPetBot();
+  const wornBot = useCurrentPetBot();
+  // Only fetched where the terminal can draw it; elsewhere the pet is Gizzi.
+  const avatarUrl = feature('PET') && wornBot.avatar.kind === 'image' && inlineImageProtocol() ? wornBot.avatar.url : undefined;
+  const avatarPng = useAvatarPng(avatarUrl);
   useEffect(() => {
     if (feature('PET')) void refreshPetBots();
   }, []);
@@ -178,6 +195,9 @@ export function CompanionSprite(): React.ReactNode {
   const pose = excited ? EXCITED_SEQUENCE[tick % EXCITED_SEQUENCE.length]! : IDLE_SEQUENCE[tick % IDLE_SEQUENCE.length]!;
   // The beacon (Gizzi) or antenna (robot pets) pulses while excited.
   const body = petBotRows(companion.bot, pose, excited && tick % 2 === 1 ? 'gizziShimmer' : 'gizzi');
+  // Image avatars in terminals that draw images; the Gizzi rows above otherwise.
+  const imageKey = avatarUrl && avatarPng && companion.bot.avatar.kind === 'image' && companion.bot.avatar.url === avatarUrl ? `pet-avatar:${avatarUrl}` : undefined;
+  const imageRows = imageKey && avatarPng ? inlineImageBlock(imageKey, avatarPng, AVATAR_COLS, AVATAR_ROWS) : null;
 
   // Name row doubles as hint row — unfocused shows dim name + ↓ discovery,
   // focused shows inverse name. The enter-to-open hint lives in
@@ -190,7 +210,7 @@ export function CompanionSprite(): React.ReactNode {
           their trailing spaces trimmed, and centering the shorter row would
           shift it sideways and bend the sprite. */}
       <Box flexDirection="column" width={SPRITE_BODY_WIDTH} flexShrink={0}>
-        {body.map((segments, i) => <Text key={i}>
+        {imageKey && imageRows ? <AvatarImage imageKey={imageKey} rows={imageRows} /> : body.map((segments, i) => <Text key={i}>
             {segments.map(([text, fg, bg], j) => <Text key={j} color={fg || undefined} backgroundColor={bg}>{text}</Text>)}
           </Text>)}
       </Box>

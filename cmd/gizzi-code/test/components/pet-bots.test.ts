@@ -41,11 +41,23 @@ describe("pet bots", () => {
     expect(bot.model).toEqual({ providerID: "anthropic", modelID: "claude-sonnet-5" })
   })
 
-  test("skips non-bot agents; image and mascot avatars fall back to Gizzi", () => {
+  test("skips non-bot agents; image avatars keep their URL, mascots fall back to Gizzi", () => {
     expect(parsePetBot({ id: "a", name: "Helper", isBot: false })).toBeUndefined()
     const image = parsePetBot({ id: "b", name: "Pic", is_bot: 1, botProfile: { avatar: { type: "image", data: { url: "https://x/y.png" } } } })
-    expect(image?.avatar).toEqual({ kind: "gizzi" })
+    expect(image?.avatar).toEqual({ kind: "image", url: "https://x/y.png" })
+    const legacy = parsePetBot({ id: "c", name: "Old", isBot: true, config: { avatar: { type: "image", uri: "data:image/png;base64,AAAA" } } })
+    expect(legacy?.avatar).toEqual({ kind: "image", url: "data:image/png;base64,AAAA" })
+    const mascot = parsePetBot({ id: "d", name: "M", isBot: true, config: { avatar: { type: "mascot", mascot: { template: "cyber" } } } })
+    expect(mascot?.avatar).toEqual({ kind: "gizzi" })
+    const badUrl = parsePetBot({ id: "e", name: "F", isBot: true, botProfile: { avatar: { type: "image", data: { url: "file:///etc/passwd" } } } })
+    expect(badUrl?.avatar).toEqual({ kind: "gizzi" })
     expect(parsePetBot({ id: GIZZI_BOT_ID, name: "gizzi" })?.avatar).toEqual({ kind: "gizzi" })
+  })
+
+  test("an image avatar draws as Gizzi where the terminal can't show images", () => {
+    const image = parsePetBot({ id: "b", name: "Pic", isBot: true, botProfile: { avatar: { type: "image", data: { url: "https://x/y.png" } } } })!
+    const gizzi = parsePetBot({ id: GIZZI_BOT_ID, name: "gizzi" })!
+    expect(petBotRows(image, "idle")).toEqual(petBotRows(gizzi, "idle"))
   })
 
   test("reads a stringified avatar and rejects bad colors", () => {

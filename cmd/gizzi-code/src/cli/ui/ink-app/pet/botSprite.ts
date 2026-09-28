@@ -256,7 +256,8 @@ function speciesPixels(avatar: Extract<PetAvatar, { kind: 'pet' }>): string[][] 
 /** The pet's rows for a bot and pose. `beacon` colors Gizzi's beacon (theme key). */
 export function petBotRows(bot: PetBot, p: GizziPose, beacon: string = 'gizzi'): ArtRow[] {
   const avatar = bot.avatar
-  if (avatar.kind === 'gizzi') return gizziPetRows(p, beacon)
+  // Image avatars draw as images where the terminal can (AvatarImage); this is the fallback.
+  if (avatar.kind === 'gizzi' || avatar.kind === 'image') return gizziPetRows(p, beacon)
   const grid = avatar.kind === 'geometric' ? geometricPixels(avatar) : speciesPixels(avatar)
   const faceKey = avatar.kind === 'pet' ? SPECIES[avatar.species].face : 'S'
   const faceColor = faceKey === 'S' ? avatar.secondary : avatar.primary
@@ -278,7 +279,7 @@ export function petBotRows(bot: PetBot, p: GizziPose, beacon: string = 'gizzi'):
 /** One-line face for narrow terminals: `▐■ ■▌` in the bot's colors. */
 export function petFaceColors(bot: PetBot): { body: string; face: string; eye: string } {
   const avatar = bot.avatar
-  if (avatar.kind === 'gizzi') return { body: 'gizziSand', face: 'gizziVisor', eye: 'gizziEye' }
+  if (avatar.kind === 'gizzi' || avatar.kind === 'image') return { body: 'gizziSand', face: 'gizziVisor', eye: 'gizziEye' }
   const face = avatar.kind === 'pet' && SPECIES[avatar.species].face === 'P' ? avatar.primary : avatar.secondary
   return { body: avatar.primary, face, eye: eyeColorOn(face) }
 }
