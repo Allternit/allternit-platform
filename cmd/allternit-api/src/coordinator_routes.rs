@@ -173,6 +173,9 @@ pub struct PlanStep {
     pub depends_on: Vec<String>,
     #[serde(default)]
     pub todo: Vec<String>,
+    /// Optional spend cap for this thread, in USD (P8.1).
+    #[serde(default, rename = "budgetUsd")]
+    pub budget_usd: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -204,7 +207,7 @@ pub struct OpenThread {
 
 pub const PLANNER_SYSTEM: &str = "You are Al, the coordinator of a team of bots. You plan and delegate; you never do the work yourself. \
 Reply with ONE JSON object and nothing else. Choose one:\n\
-1. A new request: {\"action\":\"plan\",\"reply\":\"<one or two plain sentences to the user>\",\"steps\":[{\"key\":\"<short-id>\",\"title\":\"<3-6 words>\",\"objective\":\"<what done looks like>\",\"bot\":\"<exact bot name from the team>\",\"dependsOn\":[\"<key of a step that must finish first>\"],\"todo\":[\"<2-4 short steps>\"]}]}\n\
+1. A new request: {\"action\":\"plan\",\"reply\":\"<one or two plain sentences to the user>\",\"steps\":[{\"key\":\"<short-id>\",\"title\":\"<3-6 words>\",\"objective\":\"<what done looks like>\",\"bot\":\"<exact bot name from the team>\",\"dependsOn\":[\"<key of a step that must finish first>\"],\"todo\":[\"<2-4 short steps>\"],\"budgetUsd\":<optional spend cap, only if the user gave one>}]}\n\
    Use the fewest steps that let independent work run in parallel (max 6). Only use bots from the team list.\n\
 2. A follow-up that belongs to one open thread: {\"action\":\"route\",\"reply\":\"<one sentence>\",\"threadId\":\"<id from the open threads>\"}\n\
 3. A question you can answer from what you already know about the project: {\"action\":\"answer\",\"reply\":\"<answer>\"}";
@@ -253,6 +256,7 @@ pub struct ValidStep {
     pub bot_id: String,
     pub depends_on: Vec<String>,
     pub todo: Vec<String>,
+    pub budget_usd: Option<f64>,
 }
 
 /// Deterministic checks on a proposed plan. Returns the steps to create, or
@@ -286,6 +290,7 @@ pub fn validate_plan(steps: &[PlanStep], team: &[TeamBot]) -> Result<Vec<ValidSt
             bot_id: bot.id.clone(),
             depends_on: s.depends_on.clone(),
             todo: s.todo.iter().take(6).cloned().collect(),
+            budget_usd: s.budget_usd.filter(|v| v.is_finite() && *v > 0.0),
         });
     }
     // Cycle check (Kahn).
@@ -331,6 +336,7 @@ pub fn fallback_step(team: &[TeamBot], message: &str) -> Option<ValidStep> {
         bot_id: bot.id.clone(),
         depends_on: vec![],
         todo: vec![],
+        budget_usd: None,
     })
 }
 
@@ -540,6 +546,11 @@ pub async fn coordinate<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user_id: &
             depends_on: deps.clone(),
         };
         let thread = thread_routes::create(db, rt, user_id, body).await?;
+        if let (Some(usd), Some(session)) = (step.budget_usd, thread.current_session_id.as_deref()) {
+            if let Err(e) = crate::spend_limits::set_thread_budget_for(session, Some(usd)).await {
+                tracing::warn!(error = %e, thread = %thread.id, "couldn't set the plan's thread budget");
+            }
+        }
         if let Some((dag, nodes)) = &graph {
             if let (Some(node), Ok(conn)) = (nodes.get(&step.key), db.connect()) {
                 let _ = conn.execute("UPDATE bot_threads SET dag_id = ?2, dag_node_id = ?3 WHERE id = ?1", params![thread.id, dag, node]);
@@ -854,7 +865,19 @@ mod tests {
     }
 
     fn step(key: &str, bot: &str, deps: &[&str]) -> PlanStep {
-        PlanStep { key: key.into(), title: format!("Step {key}"), objective: String::new(), bot: bot.into(), depends_on: deps.iter().map(|s| s.to_string()).collect(), todo: vec![] }
+        PlanStep { key: key.into(), title: format!("Step {key}"), objective: String::new(), bot: bot.into(), depends_on: deps.iter().map(|s| s.to_string()).collect(), todo: vec![], budget_usd: None }
+    }
+
+    #[test]
+    fn a_plan_step_can_carry_a_budget() {
+        let steps: Vec<PlanStep> = serde_json::from_value(json!([
+            {"key": "a", "title": "Price it", "bot": "Scout", "budgetUsd": 5.0},
+            {"key": "b", "title": "Page", "bot": "Scout", "budgetUsd": -1}
+        ]))
+        .unwrap();
+        let valid = validate_plan(&steps, &team()).unwrap();
+        assert_eq!(valid[0].budget_usd, Some(5.0));
+        assert_eq!(valid[1].budget_usd, None, "nonsense budgets are dropped");
     }
 
     #[test]

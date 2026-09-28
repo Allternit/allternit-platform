@@ -2422,6 +2422,16 @@ pub(crate) async fn gizzi_lineage(db: &DbHandle, session_id: &str) -> Result<Vec
     Ok(result["sessions"].as_array().cloned().unwrap_or_default())
 }
 
+/// Set a session's gizzi permission ruleset (P8.3 channel tool rules).
+pub(crate) async fn restrict_session(session_id: &str, rules: serde_json::Value) -> Result<(), String> {
+    let client = gizzi_client(&HeaderMap::new());
+    let path = format!("/v1/session/{}", urlencoding::encode(session_id));
+    gizzi_json::<serde_json::Value>(&client, reqwest::Method::PATCH, &path, Some(json!({ "permission": rules })))
+        .await
+        .map(|_| ())
+        .map_err(|_| "gizzi refused the tool rules".to_string())
+}
+
 /// Whether a gizzi session still exists (a pinned thread can be deleted from
 /// another client; delivery then falls back instead of failing forever).
 pub(crate) async fn bot_session_exists(db: &DbHandle, session_id: &str) -> bool {

@@ -910,6 +910,8 @@ async fn main() {
         .merge(inference_router_router())
         .merge(bot_event_router())
         .merge(allternit_api::thread_routes::thread_router())
+        .merge(allternit_api::spend_limits::spend_limit_router())
+        .merge(allternit_api::channel_tools::channel_tools_router())
         .merge(allternit_api::memory_curation::memory_curation_router())
         .merge(allternit_api::coordinator_routes::coordinator_router())
         .merge(allternit_api::slack_webhook_routes::slack_binding_router())
@@ -1161,6 +1163,8 @@ async fn main() {
     let mut app = combined.with_state(state.clone());
     // Automation Tasks routines with execution_domain = 'local' run here.
     allternit_api::routine_local_scheduler::spawn(state.clone());
+    // gizzi enforces bots' spend limits; bring its copy up to date (P8.1).
+    allternit_api::spend_limits::spawn_sync(state.clone());
     // Bots' saved memory is tidied weekly on their own model (P7.4).
     allternit_api::memory_curation::spawn_weekly(state.clone());
 

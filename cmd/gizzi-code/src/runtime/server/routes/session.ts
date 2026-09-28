@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 import { SessionHandoff } from "@/runtime/session/handoff"
 import { SessionPause } from "@/runtime/session/pause"
+import { Budget } from "@/runtime/session/budget"
 import { stream } from "hono/streaming"
 import { describeRoute, validator, resolver } from "@/runtime/server/openapi"
 import z from "zod/v4"
@@ -585,6 +586,44 @@ export const SessionRoutes = lazy(() =>
         // The resumed turn runs in the background; the caller follows it on /event.
         void SessionPause.resume(sessionID, { model: body.model }).catch(() => undefined)
         return c.json({ resumed: true })
+      },
+    )
+    .get(
+      "/budget/:scope/:targetID",
+      describeRoute({
+        summary: "Spend against a budget",
+        description: "A bot's monthly budget (scope agent) or a thread's budget (scope session): limit, spent, reset.",
+        operationId: "session.budget.get",
+        responses: { 200: { description: "Budget", content: { "application/json": { schema: resolver(z.any()) } } } },
+      }),
+      validator("param", z.object({ scope: z.enum(["agent", "session"]), targetID: z.string() })),
+      async (c) => {
+        const { scope, targetID } = c.req.valid("param")
+        const info = await Budget.info(scope, targetID)
+        if (info) return c.json(info)
+        return c.json({
+          scope,
+          targetID,
+          limitUsd: null,
+          spentUsd: scope === "agent" ? Budget.agentSpend(targetID, Budget.monthStart()) : await Budget.lineageSpend(targetID),
+        })
+      },
+    )
+    .put(
+      "/budget/:scope/:targetID",
+      describeRoute({
+        summary: "Set a budget",
+        description: "Set (or clear with null) a bot's monthly budget or a thread's budget in USD.",
+        operationId: "session.budget.set",
+        responses: { 200: { description: "Budget", content: { "application/json": { schema: resolver(z.any()) } } } },
+      }),
+      validator("param", z.object({ scope: z.enum(["agent", "session"]), targetID: z.string() })),
+      validator("json", z.object({ limitUsd: z.number().min(0).nullable() })),
+      async (c) => {
+        const { scope, targetID } = c.req.valid("param")
+        const { limitUsd } = c.req.valid("json")
+        Budget.set(scope, targetID, limitUsd)
+        return c.json((await Budget.info(scope, targetID)) ?? { scope, targetID, limitUsd: null })
       },
     )
     .post(

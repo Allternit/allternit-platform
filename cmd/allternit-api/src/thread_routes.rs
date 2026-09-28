@@ -491,6 +491,10 @@ pub trait ThreadRuntime: Send + Sync {
         thread_id: &str,
     ) -> impl Future<Output = Result<String, String>> + Send;
     fn seed(&self, session_id: &str, text: &str) -> impl Future<Output = Result<(), String>> + Send;
+    /// Apply a gizzi permission ruleset to a thread session (P8.3 channel tools).
+    fn restrict(&self, _session_id: &str, _rules: Value) -> impl Future<Output = Result<(), String>> + Send {
+        async { Ok(()) }
+    }
     /// gizzi's native context handoff: ends `session_id`'s window with a
     /// checkpoint baton and continues in a fresh, linked session. Returns the
     /// new session id and the baton (`summary`, `decisions`, `openItems`,
@@ -534,6 +538,9 @@ impl ThreadRuntime for GizziRuntime {
     }
     async fn seed(&self, session_id: &str, text: &str) -> Result<(), String> {
         crate::agent_session_routes::seed_session_message(&self.db, session_id, text).await
+    }
+    async fn restrict(&self, session_id: &str, rules: Value) -> Result<(), String> {
+        crate::agent_session_routes::restrict_session(session_id, rules).await
     }
     async fn handoff(&self, session_id: &str, reason: &str, context: &str, baton: Option<Value>) -> Result<(String, Value), String> {
         let (next, baton) = crate::agent_session_routes::gizzi_handoff(&self.db, session_id, gizzi_reason(reason), context, baton).await?;
@@ -595,6 +602,13 @@ pub async fn create<R: ThreadRuntime>(db: &DbHandle, rt: &R, user_id: &str, body
         Some(s) => s,
         None => rt.create_session(&body.bot_id, &bot_name(db, &body.bot_id), body.title.trim(), false, &id).await?,
     };
+    // P8.3: the bot's tool rules for the channel this thread came from.
+    let channel = body.created_by.as_deref().unwrap_or("user");
+    if let Some(rules) = crate::channel_tools::channel_rules(db, &body.bot_id, channel) {
+        if let Err(e) = rt.restrict(&session_id, rules).await {
+            tracing::warn!(error = %e, channel, "couldn't apply the channel's tool rules");
+        }
+    }
     let ts = now();
     {
         let conn = db.connect().map_err(|e| e.to_string())?;
@@ -1481,6 +1495,7 @@ mod tests {
         /// gizzi lineage after a session: session → [(next, reason, baton)].
         lineage: std::collections::HashMap<String, Vec<(String, String, Value)>>,
         prefix: &'static str,
+        restricted: Mutex<Vec<(String, Value)>>,
     }
 
     impl ThreadRuntime for FakeRt {
@@ -1501,6 +1516,10 @@ mod tests {
         }
         async fn successors(&self, s: &str) -> Vec<(String, String, Value)> {
             self.lineage.get(s).cloned().unwrap_or_default()
+        }
+        async fn restrict(&self, s: &str, rules: Value) -> Result<(), String> {
+            self.restricted.lock().unwrap().push((s.to_string(), rules));
+            Ok(())
         }
     }
 
@@ -1787,6 +1806,28 @@ mod tests {
         let s3 = channel_thread(&state.db, &rt, "bot-1", "email", &key, "H100 pricing", "New question").await.unwrap();
         assert_ne!(s3, s1, "after it's done, a new email starts a new thread");
         let _ = status;
+    }
+
+    #[tokio::test]
+    async fn a_thread_from_a_channel_gets_that_channels_tool_rules() {
+        let state = setup("chtools").await;
+        state
+            .db
+            .connect()
+            .unwrap()
+            .execute(
+                "UPDATE agents SET config = json_set(COALESCE(config, '{}'), '$.channelTools', json('{\"mention\":{\"deny\":[\"bash\"],\"ask\":[]}}')) WHERE id = 'bot-1'",
+                [],
+            )
+            .unwrap();
+        let rt = FakeRt::default();
+        let mut b = body("From a mention");
+        b.created_by = Some("mention".into());
+        create(&state.db, &rt, "user-a", b).await.unwrap();
+        create(&state.db, &rt, "user-a", body("Typed by the user")).await.unwrap();
+        let r = rt.restricted.lock().unwrap().clone();
+        assert_eq!(r.len(), 1, "only the mention thread is restricted");
+        assert_eq!(r[0].1, json!([{ "permission": "bash", "action": "deny", "pattern": "*" }]));
     }
 
     #[tokio::test]

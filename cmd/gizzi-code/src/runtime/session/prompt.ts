@@ -64,6 +64,7 @@ import { isRoutineTurnText } from "@/runtime/bots/bot-routines"
 import { isMessageAgentSession, MessageAgentTool } from "@/runtime/tools/builtins/message-agent"
 import { SessionHandoff } from "@/runtime/session/handoff"
 import { SessionPause } from "@/runtime/session/pause"
+import { Budget } from "@/runtime/session/budget"
 
 // @ts-ignore — suppress ai-sdk stdout warnings (see server.ts for details)
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -297,6 +298,12 @@ const message = await createUserMessage(input)
   async function holdForLimit(session: Session.Info, model: PromptInput["model"]): Promise<boolean> {
     if (session.parentID) return false
     if (SessionPause.isPaused(session)) return true
+    // Spend limits (P8.1): a bot's monthly budget or the thread's own.
+    const over = await Budget.exceeded(session).catch(() => undefined)
+    if (over) {
+      SessionPause.pause(session.id, { ...over, reason: "budget" })
+      return true
+    }
     const providerID = model?.providerID ?? session.defaultModel?.providerID
     if (!providerID) return false
     const landing = await SessionPause.quotaLanding(providerID).catch(() => undefined)

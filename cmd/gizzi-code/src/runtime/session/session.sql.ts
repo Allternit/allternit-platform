@@ -72,7 +72,7 @@ export const SessionTable = sqliteTable(
       until: number
       limit: string
       providerID?: string
-      reason: "quota" | "rate_limit" | "limit_hit"
+      reason: "quota" | "rate_limit" | "limit_hit" | "budget"
       at: number
       suggest?: { providerID: string; modelID: string; label: string; headroom?: number }
     }>(),
