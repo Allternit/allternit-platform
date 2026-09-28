@@ -185,7 +185,9 @@ describe("Mesh join precedence", () => {
       let out = ""
       proc.stdout?.on("data", (c: Buffer) => (out += c.toString()))
       proc.stderr?.on("data", (c: Buffer) => (out += "ERR:" + c.toString()))
+      const killer = setTimeout(() => proc.kill("SIGTERM"), 800)
       const res = await new Promise<string>((r) => proc.once("exit", (code, sig) => r(`code=${code} sig=${sig}`)))
+      clearTimeout(killer)
       console.log(`MESHDEBUG probe ${cmd[0]} ${res} after ${Date.now() - started}ms out=${JSON.stringify(out)}`)
       if (cmd[0] === nodeFake) break
     }
