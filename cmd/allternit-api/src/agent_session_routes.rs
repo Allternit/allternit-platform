@@ -2016,6 +2016,63 @@ fn bot_turn_model(db: &DbHandle, session_id: &str, bot_id: &str) -> serde_json::
     select_model(None)
 }
 
+/// Budget for saved bot memory in a server-started turn's instructions.
+const BOT_MEMORY_CHARS: usize = 6000;
+
+/// The bot's standing instructions for a turn the server starts (coordinator,
+/// routines): the thread's own prompt when the client set one, else the
+/// bot's, plus who it is and what it has saved to memory.
+pub(crate) fn bot_turn_system(db: &DbHandle, session_id: &str, bot_id: &str) -> Option<String> {
+    let conn = db.connect().ok()?;
+    let (user_id, name, description, prompt, title): (String, String, Option<String>, Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT user_id, name, description, system_prompt, json_extract(config, '$.botProfile.title') FROM agents WHERE id = ?1",
+            params![bot_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .ok()?;
+    let thread_prompt = db
+        .get_session_metadata(session_id)
+        .ok()
+        .flatten()
+        .and_then(|bag| bag.get("systemPrompt").and_then(|v| v.as_str()).map(str::to_string))
+        .filter(|p| !p.trim().is_empty());
+    let mut out = format!("# Bot identity\n\nYou are {name}{}.", title.map(|t| format!(", {t}")).unwrap_or_default());
+    if let Some(d) = description.filter(|d| !d.trim().is_empty()) {
+        out.push_str(&format!(" {d}"));
+    }
+    if let Some(p) = thread_prompt.or(prompt).filter(|p| !p.trim().is_empty()) {
+        out.push_str(&format!("\n\n## Standing instructions\n\n{}", p.trim()));
+    }
+    if let Ok(Some(principal)) = crate::cowork_routes::bot_memory_principal(&conn, &user_id, bot_id) {
+        let mut stmt = conn
+            .prepare(
+                "SELECT content FROM cowork_memory_entries WHERE user_id = ?1 AND owner_principal = ?2
+                 ORDER BY created_at DESC LIMIT 40",
+            )
+            .ok()?;
+        let rows: Vec<String> = stmt
+            .query_map(params![user_id, principal], |r| r.get::<_, String>(0))
+            .ok()?
+            .filter_map(Result::ok)
+            .collect();
+        let mut used = 0;
+        let mut lines = Vec::new();
+        for r in rows {
+            let line = format!("- {}", r.trim());
+            if used + line.len() > BOT_MEMORY_CHARS {
+                break;
+            }
+            used += line.len();
+            lines.push(line);
+        }
+        if !lines.is_empty() {
+            out.push_str(&format!("\n\n## What you remember\n\n{}", lines.join("\n")));
+        }
+    }
+    Some(out)
+}
+
 /// Create a bot's canonical chat session from the server side. Mirrors
 /// `create_session` for an agent-bound chat and stamps the same metadata the
 /// web client does, so every surface lists it as the bot's thread.
@@ -2072,10 +2129,15 @@ pub(crate) async fn create_bot_thread_session(
 pub(crate) async fn send_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str, text: &str) -> Result<String, String> {
     let client = gizzi_client(&HeaderMap::new());
     let path = format!("/v1/session/{}/message", urlencoding::encode(session_id));
-    let payload = json!({
+    let mut payload = json!({
         "parts": [{ "type": "text", "text": text }],
         "model": bot_turn_model(db, session_id, bot_id),
     });
+    // A bot running its own thread is still itself (P4.1): its standing
+    // instructions and saved memory ride on every server-started turn.
+    if let Some(system) = bot_turn_system(db, session_id, bot_id) {
+        payload["system"] = json!(format!("+{system}"));
+    }
     match gizzi_json::<GizziMessage>(&client, reqwest::Method::POST, &path, Some(payload)).await {
         Ok(message) => {
             if let Some(error) = message.info.error.as_ref().and_then(|e| e.message.clone()) {
@@ -2238,6 +2300,38 @@ mod tests {
         let now = chrono::Local::now();
         assert!(!paused_until_label(now.timestamp_millis() + 60_000, now).contains(','));
         assert!(paused_until_label(now.timestamp_millis() + 30 * 86_400_000, now).contains(','));
+    }
+
+    #[test]
+    fn server_started_bot_turns_carry_the_bot_and_its_memory() {
+        let temp = std::env::temp_dir().join(format!("bot-system-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let db = crate::db::DbHandle::new(temp.join("test.db")).expect("test db");
+        let conn = db.connect().unwrap();
+        conn.execute(
+            "INSERT INTO agents (id, user_id, name, description, model, provider, system_prompt, config)
+             VALUES ('b1', 'u1', 'Ledger', 'Unit economics and the monthly close.', 'sonnet', 'claude-cli',
+                     'Never move money.', '{\"botProfile\":{\"title\":\"Finance analyst\"}}')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO cowork_memory_entries (id, user_id, content, type, owner_principal, grants, created_at)
+             VALUES ('m1', 'u1', 'Margin target is 35%', 'fact', 'a://local/bot/b1', '[]', '2026-09-27T10:00:00Z'),
+                    ('m2', 'u1', 'Someone else''s note', 'fact', 'a://local/bot/other', '[]', '2026-09-27T10:00:00Z')",
+            [],
+        )
+        .unwrap();
+        let system = bot_turn_system(&db, "s1", "b1").unwrap();
+        assert!(system.starts_with("# Bot identity\n\nYou are Ledger, Finance analyst. Unit economics"));
+        assert!(system.contains("## Standing instructions\n\nNever move money."));
+        assert!(system.contains("- Margin target is 35%"));
+        assert!(!system.contains("Someone else"));
+
+        // A thread's own prompt (set by the client) wins over the bot default.
+        db.set_session_metadata("s2", &json!({"systemPrompt": "Price at 35% for this launch."})).unwrap();
+        assert!(bot_turn_system(&db, "s2", "b1").unwrap().contains("Price at 35% for this launch."));
+        assert!(bot_turn_system(&db, "s1", "missing").is_none());
     }
 
     #[test]
