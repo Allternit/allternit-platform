@@ -468,7 +468,7 @@ checked live in a main Desktop build (one-current-build rule).
 - [ ] P1.4 One model source per thread/bot; unavailable models dimmed with the reason (B7)
 - [ ] P1.5 Gizzi (and any pre-atomic bot) gets its computer on first use (B8)
 - [ ] P1.7 Converge the other browser-side schedulers (`lib/agents/agent-cron-scheduler.ts`, `lib/agents/scheduled-jobs.runner.ts`) onto Automation Tasks + the local scheduler, same as P1.1
-- [ ] P1.6 A:// SDK: TypeScript client + types over the existing HTTP surface (principals, intents, runs/jobs, approvals, DAG, memory grants); Rust types from `allternit-cowork-runtime`
+- [x] P1.6 A:// SDK: TypeScript client + types over the existing HTTP surface (principals, intents, runs/jobs, approvals, DAG, memory grants); Rust types from `allternit-cowork-runtime`
 
 ### P2 — Design pass (sign-off before any P3 UI)
 - [x] P2.1 Target mocks (https://claude.ai/artifact/X8fseo967PQQZDuJ1gWN1C — current; earlier copy TrCk8AYYVxhFA6DdFoejqy is in the other org), annotated against the reference frames: Project home (coordinator + Threads panel), Thread view (todo card, rip/New divider, steer composer, nested subagents), Thread inspector, Bot detail (header + 6 tabs), Create bot (one screen), group-chat @thread

@@ -1,0 +1,20 @@
+{
+  "name": "@allternit/a-sdk",
+  "version": "0.1.0",
+  "description": "Typed client for Allternit's A:// protocol surface: principals, intents, jobs and leases, approvals, delegation, the DAG and memory grants.",
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "bun test"
+  }
+}
