@@ -1,12 +1,12 @@
 // §A6.6 — artifact store: content-addressed commit, quarantine xattr, sha256 +
 // magic-byte MIME verify, relative local_path, never auto-opens.
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ArtifactFile, ProviderArtifactRef } from "@allternit/subscription-fabric-contracts";
-import { createArtifactStore, type ArtifactSourceContext } from "../src/artifacts/store.js";
+import { createArtifactStore, quarantineFor, type ArtifactSourceContext } from "../src/artifacts/store.js";
 import { openDatabase, type Db } from "../src/store/db.js";
 import { getArtifact } from "../src/store/queries.js";
 import { cleanupDir, tmpStateDir } from "./helpers.js";
@@ -145,5 +145,16 @@ describe("artifacts/store", () => {
     // idempotent — the SDK calls fail() again after a commit throws
     await sink.fail(id, "again");
     expect(getArtifact(db, id)?.storage.retrieval_state).toBe("failed");
+  });
+});
+
+describe("quarantine on Linux Sessions machines (§A6)", () => {
+  it("makes the artifact read-only with no exec bit (mandatory) — never throws for a missing xattr tool", () => {
+    const d = tmpStateDir();
+    const f = join(d, "artifact.bin");
+    writeFileSync(f, "x", { mode: 0o755 });
+    quarantineFor("linux")(f);
+    expect(statSync(f).mode & 0o777).toBe(0o444);
+    cleanupDir(d);
   });
 });

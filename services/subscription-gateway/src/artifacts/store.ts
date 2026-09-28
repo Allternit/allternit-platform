@@ -1,9 +1,11 @@
 // §A6.6 — the real contracts ArtifactSink: temp-file streaming, sha256 verify,
-// magic-byte MIME verify, content-addressed move, com.apple.quarantine xattr.
+// magic-byte MIME verify, content-addressed move, quarantine (macOS
+// com.apple.quarantine; Linux read-only/no-exec + user xattr).
 // Never auto-opens anything; local_path stays relative to the artifact root.
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID, type Hash } from "node:crypto";
 import {
+  chmodSync,
   closeSync,
   mkdirSync,
   openSync,
@@ -70,17 +72,31 @@ const FORMAT_TO_TYPE: Record<string, ArtifactType> = {
   zip: "archive",
 };
 
-function defaultSetQuarantine(path: string): void {
-  const stamp = Math.floor(Date.now() / 1000).toString(16);
-  const res = spawnSync(
-    "/usr/bin/xattr",
-    ["-w", "com.apple.quarantine", `0081;${stamp};subscription-gateway;`, path],
-    { stdio: "ignore" }
-  );
-  if (res.status !== 0) {
-    throw new Error(`xattr quarantine failed for ${path}: ${res.stderr ?? res.status}`);
-  }
+// §A6 quarantine: provider output is untrusted — never executable, never
+// auto-opened. macOS: com.apple.quarantine (Gatekeeper). Linux (Sessions
+// machines): read-only, no exec bit (mandatory) + a best-effort
+// user.allternit.quarantine xattr where the filesystem supports it.
+export function quarantineFor(platform: NodeJS.Platform): (path: string) => void {
+  return (path: string): void => {
+    const stamp = Math.floor(Date.now() / 1000).toString(16);
+    const value = `0081;${stamp};subscription-gateway;`;
+    if (platform === "darwin") {
+      const res = spawnSync("/usr/bin/xattr", ["-w", "com.apple.quarantine", value, path], {
+        stdio: "ignore",
+      });
+      if (res.status !== 0) {
+        throw new Error(
+          `xattr quarantine failed for ${path}: ${res.error?.message ?? `exit ${res.status}`}`
+        );
+      }
+      return;
+    }
+    chmodSync(path, 0o444);
+    spawnSync("setfattr", ["-n", "user.allternit.quarantine", "-v", value, path], { stdio: "ignore" });
+  };
 }
+
+const defaultSetQuarantine = quarantineFor(process.platform);
 
 export function createArtifactStore(db: Db, config: ArtifactStoreConfig): ArtifactSink {
   const setQuarantine = config.setQuarantine ?? defaultSetQuarantine;
