@@ -1,6 +1,6 @@
 //! Tool scoping per channel (spec P8.3): a bot can be more careful with
 //! work that arrived from outside. `agents.config.channelTools` maps a
-//! thread's origin (email, mention, routine, coordinator, user) to tools it
+//! thread's origin (email, slack, mention, routine, coordinator, user) to tools it
 //! may not use (`deny`) or must ask before using (`ask`). The rules become
 //! the gizzi permission ruleset of each thread session from that channel.
 //! Changes are recorded in the admin audit log.
@@ -19,7 +19,7 @@ use serde_json::{json, Map, Value};
 
 use crate::{auth::AuthUser, db::DbHandle, AppState};
 
-pub const CHANNELS: [&str; 5] = ["email", "mention", "routine", "coordinator", "user"];
+pub const CHANNELS: [&str; 6] = ["email", "slack", "mention", "routine", "coordinator", "user"];
 
 pub fn channel_tools_router() -> Router<Arc<AppState>> {
     Router::new().route("/agents/:id/channel-tools", get(get_rules).put(set_rules))
