@@ -11,6 +11,10 @@
 //! Preemption: a person (`user`) can take control from an agent, a session,
 //! a bot, or their own other device — that's "Take over". Nobody but the
 //! holder can take it from a person, and agents never preempt each other.
+//!
+//! Hand-offs (V190): anyone who can't take control asks for it (a
+//! `request` to the holder), and a holder can hand control to someone (an
+//! `offer`). The other side accepts or declines; accepting moves the lease.
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -199,6 +203,223 @@ pub fn check_input(conn: &Connection, computer_id: &str, caller: &Holder, now: i
     })
 }
 
+/// How long a hand-off request or offer stays open.
+pub const HANDOFF_TTL_SECS: i64 = 600;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HandoffDirection {
+    /// Asking the current holder for control.
+    Request,
+    /// The holder handing control to someone.
+    Offer,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Handoff {
+    pub id: String,
+    pub computer_id: String,
+    pub direction: HandoffDirection,
+    pub from: Holder,
+    pub to: Holder,
+    pub note: Option<String>,
+    pub created_at: String,
+    pub expires_at: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum HandoffError {
+    /// Nobody holds control: take it directly instead.
+    NotHeld,
+    /// Only the current holder can offer control.
+    NotHolder,
+    /// No such pending hand-off (or it expired).
+    NotFound,
+    /// Only the side it was sent to can accept or decline.
+    NotRecipient,
+    /// The lease changed hands since the hand-off was made.
+    Stale,
+    Db(String),
+}
+
+fn db_err(e: rusqlite::Error) -> HandoffError {
+    HandoffError::Db(e.to_string())
+}
+
+fn row_to_handoff(r: &rusqlite::Row<'_>) -> rusqlite::Result<Option<Handoff>> {
+    let direction = match r.get::<_, String>(2)?.as_str() {
+        "request" => HandoffDirection::Request,
+        "offer" => HandoffDirection::Offer,
+        _ => return Ok(None),
+    };
+    let holder = |kind: String, id: String, label: Option<String>, device_id: Option<String>| {
+        HolderKind::parse(&kind).map(|kind| Holder { kind, id, label, device_id })
+    };
+    let (Some(from), Some(to)) = (
+        holder(r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?),
+        holder(r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?),
+    ) else {
+        return Ok(None);
+    };
+    Ok(Some(Handoff {
+        id: r.get(0)?,
+        computer_id: r.get(1)?,
+        direction,
+        from,
+        to,
+        note: r.get(11)?,
+        created_at: r.get(12)?,
+        expires_at: r.get(13)?,
+    }))
+}
+
+const HANDOFF_COLUMNS: &str = "id, computer_id, direction, from_kind, from_id, from_label, from_device_id,
+     to_kind, to_id, to_label, to_device_id, note, created_at, expires_at";
+
+/// Open hand-offs on a computer (expired ones are marked and left out).
+pub fn pending_handoffs(conn: &Connection, computer_id: &str, now: i64) -> rusqlite::Result<Vec<Handoff>> {
+    conn.execute(
+        "UPDATE computer_control_handoffs SET status = 'expired', resolved_at = ?2
+         WHERE computer_id = ?1 AND status = 'pending' AND expires_at <= ?2",
+        params![computer_id, iso(now)],
+    )?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {HANDOFF_COLUMNS} FROM computer_control_handoffs
+         WHERE computer_id = ?1 AND status = 'pending' ORDER BY created_at"
+    ))?;
+    let rows = stmt.query_map(params![computer_id], row_to_handoff)?;
+    Ok(rows.filter_map(|r| r.ok().flatten()).collect())
+}
+
+fn insert_handoff(conn: &Connection, h: &Handoff) -> rusqlite::Result<()> {
+    conn.execute(
+        &format!(
+            "INSERT INTO computer_control_handoffs ({HANDOFF_COLUMNS}, status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'pending')"
+        ),
+        params![
+            h.id,
+            h.computer_id,
+            match h.direction { HandoffDirection::Request => "request", HandoffDirection::Offer => "offer" },
+            h.from.kind.as_str(),
+            h.from.id,
+            h.from.label,
+            h.from.device_id,
+            h.to.kind.as_str(),
+            h.to.id,
+            h.to.label,
+            h.to.device_id,
+            h.note,
+            h.created_at,
+            h.expires_at
+        ],
+    )?;
+    Ok(())
+}
+
+/// Ask whoever holds control for it. One open request per asker; asking
+/// again refreshes it.
+pub fn request_control(conn: &Connection, computer_id: &str, asker: &Holder, note: Option<String>, now: i64) -> Result<Handoff, HandoffError> {
+    let lease = current(conn, computer_id, now).map_err(db_err)?.ok_or(HandoffError::NotHeld)?;
+    conn.execute(
+        "UPDATE computer_control_handoffs SET status = 'cancelled', resolved_at = ?5
+         WHERE computer_id = ?1 AND status = 'pending' AND direction = 'request'
+           AND from_kind = ?2 AND from_id = ?3 AND IFNULL(from_device_id, '') = IFNULL(?4, '')",
+        params![computer_id, asker.kind.as_str(), asker.id, asker.device_id, iso(now)],
+    )
+    .map_err(db_err)?;
+    let handoff = Handoff {
+        id: format!("handoff_{}", uuid::Uuid::new_v4().simple()),
+        computer_id: computer_id.to_string(),
+        direction: HandoffDirection::Request,
+        from: asker.clone(),
+        to: lease.holder,
+        note,
+        created_at: iso(now),
+        expires_at: iso(now + HANDOFF_TTL_SECS),
+    };
+    insert_handoff(conn, &handoff).map_err(db_err)?;
+    Ok(handoff)
+}
+
+/// The holder hands control to `recipient`, who accepts or declines.
+pub fn offer_control(conn: &Connection, computer_id: &str, holder: &Holder, recipient: &Holder, note: Option<String>, now: i64) -> Result<Handoff, HandoffError> {
+    let lease = current(conn, computer_id, now).map_err(db_err)?.ok_or(HandoffError::NotHeld)?;
+    if !lease.holder.same_as(holder) {
+        return Err(HandoffError::NotHolder);
+    }
+    let handoff = Handoff {
+        id: format!("handoff_{}", uuid::Uuid::new_v4().simple()),
+        computer_id: computer_id.to_string(),
+        direction: HandoffDirection::Offer,
+        from: holder.clone(),
+        to: recipient.clone(),
+        note,
+        created_at: iso(now),
+        expires_at: iso(now + HANDOFF_TTL_SECS),
+    };
+    insert_handoff(conn, &handoff).map_err(db_err)?;
+    Ok(handoff)
+}
+
+fn is_recipient(handoff: &Handoff, who: &Holder) -> bool {
+    // A person answers from any of their devices.
+    if handoff.to.kind == HolderKind::User && who.kind == HolderKind::User {
+        return handoff.to.id == who.id;
+    }
+    handoff.to.same_as(who)
+}
+
+/// Accept or decline a hand-off addressed to `who`. Accepting a request
+/// gives control to the asker; accepting an offer gives it to `who`.
+pub fn answer_handoff(conn: &Connection, computer_id: &str, handoff_id: &str, who: &Holder, accept: bool, now: i64) -> Result<Option<Lease>, HandoffError> {
+    let handoff = pending_handoffs(conn, computer_id, now)
+        .map_err(db_err)?
+        .into_iter()
+        .find(|h| h.id == handoff_id)
+        .ok_or(HandoffError::NotFound)?;
+    if !is_recipient(&handoff, who) {
+        return Err(HandoffError::NotRecipient);
+    }
+    let resolve = |status: &str| {
+        conn.execute(
+            "UPDATE computer_control_handoffs SET status = ?2, resolved_at = ?3 WHERE id = ?1",
+            params![handoff.id, status, iso(now)],
+        )
+        .map_err(db_err)
+    };
+    if !accept {
+        resolve("declined")?;
+        return Ok(None);
+    }
+    // The hand-off only holds while the person who made it (request: the
+    // holder it went to; offer: the holder who made it) still has control.
+    let giver = match handoff.direction {
+        HandoffDirection::Request => &handoff.to,
+        HandoffDirection::Offer => &handoff.from,
+    };
+    let lease = current(conn, computer_id, now).map_err(db_err)?;
+    if !lease.as_ref().is_some_and(|l| l.holder.id == giver.id && l.holder.kind == giver.kind) {
+        resolve("expired")?;
+        return Err(HandoffError::Stale);
+    }
+    let mut taker = match handoff.direction {
+        HandoffDirection::Request => handoff.from.clone(),
+        HandoffDirection::Offer => handoff.to.clone(),
+    };
+    // A person accepting an offer takes control on the device they accepted from.
+    if handoff.direction == HandoffDirection::Offer && who.kind == HolderKind::User {
+        taker.device_id = who.device_id.clone();
+    }
+    conn.execute("DELETE FROM computer_control_leases WHERE computer_id = ?1", params![computer_id]).map_err(db_err)?;
+    let lease = take(conn, computer_id, &taker, now).map_err(|e| match e {
+        TakeError::Db(e) => HandoffError::Db(e),
+        TakeError::Held(_) => HandoffError::Stale,
+    })?;
+    resolve("accepted")?;
+    Ok(Some(lease))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,6 +427,7 @@ mod tests {
     fn db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(include_str!("../migrations/V189__computer_control_leases.sql")).unwrap();
+        conn.execute_batch(include_str!("../migrations/V190__computer_control_handoffs.sql")).unwrap();
         conn
     }
 
@@ -266,5 +488,53 @@ mod tests {
         assert!(current(&conn, "c1", 1_100 + LEASE_TTL_SECS).unwrap().is_none());
         // Expired: anyone may send input and take control.
         assert!(take(&conn, "c1", &agent("a2"), 1_100 + LEASE_TTL_SECS + 1).is_ok());
+    }
+
+    #[test]
+    fn an_agent_asks_a_person_for_control_and_gets_it_when_accepted() {
+        let conn = db();
+        take(&conn, "c1", &user("u1", "mac"), 1_000).unwrap();
+        let ask = request_control(&conn, "c1", &agent("a1"), Some("need to finish the form".into()), 1_001).unwrap();
+        assert_eq!(ask.to.id, "u1");
+        assert_eq!(pending_handoffs(&conn, "c1", 1_002).unwrap().len(), 1);
+        // The person answers from their phone.
+        let lease = answer_handoff(&conn, "c1", &ask.id, &user("u1", "phone"), true, 1_003).unwrap().unwrap();
+        assert_eq!(lease.holder.id, "a1");
+        assert!(pending_handoffs(&conn, "c1", 1_004).unwrap().is_empty());
+        assert!(check_input(&conn, "c1", &agent("a1"), 1_004).unwrap().is_ok());
+    }
+
+    #[test]
+    fn declining_keeps_control_and_only_the_recipient_can_answer() {
+        let conn = db();
+        take(&conn, "c1", &user("u1", "mac"), 1_000).unwrap();
+        let ask = request_control(&conn, "c1", &agent("a1"), None, 1_001).unwrap();
+        assert_eq!(answer_handoff(&conn, "c1", &ask.id, &agent("a2"), true, 1_002), Err(HandoffError::NotRecipient));
+        assert_eq!(answer_handoff(&conn, "c1", &ask.id, &user("u1", "mac"), false, 1_002), Ok(None));
+        assert_eq!(current(&conn, "c1", 1_003).unwrap().unwrap().holder.id, "u1");
+    }
+
+    #[test]
+    fn a_holder_offers_control_and_the_recipient_accepts() {
+        let conn = db();
+        take(&conn, "c1", &user("u1", "mac"), 1_000).unwrap();
+        assert_eq!(offer_control(&conn, "c1", &agent("a1"), &user("u1", "mac"), None, 1_001), Err(HandoffError::NotHolder));
+        let offer = offer_control(&conn, "c1", &user("u1", "mac"), &agent("a1"), None, 1_001).unwrap();
+        let lease = answer_handoff(&conn, "c1", &offer.id, &agent("a1"), true, 1_002).unwrap().unwrap();
+        assert_eq!(lease.holder.kind, HolderKind::Agent);
+    }
+
+    #[test]
+    fn hand_offs_go_stale_or_expire() {
+        let conn = db();
+        take(&conn, "c1", &user("u1", "mac"), 1_000).unwrap();
+        let ask = request_control(&conn, "c1", &agent("a1"), None, 1_001).unwrap();
+        // Control changed hands before the answer: the request is stale.
+        release(&conn, "c1", &user("u1", "mac"), 1_002).unwrap();
+        take(&conn, "c1", &agent("a2"), 1_003).unwrap();
+        assert_eq!(answer_handoff(&conn, "c1", &ask.id, &user("u1", "mac"), true, 1_004), Err(HandoffError::Stale));
+        let old = request_control(&conn, "c1", &agent("a3"), None, 1_005).unwrap();
+        assert!(pending_handoffs(&conn, "c1", 1_005 + HANDOFF_TTL_SECS).unwrap().iter().all(|h| h.id != old.id));
+        assert_eq!(request_control(&conn, "c2", &agent("a1"), None, 1_006), Err(HandoffError::NotHeld));
     }
 }
