@@ -130,7 +130,7 @@ function MessageImpl({
         if (message.subtype === "compact_boundary") {
           // Drawn in fullscreen too: the earlier conversation stays in
           // scrollback above the rip there.
-          const t2 = <CompactBoundaryMessage metadata={message.compactMetadata} timestamp={message.timestamp} />;
+          const t2 = <CompactBoundaryMessage metadata={message.compactMetadata} timestamp={typeof message.timestamp === 'number' ? new Date(message.timestamp).toISOString() : message.timestamp} />;
 
           return t2;
         }

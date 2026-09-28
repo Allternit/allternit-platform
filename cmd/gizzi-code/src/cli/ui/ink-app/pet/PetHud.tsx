@@ -5,6 +5,7 @@ import {
   ensureStandingThread,
   followThread,
   listSessionMessages,
+  messageHandoff,
   sendThreadTurn,
   threadApi,
   turnContextTokens,
@@ -14,6 +15,7 @@ import { PlatformSignedOutError } from '@/runtime/bots/platform-api.js';
 import type { CommandResultDisplay } from '../commands';
 import TextInput from '../components/TextInput';
 import { SpinnerGlyph } from '../components/Spinner/SpinnerGlyph';
+import { SessionRip } from '../components/messages/SessionRip';
 import { useTerminalSize } from '../hooks/useTerminalSize';
 import { Box, Text, useInput } from '../ink';
 import { useSetAppState } from '../state/AppState';
@@ -49,9 +51,13 @@ function clip(text: string): string {
   return flat.length > MAX_CHARS ? `${flat.slice(0, MAX_CHARS - 1)}…` : flat;
 }
 
-function Lines({ lines, bot, accent }: { lines: ChatLine[]; bot: PetBot; accent: string }) {
+/** A chat line, or the rip where the thread moved to a fresh context window. */
+type HudLine = ChatLine | { role: 'rip'; generation?: number; reason?: string; at?: string };
+const isChat = (l: HudLine): l is ChatLine => l.role !== 'rip';
+
+function Lines({ lines, bot, accent, width }: { lines: HudLine[]; bot: PetBot; accent: string; width: number }) {
   return <Box flexDirection="column">
-      {lines.slice(-SHOWN_LINES).map((line, i) => <Box key={i} flexDirection="row">
+      {lines.slice(-SHOWN_LINES).map((line, i) => !isChat(line) ? <SessionRip key={i} compact startedAt={line.at} generation={line.generation} reason={line.reason} width={width} /> : <Box key={i} flexDirection="row">
           <Box width={Math.max(4, bot.name.length) + 2} flexShrink={0}>
             {line.role === 'user' ? <Text dimColor>you</Text> : <Text color={accent}>{bot.name}</Text>}
           </Box>
@@ -81,7 +87,7 @@ export function PetHud({ onDone }: Props): React.ReactNode {
   const [frame, setFrame] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [thread, setThread] = useState<PlatformThread | null>(null);
-  const [threadLines, setThreadLines] = useState<ChatLine[]>([]);
+  const [threadLines, setThreadLines] = useState<HudLine[]>([]);
   const [incognitoLines, setIncognitoLines] = useState<ChatLine[]>([]);
   const [botCursor, setBotCursorState] = useState(0);
   // Keys can arrive in one burst (Up then Enter); Enter must see the moved
@@ -120,9 +126,13 @@ export function PetHud({ onDone }: Props): React.ReactNode {
         if (!t.currentSessionId) return;
         const messages = await listSessionMessages(t.currentSessionId);
         if (cancelled) return;
-        setThreadLines(messages
-          .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content && m.content !== '[No text content]')
-          .map(m => ({ role: m.role as ChatLine['role'], content: m.content })));
+        // The window's seed (checkpoint) message is drawn as the rip.
+        setThreadLines(messages.flatMap((m): HudLine[] => {
+          const handoff = messageHandoff(m);
+          if (handoff) return [{ role: 'rip', generation: (handoff.generation ?? 1) + 1, reason: handoff.reason, at: m.timestamp }];
+          if ((m.role !== 'user' && m.role !== 'assistant') || !m.content || m.content === '[No text content]') return [];
+          return [{ role: m.role, content: m.content }];
+        }));
       } catch (err) {
         if (!cancelled) setError(`Couldn't open ${bot.name}'s thread: ${errorMessage(err)}`);
       }
@@ -166,10 +176,15 @@ export function PetHud({ onDone }: Props): React.ReactNode {
         setThreadLines(lines => [...lines, mine]);
         const reply = await sendThreadTurn(thread, text, { model: bot.model, signal: controller.signal });
         setThreadLines(lines => [...lines, { role: 'assistant', content: reply.content }]);
-        setThread(await followThread(thread, {
+        const next = await followThread(thread, {
           tokensUsed: turnContextTokens(reply),
           model: bot.model ? `${bot.model.providerID}/${bot.model.modelID}` : undefined,
-        }));
+        });
+        // A handoff moved the thread to a fresh window: mark it where it happened.
+        if (next.currentSessionId && next.currentSessionId !== thread.currentSessionId) {
+          setThreadLines(lines => [...lines, { role: 'rip', generation: next.generation, reason: 'threshold', at: new Date().toISOString() }]);
+        }
+        setThread(next);
       } else {
         const history = [...incognitoLines, mine];
         setIncognitoLines(history);
@@ -250,7 +265,7 @@ export function PetHud({ onDone }: Props): React.ReactNode {
     const lines = incognito ? incognitoLines : threadLines;
     const ready = incognito || !!thread;
     body = <Box flexDirection="column">
-        {lines.length > 0 ? <Lines lines={lines} bot={bot} accent={accent} /> : <Text dimColor>
+        {lines.length > 0 ? <Lines lines={lines} bot={bot} accent={accent} width={Math.max(30, columns - 20)} /> : <Text dimColor>
             {incognito ? `Ask ${bot.name} something. Nothing here is saved.` : ready ? `Start ${bot.name}'s thread.` : `Opening ${bot.name}'s thread…`}
           </Text>}
         {busy && <Box flexDirection="row">

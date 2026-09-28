@@ -41,9 +41,11 @@ export type SessionRipProps = {
   hint?: string;
   /** Cap the rule width (e.g. inside a bordered panel). */
   width?: number;
+  /** No blank rows around it (small panels like the pet HUD). */
+  compact?: boolean;
 };
 
-export function SessionRip({ startedAt, generation, reason, previousUse, hint, width }: SessionRipProps): React.ReactNode {
+export function SessionRip({ startedAt, generation, reason, previousUse, hint, width, compact }: SessionRipProps): React.ReactNode {
   const { columns } = useTerminalSize();
   const label = ` Fresh context · ${timeLabel(startedAt)} `;
   const total = Math.max(label.length + 4, Math.min(width ?? columns - 2, 100));
@@ -56,12 +58,14 @@ export function SessionRip({ startedAt, generation, reason, previousUse, hint, w
     handoffReasonLabel(reason),
     hint,
   ].filter(Boolean);
-  return <Box flexDirection="column" marginY={1}>
+  return <Box flexDirection="column" marginY={compact ? 0 : 1}>
       <Text>
         <Text dimColor>{lead}</Text>
         <Text bold>{label}</Text>
         <Text dimColor>{tail}</Text>
       </Text>
-      {details.length > 0 && <Text dimColor wrap="wrap">{'  '}{details.join(' · ')}</Text>}
+      {details.length > 0 && <Box paddingLeft={2} width={total}>
+          <Text dimColor wrap="wrap">{details.join(' · ')}</Text>
+        </Box>}
     </Box>;
 }

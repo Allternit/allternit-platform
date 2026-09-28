@@ -53,11 +53,43 @@ export interface ThreadMessage {
   role: "user" | "assistant" | string
   content: string
   timestamp?: string
+  metadata?: {
+    handoff?: unknown
+    /** Raw gizzi parts; the handoff seed's text part carries `metadata.handoff`. */
+    parts?: Array<{ type?: string; metadata?: { handoff?: unknown } | null }>
+  }
+}
+
+/** Where a session continued from, as gizzi tags the seed of a fresh window (spec P3.16). */
+export interface HandoffMeta {
+  from: string
+  generation?: number
+  reason?: string
+}
+
+function asHandoff(value: unknown): HandoffMeta | null {
+  const h = value as Partial<HandoffMeta> | null | undefined
+  return h && typeof h.from === "string" ? (h as HandoffMeta) : null
+}
+
+/**
+ * The handoff a message seeds, or null. The seed is the checkpoint gizzi
+ * writes as the first user message of the new window; surfaces hide it and
+ * draw the rip in its place.
+ */
+export function messageHandoff(message: ThreadMessage): HandoffMeta | null {
+  const direct = asHandoff(message.metadata?.handoff)
+  if (direct) return direct
+  for (const part of message.metadata?.parts ?? []) {
+    const h = asHandoff(part?.metadata?.handoff)
+    if (h) return h
+  }
+  return null
 }
 
 /** A reply from `POST /agent-sessions/:id/messages` (API `transform_message`). */
-export interface ThreadTurnReply extends ThreadMessage {
-  metadata?: {
+export interface ThreadTurnReply extends Omit<ThreadMessage, "metadata"> {
+  metadata?: ThreadMessage["metadata"] & {
     error?: unknown
     telemetry?: { usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number } }
   }

@@ -1103,8 +1103,14 @@ export interface ISandboxManager {
 }
 
 // Stub implementations for forward compatibility
+// No violations are recorded yet; keep the store shape consumers use
+// (SandboxViolationExpandedView in the ctrl+o transcript view and
+// SandboxPromptFooterHint call subscribe/getTotalCount — missing, they threw
+// and took the whole TUI down on ctrl+o).
 const stubViolationStore = {
-  getViolations: () => [],
+  getViolations: (): SandboxViolationEvent[] => [],
+  getTotalCount: () => 0,
+  subscribe: (_listener: (violations: SandboxViolationEvent[]) => void) => () => {},
   clear: () => {},
   on: () => {},
   off: () => {},
