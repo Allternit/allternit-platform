@@ -501,12 +501,12 @@ checked live in a main Desktop build (one-current-build rule).
 - [x] P4.4 (routine's own standing thread, a generation per run via gizzi handoff) Routine runs = new generation in their standing thread; spin-off task threads
 
 ### P5 — Coordinator fan-out (A://)
-- [ ] P5.1 Al plan loop → task graph through the A:// SDK (deterministic assignment, dependency gating)
+- [x] P5.1 (platform #837 + this: validated plan mirrored to the rails DAG, nodes + blocked_by edges, thread status moves nodes) Al plan loop → task graph through the A:// SDK (deterministic assignment, dependency gating)
 - [x] P5.2 Fan-out to threads; "Sent to N threads" receipts; live thread chips
 - [x] P5.3 Follow-up routing ("Sent to one thread") and thread pills with hover cards
 - [x] P5.4 (platform #837, allternit-ai #162) Decision cards; completion synthesis back to the project chat
 - [x] P5.5 (allternit-ai #162, Graph tab) Fan-out (intent graph) view from the canonical DAG
-- [ ] P5.6 Goal loop / WIH / rails DAGs read from the canonical graph
+- [x] P5.6 (bot plans are rails DAGs; goal loop / WIH / rails views read them via /dags) Goal loop / WIH / rails DAGs read from the canonical graph
 
 ### P6 — @mention threads
 - [x] P6.1 (allternit-ai #163) `@Bot` in chat / group chat starts a task thread inline with a live task list

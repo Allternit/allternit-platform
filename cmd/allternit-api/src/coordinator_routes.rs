@@ -19,6 +19,12 @@
 //! they wait on reaches review or done. When a thread's kickoff turn
 //! finishes it moves to `review` and Al posts a short completion line in the
 //! project chat. Al never does the work itself (AL_IMPLEMENTATION_SPEC §2).
+//!
+//! Canonical graph (P5.1/P5.6): a validated plan is also written to the rails
+//! DAG — one node per thread, `blocked_by` edges for dependencies — and each
+//! thread's status moves its node (RUNNING, DONE, BLOCKED). The threads stay
+//! the execution record; the DAG is the graph the goal loop, WIH and the
+//! rails views read. A DAG write failing never blocks the plan.
 
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
@@ -28,6 +34,7 @@ use axum::{Json, Router};
 use rusqlite::{params, OptionalExtension};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 use tracing::warn;
@@ -53,6 +60,31 @@ pub trait CoordinatorRuntime: ThreadRuntime {
     fn plan(&self, system: &str, prompt: &str, model: Option<(String, String)>) -> impl Future<Output = Option<String>> + Send;
     /// Run a turn in a thread's session; returns the bot's reply text.
     fn send_turn(&self, session_id: &str, bot_id: &str, text: &str) -> impl Future<Output = Result<String, String>> + Send;
+    /// Write a plan to the canonical DAG: `steps` are (key, title, dependency
+    /// keys). Returns the DAG id and each step key's node id.
+    fn mirror_plan(
+        &self,
+        _goal: &str,
+        _project_id: &str,
+        _steps: &[(String, String, Vec<String>)],
+    ) -> impl Future<Output = Option<(String, HashMap<String, String>)>> + Send {
+        async { None }
+    }
+    /// Move a plan node to `to` (a rails status: RUNNING, DONE, BLOCKED).
+    fn node_status(&self, _dag_id: &str, _node_id: &str, _from: &str, _to: &str) -> impl Future<Output = ()> + Send {
+        async {}
+    }
+}
+
+/// Rails status for a thread status; `None` leaves the node as it is.
+pub fn dag_status(thread_status: &str) -> Option<&'static str> {
+    match thread_status {
+        "working" => Some("RUNNING"),
+        "review" | "done" => Some("DONE"),
+        "blocked" | "needs_you" => Some("BLOCKED"),
+        "failed" => Some("FAILED"),
+        _ => None,
+    }
 }
 
 pub struct GizziCoordinator {
@@ -80,6 +112,50 @@ impl CoordinatorRuntime for GizziCoordinator {
     }
     async fn send_turn(&self, session_id: &str, bot_id: &str, text: &str) -> Result<String, String> {
         crate::agent_session_routes::send_bot_turn(&self.state.db, session_id, bot_id, text).await
+    }
+    async fn mirror_plan(&self, goal: &str, project_id: &str, steps: &[(String, String, Vec<String>)]) -> Option<(String, HashMap<String, String>)> {
+        use allternit_commrails::DagMutation;
+        let gate = &self.state.rails.gate;
+        let (_, dag_id, root) = gate
+            .plan_new(goal, Some(project_id.to_string()))
+            .await
+            .map_err(|e| warn!(project = %project_id, error = %e, "plan → DAG: create failed"))
+            .ok()?;
+        let nodes: HashMap<String, String> = steps
+            .iter()
+            .map(|(key, _, _)| (key.clone(), format!("n_{}", uuid::Uuid::new_v4().simple())))
+            .collect();
+        let mut mutations: Vec<DagMutation> = steps
+            .iter()
+            .map(|(key, title, _)| DagMutation::CreateNode {
+                node_id: nodes[key].clone(),
+                node_kind: "task".into(),
+                title: title.clone(),
+                parent_node_id: Some(root.clone()),
+                execution_mode: "shared".into(),
+            })
+            .collect();
+        for (key, _, deps) in steps {
+            for dep in deps {
+                if let Some(from) = nodes.get(dep) {
+                    mutations.push(DagMutation::AddBlockedBy { from_node_id: from.clone(), to_node_id: nodes[key].clone() });
+                }
+            }
+        }
+        if !mutations.is_empty() {
+            if let Err(e) = gate.mutate_with_decision(&dag_id, "coordinator plan", None, mutations).await {
+                warn!(project = %project_id, error = %e, "plan → DAG: nodes failed");
+                return None;
+            }
+        }
+        Some((dag_id, nodes))
+    }
+    async fn node_status(&self, dag_id: &str, node_id: &str, from: &str, to: &str) {
+        use allternit_commrails::DagMutation;
+        let change = DagMutation::ChangeStatus { node_id: node_id.into(), from: from.into(), to: to.into(), reason: Some("bot thread".into()) };
+        if let Err(e) = self.state.rails.gate.mutate_with_decision(dag_id, "thread status", None, vec![change]).await {
+            warn!(dag = %dag_id, node = %node_id, error = %e, "thread status → DAG failed");
+        }
     }
 }
 
@@ -330,6 +406,27 @@ fn set_status(db: &DbHandle, thread_id: &str, status: &str, status_line: Option<
     }
 }
 
+/// `set_status` plus the thread's node on the canonical DAG, when it has one.
+async fn move_thread<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, thread_id: &str, status: &str, status_line: Option<&str>, summary: Option<&str>) {
+    let before: Option<(String, Option<String>, Option<String>)> = db.connect().ok().and_then(|c| {
+        c.query_row("SELECT status, dag_id, dag_node_id FROM bot_threads WHERE id = ?1", params![thread_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .optional()
+            .ok()
+            .flatten()
+    });
+    set_status(db, thread_id, status, status_line, summary);
+    if let Some((prev, Some(dag), Some(node))) = before {
+        if let Some(to) = dag_status(status) {
+            // Threads are created `working` (roots) or claimed `working`
+            // (dependents) before their kickoff runs; on the graph that's READY.
+            let from = if prev == "working" && status == "working" { "READY" } else { dag_status(&prev).unwrap_or("NEW") };
+            if from != to {
+                rt.node_status(&dag, &node, from, to).await;
+            }
+        }
+    }
+}
+
 fn truncate(s: &str, cap: usize) -> String {
     if s.chars().count() <= cap {
         return s.to_string();
@@ -414,6 +511,14 @@ pub async fn coordinate<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user_id: &
         _ => (fallback_step(&team, message).into_iter().collect(), String::new(), false),
     };
 
+    let graph = rt
+        .mirror_plan(
+            message,
+            project_id,
+            &steps.iter().map(|s| (s.key.clone(), s.title.clone(), s.depends_on.clone())).collect::<Vec<_>>(),
+        )
+        .await;
+
     let mut created: std::collections::HashMap<String, ThreadView> = std::collections::HashMap::new();
     let mut start = Vec::new();
     for step in &steps {
@@ -435,6 +540,11 @@ pub async fn coordinate<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user_id: &
             depends_on: deps.clone(),
         };
         let thread = thread_routes::create(db, rt, user_id, body).await?;
+        if let Some((dag, nodes)) = &graph {
+            if let (Some(node), Ok(conn)) = (nodes.get(&step.key), db.connect()) {
+                let _ = conn.execute("UPDATE bot_threads SET dag_id = ?2, dag_node_id = ?3 WHERE id = ?1", params![thread.id, dag, node]);
+            }
+        }
         if deps.is_empty() {
             start.push((thread.id.clone(), kickoff_text(&title, &thread)));
         }
@@ -452,7 +562,7 @@ pub async fn coordinate<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user_id: &
     } else {
         format!("Split this into {} threads.", ids.len())
     };
-    let msg = add_message(db, project_id, user_id, "coordinator", &text, json!({"kind": "fanout", "threads": ids, "planned": planned}))
+    let msg = add_message(db, project_id, user_id, "coordinator", &text, json!({"kind": "fanout", "threads": ids, "planned": planned, "dagId": graph.as_ref().map(|g| g.0.clone())}))
         .map_err(|e| e.to_string())?;
     Ok(Outcome { reply: msg, start })
 }
@@ -476,11 +586,11 @@ pub async fn start_threads<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user_id
     while let Some((thread_id, text)) = queue.pop() {
         let Ok(Some(t)) = thread_routes::load_view(db, &thread_id) else { continue };
         let Some(session) = t.current_session_id.clone() else { continue };
-        set_status(db, &t.id, "working", Some("Working on it"), None);
+        move_thread(db, rt, &t.id, "working", Some("Working on it"), None).await;
         match rt.send_turn(&session, &t.bot_id, &text).await {
             Ok(reply) => {
                 let line = reply.lines().find(|l| !l.trim().is_empty()).map(|l| truncate(l.trim(), 140));
-                set_status(db, &t.id, "review", line.as_deref(), Some(&truncate(&reply, 1200)));
+                move_thread(db, rt, &t.id, "review", line.as_deref(), Some(&truncate(&reply, 1200))).await;
                 let _ = add_message(
                     db,
                     project_id,
@@ -492,7 +602,7 @@ pub async fn start_threads<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user_id
                 queue.extend(ready_dependents(db, project_id, &t.id));
             }
             Err(e) => {
-                set_status(db, &t.id, "blocked", Some(&truncate(&e, 140)), None);
+                move_thread(db, rt, &t.id, "blocked", Some(&truncate(&e, 140)), None).await;
                 let _ = add_message(
                     db,
                     project_id,
@@ -682,6 +792,8 @@ mod tests {
         turns: Mutex<Vec<(String, String)>>,
         fail_turns: bool,
         sessions: Mutex<usize>,
+        graph: Mutex<Vec<(String, String, Vec<String>)>>,
+        moves: Mutex<Vec<(String, String, String)>>,
     }
 
     impl ThreadRuntime for Fake {
@@ -708,6 +820,13 @@ mod tests {
             }
             self.turns.lock().unwrap().push((s.into(), t.into()));
             Ok("Found three prices.\nDetails follow.".into())
+        }
+        async fn mirror_plan(&self, _g: &str, _p: &str, steps: &[(String, String, Vec<String>)]) -> Option<(String, HashMap<String, String>)> {
+            *self.graph.lock().unwrap() = steps.to_vec();
+            Some(("dag_1".into(), steps.iter().map(|(k, _, _)| (k.clone(), format!("node-{k}"))).collect()))
+        }
+        async fn node_status(&self, _d: &str, node: &str, from: &str, to: &str) {
+            self.moves.lock().unwrap().push((node.into(), from.into(), to.into()));
         }
     }
 
@@ -808,6 +927,48 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM project_messages WHERE json_extract(payload, '$.kind') = 'synthesis'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(syntheses, 1);
+
+        // The plan is on the canonical DAG: one node per thread, the engine
+        // blocked by economics, and every node moved READY → RUNNING → DONE.
+        assert_eq!(out.reply["payload"]["dagId"], "dag_1");
+        let graph = rt.graph.lock().unwrap().clone();
+        assert_eq!(graph.len(), 3);
+        assert_eq!(graph.iter().find(|g| g.0 == "engine").unwrap().2, vec!["econ".to_string()]);
+        let nodes: Vec<(String, String)> = conn
+            .prepare("SELECT dag_id, dag_node_id FROM bot_threads WHERE project_id = 'p1'")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert!(nodes.iter().all(|(d, n)| d == "dag_1" && n.starts_with("node-")), "{nodes:?}");
+        let moves = rt.moves.lock().unwrap().clone();
+        for key in ["research", "econ", "engine"] {
+            let node = format!("node-{key}");
+            let mine: Vec<(String, String)> = moves.iter().filter(|m| m.0 == node).map(|m| (m.1.clone(), m.2.clone())).collect();
+            assert_eq!(mine, vec![("READY".into(), "RUNNING".into()), ("RUNNING".into(), "DONE".into())], "{key}");
+        }
+    }
+
+    #[tokio::test]
+    async fn gizzi_coordinator_writes_the_plan_to_the_rails_dag() {
+        let state = setup("dag").await;
+        let rt = GizziCoordinator { state: state.clone() };
+        let steps = vec![
+            ("econ".to_string(), "GPU unit economics".to_string(), vec![]),
+            ("engine".to_string(), "Pricing engine".to_string(), vec!["econ".to_string()]),
+        ];
+        let (dag_id, nodes) = rt.mirror_plan("Price the cloud", "p1", &steps).await.expect("dag");
+        let events = state.rails.ledger.query(allternit_commrails::LedgerQuery::default()).await.unwrap();
+        let dag = allternit_commrails::work::project_dag(&events, &dag_id);
+        assert_eq!(dag.nodes[&nodes["engine"]].title, "Pricing engine");
+        assert!(dag
+            .edges
+            .iter()
+            .any(|e| e.from_node_id == nodes["econ"] && e.to_node_id == nodes["engine"] && e.edge_type == "blocked_by"));
+        rt.node_status(&dag_id, &nodes["econ"], "READY", "DONE").await;
+        let events = state.rails.ledger.query(allternit_commrails::LedgerQuery::default()).await.unwrap();
+        assert_eq!(allternit_commrails::work::project_dag(&events, &dag_id).nodes[&nodes["econ"]].status, "DONE");
     }
 
     #[tokio::test]
