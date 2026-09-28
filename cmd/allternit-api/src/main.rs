@@ -61,6 +61,7 @@ use allternit_api::conversation_routes::conversation_router;
 use allternit_api::cowork::background_service::CoworkBackgroundService;
 use allternit_api::cowork::routes::{background_router, CoworkBgState};
 use allternit_api::cowork_preferences_routes::cowork_preferences_router;
+use allternit_api::cowork_devices_routes::{cowork_devices_router, trusted_device_middleware};
 use allternit_api::cowork_routes::cowork_router;
 use allternit_api::cowork_team_routes::cowork_team_router;
 use allternit_api::db::DbHandle;
@@ -839,6 +840,7 @@ async fn main() {
         .merge(board_router())
         .merge(cowork_router())
         .merge(cowork_preferences_router())
+        .merge(cowork_devices_router())
         .merge(allternit_api::al_persona_routes::al_persona_router())
         .merge(allternit_api::deliverable_routes::deliverable_router())
         .merge(allternit_api::routine_routes::routine_router())
@@ -880,7 +882,11 @@ async fn main() {
         .merge(runtime_backend_router())
         .merge(allternit_api::runtime_settings_routes::runtime_settings_router())
         .merge(allternit_api::monitor_routes::monitor_router())
-        .merge(remote_control_router())
+        // Settings → Cowork "Require trusted devices" gates remote control.
+        .merge(remote_control_router().layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            trusted_device_middleware,
+        )))
         .merge(fabric_router())
         .merge(agents_v1_router())
         .merge(

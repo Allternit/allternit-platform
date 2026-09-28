@@ -115,6 +115,7 @@ pub mod cors;
 pub mod credits;
 pub mod cowork;
 pub mod cowork_preferences_routes;
+pub mod cowork_devices_routes;
 pub mod cowork_routes;
 pub mod cowork_team_routes;
 pub mod cron_lite;
