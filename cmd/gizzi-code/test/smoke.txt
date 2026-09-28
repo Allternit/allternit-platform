@@ -123,3 +123,4 @@ test/cli/bots-pane.test.ts
 test/runtime/bots/session-pause.test.ts
 test/components/RunTelemetry.test.ts
 test/components/ToolUseCard.test.ts
+test/runtime/bots/platform-api.test.ts

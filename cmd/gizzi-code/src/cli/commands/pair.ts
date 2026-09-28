@@ -50,7 +50,12 @@ async function runPair(args: { status?: boolean; force?: boolean; name?: string;
     name: args.name,
     onCreated: (pairing) => {
       process.stdout.write(`Pairing code: ${pairing.userCode}\n`)
-      process.stdout.write(`Approve this device at: ${pairing.verificationUrl}\n`)
+      if (Pairing.desktopApproval()) {
+        process.stdout.write("Approve it in Allternit Desktop (opening it now), where you're already signed in.\n")
+        process.stdout.write(`Or approve in a browser: ${pairing.verificationUrl}\n`)
+      } else {
+        process.stdout.write(`Approve this device at: ${pairing.verificationUrl}\n`)
+      }
       process.stdout.write("Waiting for approval…\n")
     },
   })
