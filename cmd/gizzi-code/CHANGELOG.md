@@ -10,6 +10,12 @@
   `limits.land_at` pauses before the next turn fails. `/resume-now`
   continues sooner, on the model with the most limit left when one is
   suggested. Sending a prompt yourself takes over.
+- After a conversation moves to a fresh context window, you can read the
+  earlier one in the terminal, as in Desktop. In the pet HUD's Thread view,
+  ↑ scrolls back and, past the rip, loads the earlier window in place. A
+  bot chat opened from `/bots` after a handoff keeps the earlier window's
+  last 50 messages above the rip; ctrl+o shows them. They stay out of the
+  model's context, which starts from the checkpoint.
 
 ### Changed
 - Tool cards show the Allternit orb instead of "● done": it moves while the

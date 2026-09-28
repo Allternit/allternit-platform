@@ -22,7 +22,7 @@ import { markBotRead } from '@/runtime/bots/bot-roster.js'
 import { getResumeHandler, switchSession } from '../../bootstrap/state.js'
 import { asSessionId } from '../../types/ids.js'
 import { getLastSessionLog, isLiteLog, loadFullLog } from '../../utils/sessionStorage.js'
-import { buildHandoffLog, resolveHandoffHead } from './handoff-head.js'
+import { buildHandoffLog, loadEarlierWindow, resolveHandoffHead } from './handoff-head.js'
 
 export interface OpenBotChatResult {
   projectPath: string
@@ -41,6 +41,7 @@ export interface OpenBotChatDeps {
   isLiteLog?: typeof isLiteLog
   loadFullLog?: typeof loadFullLog
   resolveHandoffHead?: typeof resolveHandoffHead
+  loadEarlierWindow?: typeof loadEarlierWindow
 }
 
 export async function openBotCanonicalChat(
@@ -57,6 +58,7 @@ export async function openBotCanonicalChat(
     isLiteLog: deps.isLiteLog ?? isLiteLog,
     loadFullLog: deps.loadFullLog ?? loadFullLog,
     resolveHandoffHead: deps.resolveHandoffHead ?? resolveHandoffHead,
+    loadEarlierWindow: deps.loadEarlierWindow ?? loadEarlierWindow,
   }
 
   const bot = await d.getBot(name)
@@ -68,13 +70,16 @@ export async function openBotCanonicalChat(
 
   // Another client may have handed the chat off to a fresh window (P3.16).
   // Open the newest window; if the REPL has never seen it, seed it with the
-  // checkpoint (on screen as the rip, and in the model's context). The pin
+  // checkpoint (on screen as the rip, and in the model's context) with the
+  // earlier window's last messages above the rip to scroll back to. The pin
   // itself moves server-side, so it is left alone here.
   const head = result.created ? null : await d.resolveHandoffHead(result.sessionId).catch(() => null)
   if (head) {
     const headLog = await d.getLastSessionLog(head.sessionId).catch(() => null)
     if (handler) {
-      const log = headLog ? (d.isLiteLog(headLog) ? await d.loadFullLog(headLog) : headLog) : buildHandoffLog(head, result.projectPath)
+      const log = headLog
+        ? d.isLiteLog(headLog) ? await d.loadFullLog(headLog) : headLog
+        : buildHandoffLog(head, result.projectPath, await d.loadEarlierWindow(head).catch(() => null))
       await handler(head.sessionId, log, 'bots_pane')
     } else {
       d.switchSession(asSessionId(head.sessionId), result.projectPath)

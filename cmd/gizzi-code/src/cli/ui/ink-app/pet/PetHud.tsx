@@ -5,7 +5,6 @@ import {
   ensureStandingThread,
   followThread,
   listSessionMessages,
-  messageHandoff,
   sendThreadTurn,
   threadApi,
   turnContextTokens,
@@ -22,6 +21,7 @@ import { Box, Text, useInput } from '../ink';
 import { useSetAppState } from '../state/AppState';
 import { errorMessage } from '../utils/errors';
 import { askPetLocally, type ChatLine } from './localChat';
+import { earlierWindowAtTop, hudLinesFromMessages, isChat, maxOffset, visibleLines, type HudLine } from './hudLines';
 import { refreshPetBots, selectPetBot, usePetBots, type PetBot, GIZZI_BOT } from './petBots';
 
 /**
@@ -52,13 +52,9 @@ function clip(text: string): string {
   return flat.length > MAX_CHARS ? `${flat.slice(0, MAX_CHARS - 1)}…` : flat;
 }
 
-/** A chat line, or the rip where the thread moved to a fresh context window. */
-type HudLine = ChatLine | { role: 'rip'; generation?: number; reason?: string; at?: string };
-const isChat = (l: HudLine): l is ChatLine => l.role !== 'rip';
-
-function Lines({ lines, bot, accent, width }: { lines: HudLine[]; bot: PetBot; accent: string; width: number }) {
+function Lines({ lines, offset = 0, bot, accent, width }: { lines: HudLine[]; offset?: number; bot: PetBot; accent: string; width: number }) {
   return <Box flexDirection="column">
-      {lines.slice(-SHOWN_LINES).map((line, i) => !isChat(line) ? <SessionRip key={i} compact startedAt={line.at} generation={line.generation} reason={line.reason} width={width} /> : <Box key={i} flexDirection="row">
+      {visibleLines(lines, offset, SHOWN_LINES).map((line, i) => !isChat(line) ? <SessionRip key={i} compact startedAt={line.at} generation={line.generation} reason={line.reason} width={width} /> : <Box key={i} flexDirection="row">
           <Box width={Math.max(4, bot.name.length) + 2} flexShrink={0}>
             {line.role === 'user' ? <Text dimColor>you</Text> : <Text color={accent}>{bot.name}</Text>}
           </Box>
@@ -92,6 +88,10 @@ export function PetHud({ onDone }: Props): React.ReactNode {
   const [incognitoPaused, setIncognitoPaused] = useState<SessionPaused | null>(null);
   const [thread, setThread] = useState<PlatformThread | null>(null);
   const [threadLines, setThreadLines] = useState<HudLine[]>([]);
+  // Thread scrollback: lines scrolled up from the newest, and the earlier
+  // windows (by session id) already loaded above their rips.
+  const [scroll, setScroll] = useState(0);
+  const [earlier, setEarlier] = useState<{ loaded: Set<string>; state: 'idle' | 'loading' | 'error' }>({ loaded: new Set(), state: 'idle' });
   const [incognitoLines, setIncognitoLines] = useState<ChatLine[]>([]);
   const [botCursor, setBotCursorState] = useState(0);
   // Keys can arrive in one burst (Up then Enter); Enter must see the moved
@@ -132,6 +132,8 @@ export function PetHud({ onDone }: Props): React.ReactNode {
   useEffect(() => {
     setThread(null);
     setThreadLines([]);
+    setScroll(0);
+    setEarlier({ loaded: new Set(), state: 'idle' });
     setThreadPaused(null);
     if (!online) return;
     let cancelled = false;
@@ -144,13 +146,7 @@ export function PetHud({ onDone }: Props): React.ReactNode {
         void getSessionPaused(t.currentSessionId).then(p => !cancelled && setThreadPaused(p)).catch(() => {});
         const messages = await listSessionMessages(t.currentSessionId);
         if (cancelled) return;
-        // The window's seed (checkpoint) message is drawn as the rip.
-        setThreadLines(messages.flatMap((m): HudLine[] => {
-          const handoff = messageHandoff(m);
-          if (handoff) return [{ role: 'rip', generation: (handoff.generation ?? 1) + 1, reason: handoff.reason, at: m.timestamp }];
-          if ((m.role !== 'user' && m.role !== 'assistant') || !m.content || m.content === '[No text content]') return [];
-          return [{ role: m.role, content: m.content }];
-        }));
+        setThreadLines(hudLinesFromMessages(messages));
       } catch (err) {
         if (!cancelled) setError(`Couldn't open ${bot.name}'s thread: ${errorMessage(err)}`);
       }
@@ -185,6 +181,7 @@ export function PetHud({ onDone }: Props): React.ReactNode {
     setInput('');
     setCursor(0);
     setError(null);
+    setScroll(0);
     const controller = new AbortController();
     inFlight.current = controller;
     setBusy(true);
@@ -201,7 +198,7 @@ export function PetHud({ onDone }: Props): React.ReactNode {
         });
         // A handoff moved the thread to a fresh window: mark it where it happened.
         if (next.currentSessionId && next.currentSessionId !== thread.currentSessionId) {
-          setThreadLines(lines => [...lines, { role: 'rip', generation: next.generation, reason: 'threshold', at: new Date().toISOString() }]);
+          setThreadLines(lines => [...lines, { role: 'rip', generation: next.generation, reason: 'threshold', at: new Date().toISOString(), from: thread.currentSessionId ?? undefined }]);
         }
         setThread(next);
         if (next.currentSessionId) setThreadPaused(await getSessionPaused(next.currentSessionId).catch(() => null));
@@ -234,6 +231,29 @@ export function PetHud({ onDone }: Props): React.ReactNode {
       setBusy(false);
     }
   }, [busy, tab, thread, bot, online, incognitoLines]);
+
+  // ↑ at the top of the input scrolls the thread back; past the oldest line,
+  // a rip's earlier window is read in place (the same messages Desktop
+  // shows under "Show the earlier conversation").
+  const scrollUp = useCallback(() => {
+    if (tabRef.current !== 'thread' || earlier.state === 'loading') return;
+    if (scroll < maxOffset(threadLines, SHOWN_LINES)) {
+      setScroll(o => o + 1);
+      return;
+    }
+    const from = earlierWindowAtTop(threadLines, earlier.loaded);
+    if (!from) return;
+    setEarlier(e => ({ ...e, state: 'loading' }));
+    void listSessionMessages(from).then(messages => {
+      const older = hudLinesFromMessages(messages);
+      setThreadLines(lines => [...older, ...lines]);
+      if (older.length > 0) setScroll(o => o + 1);
+      setEarlier(e => ({ loaded: new Set(e.loaded).add(from), state: 'idle' }));
+    }, () => setEarlier(e => ({ ...e, state: 'error' })));
+  }, [scroll, threadLines, earlier]);
+  const scrollDown = useCallback(() => {
+    if (tabRef.current === 'thread') setScroll(o => Math.max(0, o - 1));
+  }, []);
 
   useInput((_input, key) => {
     if (key.escape) {
@@ -287,9 +307,13 @@ export function PetHud({ onDone }: Props): React.ReactNode {
     const lines = incognito ? incognitoLines : threadLines;
     const ready = incognito || !!thread;
     body = <Box flexDirection="column">
-        {lines.length > 0 ? <Lines lines={lines} bot={bot} accent={accent} width={Math.max(30, columns - 20)} /> : <Text dimColor>
+        {lines.length > 0 ? <Lines lines={lines} offset={incognito ? 0 : scroll} bot={bot} accent={accent} width={Math.max(30, columns - 20)} /> : <Text dimColor>
             {incognito ? `Ask ${bot.name} something. Nothing here is saved.` : ready ? `Start ${bot.name}'s thread.` : `Opening ${bot.name}'s thread…`}
           </Text>}
+        {!incognito && earlier.state !== 'idle' && <Text dimColor={earlier.state === 'loading'} color={earlier.state === 'error' ? 'warning' : undefined}>
+            {earlier.state === 'loading' ? 'Loading the earlier conversation…' : "Couldn't load the earlier conversation. ↑ to try again."}
+          </Text>}
+        {!incognito && scroll > 0 && <Text dimColor>{`↓ ${scroll} newer`}</Text>}
         {(incognito ? incognitoPaused : threadPaused) && <Text color="warning" wrap="wrap">
             {'⏸ '}{pausedLine((incognito ? incognitoPaused : threadPaused)!)}
           </Text>}
@@ -299,14 +323,16 @@ export function PetHud({ onDone }: Props): React.ReactNode {
           </Box>}
         {ready && <Box flexDirection="row">
             <Text color={accent}>{'> '}</Text>
-            <TextInput value={input} onChange={setInput} onSubmit={value => void send(value)} columns={Math.max(20, columns - 12)} cursorOffset={cursor} onChangeCursorOffset={setCursor} focus={!busy} showCursor placeholder={`Ask ${bot.name}…`} />
+            <TextInput value={input} onChange={setInput} onSubmit={value => void send(value)} onHistoryUp={scrollUp} onHistoryDown={scrollDown} columns={Math.max(20, columns - 12)} cursorOffset={cursor} onChangeCursorOffset={setCursor} focus={!busy} showCursor placeholder={`Ask ${bot.name}…`} />
           </Box>}
       </Box>;
   }
 
+  const canScrollBack = scroll < maxOffset(threadLines, SHOWN_LINES) || !!earlierWindowAtTop(threadLines, earlier.loaded);
   const hint = tab === 'bots'
     ? '↑↓ choose · Enter wear · Tab thread · Esc close'
-    : incognito ? 'Enter send · Tab bots · Esc close and forget' : 'Enter send · Tab incognito · Esc close';
+    : incognito ? 'Enter send · Tab bots · Esc close and forget'
+    : `Enter send · ${canScrollBack ? '↑ earlier · ' : ''}Tab incognito · Esc close`;
 
   return <Box flexDirection="column" borderStyle={incognito ? 'dashed' : 'round'} borderColor={incognito ? 'inactive' : accent} paddingX={1} marginTop={1}>
       <Box flexDirection="row" justifyContent="space-between">
