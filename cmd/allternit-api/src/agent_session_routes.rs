@@ -133,6 +133,13 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
         .route("/agent-sessions/:id/unrevert", post(unrevert_session))
         .route("/agent-sessions/:id/compact", post(compact_session))
         .route("/agent-sessions/sync", get(sync_sessions))
+        // Answers to gizzi's in-chat questions (the question tool). Without
+        // these the app's reply never reached gizzi and the turn waited forever.
+        .route("/questions/:id/reply", post(reply_question))
+        .route("/questions/:id/reject", post(reject_question))
+        // The app's result for a pane_browser tool call (the page in the
+        // session's browser pane).
+        .route("/pane-browser/:id/reply", post(reply_pane_browser))
         .route("/native-sessions/harnesses", get(list_native_harnesses))
         .route("/native-sessions", get(list_native_sessions))
         .route("/native-sessions/pickup", post(pickup_native_session))
@@ -1117,6 +1124,77 @@ async fn send_message(
     }
 }
 
+/// The app sends `[{ questionIndex, answer }]` (answer a label or labels);
+/// gizzi wants one label list per question, in order. A body that is already
+/// `string[][]` passes through.
+fn question_answers(body: &serde_json::Value) -> Vec<Vec<String>> {
+    let Some(items) = body.get("answers").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    let labels = |v: &serde_json::Value| -> Vec<String> {
+        match v {
+            serde_json::Value::String(s) => vec![s.clone()],
+            serde_json::Value::Array(list) => list
+                .iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect(),
+            _ => Vec::new(),
+        }
+    };
+    if items.iter().all(|item| item.is_array()) {
+        return items.iter().map(labels).collect();
+    }
+    let mut out: Vec<Vec<String>> = Vec::new();
+    for (position, item) in items.iter().enumerate() {
+        let index = item
+            .get("questionIndex")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize)
+            .unwrap_or(position);
+        if out.len() <= index {
+            out.resize(index + 1, Vec::new());
+        }
+        out[index] = item.get("answer").map(labels).unwrap_or_default();
+    }
+    out
+}
+
+async fn reply_question(
+    headers: HeaderMap,
+    Path(request_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!("/v1/question/{}/reply", urlencoding::encode(&request_id));
+    let payload = json!({ "answers": question_answers(&body) });
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(payload)).await {
+        Ok(value) => Json(value).into_response(),
+        Err(response) => response,
+    }
+}
+
+async fn reject_question(headers: HeaderMap, Path(request_id): Path<String>) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!("/v1/question/{}/reject", urlencoding::encode(&request_id));
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(json!({}))).await {
+        Ok(value) => Json(value).into_response(),
+        Err(response) => response,
+    }
+}
+
+async fn reply_pane_browser(
+    headers: HeaderMap,
+    Path(request_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!("/v1/pane-browser/{}/reply", urlencoding::encode(&request_id));
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(body)).await {
+        Ok(value) => Json(value).into_response(),
+        Err(response) => response,
+    }
+}
+
 /// The gizzi `/v1/session/:id/message` body for a user message.
 fn send_message_payload(body: &SendMessageBody) -> serde_json::Value {
     let mut part = json!({ "type": "text", "text": body.text });
@@ -1338,6 +1416,14 @@ async fn transform_bus_event(
             "request_id": props.get("id"),
             "session_id": props.get("sessionID"),
             "questions": props.get("questions"),
+        })),
+        "pane_browser.requested" => Some(json!({
+            "type": "pane_browser_requested",
+            "request_id": props.get("id"),
+            "session_id": props.get("sessionID"),
+            "action": props.get("action"),
+            "target": props.get("target"),
+            "text": props.get("text"),
         })),
         "message.part.updated" => Some(json!({
             "type": "part_updated",
@@ -1627,6 +1713,28 @@ async fn spawn_native_session(Json(body): Json<SpawnNativeBody>) -> Response {
             Json(json!({ "error": format!("{bin} spawn timed out") })),
         )
             .into_response(),
+    }
+}
+
+#[cfg(test)]
+mod question_answers_tests {
+    use super::question_answers;
+    use serde_json::json;
+
+    #[test]
+    fn maps_app_answers_to_label_lists_in_question_order() {
+        let body = json!({ "answers": [
+            { "questionIndex": 1, "answer": ["A", "B"] },
+            { "questionIndex": 0, "answer": "Yes" },
+        ]});
+        assert_eq!(question_answers(&body), vec![vec!["Yes".to_string()], vec!["A".to_string(), "B".to_string()]]);
+    }
+
+    #[test]
+    fn passes_gizzi_shaped_answers_through() {
+        let body = json!({ "answers": [["Yes"], []] });
+        assert_eq!(question_answers(&body), vec![vec!["Yes".to_string()], Vec::<String>::new()]);
+        assert!(question_answers(&json!({})).is_empty());
     }
 }
 

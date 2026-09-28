@@ -1,0 +1,10 @@
+Act on the web page the user has open in this session's browser pane: the same page they see, in their own browser session (their logins and cookies).
+
+Actions:
+- read: the page's address, title and visible text (start here).
+- goto: open a URL in the pane (target = URL).
+- click: click an element (target = CSS selector, or the element's visible text).
+- fill: type into a field (target = CSS selector or its label/placeholder; text = what to type).
+- screenshot: a picture of the visible page.
+
+Use this when the user refers to "this page", the preview, or wants you to work in the pane. It only works while the pane is open; if it reports that the pane didn't answer, ask the user to open the browser pane, or use the browser tool for a separate automation browser. Don't enter passwords or payment details.

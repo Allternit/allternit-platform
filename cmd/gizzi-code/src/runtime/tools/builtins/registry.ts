@@ -1,4 +1,5 @@
 import { QuestionTool } from "@/runtime/tools/builtins/question"
+import { PaneBrowserTool } from "@/runtime/tools/builtins/pane-browser"
 import { VerifyTool } from "@/runtime/tools/builtins/verify"
 import { BashTool } from "@/runtime/tools/builtins/bash"
 import { EditTool } from "@/runtime/tools/builtins/edit"
@@ -136,6 +137,8 @@ export namespace ToolRegistry {
     return [
       InvalidTool,
       ...(question ? [QuestionTool] : []),
+      // Acts on the page shown in the app's browser pane; needs an app client.
+      ...(question ? [PaneBrowserTool] : []),
       AgentCommunicateTool,
       VerifyTool,
       BashTool,
