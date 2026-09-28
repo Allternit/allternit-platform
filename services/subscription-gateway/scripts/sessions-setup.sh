@@ -93,8 +93,15 @@ pnpm install --filter subscription-gateway... --reporter=append-only
 #    puts the adapter's Chrome and the login Firefox on the streamed desktop.
 mkdir -p "$STATE_DIR"
 chmod 700 "$STATE_DIR"
-for p in $(pgrep -f "tsx src/main.ts" || true); do [ "$p" != "$$" ] && kill "$p" || true; done
-sleep 1
+# Stop a previous gateway. Its command line is `node …/tsx/dist/cli.mjs
+# src/main.ts` (+ a node child), so match on src/main.ts, then wait for the
+# TCP port to free up — re-running setup must not collide (EADDRINUSE).
+for p in $(pgrep -f "src/main.ts" || true); do [ "$p" != "$$" ] && kill "$p" || true; done
+for _ in $(seq 1 20); do
+  pgrep -f "src/main.ts" >/dev/null || break
+  sleep 0.5
+done
+pkill -9 -f "src/main.ts" 2>/dev/null || true
 cd "$REPO/services/subscription-gateway"
 DISPLAY="$DISPLAY_NUM" \
 SUBS_GATEWAY_STATE_DIR="$STATE_DIR" \
