@@ -171,6 +171,14 @@ struct SendMessageBody {
     role: Option<String>,
     thinking: Option<String>,
     metadata: Option<serde_json::Value>,
+    /// Record the message in the session without starting a model turn
+    /// (e.g. a note typed in ACI's operator panel while a run is going).
+    #[serde(rename = "noReply", default)]
+    no_reply: Option<bool>,
+    /// Where the text was typed (e.g. "aci"). Stored on the text part's
+    /// metadata so the chat can label it; absent for the session composer.
+    #[serde(default)]
+    source: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -726,11 +734,93 @@ async fn list_sessions(
         }
     }
 
+    attach_latest_message_previews(&client, &mut filtered).await;
+
     Json(json!({
         "sessions": filtered,
         "count": filtered.len()
     }))
     .into_response()
+}
+
+/// Sessions that get a `last_message` preview per list call. Recents only
+/// shows the newest few dozen; the cap bounds the per-session fetches.
+const LIST_PREVIEW_SESSION_LIMIT: usize = 100;
+const LIST_PREVIEW_MAX_CHARS: usize = 160;
+
+/// Recents renders a latest-message preview under each title, but the list
+/// payload carried no message text, so rows stayed title-only until the
+/// session was opened. Fills `last_message` / `last_message_at` on the most
+/// recently updated sessions from each session's newest few messages.
+async fn attach_latest_message_previews(client: &Client, sessions: &mut [serde_json::Value]) {
+    use futures::StreamExt;
+
+    let mut order: Vec<usize> = (0..sessions.len()).collect();
+    let updated_at = |i: &usize| {
+        sessions[*i]
+            .get("updated_at")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    order.sort_by_key(|i| std::cmp::Reverse(updated_at(i)));
+    order.truncate(LIST_PREVIEW_SESSION_LIMIT);
+
+    let requests = order.into_iter().filter_map(|i| {
+        let id = sessions[i].get("id")?.as_str()?.to_string();
+        Some(async move { (i, latest_message_preview(client, &id).await) })
+    });
+    let previews: Vec<_> = futures::stream::iter(requests).buffer_unordered(8).collect().await;
+
+    for (i, preview) in previews {
+        if let (Some((text, at)), Some(obj)) = (preview, sessions[i].as_object_mut()) {
+            obj.insert("last_message".to_string(), json!(text));
+            obj.insert("last_message_at".to_string(), json!(at));
+        }
+    }
+}
+
+async fn latest_message_preview(client: &Client, session_id: &str) -> Option<(String, String)> {
+    // Older gizzi builds ignore `limit` and return every message; the newest
+    // text still wins below, so the preview is the same either way.
+    let path = format!(
+        "/v1/session/{}/messages?limit=6",
+        urlencoding::encode(session_id)
+    );
+    let messages =
+        gizzi_json::<Vec<GizziMessage>>(client, reqwest::Method::GET, &path, None)
+            .await
+            .ok()?;
+    messages.iter().rev().find_map(|message| {
+        let text = message_preview_text(&message.parts);
+        if text.is_empty() {
+            return None;
+        }
+        let at = to_iso(
+            message
+                .info
+                .time
+                .as_ref()
+                .and_then(|t| t.completed.or(t.created)),
+        );
+        Some((text, at))
+    })
+}
+
+/// Plain prose from a message's text parts: no tool/file markers, whitespace
+/// collapsed, capped at LIST_PREVIEW_MAX_CHARS.
+fn message_preview_text(parts: &[GizziMessagePart]) -> String {
+    let joined = parts
+        .iter()
+        .filter(|part| matches!(part.part_type.as_str(), "text" | "agent"))
+        .filter_map(|part| part.text.as_deref())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let collapsed = joined.split_whitespace().collect::<Vec<_>>().join(" ");
+    match collapsed.char_indices().nth(LIST_PREVIEW_MAX_CHARS) {
+        Some((cut, _)) => collapsed[..cut].to_string(),
+        None => collapsed,
+    }
 }
 
 async fn resolve_agent_harness(db: &DbHandle, agent_id: &str) -> Option<serde_json::Value> {
@@ -1004,7 +1094,7 @@ async fn send_message(
     Path(session_id): Path<String>,
     Json(body): Json<SendMessageBody>,
 ) -> impl IntoResponse {
-    let role = body.role.unwrap_or_else(|| "user".to_string());
+    let role = body.role.clone().unwrap_or_else(|| "user".to_string());
     if role != "user" {
         return Json(json!({
             "id": format!("local-{}", uuid::Uuid::new_v4()),
@@ -1019,20 +1109,28 @@ async fn send_message(
 
     let client = gizzi_client(&headers);
     let path = format!("/v1/session/{}/message", urlencoding::encode(&session_id));
-    let payload = json!({
-        "parts": [
-            {
-                "type": "text",
-                "text": body.text,
-            }
-        ],
-        "model": select_model(body.metadata.as_ref()),
-    });
+    let payload = send_message_payload(&body);
 
     match gizzi_json::<GizziMessage>(&client, reqwest::Method::POST, &path, Some(payload)).await {
         Ok(message) => Json(transform_message(message)).into_response(),
         Err(response) => response,
     }
+}
+
+/// The gizzi `/v1/session/:id/message` body for a user message.
+fn send_message_payload(body: &SendMessageBody) -> serde_json::Value {
+    let mut part = json!({ "type": "text", "text": body.text });
+    if let Some(source) = body.source.as_deref().filter(|s| !s.is_empty()) {
+        part["metadata"] = json!({ "source": source });
+    }
+    let mut payload = json!({
+        "parts": [part],
+        "model": select_model(body.metadata.as_ref()),
+    });
+    if body.no_reply == Some(true) {
+        payload["noReply"] = json!(true);
+    }
+    payload
 }
 
 async fn abort_session(
@@ -1533,6 +1631,34 @@ async fn spawn_native_session(Json(body): Json<SpawnNativeBody>) -> Response {
 }
 
 #[cfg(test)]
+mod send_message_payload_tests {
+    use super::{send_message_payload, SendMessageBody};
+
+    fn body(json: serde_json::Value) -> SendMessageBody {
+        serde_json::from_value(json).unwrap()
+    }
+
+    #[test]
+    fn plain_message_starts_a_turn() {
+        let payload = send_message_payload(&body(serde_json::json!({ "text": "hi" })));
+        assert!(payload.get("noReply").is_none());
+        assert!(payload["parts"][0].get("metadata").is_none());
+        assert_eq!(payload["parts"][0]["text"], "hi");
+    }
+
+    #[test]
+    fn aci_note_is_recorded_without_a_turn() {
+        let payload = send_message_payload(&body(serde_json::json!({
+            "text": "Skip venues without parking.",
+            "noReply": true,
+            "source": "aci",
+        })));
+        assert_eq!(payload["noReply"], true);
+        assert_eq!(payload["parts"][0]["metadata"]["source"], "aci");
+    }
+}
+
+#[cfg(test)]
 mod native_spawn_tests {
     use super::native_spawn_argv;
 
@@ -1748,27 +1874,38 @@ pub(crate) async fn seed_session_message(session_id: &str, text: &str) -> Result
         .map_err(|_| "gizzi refused the checkpoint message".to_string())
 }
 
-/// A session's recent transcript as plain "Role: text" lines, newest last,
-/// capped at `max_chars` (oldest lines dropped first). Used to write a
-/// thread checkpoint before moving it to a fresh context window.
-pub(crate) async fn session_transcript(session_id: &str, max_chars: usize) -> Result<String, String> {
+/// gizzi's native context handoff for a session. Returns the new session id
+/// and the checkpoint baton gizzi wrote (or used, when `baton` is given).
+pub(crate) async fn gizzi_handoff(
+    session_id: &str,
+    reason: &str,
+    context: &str,
+    baton: Option<serde_json::Value>,
+) -> Result<(String, serde_json::Value), String> {
     let client = gizzi_client(&HeaderMap::new());
-    let path = format!("/v1/session/{}/message", urlencoding::encode(session_id));
-    let messages = gizzi_json::<Vec<GizziMessage>>(&client, reqwest::Method::GET, &path, None)
-        .await
-        .map_err(|_| "gizzi refused the transcript read".to_string())?;
-    let mut lines: Vec<String> = messages
-        .iter()
-        .filter_map(|m| {
-            let text = extract_message_content(&m.parts);
-            (!text.trim().is_empty()).then(|| format!("{}: {}", if m.info.role == "user" { "User" } else { "Bot" }, text.trim()))
-        })
-        .collect();
-    let mut total: usize = lines.iter().map(|l| l.len() + 1).sum();
-    while total > max_chars && lines.len() > 1 {
-        total -= lines.remove(0).len() + 1;
+    let path = format!("/v1/session/{}/handoff", urlencoding::encode(session_id));
+    let mut payload = json!({ "reason": reason });
+    if !context.trim().is_empty() {
+        payload["context"] = json!(context);
     }
-    Ok(lines.join("\n"))
+    if let Some(b) = baton {
+        payload["baton"] = b;
+    }
+    let result = gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(payload))
+        .await
+        .map_err(|_| "gizzi refused the handoff".to_string())?;
+    let next = result["session"]["id"].as_str().ok_or("gizzi handoff returned no session")?.to_string();
+    Ok((next, result["baton"].clone()))
+}
+
+/// Every window of a session's conversation, oldest first (gizzi lineage).
+pub(crate) async fn gizzi_lineage(session_id: &str) -> Result<Vec<serde_json::Value>, String> {
+    let client = gizzi_client(&HeaderMap::new());
+    let path = format!("/v1/session/{}/lineage", urlencoding::encode(session_id));
+    let result = gizzi_json::<serde_json::Value>(&client, reqwest::Method::GET, &path, None)
+        .await
+        .map_err(|_| "gizzi refused the lineage read".to_string())?;
+    Ok(result["sessions"].as_array().cloned().unwrap_or_default())
 }
 
 /// Whether a gizzi session still exists (a pinned thread can be deleted from
@@ -1807,6 +1944,33 @@ mod tests {
     use tower::ServiceExt;
 
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn part(part_type: &str, text: &str) -> GizziMessagePart {
+        GizziMessagePart {
+            part_type: part_type.to_string(),
+            text: Some(text.to_string()),
+            filename: None,
+            url: None,
+            tool: None,
+            state: None,
+        }
+    }
+
+    #[test]
+    fn message_preview_text_keeps_prose_only() {
+        let parts = vec![
+            part("reasoning", "hidden thought"),
+            part("text", "  Here is\n\nthe   plan "),
+            part("tool", "ignored"),
+            part("agent", "done."),
+        ];
+        assert_eq!(message_preview_text(&parts), "Here is the plan done.");
+        assert_eq!(message_preview_text(&[part("tool", "x")]), "");
+
+        let long = "é".repeat(LIST_PREVIEW_MAX_CHARS + 20);
+        let preview = message_preview_text(&[part("text", &long)]);
+        assert_eq!(preview.chars().count(), LIST_PREVIEW_MAX_CHARS);
+    }
 
     async fn test_app_state(temp: &Path) -> Arc<AppState> {
         let config = crate::AppConfig {

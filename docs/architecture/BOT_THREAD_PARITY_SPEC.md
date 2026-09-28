@@ -477,7 +477,7 @@ checked live in a main Desktop build (one-current-build rule).
 ### P3 — Thread object + Threads UI
 - [x] P3.1 (#797) `bot_threads` + `bot_thread_sessions` tables and API; kinds standing/task; incognito flag
 - [x] P3.2 (#797, lazy sync) Migrate existing bot sessions into threads (generation 1)
-- [ ] P3.3 Per-model context budget → checkpoint → new generation (handoff); compaction within a generation
+- [x] P3.3 (platform #805, allternit-ai #132) Per-model context budget → checkpoint → new generation (handoff); compaction within a generation
 - [x] P3.4 (#797, #798) Thread status + `thread.*` events on the ledger; per-thread operational state rolled up per bot
 - [x] P3.5 (allternit-ai #114) Threads panel (groups, rows, k/n ring, artifact badge)
 - [~] P3.6 (allternit-ai #114: bar, rip, plan card; provenance + steer placeholder + model pill next) Thread view (breadcrumb, todo card, rip dividers, provenance, steer composer, model pill)
@@ -490,6 +490,9 @@ checked live in a main Desktop build (one-current-build rule).
 - [x] P3.13 (Agent B, allternit-ai #116) Cowork launch is the deck's native home: full deck + artifact template gallery; "Put a team on it" hands off to the Bots launch as a new project. Chat launch keeps its deck; the Chat/Cowork/Bots switcher stays on Chat and Cowork composers only
 - [ ] P3.14 Thread composer gets the compact deck (mode ▾ · plugins ▾ · model); artifacts made in a thread open in Cowork
 - [~] P3.15 (allternit-ai #121; Hire prefill with P3.10) Templates on the Bots launch by progressive disclosure: level 0 = three "Start from a team" cards with a mini plan graph; level 1 = "Browse templates" panel with **Teams** (orchestration use cases: bots + plan with dependencies, "uses your Scout · adds Pixel") and **Bots** (single-bot marketplace; opens Create bot prefilled, nothing created until confirmed). Visual bar: the mockup, not a card grid of icons
+
+- [~] P3.16 Session lineage + context handoff native in gizzi-code for every mode (Chat, Cowork, Code, gizzi CLI, bots): `session.continues_from` / `session.handoff`, `SessionHandoff` (baton on the session's own model, TODOs carried), automatic between turns at 70% of the usable window and before a turn that switches to a smaller window, prompts to a closed window land on the lineage head, `POST /session/:id/handoff` + `GET /session/:id/lineage`, `session.handoff` bus event. Bot threads call gizzi's handoff and record gizzi-initiated windows as generations (server: this PR; next: rip + follow-the-head in the desktop Chat/Cowork/Code views and a divider in the gizzi TUI)
+- [ ] P3.17 Land before 5-hour / weekly / rate limits for any provider and auto-resume at reset: signals from gizzi `providers/quota` (add Claude subscription + Codex fetchers), `session/retry.ts` retry-after and gateway budgets; land at a clean point with a `quota` handoff, "Paused until … · <limit>", server tick resumes; falling back to another model is opt-in only
 
 ### P4 — Bots run their own threads
 - [ ] P4.1 Fabric jobs targeting a bot principal load the bot's prompt, model, tools, memory, computer

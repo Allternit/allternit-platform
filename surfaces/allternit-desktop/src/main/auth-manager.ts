@@ -1333,6 +1333,8 @@ export class DesktopAuthManager {
       if (!session) throw new Error('Runtime is no longer paired');
       headers.set('Authorization', `Bearer ${session.accessToken}`);
       headers.set('X-Allternit-Desktop-Access-Token', session.accessToken);
+      // Another device's request: the API checks that device, not this one.
+      headers.set('X-Allternit-Relayed', '1');
       headers.set('X-Allternit-User-Id', session.userId);
       headers.set('X-Allternit-User-Email', session.userEmail);
       if (session.organizationId) headers.set('X-Allternit-Tenant-Id', session.organizationId);
@@ -1571,6 +1573,7 @@ export class DesktopAuthManager {
       headers: {
         Authorization: `Bearer ${session.accessToken}`,
         'X-Allternit-Desktop-Access-Token': session.accessToken,
+        'X-Allternit-Relayed': '1',
         'X-Allternit-User-Id': session.userId,
         'X-Allternit-User-Email': session.userEmail,
         ...(session.organizationId ? { 'X-Allternit-Tenant-Id': session.organizationId } : {}),

@@ -6,6 +6,7 @@ const {
   createIncognitoThread,
   followThread,
   parseModelRef,
+  messageHandoff,
   sendThreadTurn,
   turnContextTokens,
 } = await import("../../../src/runtime/bots/platform-threads")
@@ -109,6 +110,13 @@ describe("platform threads", () => {
 
   test("a failed follow keeps the thread as it was", async () => {
     expect((await followThread(thread() as never, { tokensUsed: 10 })).currentSessionId).toBe("s1")
+  })
+
+  test("the handoff seed is recognized from its text part's metadata", () => {
+    const seed = { id: "m1", role: "user", content: "[checkpoint: window 1] …", metadata: { parts: [{ type: "text", metadata: { handoff: { from: "s1", generation: 1, reason: "threshold" } } }] } }
+    expect(messageHandoff(seed)).toEqual({ from: "s1", generation: 1, reason: "threshold" })
+    expect(messageHandoff({ id: "m2", role: "user", content: "hi", metadata: { parts: [{ type: "text" }] } })).toBeNull()
+    expect(messageHandoff({ id: "m3", role: "assistant", content: "x" })).toBeNull()
   })
 
   test("parseModelRef", () => {

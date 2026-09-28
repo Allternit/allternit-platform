@@ -62,6 +62,7 @@ import * as BotChat from "@/runtime/bots/canonical-chat"
 import * as BotInbox from "@/runtime/bots/bot-inbox"
 import { isRoutineTurnText } from "@/runtime/bots/bot-routines"
 import { isMessageAgentSession, MessageAgentTool } from "@/runtime/tools/builtins/message-agent"
+import { SessionHandoff } from "@/runtime/session/handoff"
 
 // @ts-ignore — suppress ai-sdk stdout warnings (see server.ts for details)
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -193,6 +194,11 @@ export namespace SessionPrompt {
   export type PromptInput = z.infer<typeof PromptInput>
 
   export const prompt = fn(PromptInput, async (input) => {
+    // Context handoff: a prompt to a session that handed off lands on its
+    // lineage head, and a switch to a model whose window can't hold this one
+    // hands off first. Every entry point (HTTP, CLI, bots, routines) goes
+    // through here, so no client can talk to a closed window.
+    input.sessionID = await beforeTurnHandoff(input)
     const session = await Session.get(input.sessionID)
     await SessionRevert.cleanup(session)
 
@@ -277,8 +283,52 @@ const message = await createUserMessage(input)
       (p) => (p.type === "text" && isRoutineTurnText(p.text)) || p.type === "subtask",
     )
 
-    return loop({ sessionID: input.sessionID, fallbackModels: input.fallbackModels, botPreamble })
+    const result = await loop({ sessionID: input.sessionID, fallbackModels: input.fallbackModels, botPreamble })
+    afterTurnHandoff(input.sessionID, result)
+    return result
   })
+
+  async function beforeTurnHandoff(input: PromptInput): Promise<string> {
+    await SessionHandoff.settled(input.sessionID)
+    const head = await SessionHandoff.head(input.sessionID)
+    if (head !== input.sessionID) log.info("prompt redirected to lineage head", { from: input.sessionID, to: head })
+    if (!input.model) return head
+    try {
+      const session = await Session.get(head)
+      if (session.parentID || state()[head]) return head
+      let last: MessageV2.Assistant | undefined
+      for await (const msg of MessageV2.stream(head)) {
+        if (msg.info.role === "assistant" && msg.info.finish) {
+          last = msg.info as MessageV2.Assistant
+          break
+        }
+      }
+      if (!last) return head
+      if (last.providerID === input.model.providerID && last.modelID === input.model.modelID) return head
+      const next = await Provider.getModel(input.model.providerID, input.model.modelID)
+      const current = await Provider.getModel(last.providerID, last.modelID).catch(() => undefined)
+      if (current && SessionHandoff.usable(next) >= SessionHandoff.usable(current)) return head
+      if (!(await SessionHandoff.shouldHandoff({ tokens: last.tokens, model: next }))) return head
+      const handed = await SessionHandoff.run({ sessionID: head, reason: "model_switch" })
+      return handed.session.id
+    } catch (error) {
+      log.warn("model-switch handoff check failed; continuing in the same window", { sessionID: head, error })
+      return head
+    }
+  }
+
+  /** After a turn: hand off in the background once the window is past the threshold. */
+  function afterTurnHandoff(sessionID: string, result: MessageV2.WithParts | undefined) {
+    const info = result?.info
+    if (!info || info.role !== "assistant" || !info.finish || info.summary) return
+    void (async () => {
+      const session = await Session.get(sessionID)
+      if (session.parentID || session.handoff) return
+      const model = await Provider.getModel(info.providerID, info.modelID)
+      if (!(await SessionHandoff.shouldHandoff({ tokens: info.tokens, model }))) return
+      await SessionHandoff.run({ sessionID, reason: "threshold" })
+    })().catch((error) => log.warn("automatic handoff failed; compaction still guards the window", { sessionID, error }))
+  }
 
   /** Retry the latest durable user turn without appending a duplicate prompt. */
   export async function retry(sessionID: string): Promise<MessageV2.WithParts> {
@@ -1237,6 +1287,15 @@ const message = await createUserMessage(input)
           },
         )
 
+        // Composer + menu → Connectors: a connector turned off for this
+        // session can't be used, even though the dispatcher tool is loaded.
+        const offConnector = disabledConnectorFor(mobileOptions, args)
+        if (offConnector) {
+          throw new Error(
+            `The ${offConnector} connector is turned off for this session. Tell the user it's off; they can turn it on from the + menu → Connectors.`,
+          )
+        }
+
         await ctx.ask({
           permission: key,
           metadata: {},
@@ -1352,12 +1411,33 @@ const message = await createUserMessage(input)
     webSearch: z.boolean().optional(),
     research: z.boolean().optional(),
     toolAccess: z.enum(["auto", "on_demand", "always"]).optional(),
+    disabledConnectors: z.array(z.string()).optional(),
   })
 
   export interface MobileToolOptions {
     webSearch?: boolean
     research?: boolean
     toolAccess?: "auto" | "on_demand" | "always"
+    /** Connector ids (open-connector app ids, e.g. "github") the user turned
+     * off for this session in the composer's + menu. */
+    disabledConnectors?: string[]
+  }
+
+  /**
+   * The connector a tool call would use when the user turned it off for this
+   * turn, else undefined. Connector actions go through the connector MCP's
+   * dispatcher tools with an `actionId` of `<app>.<action>`
+   * (services/open-connector/src/mcp.ts).
+   *
+   * @internal Exported for testing
+   */
+  export function disabledConnectorFor(options: MobileToolOptions | undefined, args: unknown): string | undefined {
+    const disabled = options?.disabledConnectors
+    if (!disabled?.length || !args || typeof args !== "object") return undefined
+    const actionId = (args as { actionId?: unknown }).actionId
+    if (typeof actionId !== "string") return undefined
+    const app = actionId.split(".")[0]?.toLowerCase()
+    return disabled.find((id) => id.toLowerCase() === app)
   }
 
   /**

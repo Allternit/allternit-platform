@@ -491,24 +491,37 @@ pub trait ThreadRuntime: Send + Sync {
         thread_id: &str,
     ) -> impl Future<Output = Result<String, String>> + Send;
     fn seed(&self, session_id: &str, text: &str) -> impl Future<Output = Result<(), String>> + Send;
-    /// Model-written checkpoint for a session: `{summary, decisions[],
-    /// openItems[], artifacts[]}`. `None` → the caller falls back.
-    fn summarize(&self, _session_id: &str, _objective: &str) -> impl Future<Output = Option<Value>> + Send {
-        async { None }
+    /// gizzi's native context handoff: ends `session_id`'s window with a
+    /// checkpoint baton and continues in a fresh, linked session. Returns the
+    /// new session id and the baton (`summary`, `decisions`, `openItems`,
+    /// `artifacts`, `nextSteps`). `baton` set → gizzi uses it as written.
+    fn handoff(
+        &self,
+        session_id: &str,
+        reason: &str,
+        context: &str,
+        baton: Option<Value>,
+    ) -> impl Future<Output = Result<(String, Value), String>> + Send;
+    /// The session's lineage after it, oldest first: `(session_id, reason,
+    /// baton)` for every window it handed off to. Empty when it is the head.
+    fn successors(&self, _session_id: &str) -> impl Future<Output = Vec<(String, String, Value)>> + Send {
+        async { Vec::new() }
     }
 }
 
-pub const CHECKPOINT_SYSTEM: &str = "You write the checkpoint a bot needs to continue its work in a fresh context. \
-Reply with ONE JSON object and nothing else: {\"summary\":\"<where things stand, 2-5 sentences>\",\"decisions\":[\"<decisions made>\"],\"openItems\":[\"<what is still open>\"],\"artifacts\":[\"<files, links or outputs produced>\"]}. \
-Keep facts, numbers and names exactly as they appear. No advice, no filler.";
+/// Thread handoff reasons → gizzi's (`threshold | model_switch | manual | quota`).
+fn gizzi_reason(reason: &str) -> &'static str {
+    match reason {
+        "budget" | "threshold" => "threshold",
+        "model_switch" => "model_switch",
+        "quota" => "quota",
+        _ => "manual",
+    }
+}
 
-/// Parse the model's checkpoint JSON (tolerates code fences).
-pub fn parse_checkpoint(raw: &str) -> Option<Value> {
-    let start = raw.find('{')?;
-    let end = raw.rfind('}')?;
-    let v: Value = serde_json::from_str(&raw[start..=end]).ok()?;
-    v.get("summary").and_then(Value::as_str).filter(|s| !s.trim().is_empty())?;
-    Some(v)
+/// And back: gizzi-initiated handoffs recorded on the thread.
+fn thread_reason(reason: &str) -> &str {
+    if reason == "threshold" { "budget" } else { reason }
 }
 
 pub struct GizziRuntime {
@@ -522,27 +535,41 @@ impl ThreadRuntime for GizziRuntime {
     async fn seed(&self, session_id: &str, text: &str) -> Result<(), String> {
         crate::agent_session_routes::seed_session_message(session_id, text).await
     }
-    async fn summarize(&self, session_id: &str, objective: &str) -> Option<Value> {
-        let transcript = crate::agent_session_routes::session_transcript(session_id, 24_000).await.ok()?;
-        if transcript.trim().is_empty() {
-            return None;
+    async fn handoff(&self, session_id: &str, reason: &str, context: &str, baton: Option<Value>) -> Result<(String, Value), String> {
+        let (next, baton) = crate::agent_session_routes::gizzi_handoff(session_id, gizzi_reason(reason), context, baton).await?;
+        // The API's own per-session bag (bot flags, thread id, surface) moves
+        // with the conversation to its new window.
+        if let Ok(Some(bag)) = self.db.get_session_metadata(session_id) {
+            let _ = self.db.set_session_metadata(&next, &bag);
         }
-        let prompt = format!("Objective: {objective}\n\nConversation so far:\n{transcript}");
-        // Write the checkpoint on the thread's own bot model, not the
-        // platform default (which may be an unconfigured provider).
-        let model: Option<(String, String)> = self.db.connect().ok().and_then(|c| {
-            c.query_row(
-                "SELECT a.provider, a.model FROM bot_thread_sessions s
-                 JOIN bot_threads t ON t.id = s.thread_id JOIN agents a ON a.id = t.bot_id
-                 WHERE s.session_id = ?1",
-                params![session_id],
-                |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?)),
-            )
-            .ok()
-            .and_then(|(p, m)| p.zip(m).filter(|(p, m)| !p.is_empty() && !m.is_empty()))
-        });
-        let raw = crate::gizzi_completion::complete_ephemeral(&prompt, Some(CHECKPOINT_SYSTEM), model.as_ref()).await?;
-        parse_checkpoint(&raw)
+        if let Ok(Some(surface)) = self.db.get_session_origin_surface(session_id) {
+            let _ = self.db.set_session_origin_surface(&next, &surface);
+        }
+        Ok((next, baton))
+    }
+    async fn successors(&self, session_id: &str) -> Vec<(String, String, Value)> {
+        let Ok(chain) = crate::agent_session_routes::gizzi_lineage(session_id).await else {
+            return Vec::new();
+        };
+        let Some(at) = chain.iter().position(|s| s["id"] == session_id) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for pair in chain[at..].windows(2) {
+            let (prev, next) = (&pair[0], &pair[1]);
+            let Some(id) = next["id"].as_str() else { break };
+            if let Ok(Some(bag)) = self.db.get_session_metadata(prev["id"].as_str().unwrap_or_default()) {
+                if self.db.get_session_metadata(id).ok().flatten().is_none() {
+                    let _ = self.db.set_session_metadata(id, &bag);
+                }
+            }
+            out.push((
+                id.to_string(),
+                thread_reason(prev["handoff"]["reason"].as_str().unwrap_or("manual")).to_string(),
+                prev["handoff"]["baton"].clone(),
+            ));
+        }
+        out
     }
 }
 
@@ -640,39 +667,108 @@ pub async fn create<R: ThreadRuntime>(db: &DbHandle, rt: &R, user_id: &str, body
     load(db, &id).map_err(|e| e.to_string())?.map(|s| s.view).ok_or_else(|| "thread vanished".into())
 }
 
-/// Write the checkpoint, end the current generation, start the next one.
+/// What gizzi's baton can't know about a thread: its objective, done-when
+/// and plan. Carried at the top of the next window's checkpoint.
+fn thread_context(t: &ThreadView) -> String {
+    let mut out = String::new();
+    if let Some(o) = t.objective.as_deref() {
+        out.push_str(&format!("Objective: {o}\n"));
+    }
+    if let Some(c) = t.success_criteria.as_deref() {
+        out.push_str(&format!("Done when: {c}\n"));
+    }
+    if !t.todo.is_empty() {
+        out.push_str("Plan:\n");
+        for item in &t.todo {
+            let mark = match item.state.as_str() { "done" => "[x]", "active" => "[~]", _ => "[ ]" };
+            out.push_str(&format!("{mark} {}\n", item.text));
+        }
+    }
+    out
+}
+
+fn strings(v: &Value, k: &str) -> Vec<String> {
+    v.get(k).and_then(Value::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default()
+}
+
+/// End the current generation and start the next one. gizzi does the
+/// handoff itself (checkpoint baton on the thread's own model, linked
+/// session); the thread records the new generation.
 pub async fn do_handoff<R: ThreadRuntime>(db: &DbHandle, rt: &R, user_id: &str, id: &str, mut body: HandoffBody) -> Result<ThreadView, String> {
     let stored = load(db, id).map_err(|e| e.to_string())?.ok_or("thread not found")?;
     let t = stored.view;
-    if body.summary.trim().is_empty() {
-        // Automatic handoff: the model writes the checkpoint from this
-        // window's transcript; without a model, carry the thread's own state.
-        let objective = t.objective.clone().unwrap_or_else(|| t.title.clone());
-        let written = match t.current_session_id.as_deref() {
-            Some(sid) => rt.summarize(sid, &objective).await,
-            None => None,
-        };
-        let list = |v: &Value, k: &str| -> Vec<String> {
-            v.get(k).and_then(Value::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default()
-        };
-        match written {
-            Some(cp) => {
-                body.summary = cp["summary"].as_str().unwrap_or_default().to_string();
-                if body.decisions.is_empty() { body.decisions = list(&cp, "decisions"); }
-                if body.open_items.is_empty() { body.open_items = list(&cp, "openItems"); }
-                if body.artifacts.is_empty() { body.artifacts = list(&cp, "artifacts"); }
+    let context = thread_context(&t);
+    let session = match t.current_session_id.as_deref() {
+        Some(sid) => {
+            let given = (!body.summary.trim().is_empty()).then(|| {
+                json!({
+                    "summary": body.summary.trim(),
+                    "decisions": body.decisions,
+                    "openItems": body.open_items,
+                    "artifacts": body.artifacts,
+                })
+            });
+            let (next, baton) = rt.handoff(sid, &body.reason, &context, given).await?;
+            if body.summary.trim().is_empty() {
+                body.summary = baton["summary"].as_str().unwrap_or_default().to_string();
             }
-            None => {
+            for (field, key) in [(&mut body.decisions, "decisions"), (&mut body.open_items, "openItems"), (&mut body.artifacts, "artifacts")] {
+                if field.is_empty() {
+                    *field = strings(&baton, key);
+                }
+            }
+            next
+        }
+        None => {
+            // A thread with no window yet: start one from the thread's own state.
+            if body.summary.trim().is_empty() {
                 body.summary = t
                     .summary
                     .clone()
                     .or_else(|| t.status_line.clone())
                     .unwrap_or_else(|| format!("Continuing \"{}\" in a fresh context.", t.title));
             }
+            let canonical = is_canonical(db, &t);
+            let session = rt.create_session(&t.bot_id, &bot_name(db, &t.bot_id), &t.title, canonical, &t.id).await?;
+            let mut seed = format!("[checkpoint: generation {}] Continuing this thread in a fresh context.\n\n{context}", t.generation.max(1));
+            seed.push_str(&format!("\nWhere things stand:\n{}\n", body.summary.trim()));
+            rt.seed(&session, &seed).await?;
+            session
         }
+    };
+    advance(db, ("user", user_id), &t, &session, &body)?;
+    load(db, id).map_err(|e| e.to_string())?.map(|s| s.view).ok_or_else(|| "thread vanished".into())
+}
+
+/// When gizzi handed a thread's window off on its own (its window crossed
+/// the threshold between turns), record the generations it made. Returns
+/// whether the thread moved.
+pub async fn sync_lineage<R: ThreadRuntime>(db: &DbHandle, rt: &R, id: &str) -> Result<bool, String> {
+    let Some(stored) = load(db, id).map_err(|e| e.to_string())? else {
+        return Ok(false);
+    };
+    let Some(current) = stored.view.current_session_id.clone() else {
+        return Ok(false);
+    };
+    let successors = rt.successors(&current).await;
+    for (session, reason, baton) in &successors {
+        let t = load(db, id).map_err(|e| e.to_string())?.ok_or("thread vanished")?.view;
+        let body = HandoffBody {
+            summary: baton["summary"].as_str().unwrap_or_default().to_string(),
+            decisions: strings(baton, "decisions"),
+            open_items: strings(baton, "openItems"),
+            artifacts: strings(baton, "artifacts"),
+            reason: reason.clone(),
+            model: baton["model"]["modelID"].as_str().map(str::to_string),
+            context_window: None,
+        };
+        advance(db, ("system", "gizzi"), &t, session, &body)?;
     }
-    let canonical = db
-        .connect()
+    Ok(!successors.is_empty())
+}
+
+fn is_canonical(db: &DbHandle, t: &ThreadView) -> bool {
+    db.connect()
         .ok()
         .and_then(|c| {
             c.query_row(
@@ -683,35 +779,13 @@ pub async fn do_handoff<R: ThreadRuntime>(db: &DbHandle, rt: &R, user_id: &str, 
             .ok()
             .flatten()
         })
-        .map_or(false, |pin| Some(pin) == t.current_session_id);
+        .map_or(false, |pin| Some(pin) == t.current_session_id)
+}
+
+/// Close the current generation with its checkpoint and open `session` as the next.
+fn advance(db: &DbHandle, actor: (&str, &str), t: &ThreadView, session: &str, body: &HandoffBody) -> Result<(), String> {
+    let canonical = is_canonical(db, t);
     let next_gen = t.generation.max(1) + 1;
-    let session = rt.create_session(&t.bot_id, &bot_name(db, &t.bot_id), &t.title, canonical, &t.id).await?;
-
-    let mut checkpoint = format!("[checkpoint: generation {}] Continuing this thread in a fresh context.\n\n", next_gen - 1);
-    if let Some(o) = t.objective.as_deref() {
-        checkpoint.push_str(&format!("Objective: {o}\n"));
-    }
-    if let Some(c) = t.success_criteria.as_deref() {
-        checkpoint.push_str(&format!("Done when: {c}\n"));
-    }
-    checkpoint.push_str(&format!("\nWhere things stand:\n{}\n", body.summary.trim()));
-    for (label, items) in [("Decisions", &body.decisions), ("Open items", &body.open_items), ("Artifacts", &body.artifacts)] {
-        if !items.is_empty() {
-            checkpoint.push_str(&format!("\n{label}:\n"));
-            for i in items {
-                checkpoint.push_str(&format!("- {i}\n"));
-            }
-        }
-    }
-    if !t.todo.is_empty() {
-        checkpoint.push_str("\nPlan:\n");
-        for item in &t.todo {
-            let mark = match item.state.as_str() { "done" => "[x]", "active" => "[~]", _ => "[ ]" };
-            checkpoint.push_str(&format!("{mark} {}\n", item.text));
-        }
-    }
-    rt.seed(&session, &checkpoint).await?;
-
     let ts = now();
     let carried = json!({
         "summary": body.summary.trim(),
@@ -752,12 +826,12 @@ pub async fn do_handoff<R: ThreadRuntime>(db: &DbHandle, rt: &R, user_id: &str, 
             &t.bot_id,
             &t.id,
             "thread.checkpointed",
-            ("user", user_id),
+            actor,
             json!({ "generation": next_gen, "reason": body.reason, "carried": carried }),
-            Some(&session),
+            Some(session),
         );
     }
-    load(db, id).map_err(|e| e.to_string())?.map(|s| s.view).ok_or_else(|| "thread vanished".into())
+    Ok(())
 }
 
 // ─── Handlers ───────────────────────────────────────────────────────────────
@@ -831,6 +905,14 @@ async fn get_thread(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<String>,
 ) -> Response {
+    if let Err(r) = owned(&state, &user, &id).await {
+        return r;
+    }
+    // Pick up windows gizzi handed off on its own since the last read.
+    let rt = GizziRuntime { db: state.db.clone() };
+    if let Err(e) = sync_lineage(&state.db, &rt, &id).await {
+        warn!(error = %e, thread = %id, "thread lineage sync failed");
+    }
     let t = match owned(&state, &user, &id).await {
         Ok(t) => t,
         Err(r) => return r,
@@ -984,6 +1066,24 @@ async fn report_usage(
     Path(id): Path<String>,
     Json(body): Json<UsageBody>,
 ) -> Response {
+    if let Err(r) = owned(&state, &user, &id).await {
+        return r;
+    }
+    // gizzi hands a full window off by itself after the turn; when it has,
+    // the report is for a closed window and the thread already moved on.
+    let rt = GizziRuntime { db: state.db.clone() };
+    match sync_lineage(&state.db, &rt, &id).await {
+        Ok(true) => {
+            let t = match owned(&state, &user, &id).await {
+                Ok(t) => t,
+                Err(r) => return r,
+            };
+            return Json(json!({ "contextUsed": null, "shouldHandoff": false, "handedOff": true, "thread": t, "threshold": HANDOFF_FRACTION }))
+                .into_response();
+        }
+        Ok(false) => {}
+        Err(e) => warn!(error = %e, thread = %id, "thread lineage sync failed"),
+    }
     let t = match owned(&state, &user, &id).await {
         Ok(t) => t,
         Err(r) => return r,
@@ -1248,7 +1348,12 @@ mod tests {
     struct FakeRt {
         created: Mutex<Vec<(String, bool)>>,
         seeded: Mutex<Vec<(String, String)>>,
-        checkpoint: Option<Value>,
+        /// (session, reason, context, caller baton) per gizzi handoff call.
+        handoffs: Mutex<Vec<(String, String, String, Option<Value>)>>,
+        /// The baton gizzi writes when the caller gives none.
+        written: Option<Value>,
+        /// gizzi lineage after a session: session → [(next, reason, baton)].
+        lineage: std::collections::HashMap<String, Vec<(String, String, Value)>>,
         prefix: &'static str,
     }
 
@@ -1262,8 +1367,14 @@ mod tests {
             self.seeded.lock().unwrap().push((s.to_string(), text.to_string()));
             Ok(())
         }
-        async fn summarize(&self, _s: &str, _o: &str) -> Option<Value> {
-            self.checkpoint.clone()
+        async fn handoff(&self, s: &str, reason: &str, context: &str, baton: Option<Value>) -> Result<(String, Value), String> {
+            let mut h = self.handoffs.lock().unwrap();
+            h.push((s.to_string(), reason.to_string(), context.to_string(), baton.clone()));
+            let out = baton.or_else(|| self.written.clone()).unwrap_or_else(|| json!({"summary": "Continuing in a fresh context."}));
+            Ok((format!("{}next-{}", self.prefix, h.len()), out))
+        }
+        async fn successors(&self, s: &str) -> Vec<(String, String, Value)> {
+            self.lineage.get(s).cloned().unwrap_or_default()
         }
     }
 
@@ -1379,13 +1490,16 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(next.generation, 2);
-        assert_eq!(next.current_session_id.as_deref(), Some("sess-2"));
+        assert_eq!(next.current_session_id.as_deref(), Some("next-1"));
         assert_eq!(next.checkpoint.as_ref().unwrap()["decisions"], json!(["35% margin"]));
-        let seeded = rt.seeded.lock().unwrap().clone();
-        assert_eq!(seeded[0].0, "sess-2");
-        assert!(seeded[0].1.starts_with("[checkpoint: generation 1]"));
-        assert!(seeded[0].1.contains("Objective: Wire pricing into checkout"));
-        assert!(seeded[0].1.contains("- 35% margin"));
+        // gizzi does the handoff; the caller's summary and the thread's
+        // objective travel with it.
+        let calls = rt.handoffs.lock().unwrap().clone();
+        assert_eq!(calls[0].0, "sess-1");
+        assert_eq!(calls[0].1, "budget");
+        assert!(calls[0].2.contains("Objective: Wire pricing into checkout"));
+        assert_eq!(calls[0].3.as_ref().unwrap()["summary"], "Checkout calls the new price table");
+        assert!(rt.seeded.lock().unwrap().is_empty());
 
         let gens = generations(&state.db, &t.id).unwrap();
         assert_eq!(gens.len(), 2);
@@ -1395,27 +1509,63 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn automatic_handoff_writes_its_own_checkpoint() {
+    async fn automatic_handoff_carries_gizzis_baton() {
         let state = setup("auto").await;
         let rt = FakeRt {
-            checkpoint: parse_checkpoint("```json\n{\"summary\":\"H100 all-in is $1.94/hr\",\"decisions\":[\"35% margin\"],\"openItems\":[\"Annual discount\"],\"artifacts\":[\"pricing.xlsx\"]}\n```"),
+            written: Some(json!({"summary": "H100 all-in is $1.94/hr", "decisions": ["35% margin"], "openItems": ["Annual discount"], "artifacts": ["pricing.xlsx"], "nextSteps": ["Ship"]})),
             ..Default::default()
         };
         let t = create(&state.db, &rt, "user-a", body("Economics")).await.unwrap();
-        let auto: HandoffBody = serde_json::from_value(json!({"reason": "budget"})).unwrap();
+        let auto: HandoffBody = serde_json::from_value(json!({"reason": "model_switch"})).unwrap();
         let next = do_handoff(&state.db, &rt, "user-a", &t.id, auto).await.unwrap();
         assert_eq!(next.checkpoint.as_ref().unwrap()["summary"], "H100 all-in is $1.94/hr");
         assert_eq!(next.checkpoint.as_ref().unwrap()["artifacts"], json!(["pricing.xlsx"]));
-        assert!(rt.seeded.lock().unwrap()[0].1.contains("- 35% margin"));
+        let calls = rt.handoffs.lock().unwrap().clone();
+        assert_eq!(calls[0].1, "model_switch");
+        assert!(calls[0].3.is_none());
+        assert_eq!(gizzi_reason("budget"), "threshold");
+        assert_eq!(gizzi_reason("routine_run"), "manual");
 
-        // No model: carry the thread's own state instead of failing.
+        // No window yet: start one from the thread's own state.
         let bare = FakeRt { prefix: "b-", ..Default::default() };
         let t2 = create(&state.db, &bare, "user-a", body("Engine")).await.unwrap();
-        state.db.connect().unwrap().execute("UPDATE bot_threads SET status_line = 'Wiring checkout' WHERE id = ?1", params![t2.id]).unwrap();
-        let auto: HandoffBody = serde_json::from_value(json!({"reason": "model_switch"})).unwrap();
+        state
+            .db
+            .connect()
+            .unwrap()
+            .execute("UPDATE bot_threads SET status_line = 'Wiring checkout', current_session_id = NULL WHERE id = ?1", params![t2.id])
+            .unwrap();
+        let auto: HandoffBody = serde_json::from_value(json!({"reason": "budget"})).unwrap();
         let next2 = do_handoff(&state.db, &bare, "user-a", &t2.id, auto).await.unwrap();
         assert_eq!(next2.checkpoint.as_ref().unwrap()["summary"], "Wiring checkout");
-        assert!(parse_checkpoint("{\"summary\": \"\"}").is_none());
+        assert!(bare.seeded.lock().unwrap()[0].1.contains("Wiring checkout"));
+        assert!(bare.handoffs.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn gizzi_initiated_handoffs_become_generations() {
+        let state = setup("lineage").await;
+        let mut rt = FakeRt::default();
+        let t = create(&state.db, &rt, "user-a", body("Research")).await.unwrap();
+        assert!(!sync_lineage(&state.db, &rt, &t.id).await.unwrap());
+
+        rt.lineage.insert(
+            "sess-1".into(),
+            vec![
+                ("g-2".into(), "budget".into(), json!({"summary": "Read 12 papers", "decisions": ["Use RLHF baseline"]})),
+                ("g-3".into(), "model_switch".into(), json!({"summary": "Draft outline done", "model": {"modelID": "haiku"}})),
+            ],
+        );
+        assert!(sync_lineage(&state.db, &rt, &t.id).await.unwrap());
+        let t = load(&state.db, &t.id).unwrap().unwrap().view;
+        assert_eq!(t.generation, 3);
+        assert_eq!(t.current_session_id.as_deref(), Some("g-3"));
+        assert_eq!(t.checkpoint.as_ref().unwrap()["summary"], "Draft outline done");
+        let gens = generations(&state.db, &t.id).unwrap();
+        assert_eq!(gens[0].checkpoint_summary.as_deref(), Some("Read 12 papers"));
+        assert_eq!(gens[2].model.as_deref(), Some("haiku"));
+        // Already at the head: nothing more to record.
+        assert!(!sync_lineage(&state.db, &rt, &t.id).await.unwrap());
     }
 
     #[tokio::test]

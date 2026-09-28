@@ -21,6 +21,7 @@
  */
 
 import z from "zod/v4"
+import { Config } from "@/runtime/context/config/config"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import DESCRIPTION from "@/runtime/tools/builtins/browser.txt"
 import { Log } from "@/shared/util/log"
@@ -464,6 +465,11 @@ export const BrowserTool = Tool.define("browser", async (initCtx) => {
         },
       })
 
+      // No adapter named: use the account default (Settings → Cowork →
+      // Preferred browser, synced by the platform API into global config).
+      const adapterPreference =
+        params.adapter_preference ?? (await Config.get().catch(() => undefined))?.browser?.preferred_adapter
+
       const envelope = await callComputerUseGateway({
         action: params.action,
         session_id: ctx.sessionID,
@@ -476,7 +482,7 @@ export const BrowserTool = Tool.define("browser", async (initCtx) => {
           message_id: ctx.messageID,
           call_id: ctx.callID,
         },
-        adapter_preference: normalizeProviderPreference(params.adapter_preference),
+        adapter_preference: normalizeProviderPreference(adapterPreference),
         llm_config: llmConfig,
       })
 

@@ -88,6 +88,7 @@ import {
   assertTrustedSender,
 } from './security.js';
 import { resolveDevUserDataPath } from './desktop-data-dir.js';
+import { coworkDeviceHeaders, coworkDeviceInfo, isInAppBrowsableUrl } from './cowork-device.js';
 
 // Fix PATH for macOS
 fixPath();
@@ -637,6 +638,10 @@ interface StoreSchema {
     lastLocalVersion?: string;
   };
   onboardingComplete: boolean;
+  /** This computer's stable id in Settings → Cowork devices (cowork-device.ts). */
+  coworkDeviceId?: string;
+  /** Settings → Cowork "Open links in the built-in browser", mirrored from the API prefs. */
+  openLinksInApp?: boolean;
   /** Whether the startup onboarding wizard (welcome → sign-in) has been completed or skipped */
   startupWizardCompleted: boolean;
   permissions: {
@@ -668,6 +673,24 @@ const store = new Store<StoreSchema>({
     },
   },
 });
+
+const coworkDevice = coworkDeviceInfo(store);
+let openLinksInApp = store.get('openLinksInApp') ?? false;
+
+/**
+ * External link from an app window: with "Open links in the built-in
+ * browser" on, the main window's renderer opens it as a browser tab;
+ * otherwise (or with no main window to show it) it goes to the system browser.
+ */
+function openExternalLink(url: string): void {
+  if (openLinksInApp && isInAppBrowsableUrl(url) && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('links:open-in-app', url);
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    return;
+  }
+  openExternalAllowlisted(url);
+}
 
 // ============================================================================
 // Main Window
@@ -784,6 +807,9 @@ function createMainWindow(): BrowserWindow {
         details.requestHeaders['X-Allternit-Tenant-Id'] = session.organizationId;
       }
     }
+    if (injectDesktop) {
+      Object.assign(details.requestHeaders, coworkDeviceHeaders(coworkDevice));
+    }
     callback({ requestHeaders: details.requestHeaders });
   });
 
@@ -835,7 +861,7 @@ function createMainWindow(): BrowserWindow {
       const appUrl = new URL(window.webContents.getURL());
 
       if (requestedUrl.origin !== appUrl.origin) {
-        openExternalAllowlisted(url);
+        openExternalLink(url);
         return { action: 'deny' };
       }
 
@@ -920,7 +946,7 @@ function createMainWindow(): BrowserWindow {
       try {
         const protocol = new URL(url).protocol;
         if (protocol === 'http:' || protocol === 'https:') {
-          void openExternalAllowlisted(url);
+          openExternalLink(url);
         }
       } catch {
         log.warn(`[Main] Ignored malformed Browser Mode popup URL: ${url}`);
@@ -3024,6 +3050,21 @@ ipcMain.on('shell:hud:workspace-transfer', (_event, transferring: boolean) => {
 ipcMain.on('shell:hud:session', (_event, sessionId: string | null) => {
   hudSessionId = typeof sessionId === 'string' ? sessionId : null;
   pushHudState();
+});
+
+ipcMain.on('device:info', (event) => {
+  // Sync IPC must always set returnValue or the renderer blocks.
+  try {
+    assertTrustedSender(event, 'device:info');
+    event.returnValue = coworkDevice;
+  } catch {
+    event.returnValue = null;
+  }
+});
+
+handleGuarded('links:set-open-in-app', (_event, enabled: unknown) => {
+  openLinksInApp = enabled === true;
+  store.set('openLinksInApp', openLinksInApp);
 });
 
 ipcMain.on('shell:hud:windowing', (event) => {

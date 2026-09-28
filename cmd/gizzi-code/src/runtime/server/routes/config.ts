@@ -58,6 +58,28 @@ export const ConfigRoutes = lazy(() =>
         return c.json(config)
       },
     )
+    .patch(
+      "/global",
+      describeRoute({
+        summary: "Update global configuration",
+        description:
+          "Deep-merge settings into the user's global GIZZI config (not a project's). Used by the platform API to apply account-level preferences such as the browser tool's default adapter and browser permission rules.",
+        operationId: "config.updateGlobal",
+        responses: {
+          200: {
+            description: "Successfully updated global config",
+            content: { "application/json": { schema: resolver(z.any()) } },
+          },
+          ...errors(400),
+        },
+      }),
+      validator("json", z.any()),
+      async (c) => {
+        const config = c.req.valid("json") as any
+        await Config.updateGlobal(config)
+        return c.json(config)
+      },
+    )
     .get(
       "/providers",
       describeRoute({

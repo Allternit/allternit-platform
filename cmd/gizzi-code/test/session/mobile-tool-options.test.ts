@@ -68,3 +68,22 @@ describe("session.prompt mobile tool options (metadata.tools)", () => {
     })
   })
 })
+
+describe("disabledConnectorFor", () => {
+  const options = SessionPrompt.parseMobileToolOptions({ tools: { disabledConnectors: ["GitHub", "notion"] } })
+
+  test("parses disabledConnectors from metadata.tools", () => {
+    expect(options?.disabledConnectors).toEqual(["GitHub", "notion"])
+  })
+
+  test("blocks actions of a connector turned off for the session", () => {
+    expect(SessionPrompt.disabledConnectorFor(options, { actionId: "github.get_current_user" })).toBe("GitHub")
+    expect(SessionPrompt.disabledConnectorFor(options, { actionId: "notion.search", input: {} })).toBe("notion")
+  })
+
+  test("leaves other connectors and non-action calls alone", () => {
+    expect(SessionPrompt.disabledConnectorFor(options, { actionId: "slack.post_message" })).toBeUndefined()
+    expect(SessionPrompt.disabledConnectorFor(options, { query: "github issues" })).toBeUndefined()
+    expect(SessionPrompt.disabledConnectorFor(undefined, { actionId: "github.x" })).toBeUndefined()
+  })
+})

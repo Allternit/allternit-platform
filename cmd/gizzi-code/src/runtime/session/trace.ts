@@ -18,6 +18,7 @@ export namespace SessionTrace {
     "compaction.started",
     "compaction.pruned",
     "compaction.completed",
+    "handoff.completed",
     "session.error",
     "scratchpad.read",
     "scratchpad.written",
