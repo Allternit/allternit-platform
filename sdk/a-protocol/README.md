@@ -11,7 +11,7 @@ import { AClient } from "@allternit/a-sdk"
 
 const a = new AClient({ baseUrl: "http://127.0.0.1:8013", token: process.env.ALLTERNIT_TOKEN })
 await a.intents.submit({
-  version: "1", intent_id: crypto.randomUUID(), workspace: "ws",
+  version: "a/0.1", intent_id: crypto.randomUUID(), workspace: "ws",
   initiator: "a://workspace/ws/principal/al", target: "a://workspace/ws/bot/ledger",
   action: { action_type: "price.compute", description: "Price H100 from unit costs" },
   compute: "local",

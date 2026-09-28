@@ -16,7 +16,7 @@ describe("A:// client", () => {
     const { f, calls } = fakeFetch(() => ({ body: { intent_id: "i1", status: "accepted", run_id: "r1" } }))
     const a = new AClient({ baseUrl: "http://127.0.0.1:8013/", token: async () => "atok_1", fetch: f })
     const view = await a.intents.submit({
-      version: "1",
+      version: "a/0.1",
       intent_id: "i1",
       workspace: "ws",
       initiator: "a://workspace/ws/principal/al",

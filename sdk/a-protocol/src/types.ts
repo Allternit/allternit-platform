@@ -53,7 +53,8 @@ export interface IntentAction {
 export type ComputePolicy = "auto" | "local" | "cloud" | "vm" | "byo" | { policy: string; [key: string]: Json }
 
 export interface IntentEnvelope {
-  version: string
+  /** Protocol version; v0.1 requires `a/0.1`. */
+  version: "a/0.1" | (string & {})
   intent_id: string
   workspace: string
   initiator: PrincipalId
