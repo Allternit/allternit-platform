@@ -27,6 +27,16 @@
 | **How** | Applied via psql (idempotent). Also set `ALLTERNIT_SKIP_MIGRATIONS=1` — prod `_sqlx_migrations` is the sqlite-derived 1–24 lineage; `sqlx::migrate!("./migrations_pg")` would checksum-fail on boot. |
 | **Verify** | health is `{"status":"healthy"}`. After the first new-binary deploy: `curl -s https://api.allternit.com/api/v1/auth/dp-jwks` → `keys[0].kty = "OKP"` (old binary still 401s this route). |
 
+## 2b. Apply cloud migrations 015–017 on `mail` (pending, 2026-09-28)
+
+| | |
+|---|---|
+| **Status** | **Done** (verified 2026-09-28: `computer_pairing_codes`, `paired_computers`, `webhook_events`, `handoffs` + `eventtype` values all present; `/api/v1/computers/paired` 200). Was found by the live self-pair test: `POST /api/v1/computers/pairing-codes` and `GET /api/v1/computers/paired` return 500 `DATABASE_ERROR` while `/api/v1/mesh/enroll` (same device-token auth) returns 200, so the 017 tables are missing. Prod skips embedded migrations (item 2), so #848's deploy never created them. |
+| **What** | `015_webhook_events.sql`, `016_cowork_handoffs.sql` (check whether they were applied), `017_paired_computers.sql` (remote-computer pairing, ACI P4) |
+| **Where** | `mail`; DB `allternit`; files in `cmd/allternit-cloud-api/migrations_pg/` |
+| **How** | `\dt computer_pairing_codes paired_computers webhook_events cowork_handoffs` to see what's missing, then `psql -d allternit -f <file>` for each missing one (all idempotent: `IF NOT EXISTS`). No restart needed. |
+| **Verify** | Signed in on Desktop: Settings → Computers → *Pair a remote computer* shows a code (not "Database error"). |
+
 ## 3. Retire the live 8013 nginx proxy on `mail`
 
 | | |
