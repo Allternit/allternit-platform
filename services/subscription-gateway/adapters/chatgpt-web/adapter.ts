@@ -65,11 +65,13 @@ export function chatGPTWebConfig(
     // composer has text (idle shows the voice button), so an idle probe would
     // always report ui_drift. Submit resolves it after fillComposer.
     criticalKeys: ["composer", "logged_in_probe"],
-    completion: { sendMayBeDisabled: true },
     sampleThreadUrl: "https://chatgpt.com/c/68f7c000-aaaa-bbbb-cccc-dddddddddddd",
     sampleThreadId: "68f7c000-aaaa-bbbb-cccc-dddddddddddd",
     submitFallbackEnter: true,
     ...overrides,
+    // Merge, don't replace: a clock/timing override must not drop the
+    // live-UI completion flag.
+    completion: { sendMayBeDisabled: true, ...overrides.completion },
   };
 }
 
@@ -120,6 +122,9 @@ function sdkPage(lease: ExecutionContext["page"]): Page {
 export interface ChatGPTWebOptions {
   // D5 — temp-chat ON by default for stateless chat.create tasks.
   tempChat?: boolean;
+  // image.generate navigates to a fresh regular chat first (default true;
+  // fixture tests that load a page directly pass false).
+  freshImageChat?: boolean;
 }
 
 export type ChatGPTWebConfigOverrides = Partial<DeclarativeChatConfig>;
@@ -162,6 +167,36 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
       }
       throw err;
     }
+  }
+
+  // Live UI: "+" → "Create image" menu entry → composer chip "Remove Create
+  // image". Legacy direct toggle kept as a fallback (fixtures, older UI).
+  private async enableImageMode(ctx: ExecutionContext): Promise<boolean> {
+    const resolver = ctx.selectors as SdkSelectorResolver;
+    if (await resolver.tryResolveLocator("image_mode_active")) return true;
+    const plus = await resolver.tryResolveLocator("composer_plus");
+    if (plus) {
+      await ctx.pacing.beforeAction();
+      await plus.first().click();
+      const item = await resolver.tryResolveLocator("image_menu_item");
+      if (item) {
+        await ctx.pacing.beforeAction();
+        await item.last().click();
+        const page = sdkPage(ctx.page);
+        for (let i = 0; i < 20; i++) {
+          if (await resolver.tryResolveLocator("image_mode_active")) return true;
+          await page.waitForTimeout(100);
+        }
+      }
+      await sdkPage(ctx.page).keyboard.press("Escape");
+    }
+    const toggle = await resolver.tryResolveLocator("capability:image_tool_toggle");
+    if (!toggle) return false;
+    if ((await toggle.first().getAttribute("aria-pressed")) !== "true") {
+      await ctx.pacing.beforeAction();
+      await toggle.first().click();
+    }
+    return true;
   }
 
   // D5 — click the temp-chat toggle unless already on; plans without the
@@ -269,9 +304,17 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
       return;
     }
 
+    // Image generation is unavailable in temporary chats (provider rule), so
+    // image tasks always start a fresh regular chat — they land in history
+    // (thread reuse/cleanup is a separate, planned policy).
+    if (this.opts.freshImageChat !== false) {
+      await page.goto(this.manifest.origins[0] ?? "https://chatgpt.com/", {
+        waitUntil: "domcontentloaded",
+      });
+    }
+
     // §A3.4 — a vanished entry point is UI drift (§A9 fold: provider_ui_changed).
-    const toggle = await resolver.tryResolveLocator("capability:image_tool_toggle");
-    if (!toggle) {
+    if (!(await this.enableImageMode(ctx))) {
       yield {
         t: "error",
         error: {
@@ -281,15 +324,11 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
           fallback_eligible: true,
           cooldown_s: null,
           user_action: null,
-          detail: "locator_key=capability:image_tool_toggle matched nothing",
+          detail: "image mode could not be enabled (composer_plus/image_menu_item/capability:image_tool_toggle)",
           evidence_ref: null,
         },
       };
       return;
-    }
-    if ((await toggle.first().getAttribute("aria-pressed")) !== "true") {
-      await ctx.pacing.beforeAction();
-      await toggle.first().click();
     }
 
     await ctx.pacing.beforeTask();
@@ -317,6 +356,28 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
     const startedAt = now();
     let lastHb = now();
     let seenTiles = 0;
+    let imgSig = "";
+    let imgSigAt = now();
+    const imagesChangedRecently = (): boolean => now() - imgSigAt < stallTimeoutS * 1000;
+    const imagesSettled = async (): Promise<boolean> => {
+      const gallery = await resolver.tryResolveLocator("image_result");
+      if (!gallery) return false;
+      const state = await gallery
+        .locator("img")
+        .evaluateAll((els) =>
+          els.map((el) => {
+            const i = el as HTMLImageElement;
+            return `${i.currentSrc || i.src}|${i.complete ? i.naturalWidth : 0}`;
+          })
+        );
+      const sig = state.join(";");
+      if (sig !== imgSig) {
+        imgSig = sig;
+        imgSigAt = now();
+      }
+      const loaded = state.length > 0 && state.every((x) => Number(x.split("|").pop()) > 0);
+      return loaded && now() - imgSigAt >= (cfg.completion?.stabilityMs ?? 2000);
+    };
     for (;;) {
       while (pending.length > 0) yield pending.shift() as AdapterEvent;
       // Same late thread-id capture as the SDK chat path.
@@ -325,8 +386,11 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
         if (threadId !== null) await ctx.markSubmitted(threadId);
       }
       const { complete } = await tracker.pollOnce();
-      if (complete) break;
-      if (tracker.stalled(stallTimeoutS)) {
+      // Image turns have no Stop button while rendering, so text-side
+      // completion alone fires early: also require loaded, unchanged images.
+      const imagesDone = await imagesSettled();
+      if (complete && imagesDone) break;
+      if (tracker.stalled(stallTimeoutS) && !imagesChangedRecently()) {
         yield {
           t: "error",
           error: stalledError(ctx.attempt.submission_state, `no DOM change for ${stallTimeoutS}s`),

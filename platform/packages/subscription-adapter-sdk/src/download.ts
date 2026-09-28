@@ -160,12 +160,34 @@ export async function captureImages(
         skipped.push({ url: src, reason: "origin not allowlisted" });
         continue;
       }
-      const response = await page.context().request.get(src);
-      if (!response.ok()) {
-        skipped.push({ url: src, reason: `fetch failed: ${response.status()}` });
-        continue;
+      if (src.startsWith("blob:")) {
+        // blob: URLs exist only inside the page (ChatGPT renders generated
+        // images this way) — read the bytes there; magic-byte sniffing below
+        // still gates what is committed. No named inner functions: the body
+        // is serialized into the page (see extract.ts on __name).
+        const b64 = await img.evaluate(async (el) => {
+          const res = await fetch((el as HTMLImageElement).currentSrc || (el as HTMLImageElement).src);
+          if (!res.ok) return null;
+          const buf = new Uint8Array(await res.arrayBuffer());
+          let bin = "";
+          for (let i = 0; i < buf.length; i += 0x8000) {
+            bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+          }
+          return btoa(bin);
+        });
+        if (!b64) {
+          skipped.push({ url: src.slice(0, 64), reason: "blob fetch failed" });
+          continue;
+        }
+        bytes = Uint8Array.from(Buffer.from(b64, "base64"));
+      } else {
+        const response = await page.context().request.get(src);
+        if (!response.ok()) {
+          skipped.push({ url: src, reason: `fetch failed: ${response.status()}` });
+          continue;
+        }
+        bytes = Uint8Array.from(await response.body());
       }
-      bytes = Uint8Array.from(await response.body());
     }
 
     const sniffed = sniffMime(bytes);

@@ -68,6 +68,7 @@ model_picker:
 image_result:
   critical: false
   strategies:
+    - { testid: generated-image-gallery }
     - { testid: image-result }
     - { css: "[data-message-author-role='assistant'] [data-image-result]" }
 banner:
@@ -95,6 +96,7 @@ progress:counter:
 progress:partial_artifacts:
   critical: false
   strategies:
+    - { css: "[data-testid='generated-image-preview'] img" }
     - { css: "[data-testid='image-result'] img" }
 
 # §A3.4 — capability entry points (non-critical probe checks)
@@ -107,4 +109,20 @@ capability:image_tool_toggle:
   critical: false
   strategies:
     - { testid: image-tool-toggle }
-    - { role: button, name: /create image|image/i }
+    - { role: button, name: /^create image$|^image$/i }
+# Live UI (2026-09-27): image mode is a composer menu entry, not a toggle —
+# "+" (Add files and more) → plain-text "Create image" → a composer chip
+# "Remove Create image" shows the mode is on. Images render as blob: URLs
+# inside [data-testid=generated-image-gallery].
+image_mode_active:
+  critical: false
+  strategies:
+    - { role: button, name: /remove create image/i }
+composer_plus:
+  critical: false
+  strategies:
+    - { role: button, name: /add files and more/i }
+image_menu_item:
+  critical: false
+  strategies:
+    - { text: /^create image$/i }

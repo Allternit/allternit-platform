@@ -81,6 +81,31 @@ describe("captureImages (§A3.1 + §A6.5/§A6.6)", () => {
     await page.close();
   });
 
+  it("captures blob: images from inside the page (ChatGPT live UI) with verified MIME", async () => {
+    const page = await browser.newPage();
+    await page.route("https://fixture-web.test/**", (route) =>
+      route.fulfill({ contentType: "text/html", body: `<div data-testid="fw-response"></div>` })
+    );
+    await page.goto("https://fixture-web.test/thread");
+    await page.evaluate((b64) => {
+      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      const img = document.createElement("img");
+      img.src = URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
+      document.querySelector("[data-testid='fw-response']")!.appendChild(img);
+    }, PNG_B64);
+    const { sink, committed } = recordingSink();
+    const result = await captureImages(page, createResolver(page, loadPack()), sink, {
+      provider: "fixture-web" as ProviderId,
+      allowedOrigins: ["https://fixture-web.test"],
+    });
+    expect(result.skipped).toEqual([]);
+    expect(result.files).toHaveLength(1);
+    const pngBytes = Uint8Array.from(Buffer.from(PNG_B64, "base64"));
+    expect(committed[0].sha256).toBe(createHash("sha256").update(pngBytes).digest("hex"));
+    expect(committed[0].mime_type).toBe("image/png");
+    await page.close();
+  });
+
   it("sniffMime recognizes the required formats and rejects unknown bytes", () => {
     expect(sniffMime(Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d]))?.mime_type).toBe("image/png");
     expect(sniffMime(Uint8Array.from([0xff, 0xd8, 0xff, 0xe0]))?.mime_type).toBe("image/jpeg");
