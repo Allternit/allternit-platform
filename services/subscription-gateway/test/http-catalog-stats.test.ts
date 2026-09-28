@@ -5,7 +5,7 @@ import request from "supertest";
 import type { AdapterRegistry } from "../src/adapters/registry.js";
 import { issueToken } from "../src/security/tokens.js";
 import { insertAttempt, insertTask, upsertAccount } from "../src/store/queries.js";
-import { cleanupDir, makeDeps, sampleTask, tmpStateDir, type TestDeps } from "./helpers.js";
+import { HUMAN, cleanupDir, makeDeps, sampleTask, tmpStateDir, type TestDeps } from "./helpers.js";
 import { makeAccount, makeManifest } from "./router/fixtures.js";
 
 const manifestA = makeManifest();
@@ -132,7 +132,7 @@ describe("GET /v1/stats/rejections", () => {
     const post = await request(depsWithRouter.app)
       .post("/v1/tasks")
       .set("authorization", `Bearer ${t}`)
-      .send({ capability: "chat.create", prompt: "hello" });
+      .send({ initiated_by: HUMAN, capability: "chat.create", prompt: "hello" });
     expect(post.status).toBe(201);
 
     const res = await request(depsWithRouter.app)

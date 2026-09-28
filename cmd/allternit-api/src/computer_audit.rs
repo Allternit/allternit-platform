@@ -14,6 +14,9 @@ pub const KIND_EMBED_TOKEN: &str = "embed_token";
 pub const KIND_PROXY_ENABLE: &str = "proxy_enable";
 pub const KIND_PROXY_DISABLE: &str = "proxy_disable";
 pub const KIND_PROXY: &str = "proxy";
+/// Subscription Fabric: Sessions-computer binding and gateway forwards.
+pub const KIND_SUBS_BINDING: &str = "subs_binding";
+pub const KIND_SUBS_GATEWAY: &str = "subs_gateway";
 
 /// Record one computer access event. Never panics and never blocks the caller;
 /// failures are logged and dropped.

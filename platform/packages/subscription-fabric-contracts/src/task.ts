@@ -135,6 +135,17 @@ export const requesterSchema = z.object({
 });
 export type Requester = z.infer<typeof requesterSchema>;
 
+// D16 — every fabric task is a human act: the surface that took the human
+// action (send, approval-card confirm) stamps who and which action. The
+// gateway rejects tasks without it; allternit-api's forwarder fills it from
+// the authenticated user + a single-use human-action id.
+export const initiatedBySchema = z.object({
+  kind: z.literal("human"),
+  user_id: z.string().min(1),
+  action_id: z.string().min(1),
+});
+export type InitiatedBy = z.infer<typeof initiatedBySchema>;
+
 export const taskRoutingSchema = z.object({
   mode: z.enum(["auto", "prefer", "force"]),
   provider: providerIdSchema.optional(),
@@ -142,6 +153,9 @@ export const taskRoutingSchema = z.object({
   allow_fallback: z.boolean(), // default true within subscriptions, false across a thread boundary
   allow_metered: z.boolean(), // default false (§32)
   allow_thread_migration: z.boolean(), // default false (Critical #7)
+  // Set when the caller pinned `provider` (D16: disclosure is per provider).
+  // Routing — first pick and failure re-routes — stays inside that provider.
+  provider_pinned: z.boolean().optional(),
 });
 export type TaskRouting = z.infer<typeof taskRoutingSchema>;
 
@@ -165,6 +179,8 @@ export const taskSchema = z.object({
   capability: capabilityIdSchema,
   capability_version: z.number().int(),
   requester: requesterSchema,
+  // null only on tasks persisted before D16 enforcement (0005 migration).
+  initiated_by: initiatedBySchema.nullable(),
   thread_id: z.string().nullable(),
   project_id: z.string().nullable(),
   parent_task_id: z.string().nullable(), // research.continue, *.edit chains

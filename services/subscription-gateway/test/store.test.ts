@@ -62,6 +62,7 @@ function sampleTask(overrides: Partial<Task> = {}): Task {
     capability: "chat.create",
     capability_version: 1,
     requester: { kind: "bot", id: "caller-a", bot_id: "bot-1" },
+    initiated_by: { kind: "human", user_id: "user-1", action_id: "action-1" },
     thread_id: null,
     project_id: null,
     parent_task_id: null,
@@ -109,7 +110,7 @@ describe("migrations", () => {
     const versions = db
       .prepare("SELECT version FROM migrations ORDER BY version")
       .all() as { version: number }[];
-    expect(versions).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }]);
+    expect(versions).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }]);
     // a task inserted before re-running migrations survives
     insertTask(db, sampleTask());
     runMigrations(db, MIGRATIONS_DIR);

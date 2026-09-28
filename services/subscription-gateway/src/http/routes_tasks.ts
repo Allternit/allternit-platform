@@ -6,6 +6,7 @@ import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import {
   capabilityIdSchema,
+  initiatedBySchema,
   requesterSchema,
   taskConstraintsSchema,
   taskInputSchema,
@@ -36,6 +37,8 @@ const submitTaskSchema = z.object({
   parent_task_id: z.string().nullable().optional(),
   idempotency_key: z.string().nullable().optional(),
   requester_kind: requesterSchema.shape.kind.optional(),
+  // D16 — checked separately so a missing stamp answers 403, not 400.
+  initiated_by: z.unknown().optional(),
 });
 
 export function tasksRouter(deps: GatewayDeps): Router {
@@ -49,6 +52,16 @@ export function tasksRouter(deps: GatewayDeps): Router {
     }
     const body = parsed.data;
     const caller = callerOf(req);
+    // D16 — no fabric task runs without a human act behind it. Bots, MCP and
+    // schedules prepare tasks; the surface where a human confirms stamps this.
+    const initiated = initiatedBySchema.safeParse(body.initiated_by);
+    if (!initiated.success) {
+      res.status(403).json({
+        error: "initiated_by_required",
+        detail: 'every task needs initiated_by {kind:"human", user_id, action_id} from the surface where a human sent or confirmed it',
+      });
+      return;
+    }
 
     if (body.idempotency_key) {
       const existing = getTaskByIdempotency(deps.db, caller.caller_id, body.idempotency_key);
@@ -65,6 +78,7 @@ export function tasksRouter(deps: GatewayDeps): Router {
       capability: body.capability,
       capability_version: 1,
       requester: { kind: body.requester_kind ?? "bot", id: caller.caller_id },
+      initiated_by: initiated.data,
       thread_id: body.thread_id ?? null,
       project_id: body.project_id ?? null,
       parent_task_id: body.parent_task_id ?? null,

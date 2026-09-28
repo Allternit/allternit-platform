@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { createArtifactStore, type ArtifactSourceContext } from "../src/artifacts/store.js";
 import { issueToken } from "../src/security/tokens.js";
 import { listenTcp, listenUds, closeServer } from "../src/http/server.js";
-import {
+import { HUMAN,
   cleanupDir,
   makeDeps,
   tmpStateDir,
@@ -101,7 +101,7 @@ describe("scope enforcement (§A6.2)", () => {
     const res = await request(deps.app)
       .post("/v1/tasks")
       .set("authorization", `Bearer ${token(["tasks:read"])}`)
-      .send({ capability: "chat.create", prompt: "hi" });
+      .send({ initiated_by: HUMAN, capability: "chat.create", prompt: "hi" });
     expect(res.status).toBe(403);
     expect(res.body.error).toBe("forbidden_scope");
   });
@@ -120,7 +120,7 @@ describe("tasks routes", () => {
     const created = await request(deps.app)
       .post("/v1/tasks")
       .set("authorization", `Bearer ${t}`)
-      .send({ capability: "chat.create", prompt: "hello", inputs: [{ type: "text", name: "n", content: "c" }] });
+      .send({ initiated_by: HUMAN, capability: "chat.create", prompt: "hello", inputs: [{ type: "text", name: "n", content: "c" }] });
     expect(created.status).toBe(201);
     expect(created.body.status).toBe("queued");
     expect(created.body.requester).toEqual({ kind: "bot", id: "bot-1" });
@@ -134,9 +134,40 @@ describe("tasks routes", () => {
     expect(deps.outbox.undeliveredCount("bot-1")).toBe(1); // task.created
   });
 
+  it("D16: a task without a human initiated_by stamp → 403 initiated_by_required", async () => {
+    const t = token(["tasks:submit"], "bot-1");
+    for (const initiated_by of [
+      undefined,
+      { kind: "bot", user_id: "user-1", action_id: "a" },
+      { kind: "human", user_id: "", action_id: "a" },
+      { kind: "human", user_id: "user-1" },
+    ]) {
+      const res = await request(deps.app)
+        .post("/v1/tasks")
+        .set("authorization", `Bearer ${t}`)
+        .send({ initiated_by, capability: "chat.create", prompt: "hello" });
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe("initiated_by_required");
+    }
+    expect(deps.outbox.undeliveredCount("bot-1")).toBe(0);
+  });
+
+  it("D16: the human stamp persists on the task", async () => {
+    const t = token(["tasks:submit", "tasks:read"], "bot-1");
+    const created = await request(deps.app)
+      .post("/v1/tasks")
+      .set("authorization", `Bearer ${t}`)
+      .send({ initiated_by: HUMAN, capability: "chat.create", prompt: "hello" });
+    expect(created.status).toBe(201);
+    const fetched = await request(deps.app)
+      .get(`/v1/tasks/${created.body.task_id}`)
+      .set("authorization", `Bearer ${t}`);
+    expect(fetched.body.initiated_by).toEqual(HUMAN);
+  });
+
   it("idempotency_key replays return the existing task", async () => {
     const t = token(["tasks:submit"], "bot-1");
-    const body = { capability: "chat.create", prompt: "hello", idempotency_key: "k-1" };
+    const body = { initiated_by: HUMAN, capability: "chat.create", prompt: "hello", idempotency_key: "k-1" };
     const first = await request(deps.app).post("/v1/tasks").set("authorization", `Bearer ${t}`).send(body);
     const second = await request(deps.app).post("/v1/tasks").set("authorization", `Bearer ${t}`).send(body);
     expect(first.status).toBe(201);
@@ -148,7 +179,7 @@ describe("tasks routes", () => {
     const res = await request(deps.app)
       .post("/v1/tasks")
       .set("authorization", `Bearer ${token(["tasks:submit"])}`)
-      .send({ capability: "not-dot-named", prompt: "" });
+      .send({ initiated_by: HUMAN, capability: "not-dot-named", prompt: "" });
     expect(res.status).toBe(400);
   });
 
@@ -157,7 +188,7 @@ describe("tasks routes", () => {
     const created = await request(deps.app)
       .post("/v1/tasks")
       .set("authorization", `Bearer ${t}`)
-      .send({ capability: "chat.create", prompt: "hello" });
+      .send({ initiated_by: HUMAN, capability: "chat.create", prompt: "hello" });
     const id = created.body.task_id;
 
     const cancelled = await request(deps.app)

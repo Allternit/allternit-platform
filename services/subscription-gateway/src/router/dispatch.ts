@@ -4,7 +4,7 @@
 // (requeueAfterFailure, used by the worker boundary). The scheduler itself
 // stays a pure FIFO — the resolved (provider, account_id) pair keys its lane
 // via the task's routing fields, so no scheduler redesign.
-import type { CapabilityRouter, RouteDecision, Task } from "@allternit/subscription-fabric-contracts";
+import type { CapabilityRouter, FabricSnapshot, RouteDecision, Task } from "@allternit/subscription-fabric-contracts";
 import type { AdapterRegistry } from "../adapters/registry.js";
 import type { Scheduler } from "../queue/scheduler.js";
 import type { Db } from "../store/db.js";
@@ -18,14 +18,21 @@ export interface DispatchDeps {
   scheduler: Scheduler;
 }
 
-// True when the task left the pick to the fabric: auto mode with no explicit
-// provider/account pin. prefer/force pins keep their existing queue behavior.
+// True when the task left the account pick to the fabric: auto mode with no
+// account pin. A provider-only pin still resolves (within that provider) —
+// otherwise it sat in the (provider, UNROUTED) lane no worker drains.
+// prefer/force pins keep their existing queue behavior.
 export function needsResolution(task: Task): boolean {
-  return (
-    task.routing.mode === "auto" &&
-    task.routing.provider === undefined &&
-    task.routing.account_id === undefined
-  );
+  return task.routing.mode === "auto" && task.routing.account_id === undefined;
+}
+
+// The routing view for a task: a provider-pinned task only sees accounts of
+// that provider, so neither the first pick nor a failure re-route leaves it.
+function snapshotFor(deps: Pick<DispatchDeps, "db" | "registry">, task: Task): FabricSnapshot {
+  const snapshot = buildSnapshot(deps.db, deps.registry);
+  const pinned = task.routing.provider_pinned ? task.routing.provider : undefined;
+  if (pinned === undefined) return snapshot;
+  return { ...snapshot, accounts: snapshot.accounts.filter((a) => a.provider === pinned) };
 }
 
 // Resolve before insert/enqueue. Returns the task with route_decision set
@@ -35,7 +42,10 @@ export function resolveForNewTask(
   deps: Pick<DispatchDeps, "db" | "registry" | "router">,
   task: Task
 ): { task: Task; decision: RouteDecision } {
-  const decision = deps.router.resolve(task, buildSnapshot(deps.db, deps.registry));
+  if (task.routing.provider !== undefined && !task.routing.provider_pinned) {
+    task = { ...task, routing: { ...task.routing, provider_pinned: true } };
+  }
+  const decision = deps.router.resolve(task, snapshotFor(deps, task));
   let routed = task;
   if (decision.primary?.account_id) {
     const manifest = deps.registry.byId(decision.primary.adapter_id)?.manifest;
@@ -62,7 +72,7 @@ export function requeueAfterFailure(deps: DispatchDeps, taskId: string): RouteDe
   if (!task) return null;
   const attempt = task.attempts[task.attempts.length - 1];
   if (!attempt) return "stop";
-  const outcome = deps.router.onAttemptFailed(task, attempt, buildSnapshot(deps.db, deps.registry));
+  const outcome = deps.router.onAttemptFailed(task, attempt, snapshotFor(deps, task));
   if (outcome === "stop") return "stop";
 
   let routing = task.routing;

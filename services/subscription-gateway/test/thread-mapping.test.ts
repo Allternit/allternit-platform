@@ -11,7 +11,7 @@ import { issueToken } from "../src/security/tokens.js";
 import { openDatabase, type Db } from "../src/store/db.js";
 import { getActiveThreadMapping, getTask, insertTask, recordThreadTurn } from "../src/store/queries.js";
 import { runAttempt } from "../src/worker/worker.js";
-import {
+import { HUMAN,
   cleanupDir,
   dummyResolver,
   fakeLease,
@@ -129,7 +129,7 @@ describe("POST /v1/tasks chat.continue on a fabric thread", () => {
     const res = await request(deps.app)
       .post("/v1/tasks")
       .set("authorization", `Bearer ${tok}`)
-      .send({ capability: "chat.continue", prompt: "and then?", thread_id: "fab-1" });
+      .send({ initiated_by: HUMAN, capability: "chat.continue", prompt: "and then?", thread_id: "fab-1" });
     expect(res.status).toBe(201);
     expect(res.body.options).toMatchObject({
       provider_thread_id: "pt-1",
@@ -145,7 +145,7 @@ describe("POST /v1/tasks chat.continue on a fabric thread", () => {
     const res = await request(deps.app)
       .post("/v1/tasks")
       .set("authorization", `Bearer ${tok}`)
-      .send({ capability: "chat.continue", prompt: "x", thread_id: "nope" });
+      .send({ initiated_by: HUMAN, capability: "chat.continue", prompt: "x", thread_id: "nope" });
     expect(res.status).toBe(409);
     expect(res.body.error).toBe("thread_not_mapped");
   });

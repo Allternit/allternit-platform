@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
 import { createScheduler, type Scheduler } from "../src/queue/scheduler.js";
 import { issueToken } from "../src/security/tokens.js";
-import { cleanupDir, makeDeps, tmpStateDir, type TestDeps } from "./helpers.js";
+import { HUMAN, cleanupDir, makeDeps, tmpStateDir, type TestDeps } from "./helpers.js";
 
 let dir: string;
 let deps: TestDeps;
@@ -27,7 +27,7 @@ describe("task enqueue wiring", () => {
     const res = await request(deps.app)
       .post("/v1/tasks")
       .set("authorization", `Bearer ${t}`)
-      .send({ capability: "chat.create", prompt: "hello", priority: "interactive" });
+      .send({ initiated_by: HUMAN, capability: "chat.create", prompt: "hello", priority: "interactive" });
     expect(res.status).toBe(201);
     expect(res.body.status).toBe("queued");
     expect(scheduler.size()).toBe(1);
