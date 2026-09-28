@@ -77,6 +77,9 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
       // driver's ACP permission requests gate through the session's
       // PermissionNext policy instead of auto-approving.
       sessionID,
+      // The CLI runs its own tools, so it starts in the session's folder
+      // (its project's folder), not wherever gizzi was launched.
+      cwd: currentWorkdir(),
       // gizzi's session tools (pane document, pane browser, media) over MCP.
       mcp: sessionID ? bridgeConfig(sessionID) : undefined,
     })
@@ -238,6 +241,14 @@ function emptyStream(rawPrompt: unknown) {
       },
     }),
     rawCall: { rawPrompt, rawSettings: {} as Record<string, unknown> },
+  }
+}
+
+function currentWorkdir(): string | undefined {
+  try {
+    return Instance.workdir
+  } catch {
+    return undefined
   }
 }
 

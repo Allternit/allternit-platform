@@ -69,7 +69,7 @@ export const NotebookEditTool = Tool.define("notebook_edit", {
       throw new Error("filePath is required")
     }
 
-    const filePath = path.isAbsolute(params.filePath) ? params.filePath : path.join(Instance.directory, params.filePath)
+    const filePath = path.isAbsolute(params.filePath) ? params.filePath : path.join(Instance.workdir, params.filePath)
     await assertExternalDirectory(ctx, filePath)
 
     if (!filePath.endsWith(".ipynb")) {

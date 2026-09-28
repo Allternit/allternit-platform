@@ -789,7 +789,10 @@ export const AgentCompatRoutes = () =>
           }
         })
 
-        const turn = SessionPrompt.prompt({ sessionID, parts, model: modelRef, metadata })
+        // The session's working folder (its project's folder), same field
+        // allternit-api's bridge forwards.
+        const workdir = typeof body.workdir === "string" ? body.workdir : undefined
+        const turn = SessionPrompt.prompt({ sessionID, parts, model: modelRef, metadata, workdir })
           .then(() => push(finish("complete")))
           .catch((err: any) => {
             // Pass the engine's structured error through so clients can

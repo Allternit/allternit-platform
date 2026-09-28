@@ -12,7 +12,7 @@ export namespace ToolDispatcher {
   // dispatcher-level tests, some ACP/bot paths) — fall back to process.cwd().
   function hookCwd(): string {
     try {
-      return Instance.directory;
+      return Instance.workdir;
     } catch {
       return process.cwd();
     }

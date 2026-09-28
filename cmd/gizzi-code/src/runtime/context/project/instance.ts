@@ -15,6 +15,12 @@ interface Context {
   project: Project.Info
 }
 const context = Context.create<Context>("instance")
+// A session's working folder (e.g. its project's folder) when it differs from
+// the instance directory. Kept apart from the instance context on purpose:
+// instance state (bus, permissions, session status) is keyed by the instance
+// directory, so a session keeps its events where its clients listen while its
+// tools and CLI agents run in the folder.
+const workdirContext = Context.create<string>("instance.workdir")
 const cache = new Map<string, Promise<Context>>()
 
 const disposal = {
@@ -54,6 +60,17 @@ export const Instance = {
   get worktree() {
     return context.use().worktree
   },
+  /** Where this turn's tools resolve paths and run: the session's folder, else the instance directory. */
+  get workdir() {
+    try {
+      return workdirContext.use()
+    } catch {
+      return context.use().directory
+    }
+  },
+  withWorkdir<R>(directory: string, fn: () => R): R {
+    return workdirContext.provide(directory, fn)
+  },
   get project() {
     return context.use().project
   },
@@ -80,6 +97,16 @@ export const Instance = {
       resolvedDir = Instance.directory
     }
     if (Filesystem.contains(resolvedDir, resolved)) return true
+    const workdir = Instance.workdir
+    if (workdir !== Instance.directory) {
+      let resolvedWorkdir: string
+      try {
+        resolvedWorkdir = fs.realpathSync(workdir)
+      } catch {
+        resolvedWorkdir = workdir
+      }
+      if (Filesystem.contains(resolvedWorkdir, resolved)) return true
+    }
     // Non-git projects set worktree to "/" which would match ANY absolute path.
     // Skip worktree check in this case to preserve external_directory permissions.
     if (Instance.worktree === "/") return false
