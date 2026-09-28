@@ -269,6 +269,9 @@ class PlanningLoop:
         self.batch_client = batch_client
         self.code_client = code_client
         self._cancelled = False
+        # Steering: notes the user sends while the run is going (ACI's box or
+        # the session chat). Folded into the task before the next step.
+        self._steer_notes: List[str] = []
         self._monitor_history: List[Dict[str, Any]] = []
         # Shadow head per-run state: the previous step's element table, kept
         # for the [SINCE LAST STEP] delta block. Reset at the start of every
@@ -288,6 +291,24 @@ class PlanningLoop:
     def cancel(self) -> None:
         """Cancel a running loop."""
         self._cancelled = True
+
+    def steer(self, text: str) -> bool:
+        """Queue guidance from the user for the next step. False if empty or the run ended."""
+        note = (text or "").strip()
+        if not note or self._cancelled:
+            return False
+        self._steer_notes.append(note[:2000])
+        return True
+
+    def _apply_steering(self, task: str, run_id: str, step_num: int) -> str:
+        """Fold queued user guidance into the task text (kept for every later step)."""
+        if not self._steer_notes:
+            return task
+        notes, self._steer_notes = self._steer_notes, []
+        for note in notes:
+            self._emit({"type": "run.steered", "run_id": run_id, "step": step_num, "text": note})
+        lines = "\n".join(f"- {note}" for note in notes)
+        return task + "\n\n[USER GUIDANCE DURING THIS RUN — follow it; newer overrides older]:\n" + lines
 
     async def run(self, task: str, session_id: str, run_id: Optional[str] = None) -> PlanningLoopResult:
         """Run the planning loop to completion."""
@@ -397,6 +418,8 @@ class PlanningLoop:
                 if total_cost >= self.config.max_cost_usd:
                     stop_reason = StopReason.MAX_COST
                     break
+
+                augmented_task = self._apply_steering(augmented_task, run_id, step_num)
 
                 step = LoopStep(step=step_num, run_id=run_id, session_id=session_id)
                 step.before_screenshot_b64 = _bytes_to_b64(current_screenshot) if current_screenshot else ""
