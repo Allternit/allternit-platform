@@ -12,8 +12,16 @@
 //!
 //! - `Version`: expects 12 bytes starting with "RFB ". Forwarded verbatim.
 //! - `SecurityChoice`: 1 byte. `1` (None) -> `ClientInit`; `2` (VNC auth) ->
-//!   `AuthResponse`; anything else -> `Passthrough`.
+//!   `AuthResponse`; `30` (Apple Remote Desktop) -> `ArdResponse`; anything
+//!   else -> `Passthrough`.
 //! - `AuthResponse`: 16 bytes of challenge response, then `ClientInit`.
+//! - `ArdResponse`: 128 bytes of encrypted credentials plus the client's DH
+//!   public key (the server's key length), then `ClientInit`. macOS Screen
+//!   Sharing offers ARD first, so paired Macs and this Mac land here.
+//!
+//! The ARD response length depends on the server's DH key length, which only
+//! the server sends, so the proxy also passes every server->client byte to
+//! [`RfbReadOnlyFilter::observe_server`].
 //! - `ClientInit`: 1 shared-flag byte, then `Normal`.
 //! - `Normal`: parses typed client messages. SetPixelFormat (0, 20 bytes),
 //!   SetEncodings (2, 4 + 4n), FramebufferUpdateRequest (3, 10 bytes), and
@@ -23,7 +31,7 @@
 //!   so the stream stays aligned.
 //!
 //! Degradation: when the client picks a security mechanism this filter does not
-//! understand (anything but None/VNC auth), or sends bytes that do not look
+//! understand (anything but None/VNC auth/ARD), or sends bytes that do not look
 //! like an RFB version string, the filter switches to `Passthrough` and sets
 //! [`RfbReadOnlyFilter::unfilterable`]: read-only can no longer be enforced
 //! for the rest of the connection. The proxy site logs this once.
@@ -37,6 +45,9 @@ enum RfbState {
     SecurityChoice,
     /// Expecting the 16-byte VNC-auth challenge response.
     AuthResponse,
+    /// Expecting the ARD response: 128 bytes of credentials + the client's
+    /// DH public key (as long as the server's).
+    ArdResponse,
     /// Expecting the 1-byte ClientInit shared flag.
     ClientInit,
     /// Handshake complete; parse typed client messages.
@@ -52,6 +63,31 @@ pub struct RfbReadOnlyFilter {
     state: RfbState,
     buf: Vec<u8>,
     unfilterable: bool,
+    server: ServerHandshake,
+}
+
+/// What the filter has seen of the server's side of the handshake: the
+/// version string, the security-type list, then (for ARD) the 2-byte DH
+/// generator and 2-byte key length.
+#[derive(Debug, Default)]
+struct ServerHandshake {
+    seen: Vec<u8>,
+    done: bool,
+}
+
+impl ServerHandshake {
+    /// Offset of the first byte after the security-type list, once known.
+    fn types_end(&self) -> Option<usize> {
+        let count = *self.seen.get(12)? as usize;
+        (count > 0 && self.seen.len() >= 13 + count).then_some(13 + count)
+    }
+
+    /// The ARD DH key length (bytes 2..4 after the type list).
+    fn ard_key_len(&self) -> Option<usize> {
+        let at = self.types_end()?;
+        let bytes = self.seen.get(at + 2..at + 4)?;
+        Some(u16::from_be_bytes([bytes[0], bytes[1]]) as usize)
+    }
 }
 
 impl Default for RfbReadOnlyFilter {
@@ -66,6 +102,20 @@ impl RfbReadOnlyFilter {
             state: RfbState::Version,
             buf: Vec::new(),
             unfilterable: false,
+            server: ServerHandshake::default(),
+        }
+    }
+
+    /// Record server->client bytes. Only the handshake prefix is kept (enough
+    /// to read the ARD key length); after that this is a no-op.
+    pub fn observe_server(&mut self, data: &[u8]) {
+        if self.server.done {
+            return;
+        }
+        self.server.seen.extend_from_slice(data);
+        if self.server.ard_key_len().is_some() || self.server.seen.len() > 512 {
+            self.server.done = true;
+            self.server.seen.truncate(512);
         }
     }
 
@@ -112,6 +162,7 @@ impl RfbReadOnlyFilter {
                     self.state = match v {
                         1 => RfbState::ClientInit,
                         2 => RfbState::AuthResponse,
+                        30 => RfbState::ArdResponse,
                         _ => {
                             self.enter_passthrough(&mut out);
                             break;
@@ -124,6 +175,21 @@ impl RfbReadOnlyFilter {
                     }
                     out.extend_from_slice(&self.buf[..16]);
                     self.buf.drain(..16);
+                    self.state = RfbState::ClientInit;
+                }
+                RfbState::ArdResponse => {
+                    // The server's DH parameters precede the client's
+                    // response, so the key length is known by the time
+                    // the response arrives; until then, hold the bytes.
+                    let Some(key_len) = self.server.ard_key_len() else {
+                        break;
+                    };
+                    let len = 128 + key_len;
+                    if self.buf.len() < len {
+                        break;
+                    }
+                    out.extend_from_slice(&self.buf[..len]);
+                    self.buf.drain(..len);
                     self.state = RfbState::ClientInit;
                 }
                 RfbState::ClientInit => {
@@ -308,6 +374,43 @@ mod tests {
         assert_eq!(f.feed(&key), key);
         let cut = [6u8, 0, 0, 0, 0, 0, 0, 0];
         assert_eq!(f.feed(&cut), cut);
+    }
+
+    /// macOS Screen Sharing: server offers ARD (30), client answers with
+    /// 128 bytes of credentials + its DH public key.
+    #[test]
+    fn apple_remote_desktop_auth_stays_filtered() {
+        let mut f = RfbReadOnlyFilter::new();
+        let key_len = 128usize;
+        let mut server = b"RFB 003.889\n".to_vec();
+        server.extend_from_slice(&[2, 30, 2]); // two types: ARD, VNC auth
+        f.observe_server(&server);
+
+        let mut out = f.feed(b"RFB 003.008\n");
+        out.extend_from_slice(&f.feed(&[30]));
+        // DH params: generator (2), key length (2), prime, server public key.
+        let mut params = vec![0, 2];
+        params.extend_from_slice(&(key_len as u16).to_be_bytes());
+        params.extend(std::iter::repeat(7u8).take(key_len * 2));
+        // The response can arrive split, and before the params are read.
+        let response = vec![0xABu8; 128 + key_len];
+        assert!(f.feed(&response[..100]).is_empty());
+        f.observe_server(&params[..3]);
+        assert!(f.feed(&[]).is_empty());
+        f.observe_server(&params[3..]);
+        out.extend_from_slice(&f.feed(&response[100..]));
+        out.extend_from_slice(&f.feed(&[1])); // shared flag
+        assert_eq!(
+            out,
+            [&b"RFB 003.008\n"[..], &[30u8], &response[..], &[1u8]].concat()
+        );
+        assert!(!f.unfilterable());
+
+        // Input is dropped; display requests flow.
+        assert!(f.feed(&[5, 0, 0, 0, 0, 0]).is_empty());
+        assert!(f.feed(&[4, 1, 0, 0, 0, 0, 0, 97]).is_empty());
+        let fur = [3u8, 0, 0, 0, 0, 0, 10, 0, 10, 0];
+        assert_eq!(f.feed(&fur), fur);
     }
 
     #[test]
