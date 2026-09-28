@@ -10,12 +10,20 @@
   `limits.land_at` pauses before the next turn fails. `/resume-now`
   continues sooner, on the model with the most limit left when one is
   suggested. Sending a prompt yourself takes over.
+- `/fork <directive>` starts a background fork of the conversation that
+  works on the directive and reports back when it's done.
+- meta+j opens a terminal panel: a shell that keeps running between visits.
+  meta+j inside it returns to gizzi. Needs tmux for the shell to persist.
 
 ### Changed
 - Tool cards show the Allternit orb instead of "● done": it moves while the
   tool runs (searching, writing or working) and settles when it's done.
 - Every turn ends with one line, "▞▪▚ Gizzi forged for 3.5s · model · …":
   the duration and the run stats are no longer printed twice.
+- Bash permission checks parse the command into a syntax tree. Commands
+  that can't be checked statically, such as `$(...)` or `eval`, ask first.
+- Preferences and custom themes from the old `~/.config/gizzi` folder are
+  copied into `~/.config/gizzi-code` once. The old folder isn't changed.
 
 ### Fixed
 - `gizzi login` can now be approved in Allternit Desktop: Desktop asks
@@ -30,6 +38,11 @@
   `tailscale up` through a private file.
 - When the mesh sidecar failed, falling back to tailscale could hang for
   about five seconds.
+- After returning from an external editor or shell, most of the screen
+  stayed blank until ctrl+l.
+- The model picker never listed discovered local and subprocess models: it
+  loaded the discovery module from a wrong path.
+- Setting `USER_TYPE=ant` crashed the model picker and the system prompt.
 
 ## 2.1.4 (2026-09-28)
 

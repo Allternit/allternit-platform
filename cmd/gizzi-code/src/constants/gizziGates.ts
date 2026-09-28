@@ -20,6 +20,8 @@ const GIZZI_GATE_DEFAULTS: Readonly<Record<string, unknown>> = {
   // so it is never active without the user accepting it. ('opt-in' would
   // require a CLI flag gizzi doesn't have, leaving auto mode unreachable.)
   tengu_auto_mode_config: { enabled: 'enabled' },
+  // TERMINAL_PANEL: meta+j opens a persistent shell (tmux-backed)
+  tengu_terminal_panel: true,
 }
 
 export function gizziGateDefault<T>(gate: string, fallback: T): T {

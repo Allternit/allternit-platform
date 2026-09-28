@@ -1,16 +1,16 @@
 {
   "version": 1,
   "generatedFrom": "edcf804f88519fc628fe2e524ff13b26e3636326",
-  "batchCount": 109,
+  "batchCount": 110,
   "stats": {
-    "totalNocheck": 592,
+    "totalNocheck": 588,
     "excludedCompilerArtifacts": 0,
     "excludedVendored": 93,
-    "totalQueueFiles": 478,
-    "totalQueueLoc": 200651,
-    "quarantined": 21,
+    "totalQueueFiles": 475,
+    "totalQueueLoc": 198791,
+    "quarantined": 20,
     "quarantinedByReason": {
-      "suspect-dead-shim": 19,
+      "suspect-dead-shim": 18,
       "suspect-malformed": 2
     },
     "zeroImporter": 187,
@@ -687,7 +687,6 @@
         "src/cli/ui/ink-app/utils/permissions/classifierDecision.ts",
         "src/cli/ui/ink-app/utils/forkedAgent.ts",
         "src/cli/ui/ink-app/services/PromptSuggestion/promptSuggestion.ts",
-        "src/cli/ui/ink-app/constants/prompts.ts",
         "src/cli/ui/ink-app/utils/processUserInput/processSlashCommand.tsx",
         "src/cli/ui/ink-app/services/lsp/manager.ts",
         "src/cli/ui/ink-app/tools/LSPTool/LSPTool.ts",
@@ -695,7 +694,7 @@
         "src/cli/ui/ink-app/tools/AgentTool/prompt.ts",
         "src/shared/utils/tokens.ts"
       ],
-      "loc": 7244,
+      "loc": 6402,
       "twins": [
         {
           "runtime": "src/runtime/services/mcp/utils.ts",
@@ -834,7 +833,6 @@
       "files": [
         "src/cli/ui/ink-app/state/selectors.ts",
         "src/cli/ui/ink-app/components/tasks/taskStatusUtils.tsx",
-        "src/cli/ui/ink-app/components/Spinner.tsx",
         "src/cli/ui/ink-app/commands/install-github-app/OAuthFlowStep.tsx",
         "src/cli/ui/ink-app/commands/install-github-app/install-github-app.tsx",
         "src/cli/ui/ink-app/commands/install-github-app/index.ts",
@@ -865,7 +863,7 @@
         "src/cli/ui/ink-app/utils/sideQuestion.ts",
         "src/cli/ui/ink-app/commands/compact/compact.ts"
       ],
-      "loc": 7156,
+      "loc": 6716,
       "twins": [],
       "state": "NEW"
     },
@@ -1481,7 +1479,6 @@
         "src/shared/utils/attribution.ts",
         "src/cli/ui/ink-app/utils/backgroundHousekeeping.ts",
         "src/cli/ui/ink-app/bridge/initReplBridge.ts",
-        "src/shared/utils/model/modelOptions.ts",
         "src/shared/utils/telemetryAttributes.ts",
         "src/shared/utils/telemetry/events.ts",
         "src/shared/utils/plugins/loadPluginOutputStyles.ts",
@@ -1494,7 +1491,7 @@
         "src/shared/utils/hooks/execAgentHook.ts",
         "src/shared/utils/sessionStart.ts"
       ],
-      "loc": 7169,
+      "loc": 6591,
       "twins": [],
       "state": "NEW"
     },
@@ -1651,6 +1648,16 @@
       "note": "Burned 2026-09-19 (ao/ts-burn-tail8): FINAL pilot-12 kept-header batch — 9/9 files, 0 escalations. 7 ant-DCE recasts (external-as-string); TS2614 progress drift mirrored locally (AgentToolProgress/MCPProgress/TaskOutputProgress per WebSearchTool TODO(types) pattern — ink-app/types/tools.ts is a dead stub); NestedMessage content unions via existing isContentBlockArray/isToolUseBlock guards; BetaUsage explicit ?? null defaults; resume.tsx in-guard + UUID brand cast (loose brand flagged for sweep). Escalations: none. Identity: live -9 + recorded +9.",
       "burnedFiles": 9,
       "burnedLoc": 3276
+    },
+    {
+      "id": "b444",
+      "files": [],
+      "loc": 0,
+      "twins": [],
+      "state": "DONE",
+      "burnedFiles": 4,
+      "burnedLoc": 2472,
+      "note": "gizzi-flags-fork-hygiene (2026-09-28): removed @ts-nocheck from constants/prompts.ts, components/Spinner.tsx, shared/utils/model/modelOptions.ts (from b0428/b0405/b0437) and the quarantined ink-app utils/model/modelOptions.ts (its dead-shim import was a wrong relative path to runtime/providers/discovery, now fixed). Fixed the undefined names that kept them nocheck (getAntModels/getAntModelOverrideConfig imports, dead ant-only TTFT block). tsc exit 0."
     }
   ],
   "quarantined": [
@@ -1708,11 +1715,6 @@
       "path": "src/cli/ui/ink-app/utils/attachments.ts",
       "reason": "suspect-dead-shim",
       "detail": "unresolved: ../services/sessionTranscript/sessionTranscript.js, ../services/skillSearch/signals.js"
-    },
-    {
-      "path": "src/cli/ui/ink-app/utils/model/modelOptions.ts",
-      "reason": "suspect-dead-shim",
-      "detail": "unresolved: ../../../../runtime/providers/discovery/index.js"
     },
     {
       "path": "src/runtime/gizzi-core/setup.ts",

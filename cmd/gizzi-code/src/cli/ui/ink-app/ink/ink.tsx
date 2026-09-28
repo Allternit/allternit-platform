@@ -408,6 +408,10 @@ export default class Ink {
       this.resetFramesForAltScreen();
     } else {
       this.repaint();
+      // Same as forceRedraw(): without this the first frame blits from the
+      // empty front frame and leaves most of the screen blank until ctrl+l
+      // (seen returning from the meta+j terminal panel).
+      this.prevFrameContaminated = true;
     }
     this.resume();
     // Re-enable focus reporting and extended key reporting — terminal

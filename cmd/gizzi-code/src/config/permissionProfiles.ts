@@ -5,7 +5,7 @@
  * `permission_profiles` config field with standalone profile files.
  *
  * Profile files live in:
- *   ~/.config/gizzi/permission-profiles/<name>.json   (user scope)
+ *   ~/.config/gizzi-code/permission-profiles/<name>.json   (user scope)
  *   .gizzi/permission-profiles/<name>.json            (project scope)
  *
  * Each profile file defines a set of permission rules that are merged into
