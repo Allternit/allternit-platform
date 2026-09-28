@@ -101,6 +101,22 @@ describe("artifacts/store", () => {
     expect(existsSync(join(dir, "artifacts", "tmp", id))).toBe(false);
   });
 
+  it("quarantine failure → failed, and no unquarantined file is left in the store", async () => {
+    const sink = createArtifactStore(db, {
+      artifactsDir: join(dir, "artifacts"),
+      source: source(),
+      setQuarantine: () => {
+        throw new Error("no quarantine tool");
+      },
+    });
+    const id = await sink.begin(REF, { format: "png" });
+    await sink.write(id, PNG);
+    await expect(sink.commit(id, fileOf(PNG, "png", "image/png"))).rejects.toThrow(/quarantine failed/);
+    const sha = sha256(PNG);
+    expect(existsSync(join(dir, "artifacts", sha.slice(0, 2), sha))).toBe(false);
+    expect(getArtifact(db, id)?.storage.retrieval_state).toBe("failed");
+  });
+
   it("MIME mismatch (declared pdf, magic bytes png) → failed", async () => {
     const sink = createArtifactStore(db, { artifactsDir: join(dir, "artifacts"), source: source() });
     const id = await sink.begin(REF, { format: "pdf" });

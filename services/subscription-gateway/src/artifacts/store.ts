@@ -7,6 +7,7 @@ import { createHash, randomUUID, type Hash } from "node:crypto";
 import {
   chmodSync,
   closeSync,
+  existsSync,
   mkdirSync,
   openSync,
   readSync,
@@ -198,8 +199,16 @@ export function createArtifactStore(db: Db, config: ArtifactStoreConfig): Artifa
       const relPath = `${sha256.slice(0, 2)}/${sha256}`;
       const target = join(config.artifactsDir, relPath);
       mkdirSync(dirname(target), { recursive: true });
+      const preexisting = existsSync(target);
       renameSync(p.tmpPath, target);
-      setQuarantine(target);
+      try {
+        setQuarantine(target);
+      } catch (err) {
+        // Never leave an unquarantined file in the store. A preexisting
+        // target is an identical, already-quarantined artifact — keep it.
+        if (!preexisting) rmSync(target, { force: true });
+        return failCommit(`quarantine failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
 
       updateArtifactStorage(db, artifactId, {
         retrieval_state: "local",
