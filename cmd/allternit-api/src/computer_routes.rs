@@ -1600,6 +1600,51 @@ fn held_response(lease: &Lease) -> Response {
         .into_response()
 }
 
+/// This computer (the Mac running this API) takes mouse and keyboard only
+/// from the person holding its control lease: `Some(Ok)` = go ahead,
+/// `Some(Err)` = refuse, `None` = not this computer (normal path). Holding
+/// control is the explicit act, so there's no per-action confirmation on top
+/// (the same rule as a controller's full-control VNC token).
+async fn this_device_input_gate(
+    state: &Arc<AppState>,
+    user: &AuthUser,
+    id: &str,
+    headers: &axum::http::HeaderMap,
+) -> Option<Result<(), Response>> {
+    let computer = match fetch_computer(state, user, id).await {
+        Ok(Some(c)) => c,
+        Ok(None) => return Some(Err(error_response(StatusCode::NOT_FOUND, "computer not found"))),
+        Err(resp) => return Some(Err(resp)),
+    };
+    if !is_this_device(&computer) {
+        return None;
+    }
+    let caller = user_holder(user, headers);
+    let db = state.db.clone();
+    let computer_id = computer.id.clone();
+    let current = tokio::task::spawn_blocking(move || {
+        db.connect().ok().and_then(|conn| lease::current(&conn, &computer_id, chrono::Utc::now().timestamp()).ok().flatten())
+    })
+    .await
+    .ok()
+    .flatten();
+    Some(match current {
+        Some(lease) if lease.holder.kind == HolderKind::User && lease.holder.id == caller.id => {
+            touch_computer_activity(&state.db, id);
+            Ok(())
+        }
+        Some(lease) => Err(held_response(&lease)),
+        None => Err((
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "take_control_first",
+                "message": "Take control of this computer to use its mouse and keyboard.",
+            })),
+        )
+            .into_response()),
+    })
+}
+
 /// Input is allowed when nobody holds control or the caller does.
 async fn control_gate(state: &Arc<AppState>, computer_id: &str, caller: &Holder) -> Result<(), Response> {
     let db = state.db.clone();
@@ -1831,6 +1876,12 @@ async fn computer_mouse(
     headers: axum::http::HeaderMap,
     Json(input): Json<MouseInput>,
 ) -> Response {
+    if let Some(resp) = this_device_input_gate(&state, &user, &id, &headers).await {
+        return match resp {
+            Ok(()) => crate::this_device_input::run(crate::this_device_input::mouse_call(&input)).await,
+            Err(resp) => resp,
+        };
+    }
     // Product-scoped confirmation policy (D2): risky/irreversible actions on
     // every computer-use entry route need a hash-bound grant, enforced here
     // before the request reaches the guest.
@@ -1877,6 +1928,12 @@ async fn computer_keyboard(
     headers: axum::http::HeaderMap,
     Json(input): Json<KeyboardInput>,
 ) -> Response {
+    if let Some(resp) = this_device_input_gate(&state, &user, &id, &headers).await {
+        return match resp {
+            Ok(()) => crate::this_device_input::run(crate::this_device_input::keyboard_call(&input)).await,
+            Err(resp) => resp,
+        };
+    }
     if let Err(denial) = enforce_control_confirmation(
         &state,
         &user.user_id,
