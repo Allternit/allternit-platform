@@ -242,6 +242,12 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
       ctx.log.warn("image chat is gone; opening a new one", { image_chat_url: chatUrl });
     }
     const project = typeof task.options.image_project === "string" ? task.options.image_project.trim() : "";
+    const projectUrl = typeof task.options.image_project_url === "string" ? task.options.image_project_url : null;
+    if (project && projectUrl && projectUrl.startsWith(`${origin}/`)) {
+      await page.goto(projectUrl, { waitUntil: "domcontentloaded" });
+      if (PROJECT_PAGE_PATTERN.test(page.url())) return false;
+      ctx.log.warn("image project page is gone; looking the project up", { image_project_url: projectUrl });
+    }
     await this.openFreshChat(ctx);
     if (project && !(await this.openProject(ctx, project))) {
       ctx.log.warn("image project unavailable; using a plain new chat", { project });
@@ -257,21 +263,40 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
   private async openProject(ctx: ExecutionContext, name: string): Promise<boolean> {
     const page = sdkPage(ctx.page);
     const resolver = ctx.selectors as SdkSelectorResolver;
-    const section = await resolver.tryResolveLocator("projects_section");
-    if (!section) return false;
+    // The sidebar renders after the load event, and its project list after
+    // that: wait for the section, then give the list time to fill before
+    // concluding the project is missing (a premature create duplicates it).
+    let section = null;
+    for (let i = 0; i < 40 && !section; i++) {
+      section = await resolver.tryResolveLocator("projects_section");
+      if (!section) await page.waitForTimeout(250);
+    }
+    if (!section) {
+      ctx.log.warn("projects sidebar section not found");
+      return false;
+    }
     const link = section.first().getByRole("link", { name, exact: true });
+    for (let i = 0; i < 20 && (await link.count()) === 0; i++) await page.waitForTimeout(250);
     if ((await link.count()) > 0) {
       await ctx.pacing.beforeAction();
       await link.first().click();
     } else {
       const create = await resolver.tryResolveLocator("project_create");
-      if (!create) return false;
+      if (!create) {
+        ctx.log.warn("project create button not found");
+        return false;
+      }
       await section.first().hover();
       await ctx.pacing.beforeAction();
       await create.first().click({ force: true });
       const dialog = page.getByRole("dialog", { name: /create project/i });
       const nameBox = dialog.getByRole("textbox", { name: /project name/i });
-      if ((await nameBox.count()) === 0) return false;
+      try {
+        await nameBox.waitFor({ timeout: 5000 });
+      } catch {
+        ctx.log.warn("create-project dialog did not open");
+        return false;
+      }
       await nameBox.fill(name);
       await ctx.pacing.beforeAction();
       await dialog.getByRole("button", { name: /^create project$/i }).click();
@@ -280,22 +305,25 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
       if (PROJECT_PAGE_PATTERN.test(page.url())) return true;
       await page.waitForTimeout(250);
     }
+    ctx.log.warn("project page did not open", { url: page.url() });
     return false;
   }
 
-  // A reused chat renders earlier images lazily; mark them only once the
-  // gallery count holds, or a late one would pass for this run's image.
-  private async waitForGalleryStable(ctx: ExecutionContext, capMs = 10000): Promise<void> {
+  // A reused image chat renders its earlier images lazily; mark them only
+  // once they are in the DOM and the count holds — it always has at least one
+  // (live: a 0 == 0 "stable" read let the earlier image be re-captured).
+  private async waitForGalleryStable(ctx: ExecutionContext, capMs = 15000): Promise<void> {
     const page = sdkPage(ctx.page);
     const resolver = ctx.selectors as SdkSelectorResolver;
     let last = -1;
     for (let waited = 0; waited < capMs; waited += 500) {
       const gallery = await resolver.tryResolveLocator("image_result");
       const count = gallery ? await gallery.locator("img").count() : 0;
-      if (count === last) return;
+      if (count > 0 && count === last) return;
       last = count;
       await page.waitForTimeout(500);
     }
+    ctx.log.warn("reused image chat showed no earlier images", { url: page.url() });
   }
 
   // D5 — click the temp-chat toggle unless already on; plans without the
@@ -562,13 +590,14 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
           .locator(NEW_IMG)
           .evaluateAll((els) => els.map((el) => el.getAttribute("data-artifact-id")))
       : [];
+    const chatUrl = page.url();
     for (const [i, f] of result.files.entries()) {
       yield {
         t: "artifact.ready",
         ref: {
           provider: this.manifest.provider,
           provider_artifact_id: ids[i] ?? f.sha256.slice(0, 16),
-          provider_url: url.startsWith("about:") ? "about:blank" : url,
+          provider_url: chatUrl.startsWith("about:") ? "about:blank" : chatUrl,
           provider_url_expires_at: null,
         },
         meta: { type: "image", mime_type: f.mime_type, format: f.format, title: task.prompt.slice(0, 120) },

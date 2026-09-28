@@ -919,6 +919,15 @@ export function getActiveImageChat(db: Db, provider: string, accountId: string):
   return row ?? null;
 }
 
+export function getLatestImageChat(db: Db, provider: string, accountId: string): ImageChat | null {
+  const row = db
+    .prepare(
+      "SELECT * FROM image_chats WHERE provider = ? AND account_id = ? ORDER BY last_used_at DESC LIMIT 1"
+    )
+    .get(provider, accountId) as ImageChat | undefined;
+  return row ?? null;
+}
+
 export interface ImageChatUse {
   provider: string;
   account_id: string;

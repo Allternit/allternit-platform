@@ -387,7 +387,8 @@ describe("execute e2e against fixtures", () => {
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
   const OLD_PNG =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
-  function imageApp(opts: { oldImage?: boolean; projects?: "link" | "create" }): string {
+  // lateMs: the sidebar and earlier turns render that long after load (live).
+  function imageApp(opts: { oldImage?: boolean; projects?: "link" | "create"; lateMs?: number }): string {
     const projects =
       opts.projects === "link"
         ? `<section data-app-action-sidebar-section-heading="Projects"><a href="/g/g-p-abc-allternit/project">Allternit</a></section>`
@@ -400,7 +401,14 @@ describe("execute e2e against fixtures", () => {
            <div data-testid="generated-image-gallery"><button data-testid="generated-image-preview">
            <img alt="old" src="data:image/png;base64,${OLD_PNG}"></button></div></div>`
       : "";
-    return `<nav>${projects}</nav><div id="dlg"></div><main><div id="thread">${old}</div>
+    const late = opts.lateMs
+      ? `<script>setTimeout(() => {
+           document.querySelector("nav").innerHTML = ${JSON.stringify(projects)};
+           thread.insertAdjacentHTML("afterbegin", ${JSON.stringify(old)});
+           const np2 = document.getElementById("np"); if (np2) np2.onclick = window.__openDialog;
+         }, ${opts.lateMs});</script>`
+      : "";
+    return `<nav>${opts.lateMs ? "" : projects}</nav><div id="dlg"></div><main><div id="thread">${opts.lateMs ? "" : old}</div>
       <button aria-label="Open profile menu">me</button>
       <div data-composer-body>
         <button aria-label="Add files and more" id="plus">+</button><span id="chips"></span>
@@ -410,7 +418,7 @@ describe("execute e2e against fixtures", () => {
       <div id="menu" hidden><div id="create">Create image</div></div></main>
       <script>
         const np = document.getElementById("np");
-        if (np) np.onclick = () => {
+        window.__openDialog = () => {
           dlg.innerHTML = '<div role="dialog" aria-label="Create project"><input aria-label="Project name"><button id="cp">Create project</button></div>';
           cp.onclick = () => {
             window.__created = dlg.querySelector("input").value;
@@ -418,6 +426,7 @@ describe("execute e2e against fixtures", () => {
             history.pushState({}, "", "/g/g-p-abc-allternit/project");
           };
         };
+        if (np) np.onclick = window.__openDialog;
         plus.onclick = () => { menu.hidden = false; };
         create.onclick = () => { menu.hidden = true; chips.innerHTML = '<button aria-label="Remove Create image">Create image</button>'; };
         send.onclick = () => {
@@ -431,7 +440,7 @@ describe("execute e2e against fixtures", () => {
             chips.innerHTML = "";
           }, 400);
         };
-      </script>`;
+      </script>${late}`;
   }
   async function imagePage(html: string, gone?: string): Promise<Page> {
     const page = await browser.newPage();
@@ -498,6 +507,40 @@ describe("execute e2e against fixtures", () => {
     expect(events.map((e) => e.t)).not.toContain("error");
     expect(page.url()).toBe("https://chatgpt.com/g/g-p-abc-allternit/project");
     expect(events.filter((e) => e.t === "artifact.ready")).toHaveLength(1);
+    await page.close();
+  }, 30000);
+
+  it("image chat reuse waits for LATE-rendering earlier images before marking them (live bug)", async () => {
+    const page = await imagePage(imageApp({ oldImage: true, lateMs: 1200 }));
+    const events = await runImageTask(page, { image_chat_url: "https://chatgpt.com/c/img-chat-late" });
+    expect(events.map((e) => e.t)).not.toContain("error");
+    const { createHash } = await import("node:crypto");
+    const genSha = createHash("sha256").update(Buffer.from(GEN_PNG, "base64")).digest("hex");
+    const ready = events.filter((e) => e.t === "artifact.ready");
+    expect(ready).toHaveLength(1);
+    expect(ready[0].t === "artifact.ready" && ready[0].ref.provider_artifact_id).toBe(genSha.slice(0, 16));
+    await page.close();
+  }, 30000);
+
+  it("image project: waits for a LATE sidebar and opens the existing project (live bug)", async () => {
+    const page = await imagePage(imageApp({ projects: "link", lateMs: 1500 }));
+    const events = await runImageTask(page, { image_project: "Allternit" });
+    expect(events.map((e) => e.t)).not.toContain("error");
+    expect(page.url()).toBe("https://chatgpt.com/g/g-p-abc-allternit/project");
+    await page.close();
+  }, 30000);
+
+  it("image project URL known → goes straight to the project page", async () => {
+    const page = await imagePage(imageApp({}));
+    const events = await runImageTask(page, {
+      image_project: "Allternit",
+      image_project_url: "https://chatgpt.com/g/g-p-abc-allternit/project",
+    });
+    expect(events.map((e) => e.t)).not.toContain("error");
+    expect(page.url()).toBe("https://chatgpt.com/g/g-p-abc-allternit/project");
+    const ready = events.find((e) => e.t === "artifact.ready");
+    // artifact refs carry the chat URL as shown at capture time
+    expect(ready && ready.t === "artifact.ready" && ready.ref.provider_url).toBe(page.url());
     await page.close();
   }, 30000);
 

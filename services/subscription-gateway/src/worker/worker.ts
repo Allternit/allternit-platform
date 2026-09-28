@@ -32,6 +32,7 @@ import {
   listArtifactsForTask,
   recordThreadTurn,
   getActiveImageChat,
+  getLatestImageChat,
   recordImageChatUse,
   updateAttempt,
   updateTaskStatus,
@@ -282,10 +283,17 @@ export async function runAttempt(deps: WorkerDeps, req: RunRequest): Promise<Run
   const withImageChat = (t: Task): Task => {
     if (!imageChats) return t;
     const active = getActiveImageChat(db, manifest.provider, req.accountId);
+    // A project chat's URL is /g/<project>/c/<id>: its project page opens a
+    // new chat in the project directly (no sidebar lookup).
+    const latest = imageChats.project ? getLatestImageChat(db, manifest.provider, req.accountId) : null;
+    const projectPage = latest && /\/g\/[\w-]+\//.exec(latest.provider_url);
     return {
       ...t,
       options: {
         ...(imageChats.project ? { image_project: imageChats.project } : {}),
+        ...(projectPage && latest?.project === imageChats.project
+          ? { image_project_url: `${latest.provider_url.slice(0, projectPage.index)}${projectPage[0]}project` }
+          : {}),
         ...(active ? { image_chat_url: active.provider_url } : {}),
         ...t.options,
       },
@@ -294,10 +302,13 @@ export async function runAttempt(deps: WorkerDeps, req: RunRequest): Promise<Run
 
   // Shared event path for the interactive stream and detached resume streams.
   let providerUrl: string | null = null;
+  let artifactUrl: string | null = null;
   const handleEvent = (event: AdapterEvent): RunOutcome | null => {
     deps.onEvent?.(req.taskId, event);
     deps.supervisor?.heartbeat(req.taskId);
     appendAdapterEvent(log, task, event, deps.activity);
+    // The chat an image landed in, as the page showed it at capture time.
+    if (event.t === "artifact.ready") artifactUrl = event.ref.provider_url;
 
     switch (event.t) {
       case "submitted":
@@ -395,9 +406,8 @@ export async function runAttempt(deps: WorkerDeps, req: RunRequest): Promise<Run
               account_id: req.accountId,
               provider_thread_id: threadId,
               provider_url:
-                providerUrl && providerUrl.includes(threadId)
-                  ? providerUrl
-                  : `${manifest.origins[0] ?? ""}/c/${threadId}`,
+                [artifactUrl, providerUrl].find((u) => u && u.includes(threadId)) ??
+                `${manifest.origins[0] ?? ""}/c/${threadId}`,
               project: imageChats.project,
               images: artifactIds.length,
             },

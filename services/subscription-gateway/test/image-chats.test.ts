@@ -143,6 +143,8 @@ describe("worker applies the image-chat policy", () => {
     const third = await runImage("chat-b");
     expect(third.image_project).toBe("Allternit");
     expect(third.image_chat_url).toBeUndefined();
+    // the project page is known from the previous chat's /g/<project>/c/<id> URL
+    expect(third.image_project_url).toBe("https://chatgpt.com/g/g-p-1-allternit/project");
     expect(getActiveImageChat(db, "fixture-web", "acct-1")?.provider_thread_id).toBe("chat-b");
   });
 });
