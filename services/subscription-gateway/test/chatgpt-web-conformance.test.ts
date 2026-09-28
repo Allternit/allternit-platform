@@ -393,8 +393,17 @@ describe("execute e2e against fixtures", () => {
       opts.projects === "link"
         ? `<section data-app-action-sidebar-section-heading="Projects"><a href="/g/g-p-abc-allternit/project">Allternit</a></section>`
         : opts.projects === "create"
-          ? `<section data-app-action-sidebar-section-heading="Projects"><span>Projects</span>
-               <button data-app-action-sidebar-project-create aria-label="Add new project" id="np">+</button></section>`
+          ? // Live: the create button sits in a zero-width wrapper that only
+            // expands while the section TITLE row is hovered.
+            // (live geometry, 2026-09-28: unhovered, the button sits at x=350,
+            // outside the 330px-wide sidebar; title hover brings it to x=298).
+            `<style>.title{position:relative;width:330px;height:30px}
+               .reveal{position:absolute;left:350px;top:0}
+               .title:hover .reveal{left:298px}</style>
+             <section data-app-action-sidebar-section-heading="Projects" style="padding:40px 0;width:338px;overflow:hidden">
+               <div class="title"><button data-app-action-sidebar-section-toggle>Projects</button>
+               <span class="reveal"><button data-app-action-sidebar-project-create aria-label="Add new project" id="np">+</button></span></div>
+               <div style="height:400px">No projects</div></section>`
           : "";
     const old = opts.oldImage
       ? `<div data-user-message-bubble="true">old prompt</div><div data-conversation-role="assistant">

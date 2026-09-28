@@ -286,9 +286,17 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
         ctx.log.warn("project create button not found");
         return false;
       }
-      await section.first().hover();
+      // The button only moves into the sidebar while the section's TITLE row
+      // is hovered (live: unhovered it sits at x=350, outside the 330px
+      // sidebar, so a forced click misses). Hover the title, click normally;
+      // a DOM click is the fallback.
       await ctx.pacing.beforeAction();
-      await create.first().click({ force: true });
+      await section.first().locator("[data-app-action-sidebar-section-toggle]").first().hover();
+      try {
+        await create.first().click({ timeout: 3000 });
+      } catch {
+        await create.first().evaluate((el) => (el as HTMLElement).click());
+      }
       const dialog = page.getByRole("dialog", { name: /create project/i });
       const nameBox = dialog.getByRole("textbox", { name: /project name/i });
       try {
