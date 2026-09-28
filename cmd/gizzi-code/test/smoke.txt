@@ -116,6 +116,8 @@ test/components/inline-image.test.ts
 test/components/WelcomeBox.test.ts
 test/components/pet-soul.test.ts
 test/components/pet-bots.test.ts
+test/components/pet-avatar-image.test.ts
+test/components/worker-fetch.test.ts
 test/runtime/bots/platform-threads.test.ts
 test/runtime/bots/session-handoff-head.test.ts
 test/components/sandbox-violation-store.test.ts

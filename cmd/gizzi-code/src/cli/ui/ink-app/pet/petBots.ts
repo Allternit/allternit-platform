@@ -7,8 +7,9 @@ import { readDesktopPetAgentId, watchDesktopPetAgentId, writeDesktopPetAgentId }
  * The bots the pet can wear. The pet is one of the user's Allternit bots (the
  * same one the Desktop pet wears); Gizzi is the default and the only one
  * available offline. Avatars mirror allternit-ai BotAvatar: a stored
- * geometric or pet avatar is drawn as such; everything else (image, mascot,
- * legacy configs) falls back to the Gizzi mascot, as Desktop does.
+ * geometric or pet avatar is drawn as such; an image avatar shows the image
+ * in terminals that can draw images (iTerm2, WezTerm, Ghostty, Kitty) and
+ * Gizzi elsewhere; everything else (mascot templates, colors) is Gizzi.
  */
 export type PetAvatar =
   | { kind: 'gizzi' }
@@ -26,6 +27,7 @@ export type PetAvatar =
       secondary: string
       accessory: 'none' | 'glasses' | 'bow' | 'headset'
     }
+  | { kind: 'image'; url: string }
 
 export interface PetBot {
   id: string
@@ -52,6 +54,7 @@ const EYES = ['round', 'wide', 'narrow', 'focused', 'curious'] as const
 const SPECIES = ['cat', 'dog', 'rabbit', 'fox', 'owl', 'robot'] as const
 const ACCESSORIES = ['none', 'glasses', 'bow', 'headset'] as const
 const HEX = /^#[0-9a-f]{6}$/i
+const IMAGE_URL = /^(https?:\/\/|data:image\/)/i
 
 function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
   return allowed.includes(value as T) ? (value as T) : fallback
@@ -94,7 +97,21 @@ export function parsePetAvatar(stored: unknown): PetAvatar {
       accessory: oneOf(data.accessory, ACCESSORIES, 'none'),
     }
   }
+  const url = str(data?.url)
+  if (avatar?.type === 'image' && url && IMAGE_URL.test(url)) return { kind: 'image', url }
   return { kind: 'gizzi' }
+}
+
+/** A legacy agent config avatar (`config.avatar`, `{ type: 'image', uri }`). */
+function legacyImageAvatar(stored: unknown): PetAvatar | undefined {
+  const avatar = obj(stored)
+  const uri = str(avatar?.uri)
+  return avatar?.type === 'image' && uri && IMAGE_URL.test(uri) ? { kind: 'image', url: uri } : undefined
+}
+
+function botAvatar(profileAvatar: unknown, configAvatar: unknown): PetAvatar {
+  const avatar = parsePetAvatar(profileAvatar)
+  return avatar.kind === 'gizzi' ? (legacyImageAvatar(configAvatar) ?? avatar) : avatar
 }
 
 /** One `/api/v1/agents` row → a pet bot, or undefined for non-bot agents. */
@@ -113,7 +130,7 @@ export function parsePetBot(raw: unknown): PetBot | undefined {
     name: str(profile?.displayName) ?? str(agent.name) ?? 'Bot',
     description: str(profile?.tagline) ?? str(agent.description) ?? '',
     accent: typeof profile?.accentColor === 'string' && HEX.test(profile.accentColor) ? profile.accentColor : undefined,
-    avatar: id === GIZZI_BOT_ID ? { kind: 'gizzi' } : parsePetAvatar(profile?.avatar),
+    avatar: id === GIZZI_BOT_ID ? { kind: 'gizzi' } : botAvatar(profile?.avatar, config?.avatar),
     ...(provider && model ? { model: { providerID: provider, modelID: model } } : {}),
   }
   return bot

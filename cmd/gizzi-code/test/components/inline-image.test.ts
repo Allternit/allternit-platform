@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import {
   detectInlineImageProtocol,
   inlineImageCellOutput,
+  inlineImageClear,
   inlineImagePlaceholder,
   INLINE_IMAGE_FILLER,
   setInlineImageProtocolForTest,
@@ -47,8 +48,20 @@ describe("placeholders", () => {
     setInlineImageProtocolForTest("kitty")
     const b64 = "A".repeat(5000)
     const head = inlineImageCellOutput(inlineImagePlaceholder("t-kitty", b64, 20)![0]!)
-    expect(head).toContain("\x1b_Gf=100,a=T,c=20,r=1,C=1,q=2,m=1;")
+    expect(head).toMatch(/\x1b_Gf=100,a=T,i=\d+,p=1,c=20,r=1,C=1,q=2,m=1;/)
     expect(head).toContain("\x1b_Gm=0;")
     expect(head.endsWith("\x1b8\x1b[C")).toBe(true)
+  })
+})
+
+describe("clearing", () => {
+  test("kitty deletes the image by id; iTerm2 needs nothing", () => {
+    setInlineImageProtocolForTest("kitty")
+    const head = inlineImageCellOutput(inlineImagePlaceholder("t-clear", "QUJD", 12, 5)![0]!)
+    const id = head.match(/a=T,i=(\d+),p=1/)![1]
+    expect(inlineImageClear("t-clear")).toBe(`\x1b_Ga=d,d=I,i=${id},q=2\x1b\\`)
+    expect(inlineImageClear("never-registered")).toBe("")
+    setInlineImageProtocolForTest("iterm")
+    expect(inlineImageClear("t-clear")).toBe("")
   })
 })
