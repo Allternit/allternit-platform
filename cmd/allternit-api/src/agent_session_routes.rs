@@ -129,6 +129,7 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
             get(list_messages).post(send_message),
         )
         .route("/agent-sessions/:id/abort", post(abort_session))
+        .route("/agent-sessions/:id/status", get(session_status))
         .route("/agent-sessions/:id/revert", post(revert_session))
         .route("/agent-sessions/:id/unrevert", post(unrevert_session))
         .route("/agent-sessions/:id/compact", post(compact_session))
@@ -1301,6 +1302,30 @@ async fn abort_session(
         }
         Err(response) => response,
     }
+}
+
+/// Whether gizzi is running a turn in this session right now, whoever started
+/// it: this window, another window, or the server (coordinator, routines,
+/// Slack, email). The app shows Stop from this, not only from its own stream.
+/// gizzi's `/session/status` lists only the sessions that aren't idle.
+async fn session_status(headers: HeaderMap, Path(session_id): Path<String>) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::GET, "/v1/session/status", None).await {
+        Ok(all) => {
+            let kind = session_status_kind(&all, &session_id);
+            Json(json!({ "status": kind, "busy": kind != "idle" })).into_response()
+        }
+        Err(response) => response,
+    }
+}
+
+/// `idle`, `busy` or `retry` for one session out of gizzi's status map.
+fn session_status_kind(all: &serde_json::Value, session_id: &str) -> String {
+    all.get(session_id)
+        .and_then(|s| s.get("type"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("idle")
+        .to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -2831,5 +2856,21 @@ mod run_telemetry_tests {
     fn user_messages_have_no_run_telemetry() {
         let m = message(json!({"info": {"id": "u", "sessionID": "s", "role": "user", "time": {"created": 1}}, "parts": []}));
         assert!(run_telemetry(&m).is_null());
+    }
+}
+
+#[cfg(test)]
+mod session_status_tests {
+    use super::session_status_kind;
+    use serde_json::json;
+
+    #[test]
+    fn reads_one_session_out_of_the_status_map() {
+        let all = json!({ "ses_a": { "type": "busy" }, "ses_b": { "type": "retry", "attempt": 2 } });
+        assert_eq!(session_status_kind(&all, "ses_a"), "busy");
+        assert_eq!(session_status_kind(&all, "ses_b"), "retry");
+        // gizzi drops idle sessions from the map.
+        assert_eq!(session_status_kind(&all, "ses_c"), "idle");
+        assert_eq!(session_status_kind(&json!({}), "ses_a"), "idle");
     }
 }
