@@ -1,10 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { statSync } from "node:fs";
+import { join } from "node:path";
 import { boot, type RunningGateway } from "../src/main.js";
 import { KeychainUnavailable, type KeychainBackend } from "../src/security/keychain.js";
+import { openDatabase } from "../src/store/db.js";
+import { getTask, insertAttempt, insertTask, updateTaskStatus } from "../src/store/queries.js";
 import {
   cleanupDir,
   fakeKeychain,
+  sampleTask,
   tmpStateDir,
   udsRequest,
 } from "./helpers.js";
@@ -73,6 +77,53 @@ describe("boot", () => {
       logger: () => {},
     });
     expect(gateway.servers).toHaveLength(1);
+  });
+
+  it("settles tasks the previous process left in flight before serving (no lane traffic needed)", async () => {
+    // A prior process died mid-reply: task streaming, attempt acknowledged,
+    // plus one that died between the two markSubmitted writes.
+    const prior = openDatabase(join(dir, "state.db"));
+    for (const [taskId, state] of [
+      ["task-boot-ack", "acknowledged"],
+      ["task-boot-unconfirmed", "sent_unconfirmed"],
+    ] as const) {
+      insertTask(prior, sampleTask({ task_id: taskId, status: "running" }));
+      insertAttempt(prior, taskId, {
+        attempt_no: 1,
+        adapter_id: "chatgpt-web",
+        adapter_version: "0.1.0",
+        account_id: "acct-boot",
+        pool_key: "chatgpt:acct-boot:chat-msgs",
+        submission_state: state,
+        prompt_fingerprint: "fp",
+        provider_thread_id: state === "acknowledged" ? "thread-boot" : null,
+        requested_model_class: null,
+        observed_model: null,
+        started_at: new Date().toISOString(),
+        ended_at: null,
+        outcome: "failed",
+        error: null,
+      });
+    }
+    updateTaskStatus(prior, "task-boot-ack", "streaming");
+    prior.close();
+
+    gateway = await boot({
+      env: { SUBS_GATEWAY_STATE_DIR: dir },
+      keychain: fakeKeychain(),
+      logger: () => {},
+    });
+    const ack = getTask(gateway.db, "task-boot-ack");
+    expect(ack?.status).toBe("failed");
+    expect(ack?.error?.class).toBe("stalled");
+    expect(ack?.error?.retryable).toBe(false);
+    expect(ack?.attempts[0].ended_at).not.toBeNull();
+    // No browser at boot → never resubmitted, handed to the user.
+    const unconfirmed = getTask(gateway.db, "task-boot-unconfirmed");
+    expect(unconfirmed?.status).toBe("needs_user");
+    expect(unconfirmed?.attempts[0].ended_at).not.toBeNull();
+    // Nothing launched to do it.
+    expect(gateway.pool.runtimeFor({ provider: "chatgpt", account_id: "acct-boot" })).toBeNull();
   });
 
   it("wires the worker layer (pool + supervisor + drain) without launching anything at boot", async () => {
