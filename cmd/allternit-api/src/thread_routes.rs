@@ -731,6 +731,79 @@ pub async fn do_handoff<R: ThreadRuntime>(db: &DbHandle, rt: &R, user_id: &str, 
     load(db, id).map_err(|e| e.to_string())?.map(|s| s.view).ok_or_else(|| "thread vanished".into())
 }
 
+/// A routine's run (P4.4): its own standing thread, not the bot's main chat;
+/// each run after the first starts a fresh generation whose checkpoint
+/// carries the last run forward. Returns the session the run goes to.
+pub async fn routine_generation<R: ThreadRuntime>(
+    db: &DbHandle,
+    rt: &R,
+    user_id: &str,
+    bot_id: &str,
+    routine_id: &str,
+    routine_name: &str,
+    instruction: &str,
+) -> Result<String, String> {
+    let (known, runs): (Option<String>, i64) = db
+        .connect()
+        .ok()
+        .and_then(|c| {
+            c.query_row(
+                "SELECT json_extract(metadata, '$.threadId'), COALESCE(json_extract(metadata, '$.threadRuns'), 0) FROM routines WHERE id = ?1",
+                params![routine_id],
+                |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, i64>(1)?)),
+            )
+            .ok()
+        })
+        .unwrap_or((None, 0));
+    let count_run = || {
+        if let Ok(conn) = db.connect() {
+            let _ = conn.execute(
+                "UPDATE routines SET metadata = json_set(COALESCE(metadata, '{}'), '$.threadRuns', ?2) WHERE id = ?1",
+                params![routine_id, runs + 1],
+            );
+        }
+    };
+    if let Some(id) = known {
+        if let Some(stored) = load(db, &id).map_err(|e| e.to_string())? {
+            let t = stored.view;
+            let session = if runs == 0 {
+                t.current_session_id.clone().ok_or("routine thread has no session")?
+            } else {
+                let body: HandoffBody = serde_json::from_value(json!({ "reason": "routine_run" })).map_err(|e| e.to_string())?;
+                do_handoff(db, rt, user_id, &t.id, body)
+                    .await?
+                    .current_session_id
+                    .ok_or("routine thread has no session")?
+            };
+            count_run();
+            return Ok(session);
+        }
+    }
+    let body: CreateThreadBody = serde_json::from_value(json!({
+        "botId": bot_id,
+        "title": routine_name,
+        "kind": "standing",
+        "objective": instruction,
+        "createdBy": "routine",
+    }))
+    .map_err(|e| e.to_string())?;
+    let t = create(db, rt, user_id, body).await?;
+    if let Ok(conn) = db.connect() {
+        let _ = conn.execute(
+            "UPDATE routines SET metadata = json_set(COALESCE(metadata, '{}'), '$.threadId', ?2) WHERE id = ?1",
+            params![routine_id, t.id],
+        );
+    }
+    let session = t.current_session_id.ok_or("routine thread has no session")?;
+    if let Ok(conn) = db.connect() {
+        let _ = conn.execute(
+            "UPDATE routines SET metadata = json_set(COALESCE(metadata, '{}'), '$.threadRuns', 1) WHERE id = ?1",
+            params![routine_id],
+        );
+    }
+    Ok(session)
+}
+
 /// When gizzi handed a thread's window off on its own (its window crossed
 /// the threshold between turns), record the generations it made. Returns
 /// whether the thread moved.
@@ -1531,6 +1604,38 @@ mod tests {
         assert_eq!(next2.checkpoint.as_ref().unwrap()["summary"], "Wiring checkout");
         assert!(bare.seeded.lock().unwrap()[0].1.contains("Wiring checkout"));
         assert!(bare.handoffs.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_routine_runs_in_its_own_thread_one_generation_per_run() {
+        let state = setup("routine").await;
+        state
+            .db
+            .connect()
+            .unwrap()
+            .execute(
+                "INSERT INTO routines (id, user_id, agent_id, name, schedule_type, schedule_expression, config, metadata)
+                 VALUES ('r1', 'user-a', 'bot-1', 'Monthly close', 'cron', '0 8 1 * *', '{}', '{}')",
+                [],
+            )
+            .unwrap();
+        let rt = FakeRt::default();
+        let first = routine_generation(&state.db, &rt, "user-a", "bot-1", "r1", "Monthly close", "Close the books").await.unwrap();
+        assert_eq!(first, "sess-1");
+        let tid: String = state
+            .db
+            .connect()
+            .unwrap()
+            .query_row("SELECT json_extract(metadata, '$.threadId') FROM routines WHERE id = 'r1'", [], |r| r.get(0))
+            .unwrap();
+        let t = load(&state.db, &tid).unwrap().unwrap().view;
+        assert_eq!((t.kind.as_str(), t.title.as_str()), ("standing", "Monthly close"));
+
+        // Next run: a fresh generation in the same thread, via gizzi's handoff.
+        let second = routine_generation(&state.db, &rt, "user-a", "bot-1", "r1", "Monthly close", "Close the books").await.unwrap();
+        assert_eq!(second, "next-1");
+        assert_eq!(rt.handoffs.lock().unwrap()[0].1, "routine_run");
+        assert_eq!(load(&state.db, &tid).unwrap().unwrap().view.generation, 2);
     }
 
     #[tokio::test]
