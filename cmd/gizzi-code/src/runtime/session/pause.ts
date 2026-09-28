@@ -274,7 +274,8 @@ export namespace SessionPause {
    */
   async function offerAlternative(sessionID: string, paused: Paused) {
     const mode = (await Config.get()).limits?.fallback ?? "suggest"
-    if (mode === "off") return
+    // Another model doesn't help a spending limit.
+    if (mode === "off" || paused.reason === "budget") return
     const suggest = await suggestAlternative(paused.providerID)
     if (!suggest) return
     const current = await Session.get(sessionID).catch(() => undefined)
