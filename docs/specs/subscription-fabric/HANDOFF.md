@@ -433,3 +433,23 @@ THIS SECTION SUPERSEDES §9.3 (§9.4 plan and §9.5 mechanics still apply).
 PR for this branch → merge → §9.4 items 2–5 (SSE live check, image-chat
 history policy, D6 media-router repoint, closeout). Open decisions for Eoj
 unchanged (guest IPv4 NAT; writable viewer + origin_gate port allowlist).
+
+## 11. HANDOFF — 2026-09-28 ~08:45 CDT (claude session) — PR #863 merged; SSE live; extractor fix
+
+§10 is merged (PR #863 → main c605b17b). Branch `session/claude-sse-extract`:
+- **SSE live check (§9.4 item 2) ✅** — through the API computer proxy:
+  task.created → submitted (9.4s) → progress stream → done → completed in
+  real time; a 50s stream kept its 15s heartbeats. Required fixing the
+  proxy (allternit-api `computer_ws.rs`): it buffered the full body and had
+  a 30s total timeout. Now streams; `Accept: text/event-stream` exempt.
+- **Extractor fix** — ChatGPT's inline document block (title + `<p>`s in a
+  wrapper div) flattened to “The Lighthouse Cat Milo…”, “remember.He”.
+  Containers with block children are now walked as blocks. Live re-run:
+  clean paragraphs. **Threads mapped before this deploy will report
+  divergence on their next continue** (fingerprint = hash of extracted text).
+- Scratch API :18013 now runs `.shared-target/debug/allternit-api` built
+  from this branch (main + proxy fix). Restart trap: the old process takes a
+  few seconds to release the port — wait for `lsof` to clear before relaunch.
+
+Next: merge this PR → §9.4 item 3 (image-chat history policy — needs Eoj's
+call on the proposal), item 4 (D6 media-router → gateway), item 5 closeout.

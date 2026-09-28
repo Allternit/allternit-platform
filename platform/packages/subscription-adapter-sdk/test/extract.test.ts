@@ -41,6 +41,22 @@ describe("extractLastAssistantTurn (§A3.1)", () => {
     await page.close();
   });
 
+  it("keeps paragraph breaks inside nested wrappers (ChatGPT inline document block)", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`<div class="reply">
+      <p>Here's a 400-word story:</p>
+      <div class="doc"><div class="doc-head"><span>The Lighthouse Cat</span><button aria-label="Copy">copy</button></div>
+        <div class="doc-body"><p>Milo had lived in the lighthouse.</p><p>He was a small gray cat.</p><p>Most people laughed.</p></div>
+      </div></div>`);
+    const pack = SelectorPack.fromYaml(
+      ["response:", "  critical: true", "  strategies:", "    - { css: '.reply' }"].join("\n")
+    );
+    expect(await extractLastAssistantTurn(page, createResolver(page, pack))).toBe(
+      "Here's a 400-word story:\n\nThe Lighthouse Cat\n\nMilo had lived in the lighthouse.\n\nHe was a small gray cat.\n\nMost people laughed."
+    );
+    await page.close();
+  });
+
   it("tolerates keepNames-transpiled helpers: __name resolves in the page", async () => {
     const page = await browser.newPage();
     await page.setContent(`<div class="reply"><p>x</p></div>`);
