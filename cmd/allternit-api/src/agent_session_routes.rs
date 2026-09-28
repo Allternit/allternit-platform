@@ -142,6 +142,11 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
         .route("/questions", get(list_questions))
         .route("/questions/:id/reply", post(reply_question))
         .route("/questions/:id/reject", post(reject_question))
+        // Answers to gizzi's permission asks raised in agent-session turns
+        // (the terminal `/bots` chat and any other `/agent-sessions` client).
+        // Those turns create no cowork_approvals row, so the approvals route
+        // cannot relay them; this passes `{reply, message?}` straight through.
+        .route("/permissions/:id/reply", post(reply_permission))
         // The app's result for a pane_browser tool call (the page in the
         // session's browser pane).
         .route("/pane-browser/:id/reply", post(reply_pane_browser))
@@ -1230,6 +1235,41 @@ async fn reply_question(
     }
 }
 
+/// `{ reply: "once" | "always" | "reject", message? }`, the shape gizzi's
+/// `/v1/permission/:id/reply` takes. Anything else is refused here rather
+/// than forwarded.
+fn permission_reply_payload(body: &serde_json::Value) -> Option<serde_json::Value> {
+    let reply = body.get("reply").and_then(|v| v.as_str())?;
+    if !matches!(reply, "once" | "always" | "reject") {
+        return None;
+    }
+    let mut payload = json!({ "reply": reply });
+    if let Some(message) = body.get("message").and_then(|v| v.as_str()) {
+        payload["message"] = json!(message);
+    }
+    Some(payload)
+}
+
+async fn reply_permission(
+    headers: HeaderMap,
+    Path(request_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let Some(payload) = permission_reply_payload(&body) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "reply must be once, always or reject" })),
+        )
+            .into_response();
+    };
+    let client = gizzi_client(&headers);
+    let path = format!("/v1/permission/{}/reply", urlencoding::encode(&request_id));
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(payload)).await {
+        Ok(value) => Json(value).into_response(),
+        Err(response) => response,
+    }
+}
+
 async fn reject_question(headers: HeaderMap, Path(request_id): Path<String>) -> impl IntoResponse {
     let client = gizzi_client(&headers);
     let path = format!("/v1/question/{}/reject", urlencoding::encode(&request_id));
@@ -2036,6 +2076,27 @@ mod question_answers_tests {
         let body = json!({ "answers": [["Yes"], []] });
         assert_eq!(question_answers(&body), vec![vec!["Yes".to_string()], Vec::<String>::new()]);
         assert!(question_answers(&json!({})).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod permission_reply_tests {
+    use super::permission_reply_payload;
+    use serde_json::json;
+
+    #[test]
+    fn accepts_gizzi_replies_and_keeps_the_message() {
+        assert_eq!(permission_reply_payload(&json!({ "reply": "once" })), Some(json!({ "reply": "once" })));
+        assert_eq!(
+            permission_reply_payload(&json!({ "reply": "reject", "message": "not now" })),
+            Some(json!({ "reply": "reject", "message": "not now" }))
+        );
+    }
+
+    #[test]
+    fn refuses_anything_else() {
+        assert_eq!(permission_reply_payload(&json!({ "reply": "approve" })), None);
+        assert_eq!(permission_reply_payload(&json!({})), None);
     }
 }
 
