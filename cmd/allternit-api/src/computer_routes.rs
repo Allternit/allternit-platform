@@ -180,6 +180,9 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/computers/:id/control", get(get_computer_control))
         .route("/computers/:id/control/take", post(take_computer_control))
         .route("/computers/:id/control/release", post(release_computer_control))
+        .route("/computers/:id/control/request", post(request_computer_control))
+        .route("/computers/:id/control/offer", post(offer_computer_control))
+        .route("/computers/:id/control/handoffs/:handoff_id/:answer", post(answer_computer_handoff))
         .route("/computers/:id/screenshot", get(computer_screenshot))
         .route("/computers/:id/mouse", post(computer_mouse))
         .route("/computers/:id/keyboard", post(computer_keyboard))
@@ -1315,7 +1318,7 @@ async fn computer_screenshot(
 // Control lease (ACI P4): one controller per computer, across devices.
 // ---------------------------------------------------------------------------
 
-use crate::computer_control_lease::{self as lease, Holder, HolderKind, Lease, TakeError};
+use crate::computer_control_lease::{self as lease, HandoffError, Holder, HolderKind, Lease, TakeError};
 
 /// The calling person, on the device they're using (Settings → Cowork id).
 fn user_holder(user: &AuthUser, headers: &axum::http::HeaderMap) -> Holder {
@@ -1375,11 +1378,12 @@ async fn get_computer_control(
     let db = state.db.clone();
     let result = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
-        lease::current(&conn, &id, chrono::Utc::now().timestamp())
+        let now = chrono::Utc::now().timestamp();
+        Ok::<_, rusqlite::Error>((lease::current(&conn, &id, now)?, lease::pending_handoffs(&conn, &id, now)?))
     })
     .await;
     match result {
-        Ok(Ok(control)) => Json(json!({ "control": control })).into_response(),
+        Ok(Ok((control, handoffs))) => Json(json!({ "control": control, "handoffs": handoffs })).into_response(),
         Ok(Err(e)) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
         Err(_) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
     }
@@ -1434,6 +1438,135 @@ async fn release_computer_control(
     match result {
         Ok(Ok(released)) => Json(json!({ "released": released, "control": serde_json::Value::Null })).into_response(),
         Ok(Err(e)) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        Err(_) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+    }
+}
+
+fn handoff_error_response(error: HandoffError) -> Response {
+    let (status, code, message) = match error {
+        HandoffError::NotHeld => (StatusCode::CONFLICT, "not_held", "Nobody is controlling this computer. Take control instead."),
+        HandoffError::NotHolder => (StatusCode::FORBIDDEN, "not_holder", "Only whoever is controlling this computer can offer control."),
+        HandoffError::NotFound => (StatusCode::NOT_FOUND, "handoff_not_found", "That hand-off is no longer open."),
+        HandoffError::NotRecipient => (StatusCode::FORBIDDEN, "not_recipient", "That hand-off isn't addressed to you."),
+        HandoffError::Stale => (StatusCode::CONFLICT, "handoff_stale", "Control changed hands since that hand-off was made."),
+        HandoffError::Db(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, e),
+    };
+    (status, Json(json!({ "error": code, "message": message }))).into_response()
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct HandoffBody {
+    #[serde(default)]
+    note: Option<String>,
+    /// Offer only: who to hand control to.
+    #[serde(default)]
+    to: Option<HandoffRecipient>,
+}
+
+#[derive(Debug, Deserialize)]
+struct HandoffRecipient {
+    kind: HolderKind,
+    id: String,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    device_id: Option<String>,
+}
+
+fn clean_note(note: Option<String>) -> Option<String> {
+    note.map(|n| n.trim().chars().take(500).collect::<String>()).filter(|n| !n.is_empty())
+}
+
+/// Ask whoever controls this computer for control.
+async fn request_computer_control(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
+    body: Option<Json<HandoffBody>>,
+) -> Response {
+    match fetch_computer(&state, &user, &id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
+        Err(resp) => return resp,
+    }
+    let asker = user_holder(&user, &headers);
+    let note = clean_note(body.and_then(|Json(b)| b.note));
+    let db = state.db.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = db.connect().map_err(|e| HandoffError::Db(e.to_string()))?;
+        lease::request_control(&conn, &id, &asker, note, chrono::Utc::now().timestamp())
+    })
+    .await;
+    match result {
+        Ok(Ok(handoff)) => (StatusCode::CREATED, Json(json!({ "handoff": handoff }))).into_response(),
+        Ok(Err(e)) => handoff_error_response(e),
+        Err(_) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+    }
+}
+
+/// The holder hands control to someone, who accepts or declines.
+async fn offer_computer_control(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<HandoffBody>,
+) -> Response {
+    match fetch_computer(&state, &user, &id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
+        Err(resp) => return resp,
+    }
+    let Some(to) = body.to else {
+        return error_response(StatusCode::BAD_REQUEST, "an offer needs `to` (kind, id)");
+    };
+    if to.id.trim().is_empty() {
+        return error_response(StatusCode::BAD_REQUEST, "`to.id` is required");
+    }
+    let recipient = Holder { kind: to.kind, id: to.id.trim().to_string(), label: to.label, device_id: to.device_id };
+    let holder = user_holder(&user, &headers);
+    let note = clean_note(body.note);
+    let db = state.db.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = db.connect().map_err(|e| HandoffError::Db(e.to_string()))?;
+        lease::offer_control(&conn, &id, &holder, &recipient, note, chrono::Utc::now().timestamp())
+    })
+    .await;
+    match result {
+        Ok(Ok(handoff)) => (StatusCode::CREATED, Json(json!({ "handoff": handoff }))).into_response(),
+        Ok(Err(e)) => handoff_error_response(e),
+        Err(_) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+    }
+}
+
+/// Accept or decline a hand-off addressed to the caller.
+async fn answer_computer_handoff(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path((id, handoff_id, answer)): Path<(String, String, String)>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    let accept = match answer.as_str() {
+        "accept" => true,
+        "decline" => false,
+        _ => return error_response(StatusCode::NOT_FOUND, "unknown hand-off action"),
+    };
+    match fetch_computer(&state, &user, &id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
+        Err(resp) => return resp,
+    }
+    let who = user_holder(&user, &headers);
+    let db = state.db.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = db.connect().map_err(|e| HandoffError::Db(e.to_string()))?;
+        lease::answer_handoff(&conn, &id, &handoff_id, &who, accept, chrono::Utc::now().timestamp())
+    })
+    .await;
+    match result {
+        Ok(Ok(control)) => Json(json!({ "accepted": accept, "control": control })).into_response(),
+        Ok(Err(e)) => handoff_error_response(e),
         Err(_) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
     }
 }
