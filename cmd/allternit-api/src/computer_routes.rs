@@ -1324,39 +1324,39 @@ async fn register_this_device(
     }
 }
 
-/// This computer's screen, through the computer-use gateway's direct mode.
-async fn this_device_screenshot(state: &Arc<AppState>, computer_id: &str) -> Response {
-    let acu = state.config.acu_url();
-    let body = json!({
-        "mode": "direct",
-        "session_id": format!("computer-{computer_id}"),
-        "target_scope": "desktop",
-        "actions": [{ "kind": "screenshot" }],
-        "options": { "record": false, "approval_policy": "never" },
-    });
-    let response = match reqwest::Client::new()
-        .post(format!("{}/v1/computer-use/execute", acu.trim_end_matches('/')))
-        .timeout(std::time::Duration::from_secs(20))
-        .json(&body)
-        .send()
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => return error_response(StatusCode::BAD_GATEWAY, format!("computer use is unreachable: {e}")),
+/// This computer's screen. On macOS, `screencapture` run by this API process:
+/// it's a child of Allternit Desktop, so macOS attributes the capture to the
+/// app and its Screen Recording permission. (The computer-use driver only
+/// captures single windows.)
+async fn this_device_screenshot(_state: &Arc<AppState>, computer_id: &str) -> Response {
+    if !cfg!(target_os = "macos") {
+        return error_response(StatusCode::NOT_IMPLEMENTED, "screenshots of this computer are only supported on macOS so far");
+    }
+    let file = std::env::temp_dir().join(format!("allternit-screen-{computer_id}-{}.png", uuid::Uuid::new_v4().simple()));
+    let output = tokio::process::Command::new("/usr/sbin/screencapture")
+        .args(["-x", "-t", "png"])
+        .arg(&file)
+        .output()
+        .await;
+    let png = match output {
+        Ok(out) if out.status.success() => tokio::fs::read(&file).await.ok(),
+        Ok(out) => {
+            warn!(stderr = %String::from_utf8_lossy(&out.stderr), "screencapture failed");
+            None
+        }
+        Err(e) => {
+            warn!(error = %e, "couldn't run screencapture");
+            None
+        }
     };
-    let result: Value = match response.json().await {
-        Ok(v) => v,
-        Err(e) => return error_response(StatusCode::BAD_GATEWAY, format!("computer use sent a bad reply: {e}")),
-    };
-    let b64 = result
-        .pointer("/result/screenshot_b64")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty());
-    let Some(png) = b64.and_then(|b| BASE64_STANDARD.decode(b).ok()) else {
-        let reason = result.get("error").and_then(|v| v.as_str()).unwrap_or("no screenshot came back — check Screen Recording permission");
-        return error_response(StatusCode::BAD_GATEWAY, reason.to_string());
-    };
-    (StatusCode::OK, [(header::CONTENT_TYPE, "image/png")], Bytes::from(png)).into_response()
+    let _ = tokio::fs::remove_file(&file).await;
+    match png.filter(|bytes| !bytes.is_empty()) {
+        Some(png) => (StatusCode::OK, [(header::CONTENT_TYPE, "image/png")], Bytes::from(png)).into_response(),
+        None => error_response(
+            StatusCode::BAD_GATEWAY,
+            "couldn't capture this computer's screen — allow Screen Recording for Allternit in System Settings → Privacy & Security",
+        ),
+    }
 }
 
 async fn computer_screenshot(
