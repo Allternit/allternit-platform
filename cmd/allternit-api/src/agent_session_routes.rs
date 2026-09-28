@@ -726,11 +726,93 @@ async fn list_sessions(
         }
     }
 
+    attach_latest_message_previews(&client, &mut filtered).await;
+
     Json(json!({
         "sessions": filtered,
         "count": filtered.len()
     }))
     .into_response()
+}
+
+/// Sessions that get a `last_message` preview per list call. Recents only
+/// shows the newest few dozen; the cap bounds the per-session fetches.
+const LIST_PREVIEW_SESSION_LIMIT: usize = 100;
+const LIST_PREVIEW_MAX_CHARS: usize = 160;
+
+/// Recents renders a latest-message preview under each title, but the list
+/// payload carried no message text, so rows stayed title-only until the
+/// session was opened. Fills `last_message` / `last_message_at` on the most
+/// recently updated sessions from each session's newest few messages.
+async fn attach_latest_message_previews(client: &Client, sessions: &mut [serde_json::Value]) {
+    use futures::StreamExt;
+
+    let mut order: Vec<usize> = (0..sessions.len()).collect();
+    let updated_at = |i: &usize| {
+        sessions[*i]
+            .get("updated_at")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    order.sort_by_key(|i| std::cmp::Reverse(updated_at(i)));
+    order.truncate(LIST_PREVIEW_SESSION_LIMIT);
+
+    let requests = order.into_iter().filter_map(|i| {
+        let id = sessions[i].get("id")?.as_str()?.to_string();
+        Some(async move { (i, latest_message_preview(client, &id).await) })
+    });
+    let previews: Vec<_> = futures::stream::iter(requests).buffer_unordered(8).collect().await;
+
+    for (i, preview) in previews {
+        if let (Some((text, at)), Some(obj)) = (preview, sessions[i].as_object_mut()) {
+            obj.insert("last_message".to_string(), json!(text));
+            obj.insert("last_message_at".to_string(), json!(at));
+        }
+    }
+}
+
+async fn latest_message_preview(client: &Client, session_id: &str) -> Option<(String, String)> {
+    // Older gizzi builds ignore `limit` and return every message; the newest
+    // text still wins below, so the preview is the same either way.
+    let path = format!(
+        "/v1/session/{}/messages?limit=6",
+        urlencoding::encode(session_id)
+    );
+    let messages =
+        gizzi_json::<Vec<GizziMessage>>(client, reqwest::Method::GET, &path, None)
+            .await
+            .ok()?;
+    messages.iter().rev().find_map(|message| {
+        let text = message_preview_text(&message.parts);
+        if text.is_empty() {
+            return None;
+        }
+        let at = to_iso(
+            message
+                .info
+                .time
+                .as_ref()
+                .and_then(|t| t.completed.or(t.created)),
+        );
+        Some((text, at))
+    })
+}
+
+/// Plain prose from a message's text parts: no tool/file markers, whitespace
+/// collapsed, capped at LIST_PREVIEW_MAX_CHARS.
+fn message_preview_text(parts: &[GizziMessagePart]) -> String {
+    let joined = parts
+        .iter()
+        .filter(|part| matches!(part.part_type.as_str(), "text" | "agent"))
+        .filter_map(|part| part.text.as_deref())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let collapsed = joined.split_whitespace().collect::<Vec<_>>().join(" ");
+    match collapsed.char_indices().nth(LIST_PREVIEW_MAX_CHARS) {
+        Some((cut, _)) => collapsed[..cut].to_string(),
+        None => collapsed,
+    }
 }
 
 async fn resolve_agent_harness(db: &DbHandle, agent_id: &str) -> Option<serde_json::Value> {
@@ -1807,6 +1889,33 @@ mod tests {
     use tower::ServiceExt;
 
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn part(part_type: &str, text: &str) -> GizziMessagePart {
+        GizziMessagePart {
+            part_type: part_type.to_string(),
+            text: Some(text.to_string()),
+            filename: None,
+            url: None,
+            tool: None,
+            state: None,
+        }
+    }
+
+    #[test]
+    fn message_preview_text_keeps_prose_only() {
+        let parts = vec![
+            part("reasoning", "hidden thought"),
+            part("text", "  Here is\n\nthe   plan "),
+            part("tool", "ignored"),
+            part("agent", "done."),
+        ];
+        assert_eq!(message_preview_text(&parts), "Here is the plan done.");
+        assert_eq!(message_preview_text(&[part("tool", "x")]), "");
+
+        let long = "é".repeat(LIST_PREVIEW_MAX_CHARS + 20);
+        let preview = message_preview_text(&[part("text", &long)]);
+        assert_eq!(preview.chars().count(), LIST_PREVIEW_MAX_CHARS);
+    }
 
     async fn test_app_state(temp: &Path) -> Arc<AppState> {
         let config = crate::AppConfig {

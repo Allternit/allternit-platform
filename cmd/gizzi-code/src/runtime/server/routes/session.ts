@@ -309,7 +309,7 @@ export const SessionRoutes = lazy(() =>
       "/:sessionID/messages",
       describeRoute({
         summary: "List session messages",
-        description: "Retrieve all messages belonging to a specific session.",
+        description: "Retrieve messages belonging to a specific session, optionally only the newest `limit`.",
         operationId: "session.messages",
         responses: {
           200: {
@@ -324,9 +324,12 @@ export const SessionRoutes = lazy(() =>
         },
       }),
       validator("param", z.any()),
+      validator("query", z.object({ limit: z.coerce.number().int().min(1).optional() })),
       async (c) => {
         const { sessionID } = c.req.valid("param") as any
-        const msgs = await Session.messages({ sessionID })
+        // `limit` keeps only the newest N messages (list previews need one).
+        const { limit } = c.req.valid("query")
+        const msgs = await Session.messages({ sessionID, limit })
         return c.json(msgs)
       },
     )
