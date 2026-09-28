@@ -2794,6 +2794,14 @@ pub fn search_memory_entries(
     Ok(out)
 }
 
+/// Forget one memory entry the user owns. Returns whether a row was removed.
+pub fn delete_memory_entry(conn: &Connection, user_id: &str, id: &str) -> Result<bool, TransportError> {
+    let n = conn
+        .execute("DELETE FROM cowork_memory_entries WHERE id = ?1 AND user_id = ?2", params![id, user_id])
+        .map_err(store_err)?;
+    Ok(n > 0)
+}
+
 fn memory_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<serde_json::Value> {
     Ok(serde_json::json!({
         "id": row.get::<_, String>(0)?,

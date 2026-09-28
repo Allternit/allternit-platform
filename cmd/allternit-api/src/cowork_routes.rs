@@ -68,6 +68,7 @@ pub fn cowork_router() -> Router<Arc<AppState>> {
             get(search_memory_get).post(search_memory),
         )
         .route("/cowork/memory/health", get(memory_health))
+        .route("/cowork/memory/:id", delete(delete_memory))
         .route("/cowork/connectors", get(list_connectors))
         .route("/cowork/approvals", get(list_approvals).post(decide_approval))
         .route(
@@ -1596,6 +1597,13 @@ pub struct MemoryPrincipalQuery {
     /// Principal scope (A-T2): when set, only entries owned by or granted to
     /// this principal are returned (default-deny cross-principal).
     pub principal: Option<String>,
+    /// With `principal`: only entries that principal owns (a bot's own
+    /// memory), not unowned or granted ones.
+    #[serde(default)]
+    pub owned: bool,
+    /// A bot's id: scopes to that bot's own principal (resolved here, so
+    /// clients never build A:// ids). Implies `owned`.
+    pub bot: Option<String>,
     /// List window bounds, clamped the same way as every other list endpoint.
     #[serde(flatten)]
     pub window: ListQuery,
@@ -1609,11 +1617,20 @@ async fn get_memory(
 ) -> impl IntoResponse {
     let db = state.db.clone();
     let user_id = user.user_id;
-    let principal = query.principal;
+    let owned = query.owned || query.bot.is_some();
+    let bot = query.bot;
     let (limit, offset) = clamp_list_window(&query.window);
+    let explicit = query.principal;
 
     let rows = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
+        let principal = match bot.as_deref() {
+            Some(b) => match bot_memory_principal(&conn, &user_id, b)? {
+                Some(p) => Some(p),
+                None => return Ok((Vec::new(), None)),
+            },
+            None => explicit,
+        };
         // Principal-scoped path enforces owner+grants (A-T2); unscoped keeps
         // the legacy user-filtered behavior.
         let memories = allternit_cowork_runtime::sqlite_store::search_memory_entries(
@@ -1625,12 +1642,17 @@ async fn get_memory(
             offset,
         )
         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-        Ok::<_, rusqlite::Error>(memories)
+        Ok::<_, rusqlite::Error>((memories, principal))
     })
     .await;
 
     match rows {
-        Ok(Ok(memories)) => Json(json!({ "memories": memories })).into_response(),
+        Ok(Ok((mut memories, principal))) => {
+            if let (true, Some(p)) = (owned, principal.as_deref()) {
+                memories.retain(|m| m["owner_principal"].as_str() == Some(p));
+            }
+            Json(json!({ "memories": memories })).into_response()
+        }
         Ok(Err(e)) if is_no_such_table(&e) => {
             Json(json!({ "memories": Vec::<MemoryEntryRow>::new() })).into_response()
         }
@@ -1653,6 +1675,52 @@ async fn get_memory(
     }
 }
 
+/// The principal that owns a bot's memory: its A:// principal when it has
+/// one, else a stable local id (bots that only exist on this device, like
+/// the packaged Gizzi, have no agents row). `None` when the id belongs to
+/// another user's bot. Entries stay user-scoped either way.
+pub(crate) fn bot_memory_principal(conn: &rusqlite::Connection, user_id: &str, bot_id: &str) -> rusqlite::Result<Option<String>> {
+    let local = || format!("a://local/bot/{bot_id}");
+    match conn.query_row(
+        "SELECT user_id, principal_id FROM agents WHERE id = ?1",
+        rusqlite::params![bot_id],
+        |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+    ) {
+        Ok((owner, _)) if owner != user_id => Ok(None),
+        Ok((_, p)) => Ok(Some(p.filter(|p| !p.is_empty()).unwrap_or_else(local))),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(Some(local())),
+        Err(e) => Err(e),
+    }
+}
+
+/// Forget one memory entry (the bot detail Memory tab's "Forget").
+async fn delete_memory(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let db = state.db.clone();
+    let user_id = user.user_id;
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = db.connect()?;
+        allternit_cowork_runtime::sqlite_store::delete_memory_entry(&conn, &user_id, &id)
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
+    })
+    .await;
+    match result {
+        Ok(Ok(true)) => StatusCode::NO_CONTENT.into_response(),
+        Ok(Ok(false)) => (StatusCode::NOT_FOUND, Json(json!({"error": "memory not found"}))).into_response(),
+        Ok(Err(e)) => {
+            warn!("DB error deleting memory: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal error"}))).into_response()
+        }
+        Err(e) => {
+            warn!("DB task panicked: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal error"}))).into_response()
+        }
+    }
+}
+
 #[derive(Deserialize)]
 struct StoreMemoryBody {
     project_id: Option<String>,
@@ -1666,6 +1734,8 @@ struct StoreMemoryBody {
     principal: Option<String>,
     /// Principals explicitly granted access (default-deny otherwise).
     grants: Option<Vec<String>>,
+    /// A bot's id: the entry is owned by that bot's principal.
+    bot: Option<String>,
 }
 
 async fn store_memory(
@@ -1680,6 +1750,13 @@ async fn store_memory(
 
     let result = tokio::task::spawn_blocking(move || {
         let mut conn = db.connect()?;
+        let principal = match body.bot.as_deref() {
+            Some(b) => Some(
+                bot_memory_principal(&conn, &user_id, b)?
+                    .ok_or(rusqlite::Error::QueryReturnedNoRows)?,
+            ),
+            None => body.principal.clone(),
+        };
         allternit_cowork_runtime::sqlite_store::store_memory_entry(
             &mut conn,
             &user_id,
@@ -1689,7 +1766,7 @@ async fn store_memory(
             &type_,
             body.tags.as_deref(),
             body.source.as_deref(),
-            body.principal.as_deref(),
+            principal.as_deref(),
             &body.grants.clone().unwrap_or_default(),
         )
         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
@@ -1699,6 +1776,9 @@ async fn store_memory(
     match result {
         Ok(Ok(id)) => {
             (StatusCode::CREATED, Json(json!({ "memory": { "id": id } }))).into_response()
+        }
+        Ok(Err(rusqlite::Error::QueryReturnedNoRows)) => {
+            (StatusCode::NOT_FOUND, Json(json!({"error": "bot not found"}))).into_response()
         }
         Ok(Err(e)) => {
             warn!("DB error storing memory: {}", e);
@@ -2579,6 +2659,21 @@ mod tests {
 
     fn normalize(s: &str) -> Option<ApprovalOutcome> {
         normalize_approval_decision(s)
+    }
+
+    #[test]
+    fn bot_memory_principal_uses_the_bots_principal_or_a_stable_local_id() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE agents (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, principal_id TEXT);
+            INSERT INTO agents VALUES ('b1', 'u1', 'a://workspace/ws/bot/b1'), ('b2', 'u1', NULL);").unwrap();
+        assert_eq!(bot_memory_principal(&conn, "u1", "b1").unwrap().as_deref(), Some("a://workspace/ws/bot/b1"));
+        assert_eq!(bot_memory_principal(&conn, "u1", "b2").unwrap().as_deref(), Some("a://local/bot/b2"));
+        assert_eq!(bot_memory_principal(&conn, "u2", "b1").unwrap(), None, "not your bot");
+        assert_eq!(
+            bot_memory_principal(&conn, "u1", "local-agent-9").unwrap().as_deref(),
+            Some("a://local/bot/local-agent-9"),
+            "device-only bots still get their own memory"
+        );
     }
 
     #[test]
