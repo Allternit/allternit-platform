@@ -190,28 +190,40 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
   private async enableImageMode(ctx: ExecutionContext): Promise<boolean> {
     const resolver = ctx.selectors as SdkSelectorResolver;
     if (await resolver.tryResolveLocator("image_mode_active")) return true;
-    const plus = await resolver.tryResolveLocator("composer_plus");
-    if (plus) {
+    const page = sdkPage(ctx.page);
+    const plusAll = await resolver.tryResolveLocator("composer_plus");
+    // Only VISIBLE matches: after in-app navigation (e.g. into a project) the
+    // previous view's composer can linger hidden in the DOM.
+    const plus = plusAll ? plusAll.filter({ visible: true }) : null;
+    const diag: Record<string, unknown> = {
+      url: page.url(),
+      plus_matches: plusAll ? await plusAll.count() : 0,
+      plus_visible: plus ? await plus.count() : 0,
+    };
+    if (plus && (await plus.count()) > 0) {
       await ctx.pacing.beforeAction();
       await plus.first().click();
       // The menu renders a beat after the click (live: right after a project
       // page opened, an immediate lookup found nothing).
       let item = null;
       for (let i = 0; i < 20 && !item; i++) {
-        item = await resolver.tryResolveLocator("image_menu_item");
-        if (!item) await sdkPage(ctx.page).waitForTimeout(150);
+        const found = await resolver.tryResolveLocator("image_menu_item");
+        if (found && (await found.filter({ visible: true }).count()) > 0) item = found.filter({ visible: true });
+        else await page.waitForTimeout(150);
       }
+      diag.menu_item = item !== null;
       if (item) {
         await ctx.pacing.beforeAction();
         await item.last().click();
-        const page = sdkPage(ctx.page);
-        for (let i = 0; i < 20; i++) {
+        for (let i = 0; i < 30; i++) {
           if (await resolver.tryResolveLocator("image_mode_active")) return true;
           await page.waitForTimeout(100);
         }
+        diag.chip = false;
       }
-      await sdkPage(ctx.page).keyboard.press("Escape");
+      await page.keyboard.press("Escape");
     }
+    ctx.log.warn("image mode could not be enabled", diag);
     const toggle = await resolver.tryResolveLocator("capability:image_tool_toggle");
     if (!toggle) return false;
     if ((await toggle.first().getAttribute("aria-pressed")) !== "true") {
