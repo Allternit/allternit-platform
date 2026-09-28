@@ -113,6 +113,8 @@ function transformSession(info: any) {
       originSurface: originSurfaceOf(info),
       permission: info.permission ?? null,
       ephemeral: ephemeralSessions.has(info.id),
+      continuesFrom: info.continuesFrom ?? null,
+      handoff: info.handoff ?? null,
     },
   }
 }
@@ -163,6 +165,8 @@ function transformMessage(message: any) {
     metadata: {
       agent: info.agent ?? null,
       model: info.model ?? null,
+      // Handoff checkpoint seed (P3.16): clients draw the rip, not a bubble.
+      handoff: parts.find((p: any) => p?.metadata?.handoff)?.metadata.handoff ?? null,
       parts,
       error: info.error?.data ?? null,
     },
@@ -242,7 +246,21 @@ export const AgentCompatRoutes = () =>
                 surface: info.surface ?? null,
                 originSurface: originSurfaceOf(info),
                 permission: info.permission ?? null,
+                continuesFrom: info.continuesFrom ?? null,
+                handoff: info.handoff ?? null,
               },
+            }
+          }
+          case "session.handoff": {
+            // Context handoff: the conversation moved to a fresh window.
+            if (!props.from || !props.to) return undefined
+            if (ephemeralSessions.has(props.from)) ephemeralSessions.add(props.to)
+            return {
+              type: "handed_off",
+              session_id: props.from,
+              to: props.to,
+              reason: props.reason ?? null,
+              generation: props.generation ?? null,
             }
           }
           case "session.deleted": {

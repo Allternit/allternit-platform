@@ -214,6 +214,12 @@ struct GizziSessionInfo {
     source_ref: Option<serde_json::Value>,
     #[serde(rename = "sourceExport", default)]
     source_export: Option<serde_json::Value>,
+    /// Lineage (context handoff): the session this one continues.
+    #[serde(rename = "continuesFrom", default)]
+    continues_from: Option<String>,
+    /// Set once this session handed off: `{ sessionID, reason, at, baton }`.
+    #[serde(default)]
+    handoff: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -285,6 +291,11 @@ struct GizziMessagePart {
     tool: Option<String>,
     #[serde(default)]
     state: Option<serde_json::Value>,
+    /// Injected by gizzi, not typed by the user (e.g. a handoff checkpoint).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    synthetic: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    metadata: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -355,6 +366,8 @@ fn transform_session(info: GizziSessionInfo, db: &DbHandle) -> serde_json::Value
     );
     metadata.insert("sourceRef".to_string(), json!(info.source_ref));
     metadata.insert("sourceExport".to_string(), json!(info.source_export));
+    metadata.insert("continuesFrom".to_string(), json!(info.continues_from));
+    metadata.insert("handoff".to_string(), json!(info.handoff));
     for (key, value) in stored_metadata {
         metadata.insert(key, value);
     }
@@ -451,10 +464,21 @@ fn transform_message(message: GizziMessage) -> serde_json::Value {
             "agent": message.info.agent,
             "model": message.info.model,
             "telemetry": run_telemetry(&message),
+            "handoff": handoff_of(&message.parts),
             "parts": message.parts,
             "error": message.info.error.as_ref().and_then(|e| e.data.clone()),
         }
     })
+}
+
+/// The checkpoint a fresh context window starts from (gizzi handoff seed):
+/// `{ from, generation, reason }`, so clients draw the rip instead of a
+/// user bubble. `null` for every other message.
+fn handoff_of(parts: &[GizziMessagePart]) -> serde_json::Value {
+    parts
+        .iter()
+        .find_map(|p| p.metadata.as_ref().and_then(|m| m.get("handoff")).cloned())
+        .unwrap_or(serde_json::Value::Null)
 }
 
 /// Run telemetry for a stored assistant message, in the shape the workspace
@@ -1256,6 +1280,24 @@ async fn fetch_latest_message(client: &Client, session_id: &str) -> Option<serde
     messages.into_iter().last().map(transform_message)
 }
 
+/// Copy the API-side session bag (metadata, origin surface, incognito) from
+/// a handed-off window to its successor, without overwriting what is there.
+pub(crate) fn carry_session_bag(db: &DbHandle, from: &str, to: &str) {
+    if let Ok(Some(bag)) = db.get_session_metadata(from) {
+        if db.get_session_metadata(to).ok().flatten().is_none() {
+            let _ = db.set_session_metadata(to, &bag);
+        }
+    }
+    if let Ok(Some(surface)) = db.get_session_origin_surface(from) {
+        if db.get_session_origin_surface(to).ok().flatten().is_none() {
+            let _ = db.set_session_origin_surface(to, &surface);
+        }
+    }
+    if db.is_session_ephemeral(from).unwrap_or(false) {
+        let _ = db.set_session_ephemeral(to);
+    }
+}
+
 async fn transform_bus_event(
     client: &Client,
     db: &DbHandle,
@@ -1298,9 +1340,26 @@ async fn transform_bus_event(
                         "surface": info.surface,
                         "originSurface": origin_surface,
                         "permission": info.permission,
+                        "continuesFrom": info.continues_from,
+                        "handoff": info.handoff,
                     }
                 })
             }),
+        // Context handoff (gizzi P3.16): the conversation moved to a fresh
+        // window. The API-side bag (surface, bot flags, incognito) moves with
+        // it so the new window lands in the same list, then clients follow.
+        "session.handoff" => {
+            let from = props.get("from").and_then(|v| v.as_str())?.to_string();
+            let to = props.get("to").and_then(|v| v.as_str())?.to_string();
+            carry_session_bag(db, &from, &to);
+            Some(json!({
+                "type": "handed_off",
+                "session_id": from,
+                "to": to,
+                "reason": props.get("reason").cloned().unwrap_or(serde_json::Value::Null),
+                "generation": props.get("generation").cloned().unwrap_or(serde_json::Value::Null),
+            }))
+        }
         "session.deleted" => serde_json::from_value::<GizziSessionInfo>(props)
             .ok()
             .map(|info| json!({ "type": "deleted", "session_id": info.id })),
@@ -1953,6 +2012,8 @@ mod tests {
             url: None,
             tool: None,
             state: None,
+            synthetic: None,
+            metadata: None,
         }
     }
 
@@ -1970,6 +2031,39 @@ mod tests {
         let long = "é".repeat(LIST_PREVIEW_MAX_CHARS + 20);
         let preview = message_preview_text(&[part("text", &long)]);
         assert_eq!(preview.chars().count(), LIST_PREVIEW_MAX_CHARS);
+    }
+
+    #[test]
+    fn handoff_seed_is_tagged_for_the_rip() {
+        let parts: Vec<GizziMessagePart> = serde_json::from_value(json!([
+            {"type": "text", "text": "[checkpoint: window 1] ...", "synthetic": true,
+             "metadata": {"handoff": {"from": "s1", "generation": 1, "reason": "threshold"}}}
+        ]))
+        .unwrap();
+        assert_eq!(handoff_of(&parts)["from"], "s1");
+        assert_eq!(serde_json::to_value(&parts).unwrap()[0]["synthetic"], true);
+        let plain: Vec<GizziMessagePart> = serde_json::from_value(json!([{"type": "text", "text": "hi"}])).unwrap();
+        assert!(handoff_of(&plain).is_null());
+        assert!(serde_json::to_value(&plain).unwrap()[0].get("synthetic").is_none());
+    }
+
+    #[test]
+    fn handed_off_window_keeps_its_surface_flags_and_incognito() {
+        let temp = std::env::temp_dir().join(format!("carry-bag-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let db = crate::db::DbHandle::new(temp.join("test.db")).expect("test db");
+        db.set_session_metadata("s1", &json!({"isBot": true, "threadId": "t1"})).unwrap();
+        db.set_session_origin_surface("s1", "code").unwrap();
+        db.set_session_ephemeral("s1").unwrap();
+        carry_session_bag(&db, "s1", "s2");
+        assert_eq!(db.get_session_metadata("s2").unwrap().unwrap()["threadId"], "t1");
+        assert_eq!(db.get_session_origin_surface("s2").unwrap().as_deref(), Some("code"));
+        assert!(db.is_session_ephemeral("s2").unwrap());
+
+        // Never overwrites what the new window already has.
+        db.set_session_metadata("s3", &json!({"own": true})).unwrap();
+        carry_session_bag(&db, "s1", "s3");
+        assert_eq!(db.get_session_metadata("s3").unwrap().unwrap(), json!({"own": true}));
     }
 
     async fn test_app_state(temp: &Path) -> Arc<AppState> {

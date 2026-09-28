@@ -539,12 +539,7 @@ impl ThreadRuntime for GizziRuntime {
         let (next, baton) = crate::agent_session_routes::gizzi_handoff(session_id, gizzi_reason(reason), context, baton).await?;
         // The API's own per-session bag (bot flags, thread id, surface) moves
         // with the conversation to its new window.
-        if let Ok(Some(bag)) = self.db.get_session_metadata(session_id) {
-            let _ = self.db.set_session_metadata(&next, &bag);
-        }
-        if let Ok(Some(surface)) = self.db.get_session_origin_surface(session_id) {
-            let _ = self.db.set_session_origin_surface(&next, &surface);
-        }
+        crate::agent_session_routes::carry_session_bag(&self.db, session_id, &next);
         Ok((next, baton))
     }
     async fn successors(&self, session_id: &str) -> Vec<(String, String, Value)> {
@@ -558,11 +553,7 @@ impl ThreadRuntime for GizziRuntime {
         for pair in chain[at..].windows(2) {
             let (prev, next) = (&pair[0], &pair[1]);
             let Some(id) = next["id"].as_str() else { break };
-            if let Ok(Some(bag)) = self.db.get_session_metadata(prev["id"].as_str().unwrap_or_default()) {
-                if self.db.get_session_metadata(id).ok().flatten().is_none() {
-                    let _ = self.db.set_session_metadata(id, &bag);
-                }
-            }
+            crate::agent_session_routes::carry_session_bag(&self.db, prev["id"].as_str().unwrap_or_default(), id);
             out.push((
                 id.to_string(),
                 thread_reason(prev["handoff"]["reason"].as_str().unwrap_or("manual")).to_string(),
