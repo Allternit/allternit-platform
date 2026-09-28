@@ -9,6 +9,9 @@ const log = () => Log.create({ service: "global" })
 const legacyApp = "gizzi-code"
 const legacyData = path.join(GlobalPaths.data, legacyApp)
 const legacyConfig = path.join(GlobalPaths.config, legacyApp)
+// Before the gizzi-code rename, preferences, themes and config lived in
+// ~/.config/gizzi. Copied forward once (never overwritten, never deleted).
+const preRenameConfig = path.join(path.dirname(GlobalPaths.config), "gizzi")
 
 export namespace Global {
   export const Path = GlobalPaths
@@ -50,6 +53,12 @@ export async function init() {
       from: path.join(legacyConfig, "gizziio.jsonc"),
       to: path.join(Global.Path.config, "gizzi.jsonc"),
     }),
+    ...["gizzi.json", "gizzi.jsonc", "preferences.json", "theme.json", "themes.json"].map((file) =>
+      copyLegacyFile({
+        from: path.join(preRenameConfig, file),
+        to: path.join(Global.Path.config, file),
+      }),
+    ),
     copyLegacyFile({
       from: path.join(legacyData, "auth.json"),
       to: path.join(Global.Path.data, "auth.json"),

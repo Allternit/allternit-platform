@@ -1,8 +1,3 @@
-// @ts-nocheck
-// TODO(types): the TTFT block (~line 217) references apiMetricsRef /
-// computeTtftText, which a prior upstream edit removed while leaving the
-// (constant-false, dead) call site; `"external" === 'ant'` also trips
-// TS2367. Kept verbatim per the codemod hand-patch rule (spec §6.1 rule 6).
 import { Box, Text } from '../ink';
 import * as React from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -220,15 +215,9 @@ function SpinnerWithVerbInner({
   const messageColor = overrideColor ?? defaultColor;
   const shimmerColor = overrideShimmerColor ?? defaultShimmerColor;
 
-  // Compute TTFT string here (off the 50ms animation clock) and pass to
-  // SpinnerAnimationRow so it folds into the `(thought for Ns · ...)` status
-  // line instead of taking a separate row. apiMetricsRef is a ref so this
-  // doesn't trigger re-renders; we pick up updates on the parent's ~25x/turn
-  // re-render cadence, same as the old ApiMetricsLine did.
-  let ttftText: string | null = null;
-  if ("external" === 'ant' && apiMetricsRef?.current && apiMetricsRef.current.length > 0) {
-    ttftText = computeTtftText(apiMetricsRef.current);
-  }
+  // TTFT in the status line was ant-only (apiMetricsRef/computeTtftText were
+  // never ported), so it's always absent here.
+  const ttftText: string | null = null;
 
   // When leader is idle but teammates are running (and we're viewing the leader),
   // show a static dim idle display instead of the animated spinner — otherwise

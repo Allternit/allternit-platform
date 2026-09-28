@@ -1,28 +1,6 @@
-// Auto-generated shim to satisfy TypeScript imports
-import { homedir } from 'node:os'
-import { join } from 'node:path'
-
-/** Base directory for persistent agent memory. */
-export function getMemoryBaseDir(): string {
-  return join(homedir(), '.config', 'gizzi', 'memory')
-}
-
-/** Auto-memory directory for the current project context. */
-export function getAutoMemPath(): string {
-  return join(getMemoryBaseDir(), 'auto')
-}
-
-/** True when the given path lives under the auto-memory dir. */
-export function isAutoMemPath(path: string): boolean {
-  return path.startsWith(getAutoMemPath())
-}
-
-/** Entrypoint memory file loaded into context. */
-export function getAutoMemEntrypoint(): string {
-  return join(getAutoMemPath(), 'MEMORY.md')
-}
-
-/** Feature flag for automatic memory capture. */
-export function isAutoMemoryEnabled(): boolean {
-  return true
-}
+// src/shared code imports memdir paths relative to itself; the real
+// resolution (GIZZI_CONFIG_DIR / ~/.gizzi, remote override, settings) lives in
+// src/memdir/paths.ts. A separate copy here pointed shared code at a
+// different directory (~/.config/gizzi/memory) and ignored the auto-memory
+// setting.
+export * from '../../memdir/paths.js'

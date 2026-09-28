@@ -2,8 +2,8 @@
  * Built-in terminal panel toggled with Meta+J.
  *
  * Uses tmux for shell persistence: a separate tmux server with a per-instance
- * socket (e.g., "claude-panel-a1b2c3d4") holds the shell session. Each Claude
- * Code instance gets its own isolated terminal panel that persists within the
+ * socket (e.g., "gizzi-panel-a1b2c3d4") holds the shell session. Each gizzi-code
+ * instance gets its own isolated terminal panel that persists within the
  * session but is destroyed when the instance exits.
  *
  * Meta+J is bound to detach-client inside tmux, so pressing it returns to
@@ -32,7 +32,18 @@ const TMUX_SESSION = 'panel'
 export function getTerminalPanelSocket(): string {
   // Use first 8 chars of session UUID for uniqueness while keeping name short
   const sessionId = getSessionId()
-  return `claude-panel-${sessionId.slice(0, 8)}`
+  return `gizzi-panel-${sessionId.slice(0, 8)}`
+}
+
+/**
+ * Env for the panel's tmux client. Inside tmux, $TMUX makes a nested
+ * `attach-session` refuse to run ("sessions should be nested with care"), so
+ * meta+j did nothing; the panel is its own server on its own socket, so it's
+ * safe to drop.
+ */
+function tmuxEnv(): NodeJS.ProcessEnv {
+  const { TMUX: _tmux, TMUX_PANE: _pane, ...env } = process.env
+  return env
 }
 
 let instance: TerminalPanel | undefined
@@ -99,7 +110,7 @@ class TerminalPanel {
         shell,
         '-l',
       ],
-      { encoding: 'utf-8' },
+      { encoding: 'utf-8', env: tmuxEnv() },
     )
 
     if (result.status !== 0) {
@@ -145,7 +156,7 @@ class TerminalPanel {
     spawnSync(
       'tmux',
       ['-L', getTerminalPanelSocket(), 'attach-session', '-t', TMUX_SESSION],
-      { stdio: 'inherit' },
+      { stdio: 'inherit', env: tmuxEnv() },
     )
   }
 
