@@ -101,6 +101,23 @@ function submissionAmbiguousError(detail: string): TaskError {
   };
 }
 
+// §A8/§A9 — an attempt that dies after the provider acknowledged the prompt is
+// stalled, never resent: the reply may still land in the provider thread. Same
+// classification the restart sweep gives an orphaned `acknowledged` attempt.
+function acknowledgedStallError(detail: string): TaskError {
+  return {
+    class: "stalled",
+    scope: "task",
+    retryable: false,
+    fallback_eligible: false,
+    cooldown_s: null,
+    user_action:
+      "The prompt reached the provider before the attempt failed; read the reply in the provider thread. It is never resubmitted.",
+    detail,
+    evidence_ref: null,
+  };
+}
+
 function needsUserError(reason: "auth" | "challenge" | "confirm_dialog", message: string): TaskError {
   const base = {
     scope: "account" as const,
@@ -416,18 +433,25 @@ export async function runAttempt(deps: WorkerDeps, req: RunRequest): Promise<Run
 
   try {
     const outcome = await consume(req.adapter.execute(task, ctx));
+    const noTerminal = "adapter stream ended without a terminal event";
     const final =
       outcome ??
-      failTerminal({
-        class: "provider_error",
-        scope: "task",
-        retryable: ctx.attempt.submission_state === "not_sent",
-        fallback_eligible: true,
-        cooldown_s: null,
-        user_action: null,
-        detail: "adapter stream ended without a terminal event",
-        evidence_ref: null,
-      });
+      failTerminal(
+        ctx.attempt.submission_state === "sent_unconfirmed"
+          ? submissionAmbiguousError(noTerminal)
+          : ctx.attempt.submission_state === "acknowledged"
+            ? acknowledgedStallError(noTerminal)
+            : {
+                class: "provider_error",
+                scope: "task",
+                retryable: true,
+                fallback_eligible: true,
+                cooldown_s: null,
+                user_action: null,
+                detail: noTerminal,
+                evidence_ref: null,
+              }
+      );
     // The watchdog stays armed across detach (D11: watch polls heartbeat it).
     if (final.kind === "terminal") deps.supervisor?.releaseAttempt(req.taskId);
     return maybeRequeue(final);
@@ -436,6 +460,9 @@ export async function runAttempt(deps: WorkerDeps, req: RunRequest): Promise<Run
     const detail = err instanceof Error ? err.message : String(err);
     if (ctx.attempt.submission_state === "sent_unconfirmed") {
       return maybeRequeue(failTerminal(submissionAmbiguousError(detail)));
+    }
+    if (ctx.attempt.submission_state === "acknowledged") {
+      return maybeRequeue(failTerminal(acknowledgedStallError(detail)));
     }
     return maybeRequeue(
       failTerminal({
