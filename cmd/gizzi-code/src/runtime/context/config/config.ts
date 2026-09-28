@@ -1246,6 +1246,15 @@ export namespace Config {
       keybinds: Keybinds.optional().describe("Custom keybind configurations"),
       logLevel: Log.Level.optional().describe("Log level"),
       tui: TUI.optional().describe("TUI specific settings"),
+      browser: z
+        .object({
+          preferred_adapter: z
+            .enum(["extension-tab", "local-playwright", "browser-use", "stagehand", "playwright", "cdp", "desktop"])
+            .optional()
+            .describe("Default browser-tool adapter when a call names none (Settings → Cowork → Preferred browser)"),
+        })
+        .optional()
+        .describe("Browser tool defaults"),
       server: Server.optional().describe("Server configuration for gizzi serve and web commands"),
       command: z
         .record(z.string(), Command)
@@ -1477,6 +1486,20 @@ export namespace Config {
             .min(0)
             .optional()
             .describe("Token buffer for compaction. Leaves enough window to avoid overflow during compaction."),
+        })
+        .optional(),
+      handoff: z
+        .object({
+          auto: z
+            .boolean()
+            .optional()
+            .describe("Hand off to a fresh context window between turns once the window is past the threshold (default: true)"),
+          threshold: z
+            .number()
+            .min(0.3)
+            .max(0.95)
+            .optional()
+            .describe("Share of the usable window that triggers a handoff (default: 0.7)"),
         })
         .optional(),
       experimental: z

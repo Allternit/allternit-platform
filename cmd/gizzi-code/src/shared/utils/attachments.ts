@@ -688,7 +688,9 @@ export type Attachment =
   | {
       type: 'companion_intro'
       name: string
-      species: string
+      /** The bot's one-line description. Old transcripts carry `species` instead. */
+      description?: string
+      species?: string
     }
   | {
       type: 'bagel_console'

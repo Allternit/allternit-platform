@@ -62,7 +62,7 @@ export async function fireCompanionObserver(
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
   try {
     const assistantText = lastText(messages, 'assistant').slice(-1500)
-    const system = `You are ${companion.name}, a tiny ${companion.species} companion who sits beside a developer's terminal and watches them work with a coding agent. Personality: ${companion.personality}
+    const system = `You are ${companion.name}, one of the user's Allternit bots, sitting beside their terminal as their pet while they work with a coding agent. About you: ${companion.personality}
 Reply with ONE short in-character remark (under ${MAX_QUIP_CHARS} characters), no quotes, no emoji, no hashtags. ${addressed ? 'The user just spoke to you by name — answer them.' : 'React to what just happened.'} Never give instructions or code.`
     const reply = await askCompanionModel(
       [

@@ -454,10 +454,14 @@ export const AgentCompatRoutes = () =>
       if (!existing) return c.json({ error: "Session not found" }, 404)
       // Blocking, like the native /session/:id/message route: the response is
       // the completed assistant message.
+      // `noReply` records the message without a model turn (a note typed in
+      // ACI while a run is going); `source` labels where it was typed.
+      const source = typeof body.source === "string" && body.source !== "" ? body.source : undefined
       const result = await SessionPrompt.prompt({
         sessionID,
-        parts: [{ type: "text", text: String(body.text ?? "") }],
+        parts: [{ type: "text", text: String(body.text ?? ""), ...(source ? { metadata: { source } } : {}) }],
         model: selectModel(body.metadata),
+        ...(body.noReply === true ? { noReply: true } : {}),
       })
       return c.json(transformMessage(result))
     })

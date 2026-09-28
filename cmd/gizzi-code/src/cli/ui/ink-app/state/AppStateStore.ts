@@ -177,6 +177,9 @@ export type AppState = DeepImmutable<{
   companionReaction?: string
   // Timestamp of last /pet pat — CompanionSprite renders hearts while recent
   companionPetAt?: number
+  // The /pet HUD is open: keep the pet sprite beside it even though the
+  // panel hides the prompt row.
+  petHudOpen?: boolean
   // TODO (ashwin): see if we can use utility-types DeepReadonly for this
   mcp: {
     clients: MCPServerConnection[]

@@ -5,8 +5,12 @@
 Claude Code's interactive features, turned on and working with any provider.
 
 ### Added
-- `/pet`: hatch a terminal pet that sits beside the prompt and reacts
-  to the session (`/pet pat`, `/pet mute`, `/pet unmute`).
+- `/pet`: your Allternit bot as a terminal pet beside the prompt, the same
+  bot the Desktop pet wears (Gizzi by default). Open it with `/pet`, or ↓
+  then Enter, to get a small HUD: the bot's standing thread (the same one
+  Desktop shows), an incognito ask that's never saved (works offline on
+  gizzi's model), and a bot picker that also switches the Desktop pet.
+  Signed-in features use `gizzi login`. `/pet pat`, `/pet mute`, `/pet unmute`.
 - Ctrl+R opens a searchable prompt-history picker.
 - Scheduled prompts: the CronCreate, CronDelete and CronList tools run a
   prompt on a cron schedule for the rest of the session.

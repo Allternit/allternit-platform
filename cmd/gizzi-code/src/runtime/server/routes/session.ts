@@ -1,4 +1,5 @@
 import { Hono } from "hono"
+import { SessionHandoff } from "@/runtime/session/handoff"
 import { stream } from "hono/streaming"
 import { describeRoute, validator, resolver } from "@/runtime/server/openapi"
 import z from "zod/v4"
@@ -309,7 +310,7 @@ export const SessionRoutes = lazy(() =>
       "/:sessionID/messages",
       describeRoute({
         summary: "List session messages",
-        description: "Retrieve all messages belonging to a specific session.",
+        description: "Retrieve messages belonging to a specific session, optionally only the newest `limit`.",
         operationId: "session.messages",
         responses: {
           200: {
@@ -324,9 +325,12 @@ export const SessionRoutes = lazy(() =>
         },
       }),
       validator("param", z.any()),
+      validator("query", z.object({ limit: z.coerce.number().int().min(1).optional() })),
       async (c) => {
         const { sessionID } = c.req.valid("param") as any
-        const msgs = await Session.messages({ sessionID })
+        // `limit` keeps only the newest N messages (list previews need one).
+        const { limit } = c.req.valid("query")
+        const msgs = await Session.messages({ sessionID, limit })
         return c.json(msgs)
       },
     )
@@ -496,6 +500,65 @@ export const SessionRoutes = lazy(() =>
         const { sessionID } = c.req.valid("param") as any
         const result = await Session.fork({ sessionID })
         return c.json(result)
+      },
+    )
+    .post(
+      "/:sessionID/handoff",
+      describeRoute({
+        summary: "Hand off session",
+        description:
+          "End this session's context window with a checkpoint baton and continue in a fresh, linked session. Idempotent: a session that already handed off returns its lineage head.",
+        operationId: "session.handoff",
+        responses: {
+          200: {
+            description: "The session that now holds the conversation, and the baton it started from",
+            content: { "application/json": { schema: resolver(z.any()) } },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator("param", z.object({ sessionID: z.string() })),
+      validator(
+        "json",
+        z
+          .object({
+            reason: SessionHandoff.Reason.optional(),
+            context: z.string().optional(),
+            baton: SessionHandoff.Baton.partial().optional(),
+          })
+          .optional(),
+      ),
+      async (c) => {
+        const { sessionID } = c.req.valid("param")
+        const body = c.req.valid("json") ?? {}
+        const result = await SessionHandoff.run({
+          sessionID,
+          reason: body.reason ?? "manual",
+          context: body.context,
+          baton: body.baton,
+        })
+        return c.json(result)
+      },
+    )
+    .get(
+      "/:sessionID/lineage",
+      describeRoute({
+        summary: "Session lineage",
+        description: "Every context window of this conversation, oldest first; the last one is the head.",
+        operationId: "session.lineage",
+        responses: {
+          200: {
+            description: "Sessions in the lineage",
+            content: { "application/json": { schema: resolver(z.any()) } },
+          },
+          ...errors(404),
+        },
+      }),
+      validator("param", z.object({ sessionID: z.string() })),
+      async (c) => {
+        const { sessionID } = c.req.valid("param")
+        const sessions = await SessionHandoff.lineage(sessionID)
+        return c.json({ head: sessions[sessions.length - 1].id, sessions })
       },
     )
     .post(

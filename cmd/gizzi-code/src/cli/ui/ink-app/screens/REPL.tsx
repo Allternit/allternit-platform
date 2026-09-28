@@ -718,6 +718,7 @@ export function REPL({
   }, [disabled]);
 
   const toolPermissionContext = useAppState(s => s.toolPermissionContext);
+  const petHudOpen = useAppState(s => s.petHudOpen);
   const verbose = useAppState(s => s.verbose);
   const mcp = useAppState(s => s.mcp);
   const plugins = useAppState(s => s.plugins);
@@ -4999,7 +5000,7 @@ export function REPL({
   // spriteWidth — divider stops short and dialog text wraps early. Don't
   // check footerSelection: pill FOCUS (arrow-down to tasks pill) must keep
   // the sprite visible so arrow-right can navigate to it.
-  const companionVisible = !toolJSX?.shouldHidePromptInput && !focusedInputDialog && !showBashesDialog;
+  const companionVisible = (!toolJSX?.shouldHidePromptInput || !!petHudOpen) && !focusedInputDialog && !showBashesDialog;
 
   // In fullscreen, ALL local-jsx slash commands float in the modal slot —
   // FullscreenLayout wraps them in an absolute-positioned bottom-anchored

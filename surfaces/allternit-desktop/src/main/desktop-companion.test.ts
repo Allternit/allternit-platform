@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 
-const mocks = vi.hoisted(() => ({ handlers: new Map<string, Function>(), events: new Map<string, Function>(), windows: [] as any[], menu: [] as any[] }));
+const mocks = vi.hoisted(() => ({ handlers: new Map<string, Function>(), events: new Map<string, Function>(), windows: [] as any[], menu: [] as any[], stores: [] as any[], watchers: [] as Array<(event: string, file: string) => void> }));
+vi.mock('node:fs', async (importOriginal) => ({ ...(await importOriginal<typeof import('node:fs')>()), watch: (_dir: string, cb: any) => { mocks.watchers.push(cb); return { unref() {} }; } }));
 vi.mock('electron-store', () => ({ default: class {
   store: any;
-  constructor(options: any) { this.store = { ...options.defaults }; }
+  path = '/tmp/@allternit/desktop/desktop-companion.json';
+  constructor(options: any) { this.store = { ...options.defaults }; mocks.stores.push(this); }
   set(key: string, value: unknown) { this.store[key] = value; }
   delete(key: string) { delete this.store[key]; }
 } }));
@@ -29,8 +31,36 @@ vi.mock('electron', () => ({
 import { installDesktopCompanion } from './desktop-companion.js';
 
 function sender(win: any) { return { sender: win.webContents, senderFrame: win.webContents.mainFrame }; }
-beforeEach(() => { mocks.windows.length = 0; mocks.handlers.clear(); mocks.events.clear(); });
+beforeEach(() => { mocks.windows.length = 0; mocks.handlers.clear(); mocks.events.clear(); mocks.stores.length = 0; mocks.watchers.length = 0; });
 describe('desktop companion windows', () => {
+  it('follows a bot picked by the gizzi terminal pet', async () => {
+    vi.useFakeTimers();
+    try {
+      const manager = installDesktopCompanion({ origin: () => 'http://localhost:8013', main: () => null, preload: '/preload.js' });
+      manager.start();
+      const pet = mocks.windows[0];
+      const store = mocks.stores[0];
+      pet.webContents.send.mockClear();
+      // Another file in the folder changing, with agentId unchanged: no broadcast.
+      mocks.watchers[0]!('change', 'config.json');
+      vi.advanceTimersByTime(200);
+      expect(pet.webContents.send).not.toHaveBeenCalled();
+      // The terminal replaces our settings file via a temp file; macOS may
+      // report only the temp file's name.
+      store.store.agentId = 'bot-from-terminal';
+      mocks.watchers[0]!('rename', '.desktop-companion.json.123.tmp');
+      vi.advanceTimersByTime(200);
+      expect(pet.webContents.send).toHaveBeenCalledWith('companion:state', expect.objectContaining({ agentId: 'bot-from-terminal' }));
+      // Desktop's own writes don't re-broadcast.
+      mocks.handlers.get('companion:update')!(sender(pet), { agentId: 'bot-2' });
+      pet.webContents.send.mockClear();
+      mocks.watchers[0]!('change', 'desktop-companion.json');
+      vi.advanceTimersByTime(200);
+      expect(pet.webContents.send).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it('opens the bot HUD and keeps the pet anchored and scaled as HUD bounds change', () => {
     const openHud = vi.fn();
     const manager = installDesktopCompanion({ origin: () => 'http://localhost:8013', main: () => null, preload: '/preload.js', openHud });
