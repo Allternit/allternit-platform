@@ -26,6 +26,10 @@ separate ChatGPT Image integration:
   Seedance 2.x, Sora 2 Pro, Wan 2.7, Kling, Hailuo 3. Priced per video-second.
 - **Higgsfield is not on OpenRouter.** It needs its own client: `platform.higgsfield.ai`, key + secret,
   async request/status. Its catalog has 50+ models, including Soul and DoP.
+- **OpenAI GPT Image 2.5 is not on OpenRouter** (Eoj, 2026-09-27). It shipped in the API on
+  2026-09-08 as `gpt-image-2.5-flare` (fast, everyday production) and `gpt-image-2.5-sunburst`
+  (editing precision), and it is better than gpt-image-2. It needs a direct OpenAI client. The local
+  API media plane already has one for gpt-image-2 (`media/clients.rs`), which extends to the 2.5 ids.
 
 ## 2. The shape: one tool, lanes behind it
 
@@ -44,10 +48,15 @@ Every lane returns the same artifact. The output opens in the artifact-session p
 video viewer, lands in Outputs, and is saved as an artifact record.
 
 ### Lane 1 — Allternit cloud subscription (managed models)
-- cloud-api gains `/v1/media/images` and `/v1/media/videos`, which proxy **OpenRouter**
-  (gpt-image-2, Seedream, FLUX 2, Veo, Seedance, Sora, Wan, Kling) and **Higgsfield** (a direct
-  client; the open-connector runtime shows the request shapes). They are metered against the plan's
-  media allowance.
+- cloud-api gains `/v1/media/images` and `/v1/media/videos` for the **platform console
+  subscription**, with three upstreams:
+  - **OpenAI direct**: `gpt-image-2.5-flare` (the default image model) and `gpt-image-2.5-sunburst`
+    (edits / reference images).
+  - **Higgsfield direct**: Soul / Soul Cinema images, DoP and its video catalog (the
+    open-connector runtime shows the request shapes).
+  - **OpenRouter**: everything else (Seedream, FLUX 2, Gemini image, Veo, Seedance, Sora, Wan, Kling).
+  All three are metered against the plan's media allowance. The console's plan page and model list
+  show these media models.
 - **Entitlement check** before any call. With no media-enabled plan, the tool returns
   `needs_subscription`, and the transcript shows a **promo / preview card**: sample outputs per model
   family (stills + short looping clips), what the plan includes, and "Get Allternit Cloud"
@@ -87,7 +96,7 @@ models do when asked to "make an image/video with code":
 |---|---|---|
 | **P1** | `media_generate` tool + lane router + **lane 3 image** + output in the pane/Outputs; Image mode contract points at the real tool; no more MODE_EXECUTION_INVALID for Image | — |
 | **P2** | **Lane 3 video** (render-kit video: scenes, frames, ffmpeg, score, TTS); Video contract points at the real tool | P1 |
-| **P3** | **Lane 1**: cloud-api media routes (OpenRouter images + videos, Higgsfield), entitlement check, `needs_subscription` → **promo card** + tiles/empty-state preview; BYOK lane wired into the router | decisions 1, 3 |
+| **P3** | **Lane 1**: cloud-api media routes (OpenAI gpt-image-2.5 direct, Higgsfield direct, OpenRouter images + videos), platform console plan/model list shows them, entitlement check, `needs_subscription` → **promo card** + tiles/empty-state preview; BYOK lane wired into the router | decisions 1, 3 |
 | **P4** | **Lane 2**: router ↔ Subscription Fabric (`image.create` via ChatGPT sub; Kimi → Build/Docs/Slides modes as a backup lane) | Fabric P3 gate |
 | **P5** | Same tool for Design canvas (place generated images on the canvas), Build (assets), Swarm (real `agent-swarm` tool name in its contract) | P1 |
 
@@ -100,6 +109,6 @@ Each phase is one PR pair (platform + ai), reviewed by Eoj before merge.
 2. **Default lane order when several are available.** Proposed: connected sub (free to the user) →
    Allternit cloud → own key → native. The native lane is also always offered for code-shaped requests
    (diagrams, posters, promos).
-3. **Higgsfield:** Allternit-funded under the sub, the user's own key, or both.
+3. **OpenAI (gpt-image-2.5) and Higgsfield:** Allternit-funded under the sub, the user's own key, or both.
 4. **Where native renders run by default:** this Mac (Desktop bundles headless Chrome + ffmpeg) or the
    session's cloud computer.
