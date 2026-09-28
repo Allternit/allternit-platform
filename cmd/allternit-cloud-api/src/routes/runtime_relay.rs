@@ -1324,6 +1324,11 @@ fn filtered_headers(headers: HashMap<String, String>) -> HashMap<String, String>
                     | "if-modified-since"
                     | "last-event-id"
                     | "x-request-id"
+                    // Settings → Cowork devices: the runtime checks the
+                    // calling device against its trusted list.
+                    | "x-allternit-device-id"
+                    | "x-allternit-device-name"
+                    | "x-allternit-device-platform"
             )
         })
         .collect()

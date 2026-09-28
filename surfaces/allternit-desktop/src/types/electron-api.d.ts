@@ -152,6 +152,13 @@ export interface AppAPI {
   checkForUpdates(): Promise<{ ok: boolean; reason?: string; message?: string }>;
   installUpdate(): Promise<void>;
   onUpdateStatus(handler: (status: UpdateStatus) => void): () => void;
+  /** This computer in Settings → Cowork devices; null for an untrusted frame. */
+  deviceInfo: { id: string; name: string; platform: string; kind: 'desktop' } | null;
+}
+
+export interface LinksAPI {
+  setOpenInApp(enabled: boolean): Promise<void>;
+  onOpenInApp(callback: (url: string) => void): () => void;
 }
 
 export interface AuthAccount {
@@ -528,6 +535,7 @@ export interface AllternitDesktopAPI {
   store: StoreAPI;
   state: PersistedStateAPI;
   app: AppAPI;
+  links: LinksAPI;
   auth: AuthAPI;
   devicePairing: DevicePairingAPI;
   mesh: MeshAPI;
