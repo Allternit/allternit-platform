@@ -177,6 +177,20 @@ describe("Mesh join precedence", () => {
     expect(calls).not.toContain("tailscale up")
   })
 
+  test("DEBUG lifeline probe", async () => {
+    const { spawnOwnedChild } = await import("../../src/runtime/util/parent-lifeline")
+    for (const cmd of [["/bin/sh", ["-c", "sleep 0.3; echo alive"]], [nodeFake, []]] as const) {
+      const started = Date.now()
+      const proc = spawnOwnedChild(cmd[0], [...cmd[1]], { stdio: ["ignore", "pipe", "pipe"] })
+      let out = ""
+      proc.stdout?.on("data", (c: Buffer) => (out += c.toString()))
+      proc.stderr?.on("data", (c: Buffer) => (out += "ERR:" + c.toString()))
+      const res = await new Promise<string>((r) => proc.once("exit", (code, sig) => r(`code=${code} sig=${sig}`)))
+      console.log(`MESHDEBUG probe ${cmd[0]} ${res} after ${Date.now() - started}ms out=${JSON.stringify(out)}`)
+      if (cmd[0] === nodeFake) break
+    }
+  })
+
   test("(c) sidecar present but join fails -> attach fallback with a warning", async () => {
     await fs.symlink(nodeFake, nodeBin)
     await Bun.write(record, "")
