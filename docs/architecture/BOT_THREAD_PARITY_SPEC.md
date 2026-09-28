@@ -502,15 +502,15 @@ checked live in a main Desktop build (one-current-build rule).
 
 ### P5 — Coordinator fan-out (A://)
 - [ ] P5.1 Al plan loop → task graph through the A:// SDK (deterministic assignment, dependency gating)
-- [ ] P5.2 Fan-out to threads; "Sent to N threads" receipts; live thread chips
-- [ ] P5.3 Follow-up routing ("Sent to one thread") and thread pills with hover cards
-- [ ] P5.4 Decision cards; completion synthesis back to the project chat
-- [ ] P5.5 Fan-out (intent graph) view from the canonical DAG
+- [x] P5.2 Fan-out to threads; "Sent to N threads" receipts; live thread chips
+- [x] P5.3 Follow-up routing ("Sent to one thread") and thread pills with hover cards
+- [x] P5.4 (platform #837, allternit-ai #162) Decision cards; completion synthesis back to the project chat
+- [x] P5.5 (allternit-ai #162, Graph tab) Fan-out (intent graph) view from the canonical DAG
 - [ ] P5.6 Goal loop / WIH / rails DAGs read from the canonical graph
 
 ### P6 — @mention threads
-- [ ] P6.1 `@Bot` in chat / group chat starts a task thread inline with a live task list
-- [ ] P6.2 External channels (email / phone / Slack-style) enter as threads
+- [x] P6.1 (allternit-ai #163) `@Bot` in chat / group chat starts a task thread inline with a live task list
+- [~] P6.2 (email done: one thread per conversation; Slack once Slack is bound to a bot) External channels (email / phone / Slack-style) enter as threads
 
 ### P7 — Subagents and memory
 - [ ] P7.1 Compressed subagent result contract; transcript on expand
