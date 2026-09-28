@@ -1724,6 +1724,12 @@ async fn transform_bus_event(
             "session_id": props.get("sessionID"),
             "questions": props.get("questions"),
         })),
+        // Answered or dismissed on any surface: the others drop their prompt.
+        "question.replied" | "question.rejected" => Some(json!({
+            "type": if event_type == "question.replied" { "question_replied" } else { "question_rejected" },
+            "request_id": props.get("requestID"),
+            "session_id": props.get("sessionID"),
+        })),
         "pane_browser.requested" => Some(json!({
             "type": "pane_browser_requested",
             "request_id": props.get("id"),
@@ -2097,6 +2103,28 @@ mod permission_reply_tests {
     fn refuses_anything_else() {
         assert_eq!(permission_reply_payload(&json!({ "reply": "approve" })), None);
         assert_eq!(permission_reply_payload(&json!({})), None);
+    }
+
+    #[tokio::test]
+    async fn answered_prompts_reach_the_sync_feed() {
+        let temp = std::env::temp_dir().join(format!("prompt-sync-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let db = crate::db::DbHandle::new(temp.join("test.db")).expect("test db");
+        let client = reqwest::Client::new();
+        for (gizzi, ours) in [
+            ("permission.replied", "permission_replied"),
+            ("question.replied", "question_replied"),
+            ("question.rejected", "question_rejected"),
+        ] {
+            let event = super::GizziBusEvent {
+                event_type: Some(gizzi.to_string()),
+                properties: Some(json!({ "sessionID": "s1", "requestID": "r1", "reply": "once", "answers": [] })),
+            };
+            let payload = super::transform_bus_event(&client, &db, event).await.expect(gizzi);
+            assert_eq!(payload["type"], ours);
+            assert_eq!(payload["request_id"], "r1");
+            assert_eq!(payload["session_id"], "s1");
+        }
     }
 }
 

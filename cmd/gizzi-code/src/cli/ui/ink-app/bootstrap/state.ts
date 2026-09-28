@@ -476,10 +476,43 @@ export function switchSession(
   STATE.planSlugCache.delete(STATE.sessionId)
   STATE.sessionId = sessionId
   STATE.sessionProjectDir = projectDir
+  // Leaving the bot's shared session (e.g. /resume elsewhere) ends bot chat.
+  if (ACTIVE_BOT_CHAT.current && ACTIVE_BOT_CHAT.current.sessionId !== sessionId) {
+    setActiveBotChat(null)
+  }
   sessionSwitched.emit(sessionId)
 }
 
 const sessionSwitched = createSignal<[id: SessionId]>()
+
+/**
+ * The `/bots` chat this terminal is a live client of (the bot's `gizzi serve`
+ * session via the platform API), or null for a normal local session. When
+ * set, REPL routes turns through useBotChatSession instead of the local
+ * query loop. `sessionId` follows handoffs to the thread's newest window.
+ */
+export type ActiveBotChat = {
+  botId: string
+  botName: string
+  threadId: string
+  sessionId: string
+  /** The bot's model as "provider/model", sent with each turn. */
+  model?: string | null
+}
+
+const ACTIVE_BOT_CHAT: { current: ActiveBotChat | null } = { current: null }
+const botChatChanged = createSignal<[chat: ActiveBotChat | null]>()
+
+export function getActiveBotChat(): ActiveBotChat | null {
+  return ACTIVE_BOT_CHAT.current
+}
+
+export function setActiveBotChat(chat: ActiveBotChat | null): void {
+  ACTIVE_BOT_CHAT.current = chat
+  botChatChanged.emit(chat)
+}
+
+export const onActiveBotChatChange = botChatChanged.subscribe
 
 /**
  * Register a callback that fires when switchSession changes the active

@@ -139,10 +139,12 @@ export interface BotChatUpdate {
   commit: BotChatItem[]
   /** New streaming preview: a string, `null` to clear it, `undefined` to leave it. */
   streamingText?: string | null
-  /** The conversation moved to a fresh window; follow it. */
+  /** The conversation moved to a fresh window; the tracker already follows it. */
   handedOffTo?: { sessionId: string; generation?: number; reason?: string }
   permission?: SyncEvent
   question?: SyncEvent
+  /** A permission or question prompt was answered (here or on another surface); drop it. */
+  resolved?: string
 }
 
 /**
@@ -157,6 +159,8 @@ export class BotChatTracker {
   private readonly streaming = new Map<string, string>()
   /** Text this terminal just sent; its echo from the feed is not shown twice. */
   private readonly pendingEchoes: string[] = []
+  /** The rip for a followed handoff is drawn from the event; skip the seed's copy. */
+  private skipSeedRip = false
 
   constructor(public sessionId: string) {}
 
@@ -176,11 +180,20 @@ export class BotChatTracker {
     this.textParts.clear()
   }
 
+  /** Items from outside the feed (a turn's reply): the ones not shown yet. */
+  commitItems(items: BotChatItem[]): BotChatItem[] {
+    return this.fresh(items)
+  }
+
   private fresh(items: BotChatItem[]): BotChatItem[] {
     const out: BotChatItem[] = []
     for (const item of items) {
       if (this.seen.has(item.key)) continue
       this.seen.add(item.key)
+      if (item.kind === "rip" && this.skipSeedRip) {
+        this.skipSeedRip = false
+        continue
+      }
       if (item.kind === "user") {
         const echo = this.pendingEchoes.indexOf(item.text.trim())
         if (echo !== -1) {
@@ -240,8 +253,18 @@ export class BotChatTracker {
       }
       case "handed_off": {
         if (!event.to) return { commit: [] }
+        this.follow(event.to)
+        this.skipSeedRip = true
+        const rip: BotChatItem = {
+          kind: "rip",
+          key: `handoff:${event.to}`,
+          generation: event.generation ?? undefined,
+          reason: event.reason ?? undefined,
+          from: sessionId,
+        }
+        this.seen.add(rip.key)
         return {
-          commit: [],
+          commit: [rip],
           streamingText: null,
           handedOffTo: {
             sessionId: event.to,
@@ -254,6 +277,10 @@ export class BotChatTracker {
         return { commit: [], permission: event }
       case "question_asked":
         return { commit: [], question: event }
+      case "permission_replied":
+      case "question_replied":
+      case "question_rejected":
+        return event.request_id ? { commit: [], resolved: event.request_id } : { commit: [] }
       default:
         return { commit: [] }
     }
