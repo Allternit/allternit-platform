@@ -15,23 +15,72 @@ const repoRoot = path.resolve(desktopDir, '..', '..');
 const platformResourcesDir = path.join(desktopDir, 'resources', 'platform');
 
 function resolveHostedUiDir() {
-  const envPath = process.env.ALLTERNIT_AI_PATH;
-  if (envPath && fs.existsSync(path.join(envPath, 'package.json'))) {
-    return path.resolve(envPath);
+  // One resolver for every build path (scripts/hosted-ui.sh): ALLTERNIT_AI_PATH,
+  // else .hosted-ui, else a clean worktree on origin/main — never the shared
+  // allternit-ai checkout, whose stale commit kept reverting merged UI.
+  try {
+    const out = execFileSync('bash', ['-c', '. "$0"; resolve_hosted_ui "$1"', path.join(repoRoot, 'scripts', 'hosted-ui.sh'), repoRoot], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'inherit'],
+    }).trim();
+    const dir = out.split('\n').pop();
+    if (dir && fs.existsSync(path.join(dir, 'package.json'))) return dir;
+  } catch {
+    // fall through to the error below
   }
-  const candidates = [
-    path.join(repoRoot, '.hosted-ui'),
-    path.resolve(repoRoot, '..', 'allternit-ai'),
-  ];
-  for (const c of candidates) {
-    if (fs.existsSync(path.join(c, 'package.json'))) {
-      return c;
-    }
-  }
-  log('ERROR: ai.allternit.com UI not found.');
+  log('ERROR: ai.allternit.com UI not found or its build worktree could not be prepared.');
   log('Clone Gizziio/allternit-ai next to this repo, or set ALLTERNIT_AI_PATH.');
   log('Do not package surfaces/platform.allternit.com — that is the cloud console.');
   process.exit(1);
+}
+
+function git(dir, args) {
+  return execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+}
+
+/**
+ * Refuse to package a stale or dirty workspace UI. Builds that fell back to
+ * the shared allternit-ai checkout (parked on an old commit, with other
+ * sessions' WIP) shipped week-old screens and "reverted" merged fixes on
+ * every install. The UI must contain origin/main and be clean; the commit is
+ * stamped into resources/platform/ui-source.json so a build can be checked.
+ * ALLTERNIT_ALLOW_STALE_UI=1 overrides (e.g. testing a branch on purpose).
+ */
+function checkUiSource(uiDir) {
+  const allowStale = process.env.ALLTERNIT_ALLOW_STALE_UI === '1';
+  let head = 'unknown';
+  let branch = 'unknown';
+  let dirty = 0;
+  let behind = null;
+  try {
+    head = git(uiDir, ['rev-parse', 'HEAD']);
+    branch = git(uiDir, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    dirty = git(uiDir, ['status', '--porcelain', '--untracked-files=no']).split('\n').filter(Boolean).length;
+    try {
+      git(uiDir, ['fetch', '--quiet', 'origin', 'main']);
+    } catch (e) {
+      log(`note: could not fetch origin/main in ${uiDir} (${e.message.split('\n')[0]}); checking against the last fetch`);
+    }
+    behind = Number(git(uiDir, ['rev-list', '--count', 'HEAD..origin/main']));
+  } catch (e) {
+    log(`note: ${uiDir} is not a git checkout (${e.message.split('\n')[0]}); cannot verify it is current`);
+  }
+  const problems = [];
+  if (behind) problems.push(`${behind} commit(s) behind origin/main`);
+  if (dirty) problems.push(`${dirty} uncommitted change(s)`);
+  if (problems.length) {
+    const msg = `Workspace UI at ${uiDir} (${branch} ${head.slice(0, 9)}) is ${problems.join(' and ')}.`;
+    if (!allowStale) {
+      log(`ERROR: ${msg}`);
+      log('Build from a clean worktree on origin/main:');
+      log('  git -C <allternit-ai> worktree add --detach ../allternit-ai-wt-build origin/main');
+      log('  ALLTERNIT_AI_PATH=<that worktree> node scripts/prepare-platform-static.cjs');
+      log('Or set ALLTERNIT_ALLOW_STALE_UI=1 to package it anyway.');
+      process.exit(1);
+    }
+    log(`WARNING (ALLTERNIT_ALLOW_STALE_UI=1): ${msg}`);
+  }
+  return { commit: head, branch, dirty, behindMain: behind, path: uiDir };
 }
 
 function log(message) {
@@ -183,6 +232,8 @@ function main() {
 
   const platformDir = resolveHostedUiDir();
   log(`Workspace UI (ai.allternit.com) at ${platformDir}`);
+  const uiSource = checkUiSource(platformDir);
+  log(`Workspace UI commit ${uiSource.commit.slice(0, 9)} (${uiSource.branch})`);
   const ossLink = path.join(platformDir, '.oss-platform');
   try {
     fs.symlinkSync(repoRoot, ossLink, 'dir');
@@ -220,6 +271,14 @@ function main() {
   runBuild(platformDir, 'build', buildEnv);
   checkCompanionExport(path.join(platformDir, 'dist'));
   copyExport(path.join(platformDir, 'dist'), platformResourcesDir, 'Workspace UI');
+  fs.writeFileSync(
+    path.join(platformResourcesDir, 'ui-source.json'),
+    JSON.stringify({ ...uiSource, builtAt: new Date().toISOString() }, null, 2) + '\n',
+  );
 }
 
-main();
+if (require.main === module) {
+  main();
+} else {
+  module.exports = { checkUiSource };
+}
