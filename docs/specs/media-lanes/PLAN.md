@@ -43,7 +43,7 @@ media_generate({ kind: "image" | "video", prompt, size?, aspect?, duration?, ref
   | { status: "blocked", reason }
 ```
 
-A **lane router** picks the lane. The session's lane picker overrides the default order (see decision 2).
+A **lane router** picks the lane: the model selected in the session's picker decides the first lane; otherwise the agent asks in the session (decision 2).
 Every lane returns the same artifact. The output opens in the artifact-session pane as an image or
 video viewer, lands in Outputs, and is saved as an artifact record.
 
@@ -85,8 +85,7 @@ models do when asked to "make an image/video with code":
   synth, and optional narration from the local Kokoro TTS (audio-gen). Stills contact-sheet review
   comes before the full render. Good for: promos, title cards, explainers, kinetic type, data animation.
 - Honest limits, shown in the lane picker: no photoreal people or scenes. That is lanes 1 and 2.
-- Runs where the session's tools run: this Mac (Desktop bundles Chrome-for-testing plus ffmpeg), or
-  the session's cloud computer. Works with **any** model through gizzi. It costs only tokens, and
+- Renders inside the user's own app (Chromium), with no extra install; see §5. Works with **any** model through gizzi. It costs only tokens, and
   opus 5.5 and astra are the default routed models for it.
 - Ships as skills in the harness's skill format, so bots and threads use the same workflow.
 
@@ -94,21 +93,47 @@ models do when asked to "make an image/video with code":
 
 | Phase | Delivers | Depends on |
 |---|---|---|
-| **P1** | `media_generate` tool + lane router + **lane 3 image** + output in the pane/Outputs; Image mode contract points at the real tool; no more MODE_EXECUTION_INVALID for Image | — |
-| **P2** | **Lane 3 video** (render-kit video: scenes, frames, ffmpeg, score, TTS); Video contract points at the real tool | P1 |
-| **P3** | **Lane 1**: cloud-api media routes (OpenAI gpt-image-2.5 direct, Higgsfield direct, OpenRouter images + videos), platform console plan/model list shows them, entitlement check, `needs_subscription` → **promo card** + tiles/empty-state preview; BYOK lane wired into the router | decisions 1, 3 |
+| **P1** | `media_generate` tool + lane router + **lane 3 image** (in-app render bridge, §5) + output in the pane/Outputs; Image mode contract points at the real tool; no more MODE_EXECUTION_INVALID for Image | — |
+| **P2** | **Lane 3 video** (render-kit video: scenes, sub-frame blur, OfflineAudioContext score, WebCodecs + MP4 muxer; render worker for unattended bots); Video contract points at the real tool | P1 |
+| **P3** | **Lane 1** (per-tier media cap on the shared allowance): cloud-api media routes (OpenAI gpt-image-2.5 direct, Higgsfield direct, OpenRouter images + videos), platform console plan/model list shows them, entitlement check, `needs_subscription` → **promo card** + tiles/empty-state preview; BYOK lane wired into the router | decisions 1, 3 |
 | **P4** | **Lane 2**: router ↔ Subscription Fabric (`image.create` via ChatGPT sub; Kimi → Build/Docs/Slides modes as a backup lane) | Fabric P3 gate |
 | **P5** | Same tool for Design canvas (place generated images on the canvas), Build (assets), Swarm (real `agent-swarm` tool name in its contract) | P1 |
 
 Each phase is one PR pair (platform + ai), reviewed by Eoj before merge.
 
-## 4. Decisions for Eoj
+## 4. Decisions (Eoj, 2026-09-27)
 
-1. **Which plan(s) include media, and how it's metered:** included monthly media credits, pay per
-   generation from the credits balance, or both.
-2. **Default lane order when several are available.** Proposed: connected sub (free to the user) →
-   Allternit cloud → own key → native. The native lane is also always offered for code-shaped requests
-   (diagrams, posters, promos).
-3. **OpenAI (gpt-image-2.5) and Higgsfield:** Allternit-funded under the sub, the user's own key, or both.
-4. **Where native renders run by default:** this Mac (Desktop bundles headless Chrome + ffmpeg) or the
-   session's cloud computer.
+1. **Cost:** the subscription's existing allowance covers **all** model inference, media included,
+   even when a media model costs more. Each plan tier gets a **per-account cap on media spend** so
+   Allternit's cost stays bounded and the plan keeps its margin. At the cap, the tool returns
+   `needs_subscription` with an upgrade offer on the same promo card.
+2. **Lane choice comes from the model picker.** If the model selected in the session's picker can do
+   the job (a media model, or a subscription-backed model), its lane runs first. Otherwise, or when
+   that lane fails, the agent **asks in the session** which way to do it next (the card lists the
+   available lanes). There is no silent fixed fallback order.
+3. **OpenAI (gpt-image-2.5) and Higgsfield:** both. Allternit-funded under the subscription, and a
+   user's own key takes precedence when added.
+4. **Native rendering must ship with the product, not rely on a developer Mac.** See §5.
+
+## 5. Native lane in production: no extra dependencies
+
+Every Allternit surface already contains a Chromium engine: Desktop is Electron, the web app runs in
+the user's browser, and cloud computers have a browser. Chromium can do the whole native pipeline
+without Python, ffmpeg or a separate Chrome install:
+
+| Step | Dev prototype (motion-reel) | Production (render-kit) |
+|---|---|---|
+| Frames | headless Chrome + Playwright | the app's own Chromium, in a sandboxed offscreen iframe / Electron offscreen window |
+| Motion blur | ffmpeg `tmix` | sub-frame accumulation on canvas (render N sub-frames, blend) |
+| Soundtrack | numpy synth → WAV | `OfflineAudioContext` (deterministic, faster than real time) |
+| Encode | ffmpeg → H.264 MP4 | **WebCodecs** `VideoEncoder` (H.264) + `AudioEncoder` (AAC/Opus) + a JS MP4 muxer (e.g. `mediabunny`) |
+| Image | Playwright screenshot | canvas / SVG rasterize → PNG (`OffscreenCanvas.convertToBlob`) |
+
+**Where it runs:** the same bridge as `pane_artifact`. gizzi's `media_generate` (native lane) publishes
+a render request; the app showing the session renders it and uploads the PNG/MP4 as the artifact.
+When no app is attached (a bot or thread running unattended), the job goes to a **render worker**:
+headless Chromium in the cloud computer golden image (add it there), or a small cloud render service.
+Either way it runs the same render-kit page, so the output is identical everywhere.
+
+WebCodecs is available in Chromium/Electron and Safari 17+ (iOS included). The one addition to the
+bundle is the muxer (a JS library, tens of KB).
