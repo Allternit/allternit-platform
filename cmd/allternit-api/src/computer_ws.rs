@@ -780,8 +780,12 @@ async fn computer_vnc_ws_handler(
 ///
 /// Remote machines paired over Fabric (`provider = fabric`) expose VNC on
 /// the mesh at `<host>:5900`; the API reaches that through desktop main's
-/// mesh bridge. Everything else comes from the VM driver.
+/// mesh bridge. This Mac (the computer running this API) is its own Screen
+/// Sharing server on localhost. Everything else comes from the VM driver.
 async fn resolve_vnc_target(state: &Arc<AppState>, computer: &ComputerResponse) -> Option<(String, Option<String>)> {
+    if crate::computer_routes::is_this_device(computer) {
+        return Some((format!("127.0.0.1:{}", crate::mesh_bridge::NODE_VNC_PORT), None));
+    }
     if computer.provider == crate::mesh_bridge::FABRIC_PROVIDER {
         let host = computer.host.clone().filter(|h| !h.is_empty())?;
         let target = format!("{host}:{}", crate::mesh_bridge::NODE_VNC_PORT);
@@ -819,6 +823,20 @@ async fn resolve_vnc_target(state: &Arc<AppState>, computer: &ComputerResponse) 
         return None;
     };
     Some((tcp_addr, endpoint.token.clone().filter(|t| !t.is_empty())))
+}
+
+/// True when this user (on any device) holds the computer's control lease.
+async fn holds_control(state: &Arc<AppState>, computer_id: &str, user_id: &str) -> bool {
+    let db = state.db.clone();
+    let (id, uid) = (computer_id.to_string(), user_id.to_string());
+    tokio::task::spawn_blocking(move || {
+        db.connect()
+            .ok()
+            .and_then(|conn| crate::computer_control_lease::current(&conn, &id, chrono::Utc::now().timestamp()).ok().flatten())
+            .is_some_and(|lease| lease.holder.kind == crate::computer_control_lease::HolderKind::User && lease.holder.id == uid)
+    })
+    .await
+    .unwrap_or(false)
 }
 
 /// One controller per computer: a viewer who doesn't hold control (someone
@@ -998,7 +1016,12 @@ async fn handle_vnc_socket(
                         // receives, injected or client-originated, so its
                         // handshake state stays aligned with the server.
                         let to_server = match codec.ro_filter.as_mut() {
-                            Some(f) => f.feed(&pipe.to_server),
+                            Some(f) => {
+                                // The filter reads ARD's key length from the
+                                // server's side of the handshake.
+                                f.observe_server(&buf[..n]);
+                                f.feed(&pipe.to_server)
+                            }
                             None => pipe.to_server,
                         };
                         (to_server, pipe.to_client)
@@ -1297,7 +1320,10 @@ async fn issue_ws_token(
         // pty/events are inherently interactive; read_only is not applicable.
         _ => false,
     };
-    if body.purpose == "vnc" && !read_only {
+    // Holding the control lease is itself the explicit "I'm driving" act
+    // (Take control / an accepted hand-off), so a controller's full-control
+    // token needs no second confirmation. Anyone else still goes through it.
+    if body.purpose == "vnc" && !read_only && !holds_control(&state, &computer.id, &user.user_id).await {
         let descriptor = json!({
             "computer_id": computer.id,
             "purpose": "vnc",
@@ -2086,6 +2112,34 @@ mod tests {
             .unwrap();
         let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(value["error"], "confirmation_required");
+    }
+
+    #[tokio::test]
+    async fn ws_token_full_control_vnc_for_the_controller_needs_no_approval() {
+        handler_test_secret();
+        let state = state_with_computer(None).await;
+        let me = crate::computer_control_lease::Holder {
+            kind: crate::computer_control_lease::HolderKind::User,
+            id: "user-1".into(),
+            label: None,
+            device_id: Some("mac-1".into()),
+        };
+        let conn = state.db.connect().unwrap();
+        crate::computer_control_lease::take(&conn, "computer-1", &me, chrono::Utc::now().timestamp()).unwrap();
+        let response = issue_ws_token(
+            State(state.clone()),
+            Extension(auth_user("user-1")),
+            Path("computer-1".to_string()),
+            Query(crate::computer_routes::ApprovalQuery { approval_id: None }),
+            Json(IssueWsTokenRequest { purpose: "vnc".into(), read_only: Some(false) }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let claims = crate::bot_desktop_stream::verify_desktop_token(TEST_SECRET, value["token"].as_str().unwrap()).unwrap();
+        assert!(!claims.read_only, "the controller gets a full-control token");
     }
 
     #[tokio::test]
