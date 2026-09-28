@@ -260,7 +260,28 @@ export namespace Pairing {
       const body = await response.text().catch(() => "")
       throw new Error(`pairing request failed (${response.status}): ${body}`)
     }
-    return (await response.json()) as Created
+    const created = (await response.json()) as Created
+    return { ...created, verificationUrl: approvalUrl(created.verificationUrl) }
+  }
+
+  /**
+   * The approval page lives at ai.allternit.com/pair (the workspace, signed
+   * in with the same account as Desktop). platform.allternit.com has no
+   * /pair page, but the cloud API still builds links on it; a user who
+   * opened one saw themselves signed in while nothing approved the code
+   * and the CLI waited forever. Codes work on either host.
+   */
+  export function approvalUrl(url: string): string {
+    try {
+      const parsed = new URL(url)
+      if (parsed.hostname === "platform.allternit.com" && parsed.pathname.replace(/\/$/, "") === "/pair") {
+        parsed.hostname = "ai.allternit.com"
+        return parsed.toString()
+      }
+    } catch {
+      // not a URL; leave it
+    }
+    return url
   }
 
   export async function exchange(stored: Stored, pairing: Created): Promise<ExchangeResult> {

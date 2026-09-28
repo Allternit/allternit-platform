@@ -114,6 +114,9 @@ the `runtimeType` string match at
    windows. Fix (no protocol change, spike D9): set
    `ALLTERNIT_PLATFORM_URL=https://ai.allternit.com` on the deploy, or add
    a `/pair` redirect route to the platform SPA.
+   **Fixed 2026-09-28 (session/pair-url-fix):** platform `public/_redirects` sends `/pair` to
+   `ai.allternit.com/pair` (query kept), and gizzi rewrites the printed/opened link
+   (`Pairing.approvalUrl`). Needs the platform site deployed to take effect for old CLIs.
 
 ## Hard gate status
 
