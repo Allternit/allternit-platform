@@ -36,9 +36,7 @@ interface VideoParams {
   audio?: string
 }
 
-type Ctx = Parameters<Awaited<ReturnType<(typeof MediaGenerateTool)["init"]>>["execute"]>[1]
-
-async function renderVideo(params: VideoParams, title: string, ctx: Ctx) {
+async function renderVideo(params: VideoParams, title: string, ctx: Tool.Context) {
   if (params.format !== "canvas") {
     throw new Error('A native video is a canvas scene: use format "canvas" with the body of draw(ctx, t, width, height)')
   }
