@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+- The main chat pauses before usage limits, like sessions in the app: a
+  turn cut off by a limit ("You've hit your session limit · resets 7:40pm")
+  shows "⏸ Paused until 7:40 PM · Claude 5-hour limit · continues on its
+  own" and continues by itself at the reset; a provider window at
+  `limits.land_at` pauses before the next turn fails. `/resume-now`
+  continues sooner, on the model with the most limit left when one is
+  suggested. Sending a prompt yourself takes over.
+
 ### Changed
 - Tool cards show the Allternit orb instead of "● done": it moves while the
   tool runs (searching, writing or working) and settles when it's done.

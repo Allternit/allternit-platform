@@ -180,6 +180,9 @@ export type AppState = DeepImmutable<{
   // The /pet HUD is open: keep the pet sprite beside it even though the
   // panel hides the prompt row.
   petHudOpen?: boolean
+  // Paused before a usage limit (P3.17): the bar above the prompt; the
+  // chat continues on its own at the reset (utils/limitPause.ts).
+  replPause?: import('../utils/limitPause.js').ReplPause
   // TODO (ashwin): see if we can use utility-types DeepReadonly for this
   mcp: {
     clients: MCPServerConnection[]
