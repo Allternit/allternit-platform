@@ -1497,6 +1497,16 @@ export namespace Config {
             .optional()
             .describe("Share of a provider window (5-hour, weekly…) at which a session pauses before the limit (default: 0.95)"),
           auto_resume: z.boolean().optional().describe("Resume paused sessions on their own when the limit resets (default: true)"),
+          fallback: z
+            .enum(["off", "suggest", "auto"])
+            .optional()
+            .describe(
+              "When a session pauses at a limit: suggest the model with the most limit left (default), switch to it automatically, or do neither",
+            ),
+          fallback_models: z
+            .array(z.string())
+            .optional()
+            .describe("Preferred models to continue on, in order (provider/model). Default: any connected model with limit left"),
         })
         .optional(),
       handoff: z

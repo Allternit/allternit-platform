@@ -74,6 +74,7 @@ export const SessionTable = sqliteTable(
       providerID?: string
       reason: "quota" | "rate_limit" | "limit_hit"
       at: number
+      suggest?: { providerID: string; modelID: string; label: string; headroom?: number }
     }>(),
     ...Timestamps,
     time_compacting: integer(),

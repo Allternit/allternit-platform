@@ -188,13 +188,103 @@ export namespace SessionPause {
     return Boolean(session.paused && session.paused.until > now)
   }
 
-  export function pause(sessionID: string, p: Omit<Paused, "at">) {
+  export function pause(sessionID: string, p: Omit<Paused, "at" | "suggest">) {
     const paused: Paused = { ...p, at: Date.now() }
     Session.setPaused({ sessionID, paused })
     schedule(sessionID, paused)
     Bus.publish(Event.Paused, { sessionID, until: paused.until, limit: paused.limit, reason: paused.reason, providerID: paused.providerID })
     log.info("paused before a limit", { sessionID, until: new Date(paused.until).toISOString(), limit: paused.limit })
+    void offerAlternative(sessionID, paused).catch((error) => log.warn("no alternative model offered", { sessionID, error }))
     return paused
+  }
+
+  export type Suggestion = NonNullable<Paused["suggest"]>
+
+  /** A candidate model and how much of its tightest window is left (null = unknown). */
+  export interface Candidate {
+    providerID: string
+    modelID: string
+    label: string
+    headroom: number | null
+  }
+
+  /**
+   * Rank models to continue on: the configured order first, then connected
+   * models with the most limit left, then connected models whose limits
+   * can't be read. Anything at or past the landing threshold is out.
+   */
+  export function rankCandidates(candidates: Candidate[], preferred: string[], landAt: number): Candidate[] {
+    const usable = candidates.filter((c) => c.headroom === null || c.headroom > 1 - landAt)
+    const rank = (c: Candidate) => {
+      const i = preferred.indexOf(`${c.providerID}/${c.modelID}`)
+      const j = preferred.indexOf(c.providerID)
+      return i >= 0 ? i : j >= 0 ? j + 0.5 : Number.POSITIVE_INFINITY
+    }
+    return usable.sort(
+      (a, b) =>
+        rank(a) - rank(b) ||
+        (b.headroom ?? -1) - (a.headroom ?? -1) ||
+        a.providerID.localeCompare(b.providerID),
+    )
+  }
+
+  async function candidates(excludeProviderID: string | undefined): Promise<Candidate[]> {
+    const { Provider } = await import("@/runtime/providers/provider")
+    const providers = (await Provider.list()) as Record<string, { name?: string; models?: Record<string, any> }>
+    const out: Candidate[] = []
+    for (const [providerID, provider] of Object.entries(providers)) {
+      if (providerID === excludeProviderID || providerID === "auto") continue
+      const models = Object.values(provider.models ?? {})
+      if (models.length === 0) continue
+      const best = Provider.sort(models as any)[0] as { id: string; name?: string }
+      const quota = await ProviderQuotas.get(providerID).catch(() => undefined)
+      if (quota && quota.status !== "ok" && quota.status !== "unsupported") continue
+      const headroom =
+        quota?.status === "ok" && quota.quota.windows.length > 0
+          ? 1 - Math.max(...quota.quota.windows.map((w) => w.usedRatio))
+          : null
+      out.push({ providerID, modelID: best.id, label: `${provider.name ?? providerID} · ${best.name ?? best.id}`, headroom })
+    }
+    return out
+  }
+
+  /** The model with the most limit left, per `limits.fallback_models` and the providers' quotas. */
+  export async function suggestAlternative(excludeProviderID: string | undefined): Promise<Suggestion | undefined> {
+    const cfg = await Config.get()
+    const preferred = cfg.limits?.fallback_models ?? []
+    const pool = await candidates(excludeProviderID)
+    // A configured model on a connected provider that isn't the model's default.
+    for (const ref of preferred) {
+      const slash = ref.indexOf("/")
+      if (slash <= 0) continue
+      const providerID = ref.slice(0, slash)
+      const modelID = ref.slice(slash + 1)
+      const base = pool.find((c) => c.providerID === providerID)
+      if (base && base.modelID !== modelID) pool.push({ ...base, modelID, label: `${base.label.split(" · ")[0]} · ${modelID}` })
+    }
+    const best = rankCandidates(pool, preferred, cfg.limits?.land_at ?? DEFAULT_LAND_AT)[0]
+    if (!best) return
+    return { providerID: best.providerID, modelID: best.modelID, label: best.label, ...(best.headroom !== null ? { headroom: best.headroom } : {}) }
+  }
+
+  /**
+   * After pausing: find where the work could continue. `limits.fallback`:
+   * "suggest" (default) offers it as "Resume now on …"; "auto" switches to
+   * it right away; "off" does neither.
+   */
+  async function offerAlternative(sessionID: string, paused: Paused) {
+    const mode = (await Config.get()).limits?.fallback ?? "suggest"
+    if (mode === "off") return
+    const suggest = await suggestAlternative(paused.providerID)
+    if (!suggest) return
+    const current = await Session.get(sessionID).catch(() => undefined)
+    if (!current?.paused || current.paused.at !== paused.at) return
+    if (mode === "auto") {
+      log.info("switching to the model with the most limit left", { sessionID, to: `${suggest.providerID}/${suggest.modelID}` })
+      await resume(sessionID, { model: { providerID: suggest.providerID, modelID: suggest.modelID } })
+      return
+    }
+    Session.setPaused({ sessionID, paused: { ...current.paused, suggest } })
   }
 
   function schedule(sessionID: string, paused: Paused) {
