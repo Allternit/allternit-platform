@@ -95,15 +95,58 @@ pub fn load_prefs(conn: &rusqlite::Connection, user_id: &str) -> CoworkPrefs {
     })
 }
 
+/// Where Cowork saves the files it makes when the user hasn't picked a
+/// folder: ~/Documents/Allternit (home when there's no Documents folder).
+pub fn default_files_location() -> Option<String> {
+    dirs::document_dir()
+        .or_else(dirs::home_dir)
+        .map(|dir| dir.join("Allternit").to_string_lossy().into_owned())
+}
+
+impl CoworkPrefs {
+    /// The folder Cowork saves files to: the chosen one, or the default.
+    pub fn effective_files_location(&self) -> Option<String> {
+        self.files_location.clone().filter(|f| !f.trim().is_empty()).or_else(default_files_location)
+    }
+
+    /// Folders Cowork may use without asking: the trusted folders and the
+    /// files folder.
+    pub fn allowed_folders(&self) -> Vec<String> {
+        let mut folders = self.trusted_folders.clone();
+        if let Some(files) = self.effective_files_location() {
+            if !folders.contains(&files) {
+                folders.push(files);
+            }
+        }
+        folders
+    }
+
+    /// What a Cowork session is told about the user's settings: their global
+    /// instructions, and where to save the files it makes.
+    pub fn session_context(&self) -> Option<String> {
+        let mut parts = Vec::new();
+        if let Some(files) = self.effective_files_location() {
+            parts.push(format!(
+                "Cowork files folder: {files}\nSave files you create for the user in this folder (make subfolders as needed) unless they name another location, and tell them where you saved each file."
+            ));
+        }
+        if !self.global_instructions.trim().is_empty() {
+            parts.push(format!("Cowork instructions from the user:\n{}", self.global_instructions.trim()));
+        }
+        (!parts.is_empty()).then(|| parts.join("\n\n"))
+    }
+}
+
 impl From<CoworkPrefs> for CoworkPreferencesPayload {
     fn from(p: CoworkPrefs) -> Self {
+        let files_location = p.effective_files_location();
         CoworkPreferencesPayload {
             trusted_folders: p.trusted_folders,
             global_instructions: p.global_instructions,
             cloud_continuation: p.cloud_continuation,
             continuation_api_url: p.continuation_api_url,
             require_trusted_devices: p.require_trusted_devices,
-            files_location: p.files_location,
+            files_location,
             preferred_browser: p.preferred_browser,
             open_links_in_app: p.open_links_in_app,
             allowed_sites: p.allowed_sites,
@@ -362,6 +405,14 @@ async fn set_cowork_preferences(
                     }
                 });
             }
+            let (old_folders, new_folders) = (before.allowed_folders(), saved.allowed_folders());
+            if old_folders != new_folders {
+                tokio::spawn(async move {
+                    if let Err(e) = patch_gizzi_global(&gizzi_folders_patch(&old_folders, &new_folders)).await {
+                        warn!("cowork prefs: gizzi folder permission sync failed: {e}");
+                    }
+                });
+            }
             Json(CoworkPreferencesPayload::from(saved)).into_response()
         }
         Ok(Err(e)) => {
@@ -428,12 +479,49 @@ pub fn gizzi_browser_patch(browser: &str, old_sites: &[String], new_sites: &[Str
     patch
 }
 
+/// gizzi `permission.external_directory` rules for Cowork's folders: new ones
+/// allowed (the folder and everything in it), removed ones back to "ask".
+pub fn gizzi_folders_patch(old_folders: &[String], new_folders: &[String]) -> serde_json::Value {
+    let pattern = |folder: &str| format!("{}/*", folder.trim_end_matches('/'));
+    let mut rules = serde_json::Map::new();
+    for folder in old_folders.iter().filter(|f| !new_folders.contains(f)) {
+        rules.insert(pattern(folder), json!("ask"));
+    }
+    for folder in new_folders {
+        rules.insert(pattern(folder), json!("allow"));
+    }
+    json!({ "permission": { "external_directory": rules } })
+}
+
+/// Users whose Cowork folder permissions were pushed to gizzi by this process.
+static FOLDERS_SYNCED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
+
+/// Push the user's Cowork folders to gizzi once per process, so the default
+/// files folder works even if the user never saved Cowork settings. Saves
+/// after that sync through the PUT handler.
+pub fn ensure_folder_permissions_synced(user_id: &str, prefs: &CoworkPrefs) {
+    let synced = FOLDERS_SYNCED.get_or_init(Default::default);
+    if !synced.lock().map(|mut set| set.insert(user_id.to_string())).unwrap_or(false) {
+        return;
+    }
+    let folders = prefs.allowed_folders();
+    tokio::spawn(async move {
+        if let Err(e) = patch_gizzi_global(&gizzi_folders_patch(&[], &folders)).await {
+            warn!("cowork prefs: initial gizzi folder permission sync failed: {e}");
+        }
+    });
+}
+
 async fn sync_gizzi_browser_config(browser: &str, old_sites: &[String], new_sites: &[String]) -> Result<(), String> {
+    patch_gizzi_global(&gizzi_browser_patch(browser, old_sites, new_sites)).await
+}
+
+async fn patch_gizzi_global(patch: &serde_json::Value) -> Result<(), String> {
     let url = format!("{}/v1/config/global", crate::agent_session_routes::gizzi_base());
     let client = crate::agent_session_routes::gizzi_client(&axum::http::HeaderMap::new());
     let res = client
         .patch(url)
-        .json(&gizzi_browser_patch(browser, old_sites, new_sites))
+        .json(patch)
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
@@ -447,6 +535,46 @@ async fn sync_gizzi_browser_config(browser: &str, old_sites: &[String], new_site
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn prefs(files: Option<&str>, trusted: &[&str], instructions: &str) -> CoworkPrefs {
+        CoworkPrefs {
+            trusted_folders: trusted.iter().map(|s| s.to_string()).collect(),
+            global_instructions: instructions.to_string(),
+            cloud_continuation: false,
+            continuation_api_url: None,
+            require_trusted_devices: false,
+            files_location: files.map(str::to_string),
+            preferred_browser: "built-in".into(),
+            open_links_in_app: true,
+            allowed_sites: vec![],
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn files_folder_defaults_and_joins_the_allowed_folders() {
+        let chosen = prefs(Some("/Users/e/Work"), &["/Users/e/Repo"], "");
+        assert_eq!(chosen.effective_files_location().as_deref(), Some("/Users/e/Work"));
+        assert_eq!(chosen.allowed_folders(), vec!["/Users/e/Repo".to_string(), "/Users/e/Work".to_string()]);
+        let default = prefs(None, &[], "");
+        assert!(default.effective_files_location().unwrap().ends_with("Allternit"));
+    }
+
+    #[test]
+    fn session_context_carries_the_folder_and_instructions() {
+        let context = prefs(Some("/Users/e/Work"), &[], "Prefer short drafts.").session_context().unwrap();
+        assert!(context.contains("Cowork files folder: /Users/e/Work"));
+        assert!(context.contains("Cowork instructions from the user:\nPrefer short drafts."));
+    }
+
+    #[test]
+    fn folder_patch_allows_new_and_resets_removed() {
+        let patch = gizzi_folders_patch(&["/a".into(), "/b/".into()], &["/b/".into(), "/c".into()]);
+        let rules = &patch["permission"]["external_directory"];
+        assert_eq!(rules["/a/*"], "ask");
+        assert_eq!(rules["/b/*"], "allow");
+        assert_eq!(rules["/c/*"], "allow");
+    }
 
     #[test]
     fn allowed_sites_reduce_to_hosts() {
