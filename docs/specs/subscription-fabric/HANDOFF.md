@@ -538,3 +538,12 @@ confirmed; permanent endpoint first, then tear down; IPv4 + writable viewer.
   / `sysctl net.ipv4.ip_forward`.
 - Not removed: worktree `allternit-session-kimi-router-gsu` (another
   session's; has an uncommitted `.steering/checkpoint.md`).
+- **Writable viewer + origin allowlist merged (#889):** `/embed/computers/:id`
+  is interactive with a `purpose:"vnc", read_only:false` ws-token (still only
+  issued through `issue_ws_token`'s gates; downgrades to view-only if someone
+  else holds the control lease); the old page could not load at all (inline
+  script vs its own CSP; wrong rfb.js path) — fixed. `ALLTERNIT_ALLOWED_ORIGINS`
+  (exact origins, comma-separated) adds browser origins; the API's own port is
+  always allowed. Not yet driven in a browser against a running guest (the
+  gate guest is stopped) — the hand-built :3014 viewer is no longer needed.
+
