@@ -434,7 +434,7 @@ async fn register_manual_backend(
                 gateway_ws_url = excluded.gateway_ws_url,
                 encrypted_gateway_token = excluded.encrypted_gateway_token,
                 last_verified_at = CURRENT_TIMESTAMP",
-            params![&target_id, &user_id, &ssh_conn_id, &name_for_db, &gw_url, &gw_url, &gw_ws_url, token],
+            params![&target_id, &user_id, &ssh_conn_id, &name_for_db, &gw_url, &gw_url, &gw_ws_url, token.as_deref().map(crate::token_crypto::seal)],
         )?;
 
         // Set as active preference

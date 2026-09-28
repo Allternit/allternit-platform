@@ -533,17 +533,17 @@ impl ThreadRuntime for GizziRuntime {
         crate::agent_session_routes::create_bot_thread_session(&self.db, bot_id, bot_name, title, canonical, Some(thread_id)).await
     }
     async fn seed(&self, session_id: &str, text: &str) -> Result<(), String> {
-        crate::agent_session_routes::seed_session_message(session_id, text).await
+        crate::agent_session_routes::seed_session_message(&self.db, session_id, text).await
     }
     async fn handoff(&self, session_id: &str, reason: &str, context: &str, baton: Option<Value>) -> Result<(String, Value), String> {
-        let (next, baton) = crate::agent_session_routes::gizzi_handoff(session_id, gizzi_reason(reason), context, baton).await?;
+        let (next, baton) = crate::agent_session_routes::gizzi_handoff(&self.db, session_id, gizzi_reason(reason), context, baton).await?;
         // The API's own per-session bag (bot flags, thread id, surface) moves
         // with the conversation to its new window.
         crate::agent_session_routes::carry_session_bag(&self.db, session_id, &next);
         Ok((next, baton))
     }
     async fn successors(&self, session_id: &str) -> Vec<(String, String, Value)> {
-        let Ok(chain) = crate::agent_session_routes::gizzi_lineage(session_id).await else {
+        let Ok(chain) = crate::agent_session_routes::gizzi_lineage(&self.db, session_id).await else {
             return Vec::new();
         };
         let Some(at) = chain.iter().position(|s| s["id"] == session_id) else {
@@ -1636,6 +1636,72 @@ mod tests {
         assert_eq!(second, "next-1");
         assert_eq!(rt.handoffs.lock().unwrap()[0].1, "routine_run");
         assert_eq!(load(&state.db, &tid).unwrap().unwrap().view.generation, 2);
+    }
+
+    #[tokio::test]
+    async fn a_placed_session_lives_on_its_server_and_calls_pass_through() {
+        use axum::routing::{get as aget, post as apost};
+        // A fake second Allternit.
+        let remote = axum::Router::new()
+            .route(
+                "/api/v1/agent-sessions",
+                apost(|axum::Json(b): axum::Json<Value>| async move {
+                    axum::Json(json!({ "id": "ses_remote1", "name": b["name"] }))
+                }),
+            )
+            .route(
+                "/api/v1/agent-sessions/:id/messages",
+                aget(|axum::extract::Path(id): axum::extract::Path<String>, h: axum::http::HeaderMap| async move {
+                    let auth = h.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+                    axum::Json(json!([{ "id": "m1", "role": "assistant", "content": format!("from {id} with {auth}") }]))
+                })
+                .post(|axum::Json(b): axum::Json<Value>| async move {
+                    axum::Json(json!({ "id": "m2", "role": "assistant", "content": format!("did: {} | {}", b["text"], b["system"].as_str().unwrap_or("").starts_with("+# Bot identity")) }))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, remote).await.unwrap() });
+
+        let state = setup("placement").await;
+        let conn = state.db.connect().unwrap();
+        conn.execute(
+            "INSERT INTO remote_backend_targets (id, user_id, name, status, gateway_url, encrypted_gateway_token)
+             VALUES ('tgt1', 'user-a', 'My server', 'ready', ?1, ?2)",
+            params![format!("http://{addr}"), crate::token_crypto::seal("atok_1")],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE agents SET config = json_set(COALESCE(config, '{}'), '$.placement', json_object('targetId', 'tgt1')) WHERE id = 'bot-1'",
+            [],
+        )
+        .unwrap();
+
+        // The bot's new thread session is created on the server.
+        let sid = crate::agent_session_routes::create_bot_thread_session(&state.db, "bot-1", "Ledger", "Pricing", false, Some("t1"))
+            .await
+            .unwrap();
+        assert_eq!(sid, "ses_remote1");
+        assert_eq!(crate::placement::session_target(&state.db, &sid).unwrap().id, "tgt1");
+
+        // Server-started turns go there, carrying the bot.
+        let reply = crate::agent_session_routes::send_bot_turn(&state.db, &sid, "bot-1", "Price it").await.unwrap();
+        assert_eq!(reply, "did: \"Price it\" | true");
+
+        // App calls for that session pass through, with the server's token.
+        let app = axum::Router::new()
+            .route("/agent-sessions/:id/messages", aget(|| async { "local" }))
+            .route_layer(axum::middleware::from_fn_with_state(state.clone(), crate::placement::passthrough))
+            .with_state(state.clone());
+        let res = tower::ServiceExt::oneshot(
+            app,
+            Request::builder().uri("/agent-sessions/ses_remote1/messages").body(Body::empty()).unwrap(),
+        )
+        .await
+        .unwrap();
+        let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(v[0]["content"], "from ses_remote1 with Bearer atok_1");
     }
 
     #[tokio::test]

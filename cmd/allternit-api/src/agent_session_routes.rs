@@ -133,6 +133,8 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
         .route("/agent-sessions/:id/unrevert", post(unrevert_session))
         .route("/agent-sessions/:id/compact", post(compact_session))
         .route("/agent-sessions/:id/resume", post(resume_session))
+        .route("/agent-sessions/:id/handoff", post(handoff_session))
+        .route("/agent-sessions/:id/lineage", get(lineage_session))
         .route("/agent-sessions/sync", get(sync_sessions))
         // Answers to gizzi's in-chat questions (the question tool). Without
         // these the app's reply never reached gizzi and the turn waited forever.
@@ -190,6 +192,9 @@ struct SendMessageBody {
     /// metadata so the chat can label it; absent for the session composer.
     #[serde(default)]
     source: Option<String>,
+    /// Standing instructions for this turn ("+…" appends to gizzi's own).
+    #[serde(default)]
+    system: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1253,6 +1258,9 @@ fn send_message_payload(body: &SendMessageBody) -> serde_json::Value {
     if body.no_reply == Some(true) {
         payload["noReply"] = json!(true);
     }
+    if let Some(system) = body.system.as_deref().filter(|s| !s.trim().is_empty()) {
+        payload["system"] = json!(system);
+    }
     payload
 }
 
@@ -1339,6 +1347,31 @@ async fn compact_session(headers: HeaderMap, Path(session_id): Path<String>) -> 
     let client = gizzi_client(&headers);
     let path = format!("/v1/session/{}/summarize", urlencoding::encode(&session_id));
     match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, None).await {
+        Ok(result) => Json(result).into_response(),
+        Err(response) => response,
+    }
+}
+
+/// Hand a session off to a fresh window (gizzi, P3.16) — also how a thread
+/// placed on another Allternit hands off there (P4.2).
+async fn handoff_session(
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+    body: Option<Json<serde_json::Value>>,
+) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!("/v1/session/{}/handoff", urlencoding::encode(&session_id));
+    let payload = body.map(|Json(v)| v).unwrap_or_else(|| json!({}));
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(payload)).await {
+        Ok(result) => Json(result).into_response(),
+        Err(response) => response,
+    }
+}
+
+async fn lineage_session(headers: HeaderMap, Path(session_id): Path<String>) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!("/v1/session/{}/lineage", urlencoding::encode(&session_id));
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::GET, &path, None).await {
         Ok(result) => Json(result).into_response(),
         Err(response) => response,
     }
@@ -1655,6 +1688,7 @@ async fn sync_sessions(
         return Err((status, Json(json!({ "error": body }))).into_response());
     }
 
+    let remote_targets = crate::placement::sync_targets(&state.db);
     let stream = async_stream::stream! {
         yield Ok(axum::response::sse::Event::default().comment("connected"));
 
@@ -1703,7 +1737,18 @@ async fn sync_sessions(
         }
     };
 
-    Ok(Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::default()))
+    // Threads placed on another Allternit (P4.2): relay that server's events
+    // for them too, so they update live like local ones.
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<axum::response::sse::Event>(256);
+    for target in remote_targets {
+        let tx = tx.clone();
+        tokio::spawn(async move { crate::placement::relay_sync(target, tx).await });
+    }
+    drop(tx);
+    let remote = futures::StreamExt::map(futures::stream::poll_fn(move |cx| rx.poll_recv(cx)), Ok::<_, std::convert::Infallible>);
+    let merged = futures::stream::select(Box::pin(stream), Box::pin(remote));
+
+    Ok(Sse::new(merged).keep_alive(axum::response::sse::KeepAlive::default()))
 }
 
 async fn proxy_gizzi(
@@ -2116,6 +2161,32 @@ pub(crate) async fn create_bot_thread_session(
     canonical: bool,
     thread_id: Option<&str>,
 ) -> Result<String, String> {
+    let mut bag = json!({
+        "isBot": true,
+        "sessionMode": "agent",
+        "agentId": bot_id,
+        "agentName": bot_name,
+        "botName": bot_name,
+    });
+    bag[if canonical { "botCanonicalFor" } else { "botThreadOf" }] = json!(bot_id);
+    if let Some(id) = thread_id {
+        bag["threadId"] = json!(id);
+    }
+    // Placed on another Allternit (P4.2): the session lives there.
+    if let Some(target) = crate::placement::bot_target(db, bot_id) {
+        let created = crate::placement::call(
+            &target,
+            reqwest::Method::POST,
+            "/agent-sessions",
+            Some(json!({ "name": title, "originSurface": "chat", "metadata": bag })),
+        )
+        .await?;
+        let id = created["id"].as_str().ok_or("the server returned no session")?.to_string();
+        crate::placement::record(db, &id, &target.id);
+        let _ = db.set_session_origin_surface(&id, "chat");
+        let _ = db.set_session_metadata(&id, &bag);
+        return Ok(id);
+    }
     let client = gizzi_client(&HeaderMap::new());
     let (provider_id, model_id) = AppConfig::load().default_model();
     let mut payload = serde_json::Map::new();
@@ -2135,23 +2206,21 @@ pub(crate) async fn create_bot_thread_session(
     .await
     .map_err(|_| "gizzi runtime refused session create".to_string())?;
     let _ = db.set_session_origin_surface(&session.id, "chat");
-    let mut bag = json!({
-        "isBot": true,
-        "sessionMode": "agent",
-        "agentId": bot_id,
-        "agentName": bot_name,
-        "botName": bot_name,
-    });
-    bag[if canonical { "botCanonicalFor" } else { "botThreadOf" }] = json!(bot_id);
-    if let Some(id) = thread_id {
-        bag["threadId"] = json!(id);
-    }
     let _ = db.set_session_metadata(&session.id, &bag);
     Ok(session.id)
 }
 
 /// Run one user turn in a session and return the assistant's text.
 pub(crate) async fn send_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str, text: &str) -> Result<String, String> {
+    if let Some(target) = crate::placement::session_target(db, session_id) {
+        let mut body = json!({ "text": text, "metadata": { "model": bot_turn_model(db, session_id, bot_id) } });
+        if let Some(system) = bot_turn_system(db, session_id, bot_id) {
+            body["system"] = json!(format!("+{system}"));
+        }
+        let path = format!("/agent-sessions/{}/messages", urlencoding::encode(session_id));
+        let reply = crate::placement::call(&target, reqwest::Method::POST, &path, Some(body)).await?;
+        return Ok(reply["content"].as_str().unwrap_or_default().to_string());
+    }
     let client = gizzi_client(&HeaderMap::new());
     let path = format!("/v1/session/{}/message", urlencoding::encode(session_id));
     let mut payload = json!({
@@ -2184,7 +2253,12 @@ pub(crate) async fn send_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str,
 /// Add a user-role message to a session without running a turn (gizzi
 /// `noReply`). Used to seed a fresh context generation with the thread's
 /// checkpoint.
-pub(crate) async fn seed_session_message(session_id: &str, text: &str) -> Result<(), String> {
+pub(crate) async fn seed_session_message(db: &DbHandle, session_id: &str, text: &str) -> Result<(), String> {
+    if let Some(target) = crate::placement::session_target(db, session_id) {
+        let path = format!("/agent-sessions/{}/messages", urlencoding::encode(session_id));
+        crate::placement::call(&target, reqwest::Method::POST, &path, Some(json!({ "text": text, "noReply": true }))).await?;
+        return Ok(());
+    }
     let client = gizzi_client(&HeaderMap::new());
     let path = format!("/v1/session/{}/message", urlencoding::encode(session_id));
     let payload = json!({ "parts": [{ "type": "text", "text": text }], "noReply": true });
@@ -2197,11 +2271,26 @@ pub(crate) async fn seed_session_message(session_id: &str, text: &str) -> Result
 /// gizzi's native context handoff for a session. Returns the new session id
 /// and the checkpoint baton gizzi wrote (or used, when `baton` is given).
 pub(crate) async fn gizzi_handoff(
+    db: &DbHandle,
     session_id: &str,
     reason: &str,
     context: &str,
     baton: Option<serde_json::Value>,
 ) -> Result<(String, serde_json::Value), String> {
+    if let Some(target) = crate::placement::session_target(db, session_id) {
+        let mut payload = json!({ "reason": reason });
+        if !context.trim().is_empty() {
+            payload["context"] = json!(context);
+        }
+        if let Some(b) = baton.clone() {
+            payload["baton"] = b;
+        }
+        let path = format!("/agent-sessions/{}/handoff", urlencoding::encode(session_id));
+        let result = crate::placement::call(&target, reqwest::Method::POST, &path, Some(payload)).await?;
+        let next = result["session"]["id"].as_str().ok_or("handoff returned no session")?.to_string();
+        crate::placement::record(db, &next, &target.id);
+        return Ok((next, result["baton"].clone()));
+    }
     let client = gizzi_client(&HeaderMap::new());
     let path = format!("/v1/session/{}/handoff", urlencoding::encode(session_id));
     let mut payload = json!({ "reason": reason });
@@ -2219,7 +2308,18 @@ pub(crate) async fn gizzi_handoff(
 }
 
 /// Every window of a session's conversation, oldest first (gizzi lineage).
-pub(crate) async fn gizzi_lineage(session_id: &str) -> Result<Vec<serde_json::Value>, String> {
+pub(crate) async fn gizzi_lineage(db: &DbHandle, session_id: &str) -> Result<Vec<serde_json::Value>, String> {
+    if let Some(target) = crate::placement::session_target(db, session_id) {
+        let path = format!("/agent-sessions/{}/lineage", urlencoding::encode(session_id));
+        let result = crate::placement::call(&target, reqwest::Method::GET, &path, None).await?;
+        let sessions = result["sessions"].as_array().cloned().unwrap_or_default();
+        for s in &sessions {
+            if let Some(id) = s["id"].as_str() {
+                crate::placement::record(db, id, &target.id);
+            }
+        }
+        return Ok(sessions);
+    }
     let client = gizzi_client(&HeaderMap::new());
     let path = format!("/v1/session/{}/lineage", urlencoding::encode(session_id));
     let result = gizzi_json::<serde_json::Value>(&client, reqwest::Method::GET, &path, None)
@@ -2230,7 +2330,11 @@ pub(crate) async fn gizzi_lineage(session_id: &str) -> Result<Vec<serde_json::Va
 
 /// Whether a gizzi session still exists (a pinned thread can be deleted from
 /// another client; delivery then falls back instead of failing forever).
-pub(crate) async fn bot_session_exists(session_id: &str) -> bool {
+pub(crate) async fn bot_session_exists(db: &DbHandle, session_id: &str) -> bool {
+    if let Some(target) = crate::placement::session_target(db, session_id) {
+        let path = format!("/agent-sessions/{}", urlencoding::encode(session_id));
+        return crate::placement::call(&target, reqwest::Method::GET, &path, None).await.is_ok();
+    }
     let client = gizzi_client(&HeaderMap::new());
     let path = format!("/v1/session/{}", urlencoding::encode(session_id));
     gizzi_json::<GizziSessionInfo>(&client, reqwest::Method::GET, &path, None).await.is_ok()
