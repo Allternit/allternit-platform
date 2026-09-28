@@ -62,7 +62,7 @@ export const BashTool = Tool.define("bash", async () => {
   log.info("bash tool using shell", { shell })
 
   return {
-    description: DESCRIPTION.replaceAll("${directory}", Instance.directory)
+    description: DESCRIPTION.replaceAll("${directory}", Instance.workdir)
       .replaceAll("${maxLines}", String(Truncate.MAX_LINES))
       .replaceAll("${maxBytes}", String(Truncate.MAX_BYTES)),
     parameters: z.object({
@@ -71,7 +71,7 @@ export const BashTool = Tool.define("bash", async () => {
       workdir: z
         .string()
         .describe(
-          `The working directory to run the command in. Defaults to ${Instance.directory}. Use this instead of 'cd' commands.`,
+          `The working directory to run the command in. Defaults to ${Instance.workdir}. Use this instead of 'cd' commands.`,
         )
         .optional(),
       description: z
@@ -81,7 +81,7 @@ export const BashTool = Tool.define("bash", async () => {
         ),
     }),
     async execute(params, ctx) {
-      const cwd = params.workdir || Instance.directory
+      const cwd = params.workdir || Instance.workdir
       if (params.timeout !== undefined && params.timeout < 0) {
         throw new Error(`Invalid timeout value: ${params.timeout}. Timeout must be a positive number.`)
       }

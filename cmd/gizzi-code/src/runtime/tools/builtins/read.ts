@@ -42,7 +42,7 @@ export const ReadTool = Tool.define("read", {
     }
     let filepath = params.filePath
     if (!path.isAbsolute(filepath)) {
-      filepath = path.resolve(Instance.directory, filepath)
+      filepath = path.resolve(Instance.workdir, filepath)
     }
     const title = path.relative(Instance.worktree, filepath)
 

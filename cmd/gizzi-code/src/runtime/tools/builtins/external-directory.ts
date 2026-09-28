@@ -44,9 +44,9 @@ export async function assertExternalDirectory(ctx: Tool.Context, target?: string
  */
 export function assertSandboxWriteAllowed(ctx: Tool.Context, target?: string) {
   if (!target) return
-  const state = SessionSandbox.ensureDefault(ctx.sessionID, [Instance.directory])
+  const state = SessionSandbox.ensureDefault(ctx.sessionID, [Instance.workdir])
   if (!state?.enabled) return
-  if (Sandbox.isWriteAllowed(target, Instance.directory, state.policy)) return
+  if (Sandbox.isWriteAllowed(target, Instance.workdir, state.policy)) return
   throw new Error(
     `Sandbox policy blocked this write: ${target} is outside the allowed write paths for this session.`,
   )

@@ -137,3 +137,4 @@ test/provider/cli-discovery.test.ts
 test/cli-bridge/cli-bridge.test.ts
 test/pane-artifact/pane-artifact.test.ts
 test/pane-browser/pane-browser.test.ts
+test/project/workdir.test.ts

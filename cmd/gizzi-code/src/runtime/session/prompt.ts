@@ -1,6 +1,7 @@
 import path from "path"
 import os from "os"
 import fs from "fs/promises"
+import { statSync } from "fs"
 import z from "zod/v4"
 import { Filesystem } from "@/shared/util/filesystem"
 import { Identifier } from "@/shared/id/id"
@@ -154,6 +155,11 @@ export namespace SessionPrompt {
       ),
     format: MessageV2.Format.optional(),
     system: z.string().optional(),
+    /**
+     * The session's working folder (e.g. its project's folder): tools and CLI
+     * agents run there. Kept for later turns; an empty string clears it.
+     */
+    workdir: z.string().optional(),
     variant: z.string().optional(),
     backgroundPolicy: z.enum(["exit", "drain", "steer"]).optional(),
     parts: z.array(
@@ -255,6 +261,7 @@ export namespace SessionPrompt {
     if (input.backgroundPolicy) {
       BackgroundTask.setPrintPolicy(input.sessionID, input.backgroundPolicy)
     }
+    if (input.workdir !== undefined) setWorkdir(input.sessionID, input.workdir)
 
 const message = await createUserMessage(input)
     await Session.touch(input.sessionID)
@@ -478,7 +485,36 @@ const message = await createUserMessage(input)
       )
       .optional(),
   })
+  // Session working folders, by session id. Clients send the folder on every
+  // turn (it follows the session's project), so memory is enough.
+  const workdirs = new Map<string, string>()
+
+  function setWorkdir(sessionID: string, workdir: string) {
+    const dir = workdir.trim()
+    if (!dir) {
+      workdirs.delete(sessionID)
+      return
+    }
+    try {
+      if (path.isAbsolute(dir) && statSync(dir).isDirectory()) {
+        workdirs.set(sessionID, dir)
+        return
+      }
+    } catch {}
+    log.warn("ignoring session workdir that is not a folder", { sessionID, workdir: dir })
+  }
+
+  /** The folder a session's turns run in, if it has one of its own. */
+  export function workdir(sessionID: string): string | undefined {
+    return workdirs.get(sessionID)
+  }
+
   export const loop = fn(LoopInput, async (input) => {
+    const dir = workdirs.get(input.sessionID)
+    return dir ? Instance.withWorkdir(dir, () => runLoop(input)) : runLoop(input)
+  })
+
+  async function runLoop(input: z.infer<typeof LoopInput>) {
     const { sessionID, resume_existing } = input
 
     const abort = resume_existing ? resume(sessionID) : start(sessionID)
@@ -1133,7 +1169,7 @@ const message = await createUserMessage(input)
       return item
     }
     throw new Error("Impossible")
-  })
+  }
 
   async function lastModel(sessionID: string) {
     const session = await Session.get(sessionID)

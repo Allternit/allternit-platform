@@ -33,7 +33,7 @@ export const LspTool = Tool.define("lsp", {
       .describe("Search string for workspaceSymbol (ignored by all other operations)"),
   }),
   execute: async (args, ctx) => {
-    const file = path.isAbsolute(args.filePath) ? args.filePath : path.join(Instance.directory, args.filePath)
+    const file = path.isAbsolute(args.filePath) ? args.filePath : path.join(Instance.workdir, args.filePath)
     await assertExternalDirectory(ctx, file)
 
     await ctx.ask({

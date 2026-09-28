@@ -1331,6 +1331,11 @@ async fn agent_chat_bridge(
         if let Some(effort) = effort {
             gizzi_payload["effort"] = json!(effort);
         }
+        // The session's working folder (its project's folder): gizzi runs
+        // the turn's tools and CLI agents there. "" clears it.
+        if let Some(workdir) = body_json.get("workdir").and_then(|v| v.as_str()) {
+            gizzi_payload["workdir"] = json!(workdir.trim());
+        }
         // "+" prefix: APPEND to gizzi's default assembled system prompt
         // rather than replace it.
         if !system_prompt.trim().is_empty() {

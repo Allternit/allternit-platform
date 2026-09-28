@@ -172,6 +172,8 @@ struct CreateSessionBody {
     ephemeral: Option<bool>,
     metadata: Option<serde_json::Value>,
     model: Option<GizziModelRef>,
+    /// The session's project; the web client sends it top-level.
+    project_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -920,6 +922,8 @@ async fn create_session(
         .as_ref()
         .and_then(|m| m.get("projectId").or_else(|| m.get("project_id")))
         .and_then(|v| v.as_str())
+        .or(body.project_id.as_deref())
+        .filter(|id| !id.is_empty())
     {
         payload.insert("project_id".to_string(), json!(project_id));
     }
