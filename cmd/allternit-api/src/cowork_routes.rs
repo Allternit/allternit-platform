@@ -1378,6 +1378,32 @@ async fn update_project(
     }
 }
 
+/// Delete a project and what hangs off it, in one transaction. Its bot
+/// threads stay with their bots, detached from the project (the bots' work
+/// isn't lost); the project's team rows and Al's project chat go with it.
+/// Before, only the project row went, leaving threads and team rows pointing
+/// at a project that no longer existed. Returns whether a project was deleted.
+fn delete_project_rows(conn: &rusqlite::Connection, id: &str, user_id: &str) -> rusqlite::Result<bool> {
+    let tx = conn.unchecked_transaction()?;
+    let deleted = tx.execute(
+        "DELETE FROM cowork_projects WHERE id = ?1 AND user_id = ?2",
+        params![id, user_id],
+    )?;
+    if deleted > 0 {
+        tx.execute(
+            "UPDATE bot_threads SET project_id = NULL WHERE project_id = ?1 AND user_id = ?2",
+            params![id, user_id],
+        )?;
+        tx.execute("DELETE FROM project_bots WHERE project_id = ?1", params![id])?;
+        tx.execute(
+            "DELETE FROM project_messages WHERE project_id = ?1 AND user_id = ?2",
+            params![id, user_id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(deleted > 0)
+}
+
 async fn delete_project(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -1389,11 +1415,7 @@ async fn delete_project(
 
     let result = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
-        conn.execute(
-            "DELETE FROM cowork_projects WHERE id = ?1 AND user_id = ?2",
-            params![id, user_id],
-        )?;
-        Ok::<_, rusqlite::Error>(())
+        delete_project_rows(&conn, &id, &user_id).map(|_| ())
     })
     .await;
 
@@ -2656,6 +2678,30 @@ async fn cowork_status() -> impl IntoResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deleting_a_project_detaches_its_threads_and_drops_its_team_and_chat() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE cowork_projects (id TEXT PRIMARY KEY, user_id TEXT NOT NULL);
+             CREATE TABLE bot_threads (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, project_id TEXT);
+             CREATE TABLE project_bots (project_id TEXT NOT NULL, bot_id TEXT NOT NULL);
+             CREATE TABLE project_messages (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, user_id TEXT NOT NULL);
+             INSERT INTO cowork_projects VALUES ('p1','u1'), ('p2','u1');
+             INSERT INTO bot_threads VALUES ('t1','u1','p1'), ('t2','u1','p2');
+             INSERT INTO project_bots VALUES ('p1','b1'), ('p2','b1');
+             INSERT INTO project_messages VALUES ('m1','p1','u1'), ('m2','p2','u1');",
+        )
+        .unwrap();
+        assert!(!delete_project_rows(&conn, "p1", "u2").unwrap(), "not your project");
+        assert!(delete_project_rows(&conn, "p1", "u1").unwrap());
+        let one = |sql: &str| conn.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap();
+        assert_eq!(one("SELECT COUNT(*) FROM cowork_projects"), 1);
+        assert_eq!(one("SELECT COUNT(*) FROM bot_threads WHERE id='t1' AND project_id IS NULL"), 1, "thread kept, detached");
+        assert_eq!(one("SELECT COUNT(*) FROM bot_threads WHERE project_id='p2'"), 1, "other project untouched");
+        assert_eq!(one("SELECT COUNT(*) FROM project_bots"), 1);
+        assert_eq!(one("SELECT COUNT(*) FROM project_messages"), 1);
+    }
 
     fn normalize(s: &str) -> Option<ApprovalOutcome> {
         normalize_approval_decision(s)
