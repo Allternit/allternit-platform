@@ -19,7 +19,10 @@
 import { getBot } from '@/runtime/bots/bot-store.js'
 import { openCanonicalChat } from '@/runtime/bots/canonical-chat.js'
 import { markBotRead } from '@/runtime/bots/bot-roster.js'
-import { getResumeHandler, switchSession } from '../../bootstrap/state.js'
+import { ensurePlatformBot } from '@/runtime/bots/platform-bot.js'
+import { PlatformApiError, PlatformSignedOutError } from '@/runtime/bots/platform-api.js'
+import { ensureStandingThread } from '@/runtime/bots/platform-threads.js'
+import { getResumeHandler, setActiveBotChat, switchSession } from '../../bootstrap/state.js'
 import { asSessionId } from '../../types/ids.js'
 import { getLastSessionLog, isLiteLog, loadFullLog } from '../../utils/sessionStorage.js'
 import { buildHandoffLog, loadEarlierWindow, resolveHandoffHead } from './handoff-head.js'
@@ -102,4 +105,70 @@ export async function openBotCanonicalChat(
     d.switchSession(asSessionId(result.sessionId), result.projectPath)
   }
   return result
+}
+
+export interface OpenBotChatOutcome extends Partial<OpenBotChatResult> {
+  /** live: a client of the bot's shared session; local: the terminal-only chat. */
+  mode: 'live' | 'local'
+  /** Why the live chat couldn't open (shown to the user), when mode is local. */
+  notice?: string
+}
+
+export interface OpenBotLiveChatDeps extends OpenBotChatDeps {
+  ensurePlatformBot?: typeof ensurePlatformBot
+  ensureStandingThread?: typeof ensureStandingThread
+  setActiveBotChat?: typeof setActiveBotChat
+  openBotCanonicalChat?: typeof openBotCanonicalChat
+}
+
+function fallbackNotice(botName: string, err: unknown): string {
+  const local = `Opened ${botName}'s terminal-only chat; Desktop won't see it.`
+  if (err instanceof PlatformSignedOutError) return `${local} Run \`gizzi login\` to share it.`
+  if (err instanceof PlatformApiError) return `${local} Allternit said: ${err.message}`
+  return `${local} Allternit isn't reachable (${(err as Error)?.message ?? err}).`
+}
+
+/**
+ * The /bots pane Enter action: open the bot's chat as a live client of its
+ * shared session, the platform bot's standing thread, which Desktop and the
+ * pet HUD show too. The local bot is registered on the platform first.
+ * Signed out, or the platform unreachable: fall back to the terminal-only
+ * canonical chat, with a notice saying why.
+ */
+export async function openBotChat(name: string, deps: OpenBotLiveChatDeps = {}): Promise<OpenBotChatOutcome> {
+  const d = {
+    ensurePlatformBot: deps.ensurePlatformBot ?? ensurePlatformBot,
+    ensureStandingThread: deps.ensureStandingThread ?? ensureStandingThread,
+    setActiveBotChat: deps.setActiveBotChat ?? setActiveBotChat,
+    openBotCanonicalChat: deps.openBotCanonicalChat ?? openBotCanonicalChat,
+    markBotRead: deps.markBotRead ?? markBotRead,
+    switchSession: deps.switchSession ?? switchSession,
+    getBot: deps.getBot ?? getBot,
+  }
+  const local = await d.getBot(name)
+  if (!local) throw new Error(`bot '${name}' not found`)
+  const botName = local.title.trim() || local.name
+
+  let live: { botId: string; threadId: string; sessionId: string; model: string | null } | null = null
+  let failure: unknown = null
+  try {
+    const { id, bot } = await d.ensurePlatformBot(local.name)
+    const thread = await d.ensureStandingThread(id, botName)
+    if (!thread.currentSessionId) throw new Error(`${botName}'s thread has no live session`)
+    live = { botId: id, threadId: thread.id, sessionId: thread.currentSessionId, model: bot.model }
+  } catch (err) {
+    failure = err
+  }
+
+  if (!live) {
+    d.setActiveBotChat(null)
+    const result = await d.openBotCanonicalChat(local.name, deps)
+    return { ...result, mode: 'local', notice: fallbackNotice(botName, failure) }
+  }
+
+  await d.markBotRead(local.name)
+  // Switch first: switchSession ends any other bot chat.
+  d.switchSession(asSessionId(live.sessionId))
+  d.setActiveBotChat({ botId: live.botId, botName, threadId: live.threadId, sessionId: live.sessionId, model: live.model })
+  return { mode: 'live', sessionId: live.sessionId, projectPath: undefined, created: false }
 }

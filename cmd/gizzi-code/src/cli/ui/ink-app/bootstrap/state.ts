@@ -447,6 +447,8 @@ export function regenerateSessionId(
   // null so getTranscriptPath() derives from originalCwd.
   STATE.sessionId = randomUUID() as SessionId
   STATE.sessionProjectDir = null
+  // A fresh local session is not the bot's shared one.
+  if (ACTIVE_BOT_CHAT.current) setActiveBotChat(null)
   return STATE.sessionId
 }
 

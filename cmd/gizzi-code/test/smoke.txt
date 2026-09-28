@@ -122,6 +122,7 @@ test/components/pet-hud-lines.test.ts
 test/runtime/bots/platform-threads.test.ts
 test/runtime/bots/bot-chat-view.test.ts
 test/runtime/bots/bot-chat-client.test.ts
+test/runtime/bots/platform-bot.test.ts
 test/runtime/bots/session-handoff-head.test.ts
 test/components/sandbox-violation-store.test.ts
 test/cli/bots-pane.test.ts

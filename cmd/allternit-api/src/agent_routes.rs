@@ -806,11 +806,19 @@ fn validate_agent_against_checklist(body: &CreateAgentBody) -> Result<(), String
     if body.agent_type.as_deref().unwrap_or("").trim().is_empty() {
         return Err("Agent type is required".to_string());
     }
-    if body.model.trim().is_empty() {
-        return Err("Model is required".to_string());
-    }
-    if body.provider.trim().is_empty() {
-        return Err("Provider is required".to_string());
+    // A bot may leave both empty: it follows the platform default model
+    // (`bot_turn_model` and turn sends fall back to it). Terminal bots
+    // registered without a model pin rely on this.
+    let follows_default = body.is_bot == Some(true)
+        && body.model.trim().is_empty()
+        && body.provider.trim().is_empty();
+    if !follows_default {
+        if body.model.trim().is_empty() {
+            return Err("Model is required".to_string());
+        }
+        if body.provider.trim().is_empty() {
+            return Err("Provider is required".to_string());
+        }
     }
 
     let harness_mode = body
@@ -4922,6 +4930,30 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn a_bot_without_a_model_follows_the_platform_default() {
+        let temp = beta_test::temp_dir("bot-default-model");
+        let state = beta_test::test_app_state(&temp).await;
+        let router = agent_router().with_state(state);
+
+        let mut bot_body = full_agent_body("Terminal Bot");
+        bot_body["is_bot"] = json!(true);
+        bot_body["model"] = json!("");
+        bot_body["provider"] = json!("");
+        let (status, payload) = post_json(&router, "/agents", &bot_body, "user-a").await;
+        assert_eq!(status, StatusCode::CREATED, "{payload}");
+
+        // Only bots may skip it, and only both together.
+        let mut plain = full_agent_body("Plain Agent");
+        plain["model"] = json!("");
+        plain["provider"] = json!("");
+        let (status, _) = post_json(&router, "/agents", &plain, "user-a").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        bot_body["provider"] = json!("allternit");
+        let (status, _) = post_json(&router, "/agents", &bot_body, "user-a").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
