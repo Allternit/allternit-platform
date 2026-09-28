@@ -189,7 +189,7 @@ pub struct GizziDriver {
 
 impl RoutineDriver for GizziDriver {
     async fn session_exists(&self, session_id: &str) -> bool {
-        crate::agent_session_routes::bot_session_exists(session_id).await
+        crate::agent_session_routes::bot_session_exists(&self.state.db, session_id).await
     }
 
     async fn create_session(&self, bot_id: &str, bot_name: &str) -> Result<String, String> {

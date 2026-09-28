@@ -64,7 +64,7 @@ impl ThreadRuntime for GizziCoordinator {
         crate::agent_session_routes::create_bot_thread_session(&self.state.db, bot_id, bot_name, title, canonical, Some(thread_id)).await
     }
     async fn seed(&self, session_id: &str, text: &str) -> Result<(), String> {
-        crate::agent_session_routes::seed_session_message(session_id, text).await
+        crate::agent_session_routes::seed_session_message(&self.state.db, session_id, text).await
     }
     async fn handoff(&self, session_id: &str, reason: &str, context: &str, baton: Option<Value>) -> Result<(String, Value), String> {
         crate::thread_routes::GizziRuntime { db: self.state.db.clone() }.handoff(session_id, reason, context, baton).await

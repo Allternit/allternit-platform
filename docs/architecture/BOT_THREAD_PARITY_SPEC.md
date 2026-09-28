@@ -496,7 +496,7 @@ checked live in a main Desktop build (one-current-build rule).
 
 ### P4 — Bots run their own threads
 - [~] P4.1 (server-started bot turns carry the bot's instructions + saved memory; handoff seeds and resumes keep them) Fabric jobs targeting a bot principal load the bot's prompt, model, tools, memory, computer
-- [ ] P4.2 Placement per bot / per thread: this Mac, Allternit cloud, own server
+- [~] P4.2 (platform: session_placements, passthrough, bot placement API, relayed sync; UI next) Placement per bot / per thread: this Mac, Allternit cloud, own server
 - [x] P4.3 (allternit-ai #157; gizzi queued turns) Steer and interrupt a running thread
 - [x] P4.4 (routine's own standing thread, a generation per run via gizzi handoff) Routine runs = new generation in their standing thread; spin-off task threads
 

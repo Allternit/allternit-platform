@@ -850,7 +850,13 @@ async fn main() {
         .merge(allternit_api::agent_email_routes::agent_email_router())
         .merge(agent_preferences_router())
         .merge(agent_workspace_router())
-        .merge(agent_session_router())
+        // A thread placed on another Allternit (P4.2): its session's calls
+        // pass through to where it lives.
+        .merge(agent_session_router().route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            allternit_api::placement::passthrough,
+        )))
+        .merge(allternit_api::placement::placement_router())
         .merge(beta_session_router())
         .merge(cloud_agents_router())
         .merge(beta_deployment_router())
