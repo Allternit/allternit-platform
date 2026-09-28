@@ -14,6 +14,11 @@ use crate::error::ApiError;
 
 const TOKEN_PREFIX: &str = "alt_";
 const TOKEN_ENTROPY_BYTES: usize = 32;
+/// Scopes a key gets when the mint request names none. `compute` drives
+/// paired nodes (catalog + runtime proxy); `inference` lets the same key call
+/// the model gateway (`/v1/chat/completions`), which gizzi's `allternit`
+/// provider needs. Neither grants billing or admin.
+const DEFAULT_SCOPES: [&str; 2] = ["compute", "inference"];
 
 /// A key as returned to the owner (no hash exposed).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,17 +79,16 @@ fn generate_id() -> String {
     format!("ak_{}", hex::encode(rand::random::<[u8; 16]>())).to_lowercase()
 }
 
-fn normalize_scopes(scopes: Vec<String>) -> Vec<String> {
+pub(crate) fn normalize_scopes(scopes: Vec<String>) -> Vec<String> {
     let scopes: Vec<String> = scopes
         .into_iter()
         .map(|s| s.trim().to_lowercase())
         .filter(|s| !s.is_empty())
         .collect();
-    // Operator keys drive paired nodes (catalog + runtime proxy). An empty
-    // list fails `has_scope("compute")`, so minting without scopes used to
-    // produce a key that could not list devices or proxy.
+    // An empty list fails every scope check, so minting without scopes used
+    // to produce a key that could neither drive nodes nor run models.
     if scopes.is_empty() {
-        vec!["compute".to_string()]
+        DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect()
     } else {
         scopes
     }
@@ -229,11 +233,11 @@ mod tests {
     }
 
     #[test]
-    fn empty_scopes_default_to_compute() {
-        assert_eq!(normalize_scopes(vec![]), vec!["compute"]);
+    fn empty_scopes_default_to_compute_and_inference() {
+        assert_eq!(normalize_scopes(vec![]), vec!["compute", "inference"]);
         assert_eq!(
             normalize_scopes(vec!["".to_string(), "  ".to_string()]),
-            vec!["compute"]
+            vec!["compute", "inference"]
         );
     }
 }

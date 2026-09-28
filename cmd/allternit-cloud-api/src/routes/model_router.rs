@@ -25,6 +25,14 @@ use crate::{
 /// Permission required to invoke chat completions.
 const REQUIRED_PERMISSION: &str = "models:write";
 
+/// Whether a caller may run chat completions. `has_permission` honors the
+/// `"*"` wildcard.
+fn can_run_inference(user: &crate::auth::AuthenticatedUser) -> bool {
+    user.has_permission(REQUIRED_PERMISSION)
+        || user.has_permission("inference")
+        || user.has_permission("admin")
+}
+
 /// Response shape for the public model list endpoint.
 #[derive(Debug, Serialize)]
 pub struct ModelListResponse {
@@ -61,10 +69,7 @@ pub async fn chat_completions(
     // Legacy tokens carry `models:write`; scoped keys minted for inference
     // carry `inference`. `has_permission` honors the `"*"` wildcard, which is
     // the production default for pre-scoping tokens.
-    if !auth.user.has_permission(REQUIRED_PERMISSION)
-        && !auth.user.has_permission("inference")
-        && !auth.user.has_permission("admin")
-    {
+    if !can_run_inference(&auth.user) {
         return Err(ApiError::Forbidden(format!(
             "Missing required permission: {} (or 'inference')",
             REQUIRED_PERMISSION
@@ -279,3 +284,36 @@ async fn byok_chat_completions(
     Ok(response)
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::AuthenticatedUser;
+
+    fn key_user(scopes: Vec<String>) -> AuthenticatedUser {
+        // Mirrors `auth::middleware`: an `alt_` key authenticates with its
+        // stored scopes as permissions.
+        AuthenticatedUser {
+            user_id: "u1".to_string(),
+            token_id: "ak_test".to_string(),
+            permissions: crate::services::api_keys::normalize_scopes(scopes),
+        }
+    }
+
+    #[test]
+    fn key_minted_with_default_scopes_can_run_inference() {
+        assert!(can_run_inference(&key_user(vec![])));
+    }
+
+    #[test]
+    fn compute_only_key_cannot_run_inference() {
+        assert!(!can_run_inference(&key_user(vec!["compute".to_string()])));
+    }
+
+    #[test]
+    fn explicit_inference_and_legacy_permissions_pass() {
+        assert!(can_run_inference(&key_user(vec!["inference".to_string()])));
+        assert!(can_run_inference(&key_user(vec!["models:write".to_string()])));
+        assert!(can_run_inference(&AuthenticatedUser::development_user()));
+    }
+}
