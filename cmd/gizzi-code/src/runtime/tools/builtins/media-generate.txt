@@ -1,8 +1,8 @@
-Make an image for the user. The result is saved to the session's Outputs and opens beside the chat.
+Make an image or a video for the user. The result is saved to the session's Outputs and opens beside the chat.
 
 Lanes:
-- native (available now): you write the image as code; the user's Allternit app renders it to a PNG in a sandbox, and the PNG comes back to you to check. Costs nothing and works with any model.
-- cloud / subscription / own_key: photoreal and model-generated images (GPT Image, Higgsfield, connected subscriptions). Not available in this build yet. If the request needs a photo-realistic image (real-looking people, places, products), say that plainly and ask the user in the chat how they'd like to proceed, e.g. a stylized native version instead.
+- native (available now): you write the image or video as code; the user's Allternit app renders it in a sandbox (a PNG, or an MP4 with optional sound), and the render comes back to you to check. Costs nothing and works with any model.
+- cloud / subscription / own_key: photoreal and model-generated images and footage (GPT Image, Higgsfield, Veo, connected subscriptions). Not available in this build yet. If the request needs photo-realistic output (real-looking people, places, products), say that plainly and ask the user in the chat how they'd like to proceed, e.g. a stylized native version instead.
 
 Native: pick the format for the job
 - svg: illustrations, icons, logos, diagrams, flat or geometric art, maps, charts. Set width/height and a viewBox on the root <svg>.
@@ -21,4 +21,10 @@ The rendered PNG is attached to the result. Look at it: clipping, overlaps, unre
 
 Sizes: width and height in pixels, 64–4096 (default 1024 × 1024). Common: 1080×1080 post, 1080×1920 story, 1200×630 link card, 1920×1080 slide, 1024×1024 square.
 
-Video (kind "video") isn't available in this build yet; say so if asked.
+Native video (kind "video"): motion graphics, title cards, logo stings, kinetic type, animated charts, explainers, generative loops
+- code is the body of draw(ctx, t, width, height) for a 2D canvas: paint the whole frame at time t (seconds, 0 → duration). It is called for every frame and for sub-frame samples (motion blur), in any order, so it must be a pure function of t: no state carried between calls, no timers, no requestAnimationFrame. Math.random is seeded and restarts every call, so random layouts stay put; drive motion from t.
+- Structure it as scenes on a timeline: const scenes = [[0, 2, intro], [2, 5, main], …]; pick the scene for t, compute local progress p in 0..1, and ease it (easeOutCubic, easeInOutQuad). Cross-fade between scenes with globalAlpha. Stagger elements by a few frames; hold key frames long enough to read (text on screen ≥ 1.5s).
+- Same craft as images: fill every pixel, readable type (headline ≥ 6% of the height), system font stacks, no network. Keep per-frame work light (under ~20ms): no huge loops or per-pixel getImageData.
+- audio (optional): the body of score(ctx, duration) on an OfflineAudioContext (48 kHz stereo). Build it from oscillators, gain envelopes, filtered noise buffers and delays, scheduled on a beat grid that matches the scene cuts (e.g. 120 BPM = 0.5s per beat). Keep the master gain under ~0.3 and fade out at the end. Omit it for silent videos.
+- duration 1–60s (default 6), fps 24/25/30/60 (default 30), motionBlur 1–8 (default 4), size default 1920×1080 (1080×1920 vertical, 1080×1080 square; max 4K).
+- The result attaches a contact sheet: six timestamped stills across the video. Check pacing, framing, text and that the motion reads. Fix with the same title (it replaces the previous version); at most two fix rounds.
