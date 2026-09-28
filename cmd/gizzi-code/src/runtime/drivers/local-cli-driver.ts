@@ -155,6 +155,8 @@ export class LocalCliDriver implements RuntimeDriver {
       mcp: task?.mcp,
     })
 
+    const env = adapter.env ? { ...adapter.env, ...task?.env } : task?.env
+
     let failed = false
     try {
       if (adapter.mode === "stream-json") {
@@ -162,18 +164,18 @@ export class LocalCliDriver implements RuntimeDriver {
           prompt: message,
           promptOnStdin: adapter.promptOnStdin ?? false,
           cwd: task?.cwd,
-          env: task?.env,
+          env: env,
         })
       } else if (adapter.mode === "openclaw-json") {
-        yield* this.runOpenclawJson(handle, argv, message, task?.cwd, task?.env)
+        yield* this.runOpenclawJson(handle, argv, message, task?.cwd, env)
       } else if (adapter.mode === "acp") {
-        yield* this.runAcp(handle, argv, task?.cwd, task?.env)
+        yield* this.runAcp(handle, argv, task?.cwd, env)
       } else if (adapter.mode === "codex-app-server") {
-        yield* this.runCodexAppServer(handle, argv, message, task?.cwd, task?.systemPrompt, task?.env)
+        yield* this.runCodexAppServer(handle, argv, message, task?.cwd, task?.systemPrompt, env)
       } else if (adapter.mode === "one-shot-json") {
-        yield* this.runOneShotJson(handle, argv, { cwd: task?.cwd, env: task?.env })
+        yield* this.runOneShotJson(handle, argv, { cwd: task?.cwd, env: env })
       } else if (adapter.mode === "one-shot-text") {
-        yield* this.runOneShotText(handle, argv, { cwd: task?.cwd, env: task?.env })
+        yield* this.runOneShotText(handle, argv, { cwd: task?.cwd, env: env })
       } else {
         throw new Error(`CLI ${this.cliName} has an unsupported local-driver mode`)
       }
@@ -1361,6 +1363,8 @@ interface CliAdapter {
   supportsAttachments?: boolean
   /** For stream-json adapters: deliver the prompt as raw stdin text instead of NDJSON. */
   promptOnStdin?: boolean
+  /** Environment every run of this CLI gets (the task's own env wins). */
+  env?: Record<string, string>
   /** Build the final argv. */
   buildArgv(
     baseCmd: string[],
@@ -1386,6 +1390,10 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
   // Anthropic gizzi-code — stream-json.
   "claude-cli": {
     mode: "stream-json",
+    // An Allternit session must not route work to the user's claude.ai
+    // connectors (Claude Docs, Drive…): document work goes to the pane via
+    // gizzi's own tools. Seen live: a Docs session wrote a claude.ai doc.
+    env: { ENABLE_CLAUDEAI_MCP_SERVERS: "false" },
     buildArgv: ([command], _message, ctx) => {
       return [
         command,
