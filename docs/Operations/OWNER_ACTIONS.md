@@ -31,7 +31,7 @@
 
 | | |
 |---|---|
-| **Status** | **Pending.** Found by the live self-pair test: `POST /api/v1/computers/pairing-codes` and `GET /api/v1/computers/paired` return 500 `DATABASE_ERROR` while `/api/v1/mesh/enroll` (same device-token auth) returns 200, so the 017 tables are missing. Prod skips embedded migrations (item 2), so #848's deploy never created them. |
+| **Status** | **Done** (verified 2026-09-28: `computer_pairing_codes`, `paired_computers`, `webhook_events`, `handoffs` + `eventtype` values all present; `/api/v1/computers/paired` 200). Was found by the live self-pair test: `POST /api/v1/computers/pairing-codes` and `GET /api/v1/computers/paired` return 500 `DATABASE_ERROR` while `/api/v1/mesh/enroll` (same device-token auth) returns 200, so the 017 tables are missing. Prod skips embedded migrations (item 2), so #848's deploy never created them. |
 | **What** | `015_webhook_events.sql`, `016_cowork_handoffs.sql` (check whether they were applied), `017_paired_computers.sql` (remote-computer pairing, ACI P4) |
 | **Where** | `mail`; DB `allternit`; files in `cmd/allternit-cloud-api/migrations_pg/` |
 | **How** | `\dt computer_pairing_codes paired_computers webhook_events cowork_handoffs` to see what's missing, then `psql -d allternit -f <file>` for each missing one (all idempotent: `IF NOT EXISTS`). No restart needed. |
