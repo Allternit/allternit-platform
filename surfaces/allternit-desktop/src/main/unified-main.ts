@@ -53,6 +53,7 @@ import { tunnelManager } from './tunnel-manager.js';
 import { authManager } from './auth-manager.js';
 import { devicePairingManager } from './device-pairing-manager.js';
 import { meshManager } from './mesh-manager.js';
+import { startMeshBridgeServer } from './mesh-bridge-server.js';
 import { createStartupWindow } from './startup-window.js';
 import { notebookManager } from './notebook-manager.js';
 import { voiceManager } from './voice-manager.js';
@@ -675,6 +676,21 @@ const store = new Store<StoreSchema>({
 });
 
 const coworkDevice = coworkDeviceInfo(store);
+
+let meshBridgeUrl: Promise<string | null> | null = null;
+/** Start the local mesh bridge once; null if it couldn't start. */
+function ensureMeshBridge(): Promise<string | null> {
+  meshBridgeUrl ??= startMeshBridgeServer({
+    secret: () => backendManager.getDesktopAccessToken(),
+    loopbackFor: (target) => meshManager.loopbackFor(target),
+  })
+    .then(({ url }) => url)
+    .catch((error) => {
+      log.warn('[MeshBridge] could not start:', error);
+      return null;
+    });
+  return meshBridgeUrl;
+}
 let openLinksInApp = store.get('openLinksInApp') ?? false;
 
 /**
@@ -1212,12 +1228,17 @@ async function initializeBundledMode(): Promise<void> {
       updateSplash('Starting operator backend…', 30);
     }
 
+    // Remote computers on the mesh: the API reaches their VNC servers through
+    // this loopback bridge (mesh-bridge-server.ts).
+    const meshBridge = await ensureMeshBridge();
+
     try {
       await backendManager.ensureBackend({
         gizziUrl,
         gizziPassword: gizziManager.getPassword(),
         gizziUsername: 'gizzi',
         extraEnv: {
+          ...(meshBridge ? { ALLTERNIT_MESH_BRIDGE_URL: meshBridge } : {}),
           ...(localEngineUrl ? { LOCAL_ENGINE_URL: localEngineUrl } : {}),
           ...computerUseDriverManager.getLaunchEnvironment(),
           ...acuGatewayManager.getLaunchEnvironment(),

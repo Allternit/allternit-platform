@@ -170,6 +170,21 @@ class MeshManager {
     return rewritten.toString();
   }
 
+  /**
+   * A loopback `127.0.0.1:<port>` that reaches a raw TCP target on the mesh
+   * (for example a paired computer's VNC server at 100.x.y.z:5900). Same
+   * reverse sidecars as `proxyFor`, without the URL rewriting.
+   */
+  async loopbackFor(target: string): Promise<string> {
+    const [host, port] = target.split(':');
+    if (!host || !port || !isMeshHost(host) || !/^\d+$/.test(port)) {
+      throw new Error(`${target} is not a mesh address`);
+    }
+    await this.start();
+    const node = this.nodes.get(target) ?? await this.spawnNode(target);
+    return `127.0.0.1:${node.port}`;
+  }
+
   async stop(): Promise<void> {
     this.stopping = true;
     for (const node of this.nodes.values()) {
