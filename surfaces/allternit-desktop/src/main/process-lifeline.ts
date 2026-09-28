@@ -35,6 +35,9 @@ const LIFELINE_SHIM = `
 (
   trap '' TERM INT HUP
   while read -r _; do :; done
+  # EOF while both our parent and the command are alive is a stray close of
+  # the pipe, not a shutdown: leave the command running.
+  if kill -0 "$PPID" 2>/dev/null && kill -0 $$ 2>/dev/null; then exit 0; fi
   kill -TERM -$$ 2>/dev/null
   sleep 5
   kill -KILL -$$ 2>/dev/null
