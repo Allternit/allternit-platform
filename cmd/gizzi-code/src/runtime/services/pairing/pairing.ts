@@ -36,6 +36,14 @@ import { Filesystem } from "@/runtime/util/filesystem"
 import { Installation } from "@/shared/installation"
 
 export namespace Pairing {
+  /** The pairing request ended without approval: expired or denied. The CLI prints it without a stack trace. */
+  export class PairingEnded extends Error {
+    constructor(readonly reason: "expired" | "denied") {
+      super(reason === "expired" ? "Pairing request expired before it was approved." : "Pairing request was denied.")
+      this.name = "PairingEnded"
+    }
+  }
+
   const log = Log.create({ service: "pairing" })
 
   const REQUEST_TIMEOUT_MS = 10_000
@@ -358,8 +366,8 @@ export namespace Pairing {
         await new Promise((resolve) => setTimeout(resolve, result.retryAfterMs))
         continue
       }
-      if (result.status === "expired") throw new Error("Pairing request expired before it was approved. Run `gizzi pair` again.")
-      if (result.status === "denied") throw new Error("Pairing request was denied in the browser.")
+      if (result.status === "expired") throw new PairingEnded("expired")
+      if (result.status === "denied") throw new PairingEnded("denied")
       stored.runtimeId = result.session.runtimeId
       stored.userId = result.session.userId
       stored.userEmail = result.session.userEmail

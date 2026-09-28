@@ -18,6 +18,13 @@
   the duration and the run stats are no longer printed twice.
 
 ### Fixed
+- `gizzi login` can now be approved in Allternit Desktop: Desktop asks
+  "Sign in gizzi on this Mac?" and approves with your account. Before, its
+  approval window stayed on "Checking your Allternit session…". When Desktop
+  can't approve, the page opens in your browser instead.
+- An expired or cancelled sign-in prints one line ("The code expired before
+  it was approved. Run `gizzi login` again.") instead of an error and a
+  stack trace, and names the command you ran.
 - The mesh auth key was passed on the command line, where any local user
   could read it. It now reaches mesh-node through its environment and
   `tailscale up` through a private file.

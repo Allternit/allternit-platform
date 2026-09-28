@@ -46,6 +46,7 @@ async function runPair(args: { status?: boolean; force?: boolean; name?: string;
     process.stdout.write("Opening Allternit to sign in…\n")
   }
 
+  const again = args.login ? "gizzi login" : "gizzi pair"
   const stored = await Pairing.pair({
     name: args.name,
     onCreated: (pairing) => {
@@ -58,6 +59,14 @@ async function runPair(args: { status?: boolean; force?: boolean; name?: string;
       }
       process.stdout.write("Waiting for approval…\n")
     },
+  }).catch((err) => {
+    if (!(err instanceof Pairing.PairingEnded)) throw err
+    process.stderr.write(
+      err.reason === "expired"
+        ? `The code expired before it was approved. Run \`${again}\` again.\n`
+        : "Sign-in was cancelled.\n",
+    )
+    process.exit(1)
   })
   if (args.login) {
     process.stdout.write(`Signed in as ${stored.userEmail ?? stored.name}.\n`)
