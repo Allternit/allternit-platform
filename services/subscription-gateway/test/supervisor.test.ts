@@ -9,7 +9,7 @@ import { createScheduler, type Scheduler } from "../src/queue/scheduler.js";
 import { WorkerSupervisor, type WorkerKey } from "../src/worker/supervisor.js";
 import { runAttempt } from "../src/worker/worker.js";
 import { openDatabase, type Db } from "../src/store/db.js";
-import { getTask, insertAttempt, insertTask, updateAttempt } from "../src/store/queries.js";
+import { getTask, insertAttempt, insertTask, updateAttempt, updateTaskStatus } from "../src/store/queries.js";
 import {
   cleanupDir,
   dummyCtx,
@@ -267,7 +267,7 @@ describe("supervisor restart recovery (§A8)", () => {
     await firstRun; // worker observes the terminal guard and returns
   });
 
-  it("acknowledged reconcile adopts the thread and resumes the task", async () => {
+  it("acknowledged reconcile adopts the thread and ends the attempt (never left running, never resubmitted)", async () => {
     const task = sampleTask({ task_id: "task-adopt-1", status: "running" });
     insertTask(db, task);
     insertAttempt(db, task.task_id, {
@@ -302,8 +302,77 @@ describe("supervisor restart recovery (§A8)", () => {
     const final = getTask(db, task.task_id);
     expect(final?.attempts[0].submission_state).toBe("acknowledged");
     expect(final?.attempts[0].provider_thread_id).toBe("fw-thread-77");
-    expect(final?.status).toBe("running"); // resumed/adopted, not resubmitted
+    // Nothing resumes a reconciled attempt, so it must not sit in running
+    // forever: delivered → failed(stalled), not retryable, thread kept.
+    expect(final?.status).toBe("failed");
+    expect(final?.attempts[0].ended_at).not.toBeNull();
+    expect(final?.attempts[0].error?.class).toBe("stalled");
+    expect(final?.attempts[0].error?.retryable).toBe(false);
+    expect(final?.attempts[0].error?.detail).toContain("fw-thread-77");
     expect(adapter.executeCalls).toBe(0);
+  });
+
+  const orphan = (taskId: string, state: "not_sent" | "acknowledged"): void => {
+    insertTask(db, sampleTask({ task_id: taskId, status: "running" }));
+    insertAttempt(db, taskId, {
+      attempt_no: 1,
+      adapter_id: "fixture-web",
+      adapter_version: "0.1.0",
+      account_id: "acct-fw-1",
+      pool_key: "fixture-web:acct-fw-1:fixture-pool",
+      submission_state: state,
+      prompt_fingerprint: "fp",
+      provider_thread_id: state === "acknowledged" ? "fw-thread-9" : null,
+      requested_model_class: null,
+      observed_model: null,
+      started_at: new Date().toISOString(),
+      ended_at: null,
+      outcome: "failed",
+      error: null,
+    });
+  };
+  const restartSupervisor = (): WorkerSupervisor =>
+    new WorkerSupervisor({
+      db,
+      scheduler,
+      adapters: () => scriptedAdapter({ execute: async function* () {} }),
+      log,
+      makeReconcileCtx: () => dummyCtx(),
+    });
+
+  it("restart: an in-flight acknowledged attempt (killed mid-reply) fails as stalled, NOT retryable", async () => {
+    orphan("task-orphan-ack", "acknowledged");
+    await restartSupervisor().ensureWorker(KEY);
+    const final = getTask(db, "task-orphan-ack");
+    expect(final?.status).toBe("failed");
+    expect(final?.error?.class).toBe("stalled");
+    expect(final?.error?.retryable).toBe(false);
+    expect(final?.error?.detail).toContain("fw-thread-9");
+    expect(final?.attempts[0].ended_at).not.toBeNull();
+  });
+
+  it("restart: a task left in streaming is an orphan too", async () => {
+    orphan("task-orphan-stream", "acknowledged");
+    updateTaskStatus(db, "task-orphan-stream", "streaming");
+    await restartSupervisor().ensureWorker(KEY);
+    expect(getTask(db, "task-orphan-stream")?.status).toBe("failed");
+  });
+
+  it("restart: an in-flight not_sent attempt fails as stalled and IS retryable", async () => {
+    orphan("task-orphan-ns", "not_sent");
+    await restartSupervisor().ensureWorker(KEY);
+    const final = getTask(db, "task-orphan-ns");
+    expect(final?.status).toBe("failed");
+    expect(final?.error?.retryable).toBe(true);
+  });
+
+  it("restart sweep leaves an attempt this process is still driving alone", async () => {
+    orphan("task-live", "acknowledged");
+    const sup = restartSupervisor();
+    sup.trackAttempt("task-live", 1, "chat.create");
+    await sup.ensureWorker(KEY);
+    expect(getTask(db, "task-live")?.status).toBe("running");
+    sup.shutdown();
   });
 
   it("missing adapter/reconcile fn → ambiguous → task needs_user", async () => {

@@ -266,7 +266,7 @@ describe("execute e2e against fixtures", () => {
   }, 30000);
 
   it("image.generate: partial tiles → artifact.partial, completion → captureImages → artifact.ready into the real store", async () => {
-    const adapter = new ChatGPTWebAdapter({}, FAST);
+    const adapter = new ChatGPTWebAdapter({ freshImageChat: false }, FAST);
     const page = await fixturePage("image-mid-run");
     const { ctx } = makeCtx(page, adapter, makeAttempt());
 
@@ -297,6 +297,51 @@ describe("execute e2e against fixtures", () => {
       expect(a.storage.local_path).toBe(`${a.storage.sha256!.slice(0, 2)}/${a.storage.sha256}`);
       expect(getArtifact(db, a.artifact_id)?.type).toBe("image");
     }
+    await page.close();
+  }, 30000);
+
+  it("image.generate against the live-UI shape: + menu → Create image chip → blob: gallery image → artifact.ready", async () => {
+    const adapter = new ChatGPTWebAdapter({ freshImageChat: false }, FAST);
+    const page = await browser.newPage();
+    const PNG =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    await page.route("https://chatgpt.com/**", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: `<main><div id="thread"></div>
+          <button aria-label="Open profile menu">me</button>
+          <div data-composer-body>
+            <button aria-label="Add files and more" id="plus">+</button>
+            <span id="chips"></span>
+            <div role="textbox" aria-label="Ask ChatGPT" contenteditable="true"></div>
+            <button aria-label="Send" type="submit" id="send">Send</button>
+          </div>
+          <div id="menu" hidden><div id="create">Create image</div></div></main>
+          <script>
+            plus.onclick = () => { menu.hidden = false; };
+            create.onclick = () => { menu.hidden = true; chips.innerHTML = '<button aria-label="Remove Create image">Create image</button>'; };
+            send.onclick = () => {
+              thread.innerHTML = '<div data-user-message-bubble="true">p</div><div data-conversation-role="assistant"></div>';
+              setTimeout(() => {
+                const bytes = Uint8Array.from(atob("${PNG}"), (c) => c.charCodeAt(0));
+                const src = URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
+                thread.querySelector("[data-conversation-role]").innerHTML =
+                  '<div data-testid="generated-image-gallery"><button data-testid="generated-image-preview"><img alt="Generated image 1" src="' + src + '"></button></div>';
+                send.remove(); // live UI: no Send button after an image reply
+              }, 150);
+            };
+          </script>`,
+      })
+    );
+    await page.goto("https://chatgpt.com/");
+    const { ctx } = makeCtx(page, adapter, makeAttempt());
+    const events: AdapterEvent[] = [];
+    for await (const e of adapter.execute(makeTask("image.generate"), ctx)) events.push(e);
+    const kinds = events.map((e) => e.t);
+    expect(kinds).not.toContain("error");
+    expect(await page.getByRole("button", { name: /remove create image/i }).count()).toBe(1);
+    expect(kinds.filter((k) => k === "artifact.ready")).toHaveLength(1);
+    expect(kinds[kinds.length - 1]).toBe("done");
     await page.close();
   }, 30000);
 
@@ -460,4 +505,15 @@ describe("reconcile outcome mapping (Critical #2)", () => {
     expect(res.outcome).toBe("not_found");
     await page.close();
   }, 30000);
+});
+
+describe("chatgpt-web THREAD_URL_PATTERN (live UI, P3 gate)", () => {
+  it("ignores the provisional /c/local-… id and matches the server id", async () => {
+    const { THREAD_URL_PATTERN } = await import("../adapters/chatgpt-web/adapter.js");
+    const { threadIdFromUrl } = await import("@allternit/subscription-adapter-sdk");
+    expect(threadIdFromUrl("https://chatgpt.com/c/local-chatgpt:abc?temporary-chat=true", THREAD_URL_PATTERN)).toBeNull();
+    expect(
+      threadIdFromUrl("https://chatgpt.com/c/6ab9e2e2-cdbc-83ea-92e3-91624aaa1e57?temporary-chat=true", THREAD_URL_PATTERN)
+    ).toBe("6ab9e2e2-cdbc-83ea-92e3-91624aaa1e57");
+  });
 });

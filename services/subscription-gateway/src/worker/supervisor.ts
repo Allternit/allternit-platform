@@ -69,6 +69,7 @@ export class WorkerSupervisor {
       log: this.deps.log,
       makeCtx: this.deps.makeReconcileCtx,
       filter: key,
+      isLive: (taskId) => this.watchdogs.has(taskId),
     });
     this.workers.set(id, "ready");
   }

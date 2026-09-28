@@ -181,7 +181,7 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
     await ctx.pacing.beforeAction();
     await ctx.markSubmitted(null); // §A1: sent_unconfirmed BEFORE Send is clicked
     await submit(page, resolver, { fallback: cfg.submitFallbackEnter ? "enter" : undefined });
-    const threadId = threadIdFromUrl(page.url(), cfg.threadUrlPattern);
+    let threadId = threadIdFromUrl(page.url(), cfg.threadUrlPattern);
     await ctx.markSubmitted(threadId); // §A1: acknowledged after provider ack
     const url = page.url();
     yield {
@@ -211,6 +211,13 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
 
     for (;;) {
       while (pending.length > 0) yield pending.shift() as AdapterEvent;
+      // Providers route to the thread URL a beat after Send (ChatGPT: / →
+      // /c/<id>). Persist the id once it appears so crash reconcile can
+      // reopen the mapped thread (the SDK keeps state at acknowledged).
+      if (threadId === null) {
+        threadId = threadIdFromUrl(page.url(), cfg.threadUrlPattern);
+        if (threadId !== null) await ctx.markSubmitted(threadId);
+      }
       const { complete } = await tracker.pollOnce();
       if (complete) break;
       if (tracker.stalled(stallTimeoutS)) {

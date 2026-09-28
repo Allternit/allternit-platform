@@ -9,7 +9,11 @@ export async function extractLastAssistantTurn(
   opts: { key?: string } = {}
 ): Promise<string> {
   const locator = await resolver.resolveLocator(opts.key ?? "response");
-  const markdown = await locator.first().evaluate((root) => {
+  // Runners that transpile with esbuild keepNames (tsx — how the gateway runs
+  // on Sessions machines) wrap the named helpers below in __name(...), which
+  // does not exist in the page. Define it as identity before serializing.
+  await page.evaluate("globalThis.__name ??= (fn) => fn");
+  const markdown = await locator.last().evaluate((root) => {
     function langOf(pre: Element): string {
       const code = pre.querySelector("code");
       const cls = (code?.getAttribute("class") ?? pre.getAttribute("class") ?? "") as string;
