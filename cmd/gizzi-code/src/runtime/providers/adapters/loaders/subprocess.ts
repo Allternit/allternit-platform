@@ -69,6 +69,7 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
     const task = await driver.assign({
       taskId: generateTaskId(),
       prompt: message,
+      model: this.modelId,
       // The session's instructions (mode contract, artifact-session note…)
       // go to the CLI as its system prompt; without them it only sees the
       // last user message.

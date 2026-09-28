@@ -9,6 +9,7 @@ export interface Attachment {
 export interface AgentTask {
   taskId: string
   prompt: string
+  model?: string
   cwd?: string
   env?: Record<string, string>
   systemPrompt?: string
