@@ -295,7 +295,7 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
     await ctx.pacing.beforeAction();
     await ctx.markSubmitted(null); // §A1: sent_unconfirmed BEFORE Send
     await submit(page, resolver, { fallback: cfg.submitFallbackEnter ? "enter" : undefined });
-    const threadId = threadIdFromUrl(page.url(), THREAD_URL_PATTERN);
+    let threadId = threadIdFromUrl(page.url(), THREAD_URL_PATTERN);
     await ctx.markSubmitted(threadId); // §A1: acknowledged after provider ack
     const url = page.url();
     yield {
@@ -317,6 +317,11 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
     let seenTiles = 0;
     for (;;) {
       while (pending.length > 0) yield pending.shift() as AdapterEvent;
+      // Same late thread-id capture as the SDK chat path.
+      if (threadId === null) {
+        threadId = threadIdFromUrl(page.url(), THREAD_URL_PATTERN);
+        if (threadId !== null) await ctx.markSubmitted(threadId);
+      }
       const { complete } = await tracker.pollOnce();
       if (complete) break;
       if (tracker.stalled(stallTimeoutS)) {
