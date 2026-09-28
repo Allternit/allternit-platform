@@ -13,6 +13,7 @@ ChatGPT Plus) through the scratch allternit-api on :18013.
 | #873 | 1c2295bde | allternit-api computer proxy streamed nothing (buffered body + 30s total timeout) → streams, SSE exempt; SDK extractor flattened nested paragraphs (ChatGPT document block) → walks containers |
 | #881 | 281ee9bd1 | Image-chat policy (Eoj 2026-09-28): images in the "Allternit" ChatGPT project, one reused chat per account, rotate at N (default 20); 6 live UI facts mirrored in fixtures (late sidebar, button entries, hover-gated create, late "+"/menu, late earlier images, null adapter logger) |
 | #882 | 9a430999c | D6: `GET /v1/artifacts/:id/download` (non-rendering attachment, sha256 header); `chatgpt-image` skill `fabric_capture.mjs` lane (outside this repo) |
+| (this PR) | — | `GET /v1/artifacts/:id/preview` — raster images inline, sandboxed; SVG/other 415 |
 
 ## P3 manual gate — verdicts (IMPLEMENTATION_PLAN §P3)
 
@@ -24,7 +25,7 @@ ChatGPT Plus) through the scratch allternit-api on :18013.
 | SSE stream | PASS | via API proxy after #873: created → submitted → 57 progress → done → completed in real time; 50s stream kept heartbeats |
 | kill -9 mid-stream → restart, no double submit | PASS (gateway + Chrome kill) | task `stalled`, not retryable, 1 attempt, settled at boot. **Eoj's eyeball check in ChatGPT still outstanding** (beekeeper/cartographer/clockmaker chats: one prompt each) |
 | image → artifact + sha256 | PASS | PNG 1254²/1536×1024, sha256 == stored name, mode 444; downloadable via #882 |
-| image → local preview | NOT DONE | sandboxed preview route not built (bytes download only) |
+| image → local preview | PASS | `GET /v1/artifacts/:id/preview` (this PR): raster inline, nosniff + CSP sandbox; live PNG identical to the download |
 | D6 media-router lane | PASS | Mac → proxy → guest → Allternit project → PNG, checksum verified |
 
 ## Not done / needs Eoj
@@ -40,4 +41,4 @@ ChatGPT Plus) through the scratch allternit-api on :18013.
 - Old ChatGPT lanes (Safari, Chrome profile) stay until the gateway lane
   runs stable (D6) — nothing retired.
 
-Tests at close: gateway 297/297, SDK 76/76, allternit-api computer_ws 21/21.
+Tests at close: gateway 299/299, SDK 76/76, allternit-api computer_ws 21/21.
