@@ -513,17 +513,17 @@ checked live in a main Desktop build (one-current-build rule).
 - [~] P6.2 (email done: one thread per conversation; Slack once Slack is bound to a bot) External channels (email / phone / Slack-style) enter as threads
 
 ### P7 — Subagents and memory
-- [ ] P7.1 Compressed subagent result contract; transcript on expand
-- [ ] P7.2 Subagent → thread promotion
-- [ ] P7.3 Memory scopes (global / project / bot / thread / subagent) + promotion API + `memory.promoted`
-- [ ] P7.4 Scheduled memory curation per bot
+- [x] P7.1 (platform #841, allternit-ai #166) Compressed subagent result contract; transcript on expand
+- [x] P7.2 (allternit-ai #166) Subagent → thread promotion
+- [x] P7.3 (platform #841) Memory scopes (global / project / bot / thread / subagent) + promotion API + `memory.promoted`
+- [x] P7.4 (platform #841) Scheduled memory curation per bot
 
 ### P8 — Governance
-- [ ] P8.1 Per-bot spend limit; per-thread budget from the plan
-- [ ] P8.2 Task log (who asked, what ran, result)
-- [ ] P8.3 Tool/connector scoping per surface or channel; admin audit
+- [x] P8.1 (platform #842, allternit-ai #168) Per-bot spend limit; per-thread budget from the plan
+- [x] P8.2 (allternit-ai #168) Task log (who asked, what ran, result)
+- [x] P8.3 (platform #842, allternit-ai #168) Tool/connector scoping per surface or channel; admin audit
 
 ### P9 — Other surfaces
-- [ ] P9.1 PWA (FabricBotMode) on the Threads components
-- [ ] P9.2 iOS on the thread object model
-- [ ] P9.3 `gizzi bot threads` / `gizzi thread steer`
+- [x] P9.1 (allternit-ai #169) PWA (FabricBotMode) on the Threads components
+- [x] P9.2 (Agents tab › bot: Threads card; no new rail tab) iOS on the thread object model
+- [x] P9.3 (platform #844) `gizzi bot threads` / `gizzi thread steer`
