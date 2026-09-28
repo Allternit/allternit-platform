@@ -17,6 +17,7 @@ import type { CapabilityRouter } from "@allternit/subscription-fabric-contracts"
 import type { AdapterRegistry } from "../adapters/registry.js";
 import type { Scheduler } from "../queue/scheduler.js";
 import type { WorkerPool } from "../worker/pool.js";
+import type { LoginBrowser } from "../worker/login_browser.js";
 import { tasksRouter } from "./routes_tasks.js";
 import { eventsRouter } from "./routes_events.js";
 import { artifactsRouter } from "./routes_artifacts.js";
@@ -37,6 +38,7 @@ export interface GatewayDeps {
   scheduler?: Scheduler; // P3 — POST /v1/tasks enqueues; workers drain per key
   adapterRegistry?: AdapterRegistry; // P3 — live /v1/capabilities view
   pool?: WorkerPool; // P3 activation — POST /v1/accounts/:id/connect activates lanes
+  loginBrowser?: LoginBrowser; // login mode — POST /v1/accounts/:id/login
   allowedOrigins?: string[]; // default: empty — every Origin is rejected
   version?: string;
 }

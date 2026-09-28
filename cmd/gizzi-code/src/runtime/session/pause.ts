@@ -339,6 +339,7 @@ export namespace SessionPause {
       sessionID,
       agent: lastUser.agent,
       model,
+      ...(lastUser.system ? { system: lastUser.system } : {}),
       parts: [
         {
           type: "text",

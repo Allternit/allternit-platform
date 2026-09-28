@@ -27,6 +27,7 @@ pub mod inference_keys;
 pub mod jobs;
 pub mod me_usage;
 pub mod mesh;
+pub mod paired_computers;
 pub mod mirror;
 pub mod model_router;
 pub mod mirror_ws;

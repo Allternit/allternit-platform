@@ -50,6 +50,27 @@ describe("runAgenticLoop budgets", () => {
     log: () => {},
   }
 
+  test("a bot job's instructions lead the system prompt, worker rules still apply", async () => {
+    let sent: { messages: Array<{ role: string; content: string }>; model: string } | null = null
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      sent = JSON.parse(String(init.body))
+      return new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "Priced it." } }], usage: { total_tokens: 10 } }))
+    }) as unknown as typeof fetch
+    await runAgenticLoop("Price the H100", {
+      ...depsBase,
+      fetchImpl,
+      model: "anthropic/claude-sonnet-5",
+      system: "# Bot identity\n\nYou are Ledger, Finance analyst.",
+      complete: async () => {},
+    })
+    const system = sent!.messages[0]
+    expect(system.role).toBe("system")
+    expect(system.content.startsWith("# Bot identity")).toBe(true)
+    expect(system.content).toContain("# Worker rules")
+    expect(system.content).toContain("Granted folders")
+    expect(sent!.model).toBe("anthropic/claude-sonnet-5")
+  })
+
   test("refuses to start without an operator key", async () => {
     let completed: { success: boolean } | null = null
     await runAgenticLoop("task", {

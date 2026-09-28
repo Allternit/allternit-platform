@@ -42,6 +42,7 @@
 import { execFile, type ChildProcess } from "node:child_process"
 import { spawnOwnedChild } from "@/runtime/util/parent-lifeline"
 import { existsSync } from "node:fs"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import { dirname, join } from "node:path"
 import { Log } from "@/shared/util/log"
@@ -131,6 +132,15 @@ export namespace Mesh {
     return `gizzi-${host || "host"}`
   }
 
+  // A 0600 file holding the auth key for `tailscale up --auth-key=file:`,
+  // in a private temp dir; the caller removes it right after the call.
+  async function writePrivateKeyFile(key: string): Promise<string> {
+    const dir = await mkdtemp(join(os.tmpdir(), "gizzi-mesh-"))
+    const file = join(dir, "authkey")
+    await writeFile(file, key, { mode: 0o600 })
+    return file
+  }
+
   // Runs the tailscale CLI and captures output; resolves with the exit code
   // instead of rejecting so callers can branch on "daemon unreachable" vs
   // "command failed". Times out so a stuck `up` (e.g. waiting on interactive
@@ -183,10 +193,13 @@ export namespace Mesh {
       control,
       "--hostname",
       hostname(),
-      ...(opts.authKey ? ["--auth-key", opts.authKey] : []),
     ]
+    // Never on the command line: any local user can read argv with `ps`.
+    // tailscale reads `--auth-key=file:<path>` from a private temp file.
+    const keyFile = opts.authKey ? await writePrivateKeyFile(opts.authKey) : undefined
+    if (keyFile) args.push(`--auth-key=file:${keyFile}`)
     log.info("joining mesh tailnet", { control, authKey: !!opts.authKey, socket: opts.socket })
-    const result = await runCli(cli, args)
+    const result = await runCli(cli, args).finally(() => (keyFile ? rm(dirname(keyFile), { recursive: true, force: true }) : undefined))
     if (result.code === 0) {
       if (opts.authKey) broughtUp = true
       return
@@ -232,10 +245,13 @@ export namespace Mesh {
         String(port),
         "--listen",
         String(port),
-        ...(opts.authKey ? ["--auth-key", opts.authKey] : []),
       ]
       log.info("spawning mesh-node sidecar", { bin, control, port, authKey: !!opts.authKey })
-      const proc = spawnOwnedChild(bin, args, { stdio: ["ignore", "pipe", "pipe"] })
+      // The key goes in mesh-node's MESH_AUTH_KEY env, never argv (`ps` shows argv to every local user).
+      const proc = spawnOwnedChild(bin, args, {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, ...(opts.authKey ? { MESH_AUTH_KEY: opts.authKey } : {}) },
+      })
       child = proc
 
       let settled = false

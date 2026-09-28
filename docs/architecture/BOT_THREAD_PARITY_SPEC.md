@@ -468,7 +468,7 @@ checked live in a main Desktop build (one-current-build rule).
 - [ ] P1.4 One model source per thread/bot; unavailable models dimmed with the reason (B7)
 - [ ] P1.5 Gizzi (and any pre-atomic bot) gets its computer on first use (B8)
 - [ ] P1.7 Converge the other browser-side schedulers (`lib/agents/agent-cron-scheduler.ts`, `lib/agents/scheduled-jobs.runner.ts`) onto Automation Tasks + the local scheduler, same as P1.1
-- [ ] P1.6 A:// SDK: TypeScript client + types over the existing HTTP surface (principals, intents, runs/jobs, approvals, DAG, memory grants); Rust types from `allternit-cowork-runtime`
+- [x] P1.6 A:// SDK: TypeScript client + types over the existing HTTP surface (principals, intents, runs/jobs, approvals, DAG, memory grants); Rust types from `allternit-cowork-runtime`
 
 ### P2 — Design pass (sign-off before any P3 UI)
 - [x] P2.1 Target mocks (https://claude.ai/artifact/X8fseo967PQQZDuJ1gWN1C — current; earlier copy TrCk8AYYVxhFA6DdFoejqy is in the other org), annotated against the reference frames: Project home (coordinator + Threads panel), Thread view (todo card, rip/New divider, steer composer, nested subagents), Thread inspector, Bot detail (header + 6 tabs), Create bot (one screen), group-chat @thread
@@ -485,45 +485,45 @@ checked live in a main Desktop build (one-current-build rule).
 - [~] P3.8 (platform #799, allternit-ai #121: Bots launch + project migration; rail regrouping + Project home coordinator chat + bot project page on server next) Rail regrouping + **Bots launch** (no project open: "What should the team work on?" composer to Al, team strip with live status, projects with waiting/working counts, standing threads, first-run create-bot block) and **Project home** (inside a project) replace "The roster" and Bot Hub (B10). No template gallery, no Chat/Cowork/Bots dock on the Bots launch
 - [~] P3.9 (allternit-ai #142) Bot detail rebuild: split `BotHomeView.tsx` into header + Threads · Routines · Memory · Computer · Performance · Config (§7.2)
 - [ ] P3.10 Create bot one-screen flow (§7.3)
-- [ ] P3.11 Incognito asks
+- [x] P3.11 (allternit-ai #157) Incognito asks
 - [x] P3.12 (Agent B, allternit-ai #116) Extract the deck (artifact-mode picker, plugins, starter pills, template gallery) from `ChatComposer` into one shared component; no second copy
 - [x] P3.13 (Agent B, allternit-ai #116) Cowork launch is the deck's native home: full deck + artifact template gallery; "Put a team on it" hands off to the Bots launch as a new project. Chat launch keeps its deck; the Chat/Cowork/Bots switcher stays on Chat and Cowork composers only
 - [ ] P3.14 Thread composer gets the compact deck (mode ▾ · plugins ▾ · model); artifacts made in a thread open in Cowork
 - [~] P3.15 (allternit-ai #121; Hire prefill with P3.10) Templates on the Bots launch by progressive disclosure: level 0 = three "Start from a team" cards with a mini plan graph; level 1 = "Browse templates" panel with **Teams** (orchestration use cases: bots + plan with dependencies, "uses your Scout · adds Pixel") and **Bots** (single-bot marketplace; opens Create bot prefilled, nothing created until confirmed). Visual bar: the mockup, not a card grid of icons
 
 - [x] P3.16 (platform #808, #816; allternit-ai #147; gizzi TUI divider with the TUI owner) Session lineage + context handoff native in gizzi-code for every mode (Chat, Cowork, Code, gizzi CLI, bots): `session.continues_from` / `session.handoff`, `SessionHandoff` (baton on the session's own model, TODOs carried), automatic between turns at 70% of the usable window and before a turn that switches to a smaller window, prompts to a closed window land on the lineage head, `POST /session/:id/handoff` + `GET /session/:id/lineage`, `session.handoff` bus event. Bot threads call gizzi's handoff and record gizzi-initiated windows as generations (server: this PR; next: rip + follow-the-head in the desktop Chat/Cowork/Code views and a divider in the gizzi TUI)
-- [~] P3.17 (platform: gizzi `session/pause.ts`, Codex + Claude quota readers, API relay/resume/thread pause; UI next) Land before 5-hour / weekly / rate limits for any provider and auto-resume at reset: signals from gizzi `providers/quota` (add Claude subscription + Codex fetchers), `session/retry.ts` retry-after and gateway budgets; land at a clean point with a `quota` handoff, "Paused until … · <limit>", server tick resumes; falling back to another model is opt-in only
+- [x] P3.17 (platform #821, #825; allternit-ai #150, #155; TUI/HUD by the TUI owner) (gizzi `session/pause.ts`, Codex + Claude quota readers, API relay/resume/thread pause; UI next) Land before 5-hour / weekly / rate limits for any provider and auto-resume at reset: signals from gizzi `providers/quota` (add Claude subscription + Codex fetchers), `session/retry.ts` retry-after and gateway budgets; land at a clean point with a `quota` handoff, "Paused until … · <limit>", server tick resumes; falling back to another model is opt-in only
 
 ### P4 — Bots run their own threads
-- [ ] P4.1 Fabric jobs targeting a bot principal load the bot's prompt, model, tools, memory, computer
-- [ ] P4.2 Placement per bot / per thread: this Mac, Allternit cloud, own server
-- [ ] P4.3 Steer and interrupt a running thread
-- [ ] P4.4 Routine runs = new generation in their standing thread; spin-off task threads
+- [~] P4.1 (server-started bot turns carry the bot's instructions + saved memory; handoff seeds and resumes keep them) Fabric jobs targeting a bot principal load the bot's prompt, model, tools, memory, computer
+- [~] P4.2 (platform: session_placements, passthrough, bot placement API, relayed sync; UI next) Placement per bot / per thread: this Mac, Allternit cloud, own server
+- [x] P4.3 (allternit-ai #157; gizzi queued turns) Steer and interrupt a running thread
+- [x] P4.4 (routine's own standing thread, a generation per run via gizzi handoff) Routine runs = new generation in their standing thread; spin-off task threads
 
 ### P5 — Coordinator fan-out (A://)
-- [ ] P5.1 Al plan loop → task graph through the A:// SDK (deterministic assignment, dependency gating)
-- [ ] P5.2 Fan-out to threads; "Sent to N threads" receipts; live thread chips
-- [ ] P5.3 Follow-up routing ("Sent to one thread") and thread pills with hover cards
-- [ ] P5.4 Decision cards; completion synthesis back to the project chat
-- [ ] P5.5 Fan-out (intent graph) view from the canonical DAG
-- [ ] P5.6 Goal loop / WIH / rails DAGs read from the canonical graph
+- [x] P5.1 (platform #837 + this: validated plan mirrored to the rails DAG, nodes + blocked_by edges, thread status moves nodes) Al plan loop → task graph through the A:// SDK (deterministic assignment, dependency gating)
+- [x] P5.2 Fan-out to threads; "Sent to N threads" receipts; live thread chips
+- [x] P5.3 Follow-up routing ("Sent to one thread") and thread pills with hover cards
+- [x] P5.4 (platform #837, allternit-ai #162) Decision cards; completion synthesis back to the project chat
+- [x] P5.5 (allternit-ai #162, Graph tab) Fan-out (intent graph) view from the canonical DAG
+- [x] P5.6 (bot plans are rails DAGs; goal loop / WIH / rails views read them via /dags) Goal loop / WIH / rails DAGs read from the canonical graph
 
 ### P6 — @mention threads
-- [ ] P6.1 `@Bot` in chat / group chat starts a task thread inline with a live task list
-- [ ] P6.2 External channels (email / phone / Slack-style) enter as threads
+- [x] P6.1 (allternit-ai #163) `@Bot` in chat / group chat starts a task thread inline with a live task list
+- [~] P6.2 (email done: one thread per conversation; Slack once Slack is bound to a bot) External channels (email / phone / Slack-style) enter as threads
 
 ### P7 — Subagents and memory
-- [ ] P7.1 Compressed subagent result contract; transcript on expand
-- [ ] P7.2 Subagent → thread promotion
-- [ ] P7.3 Memory scopes (global / project / bot / thread / subagent) + promotion API + `memory.promoted`
-- [ ] P7.4 Scheduled memory curation per bot
+- [x] P7.1 (platform #841, allternit-ai #166) Compressed subagent result contract; transcript on expand
+- [x] P7.2 (allternit-ai #166) Subagent → thread promotion
+- [x] P7.3 (platform #841) Memory scopes (global / project / bot / thread / subagent) + promotion API + `memory.promoted`
+- [x] P7.4 (platform #841) Scheduled memory curation per bot
 
 ### P8 — Governance
-- [ ] P8.1 Per-bot spend limit; per-thread budget from the plan
-- [ ] P8.2 Task log (who asked, what ran, result)
-- [ ] P8.3 Tool/connector scoping per surface or channel; admin audit
+- [x] P8.1 (platform #842, allternit-ai #168) Per-bot spend limit; per-thread budget from the plan
+- [x] P8.2 (allternit-ai #168) Task log (who asked, what ran, result)
+- [x] P8.3 (platform #842, allternit-ai #168) Tool/connector scoping per surface or channel; admin audit
 
 ### P9 — Other surfaces
-- [ ] P9.1 PWA (FabricBotMode) on the Threads components
-- [ ] P9.2 iOS on the thread object model
-- [ ] P9.3 `gizzi bot threads` / `gizzi thread steer`
+- [x] P9.1 (allternit-ai #169) PWA (FabricBotMode) on the Threads components
+- [x] P9.2 (Agents tab › bot: Threads card; no new rail tab) iOS on the thread object model
+- [x] P9.3 (platform #844) `gizzi bot threads` / `gizzi thread steer`

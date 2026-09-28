@@ -33,12 +33,12 @@ export function onParentExit(callback: () => void): void {
 }
 
 // Twin of surfaces/allternit-desktop/src/main/process-lifeline.ts — keep the
-// shim identical. The watcher sits in the child's process group (so -$$ can
+// watcher body identical (gizzi adds a stdin-lifeline variant for Bun, below).
+// The watcher sits in the child's process group (so -$$ can
 // never name a reused group), blocks in read(2) on a pipe from us on fd 3
 // (the child's own stdin is untouched), and on EOF (we died, or the child
 // exited and we closed it) sweeps the group.
-const LIFELINE_SHIM = `
-(
+const WATCHER = `(
   trap '' TERM INT HUP
   while read -r _; do :; done
   # EOF while the command is still alive and still our parent's child is a
@@ -49,8 +49,22 @@ const LIFELINE_SHIM = `
   kill -TERM -$$ 2>/dev/null
   sleep 5
   kill -KILL -$$ 2>/dev/null
-) <&3 >/dev/null 2>&1 &
+) <&3 >/dev/null 2>&1 &`
+
+const LIFELINE_SHIM = `
+${WATCHER}
 exec "$@" 3<&-
+`
+
+// Same watcher, lifeline on the shim's stdin (dup'd to fd 3 for the
+// watcher; the command gets /dev/null). Used when the command doesn't read
+// stdin: Bun stalls later child I/O for seconds after a detached child with
+// an extra stdio pipe (fd 3) exits — the mesh fallback hung ~5s, and
+// mesh.test.ts (c) flaked 3–4 in 40 — while a stdin pipe does not.
+const LIFELINE_SHIM_STDIN = `
+exec 3<&0
+${WATCHER}
+exec "$@" 3<&- </dev/null
 `
 
 /**
@@ -68,12 +82,15 @@ export function spawnOwnedChild(
     return spawn(command, args, options)
   }
   const [stdin, stdout, stderr] = normalizeStdio(options.stdio)
-  const proc = spawn("/bin/sh", ["-c", LIFELINE_SHIM, "gizzi-lifeline", command, ...args], {
+  // Commands that don't read stdin carry the lifeline on it (see
+  // LIFELINE_SHIM_STDIN); the rest keep the fd-3 pipe.
+  const viaStdin = stdin === "ignore"
+  const proc = spawn("/bin/sh", ["-c", viaStdin ? LIFELINE_SHIM_STDIN : LIFELINE_SHIM, "gizzi-lifeline", command, ...args], {
     ...options,
-    stdio: [stdin, stdout, stderr, "pipe"],
+    stdio: viaStdin ? ["pipe", stdout, stderr] : [stdin, stdout, stderr, "pipe"],
     detached: true,
   })
-  const lifeline = proc.stdio[3] as import("node:stream").Duplex | null
+  const lifeline = (viaStdin ? proc.stdin : proc.stdio[3]) as import("node:stream").Writable | null
   lifeline?.on("error", () => {})
   proc.once("exit", () => lifeline?.destroy())
   return proc

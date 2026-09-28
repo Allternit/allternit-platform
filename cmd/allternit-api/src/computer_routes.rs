@@ -155,6 +155,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/computers", get(list_computers).post(create_computer))
         .route("/computers/quota", get(get_computer_quota))
         .route("/computers/this-device", post(register_this_device))
+        .route("/computers/remote/sync", post(sync_remote_computers))
         .route("/computers/:id", get(get_computer).patch(update_computer))
         .route(
             "/computers/:id/resize",
@@ -1235,6 +1236,18 @@ pub(crate) fn is_this_device(computer: &ComputerResponse) -> bool {
 }
 
 fn refuse_on_this_device(computer: &ComputerResponse) -> Option<Response> {
+    if computer.provider == crate::mesh_bridge::FABRIC_PROVIDER {
+        return Some(
+            (
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "error": "paired_computer",
+                    "message": "This is one of your own machines, paired over the mesh. It can't be started, stopped, cloned or deleted from here; unpair it in Computers.",
+                })),
+            )
+                .into_response(),
+        );
+    }
     is_this_device(computer).then(|| {
         (
             StatusCode::CONFLICT,
@@ -1324,39 +1337,133 @@ async fn register_this_device(
     }
 }
 
-/// This computer's screen, through the computer-use gateway's direct mode.
-async fn this_device_screenshot(state: &Arc<AppState>, computer_id: &str) -> Response {
-    let acu = state.config.acu_url();
-    let body = json!({
-        "mode": "direct",
-        "session_id": format!("computer-{computer_id}"),
-        "target_scope": "desktop",
-        "actions": [{ "kind": "screenshot" }],
-        "options": { "record": false, "approval_policy": "never" },
-    });
-    let response = match reqwest::Client::new()
-        .post(format!("{}/v1/computer-use/execute", acu.trim_end_matches('/')))
-        .timeout(std::time::Duration::from_secs(20))
-        .json(&body)
-        .send()
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => return error_response(StatusCode::BAD_GATEWAY, format!("computer use is unreachable: {e}")),
+#[derive(Debug, Deserialize)]
+struct RemoteComputer {
+    id: String,
+    name: String,
+    #[serde(default)]
+    os: Option<String>,
+    #[serde(default)]
+    mesh_ip: Option<String>,
+    #[serde(default)]
+    vnc_ready: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct RemoteSyncBody {
+    computers: Vec<RemoteComputer>,
+}
+
+/// Status of a paired machine's mirror row: running once it's on the mesh
+/// with VNC up; creating while it hasn't joined; error when it joined but
+/// its VNC server is off.
+pub(crate) fn remote_status(mesh_ip: Option<&str>, vnc_ready: bool) -> &'static str {
+    match (mesh_ip.filter(|ip| crate::mesh_bridge::is_mesh_target(&format!("{ip}:5900"))), vnc_ready) {
+        (None, _) => "creating",
+        (Some(_), true) => "running",
+        (Some(_), false) => "error",
+    }
+}
+
+/// POST /computers/remote/sync — mirror the account's paired machines (from
+/// the cloud's `/api/v1/computers/paired`) as `fabric` computers here, so
+/// control, hand-offs and the VNC view work on them like on any computer.
+/// Machines no longer paired are marked deleted.
+async fn sync_remote_computers(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<RemoteSyncBody>,
+) -> Response {
+    let db = state.db.clone();
+    let owner = user.user_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = db.connect()?;
+        let mut keep = Vec::new();
+        for remote in body.computers.iter().take(200) {
+            let native_id: String = remote.id.chars().take(128).collect();
+            let name: String = remote.name.trim().chars().take(80).collect();
+            let status = remote_status(remote.mesh_ip.as_deref(), remote.vnc_ready);
+            let existing: Option<String> = conn
+                .query_row(
+                    "SELECT id FROM computers WHERE provider = ?1 AND owner_type = 'user' AND owner_id = ?2 AND native_id = ?3",
+                    rusqlite::params![crate::mesh_bridge::FABRIC_PROVIDER, owner, native_id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let id = match existing {
+                Some(id) => {
+                    conn.execute(
+                        "UPDATE computers SET name = ?2, os = ?3, host = ?4, status = ?5 WHERE id = ?1",
+                        rusqlite::params![id, name, remote.os, remote.mesh_ip, status],
+                    )?;
+                    id
+                }
+                None => {
+                    let id = format!("cmp_{}", uuid::Uuid::new_v4().simple());
+                    conn.execute(
+                        "INSERT INTO computers (id, kind, provider, status, owner_type, owner_id, name, os, host, native_id, billing_source)
+                         VALUES (?1, 'byo_vps', ?2, ?3, 'user', ?4, ?5, ?6, ?7, ?8, 'free')",
+                        rusqlite::params![id, crate::mesh_bridge::FABRIC_PROVIDER, status, owner, name, remote.os, remote.mesh_ip, native_id],
+                    )?;
+                    id
+                }
+            };
+            keep.push(id);
+        }
+        // Unpaired elsewhere: gone here too.
+        let mut stmt = conn.prepare(
+            "SELECT id FROM computers WHERE provider = ?1 AND owner_type = 'user' AND owner_id = ?2 AND status != 'deleted'",
+        )?;
+        let current: Vec<String> = stmt
+            .query_map(rusqlite::params![crate::mesh_bridge::FABRIC_PROVIDER, owner], |r| r.get(0))?
+            .filter_map(Result::ok)
+            .collect();
+        for id in current.into_iter().filter(|id| !keep.contains(id)) {
+            conn.execute("UPDATE computers SET status = 'deleted' WHERE id = ?1", rusqlite::params![id])?;
+        }
+        Ok::<_, rusqlite::Error>(keep.len())
+    })
+    .await;
+    match result {
+        Ok(Ok(count)) => Json(json!({ "synced": count })).into_response(),
+        Ok(Err(e)) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        Err(_) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+    }
+}
+
+/// This computer's screen. On macOS, `screencapture` run by this API process:
+/// it's a child of Allternit Desktop, so macOS attributes the capture to the
+/// app and its Screen Recording permission. (The computer-use driver only
+/// captures single windows.)
+async fn this_device_screenshot(_state: &Arc<AppState>, computer_id: &str) -> Response {
+    if !cfg!(target_os = "macos") {
+        return error_response(StatusCode::NOT_IMPLEMENTED, "screenshots of this computer are only supported on macOS so far");
+    }
+    let file = std::env::temp_dir().join(format!("allternit-screen-{computer_id}-{}.png", uuid::Uuid::new_v4().simple()));
+    let output = tokio::process::Command::new("/usr/sbin/screencapture")
+        .args(["-x", "-t", "png"])
+        .arg(&file)
+        .output()
+        .await;
+    let png = match output {
+        Ok(out) if out.status.success() => tokio::fs::read(&file).await.ok(),
+        Ok(out) => {
+            warn!(stderr = %String::from_utf8_lossy(&out.stderr), "screencapture failed");
+            None
+        }
+        Err(e) => {
+            warn!(error = %e, "couldn't run screencapture");
+            None
+        }
     };
-    let result: Value = match response.json().await {
-        Ok(v) => v,
-        Err(e) => return error_response(StatusCode::BAD_GATEWAY, format!("computer use sent a bad reply: {e}")),
-    };
-    let b64 = result
-        .pointer("/result/screenshot_b64")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty());
-    let Some(png) = b64.and_then(|b| BASE64_STANDARD.decode(b).ok()) else {
-        let reason = result.get("error").and_then(|v| v.as_str()).unwrap_or("no screenshot came back — check Screen Recording permission");
-        return error_response(StatusCode::BAD_GATEWAY, reason.to_string());
-    };
-    (StatusCode::OK, [(header::CONTENT_TYPE, "image/png")], Bytes::from(png)).into_response()
+    let _ = tokio::fs::remove_file(&file).await;
+    match png.filter(|bytes| !bytes.is_empty()) {
+        Some(png) => (StatusCode::OK, [(header::CONTENT_TYPE, "image/png")], Bytes::from(png)).into_response(),
+        None => error_response(
+            StatusCode::BAD_GATEWAY,
+            "couldn't capture this computer's screen — allow Screen Recording for Allternit in System Settings → Privacy & Security",
+        ),
+    }
 }
 
 async fn computer_screenshot(
@@ -1372,6 +1479,9 @@ async fn computer_screenshot(
     touch_computer_activity(&state.db, &id);
     if is_this_device(&computer) {
         return this_device_screenshot(&state, &id).await;
+    }
+    if computer.provider == crate::mesh_bridge::FABRIC_PROVIDER {
+        return error_response(StatusCode::CONFLICT, "view this computer live (VNC over the mesh); single screenshots aren't taken from paired machines");
     }
     let bot_id = computer.bot_id.as_deref();
     let record = match computer_sandbox(&state, &computer) {
@@ -2608,6 +2718,14 @@ mod tests {
         ));
         assert!(matches!(status_from_str("error"), ComputerStatus::Error));
         assert!(matches!(status_from_str("unknown"), ComputerStatus::Error));
+    }
+
+    #[test]
+    fn remote_status_follows_mesh_and_vnc() {
+        assert_eq!(remote_status(None, false), "creating");
+        assert_eq!(remote_status(Some("100.64.0.9"), true), "running");
+        assert_eq!(remote_status(Some("100.64.0.9"), false), "error");
+        assert_eq!(remote_status(Some("192.168.1.2"), true), "creating");
     }
 
     #[test]

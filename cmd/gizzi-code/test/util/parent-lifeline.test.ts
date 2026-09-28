@@ -36,7 +36,8 @@ describe.skipIf(process.platform === "win32")("parent lifeline", () => {
     expect(await exited).toEqual([null, "SIGTERM"])
   })
 
-  test("owned child and its grandchildren die when gizzi is SIGKILLed", async () => {
+  for (const stdin of ["ignore", "pipe"] as const) {
+  test(`owned child and its grandchildren die when gizzi is SIGKILLed (stdin ${stdin})`, async () => {
     const dir = mkdtempSync(join(tmpdir(), "gizzi-lifeline-"))
     const gcFile = join(dir, "gc")
     const parent = spawn(
@@ -44,7 +45,7 @@ describe.skipIf(process.platform === "win32")("parent lifeline", () => {
       [
         "-e",
         `const { spawnOwnedChild } = await import(${JSON.stringify(LIFELINE)});
-         spawnOwnedChild("bash", ["-c", "sleep 30 & echo $! > ${gcFile}; wait"], { stdio: "ignore" });
+         spawnOwnedChild("bash", ["-c", "sleep 30 & echo $! > ${gcFile}; wait"], { stdio: [${JSON.stringify(stdin)}, "ignore", "ignore"] });
          setInterval(() => {}, 1000)`,
       ],
       { stdio: "ignore" },
@@ -57,6 +58,7 @@ describe.skipIf(process.platform === "win32")("parent lifeline", () => {
 
     expect(await until(() => !alive(grandchild))).toBe(true)
   })
+  }
 
   for (const [env, survives] of [["stdin", false], ["", true]] as const) {
     test(`in-process lifeline (GIZZI_PARENT_LIFELINE=${env || "unset"}): child ${survives ? "survives" : "exits"}`, async () => {

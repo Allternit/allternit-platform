@@ -66,6 +66,7 @@ pub mod routine_local_scheduler;
 pub mod thread_routes;
 pub mod spend_limits;
 pub mod channel_tools;
+pub mod placement;
 pub mod coordinator_routes;
 pub mod browser_history_service;
 pub mod procedural_memory_service;
@@ -85,6 +86,7 @@ pub mod cloud_agents_routes;
 pub mod compliance_routes;
 pub mod computer_control;
 pub mod computer_control_lease;
+pub mod mesh_bridge;
 pub mod computer_routes;
 pub mod computer_groups;
 pub mod computer_idle;
@@ -270,8 +272,9 @@ use tokio::sync::RwLock;
 use vm_session_routes::VmSessionStore;
 
 // Unit tests (`cfg(test)`) and integration tests in `tests/` (which build the
-// crate without `cfg(test)` but with debug assertions) both use this factory.
-#[cfg(any(test, debug_assertions))]
+// crate without `cfg(test)`: with debug assertions in dev, or with the
+// `test-helpers` feature in release test runs) both use this factory.
+#[cfg(any(test, debug_assertions, feature = "test-helpers"))]
 pub mod test_helpers {
     //! Minimal `AppState` factory for unit tests that need the full struct.
     use super::*;

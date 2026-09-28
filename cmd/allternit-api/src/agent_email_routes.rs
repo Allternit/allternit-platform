@@ -634,6 +634,29 @@ async fn receive_inbound_email(
         }
     }
 
+    // The email is also a thread for the bot (P6.2): one per conversation
+    // (sender + subject without Re:/Fwd:), so a reply continues it.
+    {
+        let db = state.db.clone();
+        let agent = agent_id.clone();
+        let from_s = from.to_string();
+        let subject_s = subject.unwrap_or("(no subject)").to_string();
+        let body_s = text_body.or(snippet).unwrap_or("(no body)").to_string();
+        tokio::spawn(async move {
+            let rt = crate::thread_routes::GizziRuntime { db: db.clone() };
+            let key = format!("email:{}:{}", from_s.to_lowercase(), crate::thread_routes::conversation_subject(&subject_s));
+            let text = format!("[email from {from_s}] Subject: {subject_s}\n\n{body_s}");
+            match crate::thread_routes::channel_thread(&db, &rt, &agent, "email", &key, &subject_s, &body_s).await {
+                Ok(session) => {
+                    if let Err(e) = crate::agent_session_routes::send_bot_turn(&db, &session, &agent, &text).await {
+                        warn!(error = %e, agent_id = %agent, "agent-email: the email thread's turn failed");
+                    }
+                }
+                Err(e) => warn!(error = %e, agent_id = %agent, "agent-email: couldn't start the email thread"),
+            }
+        });
+    }
+
     let thread_id = format!(
         "mail:email-in-{}",
         agent_id

@@ -21,7 +21,11 @@ echo "tailscale $*" >> "$MESH_TEST_RECORD"
 case "$1" in
   status) exit "\${FAKE_TS_STATUS_CODE:-1}" ;;
   ip) [ -n "$FAKE_TS_IP" ] && echo "$FAKE_TS_IP"; exit 0 ;;
-  up) exit "\${FAKE_TS_UP_CODE:-0}" ;;
+  up)
+    for a in "$@"; do
+      case "$a" in --auth-key=file:*) f="\${a#--auth-key=file:}"; echo "keyfile=$(cat "$f") at=$f" >> "$MESH_TEST_RECORD" ;; esac
+    done
+    exit "\${FAKE_TS_UP_CODE:-0}" ;;
   down) exit 0 ;;
 esac
 exit 0
@@ -33,7 +37,7 @@ sleep 60
 `
 
 const MESH_NODE_FAKE = `#!/bin/sh
-echo "mesh-node $*" >> "$MESH_TEST_RECORD"
+echo "mesh-node $* key=$MESH_AUTH_KEY" >> "$MESH_TEST_RECORD"
 if [ "$FAKE_NODE_FAIL" = "1" ]; then
   echo "MESH_ERROR reason=boom" >&2
   exit 1
@@ -156,7 +160,9 @@ describe("Mesh join precedence", () => {
     expect(url).toBe("http://100.64.0.7:4096")
     const calls = await recorded()
     expect(calls).toContain("mesh-node ")
-    expect(calls).toContain("--auth-key tskey-test")
+    // The key reaches mesh-node through its env, never argv (visible in `ps`).
+    expect(calls).toContain("key=tskey-test")
+    expect(calls).not.toContain("--auth-key")
     expect(calls).not.toContain("tailscale")
   })
 
@@ -194,6 +200,23 @@ describe("Mesh join precedence", () => {
     await wait(100)
     const logfile = await fs.readFile(Log.file(), "utf8")
     expect(logfile).toContain("mesh-node sidecar failed; falling back to a system tailscaled")
+  })
+
+  test("(e) tailscale up reads the auth key from a private file, never argv", async () => {
+    // No sidecar; a reachable system tailscaled with no tailnet IP yet -> `tailscale up`.
+    await Bun.write(record, "")
+    process.env.FAKE_TS_STATUS_CODE = "0"
+
+    await Mesh.start(4096, { authKey: "tskey-test" }).catch(() => undefined)
+
+    const calls = await recorded()
+    expect(calls).toContain("tailscale up")
+    expect(calls).toContain("keyfile=tskey-test")
+    expect(calls).not.toContain("--auth-key tskey-test")
+    const keyPath = /at=(\S+)/.exec(calls)?.[1]
+    expect(keyPath).toBeTruthy()
+    // Removed right after the call.
+    expect(await fs.stat(keyPath!).then(() => true, () => false)).toBe(false)
   })
 
   test("(d) no auth key -> mesh skipped with a hint; no binary is invoked", async () => {

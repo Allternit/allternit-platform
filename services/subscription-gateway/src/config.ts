@@ -30,9 +30,24 @@ export interface Config {
   stallTimeouts: { defaultS: number; byCapability: Record<string, number> };
   // Base URL of the local allternit-api (CommRails peer messages, D12).
   apiBase: string;
+  // Login mode browser (plain, non-automated Firefox). null → auto-detect at
+  // boot; unset and undetected → POST /v1/accounts/:id/login answers 501.
+  // Env: SUBS_GATEWAY_LOGIN_BROWSER.
+  loginBrowser: string | null;
 }
 
 const ENV_PREFIX = "SUBS_GATEWAY_";
+
+// Sessions machines install Firefox to /opt/firefox (sessions-setup.sh);
+// desktops usually have it on PATH or in /Applications.
+function detectFirefox(): string | null {
+  const candidates = [
+    "/opt/firefox/firefox",
+    "/usr/bin/firefox",
+    "/Applications/Firefox.app/Contents/MacOS/firefox",
+  ];
+  return candidates.find((c) => existsSync(c)) ?? null;
+}
 
 function expandHome(p: string): string {
   if (p === "~") return homedir();
@@ -117,5 +132,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     policy,
     stallTimeouts: stallTimeoutsFromPolicy(policy),
     apiBase: env[`${ENV_PREFIX}API_BASE`] ?? "http://127.0.0.1:18013",
+    loginBrowser: env[`${ENV_PREFIX}LOGIN_BROWSER`] ?? detectFirefox(),
   };
 }

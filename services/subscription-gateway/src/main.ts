@@ -26,6 +26,7 @@ import { FabricRouter } from "./router/resolve.js";
 import type { DispatchDeps } from "./router/dispatch.js";
 import { WorkerSupervisor } from "./worker/supervisor.js";
 import { WorkerPool } from "./worker/pool.js";
+import { createFirefoxLoginBrowser, importFirefoxSessionIfNewer } from "./worker/login_browser.js";
 import { startDrain } from "./worker/drain.js";
 import { createWatchScheduler } from "./worker/detach.js";
 import { createActivityTracker } from "./worker/progress.js";
@@ -123,7 +124,14 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
     profilesDir: config.stateDir,
     log,
     logger,
+    sessionImport: importFirefoxSessionIfNewer,
   });
+  const loginBrowser = config.loginBrowser
+    ? createFirefoxLoginBrowser({ executable: config.loginBrowser })
+    : undefined;
+  logger(
+    `subscription-gateway: login browser ${config.loginBrowser ?? "unavailable (login mode disabled)"}`
+  );
   const watchScheduler = createWatchScheduler();
   const activity = createActivityTracker();
   const dispatch: DispatchDeps = { db, registry: adapterRegistry, router, scheduler };
@@ -140,6 +148,7 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
     scheduler,
     adapterRegistry,
     pool,
+    loginBrowser,
     version: packageVersion(),
   });
 

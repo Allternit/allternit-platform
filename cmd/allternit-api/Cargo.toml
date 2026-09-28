@@ -129,6 +129,11 @@ tower = { workspace = true, features = ["util"] }
 [features]
 default = ["vm-driver"]
 vm-driver = []
+# Exposes `allternit_api::test_helpers` to the integration tests in `tests/`
+# when they're built in release mode (no debug_assertions), e.g. the deploy
+# workflow's `cargo test --release --features test-helpers`. Never enabled
+# for the shipped binary.
+test-helpers = []
 
 # Make this package independent from the root workspace so it can build
 # even when other workspace members have broken manifests.
