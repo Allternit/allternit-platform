@@ -386,3 +386,50 @@ allowlist (API `origin_gate` only allows fixed ports — 18013/18014 blocked).
   contains the pattern — use `pgrep`+`$$` exclusion or `pkill -x`.
 - Test flake: file-level hook timeouts when load avg is high (other sessions);
   use `--no-file-parallelism` to confirm.
+
+## 10. HANDOFF — 2026-09-28 ~08:10 CDT (claude session) — chat.continue live-verified; 4 live bugs fixed
+
+THIS SECTION SUPERSEDES §9.3 (§9.4 plan and §9.5 mechanics still apply).
+
+### 10.1 Live results on the gate guest (final build 0d1a84c94)
+- chat.create thread_id=T “Pick a random fruit” → “Mango”; chat.continue T
+  “What colour…” → “Orange”; same provider thread, account pinned ✅.
+  chat.continue on an unmapped thread → 409 `thread_not_mapped` ✅.
+- Stateless chat ✅ (temp chat, not in Recents) · image.generate → PNG 1254²,
+  sha256 == name, mode 444 ✅ (also right after a continue, in its own chat).
+- Gate step 4 (kill -9 the GATEWAY mid-reply → restart) → task `stalled`,
+  not retryable, 1 attempt, settled AT BOOT with no further traffic ✅.
+- kill -9 of CHROME mid-reply → `stalled`, not retryable, not
+  fallback-eligible, 1 attempt ✅.
+- Isolation sequence: threaded create T2 “Axolotl” → stateless create →
+  continue T2 “Squeak” passes the fingerprint check (stateless stayed out) ✅;
+  continue on the fruit thread polluted by the old bug → divergence fail ✅.
+- Eoj to eyeball in ChatGPT: the “beekeeper”/“cartographer”/“clockmaker”
+  story chats each show their prompt ONCE (no double submit).
+
+### 10.2 Bugs found live and fixed on this branch (tests: gateway 281, SDK 75)
+1. 1fd1ba321 — adapter throw after `acknowledged` was retryable +
+   fallback-eligible (maybeRequeue could resend on another account). Now
+   `stalled` (acknowledged) / `submission_ambiguous` (sent_unconfirmed).
+2. b4a65fe42 — orphans only settled when another task hit their lane (stuck
+   `streaming` forever otherwise). `supervisor.sweepAtBoot()` in boot();
+   sent_unconfirmed loop skips already-ended attempts.
+3. a685c5f49 — chat.create typed into whatever page the previous task left:
+   a stateless prompt landed IN a mapped fabric thread. chat.create now opens
+   the origin root first (`freshImageChat` → `freshChat`).
+4. 390397c66 — chat.continue read the thread before the SPA rendered it
+   (“response matched nothing”). Waits ≤15s for stable assistant turns.
+5. 0d1a84c94 — `--hide-crash-restore-bubble` on lane Chrome.
+
+### 10.3 Infra notes
+- Scratch API :18013 died ~13:02 UTC (cause unknown, not this session);
+  relaunched from `~/Desktop/allternit-workspace/.shared-target/debug/allternit-api`
+  (built from kimi-router-gsu f74854fa3) with the §8.2 env, log appended to
+  `/tmp/sessions-gate/api18013.log`.
+- Trap: `pgrep -f` in a guest poll matches its own shell (the §9.5 pkill trap
+  applies to pgrep too) — use `ps -eo pid,args | grep '[p]attern'`.
+
+### 10.4 Next
+PR for this branch → merge → §9.4 items 2–5 (SSE live check, image-chat
+history policy, D6 media-router repoint, closeout). Open decisions for Eoj
+unchanged (guest IPv4 NAT; writable viewer + origin_gate port allowlist).
