@@ -1,6 +1,6 @@
-import { getCompanion, roll, companionUserId } from '../../buddy/companion.js'
-import { askCompanionModel, createUserMessage } from '../../buddy/soul.js'
-import { RARITY_STARS, type CompanionSoul, type Species } from '../../buddy/types.js'
+import { getCompanion, roll, companionUserId } from '../../pet/companion.js'
+import { askCompanionModel, createUserMessage } from '../../pet/soul.js'
+import { RARITY_STARS, type CompanionSoul, type Species } from '../../pet/types.js'
 import type { LocalCommandCall } from '../../types/command.js'
 import { getGlobalConfig, saveGlobalConfig } from '../../utils/config.js'
 
@@ -11,7 +11,8 @@ const FALLBACK_TRAITS = ['curious', 'unbothered', 'dramatic', 'deadpan', 'cheerf
 function fallbackSoul(seed: number, species: Species): CompanionSoul {
   const name = FALLBACK_NAMES[seed % FALLBACK_NAMES.length]!
   const trait = FALLBACK_TRAITS[Math.floor(seed / 7) % FALLBACK_TRAITS.length]!
-  return { name, personality: `A ${trait} little ${species} who has opinions about your code.` }
+  const article = /^[aeiou]/.test(trait) ? 'An' : 'A'
+  return { name, personality: `${article} ${trait} little ${species} who has opinions about your code.` }
 }
 
 async function hatchSoul(): Promise<CompanionSoul> {
@@ -25,7 +26,7 @@ async function hatchSoul(): Promise<CompanionSoul> {
     const reply = await askCompanionModel(
       [
         createUserMessage({
-          content: `Invent a terminal companion. Species: ${bones.species}. Rarity: ${bones.rarity}. Stats: ${statLine}. Inspiration seed: ${inspirationSeed}.
+          content: `Invent a terminal pet. Species: ${bones.species}. Rarity: ${bones.rarity}. Stats: ${statLine}. Inspiration seed: ${inspirationSeed}.
 Return ONLY JSON: {"name": "<one short name, max 12 chars>", "personality": "<one sentence, max 120 chars, shaped by the peak and dump stats>"}`,
         }),
       ],
@@ -53,7 +54,7 @@ function card(): string {
   const stats = Object.entries(c.stats)
     .map(([k, v]) => `${k.toLowerCase()} ${v}`)
     .join(' · ')
-  return `${c.name} the ${c.shiny ? 'shiny ' : ''}${c.species} ${RARITY_STARS[c.rarity]}\n${c.personality}\n${stats}\n\n/buddy pet · /buddy mute · /buddy unmute · say ${c.name}'s name to talk to it`
+  return `${c.name} the ${c.shiny ? 'shiny ' : ''}${c.species} ${RARITY_STARS[c.rarity]}\n${c.personality}\n${stats}\n\n/pet pat · /pet mute · /pet unmute · say ${c.name}'s name to talk to it`
 }
 
 export const call: LocalCommandCall = async (args, context) => {
@@ -61,20 +62,20 @@ export const call: LocalCommandCall = async (args, context) => {
   const existing = getCompanion()
 
   if (sub === 'mute' || sub === 'unmute') {
-    if (!existing) return { type: 'text', value: 'No companion yet. Run /buddy to hatch one.' }
+    if (!existing) return { type: 'text', value: 'No pet yet. Run /pet to hatch one.' }
     const muted = sub === 'mute'
     saveGlobalConfig(c => ({ ...c, companionMuted: muted }))
     if (muted) context.setAppState(prev => ({ ...prev, companionReaction: undefined }))
-    return { type: 'text', value: muted ? `${existing.name} is napping. /buddy unmute to wake it.` : `${existing.name} is back.` }
+    return { type: 'text', value: muted ? `${existing.name} is napping. /pet unmute to wake it.` : `${existing.name} is back.` }
   }
 
-  if (sub === 'pet') {
-    if (!existing) return { type: 'text', value: 'No companion yet. Run /buddy to hatch one.' }
+  if (sub === 'pat') {
+    if (!existing) return { type: 'text', value: 'No pet yet. Run /pet to hatch one.' }
     context.setAppState(prev => ({ ...prev, companionPetAt: Date.now() }))
-    return { type: 'text', value: `You pet ${existing.name}.` }
+    return { type: 'text', value: `You pat ${existing.name}.` }
   }
 
-  if (sub) return { type: 'text', value: 'Usage: /buddy [pet|mute|unmute]' }
+  if (sub) return { type: 'text', value: 'Usage: /pet [pat|mute|unmute]' }
 
   if (existing) {
     if (getGlobalConfig().companionMuted) {

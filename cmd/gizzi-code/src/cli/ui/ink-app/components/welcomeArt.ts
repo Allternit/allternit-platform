@@ -1,5 +1,5 @@
 /**
- * Gizzi pixel-art support shared by the buddy sprite: theme color keys
+ * Gizzi pixel-art support shared by the pet sprite: theme color keys
  * (gizziSand / gizziVisor / gizziEye / gizzi coral) and a half-block renderer.
  */
 

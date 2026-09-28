@@ -113,3 +113,5 @@ test/telemetry/gizziUsageTelemetry.test.ts
 test/tui-feature-flags.test.ts
 test/vendor/color-diff-napi.test.ts
 test/components/inline-image.test.ts
+test/components/WelcomeBox.test.ts
+test/components/pet-soul.test.ts

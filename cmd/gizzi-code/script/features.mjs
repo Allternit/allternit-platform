@@ -32,7 +32,7 @@ export const FEATURES = [
   // Owner-approved beyond the parity set (2026-09-26)
   "EXTRACT_MEMORIES", // background auto-memory extraction
   "TRANSCRIPT_CLASSIFIER", // auto mode
-  "BUDDY", // companion sprite
+  "PET", // terminal pet (/pet)
 ];
 
 /** Extra flags for one-off experiments: GIZZI_FEATURES_EXTRA=FOO,BAR */

@@ -17,8 +17,14 @@ export async function askCompanionModel(
   signal: AbortSignal,
   querySource: string,
 ): Promise<string | null> {
+  // The provider layer can keep retrying an unreachable model long after the
+  // signal fires, so stop waiting on abort ourselves.
+  const aborted = new Promise<null>(resolve => {
+    if (signal.aborted) resolve(null)
+    else signal.addEventListener('abort', () => resolve(null), { once: true })
+  })
   try {
-    const response = await queryModelWithoutStreaming({
+    const request = queryModelWithoutStreaming({
       messages,
       systemPrompt: asSystemPrompt([system]),
       thinkingConfig: { type: 'disabled' },
@@ -36,13 +42,19 @@ export async function askCompanionModel(
         skipCacheWrite: true,
       },
     })
+    request.catch(() => {})
+    const response = await Promise.race([request, aborted])
+    if (!response) {
+      logForDebugging(`[pet] ${querySource} aborted`)
+      return null
+    }
     if (response.isApiErrorMessage) {
-      logForDebugging(`[buddy] ${querySource} API error: ${getAssistantMessageText(response)}`)
+      logForDebugging(`[pet] ${querySource} API error: ${getAssistantMessageText(response)}`)
       return null
     }
     return getAssistantMessageText(response)?.trim() || null
   } catch (err) {
-    if (!signal.aborted) logForDebugging(`[buddy] ${querySource} failed: ${err}`)
+    if (!signal.aborted) logForDebugging(`[pet] ${querySource} failed: ${err}`)
     return null
   }
 }

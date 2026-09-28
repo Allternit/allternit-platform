@@ -47,7 +47,7 @@ export async function fireCompanionObserver(
   messages: readonly Message[],
   onReaction: (reaction: string) => void,
 ): Promise<void> {
-  if (!feature('BUDDY')) return
+  if (!feature('PET')) return
   const companion = getCompanion()
   if (!companion || getGlobalConfig().companionMuted) return
 
@@ -75,7 +75,7 @@ Reply with ONE short in-character remark (under ${MAX_QUIP_CHARS} characters), n
       'companion_observer',
     )
     if (controller.signal.aborted) {
-      logForDebugging('[buddy] observer timed out')
+      logForDebugging('[pet] observer timed out')
       return
     }
     if (!reply) return

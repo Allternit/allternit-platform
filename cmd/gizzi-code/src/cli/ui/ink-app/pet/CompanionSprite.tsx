@@ -10,13 +10,13 @@ import { getGlobalConfig } from '../utils/config';
 import { isFullscreenActive } from '../utils/fullscreen';
 import type { Theme } from '../utils/theme';
 import { getCompanion } from './companion';
-import { gizziBuddyRows, type GizziPose } from './gizziSprite';
+import { gizziPetRows, type GizziPose } from './gizziSprite';
 import { SAND, VISOR, EYE } from '../components/welcomeArt';
 import { RARITY_COLORS } from './types';
 const TICK_MS = 500;
 const BUBBLE_SHOW = 20; // ticks → ~10s at 500ms
 const FADE_WINDOW = 6; // last ~3s the bubble dims so you know it's about to go
-const PET_BURST_MS = 2500; // how long hearts float after /buddy pet
+const PET_BURST_MS = 2500; // how long hearts float after /pet pat
 
 // Idle sequence: mostly rest, an occasional glance up at the beacon, a rare
 // blink and wink (the Gizzi mark's animation states).
@@ -93,7 +93,7 @@ function spriteColWidth(nameWidth: number): number {
 // Narrow terminals: 0 — REPL.tsx stacks the one-liner on its own row
 // (above input in fullscreen, below in scrollback), so no reservation.
 export function companionReservedColumns(terminalColumns: number, speaking: boolean): number {
-  if (!feature('BUDDY')) return 0;
+  if (!feature('PET')) return 0;
   const companion = getCompanion();
   if (!companion || getGlobalConfig().companionMuted) return 0;
   if (terminalColumns < MIN_COLS_FOR_FULL_SPRITE) return 0;
@@ -140,7 +140,7 @@ export function CompanionSprite(): React.ReactNode {
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- tick intentionally captured at reaction-change, not tracked
   }, [reaction, setAppState]);
-  if (!feature('BUDDY')) return null;
+  if (!feature('PET')) return null;
   const companion = getCompanion();
   if (!companion || getGlobalConfig().companionMuted) return null;
   const color = RARITY_COLORS[companion.rarity];
@@ -171,7 +171,7 @@ export function CompanionSprite(): React.ReactNode {
   const excited = reaction !== undefined || petting;
   const pose = excited ? EXCITED_SEQUENCE[tick % EXCITED_SEQUENCE.length]! : IDLE_SEQUENCE[tick % IDLE_SEQUENCE.length]!;
   // The beacon pulses while Gizzi is excited.
-  const body = gizziBuddyRows(pose, excited && tick % 2 === 1 ? 'gizziShimmer' : 'gizzi');
+  const body = gizziPetRows(pose, excited && tick % 2 === 1 ? 'gizziShimmer' : 'gizzi');
 
   // Name row doubles as hint row — unfocused shows dim name + ↓ discovery,
   // focused shows inverse name. The enter-to-open hint lives in
@@ -237,7 +237,7 @@ export function CompanionFloatingBubble() {
   const t3 = [reaction];
 
   useEffect(t2, t3);
-  if (!feature("BUDDY") || !reaction) {
+  if (!feature("PET") || !reaction) {
     return null;
   }
   const companion = getCompanion();

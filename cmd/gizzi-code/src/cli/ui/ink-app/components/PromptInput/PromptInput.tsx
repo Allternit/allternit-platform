@@ -13,8 +13,8 @@ import type { FooterItem } from './../../state/AppStateStore.ts';
 import { getCwd } from './../../utils/cwd.ts';
 import { isQueuedCommandEditable, popAllEditable } from './../../utils/messageQueueManager.ts';
 import stripAnsi from 'strip-ansi';
-import { companionReservedColumns } from '../../buddy/CompanionSprite';
-import { findBuddyTriggerPositions, useBuddyNotification } from '../../buddy/useBuddyNotification';
+import { companionReservedColumns } from '../../pet/CompanionSprite';
+import { findPetTriggerPositions, usePetNotification } from '../../pet/usePetNotification';
 import { FastModePicker } from '../../commands/fast/fast';
 import { isUltrareviewEnabled } from '../../commands/review/ultrareviewEnabled';
 import { getNativeCSIuTerminalDisplayName } from '../../commands/terminalSetup/terminalSetup';
@@ -310,7 +310,7 @@ function PromptInput({
   const {
     companion: _companion,
     companionMuted
-  } = feature('BUDDY') ? getGlobalConfig() : {
+  } = feature('PET') ? getGlobalConfig() : {
     companion: undefined,
     companionMuted: undefined
   };
@@ -523,7 +523,7 @@ function PromptInput({
   const ultraplanTriggers = useMemo(() => feature('ULTRAPLAN') && !ultraplanSessionUrl && !ultraplanLaunching ? findUltraplanTriggerPositions(displayedValue) : [], [displayedValue, ultraplanSessionUrl, ultraplanLaunching]);
   const ultrareviewTriggers = useMemo(() => isUltrareviewEnabled() ? findUltrareviewTriggerPositions(displayedValue) : [], [displayedValue]);
   const btwTriggers = useMemo(() => findBtwTriggerPositions(displayedValue), [displayedValue]);
-  const buddyTriggers = useMemo(() => findBuddyTriggerPositions(displayedValue), [displayedValue]);
+  const petTriggers = useMemo(() => findPetTriggerPositions(displayedValue), [displayedValue]);
   const slashCommandTriggers = useMemo(() => {
     const positions = findSlashCommandPositions(displayedValue);
     // Only highlight valid commands
@@ -726,8 +726,8 @@ function PromptInput({
       }
     }
 
-    // Rainbow for /buddy
-    for (const trigger of buddyTriggers) {
+    // Rainbow for /pet
+    for (const trigger of petTriggers) {
       for (let i = trigger.start; i < trigger.end; i++) {
         highlights.push({
           start: i,
@@ -739,7 +739,7 @@ function PromptInput({
       }
     }
     return highlights;
-  }, [isSearchingHistory, historyQuery, historyMatch, historyFailedMatch, cursorOffset, btwTriggers, imageRefPositions, memberMentionHighlights, slashCommandTriggers, tokenBudgetTriggers, slackChannelTriggers, displayedValue, voiceInterimRange, thinkTriggers, ultraplanTriggers, ultrareviewTriggers, buddyTriggers]);
+  }, [isSearchingHistory, historyQuery, historyMatch, historyFailedMatch, cursorOffset, btwTriggers, imageRefPositions, memberMentionHighlights, slashCommandTriggers, tokenBudgetTriggers, slackChannelTriggers, displayedValue, voiceInterimRange, thinkTriggers, ultraplanTriggers, ultrareviewTriggers, petTriggers]);
   const {
     addNotification,
     removeNotification
@@ -1772,9 +1772,9 @@ function PromptInput({
       }
       switch (footerItemSelected) {
         case 'companion':
-          if (feature('BUDDY')) {
+          if (feature('PET')) {
             selectFooterItem(null);
-            void onSubmit('/buddy');
+            void onSubmit('/pet');
           }
           break;
         case 'tasks':
@@ -1966,8 +1966,8 @@ function PromptInput({
       timeoutMs: 12_000
     });
   }, [effortNotificationText, addNotification, removeNotification]);
-  useBuddyNotification();
-  const companionSpeaking = feature('BUDDY') ?
+  usePetNotification();
+  const companionSpeaking = feature('PET') ?
   // biome-ignore lint/correctness/useHookAtTopLevel: feature() is a compile-time constant
   useAppState(s => s.companionReaction !== undefined) : false;
   const {

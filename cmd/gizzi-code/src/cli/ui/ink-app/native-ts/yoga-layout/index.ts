@@ -1114,7 +1114,7 @@ function layoutNode(
     // MEASURE calls only: entries hold w/h, not child positions. Children sit
     // where the LAST layout pass put them, which the _hasL check above already
     // covers; a layout-pass hit on any other entry skips STEP 5 and leaves
-    // them at positions computed for different inputs (the buddy bubble
+    // them at positions computed for different inputs (the pet bubble
     // narrowing the prompt column left the footer painted at its old width).
     if (node._cN > 0 && !performLayout && (sameGen || !node.isDirty_)) {
       const cIn = node._cIn!

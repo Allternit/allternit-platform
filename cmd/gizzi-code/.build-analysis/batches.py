@@ -18,7 +18,7 @@ batches = {
         "coordinator","scheduler","jobs","state","migrations","watcher","workspace",
         "query","entrypoints","daemon","environment-runner","self-hosted-runner",
         "remote","others","native-ts","plugins","skills","moreright","upstreamproxy",
-        "buddy","config","constants","main.ts","index.ts","Tool.ts","ac.ts","acp.ts",
+        "pet","config","constants","main.ts","index.ts","Tool.ts","ac.ts","acp.ts",
         "ink.ts","cost-tracker.ts","global.ts","env.ts","session.ts","snapshot.ts",
         "question.ts","ide.ts","patch.ts","commands.ts","hooks.ts","context.ts",
         "scheduler.ts","tools.ts","services","lib","memdir","bootstrap","agent",

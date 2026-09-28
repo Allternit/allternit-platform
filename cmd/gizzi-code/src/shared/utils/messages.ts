@@ -22,7 +22,7 @@ import {
 } from '@/services/analytics/index.js'
 import { sanitizeToolNameForAnalytics } from '@/services/analytics/metadata.js'
 import type { AgentId } from '@/types/ids.js'
-import { companionIntroText } from '../buddy/prompt.js'
+import { companionIntroText } from '../pet/prompt.js'
 import { NO_CONTENT_MESSAGE } from '@/constants/messages.js'
 import { OUTPUT_STYLE_CONFIG } from '@/constants/outputStyleConstants.js'
 import {

@@ -17,7 +17,7 @@ export function setConfig(key: string, value: unknown): void {
   // Implementation
 }
 
-// Global config for buddy/companion
+// Global config for pet/companion
 export interface GlobalConfig {
   theme?: string
   notifications?: boolean

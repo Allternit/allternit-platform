@@ -22,7 +22,7 @@ cli/ui/ink-app/bridge/replBridge.ts
 cli/ui/ink-app/bridge/replBridgeHandle.ts
 cli/ui/ink-app/bridge/replBridgeTransport.ts
 cli/ui/ink-app/bridge/workSecret.ts
-cli/ui/ink-app/buddy/useBuddyNotification.tsx
+cli/ui/ink-app/pet/usePetNotification.tsx
 cli/ui/ink-app/cli/handlers/auth.ts
 cli/ui/ink-app/cli/ndjsonSafeStringify.ts
 cli/ui/ink-app/cli/structuredIO.ts

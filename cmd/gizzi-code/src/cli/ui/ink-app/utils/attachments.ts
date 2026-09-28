@@ -239,7 +239,7 @@ import {
 import { isInProcessTeammate } from './teammateContext.js'
 import { removeTeammateFromTeamFile } from './swarm/teamHelpers.js'
 import { unassignTeammateTasks } from './tasks.js'
-import { getCompanionIntroAttachment } from '../buddy/prompt.js'
+import { getCompanionIntroAttachment } from '../pet/prompt.js'
 
 export const TODO_REMINDER_CONFIG = {
   TURNS_SINCE_WRITE: 10,
@@ -822,7 +822,7 @@ export async function getAttachments(
         ),
       ),
     ),
-    ...(feature('BUDDY')
+    ...(feature('PET')
       ? [
           maybe('companion_intro', () =>
             Promise.resolve(getCompanionIntroAttachment(messages)),

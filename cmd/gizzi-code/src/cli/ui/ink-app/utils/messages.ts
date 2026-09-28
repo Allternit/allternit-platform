@@ -21,7 +21,7 @@ import {
 } from './../services/analytics/index.ts'
 import { sanitizeToolNameForAnalytics } from './../services/analytics/metadata.ts'
 import type { AgentId } from './../types/ids.ts'
-import { companionIntroText } from '../buddy/prompt.js'
+import { companionIntroText } from '../pet/prompt.js'
 import { NO_CONTENT_MESSAGE } from '../constants/messages.js'
 import { OUTPUT_STYLE_CONFIG } from '../constants/outputStyleConstants.js'
 import {
