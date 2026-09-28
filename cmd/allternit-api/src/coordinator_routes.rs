@@ -504,9 +504,61 @@ pub async fn start_threads<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user_id
             }
         }
     }
+    maybe_synthesize(db, rt, user_id, project_id).await;
 }
 
-/// Queued threads in the project whose dependencies are all in review/done.
+pub const SYNTHESIS_SYSTEM: &str = "You are Al, the coordinator. Every thread in this project has reported back. \
+Write the wrap-up the user reads first: what was decided and produced, the key numbers exactly as the threads gave them, \
+and anything still open or needing their call. 3-8 short lines, plain text, no headings, no filler.";
+
+/// When every task thread in the project is back (review or done), Al posts
+/// one synthesis of what came back (P5.4). Again only after newer results.
+pub async fn maybe_synthesize<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user_id: &str, project_id: &str) -> Option<Value> {
+    let (threads, last_synthesis): (Vec<(String, String, Option<String>, String)>, Option<String>) = {
+        let conn = db.connect().ok()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT title, status, summary, updated_at FROM bot_threads
+                 WHERE project_id = ?1 AND kind = 'task' AND incognito = 0",
+            )
+            .ok()?;
+        let rows = stmt
+            .query_map(params![project_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .ok()?
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+        let last = conn
+            .query_row(
+                "SELECT MAX(created_at) FROM project_messages WHERE project_id = ?1 AND json_extract(payload, '$.kind') = 'synthesis'",
+                params![project_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .ok()
+            .flatten();
+        (rows, last)
+    };
+    if threads.len() < 2 || !threads.iter().all(|t| t.1 == "review" || t.1 == "done") {
+        return None;
+    }
+    let newest = threads.iter().map(|t| t.3.as_str()).max()?;
+    if last_synthesis.as_deref().map_or(false, |l| l >= newest) {
+        return None;
+    }
+    let title = project_title(db, project_id, user_id).ok().flatten().unwrap_or_default();
+    let team = load_team(db, project_id, user_id).unwrap_or_default();
+    let mut prompt = format!("Project: {title}\n\nWhat each thread reported:\n");
+    for (t, _, summary, _) in &threads {
+        prompt.push_str(&format!("\n## {t}\n{}\n", summary.as_deref().unwrap_or("(no report)")));
+    }
+    let text = rt.plan(SYNTHESIS_SYSTEM, &prompt, team_model(db, &team)).await?;
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    add_message(db, project_id, user_id, "coordinator", text, json!({ "kind": "synthesis", "threads": threads.len() })).ok()
+}
+
+/// Queued threads in the project whose dependencies are all in review/done./// Queued threads in the project whose dependencies are all in review/done.
 pub fn ready_dependents(db: &DbHandle, project_id: &str, finished: &str) -> Vec<(String, String)> {
     let Ok(conn) = db.connect() else { return vec![] };
     let title: String = conn
@@ -749,6 +801,13 @@ mod tests {
             .map(Result::unwrap)
             .collect();
         assert_eq!(kinds.iter().filter(|k| *k == "completed").count(), 3);
+        // All back: Al posts one wrap-up, and not again without new results.
+        assert_eq!(kinds.last().map(String::as_str), Some("synthesis"));
+        assert!(maybe_synthesize(&state.db, &rt, "u", "p1").await.is_none());
+        let syntheses: i64 = conn
+            .query_row("SELECT COUNT(*) FROM project_messages WHERE json_extract(payload, '$.kind') = 'synthesis'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(syntheses, 1);
     }
 
     #[tokio::test]
