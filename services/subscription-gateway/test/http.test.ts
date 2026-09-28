@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import request from "supertest";
+import { createHash } from "node:crypto";
+import { createArtifactStore, type ArtifactSourceContext } from "../src/artifacts/store.js";
 import { issueToken } from "../src/security/tokens.js";
 import { listenTcp, listenUds, closeServer } from "../src/http/server.js";
 import {
@@ -214,6 +216,69 @@ describe("artifacts + capabilities", () => {
       .set("authorization", `Bearer ${token(["artifacts:read"])}`);
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: "artifact_not_found", artifact_id: "missing" });
+  });
+
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7, 7, 7, 7]);
+  async function storedPng(): Promise<string> {
+    const source: ArtifactSourceContext = {
+      task_id: "task-dl-1",
+      attempt_no: 1,
+      capability: "image.generate",
+      provider: "fixture-web" as ArtifactSourceContext["provider"],
+      account_id: "acct-1",
+      adapter_id: "fixture-web",
+      adapter_version: "0.1.0",
+      thread_id: null,
+      project_id: null,
+      bot_id: null,
+      sensitivity: "internal",
+    };
+    const sink = createArtifactStore(deps.db, { artifactsDir: deps.config.artifactsDir, source });
+    const id = await sink.begin(
+      { provider: "fixture-web", provider_artifact_id: "p-1", provider_url: "https://x.test/", provider_url_expires_at: null } as never,
+      { mime_type: "image/png", format: "png", title: "img" }
+    );
+    await sink.write(id, PNG);
+    await sink.commit(id, {
+      data: PNG,
+      mime_type: "image/png",
+      format: "png",
+      sha256: createHash("sha256").update(PNG).digest("hex"),
+      size_bytes: PNG.length,
+    });
+    return id;
+  }
+
+  it("GET /v1/artifacts/:id/download streams the bytes as a non-rendering attachment (D6)", async () => {
+    const id = await storedPng();
+    const res = await request(deps.app)
+      .get(`/v1/artifacts/${id}/download`)
+      .set("authorization", `Bearer ${token(["artifacts:read"])}`)
+      .buffer(true)
+      .parse((r, cb) => {
+        const chunks: Buffer[] = [];
+        r.on("data", (c: Buffer) => chunks.push(c));
+        r.on("end", () => cb(null, Buffer.concat(chunks)));
+      });
+    expect(res.status).toBe(200);
+    expect(Buffer.from(res.body as Buffer).equals(Buffer.from(PNG))).toBe(true);
+    expect(res.headers["content-type"]).toBe("image/png");
+    expect(res.headers["content-disposition"]).toBe(`attachment; filename="${id}.png"`);
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+    expect(res.headers["content-security-policy"]).toContain("sandbox");
+    expect(res.headers["x-artifact-sha256"]).toBe(createHash("sha256").update(PNG).digest("hex"));
+  });
+
+  it("download needs artifacts:read; unknown → 404", async () => {
+    const id = await storedPng();
+    const denied = await request(deps.app)
+      .get(`/v1/artifacts/${id}/download`)
+      .set("authorization", `Bearer ${token(["tasks:read"])}`);
+    expect(denied.status).toBe(403);
+    const missing = await request(deps.app)
+      .get("/v1/artifacts/nope/download")
+      .set("authorization", `Bearer ${token(["artifacts:read"])}`);
+    expect(missing.status).toBe(404);
   });
 
   it("GET /v1/capabilities returns [] (P1 smoke behavior)", async () => {

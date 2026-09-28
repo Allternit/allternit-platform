@@ -482,3 +482,24 @@ then the next image opens a new chat in the same project.
   capture binary responses in a shell variable — NULs are stripped).
 
 Next: §9.4 item 4 (D6 media-router ChatGPT lane → gateway), item 5 closeout.
+
+## 13. HANDOFF — 2026-09-28 ~13:45 CDT (claude session) — D6 media-router lane live (§9.4 item 4 DONE)
+
+#881 merged (image-chat policy). Branch `session/claude-d6-media-router`:
+- Gateway `GET /v1/artifacts/:id/download` — stored bytes as a non-rendering
+  attachment (nosniff, CSP sandbox, no-store, `x-artifact-sha256`),
+  artifacts:read, local artifacts only, paths confined to the artifact root.
+- Skill `chatgpt-image` (global `~/.claude/skills`, synced into the untracked
+  `Allternit/.claude/skills` copy): new `fabric_capture.mjs` (no deps) —
+  submit image.generate → poll → download + sha256 verify. Lane order:
+  gateway (when `SUBS_GATEWAY_URL`/`SUBS_GATEWAY_TOKEN` set) → Safari →
+  Chrome profile. Exit 5 = gateway unconfigured/unreachable → Safari.
+  media-router SKILL + `provider-routing.json` notes updated.
+- **Live ✅:** this Mac → scratch API proxy → guest gateway → Allternit
+  project → PNG 1536×1024 saved, checksum verified; exit codes 5 verified.
+- Nothing retired (D6: the old lanes go only after the gateway lane runs
+  stable). The gateway is reachable today only via the scratch API :18013;
+  a durable endpoint + token for day-to-day use comes with P3 closeout.
+
+Next: §9.4 item 5 — P3 closeout attestation; Eoj decides keep/stop guest,
+the two empty duplicate "Allternit" projects, IPv4 NAT, writable viewer.
