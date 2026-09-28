@@ -269,8 +269,9 @@ use tokio::sync::RwLock;
 use vm_session_routes::VmSessionStore;
 
 // Unit tests (`cfg(test)`) and integration tests in `tests/` (which build the
-// crate without `cfg(test)` but with debug assertions) both use this factory.
-#[cfg(any(test, debug_assertions))]
+// crate without `cfg(test)`: with debug assertions in dev, or with the
+// `test-helpers` feature in release test runs) both use this factory.
+#[cfg(any(test, debug_assertions, feature = "test-helpers"))]
 pub mod test_helpers {
     //! Minimal `AppState` factory for unit tests that need the full struct.
     use super::*;

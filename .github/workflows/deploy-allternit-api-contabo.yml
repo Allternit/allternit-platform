@@ -46,7 +46,7 @@ jobs:
       # Full suite in release mode, mirroring the VPS deploy loop and the
       # cloud-api workflow's test gate.
       - name: Test
-        run: cargo test --release --target x86_64-unknown-linux-gnu -p allternit-api
+        run: cargo test --release --target x86_64-unknown-linux-gnu -p allternit-api --features test-helpers
 
   deploy:
     needs: test
