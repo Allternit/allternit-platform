@@ -41,11 +41,12 @@ export function onParentExit(callback: () => void): void {
 const WATCHER = `(
   trap '' TERM INT HUP
   while read -r _; do :; done
-  # EOF while the command is still alive and still our parent's child is a
-  # stray close of the pipe, not a shutdown: leave it running. (A dead parent
-  # can linger unreaped, so ask whose child the command is now; without ps
-  # this falls through to the sweep.)
-  if [ "$(ps -o ppid= -p $$ 2>/dev/null | tr -d ' ')" = "$PPID" ]; then exit 0; fi
+  # EOF doesn't always mean the parent is gone: a stray close, or the
+  # parent closing its fds during quit a moment before it exits. Wait while
+  # the command is alive and still our parent's child, then sweep once
+  # either stops being true. Exiting here instead leaked every sidecar on a
+  # normal quit. (Without ps the check fails at once and it sweeps.)
+  while [ "$(ps -o ppid= -p $$ 2>/dev/null | tr -d ' ')" = "$PPID" ]; do sleep 1; done
   kill -TERM -$$ 2>/dev/null
   sleep 5
   kill -KILL -$$ 2>/dev/null
