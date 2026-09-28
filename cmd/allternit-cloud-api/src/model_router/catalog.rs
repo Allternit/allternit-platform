@@ -92,7 +92,7 @@ pub fn starter_catalog() -> ModelAliasMap {
         ModelAliasEntry {
             alias: "claude-sonnet-4".to_string(),
             provider: "openrouter".to_string(),
-            upstream_id: "anthropic/claude-sonnet-4-20250514".to_string(),
+            upstream_id: "anthropic/claude-sonnet-4".to_string(),
             aliases: Some(vec!["claude-sonnet".to_string()]),
             created: 1746057600, // 2025-05-01
             name: "Claude Sonnet 4".to_string(),
