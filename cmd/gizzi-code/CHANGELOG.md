@@ -38,6 +38,8 @@
   `tailscale up` through a private file.
 - When the mesh sidecar failed, falling back to tailscale could hang for
   about five seconds.
+- The terminal panel's shell kept running after gizzi was killed or
+  crashed. It now closes whenever gizzi exits.
 - After returning from an external editor or shell, most of the screen
   stayed blank until ctrl+l.
 - The model picker never listed discovered local and subprocess models: it
