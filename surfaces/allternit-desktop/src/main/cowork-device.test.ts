@@ -5,7 +5,7 @@ import {
   isInAppBrowsableUrl,
   platformLabel,
   shortHostname,
-} from './cowork-device';
+} from './cowork-device.js';
 
 function memoryStore(initial?: string) {
   let id = initial;
