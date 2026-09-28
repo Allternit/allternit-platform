@@ -40,6 +40,7 @@ import { RuntimeCommand } from "@/cli/commands/runtime"
 import { AllternitCommand } from "@/cli/commands/allternit"
 import { BrainCommand } from "@/cli/commands/brain"
 import { BotCommand } from "@/cli/commands/bot"
+import { ThreadCommand } from "@/cli/commands/thread"
 import { ProductsCommand } from "@/cli/commands/products"
 import { HtmlArtifactCommand } from "@/cli/commands/html-artifact"
 import { ArtifactCommand } from "@/cli/commands/artifact"
@@ -121,6 +122,7 @@ export const COMMANDS: RegisteredCommand[] = [
   AllternitCommand,
   BrainCommand,
   BotCommand,
+  ThreadCommand,
   HtmlArtifactCommand,
   ArtifactCommand,
   ProgramsCommand,
