@@ -41,7 +41,7 @@ import { gizziManager } from './gizzi-manager.js';
 import { connectorSidecarManager } from './connector-sidecar-manager.js';
 import { gizziDaemonManager } from './gizzi-daemon-manager.js';
 import { PORTS, URLS, devUiUrl, apiUrl, notebookUrl, staticUiUrl } from './config.js';
-import { isPublicCloudCatalogPath, rewriteCloudApiToProtocol, shouldInjectDesktopIdentity } from './api-protocol.js';
+import { acceptsDeviceToken, isPublicCloudCatalogPath, rewriteCloudApiToProtocol, shouldInjectDesktopIdentity } from './api-protocol.js';
 import { installMiniApp, startMiniApp, stopMiniApp, getMiniAppStatus, launchMiniAppDesktop, getMiniAppApproval, reviewAndApproveMiniApp, revokeMiniAppApproval, removeMiniAppRuntime, rollbackMiniAppRuntime, setMiniAppOAuthTokenResolver } from './mini-apps-manager.js';
 import { installReleaseFromRegistry, rollbackReleaseInstall, removeReleaseInstall, listReleaseInstalls, getReleaseInstallState } from './mini-app-release-installer.js';
 import { createMiniAppOAuthBroker, type MiniAppOAuthBroker, type MiniAppOAuthProvider } from './mini-app-oauth-broker.js';
@@ -2198,8 +2198,15 @@ app.whenReady().then(async () => {
           log.warn('[Protocol] Clerk JWT unavailable for cloud request:', error);
           return null;
         });
+        const deviceSession = !clerk && acceptsDeviceToken(pathAndQuery)
+          ? await authManager.getSession().catch(() => null)
+          : null;
         if (clerk) {
           headers.set('Authorization', `Bearer ${clerk}`);
+        } else if (deviceSession) {
+          // Signed in by device pairing only: routes that accept the paired
+          // device token (mesh enroll, computer pairing) get it instead.
+          headers.set('Authorization', `Bearer ${deviceSession.accessToken}`);
         } else {
           headers.delete('Authorization');
         }

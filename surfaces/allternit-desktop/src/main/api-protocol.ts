@@ -57,3 +57,22 @@ export function isPublicCloudCatalogPath(urlOrPath: string): boolean {
   const normalized = path.split('?')[0];
   return normalized === '/v1/models' || normalized.startsWith('/v1/models/');
 }
+
+/**
+ * Cloud routes that accept this desktop's paired device token as well as a
+ * Clerk JWT (allternit-cloud-api: `mesh.rs` enroll, `paired_computers.rs`).
+ * When the app has no Clerk session (signed in by device pairing only), main
+ * sends the device token for these instead of nothing.
+ */
+const DEVICE_TOKEN_CLOUD_PATHS = ['/api/v1/mesh/enroll', '/api/v1/computers/pairing-codes', '/api/v1/computers/paired'];
+
+export function acceptsDeviceToken(urlOrPath: string): boolean {
+  let path = urlOrPath;
+  try {
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(urlOrPath)) path = new URL(urlOrPath).pathname;
+  } catch {
+    path = urlOrPath;
+  }
+  const normalized = path.split('?')[0];
+  return DEVICE_TOKEN_CLOUD_PATHS.some((prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`));
+}
