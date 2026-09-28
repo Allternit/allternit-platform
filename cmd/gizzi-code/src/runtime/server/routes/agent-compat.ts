@@ -115,6 +115,7 @@ function transformSession(info: any) {
       ephemeral: ephemeralSessions.has(info.id),
       continuesFrom: info.continuesFrom ?? null,
       handoff: info.handoff ?? null,
+      paused: info.paused ?? null,
     },
   }
 }
@@ -248,6 +249,7 @@ export const AgentCompatRoutes = () =>
                 permission: info.permission ?? null,
                 continuesFrom: info.continuesFrom ?? null,
                 handoff: info.handoff ?? null,
+                paused: info.paused ?? null,
               },
             }
           }

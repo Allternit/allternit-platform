@@ -3,9 +3,11 @@
  * 5-hour, weekly) a provider has used. Read-only: uses credentials the user
  * already configured (a provider CLI's stored sign-in, or the env API key
  * models.dev declares for the provider), never prompts or refreshes them.
- * Fetchers only exist for providers with a real, documented quota/credits
- * endpoint; everything else returns { status: "unsupported" } so the client
- * can render an explicit "quota n/a" — never a fabricated window.
+ * Fetchers only exist for providers with a real quota source — a documented
+ * quota/credits endpoint, or the limits a CLI records locally for its own
+ * sessions (Codex rollout `rate_limits`, Claude Code `quotaLimits`);
+ * everything else returns { status: "unsupported" } so the client can render
+ * an explicit "quota n/a" — never a fabricated window.
  */
 
 import { readFile } from "node:fs/promises"
@@ -204,9 +206,139 @@ const openrouter: Fetcher = async () => {
   }
 }
 
+// ── Local CLI records (no credentials, no network) ─────────────────────────
+// The newest file under a CLI's session directory, and its last `maxBytes`.
+async function newestFile(root: string, match: (name: string) => boolean, depth = 4): Promise<string | undefined> {
+  const { readdir, stat } = await import("node:fs/promises")
+  let best: { path: string; mtime: number } | undefined
+  async function walk(dir: string, d: number) {
+    let entries: import("node:fs").Dirent[]
+    try {
+      entries = await readdir(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of entries) {
+      const full = path.join(dir, e.name)
+      if (e.isDirectory() && d > 0) await walk(full, d - 1)
+      else if (e.isFile() && match(e.name)) {
+        const m = (await stat(full).catch(() => undefined))?.mtimeMs ?? 0
+        if (!best || m > best.mtime) best = { path: full, mtime: m }
+      }
+    }
+  }
+  await walk(root, depth)
+  return best?.path
+}
+
+async function tail(file: string, maxBytes = 512 * 1024): Promise<string> {
+  const { open } = await import("node:fs/promises")
+  const fh = await open(file, "r")
+  try {
+    const { size } = await fh.stat()
+    const start = Math.max(0, size - maxBytes)
+    const buf = Buffer.alloc(size - start)
+    await fh.read(buf, 0, buf.length, start)
+    return buf.toString("utf8")
+  } finally {
+    await fh.close()
+  }
+}
+
+/** The last JSON object value of `"key": {...}` in a JSONL tail. */
+function lastObject(text: string, key: string): any {
+  const needle = `"${key}":{`
+  let i = text.lastIndexOf(needle)
+  while (i >= 0) {
+    let depth = 0
+    const from = i + needle.length - 1
+    for (let j = from; j < text.length; j++) {
+      if (text[j] === "{") depth++
+      else if (text[j] === "}" && --depth === 0) {
+        try {
+          return JSON.parse(text.slice(from, j + 1))
+        } catch {
+          break
+        }
+      }
+    }
+    i = text.lastIndexOf(needle, i - 1)
+  }
+  return undefined
+}
+
+// Codex CLI: every turn records `rate_limits` in its rollout log —
+// primary = the 5-hour window, secondary = the weekly one.
+export function parseCodexRateLimits(limits: any): QuotaWindow[] {
+  const out: QuotaWindow[] = []
+  for (const [key, fallbackLabel] of [["primary", "5-hour"], ["secondary", "Weekly"]] as const) {
+    const w = limits?.[key]
+    const used = typeof w?.used_percent === "number" ? w.used_percent / 100 : undefined
+    if (used === undefined) continue
+    const minutes = typeof w.window_minutes === "number" ? w.window_minutes : undefined
+    const label = minutes === 300 ? "5-hour" : minutes === 10080 ? "Weekly" : fallbackLabel
+    const resets = typeof w.resets_at === "number" ? new Date(w.resets_at * 1000).toISOString() : undefined
+    out.push({ id: label === "Weekly" ? "7d" : "5h", label, usedRatio: Math.min(1, Math.max(0, used)), ...(resets ? { resetAt: resets } : {}) })
+  }
+  return out
+}
+
+const codex: Fetcher = async () => {
+  const home = process.env.CODEX_HOME ?? path.join(homedir(), ".codex")
+  const file = await newestFile(path.join(home, "sessions"), (n) => n.startsWith("rollout-") && n.endsWith(".jsonl"))
+  if (!file) return { status: "signed-out", message: "Run Codex once to see its plan usage." }
+  try {
+    const limits = lastObject(await tail(file), "rate_limits")
+    return {
+      status: "ok",
+      quota: { providerID: "codex-cli", source: "Codex", windows: limits ? parseCodexRateLimits(limits) : [], fetchedAt: Date.now() },
+    }
+  } catch (err) {
+    log.warn("codex quota read failed", { error: err instanceof Error ? err.message : String(err) })
+    return { status: "error", message: "Couldn't read Codex usage." }
+  }
+}
+
+// Claude Code: transcripts carry `quotaLimits` when a limit applies —
+// `allowed_warning` as it nears one, `rejected` once hit — with resetsAt.
+export function parseClaudeQuotaLimits(q: any, now = Date.now()): QuotaWindow[] {
+  if (!q || typeof q.resetsAt !== "number") return []
+  const resetAt = new Date(q.resetsAt * 1000)
+  if (resetAt.getTime() <= now) return []
+  const type = String(q.rateLimitType ?? "")
+  const label = /seven_day|weekly/.test(type) ? "Weekly" : /five_hour/.test(type) ? "5-hour" : "Usage"
+  const usedRatio =
+    typeof q.utilization === "number"
+      ? Math.min(1, Math.max(0, q.utilization > 1 ? q.utilization / 100 : q.utilization))
+      : q.status === "rejected"
+        ? 1
+        : q.status === "allowed_warning"
+          ? 0.95
+          : 0
+  return [{ id: label === "Weekly" ? "7d" : label === "5-hour" ? "5h" : "usage", label, usedRatio, resetAt: resetAt.toISOString() }]
+}
+
+const claude: Fetcher = async () => {
+  const root = path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(homedir(), ".claude"), "projects")
+  const file = await newestFile(root, (n) => n.endsWith(".jsonl"), 1)
+  if (!file) return { status: "signed-out", message: "Run Claude Code once to see its plan usage." }
+  try {
+    const q = lastObject(await tail(file), "quotaLimits")
+    return {
+      status: "ok",
+      quota: { providerID: "claude-cli", source: "Claude", windows: parseClaudeQuotaLimits(q), fetchedAt: Date.now() },
+    }
+  } catch (err) {
+    log.warn("claude quota read failed", { error: err instanceof Error ? err.message : String(err) })
+    return { status: "error", message: "Couldn't read Claude usage." }
+  }
+}
+
 const FETCHERS: Record<string, Fetcher> = {
   "kimi-cli": kimi,
   openrouter,
+  "codex-cli": codex,
+  "claude-cli": claude,
 }
 
 export namespace ProviderQuotas {

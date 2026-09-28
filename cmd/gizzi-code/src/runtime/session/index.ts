@@ -10,7 +10,7 @@ import { Flag } from "@/runtime/context/flag/flag"
 import { Identifier } from "@/shared/id/id"
 import { Installation } from "@/shared/installation"
 
-import { Database, NotFoundError, eq, and, or, gte, isNull, desc, like, inArray, lt } from "@/runtime/session/storage/db"
+import { Database, NotFoundError, eq, and, or, gte, isNull, isNotNull, desc, like, inArray, lt } from "@/runtime/session/storage/db"
 import type { SQL } from "@/runtime/session/storage/db"
 import { SessionTable, MessageTable, PartTable } from "@/runtime/session/session.sql"
 import { SessionTrace } from "@/runtime/session/trace"
@@ -68,6 +68,7 @@ export namespace Session {
       parentID: row.parent_id ?? undefined,
       continuesFrom: row.continues_from ?? undefined,
       handoff: row.handoff ?? undefined,
+      paused: row.paused ?? undefined,
       title: row.title,
       version: row.version,
       summary,
@@ -114,6 +115,7 @@ export namespace Session {
       parent_id: info.parentID,
       continues_from: info.continuesFrom ?? null,
       handoff: info.handoff ?? null,
+      paused: info.paused ?? null,
       slug: info.slug,
       directory: info.directory,
       title: info.title,
@@ -176,6 +178,16 @@ export namespace Session {
           reason: z.string(),
           at: z.number(),
           baton: z.unknown().optional(),
+        })
+        .optional(),
+      /** Landed before a usage limit (P3.17); resumes on its own at `until`. */
+      paused: z
+        .object({
+          until: z.number(),
+          limit: z.string(),
+          providerID: z.string().optional(),
+          reason: z.enum(["quota", "rate_limit", "limit_hit"]),
+          at: z.number(),
         })
         .optional(),
       summary: z
@@ -634,6 +646,34 @@ export namespace Session {
       })
     },
   )
+
+  /** Set or clear a session's paused state (P3.17 usage-limit landing). */
+  export function setPaused(input: { sessionID: string; paused: Info["paused"] | null }) {
+    return Database.use((db) => {
+      const row = db
+        .update(SessionTable)
+        .set({ paused: input.paused ?? null, time_updated: Date.now() })
+        .where(eq(SessionTable.id, input.sessionID))
+        .returning()
+        .get()
+      if (!row) throw new NotFoundError({ message: `Session not found: ${input.sessionID}` })
+      const info = fromRow(row)
+      Database.effect(() => Bus.publish(Event.Updated, { info }))
+      return info
+    })
+  }
+
+  /** Sessions currently paused before a usage limit, in this project. */
+  export function listPaused(): Info[] {
+    const project = Instance.project
+    return Database.use((db) =>
+      db
+        .select()
+        .from(SessionTable)
+        .where(and(eq(SessionTable.project_id, project.id), isNotNull(SessionTable.paused)))
+        .all(),
+    ).map(fromRow)
+  }
 
   /** Mark a session as handed off to its successor (context handoff). */
   export function setHandoff(input: { sessionID: string; handoff: NonNullable<Info["handoff"]> }) {

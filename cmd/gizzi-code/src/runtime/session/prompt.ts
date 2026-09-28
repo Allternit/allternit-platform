@@ -63,6 +63,7 @@ import * as BotInbox from "@/runtime/bots/bot-inbox"
 import { isRoutineTurnText } from "@/runtime/bots/bot-routines"
 import { isMessageAgentSession, MessageAgentTool } from "@/runtime/tools/builtins/message-agent"
 import { SessionHandoff } from "@/runtime/session/handoff"
+import { SessionPause } from "@/runtime/session/pause"
 
 // @ts-ignore — suppress ai-sdk stdout warnings (see server.ts for details)
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -276,6 +277,10 @@ const message = await createUserMessage(input)
       return message
     }
 
+    // Usage limits (P3.17): a paused session holds the turn until it
+    // resumes; one about to run into a limit lands here instead of failing.
+    if (await holdForLimit(session, input.model)) return message
+
     // Bot Mode: interactive turns (user chat or teammate DM pickup) carry the
     // first-response preamble in the persona injection; routine deliveries
     // (`[routine: …]` marker) and delegated subtask turns stay quiet.
@@ -284,9 +289,31 @@ const message = await createUserMessage(input)
     )
 
     const result = await loop({ sessionID: input.sessionID, fallbackModels: input.fallbackModels, botPreamble })
-    afterTurnHandoff(input.sessionID, result)
+    if (!afterTurnLimit(session, result)) afterTurnHandoff(input.sessionID, result)
     return result
   })
+
+  /** Hold this turn when the session is paused or about to hit a limit. */
+  async function holdForLimit(session: Session.Info, model: PromptInput["model"]): Promise<boolean> {
+    if (session.parentID) return false
+    if (SessionPause.isPaused(session)) return true
+    const providerID = model?.providerID ?? session.defaultModel?.providerID
+    if (!providerID) return false
+    const landing = await SessionPause.quotaLanding(providerID).catch(() => undefined)
+    if (!landing) return false
+    SessionPause.pause(session.id, { ...landing, providerID, reason: "quota" })
+    return true
+  }
+
+  /** A turn that ran into a limit pauses the session until it resets. */
+  function afterTurnLimit(session: Session.Info, result: MessageV2.WithParts | undefined): boolean {
+    if (session.parentID) return false
+    const hit = SessionPause.limitFromTurn(result)
+    if (!hit) return false
+    const providerID = result?.info.role === "assistant" ? result.info.providerID : undefined
+    SessionPause.pause(session.id, { until: hit.until, limit: hit.limit, reason: hit.reason, providerID })
+    return true
+  }
 
   async function beforeTurnHandoff(input: PromptInput): Promise<string> {
     await SessionHandoff.settled(input.sessionID)

@@ -1,5 +1,6 @@
 import { Hono } from "hono"
 import { SessionHandoff } from "@/runtime/session/handoff"
+import { SessionPause } from "@/runtime/session/pause"
 import { stream } from "hono/streaming"
 import { describeRoute, validator, resolver } from "@/runtime/server/openapi"
 import z from "zod/v4"
@@ -559,6 +560,31 @@ export const SessionRoutes = lazy(() =>
         const { sessionID } = c.req.valid("param")
         const sessions = await SessionHandoff.lineage(sessionID)
         return c.json({ head: sessions[sessions.length - 1].id, sessions })
+      },
+    )
+    .post(
+      "/:sessionID/resume",
+      describeRoute({
+        summary: "Resume a paused session",
+        description:
+          "Resume a session paused before a usage limit. Without a model it continues on its own model (normally done automatically at the reset); with one, it is the explicit \"Resume now on …\" on another model.",
+        operationId: "session.resume",
+        responses: {
+          200: { description: "Resumed", content: { "application/json": { schema: resolver(z.any()) } } },
+          ...errors(404),
+        },
+      }),
+      validator("param", z.object({ sessionID: z.string() })),
+      validator(
+        "json",
+        z.object({ model: z.object({ providerID: z.string(), modelID: z.string() }).optional() }).optional(),
+      ),
+      async (c) => {
+        const { sessionID } = c.req.valid("param")
+        const body = c.req.valid("json") ?? {}
+        // The resumed turn runs in the background; the caller follows it on /event.
+        void SessionPause.resume(sessionID, { model: body.model }).catch(() => undefined)
+        return c.json({ resumed: true })
       },
     )
     .post(
