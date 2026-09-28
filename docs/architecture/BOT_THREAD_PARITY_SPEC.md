@@ -464,7 +464,7 @@ checked live in a main Desktop build (one-current-build rule).
 ### P1 — Converge (no duplicate systems)
 - [x] P1.1 (platform #796, allternit-ai #109; live-verified on b3914) Routines: retire `bot-routine.service.ts` + `use-routine-timer.ts`; Bot Home, rail, composer, team import, presence read/write Automation Tasks (`agent_id`); one-time import of browser-stored routines; monitor mode as an Automation routine config using `shell.exec` (B9)
 - [x] P1.2 (same PRs) Canonical thread pin stored on the bot (server), not localStorage
-- [ ] P1.3 Bot memory on server scopes (`/cowork/memory`, principal = bot); `bot-memory-store.ts` becomes a cache
+- [~] P1.3 (platform #813, allternit-ai #142) Bot memory on server scopes (`/cowork/memory`, principal = bot); `bot-memory-store.ts` becomes a cache
 - [ ] P1.4 One model source per thread/bot; unavailable models dimmed with the reason (B7)
 - [ ] P1.5 Gizzi (and any pre-atomic bot) gets its computer on first use (B8)
 - [ ] P1.7 Converge the other browser-side schedulers (`lib/agents/agent-cron-scheduler.ts`, `lib/agents/scheduled-jobs.runner.ts`) onto Automation Tasks + the local scheduler, same as P1.1
@@ -483,7 +483,7 @@ checked live in a main Desktop build (one-current-build rule).
 - [~] P3.6 (allternit-ai #114: bar, rip, plan card; provenance + steer placeholder + model pill next) Thread view (breadcrumb, todo card, rip dividers, provenance, steer composer, model pill)
 - [x] P3.7 (allternit-ai #118) Thread inspector (Activity, Subagents, Artifacts, Memory, Computer, Details)
 - [~] P3.8 (platform #799, allternit-ai #121: Bots launch + project migration; rail regrouping + Project home coordinator chat + bot project page on server next) Rail regrouping + **Bots launch** (no project open: "What should the team work on?" composer to Al, team strip with live status, projects with waiting/working counts, standing threads, first-run create-bot block) and **Project home** (inside a project) replace "The roster" and Bot Hub (B10). No template gallery, no Chat/Cowork/Bots dock on the Bots launch
-- [ ] P3.9 Bot detail rebuild: split `BotHomeView.tsx` into header + Threads · Routines · Memory · Computer · Performance · Config (§7.2)
+- [~] P3.9 (allternit-ai #142) Bot detail rebuild: split `BotHomeView.tsx` into header + Threads · Routines · Memory · Computer · Performance · Config (§7.2)
 - [ ] P3.10 Create bot one-screen flow (§7.3)
 - [ ] P3.11 Incognito asks
 - [x] P3.12 (Agent B, allternit-ai #116) Extract the deck (artifact-mode picker, plugins, starter pills, template gallery) from `ChatComposer` into one shared component; no second copy
@@ -491,8 +491,8 @@ checked live in a main Desktop build (one-current-build rule).
 - [ ] P3.14 Thread composer gets the compact deck (mode ▾ · plugins ▾ · model); artifacts made in a thread open in Cowork
 - [~] P3.15 (allternit-ai #121; Hire prefill with P3.10) Templates on the Bots launch by progressive disclosure: level 0 = three "Start from a team" cards with a mini plan graph; level 1 = "Browse templates" panel with **Teams** (orchestration use cases: bots + plan with dependencies, "uses your Scout · adds Pixel") and **Bots** (single-bot marketplace; opens Create bot prefilled, nothing created until confirmed). Visual bar: the mockup, not a card grid of icons
 
-- [~] P3.16 Session lineage + context handoff native in gizzi-code for every mode (Chat, Cowork, Code, gizzi CLI, bots): `session.continues_from` / `session.handoff`, `SessionHandoff` (baton on the session's own model, TODOs carried), automatic between turns at 70% of the usable window and before a turn that switches to a smaller window, prompts to a closed window land on the lineage head, `POST /session/:id/handoff` + `GET /session/:id/lineage`, `session.handoff` bus event. Bot threads call gizzi's handoff and record gizzi-initiated windows as generations (server: this PR; next: rip + follow-the-head in the desktop Chat/Cowork/Code views and a divider in the gizzi TUI)
-- [ ] P3.17 Land before 5-hour / weekly / rate limits for any provider and auto-resume at reset: signals from gizzi `providers/quota` (add Claude subscription + Codex fetchers), `session/retry.ts` retry-after and gateway budgets; land at a clean point with a `quota` handoff, "Paused until … · <limit>", server tick resumes; falling back to another model is opt-in only
+- [x] P3.16 (platform #808, #816; allternit-ai #147; gizzi TUI divider with the TUI owner) Session lineage + context handoff native in gizzi-code for every mode (Chat, Cowork, Code, gizzi CLI, bots): `session.continues_from` / `session.handoff`, `SessionHandoff` (baton on the session's own model, TODOs carried), automatic between turns at 70% of the usable window and before a turn that switches to a smaller window, prompts to a closed window land on the lineage head, `POST /session/:id/handoff` + `GET /session/:id/lineage`, `session.handoff` bus event. Bot threads call gizzi's handoff and record gizzi-initiated windows as generations (server: this PR; next: rip + follow-the-head in the desktop Chat/Cowork/Code views and a divider in the gizzi TUI)
+- [~] P3.17 (platform: gizzi `session/pause.ts`, Codex + Claude quota readers, API relay/resume/thread pause; UI next) Land before 5-hour / weekly / rate limits for any provider and auto-resume at reset: signals from gizzi `providers/quota` (add Claude subscription + Codex fetchers), `session/retry.ts` retry-after and gateway budgets; land at a clean point with a `quota` handoff, "Paused until … · <limit>", server tick resumes; falling back to another model is opt-in only
 
 ### P4 — Bots run their own threads
 - [ ] P4.1 Fabric jobs targeting a bot principal load the bot's prompt, model, tools, memory, computer

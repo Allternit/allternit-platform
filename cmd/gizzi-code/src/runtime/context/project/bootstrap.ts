@@ -33,6 +33,10 @@ export async function InstanceBootstrap() {
   Vcs.init()
   Snapshot.init()
   Truncate.init()
+  // Sessions paused before a usage limit resume on their own (P3.17).
+  void import("@/runtime/session/pause")
+    .then(({ SessionPause }) => SessionPause.restore())
+    .catch((e) => Log.Default.warn("paused-session restore failed", { error: e instanceof Error ? e.message : String(e) }))
 
   // Initialize Agent Communication Runtime
   try {

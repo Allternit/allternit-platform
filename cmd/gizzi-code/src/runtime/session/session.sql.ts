@@ -67,6 +67,14 @@ export const SessionTable = sqliteTable(
       at: number
       baton?: unknown
     }>(),
+    // Landed before a usage limit (P3.17): resumes on its own at `until`.
+    paused: text({ mode: "json" }).$type<{
+      until: number
+      limit: string
+      providerID?: string
+      reason: "quota" | "rate_limit" | "limit_hit"
+      at: number
+    }>(),
     ...Timestamps,
     time_compacting: integer(),
     time_archived: integer(),

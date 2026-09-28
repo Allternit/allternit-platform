@@ -132,6 +132,7 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
         .route("/agent-sessions/:id/revert", post(revert_session))
         .route("/agent-sessions/:id/unrevert", post(unrevert_session))
         .route("/agent-sessions/:id/compact", post(compact_session))
+        .route("/agent-sessions/:id/resume", post(resume_session))
         .route("/agent-sessions/sync", get(sync_sessions))
         .route("/native-sessions/harnesses", get(list_native_harnesses))
         .route("/native-sessions", get(list_native_sessions))
@@ -220,6 +221,9 @@ struct GizziSessionInfo {
     /// Set once this session handed off: `{ sessionID, reason, at, baton }`.
     #[serde(default)]
     handoff: Option<serde_json::Value>,
+    /// Paused before a usage limit: `{ until, limit, providerID, reason, at }`.
+    #[serde(default)]
+    paused: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -368,6 +372,7 @@ fn transform_session(info: GizziSessionInfo, db: &DbHandle) -> serde_json::Value
     metadata.insert("sourceExport".to_string(), json!(info.source_export));
     metadata.insert("continuesFrom".to_string(), json!(info.continues_from));
     metadata.insert("handoff".to_string(), json!(info.handoff));
+    metadata.insert("paused".to_string(), json!(info.paused));
     for (key, value) in stored_metadata {
         metadata.insert(key, value);
     }
@@ -1245,6 +1250,22 @@ async fn compact_session(headers: HeaderMap, Path(session_id): Path<String>) -> 
     }
 }
 
+/// Resume a session paused before a usage limit (P3.17). With `{model}` it
+/// is the explicit "Resume now on …"; without, it continues on its own model.
+async fn resume_session(
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+    body: Option<Json<serde_json::Value>>,
+) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!("/v1/session/{}/resume", urlencoding::encode(&session_id));
+    let payload = body.map(|Json(v)| v).unwrap_or_else(|| json!({}));
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(payload)).await {
+        Ok(result) => Json(result).into_response(),
+        Err(response) => response,
+    }
+}
+
 struct ParsedSseBlock {
     id: Option<String>,
     data: String,
@@ -1278,6 +1299,48 @@ async fn fetch_latest_message(client: &Client, session_id: &str) -> Option<serde
         .await
         .ok()?;
     messages.into_iter().last().map(transform_message)
+}
+
+/// "7:40 PM" today, "Sat 9:00 AM" within a week, else "Oct 3, 9:00 AM" — in
+/// the machine's local time (the API runs where the user is).
+pub(crate) fn paused_until_label(until_ms: i64, now: chrono::DateTime<chrono::Local>) -> String {
+    use chrono::TimeZone;
+    let Some(t) = chrono::Local.timestamp_millis_opt(until_ms).single() else {
+        return String::new();
+    };
+    if t.date_naive() == now.date_naive() {
+        t.format("%-I:%M %p").to_string()
+    } else if (t - now).num_days() < 6 {
+        t.format("%a %-I:%M %p").to_string()
+    } else {
+        t.format("%b %-d, %-I:%M %p").to_string()
+    }
+}
+
+/// A bot thread whose window paused before a usage limit reads "Paused until
+/// … · <limit>" (P3.17); it goes back to working when the session resumes.
+pub(crate) fn sync_thread_pause(db: &DbHandle, session_id: &str, paused: Option<&serde_json::Value>) {
+    let Ok(conn) = db.connect() else { return };
+    let now = chrono::Utc::now().to_rfc3339();
+    match paused.filter(|p| !p.is_null()) {
+        Some(p) => {
+            let until = p.get("until").and_then(|v| v.as_i64()).unwrap_or(0);
+            let limit = p.get("limit").and_then(|v| v.as_str()).unwrap_or("usage limit");
+            let when = paused_until_label(until, chrono::Local::now());
+            let _ = conn.execute(
+                "UPDATE bot_threads SET status = 'paused', status_line = ?2, updated_at = ?3
+                 WHERE current_session_id = ?1 AND status != 'paused'",
+                rusqlite::params![session_id, format!("Paused until {when} · {limit}"), now],
+            );
+        }
+        None => {
+            let _ = conn.execute(
+                "UPDATE bot_threads SET status = 'working', status_line = NULL, updated_at = ?2
+                 WHERE current_session_id = ?1 AND status = 'paused'",
+                rusqlite::params![session_id, now],
+            );
+        }
+    }
 }
 
 /// Copy the API-side session bag (metadata, origin surface, incognito) from
@@ -1319,6 +1382,7 @@ async fn transform_bus_event(
         "session.updated" => serde_json::from_value::<GizziSessionInfo>(props)
             .ok()
             .map(|info| {
+                sync_thread_pause(db, &info.id, info.paused.as_ref());
                 let origin_surface = db
                     .get_session_origin_surface(&info.id)
                     .ok()
@@ -1342,6 +1406,7 @@ async fn transform_bus_event(
                         "permission": info.permission,
                         "continuesFrom": info.continues_from,
                         "handoff": info.handoff,
+                        "paused": info.paused,
                     }
                 })
             }),
@@ -2031,6 +2096,39 @@ mod tests {
         let long = "é".repeat(LIST_PREVIEW_MAX_CHARS + 20);
         let preview = message_preview_text(&[part("text", &long)]);
         assert_eq!(preview.chars().count(), LIST_PREVIEW_MAX_CHARS);
+    }
+
+    #[test]
+    fn a_paused_window_pauses_its_thread_and_resuming_restores_it() {
+        let temp = std::env::temp_dir().join(format!("pause-thread-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let db = crate::db::DbHandle::new(temp.join("test.db")).expect("test db");
+        let conn = db.connect().unwrap();
+        conn.execute(
+            "INSERT INTO agents (id, user_id, name, model, provider) VALUES ('b1', 'u1', 'Ledger', 'sonnet', 'claude-cli')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO bot_threads (id, user_id, bot_id, title, kind, status, current_session_id, last_activity_at, created_at, updated_at)
+             VALUES ('t1', 'u1', 'b1', 'Pricing', 'task', 'working', 's1', '2026-09-27', '2026-09-27', '2026-09-27')",
+            [],
+        )
+        .unwrap();
+        let until = chrono::Local::now().timestamp_millis() + 3_600_000;
+        sync_thread_pause(&db, "s1", Some(&json!({"until": until, "limit": "Claude 5-hour limit"})));
+        let (status, line): (String, String) = conn
+            .query_row("SELECT status, status_line FROM bot_threads WHERE id = 't1'", [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!(status, "paused");
+        assert!(line.starts_with("Paused until ") && line.ends_with(" · Claude 5-hour limit"), "{line}");
+        sync_thread_pause(&db, "s1", Some(&serde_json::Value::Null));
+        let status: String = conn.query_row("SELECT status FROM bot_threads WHERE id = 't1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(status, "working");
+
+        let now = chrono::Local::now();
+        assert!(!paused_until_label(now.timestamp_millis() + 60_000, now).contains(','));
+        assert!(paused_until_label(now.timestamp_millis() + 30 * 86_400_000, now).contains(','));
     }
 
     #[test]

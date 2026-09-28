@@ -1479,6 +1479,17 @@ export namespace Config {
             .describe("Token buffer for compaction. Leaves enough window to avoid overflow during compaction."),
         })
         .optional(),
+      limits: z
+        .object({
+          land_at: z
+            .number()
+            .min(0.5)
+            .max(1)
+            .optional()
+            .describe("Share of a provider window (5-hour, weekly…) at which a session pauses before the limit (default: 0.95)"),
+          auto_resume: z.boolean().optional().describe("Resume paused sessions on their own when the limit resets (default: true)"),
+        })
+        .optional(),
       handoff: z
         .object({
           auto: z
