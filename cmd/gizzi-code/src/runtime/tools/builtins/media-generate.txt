@@ -1,0 +1,24 @@
+Make an image for the user. The result is saved to the session's Outputs and opens beside the chat.
+
+Lanes:
+- native (available now): you write the image as code; the user's Allternit app renders it to a PNG in a sandbox, and the PNG comes back to you to check. Costs nothing and works with any model.
+- cloud / subscription / own_key: photoreal and model-generated images (GPT Image, Higgsfield, connected subscriptions). Not available in this build yet. If the request needs a photo-realistic image (real-looking people, places, products), say that plainly and ask the user in the chat how they'd like to proceed, e.g. a stylized native version instead.
+
+Native: pick the format for the job
+- svg: illustrations, icons, logos, diagrams, flat or geometric art, maps, charts. Set width/height and a viewBox on the root <svg>.
+- html: posters, social cards, slides-as-images, UI mockups, anything typography-heavy. One self-contained document with inline <style>; the page is exactly width × height; flexbox/grid for layout.
+- canvas: generative or procedural art, patterns, particles, data-driven drawing. The code is the body of function(ctx, width, height) and runs synchronously once; use a seeded PRNG, not Math.random, so re-renders match.
+
+Rules that keep renders clean
+- Self-contained: no network. External URLs, web fonts and remote images are blocked. Use system font stacks (e.g. -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; Georgia, serif; ui-monospace, Menlo, monospace) and inline images as data: URLs.
+- Paint every pixel on purpose: set a background, fill the frame, keep margins consistent, no accidental empty regions.
+- Text must be readable at the output size: headline ≥ 5% of the height, body ≥ 2.5%, strong contrast, nothing clipped at the edges.
+- Build depth with gradients, layered shapes, shadows and texture; avoid a single flat shape on a blank field unless the brief asks for minimal.
+- Stay on the brief: subject, style, palette, aspect ratio and any exact words the user gave.
+
+Check and fix
+The rendered PNG is attached to the result. Look at it: clipping, overlaps, unreadable or misspelled text, wrong aspect, empty areas, off-brief colors. If anything is wrong, call again with the same title and fixed code (the same title replaces the previous version). At most two fix rounds; then say what's left.
+
+Sizes: width and height in pixels, 64–4096 (default 1024 × 1024). Common: 1080×1080 post, 1080×1920 story, 1200×630 link card, 1920×1080 slide, 1024×1024 square.
+
+Video (kind "video") isn't available in this build yet; say so if asked.

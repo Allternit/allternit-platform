@@ -147,6 +147,8 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
         // The app's result for a pane_artifact tool call (the document in the
         // session's artifact pane, edited through its editor's tools).
         .route("/pane-artifact/:id/reply", post(reply_pane_artifact))
+        // The app's rendered image for a media_generate (native lane) call.
+        .route("/pane-render/:id/reply", post(reply_pane_render))
         .route("/native-sessions/harnesses", get(list_native_harnesses))
         .route("/native-sessions", get(list_native_sessions))
         .route("/native-sessions/pickup", post(pickup_native_session))
@@ -1246,6 +1248,19 @@ async fn reply_pane_artifact(
     }
 }
 
+async fn reply_pane_render(
+    headers: HeaderMap,
+    Path(request_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!("/v1/pane-render/{}/reply", urlencoding::encode(&request_id));
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(body)).await {
+        Ok(value) => Json(value).into_response(),
+        Err(response) => response,
+    }
+}
+
 /// The gizzi `/v1/session/:id/message` body for a user message.
 fn send_message_payload(body: &SendMessageBody) -> serde_json::Value {
     let mut part = json!({ "type": "text", "text": body.text });
@@ -1620,6 +1635,18 @@ async fn transform_bus_event(
             "action": props.get("action"),
             "target": props.get("target"),
             "text": props.get("text"),
+            "time": props.get("time"),
+        })),
+        "pane_render.requested" => Some(json!({
+            "type": "pane_render_requested",
+            "request_id": props.get("id"),
+            "session_id": props.get("sessionID"),
+            "kind": props.get("kind"),
+            "format": props.get("format"),
+            "code": props.get("code"),
+            "width": props.get("width"),
+            "height": props.get("height"),
+            "title": props.get("title"),
             "time": props.get("time"),
         })),
         "pane_artifact.requested" => Some(json!({
