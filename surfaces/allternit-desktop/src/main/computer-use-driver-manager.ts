@@ -1,6 +1,7 @@
 import { app } from 'electron';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as fs from 'node:fs';
+import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import log from 'electron-log';
@@ -17,6 +18,33 @@ export interface ComputerUseDriverStatus {
 
 const INSTALLED_CUA_DRIVER = '/Applications/CuaDriver.app/Contents/MacOS/cua-driver';
 const INSTALLED_CUA_SOCKET = path.join(os.homedir(), 'Library/Caches/cua-driver/cua-driver.sock');
+
+/** True when something is listening on the Unix socket. */
+export function socketAnswers(socketPath: string, timeoutMs = 1000): Promise<boolean> {
+  if (!fs.existsSync(socketPath)) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const socket = net.createConnection(socketPath);
+    const done = (alive: boolean) => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(alive);
+    };
+    socket.setTimeout(timeoutMs, () => done(false));
+    socket.once('connect', () => done(true));
+    socket.once('error', () => done(false));
+  });
+}
+
+/** Remove a dead daemon's socket and pid file so a fresh one can bind. */
+export function removeStaleDaemonFiles(socketPath: string): void {
+  for (const file of [socketPath, path.join(path.dirname(socketPath), 'cua-driver.pid')]) {
+    try {
+      fs.rmSync(file, { force: true });
+    } catch (error) {
+      log.warn('[ComputerUseDriver] could not remove stale file', file, error);
+    }
+  }
+}
 
 export function cuaDriverBinaryName(platform: NodeJS.Platform = process.platform): string {
   return platform === 'win32' ? 'cua-driver.exe' : 'cua-driver';
@@ -92,11 +120,19 @@ class ComputerUseDriverManager {
     // If the installed CuaDriver.app is present, use its daemon. History and
     // all TCC attribution stay with the verified Cua Driver app bundle.
     if (isInstalledCuaDriver(executable)) {
-      if (fs.existsSync(INSTALLED_CUA_SOCKET)) {
+      // A socket file alone doesn't mean the daemon is up: a crashed or
+      // killed daemon leaves it behind, and every computer-use call then
+      // fails with "Cua Driver daemon is not running". Only reuse a socket
+      // that answers.
+      if (await socketAnswers(INSTALLED_CUA_SOCKET)) {
         this.socketPath = INSTALLED_CUA_SOCKET;
         this.lastError = undefined;
         log.info('[ComputerUseDriver] using installed CuaDriver.app daemon');
         return this.getStatus();
+      }
+      if (fs.existsSync(INSTALLED_CUA_SOCKET)) {
+        log.warn('[ComputerUseDriver] installed CuaDriver.app socket is stale; relaunching the daemon');
+        removeStaleDaemonFiles(INSTALLED_CUA_SOCKET);
       }
 
       log.info('[ComputerUseDriver] launching installed CuaDriver.app daemon');
