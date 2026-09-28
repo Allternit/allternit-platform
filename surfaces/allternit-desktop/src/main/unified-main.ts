@@ -21,6 +21,7 @@ import log from 'electron-log';
 import { updateElectronApp } from 'update-electron-app';
 import fixPath from 'fix-path';
 import { installDesktopCompanion } from './desktop-companion.js';
+import { isPairingLink, pairingCodeFromUrl } from './pairing-link.js';
 import { backendManager } from './backend-manager.js';
 import { officeEngineManager } from './office-engine-manager.js';
 import { fabricWorkerManager, type FabricWorkerState } from './fabric-worker-manager.js';
@@ -2029,6 +2030,15 @@ async function handleProtocolCallback(url: string | null): Promise<void> {
     return;
   }
 
+  // `gizzi login` from a terminal on this Mac: allternit://pair?code=ABCD-1234
+  // opens the pairing approval page in the signed-in app, so the terminal
+  // uses the same account with one click instead of a second browser sign-in.
+  if (isPairingLink(url)) {
+    const code = pairingCodeFromUrl(url);
+    if (code) openPairingApproval(code);
+    return;
+  }
+
   // Buffer if auth manager hasn't initialized yet — will be flushed after initialize()
   if (!authManagerReady) {
     log.info('[Main] Auth manager not yet initialized — buffering URL');
@@ -2695,6 +2705,45 @@ function openDesignStudio(prompt?: string | null): void {
   designWindow.once('ready-to-show', () => designWindow?.show());
   designWindow.on('closed', () => { designWindow = null; });
   void designWindow.loadURL(targetUrl);
+}
+
+// Approval window for a terminal's `gizzi login` (see handleProtocolCallback).
+// Same window profile as Design, so it carries the app's signed-in session.
+let pairingWindow: BrowserWindow | null = null;
+function openPairingApproval(code: string): void {
+  const target = new URL('/pair', activePlatformUrl);
+  target.searchParams.set('code', code);
+  const targetUrl = target.toString();
+  if (pairingWindow && !pairingWindow.isDestroyed()) {
+    void pairingWindow.loadURL(targetUrl);
+    pairingWindow.show();
+    pairingWindow.focus();
+    return;
+  }
+  pairingWindow = new BrowserWindow({
+    width: 520,
+    height: 640,
+    title: 'Sign in gizzi on this Mac',
+    titleBarStyle: isMac ? 'hiddenInset' : 'default',
+    show: false,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  installWillNavigateGuard(pairingWindow.webContents);
+  pairingWindow.webContents.setWindowOpenHandler(({ url }) => {
+    void openExternalAllowlisted(url);
+    return { action: 'deny' };
+  });
+  pairingWindow.once('ready-to-show', () => {
+    pairingWindow?.show();
+    pairingWindow?.focus();
+  });
+  pairingWindow.on('closed', () => { pairingWindow = null; });
+  void pairingWindow.loadURL(targetUrl);
 }
 
 ipcMain.handle('shell:open-design', () => {
