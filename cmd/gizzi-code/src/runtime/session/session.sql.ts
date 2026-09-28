@@ -58,6 +58,15 @@ export const SessionTable = sqliteTable(
       resumeHint: string
       at: number
     }>(),
+    // Session lineage (context handoff): the session this one continues, and
+    // on the predecessor, where it handed off to with the checkpoint baton.
+    continues_from: text(),
+    handoff: text({ mode: "json" }).$type<{
+      sessionID: string
+      reason: string
+      at: number
+      baton?: unknown
+    }>(),
     ...Timestamps,
     time_compacting: integer(),
     time_archived: integer(),
@@ -65,6 +74,7 @@ export const SessionTable = sqliteTable(
   (table) => [
     index("session_project_idx").on(table.project_id),
     index("session_parent_idx").on(table.parent_id),
+    index("session_continues_from_idx").on(table.continues_from),
     index("session_agent_idx").on(table.agent_id),
     index("session_surface_idx").on(table.surface),
     index("session_pinned_idx").on(table.pinned),

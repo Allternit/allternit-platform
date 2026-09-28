@@ -1748,27 +1748,38 @@ pub(crate) async fn seed_session_message(session_id: &str, text: &str) -> Result
         .map_err(|_| "gizzi refused the checkpoint message".to_string())
 }
 
-/// A session's recent transcript as plain "Role: text" lines, newest last,
-/// capped at `max_chars` (oldest lines dropped first). Used to write a
-/// thread checkpoint before moving it to a fresh context window.
-pub(crate) async fn session_transcript(session_id: &str, max_chars: usize) -> Result<String, String> {
+/// gizzi's native context handoff for a session. Returns the new session id
+/// and the checkpoint baton gizzi wrote (or used, when `baton` is given).
+pub(crate) async fn gizzi_handoff(
+    session_id: &str,
+    reason: &str,
+    context: &str,
+    baton: Option<serde_json::Value>,
+) -> Result<(String, serde_json::Value), String> {
     let client = gizzi_client(&HeaderMap::new());
-    let path = format!("/v1/session/{}/message", urlencoding::encode(session_id));
-    let messages = gizzi_json::<Vec<GizziMessage>>(&client, reqwest::Method::GET, &path, None)
-        .await
-        .map_err(|_| "gizzi refused the transcript read".to_string())?;
-    let mut lines: Vec<String> = messages
-        .iter()
-        .filter_map(|m| {
-            let text = extract_message_content(&m.parts);
-            (!text.trim().is_empty()).then(|| format!("{}: {}", if m.info.role == "user" { "User" } else { "Bot" }, text.trim()))
-        })
-        .collect();
-    let mut total: usize = lines.iter().map(|l| l.len() + 1).sum();
-    while total > max_chars && lines.len() > 1 {
-        total -= lines.remove(0).len() + 1;
+    let path = format!("/v1/session/{}/handoff", urlencoding::encode(session_id));
+    let mut payload = json!({ "reason": reason });
+    if !context.trim().is_empty() {
+        payload["context"] = json!(context);
     }
-    Ok(lines.join("\n"))
+    if let Some(b) = baton {
+        payload["baton"] = b;
+    }
+    let result = gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(payload))
+        .await
+        .map_err(|_| "gizzi refused the handoff".to_string())?;
+    let next = result["session"]["id"].as_str().ok_or("gizzi handoff returned no session")?.to_string();
+    Ok((next, result["baton"].clone()))
+}
+
+/// Every window of a session's conversation, oldest first (gizzi lineage).
+pub(crate) async fn gizzi_lineage(session_id: &str) -> Result<Vec<serde_json::Value>, String> {
+    let client = gizzi_client(&HeaderMap::new());
+    let path = format!("/v1/session/{}/lineage", urlencoding::encode(session_id));
+    let result = gizzi_json::<serde_json::Value>(&client, reqwest::Method::GET, &path, None)
+        .await
+        .map_err(|_| "gizzi refused the lineage read".to_string())?;
+    Ok(result["sessions"].as_array().cloned().unwrap_or_default())
 }
 
 /// Whether a gizzi session still exists (a pinned thread can be deleted from
