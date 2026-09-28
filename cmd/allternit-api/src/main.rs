@@ -912,6 +912,7 @@ async fn main() {
         .merge(allternit_api::thread_routes::thread_router())
         .merge(allternit_api::spend_limits::spend_limit_router())
         .merge(allternit_api::channel_tools::channel_tools_router())
+        .merge(allternit_api::memory_curation::memory_curation_router())
         .merge(allternit_api::coordinator_routes::coordinator_router())
         .merge(allternit_api::slack_webhook_routes::slack_binding_router())
         .merge(model_training_router())
@@ -1164,6 +1165,8 @@ async fn main() {
     allternit_api::routine_local_scheduler::spawn(state.clone());
     // gizzi enforces bots' spend limits; bring its copy up to date (P8.1).
     allternit_api::spend_limits::spawn_sync(state.clone());
+    // Bots' saved memory is tidied weekly on their own model (P7.4).
+    allternit_api::memory_curation::spawn_weekly(state.clone());
 
     // Mount cowork scheduler routes if scheduler is active. These routes
     // create/update/delete schedules and self-gate nothing, so they must be
