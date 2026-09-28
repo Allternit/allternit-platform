@@ -23,10 +23,11 @@ export interface CompletionOptions {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   keys?: CompletionKeys;
-  // Providers whose Send button stays rendered but DISABLED once the reply
-  // lands (empty composer) — ChatGPT's live UI. Presence then satisfies the
-  // send signal; stop/streaming absence + text stability still gate it.
-  sendMayBeDisabled?: boolean;
+  // Providers whose Send button is not a completion signal — ChatGPT renders
+  // it enabled, disabled, or not at all (voice button) depending on chat mode
+  // and reply type. The send signal then only requires a non-empty reply;
+  // stop/streaming absence + text stability still gate completion.
+  ignoreSend?: boolean;
 }
 
 export interface CompletionResult {
@@ -89,7 +90,9 @@ export function createCompletionTracker(
     const signals: CompletionSignals = {
       stop_absent: stopLoc === null,
       send_enabled:
-        sendLoc !== null && (opts.sendMayBeDisabled === true || (await sendLoc.first().isEnabled())),
+        opts.ignoreSend === true
+          ? text.trim().length > 0
+          : sendLoc !== null && (await sendLoc.first().isEnabled()),
       stable: now() - lastChange >= stabilityMs,
       streaming_absent: streamingLoc === null,
     };

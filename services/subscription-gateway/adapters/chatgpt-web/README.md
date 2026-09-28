@@ -7,9 +7,15 @@ image capture (`captureImages` → artifact store), `chat.continue` divergence
 checks against `thread_mappings` fingerprints (`on_divergence: adopt|fork|fail`,
 default `fail`), and fingerprint-based `reconcile` (never resubmits).
 
-**Temp chat (D5):** `chat.create` clicks the temporary-chat toggle by default
-(`new ChatGPTWebAdapter({ tempChat: false })` or future per-account policy to
-opt out). Plans without the toggle run in normal history.
+**Fresh chat:** `chat.create` and `image.generate` first navigate to the
+origin root (a new regular chat), never reusing the page the previous task
+left — otherwise a prompt lands in that task's thread or temp chat.
+`freshChat: false` is for fixture tests that load a page directly.
+
+**Temp chat (D5):** a stateless `chat.create` (no `thread_id`) clicks the
+temporary-chat toggle by default (`new ChatGPTWebAdapter({ tempChat: false })`
+or future per-account policy to opt out); a threaded one stays in a regular,
+reopenable chat. Plans without the toggle run in normal history.
 
 **Selectors are v1-unverified.** `selectors/v1.yaml` was written from public
 knowledge of the ChatGPT web UI and has NOT been validated against a logged-in

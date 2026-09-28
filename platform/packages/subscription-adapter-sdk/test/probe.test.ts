@@ -7,10 +7,10 @@ import { FIXTURE_WEB_EXTRA_SELECTORS, fixtureWebConfig } from "./fixture-web";
 let browser: Browser;
 beforeAll(async () => {
   browser = await launchBrowser();
-});
+}, 30000);
 afterAll(async () => {
   await browser.close();
-});
+}, 30000);
 
 const probeInput = {
   auth: { login_url: "https://fixture-web.test/login", logged_in_probe: "logged_in_probe" },

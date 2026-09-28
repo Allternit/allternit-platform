@@ -71,7 +71,7 @@ export function chatGPTWebConfig(
     ...overrides,
     // Merge, don't replace: a clock/timing override must not drop the
     // live-UI completion flag.
-    completion: { sendMayBeDisabled: true, ...overrides.completion },
+    completion: { ignoreSend: true, ...overrides.completion },
   };
 }
 
@@ -122,9 +122,11 @@ function sdkPage(lease: ExecutionContext["page"]): Page {
 export interface ChatGPTWebOptions {
   // D5 — temp-chat ON by default for stateless chat.create tasks.
   tempChat?: boolean;
-  // image.generate navigates to a fresh regular chat first (default true;
-  // fixture tests that load a page directly pass false).
-  freshImageChat?: boolean;
+  // chat.create and image.generate start from the origin root — a fresh,
+  // regular new chat — instead of whatever the lane page is showing (a
+  // previous task's thread, or a temp chat). Default true; fixture tests that
+  // load a page directly pass false.
+  freshChat?: boolean;
 }
 
 export type ChatGPTWebConfigOverrides = Partial<DeclarativeChatConfig>;
@@ -153,8 +155,16 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
           yield gate;
           return;
         }
-      } else if (this.opts.tempChat !== false) {
-        await this.enableTempChat(ctx);
+      } else {
+        // Never type into the page as left by the previous task: a chat.create
+        // there would land in that task's thread (live: a stateless prompt
+        // appended to a mapped fabric thread) or in its temp chat.
+        await this.openFreshChat(ctx);
+        if (this.opts.tempChat !== false && !task.thread_id) {
+          // D5: temporary chat is for STATELESS tasks only. A task on a fabric
+          // thread must land in a reopenable chat so chat.continue can follow.
+          await this.enableTempChat(ctx);
+        }
       }
       yield* super.execute(task, ctx);
     } catch (err) {
@@ -199,6 +209,13 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
     return true;
   }
 
+  private async openFreshChat(ctx: ExecutionContext): Promise<void> {
+    if (this.opts.freshChat === false) return;
+    await sdkPage(ctx.page).goto(this.manifest.origins[0] ?? "https://chatgpt.com/", {
+      waitUntil: "domcontentloaded",
+    });
+  }
+
   // D5 — click the temp-chat toggle unless already on; plans without the
   // toggle just run in normal history (documented in README).
   private async enableTempChat(ctx: ExecutionContext): Promise<void> {
@@ -239,6 +256,7 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
     if (threadIdFromUrl(page.url(), THREAD_URL_PATTERN) !== providerThreadId) {
       await page.goto(`https://chatgpt.com/c/${providerThreadId}`);
     }
+    await this.waitForThreadRender(ctx);
     const snapshot = await this.readThread(providerThreadId, ctx);
     const expected =
       typeof task.options.last_turn_fingerprint === "string"
@@ -271,6 +289,24 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
       };
     }
     return null;
+  }
+
+  // A navigated thread renders its turns after the load event (live: reading
+  // it straight away found no "response"). Wait until assistant turns exist
+  // and their count holds across two samples; readThread then reports what
+  // the provider really shows (and throws — not_sent, retryable — if still
+  // nothing after the cap).
+  private async waitForThreadRender(ctx: ExecutionContext, capMs = 15000): Promise<void> {
+    const page = sdkPage(ctx.page);
+    const resolver = ctx.selectors as SdkSelectorResolver;
+    let last = -1;
+    for (let waited = 0; waited < capMs; waited += 250) {
+      const turns = await resolver.tryResolveLocator("response");
+      const count = turns ? await turns.count() : 0;
+      if (count > 0 && count === last) return;
+      last = count;
+      await page.waitForTimeout(250);
+    }
   }
 
   // image.generate — same composer, image entry point, captureImages → sink.
@@ -307,11 +343,7 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
     // Image generation is unavailable in temporary chats (provider rule), so
     // image tasks always start a fresh regular chat — they land in history
     // (thread reuse/cleanup is a separate, planned policy).
-    if (this.opts.freshImageChat !== false) {
-      await page.goto(this.manifest.origins[0] ?? "https://chatgpt.com/", {
-        waitUntil: "domcontentloaded",
-      });
-    }
+    await this.openFreshChat(ctx);
 
     // §A3.4 — a vanished entry point is UI drift (§A9 fold: provider_ui_changed).
     if (!(await this.enableImageMode(ctx))) {

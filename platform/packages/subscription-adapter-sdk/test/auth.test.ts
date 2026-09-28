@@ -6,10 +6,10 @@ import { fixturePage, launchBrowser, makeResolver } from "./helpers";
 let browser: Browser;
 beforeAll(async () => {
   browser = await launchBrowser();
-});
+}, 30000);
 afterAll(async () => {
   await browser.close();
-});
+}, 30000);
 
 describe("detectAuthState (§A3.1)", () => {
   it("ready on the idle fixture (logged-in probe present)", async () => {

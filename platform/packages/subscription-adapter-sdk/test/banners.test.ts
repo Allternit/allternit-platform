@@ -6,10 +6,10 @@ import { fixturePage, launchBrowser } from "./helpers";
 let browser: Browser;
 beforeAll(async () => {
   browser = await launchBrowser();
-});
+}, 30000);
 afterAll(async () => {
   await browser.close();
-});
+}, 30000);
 
 const pack: BannerPattern[] = [
   { kind: "limit_banner", pattern: /approaching your (usage )?limit/i },

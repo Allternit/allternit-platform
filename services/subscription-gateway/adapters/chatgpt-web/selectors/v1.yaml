@@ -8,7 +8,8 @@
 # composer/buttons; composer is role=textbox "Ask ChatGPT" (ProseMirror);
 # send is button[type=submit] "Send" and only renders once the composer has
 # text (idle shows "Start Voice"), and after a reply it is back but DISABLED
-# (empty composer) — hence completion.sendMayBeDisabled in adapter.ts; stop
+# (empty composer) in temp chats, and absent (voice button) in regular chats
+# — hence completion.ignoreSend in adapter.ts; stop
 # is button "Stop"; profile is button "Open profile menu". Turns: assistant
 # [data-conversation-role=assistant] > [data-markdown-text-style=
 # assistant-message]; user [data-user-message-bubble=true] (no author-role

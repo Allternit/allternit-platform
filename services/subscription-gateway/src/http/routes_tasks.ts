@@ -14,6 +14,7 @@ import {
 } from "@allternit/subscription-fabric-contracts";
 import { needsResolution, resolveForNewTask } from "../router/dispatch.js";
 import {
+  getActiveThreadMapping,
   getTask,
   getTaskByIdempotency,
   insertTask,
@@ -96,6 +97,27 @@ export function tasksRouter(deps: GatewayDeps): Router {
       updated_at: now,
       completed_at: null,
     };
+    // §S6 — chat.continue on a fabric thread: resolve the provider thread,
+    // the divergence fingerprint and the owning account from the active
+    // mapping, and pin routing there (a thread lives in one account).
+    if (task.capability === "chat.continue" && task.thread_id && task.options.provider_thread_id === undefined) {
+      const mapping = getActiveThreadMapping(deps.db, task.thread_id);
+      if (!mapping) {
+        res.status(409).json({
+          error: "thread_not_mapped",
+          thread_id: task.thread_id,
+          detail: "no active provider thread for this thread_id — start it with chat.create and the same thread_id",
+        });
+        return;
+      }
+      task.options = {
+        ...task.options,
+        provider_thread_id: mapping.provider_thread_id,
+        last_turn_fingerprint: mapping.last_turn_fingerprint,
+        on_divergence: task.options.on_divergence ?? mapping.on_divergence,
+      };
+      task.routing = { ...task.routing, provider: mapping.provider, account_id: mapping.account_id };
+    }
     // P4 — pick-time routing (§A2): an unrouted auto task is resolved against
     // a fresh snapshot before enqueue; the decision persists on the task and a
     // primary pins (provider, account_id), keying the worker's scheduler lane.

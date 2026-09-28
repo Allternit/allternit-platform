@@ -126,6 +126,7 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
     logger,
     sessionImport: importFirefoxSessionIfNewer,
   });
+  await supervisor.sweepAtBoot();
   const loginBrowser = config.loginBrowser
     ? createFirefoxLoginBrowser({ executable: config.loginBrowser })
     : undefined;

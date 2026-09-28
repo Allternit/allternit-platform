@@ -73,6 +73,8 @@ export async function reconcileAttempts(
   const pending = listAttemptsBySubmissionState(db, "sent_unconfirmed");
 
   for (const { task_id, attempt } of pending) {
+    // Already settled (reconciled, stalled or ambiguous) by an earlier sweep.
+    if (attempt.ended_at !== null) continue;
     const task = getTask(db, task_id);
     if (!task) continue;
     const adapter = adapters(attempt.adapter_id);

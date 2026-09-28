@@ -74,6 +74,19 @@ export class WorkerSupervisor {
     this.workers.set(id, "ready");
   }
 
+  // Boot: settle every attempt the previous process left in flight, on every
+  // lane, before anything is served. No browser runs yet, so sent_unconfirmed
+  // takes the safe ambiguous path and orphans get the §A8/§A9 stall rule —
+  // otherwise an orphan waits in running/streaming for the next task on its
+  // lane (forever, if none comes).
+  async sweepAtBoot(): Promise<void> {
+    await reconcileAttempts(this.deps.db, this.deps.adapters, {
+      log: this.deps.log,
+      makeCtx: this.deps.makeReconcileCtx,
+      isLive: (taskId) => this.watchdogs.has(taskId),
+    });
+  }
+
   // Crash → restart: the worker goes through the full recovery rule again
   // before its queue is served.
   async crash(key: WorkerKey): Promise<void> {

@@ -6,10 +6,10 @@ import { fixturePage, launchBrowser, makeResolver } from "./helpers";
 let browser: Browser;
 beforeAll(async () => {
   browser = await launchBrowser();
-});
+}, 30000);
 afterAll(async () => {
   await browser.close();
-});
+}, 30000);
 
 describe("extractLastAssistantTurn (§A3.1)", () => {
   it("converts the complete fixture to markdown with fenced code and citation link", async () => {

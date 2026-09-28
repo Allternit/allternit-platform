@@ -310,3 +310,126 @@ login, which is Eoj-driven and was in progress when this was written.
 Approve each gated action as prompted; drive the ChatGPT login in the
 streamed display; verify no-double-submit and the chat text in the ChatGPT
 UI. Nothing client-facing ships from this gate.
+
+## 9. HANDOFF — 2026-09-28 ~07:20 CDT (claude session) — P3 gate steps 1–6 PASS live; chat.continue in progress
+
+THIS SECTION SUPERSEDES §8. §8.4 traps still apply.
+
+### 9.1 Landed on main
+- **PR #820 / 16a13fe3** — live gate fixes: dead-runtime relaunch (pool
+  `isAlive`); ChatGPT selectors v1 verified live (testids gone; composer
+  `role=textbox "Ask ChatGPT"`, assistant `[data-conversation-role=assistant]`
+  / `[data-markdown-text-style=assistant-message]`, user
+  `[data-user-message-bubble=true]`); crash recovery (restart sweep applies the
+  §A8/§A9 stall rule to orphaned `not_sent`/`acknowledged` attempts in
+  `running`/`streaming`; adoption never parks a task in `running`); late
+  thread-id capture (skips provisional `/c/local-…`); image.generate (“+” →
+  plain-text “Create image” → chip “Remove Create image”; fresh REGULAR chat —
+  image gen is unavailable in temp chats; `blob:` capture in-page;
+  image-aware completion); Linux quarantine (0444 + best-effort xattr).
+- **PR #834 / edb07e33** — Firefox login mode: `POST /v1/accounts/:id/login`
+  opens plain Firefox on `<profile>-firefox`; `connect` closes it and the
+  Chrome launcher imports the session only when cookies.sqlite changed.
+  CLI `allternit subs login <provider>`. `scripts/sessions-setup.sh` is now
+  in-repo (installs bundled Firefox, first-run prefs, preferIPv6 ONLY when
+  guest IPv4 is dead, DISPLAY, login browser; safe re-run).
+
+### 9.2 Live gate results (guest computer-e0cc21e9…, account 2bf94d24…)
+connect/ready ✅ · chat.create “Hello there friend” ✅ · kill -9 → stalled,
+not retryable, 1 attempt, no re-send (seen on screen) ✅ · image.generate →
+PNG 1254², sha256 == name, mode 444 ✅ · login mode from scratch (Chrome
+profile wiped → gateway imported 64 cookies → ready → chat “login mode
+works”) ✅.
+
+### 9.3 In progress — branch `session/claude-chat-continue` (pushed, NO PR yet)
+Worktree `~/Desktop/allternit-workspace/allternit-session-claude-pool-dead`.
+- a605fa926 thread mapping (§S6): `recordThreadTurn`/`getActiveThreadMapping`;
+  worker records mapping on a threaded chat `done`; `POST /v1/tasks`
+  chat.continue+thread_id fills provider_thread_id/fingerprint and pins the
+  account (409 `thread_not_mapped`); D5: temp chat only for stateless tasks.
+- 9f2ab7138 `ignoreSend` completion (ChatGPT Send is enabled/disabled/absent
+  by chat mode — regular chats show the voice button) + 30s browser hooks.
+- **Live status:** threaded chat.create in a regular chat got the reply but
+  STALLED before 9f2ab7138 (the Send bug). **Next:** deploy 9f2ab7138 via
+  `sessions-setup.sh` (archive = `git archive --format=tar.gz HEAD -- .npmrc
+  package.json patches pnpm-lock.yaml pnpm-workspace.yaml
+  platform/packages/subscription-adapter-sdk
+  platform/packages/subscription-fabric-contracts services/subscription-gateway`
+  → upload to `/opt/subsfab/gateway.tar.gz` → run
+  `/opt/subsfab/sessions-setup.sh` in background, log `/var/log/subsfab-setup*.log`),
+  then rerun: chat.create thread_id=T “Pick a random fruit…”, chat.continue
+  thread_id=T “What colour is that fruit?”; re-run the chat.create/kill/image
+  checks too (completion rule changed). Then open the PR.
+
+### 9.4 Remaining P3 plan (in order)
+1. Finish 9.3 (live verify, PR, merge).
+2. SSE streaming live check (`GET /v1/tasks/:id/events` or events route).
+3. Image-chat history policy (Eoj accepted history; proposal: one reusable
+   image thread per account, rotate after N, opt-in cleanup; D5 also names a
+   provider project “Allternit”).
+4. D6: repoint media-router ChatGPT free image lane at the gateway.
+5. P3 closeout attestation; keep/stop guest (Eoj); teardown scratch API + worktrees.
+Open decisions for Eoj: guest IPv4 NAT on the VPS; writable viewer + CORS
+allowlist (API `origin_gate` only allows fixed ports — 18013/18014 blocked).
+
+### 9.5 Live infra + mechanics
+- Scratch API :18013 (token `/tmp/sessions-gate/.scratch-tok`); gated calls via
+  helper pattern: POST action → 403 {approval_id} → `POST /api/aci/handoff/<id>/approve`
+  → retry with `?approval_id=`. Eoj approved relaying for the gate actions.
+- Proxy lane: `…/api/v1/computers/<id>/proxy/v1/...` + `Authorization: Bearer
+  sgw_gDJpb1joEW1cux4UfuR0MEjh3Bm8U1D9cnTlO6GH100`.
+- Writable viewer: the API embed page is view-only; use the local noVNC page
+  served on **127.0.0.1:3014** (allowlisted port) with a `purpose:vnc,
+  read_only:false` ws-token: `http://127.0.0.1:3014/#id=<id>&t=<token>`.
+- Guest: no IPv4 egress (IPv6 only). Uploads ≤2 MB per call; parent dir must exist.
+- **Trap:** in-guest `pkill -f <pattern>` kills the shell if the command text
+  contains the pattern — use `pgrep`+`$$` exclusion or `pkill -x`.
+- Test flake: file-level hook timeouts when load avg is high (other sessions);
+  use `--no-file-parallelism` to confirm.
+
+## 10. HANDOFF — 2026-09-28 ~08:10 CDT (claude session) — chat.continue live-verified; 4 live bugs fixed
+
+THIS SECTION SUPERSEDES §9.3 (§9.4 plan and §9.5 mechanics still apply).
+
+### 10.1 Live results on the gate guest (final build 0d1a84c94)
+- chat.create thread_id=T “Pick a random fruit” → “Mango”; chat.continue T
+  “What colour…” → “Orange”; same provider thread, account pinned ✅.
+  chat.continue on an unmapped thread → 409 `thread_not_mapped` ✅.
+- Stateless chat ✅ (temp chat, not in Recents) · image.generate → PNG 1254²,
+  sha256 == name, mode 444 ✅ (also right after a continue, in its own chat).
+- Gate step 4 (kill -9 the GATEWAY mid-reply → restart) → task `stalled`,
+  not retryable, 1 attempt, settled AT BOOT with no further traffic ✅.
+- kill -9 of CHROME mid-reply → `stalled`, not retryable, not
+  fallback-eligible, 1 attempt ✅.
+- Isolation sequence: threaded create T2 “Axolotl” → stateless create →
+  continue T2 “Squeak” passes the fingerprint check (stateless stayed out) ✅;
+  continue on the fruit thread polluted by the old bug → divergence fail ✅.
+- Eoj to eyeball in ChatGPT: the “beekeeper”/“cartographer”/“clockmaker”
+  story chats each show their prompt ONCE (no double submit).
+
+### 10.2 Bugs found live and fixed on this branch (tests: gateway 281, SDK 75)
+1. 1fd1ba321 — adapter throw after `acknowledged` was retryable +
+   fallback-eligible (maybeRequeue could resend on another account). Now
+   `stalled` (acknowledged) / `submission_ambiguous` (sent_unconfirmed).
+2. b4a65fe42 — orphans only settled when another task hit their lane (stuck
+   `streaming` forever otherwise). `supervisor.sweepAtBoot()` in boot();
+   sent_unconfirmed loop skips already-ended attempts.
+3. a685c5f49 — chat.create typed into whatever page the previous task left:
+   a stateless prompt landed IN a mapped fabric thread. chat.create now opens
+   the origin root first (`freshImageChat` → `freshChat`).
+4. 390397c66 — chat.continue read the thread before the SPA rendered it
+   (“response matched nothing”). Waits ≤15s for stable assistant turns.
+5. 0d1a84c94 — `--hide-crash-restore-bubble` on lane Chrome.
+
+### 10.3 Infra notes
+- Scratch API :18013 died ~13:02 UTC (cause unknown, not this session);
+  relaunched from `~/Desktop/allternit-workspace/.shared-target/debug/allternit-api`
+  (built from kimi-router-gsu f74854fa3) with the §8.2 env, log appended to
+  `/tmp/sessions-gate/api18013.log`.
+- Trap: `pgrep -f` in a guest poll matches its own shell (the §9.5 pkill trap
+  applies to pgrep too) — use `ps -eo pid,args | grep '[p]attern'`.
+
+### 10.4 Next
+PR for this branch → merge → §9.4 items 2–5 (SSE live check, image-chat
+history policy, D6 media-router repoint, closeout). Open decisions for Eoj
+unchanged (guest IPv4 NAT; writable viewer + origin_gate port allowlist).

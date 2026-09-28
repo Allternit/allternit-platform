@@ -44,7 +44,7 @@ beforeAll(async () => {
 }, 30000);
 afterAll(async () => {
   await browser.close();
-});
+}, 30000);
 
 async function fixturePage(name: string): Promise<Page> {
   const page = await browser.newPage();
@@ -57,7 +57,7 @@ describe("conformance (canonical 6 states)", () => {
   it("chatgpt-web passes the shared suite against its fixtures", async () => {
     const report = await runConformance(
       () => {
-        const adapter = new ChatGPTWebAdapter({}, FAST);
+        const adapter = new ChatGPTWebAdapter({ freshChat: false }, FAST);
         return {
           pack: adapter.pack,
           banners: [
@@ -225,7 +225,7 @@ describe("execute e2e against fixtures", () => {
   }
 
   it("chat.create: temp-chat ON by default, submitted → reply → done", async () => {
-    const adapter = new ChatGPTWebAdapter({}, FAST);
+    const adapter = new ChatGPTWebAdapter({ freshChat: false }, FAST);
     const page = await fixturePage("complete");
     const { ctx, marks } = makeCtx(page, adapter, makeAttempt());
     const events: AdapterEvent[] = [];
@@ -244,7 +244,7 @@ describe("execute e2e against fixtures", () => {
   }, 30000);
 
   it("chat.create: tempChat opt-out leaves the toggle untouched", async () => {
-    const adapter = new ChatGPTWebAdapter({ tempChat: false }, FAST);
+    const adapter = new ChatGPTWebAdapter({ tempChat: false, freshChat: false }, FAST);
     const page = await fixturePage("complete");
     const { ctx } = makeCtx(page, adapter, makeAttempt());
     for await (const _e of adapter.execute(makeTask("chat.create"), ctx)) {
@@ -254,8 +254,43 @@ describe("execute e2e against fixtures", () => {
     await page.close();
   }, 30000);
 
-  it("chat.create on a challenge fixture → needs_user, no submit (Critical #5)", async () => {
+  it("chat.create on a fabric thread stays out of temp chat (D5: temp is for stateless tasks only)", async () => {
+    const adapter = new ChatGPTWebAdapter({ freshChat: false }, FAST);
+    const page = await fixturePage("complete");
+    const { ctx } = makeCtx(page, adapter, makeAttempt());
+    const task = { ...makeTask("chat.create"), thread_id: "fab-1" };
+    for await (const _e of adapter.execute(task, ctx)) {
+      // drain
+    }
+    expect(await page.evaluate(() => document.body.dataset.tempChat)).toBeUndefined();
+    expect(await page.evaluate(() => document.body.dataset.submitted)).toBe("true");
+    await page.close();
+  }, 30000);
+
+  it("chat.create never types into the previous task's thread: it opens a fresh chat at the origin root first", async () => {
     const adapter = new ChatGPTWebAdapter({}, FAST);
+    const page = await browser.newPage();
+    const { readFileSync } = await import("node:fs");
+    const html = readFileSync(join(FIXTURES_DIR, "complete.html"), "utf8");
+    const served: string[] = [];
+    await page.route("https://chatgpt.com/**", (route) => {
+      served.push(route.request().url());
+      return route.fulfill({ contentType: "text/html", body: html });
+    });
+    // The lane page as a prior chat.continue left it.
+    await page.goto("https://chatgpt.com/c/mapped-thread-1");
+    const { ctx } = makeCtx(page, adapter, makeAttempt());
+    for await (const _e of adapter.execute(makeTask("chat.create"), ctx)) {
+      // drain
+    }
+    expect(served).toEqual(["https://chatgpt.com/c/mapped-thread-1", "https://chatgpt.com/"]);
+    expect(page.url()).toBe("https://chatgpt.com/");
+    expect(await page.evaluate(() => document.body.dataset.submitted)).toBe("true");
+    await page.close();
+  }, 30000);
+
+  it("chat.create on a challenge fixture → needs_user, no submit (Critical #5)", async () => {
+    const adapter = new ChatGPTWebAdapter({ freshChat: false }, FAST);
     const page = await fixturePage("challenge");
     const { ctx } = makeCtx(page, adapter, makeAttempt());
     const events: AdapterEvent[] = [];
@@ -266,7 +301,7 @@ describe("execute e2e against fixtures", () => {
   }, 30000);
 
   it("image.generate: partial tiles → artifact.partial, completion → captureImages → artifact.ready into the real store", async () => {
-    const adapter = new ChatGPTWebAdapter({ freshImageChat: false }, FAST);
+    const adapter = new ChatGPTWebAdapter({ freshChat: false }, FAST);
     const page = await fixturePage("image-mid-run");
     const { ctx } = makeCtx(page, adapter, makeAttempt());
 
@@ -301,7 +336,7 @@ describe("execute e2e against fixtures", () => {
   }, 30000);
 
   it("image.generate against the live-UI shape: + menu → Create image chip → blob: gallery image → artifact.ready", async () => {
-    const adapter = new ChatGPTWebAdapter({ freshImageChat: false }, FAST);
+    const adapter = new ChatGPTWebAdapter({ freshChat: false }, FAST);
     const page = await browser.newPage();
     const PNG =
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
@@ -345,8 +380,41 @@ describe("execute e2e against fixtures", () => {
     await page.close();
   }, 30000);
 
+  it("chat.continue waits for a navigated thread to render before the divergence read", async () => {
+    const adapter = new ChatGPTWebAdapter({ freshChat: false }, FAST);
+    const { readFileSync } = await import("node:fs");
+    const completeHtml = readFileSync(join(FIXTURES_DIR, "complete.html"), "utf8");
+    const probe = await fixturePage("complete");
+    const { ctx: probeCtx } = makeCtx(probe, adapter, makeAttempt());
+    const snapshot = await adapter.readThread("thread-late", probeCtx);
+    await probe.close();
+
+    // Live shape: the load event fires before the SPA renders the turns.
+    const page = await browser.newPage();
+    await page.route("https://chatgpt.com/**", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: `<body></body><script>setTimeout(() => {
+          document.open(); document.write(${JSON.stringify(completeHtml).replace(/<\//g, "<\\/")}); document.close();
+        }, 600);</script>`,
+      })
+    );
+    const { ctx } = makeCtx(page, adapter, makeAttempt());
+    const events: AdapterEvent[] = [];
+    for await (const e of adapter.execute(
+      makeTask("chat.continue", {
+        provider_thread_id: "thread-late",
+        last_turn_fingerprint: snapshot.last_turn_fingerprint,
+      }),
+      ctx
+    )) events.push(e);
+    expect(events.map((e) => e.t)).not.toContain("error");
+    expect(events[events.length - 1].t).toBe("done");
+    await page.close();
+  }, 30000);
+
   it("chat.continue: fingerprint match proceeds; mismatch with fail policy errors; fork asks", async () => {
-    const adapter = new ChatGPTWebAdapter({}, FAST);
+    const adapter = new ChatGPTWebAdapter({ freshChat: false }, FAST);
     const { readFileSync } = await import("node:fs");
     const completeHtml = readFileSync(join(FIXTURES_DIR, "complete.html"), "utf8");
     // Offline navigation: page.goto("https://chatgpt.com/c/<id>") is fulfilled
@@ -482,7 +550,7 @@ describe("reconcile outcome mapping (Critical #2)", () => {
   }
 
   it("last user turn matches fingerprint → acknowledged (adopt)", async () => {
-    const adapter = new ChatGPTWebAdapter({}, FAST);
+    const adapter = new ChatGPTWebAdapter({ freshChat: false }, FAST);
     const page = await fixturePage("complete");
     const fp = userTurnFingerprint("Summarize the migration plan.");
     const res = await adapter.reconcile(attemptWith(fp, null), reconcileCtx(page, adapter));
@@ -491,7 +559,7 @@ describe("reconcile outcome mapping (Critical #2)", () => {
   }, 30000);
 
   it("thread exists but last user turn differs → ambiguous", async () => {
-    const adapter = new ChatGPTWebAdapter({}, FAST);
+    const adapter = new ChatGPTWebAdapter({ freshChat: false }, FAST);
     const page = await fixturePage("complete");
     const res = await adapter.reconcile(attemptWith("deadbeef", null), reconcileCtx(page, adapter));
     expect(res.outcome).toBe("ambiguous");
@@ -499,7 +567,7 @@ describe("reconcile outcome mapping (Critical #2)", () => {
   }, 30000);
 
   it("thread gone → not_found", async () => {
-    const adapter = new ChatGPTWebAdapter({}, FAST);
+    const adapter = new ChatGPTWebAdapter({ freshChat: false }, FAST);
     const page = await fixturePage("logged-out");
     const res = await adapter.reconcile(attemptWith("deadbeef", null), reconcileCtx(page, adapter));
     expect(res.outcome).toBe("not_found");

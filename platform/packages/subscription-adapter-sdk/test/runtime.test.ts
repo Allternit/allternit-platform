@@ -12,10 +12,10 @@ import { fixturePage, launchBrowser, loadPack } from "./helpers";
 let browser: Browser;
 beforeAll(async () => {
   browser = await launchBrowser();
-});
+}, 30000);
 afterAll(async () => {
   await browser.close();
-});
+}, 30000);
 
 describe("PageLease (§A1)", () => {
   it("throws on use after release", async () => {

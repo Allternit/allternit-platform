@@ -7,10 +7,10 @@ import type { DriftSignal } from "../src/index";
 let browser: Browser;
 beforeAll(async () => {
   browser = await launchBrowser();
-});
+}, 30000);
 afterAll(async () => {
   await browser.close();
-});
+}, 30000);
 
 describe("selector registry (§A3.2)", () => {
   it("resolves a key at strategy 0 when the first strategy matches", async () => {

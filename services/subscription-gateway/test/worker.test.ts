@@ -67,7 +67,7 @@ describe("worker happy path (fixture-web declarative adapter, real browser)", ()
   }, 30000);
   afterAll(async () => {
     await browser.close();
-  });
+  }, 30000);
   beforeEach(() => {
     dir = tmpStateDir();
     db = openDatabase(":memory:");
@@ -233,6 +233,47 @@ describe("worker (scripted fake adapter, no browser)", () => {
     expect(final?.error?.retryable).toBe(false);
     expect(final?.error?.fallback_eligible).toBe(false);
     expect(adapter.submissionCount).toBe(1);
+  });
+
+  it("throw after acknowledged (browser died mid-reply) → stalled, never resubmitted", async () => {
+    const adapter = scriptedAdapter({
+      execute: async function* (_task, ctx) {
+        adapter.submissionCount += 1;
+        await ctx.markSubmitted(null);
+        await ctx.markSubmitted("fw-thread-7");
+        yield* [];
+        throw new Error("locator.count: Target page, context or browser has been closed");
+      },
+    });
+    const task = seedTask();
+    const outcome = await scriptedRun(adapter, task);
+    expect(outcome).toEqual({ kind: "terminal", status: "failed" });
+    const final = getTask(db, task.task_id);
+    expect(final?.error?.class).toBe("stalled");
+    expect(final?.error?.retryable).toBe(false);
+    expect(final?.error?.fallback_eligible).toBe(false);
+    expect(adapter.submissionCount).toBe(1);
+  });
+
+  it("stream ends without a terminal event after acknowledged → stalled; while sent_unconfirmed → ambiguous", async () => {
+    for (const [acks, expected] of [
+      [["fw-thread-8"], "stalled"],
+      [[], "submission_ambiguous"],
+    ] as const) {
+      const adapter = scriptedAdapter({
+        execute: async function* (_task, ctx) {
+          await ctx.markSubmitted(null);
+          for (const id of acks) await ctx.markSubmitted(id);
+          yield* [];
+        },
+      });
+      const task = seedTask();
+      await scriptedRun(adapter, task);
+      const final = getTask(db, task.task_id);
+      expect(final?.error?.class).toBe(expected);
+      expect(final?.error?.retryable).toBe(false);
+      expect(final?.error?.fallback_eligible).toBe(false);
+    }
   });
 
   it("detached event → provider_running + watch scheduled; resume stream completes the task", async () => {

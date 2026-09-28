@@ -12,10 +12,10 @@ import { fixturePage, launchBrowser, makeResolver } from "./helpers";
 let browser: Browser;
 beforeAll(async () => {
   browser = await launchBrowser();
-});
+}, 30000);
 afterAll(async () => {
   await browser.close();
-});
+}, 30000);
 
 describe("awaitCompletion (§A1 multi-signal detector)", () => {
   it("completes on the complete fixture", async () => {
@@ -97,7 +97,7 @@ describe("awaitCompletion (§A1 multi-signal detector)", () => {
   });
 });
 
-describe("sendMayBeDisabled (ChatGPT live UI: Send rendered but disabled after the reply)", () => {
+describe("ignoreSend (ChatGPT live UI: Send enabled, disabled, or absent depending on chat mode)", () => {
   const pack = SelectorPack.fromYaml(
     [
       "response:",
@@ -111,27 +111,34 @@ describe("sendMayBeDisabled (ChatGPT live UI: Send rendered but disabled after t
     ].join("\n")
   );
 
-  it("a disabled Send blocks completion by default and satisfies it when opted in", async () => {
+  it("a disabled Send blocks completion by default; ignoreSend completes on the reply alone", async () => {
     const page = await browser.newPage();
     await page.setContent(`<div class="reply">Hello there, friend</div><button class="send" disabled>Send</button>`);
     const strict = createCompletionTracker(page, createResolver(page, pack), { stabilityMs: 0 });
     expect((await strict.pollOnce()).complete).toBe(false);
     const lenient = createCompletionTracker(page, createResolver(page, pack), {
       stabilityMs: 0,
-      sendMayBeDisabled: true,
+      ignoreSend: true,
     });
     expect((await lenient.pollOnce()).complete).toBe(true);
     await page.close();
   });
 
-  it("an absent Send still blocks completion even when opted in", async () => {
+  it("ignoreSend completes with no Send at all (regular chat shows the voice button)", async () => {
     const page = await browser.newPage();
-    await page.setContent(`<div class="reply">Hello</div>`);
-    const t = createCompletionTracker(page, createResolver(page, pack), {
-      stabilityMs: 0,
-      sendMayBeDisabled: true,
-    });
-    expect((await t.pollOnce()).signals.send_enabled).toBe(false);
+    await page.setContent(`<div class="reply">Mango</div><button aria-label="Start Voice">v</button>`);
+    const t = createCompletionTracker(page, createResolver(page, pack), { stabilityMs: 0, ignoreSend: true });
+    expect((await t.pollOnce()).complete).toBe(true);
+    await page.close();
+  });
+
+  it("ignoreSend still refuses to complete before any reply text exists", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`<div class="reply"></div>`);
+    const t = createCompletionTracker(page, createResolver(page, pack), { stabilityMs: 0, ignoreSend: true });
+    const r = await t.pollOnce();
+    expect(r.signals.send_enabled).toBe(false);
+    expect(r.complete).toBe(false);
     await page.close();
   });
 
