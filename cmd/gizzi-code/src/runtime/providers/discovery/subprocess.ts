@@ -12,7 +12,8 @@
 import { which } from "bun"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
-import { existsSync, statSync } from "node:fs"
+import { existsSync, readdirSync, statSync } from "node:fs"
+import os from "node:os"
 import path from "node:path"
 import type { DiscoveredProvider, DiscoveredModel } from "./index"
 
@@ -135,7 +136,9 @@ async function resolveBinPath(name: string): Promise<string | null> {
  *   1. `MULTICA_<PROVIDER>_PATH` env override.
  *   2. Direct PATH walk + `bun:which`.
  *   3. Login-shell PATH fallback (cached 30 minutes).
- *   4. Codex macOS Desktop app bundle fallback.
+ *   4. Known install locations (the CLI's own installer, user bin dirs). A
+ *      desktop app launched from Finder/Dock gets a minimal PATH, and a CLI
+ *      whose launcher link went missing is still installed.
  */
 export async function resolveCliPath(spec: SubprocessSpec): Promise<string | null> {
   const env = PROVIDER_ENV_KEYS[spec.id]
@@ -148,19 +151,77 @@ export async function resolveCliPath(spec: SubprocessSpec): Promise<string | nul
   const fromPath = await resolveBinPath(spec.bin)
   if (fromPath) return fromPath
 
-  // Codex is commonly installed as a macOS desktop app with a bundled CLI.
-  if (spec.id === "codex-cli" && process.platform === "darwin") {
-    const user = process.env.USER || ""
-    const candidates = [
-      "/Applications/Codex.app/Contents/MacOS/Codex",
-      `/Users/${user}/Applications/Codex.app/Contents/MacOS/Codex`,
-    ]
-    for (const candidate of candidates) {
-      if (existsSync(candidate)) return candidate
-    }
+  for (const candidate of knownInstallPaths(spec)) {
+    if (isExecutable(candidate)) return candidate
   }
 
   return null
+}
+
+/** Directories user-level installers put CLIs in, whether or not they're on PATH. */
+function userBinDirs(home: string): string[] {
+  return [
+    path.join(home, ".local", "bin"),
+    path.join(home, ".bun", "bin"),
+    path.join(home, ".npm-global", "bin"),
+    path.join(home, ".cargo", "bin"),
+    path.join(home, ".deno", "bin"),
+    path.join(home, "bin"),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+  ]
+}
+
+/** Newest entry of a versions directory (e.g. Claude Code's ~/.local/share/claude/versions/2.1.283). */
+function newestVersion(dir: string): string | null {
+  let names: string[]
+  try {
+    names = readdirSync(dir)
+  } catch {
+    return null
+  }
+  const parse = (v: string) => v.split(/[.-]/).map((n) => Number.parseInt(n, 10) || 0)
+  const sorted = names
+    .filter((n) => /^\d+(\.\d+)*/.test(n))
+    .sort((a, b) => {
+      const pa = parse(a)
+      const pb = parse(b)
+      for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
+        const d = (pb[i] ?? 0) - (pa[i] ?? 0)
+        if (d) return d
+      }
+      return 0
+    })
+  for (const name of sorted) {
+    const full = path.join(dir, name)
+    if (isExecutable(full)) return full
+  }
+  return null
+}
+
+/** Where each CLI's own installer puts it, checked in order after PATH. */
+export function knownInstallPaths(spec: Pick<SubprocessSpec, "id" | "bin">, home = process.env.HOME || os.homedir()): string[] {
+  if (!home || spec.bin.includes("/")) return []
+  const candidates: string[] = []
+  if (spec.id === "claude-cli") {
+    // Claude Code's native installer: the launcher in ~/.local/bin points at
+    // a versioned binary; the older local install lives in ~/.claude/local.
+    candidates.push(path.join(home, ".local", "bin", "claude"), path.join(home, ".claude", "local", "claude"))
+    const newest = newestVersion(path.join(home, ".local", "share", "claude", "versions"))
+    if (newest) candidates.push(newest)
+  }
+  if (spec.id === "codex-cli" && process.platform === "darwin") {
+    // Codex is commonly installed as a macOS desktop app with a bundled CLI.
+    candidates.push(
+      "/Applications/Codex.app/Contents/MacOS/Codex",
+      path.join(home, "Applications", "Codex.app", "Contents", "MacOS", "Codex"),
+    )
+  }
+  // CLIs whose installers use their own bin dir.
+  const ownDir: Record<string, string> = { "kimi-cli": ".kimi-code", grok: ".grok", opencode: ".opencode" }
+  if (ownDir[spec.id]) candidates.push(path.join(home, ownDir[spec.id], "bin", spec.bin))
+  for (const dir of userBinDirs(home)) candidates.push(path.join(dir, spec.bin))
+  return [...new Set(candidates)]
 }
 
 export interface SubprocessSpec {

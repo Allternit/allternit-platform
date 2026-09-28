@@ -26,6 +26,7 @@ import { CUSTOM_LOADERS } from "@/runtime/providers/adapters/loaders"
 import type { CustomModelLoader } from "@/runtime/providers/types"
 import { Discovery } from "@/runtime/providers/discovery"
 import { SubprocessLanguageModel } from "@/runtime/providers/adapters/loaders/subprocess"
+import { cliModel } from "@/runtime/providers/cli-model"
 import { tapRetryHint } from "@/runtime/providers/retry-hint"
 
 export namespace Provider {
@@ -780,7 +781,7 @@ export namespace Provider {
       throw new ModelNotFoundError({ providerID, modelID, suggestions })
     }
 
-    const info = provider.models[modelID]
+    const info = provider.models[modelID] ?? cliModel(provider, modelID, log)
     if (!info) {
       const availableModels = Object.keys(provider.models)
       const matches = fuzzysort.go(modelID, availableModels, { limit: 3, threshold: -10000 })
