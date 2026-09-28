@@ -391,7 +391,12 @@ describe("execute e2e against fixtures", () => {
   function imageApp(opts: { oldImage?: boolean; projects?: "link" | "create"; lateMs?: number }): string {
     const projects =
       opts.projects === "link"
-        ? `<section data-app-action-sidebar-section-heading="Projects"><a href="/g/g-p-abc-allternit/project">Allternit</a></section>`
+        ? // live: project entries are buttons (not links) with nested actions
+          `<section data-app-action-sidebar-section-heading="Projects"><ul><li>
+             <div role="button" aria-label="Allternit">Allternit
+               <button aria-label="Project actions for Allternit">…</button>
+               <button aria-label="New chat in Allternit" onclick="history.pushState({}, '', '/g/g-p-abc-allternit/project')">+</button>
+             </div></li></ul></section>`
         : opts.projects === "create"
           ? // Live: the create button sits in a zero-width wrapper that only
             // expands while the section TITLE row is hovered.
@@ -424,7 +429,7 @@ describe("execute e2e against fixtures", () => {
         <div role="textbox" aria-label="Ask ChatGPT" contenteditable="true"></div>
         <button aria-label="Send" type="submit" id="send">Send</button>
       </div>
-      <div id="menu" hidden><div id="create">Create image</div></div></main>
+</main>
       <script>
         const np = document.getElementById("np");
         window.__openDialog = () => {
@@ -436,8 +441,14 @@ describe("execute e2e against fixtures", () => {
           };
         };
         if (np) np.onclick = window.__openDialog;
-        plus.onclick = () => { menu.hidden = false; };
-        create.onclick = () => { menu.hidden = true; chips.innerHTML = '<button aria-label="Remove Create image">Create image</button>'; };
+        // live: the "+" menu is only added to the DOM a beat after the click
+        plus.onclick = () => setTimeout(() => {
+          document.querySelector("main").insertAdjacentHTML("beforeend", '<div id="menu"><div id="create">Create image</div></div>');
+          document.getElementById("create").onclick = () => {
+            document.getElementById("menu").remove();
+            chips.innerHTML = '<button aria-label="Remove Create image">Create image</button>';
+          };
+        }, 300);
         send.onclick = () => {
           thread.insertAdjacentHTML("beforeend", '<div data-user-message-bubble="true">p</div><div data-conversation-role="assistant"></div>');
           setTimeout(() => {

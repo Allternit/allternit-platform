@@ -37,7 +37,8 @@ import {
 // server id arrives; that one is not reopenable, so it never matches.
 // Project chats live under /g/<project>/c/<id>; the id is the same thread id.
 export const THREAD_URL_PATTERN = /^https:\/\/chatgpt\.com\/(?:g\/[\w-]+\/)?c\/(?!local-)([\w-]+)/;
-const PROJECT_PAGE_PATTERN = /^https:\/\/chatgpt\.com\/g\/[\w-]+\/project/;
+// A project's page (its composer starts a chat in the project); not a chat.
+const PROJECT_PAGE_PATTERN = /^https:\/\/chatgpt\.com\/g\/[\w-]+(?:\/project)?\/?(?:[?#]|$)/;
 // Marks images already in a reused chat so only this run's images are
 // watched and captured.
 const SEEN_ATTR = "data-allternit-seen";
@@ -193,7 +194,13 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
     if (plus) {
       await ctx.pacing.beforeAction();
       await plus.first().click();
-      const item = await resolver.tryResolveLocator("image_menu_item");
+      // The menu renders a beat after the click (live: right after a project
+      // page opened, an immediate lookup found nothing).
+      let item = null;
+      for (let i = 0; i < 20 && !item; i++) {
+        item = await resolver.tryResolveLocator("image_menu_item");
+        if (!item) await sdkPage(ctx.page).waitForTimeout(150);
+      }
       if (item) {
         await ctx.pacing.beforeAction();
         await item.last().click();
@@ -275,11 +282,19 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
       ctx.log.warn("projects sidebar section not found");
       return false;
     }
-    const link = section.first().getByRole("link", { name, exact: true });
-    for (let i = 0; i < 20 && (await link.count()) === 0; i++) await page.waitForTimeout(250);
-    if ((await link.count()) > 0) {
+    // Live (2026-09-28): each project is a sidebar button named after it,
+    // holding "Project actions for <name>" and "New chat in <name>" buttons.
+    const entry = section.first().getByRole("button", { name, exact: true });
+    const newChat = section.first().getByRole("button", { name: `New chat in ${name}`, exact: true });
+    for (let i = 0; i < 20 && (await entry.count()) === 0; i++) await page.waitForTimeout(250);
+    if ((await entry.count()) > 0) {
       await ctx.pacing.beforeAction();
-      await link.first().click();
+      await entry.first().hover();
+      if ((await newChat.count()) > 0) {
+        await newChat.first().click({ timeout: 3000 }).catch(() => newChat.first().evaluate((el) => (el as HTMLElement).click()));
+      } else {
+        await entry.first().click();
+      }
     } else {
       const create = await resolver.tryResolveLocator("project_create");
       if (!create) {
@@ -310,7 +325,10 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
       await dialog.getByRole("button", { name: /^create project$/i }).click();
     }
     for (let i = 0; i < 60; i++) {
-      if (PROJECT_PAGE_PATTERN.test(page.url())) return true;
+      if (PROJECT_PAGE_PATTERN.test(page.url())) {
+        await resolver.resolveLocator("composer").then((c) => c.first().waitFor({ timeout: 10000 })).catch(() => {});
+        return true;
+      }
       await page.waitForTimeout(250);
     }
     ctx.log.warn("project page did not open", { url: page.url() });
