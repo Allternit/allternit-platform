@@ -1,5 +1,5 @@
-// @ts-nocheck
 // biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
+import { getAntModels } from './antModels.js'
 import { getInitialMainLoopModel } from '../../bootstrap/state.js'
 import {
   isClaudeAISubscriber,
@@ -498,7 +498,7 @@ function getKnownModelOption(model: string): ModelOption | null {
 
 function getDiscoveredBrainOptions(): ModelOption[] {
   try {
-    const { Discovery } = require('../../../../runtime/providers/discovery/index.js') as typeof import('../../../../runtime/providers/discovery/index.js')
+    const { Discovery } = require('../../../../../runtime/providers/discovery/index.js') as typeof import('../../../../../runtime/providers/discovery/index.js')
     Discovery.prefetch()
     const options: ModelOption[] = []
     const providers = [...Discovery.last()].sort((a, b) => {

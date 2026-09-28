@@ -257,6 +257,19 @@ for app in apps:
                 problems.append(f"installed Desktop UI was patched in place at {fmt(dt.datetime.fromtimestamp(ui_at))} (platform/ newer than the packaged app) — it matches no build; reinstall from a full Desktop build and find the session that rsync'd it")
         except OSError:
             pass
+        # Which workspace UI commit this app carries (ui-source.json, stamped by
+        # prepare-platform-static). Builds that packaged the stale shared
+        # allternit-ai checkout silently "reverted" merged UI fixes.
+        ai_repo = TOP.parent / "allternit-ai"
+        try:
+            src = json.loads((res / "platform/ui-source.json").read_text())
+            commit = src.get("commit", "")
+            behind = sh("git", "-C", str(ai_repo), "rev-list", "--count", f"{commit}..origin/main") if ai_repo.exists() and commit else ""
+            print(f"  installed UI     allternit-ai {commit[:9]} ({src.get('branch')}) · {behind or '?'} commit(s) behind origin/main")
+            if behind and behind.isdigit() and int(behind) > 0:
+                problems.append(f"installed Desktop UI is {behind} commit(s) behind allternit-ai origin/main — rebuild Desktop from main")
+        except (OSError, ValueError):
+            print("  installed UI     unknown (no ui-source.json — built before the UI-source stamp; may be stale)")
         try:
             suffix = json.loads((app / "Contents/Resources/build-info.json").read_text()).get("buildSuffix") or ""
             if suffix:

@@ -2,7 +2,7 @@
  * Settings Module
  * 
  * Manages user settings in `.gizzi/settings.json` (project level)
- * and `~/.config/gizzi/settings.json` (global level).
+ * and `~/.config/gizzi-code/settings.json` (global level).
  * 
  * Similar to gizzi-code's `.claude.json` system.
  */

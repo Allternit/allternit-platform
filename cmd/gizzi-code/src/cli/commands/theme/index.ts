@@ -3,14 +3,14 @@
  * Production-quality theme management with custom palette editing.
  *
  * Supports three immutable built-ins (dark, light, system) plus arbitrary
- * user-defined named themes stored in ~/.config/gizzi/themes.json.
+ * user-defined named themes stored in ~/.config/gizzi-code/themes.json.
  */
 
 import { log } from '../../utils/log.js'
 import { loadPreferences, savePreferences, getPreference } from '../../../utils/sessionStorage.js'
 import { writeFile, readFile, mkdir, access, constants } from 'fs/promises'
 import { join } from 'path'
-import { homedir } from 'os'
+import { GlobalPaths } from '../../../runtime/context/global/paths.js'
 
 export type BuiltinThemeName = 'dark' | 'light' | 'system'
 export type ThemeName = BuiltinThemeName | string
@@ -116,7 +116,7 @@ const COLOR_KEYS: ColorKey[] = [
 ]
 
 function getConfigDir(): string {
-  return join(homedir(), '.config', 'gizzi')
+  return GlobalPaths.config
 }
 
 function getThemeFilePath(): string {

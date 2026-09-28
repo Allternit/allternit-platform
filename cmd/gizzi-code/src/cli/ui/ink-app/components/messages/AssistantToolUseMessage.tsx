@@ -133,10 +133,10 @@ export function AssistantToolUseMessage({
 
   const t14 = !isResolved && isQueued && renderToolUseQueuedMessage(tool_0);
 
-  const t15 = <Box flexDirection="column">{t12}{t13}{t14}</Box>;
+  const t15 = <Box flexDirection="column">{t13}{t14}</Box>;
 
   const isError = lookups.erroredToolUseIDs.has(param.id);
-  const t16 = <Box flexDirection="row" justifyContent="space-between" marginTop={t5} width="100%" backgroundColor={bg}><ToolUseCard param={param} toolName={userFacingToolName} isQueued={isQueued} isResolved={isResolved} isError={isError}>{t15}</ToolUseCard></Box>;
+  const t16 = <Box flexDirection="row" justifyContent="space-between" marginTop={t5} width="100%" backgroundColor={bg}><ToolUseCard param={param} toolName={userFacingToolName} isQueued={isQueued} isResolved={isResolved} isError={isError} args={t12}>{t15}</ToolUseCard></Box>;
 
   return t16;
 }

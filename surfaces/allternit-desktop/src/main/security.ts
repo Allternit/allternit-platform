@@ -14,7 +14,18 @@
  * other origin untouched.
  */
 
-import { shell, type IpcMainEvent, type IpcMainInvokeEvent, type Session, type WebContents } from 'electron';
+import {
+  desktopCapturer,
+  screen,
+  shell,
+  type DesktopCapturerSource,
+  type DisplayMediaRequestHandlerHandlerRequest,
+  type IpcMainEvent,
+  type IpcMainInvokeEvent,
+  type Session,
+  type Streams,
+  type WebContents,
+} from 'electron';
 import log from 'electron-log';
 
 /** Schemes a renderer-initiated openExternal is allowed to use. */
@@ -156,11 +167,12 @@ export function installSessionSecurityHandlers(session: Session): void {
     });
   });
 
-  // Default-deny permission requests. The only renderer capability the app
-  // uses is microphone access for voice/dictation from first-party origins.
+  // Default-deny permission requests. First-party origins may use the
+  // microphone (voice/dictation) and capture the screen (this Mac's live
+  // screen in the Computer view, composer screen share).
   session.setPermissionRequestHandler((_webContents, permission, callback, details) => {
     const requestingUrl = details.requestingUrl ?? '';
-    const granted = permission === 'media' && isTrustedAppUrl(requestingUrl);
+    const granted = (permission === 'media' || permission === 'display-capture') && isTrustedAppUrl(requestingUrl);
     if (!granted) {
       log.warn(`[Security] Denied permission "${permission}" for ${requestingUrl || '(unknown origin)'}`);
     }
@@ -170,6 +182,43 @@ export function installSessionSecurityHandlers(session: Session): void {
   session.setPermissionCheckHandler((_webContents, permission, requestingOrigin) => {
     return permission === 'media' && isTrustedAppUrl(requestingOrigin);
   });
+
+  session.setDisplayMediaRequestHandler(
+    displayMediaHandler({
+      getSources: () => desktopCapturer.getSources({ types: ['screen'] }),
+      primaryDisplayId: () => String(screen.getPrimaryDisplay().id),
+    }),
+  );
+}
+
+/**
+ * getDisplayMedia() for app-owned pages: the primary screen, no picker
+ * (macOS still requires the Screen Recording permission). Web pages in
+ * Browser Mode share this session and get nothing.
+ */
+export function displayMediaHandler(deps: {
+  getSources: () => Promise<DesktopCapturerSource[]>;
+  primaryDisplayId: () => string;
+}): (request: DisplayMediaRequestHandlerHandlerRequest, callback: (streams: Streams) => void) => void {
+  return (request, callback) => {
+    const origin = request.securityOrigin || request.frame?.url || '';
+    if (!isTrustedAppUrl(origin)) {
+      log.warn(`[Security] Denied screen capture for ${origin || '(unknown origin)'}`);
+      callback({});
+      return;
+    }
+    deps
+      .getSources()
+      .then((sources) => {
+        const primary = deps.primaryDisplayId();
+        const source = sources.find((s) => s.display_id === primary) ?? sources[0];
+        callback(source ? { video: source } : {});
+      })
+      .catch((err) => {
+        log.warn('[Security] Screen capture unavailable:', err);
+        callback({});
+      });
+  };
 }
 
 function buildContentSecurityPolicy(): string {

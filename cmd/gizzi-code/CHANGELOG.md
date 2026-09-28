@@ -16,19 +16,51 @@
   bot chat opened from `/bots` after a handoff keeps the earlier window's
   last 50 messages above the rip; ctrl+o shows them. They stay out of the
   model's context, which starts from the checkpoint.
+- `/fork <directive>` starts a background fork of the conversation that
+  works on the directive and reports back when it's done.
+- meta+j opens a terminal panel: a shell that keeps running between visits.
+  meta+j inside it returns to gizzi. Needs tmux for the shell to persist.
 
 ### Changed
+- Tool cards put the arguments beside the tool name, as in Claude Code:
+  "Update(src/math.ts)" on one line with the orb.
+- The spinner shows the elapsed time from the start, and the token count as
+  soon as tokens arrive, instead of after 30 seconds.
+- The startup header no longer leaves ten blank rows under it.
 - Tool cards show the Allternit orb instead of "● done": it moves while the
   tool runs (searching, writing or working) and settles when it's done.
 - Every turn ends with one line, "▞▪▚ Gizzi forged for 3.5s · model · …":
   the duration and the run stats are no longer printed twice.
+- Bash permission checks parse the command into a syntax tree. Commands
+  that can't be checked statically, such as `$(...)` or `eval`, ask first.
+- Preferences and custom themes from the old `~/.config/gizzi` folder are
+  copied into `~/.config/gizzi-code` once. The old folder isn't changed.
 
 ### Fixed
+- Replies now stream as they're written. Every request, including the
+  model provider's, went through an internal relay that waited for the
+  whole response, so a reply appeared in one piece at the end.
+- With OpenRouter and other OpenAI-compatible providers, the spinner shows
+  a model's reasoning live ("Reconciling… (7s · ↓ 192 tokens · thinking)").
+  The reasoning was dropped before, and on some servers it could have
+  appeared in the reply.
+- `gizzi login` can now be approved in Allternit Desktop: Desktop asks
+  "Sign in gizzi on this Mac?" and approves with your account. Before, its
+  approval window stayed on "Checking your Allternit session…". When Desktop
+  can't approve, the page opens in your browser instead.
+- An expired or cancelled sign-in prints one line ("The code expired before
+  it was approved. Run `gizzi login` again.") instead of an error and a
+  stack trace, and names the command you ran.
 - The mesh auth key was passed on the command line, where any local user
   could read it. It now reaches mesh-node through its environment and
   `tailscale up` through a private file.
 - When the mesh sidecar failed, falling back to tailscale could hang for
   about five seconds.
+- After returning from an external editor or shell, most of the screen
+  stayed blank until ctrl+l.
+- The model picker never listed discovered local and subprocess models: it
+  loaded the discovery module from a wrong path.
+- Setting `USER_TYPE=ant` crashed the model picker and the system prompt.
 
 ## 2.1.4 (2026-09-28)
 

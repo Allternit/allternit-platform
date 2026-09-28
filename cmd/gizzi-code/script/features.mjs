@@ -33,6 +33,9 @@ export const FEATURES = [
   "EXTRACT_MEMORIES", // background auto-memory extraction
   "TRANSCRIPT_CLASSIFIER", // auto mode
   "PET", // terminal pet (/pet)
+  // Checked live 2026-09-28
+  "TERMINAL_PANEL", // meta+j persistent shell panel (tmux-backed)
+  "TREE_SITTER_BASH", // AST-based bash permission checks (pure-TS parser)
 ];
 
 /** Extra flags for one-off experiments: GIZZI_FEATURES_EXTRA=FOO,BAR */

@@ -7,7 +7,7 @@
  * - Version-locked: Desktop 1.2.3 = Backend 1.2.3
  */
 
-import { app, autoUpdater, BrowserWindow, ipcMain, nativeTheme, safeStorage, session, Tray, Menu, dialog, globalShortcut, screen, protocol, type WebContents } from 'electron';
+import { app, autoUpdater, BrowserWindow, ipcMain, nativeTheme, Notification, safeStorage, session, Tray, Menu, dialog, globalShortcut, screen, protocol, type WebContents } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve, basename } from 'node:path';
 import * as fs from 'node:fs';
@@ -22,6 +22,7 @@ import { updateElectronApp } from 'update-electron-app';
 import fixPath from 'fix-path';
 import { installDesktopCompanion } from './desktop-companion.js';
 import { isPairingLink, pairingCodeFromUrl } from './pairing-link.js';
+import { approvePairing, describePairingRequest } from './pairing-approval.js';
 import { backendManager } from './backend-manager.js';
 import { officeEngineManager } from './office-engine-manager.js';
 import { fabricWorkerManager, type FabricWorkerState } from './fabric-worker-manager.js';
@@ -2735,43 +2736,44 @@ function openDesignStudio(prompt?: string | null): void {
   void designWindow.loadURL(targetUrl);
 }
 
-// Approval window for a terminal's `gizzi login` (see handleProtocolCallback).
-// Same window profile as Design, so it carries the app's signed-in session.
-let pairingWindow: BrowserWindow | null = null;
+// Approves a terminal's `gizzi login` (see handleProtocolCallback): a native
+// confirmation, then the account's Clerk token approves it; the hosted page
+// in the browser when there is no Clerk token (see pairing-approval.ts).
 function openPairingApproval(code: string): void {
-  const target = new URL('/pair', activePlatformUrl);
-  target.searchParams.set('code', code);
-  const targetUrl = target.toString();
-  if (pairingWindow && !pairingWindow.isDestroyed()) {
-    void pairingWindow.loadURL(targetUrl);
-    pairingWindow.show();
-    pairingWindow.focus();
-    return;
-  }
-  pairingWindow = new BrowserWindow({
-    width: 520,
-    height: 640,
-    title: 'Sign in gizzi on this Mac',
-    titleBarStyle: isMac ? 'hiddenInset' : 'default',
-    show: false,
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
+  const session = authManager.getSessionSnapshot();
+  void approvePairing(code, {
+    cloudApiBase: process.env.ALLTERNIT_CLOUD_API_URL || URLS.CLOUD_API,
+    hostedPairUrl: (c) => new URL(`/pair?code=${encodeURIComponent(c)}`, URLS.PLATFORM).toString(),
+    getClerkToken: () => authManager.getClerkToken(),
+    fetch: (input, init) => fetch(input, init),
+    confirm: async (request) => {
+      const parent = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.isVisible());
+      if (parent) {
+        if (parent.isMinimized()) parent.restore();
+        parent.show();
+        parent.focus();
+      }
+      if (isMac) app.focus({ steal: true });
+      const options = {
+        type: 'question' as const,
+        buttons: ['Approve', 'Cancel'],
+        defaultId: 0,
+        cancelId: 1,
+        message: 'Sign in gizzi on this Mac?',
+        detail: describePairingRequest(request),
+      };
+      const { response } = parent
+        ? await dialog.showMessageBox(parent, options)
+        : await dialog.showMessageBox(options);
+      return response === 0;
     },
-  });
-  installWillNavigateGuard(pairingWindow.webContents);
-  pairingWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void openExternalAllowlisted(url);
-    return { action: 'deny' };
-  });
-  pairingWindow.once('ready-to-show', () => {
-    pairingWindow?.show();
-    pairingWindow?.focus();
-  });
-  pairingWindow.on('closed', () => { pairingWindow = null; });
-  void pairingWindow.loadURL(targetUrl);
+    openBrowser: (url) => { openExternalAllowlisted(url); },
+    notify: (title, body) => {
+      if (Notification.isSupported()) new Notification({ title, body }).show();
+      else log.info(`[Pairing] ${title}: ${body}`);
+    },
+    account: { email: session?.userEmail },
+  }).then((outcome) => log.info(`[Pairing] gizzi login ${code}: ${outcome}`));
 }
 
 ipcMain.handle('shell:open-design', () => {

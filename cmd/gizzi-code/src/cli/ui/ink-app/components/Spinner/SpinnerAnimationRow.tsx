@@ -16,7 +16,9 @@ import { useStalledAnimation } from './useStalledAnimation';
 import { interpolateColor, toRGBColor } from './utils';
 const SEP_WIDTH = stringWidth(' · ');
 const THINKING_BARE_WIDTH = stringWidth('thinking');
-const SHOW_TOKENS_AFTER_MS = 30_000;
+// Claude Code shows the elapsed time from 0s and the token count as soon as
+// tokens arrive ("Composing… (0s · thinking)"); it no longer waits 30s.
+const SHOW_TOKENS_AFTER_MS = 0;
 
 // Thinking shimmer constants. Previously lived in a separate ThinkingShimmerText
 // component with its own useAnimationFrame(50) — inlined here to reuse our

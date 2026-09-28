@@ -131,7 +131,7 @@ const ultraplan = feature('ULTRAPLAN')
   : null
 const torch = feature('TORCH') ? safeRequire('./commands/torch.js')?.default : null
 const forkCmd = feature('FORK_SUBAGENT')
-  ? safeRequire('./commands/fork/index.js')?.default
+  ? require('./commands/fork/index.js').default
   : null
 const pet = feature('PET')
   ? require('./commands/pet/index.js').default

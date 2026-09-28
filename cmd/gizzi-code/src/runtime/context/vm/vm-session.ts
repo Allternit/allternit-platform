@@ -276,6 +276,7 @@ export namespace VmSession {
     const candidates = [
       path.join(home, ".openclaw"),
       path.join(home, ".gizzi"),
+      path.join(home, ".config", "gizzi-code"),
       path.join(home, ".config", "gizzi"),
       path.join(home, ".config", "openclaw"),
     ]

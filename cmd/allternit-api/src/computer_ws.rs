@@ -1613,11 +1613,25 @@ async fn get_proxy_config(
     }
 }
 
+const PROXY_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// An SSE subscription (`Accept: text/event-stream`) is long-lived by design
+/// and exempt from the per-request timeout; its body streams through.
+pub(crate) fn wants_event_stream(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_ascii_lowercase().contains("text/event-stream"))
+        .unwrap_or(false)
+}
+
 fn proxy_client() -> &'static reqwest::Client {
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     CLIENT.get_or_init(|| {
+        // No client-wide total timeout: it would cut event streams. Plain
+        // requests get PROXY_REQUEST_TIMEOUT per request (proxy_forward).
         reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(10))
             .build()
             .expect("proxy reqwest client builds")
     })
@@ -1709,6 +1723,9 @@ async fn proxy_forward(
     let mut upstream = proxy_client()
         .request(method.clone(), &url)
         .header(header::HOST, upstream_guest_host(config.port));
+    if !wants_event_stream(&headers) {
+        upstream = upstream.timeout(PROXY_REQUEST_TIMEOUT);
+    }
     for (name, value) in headers.iter() {
         if is_hop_by_hop(name.as_str()) {
             continue;
@@ -1729,22 +1746,15 @@ async fn proxy_forward(
                     response_headers.append(name, value.clone());
                 }
             }
-            match resp.bytes().await {
-                Ok(bytes) => match builder.body(axum::body::Body::from(bytes)) {
-                    Ok(response) => response,
-                    Err(e) => {
-                        warn!(error = %e, "failed to build proxy response");
-                        return crate::computer_routes::error_response(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            "failed to build proxy response",
-                        );
-                    }
-                },
+            // Stream the body through (SSE must not wait for the upstream to
+            // end — it never does). A mid-body upstream error ends the stream.
+            match builder.body(axum::body::Body::from_stream(resp.bytes_stream())) {
+                Ok(response) => response,
                 Err(e) => {
-                    warn!(error = %e, "failed to read proxy upstream body");
+                    warn!(error = %e, "failed to build proxy response");
                     return crate::computer_routes::error_response(
-                        StatusCode::BAD_GATEWAY,
-                        format!("failed to read upstream response: {e}"),
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "failed to build proxy response",
                     );
                 }
             }
@@ -1776,6 +1786,16 @@ mod tests {
     use axum::http::HeaderValue;
 
     const TEST_SECRET: &str = "test-ws-secret-for-unit-tests";
+
+    #[test]
+    fn event_stream_requests_are_exempt_from_the_proxy_timeout() {
+        let mut headers = HeaderMap::new();
+        assert!(!wants_event_stream(&headers));
+        headers.insert(header::ACCEPT, HeaderValue::from_static("application/json"));
+        assert!(!wants_event_stream(&headers));
+        headers.insert(header::ACCEPT, HeaderValue::from_static("Text/Event-Stream"));
+        assert!(wants_event_stream(&headers));
+    }
 
     #[test]
     fn vnc_access_resolution() {

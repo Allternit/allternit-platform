@@ -146,3 +146,53 @@ describe('built-in agents', () => {
     expect(types).toContain('Plan')
   })
 })
+
+describe('/fork', () => {
+  test('asks for a fork through the Agent tool with the directive verbatim', async () => {
+    const fork = (await import('../src/cli/ui/ink-app/commands/fork/index')).default
+    const [block] = (await fork.getPromptForCommand('count the files  in src')) as Array<{ text: string }>
+    expect(block.text).toContain('WITHOUT subagent_type')
+    expect(block.text).toContain('<directive>\ncount the files  in src\n</directive>')
+  })
+
+  test('without a directive it only explains usage', async () => {
+    const fork = (await import('../src/cli/ui/ink-app/commands/fork/index')).default
+    const [block] = (await fork.getPromptForCommand('   ')) as Array<{ text: string }>
+    expect(block.text).toContain('usage is /fork <directive>')
+    expect(block.text).toContain('Do not call any tools')
+  })
+})
+
+describe('terminal panel', () => {
+  test('gate defaults on and each session gets its own gizzi-panel socket', async () => {
+    expect(gizziGateDefault('tengu_terminal_panel', false)).toBe(true)
+    const { getTerminalPanelSocket } = await import('../src/cli/ui/ink-app/utils/terminalPanel')
+    expect(getTerminalPanelSocket()).toMatch(/^gizzi-panel-[0-9a-f-]{8}$/)
+  })
+})
+
+describe('AST bash permission checks (TREE_SITTER_BASH)', () => {
+  test('simple commands split; substitutions fail closed', async () => {
+    const { parseCommandRaw } = await import('../src/cli/ui/ink-app/utils/bash/parser')
+    const { parseForSecurityFromAst } = await import('../src/cli/ui/ink-app/utils/bash/ast')
+    const check = async (cmd: string) => {
+      const root = await parseCommandRaw(cmd)
+      expect(root).not.toBeNull()
+      return parseForSecurityFromAst(cmd, root as never)
+    }
+    const simple = await check('git status && git diff')
+    expect(simple.kind).toBe('simple')
+    expect(simple.kind === 'simple' && simple.commands.map(c => c.text)).toEqual(['git status', 'git diff'])
+    expect((await check('echo $(rm -rf /)')).kind).toBe('too-complex')
+    expect((await check('eval "$X"')).kind).toBe('too-complex')
+  })
+})
+
+describe('shared memdir paths', () => {
+  test('resolve to the same directories as src/memdir', async () => {
+    const shared = await import('../src/shared/memdir/paths')
+    const real = await import('../src/memdir/paths')
+    expect(shared.getMemoryBaseDir()).toBe(real.getMemoryBaseDir())
+    expect(shared.isAutoMemoryEnabled()).toBe(real.isAutoMemoryEnabled())
+  })
+})

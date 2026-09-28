@@ -1,4 +1,3 @@
-// @ts-nocheck
 // biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 import { type as osType, version as osVersion, release as osRelease } from 'os'
 import { readGizziEnv } from '@/shared/utils/gizziEnv.js';
@@ -61,6 +60,7 @@ import { TICK_TAG } from './xml.js'
 import { logForDebugging } from '../utils/debug.js'
 import { loadMemoryPrompt } from '../memdir/memdir.js'
 import { isUndercover } from '../utils/undercover.js'
+import { getAntModelOverrideConfig } from '../utils/model/antModels.js'
 import { isMcpInstructionsDeltaEnabled } from '../utils/mcpInstructionsDelta.js'
 
 // Dead code elimination: conditional imports for feature-gated modules
