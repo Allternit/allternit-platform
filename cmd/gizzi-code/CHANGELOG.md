@@ -5,8 +5,12 @@
 Claude Code's interactive features, turned on and working with any provider.
 
 ### Added
-- `/buddy`: hatch a terminal companion that sits beside the prompt and reacts
-  to the session (`/buddy pet`, `/buddy mute`, `/buddy unmute`).
+- `/pet`: your Allternit bot as a terminal pet beside the prompt, the same
+  bot the Desktop pet wears (Gizzi by default). Open it with `/pet`, or ↓
+  then Enter, to get a small HUD: the bot's standing thread (the same one
+  Desktop shows), an incognito ask that's never saved (works offline on
+  gizzi's model), and a bot picker that also switches the Desktop pet.
+  Signed-in features use `gizzi login`. `/pet pat`, `/pet mute`, `/pet unmute`.
 - Ctrl+R opens a searchable prompt-history picker.
 - Scheduled prompts: the CronCreate, CronDelete and CronList tools run a
   prompt on a cron schedule for the rest of the session.
@@ -22,7 +26,7 @@ Claude Code's interactive features, turned on and working with any provider.
 - Interactive-only features (`/context`, file history, memory extraction)
   were silently off in the TUI.
 - Bash permission checks failed outside bypass mode.
-- Background model calls (recap, compaction, memory, buddy) failed with "Not
+- Background model calls (recap, compaction, memory, pet) failed with "Not
   logged in" when the model came from another provider. They now use the
   same provider as the main conversation.
 - `small_model` in gizzi.json was ignored. Background calls use it when its
@@ -31,11 +35,13 @@ Claude Code's interactive features, turned on and working with any provider.
   as `argument-hint: [system] [--source <path>]`) stopped every plugin from
   loading. gizzi now reads it as Claude Code does, and skips any file it
   still can't parse.
-- When the buddy spoke, its speech bubble drew over the prompt dividers and
+- When the pet spoke, its speech bubble drew over the prompt dividers and
   footer for several seconds, with footer text showing through the bubble.
   The layout engine reused cached sizes without re-positioning children;
   the prompt now narrows to make room as soon as the bubble appears.
 - A failed production build no longer leaves `bunfig.toml` deleted.
+- `/pet` hung when the small model couldn't be reached. It now falls back to
+  an offline name after 15 seconds, and pet reactions give up on time too.
 
 ## 2.1.3 (2026-09-26)
 

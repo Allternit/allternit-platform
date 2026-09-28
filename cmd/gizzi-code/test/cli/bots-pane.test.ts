@@ -256,9 +256,61 @@ describe("openBotCanonicalChat", () => {
       getLastSessionLog: async (sessionId: string) => ({ sessionId, messages: [] }),
       isLiteLog: () => false,
       loadFullLog: async (log: unknown) => log,
+      resolveHandoffHead: async () => null,
       ...overrides,
     }
   }
+
+  test("follows a handoff: opens the newest window seeded with the checkpoint", async () => {
+    const { createBot, getBot } = await import("../../src/runtime/bots/bot-store")
+    await createBot({ name: "scout", title: "Scout" })
+    const { openBotCanonicalChat } = await import(
+      "../../src/cli/ui/ink-app/screens/bots-pane/open-bot-chat"
+    )
+    const result = await openBotCanonicalChat("scout", {
+      ...fakeDeps(),
+      getBot,
+      // Desktop handed the chat off; the REPL has no transcript for the head.
+      resolveHandoffHead: async (id: string) =>
+        id === "ses_canonical_1"
+          ? { sessionId: "ses_head_2", checkpoint: "[checkpoint: window 1] Decided: ship 2.1.4 Friday.", generation: 2, reason: "threshold", at: "2026-09-27T10:02:00Z" }
+          : null,
+      getLastSessionLog: async () => null,
+      getResumeHandler: () => async (sessionId: string, log: any, entrypoint: string) => {
+        calls.resumed.push([sessionId, log, entrypoint])
+      },
+    })
+    expect(result.sessionId).toBe("ses_head_2")
+    expect(calls.switched).toEqual([])
+    const [[sessionId, log, entrypoint]] = calls.resumed as any
+    expect([sessionId, entrypoint]).toEqual(["ses_head_2", "bots_pane"])
+    // Drawn as the rip (boundary tagged with the handoff) and carried into
+    // the model's context as the compact summary.
+    expect(log.messages).toHaveLength(2)
+    expect(log.messages[0]).toMatchObject({ type: "system", subtype: "compact_boundary", sessionId: "ses_head_2", cwd: "/proj/demo" })
+    expect(log.messages[0].compactMetadata.handoff).toEqual({ generation: 2, reason: "threshold" })
+    expect(log.messages[1]).toMatchObject({ type: "user", isCompactSummary: true, isVisibleInTranscriptOnly: true })
+    expect(JSON.stringify(log.messages[1].message.content)).toContain("ship 2.1.4 Friday")
+  })
+
+  test("a head the REPL already knows resumes its own transcript", async () => {
+    const { createBot, getBot } = await import("../../src/runtime/bots/bot-store")
+    await createBot({ name: "scout", title: "Scout" })
+    const { openBotCanonicalChat } = await import(
+      "../../src/cli/ui/ink-app/screens/bots-pane/open-bot-chat"
+    )
+    const headLog = { sessionId: "ses_head_2", messages: [{ uuid: "m1" }] }
+    await openBotCanonicalChat("scout", {
+      ...fakeDeps(),
+      getBot,
+      resolveHandoffHead: async () => ({ sessionId: "ses_head_2", checkpoint: "x" }),
+      getLastSessionLog: async (id: string) => (id === "ses_head_2" ? headLog : null),
+      getResumeHandler: () => async (sessionId: string, log: unknown) => {
+        calls.resumed.push([sessionId, log])
+      },
+    })
+    expect(calls.resumed).toEqual([["ses_head_2", headLog]])
+  })
 
   test("opens the canonical chat, marks read, switches the ink session", async () => {
     const { createBot, getBot } = await import("../../src/runtime/bots/bot-store")

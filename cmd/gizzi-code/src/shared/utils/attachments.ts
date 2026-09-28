@@ -237,7 +237,7 @@ import {
 import { isInProcessTeammate } from './teammateContext.js'
 import { removeTeammateFromTeamFile } from './swarm/teamHelpers.js'
 import { unassignTeammateTasks } from './tasks.js'
-import { getCompanionIntroAttachment } from '../buddy/prompt.js'
+import { getCompanionIntroAttachment } from '../pet/prompt.js'
 
 export const TODO_REMINDER_CONFIG = {
   TURNS_SINCE_WRITE: 10,
@@ -688,7 +688,9 @@ export type Attachment =
   | {
       type: 'companion_intro'
       name: string
-      species: string
+      /** The bot's one-line description. Old transcripts carry `species` instead. */
+      description?: string
+      species?: string
     }
   | {
       type: 'bagel_console'
@@ -817,7 +819,7 @@ export async function getAttachments(
         ),
       ),
     ),
-    ...(feature('BUDDY')
+    ...(feature('PET')
       ? [
           maybe('companion_intro', () =>
             Promise.resolve(getCompanionIntroAttachment(messages)),

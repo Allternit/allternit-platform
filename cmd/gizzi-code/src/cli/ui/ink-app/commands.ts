@@ -132,8 +132,8 @@ const torch = feature('TORCH') ? safeRequire('./commands/torch.js')?.default : n
 const forkCmd = feature('FORK_SUBAGENT')
   ? safeRequire('./commands/fork/index.js')?.default
   : null
-const buddy = feature('BUDDY')
-  ? require('./commands/buddy/index.js').default
+const pet = feature('PET')
+  ? require('./commands/pet/index.js').default
   : null
 /* eslint-enable @typescript-eslint/no-require-imports */
 import think from './commands/think/index.js'
@@ -387,7 +387,7 @@ const COMMANDS = memoize((): Command[] => [
   vim,
   ...(webCmd ? [webCmd] : []),
   ...(forkCmd ? [forkCmd] : []),
-  ...(buddy ? [buddy] : []),
+  ...(pet ? [pet] : []),
   ...(proactive ? [proactive] : []),
   ...(briefCommand ? [briefCommand] : []),
   ...(assistantCommand ? [assistantCommand] : []),

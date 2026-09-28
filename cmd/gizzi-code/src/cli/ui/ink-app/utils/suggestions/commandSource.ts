@@ -142,7 +142,7 @@ const COMMAND_CATEGORIES: Record<string, SlashCategory> = {
   cowork: 'Agents',
   'cowork-project': 'Agents',
   swarm: 'Agents',
-  buddy: 'Agents',
+  pet: 'Agents',
   login: 'Account',
   logout: 'Account',
   upgrade: 'Account',

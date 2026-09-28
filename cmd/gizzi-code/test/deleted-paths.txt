@@ -2708,3 +2708,13 @@ src/shared/utils/postCommitAttribution.ts
 src/cli/ui/ink-app/services/skillSearch/prefetch.ts
 src/shared/tools/VerifyPlanExecutionTool/constants.ts
 src/cli/ui/ink-app/buddy/sprites.ts
+src/cli/ui/ink-app/buddy/CompanionSprite.tsx
+src/cli/ui/ink-app/buddy/companion.ts
+src/cli/ui/ink-app/buddy/gizziSprite.ts
+src/cli/ui/ink-app/buddy/observer.ts
+src/cli/ui/ink-app/buddy/prompt.ts
+src/cli/ui/ink-app/buddy/soul.ts
+src/cli/ui/ink-app/buddy/types.ts
+src/cli/ui/ink-app/buddy/useBuddyNotification.tsx
+src/cli/ui/ink-app/commands/buddy/buddy.ts
+src/shared/buddy/prompt.ts

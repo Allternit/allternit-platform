@@ -27,7 +27,7 @@ gizzi-code inherited 74 `feature('X')` flags (`import { feature } from 'bun:bund
 | AGENT_TRIGGERS | CronCreate / CronDelete / CronList | The tool wrappers were missing and were written 2026-09-26 on top of the existing scheduler. |
 | EXTRACT_MEMORIES | Background memory extraction after turns | Gate `tengu_passport_quail` defaults to true. Skips turns where the agent already wrote memory. |
 | TRANSCRIPT_CLASSIFIER | Auto mode | The classifier prompts were missing and were authored in `utils/permissions/yolo-classifier-prompts/`. Offered only for Claude Opus/Sonnet 4.6+ and later families on the Anthropic API. First entry shows a consent dialog. |
-| BUDDY | Companion sprite, `/buddy` | `/buddy` and the per-turn observer were missing and were written 2026-09-26. Uses the small model. |
+| PET | Terminal pet sprite, `/pet` | `/pet` and the per-turn observer were missing and were written 2026-09-26. Uses the small model. |
 
 ## Off, needing Anthropic services
 

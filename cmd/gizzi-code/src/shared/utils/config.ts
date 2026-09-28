@@ -273,10 +273,10 @@ export type GlobalConfig = {
     [tipId: string]: number // Key is tipId, value is the numStartups when tip was last shown
   }
 
-  // /buddy companion soul — bones regenerated from userId on read. See src/buddy/.
+  // /pet companion soul — bones regenerated from userId on read. See src/pet/.
   // Inlined shape (not import()) because config.ts is in the SDK build surface
   // and the SDK bundler can't resolve CLI modules. Keep in sync with
-  // src/cli/ui/ink-app/buddy/types.ts StoredCompanion.
+  // src/cli/ui/ink-app/pet/types.ts StoredCompanion.
   companion?: {
     name: string
     personality: string

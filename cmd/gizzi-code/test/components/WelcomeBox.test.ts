@@ -35,26 +35,26 @@ describe("text-only header mark", () => {
   })
 })
 
-describe("gizzi buddy sprite", () => {
+describe("gizzi pet sprite", () => {
   test("every pose fills the 12x5 companion slot", async () => {
-    const { gizziBuddyRows, GIZZI_BUDDY_WIDTH } = await import("../../src/cli/ui/ink-app/buddy/gizziSprite")
-    expect(GIZZI_BUDDY_WIDTH).toBe(12)
+    const { gizziPetRows, GIZZI_PET_WIDTH } = await import("../../src/cli/ui/ink-app/pet/gizziSprite")
+    expect(GIZZI_PET_WIDTH).toBe(12)
     for (const pose of ["idle", "blink", "glance", "wink"] as const) {
-      const rows = gizziBuddyRows(pose)
+      const rows = gizziPetRows(pose)
       expect(rows).toHaveLength(5)
       for (const row of rows) expect(row.map(([t]) => t).join("")).toHaveLength(12)
     }
   })
 
   test("blink hides the eyes; the other poses show them", async () => {
-    const { gizziBuddyRows } = await import("../../src/cli/ui/ink-app/buddy/gizziSprite")
-    const hasEye = (pose: any) => gizziBuddyRows(pose).some(r => r.some(([, fg, bg]) => fg === EYE || bg === EYE))
+    const { gizziPetRows } = await import("../../src/cli/ui/ink-app/pet/gizziSprite")
+    const hasEye = (pose: any) => gizziPetRows(pose).some(r => r.some(([, fg, bg]) => fg === EYE || bg === EYE))
     expect(hasEye("blink")).toBe(false)
     for (const pose of ["idle", "glance", "wink"]) expect(hasEye(pose)).toBe(true)
   })
 
   test("the beacon takes the pulse color", async () => {
-    const { gizziBuddyRows } = await import("../../src/cli/ui/ink-app/buddy/gizziSprite")
-    expect(gizziBuddyRows("idle", "gizziShimmer")[0]!.some(([, fg]) => fg === "gizziShimmer")).toBe(true)
+    const { gizziPetRows } = await import("../../src/cli/ui/ink-app/pet/gizziSprite")
+    expect(gizziPetRows("idle", "gizziShimmer")[0]!.some(([, fg]) => fg === "gizziShimmer")).toBe(true)
   })
 })
