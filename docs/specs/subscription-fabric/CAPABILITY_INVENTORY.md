@@ -20,6 +20,11 @@ unverified). Enforcement noted by OpenAI: temporary usage restrictions. This is
 not legal advice; it is an explicit owner go/no-go (and applies to the existing
 `chatgpt-image` lane too).
 
+**Decided (owner, 2026-09-28) → HARDENING D16:** offer it, with a provider-terms
+disclosure acknowledged on first selection, and a human-initiated send for every
+task (mid-task provider questions answered by a human; agents/bots/schedules may
+only prepare a task that a human confirms).
+
 ## 1. Model-selector entries (chat → `subs/<provider>:<model_class>`)
 
 Keep the four router classes; add finer model ids + an `effort` parameter,
@@ -87,7 +92,7 @@ Files), **approval** (cowork approval card), **MCP** (tool for gizzi-code / bots
 
 ## 5. Build order (P5–P6 as revised with the owner, 2026-09-28)
 
-1. **Owner decision on §0.**
+1. ~~Owner decision on §0~~ — decided: D16 (disclosure + human send).
 2. **Sessions machine = the permanent home** (done 2026-09-28: Desktop-registered `sessions` computer, reached via the Desktop API proxy).
 3. **P5a claude-web:** chat (+ model/effort), artifacts → `website.*`/`document.*`/`presentation.*` (Docs/Slides/Design), file creation, research. Owner logs in once via the Sessions machine's streamed display.
 4. **P5b kimi-web (kimi.ai):** chat, Agent → slides/docs/sheets/websites (detached), deep research (clarify step), Design images, video.
