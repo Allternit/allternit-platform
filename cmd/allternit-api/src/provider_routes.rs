@@ -70,6 +70,12 @@ pub fn provider_router() -> Router<Arc<AppState>> {
             post(crate::media::handlers::generate_image),
         )
         .route(
+            "/media/artifacts",
+            post(crate::media::handlers::upload_media_artifact).layer(
+                axum::extract::DefaultBodyLimit::max(crate::media::handlers::MAX_UPLOAD_BYTES),
+            ),
+        )
+        .route(
             "/media/artifacts/:artifact_id",
             get(crate::media::handlers::get_media_artifact),
         )

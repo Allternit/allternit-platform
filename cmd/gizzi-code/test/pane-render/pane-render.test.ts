@@ -45,6 +45,24 @@ describe("PaneRender", () => {
     })
   })
 
+  test("a video request carries its own timeout and the reply's video", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const pending = PaneRender.request(
+          { sessionID: "ses_test", kind: "video", format: "canvas", code: "x", width: 64, height: 64, duration: 2, fps: 30, title: "v" },
+          { timeoutMs: 300_000 },
+        )
+        const [req] = await PaneRender.list()
+        expect(req).toMatchObject({ kind: "video", duration: 2, fps: 30, timeoutMs: 300_000 })
+        const video = { url: "/api/v1/media/artifacts/x", mime: "video/mp4", bytes: 10, duration: 2, fps: 30 }
+        expect(await PaneRender.reply({ requestID: req.id, result: { ok: true, video } })).toBe(true)
+        expect(await pending).toEqual({ ok: true, video })
+      },
+    })
+  })
+
   test("unknown replies are refused", async () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({

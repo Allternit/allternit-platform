@@ -500,6 +500,65 @@ pub async fn generate_image(
     }
 }
 
+/// Largest file the app may store (a natively rendered MP4). The route's body
+/// limit matches.
+pub const MAX_UPLOAD_BYTES: usize = 256 * 1024 * 1024;
+
+/// Store a file the app made itself (the media_generate native lane renders
+/// and encodes video in the app). Only media types are accepted, and the
+/// artifact is scoped to the uploading user like any other.
+pub fn store_uploaded_artifact_core(
+    db: &DbHandle,
+    user_id: &str,
+    content_type: Option<&str>,
+    bytes: &[u8],
+) -> Result<Value, CoreError> {
+    let content_type = content_type
+        .map(|v| v.split(';').next().unwrap_or("").trim().to_ascii_lowercase())
+        .unwrap_or_default();
+    let allowed = matches!(
+        content_type.as_str(),
+        "video/mp4" | "video/webm" | "image/png" | "image/jpeg" | "image/webp" | "audio/mp4" | "audio/mpeg" | "audio/wav"
+    );
+    if !allowed {
+        return Err(bad_request("Only video/mp4, video/webm, PNG/JPEG/WebP images and MP4/MP3/WAV audio can be stored"));
+    }
+    if bytes.is_empty() {
+        return Err(bad_request("The file is empty"));
+    }
+    if bytes.len() > MAX_UPLOAD_BYTES {
+        return Err(bad_request("The file is larger than 256 MB"));
+    }
+    let artifact_id = insert_artifact(db, user_id, None, &content_type, bytes).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "error": "db", "message": e.to_string() }),
+        )
+    })?;
+    Ok(json!({
+        "artifact_id": artifact_id,
+        "artifact_url": format!("/api/v1/media/artifacts/{artifact_id}"),
+        "content_type": content_type,
+        "bytes": bytes.len(),
+    }))
+}
+
+pub async fn upload_media_artifact(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    let user = match get_user(&headers) {
+        Some(user) => user,
+        None => return unauthorized(),
+    };
+    let content_type = headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok());
+    match store_uploaded_artifact_core(&state.db, &user.user_id, content_type, &body) {
+        Ok(value) => (StatusCode::CREATED, Json(value)).into_response(),
+        Err(e) => core_err(e),
+    }
+}
+
 pub async fn get_media_artifact(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,

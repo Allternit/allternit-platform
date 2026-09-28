@@ -12,8 +12,8 @@ use super::clients::{
     MediaTransport, ProviderKey, VideoBackend, VideoJobHandle, VideoJobSubmit, VideoPoll,
 };
 use super::handlers::{
-    generate_image_core, get_video_job_core, job_artifact_core, submit_video_job_core,
-    GenerateImageRequest, SubmitVideoRequest,
+    generate_image_core, get_video_job_core, job_artifact_core, store_uploaded_artifact_core,
+    submit_video_job_core, GenerateImageRequest, SubmitVideoRequest, MAX_UPLOAD_BYTES,
 };
 use super::{get_artifact, get_job, resolve_provider_key};
 use crate::db::DbHandle;
@@ -958,4 +958,33 @@ async fn video_job_route_requires_auth_and_rejects_missing_key() {
         .unwrap();
     let payload: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(payload["error"], "no_provider_key");
+}
+
+// ─── App uploads (native lane) ───────────────────────────────────────────────
+
+#[test]
+fn uploaded_video_is_stored_for_its_user_only() {
+    let db = DbHandle::new_memory().unwrap();
+    let value = store_uploaded_artifact_core(&db, "u1", Some("video/mp4; codecs=avc1"), b"mp4-bytes").unwrap();
+    let id = value["artifact_id"].as_str().unwrap();
+    assert_eq!(value["artifact_url"], format!("/api/v1/media/artifacts/{id}"));
+    assert_eq!(value["content_type"], "video/mp4");
+    let row = get_artifact(&db, id, "u1").unwrap().unwrap();
+    assert_eq!(row.bytes, b"mp4-bytes");
+    assert_eq!(row.content_type, "video/mp4");
+    assert!(get_artifact(&db, id, "u2").unwrap().is_none());
+}
+
+#[test]
+fn uploads_refuse_non_media_empty_and_oversized_files() {
+    let db = DbHandle::new_memory().unwrap();
+    for ct in [None, Some("text/html"), Some("application/javascript"), Some("image/svg+xml")] {
+        let (status, _) = store_uploaded_artifact_core(&db, "u1", ct, b"x").unwrap_err();
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST, "{ct:?}");
+    }
+    let (status, _) = store_uploaded_artifact_core(&db, "u1", Some("video/mp4"), b"").unwrap_err();
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    let big = vec![0u8; MAX_UPLOAD_BYTES + 1];
+    let (status, _) = store_uploaded_artifact_core(&db, "u1", Some("video/mp4"), &big).unwrap_err();
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
 }
