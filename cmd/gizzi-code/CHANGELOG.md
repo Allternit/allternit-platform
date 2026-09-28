@@ -1,16 +1,34 @@
 # Changelog
 
-## 2.1.4 (2026-09-26)
+## 2.1.4 (2026-09-28)
 
-Claude Code's interactive features, turned on and working with any provider.
+Claude Code's interactive features working with any provider, your
+Allternit bots in the terminal, and conversations that survive full context
+windows and usage limits.
 
 ### Added
+- A new startup header: the GIZZI CODE mark and wordmark as images in
+  iTerm2, WezTerm, Ghostty and Kitty, and drawn in text in Apple Terminal
+  and tmux, with the version, model and folder beside it.
 - `/pet`: your Allternit bot as a terminal pet beside the prompt, the same
   bot the Desktop pet wears (Gizzi by default). Open it with `/pet`, or ↓
   then Enter, to get a small HUD: the bot's standing thread (the same one
   Desktop shows), an incognito ask that's never saved (works offline on
   gizzi's model), and a bot picker that also switches the Desktop pet.
   Signed-in features use `gizzi login`. `/pet pat`, `/pet mute`, `/pet unmute`.
+- Context handoff: a conversation past 70% of its model's window moves to a
+  fresh, linked window seeded with a checkpoint, between turns or before a
+  switch to a smaller-window model. The terminal draws it as the rip
+  ("Fresh context · 10:02 PM · context was getting full"), in the main chat,
+  bot chats opened from `/bots`, and the pet HUD.
+- Usage limits: a session about to hit a provider limit, or that just hit
+  one, pauses instead of failing and resumes when the limit resets
+  ("Paused until 7:40 PM · Claude 5-hour limit · resumes on its own").
+  `limits.fallback` can suggest, or switch to, the model with the most limit
+  left.
+- Tools for the app's side panes: `pane_browser` acts on the page in the
+  browser pane, and `pane_artifact` reads and edits the document open in the
+  artifact pane.
 - Ctrl+R opens a searchable prompt-history picker.
 - Scheduled prompts: the CronCreate, CronDelete and CronList tools run a
   prompt on a cron schedule for the rest of the session.
@@ -21,6 +39,7 @@ Claude Code's interactive features, turned on and working with any provider.
 - Memory extraction, message actions, quick open, an Auto option in `/theme`,
   ultrathink, token budgets, rich MCP output, clipboard image paste, hook
   prompts, compaction reminders, and the Explore and Plan agents.
+- Connectors switched off in the app's + menu can't run actions that turn.
 
 ### Fixed
 - Interactive-only features (`/context`, file history, memory extraction)
@@ -40,6 +59,14 @@ Claude Code's interactive features, turned on and working with any provider.
   The layout engine reused cached sizes without re-positioning children;
   the prompt now narrows to make room as soon as the bubble appears.
 - A failed production build no longer leaves `bunfig.toml` deleted.
+- Pressing ctrl+o (the transcript view) crashed the whole TUI.
+- Diffs and highlighted files used 24-bit color even in terminals that
+  can't show it. They follow the terminal's color depth now, with Claude
+  Code's diff gutter and prompt wrapping.
+- The terminal pet could look bent, with rows shifted one cell sideways.
+- Helper processes gizzi starts (mesh-node, tailscaled, cloudflared,
+  allternit-mux) no longer outlive it, and a stray pipe close no longer
+  stops a helper that is still in use.
 - `/pet` hung when the small model couldn't be reached. It now falls back to
   an offline name after 15 seconds, and pet reactions give up on time too.
 
