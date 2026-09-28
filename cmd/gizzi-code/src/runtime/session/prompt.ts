@@ -1287,6 +1287,15 @@ const message = await createUserMessage(input)
           },
         )
 
+        // Composer + menu → Connectors: a connector turned off for this
+        // session can't be used, even though the dispatcher tool is loaded.
+        const offConnector = disabledConnectorFor(mobileOptions, args)
+        if (offConnector) {
+          throw new Error(
+            `The ${offConnector} connector is turned off for this session. Tell the user it's off; they can turn it on from the + menu → Connectors.`,
+          )
+        }
+
         await ctx.ask({
           permission: key,
           metadata: {},
@@ -1402,12 +1411,33 @@ const message = await createUserMessage(input)
     webSearch: z.boolean().optional(),
     research: z.boolean().optional(),
     toolAccess: z.enum(["auto", "on_demand", "always"]).optional(),
+    disabledConnectors: z.array(z.string()).optional(),
   })
 
   export interface MobileToolOptions {
     webSearch?: boolean
     research?: boolean
     toolAccess?: "auto" | "on_demand" | "always"
+    /** Connector ids (open-connector app ids, e.g. "github") the user turned
+     * off for this session in the composer's + menu. */
+    disabledConnectors?: string[]
+  }
+
+  /**
+   * The connector a tool call would use when the user turned it off for this
+   * turn, else undefined. Connector actions go through the connector MCP's
+   * dispatcher tools with an `actionId` of `<app>.<action>`
+   * (services/open-connector/src/mcp.ts).
+   *
+   * @internal Exported for testing
+   */
+  export function disabledConnectorFor(options: MobileToolOptions | undefined, args: unknown): string | undefined {
+    const disabled = options?.disabledConnectors
+    if (!disabled?.length || !args || typeof args !== "object") return undefined
+    const actionId = (args as { actionId?: unknown }).actionId
+    if (typeof actionId !== "string") return undefined
+    const app = actionId.split(".")[0]?.toLowerCase()
+    return disabled.find((id) => id.toLowerCase() === app)
   }
 
   /**

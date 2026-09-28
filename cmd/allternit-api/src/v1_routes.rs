@@ -1280,13 +1280,10 @@ async fn agent_chat_bridge(
             gizzi_payload["system"] = json!(format!("+{}", system_prompt.trim()));
         }
 
-        // Composer tool options (mobile "+" sheet): `metadata.tools` carries
-        // {webSearch, research, toolAccess: "auto"|"on_demand"|"always"}.
-        // Stashed into the gizzi payload metadata so the runtime can see the
-        // user's choices.
-        // TODO(runtime): gizzi currently ignores `metadata.tools` — wire the
-        // web-search/research tool gating and tool-access mode into the
-        // runtime once it supports per-request tool configuration.
+        // Composer tool options (the + menu / mobile "+" sheet):
+        // `metadata.tools` carries {webSearch, research, toolAccess:
+        // "auto"|"on_demand"|"always", disabledConnectors: [app ids]}. gizzi
+        // applies them to this turn only (SessionPrompt.resolveTools).
         if let Some(tools) = body_json
             .get("metadata")
             .and_then(|m| m.get("tools"))
