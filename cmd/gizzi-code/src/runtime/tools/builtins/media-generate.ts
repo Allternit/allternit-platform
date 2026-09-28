@@ -3,6 +3,15 @@ import { Tool } from "@/runtime/tools/builtins/tool"
 import { PaneRender } from "@/runtime/integrations/pane-render"
 import DESCRIPTION from "@/runtime/tools/builtins/media-generate.txt"
 
+interface Meta {
+  ok: boolean
+  lane: string | null
+  format?: string
+  width?: number
+  height?: number
+}
+const meta = (m: Meta): Meta => m
+
 const MAX_CODE = 400_000
 const MIN_SIDE = 64
 const MAX_SIDE = 4096
@@ -29,7 +38,7 @@ export const MediaGenerateTool = Tool.define("media_generate", {
         title: "Video: not available yet",
         output:
           "Video generation isn't available in this build yet (native video is the next release). Tell the user, and offer a still image or a storyboard instead.",
-        metadata: { ok: false, lane: null },
+        metadata: meta({ ok: false, lane: null }),
       }
     }
     const lane = params.lane ?? (params.code ? "native" : undefined)
@@ -43,7 +52,7 @@ export const MediaGenerateTool = Tool.define("media_generate", {
           "Available now: native — write the image as svg, html or canvas code and call media_generate again with lane \"native\", format and code.",
           "If the request needs a photo-realistic image, ask the user in the chat how to proceed (e.g. a stylized native version).",
         ].join("\n"),
-        metadata: { ok: false, lane: lane ?? null },
+        metadata: meta({ ok: false, lane: lane ?? null }),
       }
     }
     if (!params.format || !params.code?.trim()) {
@@ -74,13 +83,13 @@ export const MediaGenerateTool = Tool.define("media_generate", {
       return {
         title: `Image: ${title} — render failed`,
         output: `The render failed: ${result.error ?? "no image came back"}. Fix the code and call again with the same title.`,
-        metadata: { ok: false, lane: "native", format: params.format, width, height },
+        metadata: meta({ ok: false, lane: "native", format: params.format, width, height }),
       }
     }
     return {
       title: `Image: ${title}`,
       output: `Rendered "${title}" (${width}×${height}, ${params.format}). It's in the session's Outputs. The PNG is attached: check it against the request, and if anything is off, call again with the same title and fixed code.`,
-      metadata: { ok: true, lane: "native", format: params.format, width, height },
+      metadata: meta({ ok: true, lane: "native", format: params.format, width, height }),
       attachments: [{ type: "file" as const, mime: "image/png", url: result.image, filename: `${title}.png` }],
     }
   },
