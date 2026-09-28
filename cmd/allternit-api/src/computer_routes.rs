@@ -177,6 +177,9 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/computers/:id/stop", post(stop_computer))
         .route("/computers/:id/delete", post(delete_computer))
         .route("/computers/:id/session-end", post(session_end_computer))
+        .route("/computers/:id/control", get(get_computer_control))
+        .route("/computers/:id/control/take", post(take_computer_control))
+        .route("/computers/:id/control/release", post(release_computer_control))
         .route("/computers/:id/screenshot", get(computer_screenshot))
         .route("/computers/:id/mouse", post(computer_mouse))
         .route("/computers/:id/keyboard", post(computer_keyboard))
@@ -1308,11 +1311,139 @@ async fn computer_screenshot(
         .into_response()
 }
 
+// ---------------------------------------------------------------------------
+// Control lease (ACI P4): one controller per computer, across devices.
+// ---------------------------------------------------------------------------
+
+use crate::computer_control_lease::{self as lease, Holder, HolderKind, Lease, TakeError};
+
+/// The calling person, on the device they're using (Settings → Cowork id).
+fn user_holder(user: &AuthUser, headers: &axum::http::HeaderMap) -> Holder {
+    Holder {
+        kind: HolderKind::User,
+        id: user.user_id.clone(),
+        label: user.name.clone().or_else(|| user.email.clone()),
+        device_id: headers
+            .get(crate::cowork_devices_routes::DEVICE_ID_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string),
+    }
+}
+
+fn held_response(lease: &Lease) -> Response {
+    (
+        StatusCode::LOCKED,
+        Json(json!({
+            "error": "computer_controlled_elsewhere",
+            "message": format!(
+                "{} is controlling this computer. Take over to control it.",
+                lease.holder.label.clone().unwrap_or_else(|| "Someone else".to_string())
+            ),
+            "control": lease,
+        })),
+    )
+        .into_response()
+}
+
+/// Input is allowed when nobody holds control or the caller does.
+async fn control_gate(state: &Arc<AppState>, computer_id: &str, caller: &Holder) -> Result<(), Response> {
+    let db = state.db.clone();
+    let (id, caller) = (computer_id.to_string(), caller.clone());
+    let verdict = tokio::task::spawn_blocking(move || {
+        let conn = db.connect()?;
+        lease::check_input(&conn, &id, &caller, chrono::Utc::now().timestamp())
+    })
+    .await;
+    match verdict {
+        Ok(Ok(Ok(()))) => Ok(()),
+        Ok(Ok(Err(held))) => Err(held_response(&held)),
+        Ok(Err(e)) => Err(error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
+        Err(_) => Err(error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error")),
+    }
+}
+
+async fn get_computer_control(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+) -> Response {
+    match fetch_computer(&state, &user, &id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
+        Err(resp) => return resp,
+    }
+    let db = state.db.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = db.connect()?;
+        lease::current(&conn, &id, chrono::Utc::now().timestamp())
+    })
+    .await;
+    match result {
+        Ok(Ok(control)) => Json(json!({ "control": control })).into_response(),
+        Ok(Err(e)) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        Err(_) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+    }
+}
+
+/// Take control (Take over), or renew it while holding it.
+async fn take_computer_control(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    match fetch_computer(&state, &user, &id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
+        Err(resp) => return resp,
+    }
+    let taker = user_holder(&user, &headers);
+    let db = state.db.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = db.connect().map_err(|e| TakeError::Db(e.to_string()))?;
+        lease::take(&conn, &id, &taker, chrono::Utc::now().timestamp())
+    })
+    .await;
+    match result {
+        Ok(Ok(control)) => Json(json!({ "control": control })).into_response(),
+        Ok(Err(TakeError::Held(held))) => held_response(&held),
+        Ok(Err(TakeError::Db(e))) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e),
+        Err(_) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+    }
+}
+
+/// Hand control back.
+async fn release_computer_control(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    match fetch_computer(&state, &user, &id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
+        Err(resp) => return resp,
+    }
+    let releaser = user_holder(&user, &headers);
+    let db = state.db.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = db.connect()?;
+        lease::release(&conn, &id, &releaser, chrono::Utc::now().timestamp())
+    })
+    .await;
+    match result {
+        Ok(Ok(released)) => Json(json!({ "released": released, "control": serde_json::Value::Null })).into_response(),
+        Ok(Err(e)) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        Err(_) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+    }
+}
+
 async fn computer_mouse(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<String>,
     Query(approval): Query<ApprovalQuery>,
+    headers: axum::http::HeaderMap,
     Json(input): Json<MouseInput>,
 ) -> Response {
     // Product-scoped confirmation policy (D2): risky/irreversible actions on
@@ -1331,6 +1462,9 @@ async fn computer_mouse(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(resp) => return resp,
     };
+    if let Err(resp) = control_gate(&state, &id, &user_holder(&user, &headers)).await {
+        return resp;
+    }
     touch_computer_activity(&state.db, &id);
     let sandbox_id = match computer.native_id.as_deref() {
         Some(id) => id,
@@ -1352,6 +1486,7 @@ async fn computer_keyboard(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<String>,
     Query(approval): Query<ApprovalQuery>,
+    headers: axum::http::HeaderMap,
     Json(input): Json<KeyboardInput>,
 ) -> Response {
     if let Err(denial) = enforce_control_confirmation(
@@ -1367,6 +1502,9 @@ async fn computer_keyboard(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(resp) => return resp,
     };
+    if let Err(resp) = control_gate(&state, &id, &user_holder(&user, &headers)).await {
+        return resp;
+    }
     touch_computer_activity(&state.db, &id);
     let sandbox_id = match computer.native_id.as_deref() {
         Some(id) => id,
@@ -1388,6 +1526,7 @@ async fn computer_shell(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<String>,
     Query(approval): Query<ApprovalQuery>,
+    headers: axum::http::HeaderMap,
     Json(input): Json<ShellInput>,
 ) -> Response {
     if let Err(denial) = enforce_control_confirmation(
@@ -1403,6 +1542,9 @@ async fn computer_shell(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(resp) => return resp,
     };
+    if let Err(resp) = control_gate(&state, &id, &user_holder(&user, &headers)).await {
+        return resp;
+    }
     touch_computer_activity(&state.db, &id);
     let sandbox_id = match computer.native_id.as_deref() {
         Some(id) => id,
