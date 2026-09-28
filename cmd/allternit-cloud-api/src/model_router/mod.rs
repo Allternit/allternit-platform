@@ -72,11 +72,60 @@ impl From<ModelRouterError> for crate::ApiError {
     }
 }
 
-/// A single message in a chat completion conversation.
+/// A single message in a chat completion conversation, passed to the upstream
+/// as sent. OpenAI-compatible clients (gizzi's agent loop, the AI SDK) send
+/// `content` as a string, an array of content parts (text, image_url…), or
+/// null on an assistant turn that only calls tools, and carry `tool_calls`,
+/// `tool_call_id` and `name` on the message. A `content: String` field with
+/// nothing else rejected every real agent turn with a 422 and dropped tool
+/// calls between rounds.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: String,
-    pub content: String,
+    #[serde(default)]
+    pub content: serde_json::Value,
+    /// `tool_calls`, `tool_call_id`, `name`, `reasoning_content`… verbatim.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl Message {
+    /// A plain text message.
+    pub fn text(role: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: role.into(),
+            content: serde_json::Value::String(content.into()),
+            extra: serde_json::Map::new(),
+        }
+    }
+
+    /// Characters of prompt this message carries, for usage estimates: its
+    /// text (a string, or the text parts of an array) plus any tool-call
+    /// arguments. Images and other non-text parts count as nothing.
+    pub fn content_chars(&self) -> usize {
+        let text = match &self.content {
+            serde_json::Value::String(s) => s.len(),
+            serde_json::Value::Array(parts) => parts
+                .iter()
+                .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                .map(str::len)
+                .sum(),
+            _ => 0,
+        };
+        let tool_args: usize = self
+            .extra
+            .get("tool_calls")
+            .and_then(|v| v.as_array())
+            .map(|calls| {
+                calls
+                    .iter()
+                    .filter_map(|c| c.pointer("/function/arguments").and_then(|a| a.as_str()))
+                    .map(str::len)
+                    .sum()
+            })
+            .unwrap_or(0);
+        text + tool_args
+    }
 }
 
 /// User-facing chat completion request. OpenAI-compatible subset.

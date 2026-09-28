@@ -79,10 +79,7 @@ async fn disabled_router_list_models_returns_static_catalog() {
 async fn chat_completion_request_detects_streaming() {
     let non_stream = ChatCompletionRequest {
         model: "gpt-4o".to_string(),
-        messages: vec![Message {
-            role: "user".to_string(),
-            content: "hello".to_string(),
-        }],
+        messages: vec![Message::text("user", "hello")],
         temperature: None,
         max_tokens: None,
         stream: None,
@@ -177,10 +174,7 @@ mod pricing {
     fn request(model: &str, stream: bool) -> ChatCompletionRequest {
         ChatCompletionRequest {
             model: model.to_string(),
-            messages: vec![Message {
-                role: "user".to_string(),
-                content: "hello".to_string(),
-            }],
+            messages: vec![Message::text("user", "hello")],
             temperature: None,
             max_tokens: None,
             stream: if stream { Some(true) } else { None },
@@ -279,4 +273,36 @@ mod pricing {
             "an explicit caller value is never overwritten"
         );
     }
+}
+
+#[test]
+fn messages_accept_openai_content_parts_and_keep_tool_fields() {
+    let body = serde_json::json!({
+        "model": "deepseek-v4-pro",
+        "messages": [
+            { "role": "system", "content": "You are helpful." },
+            { "role": "user", "content": [
+                { "type": "text", "text": "Make a poster" },
+                { "type": "image_url", "image_url": { "url": "data:image/png;base64,AA==" } }
+            ] },
+            { "role": "assistant", "content": null, "tool_calls": [
+                { "id": "call_1", "type": "function", "function": { "name": "media_generate", "arguments": "{\"kind\":\"image\"}" } }
+            ] },
+            { "role": "tool", "tool_call_id": "call_1", "content": "Rendered" }
+        ],
+        "tools": [{ "type": "function", "function": { "name": "media_generate", "parameters": { "type": "object" } } }]
+    });
+    let req: ChatCompletionRequest = serde_json::from_value(body).expect("OpenAI-shaped request parses");
+    assert_eq!(req.messages.len(), 4);
+    assert_eq!(req.messages[1].content_chars(), "Make a poster".len());
+    assert_eq!(req.messages[2].content_chars(), r#"{"kind":"image"}"#.len());
+    assert!(req.extra.contains_key("tools"));
+
+    // Round-trips to the upstream unchanged: parts, null content, tool fields.
+    let out = serde_json::to_value(&req).unwrap();
+    assert_eq!(out["messages"][1]["content"][1]["type"], "image_url");
+    assert!(out["messages"][2]["content"].is_null());
+    assert_eq!(out["messages"][2]["tool_calls"][0]["id"], "call_1");
+    assert_eq!(out["messages"][3]["tool_call_id"], "call_1");
+    assert_eq!(out["tools"][0]["function"]["name"], "media_generate");
 }
