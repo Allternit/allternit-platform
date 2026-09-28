@@ -52,7 +52,7 @@ import { exportHermesRouting } from './hermes-routing-bridge.js';
 import { OfficeAddinManager, type OfficeProductId } from './office-addin-manager.js';
 
 import { tunnelManager } from './tunnel-manager.js';
-import { authManager } from './auth-manager.js';
+import { authManager, FULL_CLERK_REFRESH_WAIT_MS } from './auth-manager.js';
 import { devicePairingManager } from './device-pairing-manager.js';
 import { meshManager } from './mesh-manager.js';
 import { startMeshBridgeServer } from './mesh-bridge-server.js';
@@ -2425,7 +2425,7 @@ async function handoffInFlightToCloud(): Promise<void> {
   const headers = backendManager.getLocalAuthHeaders();
   const api = backendManager.getUrl();
   try {
-    const ensureClerk = await authManager.getClerkToken();
+    const ensureClerk = await authManager.getClerkToken(FULL_CLERK_REFRESH_WAIT_MS);
     if (ensureClerk) {
       const ensure = await fetch(`${URLS.CLOUD_API}/api/v1/continuation/ensure`, {
         method: 'POST',
@@ -2450,7 +2450,7 @@ async function handoffInFlightToCloud(): Promise<void> {
       forwarded?: number;
       target?: string;
     };
-    const clerk = ensureClerk ?? (await authManager.getClerkToken());
+    const clerk = ensureClerk ?? (await authManager.getClerkToken(FULL_CLERK_REFRESH_WAIT_MS));
     let relayed = 0;
     if (clerk && body.jobs?.length) {
       for (const job of body.jobs) {
@@ -2744,7 +2744,7 @@ function openPairingApproval(code: string): void {
   void approvePairing(code, {
     cloudApiBase: process.env.ALLTERNIT_CLOUD_API_URL || URLS.CLOUD_API,
     hostedPairUrl: (c) => new URL(`/pair?code=${encodeURIComponent(c)}`, URLS.PLATFORM).toString(),
-    getClerkToken: () => authManager.getClerkToken(),
+    getClerkToken: () => authManager.getClerkToken(FULL_CLERK_REFRESH_WAIT_MS),
     fetch: (input, init) => fetch(input, init),
     confirm: async (request) => {
       const parent = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.isVisible());
