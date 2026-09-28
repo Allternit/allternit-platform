@@ -26,11 +26,18 @@ import log from 'electron-log';
 import WebSocket from 'ws';
 import { URLS } from './config.js';
 import { isDesktopAuthNavigation } from './desktop-auth-url.js';
+import { ClerkTokenBroker } from './clerk-token-broker.js';
 
 const RUNTIME_CLIENT_ID = 'allternit-desktop-runtime';
 const PAIRING_TIMEOUT_MS = 10 * 60 * 1000;
 const ROTATION_SKEW_MS = 7 * 24 * 60 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 45 * 1000;
+// Longest a request may wait for a Clerk token when none is cached. The
+// renderer's value is decorative on Desktop (main injects credentials).
+const REQUEST_CLERK_WAIT_MS = 4_000;
+const RENDERER_CLERK_WAIT_MS = 1_500;
+// One-shot flows that need a real token wait out a full hidden refresh.
+export const FULL_CLERK_REFRESH_WAIT_MS = 25_000;
 const SAFE_STORAGE_HEADER = 'allternit-safe-storage-v1\n';
 const LOCAL_STORAGE_HEADER = 'allternit-local-aes-gcm-v1\n';
 
@@ -218,9 +225,15 @@ export class DesktopAuthManager {
   private authSessionProtocolRegistered = false;
   private oauthPopupInFlight = false;
   private pendingClerkEmail: string | null = null;
-  private clerkTokenCache: { token: string; expiresAt: number } | null = null;
-  private clerkTokenInFlight: Promise<string | null> | null = null;
-  private clerkTokenFailureUntil = 0;
+  // Clerk session JWT for cloud calls. Never makes a caller wait out the
+  // hidden-window refresh (see clerk-token-broker.ts).
+  private readonly clerkTokens = new ClerkTokenBroker({
+    refresh: () => this.refreshClerkToken(),
+    expiresAt: jwtExpiresAt,
+    onFailure: (error, retryInMs) => {
+      log.warn(`[Auth] Could not refresh Clerk session token (next try in ${Math.round(retryInMs / 1000)}s):`, error);
+    },
+  });
 
   constructor() {
     ipcMain.on('auth:start-login', () => {
@@ -247,7 +260,9 @@ export class DesktopAuthManager {
       this.clerkTokenRejecter = null;
     });
 
-    ipcMain.handle('auth:get-clerk-token', () => this.getClerkToken());
+    // The renderer asks on every runtime API call; Electron main injects the
+    // real credentials, so this must never hold a request up.
+    ipcMain.handle('auth:get-clerk-token', () => this.getClerkToken(RENDERER_CLERK_WAIT_MS));
 
     ipcMain.handle('auth:clerk-error', (_event, message: string) => {
       log.warn('[Auth] Clerk renderer error:', message);
@@ -880,42 +895,34 @@ export class DesktopAuthManager {
   }
 
   private cacheClerkToken(token: string): void {
-    if (!token) return;
-    this.clerkTokenFailureUntil = 0;
-    this.clerkTokenCache = {
-      token,
-      expiresAt: jwtExpiresAt(token) ?? Date.now() + 50_000,
-    };
+    this.clerkTokens.remember(token);
   }
 
-  async getClerkToken(): Promise<string | null> {
-    if (this.clerkTokenCache && this.clerkTokenCache.expiresAt - 10_000 > Date.now()) {
-      return this.clerkTokenCache.token;
-    }
-    if (Date.now() < this.clerkTokenFailureUntil) return null;
-    if (this.clerkTokenInFlight) return this.clerkTokenInFlight;
-    this.clerkTokenInFlight = this.refreshClerkToken().finally(() => {
-      this.clerkTokenInFlight = null;
-    });
-    return this.clerkTokenInFlight;
+  /**
+   * The Clerk session JWT without stalling on a refresh: a cached token comes
+   * back at once (a near-expiry one refreshes in the background); with none,
+   * wait at most `maxWaitMs`. One-shot flows that need a real token (pairing
+   * approval, quit-time handoff) pass a longer wait.
+   */
+  async getClerkToken(maxWaitMs = REQUEST_CLERK_WAIT_MS): Promise<string | null> {
+    return this.clerkTokens.get(maxWaitMs);
   }
 
-  private async refreshClerkToken(): Promise<string | null> {
+  private async refreshClerkToken(): Promise<string> {
     if (this.pendingPairing) {
-      return this.clerkTokenCache?.token ?? null;
+      const cached = this.clerkTokens.cachedToken();
+      if (cached) return cached;
+      throw new Error('Pairing in progress');
     }
     try {
       const clerk = await this.requestClerkSession({ hidden: true, timeoutMs: 20_000 });
       this.closeAuthWindow();
-      this.cacheClerkToken(clerk.token);
       const email = preferredEmail(clerk.email, emailFromJwt(clerk.token));
       if (email) this.applyAccountEmail(email);
       return clerk.token;
     } catch (error) {
-      log.warn('[Auth] Could not refresh Clerk session token:', error);
       this.closeAuthWindow();
-      this.clerkTokenFailureUntil = Date.now() + 60_000;
-      return this.clerkTokenCache?.token ?? null;
+      throw error;
     }
   }
 
