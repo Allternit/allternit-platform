@@ -34,7 +34,7 @@ describe("session context handoff", () => {
         await userTurn(first.id, "Build the H100 pricing sheet")
         Todo.update({
           sessionID: first.id,
-          todos: [{ id: "1", content: "Annual discount", status: "pending", priority: "high" }],
+          todos: [{ content: "Annual discount", status: "pending", priority: "high" }],
         })
 
         const { session: second, baton } = await SessionHandoff.run({
