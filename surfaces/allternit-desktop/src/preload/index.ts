@@ -244,6 +244,8 @@ const appAPI = {
     ipcRenderer.on('app:update-status', listener);
     return () => ipcRenderer.removeListener('app:update-status', listener);
   },
+  /** Record this computer as a trusted Cowork device (main holds the API secret). */
+  registerDevice: (): Promise<boolean> => ipcRenderer.invoke('device:register'),
   /** This computer in Settings → Cowork devices (stable id, host name, OS). */
   deviceInfo: ipcRenderer.sendSync('device:info') as {
     id: string;
