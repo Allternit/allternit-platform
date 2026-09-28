@@ -12,6 +12,7 @@ import {
   type PlatformThread,
 } from '@/runtime/bots/platform-threads.js';
 import { PlatformSignedOutError } from '@/runtime/bots/platform-api.js';
+import { getSessionPaused, pausedLine, type SessionPaused } from '@/runtime/bots/session-pause.js';
 import type { CommandResultDisplay } from '../commands';
 import TextInput from '../components/TextInput';
 import { SpinnerGlyph } from '../components/Spinner/SpinnerGlyph';
@@ -86,6 +87,9 @@ export function PetHud({ onDone }: Props): React.ReactNode {
   const [busy, setBusy] = useState(false);
   const [frame, setFrame] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // Paused before a usage limit (P3.17), per view: the thread's window or the incognito ask's.
+  const [threadPaused, setThreadPaused] = useState<SessionPaused | null>(null);
+  const [incognitoPaused, setIncognitoPaused] = useState<SessionPaused | null>(null);
   const [thread, setThread] = useState<PlatformThread | null>(null);
   const [threadLines, setThreadLines] = useState<HudLine[]>([]);
   const [incognitoLines, setIncognitoLines] = useState<ChatLine[]>([]);
@@ -112,10 +116,23 @@ export function PetHud({ onDone }: Props): React.ReactNode {
     void refreshPetBots();
   }, []);
 
+  // While paused, re-check every 30s: gizzi resumes on its own at the reset.
+  useEffect(() => {
+    if (!threadPaused && !incognitoPaused) return;
+    const timer = setInterval(() => {
+      const threadSid = thread?.currentSessionId;
+      if (threadPaused && threadSid) void getSessionPaused(threadSid).then(setThreadPaused).catch(() => {});
+      const incSid = incognitoThread.current?.currentSessionId;
+      if (incognitoPaused && incSid) void getSessionPaused(incSid).then(setIncognitoPaused).catch(() => {});
+    }, 30_000);
+    return () => clearInterval(timer);
+  }, [threadPaused, incognitoPaused, thread?.currentSessionId]);
+
   // Load the worn bot's standing thread (and its recent lines) when signed in.
   useEffect(() => {
     setThread(null);
     setThreadLines([]);
+    setThreadPaused(null);
     if (!online) return;
     let cancelled = false;
     void (async () => {
@@ -124,6 +141,7 @@ export function PetHud({ onDone }: Props): React.ReactNode {
         if (cancelled) return;
         setThread(t);
         if (!t.currentSessionId) return;
+        void getSessionPaused(t.currentSessionId).then(p => !cancelled && setThreadPaused(p)).catch(() => {});
         const messages = await listSessionMessages(t.currentSessionId);
         if (cancelled) return;
         // The window's seed (checkpoint) message is drawn as the rip.
@@ -146,6 +164,7 @@ export function PetHud({ onDone }: Props): React.ReactNode {
   useEffect(() => {
     incognitoThread.current = null;
     setIncognitoLines([]);
+    setIncognitoPaused(null);
   }, [bot.id]);
 
   useEffect(() => {
@@ -185,6 +204,7 @@ export function PetHud({ onDone }: Props): React.ReactNode {
           setThreadLines(lines => [...lines, { role: 'rip', generation: next.generation, reason: 'threshold', at: new Date().toISOString() }]);
         }
         setThread(next);
+        if (next.currentSessionId) setThreadPaused(await getSessionPaused(next.currentSessionId).catch(() => null));
       } else {
         const history = [...incognitoLines, mine];
         setIncognitoLines(history);
@@ -192,6 +212,8 @@ export function PetHud({ onDone }: Props): React.ReactNode {
         if (online) {
           incognitoThread.current ??= await createIncognitoThread(bot.id, `Incognito ask: ${text.slice(0, 60)}`);
           answer = (await sendThreadTurn(incognitoThread.current, text, { model: bot.model, signal: controller.signal })).content;
+          const sid = incognitoThread.current.currentSessionId;
+          if (sid) setIncognitoPaused(await getSessionPaused(sid).catch(() => null));
         } else {
           const timer = setTimeout(() => controller.abort(), LOCAL_TIMEOUT_MS);
           try {
@@ -267,6 +289,9 @@ export function PetHud({ onDone }: Props): React.ReactNode {
     body = <Box flexDirection="column">
         {lines.length > 0 ? <Lines lines={lines} bot={bot} accent={accent} width={Math.max(30, columns - 20)} /> : <Text dimColor>
             {incognito ? `Ask ${bot.name} something. Nothing here is saved.` : ready ? `Start ${bot.name}'s thread.` : `Opening ${bot.name}'s thread…`}
+          </Text>}
+        {(incognito ? incognitoPaused : threadPaused) && <Text color="warning" wrap="wrap">
+            {'⏸ '}{pausedLine((incognito ? incognitoPaused : threadPaused)!)}
           </Text>}
         {busy && <Box flexDirection="row">
             <SpinnerGlyph frame={frame} messageColor="gizzi" />
