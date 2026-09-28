@@ -35,11 +35,20 @@ export function platformApiBase(): string {
   return ALLTERNIT_GATEWAY_BASE
 }
 
-export async function platformToken(): Promise<string | undefined> {
-  const env = process.env.ALLTERNIT_API_TOKEN?.trim()
-  if (env) return env
+async function deviceToken(): Promise<string | undefined> {
   const stored = await Pairing.load().catch(() => undefined)
   return Pairing.tokenUsable(stored) ? stored.deviceToken : undefined
+}
+
+/** Credentials in order of preference: an explicit env token, then the `gizzi login` device token. */
+async function platformTokens(): Promise<string[]> {
+  const env = process.env.ALLTERNIT_API_TOKEN?.trim()
+  const device = await deviceToken()
+  return [...new Set([env, device].filter((t): t is string => !!t))]
+}
+
+export async function platformToken(): Promise<string | undefined> {
+  return (await platformTokens())[0]
 }
 
 export async function platformSignedIn(): Promise<boolean> {
@@ -58,21 +67,29 @@ export async function platformRequest<T>(
   body?: unknown,
   options: PlatformRequestOptions = {},
 ): Promise<T> {
-  const token = await platformToken()
-  if (!token) throw new PlatformSignedOutError()
+  const tokens = await platformTokens()
+  if (tokens.length === 0) throw new PlatformSignedOutError()
   const signals = [options.signal, options.timeoutMs ? AbortSignal.timeout(options.timeoutMs) : undefined].filter(
     (s): s is AbortSignal => s !== undefined,
   )
-  const response = await fetch(`${platformApiBase()}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/json",
-      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: signals.length === 0 ? undefined : signals.length === 1 ? signals[0] : AbortSignal.any(signals),
-  })
+  const send = (token: string) =>
+    fetch(`${platformApiBase()}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: signals.length === 0 ? undefined : signals.length === 1 ? signals[0] : AbortSignal.any(signals),
+    })
+  // A stale ALLTERNIT_API_TOKEN left in a shell shouldn't hide a good
+  // `gizzi login`: on a rejected credential, try the next one.
+  let response = await send(tokens[0]!)
+  for (const next of tokens.slice(1)) {
+    if (response.status !== 401 && response.status !== 403) break
+    response = await send(next)
+  }
   if (!response.ok) {
     const text = await response.text().catch(() => "")
     let message = text
