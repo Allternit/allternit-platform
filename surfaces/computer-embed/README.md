@@ -93,7 +93,10 @@ Token rules:
 - Dark theme matches `#0b0b0c`.
 
 The API server also ships its own noVNC-based viewer page at
-`/embed/computers/:id?token=…` (vendored assets, frozen server code). This
+`/embed/computers/:id?token=…` (vendored assets, frozen server code). That
+page is view-only for embed tokens; opened with an approval-gated
+`ws-token {"purpose":"vnc","read_only":false}` instead, it is interactive
+(keyboard/mouse) unless someone else holds the control lease. This
 package is the standalone, dependency-light variant for embedding from static
 hosts; both speak the same wire protocol.
 

@@ -583,11 +583,20 @@ impl AppConfig {
 
     /// Origins allowed to make cross-origin browser calls, from
     /// `ALLTERNIT_CORS_ORIGINS` (comma-separated). When unset or empty, the
-    /// [`crate::cors::DEFAULT_ALLOWED_ORIGINS`] list is used. Requests without
-    /// an `Origin` header (non-browser clients) are never CORS-gated.
+    /// [`crate::cors::DEFAULT_ALLOWED_ORIGINS`] list is used. The API's own
+    /// loopback origins (`http://{localhost,127.0.0.1}:<api_port>`) are always
+    /// included, and exact origins from `ALLTERNIT_ALLOWED_ORIGINS`
+    /// (comma-separated, validated — see [`crate::cors::parse_extra_origins`])
+    /// are ADDED on top. Requests without an `Origin` header (non-browser
+    /// clients) are never CORS-gated.
     pub fn cors_origins(&self) -> Vec<axum::http::HeaderValue> {
         let raw = std::env::var("ALLTERNIT_CORS_ORIGINS").ok();
-        crate::cors::parse_allowed_origins(raw.as_deref())
+        let extra = std::env::var(crate::cors::EXTRA_ALLOWED_ORIGINS_ENV).ok();
+        crate::cors::effective_allowed_origins(
+            crate::cors::parse_allowed_origins(raw.as_deref()),
+            self.api_port(),
+            extra.as_deref(),
+        )
     }
 
     /// When true, the app is running in self-hosted mode. Clerk is not required

@@ -17,12 +17,24 @@
 //!   the single computer, and are ALWAYS signed read-only. One token
 //!   authorizes both the viewer page and the VNC connection: the VNC ws
 //!   handler accepts purpose `"embed"` and forces read-only (see
-//!   `resolve_vnc_access` in `computer_ws`). The invariant is: embed viewers
+//!   `resolve_vnc_access` in `computer_ws`). The invariant is: embed TOKENS
 //!   are always read-only — the ws proxy suppresses client->TCP frames.
 //! - **Viewer page** (`GET /embed/computers/:id?token=...`) is mounted on the
-//!   PUBLIC router: it verifies the embed token (HMAC, computer binding,
-//!   expiry, purpose) with NO Clerk auth, and serves a minimal self-contained
-//!   noVNC page. The Content-Security-Policy `frame-ancestors` source list
+//!   PUBLIC router: it verifies the token (HMAC, computer binding, expiry,
+//!   purpose) with NO Clerk auth, and serves a minimal self-contained noVNC
+//!   page. It accepts two token purposes (see [`resolve_embed_page_access`]):
+//!   `"embed"` (always view-only) and `"vnc"` minted by
+//!   `POST /api/v1/computers/:id/ws-token`. The page is INTERACTIVE only for a
+//!   `"vnc"` token whose claim is `read_only: false` — minting one is the
+//!   existing approval-gated path in `computer_ws::issue_ws_token` (control
+//!   lease holder, or an ACI confirmation grant), which stays the ONLY way to
+//!   get write — and only while no one else holds the control lease (the same
+//!   `read_only_unless_controller` downgrade the ws proxy applies). The page
+//!   hands the same token to the VNC ws, whose proxy enforces read-only on
+//!   the server regardless of what the page sets client-side. The bootstrap
+//!   script is an external same-origin file (`/embed/viewer.js`) so the page
+//!   works under `script-src 'self'` (an inline module is blocked by that
+//!   CSP); per-page config travels in HTML-escaped `data-*` attributes. The Content-Security-Policy `frame-ancestors` source list
 //!   comes from `ALLTERNIT_EMBED_FRAME_ANCESTORS` (default `"*"` — v1
 //!   self-host allows embedding from any origin; tighten the env var to a
 //!   space-separated origin list to restrict who may iframe the viewer).
@@ -41,7 +53,6 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -92,6 +103,7 @@ pub fn public_router() -> Router<Arc<AppState>> {
     }
     Router::new()
         .route("/embed/computers/:id", get(embed_viewer_page))
+        .route("/embed/viewer.js", get(serve_viewer_script))
         .route("/embed/assets/*path", get(serve_novnc_asset))
 }
 
@@ -241,6 +253,38 @@ pub fn verify_embed_token(
         .map(|_| ())
 }
 
+/// Decide what the public viewer page may do with `token` for computer `id`.
+/// Returns the verified claims and whether the TOKEN grants write:
+///
+/// - purpose `"embed"` — view-only, always (even a forged `read_only: false`
+///   claim; mirrors `resolve_vnc_access` in `computer_ws`).
+/// - purpose `"vnc"` — write iff the claim is `read_only: false`. Such tokens
+///   are only minted by `issue_ws_token` behind the control lease / ACI
+///   confirmation gate, so this adds no new way to obtain write.
+/// - anything else (`pty`, `events`, bot tokens) — rejected.
+///
+/// The caller still applies the control-lease downgrade before rendering.
+pub fn resolve_embed_page_access(
+    secret: &str,
+    token: &str,
+    computer_id: &str,
+) -> Result<
+    (crate::bot_desktop_stream::DesktopTokenClaims, bool),
+    crate::bot_desktop_stream::DesktopTokenError,
+> {
+    use crate::bot_desktop_stream::DesktopTokenError;
+    let claims = crate::bot_desktop_stream::verify_desktop_token(secret, token)?;
+    if claims.computer_id.as_deref() != Some(computer_id) {
+        return Err(DesktopTokenError::ComputerMismatch);
+    }
+    let writable = match claims.purpose.as_deref() {
+        Some("embed") => false,
+        Some("vnc") => !claims.read_only,
+        _ => return Err(DesktopTokenError::PurposeMismatch),
+    };
+    Ok((claims, writable))
+}
+
 fn frame_ancestors() -> String {
     std::env::var(FRAME_ANCESTORS_ENV)
         .ok()
@@ -256,20 +300,33 @@ fn viewer_csp() -> String {
     )
 }
 
-/// Embed a string as a JS string literal (JSON string syntax is valid JS).
-fn js_string(s: &str) -> String {
-    json!(s).to_string()
+/// Escape text for a double-quoted HTML attribute value.
+fn html_attr(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
-fn viewer_html(computer_id: &str, token: &str) -> String {
-    let id = js_string(computer_id);
-    let token = js_string(token);
+fn viewer_html(computer_id: &str, token: &str, writable: bool) -> String {
+    let id = html_attr(computer_id);
+    let token = html_attr(token);
+    let writable = if writable { "true" } else { "false" };
     format!(
         r#"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
 <title>Allternit Computer Viewer</title>
 <style>
   html, body {{ margin: 0; padding: 0; height: 100%; background: #0b0b0c; overflow: hidden; }}
@@ -277,46 +334,76 @@ fn viewer_html(computer_id: &str, token: &str) -> String {
   #status {{
     position: fixed; left: 12px; bottom: 10px; padding: 4px 10px; border-radius: 6px;
     font: 12px/1.4 system-ui, sans-serif; color: #e5e5e5; background: rgba(0,0,0,.55);
+    pointer-events: none;
   }}
 </style>
 </head>
 <body>
-<div id="screen"></div>
-<div id="status">connecting…</div>
-<script type="module">
-import RFB from '/embed/assets/novnc/core/rfb.js';
-
-const computerId = {id};
-const token = {token};
-const statusEl = document.getElementById('status');
-
-const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-const wsUrl = `${{proto}}//${{location.host}}/ws/computers/${{computerId}}/vnc?token=${{encodeURIComponent(token)}}`;
-
-const rfb = new RFB(document.getElementById('screen'), wsUrl, {{
-  scaleViewport: true,
-  resizeSession: false,
-}});
-// Belt-and-braces client-side view-only; the server suppresses client->TCP
-// frames for embed (read-only) tokens regardless.
-rfb.viewOnly = true;
-
-rfb.addEventListener('connect', () => {{ statusEl.textContent = 'connected (view-only)'; }});
-rfb.addEventListener('disconnect', (e) => {{
-  statusEl.textContent = e.detail.clean ? 'disconnected' : 'connection lost';
-}});
-rfb.addEventListener('securityfailure', () => {{ statusEl.textContent = 'security handshake failed'; }});
-rfb.addEventListener('credentialsrequired', () => {{ statusEl.textContent = 'credentials required'; }});
-</script>
+<div id="screen" data-computer-id="{id}" data-token="{token}" data-writable="{writable}"></div>
+<div id="status" role="status">connecting…</div>
+<script type="module" src="/embed/viewer.js"></script>
 </body>
 </html>
 "#
     )
 }
 
+/// Bootstrap for the viewer page, served same-origin from `/embed/viewer.js`
+/// (the page CSP is `script-src 'self'`, which blocks inline scripts). Reads
+/// its config from `#screen`'s `data-*` attributes. `data-writable` only
+/// toggles noVNC's client-side `viewOnly`; the ws proxy enforces read-only
+/// server-side from the token claims, so flipping it in devtools cannot
+/// grant input. The asset root is `assets/novnc`, so `rfb.js` is served at
+/// `/embed/assets/core/rfb.js` (its `../vendor/` imports resolve beside it).
+const VIEWER_JS: &str = r#"import RFB from '/embed/assets/core/rfb.js';
+
+const screen = document.getElementById('screen');
+const statusEl = document.getElementById('status');
+const computerId = screen.dataset.computerId;
+const token = screen.dataset.token;
+const writable = screen.dataset.writable === 'true';
+const mode = writable ? 'interactive' : 'view-only';
+
+const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const wsUrl = `${proto}//${location.host}/ws/computers/${encodeURIComponent(computerId)}/vnc?token=${encodeURIComponent(token)}`;
+
+const rfb = new RFB(screen, wsUrl, {
+  scaleViewport: true,
+  resizeSession: false,
+});
+rfb.viewOnly = !writable;
+rfb.focusOnClick = writable;
+
+rfb.addEventListener('connect', () => {
+  statusEl.textContent = `connected (${mode})`;
+  if (writable) rfb.focus();
+});
+rfb.addEventListener('disconnect', (e) => {
+  statusEl.textContent = e.detail.clean ? 'disconnected' : 'connection lost';
+});
+rfb.addEventListener('securityfailure', () => { statusEl.textContent = 'security handshake failed'; });
+rfb.addEventListener('credentialsrequired', () => { statusEl.textContent = 'credentials required'; });
+"#;
+
+/// GET /embed/viewer.js — the viewer page's same-origin bootstrap script.
+async fn serve_viewer_script() -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        VIEWER_JS,
+    )
+        .into_response()
+}
+
 /// GET /embed/computers/:id?token= — public, token-gated, self-contained
-/// read-only noVNC viewer. Served with a restrictive CSP whose
-/// `frame-ancestors` comes from `ALLTERNIT_EMBED_FRAME_ANCESTORS`.
+/// noVNC viewer: view-only for embed tokens and read-only vnc tokens,
+/// interactive for a write-granting vnc token (see
+/// [`resolve_embed_page_access`]) unless someone else holds the control
+/// lease. Served with a restrictive CSP whose `frame-ancestors` comes from
+/// `ALLTERNIT_EMBED_FRAME_ANCESTORS`.
 async fn embed_viewer_page(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -331,11 +418,19 @@ async fn embed_viewer_page(
             )
         }
     };
-    if let Err(e) = verify_embed_token(&secret, &query.token, &id) {
-        warn!(error = %e, computer_id = %id, "invalid embed token");
-        return crate::computer_routes::error_response(StatusCode::FORBIDDEN, "invalid token");
-    }
-    let html = viewer_html(&id, &query.token);
+    let (claims, token_writable) = match resolve_embed_page_access(&secret, &query.token, &id) {
+        Ok(access) => access,
+        Err(e) => {
+            warn!(error = %e, computer_id = %id, "invalid embed viewer token");
+            return crate::computer_routes::error_response(StatusCode::FORBIDDEN, "invalid token");
+        }
+    };
+    // Same one-controller downgrade the ws proxy applies: when someone else
+    // holds the control lease, a write-granting token still only watches.
+    let writable = token_writable
+        && !crate::computer_ws::read_only_unless_controller(&state, &id, &claims.user_id, false)
+            .await;
+    let html = viewer_html(&id, &query.token, writable);
     let csp = viewer_csp();
     (
         [
@@ -343,6 +438,7 @@ async fn embed_viewer_page(
             (header::CONTENT_SECURITY_POLICY, csp.as_str()),
             (header::CACHE_CONTROL, "no-store"),
             (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            (header::REFERRER_POLICY, "no-referrer"),
         ],
         html,
     )
@@ -634,14 +730,183 @@ mod tests {
     }
 
     #[test]
-    fn viewer_page_includes_readonly_rfb_and_safe_escaping() {
-        let html = viewer_html("computer-1", "tok-with-\"quotes\"");
-        assert!(html.contains("import RFB from '/embed/assets/novnc/core/rfb.js'"));
-        assert!(html.contains("rfb.viewOnly = true"));
-        assert!(html.contains("scaleViewport: true"));
-        // The token is embedded as a JSON string literal (safe escaping).
-        assert!(html.contains("tok-with-\\\"quotes\\\""));
+    fn viewer_page_is_view_only_by_default_and_escapes_attrs() {
+        let html = viewer_html("computer-1", "tok-with-\"quotes\"<x>", false);
+        // External same-origin bootstrap: an inline module violates the CSP.
+        assert!(html.contains(r#"<script type="module" src="/embed/viewer.js"></script>"#));
+        assert!(!html.contains("import RFB"));
+        assert!(html.contains(r#"data-writable="false""#));
+        assert!(html.contains(r#"data-computer-id="computer-1""#));
+        // The token is HTML-attribute escaped.
+        assert!(html.contains("tok-with-&quot;quotes&quot;&lt;x&gt;"));
         assert!(!html.contains("tok-with-\"quotes\""));
+    }
+
+    #[test]
+    fn viewer_page_writable_flag() {
+        assert!(viewer_html("computer-1", "tok", true).contains(r#"data-writable="true""#));
+    }
+
+    #[test]
+    fn viewer_script_drives_view_only_from_writable_flag() {
+        // The asset root is assets/novnc, so rfb.js is at /embed/assets/core/.
+        assert!(VIEWER_JS.contains("import RFB from '/embed/assets/core/rfb.js'"));
+        assert!(
+            resolve_asset_path(&novnc_assets_dir(), "core/rfb.js").unwrap().is_file(),
+            "vendored rfb.js must exist where the viewer imports it"
+        );
+        assert!(VIEWER_JS.contains("screen.dataset.writable === 'true'"));
+        assert!(VIEWER_JS.contains("rfb.viewOnly = !writable"));
+        assert!(VIEWER_JS.contains("scaleViewport: true"));
+    }
+
+    #[test]
+    fn page_access_embed_token_is_never_writable() {
+        for read_only in [true, false] {
+            let token = crate::bot_desktop_stream::sign_computer_token(
+                TEST_SECRET, "computer-1", "s", "user-1", 60, "embed", read_only,
+            );
+            let (_, writable) = resolve_embed_page_access(TEST_SECRET, &token, "computer-1").unwrap();
+            assert!(!writable, "embed tokens are view-only (claim read_only={read_only})");
+        }
+    }
+
+    #[test]
+    fn page_access_vnc_token_writable_only_when_it_grants_write() {
+        let rw = crate::bot_desktop_stream::sign_computer_token(
+            TEST_SECRET, "computer-1", "s", "user-1", 60, "vnc", false,
+        );
+        assert!(resolve_embed_page_access(TEST_SECRET, &rw, "computer-1").unwrap().1);
+        let ro = crate::bot_desktop_stream::sign_computer_token(
+            TEST_SECRET, "computer-1", "s", "user-1", 60, "vnc", true,
+        );
+        assert!(!resolve_embed_page_access(TEST_SECRET, &ro, "computer-1").unwrap().1);
+    }
+
+    #[test]
+    fn page_access_rejects_other_purposes_wrong_computer_and_forgery() {
+        use crate::bot_desktop_stream::DesktopTokenError;
+        for purpose in ["pty", "events"] {
+            let token = crate::bot_desktop_stream::sign_computer_token(
+                TEST_SECRET, "computer-1", "s", "user-1", 60, purpose, false,
+            );
+            assert!(matches!(
+                resolve_embed_page_access(TEST_SECRET, &token, "computer-1"),
+                Err(DesktopTokenError::PurposeMismatch)
+            ));
+        }
+        let token = crate::bot_desktop_stream::sign_computer_token(
+            TEST_SECRET, "computer-a", "s", "user-1", 60, "vnc", false,
+        );
+        assert!(matches!(
+            resolve_embed_page_access(TEST_SECRET, &token, "computer-b"),
+            Err(DesktopTokenError::ComputerMismatch)
+        ));
+        // A write token signed with another secret is not honored.
+        let forged = crate::bot_desktop_stream::sign_computer_token(
+            "attacker-secret", "computer-1", "s", "user-1", 60, "vnc", false,
+        );
+        assert!(matches!(
+            resolve_embed_page_access(TEST_SECRET, &forged, "computer-1"),
+            Err(DesktopTokenError::Signature)
+        ));
+    }
+
+    /// Same value computer_ws's handler tests put in the process env, so
+    /// parallel tests setting the shared secret never race to different values.
+    const HANDLER_SECRET: &str = "test-ws-secret-for-unit-tests";
+
+    async fn page_state() -> Arc<AppState> {
+        std::env::set_var("ALLTERNIT_DESKTOP_WS_SECRET", HANDLER_SECRET);
+        let temp = tempfile::tempdir().unwrap();
+        let state = crate::test_helpers::app_state(temp.path()).await;
+        std::mem::forget(temp);
+        state
+            .db
+            .connect()
+            .unwrap()
+            .execute(
+                "INSERT INTO computers (id, kind, provider, status, owner_type, owner_id, name, os, native_id, billing_source)
+                 VALUES ('computer-1', 'cloud_desktop', 'incus', 'running', 'user', 'user-1', 'Builder Box', 'ubuntu-24.04', 'sandbox-1', 'credits')",
+                [],
+            )
+            .unwrap();
+        state
+    }
+
+    async fn page(state: &Arc<AppState>, token: String) -> (StatusCode, axum::http::HeaderMap, String) {
+        let response = embed_viewer_page(
+            State(state.clone()),
+            Path("computer-1".to_string()),
+            Query(EmbedPageQuery { token }),
+        )
+        .await;
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body = axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        (status, headers, String::from_utf8(body.to_vec()).unwrap())
+    }
+
+    fn handler_token(purpose: &str, read_only: bool) -> String {
+        crate::bot_desktop_stream::sign_computer_token(
+            HANDLER_SECRET, "computer-1", "sandbox-1", "user-1", 60, purpose, read_only,
+        )
+    }
+
+    #[tokio::test]
+    async fn embed_page_writable_only_with_write_granting_token() {
+        let state = page_state().await;
+        // Embed tokens (even with a read_only=false claim): view-only, and
+        // the security headers are intact.
+        for ro in [true, false] {
+            let (status, headers, html) = page(&state, handler_token("embed", ro)).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(html.contains(r#"data-writable="false""#));
+            let csp = headers.get(header::CONTENT_SECURITY_POLICY).unwrap().to_str().unwrap();
+            assert!(csp.contains("default-src 'none'") && csp.contains("script-src 'self'"));
+            assert_eq!(headers.get(header::X_CONTENT_TYPE_OPTIONS).unwrap(), "nosniff");
+            assert_eq!(headers.get(header::CACHE_CONTROL).unwrap(), "no-store");
+            assert_eq!(headers.get(header::REFERRER_POLICY).unwrap(), "no-referrer");
+        }
+        // Read-only vnc token: view-only.
+        let (status, _, html) = page(&state, handler_token("vnc", true)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains(r#"data-writable="false""#));
+        // Write-granting vnc token: interactive.
+        let (status, _, html) = page(&state, handler_token("vnc", false)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains(r#"data-writable="true""#));
+        // Interactive-shell tokens never open the viewer.
+        let (status, _, _) = page(&state, handler_token("pty", false)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn embed_page_write_token_downgrades_when_someone_else_controls() {
+        let state = page_state().await;
+        let other = crate::computer_control_lease::Holder {
+            kind: crate::computer_control_lease::HolderKind::User,
+            id: "user-2".into(),
+            label: None,
+            device_id: None,
+        };
+        let conn = state.db.connect().unwrap();
+        crate::computer_control_lease::take(&conn, "computer-1", &other, chrono::Utc::now().timestamp())
+            .unwrap();
+        let (status, _, html) = page(&state, handler_token("vnc", false)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains(r#"data-writable="false""#));
+    }
+
+    #[tokio::test]
+    async fn viewer_script_is_served_as_javascript() {
+        let response = serve_viewer_script().await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "text/javascript; charset=utf-8"
+        );
+        assert_eq!(response.headers().get(header::X_CONTENT_TYPE_OPTIONS).unwrap(), "nosniff");
     }
 
     #[test]

@@ -841,7 +841,7 @@ async fn holds_control(state: &Arc<AppState>, computer_id: &str, user_id: &str) 
 
 /// One controller per computer: a viewer who doesn't hold control (someone
 /// else does) watches read-only.
-async fn read_only_unless_controller(state: &Arc<AppState>, computer_id: &str, user_id: &str, read_only: bool) -> bool {
+pub(crate) async fn read_only_unless_controller(state: &Arc<AppState>, computer_id: &str, user_id: &str, read_only: bool) -> bool {
     if read_only {
         return true;
     }
