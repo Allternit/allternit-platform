@@ -138,6 +138,7 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
         .route("/agent-sessions/sync", get(sync_sessions))
         // Answers to gizzi's in-chat questions (the question tool). Without
         // these the app's reply never reached gizzi and the turn waited forever.
+        .route("/questions", get(list_questions))
         .route("/questions/:id/reply", post(reply_question))
         .route("/questions/:id/reject", post(reject_question))
         // The app's result for a pane_browser tool call (the page in the
@@ -1332,6 +1333,28 @@ async fn compact_session(headers: HeaderMap, Path(session_id): Path<String>) -> 
     let path = format!("/v1/session/{}/summarize", urlencoding::encode(&session_id));
     match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, None).await {
         Ok(result) => Json(result).into_response(),
+        Err(response) => response,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ListQuestionsQuery {
+    #[serde(rename = "sessionId")]
+    session_id: Option<String>,
+}
+
+/// Pending questions a bot asked (with their options), optionally for one
+/// session — Project home turns them into decision cards (P5.4).
+async fn list_questions(headers: HeaderMap, Query(q): Query<ListQuestionsQuery>) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    match gizzi_json::<Vec<serde_json::Value>>(&client, reqwest::Method::GET, "/v1/question", None).await {
+        Ok(all) => {
+            let filtered: Vec<serde_json::Value> = all
+                .into_iter()
+                .filter(|r| q.session_id.as_deref().map_or(true, |sid| r["sessionID"].as_str() == Some(sid)))
+                .collect();
+            Json(json!({ "questions": filtered })).into_response()
+        }
         Err(response) => response,
     }
 }
