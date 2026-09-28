@@ -188,6 +188,10 @@ export namespace Session {
           providerID: z.string().optional(),
           reason: z.enum(["quota", "rate_limit", "limit_hit"]),
           at: z.number(),
+          /** The model with the most limit left, to continue on (P3.17). */
+          suggest: z
+            .object({ providerID: z.string(), modelID: z.string(), label: z.string(), headroom: z.number().optional() })
+            .optional(),
         })
         .optional(),
       summary: z

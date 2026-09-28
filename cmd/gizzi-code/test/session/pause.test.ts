@@ -133,3 +133,21 @@ describe("pausing and resuming", () => {
     expect(SessionPause.limitFromTurn(err("20"), NOW)).toBeUndefined()
   })
 })
+
+describe("continuing on another model", () => {
+  const c = (providerID: string, headroom: number | null, modelID = "m") => ({ providerID, modelID, label: providerID, headroom })
+
+  test("most limit left first; unknown limits after known; near-limit ones are out", () => {
+    const ranked = SessionPause.rankCandidates([c("kimi-cli", 0.4), c("openrouter", null), c("codex-cli", 0.02), c("anthropic", 0.8)], [], 0.95)
+    expect(ranked.map((x) => x.providerID)).toEqual(["anthropic", "kimi-cli", "openrouter"])
+  })
+
+  test("the configured order wins over headroom", () => {
+    const ranked = SessionPause.rankCandidates(
+      [c("kimi-cli", 0.4, "kimi-k3"), c("anthropic", 0.8, "sonnet"), c("openrouter", null, "x")],
+      ["kimi-cli/kimi-k3", "openrouter"],
+      0.95,
+    )
+    expect(ranked.map((x) => x.providerID)).toEqual(["kimi-cli", "openrouter", "anthropic"])
+  })
+})
