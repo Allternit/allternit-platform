@@ -113,3 +113,32 @@ function normalizeStdio(stdio: StdioOptions | undefined): [StdioEntry, StdioEntr
   if (typeof stdio === "string") return [stdio, stdio, stdio]
   return [stdio[0], stdio[1] ?? "pipe", stdio[2] ?? "pipe"]
 }
+
+// Blocks on the lifeline (its stdin), then runs the command once gizzi's end
+// closes: gizzi exited, crashed, or was SIGKILLed. Ignores the signals a
+// terminal sends its process group so a closing tab can't skip the hook.
+const EXIT_HOOK = `
+trap '' TERM INT HUP
+while read -r _; do :; done
+exec "$@" </dev/null >/dev/null 2>&1
+`
+
+/**
+ * Run `command args` when gizzi exits, however it exits. For resources that
+ * daemonize out of gizzi's reach (a tmux server forks and calls setsid, so
+ * spawnOwnedChild's process-group sweep never sees it). The hook is a
+ * detached shell holding a stdin pipe from gizzi, so it doesn't keep gizzi's
+ * event loop alive and survives gizzi's process group being killed.
+ */
+export function runOnGizziExit(command: string, args: readonly string[]): void {
+  if (process.platform === "win32") return
+  const hook = spawn("/bin/sh", ["-c", EXIT_HOOK, "gizzi-exit-hook", command, ...args], {
+    stdio: ["pipe", "ignore", "ignore"],
+    detached: true,
+  })
+  hook.on("error", () => {})
+  hook.stdin?.on("error", () => {})
+  hook.unref()
+  // The pipe handle would otherwise hold the event loop open.
+  ;(hook.stdin as unknown as { unref?: () => void } | null)?.unref?.()
+}

@@ -94,4 +94,38 @@ describe.skipIf(process.platform === "win32")("parent lifeline", () => {
       }
     })
   }
+
+  test("exit hook runs when gizzi is SIGKILLed, and doesn't hold gizzi open", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gizzi-exit-hook-"))
+    const ran = join(dir, "ran")
+    const parent = spawn(
+      process.execPath,
+      [
+        "-e",
+        `const { runOnGizziExit } = await import(${JSON.stringify(LIFELINE)});
+         runOnGizziExit("/bin/sh", ["-c", "echo ok > ${ran}"]);
+         setInterval(() => {}, 1000)`,
+      ],
+      { stdio: "ignore" },
+    )
+    await Bun.sleep(500)
+    expect(existsSync(ran)).toBe(false)
+    parent.kill("SIGKILL")
+    expect(await until(() => existsSync(ran))).toBe(true)
+
+    // A gizzi that just finishes still exits on its own, and the hook fires.
+    const ran2 = join(dir, "ran2")
+    const quick = spawn(
+      process.execPath,
+      [
+        "-e",
+        `const { runOnGizziExit } = await import(${JSON.stringify(LIFELINE)});
+         runOnGizziExit("/bin/sh", ["-c", "echo ok > ${ran2}"])`,
+      ],
+      { stdio: "ignore" },
+    )
+    const code = await new Promise<number | null>((resolve) => quick.once("exit", resolve))
+    expect(code).toBe(0)
+    expect(await until(() => existsSync(ran2))).toBe(true)
+  })
 })
