@@ -31,6 +31,7 @@ import { registerRailsPeer } from '../../../runtime/gizzi-core/services/railsPee
 import { RailsInboxBridge } from './components/RailsInboxBridge'
 import { RailsDagBridge } from './components/RailsDagBridge'
 import { getSessionId } from './bootstrap/state.js'
+import { routeInternalFetch } from './utils/routeInternalFetch'
 
 export async function tui(options?: any): Promise<void> {
   const currentCwd = process.cwd()
@@ -91,7 +92,7 @@ export async function tui(options?: any): Promise<void> {
   })
 
   if (options?.fetch) {
-    globalThis.fetch = options.fetch
+    globalThis.fetch = routeInternalFetch(options.fetch, options.url, globalThis.fetch)
   }
 
   Log.Default.info("tui: getting tools and commands")

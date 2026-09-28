@@ -58,7 +58,7 @@ const LogoHeader = React.memo(function LogoHeader({
 }) {
   const t1 = <WelcomeBox />;
 
-  const t2 = <OffscreenFreeze><Box flexDirection="column" gap={1} marginBottom={10}>{t1}<React.Suspense fallback={null}><StatusNotices agentDefinitions={agentDefinitions} /></React.Suspense></Box></OffscreenFreeze>;
+  const t2 = <OffscreenFreeze><Box flexDirection="column" gap={1}>{t1}<React.Suspense fallback={null}><StatusNotices agentDefinitions={agentDefinitions} /></React.Suspense></Box></OffscreenFreeze>;
 
   return t2;
 });
