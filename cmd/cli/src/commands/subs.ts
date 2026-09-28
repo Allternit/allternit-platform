@@ -182,6 +182,33 @@ export function createSubsCommand(): Command {
   );
 
   subs.addCommand(
+    new Command('login')
+      .description(
+        'Open a plain Firefox login window for a provider account (for sign-ins, e.g. Google, that refuse automated Chrome); then run `subs connect`',
+      )
+      .argument('<provider>', 'provider id (see `allternit caps list`)')
+      .option('--label <label>', 'account label')
+      .action(function (this: Command, provider: string, options: { label?: string }) {
+        return run(this, async () => {
+          const client = new SubsClient();
+          const accounts = await client.requestOk<AccountRow[]>('GET', '/v1/accounts');
+          let account = accounts.find((a) => a.provider === provider && a.enabled);
+          if (!account) {
+            account = await client.requestOk<AccountRow>('POST', '/v1/accounts', {
+              provider,
+              label: options.label ?? provider,
+            });
+          }
+          const opened = await client.requestOk('POST', `/v1/accounts/${account.account_id}/login`, {});
+          process.stderr.write(
+            `Sign in in the Firefox window on the Sessions display, then run \`allternit subs connect ${provider}\`.\n`,
+          );
+          return opened;
+        });
+      }),
+  );
+
+  subs.addCommand(
     new Command('disconnect')
       .description('Disable an account (does not wipe the profile)')
       .argument('<id>', 'account id')

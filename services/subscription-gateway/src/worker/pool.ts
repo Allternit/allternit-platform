@@ -66,6 +66,7 @@ export interface WorkerPoolDeps {
   profilesDir?: string;
   log?: EventLog; // challenge transitions surface one account-scoped ledger event
   logger?: (line: string) => void;
+  sessionImport?: PlaywrightLauncherDeps["sessionImport"];
 }
 
 interface LaneEntry {
@@ -116,7 +117,24 @@ export class WorkerPool {
       createPlaywrightLauncher({
         registry: deps.registry,
         profilesDir: deps.profilesDir ?? process.cwd(),
+        sessionImport: deps.sessionImport,
+        logger: deps.logger,
       });
+  }
+
+  // Login mode: close the lane's Chrome so the profile is free and the next
+  // activate relaunches (importing any new login-browser session).
+  async deactivate(lane: LaneKey): Promise<void> {
+    const id = workerKeyId(lane);
+    await this.activations.get(id)?.catch(() => {});
+    const entry = this.lanes.get(id);
+    this.lanes.delete(id);
+    if (entry) await entry.runtime.close().catch(() => {});
+  }
+
+  // Absolute Chrome user-data dir for an account's profile_ref.
+  userDataDirFor(profileRef: string): string {
+    return isAbsolute(profileRef) ? profileRef : join(this.deps.profilesDir ?? process.cwd(), profileRef);
   }
 
   // A dead runtime is not resident: callers get null (activate relaunches it).
@@ -309,6 +327,10 @@ async function instantiateAdapter(loaded: LoadedAdapter): Promise<SubscriptionAd
 
 export interface PlaywrightLauncherDeps {
   registry: AdapterRegistry;
+  // Login mode: import a session the human established in the login browser
+  // (Firefox) into this Chrome context before the first navigation.
+  sessionImport?: (userDataDir: string, context: BrowserContext) => Promise<number>;
+  logger?: (line: string) => void;
   // Base dir for relative profile_refs (e.g. config.stateDir →
   // <stateDir>/profiles/<account_id>). Absolute profile_refs pass through.
   profilesDir: string;
@@ -333,6 +355,10 @@ export function createPlaywrightLauncher(deps: PlaywrightLauncherDeps): Launcher
       headless: false,
     });
     try {
+      if (deps.sessionImport) {
+        const n = await deps.sessionImport(userDataDir, context);
+        if (n > 0) deps.logger?.(`subscription-gateway: imported login-browser session (${n} cookies) for ${lane.account_id}`);
+      }
       const page = context.pages()[0] ?? (await context.newPage());
       const runtimeCtx: SdkAdapterRuntime = {
         adapter_id: manifest.adapter_id,
