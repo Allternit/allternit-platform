@@ -503,3 +503,47 @@ Next: §9.4 item 4 (D6 media-router ChatGPT lane → gateway), item 5 closeout.
 
 Next: §9.4 item 5 — P3 closeout attestation; Eoj decides keep/stop guest,
 the two empty duplicate "Allternit" projects, IPv4 NAT, writable viewer.
+
+## 14. HANDOFF — 2026-09-28 ~14:45 CDT (claude session) — permanent local gateway; gate guest torn down
+
+Eoj's calls (2026-09-28): delete the duplicate projects; no-double-submit
+confirmed; permanent endpoint first, then tear down; IPv4 + writable viewer.
+- **Duplicate "Allternit" projects deleted** (the 2 empty ones; the one with
+  the image chats `g-p-6abaa3bd6da0819194aeda362dfad6e8` kept) — re-checked
+  empty before each delete.
+- **Permanent endpoint = the local gateway on Eoj's Mac** (#886,
+  `scripts/install-local.sh`): launchd `com.allternit.subscription-gateway`,
+  app in `~/.allternit/subscription-gateway/app` (REVISION file), state in
+  `~/.allternit/subscriptions`, UDS + keychain cli-token. Update = re-run the
+  script. Log: `~/Library/Application Support/Allternit/logs/subscription-gateway.log`.
+  Account `96d4ccb2…` (chatgpt) is `ready`: its session was moved from the gate
+  guest's Chrome (Linux basic-store cookies decrypted → Firefox-format
+  `profiles/<acct>-firefox/cookies.sqlite` → the gateway's own import on
+  connect); the guest gateway was stopped first (one automation identity per
+  account, D6). `fabric_capture.mjs` now defaults to this gateway — verified
+  live with no env (PNG in the Allternit project).
+- **Gate guest torn down:** `computer-e0cc21e9…` STOPPED (not deleted — its
+  record lives in the scratch API DB, archived at
+  `~/.allternit/gate-archive/subs-scratch-api-2026-09-28`; to use it again run
+  the scratch API with `ALLTERNIT_DATA_DIR` pointing at a copy of that dir).
+  Scratch API :18013 stopped; `/tmp/sessions-gate` removed.
+- **Guest IPv4: NOT fixable from here.** `incusbr0` already has
+  `ipv4.nat=true`; guests reach 10.1.169.1 but not the internet over IPv4,
+  IPv6 works — the host is not forwarding bridged IPv4 (Docker is installed on
+  the host; its FORWARD DROP policy is the classic cause). Needs root on the
+  VPS (no SSH access from this Mac):
+  `iptables -I DOCKER-USER -i incusbr0 -j ACCEPT` and
+  `iptables -I DOCKER-USER -o incusbr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT`,
+  persisted (e.g. netfilter-persistent), after checking `iptables -S FORWARD`
+  / `sysctl net.ipv4.ip_forward`.
+- Not removed: worktree `allternit-session-kimi-router-gsu` (another
+  session's; has an uncommitted `.steering/checkpoint.md`).
+- **Writable viewer + origin allowlist merged (#889):** `/embed/computers/:id`
+  is interactive with a `purpose:"vnc", read_only:false` ws-token (still only
+  issued through `issue_ws_token`'s gates; downgrades to view-only if someone
+  else holds the control lease); the old page could not load at all (inline
+  script vs its own CSP; wrong rfb.js path) — fixed. `ALLTERNIT_ALLOWED_ORIGINS`
+  (exact origins, comma-separated) adds browser origins; the API's own port is
+  always allowed. Not yet driven in a browser against a running guest (the
+  gate guest is stopped) — the hand-built :3014 viewer is no longer needed.
+
