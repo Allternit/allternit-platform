@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createServer } from 'node:net';
-import { findMeshNode, meshHostname, portOpen, serviceFiles, vncHelp } from './computer-pair.js';
+import { findMeshNode, meshHostname, meshNodeArgs, portOpen, serviceFiles, vncHelp } from './computer-pair.js';
 
 test('finds mesh-node from the flag, env, PATH, or Allternit Desktop', () => {
   const has = (set: string[]) => (p: string) => set.includes(p);
@@ -38,4 +38,14 @@ test('writes a login service for macOS and Linux', () => {
 test('explains how to turn on VNC', () => {
   assert.match(vncHelp('darwin'), /Screen Sharing/);
   assert.match(vncHelp('linux'), /5900/);
+});
+
+test('mesh-node listens on 5900 on the mesh and forwards to the local VNC port', () => {
+  const base = { computerId: 'c', secret: 's', cloudUrl: 'u', name: 'Mail VPS', controlUrl: 'https://mesh', meshNode: '/bin/mesh-node' };
+  const args = meshNodeArgs(base);
+  assert.equal(args[args.indexOf('--forward') + 1], '5900');
+  assert.equal(args[args.indexOf('--listen') + 1], '5900');
+  const other = meshNodeArgs({ ...base, vncPort: 5942 });
+  assert.equal(other[other.indexOf('--forward') + 1], '5942');
+  assert.equal(other[other.indexOf('--listen') + 1], '5900');
 });

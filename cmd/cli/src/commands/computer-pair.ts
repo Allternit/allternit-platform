@@ -31,6 +31,16 @@ export interface PairedConfig {
   /** Single-use: only needed until the first join; mesh state keeps the identity. */
   authKey?: string;
   meshNode: string;
+  /**
+   * Local port of this machine's VNC server when it isn't 5900 (e.g. a
+   * server whose 5900 belongs to something else). The mesh side is always
+   * 5900, which is where your devices look for it.
+   */
+  vncPort?: number;
+}
+
+function localVncPort(config: Pick<PairedConfig, 'vncPort'>): number {
+  return config.vncPort ?? VNC_PORT;
 }
 
 export function stateDir(): string {
@@ -99,7 +109,7 @@ async function report(config: PairedConfig, meshIp: string, name?: string): Prom
   const res = await fetch(`${config.cloudUrl}/api/v1/computers/paired/${encodeURIComponent(config.computerId)}/report`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-allternit-computer-secret': config.secret },
-    body: JSON.stringify({ meshIp, vncReady: await portOpen(VNC_PORT), ...(name ? { name } : {}) }),
+    body: JSON.stringify({ meshIp, vncReady: await portOpen(localVncPort(config)), ...(name ? { name } : {}) }),
   });
   if (!res.ok) throw new Error(`report failed (${res.status})`);
 }
@@ -160,13 +170,17 @@ function runQuiet(args: string[]): Promise<number> {
   });
 }
 
-async function pairAction(code: string, options: { name?: string; meshNode?: string; service?: boolean }): Promise<void> {
+async function pairAction(code: string, options: { name?: string; meshNode?: string; service?: boolean; vncPort?: string }): Promise<void> {
   const fail = (message: string) => {
     process.stderr.write(`allternit: ${message}\n`);
     process.exitCode = 1;
   };
-  if (!(await portOpen(VNC_PORT))) {
-    return fail(`no VNC server on this computer (port ${VNC_PORT}). ${vncHelp()} Then run this again; your code is still unused.`);
+  const vncPort = options.vncPort ? Number(options.vncPort) : VNC_PORT;
+  if (!Number.isInteger(vncPort) || vncPort < 1 || vncPort > 65535) {
+    return fail(`--vnc-port must be a port number. Your code is still unused.`);
+  }
+  if (!(await portOpen(vncPort))) {
+    return fail(`no VNC server on this computer (port ${vncPort}). ${vncHelp()} Then run this again; your code is still unused.`);
   }
   const meshNode = findMeshNode(options.meshNode);
   if (!meshNode) {
@@ -188,6 +202,7 @@ async function pairAction(code: string, options: { name?: string; meshNode?: str
     cloudUrl: cloudUrl(),
     name,
     meshNode,
+    ...(vncPort !== VNC_PORT ? { vncPort } : {}),
   };
   await saveConfig(config);
   process.stdout.write(`Paired "${name}". Joining your Allternit mesh…\n`);
@@ -204,16 +219,21 @@ async function pairAction(code: string, options: { name?: string; meshNode?: str
   process.stdout.write('It shows up in Computers on your other devices within a minute.\n');
 }
 
-/** Start mesh-node and resolve with the mesh IP it reports. */
-function startMeshNode(config: PairedConfig): Promise<{ ip: string; stop: () => void; exited: Promise<number> }> {
-  const args = [
+/** mesh-node arguments: listen on the mesh at 5900, forward to the local VNC port. */
+export function meshNodeArgs(config: PairedConfig): string[] {
+  return [
     '--hostname', meshHostname(config.name),
     '--control-url', config.controlUrl,
     '--data-dir', path.join(stateDir(), 'mesh'),
-    '--forward', String(VNC_PORT),
+    '--forward', String(localVncPort(config)),
     '--listen', String(VNC_PORT),
     ...(config.authKey ? ['--auth-key', config.authKey] : []),
   ];
+}
+
+/** Start mesh-node and resolve with the mesh IP it reports. */
+function startMeshNode(config: PairedConfig): Promise<{ ip: string; stop: () => void; exited: Promise<number> }> {
+  const args = meshNodeArgs(config);
   const child = spawn(config.meshNode, args, { stdio: ['ignore', 'pipe', 'pipe'] });
   const exited = new Promise<number>((resolve) => child.on('exit', (code) => resolve(code ?? 1)));
   return new Promise((resolve, reject) => {
@@ -259,7 +279,8 @@ export function pairCommand(): Command {
     .option('--name <name>', 'how this computer is listed (default: host name)')
     .option('--mesh-node <path>', 'path to the mesh-node binary')
     .option('--no-service', "don't install a login service; run `allternit computers serve` yourself")
-    .action((code: string, options: { name?: string; meshNode?: string; service?: boolean }) => pairAction(code, options));
+    .option('--vnc-port <port>', 'local port of this machine\'s VNC server when it isn\'t 5900 (your devices still reach it at 5900 on the mesh)')
+    .action((code: string, options: { name?: string; meshNode?: string; service?: boolean; vncPort?: string }) => pairAction(code, options));
 }
 
 export function serveCommand(): Command {
