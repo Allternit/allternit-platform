@@ -18,6 +18,7 @@
 import { spawn, spawnSync } from 'child_process'
 import { getSessionId } from '../bootstrap/state.js'
 import instances from '../ink/instances.js'
+import { runOnGizziExit } from '../../../../runtime/util/parent-lifeline.js'
 import { registerCleanup } from './cleanupRegistry.js'
 import { pwd } from './cwd.js'
 import { logForDebugging } from './debug.js'
@@ -135,6 +136,15 @@ class TerminalPanel {
 
     if (!this.cleanupRegistered) {
       this.cleanupRegistered = true
+      // The server daemonizes, so a SIGKILLed or crashed gizzi never runs the
+      // cleanup below; this hook kills it when gizzi's process goes away.
+      // kill-server leaves the socket file behind; remove it too.
+      runOnGizziExit('/bin/sh', [
+        '-c',
+        'tmux -L "$1" kill-server; rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$1"',
+        'gizzi-panel-exit',
+        socket,
+      ])
       registerCleanup(async () => {
         // Detached async spawn — spawnSync here would block the event loop
         // and serialize the entire cleanup Promise.all in gracefulShutdown.

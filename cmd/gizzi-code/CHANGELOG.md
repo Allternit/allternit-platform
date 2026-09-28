@@ -13,6 +13,12 @@
 - A pet bot with an image avatar shows that image in iTerm2, WezTerm,
   Ghostty and Kitty. Other terminals (Apple Terminal, tmux) still show
   Gizzi.
+- After a conversation moves to a fresh context window, you can read the
+  earlier one in the terminal, as in Desktop. In the pet HUD's Thread view,
+  ↑ scrolls back and, past the rip, loads the earlier window in place. A
+  bot chat opened from `/bots` after a handoff keeps the earlier window's
+  last 50 messages above the rip; ctrl+o shows them. They stay out of the
+  model's context, which starts from the checkpoint.
 - `/fork <directive>` starts a background fork of the conversation that
   works on the directive and reports back when it's done.
 - meta+j opens a terminal panel: a shell that keeps running between visits.
@@ -57,6 +63,8 @@
   which returned each response as text. Images and other binary downloads
   came back corrupted, and streamed responses were held until they
   finished. Only requests to gizzi's own server go through the worker now.
+- The terminal panel's shell kept running after gizzi was killed or
+  crashed. It now closes whenever gizzi exits.
 - After returning from an external editor or shell, most of the screen
   stayed blank until ctrl+l.
 - The model picker never listed discovered local and subprocess models: it

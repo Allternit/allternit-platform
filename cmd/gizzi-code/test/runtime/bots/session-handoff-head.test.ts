@@ -29,7 +29,11 @@ afterAll(async () => {
   }
 })
 
-async function seed() {
+let seeded: ReturnType<typeof seedStore> | undefined
+// Both tests read the same rows; seed them once.
+const seed = () => (seeded ??= seedStore())
+
+async function seedStore() {
   // Creates the sandboxed data dir, as the real store reads do.
   await (await import("../../../src/runtime/bots/session-db")).sessionExistsInStore("warmup")
   const { Database } = await import("../../../src/runtime/session/storage/db")
@@ -54,7 +58,19 @@ async function seed() {
     session(a, b)
     session(b, c)
     session(c)
-    db.insert(MessageTable).values({ id: `${c}-m1`, session_id: c, data: {} as never }).run()
+    db.insert(MessageTable).values({ id: `${c}-m1`, session_id: c, data: { role: "user" } as never }).run()
+    // The earlier window b: a question, an answer with a tool call, an empty reply.
+    const msg = (id: string, role: string, at: number, modelID?: string) =>
+      db.insert(MessageTable).values({ id: `${b}-${id}`, session_id: b, time_created: at, data: { role, modelID } as never }).run()
+    const part = (id: string, message: string, data: object) =>
+      db.insert(PartTable).values({ id: `${b}-${id}`, message_id: `${b}-${message}`, session_id: b, data: data as never }).run()
+    msg("m1", "user", 1000)
+    msg("m2", "assistant", 2000, "glm-4.7-flash")
+    msg("m3", "assistant", 3000)
+    part("p1", "m1", { type: "text", text: "When do we ship?" })
+    part("p2", "m2", { type: "text", text: "Friday." })
+    part("p3", "m2", { type: "tool", tool: "read" })
+    part("p4", "m3", { type: "reasoning", text: "thinking only" })
     db.insert(PartTable)
       .values({ id: `${c}-p0`, message_id: `${c}-m1`, session_id: c, data: { type: "text", text: "just text" } as never })
       .run()
@@ -93,6 +109,27 @@ describe("session handoff head", () => {
 
     const { resolveHandoffHead } = await import("../../../src/cli/ui/ink-app/screens/bots-pane/handoff-head")
     expect(await resolveHandoffHead(c)).toBeNull()
-    expect(await resolveHandoffHead(a)).toMatchObject({ sessionId: c, generation: 3, reason: "model_switch" })
+    expect(await resolveHandoffHead(a)).toMatchObject({ sessionId: c, from: b, generation: 3, reason: "model_switch" })
+    // First store open runs migrations; slow on a busy machine.
+  }, 30_000)
+
+  test("reads the earlier window as text, newest capped", async () => {
+    const { sessionTextMessages } = await import("../../../src/runtime/bots/session-db")
+    const { b, c } = await seed()
+    expect(await sessionTextMessages(b)).toEqual({
+      total: 2,
+      messages: [
+        { id: `${b}-m1`, role: "user", content: "When do we ship?", at: 1000 },
+        { id: `${b}-m2`, role: "assistant", content: "Friday.\n[Tool read]", at: 2000, model: "glm-4.7-flash" },
+      ],
+    })
+    expect((await sessionTextMessages(b, 1)).messages.map((m) => m.id)).toEqual([`${b}-m2`])
+    // A window's seed carries its handoff.
+    const [first] = (await sessionTextMessages(c)).messages
+    expect(first?.handoff).toEqual({ from: b, generation: 2, reason: "model_switch" })
+
+    const { loadEarlierWindow } = await import("../../../src/cli/ui/ink-app/screens/bots-pane/handoff-head")
+    expect((await loadEarlierWindow({ sessionId: c, from: b, checkpoint: "" }))?.total).toBe(2)
+    expect(await loadEarlierWindow({ sessionId: c, checkpoint: "" })).toBeNull()
   })
 })

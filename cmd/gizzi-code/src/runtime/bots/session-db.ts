@@ -92,3 +92,80 @@ export async function sessionHandoffSeed(
   }
   return null
 }
+
+export interface StoredTextMessage {
+  id: string
+  role: "user" | "assistant"
+  /** Text parts joined, as the agent-sessions API's `content` (tools/files as brackets). */
+  content: string
+  at?: number
+  /** The model that wrote an assistant message (`modelID`). */
+  model?: string
+  /** Set on a window's seed: the checkpoint that continued from `from`. */
+  handoff?: { from: string; generation?: number; reason?: string }
+}
+
+/**
+ * A window's conversation as text, oldest first, capped to the newest
+ * `limit` messages (spec P3.16: reading the earlier window after a rip).
+ * The same rows and text the agent-sessions API serves Desktop
+ * (`transformMessage` in routes/agent-compat.ts), read from the store so
+ * the TUI needs no running server. Messages with no text are skipped.
+ */
+export async function sessionTextMessages(
+  sessionId: string,
+  limit = 50,
+): Promise<{ total: number; messages: StoredTextMessage[] }> {
+  const { Database, eq, asc } = await import("@/runtime/session/storage/db")
+  const { MessageTable, PartTable } = await import("@/runtime/session/session.sql")
+  await ensureSessionStoreDir()
+  const rows = Database.use((db) =>
+    db
+      .select({ id: MessageTable.id, data: MessageTable.data, created: MessageTable.time_created })
+      .from(MessageTable)
+      .where(eq(MessageTable.session_id, sessionId))
+      .orderBy(asc(MessageTable.time_created), asc(MessageTable.id))
+      .all(),
+  )
+  const parts = Database.use((db) =>
+    db
+      .select({ message: PartTable.message_id, data: PartTable.data })
+      .from(PartTable)
+      .where(eq(PartTable.session_id, sessionId))
+      .orderBy(asc(PartTable.id))
+      .all(),
+  )
+  const byMessage = new Map<string, any[]>()
+  for (const p of parts) {
+    const list = byMessage.get(p.message) ?? []
+    list.push(p.data)
+    byMessage.set(p.message, list)
+  }
+  const out: StoredTextMessage[] = []
+  for (const row of rows) {
+    const info = row.data as { role?: string; modelID?: string }
+    const role = info?.role
+    if (role !== "user" && role !== "assistant") continue
+    const own = byMessage.get(row.id) ?? []
+    const text: string[] = []
+    let handoff: StoredTextMessage["handoff"]
+    for (const part of own) {
+      const h = part?.metadata?.handoff
+      if (h && typeof h.from === "string") handoff = { from: h.from, generation: h.generation, reason: h.reason }
+      if ((part?.type === "text" || part?.type === "agent") && part.text) text.push(part.text)
+      else if (part?.type === "file") text.push(`[File ${part.filename ?? part.url ?? "attachment"}]`)
+      else if (part?.type === "tool" && part.tool) text.push(`[Tool ${part.tool}]`)
+    }
+    const content = text.join("\n").trim()
+    if (!content && !handoff) continue
+    out.push({
+      id: row.id,
+      role,
+      content,
+      at: row.created,
+      ...(role === "assistant" && info.modelID ? { model: info.modelID } : {}),
+      ...(handoff ? { handoff } : {}),
+    })
+  }
+  return { total: out.length, messages: out.slice(-limit) }
+}

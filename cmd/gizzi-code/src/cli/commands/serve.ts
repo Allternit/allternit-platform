@@ -82,16 +82,29 @@ export const ServeCommand = cmd({
     // which also kills the cloudflared/mesh-node children. Without these
     // handlers SIGTERM/SIGINT would leave those children orphaned.
     let shuttingDown = false
+    // When the desktop that launched us is gone, stderr is a broken pipe: a
+    // write can throw (EPIPE). A log line must never stop a shutdown, which
+    // it did, leaking a serve per desktop exit.
+    process.stderr.on("error", () => {})
+    process.stdout.on("error", () => {})
+    const note = (line: string) => {
+      try {
+        process.stderr.write(line)
+      } catch {
+        // stderr is gone; nobody is reading it anyway
+      }
+    }
     const shutdown = (signal: string) => {
       // A second signal while cleanup is in flight means "stop waiting".
       if (shuttingDown) {
-        process.stderr.write(`gizzi server received ${signal} again; force exiting\n`)
+        note(`gizzi server received ${signal} again; force exiting\n`)
         process.exit(1)
       }
       shuttingDown = true
-      process.stderr.write(`gizzi server received ${signal}; shutting down\n`)
-      // A wedged server.stop() must not turn a shutdown into a leak.
+      // Armed before anything that can throw: a wedged server.stop() or a
+      // failing write must not turn a shutdown into a leak.
       setTimeout(() => process.exit(1), 10_000).unref()
+      note(`gizzi server received ${signal}; shutting down\n`)
       ProcessRegistry.killAll()
       void Sidecar.stop().catch(() => {})
       server

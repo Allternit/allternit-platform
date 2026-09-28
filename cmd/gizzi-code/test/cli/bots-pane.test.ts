@@ -257,6 +257,7 @@ describe("openBotCanonicalChat", () => {
       isLiteLog: () => false,
       loadFullLog: async (log: unknown) => log,
       resolveHandoffHead: async () => null,
+      loadEarlierWindow: async () => null,
       ...overrides,
     }
   }
@@ -291,6 +292,53 @@ describe("openBotCanonicalChat", () => {
     expect(log.messages[0].compactMetadata.handoff).toEqual({ generation: 2, reason: "threshold" })
     expect(log.messages[1]).toMatchObject({ type: "user", isCompactSummary: true, isVisibleInTranscriptOnly: true })
     expect(JSON.stringify(log.messages[1].message.content)).toContain("ship 2.1.4 Friday")
+  })
+
+  test("puts the earlier window's last messages above the rip, out of the model's context", async () => {
+    const { createBot, getBot } = await import("../../src/runtime/bots/bot-store")
+    await createBot({ name: "scout", title: "Scout" })
+    const { openBotCanonicalChat } = await import(
+      "../../src/cli/ui/ink-app/screens/bots-pane/open-bot-chat"
+    )
+    const { getMessagesAfterCompactBoundary } = await import("../../src/cli/ui/ink-app/utils/messages")
+    await openBotCanonicalChat("scout", {
+      ...fakeDeps(),
+      getBot,
+      resolveHandoffHead: async () => ({ sessionId: "ses_head_3", from: "ses_gen2", checkpoint: "Decided: ship Friday.", generation: 3, reason: "threshold", at: "2026-09-28T10:00:00Z" }),
+      loadEarlierWindow: async (head: any) => {
+        expect(head.from).toBe("ses_gen2")
+        return {
+          total: 60,
+          messages: [
+            { id: "e0", role: "user", content: "[checkpoint: window 1] …", at: 1000, handoff: { from: "ses_gen1", generation: 1, reason: "manual" } },
+            { id: "e1", role: "user", content: "When do we ship?", at: 2000 },
+            { id: "e2", role: "assistant", content: "Friday.", at: 3000, model: "glm-4.7-flash" },
+          ],
+        }
+      },
+      getLastSessionLog: async () => null,
+      getResumeHandler: () => async (sessionId: string, log: any) => {
+        calls.resumed.push([sessionId, log])
+      },
+    })
+    const [[, log]] = calls.resumed as any
+    expect(log.messages.map((m: any) => m.subtype ?? m.type)).toEqual([
+      "informational", // 57 earlier messages not shown
+      "compact_boundary", // that window's own rip (gen 2)
+      "user",
+      "assistant",
+      "compact_boundary", // the head's rip (gen 3)
+      "user", // checkpoint
+    ])
+    expect(log.messages[0].content).toContain("57 earlier messages")
+    expect(log.messages[1].compactMetadata.handoff).toEqual({ generation: 2, reason: "manual" })
+    expect(log.messages[2].timestamp).toBe(new Date(2000).toISOString())
+    expect(log.messages[3].message.model).toBe("glm-4.7-flash")
+    expect(log.messages[4].compactMetadata.handoff).toEqual({ generation: 3, reason: "threshold", earlierAbove: true })
+    expect(log.messages.every((m: any) => m.sessionId === "ses_head_3")).toBe(true)
+    // Only the checkpoint reaches the model.
+    const context = getMessagesAfterCompactBoundary(log.messages)
+    expect(context.map((m: any) => m.subtype ?? m.type)).toEqual(["compact_boundary", "user"])
   })
 
   test("a head the REPL already knows resumes its own transcript", async () => {
