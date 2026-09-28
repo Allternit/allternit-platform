@@ -131,3 +131,9 @@ test/runtime/bots/platform-api.test.ts
 test/components/routeInternalFetch.test.ts
 test/services/localModel-reasoning.test.ts
 test/components/side-query-provider.test.ts
+test/tool/media-generate.test.ts
+test/pane-render/pane-render.test.ts
+test/provider/cli-discovery.test.ts
+test/cli-bridge/cli-bridge.test.ts
+test/pane-artifact/pane-artifact.test.ts
+test/pane-browser/pane-browser.test.ts

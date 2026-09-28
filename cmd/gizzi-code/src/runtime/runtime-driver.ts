@@ -20,6 +20,11 @@ export interface AgentTask {
    * resolve the session they belong to.
    */
   sessionID?: string
+  /**
+   * An MCP server (HTTP) the CLI should load for this task: gizzi's CLI tool
+   * bridge, which gives the CLI the session's own tools (see CliBridge).
+   */
+  mcp?: { name: string; url: string; headers: Record<string, string> }
 }
 
 export interface TaskHandle {
