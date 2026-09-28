@@ -269,3 +269,25 @@ test('subs connect reuses an existing enabled account instead of creating a dupl
   assert.deepEqual(calls, ['GET /v1/accounts', 'POST /v1/accounts/acct-1/connect']);
   assert.equal(JSON.parse(out).account_id, 'acct-1');
 });
+
+test('subs login reuses the account and opens the Firefox login window', async () => {
+  const existing = {
+    account_id: 'acct-1',
+    provider: 'prov-a',
+    label: 'Work',
+    plan: null,
+    session_health: 'auth_required',
+    enabled: true,
+  };
+  const calls: string[] = [];
+  const out = await withGateway(
+    {
+      'GET /v1/accounts': [existing],
+      'POST /v1/accounts/acct-1/login': { account_id: 'acct-1', status: 'login_window_open', browser: 'firefox' },
+    },
+    () => buildProgram().parseAsync(['node', 'allternit', 'subs', 'login', 'prov-a']),
+    calls,
+  );
+  assert.deepEqual(calls, ['GET /v1/accounts', 'POST /v1/accounts/acct-1/login']);
+  assert.equal(JSON.parse(out).status, 'login_window_open');
+});

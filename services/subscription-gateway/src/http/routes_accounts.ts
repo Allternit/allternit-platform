@@ -97,6 +97,13 @@ export function accountsRouter(deps: GatewayDeps): Router {
       // challenge_presented / ui_drift / provider_down); auth walls and
       // challenges leave the window open for the human and are never retried
       // here — re-POST to re-drive the probe after an interactive login.
+      // Login mode: a login-browser window still open holds the fresh session
+      // in memory — close it first so cookies.sqlite is flushed, then the
+      // relaunched Chrome imports it.
+      if (deps.loginBrowser?.isOpen(account.account_id)) {
+        await deps.loginBrowser.close(account.account_id);
+        await deps.pool.deactivate({ provider: account.provider, account_id: account.account_id });
+      }
       try {
         await deps.pool.activate({
           provider: account.provider,
@@ -110,6 +117,62 @@ export function accountsRouter(deps: GatewayDeps): Router {
         return;
       }
       res.json(getAccount(deps.db, req.params.id));
+    }
+  );
+
+  // Login mode: providers that sign in through Google refuse automated
+  // Chrome, so the human signs in inside a plain Firefox window on the
+  // account's own Firefox profile. The adapter's Chrome is closed so the next
+  // connect relaunches it and imports the new session. Never automates the
+  // login itself and never sees credentials.
+  router.post(
+    "/v1/accounts/:id/login",
+    requireScope("accounts:manage"),
+    async (req: Request, res: Response) => {
+      const account = getAccount(deps.db, req.params.id);
+      if (!account) {
+        res.status(404).json({ error: "account_not_found", account_id: req.params.id });
+        return;
+      }
+      if (!account.enabled) {
+        res.status(409).json({ error: "account_disabled", account_id: account.account_id });
+        return;
+      }
+      if (!deps.pool || !deps.loginBrowser) {
+        res.status(501).json({
+          error: "login_browser_unavailable",
+          detail: "no login browser configured (install Firefox or set SUBS_GATEWAY_LOGIN_BROWSER)",
+        });
+        return;
+      }
+      const origin = deps.adapterRegistry?.adapters.find(
+        (a) => a.manifest.provider === account.provider
+      )?.manifest.origins[0];
+      if (!origin) {
+        res.status(409).json({ error: "no_adapter_for_provider", provider: account.provider });
+        return;
+      }
+      const lane = { provider: account.provider, account_id: account.account_id };
+      await deps.pool.deactivate(lane);
+      try {
+        await deps.loginBrowser.open(
+          account.account_id,
+          deps.pool.userDataDirFor(account.profile_ref),
+          origin
+        );
+      } catch (err) {
+        res.status(502).json({
+          error: "login_browser_failed",
+          detail: err instanceof Error ? err.message : String(err),
+        });
+        return;
+      }
+      res.json({
+        account_id: account.account_id,
+        status: "login_window_open",
+        browser: "firefox",
+        next: `Sign in in the Firefox window, then POST /v1/accounts/${account.account_id}/connect`,
+      });
     }
   );
 
