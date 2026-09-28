@@ -425,7 +425,7 @@ describe("execute e2e against fixtures", () => {
     return `<nav>${opts.lateMs ? "" : projects}</nav><div id="dlg"></div><main><div id="thread">${opts.lateMs ? "" : old}</div>
       <button aria-label="Open profile menu">me</button>
       <div data-composer-body>
-        <button aria-label="Add files and more" id="plus">+</button><span id="chips"></span>
+<span id="plusSlot"></span><span id="chips"></span>
         <div role="textbox" aria-label="Ask ChatGPT" contenteditable="true"></div>
         <button aria-label="Send" type="submit" id="send">Send</button>
       </div>
@@ -441,8 +441,15 @@ describe("execute e2e against fixtures", () => {
           };
         };
         if (np) np.onclick = window.__openDialog;
-        // live: the "+" menu is only added to the DOM a beat after the click
-        plus.onclick = () => setTimeout(() => {
+        // live: the composer "+" renders after the textbox, and its menu is
+        // only added to the DOM a beat after the click
+        let plus;
+        setTimeout(() => {
+          plusSlot.innerHTML = '<button aria-label="Add files and more" id="plus">+</button>';
+          plus = document.getElementById("plus");
+          plus.onclick = openMenu;
+        }, 700);
+        const openMenu = () => setTimeout(() => {
           document.querySelector("main").insertAdjacentHTML("beforeend", '<div id="menu"><div id="create">Create image</div></div>');
           document.getElementById("create").onclick = () => {
             document.getElementById("menu").remove();

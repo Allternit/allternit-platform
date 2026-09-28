@@ -191,10 +191,16 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
     const resolver = ctx.selectors as SdkSelectorResolver;
     if (await resolver.tryResolveLocator("image_mode_active")) return true;
     const page = sdkPage(ctx.page);
-    const plusAll = await resolver.tryResolveLocator("composer_plus");
-    // Only VISIBLE matches: after in-app navigation (e.g. into a project) the
-    // previous view's composer can linger hidden in the DOM.
-    const plus = plusAll ? plusAll.filter({ visible: true }) : null;
+    // The "+" renders after the composer textbox (live: on a just-opened
+    // project page it was not in the DOM yet). Only VISIBLE matches count.
+    let plusAll = null;
+    let plus = null;
+    for (let i = 0; i < 40; i++) {
+      plusAll = await resolver.tryResolveLocator("composer_plus");
+      plus = plusAll ? plusAll.filter({ visible: true }) : null;
+      if (plus && (await plus.count()) > 0) break;
+      await page.waitForTimeout(250);
+    }
     const diag: Record<string, unknown> = {
       url: page.url(),
       plus_matches: plusAll ? await plusAll.count() : 0,
