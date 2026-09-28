@@ -36,7 +36,25 @@ describe("CliBridge MCP server", () => {
     expect(CliBridge.authorized(headers[CliBridge.TOKEN_HEADER])).toBe(true)
     expect(CliBridge.authorized(undefined)).toBe(false)
     expect(CliBridge.authorized("nope")).toBe(false)
-    expect(headers.Authorization).toBeUndefined() // never a Bearer the auth middleware would misread
+    expect(headers.Authorization ?? "").not.toStartWith("Bearer") // never a Bearer the auth middleware would misread
+  })
+
+  test("a password-protected server gets basic auth alongside the bridge token", () => {
+    const saved = { p: process.env.GIZZI_SERVER_PASSWORD, u: process.env.GIZZI_SERVER_USERNAME }
+    try {
+      delete process.env.GIZZI_SERVER_PASSWORD
+      expect(CliBridge.serverConfig({ baseURL: "http://127.0.0.1:4096", sessionID: "s" }).headers.Authorization).toBeUndefined()
+      process.env.GIZZI_SERVER_PASSWORD = "pw"
+      process.env.GIZZI_SERVER_USERNAME = "gizzi"
+      const { headers } = CliBridge.serverConfig({ baseURL: "http://127.0.0.1:4096", sessionID: "s" })
+      expect(headers.Authorization).toBe(`Basic ${Buffer.from("gizzi:pw").toString("base64")}`)
+      expect(headers[CliBridge.TOKEN_HEADER]).toBeDefined()
+    } finally {
+      if (saved.p === undefined) delete process.env.GIZZI_SERVER_PASSWORD
+      else process.env.GIZZI_SERVER_PASSWORD = saved.p
+      if (saved.u === undefined) delete process.env.GIZZI_SERVER_USERNAME
+      else process.env.GIZZI_SERVER_USERNAME = saved.u
+    }
   })
 
   test("the config points at this session on this server, in its project directory", () => {
