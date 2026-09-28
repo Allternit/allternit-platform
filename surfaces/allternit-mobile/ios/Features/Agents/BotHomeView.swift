@@ -19,6 +19,9 @@ struct BotHomeView: View {
     @State private var isLoadingSessions = false
     @State private var sessionsError: String? = nil
 
+    // MARK: - Threads (P9.2)
+    @State private var threads: [BotThread] = []
+
     // MARK: - Artifacts
     @State private var selectedArtifact: ArtifactRecord? = nil
 
@@ -322,9 +325,19 @@ struct BotHomeView: View {
     // MARK: - Tasks card
 
     private var tasksCard: some View {
-        BotCard(title: "Tasks", icon: "message", accent: accentColor) {
+        BotCard(title: threads.isEmpty ? "Tasks" : "Threads", icon: "message", accent: accentColor) {
             VStack(alignment: .leading, spacing: 0) {
-                if isLoadingSessions && botSessions.isEmpty {
+                if !threads.isEmpty {
+                    VStack(spacing: 0) {
+                        ForEach(threads.prefix(8)) { thread in
+                            threadRow(thread)
+                            if thread.id != threads.prefix(8).last?.id {
+                                Divider()
+                                    .background(Theme.borderWarmSubtle)
+                            }
+                        }
+                    }
+                } else if isLoadingSessions && botSessions.isEmpty {
                     ProgressView()
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.vertical, 20)
@@ -387,6 +400,51 @@ struct BotHomeView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
+    }
+
+    private func threadColor(_ group: String) -> Color {
+        switch group {
+        case "waiting": return .orange
+        case "working": return .blue
+        case "resolved": return .green
+        default: return Color("TextSecondary")
+        }
+    }
+
+    private func threadRow(_ thread: BotThread) -> some View {
+        Button(action: {
+            hapticLight()
+            if let sid = thread.currentSessionId { openChatSession(sid) }
+        }) {
+            HStack(spacing: 12) {
+                Circle()
+                    .fill(threadColor(thread.group))
+                    .frame(width: 7, height: 7)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(thread.title)
+                        .font(.subheadline)
+                        .foregroundColor(Color("TextPrimary"))
+                        .lineLimit(1)
+                    Text([thread.statusLine ?? thread.status, relativeTime(thread.lastActivityAt)].joined(separator: " · "))
+                        .font(.caption)
+                        .foregroundColor(thread.group == "waiting" ? .orange : Color("TextSecondary"))
+                        .lineLimit(1)
+                }
+                Spacer()
+                if let p = thread.progressLabel {
+                    Text(p)
+                        .font(.caption.monospacedDigit())
+                        .foregroundColor(Color("TextSecondary"))
+                }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(Color("TextSecondary"))
+            }
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(thread.currentSessionId == nil)
     }
 
     private func taskRow(_ session: AgentSession) -> some View {
@@ -1006,10 +1064,21 @@ struct BotHomeView: View {
     private func loadAll() async {
         await withTaskGroup(of: Void.self) { group in
             group.addTask { await loadSessions() }
+            group.addTask { await loadThreads() }
             group.addTask { await loadArtifacts() }
             group.addTask { await loadAutomation() }
             group.addTask { await loadWorkspaceFileCount() }
             group.addTask { await loadWebhookCount() }
+        }
+    }
+
+    private func loadThreads() async {
+        do {
+            threads = try await ThreadsClient.shared.listThreads(botId: agent.id)
+                .sorted { ($0.groupOrder, $1.lastActivityAt) < ($1.groupOrder, $0.lastActivityAt) }
+        } catch {
+            // Older servers have no threads; the card shows sessions instead.
+            threads = []
         }
     }
 
