@@ -4,6 +4,7 @@ import {
   isPublicCloudCatalogPath,
   rewriteCloudApiToProtocol,
   shouldInjectDesktopIdentity,
+  acceptsDeviceToken,
 } from './api-protocol.js';
 
 const CLOUD = 'https://api.allternit.com';
@@ -42,5 +43,15 @@ describe('api-protocol routing', () => {
     expect(isPublicCloudCatalogPath(`${CLOUD}/v1/models`)).toBe(true);
     expect(isPublicCloudCatalogPath('/api/v1/billing/subscription')).toBe(false);
     expect(isPublicCloudCatalogPath('allternit-api://cloud/api/v1/billing/credits')).toBe(false);
+  });
+});
+
+describe('acceptsDeviceToken', () => {
+  it('covers the cloud routes that take the paired device token', () => {
+    expect(acceptsDeviceToken('/api/v1/mesh/enroll')).toBe(true);
+    expect(acceptsDeviceToken('allternit-api://cloud/api/v1/computers/pairing-codes')).toBe(true);
+    expect(acceptsDeviceToken('/api/v1/computers/paired/pc_1?x=1')).toBe(true);
+    expect(acceptsDeviceToken('/api/v1/billing/subscription')).toBe(false);
+    expect(acceptsDeviceToken('/api/v1/computers/pair')).toBe(false);
   });
 });
