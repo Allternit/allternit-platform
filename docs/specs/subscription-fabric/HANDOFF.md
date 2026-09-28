@@ -572,3 +572,76 @@ confirmed; permanent endpoint first, then tear down; IPv4 + writable viewer.
   features → capability ids → platform surfaces, excluded items, 🔒 gates,
   revised P5–P6 order. **Owner decision pending: provider-terms risk (§0).**
 - Old gate guest `computer-e0cc21e9…` still STOPPED (scratch DB archived).
+
+## 16. HANDOFF — 2026-09-28 ~16:30 CDT (claude session) — START HERE for the next session
+
+THIS SECTION SUPERSEDES §9–§15 for "what's next"; they remain history.
+
+### 16.1 Read first (in order)
+1. `CAPABILITY_INVENTORY.md` — every ChatGPT/Claude/Kimi web-subscription
+   feature → capability id → surface; exclusions; 🔒 gates.
+2. `SURFACES_PLAN.md` — the integration design (fabric = a gizzi-code
+   provider, not a parallel pipeline) with file:line seams in gizzi-code,
+   allternit-api and allternit-ai, and the 7-step build order.
+3. HARDENING **D15** (runtime only on the Sessions machine — never the user's
+   Mac) and **D16** (provider-terms disclosure acknowledged on first select +
+   every task human-initiated; mid-task provider questions answered by a
+   human; agents/bots/MCP/schedules only *prepare* tasks a human confirms).
+
+### 16.2 Owner decisions (2026-09-28)
+- Offer the fabric despite provider-terms risk, with disclosure + human send (D16).
+- "Called like any other model in the model selector … stream responses
+  correctly, no lag or errors." Surfaces must be correct, not stubbed.
+- Build **adapters AND platform surfaces**; enumerate every provider feature
+  (done: inventory). Gizzi has a tool belt; a gateway tool server (MCP) too.
+- Image-chat policy: ChatGPT project "Allternit", one reused chat/account,
+  rotate at N (default 20). Duplicate projects cleaned up.
+
+### 16.3 Live state
+- **Sessions machine (permanent, T1):** Desktop-registered computer
+  `computer-9bd5cfe494a140d182645e645039f74b` ("sessions", VPS Incus
+  `allternit-user-local-dev-user-afc0fd47…`), gateway from origin/main via
+  `sessions-setup.sh`, Firefox 156 + Chrome 151, account `6560c6b4-e019-4073-ae81-343b4bc1d655`
+  (chatgpt) **ready**. Reached through the installed Desktop API proxy
+  (`127.0.0.1:8013/api/v1/computers/<id>/proxy`, guest port 7788; Desktop
+  token = `ALLTERNIT_DESKTOP_ACCESS_TOKEN` in the 8013 process env — re-read
+  after every Desktop restart). Gateway cli-token: Mac keychain
+  `com.allternit.subscription-gateway` / `sessions-cli-token`.
+  Gated guest shell/upload via the approval relay (§4): POST → 403
+  {approval_id} → `POST /api/aci/handoff/<id>/approve` → retry with
+  `?approval_id=`.
+- **Nothing of the fabric runs on the Mac** (D15). `~/.allternit/subscriptions`
+  holds only an old state.db (no session material).
+- **VPS IPv4 fixed:** host unit `incus-docker-forward.service` (DOCKER-USER
+  accepts for incusbr0). Host-level changes are possible via a temporary
+  privileged Incus container (hostroot + hostproc disk devices,
+  `raw.lxc: lxc.apparmor.profile=unconfined`, `nsenter --net=/mnt/hostproc/1/ns/net`)
+  — delete it afterwards. Incus client certs: `~/.allternit/incus-client/`.
+- Old gate guest `computer-e0cc21e9…` STOPPED (record: `~/.allternit/gate-archive/subs-scratch-api-2026-09-28`).
+- Skill lane: `~/.claude/skills/chatgpt-image/fabric_capture.mjs` (no env;
+  Desktop API → computer "sessions" → gateway) — stopgap until step 1 of
+  SURFACES_PLAN lands; repo copy synced into `Allternit/.claude/skills`.
+
+### 16.4 Merged today
+#863 continue + fixes · #873 SSE proxy streaming + extractor · #881 image-chat
+policy · #882 artifact download · #883 preview + P3 attestation · #886→#893
+(local install reverted, D15) · #889 writable viewer + `ALLTERNIT_ALLOWED_ORIGINS`
+· #890/#893 handoffs + inventory · #896 D16.
+
+### 16.5 Next — exactly this
+Start `SURFACES_PLAN.md` §3 step 1 (allternit-api `/api/v1/subscriptions/*`
+forwarder + disclosure ack + `initiated_by`), then step 2 (gizzi-code `subs`
+provider). Live-verify each on the Sessions machine through the real chat UI
+(streaming token-by-token, no errors) before moving on.
+
+### 16.6 Traps (new today, all binding)
+- Probe provider UIs on a **copy** of the lane profile, **headed**
+  (`DISPLAY=:0`; headless gets Cloudflare), then write selectors; mirror every
+  live quirk in a fixture that fails without the fix.
+- Binary downloads: never capture curl output in a shell variable (NULs strip).
+- Shell polls: `pgrep -f`/`pkill -f` match their own shell — use `ps … | grep '[p]attern'`.
+- Python heredocs turn `\n` inside JS strings into real newlines — `node --check` before upload.
+- Machine load is high (load avg 50–80): vitest hook timeouts are flakes —
+  rerun with `--no-file-parallelism`; Rust builds use
+  `CARGO_TARGET_DIR=~/Desktop/allternit-workspace/.shared-target`.
+- Don't put fabric runtime on the Mac, ever (D15).
