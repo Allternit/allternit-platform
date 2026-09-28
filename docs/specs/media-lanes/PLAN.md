@@ -135,5 +135,7 @@ When no app is attached (a bot or thread running unattended), the job goes to a 
 headless Chromium in the cloud computer golden image (add it there), or a small cloud render service.
 Either way it runs the same render-kit page, so the output is identical everywhere.
 
-WebCodecs is available in Chromium/Electron and Safari 17+ (iOS included). The one addition to the
-bundle is the muxer (a JS library, tens of KB).
+WebCodecs encoding is solid in Chromium and Electron (Desktop, web in Chrome/Edge). Safari's
+support is newer and uneven (audio encoding especially), so iOS/Safari sessions send video renders
+to the render worker until P2 verifies them. The one addition to the bundle is the muxer (a JS
+library, tens of KB).
