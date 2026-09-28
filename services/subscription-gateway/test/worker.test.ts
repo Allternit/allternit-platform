@@ -67,7 +67,7 @@ describe("worker happy path (fixture-web declarative adapter, real browser)", ()
   }, 30000);
   afterAll(async () => {
     await browser.close();
-  });
+  }, 30000);
   beforeEach(() => {
     dir = tmpStateDir();
     db = openDatabase(":memory:");

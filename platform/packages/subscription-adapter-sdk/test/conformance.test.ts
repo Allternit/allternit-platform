@@ -15,10 +15,10 @@ const FIXTURES_DIR = fileURLToPath(new URL("./fixtures", import.meta.url));
 let browser: Browser;
 beforeAll(async () => {
   browser = await launchBrowser();
-});
+}, 30000);
 afterAll(async () => {
   await browser.close();
-});
+}, 30000);
 
 function targetFrom(config = fixtureWebConfig()): ConformanceTarget {
   const adapter = new DeclarativeChatAdapter(config);

@@ -14,10 +14,10 @@ import type { ProviderId } from "@allternit/subscription-fabric-contracts";
 let browser: Browser;
 beforeAll(async () => {
   browser = await launchBrowser();
-});
+}, 30000);
 afterAll(async () => {
   await browser.close();
-});
+}, 30000);
 
 describe("progress extractors (D11)", () => {
   it("extractStepList emits one progress event per step with fraction from done/total", async () => {

@@ -20,10 +20,10 @@ import { fixtureWebConfig } from "./fixture-web";
 let browser: Browser;
 beforeAll(async () => {
   browser = await launchBrowser();
-});
+}, 30000);
 afterAll(async () => {
   await browser.close();
-});
+}, 30000);
 
 function makeTask(): Task {
   const now = new Date().toISOString();

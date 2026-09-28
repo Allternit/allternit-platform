@@ -71,7 +71,7 @@ export function chatGPTWebConfig(
     ...overrides,
     // Merge, don't replace: a clock/timing override must not drop the
     // live-UI completion flag.
-    completion: { sendMayBeDisabled: true, ...overrides.completion },
+    completion: { ignoreSend: true, ...overrides.completion },
   };
 }
 

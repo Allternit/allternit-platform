@@ -14,10 +14,10 @@ import { createResolver } from "../src/index";
 let browser: Browser;
 beforeAll(async () => {
   browser = await launchBrowser();
-});
+}, 30000);
 afterAll(async () => {
   await browser.close();
-});
+}, 30000);
 
 const PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 const GIF_B64 = "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";

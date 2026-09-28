@@ -44,7 +44,7 @@ beforeAll(async () => {
 }, 30000);
 afterAll(async () => {
   await browser.close();
-});
+}, 30000);
 
 async function fixturePage(name: string): Promise<Page> {
   const page = await browser.newPage();
