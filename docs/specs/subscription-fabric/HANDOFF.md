@@ -453,3 +453,32 @@ unchanged (guest IPv4 NAT; writable viewer + origin_gate port allowlist).
 
 Next: merge this PR → §9.4 item 3 (image-chat history policy — needs Eoj's
 call on the proposal), item 4 (D6 media-router → gateway), item 5 closeout.
+
+## 12. HANDOFF — 2026-09-28 ~13:00 CDT (claude session) — image-chat policy live (§9.4 item 3 DONE)
+
+#873 merged (SSE + extractor). Branch `session/claude-image-project`:
+**Eoj's policy (2026-09-28):** image tasks run in a ChatGPT project named
+**Allternit**; each account reuses one image chat until it holds N images,
+then the next image opens a new chat in the same project.
+- Config: `SUBS_GATEWAY_IMAGE_PROJECT` (default Allternit; empty disables),
+  `SUBS_GATEWAY_IMAGE_CHAT_MAX` (default 20). Store: `image_chats` (0004).
+- **Live ✅ (max=2):** #1 + #2 in one project chat
+  (`/g/g-p-6abaa3bd…-allternit/c/6abaaa0b…`, then full), #3 → new chat in
+  the project; 3 unique images, one per task.
+- Live-found bugs fixed on the way (each with a fixture that fails without
+  the fix): sidebar/project list render late; project entries are BUTTONS
+  (not links); "Add new project" only reachable after hovering the section
+  TITLE (x=350 → 298); composer "+" and its menu render late on a
+  just-opened project page; a reused chat's earlier images render late (a
+  0==0 "stable" read re-captured the old image); adapter ctx.log went to a
+  null logger (now the gateway log).
+- **Leftover on Eoj's account:** two EMPTY duplicate "Allternit" projects
+  created by the pre-fix lookup bug (the first one holds the chats). Needs
+  Eoj's OK to delete (account data).
+- Guest gateway relaunched with the default max (20) after the test.
+- Probing ChatGPT UI safely: copy the lane profile to /tmp/probe-profile,
+  launch HEADED (`DISPLAY=:0` — headless gets a Cloudflare challenge),
+  playwright from the gateway dir; `gdl.sh`-style binary download (don't
+  capture binary responses in a shell variable — NULs are stripped).
+
+Next: §9.4 item 4 (D6 media-router ChatGPT lane → gateway), item 5 closeout.
