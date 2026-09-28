@@ -188,6 +188,9 @@ describe("Mesh join precedence", () => {
 
     expect(url).toBe("http://100.99.0.5:4096")
     const calls = await recorded()
+    await wait(100)
+    console.log("MESHDEBUG record:\n" + calls)
+    console.log("MESHDEBUG log:\n" + (await fs.readFile(Log.file(), "utf8")).split("\n").filter((l) => /mesh|sidecar|tailscale/i.test(l)).slice(-15).join("\n"))
     // Sidecar was attempted first, then the system tailscaled took over.
     expect(calls).toContain("mesh-node ")
     expect(calls).toContain("tailscale status")
