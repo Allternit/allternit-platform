@@ -13,6 +13,8 @@ type Props = {
   isQueued: boolean
   isResolved: boolean
   isError: boolean
+  /** The tool's arguments, drawn right after its name: "Update(src/math.ts)". */
+  args?: React.ReactNode
   children: React.ReactNode
 }
 
@@ -22,6 +24,7 @@ export function ToolUseCard({
   isQueued,
   isResolved,
   isError,
+  args,
   children,
 }: Props): React.ReactNode {
   const tasks = useAppStateMaybeOutsideOfProvider(s => s.tasks) ?? {}
@@ -48,9 +51,12 @@ export function ToolUseCard({
       width="100%"
     >
       <Box flexDirection="row" justifyContent="space-between" gap={1}>
-        <Text bold={true} wrap="truncate">
-          {toolName}
-        </Text>
+        <Box flexDirection="row" flexShrink={1}>
+          <Text bold={true} wrap="truncate">
+            {toolName}
+          </Text>
+          {args}
+        </Box>
         <ToolOrb state={state} toolName={toolName} />
       </Box>
       {backgroundTask && (

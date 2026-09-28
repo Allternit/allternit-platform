@@ -16,6 +16,11 @@
   meta+j inside it returns to gizzi. Needs tmux for the shell to persist.
 
 ### Changed
+- Tool cards put the arguments beside the tool name, as in Claude Code:
+  "Update(src/math.ts)" on one line with the orb.
+- The spinner shows the elapsed time from the start, and the token count as
+  soon as tokens arrive, instead of after 30 seconds.
+- The startup header no longer leaves ten blank rows under it.
 - Tool cards show the Allternit orb instead of "● done": it moves while the
   tool runs (searching, writing or working) and settles when it's done.
 - Every turn ends with one line, "▞▪▚ Gizzi forged for 3.5s · model · …":
@@ -26,6 +31,13 @@
   copied into `~/.config/gizzi-code` once. The old folder isn't changed.
 
 ### Fixed
+- Replies now stream as they're written. Every request, including the
+  model provider's, went through an internal relay that waited for the
+  whole response, so a reply appeared in one piece at the end.
+- With OpenRouter and other OpenAI-compatible providers, the spinner shows
+  a model's reasoning live ("Reconciling… (7s · ↓ 192 tokens · thinking)").
+  The reasoning was dropped before, and on some servers it could have
+  appeared in the reply.
 - `gizzi login` can now be approved in Allternit Desktop: Desktop asks
   "Sign in gizzi on this Mac?" and approves with your account. Before, its
   approval window stayed on "Checking your Allternit session…". When Desktop
