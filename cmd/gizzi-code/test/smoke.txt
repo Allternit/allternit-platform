@@ -121,3 +121,4 @@ test/runtime/bots/session-handoff-head.test.ts
 test/components/sandbox-violation-store.test.ts
 test/cli/bots-pane.test.ts
 test/runtime/bots/session-pause.test.ts
+test/components/limit-pause.test.ts

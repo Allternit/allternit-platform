@@ -314,6 +314,9 @@ import exit from '../commands/exit/index';
 import { ExitFlow } from '../components/ExitFlow';
 import { getCurrentWorktreeSession } from '../utils/worktree';
 import { popAllEditable, enqueue, type SetAppState, getCommandQueue, getCommandQueueLength, removeByFilter } from '../utils/messageQueueManager';
+import { limitInTurn, providerOfModel, quotaLandingFor, suggestionFor } from '../utils/limitPause';
+import { useLimitPauseResume } from '../hooks/useLimitPauseResume';
+import { PausedBar } from '../components/PromptInput/PausedBar';
 import { useCommandQueue } from '../hooks/useCommandQueue';
 import { SessionBackgroundHint } from '../components/SessionBackgroundHint';
 import { startBackgroundSession } from '../tasks/LocalMainSessionTask';
@@ -719,6 +722,7 @@ export function REPL({
 
   const toolPermissionContext = useAppState(s => s.toolPermissionContext);
   const petHudOpen = useAppState(s => s.petHudOpen);
+  useLimitPauseResume();
   const verbose = useAppState(s => s.verbose);
   const mcp = useAppState(s => s.mcp);
   const plugins = useAppState(s => s.plugins);
@@ -3417,6 +3421,21 @@ export function REPL({
             }
           }
         }
+        // Landing before usage limits (P3.17): a turn cut off by a limit
+        // pauses the chat until the reset (then continues on its own); a
+        // provider window at limits.land_at pauses before the next turn fails.
+        if (shouldQuery && !abortController.signal.aborted && !proactiveActive) {
+          const pauseProvider = resolveQuotaProviderId(mainLoopModelParam) ?? providerOfModel(mainLoopModelParam);
+          const pauseFor = (p: { until: number; limit: string }, reason: 'limit_hit' | 'quota') => {
+            setAppState(prev => ({ ...prev, replPause: { ...p, providerID: pauseProvider, reason } }));
+            void suggestionFor(pauseProvider).then(suggest => {
+              if (suggest) setAppState(prev => prev.replPause ? { ...prev, replPause: { ...prev.replPause, suggest } } : prev);
+            });
+          };
+          const hit = limitInTurn(messagesRef.current.slice(turnTelemetryBaselineRef.current?.messageCount ?? 0));
+          if (hit) pauseFor(hit, 'limit_hit');
+          else void quotaLandingFor(pauseProvider).then(landing => { if (landing) pauseFor(landing, 'quota'); });
+        }
         // Clear the controller so CancelRequestHandler's canCancelRunningTask
         // reads false at the idle prompt. Without this, the stale non-aborted
         // controller makes ctrl+c fire onCancel() (aborting nothing) instead of
@@ -3573,6 +3592,12 @@ export function REPL({
     // Re-pin scroll to bottom on submit so the user always sees the new
     // exchange (matches common agent auto-scroll behavior).
     repinScroll();
+
+    // Sending a prompt yourself takes over from a limit pause (slash
+    // commands like /resume-now handle the pause themselves).
+    if (input.trim() && !input.trim().startsWith('/')) {
+      setAppState(prev => prev.replPause ? { ...prev, replPause: undefined } : prev);
+    }
 
     // Resume loop mode if paused
     if (feature('PROACTIVE') || feature('KAIROS')) {
@@ -5380,6 +5405,7 @@ export function REPL({
                       {"external" === 'ant' && skillImprovementSurvey.suggestion && <SkillImprovementSurvey isOpen={skillImprovementSurvey.isOpen} skillName={skillImprovementSurvey.suggestion.skillName} updates={skillImprovementSurvey.suggestion.updates} handleSelect={skillImprovementSurvey.handleSelect} inputValue={inputValue} setInputValue={setInputValue} />}
                       {showIssueFlagBanner && <IssueFlagBanner />}
                       {}
+                      <PausedBar />
                       <PromptInput debug={debug} ideSelection={ideSelection} hasSuppressedDialogs={!!hasSuppressedDialogs} isLocalJSXCommandActive={isShowingLocalJSXCommand} getToolUseContext={getToolUseContext} toolPermissionContext={toolPermissionContext} setToolPermissionContext={setToolPermissionContext} apiKeyStatus={apiKeyStatus} commands={commands} agents={agentDefinitions.activeAgents} isLoading={isLoading} onExit={handleExit} verbose={verbose} messages={messages} onAutoUpdaterResult={setAutoUpdaterResult} autoUpdaterResult={autoUpdaterResult} input={inputValue} onInputChange={setInputValue} mode={inputMode} onModeChange={setInputMode} stashedPrompt={stashedPrompt} setStashedPrompt={setStashedPrompt} submitCount={submitCount} onShowMessageSelector={handleShowMessageSelector} onMessageActionsEnter={
             // Works during isLoading — edit cancels first; uuid selection survives appends.
             feature('MESSAGE_ACTIONS') && isFullscreenEnvEnabled() && !disableMessageActions ? enterMessageActions : undefined} mcpClients={mcpClients} pastedContents={pastedContents} setPastedContents={setPastedContents} vimMode={vimMode} setVimMode={setVimMode} showBashesDialog={showBashesDialog} setShowBashesDialog={setShowBashesDialog} onSubmit={onSubmit} onAgentSubmit={onAgentSubmit} isSearchingHistory={isSearchingHistory} setIsSearchingHistory={setIsSearchingHistory} helpOpen={isHelpOpen} setHelpOpen={setIsHelpOpen} insertTextRef={insertTextRef} voiceInterimRange={voice.interimRange} 
