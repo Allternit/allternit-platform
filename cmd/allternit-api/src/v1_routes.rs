@@ -1453,6 +1453,15 @@ async fn agent_chat_bridge(
                     // can render targeted UI (e.g. a model picker on
                     // ProviderModelNotFoundError) instead of parsing a string.
                     let details = serde_json::from_str::<serde_json::Value>(&body).ok();
+                    if let Some(link) = dag_link.clone() {
+                        let db = state.db.clone();
+                        let uid = user_id_for_record.clone();
+                        let _ = tokio::task::spawn_blocking(move || {
+                            let mut conn = db.connect()?;
+                            crate::cowork::dag::settle_running_tool_jobs(&mut conn, &link.run_id, &uid, false)
+                        })
+                        .await;
+                    }
                     settle_chat_run(&chat_run, false, Some(&error)).await;
                     yield Ok(Event::default().data(json!({
                         "type": "finish",
@@ -1832,8 +1841,12 @@ async fn agent_chat_bridge(
             };
             let session_row_id = link.session_id.clone();
             let run_id = link.run_id.clone();
+            let settle_ok = finish.status != "error";
             let _ = tokio::task::spawn_blocking(move || {
                 let mut conn = db.connect()?;
+                // The loop stops reading at idle, so a tool whose final
+                // update lands later would leave its job running forever.
+                crate::cowork::dag::settle_running_tool_jobs(&mut conn, &run_id, &uid, settle_ok)?;
                 crate::cowork::dag::record_turn_result(
                     &mut conn,
                     &run_id,

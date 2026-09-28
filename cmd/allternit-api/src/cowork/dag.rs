@@ -306,6 +306,39 @@ pub fn complete_tool_job(
     Ok(true)
 }
 
+/// Settle every tool job on the run still `running` — called when a turn's
+/// event loop exits and when the session finalizes. The bridge stops reading
+/// the bus once the session goes idle, so a tool's final update that lands
+/// after that is never seen and its job would stay `running` forever (the
+/// Progress panel's endless spinners). `success` follows the turn: a turn
+/// that completed settles its leftovers `completed`, an errored one `failed`.
+/// Only `tool.*` jobs are touched — the `cowork.session` placeholder is not
+/// tool work. Returns the number of jobs settled.
+pub fn settle_running_tool_jobs(
+    conn: &mut Connection,
+    run_id: &str,
+    user_id: &str,
+    success: bool,
+) -> Result<usize, rusqlite::Error> {
+    let call_ids: Vec<String> = {
+        let mut stmt = conn.prepare(
+            "SELECT dag_node_id FROM cowork_jobs
+             WHERE run_id = ?1 AND state = 'running' AND job_type LIKE 'tool.%'
+               AND dag_node_id IS NOT NULL",
+        )?;
+        let rows = stmt.query_map(params![run_id], |row| row.get::<_, String>(0))?;
+        rows.collect::<Result<_, _>>()?
+    };
+    let error = (!success).then_some("turn ended before the tool reported a result");
+    let mut settled = 0;
+    for call_id in call_ids {
+        if complete_tool_job(conn, run_id, user_id, &call_id, success, error)? {
+            settled += 1;
+        }
+    }
+    Ok(settled)
+}
+
 fn typed_tool_result(call_id: &str, success: bool, error: Option<&str>) -> serde_json::Value {
     let mut r = serde_json::json!({
         "result_id": format!("result_{}", uuid::Uuid::new_v4()),
@@ -425,6 +458,8 @@ pub fn finalize_session_run(
         Some("completed") | Some("failed") | Some("cancelled") => return Ok(None),
         _ => {}
     }
+    // A completed run cannot hold running tool jobs.
+    settle_running_tool_jobs(conn, &link.run_id, user_id, true)?;
     sqlite_store::update_run_state_record(conn, &link.run_id, "completed", Some(chrono_now()))
         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
     sqlite_store::insert_event_idempotent(
@@ -612,6 +647,54 @@ mod tests {
             )
             .unwrap();
         assert!(exec.ends_with("/principal/gizzi"));
+    }
+
+    #[test]
+    fn settle_running_tool_jobs_closes_leftovers_only() {
+        let mut conn = scratch();
+        let link = ensure_session_run(&mut conn, "user-a", Some("chat-1"), None).unwrap();
+        record_tool_job(&mut conn, &link.run_id, "user-a", "bash", "call-1", "msg-1", None).unwrap();
+        record_tool_job(&mut conn, &link.run_id, "user-a", "read", "call-2", "msg-1", None).unwrap();
+        record_tool_job(&mut conn, &link.run_id, "user-a", "edit", "call-3", "msg-1", None).unwrap();
+        complete_tool_job(&mut conn, &link.run_id, "user-a", "call-1", true, None).unwrap();
+        complete_tool_job(&mut conn, &link.run_id, "user-a", "call-2", false, Some("boom")).unwrap();
+
+        // Only the job whose final update never arrived is settled.
+        assert_eq!(settle_running_tool_jobs(&mut conn, &link.run_id, "user-a", false).unwrap(), 1);
+        assert_eq!(settle_running_tool_jobs(&mut conn, &link.run_id, "user-a", false).unwrap(), 0);
+
+        let state_of = |conn: &Connection, call: &str| -> String {
+            conn.query_row(
+                "SELECT state FROM cowork_jobs WHERE dag_node_id = ?1",
+                params![call],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(state_of(&conn, "call-1"), "completed");
+        assert_eq!(state_of(&conn, "call-2"), "failed");
+        assert_eq!(state_of(&conn, "call-3"), "failed");
+        // The session placeholder job is not tool work and stays as it was.
+        let placeholder: String = conn
+            .query_row(
+                "SELECT state FROM cowork_jobs WHERE run_id = ?1 AND job_type = 'cowork.session'",
+                params![link.run_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_ne!(placeholder, "failed");
+    }
+
+    #[test]
+    fn finalize_session_run_settles_running_tool_jobs() {
+        let mut conn = scratch();
+        let link = ensure_session_run(&mut conn, "user-a", Some("chat-1"), None).unwrap();
+        record_tool_job(&mut conn, &link.run_id, "user-a", "bash", "call-1", "msg-1", None).unwrap();
+        finalize_session_run(&mut conn, &link.session_id, "user-a").unwrap();
+        let state: String = conn
+            .query_row("SELECT state FROM cowork_jobs WHERE dag_node_id = 'call-1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(state, "completed");
     }
 
     #[test]
