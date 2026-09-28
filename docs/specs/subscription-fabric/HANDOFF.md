@@ -547,3 +547,28 @@ confirmed; permanent endpoint first, then tear down; IPv4 + writable viewer.
   always allowed. Not yet driven in a browser against a running guest (the
   gate guest is stopped) — the hand-built :3014 viewer is no longer needed.
 
+
+## 15. HANDOFF — 2026-09-28 ~15:30 CDT (claude session) — D15 placement corrected; VPS IPv4 fixed; capability inventory
+
+- **D15 correction:** §14's "permanent local gateway on the Mac" (#886)
+  violated D15 (fabric runtime never on the user's desktop — owner:
+  "the separation was to route this without touching the local computer").
+  Reverted: launchd agent, app copy and ALL session material removed from the
+  Mac; `install-local.sh` deleted (this PR).
+- **Permanent home = the Desktop-registered `sessions` computer**
+  `computer-9bd5cfe494a140d182645e645039f74b` (T1, VPS Incus), reached via the
+  installed Desktop API's computer proxy (:8013, proxy port 7788). Gateway set
+  up with `sessions-setup.sh` (origin/main), Firefox 156 downloaded in-guest,
+  account `6560c6b4…` (chatgpt) `ready` (session moved from the gate guest via
+  the Firefox-import path). Gateway token in the Mac keychain
+  (`com.allternit.subscription-gateway` / `sessions-cli-token`).
+  `fabric_capture.mjs` discovers it with no env (Desktop API → computer
+  "sessions" → proxy) — live PNG verified.
+- **VPS IPv4 fixed:** host FORWARD policy DROP (Docker) blocked incusbr0.
+  Added `DOCKER-USER` accepts for incusbr0 (in + established out), persisted
+  by host unit `incus-docker-forward.service` (enabled, idempotent). Done via
+  a temporary privileged Incus helper (deleted). Verified on two guests.
+- **Capability inventory:** `CAPABILITY_INVENTORY.md` — ChatGPT/Claude/Kimi
+  features → capability ids → platform surfaces, excluded items, 🔒 gates,
+  revised P5–P6 order. **Owner decision pending: provider-terms risk (§0).**
+- Old gate guest `computer-e0cc21e9…` still STOPPED (scratch DB archived).
