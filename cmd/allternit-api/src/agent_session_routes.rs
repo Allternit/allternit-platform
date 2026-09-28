@@ -140,6 +140,9 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
         // The app's result for a pane_browser tool call (the page in the
         // session's browser pane).
         .route("/pane-browser/:id/reply", post(reply_pane_browser))
+        // The app's result for a pane_artifact tool call (the document in the
+        // session's artifact pane, edited through its editor's tools).
+        .route("/pane-artifact/:id/reply", post(reply_pane_artifact))
         .route("/native-sessions/harnesses", get(list_native_harnesses))
         .route("/native-sessions", get(list_native_sessions))
         .route("/native-sessions/pickup", post(pickup_native_session))
@@ -1195,6 +1198,19 @@ async fn reply_pane_browser(
     }
 }
 
+async fn reply_pane_artifact(
+    headers: HeaderMap,
+    Path(request_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!("/v1/pane-artifact/{}/reply", urlencoding::encode(&request_id));
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(body)).await {
+        Ok(value) => Json(value).into_response(),
+        Err(response) => response,
+    }
+}
+
 /// The gizzi `/v1/session/:id/message` body for a user message.
 fn send_message_payload(body: &SendMessageBody) -> serde_json::Value {
     let mut part = json!({ "type": "text", "text": body.text });
@@ -1424,6 +1440,15 @@ async fn transform_bus_event(
             "action": props.get("action"),
             "target": props.get("target"),
             "text": props.get("text"),
+            "time": props.get("time"),
+        })),
+        "pane_artifact.requested" => Some(json!({
+            "type": "pane_artifact_requested",
+            "request_id": props.get("id"),
+            "session_id": props.get("sessionID"),
+            "action": props.get("action"),
+            "tool": props.get("tool"),
+            "input": props.get("input"),
             "time": props.get("time"),
         })),
         "message.part.updated" => Some(json!({

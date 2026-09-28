@@ -293,6 +293,16 @@ export const AgentCompatRoutes = () =>
               text: props.text ?? null,
               time: props.time ?? null,
             }
+          case "pane_artifact.requested":
+            return {
+              type: "pane_artifact_requested",
+              request_id: props.id ?? null,
+              session_id: props.sessionID ?? null,
+              action: props.action ?? null,
+              tool: props.tool ?? null,
+              input: props.input ?? null,
+              time: props.time ?? null,
+            }
           case "message.part.updated":
             return {
               type: "part_updated",

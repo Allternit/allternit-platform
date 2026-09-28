@@ -1,5 +1,6 @@
 import { QuestionTool } from "@/runtime/tools/builtins/question"
 import { PaneBrowserTool } from "@/runtime/tools/builtins/pane-browser"
+import { PaneArtifactTool } from "@/runtime/tools/builtins/pane-artifact"
 import { VerifyTool } from "@/runtime/tools/builtins/verify"
 import { BashTool } from "@/runtime/tools/builtins/bash"
 import { EditTool } from "@/runtime/tools/builtins/edit"
@@ -139,6 +140,8 @@ export namespace ToolRegistry {
       ...(question ? [QuestionTool] : []),
       // Acts on the page shown in the app's browser pane; needs an app client.
       ...(question ? [PaneBrowserTool] : []),
+      // Works on the document open in the app's artifact pane; needs an app client.
+      ...(question ? [PaneArtifactTool] : []),
       AgentCommunicateTool,
       VerifyTool,
       BashTool,
