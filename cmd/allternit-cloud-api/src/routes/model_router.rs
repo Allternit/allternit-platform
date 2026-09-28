@@ -130,7 +130,7 @@ pub async fn chat_completions(
     }
 
     let streaming = request.is_streaming();
-    let prompt_chars: usize = request.messages.iter().map(|m| m.content.len()).sum();
+    let prompt_chars: usize = request.messages.iter().map(|m| m.content_chars()).sum();
     let prices = state.model_router.retail_prices(&alias).await?;
 
     // Pool circuit breaker + free-tier pool policy. Unknown alias →
@@ -222,7 +222,7 @@ async fn byok_chat_completions(
         .to_string();
 
     let streaming = request.is_streaming();
-    let prompt_chars: usize = request.messages.iter().map(|m| m.content.len()).sum();
+    let prompt_chars: usize = request.messages.iter().map(|m| m.content_chars()).sum();
     // Same usage-chunk injection as the shared router path.
     if streaming {
         request
