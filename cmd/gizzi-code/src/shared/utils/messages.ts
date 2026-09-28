@@ -4117,7 +4117,7 @@ You have exited auto mode. The user may now want to interact more directly. You 
     case 'companion_intro': {
       return wrapMessagesInSystemReminder([
         createUserMessage({
-          content: companionIntroText(attachment.name, attachment.species),
+          content: companionIntroText(attachment.name, attachment.description ?? attachment.species ?? ''),
           isMeta: true,
         }),
       ])

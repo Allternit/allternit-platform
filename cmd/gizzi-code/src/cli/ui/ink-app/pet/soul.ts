@@ -7,8 +7,8 @@ import { getSmallFastModel } from '../utils/model/model.js'
 import { asSystemPrompt } from '../utils/systemPromptType.js'
 
 /**
- * One-shot small-model call for the companion (hatching its soul, reacting
- * to a turn). Returns null on any failure — the companion is decoration and
+ * One-shot model call for the pet (reacting to a turn, offline incognito
+ * chat). Returns null on any failure — the companion is decoration and
  * must never surface an error or block the REPL.
  */
 export async function askCompanionModel(
@@ -16,6 +16,8 @@ export async function askCompanionModel(
   system: string,
   signal: AbortSignal,
   querySource: string,
+  /** Defaults to the small model; the HUD's offline chat passes the main model. */
+  model: string = getSmallFastModel(),
 ): Promise<string | null> {
   // The provider layer can keep retrying an unreachable model long after the
   // signal fires, so stop waiting on abort ourselves.
@@ -32,7 +34,7 @@ export async function askCompanionModel(
       signal,
       options: {
         getToolPermissionContext: async () => getEmptyToolPermissionContext(),
-        model: getSmallFastModel(),
+        model,
         toolChoice: undefined,
         isNonInteractiveSession: false,
         hasAppendSystemPrompt: false,

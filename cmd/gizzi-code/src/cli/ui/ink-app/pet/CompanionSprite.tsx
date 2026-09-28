@@ -10,9 +10,9 @@ import { getGlobalConfig } from '../utils/config';
 import { isFullscreenActive } from '../utils/fullscreen';
 import type { Theme } from '../utils/theme';
 import { getCompanion } from './companion';
-import { gizziPetRows, type GizziPose } from './gizziSprite';
-import { SAND, VISOR, EYE } from '../components/welcomeArt';
-import { RARITY_COLORS } from './types';
+import type { GizziPose } from './gizziSprite';
+import { petBotRows, petFaceColors } from './botSprite';
+import { refreshPetBots, useCurrentPetBot } from './petBots';
 const TICK_MS = 500;
 const BUBBLE_SHOW = 20; // ticks → ~10s at 500ms
 const FADE_WINDOW = 6; // last ~3s the bubble dims so you know it's about to go
@@ -106,6 +106,11 @@ export function CompanionSprite(): React.ReactNode {
   const petAt = useAppState(s => s.companionPetAt);
   const focused = useAppState(s => s.footerSelection === 'companion');
   const setAppState = useSetAppState();
+  // Re-render when the worn bot changes (HUD pick, Desktop pet, roster load).
+  useCurrentPetBot();
+  useEffect(() => {
+    if (feature('PET')) void refreshPetBots();
+  }, []);
   const {
     columns
   } = useTerminalSize();
@@ -143,7 +148,7 @@ export function CompanionSprite(): React.ReactNode {
   if (!feature('PET')) return null;
   const companion = getCompanion();
   if (!companion || getGlobalConfig().companionMuted) return null;
-  const color = RARITY_COLORS[companion.rarity];
+  const color = companion.bot.accent ?? 'gizzi';
   const colWidth = spriteColWidth(stringWidth(companion.name));
   const bubbleAge = reaction ? tick - lastSpokeTick.current : 0;
   const fading = reaction !== undefined && bubbleAge >= BUBBLE_SHOW - FADE_WINDOW;
@@ -155,12 +160,13 @@ export function CompanionSprite(): React.ReactNode {
   if (columns < MIN_COLS_FOR_FULL_SPRITE) {
     const quip = reaction && reaction.length > NARROW_QUIP_CAP ? reaction.slice(0, NARROW_QUIP_CAP - 1) + '…' : reaction;
     const label = quip ? `"${quip}"` : focused ? ` ${companion.name} ` : companion.name;
+    const face = petFaceColors(companion.bot);
     return <Box paddingX={1} alignSelf="flex-end">
         <Text>
           {petting && <Text color="autoAccept">{figures.heart} </Text>}
-          <Text color={SAND}>▐</Text>
-          <Text color={EYE} backgroundColor={VISOR}>■ ■</Text>
-          <Text color={SAND}>▌</Text>{' '}
+          <Text color={face.body}>▐</Text>
+          <Text color={face.eye} backgroundColor={face.face}>■ ■</Text>
+          <Text color={face.body}>▌</Text>{' '}
           <Text italic dimColor={!focused && !reaction} bold={focused} inverse={focused && !reaction} color={reaction ? fading ? 'inactive' : color : focused ? color : undefined}>
             {label}
           </Text>
@@ -170,8 +176,8 @@ export function CompanionSprite(): React.ReactNode {
   const heartFrame = petting ? PET_HEARTS[petAge % PET_HEARTS.length] : null;
   const excited = reaction !== undefined || petting;
   const pose = excited ? EXCITED_SEQUENCE[tick % EXCITED_SEQUENCE.length]! : IDLE_SEQUENCE[tick % IDLE_SEQUENCE.length]!;
-  // The beacon pulses while Gizzi is excited.
-  const body = gizziPetRows(pose, excited && tick % 2 === 1 ? 'gizziShimmer' : 'gizzi');
+  // The beacon (Gizzi) or antenna (robot pets) pulses while excited.
+  const body = petBotRows(companion.bot, pose, excited && tick % 2 === 1 ? 'gizziShimmer' : 'gizzi');
 
   // Name row doubles as hint row — unfocused shows dim name + ↓ discovery,
   // focused shows inverse name. The enter-to-open hint lives in
@@ -180,9 +186,14 @@ export function CompanionSprite(): React.ReactNode {
   // inline-bubble row wrapper from squeezing the sprite to fit.
   const spriteColumn = <Box flexDirection="column" flexShrink={0} alignItems="center" width={colWidth}>
       {heartFrame && <Text color="autoAccept">{heartFrame}</Text>}
-      {body.map((segments, i) => <Text key={i}>
-          {segments.map(([text, fg, bg], j) => <Text key={j} color={fg || undefined} backgroundColor={bg}>{text}</Text>)}
-        </Text>)}
+      {/* Fixed-width, left-aligned box: rows ending in transparent cells get
+          their trailing spaces trimmed, and centering the shorter row would
+          shift it sideways and bend the sprite. */}
+      <Box flexDirection="column" width={SPRITE_BODY_WIDTH} flexShrink={0}>
+        {body.map((segments, i) => <Text key={i}>
+            {segments.map(([text, fg, bg], j) => <Text key={j} color={fg || undefined} backgroundColor={bg}>{text}</Text>)}
+          </Text>)}
+      </Box>
       <Text italic bold={focused} dimColor={!focused} color={focused ? color : undefined} inverse={focused}>
         {focused ? ` ${companion.name} ` : companion.name}
       </Text>
@@ -245,7 +256,7 @@ export function CompanionFloatingBubble() {
     return null;
   }
   const t4 = tick >= BUBBLE_SHOW - FADE_WINDOW;
-  const t5 = <SpeechBubble text={reaction} color={RARITY_COLORS[companion.rarity]} fading={t4} tail="down" />;
+  const t5 = <SpeechBubble text={reaction} color={companion.bot.accent ?? 'gizzi'} fading={t4} tail="down" />;
 
   return t5;
 }

@@ -1,5 +1,7 @@
 import { app, BrowserWindow, ipcMain, Menu, screen, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
 import Store from 'electron-store';
+import { watch } from 'node:fs';
+import path from 'node:path';
 
 export interface CompanionState {
   enabled: boolean;
@@ -25,6 +27,29 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
   const broadcast = () => {
     for (const win of [pet, chat, options.main()]) if (win && !win.isDestroyed()) win.webContents.send('companion:state', state());
   };
+  // The gizzi terminal pet wears the same bot: it rewrites this settings file
+  // when the user picks a bot in its HUD. Follow those external writes so
+  // both pets match (electron-store re-reads the file on each access). Any
+  // event in the folder triggers a re-read: when a temp file is renamed over
+  // the settings file, macOS may report only the temp file's name.
+  let lastAgentId = state().agentId;
+  let externalTimer: ReturnType<typeof setTimeout> | undefined;
+  const settingsPath = (settings as { path?: unknown }).path;
+  if (typeof settingsPath === 'string') {
+    try {
+      watch(path.dirname(settingsPath), () => {
+        clearTimeout(externalTimer);
+        externalTimer = setTimeout(() => {
+          const next = state().agentId;
+          if (next === lastAgentId) return;
+          lastAgentId = next;
+          broadcast();
+        }, 150);
+      }).unref();
+    } catch (error) {
+      console.warn('[desktop-companion] not following terminal pet changes', error);
+    }
+  }
   function petBounds(reset = false) {
     const size = state().size + 16;
     const saved = reset ? undefined : state().position;
@@ -121,7 +146,7 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
     const geometryChanged = typeof patch.enabled === 'boolean' || typeof patch.size === 'number' && Number.isFinite(patch.size);
     if (typeof patch.enabled === 'boolean') settings.set('enabled', patch.enabled);
     if (typeof patch.size === 'number' && Number.isFinite(patch.size)) settings.set('size', clamp(Math.round(patch.size), 48, 160));
-    if (patch.agentId === null || typeof patch.agentId === 'string' && patch.agentId.length <= 200) settings.set('agentId', patch.agentId);
+    if (patch.agentId === null || typeof patch.agentId === 'string' && patch.agentId.length <= 200) { settings.set('agentId', patch.agentId); lastAgentId = patch.agentId; }
     if (state().enabled) { ensurePet(); if (geometryChanged) { if (attachedHudBounds) attachPetToHud(attachedHudBounds); else pet?.setBounds(petBounds()); } if (pet && ready.has(pet)) pet.showInactive(); }
     else { pet?.hide(); if (state().panel !== 'settings') chat?.hide(); }
     placeChat(); broadcast();

@@ -1,11 +1,11 @@
 import type { Command } from '../../commands.js'
 
 const pet = {
-  type: 'local',
+  type: 'local-jsx',
   name: 'pet',
-  description: 'Hatch, pat, or mute your terminal pet',
+  description: 'Open your pet: quick chat with your Allternit bot, incognito asks, switch bots',
   argumentHint: '[pat|mute|unmute]',
-  supportsNonInteractive: false,
+  immediate: true,
   load: () => import('./pet.js'),
 } satisfies Command
 
