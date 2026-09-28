@@ -1424,6 +1424,7 @@ async fn transform_bus_event(
             "action": props.get("action"),
             "target": props.get("target"),
             "text": props.get("text"),
+            "time": props.get("time"),
         })),
         "message.part.updated" => Some(json!({
             "type": "part_updated",

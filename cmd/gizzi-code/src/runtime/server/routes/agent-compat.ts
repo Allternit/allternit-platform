@@ -291,6 +291,7 @@ export const AgentCompatRoutes = () =>
               action: props.action ?? null,
               target: props.target ?? null,
               text: props.text ?? null,
+              time: props.time ?? null,
             }
           case "message.part.updated":
             return {

@@ -23,6 +23,9 @@ export namespace PaneBrowser {
     action: Action,
     target: z.string().optional(),
     text: z.string().optional(),
+    /** When it was asked (ms). The app skips requests older than TIMEOUT_MS,
+     * so a replayed event never repeats an action. */
+    time: z.number(),
     tool: z
       .object({
         messageID: z.string(),
@@ -61,12 +64,12 @@ export namespace PaneBrowser {
   })
 
   export async function request(
-    input: Omit<Request, "id">,
+    input: Omit<Request, "id" | "time">,
     options: { timeoutMs?: number; abort?: AbortSignal } = {},
   ): Promise<Result> {
     const s = await state()
     const id = Identifier.ascending("question")
-    const info: Request = { ...input, id }
+    const info: Request = { ...input, id, time: Date.now() }
     log.info("requesting", { id, action: input.action })
     return new Promise<Result>((resolve) => {
       const finish = (result: Result) => {
