@@ -173,6 +173,14 @@ pub trait RoutineDriver: Send + Sync {
     fn create_session(&self, bot_id: &str, bot_name: &str) -> impl Future<Output = Result<String, String>> + Send;
     fn send_turn(&self, session_id: &str, bot_id: &str, text: &str) -> impl Future<Output = Result<String, String>> + Send;
     fn run_monitor(&self, user_id: &str, command: &str) -> impl Future<Output = Result<String, String>> + Send;
+    /// The session a run goes to: the routine's own standing thread, a fresh
+    /// generation per run (P4.4). `None` → the bot's main thread.
+    fn routine_session(
+        &self,
+        r: &LocalRoutine,
+        agent_id: &str,
+        instruction: &str,
+    ) -> impl Future<Output = Option<Result<String, String>>> + Send;
 }
 
 pub struct GizziDriver {
@@ -181,7 +189,7 @@ pub struct GizziDriver {
 
 impl RoutineDriver for GizziDriver {
     async fn session_exists(&self, session_id: &str) -> bool {
-        crate::agent_session_routes::bot_session_exists(session_id).await
+        crate::agent_session_routes::bot_session_exists(&self.state.db, session_id).await
     }
 
     async fn create_session(&self, bot_id: &str, bot_name: &str) -> Result<String, String> {
@@ -190,6 +198,14 @@ impl RoutineDriver for GizziDriver {
 
     async fn send_turn(&self, session_id: &str, bot_id: &str, text: &str) -> Result<String, String> {
         crate::agent_session_routes::send_bot_turn(&self.state.db, session_id, bot_id, text).await
+    }
+
+    async fn routine_session(&self, r: &LocalRoutine, agent_id: &str, instruction: &str) -> Option<Result<String, String>> {
+        let rt = crate::thread_routes::GizziRuntime { db: self.state.db.clone() };
+        Some(
+            crate::thread_routes::routine_generation(&self.state.db, &rt, &r.user_id, agent_id, &r.id, &r.name, instruction)
+                .await,
+        )
     }
 
     async fn run_monitor(&self, user_id: &str, command: &str) -> Result<String, String> {
@@ -381,7 +397,10 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
             }
             routine_turn(&r.name, &instruction)
         };
-        let session = resolve_thread(db, driver, agent_id, bot).await?;
+        let session = match driver.routine_session(r, agent_id, &instruction_of(r)).await {
+            Some(result) => result?,
+            None => resolve_thread(db, driver, agent_id, bot).await?,
+        };
         session_used = Some(session.clone());
         let reply = driver.send_turn(&session, agent_id, &text).await?;
         Ok((reply, "succeeded"))
@@ -573,6 +592,9 @@ mod tests {
         }
         async fn run_monitor(&self, _u: &str, _c: &str) -> Result<String, String> {
             Ok(self.monitor.lock().unwrap().clone())
+        }
+        async fn routine_session(&self, _r: &LocalRoutine, _a: &str, _i: &str) -> Option<Result<String, String>> {
+            None
         }
     }
 

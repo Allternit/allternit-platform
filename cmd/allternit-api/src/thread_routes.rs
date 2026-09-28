@@ -533,17 +533,17 @@ impl ThreadRuntime for GizziRuntime {
         crate::agent_session_routes::create_bot_thread_session(&self.db, bot_id, bot_name, title, canonical, Some(thread_id)).await
     }
     async fn seed(&self, session_id: &str, text: &str) -> Result<(), String> {
-        crate::agent_session_routes::seed_session_message(session_id, text).await
+        crate::agent_session_routes::seed_session_message(&self.db, session_id, text).await
     }
     async fn handoff(&self, session_id: &str, reason: &str, context: &str, baton: Option<Value>) -> Result<(String, Value), String> {
-        let (next, baton) = crate::agent_session_routes::gizzi_handoff(session_id, gizzi_reason(reason), context, baton).await?;
+        let (next, baton) = crate::agent_session_routes::gizzi_handoff(&self.db, session_id, gizzi_reason(reason), context, baton).await?;
         // The API's own per-session bag (bot flags, thread id, surface) moves
         // with the conversation to its new window.
         crate::agent_session_routes::carry_session_bag(&self.db, session_id, &next);
         Ok((next, baton))
     }
     async fn successors(&self, session_id: &str) -> Vec<(String, String, Value)> {
-        let Ok(chain) = crate::agent_session_routes::gizzi_lineage(session_id).await else {
+        let Ok(chain) = crate::agent_session_routes::gizzi_lineage(&self.db, session_id).await else {
             return Vec::new();
         };
         let Some(at) = chain.iter().position(|s| s["id"] == session_id) else {
@@ -729,6 +729,141 @@ pub async fn do_handoff<R: ThreadRuntime>(db: &DbHandle, rt: &R, user_id: &str, 
     };
     advance(db, ("user", user_id), &t, &session, &body)?;
     load(db, id).map_err(|e| e.to_string())?.map(|s| s.view).ok_or_else(|| "thread vanished".into())
+}
+
+/// A conversation arriving from outside (email, phone, a chat channel) is
+/// a thread (P6.2): the same conversation key continues its open thread,
+/// a new one starts a task thread for the bot. Returns the thread's session.
+pub async fn channel_thread<R: ThreadRuntime>(
+    db: &DbHandle,
+    rt: &R,
+    bot_id: &str,
+    channel: &str,
+    key: &str,
+    title: &str,
+    objective: &str,
+) -> Result<String, String> {
+    let (owner, open): (Option<String>, Option<(String, Option<String>)>) = {
+        let conn = db.connect().map_err(|e| e.to_string())?;
+        let owner = conn
+            .query_row("SELECT user_id FROM agents WHERE id = ?1", params![bot_id], |r| r.get::<_, String>(0))
+            .ok();
+        let open = conn
+            .query_row(
+                "SELECT id, current_session_id FROM bot_threads
+                 WHERE bot_id = ?1 AND json_extract(origin, '$.channelKey') = ?2
+                   AND status NOT IN ('done', 'failed')
+                 ORDER BY updated_at DESC LIMIT 1",
+                params![bot_id, key],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+            )
+            .ok();
+        (owner, open)
+    };
+    if let Some((_, Some(session))) = open {
+        return Ok(session);
+    }
+    let user_id = owner.ok_or("that bot doesn't exist")?;
+    let body: CreateThreadBody = serde_json::from_value(json!({
+        "botId": bot_id,
+        "title": title,
+        "kind": "task",
+        "objective": objective,
+        "createdBy": channel,
+        "origin": { "channel": channel, "channelKey": key },
+    }))
+    .map_err(|e| e.to_string())?;
+    create(db, rt, &user_id, body)
+        .await?
+        .current_session_id
+        .ok_or_else(|| "the thread has no session".into())
+}
+
+/// "Re: Fwd: Pricing" → "pricing": one conversation, whatever the prefixes.
+pub fn conversation_subject(subject: &str) -> String {
+    let mut s = subject.trim();
+    loop {
+        let lower = s.to_ascii_lowercase();
+        let cut = ["re:", "fw:", "fwd:", "aw:"].iter().find(|p| lower.starts_with(*p)).map(|p| p.len());
+        match cut {
+            Some(n) => s = s[n..].trim_start(),
+            None => break,
+        }
+    }
+    s.to_lowercase()
+}
+
+/// A routine's run (P4.4): its own standing thread, not the bot's main chat;
+/// each run after the first starts a fresh generation whose checkpoint
+/// carries the last run forward. Returns the session the run goes to.
+pub async fn routine_generation<R: ThreadRuntime>(
+    db: &DbHandle,
+    rt: &R,
+    user_id: &str,
+    bot_id: &str,
+    routine_id: &str,
+    routine_name: &str,
+    instruction: &str,
+) -> Result<String, String> {
+    let (known, runs): (Option<String>, i64) = db
+        .connect()
+        .ok()
+        .and_then(|c| {
+            c.query_row(
+                "SELECT json_extract(metadata, '$.threadId'), COALESCE(json_extract(metadata, '$.threadRuns'), 0) FROM routines WHERE id = ?1",
+                params![routine_id],
+                |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, i64>(1)?)),
+            )
+            .ok()
+        })
+        .unwrap_or((None, 0));
+    let count_run = || {
+        if let Ok(conn) = db.connect() {
+            let _ = conn.execute(
+                "UPDATE routines SET metadata = json_set(COALESCE(metadata, '{}'), '$.threadRuns', ?2) WHERE id = ?1",
+                params![routine_id, runs + 1],
+            );
+        }
+    };
+    if let Some(id) = known {
+        if let Some(stored) = load(db, &id).map_err(|e| e.to_string())? {
+            let t = stored.view;
+            let session = if runs == 0 {
+                t.current_session_id.clone().ok_or("routine thread has no session")?
+            } else {
+                let body: HandoffBody = serde_json::from_value(json!({ "reason": "routine_run" })).map_err(|e| e.to_string())?;
+                do_handoff(db, rt, user_id, &t.id, body)
+                    .await?
+                    .current_session_id
+                    .ok_or("routine thread has no session")?
+            };
+            count_run();
+            return Ok(session);
+        }
+    }
+    let body: CreateThreadBody = serde_json::from_value(json!({
+        "botId": bot_id,
+        "title": routine_name,
+        "kind": "standing",
+        "objective": instruction,
+        "createdBy": "routine",
+    }))
+    .map_err(|e| e.to_string())?;
+    let t = create(db, rt, user_id, body).await?;
+    if let Ok(conn) = db.connect() {
+        let _ = conn.execute(
+            "UPDATE routines SET metadata = json_set(COALESCE(metadata, '{}'), '$.threadId', ?2) WHERE id = ?1",
+            params![routine_id, t.id],
+        );
+    }
+    let session = t.current_session_id.ok_or("routine thread has no session")?;
+    if let Ok(conn) = db.connect() {
+        let _ = conn.execute(
+            "UPDATE routines SET metadata = json_set(COALESCE(metadata, '{}'), '$.threadRuns', 1) WHERE id = ?1",
+            params![routine_id],
+        );
+    }
+    Ok(session)
 }
 
 /// When gizzi handed a thread's window off on its own (its window crossed
@@ -1531,6 +1666,127 @@ mod tests {
         assert_eq!(next2.checkpoint.as_ref().unwrap()["summary"], "Wiring checkout");
         assert!(bare.seeded.lock().unwrap()[0].1.contains("Wiring checkout"));
         assert!(bare.handoffs.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_routine_runs_in_its_own_thread_one_generation_per_run() {
+        let state = setup("routine").await;
+        state
+            .db
+            .connect()
+            .unwrap()
+            .execute(
+                "INSERT INTO routines (id, user_id, agent_id, name, schedule_type, schedule_expression, config, metadata)
+                 VALUES ('r1', 'user-a', 'bot-1', 'Monthly close', 'cron', '0 8 1 * *', '{}', '{}')",
+                [],
+            )
+            .unwrap();
+        let rt = FakeRt::default();
+        let first = routine_generation(&state.db, &rt, "user-a", "bot-1", "r1", "Monthly close", "Close the books").await.unwrap();
+        assert_eq!(first, "sess-1");
+        let tid: String = state
+            .db
+            .connect()
+            .unwrap()
+            .query_row("SELECT json_extract(metadata, '$.threadId') FROM routines WHERE id = 'r1'", [], |r| r.get(0))
+            .unwrap();
+        let t = load(&state.db, &tid).unwrap().unwrap().view;
+        assert_eq!((t.kind.as_str(), t.title.as_str()), ("standing", "Monthly close"));
+
+        // Next run: a fresh generation in the same thread, via gizzi's handoff.
+        let second = routine_generation(&state.db, &rt, "user-a", "bot-1", "r1", "Monthly close", "Close the books").await.unwrap();
+        assert_eq!(second, "next-1");
+        assert_eq!(rt.handoffs.lock().unwrap()[0].1, "routine_run");
+        assert_eq!(load(&state.db, &tid).unwrap().unwrap().view.generation, 2);
+    }
+
+    #[tokio::test]
+    async fn a_placed_session_lives_on_its_server_and_calls_pass_through() {
+        use axum::routing::{get as aget, post as apost};
+        // A fake second Allternit.
+        let remote = axum::Router::new()
+            .route(
+                "/api/v1/agent-sessions",
+                apost(|axum::Json(b): axum::Json<Value>| async move {
+                    axum::Json(json!({ "id": "ses_remote1", "name": b["name"] }))
+                }),
+            )
+            .route(
+                "/api/v1/agent-sessions/:id/messages",
+                aget(|axum::extract::Path(id): axum::extract::Path<String>, h: axum::http::HeaderMap| async move {
+                    let auth = h.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+                    axum::Json(json!([{ "id": "m1", "role": "assistant", "content": format!("from {id} with {auth}") }]))
+                })
+                .post(|axum::Json(b): axum::Json<Value>| async move {
+                    axum::Json(json!({ "id": "m2", "role": "assistant", "content": format!("did: {} | {}", b["text"], b["system"].as_str().unwrap_or("").starts_with("+# Bot identity")) }))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, remote).await.unwrap() });
+
+        let state = setup("placement").await;
+        let conn = state.db.connect().unwrap();
+        conn.execute(
+            "INSERT INTO remote_backend_targets (id, user_id, name, status, gateway_url, encrypted_gateway_token)
+             VALUES ('tgt1', 'user-a', 'My server', 'ready', ?1, ?2)",
+            params![format!("http://{addr}"), crate::token_crypto::seal("atok_1")],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE agents SET config = json_set(COALESCE(config, '{}'), '$.placement', json_object('targetId', 'tgt1')) WHERE id = 'bot-1'",
+            [],
+        )
+        .unwrap();
+
+        // The bot's new thread session is created on the server.
+        let sid = crate::agent_session_routes::create_bot_thread_session(&state.db, "bot-1", "Ledger", "Pricing", false, Some("t1"))
+            .await
+            .unwrap();
+        assert_eq!(sid, "ses_remote1");
+        assert_eq!(crate::placement::session_target(&state.db, &sid).unwrap().id, "tgt1");
+
+        // Server-started turns go there, carrying the bot.
+        let reply = crate::agent_session_routes::send_bot_turn(&state.db, &sid, "bot-1", "Price it").await.unwrap();
+        assert_eq!(reply, "did: \"Price it\" | true");
+
+        // App calls for that session pass through, with the server's token.
+        let app = axum::Router::new()
+            .route("/agent-sessions/:id/messages", aget(|| async { "local" }))
+            .route_layer(axum::middleware::from_fn_with_state(state.clone(), crate::placement::passthrough))
+            .with_state(state.clone());
+        let res = tower::ServiceExt::oneshot(
+            app,
+            Request::builder().uri("/agent-sessions/ses_remote1/messages").body(Body::empty()).unwrap(),
+        )
+        .await
+        .unwrap();
+        let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(v[0]["content"], "from ses_remote1 with Bearer atok_1");
+    }
+
+    #[tokio::test]
+    async fn an_email_conversation_is_one_thread_until_it_is_done() {
+        let state = setup("email").await;
+        let rt = FakeRt::default();
+        assert_eq!(conversation_subject("Re: Fwd: RE: H100 pricing"), "h100 pricing");
+        let key = format!("email:dana@acme.com:{}", conversation_subject("H100 pricing"));
+        let s1 = channel_thread(&state.db, &rt, "bot-1", "email", &key, "H100 pricing", "What's your H100 rate?").await.unwrap();
+        let again = format!("email:dana@acme.com:{}", conversation_subject("Re: H100 pricing"));
+        let s2 = channel_thread(&state.db, &rt, "bot-1", "email", &again, "Re: H100 pricing", "And annual?").await.unwrap();
+        assert_eq!(s1, s2, "a reply continues the same thread");
+        let (created_by, status): (String, String) = state
+            .db
+            .connect()
+            .unwrap()
+            .query_row("SELECT created_by, status FROM bot_threads WHERE current_session_id = ?1", params![s1], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!(created_by, "email");
+        state.db.connect().unwrap().execute("UPDATE bot_threads SET status = 'done' WHERE current_session_id = ?1", params![s1]).unwrap();
+        let s3 = channel_thread(&state.db, &rt, "bot-1", "email", &key, "H100 pricing", "New question").await.unwrap();
+        assert_ne!(s3, s1, "after it's done, a new email starts a new thread");
+        let _ = status;
     }
 
     #[tokio::test]

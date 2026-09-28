@@ -1063,6 +1063,47 @@ async fn agent_chat_bridge(
     )
     .unwrap_or_default();
 
+    // Cowork sessions also get the user's Cowork settings: their global
+    // instructions and the folder to save files in (created here, and allowed
+    // without an outside-directory prompt).
+    let is_cowork = state
+        .db
+        .get_session_origin_surface(&chat_id)
+        .ok()
+        .flatten()
+        .as_deref()
+        == Some("cowork");
+    let system_prompt = if is_cowork {
+        let db = state.db.clone();
+        let uid = user_id_for_record.clone();
+        let prefs = tokio::task::spawn_blocking(move || {
+            db.connect()
+                .ok()
+                .map(|conn| crate::cowork_preferences_routes::load_prefs(&conn, &uid))
+        })
+        .await
+        .ok()
+        .flatten();
+        match prefs {
+            Some(prefs) => {
+                if let Some(folder) = prefs.effective_files_location() {
+                    if let Err(e) = std::fs::create_dir_all(&folder) {
+                        warn!(folder = %folder, error = %e, "couldn't create the Cowork files folder");
+                    }
+                }
+                crate::cowork_preferences_routes::ensure_folder_permissions_synced(&user_id_for_record, &prefs);
+                match prefs.session_context() {
+                    Some(context) if system_prompt.trim().is_empty() => context,
+                    Some(context) => format!("{system_prompt}\n\n{context}"),
+                    None => system_prompt,
+                }
+            }
+            None => system_prompt,
+        }
+    } else {
+        system_prompt
+    };
+
     // Parse model from runtimeModelId or modelId — strip provider prefix if present.
     // Client-sent model ids always win; without one, fall back to the agent's
     // provider/model, then to the environment-configurable default so the

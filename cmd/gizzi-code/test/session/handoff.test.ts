@@ -7,13 +7,14 @@ import { Todo } from "../../src/runtime/session/todo"
 import { Identifier } from "../../src/shared/id/id"
 import { tmpdir } from "../fixture/fixture"
 
-async function userTurn(sessionID: string, text: string) {
+async function userTurn(sessionID: string, text: string, system?: string) {
   const id = Identifier.ascending("message")
   await Session.updateMessage({
     id,
     sessionID,
     role: "user",
     agent: "build",
+    ...(system ? { system } : {}),
     model: { providerID: "test", modelID: "test-model" },
     time: { created: Date.now() },
   })
@@ -31,7 +32,7 @@ describe("session context handoff", () => {
       directory: tmp.path,
       fn: async () => {
         const first = await Session.create({ title: "Pricing model", surface: "code", agentID: "scout" })
-        await userTurn(first.id, "Build the H100 pricing sheet")
+        await userTurn(first.id, "Build the H100 pricing sheet", "+You are Ledger. Never move money.")
         Todo.update({
           sessionID: first.id,
           todos: [{ content: "Annual discount", status: "pending", priority: "high" }],
@@ -53,6 +54,7 @@ describe("session context handoff", () => {
         const seeded = await MessageV2.filterCompacted(MessageV2.stream(second.id))
         const text = seeded[0].parts.find((p): p is MessageV2.TextPart => p.type === "text")!
         expect(text.synthetic).toBe(true)
+        expect((seeded[0].info as MessageV2.User).system).toBe("+You are Ledger. Never move money.")
         expect(text.text).toContain("H100 all-in is $1.94/hr")
         expect(text.text).toContain("- 35% margin")
         expect(text.metadata?.handoff).toMatchObject({ from: first.id, generation: 1 })

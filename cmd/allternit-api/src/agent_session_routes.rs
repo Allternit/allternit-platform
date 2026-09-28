@@ -133,9 +133,12 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
         .route("/agent-sessions/:id/unrevert", post(unrevert_session))
         .route("/agent-sessions/:id/compact", post(compact_session))
         .route("/agent-sessions/:id/resume", post(resume_session))
+        .route("/agent-sessions/:id/handoff", post(handoff_session))
+        .route("/agent-sessions/:id/lineage", get(lineage_session))
         .route("/agent-sessions/sync", get(sync_sessions))
         // Answers to gizzi's in-chat questions (the question tool). Without
         // these the app's reply never reached gizzi and the turn waited forever.
+        .route("/questions", get(list_questions))
         .route("/questions/:id/reply", post(reply_question))
         .route("/questions/:id/reject", post(reject_question))
         // The app's result for a pane_browser tool call (the page in the
@@ -190,6 +193,9 @@ struct SendMessageBody {
     /// metadata so the chat can label it; absent for the session composer.
     #[serde(default)]
     source: Option<String>,
+    /// Standing instructions for this turn ("+…" appends to gizzi's own).
+    #[serde(default)]
+    system: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1253,6 +1259,9 @@ fn send_message_payload(body: &SendMessageBody) -> serde_json::Value {
     if body.no_reply == Some(true) {
         payload["noReply"] = json!(true);
     }
+    if let Some(system) = body.system.as_deref().filter(|s| !s.trim().is_empty()) {
+        payload["system"] = json!(system);
+    }
     payload
 }
 
@@ -1339,6 +1348,53 @@ async fn compact_session(headers: HeaderMap, Path(session_id): Path<String>) -> 
     let client = gizzi_client(&headers);
     let path = format!("/v1/session/{}/summarize", urlencoding::encode(&session_id));
     match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, None).await {
+        Ok(result) => Json(result).into_response(),
+        Err(response) => response,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ListQuestionsQuery {
+    #[serde(rename = "sessionId")]
+    session_id: Option<String>,
+}
+
+/// Pending questions a bot asked (with their options), optionally for one
+/// session — Project home turns them into decision cards (P5.4).
+async fn list_questions(headers: HeaderMap, Query(q): Query<ListQuestionsQuery>) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    match gizzi_json::<Vec<serde_json::Value>>(&client, reqwest::Method::GET, "/v1/question", None).await {
+        Ok(all) => {
+            let filtered: Vec<serde_json::Value> = all
+                .into_iter()
+                .filter(|r| q.session_id.as_deref().map_or(true, |sid| r["sessionID"].as_str() == Some(sid)))
+                .collect();
+            Json(json!({ "questions": filtered })).into_response()
+        }
+        Err(response) => response,
+    }
+}
+
+/// Hand a session off to a fresh window (gizzi, P3.16) — also how a thread
+/// placed on another Allternit hands off there (P4.2).
+async fn handoff_session(
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+    body: Option<Json<serde_json::Value>>,
+) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!("/v1/session/{}/handoff", urlencoding::encode(&session_id));
+    let payload = body.map(|Json(v)| v).unwrap_or_else(|| json!({}));
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(payload)).await {
+        Ok(result) => Json(result).into_response(),
+        Err(response) => response,
+    }
+}
+
+async fn lineage_session(headers: HeaderMap, Path(session_id): Path<String>) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!("/v1/session/{}/lineage", urlencoding::encode(&session_id));
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::GET, &path, None).await {
         Ok(result) => Json(result).into_response(),
         Err(response) => response,
     }
@@ -1655,6 +1711,7 @@ async fn sync_sessions(
         return Err((status, Json(json!({ "error": body }))).into_response());
     }
 
+    let remote_targets = crate::placement::sync_targets(&state.db);
     let stream = async_stream::stream! {
         yield Ok(axum::response::sse::Event::default().comment("connected"));
 
@@ -1703,7 +1760,18 @@ async fn sync_sessions(
         }
     };
 
-    Ok(Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::default()))
+    // Threads placed on another Allternit (P4.2): relay that server's events
+    // for them too, so they update live like local ones.
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<axum::response::sse::Event>(256);
+    for target in remote_targets {
+        let tx = tx.clone();
+        tokio::spawn(async move { crate::placement::relay_sync(target, tx).await });
+    }
+    drop(tx);
+    let remote = futures::StreamExt::map(futures::stream::poll_fn(move |cx| rx.poll_recv(cx)), Ok::<_, std::convert::Infallible>);
+    let merged = futures::stream::select(Box::pin(stream), Box::pin(remote));
+
+    Ok(Sse::new(merged).keep_alive(axum::response::sse::KeepAlive::default()))
 }
 
 async fn proxy_gizzi(
@@ -2041,6 +2109,107 @@ fn bot_turn_model(db: &DbHandle, session_id: &str, bot_id: &str) -> serde_json::
     select_model(None)
 }
 
+/// The bot an A:// target principal names, when it is one of `user_id`'s
+/// bots: its registered principal, or the stable local `a://local/bot/<id>`.
+pub(crate) fn bot_for_principal(db: &DbHandle, user_id: &str, target: &str) -> Option<String> {
+    let conn = db.connect().ok()?;
+    conn.query_row(
+        "SELECT id FROM agents WHERE user_id = ?1 AND is_bot = 1
+           AND (principal_id = ?2 OR 'a://local/bot/' || id = ?2)
+         LIMIT 1",
+        params![user_id, target],
+        |r| r.get::<_, String>(0),
+    )
+    .ok()
+}
+
+/// Spec P4.1: a fabric job aimed at a bot runs as that bot. The job payload
+/// becomes an agentic job carrying the bot's instructions and memory
+/// (`bot_turn_system`) and its model, so whichever worker claims it — this
+/// Mac, the cloud, the user's server — works as the bot. A payload that
+/// already says how to run (`steps`, `agentic`) is left alone.
+pub(crate) fn bot_job_payload(db: &DbHandle, user_id: &str, target: &str, description: &str, payload: Option<&serde_json::Value>) -> Option<(String, serde_json::Value)> {
+    if payload.is_some_and(|p| p.get("steps").is_some() || p.get("agentic").is_some()) {
+        return None;
+    }
+    let bot_id = bot_for_principal(db, user_id, target)?;
+    let (provider, model): (Option<String>, Option<String>) = db
+        .connect()
+        .ok()?
+        .query_row("SELECT provider, model FROM agents WHERE id = ?1", params![bot_id], |r| Ok((r.get(0)?, r.get(1)?)))
+        .ok()?;
+    let task = payload
+        .and_then(|p| p.get("message").or_else(|| p.get("task")))
+        .and_then(serde_json::Value::as_str)
+        .filter(|t| !t.trim().is_empty())
+        .unwrap_or(description)
+        .to_string();
+    let mut agentic = json!({ "task": task, "bot_id": bot_id, "system": bot_turn_system(db, "", &bot_id) });
+    if let (Some(p), Some(m)) = (provider.filter(|p| !p.is_empty()), model.filter(|m| !m.is_empty())) {
+        agentic["model"] = json!(format!("{p}/{m}"));
+    }
+    let mut out = payload.cloned().filter(serde_json::Value::is_object).unwrap_or_else(|| json!({}));
+    out["agentic"] = agentic;
+    Some((bot_id, out))
+}
+
+/// Budget for saved bot memory in a server-started turn's instructions.
+const BOT_MEMORY_CHARS: usize = 6000;
+
+/// The bot's standing instructions for a turn the server starts (coordinator,
+/// routines): the thread's own prompt when the client set one, else the
+/// bot's, plus who it is and what it has saved to memory.
+pub(crate) fn bot_turn_system(db: &DbHandle, session_id: &str, bot_id: &str) -> Option<String> {
+    let conn = db.connect().ok()?;
+    let (user_id, name, description, prompt, title): (String, String, Option<String>, Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT user_id, name, description, system_prompt, json_extract(config, '$.botProfile.title') FROM agents WHERE id = ?1",
+            params![bot_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .ok()?;
+    let thread_prompt = db
+        .get_session_metadata(session_id)
+        .ok()
+        .flatten()
+        .and_then(|bag| bag.get("systemPrompt").and_then(|v| v.as_str()).map(str::to_string))
+        .filter(|p| !p.trim().is_empty());
+    let mut out = format!("# Bot identity\n\nYou are {name}{}.", title.map(|t| format!(", {t}")).unwrap_or_default());
+    if let Some(d) = description.filter(|d| !d.trim().is_empty()) {
+        out.push_str(&format!(" {d}"));
+    }
+    if let Some(p) = thread_prompt.or(prompt).filter(|p| !p.trim().is_empty()) {
+        out.push_str(&format!("\n\n## Standing instructions\n\n{}", p.trim()));
+    }
+    if let Ok(Some(principal)) = crate::cowork_routes::bot_memory_principal(&conn, &user_id, bot_id) {
+        let mut stmt = conn
+            .prepare(
+                "SELECT content FROM cowork_memory_entries WHERE user_id = ?1 AND owner_principal = ?2
+                 ORDER BY created_at DESC LIMIT 40",
+            )
+            .ok()?;
+        let rows: Vec<String> = stmt
+            .query_map(params![user_id, principal], |r| r.get::<_, String>(0))
+            .ok()?
+            .filter_map(Result::ok)
+            .collect();
+        let mut used = 0;
+        let mut lines = Vec::new();
+        for r in rows {
+            let line = format!("- {}", r.trim());
+            if used + line.len() > BOT_MEMORY_CHARS {
+                break;
+            }
+            used += line.len();
+            lines.push(line);
+        }
+        if !lines.is_empty() {
+            out.push_str(&format!("\n\n## What you remember\n\n{}", lines.join("\n")));
+        }
+    }
+    Some(out)
+}
+
 /// Create a bot's canonical chat session from the server side. Mirrors
 /// `create_session` for an agent-bound chat and stamps the same metadata the
 /// web client does, so every surface lists it as the bot's thread.
@@ -2059,6 +2228,32 @@ pub(crate) async fn create_bot_thread_session(
     canonical: bool,
     thread_id: Option<&str>,
 ) -> Result<String, String> {
+    let mut bag = json!({
+        "isBot": true,
+        "sessionMode": "agent",
+        "agentId": bot_id,
+        "agentName": bot_name,
+        "botName": bot_name,
+    });
+    bag[if canonical { "botCanonicalFor" } else { "botThreadOf" }] = json!(bot_id);
+    if let Some(id) = thread_id {
+        bag["threadId"] = json!(id);
+    }
+    // Placed on another Allternit (P4.2): the session lives there.
+    if let Some(target) = crate::placement::bot_target(db, bot_id) {
+        let created = crate::placement::call(
+            &target,
+            reqwest::Method::POST,
+            "/agent-sessions",
+            Some(json!({ "name": title, "originSurface": "chat", "metadata": bag })),
+        )
+        .await?;
+        let id = created["id"].as_str().ok_or("the server returned no session")?.to_string();
+        crate::placement::record(db, &id, &target.id);
+        let _ = db.set_session_origin_surface(&id, "chat");
+        let _ = db.set_session_metadata(&id, &bag);
+        return Ok(id);
+    }
     let client = gizzi_client(&HeaderMap::new());
     let (provider_id, model_id) = AppConfig::load().default_model();
     let mut payload = serde_json::Map::new();
@@ -2078,29 +2273,32 @@ pub(crate) async fn create_bot_thread_session(
     .await
     .map_err(|_| "gizzi runtime refused session create".to_string())?;
     let _ = db.set_session_origin_surface(&session.id, "chat");
-    let mut bag = json!({
-        "isBot": true,
-        "sessionMode": "agent",
-        "agentId": bot_id,
-        "agentName": bot_name,
-        "botName": bot_name,
-    });
-    bag[if canonical { "botCanonicalFor" } else { "botThreadOf" }] = json!(bot_id);
-    if let Some(id) = thread_id {
-        bag["threadId"] = json!(id);
-    }
     let _ = db.set_session_metadata(&session.id, &bag);
     Ok(session.id)
 }
 
 /// Run one user turn in a session and return the assistant's text.
 pub(crate) async fn send_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str, text: &str) -> Result<String, String> {
+    if let Some(target) = crate::placement::session_target(db, session_id) {
+        let mut body = json!({ "text": text, "metadata": { "model": bot_turn_model(db, session_id, bot_id) } });
+        if let Some(system) = bot_turn_system(db, session_id, bot_id) {
+            body["system"] = json!(format!("+{system}"));
+        }
+        let path = format!("/agent-sessions/{}/messages", urlencoding::encode(session_id));
+        let reply = crate::placement::call(&target, reqwest::Method::POST, &path, Some(body)).await?;
+        return Ok(reply["content"].as_str().unwrap_or_default().to_string());
+    }
     let client = gizzi_client(&HeaderMap::new());
     let path = format!("/v1/session/{}/message", urlencoding::encode(session_id));
-    let payload = json!({
+    let mut payload = json!({
         "parts": [{ "type": "text", "text": text }],
         "model": bot_turn_model(db, session_id, bot_id),
     });
+    // A bot running its own thread is still itself (P4.1): its standing
+    // instructions and saved memory ride on every server-started turn.
+    if let Some(system) = bot_turn_system(db, session_id, bot_id) {
+        payload["system"] = json!(format!("+{system}"));
+    }
     match gizzi_json::<GizziMessage>(&client, reqwest::Method::POST, &path, Some(payload)).await {
         Ok(message) => {
             if let Some(error) = message.info.error.as_ref().and_then(|e| e.message.clone()) {
@@ -2122,7 +2320,12 @@ pub(crate) async fn send_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str,
 /// Add a user-role message to a session without running a turn (gizzi
 /// `noReply`). Used to seed a fresh context generation with the thread's
 /// checkpoint.
-pub(crate) async fn seed_session_message(session_id: &str, text: &str) -> Result<(), String> {
+pub(crate) async fn seed_session_message(db: &DbHandle, session_id: &str, text: &str) -> Result<(), String> {
+    if let Some(target) = crate::placement::session_target(db, session_id) {
+        let path = format!("/agent-sessions/{}/messages", urlencoding::encode(session_id));
+        crate::placement::call(&target, reqwest::Method::POST, &path, Some(json!({ "text": text, "noReply": true }))).await?;
+        return Ok(());
+    }
     let client = gizzi_client(&HeaderMap::new());
     let path = format!("/v1/session/{}/message", urlencoding::encode(session_id));
     let payload = json!({ "parts": [{ "type": "text", "text": text }], "noReply": true });
@@ -2135,11 +2338,26 @@ pub(crate) async fn seed_session_message(session_id: &str, text: &str) -> Result
 /// gizzi's native context handoff for a session. Returns the new session id
 /// and the checkpoint baton gizzi wrote (or used, when `baton` is given).
 pub(crate) async fn gizzi_handoff(
+    db: &DbHandle,
     session_id: &str,
     reason: &str,
     context: &str,
     baton: Option<serde_json::Value>,
 ) -> Result<(String, serde_json::Value), String> {
+    if let Some(target) = crate::placement::session_target(db, session_id) {
+        let mut payload = json!({ "reason": reason });
+        if !context.trim().is_empty() {
+            payload["context"] = json!(context);
+        }
+        if let Some(b) = baton.clone() {
+            payload["baton"] = b;
+        }
+        let path = format!("/agent-sessions/{}/handoff", urlencoding::encode(session_id));
+        let result = crate::placement::call(&target, reqwest::Method::POST, &path, Some(payload)).await?;
+        let next = result["session"]["id"].as_str().ok_or("handoff returned no session")?.to_string();
+        crate::placement::record(db, &next, &target.id);
+        return Ok((next, result["baton"].clone()));
+    }
     let client = gizzi_client(&HeaderMap::new());
     let path = format!("/v1/session/{}/handoff", urlencoding::encode(session_id));
     let mut payload = json!({ "reason": reason });
@@ -2157,7 +2375,18 @@ pub(crate) async fn gizzi_handoff(
 }
 
 /// Every window of a session's conversation, oldest first (gizzi lineage).
-pub(crate) async fn gizzi_lineage(session_id: &str) -> Result<Vec<serde_json::Value>, String> {
+pub(crate) async fn gizzi_lineage(db: &DbHandle, session_id: &str) -> Result<Vec<serde_json::Value>, String> {
+    if let Some(target) = crate::placement::session_target(db, session_id) {
+        let path = format!("/agent-sessions/{}/lineage", urlencoding::encode(session_id));
+        let result = crate::placement::call(&target, reqwest::Method::GET, &path, None).await?;
+        let sessions = result["sessions"].as_array().cloned().unwrap_or_default();
+        for s in &sessions {
+            if let Some(id) = s["id"].as_str() {
+                crate::placement::record(db, id, &target.id);
+            }
+        }
+        return Ok(sessions);
+    }
     let client = gizzi_client(&HeaderMap::new());
     let path = format!("/v1/session/{}/lineage", urlencoding::encode(session_id));
     let result = gizzi_json::<serde_json::Value>(&client, reqwest::Method::GET, &path, None)
@@ -2168,7 +2397,11 @@ pub(crate) async fn gizzi_lineage(session_id: &str) -> Result<Vec<serde_json::Va
 
 /// Whether a gizzi session still exists (a pinned thread can be deleted from
 /// another client; delivery then falls back instead of failing forever).
-pub(crate) async fn bot_session_exists(session_id: &str) -> bool {
+pub(crate) async fn bot_session_exists(db: &DbHandle, session_id: &str) -> bool {
+    if let Some(target) = crate::placement::session_target(db, session_id) {
+        let path = format!("/agent-sessions/{}", urlencoding::encode(session_id));
+        return crate::placement::call(&target, reqwest::Method::GET, &path, None).await.is_ok();
+    }
     let client = gizzi_client(&HeaderMap::new());
     let path = format!("/v1/session/{}", urlencoding::encode(session_id));
     gizzi_json::<GizziSessionInfo>(&client, reqwest::Method::GET, &path, None).await.is_ok()
@@ -2263,6 +2496,54 @@ mod tests {
         let now = chrono::Local::now();
         assert!(!paused_until_label(now.timestamp_millis() + 60_000, now).contains(','));
         assert!(paused_until_label(now.timestamp_millis() + 30 * 86_400_000, now).contains(','));
+    }
+
+    #[test]
+    fn server_started_bot_turns_carry_the_bot_and_its_memory() {
+        let temp = std::env::temp_dir().join(format!("bot-system-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let db = crate::db::DbHandle::new(temp.join("test.db")).expect("test db");
+        let conn = db.connect().unwrap();
+        conn.execute(
+            "INSERT INTO agents (id, user_id, name, description, model, provider, system_prompt, config)
+             VALUES ('b1', 'u1', 'Ledger', 'Unit economics and the monthly close.', 'sonnet', 'claude-cli',
+                     'Never move money.', '{\"botProfile\":{\"title\":\"Finance analyst\"}}')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO cowork_memory_entries (id, user_id, content, type, owner_principal, grants, created_at)
+             VALUES ('m1', 'u1', 'Margin target is 35%', 'fact', 'a://local/bot/b1', '[]', '2026-09-27T10:00:00Z'),
+                    ('m2', 'u1', 'Someone else''s note', 'fact', 'a://local/bot/other', '[]', '2026-09-27T10:00:00Z')",
+            [],
+        )
+        .unwrap();
+        let system = bot_turn_system(&db, "s1", "b1").unwrap();
+        assert!(system.starts_with("# Bot identity\n\nYou are Ledger, Finance analyst. Unit economics"));
+        assert!(system.contains("## Standing instructions\n\nNever move money."));
+        assert!(system.contains("- Margin target is 35%"));
+        assert!(!system.contains("Someone else"));
+
+        // A thread's own prompt (set by the client) wins over the bot default.
+        db.set_session_metadata("s2", &json!({"systemPrompt": "Price at 35% for this launch."})).unwrap();
+        assert!(bot_turn_system(&db, "s2", "b1").unwrap().contains("Price at 35% for this launch."));
+        assert!(bot_turn_system(&db, "s1", "missing").is_none());
+
+        // P4.1: a fabric job aimed at the bot runs as the bot.
+        conn.execute("UPDATE agents SET is_bot = 1 WHERE id = 'b1'", []).unwrap();
+        let (bot, payload) = bot_job_payload(&db, "u1", "a://local/bot/b1", "Close September", None).unwrap();
+        assert_eq!(bot, "b1");
+        assert_eq!(payload["agentic"]["task"], "Close September");
+        assert_eq!(payload["agentic"]["model"], "claude-cli/sonnet");
+        assert!(payload["agentic"]["system"].as_str().unwrap().contains("- Margin target is 35%"));
+        let (_, with_msg) = bot_job_payload(&db, "u1", "a://local/bot/b1", "d", Some(&json!({"message": "Price H100", "k": 1}))).unwrap();
+        assert_eq!((with_msg["agentic"]["task"].as_str(), with_msg["k"].as_i64()), (Some("Price H100"), Some(1)));
+        conn.execute("UPDATE agents SET principal_id = 'a://workspace/acme/bot/ledger' WHERE id = 'b1'", []).unwrap();
+        assert!(bot_job_payload(&db, "u1", "a://workspace/acme/bot/ledger", "d", None).is_some());
+        // Not the owner, not a bot, or already a runnable payload: untouched.
+        assert!(bot_job_payload(&db, "u2", "a://local/bot/b1", "d", None).is_none());
+        assert!(bot_job_payload(&db, "u1", "a://workspace/acme/principal/al", "d", None).is_none());
+        assert!(bot_job_payload(&db, "u1", "a://local/bot/b1", "d", Some(&json!({"steps": ["ls"]}))).is_none());
     }
 
     #[test]

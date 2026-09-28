@@ -154,6 +154,8 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/computers", get(list_computers).post(create_computer))
         .route("/computers/quota", get(get_computer_quota))
+        .route("/computers/this-device", post(register_this_device))
+        .route("/computers/remote/sync", post(sync_remote_computers))
         .route("/computers/:id", get(get_computer).patch(update_computer))
         .route(
             "/computers/:id/resize",
@@ -1220,6 +1222,250 @@ fn sync_cloud_desktop_from_sandbox(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// This computer (ACI P4): the Mac running Allternit Desktop, listed with the
+// other computers as kind `local`, provider `host`. It isn't a VM: there's
+// nothing to start, stop, clone or delete, and its screen is read through the
+// computer-use gateway (ACU), not a VM driver.
+// ---------------------------------------------------------------------------
+
+pub(crate) const THIS_DEVICE_PROVIDER: &str = "host";
+
+pub(crate) fn is_this_device(computer: &ComputerResponse) -> bool {
+    computer.kind == ComputerKind::Local && computer.provider == THIS_DEVICE_PROVIDER
+}
+
+fn refuse_on_this_device(computer: &ComputerResponse) -> Option<Response> {
+    if computer.provider == crate::mesh_bridge::FABRIC_PROVIDER {
+        return Some(
+            (
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "error": "paired_computer",
+                    "message": "This is one of your own machines, paired over the mesh. It can't be started, stopped, cloned or deleted from here; unpair it in Computers.",
+                })),
+            )
+                .into_response(),
+        );
+    }
+    is_this_device(computer).then(|| {
+        (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "this_device",
+                "message": "This is the computer running Allternit. It can't be started, stopped, cloned or deleted here, and agents use it through computer use.",
+            })),
+        )
+            .into_response()
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct ThisDeviceBody {
+    id: String,
+    name: String,
+    platform: String,
+}
+
+/// POST /computers/this-device — record this Mac as a computer. Only the
+/// desktop app itself may call it (the local API's spawn-time secret, not
+/// relayed from another device), because it claims "the computer I run on".
+async fn register_this_device(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<ThisDeviceBody>,
+) -> Response {
+    let relayed = headers.get(crate::cowork_devices_routes::RELAYED_HEADER).is_some();
+    if relayed || !crate::auth::verify_desktop_access_token(&headers, &state.config) {
+        return error_response(StatusCode::FORBIDDEN, "only the desktop app can register the computer it runs on");
+    }
+    let device_id = body.id.trim().to_string();
+    if device_id.is_empty() || device_id.len() > 128 {
+        return error_response(StatusCode::BAD_REQUEST, "invalid device id");
+    }
+    let name: String = body.name.trim().chars().take(80).collect();
+    let os = match body.platform.as_str() {
+        "macOS" => "macos",
+        "Windows" => "windows",
+        "Linux" => "linux",
+        other => other,
+    }
+    .to_string();
+    let db = state.db.clone();
+    let owner = user.user_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = db.connect()?;
+        let existing: Option<String> = conn
+            .query_row(
+                "SELECT id FROM computers WHERE kind = 'local' AND provider = ?1 AND owner_type = 'user'
+                 AND owner_id = ?2 AND native_id = ?3 AND status != 'deleted'",
+                rusqlite::params![THIS_DEVICE_PROVIDER, owner, device_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let id = match existing {
+            Some(id) => {
+                conn.execute(
+                    "UPDATE computers SET name = ?2, os = ?3, status = 'running', last_activity_at = CURRENT_TIMESTAMP WHERE id = ?1",
+                    rusqlite::params![id, name, os],
+                )?;
+                id
+            }
+            None => {
+                let id = format!("cmp_{}", uuid::Uuid::new_v4().simple());
+                conn.execute(
+                    "INSERT INTO computers (id, kind, provider, status, owner_type, owner_id, name, os, native_id, billing_source)
+                     VALUES (?1, 'local', ?2, 'running', 'user', ?3, ?4, ?5, ?6, 'free')",
+                    rusqlite::params![id, THIS_DEVICE_PROVIDER, owner, name, os, device_id],
+                )?;
+                id
+            }
+        };
+        Ok::<_, rusqlite::Error>(id)
+    })
+    .await;
+    let id = match result {
+        Ok(Ok(id)) => id,
+        Ok(Err(e)) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        Err(_) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+    };
+    match fetch_computer(&state, &user, &id).await {
+        Ok(Some(computer)) => Json(computer).into_response(),
+        Ok(None) => error_response(StatusCode::NOT_FOUND, "computer not found"),
+        Err(resp) => resp,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RemoteComputer {
+    id: String,
+    name: String,
+    #[serde(default)]
+    os: Option<String>,
+    #[serde(default)]
+    mesh_ip: Option<String>,
+    #[serde(default)]
+    vnc_ready: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct RemoteSyncBody {
+    computers: Vec<RemoteComputer>,
+}
+
+/// Status of a paired machine's mirror row: running once it's on the mesh
+/// with VNC up; creating while it hasn't joined; error when it joined but
+/// its VNC server is off.
+pub(crate) fn remote_status(mesh_ip: Option<&str>, vnc_ready: bool) -> &'static str {
+    match (mesh_ip.filter(|ip| crate::mesh_bridge::is_mesh_target(&format!("{ip}:5900"))), vnc_ready) {
+        (None, _) => "creating",
+        (Some(_), true) => "running",
+        (Some(_), false) => "error",
+    }
+}
+
+/// POST /computers/remote/sync — mirror the account's paired machines (from
+/// the cloud's `/api/v1/computers/paired`) as `fabric` computers here, so
+/// control, hand-offs and the VNC view work on them like on any computer.
+/// Machines no longer paired are marked deleted.
+async fn sync_remote_computers(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<RemoteSyncBody>,
+) -> Response {
+    let db = state.db.clone();
+    let owner = user.user_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = db.connect()?;
+        let mut keep = Vec::new();
+        for remote in body.computers.iter().take(200) {
+            let native_id: String = remote.id.chars().take(128).collect();
+            let name: String = remote.name.trim().chars().take(80).collect();
+            let status = remote_status(remote.mesh_ip.as_deref(), remote.vnc_ready);
+            let existing: Option<String> = conn
+                .query_row(
+                    "SELECT id FROM computers WHERE provider = ?1 AND owner_type = 'user' AND owner_id = ?2 AND native_id = ?3",
+                    rusqlite::params![crate::mesh_bridge::FABRIC_PROVIDER, owner, native_id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let id = match existing {
+                Some(id) => {
+                    conn.execute(
+                        "UPDATE computers SET name = ?2, os = ?3, host = ?4, status = ?5 WHERE id = ?1",
+                        rusqlite::params![id, name, remote.os, remote.mesh_ip, status],
+                    )?;
+                    id
+                }
+                None => {
+                    let id = format!("cmp_{}", uuid::Uuid::new_v4().simple());
+                    conn.execute(
+                        "INSERT INTO computers (id, kind, provider, status, owner_type, owner_id, name, os, host, native_id, billing_source)
+                         VALUES (?1, 'byo_vps', ?2, ?3, 'user', ?4, ?5, ?6, ?7, ?8, 'free')",
+                        rusqlite::params![id, crate::mesh_bridge::FABRIC_PROVIDER, status, owner, name, remote.os, remote.mesh_ip, native_id],
+                    )?;
+                    id
+                }
+            };
+            keep.push(id);
+        }
+        // Unpaired elsewhere: gone here too.
+        let mut stmt = conn.prepare(
+            "SELECT id FROM computers WHERE provider = ?1 AND owner_type = 'user' AND owner_id = ?2 AND status != 'deleted'",
+        )?;
+        let current: Vec<String> = stmt
+            .query_map(rusqlite::params![crate::mesh_bridge::FABRIC_PROVIDER, owner], |r| r.get(0))?
+            .filter_map(Result::ok)
+            .collect();
+        for id in current.into_iter().filter(|id| !keep.contains(id)) {
+            conn.execute("UPDATE computers SET status = 'deleted' WHERE id = ?1", rusqlite::params![id])?;
+        }
+        Ok::<_, rusqlite::Error>(keep.len())
+    })
+    .await;
+    match result {
+        Ok(Ok(count)) => Json(json!({ "synced": count })).into_response(),
+        Ok(Err(e)) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        Err(_) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+    }
+}
+
+/// This computer's screen. On macOS, `screencapture` run by this API process:
+/// it's a child of Allternit Desktop, so macOS attributes the capture to the
+/// app and its Screen Recording permission. (The computer-use driver only
+/// captures single windows.)
+async fn this_device_screenshot(_state: &Arc<AppState>, computer_id: &str) -> Response {
+    if !cfg!(target_os = "macos") {
+        return error_response(StatusCode::NOT_IMPLEMENTED, "screenshots of this computer are only supported on macOS so far");
+    }
+    let file = std::env::temp_dir().join(format!("allternit-screen-{computer_id}-{}.png", uuid::Uuid::new_v4().simple()));
+    let output = tokio::process::Command::new("/usr/sbin/screencapture")
+        .args(["-x", "-t", "png"])
+        .arg(&file)
+        .output()
+        .await;
+    let png = match output {
+        Ok(out) if out.status.success() => tokio::fs::read(&file).await.ok(),
+        Ok(out) => {
+            warn!(stderr = %String::from_utf8_lossy(&out.stderr), "screencapture failed");
+            None
+        }
+        Err(e) => {
+            warn!(error = %e, "couldn't run screencapture");
+            None
+        }
+    };
+    let _ = tokio::fs::remove_file(&file).await;
+    match png.filter(|bytes| !bytes.is_empty()) {
+        Some(png) => (StatusCode::OK, [(header::CONTENT_TYPE, "image/png")], Bytes::from(png)).into_response(),
+        None => error_response(
+            StatusCode::BAD_GATEWAY,
+            "couldn't capture this computer's screen — allow Screen Recording for Allternit in System Settings → Privacy & Security",
+        ),
+    }
+}
+
 async fn computer_screenshot(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -1231,6 +1477,12 @@ async fn computer_screenshot(
         Err(resp) => return resp,
     };
     touch_computer_activity(&state.db, &id);
+    if is_this_device(&computer) {
+        return this_device_screenshot(&state, &id).await;
+    }
+    if computer.provider == crate::mesh_bridge::FABRIC_PROVIDER {
+        return error_response(StatusCode::CONFLICT, "view this computer live (VNC over the mesh); single screenshots aren't taken from paired machines");
+    }
     let bot_id = computer.bot_id.as_deref();
     let record = match computer_sandbox(&state, &computer) {
         Ok(Some(r)) => r,
@@ -1595,6 +1847,9 @@ async fn computer_mouse(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(resp) => return resp,
     };
+    if let Some(resp) = refuse_on_this_device(&computer) {
+        return resp;
+    }
     if let Err(resp) = control_gate(&state, &id, &user_holder(&user, &headers)).await {
         return resp;
     }
@@ -1635,6 +1890,9 @@ async fn computer_keyboard(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(resp) => return resp,
     };
+    if let Some(resp) = refuse_on_this_device(&computer) {
+        return resp;
+    }
     if let Err(resp) = control_gate(&state, &id, &user_holder(&user, &headers)).await {
         return resp;
     }
@@ -1675,6 +1933,9 @@ async fn computer_shell(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(resp) => return resp,
     };
+    if let Some(resp) = refuse_on_this_device(&computer) {
+        return resp;
+    }
     if let Err(resp) = control_gate(&state, &id, &user_holder(&user, &headers)).await {
         return resp;
     }
@@ -1718,6 +1979,9 @@ async fn computer_upload_file(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(resp) => return resp,
     };
+    if let Some(resp) = refuse_on_this_device(&computer) {
+        return resp;
+    }
     touch_computer_activity(&state.db, &id);
     let sandbox_id = match computer.native_id.as_deref() {
         Some(id) => id,
@@ -1765,6 +2029,9 @@ async fn computer_download_file(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(resp) => return resp,
     };
+    if let Some(resp) = refuse_on_this_device(&computer) {
+        return resp;
+    }
     touch_computer_activity(&state.db, &id);
     let sandbox_id = match computer.native_id.as_deref() {
         Some(id) => id,
@@ -1836,6 +2103,9 @@ async fn restart_computer(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(e) => return e,
     };
+    if let Some(resp) = refuse_on_this_device(&computer) {
+        return resp.into_response();
+    }
     touch_computer_activity(&state.db, &id);
     if !matches!(
         computer.kind,
@@ -1869,6 +2139,9 @@ pub(crate) async fn start_computer(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(resp) => return resp,
     };
+    if let Some(resp) = refuse_on_this_device(&computer) {
+        return resp.into_response();
+    }
     touch_computer_activity(&state.db, &id);
 
     match computer.kind {
@@ -1936,6 +2209,9 @@ pub(crate) async fn stop_computer(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(resp) => return resp,
     };
+    if let Some(resp) = refuse_on_this_device(&computer) {
+        return resp.into_response();
+    }
 
     stop_computer_inner(&state, &computer).await
 }
@@ -2021,6 +2297,9 @@ async fn delete_computer(
         Ok(None) => return StatusCode::NO_CONTENT.into_response(),
         Err(resp) => return resp,
     };
+    if let Some(resp) = refuse_on_this_device(&computer) {
+        return resp;
+    }
 
     match computer.kind {
         ComputerKind::CloudDesktop | ComputerKind::Local => {
@@ -2111,6 +2390,9 @@ async fn session_end_computer(
         Ok(None) => return StatusCode::NO_CONTENT.into_response(),
         Err(resp) => return resp,
     };
+    if let Some(resp) = refuse_on_this_device(&computer) {
+        return resp;
+    }
 
     match computer.kind {
         ComputerKind::CloudDesktop | ComputerKind::Local => {
@@ -2301,6 +2583,9 @@ async fn snapshot_driver_and_handle(
     let c = fetch_computer(state, user, id)
         .await?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "computer not found"))?;
+    if let Some(resp) = refuse_on_this_device(&c) {
+        return Err(resp);
+    }
     let native_id = c
         .native_id
         .as_deref()
@@ -2433,6 +2718,31 @@ mod tests {
         ));
         assert!(matches!(status_from_str("error"), ComputerStatus::Error));
         assert!(matches!(status_from_str("unknown"), ComputerStatus::Error));
+    }
+
+    #[test]
+    fn remote_status_follows_mesh_and_vnc() {
+        assert_eq!(remote_status(None, false), "creating");
+        assert_eq!(remote_status(Some("100.64.0.9"), true), "running");
+        assert_eq!(remote_status(Some("100.64.0.9"), false), "error");
+        assert_eq!(remote_status(Some("192.168.1.2"), true), "creating");
+    }
+
+    #[test]
+    fn this_device_refuses_vm_lifecycle() {
+        let mut computer: ComputerResponse = serde_json::from_value(serde_json::json!({
+            "id": "cmp_1", "kind": "local", "provider": "host", "status": "running",
+            "owner_type": "user", "owner_id": "u", "bot_id": null, "session_id": null,
+            "name": "Studio", "os": "macos", "cpu_cores": null, "memory_mb": null,
+            "disk_mb": null, "region": null, "host": null, "native_id": "desktop-1",
+            "template_id": null, "billing_source": "free", "created_at": "", "updated_at": "",
+            "idle_timeout_secs": null, "last_activity_at": null, "group_id": null
+        })).expect("computer json");
+        assert!(is_this_device(&computer));
+        assert_eq!(refuse_on_this_device(&computer).map(|r| r.status()), Some(StatusCode::CONFLICT));
+        computer.provider = "tart".into();
+        assert!(!is_this_device(&computer));
+        assert!(refuse_on_this_device(&computer).is_none());
     }
 
     #[test]
@@ -2789,6 +3099,9 @@ pub(crate) async fn resize_computer(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(e) => return e,
     };
+    if let Some(resp) = refuse_on_this_device(&computer) {
+        return resp.into_response();
+    }
     if let Err((code, message)) = validate_resize(&req, computer.status) {
         return error_response(code, message);
     }
@@ -2918,6 +3231,9 @@ pub(crate) async fn clone_computer(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(e) => return e,
     };
+    if let Some(resp) = refuse_on_this_device(&source) {
+        return resp.into_response();
+    }
     if source.kind != ComputerKind::CloudDesktop {
         return error_response(
             StatusCode::NOT_IMPLEMENTED,

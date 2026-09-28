@@ -193,6 +193,8 @@ export namespace SessionHandoff {
         agent: lastUser.agent,
         model: lastUser.model,
         variant: lastUser.variant,
+        // The bot's standing instructions carry into the fresh window (P4.1).
+        ...(lastUser.system ? { system: lastUser.system } : {}),
       })
       await Session.updatePart({
         id: Identifier.ascending("part"),

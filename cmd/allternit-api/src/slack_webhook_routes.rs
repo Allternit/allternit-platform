@@ -9,19 +9,25 @@
 //! contact — and the assistant's reply is posted back via
 //! `chat.postMessage`.
 //!
+//! A channel bound to a bot (`slack_channel_bots`, spec P6.2) goes to that
+//! bot instead: each Slack thread is one task thread on the bot
+//! (`thread_routes::channel_thread`, key `slack:<channel>:<thread_ts>`), the
+//! turn runs with the bot's identity, instructions and memory, and the reply
+//! posts back in the Slack thread. Bindings are managed per bot at
+//! `/agents/:id/slack-channels`.
+//!
 //! Scope limits, stated rather than silently assumed: text-only (no
-//! file/image attachments), one default agent/model for every channel (no
-//! per-channel agent selection), and the reply is fetched by bounded polling
+//! file/image attachments), unbound channels share one default agent/model, and the reply is fetched by bounded polling
 //! rather than subscribing to Gizzi's event bus — this is a one-shot
 //! background task per inbound message, not a held connection, so polling is
 //! the simpler correct tool here (see `wait_for_reply`).
 
 use axum::{
     body::Bytes,
-    extract::State,
+    extract::{Extension, Path, State},
     http::{HeaderMap, StatusCode},
-    response::IntoResponse,
-    routing::post,
+    response::{IntoResponse, Response},
+    routing::{delete, get, post},
     Json, Router,
 };
 use hmac::{Hmac, Mac};
@@ -33,7 +39,9 @@ use std::time::Duration;
 use tracing::{info, warn};
 
 use crate::agent_session_routes::gizzi_client;
+use crate::auth::AuthUser;
 use crate::config::AppConfig;
+use crate::db::DbHandle;
 use crate::AppState;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -41,6 +49,105 @@ type HmacSha256 = Hmac<Sha256>;
 pub fn slack_webhook_router() -> Router<Arc<AppState>> {
     Router::new().route("/webhooks/slack/events", post(handle_event))
 }
+
+/// Authenticated: which Slack channels feed a bot.
+pub fn slack_binding_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/agents/:id/slack-channels", get(list_bindings).post(bind_channel))
+        .route("/agents/:id/slack-channels/:channel", delete(unbind_channel))
+}
+
+fn owns_bot(db: &DbHandle, bot_id: &str, user_id: &str) -> bool {
+    db.connect()
+        .ok()
+        .and_then(|c| c.query_row("SELECT 1 FROM agents WHERE id = ?1 AND user_id = ?2", params![bot_id, user_id], |_| Ok(())).ok())
+        .is_some()
+}
+
+fn not_yours() -> Response {
+    (StatusCode::NOT_FOUND, Json(json!({ "error": "bot not found" }))).into_response()
+}
+
+async fn list_bindings(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(bot_id): Path<String>) -> Response {
+    if !owns_bot(&state.db, &bot_id, &user.user_id) {
+        return not_yours();
+    }
+    let channels: Vec<Value> = state
+        .db
+        .connect()
+        .ok()
+        .and_then(|c| {
+            let mut stmt = c.prepare("SELECT slack_channel_id, created_at FROM slack_channel_bots WHERE bot_id = ?1 ORDER BY created_at").ok()?;
+            let rows = stmt
+                .query_map(params![bot_id], |r| Ok(json!({ "channel": r.get::<_, String>(0)?, "createdAt": r.get::<_, String>(1)? })))
+                .ok()?
+                .filter_map(Result::ok)
+                .collect();
+            Some(rows)
+        })
+        .unwrap_or_default();
+    Json(json!({ "channels": channels, "configured": AppConfig::load().slack_signing_secret().is_some() })).into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct BindBody {
+    channel: String,
+}
+
+async fn bind_channel(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(bot_id): Path<String>,
+    Json(body): Json<BindBody>,
+) -> Response {
+    let channel = body.channel.trim().trim_start_matches('#').to_string();
+    if channel.is_empty() || !channel.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "use the Slack channel ID, e.g. C0123ABCD" }))).into_response();
+    }
+    if !owns_bot(&state.db, &bot_id, &user.user_id) {
+        return not_yours();
+    }
+    let Ok(conn) = state.db.connect() else {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "database unavailable" }))).into_response();
+    };
+    // One bot per channel. Taking over a channel another of your bots has is
+    // allowed; someone else's binding is not yours to move.
+    let holder: Option<String> = conn
+        .query_row("SELECT user_id FROM slack_channel_bots WHERE slack_channel_id = ?1", params![channel], |r| r.get(0))
+        .ok();
+    if holder.as_deref().is_some_and(|h| h != user.user_id) {
+        return (StatusCode::CONFLICT, Json(json!({ "error": "that channel is bound to someone else's bot" }))).into_response();
+    }
+    let _ = conn.execute(
+        "INSERT INTO slack_channel_bots (slack_channel_id, bot_id, user_id, created_at) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(slack_channel_id) DO UPDATE SET bot_id = excluded.bot_id, created_at = excluded.created_at",
+        params![channel, bot_id, user.user_id, chrono::Utc::now().to_rfc3339()],
+    );
+    (StatusCode::CREATED, Json(json!({ "channel": channel, "botId": bot_id }))).into_response()
+}
+
+async fn unbind_channel(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path((bot_id, channel)): Path<(String, String)>,
+) -> Response {
+    if !owns_bot(&state.db, &bot_id, &user.user_id) {
+        return not_yours();
+    }
+    if let Ok(conn) = state.db.connect() {
+        let _ = conn.execute("DELETE FROM slack_channel_bots WHERE slack_channel_id = ?1 AND bot_id = ?2", params![channel, bot_id]);
+    }
+    StatusCode::NO_CONTENT.into_response()
+}
+
+/// The bot a channel is bound to, if any.
+pub fn bound_bot(db: &DbHandle, channel: &str) -> Option<String> {
+    db.connect()
+        .ok()?
+        .query_row("SELECT bot_id FROM slack_channel_bots WHERE slack_channel_id = ?1", params![channel], |r| r.get(0))
+        .ok()
+}
+
 
 fn gizzi_base() -> String {
     AppConfig::load()
@@ -175,6 +282,19 @@ async fn handle_message_event(state: &Arc<AppState>, event: &Value) -> Result<()
 
     if text.trim().is_empty() {
         return Ok(());
+    }
+
+    if let Some(bot_id) = bound_bot(&state.db, &channel) {
+        let from = event.get("user").and_then(|v| v.as_str()).unwrap_or("someone");
+        let rt = crate::thread_routes::GizziRuntime { db: state.db.clone() };
+        let key = format!("slack:{channel}:{thread_ts}");
+        let first = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("Slack message").trim();
+        let title: String = first.chars().take(80).collect();
+        let session = crate::thread_routes::channel_thread(&state.db, &rt, &bot_id, "slack", &key, &title, &text).await?;
+        info!(channel = %channel, bot = %bot_id, session_id = %session, "routing Slack message to the bot's thread");
+        let turn = format!("[slack from <@{from}>] {text}");
+        let reply = crate::agent_session_routes::send_bot_turn(&state.db, &session, &bot_id, &turn).await?;
+        return post_slack_message(&channel, &thread_ts, &reply).await;
     }
 
     let session_id = get_or_create_session(state, &channel, &thread_ts).await?;
@@ -349,4 +469,55 @@ async fn fetch_json_array(client: &reqwest::Client, path: &str) -> Result<Vec<Va
     resp.json::<Vec<Value>>()
         .await
         .map_err(|e| format!("Gizzi response parse failed: {e}"))
+}
+
+#[cfg(test)]
+mod binding_tests {
+    use super::*;
+
+    fn user(id: &str) -> AuthUser {
+        AuthUser {
+            user_id: id.into(),
+            email: None,
+            name: None,
+            avatar_url: None,
+            tenant_id: None,
+            organization_id: None,
+            organization_role: None,
+            organization_slug: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_channel_binds_to_one_bot_its_owner_controls() {
+        let dir = std::env::temp_dir().join(format!("allternit-slack-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let state = crate::test_helpers::app_state(&dir).await;
+        {
+            let conn = state.db.connect().unwrap();
+            for (id, owner) in [("scout", "u"), ("ledger", "u"), ("other", "v")] {
+                conn.execute(
+                    "INSERT INTO agents (id, user_id, name, model, provider, is_bot, config) VALUES (?1, ?2, ?1, 'm', 'p', 1, '{}')",
+                    params![id, owner],
+                )
+                .unwrap();
+            }
+        }
+        let bind = |bot: &str, who: &str, channel: &str| {
+            bind_channel(State(state.clone()), Extension(user(who)), Path(bot.to_string()), Json(BindBody { channel: channel.into() }))
+        };
+
+        assert_eq!(bind("scout", "u", "#C01ABC").await.status(), StatusCode::CREATED);
+        assert_eq!(bound_bot(&state.db, "C01ABC").as_deref(), Some("scout"));
+        assert_eq!(bind("scout", "u", "general chat").await.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(bind("other", "u", "C02").await.status(), StatusCode::NOT_FOUND, "not your bot");
+        assert_eq!(bind("other", "v", "C01ABC").await.status(), StatusCode::CONFLICT, "someone else's channel");
+        // Moving a channel between your own bots is fine.
+        assert_eq!(bind("ledger", "u", "C01ABC").await.status(), StatusCode::CREATED);
+        assert_eq!(bound_bot(&state.db, "C01ABC").as_deref(), Some("ledger"));
+
+        let r = unbind_channel(State(state.clone()), Extension(user("u")), Path(("ledger".into(), "C01ABC".into()))).await;
+        assert_eq!(r.status(), StatusCode::NO_CONTENT);
+        assert!(bound_bot(&state.db, "C01ABC").is_none());
+    }
 }
