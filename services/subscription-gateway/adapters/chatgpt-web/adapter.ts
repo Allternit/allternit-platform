@@ -59,7 +59,11 @@ export function chatGPTWebConfig(
       { kind: "slow_mode", pattern: /slower (responses|mode)|slow mode/i },
       { kind: "reset_notice", pattern: /(quota|limit|usage) resets? (at|in)/i },
     ],
-    criticalKeys: ["composer", "send_button", "logged_in_probe"],
+    // send_button is not probed: the live UI renders it only once the
+    // composer has text (idle shows the voice button), so an idle probe would
+    // always report ui_drift. Submit resolves it after fillComposer.
+    criticalKeys: ["composer", "logged_in_probe"],
+    completion: { sendMayBeDisabled: true },
     sampleThreadUrl: "https://chatgpt.com/c/68f7c000-aaaa-bbbb-cccc-dddddddddddd",
     sampleThreadId: "68f7c000-aaaa-bbbb-cccc-dddddddddddd",
     submitFallbackEnter: true,

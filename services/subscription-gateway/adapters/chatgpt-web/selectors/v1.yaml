@@ -4,13 +4,23 @@
 # *** NOT yet validated against a logged-in session (Phase 3 manual gate).
 # *** The conformance fixtures are shaped to THESE selectors, so selector drift
 # *** against the real UI will show up first as fixture/UI mismatch at the gate.
+# 2026-09-27 P3 gate, live logged-in UI: data-testids are gone from the
+# composer/buttons; composer is role=textbox "Ask ChatGPT" (ProseMirror);
+# send is button[type=submit] "Send" and only renders once the composer has
+# text (idle shows "Start Voice"), and after a reply it is back but DISABLED
+# (empty composer) — hence completion.sendMayBeDisabled in adapter.ts; stop
+# is button "Stop"; profile is button "Open profile menu". Turns: assistant
+# [data-conversation-role=assistant] > [data-markdown-text-style=
+# assistant-message]; user [data-user-message-bubble=true] (no author-role
+# attribute any more).
 
 composer:
   critical: true
   strategies:
     - { testid: prompt-textarea }
-    - { role: textbox, name: /ask anything|message/i }
+    - { role: textbox, name: /ask chatgpt|ask anything|message/i }
     - { css: "div#prompt-textarea[contenteditable=true]" }
+    - { css: "div[contenteditable=true][role=textbox]" }
 send_button:
   critical: true
   strategies:
@@ -25,11 +35,14 @@ stop_button:
 response:
   critical: true # extraction target; idle pages legitimately lack it (probe criticalKeys excludes it)
   strategies:
+    - { css: "[data-markdown-text-style='assistant-message']" }
+    - { css: "[data-conversation-role='assistant']" }
     - { css: "[data-message-author-role='assistant']" }
     - { css: "article[data-testid^='conversation-turn'] .markdown" }
 user_turn:
   critical: false
   strategies:
+    - { css: "[data-user-message-bubble='true']" }
     - { css: "[data-message-author-role='user']" }
 streaming:
   critical: false
@@ -89,6 +102,7 @@ capability:chat:
   critical: false
   strategies:
     - { testid: prompt-textarea }
+    - { role: textbox, name: /ask chatgpt|ask anything|message/i }
 capability:image_tool_toggle:
   critical: false
   strategies:

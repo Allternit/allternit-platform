@@ -23,6 +23,10 @@ export interface CompletionOptions {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   keys?: CompletionKeys;
+  // Providers whose Send button stays rendered but DISABLED once the reply
+  // lands (empty composer) — ChatGPT's live UI. Presence then satisfies the
+  // send signal; stop/streaming absence + text stability still gate it.
+  sendMayBeDisabled?: boolean;
 }
 
 export interface CompletionResult {
@@ -70,7 +74,9 @@ export function createCompletionTracker(
 
   async function pollOnce(): Promise<{ complete: boolean; signals: CompletionSignals }> {
     const responseLoc = await resolver.tryResolveLocator(keys.response);
-    const text = responseLoc ? await responseLoc.first().innerText() : "";
+    // Newest turn: on a continued thread .first() would watch a finished
+    // earlier reply and never see the new one change.
+    const text = responseLoc ? await responseLoc.last().innerText() : "";
     if (text !== lastText) {
       lastText = text;
       lastChange = now();
@@ -82,7 +88,8 @@ export function createCompletionTracker(
 
     const signals: CompletionSignals = {
       stop_absent: stopLoc === null,
-      send_enabled: sendLoc !== null && (await sendLoc.first().isEnabled()),
+      send_enabled:
+        sendLoc !== null && (opts.sendMayBeDisabled === true || (await sendLoc.first().isEnabled())),
       stable: now() - lastChange >= stabilityMs,
       streaming_absent: streamingLoc === null,
     };

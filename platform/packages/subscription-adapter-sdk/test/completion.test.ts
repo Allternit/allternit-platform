@@ -97,6 +97,61 @@ describe("awaitCompletion (§A1 multi-signal detector)", () => {
   });
 });
 
+describe("sendMayBeDisabled (ChatGPT live UI: Send rendered but disabled after the reply)", () => {
+  const pack = SelectorPack.fromYaml(
+    [
+      "response:",
+      "  critical: true",
+      "  strategies:",
+      "    - { css: '.reply' }",
+      "send_button:",
+      "  critical: true",
+      "  strategies:",
+      "    - { css: 'button.send' }",
+    ].join("\n")
+  );
+
+  it("a disabled Send blocks completion by default and satisfies it when opted in", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`<div class="reply">Hello there, friend</div><button class="send" disabled>Send</button>`);
+    const strict = createCompletionTracker(page, createResolver(page, pack), { stabilityMs: 0 });
+    expect((await strict.pollOnce()).complete).toBe(false);
+    const lenient = createCompletionTracker(page, createResolver(page, pack), {
+      stabilityMs: 0,
+      sendMayBeDisabled: true,
+    });
+    expect((await lenient.pollOnce()).complete).toBe(true);
+    await page.close();
+  });
+
+  it("an absent Send still blocks completion even when opted in", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`<div class="reply">Hello</div>`);
+    const t = createCompletionTracker(page, createResolver(page, pack), {
+      stabilityMs: 0,
+      sendMayBeDisabled: true,
+    });
+    expect((await t.pollOnce()).signals.send_enabled).toBe(false);
+    await page.close();
+  });
+
+  it("tracks the NEWEST reply: a change in the last turn resets stability", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`<div class="reply">old answer</div><div class="reply" id="new">a</div><button class="send">Send</button>`);
+    let clock = 0;
+    const t = createCompletionTracker(page, createResolver(page, pack), {
+      stabilityMs: 100,
+      now: () => clock,
+    });
+    await t.pollOnce();
+    clock = 50;
+    await page.evaluate(() => (document.getElementById("new")!.textContent = "ab"));
+    await t.pollOnce();
+    expect(t.lastChangeAt()).toBe(50);
+    await page.close();
+  });
+});
+
 describe("stall watchdog input (D11)", () => {
   it("stalled() trips after stallTimeoutS with no DOM change on a static fixture", async () => {
     const page = await fixturePage(browser, "static.html");

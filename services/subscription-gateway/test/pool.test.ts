@@ -179,6 +179,21 @@ describe("WorkerPool.activate", () => {
     expect(getAccount(db, LANE.account_id)?.session_health).toBe("ready");
   });
 
+  it("a dead resident browser is relaunched, not re-probed forever as provider_down", async () => {
+    const h = makePool(async () => probeResult(true));
+    const first = (await h.pool.activate(LANE)) as FakeRuntime;
+    let alive = true;
+    first.isAlive = () => alive;
+    alive = false; // browser killed / window closed under the pool
+    expect(h.pool.runtimeFor(LANE)).toBeNull();
+    const second = await h.pool.activate(LANE);
+    expect(second).not.toBe(first);
+    expect(h.launchCalls).toBe(2);
+    expect(first.closeCalls).toBe(1);
+    expect(h.pool.runtimeFor(LANE)).toBe(second);
+    expect(h.pool.healthFor(LANE)).toBe("ready");
+  });
+
   it("launch failure from a profile lock persists profile_locked and propagates", async () => {
     const supervisor = new WorkerSupervisor({
       db,

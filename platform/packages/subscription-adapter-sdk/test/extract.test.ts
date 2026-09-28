@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Browser } from "playwright";
-import { extractLastAssistantTurn } from "../src/index";
+import { SelectorPack, createResolver, extractLastAssistantTurn } from "../src/index";
 import { fixturePage, launchBrowser, makeResolver } from "./helpers";
 
 let browser: Browser;
@@ -28,6 +28,28 @@ describe("extractLastAssistantTurn (§A3.1)", () => {
     const page = await fixturePage(browser, "streaming.html");
     const md = await extractLastAssistantTurn(page, makeResolver(page));
     expect(md).toBe("The answer so far is");
+    await page.close();
+  });
+
+  it("extracts the LAST assistant turn on a multi-turn thread", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`<div class="reply"><p>first answer</p></div><div class="reply"><p>second answer</p></div>`);
+    const pack = SelectorPack.fromYaml(
+      ["response:", "  critical: true", "  strategies:", "    - { css: '.reply' }"].join("\n")
+    );
+    expect(await extractLastAssistantTurn(page, createResolver(page, pack))).toBe("second answer");
+    await page.close();
+  });
+
+  it("tolerates keepNames-transpiled helpers: __name resolves in the page", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`<div class="reply"><p>x</p></div>`);
+    const pack = SelectorPack.fromYaml(
+      ["response:", "  critical: true", "  strategies:", "    - { css: '.reply' }"].join("\n")
+    );
+    await extractLastAssistantTurn(page, createResolver(page, pack));
+    // What tsx/esbuild keepNames emits inside the serialized function body.
+    expect(await page.evaluate("typeof __name(function f() {}, 'f')")).toBe("function");
     await page.close();
   });
 });

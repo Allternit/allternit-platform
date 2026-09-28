@@ -45,6 +45,9 @@ export interface LaneRuntime {
   makeResolver: (page: PageLease) => SelectorResolver;
   probe(): Promise<ProbeResult>;
   close(): Promise<void>;
+  // False once the browser behind this runtime is gone (crashed, killed, or
+  // its window closed). Optional so fakes without a browser stay alive.
+  isAlive?(): boolean;
 }
 
 export type Launcher = (
@@ -116,8 +119,10 @@ export class WorkerPool {
       });
   }
 
+  // A dead runtime is not resident: callers get null (activate relaunches it).
   runtimeFor(lane: LaneKey): LaneRuntime | null {
-    return this.lanes.get(workerKeyId(lane))?.runtime ?? null;
+    const runtime = this.lanes.get(workerKeyId(lane))?.runtime ?? null;
+    return runtime && runtime.isAlive?.() === false ? null : runtime;
   }
 
   healthFor(lane: LaneKey): SessionHealth | null {
@@ -168,13 +173,27 @@ export class WorkerPool {
   // calls single-flight on the same activation.
   async activate(lane: LaneKey): Promise<LaneRuntime> {
     const id = workerKeyId(lane);
-    const existing = this.lanes.get(id);
-    if (existing && existing.health === "ready") return existing.runtime;
     const pending = this.activations.get(id);
     if (pending) return pending;
-    const activation = this.doActivate(lane, existing?.runtime ?? null).finally(() =>
-      this.activations.delete(id)
-    );
+    let existing = this.lanes.get(id);
+    // A dead browser is never re-probed (every probe would throw "target
+    // closed" → provider_down forever); drop it so doActivate relaunches.
+    // Closed inside the single-flight activation so concurrent callers share
+    // one relaunch.
+    let dead: LaneRuntime | null = null;
+    if (existing && existing.runtime.isAlive?.() === false) {
+      this.lanes.delete(id);
+      dead = existing.runtime;
+      existing = undefined;
+    }
+    if (existing && existing.health === "ready") return existing.runtime;
+    const activation = (async () => {
+      if (dead) {
+        await dead.close().catch(() => {});
+        this.deps.logger?.(`subscription-gateway: worker runtime for ${id} was dead; relaunching`);
+      }
+      return this.doActivate(lane, existing?.runtime ?? null);
+    })().finally(() => this.activations.delete(id));
     this.activations.set(id, activation);
     return activation;
   }
@@ -331,8 +350,13 @@ export function createPlaywrightLauncher(deps: PlaywrightLauncherDeps): Launcher
         await page.goto(manifest.origins[0], { waitUntil: "domcontentloaded" });
       }
       let closed = false;
+      let alive = true;
+      context.on("close", () => {
+        alive = false;
+      });
       return {
         adapter,
+        isAlive: () => alive,
         page: lease,
         makeResolver,
         async probe(): Promise<ProbeResult> {
@@ -356,7 +380,7 @@ export function createPlaywrightLauncher(deps: PlaywrightLauncherDeps): Launcher
           if (closed) return;
           closed = true;
           await adapter.detach().catch(() => {});
-          await context.close();
+          await context.close().catch(() => {});
         },
       };
     } catch (err) {
