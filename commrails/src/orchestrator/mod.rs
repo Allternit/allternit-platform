@@ -33,6 +33,19 @@ pub struct SpawnOptions<'a> {
     /// WIH the spawned session is bound to. Hooked harnesses enforce Gate 2
     /// against it; unhooked ones are refused when its policy needs leased writes.
     pub wih: Option<&'a str>,
+    /// Headless capture (used by `drive`): the harness's stdout/stderr go to
+    /// these files, stdin is `/dev/null`, and its exit code is written to
+    /// `exit_code` (atomically, via a `.tmp` rename) when it finishes. The
+    /// exit-code file doubles as the completion sentinel for [`Orchestrator::poll`].
+    pub capture: Option<&'a CaptureFiles>,
+}
+
+/// Files a captured (headless) spawn writes. See [`SpawnOptions::capture`].
+#[derive(Debug, Clone)]
+pub struct CaptureFiles {
+    pub stdout: PathBuf,
+    pub stderr: PathBuf,
+    pub exit_code: PathBuf,
 }
 
 /// Result of a successful spawn.
@@ -168,11 +181,23 @@ impl Orchestrator {
         let cmd = hook::gate_argv(opts.cmd, settings_path.as_deref());
 
         // Write the runner file to sidestep shell quoting issues.
-        let runner_text = cmd
+        let mut runner_text = cmd
             .iter()
             .map(|s| shell_escape(s))
             .collect::<Vec<_>>()
             .join(" ");
+        if let Some(cap) = opts.capture {
+            let tmp = cap.exit_code.with_extension("tmp");
+            runner_text = format!(
+                "{} < /dev/null > {} 2> {}\nprintf '%s\\n' \"$?\" > {} && mv {} {}",
+                runner_text,
+                shell_escape(&cap.stdout.to_string_lossy()),
+                shell_escape(&cap.stderr.to_string_lossy()),
+                shell_escape(&tmp.to_string_lossy()),
+                shell_escape(&tmp.to_string_lossy()),
+                shell_escape(&cap.exit_code.to_string_lossy()),
+            );
+        }
         tokio::fs::write(&runner, format!("{}\n", runner_text)).await?;
 
         // Register the peer before starting tmux so the env vars point at a
@@ -249,7 +274,11 @@ impl Orchestrator {
             .await;
 
         sleep(Duration::from_millis(500)).await;
-        if !tmux_has_session(&session).await? {
+        // A captured run that already wrote its exit code finished fast (the
+        // session can be gone before remain-on-exit applied); that is a
+        // completed run, not a failed spawn.
+        let finished_fast = opts.capture.is_some_and(|c| c.exit_code.exists());
+        if !finished_fast && !tmux_has_session(&session).await? {
             self.registry.unregister(&peer.peer_id).ok();
             if wt_created {
                 let _ = remove_worktree(&workdir).await;
@@ -296,27 +325,40 @@ impl Orchestrator {
         timeout_seconds: u64,
         interval_seconds: u64,
     ) -> Result<WatchOutcome> {
-        let session = format!("ao-{}", sanitize_slug(slug));
         let deadline = Instant::now() + Duration::from_secs(timeout_seconds);
         let interval = Duration::from_secs(interval_seconds.max(1));
 
         loop {
-            if sentinel.exists() {
-                return Ok(WatchOutcome::Done);
-            }
-            match tmux_pane_dead(&session).await {
-                Ok(true) => return Ok(WatchOutcome::Dead),
-                Ok(false) => {}
-                Err(_) => {
-                    // Session gone is equivalent to dead.
-                    return Ok(WatchOutcome::Dead);
-                }
+            if let Some(outcome) = self.poll(slug, sentinel).await {
+                return Ok(outcome);
             }
             if Instant::now() >= deadline {
                 return Ok(WatchOutcome::Timeout);
             }
             sleep(interval).await;
         }
+    }
+
+    /// One non-blocking watch step: `Some(Done)` when the sentinel exists,
+    /// `Some(Dead)` when the pane is dead or the session gone, `None` while
+    /// it is still running. Timeouts are the caller's clock.
+    pub async fn poll(&self, slug: &str, sentinel: &Path) -> Option<WatchOutcome> {
+        if sentinel.exists() {
+            return Some(WatchOutcome::Done);
+        }
+        let session = format!("ao-{}", sanitize_slug(slug));
+        match tmux_pane_dead(&session).await {
+            Ok(false) => None,
+            // Pane dead, or session gone: re-check the sentinel once, since a
+            // run can write it and exit between the two checks.
+            Ok(true) | Err(_) if sentinel.exists() => Some(WatchOutcome::Done),
+            Ok(true) | Err(_) => Some(WatchOutcome::Dead),
+        }
+    }
+
+    /// True while the session exists and its pane is still running.
+    pub async fn is_alive(&self, slug: &str) -> bool {
+        session_alive(slug).await
     }
 
     /// Return a human-readable status summary.
@@ -469,6 +511,16 @@ impl Orchestrator {
     }
 }
 
+/// True while `ao-<slug>` exists and its pane is still running (read-only).
+pub async fn session_alive(slug: &str) -> bool {
+    matches!(tmux_pane_dead(&session_name(slug)).await, Ok(false))
+}
+
+/// Session-name form of a slug (`ao-<sanitized>`).
+pub fn session_name(slug: &str) -> String {
+    format!("ao-{}", sanitize_slug(slug))
+}
+
 fn sanitize_slug(slug: &str) -> String {
     slug.trim()
         .chars()
@@ -492,6 +544,7 @@ async fn tmux_has_session(session: &str) -> Result<bool> {
         .arg("has-session")
         .arg("-t")
         .arg(format!("={}:", session))
+        .stderr(std::process::Stdio::null())
         .status()
         .await?;
     Ok(status.success())

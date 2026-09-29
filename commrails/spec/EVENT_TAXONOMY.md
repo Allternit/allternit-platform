@@ -56,6 +56,14 @@ All events are appended to the Ledger as JSON objects with:
 - HarnessToolGated (payload: wih_id|null, harness, harness_session_id, tool, decision allow|deny, reason, paths, command) — written by `allternit-commrails hook claude-pretool` for every WIH-bound tool call and every denial (hard floor included).
 - HarnessSpawnRefused (payload: wih_id, harness, reason) — an unhooked harness refused on a WIH whose policy requires leased writes.
 
+### Drive runner (spec/DRIVE.md)
+- DriveAttemptStarted (payload: dag_id, node_id, wih_id, attempt_id, attempt, executor, harness, slug, run_dir, timeout_seconds, restart_of, pid) — written before the harness spawns; an attempt without a finish whose session is gone reads as interrupted.
+- DriveAttemptFinished (payload: dag_id, node_id, wih_id, attempt_id, outcome done|failed|dead|timeout|interrupted|spawn_refused|spawn_failed|close_failed|closed, exit_code, receipt_id, reason)
+- DriveSpawnDeferred (payload: dag_id, node_id, reason max_concurrent|max_spawns_per_hour|global_max_concurrent|global_max_spawns_per_hour|capacity, limit, current, detail) — once per node and reason per drive process.
+- DriveNeedsYou (payload: dag_id, node_id, reason harness_refused|harness_unconfigured|interrupted|attempt_failed|pickup_refused, gate_id, executor, attempt_id, detail) — paired with a manual DagNodeWaitGateAdded whose params carry `source: drive`.
+- DriveBotNotified (payload: dag_id, node_id, executor, thread_id, message_id) — one typed mail per bot node.
+- DriveCapacityRefused (payload: dag_id, reason) — drive refused to start (load / memory below thresholds).
+
 ### Mail logistics
 - ThreadCreated
 - MessageSent

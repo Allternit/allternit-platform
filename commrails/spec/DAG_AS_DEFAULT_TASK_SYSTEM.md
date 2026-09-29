@@ -53,8 +53,11 @@ extends the boundary outward so work must *enter* the system to count.
 - No change to the ledger, gate mechanics, WIH lifecycle, or vault pipeline —
   they already do the right thing. This delta only changes *what enters* the
   system.
-- No automatic executor. `ready_nodes` stays derived-on-demand; runners and
-  orchestrators keep driving execution per-WIH.
+- No background executor; `drive` is an explicit operator command.
+  `ready_nodes` stays derived-on-demand; runners and orchestrators keep driving
+  execution per-WIH, and `allternit-commrails drive <dag_id>` (spec/DRIVE.md) is
+  a foreground command an operator starts, which exits when nothing is READY or
+  running. Nothing spawns agents from a schedule, a hook, or a service.
 
 ## Ticket-system identity — RESOLVED (a), 2026-09-13
 
@@ -88,8 +91,9 @@ can say `{{ <node_id>.output }}` / `{{ <node_id>.output_path }}`, resolved at
 pickup into the WIH context (Gate 1 refuses refs to non-predecessors or missing
 outputs). Nodes can carry **wait-gates** (timer / GitHub run / GitHub PR /
 manual) that hold readiness; manual gates surface in the API `needsYou` list.
-`executor` (`bot:<slug>` | `ao:<harness>`) is recorded on nodes for a future
-runner; nothing acts on it yet, so "no automatic executor" below still holds.
+`executor` (`bot:<slug>` | `ao:<harness>`) is recorded on nodes; only the
+opt-in `drive` command acts on it (2026-09-29, spec/DRIVE.md), which is why the
+non-goal below now reads "no background executor".
 
 ## Failure modes to guard against
 

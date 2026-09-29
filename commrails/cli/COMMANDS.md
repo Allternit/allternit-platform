@@ -25,6 +25,7 @@ Required events (in addition to `plan new`'s):
   suffix per instantiation; `description`, `executor` carried over)
 - DagEdgeAdded (blocked_by) per step `blocked_by` entry
 - DagNodeWaitGateAdded per step `wait_gate`
+- LabelAdded `retry:safe` per step with `retry: safe`
 
 Validation happens before the plan exists (a bad template leaves no orphan DAG):
 unknown/duplicate step ids, blocked_by cycles, invalid `executor`, `{{ <step>.output }}`
@@ -53,7 +54,8 @@ steps:
   - id: capture
     title: "Capture {{ params.topic }}"
     description: "Screen-record the {{ params.topic }} flow"
-    executor: "ao:claude"  # optional: bot:<slug> | ao:<harness> (recorded only)
+    executor: "ao:claude"  # optional: bot:<slug> | ao:<harness> (used by `drive`)
+    retry: safe            # optional: idempotent; `drive` may restart it after an interruption
   - id: cut
     title: Cut
     description: "Cut {{ params.length }} from:\n{{ capture.output }}"
@@ -200,6 +202,31 @@ Reads projection (no events).
 Unresolved Manual node gates across all dags ("needs you"; no events). The API
 visibility DTO (`GET /api/commrails/visibility`) appends the ones whose upstream is
 DONE to `needsYou` with `reason: "manual_gate"` and a `node` join.
+
+## Drive (opt-in runner)
+
+### `allternit drive <dag_id> [--max-concurrent N] [--max-spawns-per-hour N] [--once] [--dry-run] [--workdir <dir>] [--timeout-seconds N]`
+Foreground, explicit operator command (never a daemon; spec/DRIVE.md). Each
+pass: collect finished sessions → adopt/record open attempts → for every READY
+node with an `executor`:
+- `ao:<harness>`: admission pre-check (`admit()`; refused → needs-you gate, no
+  WIH) → caps + capacity (else `DriveSpawnDeferred`) → `wih pickup` (Gate 1,
+  agent `drive-<harness>`) → `wih sign-open` → `DriveAttemptStarted` →
+  orchestrator spawn with `--wih` (spawn gate hook/lease gating) capturing
+  stdout/stderr/exit code under `.allternit/drive/runs/<dag>/<node>/<attempt>/` →
+  on exit `wih close DONE --output <stdout>` (exit 0) or `FAILED` with the output
+  as receipt (non-zero, dead, timeout) → `DriveAttemptFinished`.
+- `bot:<slug>`: one typed mail on `dag:<dag_id>` to `bot:<slug>` + `DriveBotNotified`; not spawned.
+- no executor / manual or other wait-gates / held WIHs: printed as "waiting on".
+
+Exits when nothing is READY-and-drivable and nothing is running (`Idle`), on
+Ctrl-C (sessions keep running; the next run adopts them), or after one pass with
+`--once`. One drive process per DAG (flock). `--dry-run` prints the plan
+(argv after the spawn gate's rewrite, caps, refusals) with no ledger writes, no
+files, no spawns. Caps and capacity thresholds: `.allternit/drive/config.json`.
+Events: DriveAttemptStarted, DriveAttemptFinished, DriveSpawnDeferred,
+DriveNeedsYou (+ DagNodeWaitGateAdded manual, `params.source: drive`),
+DriveBotNotified (+ ThreadCreated/MessageSent), DriveCapacityRefused.
 
 ## Leases / Reservations
 
