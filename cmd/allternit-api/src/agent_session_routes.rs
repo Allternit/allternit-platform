@@ -142,6 +142,11 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
         .route("/questions", get(list_questions))
         .route("/questions/:id/reply", post(reply_question))
         .route("/questions/:id/reject", post(reject_question))
+        // Answers to gizzi's permission asks raised in agent-session turns
+        // (the terminal `/bots` chat and any other `/agent-sessions` client).
+        // Those turns create no cowork_approvals row, so the approvals route
+        // cannot relay them; this passes `{reply, message?}` straight through.
+        .route("/permissions/:id/reply", post(reply_permission))
         // The app's result for a pane_browser tool call (the page in the
         // session's browser pane).
         .route("/pane-browser/:id/reply", post(reply_pane_browser))
@@ -1230,6 +1235,41 @@ async fn reply_question(
     }
 }
 
+/// `{ reply: "once" | "always" | "reject", message? }`, the shape gizzi's
+/// `/v1/permission/:id/reply` takes. Anything else is refused here rather
+/// than forwarded.
+fn permission_reply_payload(body: &serde_json::Value) -> Option<serde_json::Value> {
+    let reply = body.get("reply").and_then(|v| v.as_str())?;
+    if !matches!(reply, "once" | "always" | "reject") {
+        return None;
+    }
+    let mut payload = json!({ "reply": reply });
+    if let Some(message) = body.get("message").and_then(|v| v.as_str()) {
+        payload["message"] = json!(message);
+    }
+    Some(payload)
+}
+
+async fn reply_permission(
+    headers: HeaderMap,
+    Path(request_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let Some(payload) = permission_reply_payload(&body) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "reply must be once, always or reject" })),
+        )
+            .into_response();
+    };
+    let client = gizzi_client(&headers);
+    let path = format!("/v1/permission/{}/reply", urlencoding::encode(&request_id));
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(payload)).await {
+        Ok(value) => Json(value).into_response(),
+        Err(response) => response,
+    }
+}
+
 async fn reject_question(headers: HeaderMap, Path(request_id): Path<String>) -> impl IntoResponse {
     let client = gizzi_client(&headers);
     let path = format!("/v1/question/{}/reject", urlencoding::encode(&request_id));
@@ -1499,12 +1539,24 @@ fn parse_sse_block(block: &str) -> Option<ParsedSseBlock> {
     }
 }
 
-async fn fetch_latest_message(client: &Client, session_id: &str) -> Option<serde_json::Value> {
+/// The message a `message.updated` event names. Fetching "the newest message"
+/// instead lost user messages: the turn's reply row lands a few ms after the
+/// user's, so by the time the fetch ran the newest message was the reply and
+/// the user message never reached the sync stream.
+async fn fetch_event_message(client: &Client, session_id: &str, message_id: Option<&str>) -> Option<serde_json::Value> {
     let path = format!("/v1/session/{}/messages", urlencoding::encode(session_id));
     let messages = gizzi_json::<Vec<GizziMessage>>(client, reqwest::Method::GET, &path, None)
         .await
         .ok()?;
-    messages.into_iter().last().map(transform_message)
+    pick_event_message(messages, message_id).map(transform_message)
+}
+
+/// By id when the event carries one; the newest message otherwise.
+fn pick_event_message(messages: Vec<GizziMessage>, message_id: Option<&str>) -> Option<GizziMessage> {
+    match message_id {
+        Some(id) => messages.into_iter().rev().find(|m| m.info.id == id),
+        None => messages.into_iter().last(),
+    }
 }
 
 /// "7:40 PM" today, "Sat 9:00 AM" within a week, else "Oct 3, 9:00 AM" — in
@@ -1650,12 +1702,12 @@ async fn transform_bus_event(
             .ok()
             .map(|info| json!({ "type": "deleted", "session_id": info.id })),
         "message.updated" => {
-            let session_id = props
-                .get("info")
+            let info = props.get("info");
+            let session_id = info
                 .and_then(|info| info.get("sessionID"))
                 .and_then(|value| value.as_str())?;
-            let latest = fetch_latest_message(client, session_id).await?;
-            let mut payload = latest;
+            let message_id = info.and_then(|info| info.get("id")).and_then(|value| value.as_str());
+            let mut payload = fetch_event_message(client, session_id, message_id).await?;
             if let Some(obj) = payload.as_object_mut() {
                 obj.insert("type".to_string(), json!("message_added"));
                 obj.insert("session_id".to_string(), json!(session_id));
@@ -1683,6 +1735,12 @@ async fn transform_bus_event(
             "request_id": props.get("id"),
             "session_id": props.get("sessionID"),
             "questions": props.get("questions"),
+        })),
+        // Answered or dismissed on any surface: the others drop their prompt.
+        "question.replied" | "question.rejected" => Some(json!({
+            "type": if event_type == "question.replied" { "question_replied" } else { "question_rejected" },
+            "request_id": props.get("requestID"),
+            "session_id": props.get("sessionID"),
         })),
         "pane_browser.requested" => Some(json!({
             "type": "pane_browser_requested",
@@ -2036,6 +2094,49 @@ mod question_answers_tests {
         let body = json!({ "answers": [["Yes"], []] });
         assert_eq!(question_answers(&body), vec![vec!["Yes".to_string()], Vec::<String>::new()]);
         assert!(question_answers(&json!({})).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod permission_reply_tests {
+    use super::permission_reply_payload;
+    use serde_json::json;
+
+    #[test]
+    fn accepts_gizzi_replies_and_keeps_the_message() {
+        assert_eq!(permission_reply_payload(&json!({ "reply": "once" })), Some(json!({ "reply": "once" })));
+        assert_eq!(
+            permission_reply_payload(&json!({ "reply": "reject", "message": "not now" })),
+            Some(json!({ "reply": "reject", "message": "not now" }))
+        );
+    }
+
+    #[test]
+    fn refuses_anything_else() {
+        assert_eq!(permission_reply_payload(&json!({ "reply": "approve" })), None);
+        assert_eq!(permission_reply_payload(&json!({})), None);
+    }
+
+    #[tokio::test]
+    async fn answered_prompts_reach_the_sync_feed() {
+        let temp = std::env::temp_dir().join(format!("prompt-sync-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let db = crate::db::DbHandle::new(temp.join("test.db")).expect("test db");
+        let client = reqwest::Client::new();
+        for (gizzi, ours) in [
+            ("permission.replied", "permission_replied"),
+            ("question.replied", "question_replied"),
+            ("question.rejected", "question_rejected"),
+        ] {
+            let event = super::GizziBusEvent {
+                event_type: Some(gizzi.to_string()),
+                properties: Some(json!({ "sessionID": "s1", "requestID": "r1", "reply": "once", "answers": [] })),
+            };
+            let payload = super::transform_bus_event(&client, &db, event).await.expect(gizzi);
+            assert_eq!(payload["type"], ours);
+            assert_eq!(payload["request_id"], "r1");
+            assert_eq!(payload["session_id"], "s1");
+        }
     }
 }
 
@@ -3059,6 +3160,20 @@ mod run_telemetry_tests {
         assert!(t["usage"].get("cost").is_none());
         assert_eq!(t["toolCalls"], 2);
         assert_eq!(t["toolFailures"], 1);
+    }
+
+    #[test]
+    fn event_message_is_the_one_the_event_names() {
+        let list = || {
+            vec![
+                message(json!({"info": {"id": "msg_user", "sessionID": "s", "role": "user"}, "parts": []})),
+                message(json!({"info": {"id": "msg_reply", "sessionID": "s", "role": "assistant"}, "parts": []})),
+            ]
+        };
+        // The user's message.updated, read after the reply row already exists.
+        assert_eq!(pick_event_message(list(), Some("msg_user")).unwrap().info.id, "msg_user");
+        assert_eq!(pick_event_message(list(), None).unwrap().info.id, "msg_reply");
+        assert!(pick_event_message(list(), Some("msg_gone")).is_none());
     }
 
     #[test]

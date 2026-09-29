@@ -1,10 +1,24 @@
 import { describe, test, expect } from "bun:test"
-import { WelcomeBox } from "../../src/cli/ui/ink-app/components/WelcomeBox"
+import { WelcomeBox, welcomeRows } from "../../src/cli/ui/ink-app/components/WelcomeBox"
 import { CORAL, EYE } from "../../src/cli/ui/ink-app/components/welcomeArt"
 
 describe("WelcomeBox", () => {
   test("exports a component", () => {
     expect(typeof WelcomeBox).toBe("function")
+  })
+})
+
+describe("header rows", () => {
+  test("a /bots chat names the bot and its pinned model, not this terminal's", () => {
+    const chat = { botName: "live-check", model: "claude-cli/claude-opus-5" } as any
+    expect(welcomeRows("~/p", "ses_1", "local-mlx/gemma", chat).map(([l, v]) => `${l}=${v}`)).toEqual([
+      "Directory=~/p",
+      "Session=ses_1",
+      "Bot=live-check",
+      "Model=claude-cli/claude-opus-5",
+    ])
+    expect(welcomeRows("~/p", "ses_1", "local-mlx/gemma", { ...chat, model: null }).at(-1)![1]).toBe("platform default model")
+    expect(welcomeRows("~/p", "ses_1", "local-mlx/gemma", null).map(([l]) => l)).toEqual(["Directory", "Session", "Model"])
   })
 })
 

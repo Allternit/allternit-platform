@@ -54,6 +54,7 @@ test/sdk.test.ts
 test/server/instance-registration.test.ts
 test/server/mesh.test.ts
 test/server/reasoning-trace.test.ts
+test/server/agent-compat-event-message.test.ts
 test/session/context-accounting.test.ts
 test/session/context-projector.test.ts
 test/session/instruction.test.ts
@@ -120,6 +121,9 @@ test/components/pet-avatar-image.test.ts
 test/components/worker-fetch.test.ts
 test/components/pet-hud-lines.test.ts
 test/runtime/bots/platform-threads.test.ts
+test/runtime/bots/bot-chat-view.test.ts
+test/runtime/bots/bot-chat-client.test.ts
+test/runtime/bots/platform-bot.test.ts
 test/runtime/bots/session-handoff-head.test.ts
 test/components/sandbox-violation-store.test.ts
 test/cli/bots-pane.test.ts

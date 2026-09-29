@@ -441,3 +441,91 @@ describe("openBotCanonicalChat", () => {
     expect(calls.switched).toEqual([["ses_fresh_1", "/proj/demo"]])
   })
 })
+
+/* ------------------------------------------------------------------------ */
+/* Enter action: live chat on the platform bot's standing thread           */
+/* ------------------------------------------------------------------------ */
+
+describe("openBotChat", () => {
+  let tmp
+  beforeEach(async () => {
+    tmp = await tmpdir()
+    process.env.GIZZI_CONFIG_DIR = join(tmp.path, ".gizzi")
+  })
+  afterEach(() => {
+    delete process.env.GIZZI_CONFIG_DIR
+  })
+
+  function deps(overrides: Record<string, unknown> = {}) {
+    const log = { switched: [] as unknown[], active: [] as unknown[], read: [] as string[], local: 0 }
+    return {
+      log,
+      deps: {
+        ensurePlatformBot: async (name: string) => ({ id: "gizzi-bot-1", bot: { name, model: "anthropic/claude-sonnet-5" } }),
+        ensureStandingThread: async (botId: string, title: string) => ({ id: "t1", botId, title, currentSessionId: "ses_live" }),
+        setActiveBotChat: (chat: unknown) => log.active.push(chat),
+        switchSession: (id: unknown) => log.switched.push(id),
+        markBotRead: async (name: string) => log.read.push(name),
+        openBotCanonicalChat: async () => {
+          log.local++
+          return { projectPath: "/proj", sessionId: "ses_local", created: false }
+        },
+        ...overrides,
+      },
+    }
+  }
+
+  test("opens the standing thread live and switches to its session", async () => {
+    const { createBot, getBot } = await import("../../src/runtime/bots/bot-store")
+    await createBot({ name: "scout", title: "Scout" })
+    const { openBotChat } = await import("../../src/cli/ui/ink-app/screens/bots-pane/open-bot-chat")
+    const { log, deps: d } = deps()
+    const outcome = await openBotChat("scout", { ...d, getBot })
+    expect(outcome).toMatchObject({ mode: "live", sessionId: "ses_live" })
+    expect(outcome.notice).toBeUndefined()
+    expect(log.switched).toEqual(["ses_live"])
+    expect(log.active).toEqual([
+      { botId: "gizzi-bot-1", botName: "Scout", threadId: "t1", sessionId: "ses_live", model: "anthropic/claude-sonnet-5" },
+    ])
+    expect(log.read).toEqual(["scout"])
+    expect(log.local).toBe(0)
+  })
+
+  test("signed out: falls back to the terminal-only chat and says why", async () => {
+    const { createBot, getBot } = await import("../../src/runtime/bots/bot-store")
+    await createBot({ name: "scout", title: "Scout" })
+    const { PlatformSignedOutError } = await import("../../src/runtime/bots/platform-api")
+    const { openBotChat } = await import("../../src/cli/ui/ink-app/screens/bots-pane/open-bot-chat")
+    const { log, deps: d } = deps({
+      ensurePlatformBot: async () => {
+        throw new PlatformSignedOutError()
+      },
+    })
+    const outcome = await openBotChat("scout", { ...d, getBot })
+    expect(outcome).toMatchObject({ mode: "local", sessionId: "ses_local" })
+    expect(outcome.notice).toContain("gizzi login")
+    expect(log.active).toEqual([null])
+    expect(log.local).toBe(1)
+  })
+
+  test("platform unreachable: falls back with the reason", async () => {
+    const { createBot, getBot } = await import("../../src/runtime/bots/bot-store")
+    await createBot({ name: "scout", title: "Scout" })
+    const { openBotChat } = await import("../../src/cli/ui/ink-app/screens/bots-pane/open-bot-chat")
+    const { log, deps: d } = deps({
+      ensureStandingThread: async () => {
+        throw new TypeError("fetch failed")
+      },
+    })
+    const outcome = await openBotChat("scout", { ...d, getBot })
+    expect(outcome.mode).toBe("local")
+    expect(outcome.notice).toContain("isn't reachable (fetch failed)")
+    expect(log.local).toBe(1)
+  })
+
+  test("an unknown bot is an error, not a fallback", async () => {
+    const { getBot } = await import("../../src/runtime/bots/bot-store")
+    const { openBotChat } = await import("../../src/cli/ui/ink-app/screens/bots-pane/open-bot-chat")
+    await expect(openBotChat("ghost", { ...deps().deps, getBot })).rejects.toThrow("not found")
+  })
+})

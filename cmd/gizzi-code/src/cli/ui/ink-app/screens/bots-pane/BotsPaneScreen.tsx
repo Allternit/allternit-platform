@@ -12,9 +12,11 @@
  *
  * Delete confirm idiom mirrors the dashboard's armed double-press: a bot
  * with a canonical chat requires y twice; a bot without one confirms once.
- * Opening a chat marks it read (markBotRead inside openBotCanonicalChat) and
- * switches the ink session to the canonical session, same as app.tsx's
- * `-s/--session` startup path.
+ * Enter opens the bot's chat live (openBotChat): the bot is registered on the
+ * platform and the terminal becomes a client of its standing thread, the same
+ * conversation Desktop and the pet HUD show. Signed out or offline, it falls
+ * back to the terminal-only canonical chat and says why. Either way the bot
+ * is marked read.
  */
 import * as React from 'react'
 import { Box, Text, useInput, useTheme } from '../../ink'
@@ -26,7 +28,8 @@ import { getBotRosterRows } from '@/runtime/bots/bot-roster.js'
 import { createBot, deleteBot, BotStoreError } from '@/runtime/bots/bot-store.js'
 import { BotsRowList } from './BotsRowList'
 import { handleBotsPaneKey } from './keys'
-import { openBotCanonicalChat } from './open-bot-chat'
+import { openBotChat } from './open-bot-chat'
+import { useNotifications } from '../../../../../context/notifications'
 import { truncate } from './rows'
 
 type DeleteConfirm = { name: string; armed: boolean }
@@ -35,6 +38,7 @@ export function BotsPaneScreen(): React.ReactNode {
   const { rows: termRows, columns } = useTerminalSize()
   const theme = useTheme()
   const setAppState = useSetAppState()
+  const { addNotification } = useNotifications()
 
   const [rows, setRows] = React.useState([])
   const [selected, setSelected] = React.useState(0)
@@ -79,9 +83,12 @@ export function BotsPaneScreen(): React.ReactNode {
     (name: string) => {
       setBusy(true)
       setStatusError(null)
-      openBotCanonicalChat(name)
-        .then(() => {
+      openBotChat(name)
+        .then(outcome => {
           setBusy(false)
+          if (outcome.notice) {
+            addNotification({ key: 'bots-open', text: outcome.notice, color: 'warning', priority: 'immediate', timeoutMs: 8000 })
+          }
           exitPane()
         })
         .catch(err => {
@@ -89,7 +96,7 @@ export function BotsPaneScreen(): React.ReactNode {
           setStatusError(err?.message || String(err))
         })
     },
-    [exitPane],
+    [exitPane, addNotification],
   )
 
   const submitCreate = React.useCallback(() => {

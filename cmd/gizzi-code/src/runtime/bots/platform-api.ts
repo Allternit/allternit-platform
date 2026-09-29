@@ -61,12 +61,17 @@ export interface PlatformRequestOptions {
   timeoutMs?: number
 }
 
-export async function platformRequest<T>(
+/**
+ * Send one authenticated request and return the raw response (no status
+ * check). Shared by `platformRequest` and the `/sync` event stream, which
+ * reads the body incrementally.
+ */
+export async function platformFetch(
   method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE",
   path: string,
   body?: unknown,
-  options: PlatformRequestOptions = {},
-): Promise<T> {
+  options: PlatformRequestOptions & { accept?: string; headers?: Record<string, string> } = {},
+): Promise<Response> {
   const tokens = await platformTokens()
   if (tokens.length === 0) throw new PlatformSignedOutError()
   const signals = [options.signal, options.timeoutMs ? AbortSignal.timeout(options.timeoutMs) : undefined].filter(
@@ -77,8 +82,9 @@ export async function platformRequest<T>(
       method,
       headers: {
         Authorization: `Bearer ${token}`,
-        Accept: "application/json",
+        Accept: options.accept ?? "application/json",
         ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        ...options.headers,
       },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: signals.length === 0 ? undefined : signals.length === 1 ? signals[0] : AbortSignal.any(signals),
@@ -90,6 +96,16 @@ export async function platformRequest<T>(
     if (response.status !== 401 && response.status !== 403) break
     response = await send(next)
   }
+  return response
+}
+
+export async function platformRequest<T>(
+  method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE",
+  path: string,
+  body?: unknown,
+  options: PlatformRequestOptions = {},
+): Promise<T> {
+  const response = await platformFetch(method, path, body, options)
   if (!response.ok) {
     const text = await response.text().catch(() => "")
     let message = text

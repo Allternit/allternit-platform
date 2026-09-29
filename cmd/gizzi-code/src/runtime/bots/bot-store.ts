@@ -55,6 +55,16 @@ export const BotCanonicalSessionSchema = z.object({
   sessionId: z.string(),
 })
 
+/**
+ * The platform agent this bot is registered as (so Desktop, the pet HUD and
+ * the terminal `/bots` chat share one conversation). `syncHash` is the hash
+ * of the identity last pushed; a different hash means push again.
+ */
+export const BotPlatformLinkSchema = z.object({
+  id: z.string(),
+  syncHash: z.string().nullable(),
+})
+
 export const BotSchema = z.object({
   schemaVersion: z.literal(1),
   name: z.string(),
@@ -64,12 +74,15 @@ export const BotSchema = z.object({
   avatar: BotAvatarSchema.nullable(),
   canonicalSession: BotCanonicalSessionSchema.nullable(),
   capabilityEpoch: z.string().nullable(),
+  /** Absent in bot.json written before registration existed. */
+  platform: BotPlatformLinkSchema.nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })
 
 export type BotAvatar = z.infer<typeof BotAvatarSchema>
 export type BotCanonicalSession = z.infer<typeof BotCanonicalSessionSchema>
+export type BotPlatformLink = z.infer<typeof BotPlatformLinkSchema>
 export type Bot = z.infer<typeof BotSchema>
 
 /** Fields `updateBot` accepts — identity metadata only, never the canonical session. */
@@ -348,6 +361,25 @@ export async function setCapabilityEpoch(
   const dir = botDir(resolved)
   const bot = await readBot(dir)
   bot.capabilityEpoch = capabilityEpoch
+  bot.updatedAt = (opts.now ?? new Date()).toISOString()
+  await writeJsonAtomic(await botJsonPath(dir), bot)
+  return bot
+}
+
+/** Record (or clear) the platform agent this bot is registered as. */
+export async function setPlatformLink(
+  name: string,
+  platform: BotPlatformLink | null,
+  opts: BotStoreOptions = {},
+): Promise<Bot> {
+  const entries = await listBotDirNames()
+  const resolved = resolveBotDirName(entries, name)
+  if (resolved === null) {
+    throw new BotStoreError(`bot '${name}' not found`)
+  }
+  const dir = botDir(resolved)
+  const bot = await readBot(dir)
+  bot.platform = platform
   bot.updatedAt = (opts.now ?? new Date()).toISOString()
   await writeJsonAtomic(await botJsonPath(dir), bot)
   return bot
