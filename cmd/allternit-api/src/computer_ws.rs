@@ -1646,6 +1646,97 @@ pub(crate) fn upstream_guest_host(guest_port: u16) -> String {
     format!("127.0.0.1:{}", guest_port)
 }
 
+/// Send one request to a service on the computer's guest port and stream the
+/// response back. Shared by the owner-configured proxy and server-side
+/// forwarders (the subscription gateway route) that inject their own auth.
+/// The caller has already authorized the request and filtered `headers`.
+/// Event streams (`Accept: text/event-stream`) are exempt from `timeout`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn forward_to_guest(
+    state: &AppState,
+    computer: &ComputerResponse,
+    guest_port: u16,
+    path: &str,
+    query: Option<&str>,
+    method: Method,
+    headers: &HeaderMap,
+    body: Bytes,
+    timeout: std::time::Duration,
+) -> Response {
+    let driver = match require_driver(&state) {
+        Ok(d) => d,
+        Err(response) => return response,
+    };
+    let handle = match computer_handle(&computer) {
+        Ok(h) => h,
+        Err(response) => return response,
+    };
+    let base = match driver.guest_service_url(&handle, guest_port).await {
+        Ok(url) => url,
+        Err(e) => {
+            let status = guest_error_status(&e);
+            return crate::computer_routes::error_response(
+                status,
+                format!("proxy upstream is unreachable: {e}"),
+            );
+        }
+    };
+
+    let mut url = format!("{}/{}", base.trim_end_matches('/'), path.trim_start_matches('/'));
+    if let Some(query) = query {
+        url.push('?');
+        url.push_str(query);
+    }
+
+    let mut upstream = proxy_client()
+        .request(method, &url)
+        .header(header::HOST, upstream_guest_host(guest_port));
+    if !wants_event_stream(headers) {
+        upstream = upstream.timeout(timeout);
+    }
+    for (name, value) in headers.iter() {
+        if is_hop_by_hop(name.as_str()) {
+            continue;
+        }
+        upstream = upstream.header(name.as_str(), value.as_bytes());
+    }
+    let upstream = upstream.body(body).send().await;
+
+    match upstream {
+        Ok(resp) => {
+            let status = resp.status();
+            let mut builder = Response::builder().status(status);
+            let response_headers = builder
+                .headers_mut()
+                .expect("response builder has headers");
+            for (name, value) in resp.headers().iter() {
+                if !is_hop_by_hop(name.as_str()) {
+                    response_headers.append(name, value.clone());
+                }
+            }
+            // Stream the body through (SSE must not wait for the upstream to
+            // end — it never does). A mid-body upstream error ends the stream.
+            match builder.body(axum::body::Body::from_stream(resp.bytes_stream())) {
+                Ok(response) => response,
+                Err(e) => {
+                    warn!(error = %e, "failed to build proxy response");
+                    crate::computer_routes::error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "failed to build proxy response",
+                    )
+                }
+            }
+        }
+        Err(e) => {
+            warn!(error = %e, %url, "proxy upstream request failed");
+            crate::computer_routes::error_response(
+                StatusCode::BAD_GATEWAY,
+                format!("proxy upstream is unreachable: {e}"),
+            )
+        }
+    }
+}
+
 async fn proxy_forward(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -1695,78 +1786,18 @@ async fn proxy_forward(
     if body.len() > PROXY_BODY_LIMIT {
         return crate::computer_routes::error_response(StatusCode::PAYLOAD_TOO_LARGE, "request body exceeds 10 MB");
     }
-    let driver = match require_driver(&state) {
-        Ok(d) => d,
-        Err(response) => return response,
-    };
-    let handle = match computer_handle(&computer) {
-        Ok(h) => h,
-        Err(response) => return response,
-    };
-    let base = match driver.guest_service_url(&handle, config.port).await {
-        Ok(url) => url,
-        Err(e) => {
-            let status = guest_error_status(&e);
-            return crate::computer_routes::error_response(
-                status,
-                format!("proxy upstream is unreachable: {e}"),
-            );
-        }
-    };
-
-    let mut url = format!("{}/{}", base.trim_end_matches('/'), path.trim_start_matches('/'));
-    if let Some(query) = uri.query() {
-        url.push('?');
-        url.push_str(query);
-    }
-
-    let mut upstream = proxy_client()
-        .request(method.clone(), &url)
-        .header(header::HOST, upstream_guest_host(config.port));
-    if !wants_event_stream(&headers) {
-        upstream = upstream.timeout(PROXY_REQUEST_TIMEOUT);
-    }
-    for (name, value) in headers.iter() {
-        if is_hop_by_hop(name.as_str()) {
-            continue;
-        }
-        upstream = upstream.header(name.as_str(), value.as_bytes());
-    }
-    let upstream = upstream.body(body.to_vec()).send().await;
-
-    let response = match upstream {
-        Ok(resp) => {
-            let status = resp.status();
-            let mut builder = Response::builder().status(status);
-            let response_headers = builder
-                .headers_mut()
-                .expect("response builder has headers");
-            for (name, value) in resp.headers().iter() {
-                if !is_hop_by_hop(name.as_str()) {
-                    response_headers.append(name, value.clone());
-                }
-            }
-            // Stream the body through (SSE must not wait for the upstream to
-            // end — it never does). A mid-body upstream error ends the stream.
-            match builder.body(axum::body::Body::from_stream(resp.bytes_stream())) {
-                Ok(response) => response,
-                Err(e) => {
-                    warn!(error = %e, "failed to build proxy response");
-                    return crate::computer_routes::error_response(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "failed to build proxy response",
-                    );
-                }
-            }
-        }
-        Err(e) => {
-            warn!(error = %e, %url, "proxy upstream request failed");
-            return crate::computer_routes::error_response(
-                StatusCode::BAD_GATEWAY,
-                format!("proxy upstream is unreachable: {e}"),
-            );
-        }
-    };
+    let response = forward_to_guest(
+        &state,
+        &computer,
+        config.port,
+        &path,
+        uri.query(),
+        method.clone(),
+        &headers,
+        body,
+        PROXY_REQUEST_TIMEOUT,
+    )
+    .await;
 
     crate::computer_audit::log_computer_access(
         &state.db,
@@ -1781,7 +1812,7 @@ async fn proxy_forward(
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use axum::http::HeaderValue;
 
@@ -1854,10 +1885,12 @@ mod tests {
         state
     }
 
-    /// Presence-only driver stub: `validate_vnc_ws_request` checks that a
-    /// driver is configured but never calls it on the success path.
+    /// Driver stub: `validate_vnc_ws_request` only checks that a driver is
+    /// configured. `.0` is the base URL `guest_service_url` answers (None →
+    /// NotSupported), so forwarders (subscription_routes) can point a
+    /// computer at a local fake service.
     #[derive(Debug)]
-    struct StubDriver;
+    pub(crate) struct StubDriver(pub(crate) Option<String>);
 
     #[async_trait::async_trait]
     impl ExecutionDriver for StubDriver {
@@ -1969,6 +2002,16 @@ mod tests {
                 ..Default::default()
             })
         }
+
+        async fn guest_service_url(
+            &self,
+            _handle: &ExecutionHandle,
+            _guest_port: u16,
+        ) -> std::result::Result<String, allternit_driver_interface::DriverError> {
+            self.0.clone().ok_or_else(|| allternit_driver_interface::DriverError::NotSupported {
+                feature: "guest service url".to_string(),
+            })
+        }
     }
 
     fn handler_test_secret() {
@@ -1995,7 +2038,7 @@ mod tests {
         // token (HMAC, computer-bound, expiring, forced read-only) is the
         // entire credential — None user must validate fine.
         handler_test_secret();
-        let state = state_with_computer(Some(Arc::new(StubDriver))).await;
+        let state = state_with_computer(Some(Arc::new(StubDriver(None)))).await;
         let token = crate::bot_desktop_stream::sign_computer_token(
             TEST_SECRET, "computer-1", "sandbox-1", "user-1", 60, "embed", true,
         );
@@ -2015,7 +2058,7 @@ mod tests {
         // computer-bound, user-bound, expiring — is the credential. Before
         // this fix the session requirement made every vnc token 403.
         handler_test_secret();
-        let state = state_with_computer(Some(Arc::new(StubDriver))).await;
+        let state = state_with_computer(Some(Arc::new(StubDriver(None)))).await;
         let token = crate::bot_desktop_stream::sign_computer_token(
             TEST_SECRET, "computer-1", "sandbox-1", "user-1", 60, "vnc", false,
         );

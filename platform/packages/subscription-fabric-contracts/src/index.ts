@@ -61,6 +61,7 @@ export type { ThreadMapping, ThreadSnapshot } from "./thread";
 export {
   attemptOutcomeSchema,
   failureClassSchema,
+  initiatedBySchema,
   requesterSchema,
   submissionStateSchema,
   taskAttemptSchema,
@@ -75,6 +76,7 @@ export {
 export type {
   AttemptOutcome,
   FailureClass,
+  InitiatedBy,
   Requester,
   SubmissionState,
   Task,

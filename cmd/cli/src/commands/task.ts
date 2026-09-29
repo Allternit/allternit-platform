@@ -1,5 +1,7 @@
 import { Command } from 'commander';
 import { SubsClient, followTaskEvents, type SseEvent } from '../subs/client.js';
+import { randomUUID } from 'node:crypto';
+import { userInfo } from 'node:os';
 
 type GlobalOptions = { json?: boolean };
 
@@ -63,7 +65,9 @@ export function createTaskCommand(): Command {
       .action(async function (this: Command, capability: string, options: { prompt: string; provider: string; wait?: boolean }) {
         const client = new SubsClient();
         try {
+          // D16 — the person typing this command is the human act behind the task.
           const created = await client.requestOk<TaskRecord>('POST', '/v1/tasks', {
+            initiated_by: { kind: 'human', user_id: userInfo().username, action_id: `cli-${randomUUID()}` },
             capability,
             prompt: options.prompt,
             ...(options.provider !== 'auto' ? { routing: { provider: options.provider } } : {}),

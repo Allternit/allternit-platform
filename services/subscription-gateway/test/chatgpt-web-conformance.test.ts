@@ -203,6 +203,7 @@ describe("execute e2e against fixtures", () => {
       capability,
       capability_version: 1,
       requester: { kind: "user", id: "user-1" },
+      initiated_by: { kind: "human", user_id: "user-1", action_id: "action-1" },
       thread_id: null,
       project_id: null,
       parent_task_id: null,

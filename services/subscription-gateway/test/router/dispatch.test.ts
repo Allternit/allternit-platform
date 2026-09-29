@@ -10,7 +10,7 @@ import { requeueAfterFailure, resolveForNewTask, type DispatchDeps } from "../..
 import { FabricRouter } from "../../src/router/resolve.js";
 import { issueToken } from "../../src/security/tokens.js";
 import { getTask, insertAttempt, insertTask, updateTaskStatus, upsertAccount, upsertQuotaPool } from "../../src/store/queries.js";
-import { cleanupDir, makeDeps, sampleTask, tmpStateDir, type TestDeps } from "../helpers.js";
+import { HUMAN, cleanupDir, makeDeps, sampleTask, tmpStateDir, type TestDeps } from "../helpers.js";
 import { makeAccount, makeManifest, makePool, NOW, POOL_ID } from "./fixtures.js";
 
 const manifestA = makeManifest({ adapter_id: "adapter-a", provider: "prov-a" as ReturnType<typeof makeAccount>["provider"] });
@@ -187,7 +187,7 @@ describe("http wiring — POST /v1/tasks resolves at pick time", () => {
     const res = await request(deps.app)
       .post("/v1/tasks")
       .set("authorization", `Bearer ${t}`)
-      .send({ capability: "chat.create", prompt: "hello" });
+      .send({ initiated_by: HUMAN, capability: "chat.create", prompt: "hello" });
     expect(res.status).toBe(201);
     expect(res.body.status).toBe("queued");
     expect(res.body.routing.provider).toBe("prov-a");
@@ -200,13 +200,36 @@ describe("http wiring — POST /v1/tasks resolves at pick time", () => {
     expect(getTask(deps.db, res.body.task_id)?.route_decision?.primary?.adapter_id).toBe("adapter-a");
   });
 
+  it("a provider-only pin resolves to that provider's account (live: it sat in the provider/unrouted lane)", async () => {
+    const t = issueToken(deps.db, "caller-1", "test", ["tasks:submit"]).token;
+    const res = await request(deps.app)
+      .post("/v1/tasks")
+      .set("authorization", `Bearer ${t}`)
+      .send({ initiated_by: HUMAN, capability: "chat.create", prompt: "hello", routing: { provider: "prov-a" } });
+    expect(res.status).toBe(201);
+    expect(res.body.routing).toMatchObject({ provider: "prov-a", account_id: "acct-1", provider_pinned: true });
+    expect(scheduler.size("prov-a", "acct-1")).toBe(1);
+    expect(scheduler.size("prov-a", "unrouted")).toBe(0);
+  });
+
+  it("a provider pin never routes to another provider's account", async () => {
+    const t = issueToken(deps.db, "caller-1", "test", ["tasks:submit"]).token;
+    const res = await request(deps.app)
+      .post("/v1/tasks")
+      .set("authorization", `Bearer ${t}`)
+      .send({ initiated_by: HUMAN, capability: "chat.create", prompt: "hello", routing: { provider: "prov-other" } });
+    expect(res.status).toBe(201);
+    expect(res.body.route_decision.primary).toBeNull();
+    expect(scheduler.size("prov-a", "acct-1")).toBe(0);
+  });
+
   it("with no eligible route the task stays queued in the unrouted lane, decision recording why", async () => {
     upsertQuotaPool(deps.db, makePool({ state: "exhausted" }));
     const t = issueToken(deps.db, "caller-1", "test", ["tasks:submit"]).token;
     const res = await request(deps.app)
       .post("/v1/tasks")
       .set("authorization", `Bearer ${t}`)
-      .send({ capability: "chat.create", prompt: "hello" });
+      .send({ initiated_by: HUMAN, capability: "chat.create", prompt: "hello" });
     expect(res.status).toBe(201);
     expect(res.body.route_decision.primary).toBeNull();
     expect(res.body.route_decision.rejected).toContainEqual({

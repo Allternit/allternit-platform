@@ -36,6 +36,7 @@ interface TaskRow {
   routing: string;
   constraints: string;
   approval_id: string | null;
+  initiated_by: string | null;
   priority: string;
   status: string;
   status_detail: string | null;
@@ -54,6 +55,7 @@ function taskFromRow(db: Db, row: TaskRow): Task {
     capability: row.capability as Task["capability"],
     capability_version: row.capability_version,
     requester: JSON.parse(row.requester),
+    initiated_by: row.initiated_by ? JSON.parse(row.initiated_by) : null,
     thread_id: row.thread_id,
     project_id: row.project_id,
     parent_task_id: row.parent_task_id,
@@ -161,8 +163,8 @@ export function insertTask(db: Db, task: Task): void {
       requester, thread_id, project_id, parent_task_id, prompt, inputs,
       options, routing, constraints, approval_id, priority, status,
       status_detail, route_decision, result, error, created_at, updated_at,
-      completed_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      completed_at, initiated_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     task.task_id,
     task.idempotency_key,
@@ -187,7 +189,8 @@ export function insertTask(db: Db, task: Task): void {
     task.error ? JSON.stringify(task.error) : null,
     task.created_at,
     task.updated_at,
-    task.completed_at
+    task.completed_at,
+    task.initiated_by ? JSON.stringify(task.initiated_by) : null
   );
 }
 

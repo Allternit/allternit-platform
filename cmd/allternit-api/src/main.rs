@@ -946,6 +946,7 @@ async fn main() {
         .merge(allternit_api::computer_routes::router())
         .merge(allternit_api::computer_groups::router())
         .merge(allternit_api::computer_ws::computer_api_router())
+        .merge(allternit_api::subscription_routes::router())
         .merge(allternit_api::computer_embed::api_router())
         .merge(allternit_api::bot_group_routes::router())
         .merge(allternit_api::allternit_vault::router())

@@ -102,6 +102,9 @@ export function makeDeps(
   };
 }
 
+// D16 — the human stamp every POST /v1/tasks must carry.
+export const HUMAN = { kind: "human", user_id: "user-1", action_id: "action-1" } as const;
+
 export function sampleTask(overrides: Partial<Task> = {}): Task {
   const now = new Date().toISOString();
   return {
@@ -110,6 +113,7 @@ export function sampleTask(overrides: Partial<Task> = {}): Task {
     capability: "chat.create",
     capability_version: 1,
     requester: { kind: "bot", id: "bot-1", bot_id: "bot-1" },
+    initiated_by: { ...HUMAN },
     thread_id: null,
     project_id: null,
     parent_task_id: null,

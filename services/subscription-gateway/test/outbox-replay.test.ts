@@ -4,7 +4,7 @@ import type { Server } from "node:http";
 import request from "supertest";
 import { issueToken } from "../src/security/tokens.js";
 import { closeServer, listenTcp } from "../src/http/server.js";
-import {
+import { HUMAN,
   cleanupDir,
   makeDeps,
   openSse,
@@ -46,7 +46,7 @@ describe("D12 outbox replay gate", () => {
     const created = await request(deps.app)
       .post("/v1/tasks")
       .set("authorization", `Bearer ${t}`)
-      .send({ capability: "chat.create", prompt: "hello" });
+      .send({ initiated_by: HUMAN, capability: "chat.create", prompt: "hello" });
     const taskId = created.body.task_id;
 
     // connect — replay delivers the missed task.created
@@ -100,7 +100,7 @@ describe("D12 outbox replay gate", () => {
     const created = await request(deps.app)
       .post("/v1/tasks")
       .set("authorization", `Bearer ${t}`)
-      .send({ capability: "chat.create", prompt: "hello" });
+      .send({ initiated_by: HUMAN, capability: "chat.create", prompt: "hello" });
     const taskId = created.body.task_id;
     const e1 = deps.log.append({ task_id: taskId, kind: "progress", payload: { n: 1 }, callers: ["bot-1"] });
     const e2 = deps.log.append({ task_id: taskId, kind: "progress", payload: { n: 2 }, callers: ["bot-1"] });
