@@ -2369,7 +2369,7 @@ pub(crate) async fn send_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str,
         }
         let path = format!("/agent-sessions/{}/messages", urlencoding::encode(session_id));
         let reply = crate::placement::call(&target, reqwest::Method::POST, &path, Some(body)).await?;
-        return Ok(reply["content"].as_str().unwrap_or_default().to_string());
+        return placed_turn_report(&reply);
     }
     let client = gizzi_client(&HeaderMap::new());
     let path = format!("/v1/session/{}/message", urlencoding::encode(session_id));
@@ -2387,7 +2387,7 @@ pub(crate) async fn send_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str,
             if let Some(error) = message.info.error.as_ref().and_then(|e| e.message.clone()) {
                 return Err(error);
             }
-            Ok(extract_message_content(&message.parts))
+            turn_report(&message.parts)
         }
         Err(response) => {
             let status = response.status();
@@ -2398,6 +2398,67 @@ pub(crate) async fn send_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str,
             Err(format!("gizzi turn failed ({status}): {body}"))
         }
     }
+}
+
+/// The bot's report for one turn: the text of its final answer — the text
+/// parts after the turn's last tool call — with no `[Tool …]`/`[File …]`
+/// placeholders (those are the chat transcript's rendering, not the answer).
+/// A turn that ends on a tool call, or with no text at all, never answered:
+/// that's an error, not an empty or placeholder report. Seen live: a Claude
+/// CLI turn cut short mid-tool-call came back as "[Tool Bash]" ×4, and the
+/// coordinator filed that as the thread's report and status line.
+pub(crate) fn turn_report(parts: &[GizziMessagePart]) -> Result<String, String> {
+    let last_tool = parts.iter().rposition(|p| p.part_type == "tool");
+    let answer = parts[last_tool.map_or(0, |i| i + 1)..]
+        .iter()
+        .filter(|p| matches!(p.part_type.as_str(), "text" | "agent"))
+        .filter_map(|p| p.text.as_deref().map(str::trim))
+        .filter(|t| !t.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    if !answer.is_empty() {
+        return Ok(answer);
+    }
+    Err(match last_tool.and_then(|i| parts[i].tool.as_deref()) {
+        Some(tool) => format!("the turn stopped after a {tool} call, before the bot replied"),
+        None if last_tool.is_some() => "the turn stopped after a tool call, before the bot replied".to_string(),
+        None => "the bot finished the turn without replying".to_string(),
+    })
+}
+
+/// [`turn_report`] for a turn run on another Allternit: its message route
+/// returns the transcript shape, with the raw parts in `metadata.parts`.
+fn placed_turn_report(reply: &serde_json::Value) -> Result<String, String> {
+    if let Some(error) = reply.pointer("/metadata/error").filter(|e| !e.is_null()) {
+        let text = error["message"].as_str().map(str::to_string).unwrap_or_else(|| error.to_string());
+        return Err(text);
+    }
+    match reply.pointer("/metadata/parts").cloned().map(serde_json::from_value::<Vec<GizziMessagePart>>) {
+        Some(Ok(parts)) => turn_report(&parts),
+        // An older server without parts: its content, placeholders dropped.
+        _ => {
+            let content = reply["content"]
+                .as_str()
+                .unwrap_or_default()
+                .lines()
+                .filter(|l| !is_placeholder_line(l))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let content = content.trim();
+            if content.is_empty() {
+                Err("the bot finished the turn without replying".to_string())
+            } else {
+                Ok(content.to_string())
+            }
+        }
+    }
+}
+
+/// A transcript placeholder line (`[Tool Bash]`, `[File a.png]`,
+/// `[No text content]`) — never report text.
+pub(crate) fn is_placeholder_line(line: &str) -> bool {
+    let l = line.trim();
+    l.starts_with("[Tool ") || l.starts_with("[File ") || l == "[No text content]"
 }
 
 /// Add a user-role message to a session without running a turn (gizzi
@@ -2556,6 +2617,76 @@ mod tests {
         let long = "é".repeat(LIST_PREVIEW_MAX_CHARS + 20);
         let preview = message_preview_text(&[part("text", &long)]);
         assert_eq!(preview.chars().count(), LIST_PREVIEW_MAX_CHARS);
+    }
+
+    fn tool(name: &str) -> GizziMessagePart {
+        GizziMessagePart { tool: Some(name.to_string()), text: None, ..part("tool", "") }
+    }
+
+    #[test]
+    fn a_turn_with_tools_reports_its_final_answer_with_the_checklist() {
+        // The shape a Claude CLI turn is stored in: narration and tool calls
+        // interleaved in one assistant message, the answer last.
+        let parts = vec![
+            part("step-start", ""),
+            part("text", "Let me look for comparables."),
+            tool("WebSearch"),
+            tool("WebFetch"),
+            part("reasoning", "the second one is closed"),
+            part("text", "One of them looks closed. Checking another."),
+            tool("WebFetch"),
+            part("text", "Two comparables: Sweet Lavender ($4.25), Bloom ($4.50)."),
+            part("text", "Checklist:\n[x] 1. Find two comparables\n[x] 2. Note their prices"),
+            part("step-finish", ""),
+        ];
+        let report = turn_report(&parts).expect("the turn answered");
+        assert!(!report.contains("[Tool"), "no tool placeholders in the report: {report}");
+        assert!(!report.contains("Checking another"), "mid-work narration is not the answer: {report}");
+        assert!(report.starts_with("Two comparables"));
+        assert!(report.ends_with("[x] 2. Note their prices"));
+
+        let todo: Vec<crate::thread_routes::TodoItem> = ["Find two comparables", "Note their prices"]
+            .iter()
+            .map(|t| crate::thread_routes::TodoItem { text: t.to_string(), state: "pending".into() })
+            .collect();
+        let ticked = crate::coordinator_routes::tick_todo(&todo, &report);
+        assert!(ticked.iter().all(|i| i.state == "done"), "{ticked:?}");
+        assert_eq!(
+            crate::coordinator_routes::status_line_of(&report).as_deref(),
+            Some("Two comparables: Sweet Lavender ($4.25), Bloom ($4.50).")
+        );
+
+        // No tools: the whole text is the answer (as before).
+        assert_eq!(turn_report(&[part("text", "Checklist drafted."), part("text", "[x] 1. Draft")]).unwrap(), "Checklist drafted.\n\n[x] 1. Draft");
+    }
+
+    #[test]
+    fn a_turn_cut_short_mid_tool_call_is_an_error_not_a_report() {
+        // Seen live: four Bash calls and no answer came back as the report
+        // "[Tool Bash]\n[Tool Bash]\n[Tool Bash]\n[Tool Bash]".
+        let parts = vec![part("step-start", ""), tool("Bash"), tool("Bash"), tool("Bash"), tool("Bash"), part("step-finish", "")];
+        let err = turn_report(&parts).unwrap_err();
+        assert!(err.contains("Bash") && err.contains("before the bot replied"), "{err}");
+        // Narration before the last tool is not an answer either.
+        assert!(turn_report(&[part("text", "Verifying both pages."), tool("WebFetch")]).is_err());
+        assert!(turn_report(&[part("step-start", ""), part("text", "  ")]).is_err());
+    }
+
+    #[test]
+    fn a_placed_turn_reports_from_its_parts_and_errors() {
+        let reply = json!({
+            "content": "[Tool Bash]\nThe tagline: Spring, baked fresh.",
+            "metadata": { "parts": [
+                { "type": "tool", "tool": "Bash" },
+                { "type": "text", "text": "The tagline: Spring, baked fresh." },
+            ], "error": null },
+        });
+        assert_eq!(placed_turn_report(&reply).unwrap(), "The tagline: Spring, baked fresh.");
+        let failed = json!({ "content": "x", "metadata": { "parts": [], "error": { "message": "claude-cli was stopped (SIGTERM) before finishing the turn" } } });
+        assert!(placed_turn_report(&failed).unwrap_err().contains("SIGTERM"));
+        // An older server without parts: content minus placeholders.
+        assert_eq!(placed_turn_report(&json!({ "content": "[Tool Bash]\nDone: saved." })).unwrap(), "Done: saved.");
+        assert!(placed_turn_report(&json!({ "content": "[Tool Bash]\n[Tool Bash]" })).is_err());
     }
 
     #[tokio::test]

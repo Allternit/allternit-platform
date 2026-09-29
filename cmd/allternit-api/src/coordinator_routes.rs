@@ -651,7 +651,13 @@ pub fn status_line_of(reply: &str) -> Option<String> {
         .map(|l| l.trim().trim_start_matches('#').trim().replace("**", "").replace("__", ""))
         .map(|l| l.trim().to_string())
         .find(|l| !l.is_empty() && !l.ends_with(':') && !l.starts_with('[') && l.split_whitespace().count() >= 3)
-        .or_else(|| reply.lines().map(str::trim).find(|l| !l.is_empty()).map(str::to_string))
+        .or_else(|| {
+            reply
+                .lines()
+                .map(str::trim)
+                .find(|l| !l.is_empty() && !crate::agent_session_routes::is_placeholder_line(l))
+                .map(str::to_string)
+        })
         .map(|l| truncate(&l, 140))
 }
 
@@ -1161,6 +1167,9 @@ mod tests {
         assert_eq!(status_line_of("## Recommended name: Bloom Box").as_deref(), Some("Recommended name: Bloom Box"));
         assert_eq!(status_line_of("Done").as_deref(), Some("Done"));
         assert_eq!(status_line_of("  \n"), None);
+        // The fallback never surfaces a transcript placeholder.
+        assert_eq!(status_line_of("[Tool Bash]\n[Tool Bash]"), None);
+        assert_eq!(status_line_of("[File a.png]\n[No text content]\nOk"), Some("Ok".into()));
     }
 
     #[tokio::test]

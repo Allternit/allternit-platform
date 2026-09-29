@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, test } from "bun:test"
-import { getCliAdapterInfo, StreamJsonBlocks } from "@/runtime/drivers/local-cli-driver"
+import { getCliAdapterInfo, StreamJsonBlocks, streamJsonCutShort } from "@/runtime/drivers/local-cli-driver"
 import { SUBPROCESS_PROVIDERS } from "@/runtime/providers/discovery/subprocess"
 
 const EXPECTED_ACP_CLIS = [
@@ -207,5 +207,27 @@ describe("StreamJsonBlocks (Claude stream-json text bookkeeping)", () => {
     const b = new StreamJsonBlocks()
     expect(b.assistantParts({ id: "m1", content: [{ type: "text", text: "a" }, { type: "text", text: "b" }] })).toEqual(["a", "b"])
     expect(b.assistantParts({ id: "m1", content: [{ type: "text", text: "a" }, { type: "text", text: "bc" }] })).toEqual(["", "c"])
+  })
+})
+
+describe("streamJsonCutShort — a turn with no result event did not finish", () => {
+  const base = { cliName: "claude-cli", stderr: "" }
+
+  test("Claude killed mid-turn (Desktop quit → SIGTERM) is an error, not a finished turn", () => {
+    const why = streamJsonCutShort({ ...base, endsWithResult: true, exitCode: null, signalCode: "SIGTERM" })
+    expect(why).toBe("claude-cli was stopped (SIGTERM) before finishing the turn")
+  })
+
+  test("Claude exiting cleanly without its result event is still cut short", () => {
+    expect(streamJsonCutShort({ ...base, endsWithResult: true, exitCode: 0, signalCode: null })).toContain("before finishing")
+  })
+
+  test("a failed exit carries the stderr tail", () => {
+    const why = streamJsonCutShort({ cliName: "opencode", endsWithResult: false, exitCode: 1, signalCode: null, stderr: "boom\n" })
+    expect(why).toBe("opencode exited with code 1 before finishing the turn: boom")
+  })
+
+  test("dialects without a result event finish normally on a clean exit", () => {
+    expect(streamJsonCutShort({ ...base, cliName: "cursor-agent", endsWithResult: false, exitCode: 0, signalCode: null })).toBeUndefined()
   })
 })
