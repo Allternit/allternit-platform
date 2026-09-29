@@ -824,6 +824,19 @@ const hyperframesAPI = {
   },
 };
 
+// ─── Artifact preview capture ────────────────────────────────────────────────
+// A real render of a site an agent built, as a picture it can look at.
+
+const artifactPreviewAPI = {
+  capture: (req: { html: string; width?: number; height?: number; fullPage?: boolean }): Promise<{
+    ok: boolean;
+    image?: string;
+    width?: number;
+    height?: number;
+    error?: string;
+  }> => ipcRenderer.invoke('artifact-preview:capture', req),
+};
+
 // ─── Browser API Capture ─────────────────────────────────────────────────────
 // Records network traffic from the ACI browser and returns a HAR archive for
 // the platform's HAR-derived API service.
@@ -872,6 +885,7 @@ const allternitDesktopAPI = {
   miniApps: miniAppsAPI,
   hermesRouting: hermesRoutingAPI,
   browserCapture: browserCaptureAPI,
+  artifactPreview: artifactPreviewAPI,
   voice: voiceAPI,
 };
 
