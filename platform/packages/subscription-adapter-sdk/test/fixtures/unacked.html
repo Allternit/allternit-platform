@@ -1,14 +1,12 @@
 <!doctype html>
 <html lang="en">
-  <head><meta charset="utf-8"><title>fixture-web — static</title></head>
-  <body data-state="static">
+  <head><meta charset="utf-8"><title>fixture-web — send not acknowledged</title></head>
+  <body data-state="idle">
     <header>
       <div data-testid="fw-user-menu" class="fw-user-menu">fixture-user</div>
     </header>
     <main>
-      <div data-testid="fw-response" class="fw-response">
-        <p>Static response body.</p>
-      </div>
+      <div id="fw-transcript"></div>
       <div
         id="fw-composer"
         data-testid="fw-composer"
@@ -16,15 +14,17 @@
         aria-label="Message fixture-web"
         contenteditable="true"
       ></div>
+      <textarea
+        id="fw-composer-textarea"
+        data-testid="fw-composer-textarea"
+        aria-label="Message fixture-web via plain text"
+      ></textarea>
       <button id="fw-send" data-testid="fw-send" type="button">Send</button>
     </main>
     <script>
       document.getElementById("fw-send").addEventListener("click", () => {
+        // The provider ignores Send: no turn, no thread URL, composer keeps the prompt.
         document.body.dataset.fwSubmitted = "click";
-        // Like real providers: Send takes the prompt out of the composer.
-        document.getElementById("fw-composer").textContent = "";
-        const ta = document.getElementById("fw-composer-textarea");
-        if (ta) ta.value = "";
       });
     </script>
   </body>

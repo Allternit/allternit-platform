@@ -1,21 +1,26 @@
 <!doctype html>
 <html lang="en">
-  <head><meta charset="utf-8"><title>fixture-web — static</title></head>
-  <body data-state="static">
+  <head><meta charset="utf-8"><title>fixture-web — composer drift</title></head>
+  <body data-state="idle">
     <header>
       <div data-testid="fw-user-menu" class="fw-user-menu">fixture-user</div>
     </header>
     <main>
-      <div data-testid="fw-response" class="fw-response">
-        <p>Static response body.</p>
-      </div>
+      <div id="fw-transcript"></div>
       <div
         id="fw-composer"
         data-testid="fw-composer"
         role="textbox"
         aria-label="Message fixture-web"
         contenteditable="true"
+        style="display:none"
       ></div>
+      <textarea
+        id="fw-composer-textarea"
+        data-testid="fw-composer-textarea"
+        aria-label="Message fixture-web via plain text"
+        style="display:none"
+      ></textarea>
       <button id="fw-send" data-testid="fw-send" type="button">Send</button>
     </main>
     <script>

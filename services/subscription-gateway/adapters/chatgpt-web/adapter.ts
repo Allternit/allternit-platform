@@ -25,6 +25,9 @@ import {
   createHeartbeat,
   createResolver,
   detectAuthState,
+  ComposerNotFilledError,
+  composerDriftError,
+  confirmSend,
   fillComposer,
   pageShape,
   stalledError,
@@ -626,7 +629,14 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
         return;
       }
     }
-    await fillComposer(page, resolver, task.prompt);
+    let composer;
+    try {
+      composer = await fillComposer(page, resolver, task.prompt);
+    } catch (err) {
+      if (!(err instanceof ComposerNotFilledError)) throw err;
+      yield { t: "error", error: composerDriftError(err.detail) };
+      return;
+    }
     if (
       images.length > 0 &&
       !(await waitForSendReady(resolver, { timeoutMs: cfg.completion?.timeoutMs ?? 120000, now, sleep }))
@@ -637,11 +647,24 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
       };
       return;
     }
+    const countOf = async (key: string) => (await resolver.tryResolveLocator(key))?.count() ?? 0;
+    const userTurnsBefore = await countOf("user_turn");
+    const repliesBefore = await countOf("response");
     await ctx.pacing.beforeAction();
     await ctx.markSubmitted(null); // §A1: sent_unconfirmed BEFORE Send
     await submit(page, resolver, { fallback: cfg.submitFallbackEnter ? "enter" : undefined });
-    let threadId = threadIdFromUrl(page.url(), THREAD_URL_PATTERN);
-    await ctx.markSubmitted(threadId); // §A1: acknowledged after provider ack
+    // §A1: acknowledged only on ChatGPT's own evidence.
+    let threadId = await confirmSend(page, resolver, ctx, {
+      composer,
+      prompt: task.prompt,
+      threadUrlPattern: THREAD_URL_PATTERN,
+      userTurnsBefore,
+      repliesBefore,
+      timeoutMs: cfg.ackTimeoutMs,
+      pollIntervalMs,
+      now,
+      sleep,
+    });
     const url = page.url();
     yield {
       t: "submitted",

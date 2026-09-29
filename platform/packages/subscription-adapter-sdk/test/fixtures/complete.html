@@ -28,5 +28,14 @@
       ></div>
       <button id="fw-send" data-testid="fw-send" type="button">Send</button>
     </main>
+    <script>
+      document.getElementById("fw-send").addEventListener("click", () => {
+        document.body.dataset.fwSubmitted = "click";
+        // Like real providers: Send takes the prompt out of the composer.
+        document.getElementById("fw-composer").textContent = "";
+        const ta = document.getElementById("fw-composer-textarea");
+        if (ta) ta.value = "";
+      });
+    </script>
   </body>
 </html>
