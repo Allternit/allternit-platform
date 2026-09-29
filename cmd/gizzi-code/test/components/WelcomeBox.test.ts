@@ -25,13 +25,13 @@ describe("header images", () => {
 })
 
 describe("text-only header mark", () => {
-  test("four rows, 12 wide, ink in the text color with coral beacon and nose", async () => {
+  test("the mascot in its own colors, 8 wide and 4 rows", async () => {
     const { textMarkRows } = await import("../../src/cli/ui/ink-app/components/welcomeArt")
     const rows = textMarkRows()
     expect(rows).toHaveLength(4)
-    for (const row of rows) expect(row.map(([t]) => t).join("")).toHaveLength(12)
+    for (const row of rows) expect(row.map(([t]) => t).join("")).toHaveLength(8)
     const colors = new Set(rows.flat().flatMap(([, fg, bg]) => [fg, bg]).filter(Boolean))
-    expect([...colors].sort()).toEqual(["gizzi", "text"])
+    expect([...colors].sort()).toEqual([CORAL, "gizziEye", "gizziSand", "gizziVisor"].sort())
   })
 })
 
@@ -56,5 +56,15 @@ describe("gizzi pet sprite", () => {
   test("the beacon takes the pulse color", async () => {
     const { gizziPetRows } = await import("../../src/cli/ui/ink-app/pet/gizziSprite")
     expect(gizziPetRows("idle", "gizziShimmer")[0]!.some(([, fg]) => fg === "gizziShimmer")).toBe(true)
+  })
+})
+
+describe("256-color downgrade", () => {
+  test("keeps the Gizzi colors warm instead of rounding them to pink or olive", async () => {
+    const { nearestAnsi256 } = await import("../../src/cli/ui/ink-app/ink/colorize")
+    expect(nearestAnsi256(212, 176, 140)).toBe(180) // sand -> (215,175,135)
+    expect(nearestAnsi256(181, 151, 111)).toBe(137) // face panel -> (175,135,95)
+    expect(nearestAnsi256(217, 119, 87)).toBe(173) // coral -> (215,135,95)
+    expect(nearestAnsi256(17, 19, 24)).toBe(233) // eye -> gray ramp
   })
 })

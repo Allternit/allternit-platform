@@ -54,7 +54,6 @@ test/commands/status-json.test.ts
 test/commands/status.test.ts
 test/commands/think.test.ts
 test/commands/usage.test.ts
-test/components/FooterStatusBadges.test.ts
 test/components/RotatingTip.test.ts
 test/components/ThinkingSpinner.test.ts
 test/components/ToolUseCard.test.ts

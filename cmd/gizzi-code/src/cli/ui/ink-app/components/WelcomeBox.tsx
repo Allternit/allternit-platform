@@ -5,8 +5,9 @@
  * three rows tall on the left; beside it, the GIZZI CODE wordmark
  * (Brand/Gizzi/wordmark) one text row tall with the version, then the model
  * and the working directory. Elsewhere (Apple Terminal, tmux) the mark is
- * drawn in half blocks, four rows tall, and the name is set as type: bold
- * caps, coral G for the wordmark's core. No box, no animation.
+ * the mascot in its own colors, drawn in quadrant blocks eight columns by
+ * four rows, and the name is set as type: bold caps, coral G for the
+ * wordmark's core. No box, no animation.
  */
 import * as React from 'react'
 import { Box, Text } from '../ink'

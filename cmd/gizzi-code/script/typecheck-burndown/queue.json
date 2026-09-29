@@ -1,13 +1,13 @@
 {
   "version": 1,
   "generatedFrom": "edcf804f88519fc628fe2e524ff13b26e3636326",
-  "batchCount": 110,
+  "batchCount": 111,
   "stats": {
-    "totalNocheck": 588,
+    "totalNocheck": 586,
     "excludedCompilerArtifacts": 0,
     "excludedVendored": 93,
-    "totalQueueFiles": 475,
-    "totalQueueLoc": 198791,
+    "totalQueueFiles": 473,
+    "totalQueueLoc": 198673,
     "quarantined": 20,
     "quarantinedByReason": {
       "suspect-dead-shim": 18,
@@ -1155,7 +1155,6 @@
         "src/cli/ui/ink-app/state/onChangeAppState.ts",
         "src/cli/ui/ink-app/utils/plugins/pluginAutoupdate.ts",
         "src/cli/ui/ink-app/hooks/useTeammateViewAutoExit.ts",
-        "src/cli/ui/ink-app/hooks/useSessionMetrics.ts",
         "src/cli/ui/ink-app/utils/hooks/hooksConfigManager.ts",
         "src/cli/ui/ink-app/utils/swarm/teammateInit.ts",
         "src/shared/utils/sessionFileAccessHooks.ts",
@@ -1190,7 +1189,7 @@
         "src/cli/ui/ink-app/components/messages/UserMessage.tsx",
         "src/cli/ui/ink-app/components/wizard/WizardNavigationFooter.tsx"
       ],
-      "loc": 7012,
+      "loc": 6924,
       "twins": [],
       "state": "NEW"
     },
@@ -1350,13 +1349,12 @@
         "src/cli/ui/ink-app/components/permissions/ExitPlanModePermissionRequest/ExitPlanModePermissionRequest.tsx",
         "src/cli/ui/ink-app/hooks/useManagePlugins.ts",
         "src/cli/ui/ink-app/hooks/useSwarmInitialization.ts",
-        "src/cli/ui/ink-app/components/PromptInput/FooterStatusBadges.tsx",
         "src/cli/ui/ink-app/hooks/useInboxPoller.ts",
         "src/cli/ui/ink-app/components/permissions/FilePermissionDialog/usePermissionHandler.ts",
         "src/shared/utils/diff.ts",
         "src/shared/utils/secureStorage/macOsKeychainStorage.ts"
       ],
-      "loc": 7162,
+      "loc": 7132,
       "twins": [],
       "state": "NEW"
     },
@@ -1658,6 +1656,16 @@
       "burnedFiles": 4,
       "burnedLoc": 2472,
       "note": "gizzi-flags-fork-hygiene (2026-09-28): removed @ts-nocheck from constants/prompts.ts, components/Spinner.tsx, shared/utils/model/modelOptions.ts (from b0428/b0405/b0437) and the quarantined ink-app utils/model/modelOptions.ts (its dead-shim import was a wrong relative path to runtime/providers/discovery, now fixed). Fixed the undefined names that kept them nocheck (getAntModels/getAntModelOverrideConfig imports, dead ant-only TTFT block). tsc exit 0."
+    },
+    {
+      "id": "b445",
+      "files": [],
+      "loc": 0,
+      "twins": [],
+      "state": "DONE",
+      "burnedFiles": 2,
+      "burnedLoc": 118,
+      "note": "gizzi-tui-proportions (2026-09-29): deleted components/PromptInput/FooterStatusBadges.tsx (from b0416) and its only user hooks/useSessionMetrics.ts (from b0431). The prompt footer drops the gizzi-only cwd/model/context block to match Claude Code's single mode line."
     }
   ],
   "quarantined": [

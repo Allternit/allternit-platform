@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- The screen is laid out like Claude Code's: the prompt sits at the bottom
+  of the window, and the footer is one line (the mode). The extra
+  cwd/model/context block in the footer is gone; the header already shows
+  the model and folder. Set `GIZZI_CODE_NO_FLICKER=0` for the old inline
+  layout.
+- In terminals without inline images (Apple Terminal, tmux), the header
+  Gizzi is the mascot in its own colors, eight columns by four rows: sand
+  body, darker face panel, eyes, coral beacon and nose, hands, four legs.
+
+### Fixed
+- In 256-color terminals such as Apple Terminal, warm colors no longer turn
+  pink: truecolor values now map to the nearest palette color.
+
 ## 2.1.6 (2026-09-29)
 
 `gizzi login` on a Mac where Desktop is already signed in, and Claude CLI
