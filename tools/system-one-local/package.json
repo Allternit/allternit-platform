@@ -1,0 +1,22 @@
+{
+  "name": "allternit-system-one",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local, owned System One-compatible typed micro-decision server (noul / choice / score) backed by a local model's token logprobs.",
+  "type": "module",
+  "main": "src/index.ts",
+  "bin": {
+    "system-one": "src/cli.ts"
+  },
+  "scripts": {
+    "serve": "bun src/cli.ts serve",
+    "test": "bun test test/",
+    "typecheck": "bunx tsc --noEmit -p tsconfig.json",
+    "smoke": "bun scripts/smoke.ts",
+    "dryrun-summary": "bun scripts/dryrun-summary.ts"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "license": "MIT"
+}
