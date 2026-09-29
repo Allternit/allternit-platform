@@ -116,36 +116,60 @@ export interface FabricCapabilityEntry {
 }
 
 const CAPABILITIES_TTL_MS = 60_000
-const CAPABILITIES_FAILURE_TTL_MS = 15_000
-let capabilitiesCache: { at: number; ttl: number; entries: FabricCapabilityEntry[] } | undefined
+const CAPABILITIES_FAILURE_TTL_MS = 60_000
+const CAPABILITIES_FAILURE_TTL_MAX_MS = 5 * 60_000
+let capabilitiesCache:
+  | { at: number; ttl: number; entries: FabricCapabilityEntry[]; failureTtl?: number }
+  | undefined
+let capabilitiesInflight: Promise<FabricCapabilityEntry[]> | undefined
 
 /**
- * GET /v1/capabilities (cached briefly). Empty when the fabric is not set
- * up or the gateway is unreachable — callers then offer nothing.
+ * GET /v1/capabilities, cached. Tool listing runs on every turn in every
+ * session, so it never waits on a slow or unreachable gateway once anything
+ * is cached: a stale list is served while one refresh runs behind it. A
+ * failed refresh keeps the last good list and backs off (1 min, doubling to
+ * 5 min). Empty when the fabric is not set up or has never answered.
  */
 export async function fabricCapabilities(opts: { fresh?: boolean } = {}): Promise<FabricCapabilityEntry[]> {
   if (!fabricConfigured()) return []
-  const now = Date.now()
-  if (!opts.fresh && capabilitiesCache && now - capabilitiesCache.at < capabilitiesCache.ttl) {
-    return capabilitiesCache.entries
+  const cached = capabilitiesCache
+  if (!opts.fresh && cached) {
+    if (Date.now() - cached.at >= cached.ttl) void refreshFabricCapabilities()
+    return cached.entries
   }
-  try {
-    const entries = await fabricJson<FabricCapabilityEntry[]>("GET", "/v1/capabilities", {
-      signal: AbortSignal.timeout(5000),
-    })
-    const list = Array.isArray(entries) ? entries : []
-    capabilitiesCache = { at: now, ttl: CAPABILITIES_TTL_MS, entries: list }
-    return list
-  } catch (error) {
-    log.info("capabilities unavailable", { error: error instanceof Error ? error.message : String(error) })
-    capabilitiesCache = { at: now, ttl: CAPABILITIES_FAILURE_TTL_MS, entries: [] }
-    return []
-  }
+  return refreshFabricCapabilities()
+}
+
+function refreshFabricCapabilities(): Promise<FabricCapabilityEntry[]> {
+  capabilitiesInflight ??= (async () => {
+    const now = Date.now()
+    try {
+      const entries = await fabricJson<FabricCapabilityEntry[]>("GET", "/v1/capabilities", {
+        signal: AbortSignal.timeout(5000),
+      })
+      const list = Array.isArray(entries) ? entries : []
+      capabilitiesCache = { at: now, ttl: CAPABILITIES_TTL_MS, entries: list }
+      return list
+    } catch (error) {
+      log.info("capabilities unavailable", { error: error instanceof Error ? error.message : String(error) })
+      const failureTtl = Math.min(
+        (capabilitiesCache?.failureTtl ?? CAPABILITIES_FAILURE_TTL_MS / 2) * 2,
+        CAPABILITIES_FAILURE_TTL_MAX_MS,
+      )
+      const entries = capabilitiesCache?.entries ?? []
+      capabilitiesCache = { at: now, ttl: failureTtl, entries, failureTtl }
+      return entries
+    } finally {
+      capabilitiesInflight = undefined
+    }
+  })()
+  return capabilitiesInflight
 }
 
 /** Test hook. */
 export function resetFabricCapabilitiesCache() {
   capabilitiesCache = undefined
+  capabilitiesInflight = undefined
 }
 
 /**
