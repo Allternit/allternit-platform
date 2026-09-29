@@ -188,7 +188,7 @@ export namespace Session {
           until: z.number(),
           limit: z.string(),
           providerID: z.string().optional(),
-          reason: z.enum(["quota", "rate_limit", "limit_hit", "budget"]),
+          reason: z.enum(["quota", "rate_limit", "limit_hit", "budget", "budget-check-failed"]),
           at: z.number(),
           /** The model with the most limit left, to continue on (P3.17). */
           suggest: z

@@ -37,7 +37,6 @@ test/session/trace.test.ts
 test/skill/builtin.test.ts
 test/skill/catalog-precedence.test.ts
 test/skill/skill.test.ts
-test/tool/bash.test.ts
 test/tool/read.test.ts
 test/tool/registry.test.ts
 test/tool/skill.test.ts

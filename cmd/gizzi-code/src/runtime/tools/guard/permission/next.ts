@@ -12,6 +12,7 @@ import { Wildcard } from "@/shared/util/wildcard"
 import os from "os"
 import z from "zod/v4"
 import { HookDispatcher } from "@/runtime/hooks/dispatcher"
+import { Catastrophic } from "@/runtime/tools/guard/permission/catastrophic"
 
 export namespace PermissionNext {
   const log = Log.create({ service: "permission" })
@@ -197,8 +198,11 @@ export namespace PermissionNext {
           mode: modeOverride ?? (await getMode(request.sessionID)),
         })
         log.info("evaluated", { permission: request.permission, pattern, action: rule })
-        if (rule.action === "deny")
+        if (rule.action === "deny") {
+          const floor = Catastrophic.applies(request.permission) ? Catastrophic.check(pattern) : undefined
+          if (floor) throw new FloorError(floor.reason, pattern)
           throw new DeniedError(ruleset.filter((r) => Wildcard.match(request.permission, r.permission)))
+        }
         if (rule.action === "ask") {
           const id = input.id ?? Identifier.ascending("permission")
           await HookDispatcher.emit({
@@ -368,18 +372,39 @@ export namespace PermissionNext {
     skipPermissions?: boolean
   }
 
+  /**
+   * The hard floor (catastrophic.ts): a shell command no mode can approve.
+   * Checked before everything else except ALWAYS_ASK classes (which never
+   * allow anyway), so bypassPermissions / GIZZI_SKIP_PERMISSIONS, yolo, auto,
+   * session approvals and configured allows all stop here.
+   */
+  function floorRule(permission: string, pattern: string): Rule | undefined {
+    if (!Catastrophic.applies(permission)) return
+    if (!Catastrophic.check(pattern)) return
+    return { action: "deny", permission, pattern, source: "default" }
+  }
+
   /** Ordered runtime policy composition.
    *
    * Rules inside the configured ruleset retain Allternit's documented
-   * last-match behavior. Cross-policy precedence is explicit: hard host/plan
-   * modes, configured denial, unattended-mode restrictions, session approval,
-   * configured ask/allow, mode conveniences, then fallback.
+   * last-match behavior. Cross-policy precedence is explicit: the catastrophic
+   * floor, configured denial (bypass does not override it), hard host/plan
+   * modes, unattended-mode restrictions, session approval, configured
+   * ask/allow, mode conveniences, then fallback.
    */
   export function evaluatePolicy(permission: string, pattern: string, input: PolicyInput): Rule {
     const mode = input.mode ?? Flag.GIZZI_PERMISSION_MODE
     const skipPermissions = input.skipPermissions ?? Flag.GIZZI_SKIP_PERMISSIONS
 
     if (ALWAYS_ASK.has(permission)) return alwaysAsk(permission, pattern, input.configured, mode)
+
+    const floor = floorRule(permission, pattern)
+    if (floor) return floor
+
+    // A configured deny is the user's explicit "never": bypass skips asks,
+    // it does not override denials.
+    const configured = lastMatch(permission, pattern, input.configured)
+    if (configured?.action === "deny") return configured
 
     if (skipPermissions || mode === "bypassPermissions") {
       return { action: "allow", permission, pattern: "*" }
@@ -388,9 +413,6 @@ export namespace PermissionNext {
     if (mode === "plan" && !READONLY_PERMISSIONS.has(permission)) {
       return { action: "deny", permission, pattern: "*" }
     }
-
-    const configured = lastMatch(permission, pattern, input.configured)
-    if (configured?.action === "deny") return configured
 
     if (mode === "auto" && AUTO_QUESTION_PERMISSIONS.has(permission.toLowerCase())) {
       return { action: "deny", permission, pattern: "*" }
@@ -450,8 +472,13 @@ export namespace PermissionNext {
 
     if (ALWAYS_ASK.has(permission)) return alwaysAsk(permission, pattern, merge(...rulesets), mode)
 
-    // bypassPermissions: skip all permission checks entirely
+    const floor = floorRule(permission, pattern)
+    if (floor) return floor
+
+    // bypassPermissions skips asks, but never the floor or a configured deny.
     if (Flag.GIZZI_SKIP_PERMISSIONS || mode === "bypassPermissions") {
+      const denied = lastMatch(permission, pattern, merge(...rulesets))
+      if (denied?.action === "deny") return denied
       return { action: "allow", permission, pattern: "*" }
     }
 
@@ -531,6 +558,20 @@ export namespace PermissionNext {
       super(
         `The user has specified a rule which prevents you from using this specific tool call. Here are some of the relevant rules ${JSON.stringify(ruleset)}`,
       )
+    }
+  }
+
+  /** Refused by the catastrophic floor: no mode or rule can approve it. */
+  export class FloorError extends DeniedError {
+    constructor(
+      public readonly reason: string,
+      public readonly command: string,
+    ) {
+      super([{ permission: "bash", pattern: command, action: "deny", source: "default" }])
+      this.message =
+        `This command is blocked by the gizzi safety floor (${reason}) and cannot be approved in any permission ` +
+        `mode, including bypassPermissions. Do not retry it or work around it; if the user really wants this, ` +
+        `they must run it themselves.`
     }
   }
 
