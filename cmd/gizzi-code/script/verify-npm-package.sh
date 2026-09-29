@@ -73,8 +73,9 @@ try_curl_tarball() {
   return 1
 }
 
-# Exponential backoff: 5s, 10s, 20s, 40s, then 60s cap. 15 attempts ~ 12 min.
-for attempt in $(seq 1 15); do
+# Exponential backoff: 5s, 10s, 20s, 40s, then 60s cap. 30 attempts ~ 27 min
+# (2.1.7's tarball took about 16 min to become fetchable).
+for attempt in $(seq 1 30); do
   if TGZ=$(try_npm_pack "$TMP/reg"); then
     log "Downloaded via npm pack (attempt $attempt): $TGZ"
     break
@@ -116,6 +117,16 @@ while IFS= read -r p; do
     exit 1
   fi
 done <<<"$BIN_PATHS"
+
+# Every dependency must resolve from the registry. `workspace:*` (and file:
+# or link:) specs from the monorepo made `npm install -g` fail for every
+# version up to 2.1.7.
+LOCAL_SPECS=$(tar -xzf "$TGZ" -O package/package.json \
+  | python3 -c 'import json,sys; p=json.load(sys.stdin); print("\n".join(f"{k}@{v}" for f in ("dependencies","optionalDependencies","peerDependencies") for k,v in p.get(f,{}).items() if str(v).startswith(("workspace:","file:","link:"))))')
+if [ -n "$LOCAL_SPECS" ]; then
+  echo "::error::Published $PKG@$VERSION has dependencies no registry can resolve, so npm install fails: $(tr '\n' ' ' <<<"$LOCAL_SPECS")"
+  exit 1
+fi
 
 OPTS=$(tar -xzf "$TGZ" -O package/package.json \
   | python3 -c 'import json,sys; d=json.load(sys.stdin).get("optionalDependencies",{}); print("\n".join(f"{k} {v}" for k,v in d.items()))')
