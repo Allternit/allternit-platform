@@ -2182,9 +2182,37 @@ fn extract_gizzi_request_id(content: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+/// What an approval row asks for, as far as Subscription Fabric (D16) cares.
+#[derive(Debug, PartialEq)]
+enum SubscriptionApproval {
+    /// Not a subscription approval.
+    None,
+    /// A gizzi `subscription` permission ask (a tool-belt call waiting on
+    /// the person): approving it mints the human action the tool submits with.
+    ToolAsk,
+    /// A task an agent prepared through the subscription MCP server:
+    /// approving it runs the task.
+    Prepared,
+}
+
+fn subscription_approval(content: &str) -> SubscriptionApproval {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
+        return SubscriptionApproval::None;
+    };
+    if value.get("kind").and_then(|v| v.as_str()) == Some(crate::subscription_mcp::PREPARED_KIND) {
+        return SubscriptionApproval::Prepared;
+    }
+    if value.get("requestId").and_then(|v| v.as_str()).is_some()
+        && value.pointer("/details/actionType").and_then(|v| v.as_str()) == Some("subscription")
+    {
+        return SubscriptionApproval::ToolAsk;
+    }
+    SubscriptionApproval::None
+}
+
 async fn decide_approval(
     State(state): State<Arc<AppState>>,
-    Extension(_user): Extension<AuthUser>,
+    Extension(auth_user): Extension<AuthUser>,
     headers: HeaderMap,
     body: Result<Json<ApprovalDecisionBody>, axum::extract::rejection::JsonRejection>,
 ) -> impl IntoResponse {
@@ -2244,6 +2272,7 @@ async fn decide_approval(
     let user_id = user.user_id;
     let id_for_response = approval_id.clone();
     let label_for_response = decision_label.to_string();
+    let approved = matches!(outcome, ApprovalOutcome::Approved);
 
     let result = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
@@ -2288,14 +2317,37 @@ async fn decide_approval(
             // (unknown/expired request id) — surface that to the caller; a
             // transient transport failure only warns so a briefly unreachable
             // runtime never blocks the local decision.
+            let mut execution = None;
             if let (Some(reply), Some((content, dismissed))) = (gizzi_reply, prior) {
+                let subscription = subscription_approval(&content);
+                if dismissed == 0 && approved && subscription == SubscriptionApproval::Prepared {
+                    // D16: the person approving an agent-prepared task is the
+                    // human act; it runs now (once), through the forwarder.
+                    execution = Some(
+                        crate::subscription_mcp::execute_prepared(&state, &auth_user, &id_for_response).await,
+                    );
+                }
                 if dismissed == 0 {
                     if let Some(request_id) = extract_gizzi_request_id(&content) {
+                        let mut relay = json!({ "reply": reply });
+                        // D16: a `subscription` ask carries back the human
+                        // action minted here, where the person approved it —
+                        // the only place a tool-belt task gets one.
+                        if approved && subscription == SubscriptionApproval::ToolAsk {
+                            match crate::subscription_routes::mint_human_action(
+                                &state.db,
+                                &auth_user.user_id,
+                                "approval.confirm",
+                            ) {
+                                Ok((action_id, _)) => relay["humanAction"] = json!(action_id),
+                                Err(e) => warn!(error = %e, "could not mint the subscription human action"),
+                            }
+                        }
                         let gizzi = gizzi_base();
                         let client = gizzi_client(&headers);
                         match client
                             .post(format!("{}/permission/{}/reply", gizzi, request_id))
-                            .json(&json!({ "reply": reply }))
+                            .json(&relay)
                             .send()
                             .await
                         {
@@ -2329,12 +2381,15 @@ async fn decide_approval(
                     }
                 }
             }
-            Json(json!({
+            let mut body = json!({
                 "ok": true,
                 "id": id_for_response,
                 "decision": label_for_response,
-            }))
-            .into_response()
+            });
+            if let Some(execution) = execution {
+                body["execution"] = execution;
+            }
+            Json(body).into_response()
         }
         Ok(Err(e)) => {
             warn!("DB error deciding approval: {}", e);
@@ -2953,6 +3008,24 @@ mod tests {
         let cross = apply_approval_decision(&conn, "other", &ApprovalOutcome::Approved, "user-a")
             .expect("cross update");
         assert_eq!(cross, 0, "fallback path must keep user scoping");
+    }
+
+    #[test]
+    fn subscription_approvals_are_recognised_by_content() {
+        let tool_ask = serde_json::json!({
+            "actionId": "per_1", "requestId": "per_1",
+            "details": {"actionType": "subscription"}
+        })
+        .to_string();
+        assert_eq!(subscription_approval(&tool_ask), SubscriptionApproval::ToolAsk);
+        let prepared = serde_json::json!({"kind": "subscription_task", "actionId": "subsprep_1"}).to_string();
+        assert_eq!(subscription_approval(&prepared), SubscriptionApproval::Prepared);
+        // An ordinary tool ask, a gate row without a runtime request, junk.
+        let bash = serde_json::json!({"requestId": "per_2", "details": {"actionType": "bash"}}).to_string();
+        assert_eq!(subscription_approval(&bash), SubscriptionApproval::None);
+        let no_request = serde_json::json!({"details": {"actionType": "subscription"}}).to_string();
+        assert_eq!(subscription_approval(&no_request), SubscriptionApproval::None);
+        assert_eq!(subscription_approval("not json"), SubscriptionApproval::None);
     }
 
     #[test]

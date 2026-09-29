@@ -19,20 +19,10 @@ import type { LanguageModelV2, LanguageModelV2StreamPart } from "@ai-sdk/provide
 import { Log } from "@/shared/util/log"
 import { Token } from "@/shared/util/token"
 import { resolveTaskSessionID } from "@/runtime/session/stream-context"
-import { FabricError, HUMAN_ACTION_HEADER, describeError, fabricFetch, fabricJson, readSse } from "./client"
+import { FabricError, HUMAN_ACTION_HEADER, describeError } from "./client"
+import { cancelFabricTask, followFabricTask, submitFabricTask, type FabricTask, type FabricTaskBody } from "./tasks"
 
 const log = Log.create({ service: "fabric-lm" })
-
-const TERMINAL = new Set(["completed", "partial", "failed", "needs_user", "cancelled"])
-const MAX_RECONNECTS = 20
-
-interface FabricTask {
-  task_id: string
-  status: string
-  status_detail: string | null
-  result: { text?: string; artifact_ids: string[] } | null
-  error: { class?: string; detail?: string; user_action?: string } | null
-}
 
 export class SubscriptionFabricLanguageModel implements LanguageModelV2 {
   readonly specificationVersion = "v2" as const
@@ -90,9 +80,7 @@ export class SubscriptionFabricLanguageModel implements LanguageModelV2 {
         let taskID: string | undefined
         const onAbort = () => {
           if (!taskID) return
-          fabricFetch("POST", `/v1/tasks/${taskID}/cancel`, { body: {} }).catch((error) =>
-            log.warn("cancel failed", { taskID, error: String(error) }),
-          )
+          void cancelFabricTask(taskID)
         }
         abortSignal?.addEventListener("abort", onAbort, { once: true })
 
@@ -140,7 +128,7 @@ export class SubscriptionFabricLanguageModel implements LanguageModelV2 {
           taskID = task.task_id
           if (abortSignal?.aborted) onAbort()
 
-          const outcome = await follow(task.task_id, abortSignal, (delta) => text(delta))
+          const outcome = await followFabricTask(task.task_id, abortSignal, { onText: (delta) => text(delta) })
           if (outcome.status === "completed" || outcome.status === "partial") {
             const full = outcome.result?.text ?? ""
             if (full.startsWith(streamed)) text(full.slice(streamed.length))
@@ -187,7 +175,7 @@ async function submit(input: {
 }): Promise<FabricTask> {
   // One idempotency key per send: the continue→create fallback reuses the
   // same human action (allternit-api allows a retry of the same submission).
-  const body = (capability: "chat.create" | "chat.continue") => ({
+  const body = (capability: "chat.create" | "chat.continue"): FabricTaskBody => ({
     capability,
     prompt: input.prompt,
     thread_id: input.sessionID,
@@ -197,11 +185,7 @@ async function submit(input: {
     idempotency_key: `gizzi-${input.sessionID}-${input.requestID}`,
   })
   const send = (capability: "chat.create" | "chat.continue") =>
-    fabricJson<FabricTask>("POST", "/v1/tasks", {
-      body: body(capability),
-      headers: { [HUMAN_ACTION_HEADER]: input.humanAction },
-      signal: input.signal,
-    })
+    submitFabricTask(body(capability), input.humanAction, input.signal)
   if (!input.continuing) return send("chat.create")
   try {
     return await send("chat.continue")
@@ -211,49 +195,6 @@ async function submit(input: {
     if (error instanceof FabricError && error.code === "thread_not_mapped") return send("chat.create")
     throw error
   }
-}
-
-async function follow(
-  taskID: string,
-  signal: AbortSignal | undefined,
-  onText: (delta: string) => void,
-): Promise<FabricTask> {
-  for (let attempt = 0; attempt <= MAX_RECONNECTS; attempt++) {
-    try {
-      const res = await fabricFetch("GET", `/v1/tasks/${taskID}/events`, {
-        accept: "text/event-stream",
-        signal,
-      })
-      if (!res.ok || !res.body) {
-        const body = await res.text().catch(() => "")
-        throw new FabricError(`event stream failed (${res.status}) ${body.slice(0, 200)}`, res.status)
-      }
-      for await (const msg of readSse(res.body, signal)) {
-        let payload: any
-        try {
-          payload = JSON.parse(msg.data)
-        } catch {
-          continue
-        }
-        if (msg.event === "reply" && payload?.event?.type === "reply.text.delta") {
-          onText(String(payload.event.delta ?? ""))
-          continue
-        }
-        if (msg.event === "task.status" && TERMINAL.has(payload?.status)) {
-          return await fabricJson<FabricTask>("GET", `/v1/tasks/${taskID}`)
-        }
-      }
-      if (signal?.aborted) throw new DOMException("aborted", "AbortError")
-    } catch (error) {
-      if (signal?.aborted) throw error
-      log.warn("event stream dropped", { taskID, attempt, error: error instanceof Error ? error.message : String(error) })
-    }
-    // The stream ended without a terminal status: check, then reconnect.
-    const task = await fabricJson<FabricTask>("GET", `/v1/tasks/${taskID}`)
-    if (TERMINAL.has(task.status)) return task
-    await new Promise((r) => setTimeout(r, Math.min(1000 * 2 ** attempt, 10_000)))
-  }
-  throw new Error("Lost the connection to the subscription task.")
 }
 
 function taskFailureMessage(task: FabricTask, provider: string): string {

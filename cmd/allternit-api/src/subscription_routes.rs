@@ -45,9 +45,9 @@ const GATEWAY_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 const GATEWAY_BODY_LIMIT: usize = 10 * 1024 * 1024;
 pub const HUMAN_ACTION_HEADER: &str = "x-allternit-human-action";
 
-struct ProviderDisclosure {
-    provider: &'static str,
-    name: &'static str,
+pub(crate) struct ProviderDisclosure {
+    pub(crate) provider: &'static str,
+    pub(crate) name: &'static str,
     company: &'static str,
 }
 
@@ -57,7 +57,7 @@ const PROVIDERS: &[ProviderDisclosure] = &[
     ProviderDisclosure { provider: "kimi", name: "Kimi", company: "Moonshot AI" },
 ];
 
-fn provider_disclosure(provider: &str) -> Option<&'static ProviderDisclosure> {
+pub(crate) fn provider_disclosure(provider: &str) -> Option<&'static ProviderDisclosure> {
     PROVIDERS.iter().find(|p| p.provider == provider)
 }
 
@@ -86,6 +86,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/subscriptions/disclosure/ack", post(ack_disclosure))
         .route("/subscriptions/human-actions", post(post_human_action))
         .route("/subscriptions/gateway/*path", any(gateway_forward))
+        .route("/subscriptions/mcp", post(crate::subscription_mcp::handle_rpc))
 }
 
 // ── Storage ──────────────────────────────────────────────────────────────────
@@ -112,7 +113,7 @@ fn load_binding(db: &crate::db::DbHandle, user_id: &str) -> rusqlite::Result<Opt
     }))
 }
 
-fn acknowledged_version(db: &crate::db::DbHandle, user_id: &str, provider: &str) -> rusqlite::Result<Option<i64>> {
+pub(crate) fn acknowledged_version(db: &crate::db::DbHandle, user_id: &str, provider: &str) -> rusqlite::Result<Option<i64>> {
     db.connect()?
         .query_row(
             "SELECT MAX(version) FROM subs_disclosure_acks WHERE user_id = ?1 AND provider = ?2",
@@ -498,6 +499,22 @@ async fn gateway_forward(
     uri: Uri,
     body: Bytes,
 ) -> Response {
+    forward(&state, &user, &path, method, &headers, uri.query(), body).await
+}
+
+/// The forwarder core, also used in-process (the subscription MCP server and
+/// the approval card that runs a prepared task). `path` is the gateway path
+/// (`v1/...`); a `POST v1/tasks` is checked and stamped exactly as for HTTP
+/// callers.
+pub(crate) async fn forward(
+    state: &Arc<AppState>,
+    user: &AuthUser,
+    path: &str,
+    method: Method,
+    headers: &HeaderMap,
+    query: Option<&str>,
+    body: Bytes,
+) -> Response {
     let path = path.trim_start_matches('/').to_string();
     if !path.starts_with("v1/") || path.split('/').any(|seg| seg == ".." || seg == ".") {
         return error_response(StatusCode::NOT_FOUND, "not a gateway route");
@@ -515,7 +532,7 @@ async fn gateway_forward(
         }
         Err(e) => return db_error(e),
     };
-    let computer = match fetch_computer(&state, &user, &binding.computer_id).await {
+    let computer = match fetch_computer(state, user, &binding.computer_id).await {
         Ok(Some(c)) => c,
         Ok(None) => return coded(StatusCode::CONFLICT, json!({"error": "sessions_computer_missing"})),
         Err(response) => return response,
@@ -535,13 +552,13 @@ async fn gateway_forward(
     }
 
     let response = crate::computer_ws::forward_to_guest(
-        &state,
+        state,
         &computer,
         binding.guest_port,
         &path,
-        uri.query(),
+        query,
         method.clone(),
-        &gateway_headers(&headers, &binding.token),
+        &gateway_headers(headers, &binding.token),
         body,
         GATEWAY_REQUEST_TIMEOUT,
     )

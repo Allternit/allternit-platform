@@ -738,7 +738,7 @@ const message = await createUserMessage(input)
             } satisfies MessageV2.ToolPart)
           },
           async ask(req) {
-            await PermissionNext.ask({
+            return await PermissionNext.ask({
               ...req,
               sessionID: sessionID,
               ruleset: PermissionNext.merge(taskAgent.permission, session.permission ?? []),
@@ -1226,7 +1226,7 @@ const message = await createUserMessage(input)
         }
       },
       async ask(req) {
-        await PermissionNext.ask({
+        return await PermissionNext.ask({
           ...req,
           sessionID: input.session.id,
           tool: { messageID: input.processor.message.id, callID: options.toolCallId },

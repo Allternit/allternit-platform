@@ -2,7 +2,8 @@ Make an image or a video for the user. The result is saved to the session's Outp
 
 Lanes:
 - native (available now): you write the image or video as code; the user's Allternit app renders it in a sandbox (a PNG, or an MP4 with optional sound), and the render comes back to you to check. Costs nothing and works with any model.
-- cloud / subscription / own_key: photoreal and model-generated images and footage (GPT Image, Higgsfield, Veo, connected subscriptions). Not available in this build yet. If the request needs photo-realistic output (real-looking people, places, products), say that plainly and ask the user in the chat how they'd like to proceed, e.g. a stylized native version instead.
+- subscription (images only): the user's connected subscription (e.g. ChatGPT) makes the image on their Sessions computer. Pass prompt (and optionally provider). The user confirms every image in the app before anything is sent, and it can take a minute or two. If the result says the lane is not available, nothing was sent: offer the native lane or ask the user.
+- cloud / own_key: photoreal and model-generated images and footage (GPT Image, Higgsfield, Veo). Not available in this build yet. If the request needs photo-realistic output (real-looking people, places, products) and the subscription lane is not available, say that plainly and ask the user in the chat how they'd like to proceed, e.g. a stylized native version instead.
 
 Native: pick the format for the job
 - svg: illustrations, icons, logos, diagrams, flat or geometric art, maps, charts. Set width/height and a viewBox on the root <svg>.
