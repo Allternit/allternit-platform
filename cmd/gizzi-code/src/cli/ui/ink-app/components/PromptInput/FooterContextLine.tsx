@@ -1,4 +1,6 @@
 import * as React from 'react'
+import { useSyncExternalStore } from 'react'
+import { getActiveBotChat, onActiveBotChatChange } from '../../bootstrap/state'
 import { Box, Text } from '../../ink'
 import { useMainLoopModel } from '../../hooks/useMainLoopModel'
 import { useAppState } from '../../state/AppState'
@@ -13,9 +15,12 @@ import { getCurrentUsage } from '../../utils/tokens.js'
  * Second footer line, laid out like Kimi Code's: the model and effort on the
  * left, context-window use on the right ("context: 12% (24k/200k)"). It is
  * real from the start: 0% before the first reply, then the last reply's
- * input tokens.
+ * input tokens. In a /bots chat the turns run in the bot's platform session,
+ * so the line names the bot and its model instead; this terminal's effort and
+ * context don't apply there.
  */
 export function FooterContextLine({ messages }: { messages: Message[] }): React.ReactNode {
+  const botChat = useSyncExternalStore(onActiveBotChatChange, getActiveBotChat)
   const model = useMainLoopModel()
   const effortValue = useAppState(s => s.effortValue)
   const total = getContextWindowForModel(model)
@@ -25,6 +30,16 @@ export function FooterContextLine({ messages }: { messages: Message[] }): React.
     : 0
   const percent = calculateContextPercentages(usage, total).used ?? 0
   const effort = modelSupportsEffort(model) ? getDisplayedEffortLevel(model, effortValue) : null
+
+  if (botChat) {
+    return (
+      <Box flexGrow={1}>
+        <Text dimColor={true} wrap="truncate-end">
+          bot: {botChat.botName} · {botChat.model || 'platform default model'}
+        </Text>
+      </Box>
+    )
+  }
 
   return (
     <Box flexGrow={1} justifyContent="space-between" gap={1}>

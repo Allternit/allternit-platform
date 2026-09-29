@@ -155,6 +155,9 @@ export interface BotChatUpdate {
  */
 export class BotChatTracker {
   private readonly seen = new Set<string>()
+  /** Messages already shown part by part (from the feed) or whole (a reply without parts). */
+  private readonly partMessages = new Set<string>()
+  private readonly wholeMessages = new Set<string>()
   private readonly textParts = new Set<string>()
   private readonly streaming = new Map<string, string>()
   /** Text this terminal just sent; its echo from the feed is not shown twice. */
@@ -185,11 +188,19 @@ export class BotChatTracker {
     return this.fresh(items)
   }
 
-  private fresh(items: BotChatItem[]): BotChatItem[] {
+  private fresh(items: BotChatItem[], messageID?: string): BotChatItem[] {
     const out: BotChatItem[] = []
     for (const item of items) {
       if (this.seen.has(item.key)) continue
+      // One reply can reach the view twice: part by part from the feed (keyed
+      // by part id) and whole from the turn's reply (keyed `msg:<id>` when it
+      // carries no parts). Whichever lands first wins.
+      const whole = item.key.startsWith("msg:") ? item.key.slice(4) : undefined
+      if (whole && item.kind === "assistant" && this.partMessages.has(whole)) continue
+      if (messageID && this.wholeMessages.has(messageID)) continue
       this.seen.add(item.key)
+      if (whole && item.kind === "assistant") this.wholeMessages.add(whole)
+      if (messageID) this.partMessages.add(messageID)
       if (item.kind === "rip" && this.skipSeedRip) {
         this.skipSeedRip = false
         continue
@@ -227,11 +238,11 @@ export class BotChatTracker {
           }
           this.streaming.delete(part.id)
           const text = visibleText(part)
-          const commit = text === null ? [] : this.fresh([{ kind: "assistant", key: part.id, text }])
+          const commit = text === null ? [] : this.fresh([{ kind: "assistant", key: part.id, text }], part.messageID)
           return { commit, streamingText: this.preview() }
         }
         const tool = toolItem(part)
-        return { commit: tool ? this.fresh([tool]) : [] }
+        return { commit: tool ? this.fresh([tool], part.messageID) : [] }
       }
       case "part_delta": {
         const id = event.part_id

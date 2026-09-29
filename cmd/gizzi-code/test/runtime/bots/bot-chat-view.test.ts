@@ -102,6 +102,19 @@ describe("BotChatTracker", () => {
       ]),
     ).toEqual([{ kind: "assistant", key: "p2", text: "missed" }])
   })
+
+  test("a reply is shown once whether its parts or the whole message lands first", () => {
+    // Feed parts first, then the turn's reply without parts (keyed msg:m1).
+    const a = new BotChatTracker("s1")
+    expect(a.handle({ type: "part_updated", session_id: "s1", part: text("p1", "ok") }).commit).toHaveLength(1)
+    expect(a.commitItems([{ kind: "assistant", key: "msg:m1", text: "ok" }])).toEqual([])
+    // The whole reply first, then its parts from the feed.
+    const b = new BotChatTracker("s1")
+    expect(b.commitItems([{ kind: "assistant", key: "msg:m1", text: "ok" }])).toHaveLength(1)
+    expect(b.handle({ type: "part_updated", session_id: "s1", part: text("p1", "ok") }).commit).toEqual([])
+    // A different message still commits.
+    expect(b.handle({ type: "part_updated", session_id: "s1", part: { ...text("p2", "next"), messageID: "m2" } }).commit).toHaveLength(1)
+  })
 })
 
 describe("parseSSE", () => {
