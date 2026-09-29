@@ -38,8 +38,8 @@ export type {
 } from "./manifest";
 
 // §S3 — accounts and session health
-export { accountSchema, sessionHealthSchema } from "./account";
-export type { Account, SessionHealth } from "./account";
+export { accountSchema, accountUsageSchema, sessionHealthSchema } from "./account";
+export type { Account, AccountUsage, SessionHealth } from "./account";
 
 // §S3 — quota pools, signals, entitlements
 export { entitlementSchema, quotaPoolSchema, quotaSignalSchema } from "./quota";
@@ -131,5 +131,6 @@ export type {
   RedactingLogger,
   ResumeToken,
   SelectorResolver,
+  AccountObservation,
   SubscriptionAdapter,
 } from "./events";

@@ -25,6 +25,7 @@ import {
   createResolver,
   detectAuthState,
   fillComposer,
+  pageShape,
   stalledError,
   submit,
   threadIdFromUrl,
@@ -668,7 +669,7 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
       if (tracker.stalled(stallTimeoutS) && !imagesChangedRecently()) {
         yield {
           t: "error",
-          error: stalledError(ctx.attempt.submission_state, `no DOM change for ${stallTimeoutS}s`),
+          error: stalledError(ctx.attempt.submission_state, `no DOM change for ${stallTimeoutS}s${await pageShape(page)}`),
         };
         return;
       }

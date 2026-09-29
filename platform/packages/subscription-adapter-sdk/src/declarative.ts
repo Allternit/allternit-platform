@@ -269,7 +269,7 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
           t: "error",
           error: stalledError(
             ctx.attempt.submission_state,
-            `no DOM change for ${stallTimeoutS}s`
+            `no DOM change for ${stallTimeoutS}s${await pageShape(page)}`
           ),
         };
         return;
@@ -277,7 +277,10 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
       if (now() - startedAt >= timeoutMs) {
         yield {
           t: "error",
-          error: timeoutError(ctx.attempt.submission_state, `no completion within ${timeoutMs}ms`),
+          error: timeoutError(
+            ctx.attempt.submission_state,
+            `no completion within ${timeoutMs}ms${await pageShape(page)}`
+          ),
         };
         return;
       }
@@ -332,6 +335,43 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
 // Live reply sampling cadence: markdown extraction is a page round trip, so
 // it runs at most this often however fast the completion poll is.
 const LIVE_SAMPLE_MS = 300;
+
+/**
+ * Evidence for a stall or timeout: the conversation area's structure (tag,
+ * role and data-* attributes of message-like elements), never any text the
+ * person or the provider wrote. When a provider changes its markup this is
+ * what shows which selectors stopped matching, straight from the task error.
+ */
+export async function pageShape(page: Page, max = 1200): Promise<string> {
+  try {
+    const shape = await page.evaluate(() => {
+      const describe = (el: Element) =>
+        [
+          el.tagName.toLowerCase(),
+          ...Array.from(el.attributes)
+            .filter((a) => a.name === "role" || a.name.startsWith("data-"))
+            .map((a) => `${a.name}=${a.value.slice(0, 40)}`),
+        ].join(" ");
+      const root = document.querySelector("main") ?? document.body;
+      const seen = new Set<string>();
+      const out: string[] = [];
+      const candidates = root.querySelectorAll(
+        "[data-message-author-role],[data-conversation-role],[data-turn],[data-testid],[data-message-id],article,[role=article],[role=presentation]"
+      );
+      for (const el of Array.from(candidates)) {
+        const d = describe(el);
+        if (seen.has(d)) continue;
+        seen.add(d);
+        out.push(d);
+        if (out.length >= 40) break;
+      }
+      return out.join(" | ");
+    });
+    return shape ? `; page shape: ${shape.slice(0, max)}` : "";
+  } catch {
+    return "";
+  }
+}
 
 async function countReplies(resolver: SdkSelectorResolver): Promise<number> {
   const locator = await resolver.tryResolveLocator("response");

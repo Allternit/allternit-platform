@@ -6,6 +6,7 @@ import {
   awaitCompletion,
   createCompletionTracker,
   createResolver,
+  pageShape,
 } from "../src/index";
 import { fixturePage, launchBrowser, makeResolver } from "./helpers";
 
@@ -171,6 +172,19 @@ describe("stall watchdog input (D11)", () => {
     t += 91_000;
     expect(tracker.stalled(90)).toBe(true);
     expect(tracker.stalled(200)).toBe(false);
+    await page.close();
+  });
+
+  it("pageShape: stall evidence names the markup, never the text", async () => {
+    const page = await browser.newPage();
+    await page.setContent(
+      '<main><div data-message-author-role="user" data-message-id="m1">secret prompt</div>' +
+        '<article data-turn="assistant" role="article"><p>secret reply</p></article></main>'
+    );
+    const shape = await pageShape(page);
+    expect(shape).toContain("data-message-author-role=user");
+    expect(shape).toContain("data-turn=assistant");
+    expect(shape).not.toContain("secret");
     await page.close();
   });
 
