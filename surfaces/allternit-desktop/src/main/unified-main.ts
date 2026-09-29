@@ -24,7 +24,7 @@ import { installDesktopCompanion } from './desktop-companion.js';
 import { isPairingLink, pairingCodeFromUrl } from './pairing-link.js';
 import { approvePairing, describePairingRequest } from './pairing-approval.js';
 import { backendManager } from './backend-manager.js';
-import { applyDesktopHumanProof, applyDesktopHumanProofTo } from './human-proof.js';
+import { applyDesktopHumanProof, applyDesktopHumanProofTo, DESKTOP_PROOF_MARKER, HUMAN_PROOF_HEADER, takeDesktopProofParam } from './human-proof.js';
 import { officeEngineManager } from './office-engine-manager.js';
 import { fabricWorkerManager, type FabricWorkerState } from './fabric-worker-manager.js';
 import { readSecret, writeSecret, FABRIC_WORKER_TOKEN_KEY } from './secure-store.js';
@@ -2191,6 +2191,9 @@ app.whenReady().then(async () => {
 
   protocol.handle('allternit-api', async (request) => {
     const url = new URL(request.url);
+    // D16: the window's person-act marker rides in the URL because Chromium
+    // drops custom headers on the /api redirect; never forwarded as-is.
+    const personMarked = takeDesktopProofParam(url);
     const pathAndQuery = `${url.pathname}${url.search}`;
     const isCloud = url.hostname === 'cloud' || url.host === 'cloud';
     const targetUrl = isCloud ? `${URLS.CLOUD_API}${pathAndQuery}` : apiUrl(pathAndQuery);
@@ -2209,6 +2212,7 @@ app.whenReady().then(async () => {
     }
 
     const headers = new Headers(request.headers);
+    if (personMarked) headers.set(HUMAN_PROOF_HEADER, DESKTOP_PROOF_MARKER);
     // D16: Desktop's proof only goes to this machine's API, never the cloud.
     applyDesktopHumanProofTo(headers, isCloud ? null : backendManager.getHumanProof());
     if (isCloud) {

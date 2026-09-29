@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { openClerkOAuthPopup, setCookieOnSession } from './clerk-oauth-popup.js';
-import { stripDesktopHumanProof } from './human-proof.js';
+import { stripDesktopHumanProof, stripDesktopProofParam } from './human-proof.js';
 import {
   buildAuthForwardInit,
   cookieFromSetCookieHeader,
@@ -1368,7 +1368,7 @@ export class DesktopAuthManager {
         return;
       }
 
-      const localUrl = this.relayLocalUrl(requestPath);
+      const localUrl = this.relayLocalUrl(stripDesktopProofParam(requestPath));
       const response = await fetch(localUrl, { method, headers, body });
       const responseHeaders: Record<string, string> = {};
       for (const name of ['content-type', 'cache-control', 'content-disposition', 'etag', 'last-modified', 'x-request-id']) {
