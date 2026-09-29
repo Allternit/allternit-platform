@@ -942,6 +942,39 @@ fn delta_route(part_type: &str) -> DeltaRoute {
     }
 }
 
+/// The `chat.send` human action for a send to a subscription (`subs-*`)
+/// model, or `None`. A machine credential — the agent runtime's own device
+/// token, an access token, the service token — is not a person pressing
+/// send: nothing is minted, and gizzi puts the task on a subscription card
+/// for a person to confirm (D16).
+pub(crate) async fn chat_send_human_action(
+    db: &crate::db::DbHandle,
+    headers: &HeaderMap,
+    provider_id: &str,
+    user_id: &str,
+) -> Option<String> {
+    if !provider_id.starts_with("subs-") {
+        return None;
+    }
+    if let Some(kind) = crate::subscription_routes::machine_credential(headers) {
+        warn!(credential = kind, "subscription send from a machine credential; no human action minted");
+        return None;
+    }
+    let db = db.clone();
+    let uid = user_id.to_string();
+    match tokio::task::spawn_blocking(move || {
+        crate::subscription_routes::mint_human_action(&db, &uid, "chat.send")
+    })
+    .await
+    {
+        Ok(Ok((action_id, _))) => Some(action_id),
+        other => {
+            warn!(?other, "failed to mint a subscription human action");
+            None
+        }
+    }
+}
+
 /// 5. Filter message.part.delta events for this session and convert to
 ///    the content_block_delta SSE format the frontend expects.
 /// 6. Close the stream when session.status becomes idle.
@@ -1208,23 +1241,8 @@ async fn agent_chat_bridge(
     // D16 — a send to a subscription (fabric) model is the human act behind
     // its task: mint the single-use action here, where the person pressed
     // send. gizzi hands it to the forwarder; nothing else can start the task.
-    let subscription_action = if provider_id.starts_with("subs-") {
-        let db = state.db.clone();
-        let uid = user_id_for_record.clone();
-        match tokio::task::spawn_blocking(move || {
-            crate::subscription_routes::mint_human_action(&db, &uid, "chat.send")
-        })
-        .await
-        {
-            Ok(Ok((action_id, _))) => Some(action_id),
-            other => {
-                warn!(?other, "failed to mint a subscription human action");
-                None
-            }
-        }
-    } else {
-        None
-    };
+    let subscription_action =
+        chat_send_human_action(&state.db, &headers, &provider_id, &user_id_for_record).await;
 
     // Auth-aware client: password-protected Gizzi daemons expect Basic auth
     // (GIZZI_PASSWORD/GIZZI_SERVER_PASSWORD env, or a Basic header forwarded by
@@ -1997,6 +2015,37 @@ mod tests {
         assert_eq!(super::delta_route("step-start"), super::DeltaRoute::Drop);
     }
     use super::*;
+
+    /// D16: a send to a `subs-*` model mints `chat.send` only for a person's
+    /// session. The agent runtime's device token (gizzi's own
+    /// ALLTERNIT_API_TOKEN) and other machine credentials get nothing, so an
+    /// agent calling the chat bridge can't start a subscription task.
+    #[tokio::test]
+    async fn chat_send_action_is_minted_only_for_people_on_subs_models() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = crate::test_helpers::app_state(temp.path()).await;
+        let person = HeaderMap::new();
+        let mut agent = HeaderMap::new();
+        agent.insert(
+            axum::http::header::AUTHORIZATION,
+            axum::http::HeaderValue::from_static("Bearer allternit_runtime_abc"),
+        );
+        let mut service = HeaderMap::new();
+        service.insert("x-allternit-internal-token", axum::http::HeaderValue::from_static("svc"));
+
+        assert!(chat_send_human_action(&state.db, &person, "anthropic", "u1").await.is_none());
+        assert!(chat_send_human_action(&state.db, &agent, "subs-chatgpt", "u1").await.is_none());
+        assert!(chat_send_human_action(&state.db, &service, "subs-chatgpt", "u1").await.is_none());
+        let action = chat_send_human_action(&state.db, &person, "subs-chatgpt", "u1").await;
+        assert!(action.as_deref().is_some_and(|a| a.starts_with("ha_")), "{action:?}");
+        let count: i64 = state
+            .db
+            .connect()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM subs_human_actions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+    }
 
     #[test]
     fn usage_reports_only_what_the_provider_gave() {

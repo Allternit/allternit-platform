@@ -417,6 +417,36 @@ pub(crate) fn permission_reply_body(
     Ok(body)
 }
 
+/// The credential kind when a request carries a machine credential rather
+/// than a person's session: the runtime-device token gizzi holds as
+/// `ALLTERNIT_API_TOKEN` (`allternit_runtime_…`), an org access token
+/// (`at-…`, CLI/Codex surfaces, `ALLTERNIT_API_KEY`), a fabric worker token
+/// (`atok_…`) or the internal service token. Agent runtimes and their tool
+/// subprocesses hold these, so none of them may create a human action — not
+/// over `POST /subscriptions/human-actions`, not by deciding a subscription
+/// approval card, and not by sending to a `subs-*` model through the chat
+/// bridge (D16). `None` means a person's session (browser or desktop).
+pub(crate) fn machine_credential(headers: &HeaderMap) -> Option<&'static str> {
+    if headers.contains_key(crate::auth::INTERNAL_SERVICE_TOKEN_HEADER) {
+        return Some("internal service token");
+    }
+    let bearer = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")))
+        .map(str::trim)?;
+    if bearer.starts_with(crate::connector_routes::DEVICE_TOKEN_PREFIX) {
+        Some("runtime-device token")
+    } else if bearer.starts_with("at-") {
+        Some("access token")
+    } else if bearer.starts_with("atok_") {
+        Some("fabric worker token")
+    } else {
+        None
+    }
+}
+
 /// Surfaces only allternit-api mints, in process, where the human act
 /// happened: the chat bridge on a send (`chat.send`) and the approval
 /// decision route when a person approves a subscription card
@@ -444,7 +474,7 @@ async fn post_human_action(
             json!({"error": "human_action_surface_reserved", "detail": format!("{surface} actions are created by the platform where the person acted")}),
         );
     }
-    if crate::connector_routes::device_token_from_headers(&headers).is_some() {
+    if machine_credential(&headers).is_some() {
         return coded(
             StatusCode::FORBIDDEN,
             json!({"error": "human_action_agent_caller", "detail": "agent runtimes cannot create human actions; ask the person to confirm on an approval card"}),
@@ -981,16 +1011,40 @@ mod tests {
             let (status, body) = send(&app, "POST", "/subscriptions/human-actions", &[], json!({"surface": surface})).await;
             assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("human_action_surface_reserved")));
         }
-        // An agent runtime's device token never mints one.
-        let (status, body) = send(
-            &app,
-            "POST",
-            "/subscriptions/human-actions",
-            &[("authorization", "Bearer allternit_runtime_abc")],
-            json!({"surface": "composer.tool"}),
-        )
-        .await;
-        assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("human_action_agent_caller")));
+        // No machine credential mints one: the agent runtime's device token,
+        // an org access token, a fabric worker token, the service token.
+        for auth in [
+            ("authorization", "Bearer allternit_runtime_abc"),
+            ("authorization", "Bearer at-org-token"),
+            ("authorization", "Bearer atok_worker"),
+            ("x-allternit-internal-token", "svc"),
+        ] {
+            let (status, body) =
+                send(&app, "POST", "/subscriptions/human-actions", &[auth], json!({"surface": "composer.tool"})).await;
+            assert_eq!(
+                (status, body["error"].as_str()),
+                (StatusCode::FORBIDDEN, Some("human_action_agent_caller")),
+                "{auth:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn machine_credential_tells_agents_from_people() {
+        let with = |k: &'static str, v: &'static str| {
+            let mut h = HeaderMap::new();
+            h.insert(HeaderName::from_static(k), HeaderValue::from_static(v));
+            h
+        };
+        assert_eq!(machine_credential(&with("authorization", "Bearer allternit_runtime_x")), Some("runtime-device token"));
+        assert_eq!(machine_credential(&with("authorization", "bearer  allternit_runtime_x")), Some("runtime-device token"));
+        assert_eq!(machine_credential(&with("authorization", "Bearer at-x")), Some("access token"));
+        assert_eq!(machine_credential(&with("authorization", "Bearer atok_x")), Some("fabric worker token"));
+        assert_eq!(machine_credential(&with("x-allternit-internal-token", "t")), Some("internal service token"));
+        // A person's session: Clerk / data-plane JWT, desktop bootstrap, nothing.
+        assert_eq!(machine_credential(&with("authorization", "Bearer eyJhbGciOi.x.y")), None);
+        assert_eq!(machine_credential(&with("x-allternit-desktop-access-token", "d")), None);
+        assert_eq!(machine_credential(&HeaderMap::new()), None);
     }
 
     #[tokio::test]

@@ -45,7 +45,7 @@ use crate::db::DbHandle;
 
 const DESKTOP_ACCESS_TOKEN_HEADER: &str = "x-allternit-desktop-access-token";
 const SELF_HOSTED_SETUP_TOKEN_HEADER: &str = "x-allternit-self-hosted-token";
-const INTERNAL_SERVICE_TOKEN_HEADER: &str = "x-allternit-internal-token";
+pub(crate) const INTERNAL_SERVICE_TOKEN_HEADER: &str = "x-allternit-internal-token";
 
 /// User id synthesized by `extract_internal_service_user` for requests that
 /// authenticated with the internal service token. Routes that accept
