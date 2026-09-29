@@ -1151,6 +1151,27 @@ async fn agent_chat_bridge(
     let assistant_message_id = format!("msg_{}", Uuid::new_v4().simple());
     let model_label = format!("{}/{}", provider_id, model_id);
 
+    // D16 — a send to a subscription (fabric) model is the human act behind
+    // its task: mint the single-use action here, where the person pressed
+    // send. gizzi hands it to the forwarder; nothing else can start the task.
+    let subscription_action = if provider_id.starts_with("subs-") {
+        let db = state.db.clone();
+        let uid = user_id_for_record.clone();
+        match tokio::task::spawn_blocking(move || {
+            crate::subscription_routes::mint_human_action(&db, &uid, "chat.send")
+        })
+        .await
+        {
+            Ok(Ok((action_id, _))) => Some(action_id),
+            other => {
+                warn!(?other, "failed to mint a subscription human action");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // Auth-aware client: password-protected Gizzi daemons expect Basic auth
     // (GIZZI_PASSWORD/GIZZI_SERVER_PASSWORD env, or a Basic header forwarded by
     // the desktop shell). Sharing agent_session_routes::gizzi_client keeps the
@@ -1352,6 +1373,12 @@ async fn agent_chat_bridge(
             .filter(|t| t.is_object())
         {
             gizzi_payload["metadata"] = json!({ "tools": tools.clone() });
+        }
+        if let Some(action_id) = &subscription_action {
+            if !gizzi_payload["metadata"].is_object() {
+                gizzi_payload["metadata"] = json!({});
+            }
+            gizzi_payload["metadata"]["subscription"] = json!({ "action_id": action_id });
         }
 
         let mut message_req = client

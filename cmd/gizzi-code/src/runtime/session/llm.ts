@@ -323,6 +323,16 @@ export namespace LLM {
         // Always present so subprocess/ACP drivers can resolve the session
         // even if AsyncLocalStorage is not on the doStream call stack.
         "x-gizzi-session": input.sessionID,
+        // Subscription Fabric: this send's human action (D16), minted by the
+        // chat bridge, and the request id that keys the task's idempotency.
+        ...(Provider.isFabricModel(input.model)
+          ? {
+              "x-gizzi-request": input.user.id,
+              ...(typeof (input.user.metadata?.subscription as any)?.action_id === "string"
+                ? { "x-allternit-human-action": (input.user.metadata?.subscription as any).action_id }
+                : {}),
+            }
+          : {}),
         ...(input.model.providerID.startsWith("gizzi")
           ? {
               "x-gizzi-project": Instance.project.id,

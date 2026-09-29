@@ -176,6 +176,10 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
     };
     yield* await scanBanners();
 
+    // Replies already on the page (chat.continue): live text streams only
+    // once a new one appears, never the previous turn.
+    const repliesBefore = await countReplies(resolver);
+
     await ctx.pacing.beforeTask();
     await fillComposer(page, resolver, task.prompt);
     await ctx.pacing.beforeAction();
@@ -209,8 +213,48 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
       emit: (e) => pending.push(e as AdapterEvent),
     });
 
+    // Live reply text: sample the new reply's markdown and emit only what two
+    // consecutive samples agree on — a partial code block renders with its
+    // closing fence, which moves as the block grows, so it is held back.
+    const replyId = `reply-${task.task_id}`;
+    const runId = `run-${ctx.attempt.attempt_no}`;
+    let replyStarted = false;
+    let emitted = "";
+    let previousSample: string | null = null;
+    let lastSampleAt = 0;
+    const emitText = (text: string): AdapterEvent[] => {
+      if (!text) return [];
+      const out: AdapterEvent[] = [];
+      if (!replyStarted) {
+        replyStarted = true;
+        out.push({ t: "reply", event: { type: "reply.started", replyId, runId, ts: now() } });
+      }
+      emitted += text;
+      out.push({
+        t: "reply",
+        event: { type: "reply.text.delta", replyId, runId, itemId: "item-1", delta: text, ts: now() },
+      });
+      return out;
+    };
+    const sampleReply = async (): Promise<AdapterEvent[]> => {
+      if (now() - lastSampleAt < LIVE_SAMPLE_MS) return [];
+      lastSampleAt = now();
+      if ((await countReplies(resolver)) <= repliesBefore) return [];
+      let sample: string;
+      try {
+        sample = await extractLastAssistantTurn(page, resolver);
+      } catch {
+        return []; // the node re-rendered mid-read; next sample
+      }
+      const stable = previousSample === null ? "" : commonPrefix(previousSample, sample);
+      previousSample = sample;
+      if (stable.length <= emitted.length || !stable.startsWith(emitted)) return [];
+      return emitText(stable.slice(emitted.length));
+    };
+
     for (;;) {
       while (pending.length > 0) yield pending.shift() as AdapterEvent;
+      for (const e of await sampleReply()) yield e;
       // Providers route to the thread URL a beat after Send (ChatGPT: / →
       // /c/<id>). Persist the id once it appears so crash reconcile can
       // reopen the mapped thread (the SDK keeps state at acknowledged).
@@ -248,15 +292,11 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
 
     const hasResponse = (await resolver.tryResolveLocator("response")) !== null;
     const text = hasResponse ? await extractLastAssistantTurn(page, resolver) : undefined;
-    const ts = now();
-    if (text) {
-      const replyId = `reply-${task.task_id}`;
-      const runId = `run-${ctx.attempt.attempt_no}`;
-      yield { t: "reply", event: { type: "reply.started", replyId, runId, ts } };
-      yield {
-        t: "reply",
-        event: { type: "reply.text.delta", replyId, runId, itemId: "item-1", delta: text, ts },
-      };
+    // The rest of the reply. `done.text` stays the authoritative full text;
+    // a final render that no longer extends what streamed (rare) streams
+    // nothing more.
+    if (text && text.startsWith(emitted)) {
+      for (const e of emitText(text.slice(emitted.length))) yield e;
     }
     yield* await scanBanners();
     yield { t: "done", outcome: "success", text };
@@ -287,4 +327,20 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
       observed_at: new Date().toISOString(),
     };
   }
+}
+
+// Live reply sampling cadence: markdown extraction is a page round trip, so
+// it runs at most this often however fast the completion poll is.
+const LIVE_SAMPLE_MS = 300;
+
+async function countReplies(resolver: SdkSelectorResolver): Promise<number> {
+  const locator = await resolver.tryResolveLocator("response");
+  return locator ? await locator.count() : 0;
+}
+
+function commonPrefix(a: string, b: string): string {
+  const n = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < n && a.charCodeAt(i) === b.charCodeAt(i)) i++;
+  return a.slice(0, i);
 }

@@ -20,6 +20,7 @@
 import { discoverSubprocessProviders } from "./subprocess"
 import { discoverLocalProviders } from "./local"
 import { discoverAllternitCloud } from "./allternit-cloud"
+import { discoverSubscriptionFabric } from "../fabric/discovery"
 
 export { getCachedAllternitPlan, refreshAllternitPlan } from "./allternit-cloud"
 
@@ -36,6 +37,8 @@ export interface DiscoveredProvider {
   token?: string
   /** Source label shown in /model list */
   source: "subprocess" | "local" | "subscription" | "plugin" | "platform"
+  /** Provider options merged into the provider (e.g. `runtime: "fabric"`) */
+  options?: Record<string, unknown>
   models: DiscoveredModel[]
 }
 
@@ -95,6 +98,7 @@ export const Discovery = {
         discoverAllternitCloud(),
         discoverSubprocessProviders(),
         discoverLocalProviders(),
+        discoverSubscriptionFabric(),
         ..._hooks.map((h) => h()),
       ])
 
