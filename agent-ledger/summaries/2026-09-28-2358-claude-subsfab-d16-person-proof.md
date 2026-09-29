@@ -4,7 +4,7 @@
 **Session ID:** subsfab-d16-fix  
 **Branch:** session/subsfab-d16-fix (platform) · session/subsfab-human-proof (allternit-ai)  
 **Agent:** claude (Opus 5.5)  
-**Commit:** platform PR + allternit-ai PR (see LEDGER.md entry)  
+**Commit:** https://github.com/Gizziio/allternit-platform/pull/931 + https://github.com/Gizziio/allternit-ai/pull/230  
 **Ledger entry:** [../LEDGER.md](../LEDGER.md)
 
 ## What was done
