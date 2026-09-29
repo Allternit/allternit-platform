@@ -136,6 +136,17 @@ chat picker lists what gizzi's `/provider` reports. So:
    fix the two adapter bugs; no layout jumps.
 4. **Disclosure modal + ack** (picker + bot picker), **human-send / question
    cards** (always-ask permission class in gizzi; cowork approval relay).
+   *Built 2026-09-28:* gizzi `PermissionNext.ALWAYS_ASK` (`subscription`
+   asks in every mode, never remembered) + `fabric/human-gate.ts` (a turn
+   without a chat-send action waits on a send card; gateway `needs_user` →
+   question card, the answer is the next `chat.continue`; cards go on the
+   root session). allternit-api mints `approval.confirm` in
+   `decide_approval` (`permission_reply_body`) and relays
+   `{reply, humanAction, answer}`; `POST /subscriptions/human-actions` refuses
+   `chat.send`/`approval.confirm` and runtime-device tokens. UI: `subscription`
+   provider kind, `SubscriptionDisclosureHost` (picker `choose()`,
+   `selectModel`, bot thread pick, chat-time `disclosure_required` error),
+   `SubscriptionPermissionCard` over ChatApprovalCard/ChatQuestionCard.
 5. **Tool belt + MCP:** wire `media_generate` subscription lane; capability
    tools (`presentation.create`, `document.create`, `research.deep`, …)
    human-confirmed; gateway MCP server for other agents.
@@ -177,4 +188,11 @@ chat picker lists what gizzi's `/provider` reports. So:
    `CAPABILITY_INVENTORY.md` (probe the live UI on a copy profile first; owner
    logs in once per provider through Desktop's writable computer viewer).
 7. **Desktop Settings → Sessions Computer panel** (status, accounts,
-   needs-user queue, login viewer).
+   needs-user queue, login viewer). Built 2026-09-28: allternit-ai
+   `views/settings/SessionsComputerPanel.tsx` (Settings → Desktop app →
+   Sessions computer); gateway `GET /v1/tasks?status=&limit=` read-only
+   summaries for the needs-user and recent lists; `PUT
+   /subscriptions/binding` refuses the desktop you work on and bots'
+   computers (`409 sessions_computer_not_allowed`, D15). Resource usage shows
+   only the computers API allocations (CPU/memory/disk); there is no live
+   usage feed yet.

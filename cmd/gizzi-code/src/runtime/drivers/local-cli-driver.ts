@@ -29,6 +29,7 @@ import { RuntimeService, RuntimeNotFoundError, type RegisteredRuntime } from "@/
 import { ExecutionLogService } from "@/runtime/execution-log"
 import { Log } from "@/shared/util/log"
 import { PROVIDER_ENV_KEYS } from "@/runtime/runtime-discovery"
+import { currentCliPath } from "@/runtime/providers/discovery/subprocess"
 import {
   ClientSideConnection,
   ndJsonStream,
@@ -139,7 +140,13 @@ export class LocalCliDriver implements RuntimeDriver {
     yield { type: "status", status: "running" }
     await this.logEvent(handle.taskId, { type: "status", status: "running" })
 
-    const baseCmd = parseCmd(`${cli.path} ${this.specArgs()}`)
+    // The launcher can disappear mid-session (a CLI auto-update); find it again.
+    const cliPath = await currentCliPath(this.cliName, cli.path)
+    if (cliPath !== cli.path) {
+      log.info("cli path moved", { cli: this.cliName, from: cli.path, to: cliPath })
+      cli.path = cliPath
+    }
+    const baseCmd = parseCmd(`${cliPath} ${this.specArgs()}`)
     const adapter = resolveAdapter(this.cliName)
 
     if (task?.attachments && task.attachments.length > 0 && !adapter.supportsAttachments) {

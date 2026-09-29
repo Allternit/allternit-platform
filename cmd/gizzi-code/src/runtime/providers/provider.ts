@@ -24,10 +24,11 @@ import { BUNDLED_PROVIDERS, NoSuchModelError, type SDK, type LanguageModelV2 } f
 // Provider-specific loaders — each provider's config/auth/model logic in its own file
 import { CUSTOM_LOADERS } from "@/runtime/providers/adapters/loaders"
 import type { CustomModelLoader } from "@/runtime/providers/types"
-import { Discovery } from "@/runtime/providers/discovery"
+import { Discovery, type DiscoveredProvider } from "@/runtime/providers/discovery"
 import { SubprocessLanguageModel } from "@/runtime/providers/adapters/loaders/subprocess"
 import { SubscriptionFabricLanguageModel } from "@/runtime/providers/fabric/language-model"
-import { isFabricProviderID } from "@/runtime/providers/fabric/client"
+import { fabricConfigured, isFabricProviderID } from "@/runtime/providers/fabric/client"
+import { discoverSubscriptionFabric } from "@/runtime/providers/fabric/discovery"
 import { cliModel, stripProviderPrefix } from "@/runtime/providers/cli-model"
 import { tapRetryHint } from "@/runtime/providers/retry-hint"
 
@@ -516,38 +517,7 @@ export namespace Provider {
     const discovered = await Discovery.run()
     for (const dp of discovered) {
       if (!isProviderAllowed(dp.id)) continue
-      const dpModels: Record<string, Model> = {}
-      for (const m of dp.models) {
-        dpModels[m.id] = {
-          id: m.id,
-          providerID: dp.id,
-          name: m.name,
-          family: "",
-          api: {
-            id: m.id,
-            url: dp.base_url ?? "",
-            npm: "@ai-sdk/openai-compatible",
-          },
-          status: "active",
-          headers: {},
-          options: {},
-          release_date: "",
-          capabilities: {
-            temperature: dp.options?.["runtime"] !== "fabric",
-            reasoning: false,
-            attachment: false,
-            // Fabric chat runs in the provider's web UI: gizzi's tools cannot be
-            // called there. Also keeps these models out of auto-tier picks.
-            toolcall: dp.options?.["runtime"] !== "fabric",
-            input:  { text: true, audio: false, image: false, video: false, pdf: false },
-            output: { text: true, audio: false, image: false, video: false, pdf: false },
-            interleaved: false,
-          },
-          cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
-          limit: { context: m.context ?? 32768, output: m.output ?? 4096 },
-          variants: {},
-        }
-      }
+      const dpModels = discoveredModels(dp)
       if (Object.keys(dpModels).length === 0) continue
       const existing = providers[dp.id]
       if (existing) {
@@ -613,6 +583,11 @@ export namespace Provider {
       log.info("found", { providerID })
     }
 
+    // Subscription Fabric providers appear once the user binds a Sessions
+    // computer — usually after gizzi started. Until one is found, re-check the
+    // catalog in the background and add it to the live provider list.
+    if (!Object.keys(providers).some(isFabricProviderID)) watchForFabricProviders(providers, isProviderAllowed)
+
     return {
       models: languages,
       providers,
@@ -620,6 +595,71 @@ export namespace Provider {
       modelLoaders,
     }
   })
+
+  const FABRIC_RECHECK_MS = 60_000
+
+  function watchForFabricProviders(providers: Record<string, Info>, isProviderAllowed: (id: string) => boolean) {
+    if (!fabricConfigured()) return
+    const timer = setInterval(async () => {
+      const found = await discoverSubscriptionFabric().catch(() => [])
+      if (found.length === 0) return
+      clearInterval(timer)
+      for (const dp of found) {
+        if (!isProviderAllowed(dp.id) || providers[dp.id]) continue
+        const models = discoveredModels(dp)
+        for (const model of Object.values(models)) {
+          model.variants = mapValues(ProviderTransform.variants(model), (v) => v)
+        }
+        providers[dp.id] = {
+          id: dp.id,
+          name: dp.name,
+          source: "custom",
+          env: [],
+          auth_type: dp.auth_type,
+          options: { ...(dp.options ?? {}) },
+          models,
+        }
+        log.info("discovered-late", { providerID: dp.id, models: Object.keys(models).length })
+      }
+    }, FABRIC_RECHECK_MS)
+    timer.unref?.()
+  }
+
+  function discoveredModels(dp: DiscoveredProvider): Record<string, Model> {
+    const dpModels: Record<string, Model> = {}
+    for (const m of dp.models) {
+      dpModels[m.id] = {
+        id: m.id,
+        providerID: dp.id,
+        name: m.name,
+        family: "",
+        api: {
+          id: m.id,
+          url: dp.base_url ?? "",
+          npm: "@ai-sdk/openai-compatible",
+        },
+        status: "active",
+        headers: {},
+        options: {},
+        release_date: "",
+        capabilities: {
+          temperature: dp.options?.["runtime"] !== "fabric",
+          reasoning: false,
+          attachment: false,
+          // Fabric chat runs in the provider's web UI: gizzi's tools cannot be
+          // called there. Also keeps these models out of auto-tier picks.
+          toolcall: dp.options?.["runtime"] !== "fabric",
+          input:  { text: true, audio: false, image: false, video: false, pdf: false },
+          output: { text: true, audio: false, image: false, video: false, pdf: false },
+          interleaved: false,
+        },
+        cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
+        limit: { context: m.context ?? 32768, output: m.output ?? 4096 },
+        variants: {},
+      }
+    }
+    return dpModels
+  }
 
   export async function list() {
     return state().then((state) => state.providers)

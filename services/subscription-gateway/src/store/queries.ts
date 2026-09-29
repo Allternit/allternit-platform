@@ -451,6 +451,71 @@ export function getTaskByIdempotency(
   return row ? taskFromRow(db, row) : null;
 }
 
+/** Read-only listing row for GET /v1/tasks (Settings → Sessions Computer). */
+export interface TaskSummary {
+  task_id: string;
+  capability: string;
+  status: TaskStatus;
+  status_detail: string | null;
+  provider: string | null;
+  account_id: string | null;
+  thread_id: string | null;
+  /** First 140 characters of the prompt, whitespace collapsed. */
+  prompt_preview: string;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+export const TASK_PROMPT_PREVIEW_CHARS = 140;
+
+export function listTaskSummaries(
+  db: Db,
+  opts: { statuses?: TaskStatus[]; limit: number }
+): TaskSummary[] {
+  const statuses = opts.statuses ?? [];
+  const where = statuses.length ? `WHERE status IN (${statuses.map(() => "?").join(", ")})` : "";
+  const rows = db
+    .prepare(
+      `SELECT task_id, capability, status, status_detail, routing, thread_id, prompt,
+              created_at, updated_at, completed_at
+       FROM tasks ${where} ORDER BY created_at DESC, task_id DESC LIMIT ?`
+    )
+    .all(...statuses, opts.limit) as Pick<
+    TaskRow,
+    | "task_id"
+    | "capability"
+    | "status"
+    | "status_detail"
+    | "routing"
+    | "thread_id"
+    | "prompt"
+    | "created_at"
+    | "updated_at"
+    | "completed_at"
+  >[];
+  return rows.map((row) => {
+    const routing = JSON.parse(row.routing) as Partial<TaskRouting>;
+    const prompt = row.prompt.replace(/\s+/g, " ").trim();
+    return {
+      task_id: row.task_id,
+      capability: row.capability,
+      status: row.status as TaskStatus,
+      status_detail: row.status_detail,
+      provider: routing.provider ?? null,
+      account_id: routing.account_id ?? null,
+      thread_id: row.thread_id,
+      prompt_preview:
+        prompt.length > TASK_PROMPT_PREVIEW_CHARS
+          ? `${prompt.slice(0, TASK_PROMPT_PREVIEW_CHARS - 1)}…`
+          : prompt,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      completed_at: row.completed_at,
+    };
+  });
+}
+
 // ---------------------------------------------------------------------------
 // artifacts — metadata row lookup (byte store lands in P3)
 // ---------------------------------------------------------------------------

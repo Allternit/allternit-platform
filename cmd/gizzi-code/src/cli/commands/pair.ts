@@ -65,7 +65,10 @@ async function runPair(args: { status?: boolean; force?: boolean; name?: string;
     process.stderr.write(
       err.reason === "expired"
         ? `The code expired before it was approved. Run \`${again}\` again.\n`
-        : "Sign-in was cancelled.\n",
+        : err.reason === "refused"
+          ? `Allternit refused this device: ${err.detail}\n` +
+            "Manage your runtimes at https://platform.allternit.com/devices, then run `" + again + "` again.\n"
+          : "Sign-in was cancelled.\n",
     )
     process.exit(1)
   })

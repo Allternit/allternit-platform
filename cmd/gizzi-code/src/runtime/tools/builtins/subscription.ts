@@ -65,14 +65,20 @@ export async function confirmSubscriptionTask(ctx: Tool.Context, input: Subscrip
     patterns: [`${input.provider}:${input.capability}`],
     // Never offer "always": each task is its own human act.
     always: [],
+    // Same card shape as the fabric model's own sends (human-gate.ts): the
+    // platform renders `subscription` and shows `summary`.
     metadata: {
       toolName: input.capability,
-      capability: input.capability,
-      provider: input.provider,
-      providerName: providerName(input.provider),
-      title: input.title,
-      prompt: input.prompt,
       summary: input.summary,
+      subscription: {
+        kind: "send",
+        provider: input.provider,
+        providerName: providerName(input.provider),
+        capability: input.capability,
+        title: input.title,
+        prompt: input.prompt.slice(0, 2_000),
+        truncated: input.prompt.length > 2_000,
+      },
     },
   })
   const humanAction = grant && typeof grant === "object" ? grant.humanAction?.trim() : undefined

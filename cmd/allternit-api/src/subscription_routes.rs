@@ -32,7 +32,7 @@ use std::time::Duration;
 use tracing::warn;
 
 use crate::auth::AuthUser;
-use crate::computer_routes::{error_response, fetch_computer, ComputerStatus};
+use crate::computer_routes::{error_response, fetch_computer, ComputerKind, ComputerStatus};
 use crate::AppState;
 
 /// Bump when the disclosure text changes: every user acknowledges again.
@@ -220,6 +220,18 @@ async fn get_binding(State(state): State<Arc<AppState>>, Extension(user): Extens
     }
 }
 
+/// D15: the fabric runtime never runs on the desktop the user works on (the
+/// host computer the app registered), and a bot's computer belongs to the bot.
+fn not_a_sessions_computer(computer: &crate::computer_routes::ComputerResponse) -> Option<&'static str> {
+    if computer.kind == ComputerKind::Local && computer.provider == "host" {
+        return Some("this is the desktop you work on; subscriptions run only on a separate Sessions computer");
+    }
+    if computer.bot_id.is_some() {
+        return Some("a bot's computer can't be the Sessions computer");
+    }
+    None
+}
+
 #[derive(Debug, Deserialize)]
 struct PutBindingRequest {
     computer_id: String,
@@ -248,6 +260,9 @@ async fn put_binding(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(response) => return response,
     };
+    if let Some(detail) = not_a_sessions_computer(&computer) {
+        return coded(StatusCode::CONFLICT, json!({"error": "sessions_computer_not_allowed", "detail": detail}));
+    }
     if computer.status != ComputerStatus::Running {
         return error_response(StatusCode::CONFLICT, "computer is not running");
     }
@@ -372,17 +387,84 @@ struct HumanActionRequest {
     surface: String,
 }
 
+/// gizzi's always-ask permission class for fabric work nobody sent from the
+/// chat composer: a task an agent/tool/bot prepared, or a provider question
+/// from a running task. Approving one is the human act (D16).
+pub const SUBSCRIPTION_PERMISSION: &str = "subscription";
+/// Longest provider answer relayed from a question card.
+const MAX_ANSWER_CHARS: usize = 8000;
+
+/// Whether a `cowork_approvals` content payload is a D16 subscription card.
+pub(crate) fn is_subscription_card(content: &Value) -> bool {
+    content.pointer("/details/actionType").and_then(|v| v.as_str()) == Some(SUBSCRIPTION_PERMISSION)
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) enum CardReplyRefusal {
+    /// A provider question was approved without an answer to send.
+    AnswerRequired,
+}
+
+/// The body relayed to gizzi's `POST /permission/:id/reply` for a decided
+/// approval row. For an approved subscription card this is where the human
+/// action is minted (`approval.confirm`) — server-side, at the moment a
+/// person approved — and handed to the pending fabric task along with the
+/// person's answer to a provider question. Agents never see a way to mint.
+pub(crate) fn permission_reply_body(
+    db: &crate::db::DbHandle,
+    user_id: &str,
+    content: &Value,
+    reply: &str,
+    answer: Option<&str>,
+) -> Result<Value, Result<CardReplyRefusal, rusqlite::Error>> {
+    if reply != "once" || !is_subscription_card(content) {
+        return Ok(json!({ "reply": reply }));
+    }
+    let answer = answer.map(str::trim).filter(|a| !a.is_empty());
+    let question = content.pointer("/subscription/kind").and_then(|v| v.as_str()) == Some("question");
+    if question && answer.is_none() {
+        return Err(Ok(CardReplyRefusal::AnswerRequired));
+    }
+    let (action_id, _) = mint_human_action(db, user_id, "approval.confirm").map_err(Err)?;
+    let mut body = json!({ "reply": "once", "humanAction": action_id });
+    if let Some(answer) = answer {
+        body["answer"] = json!(answer.chars().take(MAX_ANSWER_CHARS).collect::<String>());
+    }
+    Ok(body)
+}
+
+/// Surfaces only allternit-api mints, in process, where the human act
+/// happened: the chat bridge on a send (`chat.send`) and the approval
+/// decision route when a person approves a subscription card
+/// (`approval.confirm`). Nobody can ask for these over HTTP.
+pub(crate) const SERVER_ONLY_SURFACES: &[&str] = &["chat.send", "approval.confirm"];
+
 /// POST /subscriptions/human-actions — for UI surfaces that start a fabric
-/// task directly (composer tools, Settings, approval cards). The chat send
-/// path mints its own inside allternit-api.
+/// task directly (composer tools, Settings). The chat send path and approval
+/// cards mint theirs inside allternit-api. An agent runtime (a cloud-issued
+/// runtime-device token) can never mint one: agents only *prepare* fabric
+/// tasks, a person confirms them on an approval card (D16).
 async fn post_human_action(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
+    headers: HeaderMap,
     Json(body): Json<HumanActionRequest>,
 ) -> Response {
     let surface = body.surface.trim();
     if surface.is_empty() || surface.len() > 64 {
         return error_response(StatusCode::BAD_REQUEST, "surface must be 1-64 characters");
+    }
+    if SERVER_ONLY_SURFACES.contains(&surface) {
+        return coded(
+            StatusCode::FORBIDDEN,
+            json!({"error": "human_action_surface_reserved", "detail": format!("{surface} actions are created by the platform where the person acted")}),
+        );
+    }
+    if crate::connector_routes::device_token_from_headers(&headers).is_some() {
+        return coded(
+            StatusCode::FORBIDDEN,
+            json!({"error": "human_action_agent_caller", "detail": "agent runtimes cannot create human actions; ask the person to confirm on an approval card"}),
+        );
     }
     match mint_human_action(&state.db, &user.user_id, surface) {
         Ok((action_id, expires_at)) => {
@@ -681,6 +763,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn d15_this_desktop_and_bot_computers_cannot_be_bound() {
+        let (app, state, seen) = setup().await;
+        state
+            .db
+            .connect()
+            .unwrap()
+            .execute_batch(&format!(
+                "INSERT INTO agents (id, user_id, name, model, provider, status, type)
+                 VALUES ('bot-1', '{USER}', 'Bot', 'allternit-fast', 'allternit', 'idle', 'worker');
+                 INSERT INTO computers (id, kind, provider, status, owner_type, owner_id, name, billing_source)
+                 VALUES ('computer-mac', 'local', 'host', 'running', 'user', '{USER}', 'Studio', 'free');
+                 INSERT INTO computers (id, kind, provider, status, owner_type, owner_id, bot_id, name, billing_source)
+                 VALUES ('computer-bot', 'cloud_desktop', 'incus', 'running', 'user', '{USER}', 'bot-1', 'Bot box', 'credits');"
+            ))
+            .unwrap();
+        for id in ["computer-mac", "computer-bot"] {
+            let (status, body) = send(
+                &app,
+                "PUT",
+                "/subscriptions/binding",
+                &[],
+                json!({"computer_id": id, "token": "gw-token"}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CONFLICT, "{id}: {body}");
+            assert_eq!(body["error"], "sessions_computer_not_allowed", "{id}");
+        }
+        // Refused before any request reaches a gateway, and nothing stored.
+        assert!(seen.lock().unwrap().is_empty());
+        let (_, body) = send(&app, "GET", "/subscriptions/binding", &[], Value::Null).await;
+        assert_eq!(body["bound"], false);
+    }
+
+    #[tokio::test]
     async fn binding_verifies_the_token_and_never_returns_it() {
         let (app, _state, _seen) = setup().await;
         let (status, body) = send(
@@ -773,7 +889,7 @@ mod tests {
         let (status, body) = send(&app, "POST", "/subscriptions/gateway/v1/tasks", &[], task()).await;
         assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("human_action_required")));
 
-        let (_, minted) = send(&app, "POST", "/subscriptions/human-actions", &[], json!({"surface": "chat.send"})).await;
+        let (_, minted) = send(&app, "POST", "/subscriptions/human-actions", &[], json!({"surface": "composer.tool"})).await;
         let action = minted["action_id"].as_str().unwrap().to_string();
         // A caller cannot pick its own stamp: the forwarder overwrites it.
         let mut forged = task();
@@ -877,6 +993,70 @@ mod tests {
             prepare_task_submission(&state.db, USER, &bytes, Some("old")).unwrap_err().unwrap(),
             TaskRefusal::HumanActionInvalid
         );
+    }
+
+    #[tokio::test]
+    async fn approving_a_subscription_card_mints_the_human_action_server_side() {
+        let (app, state, seen) = setup().await;
+        bind(&app).await;
+        let (status, _) = send(&app, "POST", "/subscriptions/disclosure/ack", &[], json!({"provider": "chatgpt", "version": DISCLOSURE_VERSION})).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let send_card = json!({"details": {"actionType": "subscription"}, "subscription": {"kind": "send", "provider": "chatgpt"}});
+        // Ordinary tool cards relay the plain reply.
+        let plain = permission_reply_body(&state.db, USER, &json!({"details": {"actionType": "bash"}}), "once", None).unwrap();
+        assert_eq!(plain, json!({"reply": "once"}));
+        // Rejecting a subscription card mints nothing.
+        let rejected = permission_reply_body(&state.db, USER, &send_card, "reject", None).unwrap();
+        assert_eq!(rejected, json!({"reply": "reject"}));
+
+        // Approving mints an approval.confirm action the forwarder accepts once.
+        let body = permission_reply_body(&state.db, USER, &send_card, "once", None).unwrap();
+        let action = body["humanAction"].as_str().unwrap().to_string();
+        let surface: String = state
+            .db
+            .connect()
+            .unwrap()
+            .query_row("SELECT surface FROM subs_human_actions WHERE action_id = ?1", params![action], |r| r.get(0))
+            .unwrap();
+        assert_eq!(surface, "approval.confirm");
+        let (status, _) = send(&app, "POST", "/subscriptions/gateway/v1/tasks", &[(HUMAN_ACTION_HEADER, &action)], task()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(seen.lock().unwrap().last().unwrap().4["initiated_by"]["action_id"], json!(action));
+
+        // A provider question needs the person's answer; it is relayed trimmed.
+        let question = json!({"details": {"actionType": "subscription"}, "subscription": {"kind": "question", "provider": "chatgpt"}});
+        assert!(matches!(
+            permission_reply_body(&state.db, USER, &question, "once", Some("  ")),
+            Err(Ok(CardReplyRefusal::AnswerRequired))
+        ));
+        let answered = permission_reply_body(&state.db, USER, &question, "once", Some(" Yes, continue ")).unwrap();
+        assert_eq!(answered["answer"], "Yes, continue");
+        assert!(answered["humanAction"].as_str().unwrap().starts_with("ha_"));
+    }
+
+    #[tokio::test]
+    async fn agents_and_reserved_surfaces_cannot_mint_human_actions() {
+        let (app, _state, _seen) = setup().await;
+        // A UI surface may ask for one.
+        let (status, body) = send(&app, "POST", "/subscriptions/human-actions", &[], json!({"surface": "composer.tool"})).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert!(body["action_id"].as_str().unwrap().starts_with("ha_"));
+        // chat.send / approval.confirm are minted in process only.
+        for surface in SERVER_ONLY_SURFACES {
+            let (status, body) = send(&app, "POST", "/subscriptions/human-actions", &[], json!({"surface": surface})).await;
+            assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("human_action_surface_reserved")));
+        }
+        // An agent runtime's device token never mints one.
+        let (status, body) = send(
+            &app,
+            "POST",
+            "/subscriptions/human-actions",
+            &[("authorization", "Bearer allternit_runtime_abc")],
+            json!({"surface": "composer.tool"}),
+        )
+        .await;
+        assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("human_action_agent_caller")));
     }
 
     #[tokio::test]

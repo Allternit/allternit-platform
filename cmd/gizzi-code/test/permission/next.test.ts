@@ -768,3 +768,64 @@ test("ask - allows all patterns when all match allow rules", async () => {
     },
   })
 })
+
+// D16: the subscription permission class always asks a person
+
+test("evaluatePolicy - subscription asks in every mode that could otherwise approve it", () => {
+  const allowAll: PermissionNext.Ruleset = [{ permission: "*", pattern: "*", action: "allow" }]
+  const approvals: PermissionNext.Ruleset = [{ permission: "subscription", pattern: "*", action: "allow" }]
+  for (const mode of ["default", "manual", "acceptEdits", "auto", "yolo", "bypassPermissions"]) {
+    expect(PermissionNext.evaluatePolicy("subscription", "chatgpt", { configured: allowAll, approvals, mode }).action).toBe("ask")
+  }
+  expect(
+    PermissionNext.evaluatePolicy("subscription", "chatgpt", { configured: allowAll, mode: "auto", skipPermissions: true }).action,
+  ).toBe("ask")
+  // Nobody to ask (plan, dontAsk) or a configured deny: refused, never approved.
+  expect(PermissionNext.evaluatePolicy("subscription", "chatgpt", { configured: [], mode: "plan" }).action).toBe("deny")
+  expect(PermissionNext.evaluatePolicy("subscription", "chatgpt", { configured: [], mode: "dontAsk" }).action).toBe("deny")
+  expect(
+    PermissionNext.evaluatePolicy("subscription", "chatgpt", {
+      configured: [{ permission: "subscription", pattern: "*", action: "deny" }],
+      mode: "yolo",
+    }).action,
+  ).toBe("deny")
+  expect(PermissionNext.evaluate("subscription", "chatgpt", allowAll).action).toBe("ask")
+})
+
+test("reply - subscription 'always' counts once, is not remembered, and carries the human action", async () => {
+  await using tmp = await tmpdir({ git: true })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const first = PermissionNext.ask({
+        id: "permission_sub1",
+        sessionID: "session_test",
+        permission: "subscription",
+        patterns: ["chatgpt"],
+        metadata: {},
+        always: ["chatgpt"],
+        ruleset: [],
+        mode: "yolo",
+      })
+      await settle()
+      await PermissionNext.reply({ requestID: "permission_sub1", reply: "always", humanAction: "ha_1", answer: "yes" })
+      await expect(first).resolves.toEqual({ humanAction: "ha_1", answer: "yes" })
+
+      // Still asks the next time.
+      const second = PermissionNext.ask({
+        id: "permission_sub2",
+        sessionID: "session_test",
+        permission: "subscription",
+        patterns: ["chatgpt"],
+        metadata: {},
+        always: [],
+        ruleset: [],
+        mode: "yolo",
+      })
+      await settle()
+      expect((await PermissionNext.list()).map((p) => p.id)).toContain("permission_sub2")
+      await PermissionNext.reply({ requestID: "permission_sub2", reply: "reject" })
+      await expect(second).rejects.toBeInstanceOf(PermissionNext.RejectedError)
+    },
+  })
+})

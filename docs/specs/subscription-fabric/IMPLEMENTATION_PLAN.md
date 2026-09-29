@@ -61,7 +61,7 @@ services/subscription-gateway/                       # the daemon
     config.ts            # env + policy file loading (~/.allternit/subscriptions/policy.yaml)
     http/
       server.ts          # UDS + optional TCP, Host/Origin validation, scoped bearer tokens
-      routes_tasks.ts    # POST /v1/tasks, GET /v1/tasks/{id}, POST /v1/tasks/{id}/cancel
+      routes_tasks.ts    # POST /v1/tasks, GET /v1/tasks?status=&limit= (read-only summaries), GET /v1/tasks/{id}, POST /v1/tasks/{id}/cancel
       routes_events.ts   # GET /v1/tasks/{id}/events (SSE, AdapterEvent stream)
       routes_artifacts.ts# GET /v1/artifacts/{id}, /export, /download (sandboxed preview)
       routes_accounts.ts # connect/disconnect/status, needs_user queue

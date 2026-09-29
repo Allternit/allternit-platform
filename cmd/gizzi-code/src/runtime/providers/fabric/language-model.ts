@@ -7,8 +7,12 @@
  *   turn is `chat.create`, later turns `chat.continue` (the provider keeps
  *   the conversation, so only the new user turn is sent).
  * - D16: the turn carries the human action the chat bridge minted for this
- *   send; allternit-api stamps it into the task. Without one the forwarder
- *   refuses, so nothing here can start a task on its own.
+ *   send; allternit-api stamps it into the task. A turn without one (an
+ *   agent, tool, subagent or bot prepared it) waits on a `subscription`
+ *   approval card instead — the person confirms, allternit-api mints the
+ *   action. A provider question mid-task (`needs_user`) goes to the same
+ *   card; the person's answer is sent as the next turn. Nothing here can
+ *   start or answer a task on its own.
  * - Streaming: gateway `reply.text.delta` events → text deltas as they
  *   arrive; `done.text` is authoritative for anything not yet streamed.
  * - Abort → `POST /v1/tasks/:id/cancel`. A dropped event stream reconnects
@@ -19,10 +23,14 @@ import type { LanguageModelV2, LanguageModelV2StreamPart } from "@ai-sdk/provide
 import { Log } from "@/shared/util/log"
 import { Token } from "@/shared/util/token"
 import { resolveTaskSessionID } from "@/runtime/session/stream-context"
-import { FabricError, HUMAN_ACTION_HEADER, describeError } from "./client"
+import { FabricError, HUMAN_ACTION_HEADER, providerDisplayName } from "./client"
+import { askProviderQuestion, confirmSend } from "./human-gate"
 import { cancelFabricTask, followFabricTask, submitFabricTask, type FabricTask, type FabricTaskBody } from "./tasks"
 
 const log = Log.create({ service: "fabric-lm" })
+
+/** Provider questions answered in one turn before it stops asking. */
+const MAX_QUESTION_ROUNDS = 5
 
 export class SubscriptionFabricLanguageModel implements LanguageModelV2 {
   readonly specificationVersion = "v2" as const
@@ -76,7 +84,9 @@ export class SubscriptionFabricLanguageModel implements LanguageModelV2 {
       start: async (controller) => {
         controller.enqueue({ type: "stream-start", warnings: [] })
         let textOpen = false
+        // `streamed` is the current task's text; `emitted` the whole turn's.
         let streamed = ""
+        let emitted = ""
         let taskID: string | undefined
         const onAbort = () => {
           if (!taskID) return
@@ -91,12 +101,13 @@ export class SubscriptionFabricLanguageModel implements LanguageModelV2 {
             controller.enqueue({ type: "text-start", id: "text-1" })
           }
           streamed += delta
+          emitted += delta
           controller.enqueue({ type: "text-delta", id: "text-1", delta })
         }
         const finish = (reason: "stop" | "error" | "other") => {
           if (textOpen) controller.enqueue({ type: "text-end", id: "text-1" })
           const inputTokens = Token.estimate(prompt)
-          const outputTokens = Token.estimate(streamed)
+          const outputTokens = Token.estimate(emitted)
           controller.enqueue({
             type: "finish",
             finishReason: reason,
@@ -112,13 +123,14 @@ export class SubscriptionFabricLanguageModel implements LanguageModelV2 {
         try {
           if (!prompt) throw new Error("Nothing to send: the message has no text.")
           if (!sessionID) throw new Error("Subscription models need a chat session.")
-          if (!humanAction) {
-            throw new FabricError(describeError(403, "human_action_required", undefined), 403, "human_action_required")
-          }
+          // No send behind this turn: a person confirms it on a card first.
+          const action =
+            humanAction ??
+            (await confirmSend({ sessionID, provider: fabricProvider, modelClass, prompt, signal: abortSignal }))
           const task = await submit({
             sessionID,
             prompt,
-            humanAction,
+            humanAction: action,
             requestID,
             continuing,
             fabricProvider,
@@ -128,7 +140,41 @@ export class SubscriptionFabricLanguageModel implements LanguageModelV2 {
           taskID = task.task_id
           if (abortSignal?.aborted) onAbort()
 
-          const outcome = await followFabricTask(task.task_id, abortSignal, { onText: (delta) => text(delta) })
+          let outcome = await followFabricTask(task.task_id, abortSignal, { onText: (delta) => text(delta) })
+          // A provider question pauses the task: a person answers it on the
+          // card, the answer goes to the provider as the next turn.
+          for (let round = 1; outcome.status === "needs_user" && round <= MAX_QUESTION_ROUNDS; round++) {
+            const question = outcome.status_detail ?? outcome.error?.user_action ?? "It needs you to continue."
+            let reply: { humanAction: string; answer: string }
+            try {
+              reply = await askProviderQuestion({
+                sessionID,
+                provider: fabricProvider,
+                taskID: outcome.task_id,
+                question,
+                reason: outcome.error?.class,
+                signal: abortSignal,
+              })
+            } catch (error) {
+              if (abortSignal?.aborted) throw error
+              break
+            }
+            const next = await submit({
+              sessionID,
+              prompt: reply.answer,
+              humanAction: reply.humanAction,
+              requestID: `${requestID}-answer${round}`,
+              continuing: true,
+              fabricProvider,
+              modelClass,
+              signal: abortSignal,
+            })
+            taskID = next.task_id
+            if (abortSignal?.aborted) onAbort()
+            if (streamed && !streamed.endsWith("\n")) text("\n\n")
+            streamed = ""
+            outcome = await followFabricTask(next.task_id, abortSignal, { onText: (delta) => text(delta) })
+          }
           if (outcome.status === "completed" || outcome.status === "partial") {
             const full = outcome.result?.text ?? ""
             if (full.startsWith(streamed)) text(full.slice(streamed.length))
@@ -198,7 +244,7 @@ async function submit(input: {
 }
 
 function taskFailureMessage(task: FabricTask, provider: string): string {
-  const name = provider === "chatgpt" ? "ChatGPT" : provider === "claude" ? "Claude" : provider === "kimi" ? "Kimi" : provider
+  const name = providerDisplayName(provider)
   if (task.status === "needs_user") {
     return `${name} needs you: ${task.status_detail ?? task.error?.user_action ?? "open your Sessions computer to continue"}.`
   }

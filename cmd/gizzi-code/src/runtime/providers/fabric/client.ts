@@ -13,6 +13,17 @@ export const FABRIC_PROVIDER_PREFIX = "subs-"
 /** Request header carrying the send's human action (minted by the chat bridge). */
 export const HUMAN_ACTION_HEADER = "x-allternit-human-action"
 
+const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+  chatgpt: "ChatGPT",
+  claude: "Claude",
+  kimi: "Kimi",
+}
+
+/** "chatgpt" → "ChatGPT"; unknown providers keep their id. */
+export function providerDisplayName(provider: string): string {
+  return PROVIDER_DISPLAY_NAMES[provider] ?? provider
+}
+
 export function isFabricProviderID(providerID: string): boolean {
   return providerID.startsWith(FABRIC_PROVIDER_PREFIX)
 }

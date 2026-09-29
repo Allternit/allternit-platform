@@ -232,35 +232,84 @@ fn gizzi_permission_approval_content(props: &serde_json::Value) -> serde_json::V
         .unwrap_or("")
         .to_string();
 
-    // D16: a subscription task gets its own plain summary — the person is
-    // confirming work on their own subscription, not a generic tool call.
-    let subscription = permission == "subscription";
-    let summary = match metadata.get("summary").and_then(|v| v.as_str()) {
-        Some(s) if subscription && !s.trim().is_empty() => s.to_string(),
-        _ => format!("{} requested by {}", permission, tool_name),
-    };
-    let consequence = if subscription {
-        let provider = metadata.get("providerName").and_then(|v| v.as_str()).unwrap_or("your subscription");
-        format!("Runs on your {provider} subscription on your Sessions computer. Nothing is sent to {provider} until you approve.")
-    } else {
-        "The agent is waiting on your approval to run this tool; the turn stays parked until you approve or reject.".to_string()
-    };
+    if permission == crate::subscription_routes::SUBSCRIPTION_PERMISSION {
+        return subscription_approval_content(request_id, session_id, &patterns, &message_id, &metadata);
+    }
 
     json!({
         "actionId": request_id,
         "sessionId": session_id,
-        "riskLevel": if subscription { "high" } else { "medium" },
-        "summary": summary,
+        "riskLevel": "medium",
+        "summary": format!("{} requested by {}", permission, tool_name),
         "details": {
             "actionType": permission,
             "target": patterns.join(", "),
-            "consequence": consequence,
+            "consequence": "The agent is waiting on your approval to run this tool; the turn stays parked until you approve or reject.",
         },
         "toolName": tool_name,
         "patterns": patterns,
         "requestId": request_id,
         "always": always,
         "messageId": message_id,
+    })
+}
+
+/// D16 card content for a gizzi `subscription` ask: a fabric task an agent,
+/// tool or bot prepared (`kind: "send"`), or a provider question from a
+/// running task (`kind: "question"`). Never offers "always": each one is
+/// its own human act. `subscription` carries what the card shows.
+fn subscription_approval_content(
+    request_id: &str,
+    session_id: &str,
+    patterns: &[&str],
+    message_id: &str,
+    metadata: &serde_json::Value,
+) -> serde_json::Value {
+    let sub = metadata.get("subscription").cloned().unwrap_or_else(|| json!({}));
+    let text = |key: &str| sub.get(key).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let provider = text("provider");
+    let name = {
+        let n = text("providerName");
+        if n.is_empty() { if provider.is_empty() { "your".to_string() } else { provider.clone() } } else { n }
+    };
+    let question = text("kind") == "question";
+    let (summary, consequence) = if question {
+        let q = text("question");
+        (
+            if q.is_empty() { format!("{name} needs an answer") } else { format!("{name} asks: {q}") },
+            format!("The {name} task is paused until you answer. Nothing is answered for you."),
+        )
+    } else {
+        // A tool-belt task says what it does ("Create a presentation with
+        // your ChatGPT subscription: …"); a plain send says where it goes.
+        let summary = metadata
+            .get("summary")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("Send to your {name} subscription"));
+        (
+            summary,
+            format!("An agent prepared this for your {name} subscription. It is only sent if you confirm."),
+        )
+    };
+    json!({
+        "actionId": request_id,
+        "sessionId": session_id,
+        "riskLevel": "high",
+        "summary": summary,
+        "details": {
+            "actionType": crate::subscription_routes::SUBSCRIPTION_PERMISSION,
+            "target": name,
+            "consequence": consequence,
+        },
+        "toolName": crate::subscription_routes::SUBSCRIPTION_PERMISSION,
+        "patterns": patterns,
+        "requestId": request_id,
+        "always": [],
+        "messageId": message_id,
+        "subscription": sub,
     })
 }
 
@@ -1817,6 +1866,11 @@ async fn agent_chat_bridge(
                                         .cloned()
                                         .unwrap_or_else(|| json!([])),
                                     "requestId": request_id,
+                                    // D16 cards (send / provider question) render from this.
+                                    "subscription": props
+                                        .pointer("/metadata/subscription")
+                                        .cloned()
+                                        .unwrap_or(serde_json::Value::Null),
                                 },
                             }).to_string()));
                         }
@@ -2236,14 +2290,14 @@ mod tests {
             "patterns": ["chatgpt:presentation.create"],
             "metadata": {
                 "toolName": "presentation.create",
-                "providerName": "ChatGPT",
-                "summary": "Create a presentation with your ChatGPT subscription: \"Q3\""
+                "summary": "Create a presentation with your ChatGPT subscription: \"Q3\"",
+                "subscription": { "kind": "send", "provider": "chatgpt", "providerName": "ChatGPT" }
             }
         }));
         assert_eq!(content["summary"], "Create a presentation with your ChatGPT subscription: \"Q3\"");
         assert_eq!(content["riskLevel"], "high");
         assert_eq!(content["details"]["actionType"], "subscription");
-        assert!(content["details"]["consequence"].as_str().unwrap().contains("Nothing is sent to ChatGPT until you approve"));
+        assert!(content["details"]["consequence"].as_str().unwrap().contains("ChatGPT subscription. It is only sent if you confirm"));
         assert_eq!(content["requestId"], "per_sub");
     }
 
@@ -2257,5 +2311,35 @@ mod tests {
         assert_eq!(content["patterns"], json!([]));
         assert_eq!(content["always"], json!([]));
         assert_eq!(content["messageId"], "");
+    }
+
+    #[test]
+    fn subscription_asks_become_d16_cards_without_always() {
+        let send = gizzi_permission_approval_content(&json!({
+            "id": "perm_s1",
+            "sessionID": "ses_9",
+            "permission": "subscription",
+            "patterns": ["chatgpt"],
+            // Even if a runtime offered "always", the card never does.
+            "always": ["chatgpt"],
+            "metadata": { "subscription": { "kind": "send", "provider": "chatgpt", "providerName": "ChatGPT", "prompt": "Draft a plan" } },
+        }));
+        assert_eq!(send["details"]["actionType"], "subscription");
+        assert_eq!(send["riskLevel"], "high");
+        assert_eq!(send["summary"], "Send to your ChatGPT subscription");
+        assert_eq!(send["always"], json!([]));
+        assert_eq!(send["subscription"]["prompt"], "Draft a plan");
+        assert!(send["details"]["consequence"].as_str().unwrap().contains("only sent if you confirm"));
+
+        let question = gizzi_permission_approval_content(&json!({
+            "id": "perm_q1",
+            "sessionID": "ses_9",
+            "permission": "subscription",
+            "patterns": ["chatgpt"],
+            "metadata": { "subscription": { "kind": "question", "provider": "chatgpt", "providerName": "ChatGPT", "question": "Continue generating?" } },
+        }));
+        assert_eq!(question["summary"], "ChatGPT asks: Continue generating?");
+        assert!(question["details"]["consequence"].as_str().unwrap().contains("Nothing is answered for you"));
+        assert_eq!(question["requestId"], "perm_q1");
     }
 }

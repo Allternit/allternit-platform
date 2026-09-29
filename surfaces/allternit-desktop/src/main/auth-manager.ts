@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, net, safeStorage, session, shell } from 'electron';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { openClerkOAuthPopup, setCookieOnSession } from './clerk-oauth-popup.js';
@@ -538,9 +539,9 @@ export class DesktopAuthManager {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        name: `${os.hostname()} Desktop`,
+        name: `${machineHostname()} Desktop`,
         runtimeType: 'desktop',
-        hostname: os.hostname(),
+        hostname: machineHostname(),
         platform: `${process.platform}-${process.arch}`,
         version: app.getVersion(),
         publicKey: publicKeyRaw,
@@ -1804,3 +1805,21 @@ export class DesktopAuthManager {
 }
 
 export const authManager = new DesktopAuthManager();
+
+/**
+ * This machine's name for runtime pairing. On macOS `os.hostname()` follows
+ * the network (the mDNS "foo.local" vs an ISP-assigned "foo.hsd1…" name), so
+ * the platform took Desktop and the gizzi CLI on one Mac for two machines.
+ * The LocalHostName is stable; gizzi sends the same one.
+ */
+function machineHostname(): string {
+  if (process.platform === 'darwin') {
+    try {
+      const name = execFileSync('scutil', ['--get', 'LocalHostName'], { encoding: 'utf8', timeout: 2000 }).trim();
+      if (name) return name;
+    } catch {
+      // fall back below
+    }
+  }
+  return os.hostname();
+}
