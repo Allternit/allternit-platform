@@ -21,6 +21,7 @@ import { isUndercover } from '../../utils/undercover';
 import { CoordinatorTaskPanel, useCoordinatorTaskCount } from '../CoordinatorAgentStatus';
 import { getLastAssistantMessageId, StatusLine, statusLineShouldDisplay } from '../StatusLine';
 import { Notifications } from './Notifications';
+import { FooterContextLine } from './FooterContextLine';
 import { PromptInputFooterLeftSide } from './PromptInputFooterLeftSide';
 import { PromptInputFooterSuggestions, type SuggestionItem } from './PromptInputFooterSuggestions';
 import { PromptInputHelpMenu } from './PromptInputHelpMenu';
@@ -150,6 +151,10 @@ function PromptInputFooter({
           {"external" === 'ant' && isUndercover() && <Text dimColor>undercover</Text>}
           <BridgeStatusIndicator bridgeSelected={bridgeSelected} />
         </Box>
+      </Box>
+      {/* Second line, like Kimi Code's: model + effort left, context right. */}
+      <Box paddingX={2}>
+        <FooterContextLine messages={messages} />
       </Box>
       {"external" === 'ant' && <CoordinatorTaskPanel />}
     </>;
