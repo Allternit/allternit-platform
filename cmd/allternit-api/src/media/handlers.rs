@@ -401,7 +401,7 @@ pub async fn generate_image_core(
                 .ok_or_else(|| bad_request("unknown quality"))?;
             let entries = match &req.reference_image {
                 Some(reference) => {
-                    clients::edit_gpt_images(transport, &key, &req.prompt, reference, &size, &quality, n).await
+                    clients::edit_gpt_images(transport, &key, &req.prompt, reference, None, &size, &quality, n).await
                 }
                 None => clients::generate_gpt_images(transport, &key, &req.prompt, &size, &quality, n).await,
             }
@@ -456,6 +456,87 @@ pub async fn generate_image_core(
     }
 
     Ok(json!({ "images": images, "estimated_cost_usd": estimated_cost }))
+}
+
+/// gpt-image request from the OpenAI-compatible LLM gateway
+/// (`/v1/images/generations` and `/v1/images/edits`).
+pub struct GatewayImageRequest {
+    pub prompt: String,
+    /// Data URL of the image to edit; `None` generates from the prompt.
+    pub reference_data_url: Option<String>,
+    pub mask_data_url: Option<String>,
+    /// OpenAI dall-e style size; mapped to the nearest gpt-image size.
+    pub size: String,
+    /// `standard` / `hd` or gpt-image `low` / `medium` / `high`.
+    pub quality: String,
+    pub n: u32,
+}
+
+/// Nearest gpt-image-2 size for an OpenAI images size string.
+pub fn gpt_image_size(size: &str) -> &'static str {
+    match size {
+        "1792x1024" | "1536x1024" => "1536x1024",
+        "1024x1792" | "1024x1536" => "1024x1536",
+        _ => "1024x1024",
+    }
+}
+
+/// gpt-image quality for an OpenAI images quality string.
+pub fn gpt_image_quality(quality: &str) -> &'static str {
+    match quality {
+        "low" => "low",
+        "hd" | "high" => "high",
+        _ => "medium",
+    }
+}
+
+/// Run a gateway images request on the caller's gpt-image key (BYOK, then
+/// the flag-gated platform lane). `Ok(None)` means no key is available, so
+/// the gateway answers `not_configured` instead of inventing output.
+pub async fn gateway_gpt_images(
+    db: &DbHandle,
+    transport: &dyn MediaTransport,
+    user_id: &str,
+    req: &GatewayImageRequest,
+) -> Result<Option<Vec<ImageEntry>>, String> {
+    let Some(key) = resolve_provider_key(db, user_id, "gpt-image").map_err(|e| e.to_string())? else {
+        return Ok(None);
+    };
+    let size = gpt_image_size(&req.size);
+    let quality = gpt_image_quality(&req.quality);
+    let entries = match &req.reference_data_url {
+        Some(reference) => {
+            clients::edit_gpt_images(
+                transport,
+                &key,
+                &req.prompt,
+                reference,
+                req.mask_data_url.as_deref(),
+                size,
+                quality,
+                req.n,
+            )
+            .await?
+        }
+        None => clients::generate_gpt_images(transport, &key, &req.prompt, size, quality, req.n).await?,
+    };
+    Ok(Some(entries))
+}
+
+/// Base64 image bytes as a data URL, typed from the file's magic bytes.
+pub fn base64_image_data_url(b64: &str) -> Option<String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
+    let mime = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        "image/png"
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        "image/jpeg"
+    } else if bytes.len() > 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        "image/webp"
+    } else {
+        return None;
+    };
+    Some(format!("data:{mime};base64,{b64}"))
 }
 
 // ─── Axum handlers ───────────────────────────────────────────────────────────

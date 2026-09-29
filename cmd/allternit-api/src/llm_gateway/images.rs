@@ -4,13 +4,13 @@
 //! `POST /v1/images/generations` and `POST /v1/images/edits`. These endpoints
 //! use the gateway's existing virtual-key middleware chain for authentication.
 //!
-//! Generation proxies to the configured provider (or stores a placeholder when
-//! no provider is available). Edits accept a base64-encoded source image plus a
-//! prompt and return a modified image.
+//! Generations and edits run on the key owner's gpt-image key through the
+//! media plane (BYOK OpenAI credential, then the flag-gated platform lane).
+//! Edits accept a base64 PNG/JPEG/WebP source image (and optional mask).
 //!
-//! Dev escape hatch: the placeholder SVG output is only returned when
+//! With no key: the placeholder SVG output is only returned when
 //! `ALLTERNIT_GATEWAY_ALLOW_FAKE_PROVIDERS=1` is set (dev machines, tests).
-//! Without it — the default — every images endpoint returns HTTP 501 with
+//! Without it — the default — the images endpoints return HTTP 501 with
 //! code `allternit.not_configured`, because silently billing for placeholder
 //! images on a production surface is never acceptable.
 
@@ -26,6 +26,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 
+use crate::media::clients::{ImageEntry, MediaTransport, ReqwestTransport};
+use crate::media::handlers::{base64_image_data_url, gateway_gpt_images, GatewayImageRequest};
 use crate::AppState;
 
 use super::{
@@ -186,19 +188,89 @@ fn validate_response_format(fmt: &str) -> Result<(), OpenAiErrorResponse> {
     }
 }
 
+// ─── Real provider path ─────────────────────────────────────────────────────
+
+/// Shape gpt-image entries as an OpenAI images response in the requested
+/// `response_format`. URL entries are downloaded when `b64_json` is asked for.
+pub async fn entries_to_image_data(
+    transport: &dyn MediaTransport,
+    entries: Vec<ImageEntry>,
+    response_format: &str,
+) -> Result<Vec<ImageData>, String> {
+    let mut data = Vec::new();
+    for entry in entries {
+        let item = match (entry, response_format) {
+            (ImageEntry::B64 { b64_json }, "b64_json") => ImageData {
+                url: None,
+                b64_json: Some(b64_json),
+                revised_prompt: None,
+            },
+            (ImageEntry::B64 { b64_json }, _) => ImageData {
+                url: Some(format!("data:image/png;base64,{b64_json}")),
+                b64_json: None,
+                revised_prompt: None,
+            },
+            (ImageEntry::Url { url, .. }, "b64_json") => {
+                let (status, bytes, _) = transport.get_bytes(&url, &[]).await?;
+                if !(200..300).contains(&status) {
+                    return Err(format!("image download status {status}"));
+                }
+                ImageData {
+                    url: None,
+                    b64_json: Some(STANDARD.encode(bytes)),
+                    revised_prompt: None,
+                }
+            }
+            (ImageEntry::Url { url, .. }, _) => ImageData {
+                url: Some(url),
+                b64_json: None,
+                revised_prompt: None,
+            },
+        };
+        data.push(item);
+    }
+    Ok(data)
+}
+
+/// Run the request on the caller's gpt-image key. `None` = no key available;
+/// the handler then falls back to the not_configured gate.
+async fn real_images(
+    state: &AppState,
+    user_id: &str,
+    req: &GatewayImageRequest,
+    response_format: &str,
+) -> Option<Response> {
+    let transport = ReqwestTransport::new();
+    let result = match gateway_gpt_images(&state.db, &transport, user_id, req).await {
+        Ok(None) => return None,
+        Ok(Some(entries)) => entries_to_image_data(&transport, entries, response_format).await,
+        Err(message) => Err(message),
+    };
+    Some(match result {
+        Ok(data) => (
+            StatusCode::OK,
+            Json(json!({ "created": chrono::Utc::now().timestamp(), "data": data })),
+        )
+            .into_response(),
+        Err(message) => OpenAiErrorResponse::new(
+            StatusCode::BAD_GATEWAY,
+            format!("image provider error: {message}"),
+            "api_error",
+            None,
+            None,
+        )
+        .into_response(),
+    })
+}
+
 // ─── Handlers ───────────────────────────────────────────────────────────────
 
 /// `POST /v1/images/generations` — generate one or more images from a prompt.
 pub async fn create_images(
     State(state): State<Arc<AppState>>,
-    Extension(_key): Extension<LlmKeyContext>,
+    Extension(key): Extension<LlmKeyContext>,
     Json(body): Json<CreateImageRequest>,
 ) -> Response {
-    if let Some(err) =
-        fake_provider_gate(std::env::var(ALLOW_FAKE_PROVIDERS_ENV).ok().as_deref(), "images")
-    {
-        return err.into_response();
-    }
     if let Err(e) = validate_n(body.n) {
         return e.into_response();
     }
@@ -216,9 +288,26 @@ pub async fn create_images(
         .into_response();
     }
 
+    let real_req = GatewayImageRequest {
+        prompt: body.prompt.clone(),
+        reference_data_url: None,
+        mask_data_url: None,
+        size: body.size.clone(),
+        quality: body.quality.clone(),
+        n: body.n,
+    };
+    if let Some(response) = real_images(&state, &key.user_id, &real_req, &body.response_format).await {
+        return response;
+    }
+    if let Some(err) =
+        fake_provider_gate(std::env::var(ALLOW_FAKE_PROVIDERS_ENV).ok().as_deref(), "images")
+    {
+        return err.into_response();
+    }
+
     let created = chrono::Utc::now().timestamp();
 
-    // Store generation metadata in SQLite.
+    // Dev placeholder path: store generation metadata in SQLite.
     let generation_id = format!("img_{}", uuid::Uuid::new_v4().simple());
     let db = state.db.clone();
     let gid = generation_id.clone();
@@ -308,14 +397,9 @@ pub async fn create_images(
 /// `POST /v1/images/edits` — edit an existing image using a prompt.
 pub async fn edit_images(
     State(state): State<Arc<AppState>>,
-    Extension(_key): Extension<LlmKeyContext>,
+    Extension(key): Extension<LlmKeyContext>,
     Json(body): Json<EditImageRequest>,
 ) -> Response {
-    if let Some(err) =
-        fake_provider_gate(std::env::var(ALLOW_FAKE_PROVIDERS_ENV).ok().as_deref(), "images")
-    {
-        return err.into_response();
-    }
     if let Err(e) = validate_n(body.n) {
         return e.into_response();
     }
@@ -333,24 +417,41 @@ pub async fn edit_images(
         .into_response();
     }
 
-    // Validate the source image is valid base64.
-    if STANDARD.decode(&body.image).is_err() {
+    // The source image (and mask) must be base64 PNG, JPEG, or WebP.
+    let Some(reference) = base64_image_data_url(&body.image) else {
         return OpenAiErrorResponse::invalid_request(
-            "`image` must be valid base64-encoded image data.",
+            "`image` must be base64-encoded PNG, JPEG, or WebP data.",
             Some("image"),
         )
         .into_response();
-    }
-
-    // Validate mask if provided.
-    if let Some(ref mask) = body.mask {
-        if STANDARD.decode(mask).is_err() {
+    };
+    let mask = match body.mask.as_deref().map(base64_image_data_url) {
+        None => None,
+        Some(Some(mask)) => Some(mask),
+        Some(None) => {
             return OpenAiErrorResponse::invalid_request(
-                "`mask` must be valid base64-encoded image data.",
+                "`mask` must be base64-encoded PNG data.",
                 Some("mask"),
             )
             .into_response();
         }
+    };
+
+    let real_req = GatewayImageRequest {
+        prompt: body.prompt.clone(),
+        reference_data_url: Some(reference),
+        mask_data_url: mask,
+        size: body.size.clone(),
+        quality: "medium".to_string(),
+        n: body.n,
+    };
+    if let Some(response) = real_images(&state, &key.user_id, &real_req, &body.response_format).await {
+        return response;
+    }
+    if let Some(err) =
+        fake_provider_gate(std::env::var(ALLOW_FAKE_PROVIDERS_ENV).ok().as_deref(), "images")
+    {
+        return err.into_response();
     }
 
     let created = chrono::Utc::now().timestamp();

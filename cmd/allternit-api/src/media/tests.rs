@@ -1056,3 +1056,66 @@ async fn image_generate_rejects_bad_reference_images() {
     }
     assert!(t.recorded().is_empty());
 }
+
+// ─── LLM gateway images (/v1/images/*) ───────────────────────────────────────
+
+#[tokio::test]
+async fn gateway_images_without_key_is_none() {
+    let db = DbHandle::new_memory().unwrap();
+    let t = MockTransport::new();
+    let req = super::handlers::GatewayImageRequest {
+        prompt: "a fox".to_string(),
+        reference_data_url: None,
+        mask_data_url: None,
+        size: "1024x1024".to_string(),
+        quality: "standard".to_string(),
+        n: 1,
+    };
+    let out = super::handlers::gateway_gpt_images(&db, &t, "u1", &req).await.unwrap();
+    assert!(out.is_none());
+    assert!(t.recorded().is_empty());
+}
+
+#[tokio::test]
+async fn gateway_edit_maps_size_quality_and_mask() {
+    let db = db_with_credential("openai");
+    let t = MockTransport::new();
+    t.script_json(
+        "POST",
+        "https://api.openai.com/v1/images/edits",
+        200,
+        json!({"data": [{"url": "https://oai.example/e.png"}]}),
+    );
+    t.script_bytes("GET", "https://oai.example/e.png", 200, b"edited", "image/png");
+    let req = super::handlers::GatewayImageRequest {
+        prompt: "make it a sprite".to_string(),
+        reference_data_url: Some("data:image/png;base64,AAAA".to_string()),
+        mask_data_url: Some("data:image/png;base64,BBBB".to_string()),
+        size: "1792x1024".to_string(),
+        quality: "hd".to_string(),
+        n: 1,
+    };
+    let entries = super::handlers::gateway_gpt_images(&db, &t, "u1", &req).await.unwrap().unwrap();
+    let body = t.recorded_for("POST", "https://api.openai.com/v1/images/edits")[0].body.clone().unwrap();
+    assert_eq!(body["size"], "1536x1024");
+    assert_eq!(body["quality"], "high");
+    assert_eq!(body["images"][0]["image_url"], "data:image/png;base64,AAAA");
+    assert_eq!(body["mask"]["image_url"], "data:image/png;base64,BBBB");
+
+    // b64_json response format downloads URL entries.
+    let data = crate::llm_gateway::images::entries_to_image_data(&t, entries, "b64_json").await.unwrap();
+    use base64::Engine;
+    assert_eq!(data[0].b64_json.as_deref(), Some(base64::engine::general_purpose::STANDARD.encode(b"edited").as_str()));
+}
+
+#[test]
+fn gateway_image_data_url_sniffs_type() {
+    use base64::Engine;
+    let enc = |b: &[u8]| base64::engine::general_purpose::STANDARD.encode(b);
+    let png = enc(&[0x89, b'P', b'N', b'G', 0, 0]);
+    assert_eq!(super::handlers::base64_image_data_url(&png).unwrap(), format!("data:image/png;base64,{png}"));
+    assert!(super::handlers::base64_image_data_url(&enc(&[0xFF, 0xD8, 0xFF, 0])).unwrap().starts_with("data:image/jpeg"));
+    assert!(super::handlers::base64_image_data_url(&enc(b"RIFF\0\0\0\0WEBPVP8 ")).unwrap().starts_with("data:image/webp"));
+    assert!(super::handlers::base64_image_data_url(&enc(b"<svg/>")).is_none());
+    assert!(super::handlers::base64_image_data_url("@@@").is_none());
+}
