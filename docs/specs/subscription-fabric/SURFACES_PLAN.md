@@ -143,4 +143,11 @@ chat picker lists what gizzi's `/provider` reports. So:
    `CAPABILITY_INVENTORY.md` (probe the live UI on a copy profile first; owner
    logs in once per provider through Desktop's writable computer viewer).
 7. **Desktop Settings → Sessions Computer panel** (status, accounts,
-   needs-user queue, login viewer).
+   needs-user queue, login viewer). Built 2026-09-28: allternit-ai
+   `views/settings/SessionsComputerPanel.tsx` (Settings → Desktop app →
+   Sessions computer); gateway `GET /v1/tasks?status=&limit=` read-only
+   summaries for the needs-user and recent lists; `PUT
+   /subscriptions/binding` refuses the desktop you work on and bots'
+   computers (`409 sessions_computer_not_allowed`, D15). Resource usage shows
+   only the computers API allocations (CPU/memory/disk); there is no live
+   usage feed yet.
