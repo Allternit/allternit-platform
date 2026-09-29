@@ -477,7 +477,7 @@ export class LocalCliDriver implements RuntimeDriver {
     }
 
     let finished = false
-    const blockLengths: Record<number, number> = {}
+    const blocks = new StreamJsonBlocks()
 
     try {
       for await (const line of readLines(proc.stdout)) {
@@ -503,23 +503,31 @@ export class LocalCliDriver implements RuntimeDriver {
             continue
           }
 
+          // --include-partial-messages: text and thinking as they're written.
+          if (evt.type === "stream_event") {
+            const live = blocks.streamEvent(evt.event)
+            if (live) {
+              const liveEv = { type: live.kind === "text" ? "text_delta" : "reasoning_delta", delta: live.delta } as AgentEvent
+              yield liveEv
+              await this.logEvent(handle.taskId, liveEv)
+            }
+            continue
+          }
+
           if (evt.type === "assistant" && Array.isArray(evt.message?.content)) {
+            const unsent = blocks.assistantParts(evt.message)
             for (const [idx, part] of evt.message.content.entries()) {
               if (!part || typeof part !== "object") continue
               if (part.type === "text" && typeof part.text === "string") {
-                const prev = blockLengths[idx] ?? 0
-                const delta = part.text.slice(prev)
+                const delta = unsent[idx]
                 if (delta) {
-                  blockLengths[idx] = part.text.length
                   const deltaEv = { type: "text_delta", delta } as AgentEvent
                   yield deltaEv
                   await this.logEvent(handle.taskId, deltaEv)
                 }
               } else if (part.type === "thinking" && typeof part.thinking === "string") {
-                const prev = blockLengths[idx] ?? 0
-                const delta = part.thinking.slice(prev)
+                const delta = unsent[idx]
                 if (delta) {
-                  blockLengths[idx] = part.thinking.length
                   const reasoningEv = { type: "reasoning_delta", delta } as AgentEvent
                   yield reasoningEv
                   await this.logEvent(handle.taskId, reasoningEv)
@@ -1389,6 +1397,64 @@ type AdapterMode =
  * older shapes put them at the top level. Missing this left every CLI tool
  * call "running" until the turn ended and marked it aborted.
  */
+/**
+ * Text bookkeeping for Claude's stream-json output, so each character is
+ * sent once.
+ *
+ * Claude CLI emits every content block as its own `assistant` event — one
+ * part, at index 0 — and, with --include-partial-messages, streams the same
+ * block first as `stream_event` deltas. The driver used to track sent text
+ * by part index across the whole run, so a later block was sliced by an
+ * earlier block's length: "alpha … beta" lost "beta" entirely, and a longer
+ * reply lost its opening. Blocks are now keyed by their message id and
+ * their position in that message.
+ */
+export class StreamJsonBlocks {
+  private sent = new Map<string, number>()
+  private seen = new Map<string, number>()
+  private streamMessage = ""
+  private anonymous = 0
+
+  /** A partial-message event: the text or thinking to send now, if any. */
+  streamEvent(event: any): { kind: "text" | "thinking"; delta: string } | null {
+    if (!event || typeof event !== "object") return null
+    if (event.type === "message_start") {
+      this.streamMessage = String(event.message?.id ?? "")
+      return null
+    }
+    if (event.type !== "content_block_delta" || !this.streamMessage) return null
+    const key = `${this.streamMessage}:${Number(event.index ?? 0)}`
+    const d = event.delta ?? {}
+    const text = d.type === "text_delta" ? d.text : d.type === "thinking_delta" ? d.thinking : undefined
+    if (typeof text !== "string" || !text) return null
+    this.sent.set(key, (this.sent.get(key) ?? 0) + text.length)
+    return { kind: d.type === "text_delta" ? "text" : "thinking", delta: text }
+  }
+
+  /**
+   * An `assistant` event: for each part, the text not yet sent (partial
+   * deltas already covered it, or an earlier cumulative event did).
+   */
+  assistantParts(message: any): string[] {
+    const content: any[] = Array.isArray(message?.content) ? message.content : []
+    const id = typeof message?.id === "string" && message.id ? message.id : `anon-${this.anonymous++}`
+    // One part = the next block of this message; several = a cumulative
+    // snapshot of all its blocks so far.
+    const single = content.length === 1
+    const base = single ? (this.seen.get(id) ?? 0) : 0
+    if (single) this.seen.set(id, base + 1)
+    return content.map((part, idx) => {
+      const full = part?.type === "text" ? part.text : part?.type === "thinking" ? part.thinking : undefined
+      if (typeof full !== "string") return ""
+      const key = `${id}:${single ? base : idx}`
+      const prev = this.sent.get(key) ?? 0
+      if (full.length <= prev) return ""
+      this.sent.set(key, full.length)
+      return full.slice(prev)
+    })
+  }
+}
+
 export function streamJsonUserContent(evt: any): any[] | null {
   if (evt?.type !== "user") return null
   if (Array.isArray(evt.message?.content)) return evt.message.content
@@ -1440,6 +1506,8 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
         "--output-format", "stream-json",
         "--input-format", "stream-json",
         "--verbose",
+        // Text streams as it's written, not one block at a time.
+        "--include-partial-messages",
         "--permission-mode", "bypassPermissions",
         "--disallowedTools", "AskUserQuestion",
         ...claudeSessionFlags(ctx),

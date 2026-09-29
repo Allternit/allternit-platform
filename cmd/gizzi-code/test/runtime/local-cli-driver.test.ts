@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, test } from "bun:test"
-import { getCliAdapterInfo } from "@/runtime/drivers/local-cli-driver"
+import { getCliAdapterInfo, StreamJsonBlocks } from "@/runtime/drivers/local-cli-driver"
 import { SUBPROCESS_PROVIDERS } from "@/runtime/providers/discovery/subprocess"
 
 const EXPECTED_ACP_CLIS = [
@@ -180,5 +180,32 @@ describe("streamJsonUserContent — where stream-json tool results live", () => 
   test("ignores other events", async () => {
     const { streamJsonUserContent } = await import("../../src/runtime/drivers/local-cli-driver")
     expect(streamJsonUserContent({ type: "assistant", message: { content: [] } })).toBeNull()
+  })
+})
+
+describe("StreamJsonBlocks (Claude stream-json text bookkeeping)", () => {
+  const text = (id: string, t: string) => ({ id, content: [{ type: "text", text: t }] })
+
+  test("a later, shorter text block is not dropped", () => {
+    const b = new StreamJsonBlocks()
+    expect(b.assistantParts(text("m1", "alpha"))).toEqual(["alpha"])
+    expect(b.assistantParts({ id: "m1", content: [{ type: "tool_use", name: "Bash" }] })).toEqual([""])
+    expect(b.assistantParts(text("m2", "beta"))).toEqual(["beta"])
+    expect(b.assistantParts(text("m2", "longer final reply"))).toEqual(["longer final reply"])
+  })
+
+  test("partial deltas are sent live and the final block adds nothing twice", () => {
+    const b = new StreamJsonBlocks()
+    b.streamEvent({ type: "message_start", message: { id: "m1" } })
+    expect(b.streamEvent({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hel" } })).toEqual({ kind: "text", delta: "Hel" })
+    expect(b.streamEvent({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "lo" } })).toEqual({ kind: "text", delta: "lo" })
+    expect(b.streamEvent({ type: "content_block_delta", index: 1, delta: { type: "thinking_delta", thinking: "" } })).toBeNull()
+    expect(b.assistantParts(text("m1", "Hello"))).toEqual([""])
+  })
+
+  test("a cumulative snapshot only sends what's new", () => {
+    const b = new StreamJsonBlocks()
+    expect(b.assistantParts({ id: "m1", content: [{ type: "text", text: "a" }, { type: "text", text: "b" }] })).toEqual(["a", "b"])
+    expect(b.assistantParts({ id: "m1", content: [{ type: "text", text: "a" }, { type: "text", text: "bc" }] })).toEqual(["", "c"])
   })
 })
