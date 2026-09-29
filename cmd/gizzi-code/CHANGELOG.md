@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.1.6 (2026-09-29)
+
+`gizzi login` on a Mac where Desktop is already signed in, and Claude CLI
+replies that stream in full.
+
+### Fixed
+- `gizzi login` works on a Mac where Allternit Desktop is already signed in,
+  on the Free plan too: the CLI and Desktop on one computer count as one
+  runtime. On macOS gizzi now reports the Mac's fixed name (its
+  LocalHostName), not the network-assigned one, which had made the platform
+  take one Mac for two.
+- When the platform refuses a sign-in after you approve it, `gizzi login`
+  says why (for example "Active machine limit reached (1/1)") and where to
+  manage your runtimes. It used to say "Sign-in was cancelled".
+- Claude CLI replies stream as they're written and never lose text, and its
+  tool results reach the session (no more "Tool execution aborted").
+- CLI runs survive the launcher moving mid-session.
+- Subscription models appear without a restart once a Sessions computer is
+  bound, and a model id that repeats its provider name still resolves.
+
 ## 2.1.5 (2026-09-28)
 
 `gizzi login` that finishes, replies that stream as they're written, and the
