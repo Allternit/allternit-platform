@@ -538,8 +538,9 @@ export class LocalCliDriver implements RuntimeDriver {
             continue
           }
 
-          if (evt.type === "user" && Array.isArray(evt.content)) {
-            for (const [idx, part] of evt.content.entries()) {
+          const userContent = streamJsonUserContent(evt)
+          if (userContent) {
+            for (const [idx, part] of userContent.entries()) {
               if (!part || typeof part !== "object") continue
               if (part.type === "tool_result") {
                 const toolResultEv = {
@@ -1381,6 +1382,19 @@ type AdapterMode =
   | "codex-app-server"
   | "one-shot-json"
   | "one-shot-text"
+
+/**
+ * The content blocks of a stream-json "user" event (where tool results come
+ * back). Claude Code nests them in message.content, like assistant events;
+ * older shapes put them at the top level. Missing this left every CLI tool
+ * call "running" until the turn ended and marked it aborted.
+ */
+export function streamJsonUserContent(evt: any): any[] | null {
+  if (evt?.type !== "user") return null
+  if (Array.isArray(evt.message?.content)) return evt.message.content
+  if (Array.isArray(evt.content)) return evt.content
+  return null
+}
 
 interface CliAdapter {
   mode: AdapterMode

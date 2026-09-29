@@ -165,3 +165,20 @@ describe("acpStderrLooksFatal — quota/auth must not look like a successful emp
     expect(acpStderrLooksFatal("warn: deprecated config key max_retries_per_step")).toBe(false)
   })
 })
+
+describe("streamJsonUserContent — where stream-json tool results live", () => {
+  test("reads Claude Code's message.content", async () => {
+    const { streamJsonUserContent } = await import("../../src/runtime/drivers/local-cli-driver")
+    const part = { type: "tool_result", tool_use_id: "toolu_1", content: "ok" }
+    expect(streamJsonUserContent({ type: "user", message: { role: "user", content: [part] } })).toEqual([part])
+  })
+  test("still reads a top-level content array", async () => {
+    const { streamJsonUserContent } = await import("../../src/runtime/drivers/local-cli-driver")
+    const part = { type: "tool_result", tool_use_id: "toolu_2", content: "ok" }
+    expect(streamJsonUserContent({ type: "user", content: [part] })).toEqual([part])
+  })
+  test("ignores other events", async () => {
+    const { streamJsonUserContent } = await import("../../src/runtime/drivers/local-cli-driver")
+    expect(streamJsonUserContent({ type: "assistant", message: { content: [] } })).toBeNull()
+  })
+})
