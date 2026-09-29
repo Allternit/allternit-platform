@@ -46,6 +46,8 @@ export namespace PaneArtifact {
     text: z.string().optional(),
     /** call: the tool changed the document. */
     mutated: z.boolean().optional(),
+    /** A picture of what the pane shows (PNG data URL), e.g. a rendered site preview. */
+    image: z.string().startsWith("data:image/").optional(),
     error: z.string().optional(),
   })
   export type Result = z.infer<typeof Result>

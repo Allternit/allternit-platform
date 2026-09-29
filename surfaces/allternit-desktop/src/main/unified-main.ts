@@ -82,6 +82,7 @@ import {
   stopCaptureSession,
   isCaptureAvailable,
 } from './browser-capture-manager.js';
+import { captureArtifactPreview, type CaptureWindow, type PreviewCaptureRequest } from './artifact-preview-capture.js';
 import {
   configureSecurity,
   installSessionSecurityHandlers,
@@ -4321,6 +4322,28 @@ ipcMain.handle('miniApps:oauthCancel', (_event, flowId: string) => oauthBroker()
 ipcMain.handle('miniApps:oauthAccounts', (_event, appId: string) => oauthBroker().listAccounts(appId));
 handleGuarded('miniApps:oauthDisconnect', (_event, appId: string, providerId: string, accountId: string) =>
   oauthBroker().disconnect(appId, providerId, accountId));
+
+// ─── Artifact preview capture ────────────────────────────────────────────────
+// A session agent looks at the site it built (pane_artifact → Build output):
+// rendered for real in a throwaway offscreen window, in its own in-memory
+// session so it shares no cookies or storage with the app.
+handleGuarded('artifact-preview:capture', (_event, req: PreviewCaptureRequest) =>
+  captureArtifactPreview(req, ({ width, height }) =>
+    new BrowserWindow({
+      show: false,
+      width,
+      height,
+      useContentSize: true,
+      webPreferences: {
+        offscreen: true,
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        partition: `artifact-preview-${Date.now()}`,
+        backgroundThrottling: false,
+      },
+    }) as unknown as CaptureWindow,
+  ));
 
 // ─── Browser API Capture (HAR-derived API client) ───────────────────────────
 // Records network traffic from the default Electron session and returns a HAR
