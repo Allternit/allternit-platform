@@ -146,6 +146,8 @@ async fn main() {
     // tracing spans into an OTLP/HTTP batch exporter (GenAI conventions on the
     // chat-completions path). Unset endpoint → no exporter, no overhead, logs
     // identical to before.
+    // Desktop's per-launch human-proof secret arrives on stdin (D16).
+    allternit_api::subscription_routes::read_desktop_human_proof_from_stdin();
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,tokio_cron_scheduler=off"));
     let json_logs = std::env::var("ALLTERNIT_LOG_FORMAT").as_deref() == Ok("json");

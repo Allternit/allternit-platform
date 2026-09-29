@@ -134,6 +134,12 @@ export class BackendManager {
   private kernelProc: ChildProcess | null = null;
   private apiKey: string | null = null;
   private desktopAccessToken: string | null = null;
+  /**
+   * D16 human proof: per-launch secret handed to allternit-api on its stdin,
+   * never in the environment or on disk, where a same-user agent could read
+   * it. Electron main attaches it only to a person's own acts in the window.
+   */
+  private humanProofSecret: string | null = null;
   private lastConfig: BackendLaunchConfig | null = null;
   private resolvedBinaryPath: string | null | undefined;
   /**
@@ -229,6 +235,7 @@ export class BackendManager {
     // desktop-bootstrap auth path via the environment. When absent there
     // (non-desktop deployments) the endpoints are disabled, not open.
     this.desktopAccessToken = crypto.randomBytes(32).toString('hex');
+    this.humanProofSecret = crypto.randomBytes(32).toString('hex');
 
     const dataDir = resolveApiDataDir({
       isPackaged: app.isPackaged,
@@ -259,6 +266,8 @@ export class BackendManager {
       ALLTERNIT_SELF_HOSTED: process.env.ALLTERNIT_SELF_HOSTED || 'false',
       ALLTERNIT_OPERATOR_API_KEY: this.apiKey,
       ALLTERNIT_DESKTOP_ACCESS_TOKEN: this.desktopAccessToken,
+      // The human-proof secret itself goes on stdin (below), not here.
+      ALLTERNIT_HUMAN_PROOF_STDIN: '1',
       // HMAC secret for short-lived desktop VNC WebSocket tokens (bot-desktop
       // Observe/Take Over). Without it the api returns unsigned ws_urls the
       // /ws/* auth rejects, and the computer pane renders nothing. An explicit
@@ -285,9 +294,11 @@ export class BackendManager {
     const spawned = spawnSidecar(binaryPath, developmentCargoProject ? ['run', '--manifest-path', path.join(developmentCargoProject, 'Cargo.toml')] : [], {
       cwd: developmentCargoProject ?? undefined,
       env,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
+    spawned.stdin?.on('error', () => {});
+    spawned.stdin?.end(`${this.humanProofSecret}\n`);
     this.kernelProc = spawned;
     this.intentionalStop = false;
     this.spawnTimestamp = Date.now();
@@ -385,6 +396,14 @@ export class BackendManager {
   /** Spawn-time secret for managed-runtime local API endpoints (never logged). */
   getDesktopAccessToken(): string | null {
     return this.desktopAccessToken;
+  }
+
+  /**
+   * The value Electron main puts in `X-Allternit-Human-Proof` for a person's
+   * act made in the app window (see human-proof.ts). Null before the API runs.
+   */
+  getHumanProof(): string | null {
+    return this.humanProofSecret ? `desktop:${this.humanProofSecret}` : null;
   }
 
   /** Authenticated headers for managed-runtime local API calls from main. */

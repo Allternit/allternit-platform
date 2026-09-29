@@ -58,11 +58,26 @@ subscription task.**
 - allternit-ai: vitest 61 files / 402 tests passed across agents, chat, settings, subscriptions; stale-load test confirmed to fail without the fix. `tsc --noEmit`: no errors in changed files (the 18 remaining are office-suite/tldraw packages in the borrowed node_modules).
 - Not yet live-verified in Desktop: needs a Desktop build from main with both PRs, then approve a card and send to ChatGPT from the composer.
 
+## Follow-up 2026-09-29 — Desktop proof (live check found a gap)
+
+Live check on b4207 (Eoj's Desktop): an agent holding gizzi's device token
+was refused on every route (403 `person_required`), as intended. But the
+person was refused too: this Desktop is paired by device and its hidden Clerk
+refresh has been timing out for hours ("Clerk session timed out"), so the
+renderer had no Clerk token to prove with. In Desktop the proof now comes
+from Electron main: a per-launch secret generated in main, written to
+allternit-api's **stdin** (never env or disk), and attached as
+`desktop:<secret>` only to requests from the app window that the UI marks as
+a person's act (`X-Allternit-Human-Proof: desktop`). Main strips any other
+`desktop…` value, never sends it to the cloud, and strips it from requests
+relayed from other devices. Web and phone keep the Clerk proof.
+
 ## Limits (accepted, recorded on purpose)
 
-1. **Same-user local agent.** gizzi runs as the person's macOS user. With real effort it could lift the Clerk session out of Electron's encrypted cookie store / the renderer and replay it. Clerk session tokens live ~60 s (+60 s verify leeway), which bounds the window. Closing this fully needs a native OS confirmation (Touch ID / system prompt) owned by Electron main.
-2. **Replay inside the token lifetime.** A captured proof can be reused until it expires; it is not bound to a single request. A nonce-bound proof would need a server round trip per act.
-3. **Clerk reachability.** The Desktop's local allternit-api verifies proofs against Clerk's JWKS (cached). If Clerk can't be reached and nothing is cached, human acts fail closed (403). Subscription use needs the network anyway.
+1. **Same-user local agent.** gizzi runs as the person's macOS user. With real effort (debugger attach to Electron or allternit-api, which macOS allows for unsigned same-user processes) it could read Desktop's per-launch secret from memory, or lift a Clerk session from Electron's encrypted cookie store. Clerk tokens live ~60 s (+60 s leeway); the Desktop secret lives for the app launch. Closing this fully needs a native OS confirmation (Touch ID / system prompt) owned by Electron main, plus a hardened-runtime signed build.
+2. **Replay inside the proof lifetime.** A captured proof can be reused until it expires (Clerk ~60 s; Desktop secret: until the app quits); it is not bound to a single request. A nonce-bound proof would need a server round trip per act.
+8. **UI marker trust.** In Desktop any code running in the app window can send the marker; the boundary is the app window itself (agent artifacts render in sandboxed frames, not the app origin).
+3. **Clerk reachability (web/phone only).** Clerk proofs are verified against Clerk's JWKS (cached); unreachable and uncached → 403. Desktop no longer depends on Clerk for this.
 4. **gizzi terminal (TUI/CLI).** The person typing and the agent are the same process, so a terminal send to a `subs-*` model always becomes a card to approve in web or Desktop.
 5. **iOS.** Uses the agent-session protocol and has no subscription cards or `subs-*` sends yet. When it does, it sends the Clerk session as the proof; the cloud relay already forwards it.
 6. **Paths that fall back to a card.** Code-mode sessions that talk to gizzi directly, CodeCanvas "retry last message", and bot-thread approvals of cards not in the permission store carry no proof, so they produce or keep a card rather than acting. Fail closed, by design.
