@@ -1,8 +1,27 @@
 # Changelog
 
-## Unreleased
+## 2.1.7 (2026-09-29)
+
+A screen laid out like Claude Code's with a Kimi-style header and footer,
+usage limits that wrap up a turn instead of cutting it off, and subscription
+tasks that always need a person's approval.
+
+### Added
+- Turns wrap up before a usage limit: at 95% of a limit the model gets a
+  short wrap-up and a few more steps, then the session pauses as wrapped.
+  At 80% the screen shows "Approaching usage limit", and the pet HUD shows
+  the same limit states as the web app. Usage comes from Anthropic and Codex
+  response headers and from Allternit Cloud's quota.
+- Subscription tools: images through the `subscription` media lane, plus
+  presentation, document and deep-research tools. A tool appears only when
+  your account is entitled to it. Downloaded files are checked against
+  their recorded checksum.
 
 ### Changed
+- Anything that uses your subscription (a send prepared by an agent, a
+  tool call, a provider's question) asks you first, in every permission
+  mode, including bypass and auto. "Always" counts as once and is never
+  saved. Only a person's signed-in session can start a subscription task.
 - The screen is laid out like Claude Code's, with the prompt at the bottom
   of the window. Set `GIZZI_CODE_NO_FLICKER=0` for the old inline layout.
 - The startup header is a rounded box, like Kimi Code's: Gizzi with the name,
@@ -18,6 +37,7 @@
 ### Fixed
 - In 256-color terminals such as Apple Terminal, warm colors no longer turn
   pink: truecolor values now map to the nearest palette color.
+- Messages created in the same millisecond come back in order.
 
 ## 2.1.6 (2026-09-29)
 
