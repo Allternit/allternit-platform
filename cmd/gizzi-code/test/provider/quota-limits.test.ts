@@ -113,3 +113,36 @@ describe("classifying a session against its windows", () => {
     expect(SessionLimit.classify(windows, t, "claude-sonnet-5-5", NOW).state).toBe("ok")
   })
 })
+
+describe("Allternit Cloud quota credentials", () => {
+  test("uses whichever credential the endpoint accepts (Desktop: gateway key + session token)", async () => {
+    const saved = { fetch: globalThis.fetch, env: { ...process.env } }
+    process.env.ALLTERNIT_API_URL = "http://127.0.0.1:8013"
+    process.env.ALLTERNIT_API_KEY = "alt_gateway"
+    process.env.ALLTERNIT_API_TOKEN = "session_token"
+    const seen: string[] = []
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      const auth = (init.headers as Record<string, string>).Authorization
+      seen.push(`${new URL(url).pathname} ${auth}`)
+      if (url.endsWith("/api/v1/me/usage") && auth === "Bearer session_token") {
+        return new Response(JSON.stringify({ plan: "free", weeklyUsed: 2.1, weeklyLimit: 2, resetsAt: "2026-10-01T00:00:00+00:00" }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ error: "Invalid token" }), { status: 401 })
+    }) as typeof fetch
+    try {
+      ProviderQuotas.clearCache()
+      const result = await ProviderQuotas.get("allternit")
+      expect(result).toMatchObject({ status: "ok", quota: { windows: [{ id: "month", label: "Free monthly", usedRatio: 1 }] } })
+      expect(seen[0]).toBe("/api/v1/me/usage Bearer session_token")
+
+      // Every credential rejected everywhere → signed out, not an empty "ok".
+      process.env.ALLTERNIT_API_TOKEN = "stale"
+      ProviderQuotas.clearCache()
+      expect((await ProviderQuotas.get("allternit")).status).toBe("signed-out")
+    } finally {
+      globalThis.fetch = saved.fetch
+      process.env = saved.env
+      ProviderQuotas.clearCache()
+    }
+  })
+})
