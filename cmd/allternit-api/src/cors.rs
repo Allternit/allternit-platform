@@ -246,6 +246,8 @@ fn allowed_request_headers() -> Vec<HeaderName> {
         HeaderName::from_static("x-office-binding-id"),
         HeaderName::from_static("idempotency-key"),
         HeaderName::from_static("x-allternit-session-id"),
+        // D16 human proof on human-act calls (subscription_routes::person_acted).
+        HeaderName::from_static("x-allternit-human-proof"),
     ]
     .to_vec()
 }

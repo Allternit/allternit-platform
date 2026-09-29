@@ -829,3 +829,44 @@ test("reply - subscription 'always' counts once, is not remembered, and carries 
     },
   })
 })
+
+// D16: each subscription card is its own decision. Declining one, or a stopped
+// turn withdrawing one, leaves the session's other cards open.
+test("reply - declining a subscription card or withdrawing one leaves other cards open", async () => {
+  await using tmp = await tmpdir({ git: true })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const card = (id: string, permission = "subscription") =>
+        PermissionNext.ask({
+          id,
+          sessionID: "session_root",
+          permission,
+          patterns: ["chatgpt"],
+          metadata: {},
+          always: [],
+          ruleset: [],
+        }).then(
+          (v) => ({ ok: v }),
+          (e) => ({ err: e }),
+        )
+      const declined = card("permission_subs_a")
+      const withdrawn = card("permission_subs_b")
+      const other = card("permission_bash_c", "bash")
+      const kept = card("permission_subs_d")
+      await settle()
+
+      await PermissionNext.reply({ requestID: "permission_subs_a", reply: "reject" })
+      expect(await declined).toEqual({ err: expect.any(PermissionNext.RejectedError) })
+      await PermissionNext.withdraw("permission_subs_b")
+      expect(await withdrawn).toEqual({ err: expect.any(PermissionNext.RejectedError) })
+
+      const open = (await PermissionNext.list()).map((p) => p.id).sort()
+      expect(open).toEqual(["permission_bash_c", "permission_subs_d"])
+      await PermissionNext.reply({ requestID: "permission_bash_c", reply: "once" })
+      await PermissionNext.reply({ requestID: "permission_subs_d", reply: "once" })
+      expect(await other).toEqual({ ok: undefined })
+      expect(await kept).toEqual({ ok: undefined })
+    },
+  })
+})

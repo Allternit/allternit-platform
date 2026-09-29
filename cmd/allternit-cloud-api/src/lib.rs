@@ -513,6 +513,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
                 header::HeaderName::from_static("x-requested-with"),
                 header::HeaderName::from_static("x-client-version"),
                 header::HeaderName::from_static("x-allternit-tenant-id"),
+                // D16: the person's Clerk session on human-act calls, relayed
+                // to their runtime (see runtime_relay::filtered_headers).
+                header::HeaderName::from_static("x-allternit-human-proof"),
             ])
             .allow_credentials(true)
             .max_age(std::time::Duration::from_secs(3600))

@@ -85,8 +85,9 @@ async function ask(
   // card on the conversation that started it.
   sessionID = await rootSessionID(sessionID)
   const id = Identifier.ascending("permission")
-  // A turn stopped while the card is open withdraws the card.
-  const withdraw = () => void PermissionNext.reply({ requestID: id, reply: "reject" }).catch(() => {})
+  // A turn stopped while the card is open withdraws this card only; the
+  // root session may hold other people-facing cards.
+  const withdraw = () => void PermissionNext.withdraw(id).catch(() => {})
   signal?.addEventListener("abort", withdraw, { once: true })
   try {
     return await PermissionNext.ask({

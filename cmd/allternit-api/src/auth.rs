@@ -1159,6 +1159,40 @@ pub fn get_user(headers: &HeaderMap) -> Option<AuthUser> {
     })
 }
 
+/// Test-only Clerk: signs RS256 session tokens with a key it seeds into a
+/// [`JwksManager`]'s cache, so tests exercise the real `verify_token` path.
+#[cfg(test)]
+pub(crate) async fn test_clerk_token(jwks: &JwksManager, issuer: &str, sub: &str, expires_in: i64) -> String {
+    use aws_lc_rs::rsa::{KeyPair, KeySize, PublicKeyComponents};
+    use aws_lc_rs::signature::KeyPair as _;
+    let key_pair = KeyPair::generate(KeySize::Rsa2048).expect("rsa key");
+    let components: PublicKeyComponents<Vec<u8>> = key_pair.public_key().into();
+    let kid = format!("test-{}", uuid::Uuid::new_v4());
+    let jwk = JwkKey {
+        kid: kid.clone(),
+        kty: "RSA".into(),
+        key_use: Some("sig".into()),
+        n: Some(URL_SAFE_NO_PAD.encode(&components.n)),
+        e: Some(URL_SAFE_NO_PAD.encode(&components.e)),
+        extra: HashMap::new(),
+    };
+    {
+        let mut cache = jwks.cache.write().await;
+        let cached = cache.get_or_insert_with(|| CachedJwks { keys: HashMap::new(), fetched_at: Instant::now() });
+        cached.keys.insert(kid.clone(), jwk);
+        cached.fetched_at = Instant::now();
+    }
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+    let header = URL_SAFE_NO_PAD.encode(json!({"alg": "RS256", "typ": "JWT", "kid": kid}).to_string());
+    let payload = URL_SAFE_NO_PAD.encode(json!({"iss": issuer, "sub": sub, "exp": now + expires_in, "iat": now}).to_string());
+    let signing_input = format!("{header}.{payload}");
+    let mut signature = vec![0; key_pair.public_modulus_len()];
+    key_pair
+        .sign(&aws_lc_rs::signature::RSA_PKCS1_SHA256, &aws_lc_rs::rand::SystemRandom::new(), signing_input.as_bytes(), &mut signature)
+        .expect("sign");
+    format!("{signing_input}.{}", URL_SAFE_NO_PAD.encode(signature))
+}
+
 #[cfg(test)]
 mod desktop_ws_token_tests {
     use super::user_from_desktop_token;

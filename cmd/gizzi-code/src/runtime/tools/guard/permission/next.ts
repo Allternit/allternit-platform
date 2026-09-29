@@ -226,6 +226,20 @@ export namespace PermissionNext {
     },
   )
 
+  /**
+   * Take back one open ask without touching the session's other asks — for a
+   * turn that stopped while its card was open. `reply(reject)` would reject
+   * every pending ask on the session.
+   */
+  export async function withdraw(requestID: string) {
+    const s = await state()
+    const existing = s.pending[requestID]
+    if (!existing) return
+    delete s.pending[requestID]
+    Bus.publish(Event.Replied, { sessionID: existing.info.sessionID, requestID, reply: "reject" })
+    existing.reject(new RejectedError())
+  }
+
   export const reply = fn(
     z.object({
       requestID: Identifier.schema("permission"),
@@ -267,6 +281,9 @@ export namespace PermissionNext {
       })
       if (input.reply === "reject") {
         existing.reject(input.message ? new CorrectedError(input.message) : new RejectedError())
+        // A subscription card is one task's own decision (D16): declining it
+        // leaves the session's other cards open.
+        if (ALWAYS_ASK.has(existing.info.permission)) return
         // Reject all other pending permissions for this session
         const sessionID = existing.info.sessionID
         for (const [id, pending] of Object.entries(s.pending)) {
