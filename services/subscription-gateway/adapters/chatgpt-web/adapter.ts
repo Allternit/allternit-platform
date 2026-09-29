@@ -25,6 +25,8 @@ import {
   createHeartbeat,
   createResolver,
   detectAuthState,
+  ComposerNotFilledError,
+  composerDriftError,
   fillComposer,
   pageShape,
   stalledError,
@@ -626,7 +628,13 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
         return;
       }
     }
-    await fillComposer(page, resolver, task.prompt);
+    try {
+      await fillComposer(page, resolver, task.prompt);
+    } catch (err) {
+      if (!(err instanceof ComposerNotFilledError)) throw err;
+      yield { t: "error", error: composerDriftError(err.detail) };
+      return;
+    }
     if (
       images.length > 0 &&
       !(await waitForSendReady(resolver, { timeoutMs: cfg.completion?.timeoutMs ?? 120000, now, sleep }))

@@ -1,19 +1,49 @@
 // §A3.1 — fillComposer / submit shared primitives.
-import type { Page } from "playwright";
+import type { Locator, Page } from "playwright";
 import type { SdkSelectorResolver } from "./selectors";
 
 const LONG_TEXT_THRESHOLD = 500;
 
 // Handles contenteditable and textarea composers; long prompts go through
 // insertText (never per-key typing).
+/** The prompt didn't land in the visible composer (markup drift). Nothing was sent. */
+export class ComposerNotFilledError extends Error {
+  constructor(readonly detail: string) {
+    super(`composer did not take the prompt (${detail})`);
+    this.name = "ComposerNotFilledError";
+  }
+}
+
+const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+
+// Providers keep hidden fallback fields next to the real editor; typing into
+// one of those leaves the visible composer empty (live: ChatGPT, 2026-09-29).
+async function firstVisible(locator: Locator): Promise<Locator | null> {
+  const n = Math.min(await locator.count(), 8);
+  for (let i = 0; i < n; i++) {
+    const candidate = locator.nth(i);
+    if (await candidate.isVisible().catch(() => false)) return candidate;
+  }
+  return null;
+}
+
+/** What the composer shows now (value for fields, text for editors). */
+export async function composerText(target: Locator): Promise<string> {
+  return target.evaluate((el) =>
+    el.tagName === "TEXTAREA" || el.tagName === "INPUT"
+      ? (el as HTMLTextAreaElement).value
+      : (el as HTMLElement).innerText
+  );
+}
+
 export async function fillComposer(
   page: Page,
   resolver: SdkSelectorResolver,
   text: string,
   opts: { key?: string } = {}
-): Promise<void> {
+): Promise<Locator> {
   const locator = await resolver.resolveLocator(opts.key ?? "composer");
-  const target = locator.first();
+  const target = (await firstVisible(locator)) ?? locator.first();
   const kind = await target.evaluate((el) => {
     const tag = el.tagName.toUpperCase();
     if (tag === "TEXTAREA" || tag === "INPUT") return "field";
@@ -23,14 +53,23 @@ export async function fillComposer(
 
   if (kind === "field") {
     await target.fill(text);
-    return;
-  }
-  await target.click();
-  if (text.length > LONG_TEXT_THRESHOLD) {
-    await page.keyboard.insertText(text);
   } else {
-    await target.pressSequentially(text);
+    await target.click();
+    if (text.length > LONG_TEXT_THRESHOLD) {
+      await page.keyboard.insertText(text);
+    } else {
+      await target.pressSequentially(text);
+    }
   }
+  // Verify before anything is sent: the visible composer holds the prompt.
+  const expected = norm(text).slice(0, 40);
+  const shown = norm(await composerText(target).catch(() => ""));
+  if (expected && !shown.includes(expected)) {
+    const tag = await target.evaluate((el) => el.tagName.toLowerCase()).catch(() => "?");
+    const visible = await target.isVisible().catch(() => false);
+    throw new ComposerNotFilledError(`${kind} <${tag}> visible=${visible}, shows ${shown.length} chars`);
+  }
+  return target;
 }
 
 export interface SubmitOptions {

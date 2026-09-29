@@ -42,7 +42,7 @@ export type {
   StreamingGrowthWatcher,
 } from "./progress";
 
-export { attachFiles, fillComposer, submit, waitForSendReady } from "./composer";
+export { attachFiles, ComposerNotFilledError, composerText, fillComposer, submit, waitForSendReady } from "./composer";
 export type { AttachFile, SendReadyOptions, SubmitOptions } from "./composer";
 
 export { extractLastAssistantTurn } from "./extract";
@@ -78,7 +78,7 @@ export { probe } from "./probe";
 export type { ProbeInput } from "./probe";
 
 // §A3.3 — declarative chat adapter
-export { DeclarativeChatAdapter, pageShape, stalledError, timeoutError } from "./declarative";
+export { composerDriftError, DeclarativeChatAdapter, pageShape, stalledError, timeoutError } from "./declarative";
 export type { DeclarativeChatConfig, SdkAdapterRuntime } from "./declarative";
 
 // §A3.5 — conformance suite runner

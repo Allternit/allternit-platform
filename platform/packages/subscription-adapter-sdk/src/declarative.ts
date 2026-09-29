@@ -19,7 +19,7 @@ import type {
 import { detectAuthState, threadIdFromUrl } from "./auth";
 import { createBannerClassifier, type BannerPattern } from "./banners";
 import { createCompletionTracker, type CompletionOptions } from "./completion";
-import { fillComposer, submit } from "./composer";
+import { ComposerNotFilledError, composerText, fillComposer, submit } from "./composer";
 import { extractLastAssistantTurn } from "./extract";
 import { probe as probePage, type ProbeInput } from "./probe";
 import {
@@ -49,6 +49,9 @@ export interface DeclarativeChatConfig {
   heartbeatIntervalMs?: number; // D11 default 15000
   stallTimeoutS?: number; // §A8 default 90 for chat
   submitFallbackEnter?: boolean; // pack hint for submit()
+  // How long to wait after Send for the provider to show it took the prompt
+  // (default 10 s). Without that evidence the attempt stays sent_unconfirmed.
+  ackTimeoutMs?: number;
 }
 
 // §A8 — stalled/timeout are retryable only when the submit never happened.
@@ -186,12 +189,47 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
     const repliesBefore = await countReplies(resolver);
 
     await ctx.pacing.beforeTask();
-    await fillComposer(page, resolver, task.prompt);
+    let composer;
+    try {
+      composer = await fillComposer(page, resolver, task.prompt);
+    } catch (err) {
+      if (!(err instanceof ComposerNotFilledError)) throw err;
+      // Nothing was sent: safe to retry once the pack matches the page again.
+      yield { t: "error", error: composerDriftError(err.detail) };
+      return;
+    }
+    const userTurnsBefore = await countKey(resolver, "user_turn");
     await ctx.pacing.beforeAction();
     await ctx.markSubmitted(null); // §A1: sent_unconfirmed BEFORE Send is clicked
     await submit(page, resolver, { fallback: cfg.submitFallbackEnter ? "enter" : undefined });
+    // §A1: acknowledged only on the provider's own evidence — a new user
+    // turn or reply, a thread URL, or the composer emptied by the send.
+    // Without it the attempt stays sent_unconfirmed (live: an "acknowledged"
+    // send had never left the page).
+    const expected = task.prompt.replace(/\s+/g, " ").trim().slice(0, 40);
+    const ackTimeoutMs = cfg.ackTimeoutMs ?? 10000;
+    const ackDeadline = now() + ackTimeoutMs;
+    // Bounded by rounds too: injected clocks in tests may not advance.
+    const ackRounds = Math.ceil(ackTimeoutMs / Math.max(pollIntervalMs, 1)) + 1;
     let threadId = threadIdFromUrl(page.url(), cfg.threadUrlPattern);
-    await ctx.markSubmitted(threadId); // §A1: acknowledged after provider ack
+    for (let round = 0; ; round++) {
+      threadId = threadIdFromUrl(page.url(), cfg.threadUrlPattern);
+      const shown = (await composerText(composer).catch(() => "")).replace(/\s+/g, " ").trim();
+      if (
+        threadId !== null ||
+        !shown.includes(expected) ||
+        (await countKey(resolver, "user_turn")) > userTurnsBefore ||
+        (await countReplies(resolver)) > repliesBefore
+      ) {
+        await ctx.markSubmitted(threadId);
+        break;
+      }
+      if (now() >= ackDeadline || round >= ackRounds) {
+        ctx.log.warn("send not confirmed by the provider; attempt stays sent_unconfirmed");
+        break;
+      }
+      await sleep(pollIntervalMs);
+    }
     const url = page.url();
     yield {
       t: "submitted",
@@ -382,6 +420,24 @@ export async function pageShape(page: Page, max = 1200): Promise<string> {
   } catch (err) {
     return `; page shape unavailable: ${(err instanceof Error ? err.message : String(err)).slice(0, 120)}`;
   }
+}
+
+async function countKey(resolver: SdkSelectorResolver, key: string): Promise<number> {
+  const loc = await resolver.tryResolveLocator(key);
+  return loc ? loc.count() : 0;
+}
+
+export function composerDriftError(detail: string): TaskError {
+  return {
+    class: "provider_ui_changed",
+    scope: "adapter",
+    retryable: true,
+    fallback_eligible: true,
+    cooldown_s: null,
+    user_action: null,
+    detail: `the prompt didn't land in the composer: ${detail}`,
+    evidence_ref: null,
+  };
 }
 
 async function countReplies(resolver: SdkSelectorResolver): Promise<number> {
