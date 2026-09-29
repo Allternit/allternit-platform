@@ -51,6 +51,7 @@ README.md            "MIRROR — NOT TRUTH"
 
 Files are 0444 and directories 0555. Re-running `mirror` replaces the snapshot.
 Edits in the mirror are never synced back; change the plan through the bridge.
+To delete a mirror by hand: `chmod -R u+w /workspace/runs/<dag_id> && rm -rf /workspace/runs/<dag_id>`.
 
 ## Enabling
 
