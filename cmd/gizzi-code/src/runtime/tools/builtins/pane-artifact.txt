@@ -1,8 +1,8 @@
-Work on the artifact the user has open in this session's editor pane — an Allternit Docs document, Sheets workbook, Slides deck, Design canvas or design system — through that editor's own tools. Changes land in what the user has open, where they see them, and are saved with it.
+Work on the artifact the user has open in this session's editor pane — an Allternit Docs document, Sheets workbook, Slides deck, Design canvas, design system, or a Build session's site — through that editor's own tools. Changes land in what the user has open, where they see them, and are saved with it.
 
 Actions:
 - describe: how the editor's tools work, every tool with its input schema, and the current document. Call this once before the first change.
 - read: the document's current state (what the editor feeds its own assistant).
-- call: run one editor tool (tool = its name from describe, input = an object matching its schema).
+- call: run one editor tool (tool = its name from describe, input = an object matching its schema). Some tools return a picture of the result (e.g. a Build site's rendered preview); look at it and fix what's wrong.
 
 Use this whenever the session has a document open beside the chat and the user asks about it or wants it changed: edit the document itself, don't paste a rewritten version into the chat. If it reports that the editor is closed or didn't answer, ask the user to open it beside the chat.

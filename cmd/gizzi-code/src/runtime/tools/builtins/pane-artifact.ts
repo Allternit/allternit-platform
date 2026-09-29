@@ -42,10 +42,15 @@ export const PaneArtifactTool = Tool.define("pane_artifact", {
     }
     const text =
       result.text && result.text.length > MAX_TEXT ? `${result.text.slice(0, MAX_TEXT)}\n…(truncated)` : result.text
+    const mime = result.image?.match(/^data:(image\/[a-z0-9.+-]+);base64,/i)?.[1]
     return {
       title: `${result.artifact ?? "Artifact"}: ${label}`,
       output: [result.artifact && `Open: ${result.artifact}`, text].filter(Boolean).join("\n\n") || "Done.",
       metadata: { ok: true, artifact: result.artifact, mutated: Boolean(result.mutated) },
+      // A rendered view of the pane (e.g. a site preview): the model looks at it.
+      ...(result.image && mime
+        ? { attachments: [{ type: "file" as const, mime, url: result.image, filename: `${label}.${mime === "image/jpeg" ? "jpg" : "png"}` }] }
+        : {}),
     }
   },
 })
