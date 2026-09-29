@@ -69,6 +69,28 @@ is WIH DAG only. The ticket system stays in the crate as the portable CLI
 surface; it is not an alternative work-tracking channel. If that ever changes,
 option (b) (merge/remove) reopens — but as of ratification, (a) is the law.
 
+## Templates target the WIH DAG (2026-09-29)
+
+Workflow templates (`.allternit/rails/templates/<id>.json|.md`) instantiate into the
+WIH DAG with `allternit-commrails plan new --template <id> [--param k=v ...]`: one
+`plan new` plus one `plan refine` delta carrying DagNodeCreated + DagEdgeAdded
+(blocked_by) + DagNodeWaitGateAdded mutations, all with prompt-delta provenance.
+Markdown templates hold YAML frontmatter (`name`, `description`) and one
+```` ```yaml template-spec ```` block (`params`, `steps`: id, title, description,
+blocked_by, optional `executor`, optional `wait_gate`); format in
+`cli/COMMANDS.md`. Ticket instantiation (`commrails template instantiate`) stays
+as the portable out-of-scope surface per decision (a).
+
+Nodes pass work forward through **outputs**: `wih close --output <file>` records
+an immutable blob + receipt and the derived view
+`.allternit/work/dags/<dag_id>/nodes/<node_id>.out.md`; a dependent's description
+can say `{{ <node_id>.output }}` / `{{ <node_id>.output_path }}`, resolved at
+pickup into the WIH context (Gate 1 refuses refs to non-predecessors or missing
+outputs). Nodes can carry **wait-gates** (timer / GitHub run / GitHub PR /
+manual) that hold readiness; manual gates surface in the API `needsYou` list.
+`executor` (`bot:<slug>` | `ao:<harness>`) is recorded on nodes for a future
+runner; nothing acts on it yet, so "no automatic executor" below still holds.
+
 ## Failure modes to guard against
 
 - **Ceremony inflation**: agents creating DAGs for trivial 2-step work. The

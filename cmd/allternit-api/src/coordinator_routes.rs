@@ -135,6 +135,8 @@ impl CoordinatorRuntime for GizziCoordinator {
                 title: title.clone(),
                 parent_node_id: Some(root.clone()),
                 execution_mode: "shared".into(),
+                description: None,
+                executor: None,
             })
             .collect();
         for (key, _, deps) in steps {

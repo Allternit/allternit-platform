@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use crate::core::types::AllternitEvent;
-use crate::work::types::{DagEdge, DagNode, DagRelation, DagState};
+use crate::wait_gates::WaitGateKind;
+use crate::work::types::{DagEdge, DagNode, DagRelation, DagState, NodeOutputRef, NodeWaitGate};
 
 pub fn project_dag(events: &[AllternitEvent], dag_id: &str) -> DagState {
     let mut dag = DagState {
@@ -38,6 +39,13 @@ pub fn project_dag(events: &[AllternitEvent], dag_id: &str) -> DagState {
                 }
             }
             "DagNodeUpdated" => {
+                // Older DagNodeUpdated events carry no dag_id; newer ones do,
+                // and must not leak onto a same-named node in another dag.
+                if let Some(e_dag) = get_str(&evt.payload, "dag_id") {
+                    if e_dag != dag_id {
+                        continue;
+                    }
+                }
                 if let Some(node_id) = get_str(&evt.payload, "node_id") {
                     if let Some(node) = dag.nodes.get_mut(&node_id) {
                         if let Some(patch) = evt.payload.get("patch") {
@@ -121,6 +129,55 @@ pub fn project_dag(events: &[AllternitEvent], dag_id: &str) -> DagState {
                         ) {
                             node.state.insert(dim, value);
                             node.updated_at = Some(evt.ts.clone());
+                        }
+                    }
+                }
+            }
+            "DagNodeOutputRecorded" => {
+                if get_str(&evt.payload, "dag_id").as_deref() == Some(dag_id) {
+                    if let Some(node_id) = get_str(&evt.payload, "node_id") {
+                        if let Some(node) = dag.nodes.get_mut(&node_id) {
+                            if let Some(output) = parse_output_recorded(evt) {
+                                node.output = Some(output);
+                                node.updated_at = Some(evt.ts.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            "DagNodeWaitGateAdded" => {
+                if get_str(&evt.payload, "dag_id").as_deref() == Some(dag_id) {
+                    if let Some(node_id) = get_str(&evt.payload, "node_id") {
+                        if let Some(node) = dag.nodes.get_mut(&node_id) {
+                            if let Some(gate) = parse_wait_gate_added(evt) {
+                                node.wait_gates.retain(|g| g.gate_id != gate.gate_id);
+                                node.wait_gates.push(gate);
+                                node.updated_at = Some(evt.ts.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            "DagNodeWaitGateResolved" => {
+                if get_str(&evt.payload, "dag_id").as_deref() == Some(dag_id) {
+                    if let (Some(node_id), Some(gate_id)) = (
+                        get_str(&evt.payload, "node_id"),
+                        get_str(&evt.payload, "gate_id"),
+                    ) {
+                        if let Some(node) = dag.nodes.get_mut(&node_id) {
+                            if let Some(gate) =
+                                node.wait_gates.iter_mut().find(|g| g.gate_id == gate_id)
+                            {
+                                gate.outcome = evt
+                                    .payload
+                                    .get("outcome")
+                                    .and_then(|v| serde_json::from_value(v.clone()).ok());
+                                gate.resolved_at = Some(evt.ts.clone());
+                                gate.resolved_by = get_str(&evt.payload, "resolved_by")
+                                    .or_else(|| Some(evt.actor.id.clone()));
+                                gate.reason = get_str(&evt.payload, "reason");
+                                node.updated_at = Some(evt.ts.clone());
+                            }
                         }
                     }
                 }
@@ -236,6 +293,10 @@ fn parse_node_created(evt: &AllternitEvent, dag_id: &str) -> Option<DagNode> {
         .get("design")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    let executor = payload
+        .get("executor")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
 
     Some(DagNode {
         node_id,
@@ -259,6 +320,43 @@ fn parse_node_created(evt: &AllternitEvent, dag_id: &str) -> Option<DagNode> {
         created_at: Some(evt.ts.clone()),
         updated_at: Some(evt.ts.clone()),
         worktree: None,
+        executor,
+        output: None,
+        wait_gates: Vec::new(),
+    })
+}
+
+fn parse_output_recorded(evt: &AllternitEvent) -> Option<NodeOutputRef> {
+    let p = &evt.payload;
+    Some(NodeOutputRef {
+        wih_id: get_str(p, "wih_id").unwrap_or_default(),
+        receipt_id: get_str(p, "receipt_id")?,
+        blob_id: get_str(p, "blob_id")?,
+        sha256: get_str(p, "sha256").unwrap_or_default(),
+        size_bytes: p.get("size_bytes").and_then(|v| v.as_u64()).unwrap_or(0),
+        output_path: get_str(p, "output_path")?,
+        recorded_at: evt.ts.clone(),
+    })
+}
+
+fn parse_wait_gate_added(evt: &AllternitEvent) -> Option<NodeWaitGate> {
+    let p = &evt.payload;
+    let kind: WaitGateKind = serde_json::from_value(p.get("kind")?.clone()).ok()?;
+    let params = p
+        .get("params")
+        .and_then(|v| v.as_object())
+        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+        .unwrap_or_default();
+    Some(NodeWaitGate {
+        gate_id: get_str(p, "gate_id")?,
+        description: get_str(p, "description").unwrap_or_else(|| format!("{kind} gate")),
+        kind,
+        params,
+        created_at: evt.ts.clone(),
+        outcome: None,
+        resolved_at: None,
+        resolved_by: None,
+        reason: None,
     })
 }
 
@@ -327,6 +425,9 @@ fn apply_node_patch(node: &mut DagNode, patch: &Value) {
     if let Some(design) = patch.get("design").and_then(|v| v.as_str()) {
         node.design = Some(design.to_string());
     }
+    if let Some(executor) = patch.get("executor").and_then(|v| v.as_str()) {
+        node.executor = Some(executor.to_string());
+    }
 }
 
 fn apply_readiness(dag: &mut DagState) {
@@ -351,7 +452,11 @@ fn apply_readiness(dag: &mut DagState) {
                 .map(|status| status == "DONE")
                 .unwrap_or(false)
         });
-        if deps_satisfied {
+        // A node with an unresolved wait-gate stays NEW (not ready). Timer
+        // gates count as unresolved here until the gate records their
+        // resolution; `ready_nodes` evaluates elapsed timers against the clock.
+        let gates_resolved = node.wait_gates.iter().all(|g| g.is_resolved_ok());
+        if deps_satisfied && gates_resolved {
             node.status = "READY".to_string();
         }
     }

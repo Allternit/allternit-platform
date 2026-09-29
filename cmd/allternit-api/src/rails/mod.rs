@@ -791,12 +791,19 @@ struct WihPickupRequest {
 struct WihPickupResponse {
     wih_id: String,
     context_pack_path: Option<String>,
+    /// Node description with `{{ <node>.output }}` placeholders resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolved_prompt_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolved_description: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 struct WihContextResponse {
     wih_id: String,
     context_pack: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolved_prompt: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -815,6 +822,10 @@ struct WihCloseRequest {
     evidence: Option<Vec<String>>,
     #[serde(default)]
     agent_id: String,
+    /// Node output text: stored as an immutable blob behind a `node.output`
+    /// receipt and exposed to dependents (ContextPack + placeholders).
+    #[serde(default)]
+    output: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1783,24 +1794,29 @@ async fn pickup_wih(
     match state
         .rails
         .gate
-        .wih_pickup_with(&req.dag_id, &req.node_id, &req.agent_id, options)
+        .wih_pickup_detailed(&req.dag_id, &req.node_id, &req.agent_id, options)
         .await
     {
-        Ok(wih_id) => {
-            let context_pack_path = match state.rails.ledger.query(LedgerQuery::default()).await {
-                Ok(events) => project_wih(&events, &wih_id).and_then(|w| w.context_pack_path),
-                Err(_) => None,
-            };
+        Ok(pickup) => (
+            StatusCode::OK,
+            Json(WihPickupResponse {
+                wih_id: pickup.wih_id,
+                context_pack_path: pickup.context_pack_path,
+                resolved_prompt_path: pickup.resolved_prompt_path,
+                resolved_description: pickup.resolved_description,
+            }),
+        )
+            .into_response(),
+        Err(e) => {
+            // Structured Gate 1 denial (wait-gate, blockers, placeholder refs).
+            let gate_error = allternit_commrails::GateError::from_anyhow(&e)
+                .and_then(|g| serde_json::to_value(g).ok());
             (
-                StatusCode::OK,
-                Json(WihPickupResponse {
-                    wih_id,
-                    context_pack_path,
-                }),
+                StatusCode::CONFLICT,
+                Json(json!({ "error": e.to_string(), "gate_error": gate_error })),
             )
                 .into_response()
         }
-        Err(e) => (StatusCode::CONFLICT, Json(json!({ "error": e.to_string() }))).into_response(),
     }
 }
 
@@ -1812,14 +1828,21 @@ async fn get_wih_context(
 
     match state.rails.ledger.query(LedgerQuery::default()).await {
         Ok(events) => {
-            let context_pack = project_wih(&events, &wih_id)
-                .and_then(|w| w.context_pack_path)
+            let wih = project_wih(&events, &wih_id);
+            let context_pack = wih
+                .as_ref()
+                .and_then(|w| w.context_pack_path.clone())
+                .and_then(|path| std::fs::read_to_string(path).ok());
+            let resolved_prompt = wih
+                .as_ref()
+                .and_then(|w| w.resolved_prompt_path.clone())
                 .and_then(|path| std::fs::read_to_string(path).ok());
             (
                 StatusCode::OK,
                 Json(WihContextResponse {
                     wih_id,
                     context_pack,
+                    resolved_prompt,
                 }),
             )
                 .into_response()
@@ -1924,7 +1947,12 @@ async fn close_wih(
         return resp.into_response();
     }
     let evidence = req.evidence.clone().unwrap_or_default();
-    match state.rails.gate.wih_close(&wih_id, &status, &evidence).await {
+    match state
+        .rails
+        .gate
+        .wih_close_with(&wih_id, &status, &evidence, req.output.as_deref())
+        .await
+    {
         Ok(_) => (StatusCode::OK, Json(WihCloseResponse { closed: true })).into_response(),
         Err(e) => {
             let status = if e.to_string().contains("evidence") {
@@ -2044,6 +2072,8 @@ async fn create_dag(
         title: req.name,
         parent_node_id: None,
         execution_mode: "shared".to_string(),
+        description: None,
+        executor: None,
     };
 
     match state
@@ -2462,6 +2492,8 @@ fn ui_dag_mutation_to_core(
                 title: m.title.unwrap_or(node_id),
                 parent_node_id: m.parent_id,
                 execution_mode: "shared".to_string(),
+                description: None,
+                executor: None,
             })
         }
         "modify" => {
@@ -2838,6 +2870,8 @@ async fn plan_from_text(
             title: todo.title.trim().to_string(),
             parent_node_id: Some(parent),
             execution_mode: "shared".to_string(),
+            description: None,
+            executor: None,
         });
         if todo.done {
             mutations.push(DagMutation::ChangeStatus {
@@ -2966,6 +3000,8 @@ async fn create_dag_node(
                 title: title.to_string(),
                 parent_node_id: Some(parent.to_string()),
                 execution_mode: "shared".to_string(),
+                description: None,
+                executor: None,
             }],
         )
         .await

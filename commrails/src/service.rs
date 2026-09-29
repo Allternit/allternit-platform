@@ -376,6 +376,10 @@ pub struct WihCloseRequest {
     pub status: String,
     #[serde(default)]
     pub evidence: Vec<String>,
+    /// Node output text (stored as a blob + `node.output` receipt; counts as
+    /// evidence). See `spec/STORAGE_LAYOUT.md`.
+    #[serde(default)]
+    pub output: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1349,6 +1353,9 @@ async fn wih_pickup(
         }
         Err(e) => {
             tracing::error!("wih_pickup failed: {}", e);
+            if crate::gate::GateError::from_anyhow(&e).is_some() {
+                return Err(StatusCode::CONFLICT);
+            }
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
@@ -1410,7 +1417,12 @@ async fn wih_close(
     ensure_policy_injected(&state, Some(scope)).await?;
     match state
         .gate
-        .wih_close(&wih_id, &request.status, &request.evidence)
+        .wih_close_with(
+            &wih_id,
+            &request.status,
+            &request.evidence,
+            request.output.as_deref(),
+        )
         .await
     {
         Ok(_) => Ok((StatusCode::OK, Json(WihCloseResponse { closed: true }))),

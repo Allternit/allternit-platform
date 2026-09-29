@@ -78,6 +78,8 @@ async fn plan_two_children(gate: &Gate) -> (String, String, String, String) {
                 title: "B".to_string(),
                 parent_node_id: Some(root_node.clone()),
                 execution_mode: "shared".to_string(),
+                description: None,
+                executor: None,
             },
             Mutation::CreateNode {
                 node_id: node_c.clone(),
@@ -85,6 +87,8 @@ async fn plan_two_children(gate: &Gate) -> (String, String, String, String) {
                 title: "C".to_string(),
                 parent_node_id: Some(root_node.clone()),
                 execution_mode: "shared".to_string(),
+                description: None,
+                executor: None,
             },
         ],
     )

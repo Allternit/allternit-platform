@@ -50,7 +50,7 @@ pub use crate::core::types::{
     LedgerQuery, ReceiptRecord,
 };
 pub use crate::gate::gate::{DagMutation, MutationProvenance};
-pub use crate::gate::{Gate, GateOptions, GateResult, WihPickupOptions};
+pub use crate::gate::{Gate, GateError, GateOptions, GateResult, WihPickup, WihPickupOptions};
 pub use crate::index::{Index, IndexOptions};
 pub use crate::leases::{Leases, LeasesOptions};
 pub use crate::ledger::{Ledger, LedgerOptions};

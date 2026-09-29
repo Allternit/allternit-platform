@@ -8,6 +8,11 @@ use serde_json::json;
 
 use crate::verification::types::{ProviderError, VerificationProvider, VisualConfig};
 
+use crate::gate::errors::{gate_ids, GateError};
+use crate::wait_gates::{GateOutcome, WaitGateKind};
+use crate::work::placeholders::{self, PlaceholderField};
+use std::collections::HashMap;
+
 use crate::core::ids::{create_event_id, create_lease_id, create_receipt_id};
 use crate::core::io::{ensure_dir, write_json_atomic};
 use crate::core::types::{
@@ -105,6 +110,42 @@ struct ContextPack {
     dag_slice: DagSlice,
     dependency_nodes: Vec<String>,
     receipts: Vec<ContextReceipt>,
+    /// Recorded outputs of blocked_by predecessors (hard deps).
+    dependency_outputs: Vec<ContextNodeOutput>,
+    /// The node description with output placeholders resolved at pickup.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolved_description: Option<String>,
+}
+
+/// Max bytes of a predecessor's output inlined into a ContextPack
+/// (`dependency_outputs[].text`). Longer outputs are cut at a char boundary
+/// and flagged `truncated: true`; the full text stays at `output_path`.
+pub const CONTEXT_PACK_OUTPUT_INLINE_CAP: usize = 16 * 1024;
+
+#[derive(Debug, Clone, Serialize)]
+struct ContextNodeOutput {
+    node_id: String,
+    wih_id: String,
+    receipt_id: String,
+    blob_id: String,
+    sha256: String,
+    size_bytes: u64,
+    output_path: String,
+    text: Option<String>,
+    truncated: bool,
+}
+
+/// Result of a Gate 1 pickup.
+#[derive(Debug, Clone, Serialize)]
+pub struct WihPickup {
+    pub wih_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_pack_path: Option<String>,
+    /// Set when the node description had output placeholders.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_prompt_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -265,6 +306,8 @@ impl Gate {
             agent_decision_id: None,
         };
         self.ensure_mutation_provenance(&mutation_prov)?;
+        self.validate_mutations(dag_id, &mutations, Some(&prompt_id), Some(&delta_id))
+            .await?;
 
         for mutation in mutations {
             let event = match mutation {
@@ -274,6 +317,8 @@ impl Gate {
                     title,
                     parent_node_id,
                     execution_mode,
+                    description,
+                    executor,
                 } => AllternitEvent {
                     event_id: create_event_id(),
                     ts: Utc::now().to_rfc3339(),
@@ -286,7 +331,9 @@ impl Gate {
                         "node_kind": node_kind,
                         "title": title,
                         "parent_node_id": parent_node_id,
-                        "execution_mode": execution_mode
+                        "execution_mode": execution_mode,
+                        "description": description,
+                        "executor": executor
                     }),
                     provenance: Some(self.provenance_from(&mutation_prov)),
                 },
@@ -297,6 +344,7 @@ impl Gate {
                     scope: None,
                     r#type: "DagNodeUpdated".to_string(),
                     payload: json!({
+                        "dag_id": dag_id,
                         "node_id": node_id,
                         "patch": patch
                     }),
@@ -477,6 +525,21 @@ impl Gate {
                     }),
                     provenance: Some(self.provenance_from(&mutation_prov)),
                 },
+                DagMutation::AddWaitGate {
+                    node_id,
+                    gate_id,
+                    kind,
+                    description,
+                    params,
+                } => self.wait_gate_added_event(
+                    dag_id,
+                    &node_id,
+                    gate_id,
+                    kind,
+                    description,
+                    params,
+                    Some(self.provenance_from(&mutation_prov)),
+                ),
                 DagMutation::ChangeStatus {
                     node_id,
                     from,
@@ -644,12 +707,31 @@ impl Gate {
         agent_id: &str,
         opts: WihPickupOptions,
     ) -> Result<String> {
+        Ok(self
+            .wih_pickup_detailed(dag_id, node_id, agent_id, opts)
+            .await?
+            .wih_id)
+    }
+
+    /// Gate 1. Refuses (with a structured [`GateError`]) unless the node is
+    /// READY: blocked_by predecessors DONE, every wait-gate satisfied (elapsed
+    /// timers are resolved lazily here), and every `{{ <node>.output }}`
+    /// placeholder in its description points at a blocked_by predecessor
+    /// (transitive) that has a recorded output.
+    pub async fn wih_pickup_detailed(
+        &self,
+        dag_id: &str,
+        node_id: &str,
+        agent_id: &str,
+        opts: WihPickupOptions,
+    ) -> Result<WihPickup> {
         let scope = EventScope {
             dag_id: Some(dag_id.to_string()),
             node_id: Some(node_id.to_string()),
             ..Default::default()
         };
         self.ensure_policy_scope(&scope).await?;
+        self.resolve_elapsed_timer_gates(dag_id).await?;
         let dag_events = self.events_for_dag(dag_id).await?;
         let dag = project_dag(&dag_events, dag_id);
         let node = dag
@@ -661,12 +743,11 @@ impl Gate {
                 return Err(anyhow!("role does not match owner_role"));
             }
         }
-        if node.status != "READY" && node.status != "NEW" {
-            return Err(anyhow!("node not ready"));
-        }
+        self.ensure_node_ready(&dag, node_id)?;
         if let Some(active) = self.active_wih_for_node(node_id).await? {
             return Err(anyhow!("node already has active wih {}", active));
         }
+        let resolved_description = self.resolve_node_description(&dag, node_id)?;
 
         let execution_mode = if opts.fresh {
             "fresh".to_string()
@@ -683,6 +764,32 @@ impl Gate {
         } else {
             None
         };
+        let resolved_prompt_path = match &resolved_description {
+            Some(text) => {
+                let path = resolved_prompt_path(&self.root_dir, dag_id, &wih_id);
+                if let Some(parent) = path.parent() {
+                    ensure_dir(parent)?;
+                }
+                std::fs::write(&path, text)?;
+                Some(path.to_string_lossy().to_string())
+            }
+            None => None,
+        };
+        let template_refs: Vec<serde_json::Value> = node
+            .description
+            .as_deref()
+            .map(placeholders::node_refs)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|r| {
+                let receipt_id = dag
+                    .nodes
+                    .get(&r.node_id)
+                    .and_then(|n| n.output.as_ref())
+                    .map(|o| o.receipt_id.clone());
+                json!({ "node_id": r.node_id, "field": r.field.as_str(), "receipt_id": receipt_id })
+            })
+            .collect();
         let loop_policy = LoopPolicy::default();
         let created = AllternitEvent {
             event_id: create_event_id(),
@@ -696,6 +803,8 @@ impl Gate {
                 "node_id": node_id,
                 "execution_mode": execution_mode,
                 "context_pack_path": context_pack_path,
+                "resolved_prompt_path": resolved_prompt_path,
+                "template_refs": template_refs,
                 "policy": {
                     "requires_lease_for_write": true,
                     "loop_policy": serde_json::to_value(&loop_policy).unwrap_or(json!({}))
@@ -724,12 +833,176 @@ impl Gate {
         self.emit(picked).await?;
 
         if execution_mode == "fresh" {
-            let _ = self.write_context_pack(&wih_id, dag_id, node_id).await;
+            let _ = self
+                .write_context_pack(&wih_id, dag_id, node_id, resolved_description.clone())
+                .await;
         }
 
         self.refresh_wih_view(&wih_id).await?;
 
-        Ok(wih_id)
+        Ok(WihPickup {
+            wih_id,
+            context_pack_path,
+            resolved_prompt_path,
+            resolved_description,
+        })
+    }
+
+    /// Gate 1 readiness: status READY, blocked_by predecessors DONE, no
+    /// unsatisfied wait-gate. Call after `resolve_elapsed_timer_gates`.
+    fn ensure_node_ready(&self, dag: &DagState, node_id: &str) -> Result<()> {
+        let node = dag
+            .nodes
+            .get(node_id)
+            .ok_or_else(|| anyhow!("node not found"))?;
+        let blocking = node.blocking_wait_gates(Utc::now());
+        if !blocking.is_empty() {
+            let gates: Vec<serde_json::Value> = blocking
+                .iter()
+                .map(|g| {
+                    json!({
+                        "gate_id": g.gate_id,
+                        "kind": g.kind,
+                        "description": g.description,
+                        "outcome": g.outcome
+                    })
+                })
+                .collect();
+            return Err(GateError::new(
+                gate_ids::PICKUP,
+                "wait_gate_unresolved",
+                format!(
+                    "node {} has {} unresolved wait-gate(s): {}",
+                    node_id,
+                    blocking.len(),
+                    blocking
+                        .iter()
+                        .map(|g| format!("{} ({})", g.gate_id, g.kind))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            )
+            .at(&dag.dag_id, Some(node_id))
+            .with_details(json!({ "gates": gates }))
+            .into());
+        }
+        let unmet: Vec<String> = dag
+            .edges
+            .iter()
+            .filter(|e| e.edge_type == "blocked_by" && e.to_node_id == node_id)
+            .filter(|e| {
+                dag.nodes
+                    .get(&e.from_node_id)
+                    .map(|n| n.status != "DONE")
+                    .unwrap_or(true)
+            })
+            .map(|e| e.from_node_id.clone())
+            .collect();
+        if !unmet.is_empty() {
+            return Err(GateError::new(
+                gate_ids::PICKUP,
+                "blocked_by_unmet",
+                format!("node {} is blocked by {}", node_id, unmet.join(", ")),
+            )
+            .at(&dag.dag_id, Some(node_id))
+            .with_details(json!({ "blocked_by": unmet }))
+            .into());
+        }
+        if node.status != "READY" {
+            return Err(GateError::new(
+                gate_ids::PICKUP,
+                "node_not_ready",
+                format!("node {} is {}, not READY", node_id, node.status),
+            )
+            .at(&dag.dag_id, Some(node_id))
+            .with_details(json!({ "status": node.status }))
+            .into());
+        }
+        Ok(())
+    }
+
+    /// Resolve `{{ <node>.output }}` / `{{ <node>.output_path }}` in the
+    /// node description. `Ok(None)` when the description has no placeholders.
+    fn resolve_node_description(&self, dag: &DagState, node_id: &str) -> Result<Option<String>> {
+        let node = dag
+            .nodes
+            .get(node_id)
+            .ok_or_else(|| anyhow!("node not found"))?;
+        let Some(description) = node.description.as_deref() else {
+            return Ok(None);
+        };
+        let refs = placeholders::node_refs(description);
+        if refs.is_empty() {
+            return Ok(None);
+        }
+        let preds = collect_blocked_by_predecessors(dag, node_id);
+        let mut values: HashMap<(String, PlaceholderField), String> = HashMap::new();
+        for r in &refs {
+            if !preds.contains(&r.node_id) {
+                return Err(GateError::new(
+                    gate_ids::PICKUP,
+                    "template_ref_not_predecessor",
+                    format!(
+                        "{} references {} which is not a blocked_by predecessor of {}",
+                        r.raw, r.node_id, node_id
+                    ),
+                )
+                .at(&dag.dag_id, Some(node_id))
+                .with_details(json!({ "ref": r.raw, "ref_node_id": r.node_id }))
+                .into());
+            }
+            let Some(output) = dag.nodes.get(&r.node_id).and_then(|n| n.output.as_ref()) else {
+                return Err(GateError::new(
+                    gate_ids::PICKUP,
+                    "template_ref_output_missing",
+                    format!("{} has no recorded output for {}", r.node_id, r.raw),
+                )
+                .at(&dag.dag_id, Some(node_id))
+                .with_details(json!({ "ref": r.raw, "ref_node_id": r.node_id }))
+                .into());
+            };
+            let key = (r.node_id.clone(), r.field);
+            if values.contains_key(&key) {
+                continue;
+            }
+            let text = self.read_node_output(output)?;
+            let value = match r.field {
+                PlaceholderField::Output => text,
+                PlaceholderField::OutputPath => {
+                    let path = self.ensure_output_view(output, &text)?;
+                    path.to_string_lossy().to_string()
+                }
+            };
+            values.insert(key, value);
+        }
+        Ok(Some(placeholders::render_node_refs(description, |r| {
+            values.get(&(r.node_id.clone(), r.field)).cloned()
+        })))
+    }
+
+    /// Read a recorded node output from its immutable blob.
+    fn read_node_output(&self, output: &crate::work::NodeOutputRef) -> Result<String> {
+        let path = self.receipts.blob_path(&output.blob_id);
+        std::fs::read_to_string(&path)
+            .map_err(|e| anyhow!("node output blob {} unreadable: {}", output.blob_id, e))
+    }
+
+    /// The derived `nodes/<node_id>.out.md` view; rebuilt from the blob when
+    /// missing or stale. Returns the absolute path.
+    fn ensure_output_view(
+        &self,
+        output: &crate::work::NodeOutputRef,
+        text: &str,
+    ) -> Result<PathBuf> {
+        let path = self.root_dir.join(&output.output_path);
+        let current = std::fs::read_to_string(&path).ok();
+        if current.as_deref() != Some(text) {
+            if let Some(parent) = path.parent() {
+                ensure_dir(parent)?;
+            }
+            std::fs::write(&path, text)?;
+        }
+        Ok(path)
     }
 
     pub async fn wih_sign_open(&self, wih_id: &str, signature: &str) -> Result<()> {
@@ -1176,18 +1449,49 @@ impl Gate {
         status: &str,
         evidence_refs: &[String],
     ) -> Result<()> {
+        self.wih_close_with(wih_id, status, evidence_refs, None)
+            .await
+            .map(|_| ())
+    }
+
+    /// Gate 4 close. With `output`, the text is stored as an immutable blob
+    /// behind a `node.output` receipt (`ReceiptWritten`), the derived view
+    /// `.allternit/work/dags/<dag_id>/nodes/<node_id>.out.md` is written, and
+    /// `DagNodeOutputRecorded` is emitted before the close events. The output
+    /// receipt counts as evidence (`receipt:<id>` is appended to the refs).
+    /// Returns the output receipt id when an output was recorded.
+    pub async fn wih_close_with(
+        &self,
+        wih_id: &str,
+        status: &str,
+        evidence_refs: &[String],
+        output: Option<&str>,
+    ) -> Result<Option<String>> {
         let scope = EventScope {
             wih_id: Some(wih_id.to_string()),
             ..Default::default()
         };
         self.ensure_policy_scope(&scope).await?;
-        if evidence_refs.is_empty() {
+        if evidence_refs.is_empty() && output.is_none() {
             return Err(anyhow!("evidence required to close WIH"));
         }
         let wih_events = self.events_for_wih(wih_id).await?;
         let wih_state = project_wih(&wih_events, wih_id).ok_or_else(|| anyhow!("wih not found"))?;
         let dag_id = wih_state.dag_id.clone();
         let node_id = wih_state.node_id.clone();
+
+        let mut evidence_refs: Vec<String> = evidence_refs.to_vec();
+        let output_receipt_id = match output {
+            Some(text) => {
+                let receipt_id = self
+                    .record_node_output(wih_id, &dag_id, &node_id, text)
+                    .await?;
+                evidence_refs.push(format!("receipt:{receipt_id}"));
+                Some(receipt_id)
+            }
+            None => None,
+        };
+        let evidence_refs = evidence_refs.as_slice();
 
         let close_req = AllternitEvent {
             event_id: create_event_id(),
@@ -1264,7 +1568,7 @@ impl Gate {
         self.refresh_wih_view(wih_id).await?;
         self.refresh_dag_view(&dag_id).await?;
 
-        Ok(())
+        Ok(output_receipt_id)
     }
 
     pub async fn lease_request(
@@ -1653,6 +1957,7 @@ impl Gate {
         if mutations.is_empty() {
             return Err(anyhow!("mutations required"));
         }
+        self.validate_mutations(dag_id, &mutations, None, None).await?;
         let mut events = Vec::new();
         for mutation in mutations {
             let event = match mutation {
@@ -1662,6 +1967,8 @@ impl Gate {
                     title,
                     parent_node_id,
                     execution_mode,
+                    description,
+                    executor,
                 } => AllternitEvent {
                     event_id: create_event_id(),
                     ts: Utc::now().to_rfc3339(),
@@ -1674,7 +1981,9 @@ impl Gate {
                         "node_kind": node_kind,
                         "title": title,
                         "parent_node_id": parent_node_id,
-                        "execution_mode": execution_mode
+                        "execution_mode": execution_mode,
+                        "description": description,
+                        "executor": executor
                     }),
                     provenance: None,
                 },
@@ -1685,6 +1994,7 @@ impl Gate {
                     scope: None,
                     r#type: "DagNodeUpdated".to_string(),
                     payload: json!({
+                        "dag_id": dag_id,
                         "node_id": node_id,
                         "patch": patch
                     }),
@@ -1865,6 +2175,21 @@ impl Gate {
                     }),
                     provenance: None,
                 },
+                DagMutation::AddWaitGate {
+                    node_id,
+                    gate_id,
+                    kind,
+                    description,
+                    params,
+                } => self.wait_gate_added_event(
+                    dag_id,
+                    &node_id,
+                    gate_id,
+                    kind,
+                    description,
+                    params,
+                    None,
+                ),
                 DagMutation::ChangeStatus {
                     node_id,
                     from,
@@ -1922,6 +2247,395 @@ impl Gate {
 
         self.refresh_dag_view(dag_id).await?;
         Ok((decision_id, mutation_ids))
+    }
+
+    /// Gate 0 checks that need the whole mutation batch, run before anything
+    /// is emitted: output placeholders in node descriptions must name a node
+    /// that exists in the dag or is created in the same batch; executors must
+    /// be `bot:<slug>` / `ao:<harness>`; wait-gates must target a live node
+    /// with valid params. Rejections carry the prompt/delta provenance the
+    /// batch was submitted under, and leave the ledger untouched.
+    async fn validate_mutations(
+        &self,
+        dag_id: &str,
+        mutations: &[DagMutation],
+        prompt_id: Option<&str>,
+        delta_id: Option<&str>,
+    ) -> Result<()> {
+        let dag_events = self.events_for_dag(dag_id).await?;
+        let dag = project_dag(&dag_events, dag_id);
+        let mut known: std::collections::HashSet<String> = dag.nodes.keys().cloned().collect();
+        for m in mutations {
+            if let DagMutation::CreateNode { node_id, .. } = m {
+                known.insert(node_id.clone());
+            }
+        }
+        let provenance = json!({ "prompt_id": prompt_id, "delta_id": delta_id });
+        let reject = |code: &str, node_id: &str, reason: String, extra: serde_json::Value| {
+            let mut details = json!({ "provenance": provenance });
+            if let (Some(obj), Some(more)) = (details.as_object_mut(), extra.as_object()) {
+                for (k, v) in more {
+                    obj.insert(k.clone(), v.clone());
+                }
+            }
+            Err(anyhow::Error::from(
+                GateError::new(gate_ids::PLAN, code, reason)
+                    .at(dag_id, Some(node_id))
+                    .with_details(details),
+            ))
+        };
+        for m in mutations {
+            let (node_id, description, executor) = match m {
+                DagMutation::CreateNode {
+                    node_id,
+                    description,
+                    executor,
+                    ..
+                } => (node_id, description.clone(), executor.clone()),
+                DagMutation::UpdateNode { node_id, patch } => (
+                    node_id,
+                    patch
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    patch
+                        .get("executor")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                ),
+                DagMutation::AddWaitGate {
+                    node_id,
+                    kind,
+                    params,
+                    ..
+                } => {
+                    if !known.contains(node_id) {
+                        return reject(
+                            "wait_gate_unknown_node",
+                            node_id,
+                            format!("wait-gate targets unknown node {node_id}"),
+                            json!({}),
+                        );
+                    }
+                    if let Some(node) = dag.nodes.get(node_id) {
+                        if node.status == "DONE" || node.status == "FAILED" {
+                            return reject(
+                                "wait_gate_terminal_node",
+                                node_id,
+                                format!("node {node_id} is already {}", node.status),
+                                json!({ "status": node.status }),
+                            );
+                        }
+                    }
+                    if *kind == WaitGateKind::Timer {
+                        let until_ok = params
+                            .get("until")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| s.parse::<chrono::DateTime<Utc>>().ok())
+                            .is_some();
+                        if !until_ok {
+                            return reject(
+                                "wait_gate_invalid_params",
+                                node_id,
+                                "timer wait-gate requires params.until as an RFC 3339 timestamp"
+                                    .to_string(),
+                                json!({ "params": params }),
+                            );
+                        }
+                    }
+                    continue;
+                }
+                _ => continue,
+            };
+            if let Some(executor) = executor.as_deref() {
+                if let Err(reason) = crate::work::types::validate_executor(executor) {
+                    return reject(
+                        "invalid_executor",
+                        node_id,
+                        reason,
+                        json!({ "executor": executor }),
+                    );
+                }
+            }
+            if let Some(description) = description.as_deref() {
+                for r in placeholders::node_refs(description) {
+                    if !known.contains(&r.node_id) {
+                        return reject(
+                            "template_ref_unknown_node",
+                            node_id,
+                            format!("{} references unknown node {}", r.raw, r.node_id),
+                            json!({ "ref": r.raw, "ref_node_id": r.node_id }),
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn wait_gate_added_event(
+        &self,
+        dag_id: &str,
+        node_id: &str,
+        gate_id: Option<String>,
+        kind: WaitGateKind,
+        description: Option<String>,
+        params: HashMap<String, serde_json::Value>,
+        provenance: Option<crate::core::types::EventProvenance>,
+    ) -> AllternitEvent {
+        let gate_id = gate_id.unwrap_or_else(mint_wait_gate_id);
+        let description = description.unwrap_or_else(|| format!("{kind} gate"));
+        AllternitEvent {
+            event_id: create_event_id(),
+            ts: Utc::now().to_rfc3339(),
+            actor: gate_actor(&self.actor_id),
+            scope: None,
+            r#type: "DagNodeWaitGateAdded".to_string(),
+            payload: json!({
+                "dag_id": dag_id,
+                "node_id": node_id,
+                "gate_id": gate_id,
+                "kind": kind,
+                "description": description,
+                "params": params
+            }),
+            provenance,
+        }
+    }
+
+    /// Attach a wait-gate to a node through the normal Gate 0 refine path
+    /// (prompt delta provenance). Returns the gate id.
+    pub async fn add_node_wait_gate(
+        &self,
+        dag_id: &str,
+        node_id: &str,
+        kind: WaitGateKind,
+        description: Option<String>,
+        params: HashMap<String, serde_json::Value>,
+        author: &str,
+    ) -> Result<String> {
+        let gate_id = mint_wait_gate_id();
+        let delta = format!(
+            "wait-gate add: {} on {}{}",
+            kind,
+            node_id,
+            description
+                .as_deref()
+                .map(|d| format!(" ({d})"))
+                .unwrap_or_default()
+        );
+        self.plan_refine(
+            dag_id,
+            &delta,
+            author,
+            vec![DagMutation::AddWaitGate {
+                node_id: node_id.to_string(),
+                gate_id: Some(gate_id.clone()),
+                kind,
+                description,
+                params,
+            }],
+        )
+        .await?;
+        Ok(gate_id)
+    }
+
+    /// Resolve a node wait-gate (emits `DagNodeWaitGateResolved`). Manual
+    /// gates require an explicit non-gate resolver; the event is attributed
+    /// to that actor. A gate already resolved ok/skipped cannot be resolved
+    /// again; a failed gate can be re-resolved.
+    pub async fn resolve_node_wait_gate(
+        &self,
+        dag_id: &str,
+        node_id: &str,
+        gate_id: &str,
+        outcome: GateOutcome,
+        resolver: Option<Actor>,
+        reason: Option<String>,
+    ) -> Result<()> {
+        let scope = EventScope {
+            dag_id: Some(dag_id.to_string()),
+            node_id: Some(node_id.to_string()),
+            ..Default::default()
+        };
+        self.ensure_policy_scope(&scope).await?;
+        let dag_events = self.events_for_dag(dag_id).await?;
+        let dag = project_dag(&dag_events, dag_id);
+        let deny = |code: &str, reason: String| {
+            Err(anyhow::Error::from(
+                GateError::new(gate_ids::WAIT_GATE, code, reason)
+                    .at(dag_id, Some(node_id))
+                    .with_details(json!({ "gate_id": gate_id })),
+            ))
+        };
+        let Some(node) = dag.nodes.get(node_id) else {
+            return deny("node_not_found", format!("node {node_id} not in {dag_id}"));
+        };
+        let Some(gate) = node.wait_gates.iter().find(|g| g.gate_id == gate_id) else {
+            return deny(
+                "gate_not_found",
+                format!("wait-gate {gate_id} not on node {node_id}"),
+            );
+        };
+        if gate.is_resolved_ok() {
+            return deny(
+                "already_resolved",
+                format!(
+                    "wait-gate {gate_id} already resolved {}",
+                    gate.outcome.map(|o| o.to_string()).unwrap_or_default()
+                ),
+            );
+        }
+        let explicit = resolver
+            .as_ref()
+            .filter(|a| a.r#type != ActorType::Gate && !a.id.trim().is_empty());
+        if gate.kind == WaitGateKind::Manual && explicit.is_none() {
+            return deny(
+                "manual_resolve_requires_actor",
+                "manual wait-gates must be resolved by an explicit user/agent actor".to_string(),
+            );
+        }
+        let actor = explicit.cloned().unwrap_or_else(|| gate_actor(&self.actor_id));
+        let evt = AllternitEvent {
+            event_id: create_event_id(),
+            ts: Utc::now().to_rfc3339(),
+            actor: actor.clone(),
+            scope: Some(scope),
+            r#type: "DagNodeWaitGateResolved".to_string(),
+            payload: json!({
+                "dag_id": dag_id,
+                "node_id": node_id,
+                "gate_id": gate_id,
+                "kind": gate.kind,
+                "outcome": outcome,
+                "resolved_by": actor_label(&actor),
+                "reason": reason
+            }),
+            provenance: None,
+        };
+        self.emit(evt).await?;
+        self.refresh_dag_view(dag_id).await?;
+        Ok(())
+    }
+
+    /// Lazy timer resolution: record `DagNodeWaitGateResolved` (outcome ok,
+    /// actor gate) for every unresolved timer gate in the dag whose `until`
+    /// has passed. Called on readiness checks (pickup, `wih list --ready`).
+    /// Returns the resolved gate ids.
+    pub async fn resolve_elapsed_timer_gates(&self, dag_id: &str) -> Result<Vec<String>> {
+        let dag_events = self.events_for_dag(dag_id).await?;
+        let dag = project_dag(&dag_events, dag_id);
+        let now = Utc::now();
+        let mut resolved = Vec::new();
+        let mut node_ids: Vec<&String> = dag.nodes.keys().collect();
+        node_ids.sort();
+        for node_id in node_ids {
+            let node = &dag.nodes[node_id];
+            for gate in node.wait_gates.iter().filter(|g| g.timer_elapsed(now)) {
+                let actor = gate_actor(&self.actor_id);
+                let evt = AllternitEvent {
+                    event_id: create_event_id(),
+                    ts: now.to_rfc3339(),
+                    actor: actor.clone(),
+                    scope: None,
+                    r#type: "DagNodeWaitGateResolved".to_string(),
+                    payload: json!({
+                        "dag_id": dag_id,
+                        "node_id": node_id,
+                        "gate_id": gate.gate_id,
+                        "kind": gate.kind,
+                        "outcome": GateOutcome::Ok,
+                        "resolved_by": actor_label(&actor),
+                        "reason": "timer elapsed"
+                    }),
+                    provenance: None,
+                };
+                self.emit(evt).await?;
+                resolved.push(gate.gate_id.clone());
+            }
+        }
+        if !resolved.is_empty() {
+            self.refresh_dag_view(dag_id).await?;
+        }
+        Ok(resolved)
+    }
+
+    /// Store a node's output: blob + `node.output` receipt + ReceiptWritten,
+    /// the derived `.out.md` view, and `DagNodeOutputRecorded`.
+    async fn record_node_output(
+        &self,
+        wih_id: &str,
+        dag_id: &str,
+        node_id: &str,
+        text: &str,
+    ) -> Result<String> {
+        let blob_id = self.receipts.store_blob_string(text)?;
+        let sha256 = crate::context::types::sha256_with_prefix(text);
+        let size_bytes = text.len() as u64;
+        let output_path = node_output_rel_path(dag_id, node_id);
+        let receipt_id = create_receipt_id();
+        let receipt = ReceiptRecord {
+            receipt_id: receipt_id.clone(),
+            run_id: format!("run_{}", wih_id),
+            step: None,
+            tool: "node.output".to_string(),
+            tool_version: None,
+            inputs_ref: None,
+            outputs_ref: Some(format!("blob:{blob_id}")),
+            exit: None,
+            input_tokens: None,
+            output_tokens: None,
+            total_tokens: None,
+        };
+        self.receipts.write_receipt(&receipt)?;
+        self.emit(AllternitEvent {
+            event_id: create_event_id(),
+            ts: Utc::now().to_rfc3339(),
+            actor: gate_actor(&self.actor_id),
+            scope: None,
+            r#type: "ReceiptWritten".to_string(),
+            payload: json!({
+                "wih_id": wih_id,
+                "dag_id": dag_id,
+                "node_id": node_id,
+                "receipt_id": receipt_id,
+                "tool": "node.output",
+                "payload": {
+                    "blob_id": blob_id,
+                    "sha256": sha256,
+                    "size_bytes": size_bytes,
+                    "output_path": output_path
+                }
+            }),
+            provenance: None,
+        })
+        .await?;
+        let view = self.root_dir.join(&output_path);
+        if let Some(parent) = view.parent() {
+            ensure_dir(parent)?;
+        }
+        std::fs::write(&view, text)?;
+        self.emit(AllternitEvent {
+            event_id: create_event_id(),
+            ts: Utc::now().to_rfc3339(),
+            actor: gate_actor(&self.actor_id),
+            scope: None,
+            r#type: "DagNodeOutputRecorded".to_string(),
+            payload: json!({
+                "dag_id": dag_id,
+                "node_id": node_id,
+                "wih_id": wih_id,
+                "receipt_id": receipt_id,
+                "blob_id": blob_id,
+                "sha256": sha256,
+                "size_bytes": size_bytes,
+                "output_path": output_path
+            }),
+            provenance: None,
+        })
+        .await?;
+        Ok(receipt_id)
     }
 
     async fn resolve_prompt_id(&self, dag_id: &str) -> Result<String> {
@@ -2039,7 +2753,13 @@ impl Gate {
         None
     }
 
-    async fn write_context_pack(&self, wih_id: &str, dag_id: &str, node_id: &str) -> Result<()> {
+    async fn write_context_pack(
+        &self,
+        wih_id: &str,
+        dag_id: &str,
+        node_id: &str,
+        resolved_description: Option<String>,
+    ) -> Result<()> {
         let events = self.ledger.query(LedgerQuery::default()).await?;
         let dag_events = events_for_dag(&events, dag_id);
         let dag = project_dag(&dag_events, dag_id);
@@ -2084,6 +2804,32 @@ impl Gate {
             .and_then(|pid| project_prompt(&events, pid));
 
         let receipt_refs = collect_receipts_for_nodes(&events, dag_id, &deps);
+        let mut dep_ids: Vec<&String> = deps.iter().collect();
+        dep_ids.sort();
+        let mut dependency_outputs = Vec::new();
+        for dep in dep_ids {
+            let Some(output) = dag.nodes.get(dep).and_then(|n| n.output.as_ref()) else {
+                continue;
+            };
+            let (text, truncated) = match self.read_node_output(output) {
+                Ok(full) => {
+                    let (cut, truncated) = truncate_utf8(&full, CONTEXT_PACK_OUTPUT_INLINE_CAP);
+                    (Some(cut.to_string()), truncated)
+                }
+                Err(_) => (None, false),
+            };
+            dependency_outputs.push(ContextNodeOutput {
+                node_id: dep.clone(),
+                wih_id: output.wih_id.clone(),
+                receipt_id: output.receipt_id.clone(),
+                blob_id: output.blob_id.clone(),
+                sha256: output.sha256.clone(),
+                size_bytes: output.size_bytes,
+                output_path: output.output_path.clone(),
+                text,
+                truncated,
+            });
+        }
         let dag_slice = DagSlice {
             nodes,
             edges,
@@ -2100,6 +2846,8 @@ impl Gate {
             dag_slice,
             dependency_nodes: deps.into_iter().collect(),
             receipts: receipt_refs,
+            dependency_outputs,
+            resolved_description,
         };
 
         let path = context_pack_path(&self.root_dir, dag_id, wih_id);
@@ -2120,6 +2868,13 @@ pub enum DagMutation {
         title: String,
         parent_node_id: Option<String>,
         execution_mode: String,
+        /// Node prompt. May contain `{{ <node_id>.output }}` /
+        /// `{{ <node_id>.output_path }}` placeholders (resolved at pickup).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        /// `bot:<slug>` | `ao:<harness>`; recorded, not acted on yet.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        executor: Option<String>,
     },
     UpdateNode {
         node_id: String,
@@ -2167,6 +2922,20 @@ pub enum DagMutation {
         to: String,
         reason: Option<String>,
     },
+    /// Attach a wait-gate to a node (emits `DagNodeWaitGateAdded`).
+    AddWaitGate {
+        node_id: String,
+        /// Minted when absent.
+        #[serde(default)]
+        gate_id: Option<String>,
+        kind: WaitGateKind,
+        #[serde(default)]
+        description: Option<String>,
+        /// Kind-specific params: `until` (timer, RFC 3339), `repo`,
+        /// `run_id`, `pr`.
+        #[serde(default)]
+        params: HashMap<String, serde_json::Value>,
+    },
 }
 
 fn context_pack_path(root: &PathBuf, dag_id: &str, wih_id: &str) -> PathBuf {
@@ -2175,6 +2944,44 @@ fn context_pack_path(root: &PathBuf, dag_id: &str, wih_id: &str) -> PathBuf {
         .join("wih")
         .join("context")
         .join(format!("{wih_id}.context.json"))
+}
+
+fn resolved_prompt_path(root: &std::path::Path, dag_id: &str, wih_id: &str) -> PathBuf {
+    root.join(".allternit/work/dags")
+        .join(dag_id)
+        .join("wih")
+        .join("context")
+        .join(format!("{wih_id}.prompt.md"))
+}
+
+/// Workspace-relative path of a node's derived output view.
+pub fn node_output_rel_path(dag_id: &str, node_id: &str) -> String {
+    format!(".allternit/work/dags/{dag_id}/nodes/{node_id}.out.md")
+}
+
+/// `s` cut to at most `max` bytes on a char boundary, and whether it was cut.
+fn truncate_utf8(s: &str, max: usize) -> (&str, bool) {
+    if s.len() <= max {
+        return (s, false);
+    }
+    let mut end = max;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    (&s[..end], true)
+}
+
+fn actor_label(actor: &Actor) -> String {
+    let kind = match actor.r#type {
+        ActorType::User => "user",
+        ActorType::Agent => "agent",
+        ActorType::Gate => "gate",
+    };
+    format!("{kind}:{}", actor.id)
+}
+
+fn mint_wait_gate_id() -> String {
+    format!("wg_{:06x}", rand::random::<u32>() & 0x00ff_ffff)
 }
 
 fn events_for_dag(events: &[AllternitEvent], dag_id: &str) -> Vec<AllternitEvent> {
