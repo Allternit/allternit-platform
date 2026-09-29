@@ -49,6 +49,10 @@ All events are appended to the Ledger as JSON objects with:
 - LeaseRenewed
 - LeaseReleased
 
+### Spawn gate (third-party harnesses)
+- HarnessToolGated (payload: wih_id|null, harness, harness_session_id, tool, decision allow|deny, reason, paths, command) — written by `allternit-commrails hook claude-pretool` for every WIH-bound tool call and every denial (hard floor included).
+- HarnessSpawnRefused (payload: wih_id, harness, reason) — an unhooked harness refused on a WIH whose policy requires leased writes.
+
 ### Mail logistics
 - ThreadCreated
 - MessageSent

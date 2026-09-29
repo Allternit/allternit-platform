@@ -1,12 +1,26 @@
 //! Claude Code CLI driver. NDJSON on stdout from
-//! `claude -p <prompt> --output-format stream-json --verbose --dangerously-skip-permissions`.
+//! `claude -p <prompt> --output-format stream-json --verbose
+//!  --permission-mode acceptEdits --settings <spawn-gate settings>`.
+//!
+//! No `--dangerously-skip-permissions`: the settings file (written by
+//! `allternit-commrails hook claude-settings`) carries allow rules so the
+//! headless run never blocks on a prompt, and a PreToolUse hook that runs the
+//! Allternit hard floor + Gate 2 on every tool call.
 
 use std::path::Path;
 
 use crate::drivers::{DriverState, ParsedEvent};
 use crate::protocol::Usage;
 
-pub fn argv(prompt: &str, model: Option<&str>, resume: Option<&str>, _cwd: &Path) -> Vec<String> {
+/// Without `settings` the run stays in `acceptEdits` with no allow rules:
+/// Bash is denied headless rather than silently falling back to bypass.
+pub fn argv(
+    prompt: &str,
+    model: Option<&str>,
+    resume: Option<&str>,
+    _cwd: &Path,
+    settings: Option<&Path>,
+) -> Vec<String> {
     let mut args = vec![
         "claude".to_string(),
         "-p".to_string(),
@@ -14,8 +28,13 @@ pub fn argv(prompt: &str, model: Option<&str>, resume: Option<&str>, _cwd: &Path
         "--output-format".to_string(),
         "stream-json".to_string(),
         "--verbose".to_string(),
-        "--dangerously-skip-permissions".to_string(),
+        "--permission-mode".to_string(),
+        "acceptEdits".to_string(),
     ];
+    if let Some(settings) = settings {
+        args.push("--settings".to_string());
+        args.push(settings.display().to_string());
+    }
     if let Some(id) = resume {
         args.push("--resume".to_string());
         args.push(id.to_string());
@@ -125,11 +144,30 @@ mod tests {
 
     #[test]
     fn argv_shape() {
-        let args = argv("hi", Some("claude-opus"), Some("sess_1"), Path::new("/tmp"));
+        let args = argv(
+            "hi",
+            Some("claude-opus"),
+            Some("sess_1"),
+            Path::new("/tmp"),
+            Some(Path::new("/s/claude-settings.json")),
+        );
         let joined = args.join(" ");
-        assert!(joined.starts_with("claude -p hi --output-format stream-json --verbose --dangerously-skip-permissions"));
+        assert!(joined.starts_with(
+            "claude -p hi --output-format stream-json --verbose --permission-mode acceptEdits --settings /s/claude-settings.json"
+        ));
         assert!(joined.contains("--resume sess_1"));
         assert!(joined.contains("--model claude-opus"));
+    }
+
+    #[test]
+    fn argv_never_bypasses_permissions() {
+        for settings in [Some(Path::new("/s/x.json")), None] {
+            let joined = argv("hi", None, None, Path::new("/tmp"), settings).join(" ");
+            assert!(!joined.contains("dangerously"), "{joined}");
+            assert!(!joined.contains("bypassPermissions"), "{joined}");
+        }
+        let unhooked = argv("hi", None, None, Path::new("/tmp"), None).join(" ");
+        assert!(!unhooked.contains("--settings"));
     }
 
     #[test]
