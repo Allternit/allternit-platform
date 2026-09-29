@@ -110,7 +110,7 @@ describe("migrations", () => {
     const versions = db
       .prepare("SELECT version FROM migrations ORDER BY version")
       .all() as { version: number }[];
-    expect(versions).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }]);
+    expect(versions).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }]);
     // a task inserted before re-running migrations survives
     insertTask(db, sampleTask());
     runMigrations(db, MIGRATIONS_DIR);
@@ -255,9 +255,16 @@ describe("account queries", () => {
       profile_ref: "profiles/acct-1",
       session_health: "ready",
       enabled: true,
+      identity: null,
+      usage: null,
     };
     upsertAccount(db, account);
     expect(getAccount(db, "acct-1")).toEqual(account);
+
+    // Who is signed in and the observed usage round-trip.
+    const usage = { remaining_pct: 8, resets_at: null, observed_at: "2026-09-29T14:54:00.000Z" };
+    upsertAccount(db, { ...account, identity: "eoj@example.com", usage });
+    expect(getAccount(db, "acct-1")).toMatchObject({ identity: "eoj@example.com", usage });
 
     upsertAccount(db, { ...account, session_health: "degraded", enabled: false });
     const after = getAccount(db, "acct-1")!;

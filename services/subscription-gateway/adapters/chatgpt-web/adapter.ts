@@ -8,6 +8,7 @@ import { load as yamlLoad } from "js-yaml";
 import type { Page } from "playwright";
 import {
   adapterManifestSchema,
+  type AccountObservation,
   type AdapterEvent,
   type AdapterManifest,
   type ExecutionContext,
@@ -154,6 +155,35 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
     const config = chatGPTWebConfig(configOverrides);
     super(config);
     this.cfg = config;
+  }
+
+  // Who is signed in and the "N% usage remaining" the sidebar shows.
+  // Non-spending: reads the page and ChatGPT's own session endpoint in the
+  // page (same-origin); only the email leaves the page, never a token.
+  async readAccount(_signal: AbortSignal): Promise<AccountObservation> {
+    const page = this.attachedPage();
+    if (!page) throw new Error("readAccount called before attach()");
+    const read = await page.evaluate(async () => {
+      let identity: string | null = null;
+      try {
+        const r = await fetch("/api/auth/session", { credentials: "include" });
+        if (r.ok) {
+          const j = (await r.json()) as { user?: { email?: unknown } };
+          identity = typeof j?.user?.email === "string" ? j.user.email : null;
+        }
+      } catch {
+        // not signed in, or the endpoint moved: leave identity unknown
+      }
+      const m = /(\d{1,3})\s*%\s*usage remaining/i.exec(document.body?.innerText ?? "");
+      return { identity, pct: m ? Number(m[1]) : null };
+    });
+    return {
+      identity: read.identity,
+      usage:
+        read.pct === null
+          ? null
+          : { remaining_pct: read.pct, resets_at: null, observed_at: new Date().toISOString() },
+    };
   }
 
   override async *execute(task: Task, ctx: ExecutionContext): AsyncIterable<AdapterEvent> {

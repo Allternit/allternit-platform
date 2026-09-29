@@ -104,6 +104,11 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
     this.runtimePage = null;
   }
 
+  /** The worker-provided page while attached (for non-spending reads). */
+  protected attachedPage(): Page | null {
+    return this.runtimePage;
+  }
+
   // §A3.4 — non-spending canary over the worker-provided page.
   async probe(_signal: AbortSignal): Promise<ProbeResult> {
     if (!this.runtimePage) throw new Error("probe called before attach()");

@@ -321,6 +321,31 @@ describe("execute e2e against fixtures", () => {
     await page.close();
   }, 30000);
 
+  it("readAccount: the signed-in email and the sidebar's usage, never a token", async () => {
+    const adapter = new ChatGPTWebAdapter({}, FAST);
+    const page = await browser.newPage();
+    const { readFileSync } = await import("node:fs");
+    const html = readFileSync(join(FIXTURES_DIR, "idle.html"), "utf8").replace(
+      "</body>",
+      '<aside><span>8% usage remaining</span></aside></body>'
+    );
+    await page.route("https://chatgpt.com/**", (route) =>
+      route.request().url().endsWith("/api/auth/session")
+        ? route.fulfill({
+            contentType: "application/json",
+            body: JSON.stringify({ user: { email: "eoj@example.com", name: "Eoj" }, accessToken: "SECRET" }),
+          })
+        : route.fulfill({ contentType: "text/html", body: html })
+    );
+    await page.goto("https://chatgpt.com/");
+    await adapter.attach({ adapter_id: "chatgpt-web", origins: [], navigate: async () => {}, page } as never);
+    const seen = await adapter.readAccount(new AbortController().signal);
+    expect(seen.identity).toBe("eoj@example.com");
+    expect(seen.usage).toMatchObject({ remaining_pct: 8, resets_at: null });
+    expect(JSON.stringify(seen)).not.toContain("SECRET");
+    await page.close();
+  }, 30000);
+
   it("chat.create on a challenge fixture → needs_user, no submit (Critical #5)", async () => {
     const adapter = new ChatGPTWebAdapter({ freshChat: false }, FAST);
     const page = await fixturePage("challenge");

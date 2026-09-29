@@ -17,6 +17,7 @@ import {
   type SelectorPack,
 } from "@allternit/subscription-adapter-sdk";
 import type {
+  AccountObservation,
   AdapterManifest,
   ArtifactSink,
   ExecutionContext,
@@ -44,6 +45,10 @@ export interface LaneRuntime {
   page: PageLease;
   makeResolver: (page: PageLease) => SelectorResolver;
   probe(): Promise<ProbeResult>;
+  // Who is signed in / usage / plan, read after a ready probe (optional:
+  // adapters that can't observe them leave the account's fields as they were).
+  readAccount?(): Promise<AccountObservation>;
+  readPlan?(): Promise<string | null>;
   close(): Promise<void>;
   // False once the browser behind this runtime is gone (crashed, killed, or
   // its window closed). Optional so fakes without a browser stay alive.
@@ -251,6 +256,7 @@ export class WorkerPool {
     }
     this.persistHealth(lane, health);
     this.deps.logger?.(`subscription-gateway: probe ${id} → ${health}`);
+    if (health === "ready") await this.observeAccount(lane, runtime);
     // Critical #5 — a challenge is stop + surface, never auto-retried. One
     // account-scoped ledger event per transition into challenge_presented
     // (SSE fan-out via the hub; the notifier pattern needs no extra call).
@@ -270,6 +276,21 @@ export class WorkerPool {
       });
     }
     return runtime;
+  }
+
+  // Best effort: a failed read never changes health or blocks the lane.
+  private async observeAccount(lane: LaneKey, runtime: LaneRuntime): Promise<void> {
+    const observed = runtime.readAccount ? await runtime.readAccount().catch(() => null) : null;
+    const plan = runtime.readPlan ? await runtime.readPlan().catch(() => null) : null;
+    if (!observed && !plan) return;
+    const fresh = getAccount(this.deps.db, lane.account_id);
+    if (!fresh) return;
+    upsertAccount(this.deps.db, {
+      ...fresh,
+      identity: observed?.identity ?? fresh.identity ?? null,
+      usage: observed?.usage ?? fresh.usage ?? null,
+      ...(plan ? { plan, plan_observed_at: new Date().toISOString() } : {}),
+    });
   }
 
   private persistHealth(lane: LaneKey, health: SessionHealth): void {
@@ -388,6 +409,10 @@ export function createPlaywrightLauncher(deps: PlaywrightLauncherDeps): Launcher
         isAlive: () => alive,
         page: lease,
         makeResolver,
+        ...(adapter.readAccount
+          ? { readAccount: () => adapter.readAccount!(new AbortController().signal) }
+          : {}),
+        ...(adapter.readPlan ? { readPlan: () => adapter.readPlan!(new AbortController().signal) } : {}),
         async probe(): Promise<ProbeResult> {
           const result = await adapter.probe(new AbortController().signal);
           // §A5/Critical #5 — surface a challenge interstitial as a failing

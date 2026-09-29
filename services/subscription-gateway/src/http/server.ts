@@ -21,7 +21,7 @@ import type { LoginBrowser } from "../worker/login_browser.js";
 import { tasksRouter } from "./routes_tasks.js";
 import { eventsRouter } from "./routes_events.js";
 import { artifactsRouter } from "./routes_artifacts.js";
-import { accountsRouter } from "./routes_accounts.js";
+import { accountsRouter, type AccountsRouterOptions } from "./routes_accounts.js";
 import { capabilitiesRouter } from "./routes_capabilities.js";
 import { catalogRouter } from "./routes_catalog.js";
 import { statsRouter } from "./routes_stats.js";
@@ -39,6 +39,7 @@ export interface GatewayDeps {
   adapterRegistry?: AdapterRegistry; // P3 — live /v1/capabilities view
   pool?: WorkerPool; // P3 activation — POST /v1/accounts/:id/connect activates lanes
   loginBrowser?: LoginBrowser; // login mode — POST /v1/accounts/:id/login
+  accountsOptions?: AccountsRouterOptions; // login watcher poll + cookie reader (tests)
   allowedOrigins?: string[]; // default: empty — every Origin is rejected
   version?: string;
 }
@@ -125,7 +126,7 @@ export function createServer(deps: GatewayDeps): Express {
   app.use(tasksRouter(deps));
   app.use(eventsRouter(deps));
   app.use(artifactsRouter(deps));
-  app.use(accountsRouter(deps));
+  app.use(accountsRouter(deps, deps.accountsOptions));
   app.use(capabilitiesRouter(deps));
   app.use(catalogRouter(deps));
   app.use(statsRouter(deps));

@@ -383,6 +383,8 @@ interface AccountRow {
   profile_ref: string;
   session_health: string;
   enabled: number;
+  identity?: string | null;
+  usage?: string | null;
 }
 
 function accountFromRow(row: AccountRow): Account {
@@ -395,6 +397,8 @@ function accountFromRow(row: AccountRow): Account {
     profile_ref: row.profile_ref,
     session_health: row.session_health as Account["session_health"],
     enabled: row.enabled === 1,
+    identity: row.identity ?? null,
+    usage: row.usage ? (JSON.parse(row.usage) as Account["usage"]) : null,
   };
 }
 
@@ -402,8 +406,8 @@ export function upsertAccount(db: Db, account: Account): void {
   db.prepare(
     `INSERT INTO accounts (
       account_id, provider, label, plan, plan_observed_at, profile_ref,
-      session_health, enabled
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      session_health, enabled, identity, usage
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (account_id) DO UPDATE SET
       provider = excluded.provider,
       label = excluded.label,
@@ -411,7 +415,9 @@ export function upsertAccount(db: Db, account: Account): void {
       plan_observed_at = excluded.plan_observed_at,
       profile_ref = excluded.profile_ref,
       session_health = excluded.session_health,
-      enabled = excluded.enabled`
+      enabled = excluded.enabled,
+      identity = excluded.identity,
+      usage = excluded.usage`
   ).run(
     account.account_id,
     account.provider,
@@ -420,8 +426,32 @@ export function upsertAccount(db: Db, account: Account): void {
     account.plan_observed_at,
     account.profile_ref,
     account.session_health,
-    account.enabled ? 1 : 0
+    account.enabled ? 1 : 0,
+    account.identity ?? null,
+    account.usage ? JSON.stringify(account.usage) : null
   );
+}
+
+export function deleteAccount(db: Db, accountId: string): void {
+  db.prepare("DELETE FROM accounts WHERE account_id = ?").run(accountId);
+}
+
+// A task still in flight on this account: pinned by routing or route
+// decision, or with an attempt on it. Terminal tasks don't count.
+export function accountHasActiveTasks(db: Db, accountId: string): boolean {
+  const row = db
+    .prepare(
+      `SELECT 1 FROM tasks t
+       WHERE t.status NOT IN ('completed', 'partial', 'failed', 'cancelled')
+         AND (
+           json_extract(t.routing, '$.account_id') = ?
+           OR json_extract(t.route_decision, '$.primary.account_id') = ?
+           OR EXISTS (SELECT 1 FROM task_attempts a WHERE a.task_id = t.task_id AND a.account_id = ?)
+         )
+       LIMIT 1`
+    )
+    .get(accountId, accountId, accountId);
+  return row !== undefined;
 }
 
 export function getAccount(db: Db, accountId: string): Account | null {
