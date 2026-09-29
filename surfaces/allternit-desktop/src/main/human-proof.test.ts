@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyDesktopHumanProof, applyDesktopHumanProofTo, stripDesktopHumanProof } from './human-proof';
+import { applyDesktopHumanProof, applyDesktopHumanProofTo, stripDesktopHumanProof } from './human-proof.js';
 
 const PROOF = 'desktop:secret';
 
