@@ -313,6 +313,12 @@ jobs:
         # `pnpm install --frozen-lockfile`, and a committed reference would
         # break the monorepo lockfile. npm install -g resolves them for the
         # end user's platform at install time.
+        #
+        # The published package is only the launcher (bin/gizzi.js, node
+        # built-ins only) plus the platform binaries, so the monorepo's
+        # dependencies are dropped: they include `workspace:*` specs that no
+        # registry can resolve, which made `npm install -g` fail for every
+        # version up to 2.1.7.
         working-directory: cmd/gizzi-code
         run: |
           node -e '
@@ -322,6 +328,9 @@ jobs:
             p.optionalDependencies = Object.fromEntries(
               platforms.map((t) => [`@allternit/gizzi-code-${t}`, process.env.VERSION]),
             );
+            delete p.dependencies;
+            delete p.devDependencies;
+            delete p.peerDependencies;
             fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");
           '
         env:
