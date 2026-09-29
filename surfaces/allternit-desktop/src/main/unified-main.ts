@@ -54,7 +54,10 @@ import { OfficeAddinManager, type OfficeProductId } from './office-addin-manager
 
 import { tunnelManager } from './tunnel-manager.js';
 import { authManager, FULL_CLERK_REFRESH_WAIT_MS } from './auth-manager.js';
-import { devicePairingManager } from './device-pairing-manager.js';
+// Side-effect import: constructing the manager registers the device-pairing:*
+// IPC handlers. A named import that is never read gets elided by tsc, which
+// left Settings → Devices failing with "No handler registered".
+import './device-pairing-manager.js';
 import { meshManager } from './mesh-manager.js';
 import { startMeshBridgeServer } from './mesh-bridge-server.js';
 import { createStartupWindow } from './startup-window.js';
