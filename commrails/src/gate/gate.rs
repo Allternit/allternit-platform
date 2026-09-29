@@ -10,6 +10,7 @@ use crate::verification::types::{ProviderError, VerificationProvider, VisualConf
 
 use crate::gate::errors::{gate_ids, GateError};
 use crate::wait_gates::{GateOutcome, WaitGateKind};
+use crate::fence::Fence;
 use crate::work::placeholders::{self, PlaceholderField};
 use std::collections::HashMap;
 
@@ -115,6 +116,16 @@ struct ContextPack {
     /// The node description with output placeholders resolved at pickup.
     #[serde(skip_serializing_if = "Option::is_none")]
     resolved_description: Option<String>,
+    /// Per-render fence around untrusted inlined content (S7): every
+    /// `dependency_outputs[].text` and every `{{ x.output }}` substitution in
+    /// `resolved_description` is wrapped in `<untrusted-data nonce=…>`.
+    untrusted_fence: ContextFence,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ContextFence {
+    nonce: String,
+    instruction: String,
 }
 
 /// Max bytes of a predecessor's output inlined into a ContextPack
@@ -146,6 +157,8 @@ pub struct WihPickup {
     pub resolved_prompt_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolved_description: Option<String>,
+    /// Nonce of the untrusted-content fence used for this render (S7).
+    pub fence_nonce: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -747,7 +760,10 @@ impl Gate {
         if let Some(active) = self.active_wih_for_node(node_id).await? {
             return Err(anyhow!("node already has active wih {}", active));
         }
-        let resolved_description = self.resolve_node_description(&dag, node_id)?;
+        // One fence per render (S7): minted after every predecessor output
+        // it wraps was recorded, so that content cannot know the nonce.
+        let fence = Fence::new();
+        let resolved_description = self.resolve_node_description(&dag, node_id, &fence)?;
 
         let execution_mode = if opts.fresh {
             "fresh".to_string()
@@ -834,7 +850,7 @@ impl Gate {
 
         if execution_mode == "fresh" {
             let _ = self
-                .write_context_pack(&wih_id, dag_id, node_id, resolved_description.clone())
+                .write_context_pack(&wih_id, dag_id, node_id, resolved_description.clone(), &fence)
                 .await;
         }
 
@@ -845,6 +861,7 @@ impl Gate {
             context_pack_path,
             resolved_prompt_path,
             resolved_description,
+            fence_nonce: fence.nonce().to_string(),
         })
     }
 
@@ -923,7 +940,14 @@ impl Gate {
 
     /// Resolve `{{ <node>.output }}` / `{{ <node>.output_path }}` in the
     /// node description. `Ok(None)` when the description has no placeholders.
-    fn resolve_node_description(&self, dag: &DagState, node_id: &str) -> Result<Option<String>> {
+    /// `{{ x.output }}` text is wrapped in `fence` (S7) and the fence
+    /// instruction is prepended once when any output was inlined.
+    fn resolve_node_description(
+        &self,
+        dag: &DagState,
+        node_id: &str,
+        fence: &Fence,
+    ) -> Result<Option<String>> {
         let node = dag
             .nodes
             .get(node_id)
@@ -967,7 +991,7 @@ impl Gate {
             }
             let text = self.read_node_output(output)?;
             let value = match r.field {
-                PlaceholderField::Output => text,
+                PlaceholderField::Output => fence.wrap(&format!("node:{}", r.node_id), &text),
                 PlaceholderField::OutputPath => {
                     let path = self.ensure_output_view(output, &text)?;
                     path.to_string_lossy().to_string()
@@ -975,9 +999,14 @@ impl Gate {
             };
             values.insert(key, value);
         }
-        Ok(Some(placeholders::render_node_refs(description, |r| {
+        let rendered = placeholders::render_node_refs(description, |r| {
             values.get(&(r.node_id.clone(), r.field)).cloned()
-        })))
+        });
+        if refs.iter().any(|r| r.field == PlaceholderField::Output) {
+            Ok(Some(format!("{}\n\n{}", fence.instruction(), rendered)))
+        } else {
+            Ok(Some(rendered))
+        }
     }
 
     /// Read a recorded node output from its immutable blob.
@@ -2759,6 +2788,7 @@ impl Gate {
         dag_id: &str,
         node_id: &str,
         resolved_description: Option<String>,
+        fence: &Fence,
     ) -> Result<()> {
         let events = self.ledger.query(LedgerQuery::default()).await?;
         let dag_events = events_for_dag(&events, dag_id);
@@ -2814,7 +2844,7 @@ impl Gate {
             let (text, truncated) = match self.read_node_output(output) {
                 Ok(full) => {
                     let (cut, truncated) = truncate_utf8(&full, CONTEXT_PACK_OUTPUT_INLINE_CAP);
-                    (Some(cut.to_string()), truncated)
+                    (Some(fence.wrap(&format!("node:{dep}"), cut)), truncated)
                 }
                 Err(_) => (None, false),
             };
@@ -2848,6 +2878,10 @@ impl Gate {
             receipts: receipt_refs,
             dependency_outputs,
             resolved_description,
+            untrusted_fence: ContextFence {
+                nonce: fence.nonce().to_string(),
+                instruction: fence.instruction(),
+            },
         };
 
         let path = context_pack_path(&self.root_dir, dag_id, wih_id);

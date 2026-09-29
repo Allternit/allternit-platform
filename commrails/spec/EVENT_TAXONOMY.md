@@ -62,5 +62,11 @@ All events are appended to the Ledger as JSON objects with:
 - VaultJobCreated
 - VaultJobCompleted
 - LearningRecorded
-- MemoryCandidateExtracted
-- MemoryCommitted
+- MemoryCandidateExtracted (payload: wih_id, dag_id, node_id, candidate_id, path, sink — candidate stored pending via `MemorySink`)
+- MemoryCommitted (not emitted in v1: commit = human-approved Brain draft)
+- LessonTriaged (payload: dag_id, node_id, wih_id, candidate_id, verdict promoted|rejected|unscored, scores, mean, task_min, mean_min, model, unscored_reason, draft_path)
+
+### Observer
+- No observer-specific events: the read-only observer writes only mail
+  (`ThreadCreated` if new, `MessageSent` with `from_agent: "observer"`, subject
+  `observer <trigger> dag:<id> [wih:<id>] [sig:<failure signature>]`)

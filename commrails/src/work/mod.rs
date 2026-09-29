@@ -1,5 +1,6 @@
 pub mod graph;
 pub mod needs_you;
+pub mod output_text;
 pub mod placeholders;
 pub mod ops;
 pub mod projection;

@@ -796,6 +796,8 @@ struct WihPickupResponse {
     resolved_prompt_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     resolved_description: Option<String>,
+    /// Nonce of the untrusted-content fence around inlined outputs (S7).
+    fence_nonce: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -1804,6 +1806,7 @@ async fn pickup_wih(
                 context_pack_path: pickup.context_pack_path,
                 resolved_prompt_path: pickup.resolved_prompt_path,
                 resolved_description: pickup.resolved_description,
+                fence_nonce: pickup.fence_nonce,
             }),
         )
             .into_response(),
@@ -1947,13 +1950,28 @@ async fn close_wih(
         return resp.into_response();
     }
     let evidence = req.evidence.clone().unwrap_or_default();
+    // Read-only observer hooks (commrails/spec/OBSERVER.md): opt-in pre-close
+    // advice, repeat-failure advice after the close. Advisory only.
+    allternit_commrails::observer::hook_before_close(
+        state.rails.root_dir.clone(),
+        state.rails.ledger.clone(),
+        wih_id.clone(),
+    )
+    .await;
     match state
         .rails
         .gate
         .wih_close_with(&wih_id, &status, &evidence, req.output.as_deref())
         .await
     {
-        Ok(_) => (StatusCode::OK, Json(WihCloseResponse { closed: true })).into_response(),
+        Ok(_) => {
+            allternit_commrails::observer::spawn_after_close(
+                state.rails.root_dir.clone(),
+                state.rails.ledger.clone(),
+                wih_id.clone(),
+            );
+            (StatusCode::OK, Json(WihCloseResponse { closed: true })).into_response()
+        }
         Err(e) => {
             let status = if e.to_string().contains("evidence") {
                 StatusCode::BAD_REQUEST
@@ -2744,15 +2762,22 @@ async fn plan_new(
     Json(request): Json<PlanNewRequest>,
 ) -> impl IntoResponse {
     match state.rails.gate.plan_new(&request.text, None).await {
-        Ok((prompt_id, dag_id, node_id)) => (
-            StatusCode::CREATED,
-            Json(json!({
-                "prompt_id": prompt_id,
-                "dag_id": dag_id,
-                "node_id": node_id,
-            })),
-        )
-            .into_response(),
+        Ok((prompt_id, dag_id, node_id)) => {
+            allternit_commrails::observer::spawn_on_plan(
+                state.rails.root_dir.clone(),
+                state.rails.ledger.clone(),
+                dag_id.clone(),
+            );
+            (
+                StatusCode::CREATED,
+                Json(json!({
+                    "prompt_id": prompt_id,
+                    "dag_id": dag_id,
+                    "node_id": node_id,
+                })),
+            )
+                .into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": e.to_string() })),

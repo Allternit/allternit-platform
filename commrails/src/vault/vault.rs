@@ -9,6 +9,8 @@ use crate::core::ids::create_event_id;
 use crate::core::io::{ensure_dir, write_json_atomic};
 use crate::core::types::{AllternitEvent, Actor, ActorType, LedgerQuery};
 use crate::ledger::Ledger;
+use crate::lessons::candidate::extract_candidate;
+use crate::lessons::sink::{MemorySink, VaultCandidateSink};
 use crate::wih::projection::project_wih;
 use crate::work::projection::project_dag;
 
@@ -85,8 +87,32 @@ impl Vault {
         .await?;
         self.emit("LearningRecorded", json!({ "wih_id": wih_id }))
             .await?;
-        self.emit("MemoryCandidateExtracted", json!({ "wih_id": wih_id }))
-            .await?;
+        // Memory candidates go through the one MemorySink contract (S13):
+        // stored pending under memory_candidates/, never committed here.
+        let sink = VaultCandidateSink::new(&self.root_dir);
+        let candidate = extract_candidate(&self.root_dir, &events, wih_id)
+            .map(|c| sink.submit(&c).map(|o| (c, o)))
+            .transpose()?;
+        match candidate {
+            Some((c, outcome)) => {
+                self.emit(
+                    "MemoryCandidateExtracted",
+                    json!({
+                        "wih_id": wih_id,
+                        "dag_id": c.dag_id,
+                        "node_id": c.node_id,
+                        "candidate_id": c.candidate_id,
+                        "path": outcome.location,
+                        "sink": sink.sink_name(),
+                    }),
+                )
+                .await?;
+            }
+            None => {
+                self.emit("MemoryCandidateExtracted", json!({ "wih_id": wih_id }))
+                    .await?;
+            }
+        }
 
         Ok(base)
     }
