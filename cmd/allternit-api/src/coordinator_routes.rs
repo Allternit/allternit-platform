@@ -412,6 +412,22 @@ fn set_status(db: &DbHandle, thread_id: &str, status: &str, status_line: Option<
     }
 }
 
+/// Kickoff turns live in this process, so a restart ends them mid-turn and
+/// their threads would show "working" forever with nothing running. At
+/// startup, move every such thread to `blocked` (it lands in "Waiting on
+/// you") and say how to pick it back up. Returns how many were moved.
+pub fn interrupt_orphaned_turns(db: &DbHandle) -> usize {
+    let Ok(conn) = db.connect() else { return 0 };
+    conn.execute(
+        "UPDATE bot_threads SET status = 'blocked',
+             status_line = 'Stopped when Allternit restarted. Send a message in this thread to pick it up again.',
+             last_activity_at = ?1, updated_at = ?1
+         WHERE status = 'working'",
+        params![now()],
+    )
+    .unwrap_or(0)
+}
+
 /// `set_status` plus the thread's node on the canonical DAG, when it has one.
 async fn move_thread<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, thread_id: &str, status: &str, status_line: Option<&str>, summary: Option<&str>) {
     let before: Option<(String, Option<String>, Option<String>)> = db.connect().ok().and_then(|c| {
@@ -590,42 +606,55 @@ pub fn kickoff_text(project_title: &str, t: &ThreadView) -> String {
     s
 }
 
-/// Run kickoff turns; each finished thread moves to review, Al reports it,
-/// and any dependents whose inputs are all ready start next.
+/// Run kickoff turns. Every thread in a wave starts at once (independent
+/// work runs in parallel, as the plan promises); each finished thread moves
+/// to review, Al reports it, and dependents whose inputs are all ready form
+/// the next wave. One slow or hung turn no longer holds the others back.
 pub async fn start_threads<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user_id: &str, project_id: &str, start: Vec<(String, String)>) {
-    let mut queue = start;
-    while let Some((thread_id, text)) = queue.pop() {
-        let Ok(Some(t)) = thread_routes::load_view(db, &thread_id) else { continue };
-        let Some(session) = t.current_session_id.clone() else { continue };
-        move_thread(db, rt, &t.id, "working", Some("Working on it"), None).await;
-        match rt.send_turn(&session, &t.bot_id, &text).await {
-            Ok(reply) => {
-                let line = reply.lines().find(|l| !l.trim().is_empty()).map(|l| truncate(l.trim(), 140));
-                move_thread(db, rt, &t.id, "review", line.as_deref(), Some(&truncate(&reply, 1200))).await;
-                let _ = add_message(
-                    db,
-                    project_id,
-                    user_id,
-                    "coordinator",
-                    &format!("The {} thread has an update ready for you{}", t.title, line.as_ref().map(|l| format!(": {l}")).unwrap_or_else(|| ".".into())),
-                    json!({"kind": "completed", "threadId": t.id, "threadTitle": t.title}),
-                );
-                queue.extend(ready_dependents(db, project_id, &t.id));
-            }
-            Err(e) => {
-                move_thread(db, rt, &t.id, "blocked", Some(&truncate(&e, 140)), None).await;
-                let _ = add_message(
-                    db,
-                    project_id,
-                    user_id,
-                    "coordinator",
-                    &format!("The {} thread is blocked: {}", t.title, truncate(&e, 200)),
-                    json!({"kind": "blocked", "threadId": t.id, "threadTitle": t.title}),
-                );
-            }
-        }
+    let mut wave = start;
+    while !wave.is_empty() {
+        let next = futures::future::join_all(
+            wave.into_iter().map(|(thread_id, text)| run_kickoff(db, rt, user_id, project_id, thread_id, text)),
+        )
+        .await;
+        let mut seen = std::collections::HashSet::new();
+        wave = next.into_iter().flatten().filter(|(id, _)| seen.insert(id.clone())).collect();
     }
     maybe_synthesize(db, rt, user_id, project_id).await;
+}
+
+/// One thread's kickoff turn; returns the dependents it made ready.
+async fn run_kickoff<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user_id: &str, project_id: &str, thread_id: String, text: String) -> Vec<(String, String)> {
+    let Ok(Some(t)) = thread_routes::load_view(db, &thread_id) else { return vec![] };
+    let Some(session) = t.current_session_id.clone() else { return vec![] };
+    move_thread(db, rt, &t.id, "working", Some("Working on it"), None).await;
+    match rt.send_turn(&session, &t.bot_id, &text).await {
+        Ok(reply) => {
+            let line = reply.lines().find(|l| !l.trim().is_empty()).map(|l| truncate(l.trim(), 140));
+            move_thread(db, rt, &t.id, "review", line.as_deref(), Some(&truncate(&reply, 1200))).await;
+            let _ = add_message(
+                db,
+                project_id,
+                user_id,
+                "coordinator",
+                &format!("The {} thread has an update ready for you{}", t.title, line.as_ref().map(|l| format!(": {l}")).unwrap_or_else(|| ".".into())),
+                json!({"kind": "completed", "threadId": t.id, "threadTitle": t.title}),
+            );
+            ready_dependents(db, project_id, &t.id)
+        }
+        Err(e) => {
+            move_thread(db, rt, &t.id, "blocked", Some(&truncate(&e, 140)), None).await;
+            let _ = add_message(
+                db,
+                project_id,
+                user_id,
+                "coordinator",
+                &format!("The {} thread is blocked: {}", t.title, truncate(&e, 200)),
+                json!({"kind": "blocked", "threadId": t.id, "threadTitle": t.title}),
+            );
+            vec![]
+        }
+    }
 }
 
 pub const SYNTHESIS_SYSTEM: &str = "You are Al, the coordinator. Every thread in this project has reported back. \
@@ -805,6 +834,9 @@ mod tests {
         sessions: Mutex<usize>,
         graph: Mutex<Vec<(String, String, Vec<String>)>>,
         moves: Mutex<Vec<(String, String, String)>>,
+        /// When set, every kickoff turn waits here: the test only finishes
+        /// if the independent turns are in flight at the same time.
+        rendezvous: Option<Arc<tokio::sync::Barrier>>,
     }
 
     impl ThreadRuntime for Fake {
@@ -828,6 +860,9 @@ mod tests {
         async fn send_turn(&self, s: &str, _b: &str, t: &str) -> Result<String, String> {
             if self.fail_turns {
                 return Err("provider_rate_limit".into());
+            }
+            if let Some(b) = &self.rendezvous {
+                b.wait().await;
             }
             self.turns.lock().unwrap().push((s.into(), t.into()));
             Ok("Found three prices.\nDetails follow.".into())
@@ -898,6 +933,41 @@ mod tests {
         assert_eq!(f.bot_id, "ledger");
         let t = fallback_step(&team(), "Reply with the single word OK.").unwrap();
         assert_eq!(t.title, "Reply with the single word OK");
+    }
+
+    #[tokio::test]
+    async fn a_restart_moves_stranded_working_threads_to_waiting_on_you() {
+        let state = setup("restart").await;
+        let rt = Fake::default();
+        let out = coordinate(&state.db, &rt, "u", "p1", "Chase the flour supplier").await.unwrap();
+        let id = out.start[0].0.clone();
+        set_status(&state.db, &id, "working", Some("Working on it"), None);
+        assert_eq!(interrupt_orphaned_turns(&state.db), 1);
+        let t = thread_routes::load_view(&state.db, &id).unwrap().unwrap();
+        assert_eq!(t.status, "blocked");
+        assert!(t.status_line.as_deref().unwrap_or("").contains("restarted"));
+        assert_eq!(interrupt_orphaned_turns(&state.db), 0);
+    }
+
+    #[tokio::test]
+    async fn independent_threads_run_at_the_same_time() {
+        let state = setup("parallel").await;
+        let rt = Fake { rendezvous: Some(Arc::new(tokio::sync::Barrier::new(2))), ..Fake::default() };
+        *rt.plan.lock().unwrap() = Some(json!({
+            "action": "plan",
+            "reply": "Two threads.",
+            "steps": [
+                {"key": "flour", "title": "Find backup flour supplier", "objective": "A supplier who can deliver Friday", "bot": "Scout"},
+                {"key": "prices", "title": "Update chalkboard prices", "objective": "New spring prices", "bot": "Ledger"}
+            ]
+        }).to_string());
+        let out = coordinate(&state.db, &rt, "u", "p1", "flour is late, and the chalkboard needs spring prices").await.unwrap();
+        assert_eq!(out.start.len(), 2);
+        // Run one at a time, the first turn waits at the barrier forever.
+        tokio::time::timeout(std::time::Duration::from_secs(5), start_threads(&state.db, &rt, "u", "p1", out.start))
+            .await
+            .expect("independent kickoff turns must run concurrently");
+        assert_eq!(rt.turns.lock().unwrap().len(), 2);
     }
 
     #[tokio::test]

@@ -426,6 +426,12 @@ async fn main() {
     // §3: every workspace in the store gets the default Al and Gizzi
     // principals (idempotent; credentials are provisioned separately, once).
     seed_default_principals(&db).await;
+    // Bot-thread kickoff turns ran in the previous process; nothing is
+    // running them now, so don't leave their threads showing "working".
+    let stranded = allternit_api::coordinator_routes::interrupt_orphaned_turns(&db);
+    if stranded > 0 {
+        tracing::warn!(stranded, "bot threads were mid-turn at restart; moved to waiting on you");
+    }
     if allternit_api::cloud_worker::should_run_cloud_worker(&app_config) {
         allternit_api::cloud_worker::spawn_cloud_fabric_worker(
             db.clone(),
