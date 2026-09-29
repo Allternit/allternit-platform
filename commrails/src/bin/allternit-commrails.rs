@@ -102,6 +102,150 @@ enum Commands {
     /// Node-scoped wait-gates on WIH DAG nodes.
     #[command(subcommand, name = "wait-gate")]
     WaitGate(WaitGateCmd),
+    /// Scoped bearer identities for the remote bridge (spec/BRIDGE.md).
+    #[command(subcommand)]
+    Identity(IdentityCmd),
+    /// Scoped remote listener (default off; spec/BRIDGE.md).
+    #[command(subcommand)]
+    Bridge(BridgeCmd),
+}
+
+#[derive(Subcommand)]
+enum IdentityCmd {
+    /// Mint a scoped identity; prints its bearer token ONCE.
+    Add {
+        /// `bot:<slug>` or `agent:<slug>`.
+        #[arg(long)]
+        actor: String,
+        /// Comma-separated: plan:create, plan:read, mail:send, mail:read,
+        /// template:instantiate. Execution/lease/approval scopes are refused.
+        #[arg(long, value_delimiter = ',', required = true)]
+        scopes: Vec<String>,
+        #[arg(long)]
+        note: Option<String>,
+        /// Identities file (default $ALLTERNIT_COMMRAILS_BRIDGE_IDENTITIES or
+        /// ~/.allternit/commrails-bridge/identities.json).
+        #[arg(long)]
+        identities: Option<PathBuf>,
+    },
+    /// List identities (hashes are never printed).
+    List {
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        identities: Option<PathBuf>,
+    },
+    /// Revoke by identity id and/or every active identity of an actor.
+    /// Effective on the bridge's next request; no restart needed.
+    Revoke {
+        #[arg(long)]
+        actor: Option<String>,
+        #[arg(long)]
+        id: Option<String>,
+        #[arg(long)]
+        identities: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum BridgeCmd {
+    /// Serve the scoped bridge endpoints. Loopback unless --allow-remote.
+    Serve {
+        /// IP:port. Non-loopback needs --allow-remote and >=1 identity;
+        /// 0.0.0.0 / :: are always refused.
+        #[arg(long, default_value = allternit_commrails::bridge::DEFAULT_BRIDGE_BIND)]
+        bind: String,
+        /// Workspace root whose ledger the bridge reads and writes.
+        #[arg(long)]
+        root: PathBuf,
+        #[arg(long)]
+        allow_remote: bool,
+        #[arg(long)]
+        identities: Option<PathBuf>,
+        #[arg(long, default_value_t = allternit_commrails::bridge::DEFAULT_RATE_LIMIT_PER_MIN)]
+        rate_limit_per_min: u32,
+    },
+}
+
+fn run_identity_command(cmd: IdentityCmd) -> Result<()> {
+    use allternit_commrails::bridge::{default_identities_path, parse_grant_scopes, IdentityStore};
+    let store_for = |p: Option<PathBuf>| IdentityStore::new(p.unwrap_or_else(default_identities_path));
+    match cmd {
+        IdentityCmd::Add {
+            actor,
+            scopes,
+            note,
+            identities,
+        } => {
+            let store = store_for(identities);
+            let scopes = parse_grant_scopes(&scopes)?;
+            let issued = store.add(&actor, &scopes, note)?;
+            eprintln!(
+                "identity {} for {} (scopes: {}) written to {}",
+                issued.record.id,
+                issued.record.actor,
+                issued.record.scopes.join(","),
+                store.path().display()
+            );
+            eprintln!("token (shown once; store it 0600 on the remote host):");
+            println!("{}", issued.token);
+        }
+        IdentityCmd::List { json, identities } => {
+            let store = store_for(identities);
+            let records = store.list()?;
+            if json {
+                let out: Vec<Value> = records
+                    .iter()
+                    .map(|r| {
+                        json!({
+                            "id": r.id,
+                            "actor": r.actor,
+                            "scopes": r.scopes,
+                            "effective_scopes": r.effective_scopes().iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                            "created_at": r.created_at,
+                            "revoked_at": r.revoked_at,
+                            "note": r.note,
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else if records.is_empty() {
+                println!("no identities in {}", store.path().display());
+            } else {
+                for r in records {
+                    println!(
+                        "{}\t{}\t{}\t{}",
+                        r.id,
+                        r.actor,
+                        r.effective_scopes()
+                            .iter()
+                            .map(|s| s.as_str())
+                            .collect::<Vec<_>>()
+                            .join(","),
+                        r.revoked_at
+                            .as_deref()
+                            .map(|t| format!("revoked {t}"))
+                            .unwrap_or_else(|| "active".to_string())
+                    );
+                }
+            }
+        }
+        IdentityCmd::Revoke {
+            actor,
+            id,
+            identities,
+        } => {
+            let store = store_for(identities);
+            let revoked = store.revoke(id.as_deref(), actor.as_deref())?;
+            if revoked.is_empty() {
+                bail!("no active identity matched");
+            }
+            for r in revoked {
+                println!("revoked {} ({})", r.id, r.actor);
+            }
+        }
+    }
+    Ok(())
 }
 
 #[derive(Subcommand)]
@@ -1469,6 +1613,29 @@ async fn run() -> Result<()> {
         Commands::Steer(cmd) => {
             run_steer_command(&root, cmd).await?;
         }
+        Commands::Identity(cmd) => run_identity_command(cmd)?,
+        Commands::Bridge(cmd) => match cmd {
+            BridgeCmd::Serve {
+                bind,
+                root: bridge_root,
+                allow_remote,
+                identities,
+                rate_limit_per_min,
+            } => {
+                let bind: std::net::SocketAddr = bind
+                    .parse()
+                    .with_context(|| format!("--bind {bind:?} must be an IP:port literal"))?;
+                allternit_commrails::bridge::serve(allternit_commrails::bridge::BridgeConfig {
+                    bind,
+                    root: bridge_root,
+                    identities_path: identities
+                        .unwrap_or_else(allternit_commrails::bridge::default_identities_path),
+                    allow_remote,
+                    rate_limit_per_min,
+                })
+                .await?;
+            }
+        },
         Commands::WaitGate(cmd) => match cmd {
             WaitGateCmd::Add {
                 node,

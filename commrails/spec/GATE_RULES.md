@@ -8,6 +8,12 @@ Checks:
 - Link prompt → dag
 - blocked_by edges remain acyclic
 - mutations must include provenance (prompt delta or agent decision)
+- remote-origin plans (bridge, `BRIDGE.md`) use `plan_new_with_origin`: the
+  `PromptCreated` actor is the remote identity (e.g. agent `bot:chief`) with
+  `source: bridge`, `submitted_by`, `decision_ref`, `request_id`, and the initial
+  delta is authored by it, so every node's prompt provenance ends at the remote
+  actor. Remote identities never reach Gate 1, Gate 4, leases, or wait-gate
+  resolution.
 - prompt deltas and agent decisions must list linked mutation IDs (strict-mode enforcement ensures bidirectional traceability)
 - the whole mutation batch is validated before anything is emitted (`plan refine`,
   `gate mutate`, template instantiation):

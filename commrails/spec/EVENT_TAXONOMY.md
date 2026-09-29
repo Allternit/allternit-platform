@@ -13,7 +13,7 @@ All events are appended to the Ledger as JSON objects with:
 ## Core event groups
 
 ### Prompt provenance
-- PromptCreated
+- PromptCreated (payload: prompt_id, source `cli`|`bridge`, raw_text; remote-origin prompts add `submitted_by`, `decision_ref`, `request_id` and the event actor is the remote identity, e.g. agent `bot:chief` — see `BRIDGE.md`)
 - PromptDeltaAppended
 - PromptLinkedToWork
 - AgentDecisionRecorded
@@ -57,6 +57,10 @@ All events are appended to the Ledger as JSON objects with:
 - MessageSent
 - ReviewRequested
 - ReviewDecision
+
+### Bridge audit (`BRIDGE.md`)
+- BridgeRequest (actor: the remote identity; payload: request_id, identity_id, method, path, status, scope, peer, optional target_dag, prompt_id, mail_thread, message_id, template_id; scope.dag_id set for plan requests). Payload never carries `thread_id`/`dag_id` keys so mail and DAG projections ignore it.
+- BridgeRequestDenied (actor: gate `bridge`; 401s: request_id, method, path, status, reason, peer)
 
 ### Vault + learning + memory
 - VaultJobCreated

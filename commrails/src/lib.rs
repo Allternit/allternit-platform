@@ -1,3 +1,4 @@
+pub mod bridge;
 pub mod bus;
 pub mod batch;
 pub mod cli;
@@ -49,7 +50,7 @@ pub use crate::core::types::{
     AllternitEvent, Actor, ActorType, EventProvenance, EventScope, LeaseRecord, LeaseRequest,
     LedgerQuery, ReceiptRecord,
 };
-pub use crate::gate::gate::{DagMutation, MutationProvenance};
+pub use crate::gate::gate::{DagMutation, MutationProvenance, PromptOrigin};
 pub use crate::gate::{Gate, GateError, GateOptions, GateResult, WihPickup, WihPickupOptions};
 pub use crate::index::{Index, IndexOptions};
 pub use crate::leases::{Leases, LeasesOptions};

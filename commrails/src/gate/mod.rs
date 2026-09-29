@@ -6,6 +6,7 @@ pub mod tests;
 pub use errors::GateError;
 pub use gate::{
     AutolandImpact, AutolandResult, DagMutation, Gate, GateOptions, GateResult, MutationProvenance,
+    PromptOrigin,
     WihPickup, WihPickupOptions, CONTEXT_PACK_OUTPUT_INLINE_CAP,
 };
 
