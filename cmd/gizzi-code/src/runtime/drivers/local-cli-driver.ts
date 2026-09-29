@@ -2040,7 +2040,9 @@ function safeKill(proc: KillableProcess): void {
 interface StreamJsonEvent {
   type: string
   status?: string
-  message?: { content?: Array<Record<string, unknown>> }
+  message?: { id?: string; content?: Array<Record<string, unknown>> }
+  /** `stream_event` (--include-partial-messages): the raw API stream event. */
+  event?: Record<string, unknown>
   content?: Array<Record<string, unknown>> | Record<string, unknown> | string
   usage?: { input_tokens?: number; output_tokens?: number }
   is_error?: boolean
