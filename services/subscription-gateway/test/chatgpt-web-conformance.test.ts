@@ -291,6 +291,36 @@ describe("execute e2e against fixtures", () => {
     await page.close();
   }, 30000);
 
+  it("chat.create closes an announcement dialog over the composer, then sends (live: 'Meet ChatGPT Work' stalled a task)", async () => {
+    const adapter = new ChatGPTWebAdapter({ freshChat: false }, FAST);
+    const page = await fixturePage("announcement");
+    const { ctx } = makeCtx(page, adapter, makeAttempt());
+    const events: AdapterEvent[] = [];
+    for await (const e of adapter.execute(makeTask("chat.create"), ctx)) events.push(e);
+    expect(await page.locator("#announce").count()).toBe(0);
+    expect(await page.evaluate(() => document.body.dataset.submitted)).toBe("true");
+    expect(events[events.length - 1].t).toBe("done");
+    await page.close();
+  }, 30000);
+
+  it("a dialog that asks for input is never closed by the adapter", async () => {
+    const adapter = new ChatGPTWebAdapter({ freshChat: false }, FAST);
+    const page = await fixturePage("complete");
+    await page.evaluate(() => {
+      const d = document.createElement("div");
+      d.setAttribute("role", "dialog");
+      d.id = "asks";
+      d.innerHTML = '<input aria-label="Email"><button type="button" aria-label="Close">×</button>';
+      document.body.appendChild(d);
+    });
+    const { ctx } = makeCtx(page, adapter, makeAttempt());
+    for await (const _e of adapter.execute(makeTask("chat.create"), ctx)) {
+      // drain
+    }
+    expect(await page.locator("#asks").count()).toBe(1);
+    await page.close();
+  }, 30000);
+
   it("chat.create on a challenge fixture → needs_user, no submit (Critical #5)", async () => {
     const adapter = new ChatGPTWebAdapter({ freshChat: false }, FAST);
     const page = await fixturePage("challenge");

@@ -1,0 +1,55 @@
+<!doctype html>
+<!-- fixture: complete — full assistant turn, send enabled, no stop/streaming -->
+<html lang="en">
+  <head><meta charset="utf-8"><title>chatgpt-web fixture — complete</title></head>
+  <body data-state="complete">
+    <nav>
+      <button data-testid="profile-button" aria-label="Profile">Eoj</button>
+    </nav>
+    <main>
+      <div id="thread">
+        <div data-message-author-role="user">Summarize the migration plan.</div>
+        <div data-message-author-role="assistant">
+          <h3>Migration plan</h3>
+          <p>The migration happens in three stages, each independently reversible.</p>
+          <pre><code class="language-ts">const stages: string[] = ["freeze", "move", "cutover"];</code></pre>
+          <ul>
+            <li>freeze writes</li>
+            <li>move state</li>
+            <li>cut over reads</li>
+          </ul>
+        </div>
+      </div>
+      <button data-testid="model-switcher-dropdown-button">GPT</button>
+      <button data-testid="image-tool-toggle" aria-pressed="false">Create image</button>
+      <button data-testid="temporary-chat-toggle" aria-pressed="false">Temporary chat</button>
+      <div
+        id="prompt-textarea"
+        data-testid="prompt-textarea"
+        role="textbox"
+        aria-label="Ask anything"
+        contenteditable="true"
+      ></div>
+      <button data-testid="send-button" aria-label="Send prompt" type="button">Send</button>
+    </main>
+    <script>
+      document
+        .querySelector("[data-testid='temporary-chat-toggle']")
+        .addEventListener("click", (e) => {
+          e.currentTarget.setAttribute("aria-pressed", "true");
+          document.body.dataset.tempChat = "on";
+        });
+      document.querySelector("[data-testid='send-button']").addEventListener("click", () => {
+        document.body.dataset.submitted = "true";
+      });
+    </script>
+  <!-- Live 2026-09-29: "Meet ChatGPT Work" announcement over the composer. -->
+<div role="dialog" aria-modal="true" id="announce" style="position:fixed;inset:0;background:#fff;z-index:10">
+  <button type="button" aria-label="Close" onclick="document.getElementById('announce').remove()">×</button>
+  <div role="group"><button type="button">Chat</button><button type="button">Work</button></div>
+  <h2>Meet ChatGPT Work</h2>
+  <p>Use ChatGPT Work when a task needs more than a quick answer.</p>
+  <button type="button">Try it</button>
+</div>
+</body>
+</html>
