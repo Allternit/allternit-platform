@@ -43,6 +43,9 @@ const PROJECT_PAGE_PATTERN = /^https:\/\/chatgpt\.com\/g\/[\w-]+(?:\/project)?\/
 // watched and captured.
 const SEEN_ATTR = "data-allternit-seen";
 
+/** Buttons that close an informational dialog without accepting anything. */
+const DISMISS_BUTTON = /^(close|dismiss|not now|maybe later|no thanks|skip|got it)$/i;
+
 export function loadManifest(): AdapterManifest {
   const raw = yamlLoad(
     readFileSync(new URL("./manifest.yaml", import.meta.url), "utf8")
@@ -166,12 +169,14 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
         // there would land in that task's thread (live: a stateless prompt
         // appended to a mapped fabric thread) or in its temp chat.
         await this.openFreshChat(ctx);
+        await this.dismissAnnouncements(ctx);
         if (this.opts.tempChat !== false && !task.thread_id) {
           // D5: temporary chat is for STATELESS tasks only. A task on a fabric
           // thread must land in a reopenable chat so chat.continue can follow.
           await this.enableTempChat(ctx);
         }
       }
+      await this.dismissAnnouncements(ctx);
       yield* super.execute(task, ctx);
     } catch (err) {
       if (isProfileLockError(err)) {
@@ -370,6 +375,32 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
     ctx.log.warn("reused image chat showed no earlier images", { url: page.url() });
   }
 
+  // ChatGPT opens announcement dialogs over the composer ("Meet ChatGPT
+  // Work", feature tours); a prompt typed under one never sends (live: the
+  // task stalled with "no DOM change for 90s"). Close informational dialogs
+  // with their own close button. A dialog that asks for anything (a field, a
+  // frame, a login, a challenge) is left for the banner scan to surface.
+  private async dismissAnnouncements(ctx: ExecutionContext): Promise<void> {
+    const page = sdkPage(ctx.page);
+    for (let round = 0; round < 3; round++) {
+      const dialogs = page.locator('[role="dialog"], [role="alertdialog"]');
+      let closed = false;
+      for (let i = 0, n = await dialogs.count(); i < n; i++) {
+        const dialog = dialogs.nth(i);
+        if (!(await dialog.isVisible().catch(() => false))) continue;
+        if (await dialog.locator('input, textarea, select, iframe, [contenteditable="true"]').count()) continue;
+        const close = dialog.getByRole("button", { name: DISMISS_BUTTON }).first();
+        if (!(await close.count())) continue;
+        ctx.log.info("closing a provider announcement dialog");
+        await ctx.pacing.beforeAction();
+        await close.click({ timeout: 3000 }).catch(() => {});
+        closed = true;
+      }
+      if (!closed) return;
+      await page.waitForTimeout(300);
+    }
+  }
+
   // D5 — click the temp-chat toggle unless already on; plans without the
   // toggle just run in normal history (documented in README).
   private async enableTempChat(ctx: ExecutionContext): Promise<void> {
@@ -498,6 +529,7 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
     // image tasks run in regular chats — organized by the image-chat policy:
     // the account's active image chat, else a new chat in the project.
     const reused = await this.openImageChat(task, ctx);
+    await this.dismissAnnouncements(ctx);
     // In a reused chat, everything already on the page belongs to earlier runs.
     const gallery0 = reused ? await resolver.tryResolveLocator("image_result") : null;
     if (gallery0) {
