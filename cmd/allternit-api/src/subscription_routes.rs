@@ -85,7 +85,12 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/subscriptions/disclosure", get(get_disclosure))
         .route("/subscriptions/disclosure/ack", post(ack_disclosure))
         .route("/subscriptions/human-actions", post(post_human_action))
-        .route("/subscriptions/gateway/*path", any(gateway_forward))
+        // Axum's 2 MB default would 413 before GATEWAY_BODY_LIMIT applies
+        // (image.generate carries a reference photo inline).
+        .route(
+            "/subscriptions/gateway/*path",
+            any(gateway_forward).layer(axum::extract::DefaultBodyLimit::max(GATEWAY_BODY_LIMIT)),
+        )
         .route("/subscriptions/mcp", post(crate::subscription_mcp::handle_rpc))
 }
 
@@ -807,7 +812,9 @@ mod tests {
                 }
                 (StatusCode::OK, Json(json!({"ok": true, "path": uri.path()}))).into_response()
             }
-        });
+        })
+        // The real gateway takes up to 5 MB (express.json); no 2 MB cap here.
+        .layer(axum::extract::DefaultBodyLimit::disable());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -861,6 +868,19 @@ mod tests {
 
     fn task() -> Value {
         json!({"capability": "chat.create", "prompt": "hi", "routing": {"provider": "chatgpt"}})
+    }
+
+    #[tokio::test]
+    async fn forwards_bodies_over_axums_2mb_default() {
+        let (app, _state, seen) = setup().await;
+        bind(&app).await;
+        let photo = "A".repeat(3 * 1024 * 1024);
+        let (status, body) = send(&app, "POST", "/subscriptions/gateway/v1/echo", &[], json!({"data_base64": photo})).await;
+        assert_ne!(status, StatusCode::PAYLOAD_TOO_LARGE, "{body}");
+        let seen = seen.lock().unwrap();
+        let last = seen.last().expect("gateway saw the request");
+        assert_eq!(last.1, "/v1/echo");
+        assert_eq!(last.4["data_base64"].as_str().map(str::len), Some(3 * 1024 * 1024));
     }
 
     #[tokio::test]

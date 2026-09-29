@@ -70,6 +70,12 @@ describe("negative / rejection tests", () => {
     expect(() => taskInputSchema.parse({ type: "file", path: "x" })).toThrow();
     expect(() => taskInputSchema.parse({ type: "carrier_pigeon" })).toThrow();
     expect(() =>
+      taskInputSchema.parse({ type: "image", mime_type: "image/gif", data_base64: "AAAA" })
+    ).toThrow();
+    expect(() =>
+      taskInputSchema.parse({ type: "image", mime_type: "image/png", data_base64: "data:image/png;base64,AAAA" })
+    ).toThrow();
+    expect(() =>
       taskSchema.parse({ ...task, inputs: [{ type: "text", name: "n" }] })
     ).toThrow();
   });

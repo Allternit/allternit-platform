@@ -127,6 +127,14 @@ image_menu_item:
   critical: false
   strategies:
     - { text: /^create image$/i }
+# Live UI (2026-09-29): the composer form holds three hidden multi-file
+# inputs (accept "image/*,video/*", "image/*", and any); the image-only one
+# takes reference photos. React ids are unstable, so match on accept.
+file_input_image:
+  critical: false
+  strategies:
+    - { css: "form input[type=file][accept='image/*']" }
+    - { css: "form input[type=file][accept*='image']" }
 # Projects (live UI 2026-09-28, image-chat policy): sidebar section + the
 # hover-revealed "Add new project" button that opens dialog "Create project".
 projects_section:

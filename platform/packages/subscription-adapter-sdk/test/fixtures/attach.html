@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>fixture-web — attach</title></head>
+  <body data-state="idle">
+    <main>
+      <form id="fw-form">
+        <!-- Mirrors the live composer: three hidden multi-file inputs. -->
+        <input type="file" multiple accept="image/*,video/*" hidden id="fw-file-media" />
+        <input type="file" multiple accept="image/*" hidden id="fw-file-image" />
+        <input type="file" multiple hidden id="fw-file-any" />
+        <div id="fw-attachments"></div>
+        <div data-testid="fw-composer" role="textbox" aria-label="Message fixture-web" contenteditable="true"></div>
+        <button id="fw-send" data-testid="fw-send" type="button">Send</button>
+      </form>
+    </main>
+    <script>
+      const send = document.getElementById("fw-send");
+      for (const input of document.querySelectorAll("input[type=file]")) {
+        input.addEventListener("change", () => {
+          // Uploading: send disabled until the chip lands.
+          send.disabled = true;
+          setTimeout(() => {
+            for (const f of input.files) {
+              const chip = document.createElement("span");
+              chip.dataset.fileName = f.name;
+              chip.dataset.fileSize = String(f.size);
+              chip.dataset.fromInput = input.id;
+              document.getElementById("fw-attachments").appendChild(chip);
+            }
+            send.disabled = false;
+          }, 300);
+        });
+      }
+    </script>
+  </body>
+</html>

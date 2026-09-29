@@ -53,13 +53,14 @@ describe("zod schema round-trips", () => {
     expectJsonRoundTrip(quotaPoolSchema, quotaPool);
   });
 
-  it("Task (all 4 input variants in one task)", () => {
+  it("Task (all 5 input variants in one task)", () => {
     const parsed = expectJsonRoundTrip(taskSchema, task);
     expect(parsed.inputs.map((i) => i.type)).toEqual([
       "artifact",
       "file",
       "text",
       "url",
+      "image",
     ]);
   });
 
@@ -76,6 +77,7 @@ describe("zod schema round-trips", () => {
     ],
     ["text", { type: "text", name: "brief", content: "hi" }],
     ["url", { type: "url", url: "https://example.test/x" }],
+    ["image", { type: "image", mime_type: "image/jpeg", data_base64: "AAAA" }],
   ])("TaskInput variant: %s", (_name, input) => {
     expectJsonRoundTrip(taskInputSchema, input);
   });

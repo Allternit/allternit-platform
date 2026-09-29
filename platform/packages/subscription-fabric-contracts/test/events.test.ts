@@ -66,6 +66,8 @@ function classifyInput(input: TaskInput): string {
       return `text:${input.name}`;
     case "url":
       return `url:${input.url}`;
+    case "image":
+      return `image:${input.mime_type}`;
     default:
       return assertNever(input);
   }
