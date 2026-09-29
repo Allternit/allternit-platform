@@ -78,7 +78,7 @@ export { probe } from "./probe";
 export type { ProbeInput } from "./probe";
 
 // §A3.3 — declarative chat adapter
-export { DeclarativeChatAdapter, stalledError, timeoutError } from "./declarative";
+export { DeclarativeChatAdapter, pageShape, stalledError, timeoutError } from "./declarative";
 export type { DeclarativeChatConfig, SdkAdapterRuntime } from "./declarative";
 
 // §A3.5 — conformance suite runner

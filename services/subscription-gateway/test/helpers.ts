@@ -28,6 +28,7 @@ import type { AdapterRegistry } from "../src/adapters/registry.js";
 import type { Scheduler } from "../src/queue/scheduler.js";
 import type { WorkerPool } from "../src/worker/pool.js";
 import type { LoginBrowser } from "../src/worker/login_browser.js";
+import type { AccountsRouterOptions } from "../src/http/routes_accounts.js";
 import type { CapabilityRouter } from "@allternit/subscription-fabric-contracts";
 import type { KeychainBackend } from "../src/security/keychain.js";
 import { openDatabase, type Db } from "../src/store/db.js";
@@ -57,7 +58,7 @@ export interface TestDeps extends GatewayDeps {
 
 export function makeDeps(
   stateDir: string,
-  opts: { fetchImpl?: typeof fetch; scheduler?: Scheduler; adapterRegistry?: AdapterRegistry; router?: CapabilityRouter; pool?: WorkerPool; loginBrowser?: LoginBrowser } = {}
+  opts: { fetchImpl?: typeof fetch; scheduler?: Scheduler; adapterRegistry?: AdapterRegistry; router?: CapabilityRouter; pool?: WorkerPool; loginBrowser?: LoginBrowser; accountsOptions?: AccountsRouterOptions } = {}
 ): TestDeps {
   const config: Config = loadConfig({ SUBS_GATEWAY_STATE_DIR: stateDir });
   const db: Db = openDatabase(":memory:");
@@ -85,6 +86,7 @@ export function makeDeps(
     adapterRegistry: opts.adapterRegistry,
     pool: opts.pool,
     loginBrowser: opts.loginBrowser,
+    accountsOptions: opts.accountsOptions,
     version: "0.1.0-test",
   });
   return {

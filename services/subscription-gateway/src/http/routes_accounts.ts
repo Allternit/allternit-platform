@@ -2,24 +2,233 @@
 // account's lane (launch + probe) through the worker pool. Bots never hold
 // accounts:manage — enforced at token issue (§A6.2).
 import { randomUUID } from "node:crypto";
+import { rmSync } from "node:fs";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { providerIdSchema, type Account } from "@allternit/subscription-fabric-contracts";
-import { getAccount, listAccounts, upsertAccount } from "../store/queries.js";
+import {
+  accountHasActiveTasks,
+  deleteAccount,
+  getAccount,
+  listAccounts,
+  upsertAccount,
+} from "../store/queries.js";
+import { firefoxProfileFor, readFirefoxCookies, type ImportableCookie } from "../worker/login_browser.js";
 import { callerOf, requireScope, type GatewayDeps } from "./server.js";
 
 const connectSchema = z.object({
   account_id: z.string().min(1).optional(),
   provider: providerIdSchema,
-  label: z.string().min(1),
+  // Defaults to the provider's name ("ChatGPT").
+  label: z.string().min(1).optional(),
   plan: z.string().nullable().optional(),
+  // Open the login window in the same call (Settings: one-step add).
+  login: z.boolean().optional(),
 });
 
-export function accountsRouter(deps: GatewayDeps): Router {
+// The providers people pick from in Settings; each gains an adapter in turn.
+const KNOWN_PROVIDERS: Record<string, string> = { chatgpt: "ChatGPT", claude: "Claude", kimi: "Kimi" };
+
+export function providerName(provider: string): string {
+  return KNOWN_PROVIDERS[provider] ?? provider.charAt(0).toUpperCase() + provider.slice(1);
+}
+
+export type UserActionKind = "login" | "wait" | "contact" | "none";
+
+// What the person can do about each session state, in their words.
+export function userActionFor(account: Pick<Account, "provider" | "session_health">): {
+  kind: UserActionKind;
+  label: string;
+} {
+  const name = providerName(account.provider);
+  switch (account.session_health) {
+    case "ready":
+      return { kind: "none", label: "" };
+    case "auth_required":
+      return { kind: "login", label: "Log in" };
+    case "challenge_presented":
+      return { kind: "login", label: "Finish the check in the login window" };
+    case "profile_locked":
+      return { kind: "wait", label: "Busy in another window; try again shortly" };
+    case "degraded":
+      return { kind: "wait", label: "Working, but slower than usual" };
+    case "provider_down":
+      return { kind: "wait", label: `${name} is down right now` };
+    case "ui_drift":
+      return { kind: "wait", label: `${name} changed its page; Allternit is updating` };
+    case "account_restricted":
+      return { kind: "contact", label: `${name} restricted this account; check it on ${name}'s site` };
+  }
+}
+
+export function accountView(account: Account) {
+  return {
+    ...account,
+    identity: account.identity ?? null,
+    usage: account.usage ?? null,
+    user_action: userActionFor(account),
+  };
+}
+
+export type LoginStateName = "none" | "waiting" | "signed_in" | "failed" | "closed";
+
+interface LoginSession {
+  state: LoginStateName;
+  detail: string | null;
+  opened_at: string | null;
+  baseline: Map<string, string>;
+  timer: ReturnType<typeof setInterval> | null;
+  finishing: boolean;
+}
+
+export interface AccountsRouterOptions {
+  loginPollMs?: number; // default 2000
+  readLoginCookies?: (firefoxProfile: string) => ImportableCookie[]; // tests
+}
+
+export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = {}): Router {
   const router = Router();
+  const readCookies = opts.readLoginCookies ?? ((profile: string) => readFirefoxCookies(profile));
+  const logins = new Map<string, LoginSession>();
+
+  const manifestFor = (provider: string) =>
+    deps.adapterRegistry?.adapters.find((a) => a.manifest.provider === provider)?.manifest;
+
+  // The provider's signed-in cookies in the account's login-browser profile.
+  const sessionCookies = (account: Account): Map<string, string> => {
+    const out = new Map<string, string>();
+    const manifest = manifestFor(account.provider);
+    const names = manifest?.auth.session_cookies ?? [];
+    if (!deps.pool || names.length === 0) return out;
+    const host = new URL(manifest!.origins[0]).hostname;
+    const profile = firefoxProfileFor(deps.pool.userDataDirFor(account.profile_ref));
+    for (const c of readCookies(profile)) {
+      const domain = c.domain.replace(/^\./, "");
+      if (!(host === domain || host.endsWith(`.${domain}`))) continue;
+      if (names.some((n) => c.name.startsWith(n))) out.set(c.name, c.value);
+    }
+    return out;
+  };
+
+  const loginState = (accountId: string) => {
+    const s = logins.get(accountId);
+    const done = s?.state === "signed_in" || s?.state === "failed";
+    const account = done ? getAccount(deps.db, accountId) : null;
+    return {
+      state: s?.state ?? ("none" as LoginStateName),
+      detail: s?.detail ?? null,
+      opened_at: s?.opened_at ?? null,
+      account: account ? accountView(account) : null,
+    };
+  };
+
+  const stopWatch = (s: LoginSession) => {
+    if (s.timer) clearInterval(s.timer);
+    s.timer = null;
+  };
+
+  // Login done: close Firefox so cookies.sqlite is flushed, relaunch the
+  // adapter's Chrome (it imports the new session) and probe.
+  const finishLogin = async (account: Account, s: LoginSession) => {
+    s.finishing = true;
+    stopWatch(s);
+    try {
+      await deps.loginBrowser?.close(account.account_id);
+      const lane = { provider: account.provider, account_id: account.account_id };
+      await deps.pool!.deactivate(lane);
+      await deps.pool!.activate(lane);
+      const fresh = getAccount(deps.db, account.account_id);
+      if (fresh?.session_health === "ready") {
+        s.state = "signed_in";
+        s.detail = null;
+      } else {
+        s.state = "failed";
+        s.detail = fresh ? userActionFor(fresh).label || fresh.session_health : "account removed";
+      }
+    } catch (err) {
+      s.state = "failed";
+      s.detail = err instanceof Error ? err.message : String(err);
+    } finally {
+      s.finishing = false;
+    }
+  };
+
+  const tick = async (accountId: string) => {
+    const s = logins.get(accountId);
+    if (!s || s.state !== "waiting" || s.finishing) return;
+    if (!deps.loginBrowser?.isOpen(accountId)) {
+      s.state = "closed";
+      s.detail = "The login window was closed before signing in.";
+      stopWatch(s);
+      return;
+    }
+    const account = getAccount(deps.db, accountId);
+    if (!account) {
+      stopWatch(s);
+      logins.delete(accountId);
+      return;
+    }
+    let now: Map<string, string>;
+    try {
+      now = sessionCookies(account);
+    } catch {
+      return; // Firefox mid-write; next tick
+    }
+    const signedIn = [...now].some(([name, value]) => s.baseline.get(name) !== value);
+    if (signedIn) await finishLogin(account, s);
+  };
+
+  // Opens the login window and starts watching for the sign-in.
+  const openLogin = async (account: Account) => {
+    const origin = manifestFor(account.provider)?.origins[0];
+    if (!origin) return { error: 409, body: { error: "no_adapter_for_provider", provider: account.provider } };
+    const lane = { provider: account.provider, account_id: account.account_id };
+    await deps.pool!.deactivate(lane);
+    try {
+      await deps.loginBrowser!.open(account.account_id, deps.pool!.userDataDirFor(account.profile_ref), origin);
+    } catch (err) {
+      return {
+        error: 502,
+        body: { error: "login_browser_failed", detail: err instanceof Error ? err.message : String(err) },
+      };
+    }
+    const previous = logins.get(account.account_id);
+    if (previous) stopWatch(previous);
+    let baseline = new Map<string, string>();
+    try {
+      baseline = sessionCookies(account);
+    } catch {
+      // unreadable now: any session cookie seen later counts as a sign-in
+    }
+    const s: LoginSession = {
+      state: "waiting",
+      detail: null,
+      opened_at: new Date().toISOString(),
+      baseline,
+      timer: null,
+      finishing: false,
+    };
+    s.timer = setInterval(() => void tick(account.account_id), opts.loginPollMs ?? 2000);
+    s.timer.unref?.();
+    logins.set(account.account_id, s);
+    return { error: null, body: null };
+  };
+
+  router.get("/v1/providers", requireScope("accounts:manage"), (_req: Request, res: Response) => {
+    const registered = new Set((deps.adapterRegistry?.adapters ?? []).map((a) => a.manifest.provider as string));
+    const ids = [...new Set([...Object.keys(KNOWN_PROVIDERS), ...registered])];
+    res.json(
+      ids.map((id) => ({
+        id,
+        name: providerName(id),
+        supported: registered.has(id),
+        login_supported: registered.has(id) && Boolean(deps.loginBrowser && deps.pool),
+      }))
+    );
+  });
 
   router.get("/v1/accounts", requireScope("accounts:manage"), (_req: Request, res: Response) => {
-    res.json(listAccounts(deps.db));
+    res.json(listAccounts(deps.db).map(accountView));
   });
 
   router.get(
@@ -36,11 +245,12 @@ export function accountsRouter(deps: GatewayDeps): Router {
         session_health: account.session_health,
         enabled: account.enabled,
         plan: account.plan,
+        user_action: userActionFor(account),
       });
     }
   );
 
-  router.post("/v1/accounts", requireScope("accounts:manage"), (req: Request, res: Response) => {
+  router.post("/v1/accounts", requireScope("accounts:manage"), async (req: Request, res: Response) => {
     const parsed = connectSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: "invalid_account", detail: parsed.error.issues });
@@ -51,7 +261,7 @@ export function accountsRouter(deps: GatewayDeps): Router {
     const account: Account = {
       account_id: accountId,
       provider: parsed.data.provider,
-      label: parsed.data.label,
+      label: parsed.data.label ?? providerName(parsed.data.provider),
       plan: parsed.data.plan ?? null,
       plan_observed_at: null,
       profile_ref: `profiles/${accountId}`,
@@ -71,7 +281,18 @@ export function accountsRouter(deps: GatewayDeps): Router {
       },
       callers: [caller.caller_id],
     });
-    res.status(201).json(account);
+    let login: ReturnType<typeof loginState> | null = null;
+    if (parsed.data.login) {
+      if (!deps.pool || !deps.loginBrowser) {
+        login = { state: "failed", detail: "no login browser on this Sessions computer", opened_at: null, account: null };
+      } else {
+        const opened = await openLogin(account);
+        login = opened.error
+          ? { state: "failed", detail: String((opened.body as { error: string }).error), opened_at: null, account: null }
+          : loginState(account.account_id);
+      }
+    }
+    res.status(201).json({ ...accountView(account), login });
   });
 
   router.post(
@@ -116,7 +337,14 @@ export function accountsRouter(deps: GatewayDeps): Router {
         });
         return;
       }
-      res.json(getAccount(deps.db, req.params.id));
+      const fresh = getAccount(deps.db, req.params.id);
+      const s = logins.get(req.params.id);
+      if (s && s.state === "waiting" && fresh) {
+        stopWatch(s);
+        s.state = fresh.session_health === "ready" ? "signed_in" : "failed";
+        s.detail = fresh.session_health === "ready" ? null : userActionFor(fresh).label || fresh.session_health;
+      }
+      res.json(fresh ? accountView(fresh) : null);
     }
   );
 
@@ -145,36 +373,78 @@ export function accountsRouter(deps: GatewayDeps): Router {
         });
         return;
       }
-      const origin = deps.adapterRegistry?.adapters.find(
-        (a) => a.manifest.provider === account.provider
-      )?.manifest.origins[0];
-      if (!origin) {
-        res.status(409).json({ error: "no_adapter_for_provider", provider: account.provider });
+      const opened = await openLogin(account);
+      if (opened.error) {
+        res.status(opened.error).json(opened.body);
         return;
       }
-      const lane = { provider: account.provider, account_id: account.account_id };
-      await deps.pool.deactivate(lane);
-      try {
-        await deps.loginBrowser.open(
-          account.account_id,
-          deps.pool.userDataDirFor(account.profile_ref),
-          origin
-        );
-      } catch (err) {
-        res.status(502).json({
-          error: "login_browser_failed",
-          detail: err instanceof Error ? err.message : String(err),
-        });
-        return;
-      }
+      // The old fields stay for existing callers; the rest is the LoginState
+      // the Settings hub polls (GET /v1/accounts/:id/login).
       res.json({
         account_id: account.account_id,
         status: "login_window_open",
         browser: "firefox",
-        next: `Sign in in the Firefox window, then POST /v1/accounts/${account.account_id}/connect`,
+        next: `Sign in in the Firefox window; the gateway connects by itself (or POST /v1/accounts/${account.account_id}/connect)`,
+        ...loginState(account.account_id),
       });
     }
   );
+
+  router.get("/v1/accounts/:id/login", requireScope("accounts:manage"), (req: Request, res: Response) => {
+    if (!getAccount(deps.db, req.params.id)) {
+      res.status(404).json({ error: "account_not_found", account_id: req.params.id });
+      return;
+    }
+    res.json(loginState(req.params.id));
+  });
+
+  // Cancel: the person closed the viewer. The account stays as it was.
+  router.delete(
+    "/v1/accounts/:id/login",
+    requireScope("accounts:manage"),
+    async (req: Request, res: Response) => {
+      if (!getAccount(deps.db, req.params.id)) {
+        res.status(404).json({ error: "account_not_found", account_id: req.params.id });
+        return;
+      }
+      await deps.loginBrowser?.close(req.params.id);
+      const s = logins.get(req.params.id);
+      if (s && s.state === "waiting") {
+        stopWatch(s);
+        s.state = "closed";
+        s.detail = null;
+      }
+      res.json(loginState(req.params.id));
+    }
+  );
+
+  // Remove an account: sign-out included (its browser profiles are deleted).
+  router.delete("/v1/accounts/:id", requireScope("accounts:manage"), async (req: Request, res: Response) => {
+    const account = getAccount(deps.db, req.params.id);
+    if (!account) {
+      res.status(404).json({ error: "account_not_found", account_id: req.params.id });
+      return;
+    }
+    if (accountHasActiveTasks(deps.db, account.account_id)) {
+      res.status(409).json({ error: "account_busy", account_id: account.account_id });
+      return;
+    }
+    await deps.loginBrowser?.close(account.account_id);
+    const s = logins.get(account.account_id);
+    if (s) stopWatch(s);
+    logins.delete(account.account_id);
+    if (deps.pool) {
+      await deps.pool.deactivate({ provider: account.provider, account_id: account.account_id });
+      // Only the gateway's own relative profiles are ever deleted.
+      if (/^profiles\/[\w-]+$/.test(account.profile_ref)) {
+        const dir = deps.pool.userDataDirFor(account.profile_ref);
+        rmSync(dir, { recursive: true, force: true });
+        rmSync(firefoxProfileFor(dir), { recursive: true, force: true });
+      }
+    }
+    deleteAccount(deps.db, account.account_id);
+    res.status(204).end();
+  });
 
   router.post(
     "/v1/accounts/:id/disconnect",
@@ -186,7 +456,8 @@ export function accountsRouter(deps: GatewayDeps): Router {
         return;
       }
       upsertAccount(deps.db, { ...account, enabled: false });
-      res.json(getAccount(deps.db, req.params.id));
+      const fresh = getAccount(deps.db, req.params.id);
+      res.json(fresh ? accountView(fresh) : null);
     }
   );
 

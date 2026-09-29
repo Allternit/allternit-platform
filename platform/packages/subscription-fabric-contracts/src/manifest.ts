@@ -44,6 +44,9 @@ export const adapterManifestSchema = z.object({
   auth: z.object({
     login_url: z.string(),
     logged_in_probe: z.string(),
+    // Cookie names (prefixes) the provider sets only once signed in: the
+    // gateway watches the login browser for them to finish a login by itself.
+    session_cookies: z.array(z.string()).optional(),
   }),
   plans: z.array(planDefSchema),
   capabilities: z.array(manifestCapabilitySchema),

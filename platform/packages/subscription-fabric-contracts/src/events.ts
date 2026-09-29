@@ -3,6 +3,7 @@
 // interfaces are TS-only, because the SDK implements them later.
 import { z } from "zod";
 import type { ReplyEvent } from "@allternit/replies-contract";
+import type { AccountUsage } from "./account";
 import type { AdapterManifest } from "./manifest";
 import type { QuotaSignal } from "./quota";
 import type { ThreadSnapshot } from "./thread";
@@ -202,6 +203,11 @@ export interface ExecutionContext {
   markSubmitted(provider_thread_id: string | null): Promise<void>;
 }
 
+export interface AccountObservation {
+  identity: string | null;
+  usage: AccountUsage | null;
+}
+
 export interface SubscriptionAdapter {
   readonly manifest: AdapterManifest;
 
@@ -212,6 +218,9 @@ export interface SubscriptionAdapter {
   // Health — non-spending.
   probe(signal: AbortSignal): Promise<ProbeResult>; // canary: auth + critical locators
   readPlan?(signal: AbortSignal): Promise<string | null>; // observed plan tier
+  // Who is signed in and what the page shows about usage — non-spending,
+  // read after a ready probe. Never returns tokens or cookies.
+  readAccount?(signal: AbortSignal): Promise<AccountObservation>;
   readQuota?(pool_id: string, signal: AbortSignal): Promise<QuotaSignal | null>;
 
   // Execution — streaming, cancellable.

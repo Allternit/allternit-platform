@@ -83,7 +83,10 @@ interface Harness {
   logLines: { kind: string; task_id: string }[];
 }
 
-function makePool(probeImpl: () => Promise<ProbeResult>): Harness {
+function makePool(
+  probeImpl: () => Promise<ProbeResult>,
+  extra: Partial<Pick<LaneRuntime, "readAccount" | "readPlan">> = {}
+): Harness {
   const supervisor = new WorkerSupervisor({
     db,
     scheduler: createScheduler(),
@@ -105,7 +108,7 @@ function makePool(probeImpl: () => Promise<ProbeResult>): Harness {
     log,
     launch: async () => {
       harness.launchCalls += 1;
-      return fakeRuntime(probeImpl);
+      return Object.assign(fakeRuntime(probeImpl), extra);
     },
   });
   return harness;
@@ -139,6 +142,37 @@ describe("WorkerPool.activate", () => {
     expect(h.pool.runtimeFor(LANE)).toBe(first);
     expect(h.pool.healthFor(LANE)).toBe("ready");
     expect(getAccount(db, LANE.account_id)?.session_health).toBe("ready");
+  });
+
+  it("a ready probe records who is signed in, usage and plan; a failed read changes nothing", async () => {
+    const usage = { remaining_pct: 8, resets_at: null, observed_at: "2026-09-29T14:54:00.000Z" };
+    const h = makePool(async () => probeResult(true), {
+      readAccount: async () => ({ identity: "eoj@example.com", usage }),
+      readPlan: async () => "plus",
+    });
+    await h.pool.activate(LANE);
+    expect(getAccount(db, LANE.account_id)).toMatchObject({ identity: "eoj@example.com", usage, plan: "plus" });
+
+    const failing = makePool(async () => probeResult(true), {
+      readAccount: async () => {
+        throw new Error("page gone");
+      },
+    });
+    await failing.pool.deactivate(LANE);
+    await failing.pool.activate(LANE);
+    expect(getAccount(db, LANE.account_id)).toMatchObject({ session_health: "ready", identity: "eoj@example.com" });
+  });
+
+  it("an auth wall never reads the account", async () => {
+    let reads = 0;
+    const h = makePool(async () => probeResult(false, "auth.state"), {
+      readAccount: async () => {
+        reads += 1;
+        return { identity: "x", usage: null };
+      },
+    });
+    await h.pool.activate(LANE).catch(() => {});
+    expect(reads).toBe(0);
   });
 
   it("auth wall → auth_required; re-activate re-probes WITHOUT relaunching (Critical #5: no auto-retry)", async () => {

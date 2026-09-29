@@ -13,6 +13,9 @@ origins:
 auth:
   login_url: https://chatgpt.com/auth/login
   logged_in_probe: logged_in_probe
+  # Set by chatgpt.com only once signed in (chunked as .0/.1 when large);
+  # the login watcher finishes a login when it appears in the login browser.
+  session_cookies: [__Secure-next-auth.session-token]
 plans:
   - plan_id: free
     label: Free
