@@ -27,6 +27,8 @@ export function applyDesktopHumanProof(headers: HeaderBag, proof: string | null)
     if (key.toLowerCase() !== HUMAN_PROOF_HEADER.toLowerCase()) continue;
     const value = String(headers[key]).trim();
     if (!value.toLowerCase().startsWith(DESKTOP_PROOF_MARKER)) continue;
+    // Already swapped by an earlier hook for this same request.
+    if (proof && value === proof) continue;
     delete headers[key];
     if (value === DESKTOP_PROOF_MARKER && proof) headers[HUMAN_PROOF_HEADER] = proof;
   }
@@ -36,6 +38,9 @@ export function applyDesktopHumanProof(headers: HeaderBag, proof: string | null)
 export function applyDesktopHumanProofTo(headers: Headers, proof: string | null): void {
   const value = headers.get(HUMAN_PROOF_HEADER)?.trim();
   if (!value || !value.toLowerCase().startsWith(DESKTOP_PROOF_MARKER)) return;
+  // Already swapped by onBeforeSendHeaders, which also sees allternit-api://
+  // requests: keep main's own proof (nothing outside main can know it).
+  if (proof && value === proof) return;
   headers.delete(HUMAN_PROOF_HEADER);
   if (value === DESKTOP_PROOF_MARKER && proof) headers.set(HUMAN_PROOF_HEADER, proof);
 }
