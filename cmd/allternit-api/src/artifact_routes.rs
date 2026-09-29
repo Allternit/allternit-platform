@@ -2,7 +2,7 @@
 //!
 //! Mirrors the Next.js `/api/v1/artifacts` layer.
 
-use axum::extract::Extension;
+use axum::extract::{DefaultBodyLimit, Extension};
 use axum::{
     extract::{Json, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -40,7 +40,13 @@ pub fn artifact_router() -> Router<Arc<AppState>> {
             "/artifacts/:id/sections/:section_id",
             patch(update_section).delete(delete_section),
         )
+        // Sections carry whole documents: a deck's .pptx (base64) or a design
+        // canvas with its images. axum's 2 MB default cut those off.
+        .layer(DefaultBodyLimit::max(ARTIFACT_BODY_LIMIT))
 }
+
+/// Largest artifact write accepted (a section body is a whole document).
+const ARTIFACT_BODY_LIMIT: usize = 48 * 1024 * 1024;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Data models
