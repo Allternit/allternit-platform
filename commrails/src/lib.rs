@@ -1,5 +1,7 @@
+pub mod attention;
 pub mod bus;
 pub mod batch;
+pub mod campaign;
 pub mod cli;
 pub mod compact;
 pub mod context;
@@ -36,6 +38,7 @@ pub mod tickets;
 pub mod vault;
 pub mod verification;
 pub mod wait_gates;
+pub mod wake;
 pub mod wih;
 pub mod work;
 pub mod workspace;

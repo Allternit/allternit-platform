@@ -33,6 +33,7 @@ dolt = ["sqlx/mysql", "sqlx/chrono"]
 serde = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
+chrono-tz = "0.9"
 tokio = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }

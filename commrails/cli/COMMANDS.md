@@ -201,6 +201,62 @@ Unresolved Manual node gates across all dags ("needs you"; no events). The API
 visibility DTO (`GET /api/commrails/visibility`) appends the ones whose upstream is
 DONE to `needsYou` with `reason: "manual_gate"` and a `node` join.
 
+Timer gates also register a keyed wake (`node:<dag_id>/<node_id>`, event
+WakeScheduled), so `wake run-due` flips readiness without polling.
+
+## Campaigns, wakes, attention (spec/CAMPAIGNS.md)
+
+Config: optional `.allternit/rails/automation.yaml`. Defaults: no executor
+runs, 7-day check ceiling, UTC, no quiet hours, 24h dedupe, 6/hour cap.
+
+### `allternit campaign declare --file <yaml|json> | --id <id> --objective <text> --executor bot:<slug>|ao:<harness>|command [--command <sh>] [--owner <o>] [--budget-unit <u> --budget-limit <n> [--budget-mode shared|additive] [--per-wake <n>]] [--dag <dag_id>] [--rearm-every-secs <n>] [--paused]`
+Required events: CampaignDeclared (+ WakeScheduled when active with `rearm`).
+Examples: `docs/examples/campaigns/*.yaml` (both ship paused).
+
+### `allternit campaign list [--json]` / `campaign status <id> [--json]`
+Projection from the ledger (no events).
+
+### `allternit campaign check-later <id> <delay_secs> [--message <m>]`
+Arms the campaign's one pending check and replaces any pending one. Delay is
+clamped to [60s, ceiling]. Required events: WakeScheduled.
+
+### `allternit campaign note <id> <text>`
+Required events: CampaignNoteAdded.
+
+### `allternit campaign spend <id> <amount> [--start <rfc3339> --end <rfc3339> --resource <r>] [--note <n>]`
+Required events: CampaignSpendRecorded. When the budget is exhausted, also
+CampaignStatusChanged(paused, budget_exhausted) and an attention item.
+Budgets do not cap provider bills.
+
+### `allternit campaign pause <id> [--reason <r>]` / `resume <id> [--limit <n>]` / `kill <id> [--reason <r>]` / `finish <id> [--reason <r>]`
+Required events: CampaignStatusChanged. `resume --limit` emits
+CampaignBudgetChanged first. Resume with `rearm` emits WakeScheduled.
+Kill/finish emit WakeCancelled for the pending check.
+
+### `allternit wake list [--json]` / `wake due [--at <rfc3339>] [--json]`
+Pending wakes (one per key), plus `unfinished` (claimed by a sweep that never
+completed). No events.
+
+### `allternit wake run-due [--at <rfc3339>] [--json]`
+One sweep under `.allternit/rails/wakes/sweep.lock`. A concurrent sweep prints
+`locked` and exits 0. Required events per fired wake: WakeFired, then
+WakeCompleted. `bot:`/`ao:` executors and non-allowlisted commands raise an
+attention item instead of running. The sweep also releases due attention items.
+
+### `allternit wake cancel <key> [--reason <r>]`
+Required events: WakeCancelled.
+
+### `allternit attention list [--open] [--json]`
+Projection (no events). `--open` = delivered, not acked (the needs-you set).
+
+### `allternit attention submit --key <k> --title <t> --body <b> [--channel needs-you|mail] [--source <s>]`
+Required events: AttentionItemSubmitted, then one of AttentionItemDelivered,
+AttentionItemDeferred or AttentionItemCoalesced (`mail` delivery also emits
+MessageSent on `mail:attention`).
+
+### `allternit attention release [--at <rfc3339>]` / `attention ack <item_id> [--by user:<id>]`
+Required events: AttentionItemDelivered/Deferred; AttentionItemAcked.
+
 ## Leases / Reservations
 
 ### `allternit lease request <wih_id> --paths "<glob>" [--ttl <sec>]`

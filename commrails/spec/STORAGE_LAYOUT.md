@@ -36,6 +36,11 @@ Node outputs:
 Workflow templates (JSON `<id>.json` or markdown `<id>.md`):
 - `.allternit/rails/templates/`
 
+Campaigns, wakes, attention (truth = ledger events; see spec/CAMPAIGNS.md):
+- derived campaign views: `.allternit/rails/campaigns/<campaign_id>.json`
+- sweep lock (OS advisory lock, not state): `.allternit/rails/wakes/sweep.lock`
+- operator config (optional): `.allternit/rails/automation.yaml`
+
 Notes:
 - Ledger is the single source of truth for state transitions.
 - Leases are authoritative for locks only.

@@ -1877,6 +1877,10 @@ impl Gate {
 
     async fn emit(&self, event: AllternitEvent) -> Result<()> {
         self.ledger.append(event.clone()).await?;
+        // Timer wait-gates register a keyed wake so a sweep flips readiness.
+        if let Some(wake) = crate::wake::timer_gate_wake_event(&event) {
+            self.ledger.append(wake).await?;
+        }
         if let Some(index) = &self.index {
             let _ = index.index_event(&event).await;
         }

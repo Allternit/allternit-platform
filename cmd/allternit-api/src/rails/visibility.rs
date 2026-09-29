@@ -8,6 +8,7 @@ use allternit_commrails::core::types::LedgerQuery;
 use allternit_commrails::ledger::ledger::Ledger;
 use allternit_commrails::peer::PeerRegistry;
 use allternit_commrails::wih::active_wihs;
+use allternit_commrails::attention::{open_needs_you, AttentionItem};
 use allternit_commrails::work::needs_you::{pending_manual_gates, PendingManualGate};
 use allternit_commrails::project_dag;
 use serde_json::Value;
@@ -293,7 +294,10 @@ pub async fn load_visibility(root: &Path, peers: &PeerRegistry, ledger: &Ledger)
         visibility_from_peers(peers)
     };
     match ledger.query(LedgerQuery::default()).await {
-        Ok(events) => append_manual_gate_needs(&mut dto, &pending_manual_gates(&events)),
+        Ok(events) => {
+            append_manual_gate_needs(&mut dto, &pending_manual_gates(&events));
+            append_attention_needs(&mut dto, &open_needs_you(&events));
+        }
         Err(err) => tracing::warn!(error = %err, "needsYou manual-gate read failed; skipping"),
     }
     dto
@@ -313,6 +317,20 @@ pub fn append_manual_gate_needs(dto: &mut VisibilityDto, pending: &[PendingManua
                 node_id: gate.node_id.clone(),
                 title: gate.node_title.clone(),
             }),
+        });
+    }
+}
+
+/// Delivered, un-acked attention-gate items (campaign checks the sweep did
+/// not run, budget exhaustion, failed check commands). Items still queued by
+/// quiet hours / the hourly cap are not shown until released.
+pub fn append_attention_needs(dto: &mut VisibilityDto, items: &[AttentionItem]) {
+    for item in items {
+        dto.needs_you.push(VisibilityNeed {
+            id: format!("attention:{}", item.item_id),
+            label: item.title.clone(),
+            reason: "attention".to_string(),
+            node: None,
         });
     }
 }
@@ -344,6 +362,32 @@ mod tests {
         let node = need.node.as_ref().expect("node join");
         assert_eq!(node.dag_id, "dag_1");
         assert_eq!(node.node_id, "review-wg_1");
+    }
+
+    #[test]
+    fn open_attention_items_join_needs_you() {
+        use allternit_commrails::attention::{AttentionChannel, ItemState};
+        let dir = std::env::temp_dir().join(format!("ao-vis-att-{}", std::process::id()));
+        let peers = PeerRegistry::new(&dir).expect("peers");
+        let mut dto = visibility_from_peers(&peers);
+        let item = AttentionItem {
+            item_id: "att_1".to_string(),
+            key: "campaign:c1:check".to_string(),
+            channel: AttentionChannel::NeedsYou,
+            title: "Campaign c1 check due".to_string(),
+            body: "b".to_string(),
+            content_hash: "h".to_string(),
+            source: "campaign:c1".to_string(),
+            submitted_at: "2026-09-29T00:00:00Z".to_string(),
+            state: ItemState::Delivered {
+                delivered_at: "2026-09-29T00:00:00Z".to_string(),
+            },
+        };
+        append_attention_needs(&mut dto, &[item]);
+        let need = dto.needs_you.last().expect("need");
+        assert_eq!(need.id, "attention:att_1");
+        assert_eq!(need.reason, "attention");
+        assert_eq!(need.label, "Campaign c1 check due");
     }
 
     #[test]
