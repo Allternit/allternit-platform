@@ -780,6 +780,10 @@ function createMainWindow(): BrowserWindow {
       // custom protocol handler (registered in app.whenReady) which proxies
       // to the local API without mixed-content issues.
       allowRunningInsecureContent: false,
+      // Agents keep working in the open artifact while the window is hidden
+      // or minimized; throttled timers/frames there made every pane_artifact
+      // call time out ("the editor isn't responding") until it was shown.
+      backgroundThrottling: false,
     },
   });
 
@@ -2722,6 +2726,9 @@ function openDesignStudio(prompt?: string | null): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // Same editors as the main window's pane: keep agent edits running
+      // while this window is in the background.
+      backgroundThrottling: false,
     },
   });
 
@@ -2805,6 +2812,9 @@ ipcMain.handle('shell:open-office-window', () => {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // Same editors as the main window's pane: keep agent edits running
+      // while this window is in the background.
+      backgroundThrottling: false,
     },
   });
 
