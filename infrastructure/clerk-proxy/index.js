@@ -101,7 +101,7 @@ export default {
 
     // Clerk 307s clerk-js to the configured proxy host (allternit.com). Keep
     // the browser on this origin so CSP 'self' and first-party cookies work
-    // on fabrictransport / ai / platform.
+    // on m (Allternit Mobile) / ai / platform.
     const location = corsHeaders.get('Location');
     if (location) {
       try {

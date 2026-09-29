@@ -40,13 +40,14 @@ const RATE_LIMIT_WINDOW_SECONDS = 60;
 const RATE_LIMIT_MAX_PER_RUNTIME = 30;
 
 const DASHBOARD_ORIGINS = [
-  "https://fabrictransport.allternit.com",
+  // Allternit Mobile (phone PWA); fabrictransport.allternit.com was its old name.
+  "https://m.allternit.com",
   "https://ai.allternit.com",
   "https://platform.allternit.com",
 ];
 
 function getDashboardOrigin(c: Context<{ Bindings: WorkerEnv }>): string {
-  return c.env.REMOTE_CONTROL_DASHBOARD_ORIGIN ?? "https://fabrictransport.allternit.com";
+  return c.env.REMOTE_CONTROL_DASHBOARD_ORIGIN ?? "https://m.allternit.com";
 }
 
 function allowedOrigins(origin: string, dashboardOrigin: string): boolean {
