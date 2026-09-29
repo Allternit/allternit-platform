@@ -603,7 +603,60 @@ pub fn kickoff_text(project_title: &str, t: &ThreadView) -> String {
         }
     }
     s.push_str("\n\nWork on this now and report what you did and what's left.");
+    if !t.todo.is_empty() {
+        s.push_str("\n\nEnd your report with this checklist, marking [x] only for steps you actually finished:\nChecklist:");
+        for (n, i) in t.todo.iter().enumerate() {
+            s.push_str(&format!("\n[ ] {}. {}", n + 1, i.text));
+        }
+    }
     s
+}
+
+/// Ticks the thread's plan from the checklist its bot ends the report with
+/// (`[x] 2. …`). Steps are matched by number, then by text; a step the bot
+/// didn't mark stays as it was, so nothing is ticked on a guess.
+pub fn tick_todo(todo: &[TodoItem], reply: &str) -> Vec<TodoItem> {
+    let mut out = todo.to_vec();
+    for line in reply.lines() {
+        let l = line.trim().trim_start_matches(['-', '*']).trim_start();
+        let Some(rest) = l.strip_prefix('[') else { continue };
+        let mut chars = rest.chars();
+        let mark = chars.next();
+        if chars.next() != Some(']') {
+            continue;
+        }
+        let done = matches!(mark, Some('x' | 'X' | '✓' | '✔'));
+        if !done && mark != Some(' ') {
+            continue;
+        }
+        let body = chars.as_str().trim();
+        let digits: String = body.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let text = body[digits.len()..].trim_start_matches(['.', ')']).trim();
+        let idx = digits.parse::<usize>().ok().filter(|n| *n >= 1 && *n <= out.len()).map(|n| n - 1)
+            .or_else(|| out.iter().position(|i| norm(&i.text) == norm(text)));
+        if let Some(i) = idx {
+            out[i].state = if done { "done" } else { "pending" }.into();
+        }
+    }
+    out
+}
+
+/// The report's first line worth showing on its own: skips bare labels like
+/// "**Caption:**" and the trailing checklist, and drops markdown emphasis.
+pub fn status_line_of(reply: &str) -> Option<String> {
+    reply
+        .lines()
+        .map(|l| l.trim().trim_start_matches('#').trim().replace("**", "").replace("__", ""))
+        .map(|l| l.trim().to_string())
+        .find(|l| !l.is_empty() && !l.ends_with(':') && !l.starts_with('[') && l.split_whitespace().count() >= 3)
+        .or_else(|| reply.lines().map(str::trim).find(|l| !l.is_empty()).map(str::to_string))
+        .map(|l| truncate(&l, 140))
+}
+
+fn set_todo(db: &DbHandle, thread_id: &str, todo: &[TodoItem]) {
+    if let (Ok(conn), Ok(json)) = (db.connect(), serde_json::to_string(todo)) {
+        let _ = conn.execute("UPDATE bot_threads SET todo = ?2 WHERE id = ?1", params![thread_id, json]);
+    }
 }
 
 /// Run kickoff turns. Every thread in a wave starts at once (independent
@@ -630,7 +683,10 @@ async fn run_kickoff<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user_id: &str
     move_thread(db, rt, &t.id, "working", Some("Working on it"), None).await;
     match rt.send_turn(&session, &t.bot_id, &text).await {
         Ok(reply) => {
-            let line = reply.lines().find(|l| !l.trim().is_empty()).map(|l| truncate(l.trim(), 140));
+            let line = status_line_of(&reply);
+            if !t.todo.is_empty() {
+                set_todo(db, &t.id, &tick_todo(&t.todo, &reply));
+            }
             move_thread(db, rt, &t.id, "review", line.as_deref(), Some(&truncate(&reply, 1200))).await;
             let _ = add_message(
                 db,
@@ -865,7 +921,7 @@ mod tests {
                 b.wait().await;
             }
             self.turns.lock().unwrap().push((s.into(), t.into()));
-            Ok("Found three prices.\nDetails follow.".into())
+            Ok("Found three prices.\nDetails follow.\n\nChecklist:\n[x] 1. Pull prices\n[ ] 2. Compare".into())
         }
         async fn mirror_plan(&self, _g: &str, _p: &str, steps: &[(String, String, Vec<String>)]) -> Option<(String, HashMap<String, String>)> {
             *self.graph.lock().unwrap() = steps.to_vec();
@@ -970,6 +1026,27 @@ mod tests {
         assert_eq!(rt.turns.lock().unwrap().len(), 2);
     }
 
+    #[test]
+    fn checklist_ticks_by_number_or_text_and_never_guesses() {
+        let todo: Vec<TodoItem> = ["Pull prices", "Compare", "Write it up"]
+            .iter()
+            .map(|t| TodoItem { text: t.to_string(), state: "pending".into() })
+            .collect();
+        let states = |r: &str| tick_todo(&todo, r).into_iter().map(|i| i.state).collect::<Vec<_>>();
+        assert_eq!(states("Done.\nChecklist:\n[x] 1. Pull prices\n- [X] 2) Compare\n[ ] 3. Write it up"), ["done", "done", "pending"]);
+        assert_eq!(states("- [x] **write it up**"), ["pending", "pending", "done"], "text match ignores case and emphasis");
+        assert_eq!(states("[x] Write it up\n[x] 9. Nope\n[?] 1. Pull prices"), ["pending", "pending", "done"]);
+        assert_eq!(states("No checklist at all."), ["pending", "pending", "pending"]);
+    }
+
+    #[test]
+    fn status_line_skips_bare_labels() {
+        assert_eq!(status_line_of("**Caption:**\n\nSpring is here: our rhubarb galette is back.").as_deref(), Some("Spring is here: our rhubarb galette is back."));
+        assert_eq!(status_line_of("## Recommended name: Bloom Box").as_deref(), Some("Recommended name: Bloom Box"));
+        assert_eq!(status_line_of("Done").as_deref(), Some("Done"));
+        assert_eq!(status_line_of("  \n"), None);
+    }
+
     #[tokio::test]
     async fn plan_fans_out_starts_roots_and_chains_dependents() {
         let state = setup("plan").await;
@@ -990,6 +1067,7 @@ mod tests {
         assert_eq!(out.reply["text"], "On it. Three threads; I'll flag anything that needs you.");
         assert_eq!(out.start.len(), 2, "only independent steps start now");
         assert!(out.start.iter().any(|(_, t)| t.contains("Plan:\n- Pull prices")));
+        assert!(out.start.iter().any(|(_, t)| t.contains("Checklist:\n[ ] 1. Pull prices\n[ ] 2. Compare")));
 
         start_threads(&state.db, &rt, "u", "p1", out.start).await;
         // Both roots ran; economics finishing started the engine thread too.
@@ -1003,6 +1081,10 @@ mod tests {
             .map(Result::unwrap)
             .collect();
         assert!(statuses.iter().all(|(_, s)| s == "review"), "{statuses:?}");
+        // The bot's closing checklist ticks the plan: step 1 done, step 2 not.
+        let todo: String = conn.query_row("SELECT todo FROM bot_threads WHERE title = 'Research cloud pricing'", [], |r| r.get(0)).unwrap();
+        let todo: Vec<TodoItem> = serde_json::from_str(&todo).unwrap();
+        assert_eq!(todo.iter().map(|i| i.state.as_str()).collect::<Vec<_>>(), ["done", "pending"]);
         let team: i64 = conn.query_row("SELECT COUNT(*) FROM project_bots WHERE project_id = 'p1'", [], |r| r.get(0)).unwrap();
         assert_eq!(team, 3);
         let kinds: Vec<String> = conn
