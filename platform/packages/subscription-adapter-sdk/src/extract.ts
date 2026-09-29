@@ -31,13 +31,29 @@ export async function extractLastAssistantTurn(
     ]);
     // UI chrome inside a reply (copy/expand buttons, icons) is not content.
     const SKIP_TAGS = new Set(["BUTTON", "SVG", "STYLE", "SCRIPT", "TEMPLATE"]);
+    // Also chrome: hidden layout clones (aria-hidden) and ChatGPT's suggested
+    // follow-up prompts, which render inside the reply root — as buttons plus
+    // an invisible aria-hidden measuring copy of the same text (live
+    // 2026-09-28: "Make the paragraph closer to 80 words" ended a reply).
+    function isChrome(el: Element): boolean {
+      if (SKIP_TAGS.has(el.tagName.toUpperCase())) return true;
+      if (el.getAttribute("aria-hidden") === "true") return true;
+      const cls = typeof el.className === "string" ? el.className : "";
+      if (cls.includes("suggested-followup")) return true;
+      // A block holding the suggestions and no reply content (never a wrapper
+      // that also holds the reply itself).
+      return (
+        el.querySelector("[class*='suggested-followup']") !== null &&
+        el.querySelector("p, pre, ul, ol, table, blockquote, h1, h2, h3, h4, h5, h6, [data-testid='chatgpt-writing-block']") === null
+      );
+    }
 
     function inline(node: Node): string {
       if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
       if (node.nodeType !== Node.ELEMENT_NODE) return "";
       const el = node as Element;
       const tag = el.tagName.toUpperCase();
-      if (SKIP_TAGS.has(tag)) return "";
+      if (isChrome(el)) return "";
       if (tag === "BR") return "\n";
       if (tag === "CODE") return `\`${el.textContent ?? ""}\``;
       if (tag === "A") {
@@ -96,7 +112,7 @@ export async function extractLastAssistantTurn(
       };
       for (const node of Array.from(el.childNodes)) {
         const child = node as Element;
-        if (node.nodeType === Node.ELEMENT_NODE && SKIP_TAGS.has(child.tagName.toUpperCase())) continue;
+        if (node.nodeType === Node.ELEMENT_NODE && isChrome(child)) continue;
         if (node.nodeType === Node.ELEMENT_NODE && BLOCK_TAGS.has(child.tagName.toUpperCase())) {
           flush();
           out.push(block(child, 0));
