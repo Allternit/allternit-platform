@@ -4,7 +4,7 @@
 **Session ID:** subsfab-d16-fix  
 **Branch:** session/subsfab-d16-fix (platform) · session/subsfab-human-proof (allternit-ai)  
 **Agent:** claude (Opus 5.5)  
-**Commit:** https://github.com/Gizziio/allternit-platform/pull/931 + https://github.com/Gizziio/allternit-ai/pull/230  
+**Commit:** platform #931 #933 #936 #939 #949 · allternit-ai #230 #232 #239  
 **Ledger entry:** [../LEDGER.md](../LEDGER.md)
 
 ## What was done
@@ -71,6 +71,17 @@ allternit-api's **stdin** (never env or disk), and attached as
 a person's act (`X-Allternit-Human-Proof: desktop`). Main strips any other
 `desktop…` value, never sends it to the cloud, and strips it from requests
 relayed from other devices. Web and phone keep the Clerk proof.
+
+## Live check 2026-09-29 — Desktop b4215 (PASS)
+
+Build b4215 (platform `15f60cf85`, UI `102918d5`) installed in /Applications and
+checked over CDP and curl.
+
+- **Agent, refused (all 403 `person_required`):** gizzi's own device token on `POST /subscriptions/human-actions`, with the header marker, the URL marker, both, a guessed `desktop:guess`, the token itself as proof, and nothing.
+- **Person in the app window, accepted:** marker via `personProof()` → **201**, action minted for the user. A guessed value, a wrong URL value (`allternit_person=yes`) or no marker from the same window → 403.
+- **Real send:** a `subs-chatgpt/fast` send from the window minted `chat.send` and the gateway consumed it on submit 6 s later.
+- **Two bugs fixed on the way:** Chromium drops custom headers on Desktop's `/api` → `allternit-api://` redirect (#939 / ai #239: URL marker too); main's second hook stripped its own proof (#939).
+- **ChatGPT then stalled:** a "Meet ChatGPT Work" announcement dialog covered the composer on the Sessions computer ("no DOM change for 90s"). #949: the adapter closes informational dialogs first. Live after the Sessions gateway redeploy.
 
 ## Limits (accepted, recorded on purpose)
 
