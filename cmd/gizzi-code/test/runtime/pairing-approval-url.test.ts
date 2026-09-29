@@ -14,3 +14,28 @@ describe("Pairing.approvalUrl", () => {
     }
   })
 })
+
+describe("Pairing.exchange 403", () => {
+  const { privateKey } = require("node:crypto").generateKeyPairSync("ed25519")
+  const stored = { privateKey: privateKey.export({ format: "pem", type: "pkcs8" }).toString() } as any
+  const pairing = { pairingId: "p1", deviceCode: "d1", challenge: "c1" } as any
+
+  async function exchangeWith(body: unknown) {
+    const realFetch = globalThis.fetch
+    globalThis.fetch = (async () => new Response(JSON.stringify(body), { status: 403 })) as unknown as typeof fetch
+    try {
+      return await Pairing.exchange(stored, pairing)
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  }
+
+  test("the user clicking Deny is a denial", async () => {
+    expect(await exchangeWith({ error: "access_denied", status: "denied" })).toEqual({ status: "denied" })
+  })
+
+  test("a platform limit after approval is a refusal with its reason, not a cancel", async () => {
+    const message = "Active runtime limit reached (5/5). Revoke an existing runtime or upgrade your plan."
+    expect(await exchangeWith({ error: "FORBIDDEN", code: "FORBIDDEN", message })).toEqual({ status: "refused", message })
+  })
+})

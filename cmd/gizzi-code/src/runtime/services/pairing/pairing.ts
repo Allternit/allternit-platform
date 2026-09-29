@@ -37,8 +37,18 @@ import { Installation } from "@/shared/installation"
 export namespace Pairing {
   /** The pairing request ended without approval: expired or denied. The CLI prints it without a stack trace. */
   export class PairingEnded extends Error {
-    constructor(readonly reason: "expired" | "denied") {
-      super(reason === "expired" ? "Pairing request expired before it was approved." : "Pairing request was denied.")
+    constructor(
+      readonly reason: "expired" | "denied" | "refused",
+      /** The platform's reason when it refused an approved pairing (e.g. the runtime limit). */
+      readonly detail?: string,
+    ) {
+      super(
+        reason === "expired"
+          ? "Pairing request expired before it was approved."
+          : reason === "refused"
+            ? `Allternit refused this device: ${detail}`
+            : "Pairing request was denied.",
+      )
       this.name = "PairingEnded"
     }
   }
@@ -94,6 +104,7 @@ export namespace Pairing {
   export type ExchangeResult =
     | { status: "pending" }
     | { status: "denied" }
+    | { status: "refused"; message: string }
     | { status: "expired" }
     | { status: "ratelimited"; retryAfterMs: number }
     | {
@@ -291,7 +302,16 @@ export namespace Pairing {
     })
     if (response.status === 428) return { status: "pending" }
     if (response.status === 410) return { status: "expired" }
-    if (response.status === 403) return { status: "denied" }
+    if (response.status === 403) {
+      // 403 means "denied" only when the user clicked Deny. After an approval
+      // the platform also answers 403 for its own limits ("Active runtime
+      // limit reached …"); say that instead of "cancelled".
+      const body = (await response.json().catch(() => undefined)) as
+        | { error?: string; code?: string; message?: string }
+        | undefined
+      if (!body || body.error === "access_denied") return { status: "denied" }
+      return { status: "refused", message: body.message || body.error || "the request was refused" }
+    }
     if (response.status === 429) {
       // The cloud API rate-limits the exchange poll (and the approval page
       // polls the same bucket); honor retry_after instead of dying.
@@ -383,6 +403,7 @@ export namespace Pairing {
       }
       if (result.status === "expired") throw new PairingEnded("expired")
       if (result.status === "denied") throw new PairingEnded("denied")
+      if (result.status === "refused") throw new PairingEnded("refused", result.message)
       stored.runtimeId = result.session.runtimeId
       stored.userId = result.session.userId
       stored.userEmail = result.session.userEmail
