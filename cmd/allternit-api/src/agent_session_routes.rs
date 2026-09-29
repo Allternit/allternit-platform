@@ -1539,12 +1539,24 @@ fn parse_sse_block(block: &str) -> Option<ParsedSseBlock> {
     }
 }
 
-async fn fetch_latest_message(client: &Client, session_id: &str) -> Option<serde_json::Value> {
+/// The message a `message.updated` event names. Fetching "the newest message"
+/// instead lost user messages: the turn's reply row lands a few ms after the
+/// user's, so by the time the fetch ran the newest message was the reply and
+/// the user message never reached the sync stream.
+async fn fetch_event_message(client: &Client, session_id: &str, message_id: Option<&str>) -> Option<serde_json::Value> {
     let path = format!("/v1/session/{}/messages", urlencoding::encode(session_id));
     let messages = gizzi_json::<Vec<GizziMessage>>(client, reqwest::Method::GET, &path, None)
         .await
         .ok()?;
-    messages.into_iter().last().map(transform_message)
+    pick_event_message(messages, message_id).map(transform_message)
+}
+
+/// By id when the event carries one; the newest message otherwise.
+fn pick_event_message(messages: Vec<GizziMessage>, message_id: Option<&str>) -> Option<GizziMessage> {
+    match message_id {
+        Some(id) => messages.into_iter().rev().find(|m| m.info.id == id),
+        None => messages.into_iter().last(),
+    }
 }
 
 /// "7:40 PM" today, "Sat 9:00 AM" within a week, else "Oct 3, 9:00 AM" — in
@@ -1690,12 +1702,12 @@ async fn transform_bus_event(
             .ok()
             .map(|info| json!({ "type": "deleted", "session_id": info.id })),
         "message.updated" => {
-            let session_id = props
-                .get("info")
+            let info = props.get("info");
+            let session_id = info
                 .and_then(|info| info.get("sessionID"))
                 .and_then(|value| value.as_str())?;
-            let latest = fetch_latest_message(client, session_id).await?;
-            let mut payload = latest;
+            let message_id = info.and_then(|info| info.get("id")).and_then(|value| value.as_str());
+            let mut payload = fetch_event_message(client, session_id, message_id).await?;
             if let Some(obj) = payload.as_object_mut() {
                 obj.insert("type".to_string(), json!("message_added"));
                 obj.insert("session_id".to_string(), json!(session_id));
@@ -3148,6 +3160,20 @@ mod run_telemetry_tests {
         assert!(t["usage"].get("cost").is_none());
         assert_eq!(t["toolCalls"], 2);
         assert_eq!(t["toolFailures"], 1);
+    }
+
+    #[test]
+    fn event_message_is_the_one_the_event_names() {
+        let list = || {
+            vec![
+                message(json!({"info": {"id": "msg_user", "sessionID": "s", "role": "user"}, "parts": []})),
+                message(json!({"info": {"id": "msg_reply", "sessionID": "s", "role": "assistant"}, "parts": []})),
+            ]
+        };
+        // The user's message.updated, read after the reply row already exists.
+        assert_eq!(pick_event_message(list(), Some("msg_user")).unwrap().info.id, "msg_user");
+        assert_eq!(pick_event_message(list(), None).unwrap().info.id, "msg_reply");
+        assert!(pick_event_message(list(), Some("msg_gone")).is_none());
     }
 
     #[test]

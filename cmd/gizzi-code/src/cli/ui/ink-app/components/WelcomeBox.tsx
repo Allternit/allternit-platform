@@ -10,11 +10,12 @@
  * coral G for the wordmark's core. No animation.
  */
 import * as React from 'react'
+import { useSyncExternalStore } from 'react'
 import { Box, Text } from '../ink'
 import { useMainLoopModel } from '../hooks/useMainLoopModel'
 import { renderModelSetting } from '../utils/model/model'
 import { getLogoDisplayData } from '../utils/logoV2Utils'
-import { getSessionId } from '../bootstrap/state'
+import { type ActiveBotChat, getActiveBotChat, getSessionId, onActiveBotChatChange } from '../bootstrap/state'
 import { useTheme } from './design-system/ThemeProvider'
 import { inlineImageBlock, inlineImagePlaceholder } from '../ink/inlineImage'
 import { CORAL, textMarkRows } from './welcomeArt'
@@ -33,7 +34,28 @@ const MARK_ROWS = 3
 const MARK_COLS = Math.round(GIZZI_MARK_ASPECT * MARK_ROWS * 2)
 const WORDMARK_COLS = Math.round(GIZZI_WORDMARK_ASPECT * 2)
 
+type WelcomeRow = [label: string, value: string, wrap: 'truncate-start' | 'truncate-end']
+
+/**
+ * The labelled rows. In a /bots chat the turns run on the bot's pinned model
+ * in its platform session, so the box names the bot and that model instead of
+ * this terminal's model (same as the footer).
+ */
+export function welcomeRows(cwd: string, sessionId: string, modelDisplayName: string, botChat: ActiveBotChat | null): WelcomeRow[] {
+  const rows: WelcomeRow[] = [
+    ['Directory', cwd, 'truncate-start'],
+    ['Session', sessionId, 'truncate-end'],
+  ]
+  if (botChat) {
+    rows.push(['Bot', botChat.botName, 'truncate-end'], ['Model', botChat.model || 'platform default model', 'truncate-end'])
+  } else {
+    rows.push(['Model', modelDisplayName, 'truncate-end'])
+  }
+  return rows
+}
+
 export function WelcomeBox(): React.ReactNode {
+  const botChat = useSyncExternalStore(onActiveBotChatChange, getActiveBotChat)
   const model = useMainLoopModel()
   const modelDisplayName = renderModelSetting(model)
   const { version, cwd } = getLogoDisplayData()
@@ -69,11 +91,7 @@ export function WelcomeBox(): React.ReactNode {
     </Box>
   )
 
-  const rows: Array<[string, string, 'truncate-start' | 'truncate-end']> = [
-    ['Directory', cwd, 'truncate-start'],
-    ['Session', getSessionId(), 'truncate-end'],
-    ['Model', modelDisplayName, 'truncate-end'],
-  ]
+  const rows = welcomeRows(cwd, getSessionId(), modelDisplayName, botChat)
 
   return (
     <Box flexDirection="column" width="100%" borderStyle="round" borderColor={CORAL} paddingX={2} marginBottom={1}>

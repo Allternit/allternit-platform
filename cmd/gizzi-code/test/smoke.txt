@@ -54,6 +54,7 @@ test/sdk.test.ts
 test/server/instance-registration.test.ts
 test/server/mesh.test.ts
 test/server/reasoning-trace.test.ts
+test/server/agent-compat-event-message.test.ts
 test/session/context-accounting.test.ts
 test/session/context-projector.test.ts
 test/session/instruction.test.ts

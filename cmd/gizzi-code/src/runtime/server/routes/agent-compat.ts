@@ -151,6 +151,11 @@ function extractReasoning(parts: any[]): string | null {
   return reasoning === "" ? null : reasoning
 }
 
+/** The message a `message.updated` event names (by id); the newest one when it names none. */
+export function eventMessage<T extends { info?: { id?: string } }>(messages: T[], id: string | undefined): T | undefined {
+  return id ? messages.findLast((m) => m.info?.id === id) : messages.at(-1)
+}
+
 /// Mirrors `transform_message` (agent_session_routes.rs:362-394).
 function transformMessage(message: any) {
   const info = message?.info ?? {}
@@ -274,9 +279,12 @@ export const AgentCompatRoutes = () =>
             const sessionID = props.info?.sessionID
             if (!sessionID) return undefined
             const messages = await Session.messages({ sessionID }).catch(() => [])
-            const latest = messages.at(-1)
-            if (!latest) return undefined
-            return { ...transformMessage(latest), type: "message_added", session_id: sessionID }
+            // The message the event names, not the newest one: a turn's reply
+            // row lands a few ms after the user's, so "newest" dropped the
+            // user message from the feed.
+            const message = eventMessage(messages, props.info?.id)
+            if (!message) return undefined
+            return { ...transformMessage(message), type: "message_added", session_id: sessionID }
           }
           case "permission.asked":
             return {
