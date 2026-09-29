@@ -681,7 +681,9 @@ export namespace MessageV2 {
           .select()
           .from(MessageTable)
           .where(eq(MessageTable.session_id, sessionID))
-          .orderBy(desc(MessageTable.time_created))
+          // Ids are ascending, so they break same-millisecond ties (and keep
+          // offset pages stable) where time_created alone doesn't.
+          .orderBy(desc(MessageTable.time_created), desc(MessageTable.id))
           .limit(size)
           .offset(offset)
           .all(),

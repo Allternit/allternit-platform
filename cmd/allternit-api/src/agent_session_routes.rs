@@ -263,6 +263,11 @@ struct GizziSessionInfo {
     /// Paused before a usage limit: `{ until, limit, providerID, reason, at }`.
     #[serde(default)]
     paused: Option<serde_json::Value>,
+    /// Where the session stands against its usage limit (the composer strip):
+    /// `{ state: approaching|wrapping_up|wrapped|paused, providerID, windowID,
+    /// label, usedRatio, resetAt?, at }`; absent/null when nothing to show.
+    #[serde(default)]
+    limit: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -412,6 +417,7 @@ fn transform_session(info: GizziSessionInfo, db: &DbHandle) -> serde_json::Value
     metadata.insert("continuesFrom".to_string(), json!(info.continues_from));
     metadata.insert("handoff".to_string(), json!(info.handoff));
     metadata.insert("paused".to_string(), json!(info.paused));
+    metadata.insert("limit".to_string(), json!(info.limit));
     for (key, value) in stored_metadata {
         metadata.insert(key, value);
     }
@@ -1561,6 +1567,20 @@ pub(crate) fn carry_session_bag(db: &DbHandle, from: &str, to: &str) {
     }
 }
 
+/// gizzi publishes session.created/updated/deleted as `{ info: Session.Info }`;
+/// accept a bare info too. Deserializing the envelope itself as the info
+/// always failed (no top-level `id`), which silently dropped every session
+/// event from the sync stream — and with it `metadata.paused`/`limit` and
+/// bot-thread pause syncing.
+fn session_info_props(props: serde_json::Value) -> serde_json::Value {
+    match props {
+        serde_json::Value::Object(mut map) if !map.contains_key("id") && map.contains_key("info") => {
+            map.remove("info").unwrap_or(serde_json::Value::Null)
+        }
+        other => other,
+    }
+}
+
 async fn transform_bus_event(
     client: &Client,
     db: &DbHandle,
@@ -1570,7 +1590,7 @@ async fn transform_bus_event(
     let props = event.properties.unwrap_or(serde_json::Value::Null);
 
     match event_type.as_str() {
-        "session.created" => serde_json::from_value::<GizziSessionInfo>(props)
+        "session.created" => serde_json::from_value::<GizziSessionInfo>(session_info_props(props))
             .ok()
             .map(|info| {
                 let mut payload = transform_session(info, db);
@@ -1579,7 +1599,7 @@ async fn transform_bus_event(
                 }
                 payload
             }),
-        "session.updated" => serde_json::from_value::<GizziSessionInfo>(props)
+        "session.updated" => serde_json::from_value::<GizziSessionInfo>(session_info_props(props))
             .ok()
             .map(|info| {
                 sync_thread_pause(db, &info.id, info.paused.as_ref());
@@ -1607,6 +1627,7 @@ async fn transform_bus_event(
                         "continuesFrom": info.continues_from,
                         "handoff": info.handoff,
                         "paused": info.paused,
+                        "limit": info.limit,
                     }
                 })
             }),
@@ -1625,7 +1646,7 @@ async fn transform_bus_event(
                 "generation": props.get("generation").cloned().unwrap_or(serde_json::Value::Null),
             }))
         }
-        "session.deleted" => serde_json::from_value::<GizziSessionInfo>(props)
+        "session.deleted" => serde_json::from_value::<GizziSessionInfo>(session_info_props(props))
             .ok()
             .map(|info| json!({ "type": "deleted", "session_id": info.id })),
         "message.updated" => {
@@ -2535,6 +2556,37 @@ mod tests {
         let long = "é".repeat(LIST_PREVIEW_MAX_CHARS + 20);
         let preview = message_preview_text(&[part("text", &long)]);
         assert_eq!(preview.chars().count(), LIST_PREVIEW_MAX_CHARS);
+    }
+
+    #[tokio::test]
+    async fn the_limit_state_rides_in_session_metadata_and_updates() {
+        let temp = std::env::temp_dir().join(format!("limit-meta-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let db = crate::db::DbHandle::new(temp.join("test.db")).expect("test db");
+        let limit = json!({
+            "state": "wrapping_up", "providerID": "claude-cli", "windowID": "5h",
+            "label": "Claude 5-hour limit", "usedRatio": 0.96, "resetAt": 1_790_604_000_000_i64, "at": 1_790_590_000_000_i64,
+        });
+        let info = json!({
+            "id": "ses_limit", "slug": "s", "projectID": "p", "directory": "/tmp", "title": "Cookie",
+            "version": "1", "time": { "created": 1, "updated": 2 }, "limit": limit,
+        });
+        let listed = transform_session(serde_json::from_value(info.clone()).unwrap(), &db);
+        assert_eq!(listed["metadata"]["limit"], limit);
+
+        let event: GizziBusEvent = serde_json::from_value(json!({ "type": "session.updated", "properties": { "info": info } })).unwrap();
+        let updated = transform_bus_event(&Client::new(), &db, event).await.expect("updated event");
+        assert_eq!(updated["type"], "updated");
+        assert_eq!(updated["metadata"]["limit"], limit);
+
+        // Cleared (resume / reset) → null, so clients drop the strip.
+        let cleared: GizziBusEvent = serde_json::from_value(json!({
+            "type": "session.updated",
+            "properties": { "info": { "id": "ses_limit", "slug": "s", "projectID": "p", "directory": "/tmp", "title": "Cookie", "version": "1", "time": { "created": 1, "updated": 3 } } },
+        }))
+        .unwrap();
+        let updated = transform_bus_event(&Client::new(), &db, cleared).await.expect("updated event");
+        assert!(updated["metadata"]["limit"].is_null());
     }
 
     #[test]

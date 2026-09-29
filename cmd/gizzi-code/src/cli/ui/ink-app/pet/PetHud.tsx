@@ -11,7 +11,7 @@ import {
   type PlatformThread,
 } from '@/runtime/bots/platform-threads.js';
 import { PlatformSignedOutError } from '@/runtime/bots/platform-api.js';
-import { getSessionPaused, pausedLine, type SessionPaused } from '@/runtime/bots/session-pause.js';
+import { getSessionLimit, limitGlyph, limitLine, type SessionLimitView } from '@/runtime/bots/session-pause.js';
 import type { CommandResultDisplay } from '../commands';
 import TextInput from '../components/TextInput';
 import { SpinnerGlyph } from '../components/Spinner/SpinnerGlyph';
@@ -83,9 +83,10 @@ export function PetHud({ onDone }: Props): React.ReactNode {
   const [busy, setBusy] = useState(false);
   const [frame, setFrame] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  // Paused before a usage limit (P3.17), per view: the thread's window or the incognito ask's.
-  const [threadPaused, setThreadPaused] = useState<SessionPaused | null>(null);
-  const [incognitoPaused, setIncognitoPaused] = useState<SessionPaused | null>(null);
+  // Usage limit (P3.17 + wrap-up), per view: approaching, wrapping up,
+  // wrapped up or paused — the thread's window or the incognito ask's.
+  const [threadPaused, setThreadPaused] = useState<SessionLimitView | null>(null);
+  const [incognitoPaused, setIncognitoPaused] = useState<SessionLimitView | null>(null);
   const [thread, setThread] = useState<PlatformThread | null>(null);
   const [threadLines, setThreadLines] = useState<HudLine[]>([]);
   // Thread scrollback: lines scrolled up from the newest, and the earlier
@@ -116,14 +117,14 @@ export function PetHud({ onDone }: Props): React.ReactNode {
     void refreshPetBots();
   }, []);
 
-  // While paused, re-check every 30s: gizzi resumes on its own at the reset.
+  // While a limit shows, re-check every 30s: wrap-up lands, gizzi resumes on its own at the reset.
   useEffect(() => {
     if (!threadPaused && !incognitoPaused) return;
     const timer = setInterval(() => {
       const threadSid = thread?.currentSessionId;
-      if (threadPaused && threadSid) void getSessionPaused(threadSid).then(setThreadPaused).catch(() => {});
+      if (threadPaused && threadSid) void getSessionLimit(threadSid).then(setThreadPaused).catch(() => {});
       const incSid = incognitoThread.current?.currentSessionId;
-      if (incognitoPaused && incSid) void getSessionPaused(incSid).then(setIncognitoPaused).catch(() => {});
+      if (incognitoPaused && incSid) void getSessionLimit(incSid).then(setIncognitoPaused).catch(() => {});
     }, 30_000);
     return () => clearInterval(timer);
   }, [threadPaused, incognitoPaused, thread?.currentSessionId]);
@@ -143,7 +144,7 @@ export function PetHud({ onDone }: Props): React.ReactNode {
         if (cancelled) return;
         setThread(t);
         if (!t.currentSessionId) return;
-        void getSessionPaused(t.currentSessionId).then(p => !cancelled && setThreadPaused(p)).catch(() => {});
+        void getSessionLimit(t.currentSessionId).then(p => !cancelled && setThreadPaused(p)).catch(() => {});
         const messages = await listSessionMessages(t.currentSessionId);
         if (cancelled) return;
         setThreadLines(hudLinesFromMessages(messages));
@@ -201,7 +202,7 @@ export function PetHud({ onDone }: Props): React.ReactNode {
           setThreadLines(lines => [...lines, { role: 'rip', generation: next.generation, reason: 'threshold', at: new Date().toISOString(), from: thread.currentSessionId ?? undefined }]);
         }
         setThread(next);
-        if (next.currentSessionId) setThreadPaused(await getSessionPaused(next.currentSessionId).catch(() => null));
+        if (next.currentSessionId) setThreadPaused(await getSessionLimit(next.currentSessionId).catch(() => null));
       } else {
         const history = [...incognitoLines, mine];
         setIncognitoLines(history);
@@ -210,7 +211,7 @@ export function PetHud({ onDone }: Props): React.ReactNode {
           incognitoThread.current ??= await createIncognitoThread(bot.id, `Incognito ask: ${text.slice(0, 60)}`);
           answer = (await sendThreadTurn(incognitoThread.current, text, { model: bot.model, signal: controller.signal })).content;
           const sid = incognitoThread.current.currentSessionId;
-          if (sid) setIncognitoPaused(await getSessionPaused(sid).catch(() => null));
+          if (sid) setIncognitoPaused(await getSessionLimit(sid).catch(() => null));
         } else {
           const timer = setTimeout(() => controller.abort(), LOCAL_TIMEOUT_MS);
           try {
@@ -306,6 +307,7 @@ export function PetHud({ onDone }: Props): React.ReactNode {
   } else {
     const lines = incognito ? incognitoLines : threadLines;
     const ready = incognito || !!thread;
+    const limitView = incognito ? incognitoPaused : threadPaused;
     body = <Box flexDirection="column">
         {lines.length > 0 ? <Lines lines={lines} offset={incognito ? 0 : scroll} bot={bot} accent={accent} width={Math.max(30, columns - 20)} /> : <Text dimColor>
             {incognito ? `Ask ${bot.name} something. Nothing here is saved.` : ready ? `Start ${bot.name}'s thread.` : `Opening ${bot.name}'s thread…`}
@@ -314,8 +316,8 @@ export function PetHud({ onDone }: Props): React.ReactNode {
             {earlier.state === 'loading' ? 'Loading the earlier conversation…' : "Couldn't load the earlier conversation. ↑ to try again."}
           </Text>}
         {!incognito && scroll > 0 && <Text dimColor>{`↓ ${scroll} newer`}</Text>}
-        {(incognito ? incognitoPaused : threadPaused) && <Text color="warning" wrap="wrap">
-            {'⏸ '}{pausedLine((incognito ? incognitoPaused : threadPaused)!)}
+        {limitView && <Text color={limitView.state === 'wrapped' ? 'success' : 'warning'} dimColor={limitView.state === 'approaching'} wrap="wrap">
+            {limitGlyph(limitView)}{limitLine(limitView)}
           </Text>}
         {busy && <Box flexDirection="row">
             <SpinnerGlyph frame={frame} messageColor="gizzi" />

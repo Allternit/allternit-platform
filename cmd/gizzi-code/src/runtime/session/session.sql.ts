@@ -76,6 +76,17 @@ export const SessionTable = sqliteTable(
       at: number
       suggest?: { providerID: string; modelID: string; label: string; headroom?: number }
     }>(),
+    // Where the session stands against its model's usage limit: approaching,
+    // wrapping up mid-turn, wrapped up / paused. Cleared on resume or reset.
+    limit_state: text({ mode: "json" }).$type<{
+      state: "ok" | "approaching" | "wrapping_up" | "wrapped" | "paused"
+      providerID: string
+      windowID: string
+      label: string
+      usedRatio: number
+      resetAt?: number
+      at: number
+    }>(),
     ...Timestamps,
     time_compacting: integer(),
     time_archived: integer(),

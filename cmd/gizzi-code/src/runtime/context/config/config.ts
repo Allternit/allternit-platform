@@ -1496,6 +1496,21 @@ export namespace Config {
             .max(1)
             .optional()
             .describe("Share of a provider window (5-hour, weekly…) at which a session pauses before the limit (default: 0.95)"),
+          warn_at: z
+            .number()
+            .min(0.1)
+            .max(1)
+            .optional()
+            .describe("Share of a provider window at which a session shows it is approaching the limit (default: 0.8)"),
+          wrap_up_steps: z
+            .number()
+            .int()
+            .min(0)
+            .max(20)
+            .optional()
+            .describe(
+              "Steps a turn gets to wrap up (finish the current edit, summarize what's left) after crossing land_at mid-turn (default: 3)",
+            ),
           auto_resume: z.boolean().optional().describe("Resume paused sessions on their own when the limit resets (default: true)"),
           fallback: z
             .enum(["off", "suggest", "auto"])

@@ -1,0 +1,8 @@
+<system-reminder>
+Usage limit reached: {{limit}} is nearly used up (resets {{reset}}). You have a few steps left to wrap up.
+
+- Finish the edit or command you are in the middle of so no file is left half-changed.
+- Do not start new work, new files, or long-running commands.
+- If tests were already running, report their result; don't start a new suite.
+- End with a short summary: what is done, and what is still to do so the work can resume cleanly after the limit resets.
+</system-reminder>

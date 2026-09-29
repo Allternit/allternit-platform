@@ -7,7 +7,9 @@ import SwiftUI
 struct UsageSnapshot: Decodable, Equatable, Sendable {
     /// Plan tier id from the entitlements service ("free", "pro", …).
     let plan: String
-    /// Usage consumed in the current weekly window (backend-defined units).
+    /// Usage consumed in the current window (backend-defined units). Named
+    /// "weekly" on the wire; Allternit Cloud's window is monthly — see
+    /// `UsageStore.periodLabel`.
     let weeklyUsed: Double
     /// Weekly window cap; 0 means "no metering window" and disables all
     /// percent-derived UI.
@@ -145,7 +147,7 @@ final class UsageStore: ObservableObject {
 
     // MARK: - Derived state
 
-    /// Percent of the weekly window consumed (0…∞); nil when unmetered.
+    /// Percent of the metering window consumed (0…∞); nil when unmetered.
     var percentUsed: Double? {
         guard let snapshot, snapshot.weeklyLimit > 0 else { return nil }
         return snapshot.weeklyUsed / snapshot.weeklyLimit * 100
@@ -168,12 +170,25 @@ final class UsageStore: ObservableObject {
         return !isBannerDismissedToday
     }
 
-    /// "Monday 9:00 AM"-style label for the reset point.
+    /// "Monday 9:00 AM" within the week, "Oct 1" further out (monthly plans).
     var resetsLabel: String? {
         guard let date = resetsAtDate else { return nil }
         let formatter = DateFormatter()
-        formatter.dateFormat = "EEEE h:mm a"
+        formatter.dateFormat = date.timeIntervalSinceNow > 6 * 86_400 ? "MMM d" : "EEEE h:mm a"
         return formatter.string(from: date)
+    }
+
+    /// Section title for the meter. The wire fields are named `weekly*`, but
+    /// Allternit Cloud fills them with the plan's monthly grant and resets on
+    /// the 1st (cloud me_usage.rs compose_usage) — so name the period from
+    /// when it resets, not from the field name.
+    var periodLabel: String {
+        guard let date = resetsAtDate else { return "Usage" }
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC") ?? .current
+        let parts = utc.dateComponents([.day, .hour, .minute], from: date)
+        if parts.day == 1 && parts.hour == 0 && parts.minute == 0 { return "Monthly usage" }
+        return date.timeIntervalSinceNow <= 7 * 86_400 ? "Weekly usage" : "Usage"
     }
 
     /// Parsed `resetsAt` (ISO-8601, with or without fractional seconds).

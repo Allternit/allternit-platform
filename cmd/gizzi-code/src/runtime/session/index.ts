@@ -69,6 +69,7 @@ export namespace Session {
       continuesFrom: row.continues_from ?? undefined,
       handoff: row.handoff ?? undefined,
       paused: row.paused ?? undefined,
+      limit: row.limit_state ?? undefined,
       title: row.title,
       version: row.version,
       summary,
@@ -116,6 +117,7 @@ export namespace Session {
       continues_from: info.continuesFrom ?? null,
       handoff: info.handoff ?? null,
       paused: info.paused ?? null,
+      limit_state: info.limit ?? null,
       slug: info.slug,
       directory: info.directory,
       title: info.title,
@@ -192,6 +194,18 @@ export namespace Session {
           suggest: z
             .object({ providerID: z.string(), modelID: z.string(), label: z.string(), headroom: z.number().optional() })
             .optional(),
+        })
+        .optional(),
+      /** Where the session stands against its model's usage limit (wrap-up). */
+      limit: z
+        .object({
+          state: z.enum(["ok", "approaching", "wrapping_up", "wrapped", "paused"]),
+          providerID: z.string(),
+          windowID: z.string(),
+          label: z.string(),
+          usedRatio: z.number(),
+          resetAt: z.number().optional(),
+          at: z.number(),
         })
         .optional(),
       summary: z
@@ -657,6 +671,22 @@ export namespace Session {
       const row = db
         .update(SessionTable)
         .set({ paused: input.paused ?? null, time_updated: Date.now() })
+        .where(eq(SessionTable.id, input.sessionID))
+        .returning()
+        .get()
+      if (!row) throw new NotFoundError({ message: `Session not found: ${input.sessionID}` })
+      const info = fromRow(row)
+      Database.effect(() => Bus.publish(Event.Updated, { info }))
+      return info
+    })
+  }
+
+  /** Set or clear where a session stands against its usage limit (wrap-up). */
+  export function setLimit(input: { sessionID: string; limit: Info["limit"] | null }) {
+    return Database.use((db) => {
+      const row = db
+        .update(SessionTable)
+        .set({ limit_state: input.limit ?? null, time_updated: Date.now() })
         .where(eq(SessionTable.id, input.sessionID))
         .returning()
         .get()

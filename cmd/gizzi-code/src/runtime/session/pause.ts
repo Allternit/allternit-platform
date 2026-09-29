@@ -6,6 +6,7 @@ import { MessageV2 } from "@/runtime/session/message-v2"
 import { SessionRetry } from "@/runtime/session/retry"
 import { Config } from "@/runtime/context/config/config"
 import { ProviderQuotas, type QuotaWindow } from "@/runtime/providers/quota"
+import { SessionLimit } from "@/runtime/session/limit"
 import { Log } from "@/shared/util/log"
 
 /**
@@ -188,9 +189,19 @@ export namespace SessionPause {
     return Boolean(session.paused && session.paused.until > now)
   }
 
-  export function pause(sessionID: string, p: Omit<Paused, "at" | "suggest">) {
+  /**
+   * Pause until `p.until`. `landing.state` says how the turn ended for the
+   * limit strip: "wrapped" when it wrapped up cleanly mid-turn, "paused"
+   * (default) when it was held before running or cut off by the limit.
+   */
+  export function pause(
+    sessionID: string,
+    p: Omit<Paused, "at" | "suggest">,
+    landing: { state: "wrapped" | "paused"; window?: QuotaWindow } = { state: "paused" },
+  ) {
     const paused: Paused = { ...p, at: Date.now() }
     Session.setPaused({ sessionID, paused })
+    SessionLimit.landed(sessionID, paused, landing.state, landing.window)
     schedule(sessionID, paused)
     Bus.publish(Event.Paused, { sessionID, until: paused.until, limit: paused.limit, reason: paused.reason, providerID: paused.providerID })
     log.info("paused before a limit", { sessionID, until: new Date(paused.until).toISOString(), limit: paused.limit })
@@ -323,6 +334,7 @@ export namespace SessionPause {
     timers.delete(sessionID)
     const early = Boolean(session.paused && session.paused.until > Date.now())
     if (session.paused) Session.setPaused({ sessionID, paused: null })
+    SessionLimit.clear(sessionID)
     Bus.publish(Event.Resumed, { sessionID, early, ...(opts.model ? { model: opts.model } : {}) })
 
     const msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID))

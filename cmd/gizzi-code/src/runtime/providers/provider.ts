@@ -31,6 +31,7 @@ import { fabricConfigured, isFabricProviderID } from "@/runtime/providers/fabric
 import { discoverSubscriptionFabric } from "@/runtime/providers/fabric/discovery"
 import { cliModel, stripProviderPrefix } from "@/runtime/providers/cli-model"
 import { tapRetryHint } from "@/runtime/providers/retry-hint"
+import { ProviderQuotas } from "@/runtime/providers/quota"
 
 export namespace Provider {
   const log = Log.create({ service: "provider" })
@@ -754,14 +755,17 @@ export namespace Provider {
           }
         })
         const retryHintUrl = typeof input === "string" ? input : ((input as { url?: string })?.url ?? "")
-        const wrapRetryHint = (res: Response) =>
-          tapRetryHint({
+        const wrapRetryHint = (res: Response) => {
+          // Usage windows a plan reports per response (wrap-up reads them between steps).
+          ProviderQuotas.recordHeaders(model.providerID, res.headers)
+          return tapRetryHint({
             response: res,
             method: opts.method,
             url: retryHintUrl,
             sessionID: retryHintSession,
             npm: model.api.npm,
           })
+        }
 
         // Optional per-provider concurrency cap (provider.options.concurrency).
         const cap = Number(options["concurrency"])
