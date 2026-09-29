@@ -835,6 +835,9 @@ const artifactPreviewAPI = {
     height?: number;
     error?: string;
   }> => ipcRenderer.invoke('artifact-preview:capture', req),
+  /** Serve a Build page at an allternit-preview:// URL with its own CSP (CDNs load). */
+  host: (html: string): Promise<{ ok: true; url: string } | { ok: false; error: string }> =>
+    ipcRenderer.invoke('artifact-preview:host', html),
 };
 
 // ─── Browser API Capture ─────────────────────────────────────────────────────
