@@ -122,7 +122,7 @@ const lightTheme: Theme = {
   gizzi: 'rgb(217,119,87)', // Gizzi coral #D97757
   gizziShimmer: 'rgb(245,149,117)', // Lighter Gizzi coral for shimmer effect
   gizziSand: 'rgb(212,176,140)', // Gizzi sand #D4B08C
-  gizziVisor: 'rgb(181,151,121)', // sand under the 16% ink face panel
+  gizziVisor: 'rgb(181,151,111)', // sand under the 16% ink face panel, B -10 so 256-color terminals get brown (137), not pink or olive
   gizziEye: 'rgb(17,19,24)', // #111318
   systemSpinner: 'rgb(87,105,247)', // Medium blue for system spinner
   systemSpinnerShimmer: 'rgb(117,135,255)', // Lighter blue for system spinner shimmer
@@ -375,7 +375,7 @@ const lightDaltonizedTheme: Theme = {
   gizzi: 'rgb(255,153,51)', // Orange adjusted for deuteranopia
   gizziShimmer: 'rgb(255,183,101)', // Lighter orange for shimmer effect
   gizziSand: 'rgb(212,176,140)', // Gizzi sand #D4B08C
-  gizziVisor: 'rgb(181,151,121)', // sand under the 16% ink face panel
+  gizziVisor: 'rgb(181,151,111)', // sand under the 16% ink face panel, B -10 so 256-color terminals get brown (137), not pink or olive
   gizziEye: 'rgb(17,19,24)', // #111318
   systemSpinner: 'rgb(51,102,255)', // Bright blue for system spinner
   systemSpinnerShimmer: 'rgb(101,152,255)', // Lighter bright blue for system spinner shimmer
@@ -459,7 +459,7 @@ const darkTheme: Theme = {
   gizzi: 'rgb(217,119,87)', // Gizzi coral #D97757
   gizziShimmer: 'rgb(235,159,127)', // Lighter Gizzi coral for shimmer effect
   gizziSand: 'rgb(212,176,140)', // Gizzi sand #D4B08C
-  gizziVisor: 'rgb(181,151,121)', // sand under the 16% ink face panel
+  gizziVisor: 'rgb(181,151,111)', // sand under the 16% ink face panel, B -10 so 256-color terminals get brown (137), not pink or olive
   gizziEye: 'rgb(17,19,24)', // #111318
   systemSpinner: 'rgb(147,165,255)', // Blue for system spinner
   systemSpinnerShimmer: 'rgb(177,195,255)', // Lighter blue for system spinner shimmer
@@ -543,7 +543,7 @@ const darkDaltonizedTheme: Theme = {
   gizzi: 'rgb(255,153,51)', // Orange adjusted for deuteranopia
   gizziShimmer: 'rgb(255,183,101)', // Lighter orange for shimmer effect
   gizziSand: 'rgb(212,176,140)', // Gizzi sand #D4B08C
-  gizziVisor: 'rgb(181,151,121)', // sand under the 16% ink face panel
+  gizziVisor: 'rgb(181,151,111)', // sand under the 16% ink face panel, B -10 so 256-color terminals get brown (137), not pink or olive
   gizziEye: 'rgb(17,19,24)', // #111318
   systemSpinner: 'rgb(153,204,255)', // Light blue for system spinner
   systemSpinnerShimmer: 'rgb(183,224,255)', // Lighter blue for system spinner shimmer

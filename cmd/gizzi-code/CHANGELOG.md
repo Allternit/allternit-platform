@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- The screen is laid out like Claude Code's, with the prompt at the bottom
+  of the window. Set `GIZZI_CODE_NO_FLICKER=0` for the old inline layout.
+- The startup header is a rounded box, like Kimi Code's: Gizzi with the name,
+  version and a /help hint, then Directory, Session and Model rows.
+- The footer has two lines. The first is the permission mode and status
+  items (open PR, notifications). The second, like Kimi Code's, shows the
+  model and effort on the left and context-window use on the right
+  ("context: 12% (24k/200k)").
+- In terminals without inline images (Apple Terminal, tmux), the header
+  Gizzi is the mascot in its own colors, eight columns by four rows: sand
+  body, darker face panel, eyes, coral beacon and nose, hands, four legs.
+
+### Fixed
+- In 256-color terminals such as Apple Terminal, warm colors no longer turn
+  pink: truecolor values now map to the nearest palette color.
+
 ## 2.1.6 (2026-09-29)
 
 `gizzi login` on a Mac where Desktop is already signed in, and Claude CLI

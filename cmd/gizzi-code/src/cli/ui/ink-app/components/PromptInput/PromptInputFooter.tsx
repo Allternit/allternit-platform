@@ -21,10 +21,10 @@ import { isUndercover } from '../../utils/undercover';
 import { CoordinatorTaskPanel, useCoordinatorTaskCount } from '../CoordinatorAgentStatus';
 import { getLastAssistantMessageId, StatusLine, statusLineShouldDisplay } from '../StatusLine';
 import { Notifications } from './Notifications';
+import { FooterContextLine } from './FooterContextLine';
 import { PromptInputFooterLeftSide } from './PromptInputFooterLeftSide';
 import { PromptInputFooterSuggestions, type SuggestionItem } from './PromptInputFooterSuggestions';
 import { PromptInputHelpMenu } from './PromptInputHelpMenu';
-import { FooterStatusBadges } from './FooterStatusBadges';
 type Props = {
   apiKeyStatus: VerificationStatus;
   debug: boolean;
@@ -140,18 +140,21 @@ function PromptInputFooter({
   return <>
       <Box flexDirection={isNarrow ? 'column' : 'row'} justifyContent={isNarrow ? 'flex-start' : 'space-between'} paddingX={2} gap={isNarrow ? 0 : 1}>
         {/* The mode hint (e.g. "⏵⏵ bypass permissions on") must stay whole;
-            the right-side badges truncate first. A custom StatusLine can be
+            the right side truncates first. A custom StatusLine can be
             arbitrarily long, so only then may the left side shrink. */}
         <Box flexDirection="column" flexShrink={isNarrow || !statusLineShouldDisplay(settings) ? 0 : 1}>
           {mode === 'prompt' && !isShort && !exitMessage.show && !isPasting && statusLineShouldDisplay(settings) && <StatusLine messagesRef={messagesRef} lastAssistantMessageId={lastAssistantMessageId} vimMode={vimMode} />}
           <PromptInputFooterLeftSide exitMessage={exitMessage} vimMode={vimMode} mode={mode} toolPermissionContext={toolPermissionContext} suppressHint={suppressHint} isLoading={isLoading} tasksSelected={pillSelected} teamsSelected={teamsSelected} teammateFooterIndex={teammateFooterIndex} tmuxSelected={tmuxSelected} isPasting={isPasting} isSearching={isSearching} historyQuery={historyQuery} setHistoryQuery={setHistoryQuery} historyFailedMatch={historyFailedMatch} onOpenTasksDialog={onOpenTasksDialog} />
         </Box>
         <Box flexShrink={1} gap={1}>
-          <FooterStatusBadges messages={messages} />
           {isFullscreen ? null : <Notifications apiKeyStatus={apiKeyStatus} autoUpdaterResult={autoUpdaterResult} debug={debug} isAutoUpdating={isAutoUpdating} verbose={verbose} messages={messages} onAutoUpdaterResult={onAutoUpdaterResult} onChangeIsUpdating={onChangeIsUpdating} ideSelection={ideSelection} mcpClients={mcpClients} isInputWrapped={isInputWrapped} isNarrow={isNarrow} />}
           {"external" === 'ant' && isUndercover() && <Text dimColor>undercover</Text>}
           <BridgeStatusIndicator bridgeSelected={bridgeSelected} />
         </Box>
+      </Box>
+      {/* Second line, like Kimi Code's: model + effort left, context right. */}
+      <Box paddingX={2}>
+        <FooterContextLine messages={messages} />
       </Box>
       {"external" === 'ant' && <CoordinatorTaskPanel />}
     </>;

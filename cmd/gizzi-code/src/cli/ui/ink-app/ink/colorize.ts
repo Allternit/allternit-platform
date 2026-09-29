@@ -64,6 +64,38 @@ export const CHALK_CLAMPED_FOR_TMUX = clampChalkLevelForTmux()
 
 export type ColorType = 'foreground' | 'background'
 
+const CUBE = [0, 95, 135, 175, 215, 255]
+
+/**
+ * Nearest xterm-256 color by distance, over the 6x6x6 cube and the gray ramp.
+ * chalk's own downgrade rounds each channel on its own, which pulls warm
+ * colors toward pink: Gizzi sand rgb(212,176,140) became 181 (215,175,175)
+ * and coral rgb(217,119,87) became 174 (215,135,135) in Apple Terminal.
+ * Nearest-color gives 180 (215,175,135) and 173 (215,135,95).
+ */
+export function nearestAnsi256(r: number, g: number, b: number): number {
+  const level = (v: number) => {
+    let best = 0
+    for (let i = 1; i < 6; i++) if (Math.abs(CUBE[i]! - v) < Math.abs(CUBE[best]! - v)) best = i
+    return best
+  }
+  const [ri, gi, bi] = [level(r), level(g), level(b)]
+  const dist = (x: number, y: number, z: number) => (x - r) ** 2 + (y - g) ** 2 + (z - b) ** 2
+  const cubeIndex = 16 + 36 * ri + 6 * gi + bi
+  const cubeDist = dist(CUBE[ri]!, CUBE[gi]!, CUBE[bi]!)
+  const grayStep = Math.max(0, Math.min(23, Math.round(((r + g + b) / 3 - 8) / 10)))
+  const gray = 8 + grayStep * 10
+  return dist(gray, gray, gray) < cubeDist ? 232 + grayStep : cubeIndex
+}
+
+function rgbColor(r: number, g: number, b: number, type: ColorType, str: string): string {
+  if (chalk.level === 2) {
+    const index = nearestAnsi256(r, g, b)
+    return type === 'foreground' ? chalk.ansi256(index)(str) : chalk.bgAnsi256(index)(str)
+  }
+  return type === 'foreground' ? chalk.rgb(r, g, b)(str) : chalk.bgRgb(r, g, b)(str)
+}
+
 const RGB_REGEX = /^rgb\(\s?(\d+),\s?(\d+),\s?(\d+)\s?\)$/
 const ANSI_REGEX = /^ansi256\(\s?(\d+)\s?\)$/
 
@@ -131,9 +163,14 @@ export const colorize = (
   }
 
   if (color.startsWith('#')) {
-    return type === 'foreground'
-      ? chalk.hex(color)(str)
-      : chalk.bgHex(color)(str)
+    const hex = color.length === 4
+      ? color.slice(1).split('').map(c => c + c).join('')
+      : color.slice(1, 7)
+    const value = parseInt(hex, 16)
+    if (hex.length !== 6 || Number.isNaN(value)) {
+      return type === 'foreground' ? chalk.hex(color)(str) : chalk.bgHex(color)(str)
+    }
+    return rgbColor(value >> 16, (value >> 8) & 255, value & 255, type, str)
   }
 
   if (color.startsWith('ansi256')) {
@@ -161,9 +198,7 @@ export const colorize = (
     const secondValue = Number(matches[2])
     const thirdValue = Number(matches[3])
 
-    return type === 'foreground'
-      ? chalk.rgb(firstValue, secondValue, thirdValue)(str)
-      : chalk.bgRgb(firstValue, secondValue, thirdValue)(str)
+    return rgbColor(firstValue, secondValue, thirdValue, type, str)
   }
 
   return str

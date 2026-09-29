@@ -1,18 +1,20 @@
 // @ts-nocheck
 /**
- * Startup header, sized like Claude Code's. In terminals that show inline
- * images (iTerm2, WezTerm, Ghostty, Kitty): the Gizzi mark (Brand/Gizzi/mark)
- * three rows tall on the left; beside it, the GIZZI CODE wordmark
- * (Brand/Gizzi/wordmark) one text row tall with the version, then the model
- * and the working directory. Elsewhere (Apple Terminal, tmux) the mark is
- * drawn in half blocks, four rows tall, and the name is set as type: bold
- * caps, coral G for the wordmark's core. No box, no animation.
+ * Startup header in a rounded coral box, like Kimi Code's: the Gizzi mark
+ * beside the name, version and a /help hint, then labelled Directory,
+ * Session and Model rows. In terminals that show inline images (iTerm2,
+ * WezTerm, Ghostty, Kitty) the mark is the Brand/Gizzi/mark image three rows
+ * tall and the name is the GIZZI CODE wordmark image one row tall. Elsewhere
+ * (Apple Terminal, tmux) the mark is the mascot in its own colors, quadrant
+ * blocks eight columns by four rows, and the name is set as type: bold caps,
+ * coral G for the wordmark's core. No animation.
  */
 import * as React from 'react'
 import { Box, Text } from '../ink'
 import { useMainLoopModel } from '../hooks/useMainLoopModel'
 import { renderModelSetting } from '../utils/model/model'
 import { getLogoDisplayData } from '../utils/logoV2Utils'
+import { getSessionId } from '../bootstrap/state'
 import { useTheme } from './design-system/ThemeProvider'
 import { inlineImageBlock, inlineImagePlaceholder } from '../ink/inlineImage'
 import { CORAL, textMarkRows } from './welcomeArt'
@@ -50,7 +52,7 @@ export function WelcomeBox(): React.ReactNode {
     WORDMARK_COLS,
   )
 
-  const text = (
+  const title = (
     <Box flexDirection="column" flexShrink={1}>
       <Text>
         {wordmark !== null ? (
@@ -63,25 +65,42 @@ export function WelcomeBox(): React.ReactNode {
         )}
         <Text dimColor={true}> v{version}</Text>
       </Text>
-      <Text dimColor={true} wrap="truncate-end">{modelDisplayName}</Text>
-      <Text dimColor={true} wrap="truncate-start">{cwd}</Text>
+      <Text dimColor={true}>Send /help for help information.</Text>
     </Box>
   )
 
+  const rows: Array<[string, string, 'truncate-start' | 'truncate-end']> = [
+    ['Directory', cwd, 'truncate-start'],
+    ['Session', getSessionId(), 'truncate-end'],
+    ['Model', modelDisplayName, 'truncate-end'],
+  ]
+
   return (
-    <Box flexDirection="row" paddingLeft={1} marginBottom={1}>
-      <Box flexDirection="column" flexShrink={0} marginRight={2}>
-        {mark !== null
-          ? mark.map((row, i) => <Text key={i}>{row}</Text>)
-          : textMarkRows().map((segments, i) => (
-              <Text key={i}>
-                {segments.map(([t, color, bg], j) => (
-                  <Text key={j} color={color || undefined} backgroundColor={bg}>{t}</Text>
-                ))}
-              </Text>
-            ))}
+    <Box flexDirection="column" width="100%" borderStyle="round" borderColor={CORAL} paddingX={2} marginBottom={1}>
+      <Box flexDirection="row">
+        <Box flexDirection="column" flexShrink={0} marginRight={2}>
+          {mark !== null
+            ? mark.map((row, i) => <Text key={i}>{row}</Text>)
+            : textMarkRows().map((segments, i) => (
+                <Text key={i}>
+                  {segments.map(([t, color, bg], j) => (
+                    <Text key={j} color={color || undefined} backgroundColor={bg}>{t}</Text>
+                  ))}
+                </Text>
+              ))}
+        </Box>
+        {title}
       </Box>
-      {text}
+      <Box flexDirection="column" marginTop={1}>
+        {rows.map(([label, value, wrap]) => (
+          <Box key={label} flexDirection="row">
+            <Box width={11} flexShrink={0}>
+              <Text bold={true}>{label}:</Text>
+            </Box>
+            <Text wrap={wrap}>{value}</Text>
+          </Box>
+        ))}
+      </Box>
     </Box>
   )
 }
