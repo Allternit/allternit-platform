@@ -2,7 +2,7 @@
 //!
 //! Mirrors the Next.js `/api/v1/artifacts` layer.
 
-use axum::extract::Extension;
+use axum::extract::{DefaultBodyLimit, Extension};
 use axum::{
     extract::{Json, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -10,7 +10,7 @@ use axum::{
     routing::{get, patch},
     Router,
 };
-use rusqlite::{params, Transaction};
+use rusqlite::{params, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
@@ -31,6 +31,7 @@ pub fn artifact_router() -> Router<Arc<AppState>> {
                 .delete(delete_artifact),
         )
         .route("/artifacts/:id/revisions", get(list_revisions))
+        .route("/artifacts/:id/sharing", patch(update_sharing))
         .route(
             "/artifacts/:id/sections",
             get(list_sections).post(add_section),
@@ -39,7 +40,13 @@ pub fn artifact_router() -> Router<Arc<AppState>> {
             "/artifacts/:id/sections/:section_id",
             patch(update_section).delete(delete_section),
         )
+        // Sections carry whole documents: a deck's .pptx (base64) or a design
+        // canvas with its images. axum's 2 MB default cut those off.
+        .layer(DefaultBodyLimit::max(ARTIFACT_BODY_LIMIT))
 }
+
+/// Largest artifact write accepted (a section body is a whole document).
+const ARTIFACT_BODY_LIMIT: usize = 48 * 1024 * 1024;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Data models
@@ -58,6 +65,16 @@ struct ArtifactRow {
     tags: Vec<String>,
     created_at: String,
     updated_at: String,
+    /// `private` (owner only) or `org` (the owner's organization).
+    visibility: String,
+    /// What org members may do when shared: `view` or `edit`.
+    org_access: String,
+    /// Whether the caller owns it (only the owner deletes or changes sharing).
+    is_owner: bool,
+    /// Whether the caller may change it.
+    can_edit: bool,
+    /// The owner's display name, for "Shared with you".
+    owner_name: Option<String>,
     sections: Vec<SectionRow>,
     revisions: Vec<RevisionRow>,
 }
@@ -92,6 +109,8 @@ struct ListQuery {
     #[serde(rename = "type")]
     artifact_type: Option<String>,
     _q: Option<String>,
+    /// `mine` (default): your own. `shared`: shared with you by others in your org.
+    scope: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -132,6 +151,12 @@ struct UpdateBody {
 }
 
 #[derive(Deserialize)]
+struct SharingBody {
+    visibility: String,
+    access: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct SectionBody {
     heading: Option<String>,
     kind: Option<String>,
@@ -157,15 +182,75 @@ fn normalize_tags(input: Option<serde_json::Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Who is asking: their user id and organization (sharing is org-scoped).
+#[derive(Clone)]
+struct Viewer {
+    user_id: String,
+    org_id: Option<String>,
+}
+
+impl Viewer {
+    fn of(user: &AuthUser) -> Self {
+        Viewer {
+            user_id: user.user_id.clone(),
+            org_id: crate::computer_routes::resolve_org_id(user),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Access {
+    owner: bool,
+    can_edit: bool,
+}
+
+/// The owner has full access; members of the org an artifact is shared with can
+/// read it, and change it when it's shared for editing. Everyone else: none.
+fn artifact_access(
+    conn: &rusqlite::Connection,
+    artifact_id: &str,
+    viewer: &Viewer,
+) -> Result<Option<Access>, rusqlite::Error> {
+    let row: Option<(String, String, String, Option<String>)> = conn
+        .query_row(
+            "SELECT user_id, visibility, org_access, org_id FROM artifacts WHERE id = ?1",
+            params![artifact_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()?;
+    let Some((owner, visibility, org_access, org_id)) = row else {
+        return Ok(None);
+    };
+    if owner == viewer.user_id {
+        return Ok(Some(Access { owner: true, can_edit: true }));
+    }
+    let shared_with_viewer = visibility == "org"
+        && org_id.is_some()
+        && viewer.org_id.is_some()
+        && org_id == viewer.org_id;
+    Ok(shared_with_viewer.then_some(Access { owner: false, can_edit: org_access == "edit" }))
+}
+
+fn can_read(conn: &rusqlite::Connection, id: &str, viewer: &Viewer) -> bool {
+    matches!(artifact_access(conn, id, viewer), Ok(Some(_)))
+}
+
+fn can_edit(conn: &rusqlite::Connection, id: &str, viewer: &Viewer) -> bool {
+    matches!(artifact_access(conn, id, viewer), Ok(Some(Access { can_edit: true, .. })))
+}
+
 fn fetch_artifact_with_related(
     conn: &rusqlite::Connection,
     artifact_id: &str,
-    user_id: &str,
+    viewer: &Viewer,
 ) -> Result<Option<ArtifactRow>, rusqlite::Error> {
+    let Some(access) = artifact_access(conn, artifact_id, viewer)? else {
+        return Ok(None);
+    };
     let artifact: Option<(String, String, String, String, String, String, Option<String>, Option<String>, String, String)> = conn.query_row(
         "SELECT id, user_id, workspace_id, title, type, status, summary, tags, created_at, updated_at
-         FROM artifacts WHERE id = ?1 AND user_id = ?2",
-        params![artifact_id, user_id],
+         FROM artifacts WHERE id = ?1",
+        params![artifact_id],
         |row| Ok((
             row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?,
             row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?,
@@ -176,6 +261,8 @@ fn fetch_artifact_with_related(
         Some(a) => a,
         None => return Ok(None),
     };
+    let (visibility, org_access) = sharing_of(conn, artifact_id)?;
+    let owner_name = owner_name_of(conn, &artifact.1);
 
     let mut stmt = conn.prepare(
         "SELECT id, artifact_id, heading, kind, body, position, created_at, updated_at
@@ -228,9 +315,32 @@ fn fetch_artifact_with_related(
             .unwrap_or_default(),
         created_at: artifact.8,
         updated_at: artifact.9,
+        visibility,
+        org_access,
+        is_owner: access.owner,
+        can_edit: access.can_edit,
+        owner_name,
         sections,
         revisions,
     }))
+}
+
+fn sharing_of(conn: &rusqlite::Connection, artifact_id: &str) -> Result<(String, String), rusqlite::Error> {
+    conn.query_row(
+        "SELECT visibility, org_access FROM artifacts WHERE id = ?1",
+        params![artifact_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+}
+
+fn owner_name_of(conn: &rusqlite::Connection, user_id: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT COALESCE(NULLIF(name, ''), email) FROM users WHERE id = ?1",
+        params![user_id],
+        |r| r.get::<_, Option<String>>(0),
+    )
+    .ok()
+    .flatten()
 }
 
 fn serialize_snapshot(artifact: &ArtifactRow) -> String {
@@ -281,15 +391,28 @@ async fn list_artifacts(
     Query(q): Query<ListQuery>,
 ) -> impl IntoResponse {
     let db = state.db.clone();
-    let user_id = user.user_id;
+    let viewer = Viewer::of(&user);
+    let shared = q.scope.as_deref() == Some("shared");
 
     let result = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
         let mut sql = String::from(
             "SELECT id, user_id, workspace_id, title, type, status, summary, tags, created_at, updated_at
-             FROM artifacts WHERE user_id = ?1"
+             FROM artifacts WHERE ",
         );
-        let mut params_vec: Vec<String> = vec![user_id];
+        let mut params_vec: Vec<String> = Vec::new();
+        if shared {
+            // Shared with you: others' artifacts shared with your organization.
+            let Some(org) = viewer.org_id.clone() else {
+                return Ok::<_, rusqlite::Error>(Vec::new());
+            };
+            sql.push_str("visibility = 'org' AND org_id = ? AND user_id != ?");
+            params_vec.push(org);
+            params_vec.push(viewer.user_id.clone());
+        } else {
+            sql.push_str("user_id = ?");
+            params_vec.push(viewer.user_id.clone());
+        }
 
         if let Some(ws) = &q.workspace_id {
             sql.push_str(" AND workspace_id = ?");
@@ -350,6 +473,9 @@ async fn list_artifacts(
                 })
             })?.collect::<Result<Vec<_>, _>>()?;
 
+            let access = artifact_access(&conn, &row.0, &viewer)?.unwrap_or(Access { owner: false, can_edit: false });
+            let (visibility, org_access) = sharing_of(&conn, &row.0)?;
+            let owner_name = if access.owner { None } else { owner_name_of(&conn, &row.1) };
             artifacts.push(ArtifactRow {
                 id: row.0,
                 user_id: row.1,
@@ -361,6 +487,11 @@ async fn list_artifacts(
                 tags: row.7.and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default(),
                 created_at: row.8,
                 updated_at: row.9,
+                visibility,
+                org_access,
+                is_owner: access.owner,
+                can_edit: access.can_edit,
+                owner_name,
                 sections,
                 revisions,
             });
@@ -411,7 +542,7 @@ async fn create_artifact(
     }
 
     let db = state.db.clone();
-    let user_id = user.user_id;
+    let viewer = Viewer::of(&user);
     let artifact_type = body.artifact_type.unwrap_or_else(|| "document".to_string());
     let status = body.status.unwrap_or_else(|| "draft".to_string());
     let summary = body
@@ -432,7 +563,7 @@ async fn create_artifact(
         tx.execute(
             "INSERT INTO artifacts (id, user_id, workspace_id, title, type, status, summary, tags, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
-            params![&artifact_id, &user_id, workspace_id, title, artifact_type, status, summary, serde_json::to_string(&tags).unwrap_or_default(), &now],
+            params![&artifact_id, &viewer.user_id, workspace_id, title, artifact_type, status, summary, serde_json::to_string(&tags).unwrap_or_default(), &now],
         )?;
 
         for (index, section) in sections_input.iter().enumerate() {
@@ -450,7 +581,7 @@ async fn create_artifact(
         }
 
         // Create initial revision
-        let artifact = fetch_artifact_with_related(&tx, &artifact_id, &user_id)?.unwrap();
+        let artifact = fetch_artifact_with_related(&tx, &artifact_id, &viewer)?.unwrap();
         create_revision(&tx, &artifact_id, "created", &artifact)?;
 
         tx.commit()?;
@@ -491,11 +622,11 @@ async fn get_artifact(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     let db = state.db.clone();
-    let user_id = user.user_id;
+    let viewer = Viewer::of(&user);
 
     let result = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
-        fetch_artifact_with_related(&conn, &id, &user_id)
+        fetch_artifact_with_related(&conn, &id, &viewer)
     })
     .await;
 
@@ -537,20 +668,14 @@ async fn update_artifact(
     Json(body): Json<UpdateBody>,
 ) -> impl IntoResponse {
     let db = state.db.clone();
-    let user_id = user.user_id;
+    let viewer = Viewer::of(&user);
 
     let result = tokio::task::spawn_blocking(move || {
         let mut conn = db.connect()?;
         let tx = conn.transaction()?;
 
         // Verify ownership
-        let exists: bool = tx
-            .query_row(
-                "SELECT 1 FROM artifacts WHERE id = ?1 AND user_id = ?2",
-                params![&id, &user_id],
-                |_row| Ok(true),
-            )
-            .unwrap_or(false);
+        let exists: bool = can_edit(&tx, &id, &viewer);
         if !exists {
             return Ok::<_, rusqlite::Error>(None);
         }
@@ -597,7 +722,7 @@ async fn update_artifact(
             tx.execute(&sql, rusqlite::params_from_iter(params_ref))?;
         }
 
-        let artifact = fetch_artifact_with_related(&tx, &id, &user_id)?.unwrap();
+        let artifact = fetch_artifact_with_related(&tx, &id, &viewer)?.unwrap();
         create_revision(&tx, &id, "updated", &artifact)?;
 
         tx.commit()?;
@@ -734,7 +859,7 @@ async fn search_artifacts(
 
         let mut artifacts = Vec::new();
         for row in rows {
-            if let Some(artifact) = fetch_artifact_with_related(&conn, &row.0, &row.1)? {
+            if let Some(artifact) = fetch_artifact_with_related(&conn, &row.0, &Viewer { user_id: row.1.clone(), org_id: None })? {
                 artifacts.push(artifact);
             }
         }
@@ -846,19 +971,13 @@ async fn list_revisions(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     let db = state.db.clone();
-    let user_id = user.user_id;
+    let viewer = Viewer::of(&user);
 
     let result = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
 
         // Verify ownership
-        let exists: bool = conn
-            .query_row(
-                "SELECT 1 FROM artifacts WHERE id = ?1 AND user_id = ?2",
-                params![&id, &user_id],
-                |_row| Ok(true),
-            )
-            .unwrap_or(false);
+        let exists: bool = can_read(&conn, &id, &viewer);
         if !exists {
             return Ok::<_, rusqlite::Error>(None);
         }
@@ -922,18 +1041,12 @@ async fn list_sections(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     let db = state.db.clone();
-    let user_id = user.user_id;
+    let viewer = Viewer::of(&user);
 
     let result = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
 
-        let exists: bool = conn
-            .query_row(
-                "SELECT 1 FROM artifacts WHERE id = ?1 AND user_id = ?2",
-                params![&id, &user_id],
-                |_row| Ok(true),
-            )
-            .unwrap_or(false);
+        let exists: bool = can_read(&conn, &id, &viewer);
         if !exists {
             return Ok::<_, rusqlite::Error>(None);
         }
@@ -1008,7 +1121,7 @@ async fn add_section(
     }
 
     let db = state.db.clone();
-    let user_id = user.user_id;
+    let viewer = Viewer::of(&user);
     let kind = body.kind.unwrap_or_else(|| "document/markdown".to_string());
     let body_text = body.body.unwrap_or_default();
 
@@ -1016,11 +1129,7 @@ async fn add_section(
         let mut conn = db.connect()?;
         let tx = conn.transaction()?;
 
-        let exists: bool = tx.query_row(
-            "SELECT 1 FROM artifacts WHERE id = ?1 AND user_id = ?2",
-            params![&id, &user_id],
-            |_row| Ok(true),
-        ).unwrap_or(false);
+        let exists: bool = can_edit(&tx, &id, &viewer);
         if !exists {
             return Ok::<_, rusqlite::Error>(None);
         }
@@ -1049,7 +1158,7 @@ async fn add_section(
             params![&now, &id],
         )?;
 
-        let artifact = fetch_artifact_with_related(&tx, &id, &user_id)?.unwrap();
+        let artifact = fetch_artifact_with_related(&tx, &id, &viewer)?.unwrap();
         create_revision(&tx, &id, &format!("section:{}:created", section_id), &artifact)?;
 
         tx.commit()?;
@@ -1108,19 +1217,13 @@ async fn update_section(
     Json(body): Json<SectionBody>,
 ) -> impl IntoResponse {
     let db = state.db.clone();
-    let user_id = user.user_id;
+    let viewer = Viewer::of(&user);
 
     let result = tokio::task::spawn_blocking(move || {
         let mut conn = db.connect()?;
         let tx = conn.transaction()?;
 
-        let exists: bool = tx
-            .query_row(
-                "SELECT 1 FROM artifacts WHERE id = ?1 AND user_id = ?2",
-                params![&artifact_id, &user_id],
-                |_row| Ok(true),
-            )
-            .unwrap_or(false);
+        let exists: bool = can_edit(&tx, &artifact_id, &viewer);
         if !exists {
             return Ok::<_, rusqlite::Error>(None);
         }
@@ -1177,7 +1280,7 @@ async fn update_section(
             params![&now, &artifact_id],
         )?;
 
-        let artifact = fetch_artifact_with_related(&tx, &artifact_id, &user_id)?.unwrap();
+        let artifact = fetch_artifact_with_related(&tx, &artifact_id, &viewer)?.unwrap();
         create_revision(
             &tx,
             &artifact_id,
@@ -1248,19 +1351,13 @@ async fn delete_section(
     Path((artifact_id, section_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
     let db = state.db.clone();
-    let user_id = user.user_id;
+    let viewer = Viewer::of(&user);
 
     let result = tokio::task::spawn_blocking(move || {
         let mut conn = db.connect()?;
         let tx = conn.transaction()?;
 
-        let exists: bool = tx
-            .query_row(
-                "SELECT 1 FROM artifacts WHERE id = ?1 AND user_id = ?2",
-                params![&artifact_id, &user_id],
-                |_row| Ok(true),
-            )
-            .unwrap_or(false);
+        let exists: bool = can_edit(&tx, &artifact_id, &viewer);
         if !exists {
             return Ok::<_, rusqlite::Error>(false);
         }
@@ -1287,7 +1384,7 @@ async fn delete_section(
             params![&now, &artifact_id],
         )?;
 
-        let artifact = fetch_artifact_with_related(&tx, &artifact_id, &user_id)?.unwrap();
+        let artifact = fetch_artifact_with_related(&tx, &artifact_id, &viewer)?.unwrap();
         create_revision(
             &tx,
             &artifact_id,
@@ -1323,5 +1420,182 @@ async fn delete_section(
             )
                 .into_response()
         }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PATCH /artifacts/:id/sharing
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, PartialEq)]
+enum SharingError {
+    NotFound,
+    NotOwner,
+    Invalid(&'static str),
+    NoOrganization,
+}
+
+/// Set who an artifact is shared with (owner only): `private`, or `org` with
+/// `view`/`edit` access for the owner's current organization.
+fn set_sharing(
+    conn: &rusqlite::Connection,
+    artifact_id: &str,
+    viewer: &Viewer,
+    visibility: &str,
+    access: Option<&str>,
+) -> Result<Result<(), SharingError>, rusqlite::Error> {
+    let Some(found) = artifact_access(conn, artifact_id, viewer)? else {
+        return Ok(Err(SharingError::NotFound));
+    };
+    if !found.owner {
+        return Ok(Err(SharingError::NotOwner));
+    }
+    let access = access.unwrap_or("view");
+    if !matches!(access, "view" | "edit") {
+        return Ok(Err(SharingError::Invalid("access must be view or edit")));
+    }
+    match visibility {
+        "private" => {
+            conn.execute(
+                "UPDATE artifacts SET visibility = 'private', org_id = NULL, org_access = ?2 WHERE id = ?1",
+                params![artifact_id, access],
+            )?;
+        }
+        "org" => {
+            let Some(org) = viewer.org_id.as_deref() else {
+                return Ok(Err(SharingError::NoOrganization));
+            };
+            conn.execute(
+                "UPDATE artifacts SET visibility = 'org', org_id = ?2, org_access = ?3 WHERE id = ?1",
+                params![artifact_id, org, access],
+            )?;
+        }
+        _ => return Ok(Err(SharingError::Invalid("visibility must be private or org"))),
+    }
+    Ok(Ok(()))
+}
+
+async fn update_sharing(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+    Json(body): Json<SharingBody>,
+) -> impl IntoResponse {
+    let db = state.db.clone();
+    let viewer = Viewer::of(&user);
+
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = db.connect()?;
+        match set_sharing(&conn, &id, &viewer, body.visibility.trim(), body.access.as_deref().map(str::trim))? {
+            Ok(()) => Ok::<_, rusqlite::Error>(Ok(fetch_artifact_with_related(&conn, &id, &viewer)?)),
+            Err(e) => Ok(Err(e)),
+        }
+    })
+    .await;
+
+    match result {
+        Ok(Ok(Ok(Some(artifact)))) => Json(json!({"artifact": artifact})).into_response(),
+        Ok(Ok(Ok(None))) | Ok(Ok(Err(SharingError::NotFound))) => {
+            (StatusCode::NOT_FOUND, Json(json!({"error": "Artifact not found"}))).into_response()
+        }
+        Ok(Ok(Err(SharingError::NotOwner))) => (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "Only the owner can change who it's shared with"})),
+        )
+            .into_response(),
+        Ok(Ok(Err(SharingError::Invalid(msg)))) => {
+            (StatusCode::BAD_REQUEST, Json(json!({"error": msg}))).into_response()
+        }
+        Ok(Ok(Err(SharingError::NoOrganization))) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "You're not in an organization, so there's no one to share with"})),
+        )
+            .into_response(),
+        Ok(Err(e)) => {
+            warn!("DB error updating sharing: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response()
+        }
+        Err(e) => {
+            warn!("DB task panicked: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal error"}))).into_response()
+        }
+    }
+}
+
+#[cfg(test)]
+mod sharing_tests {
+    use super::*;
+
+    fn db() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("../migrations/V1__baseline_schema.sql")).unwrap();
+        conn.execute_batch(include_str!("../migrations/V196__artifact_sharing.sql")).unwrap();
+        conn.execute(
+            "INSERT INTO artifacts (id, user_id, workspace_id, title, type) VALUES ('a1', 'owner', 'w', 'Field messaging', 'document')",
+            [],
+        )
+        .unwrap();
+        conn.execute("INSERT INTO users (id, email, name) VALUES ('owner', 'o@x.test', 'Jenn')", []).unwrap();
+        conn
+    }
+
+    fn who(user: &str, org: Option<&str>) -> Viewer {
+        Viewer { user_id: user.into(), org_id: org.map(Into::into) }
+    }
+
+    #[test]
+    fn private_artifacts_are_the_owners_alone() {
+        let conn = db();
+        assert_eq!(
+            artifact_access(&conn, "a1", &who("owner", Some("acme"))).unwrap(),
+            Some(Access { owner: true, can_edit: true })
+        );
+        assert_eq!(artifact_access(&conn, "a1", &who("teammate", Some("acme"))).unwrap(), None);
+        assert_eq!(artifact_access(&conn, "missing", &who("owner", None)).unwrap(), None);
+    }
+
+    #[test]
+    fn sharing_with_the_org_gives_members_view_or_edit_and_no_one_else() {
+        let conn = db();
+        let owner = who("owner", Some("acme"));
+        assert_eq!(set_sharing(&conn, "a1", &owner, "org", Some("view")).unwrap(), Ok(()));
+        assert_eq!(
+            artifact_access(&conn, "a1", &who("teammate", Some("acme"))).unwrap(),
+            Some(Access { owner: false, can_edit: false })
+        );
+        assert_eq!(artifact_access(&conn, "a1", &who("stranger", Some("other"))).unwrap(), None);
+        assert_eq!(artifact_access(&conn, "a1", &who("no-org", None)).unwrap(), None);
+
+        assert_eq!(set_sharing(&conn, "a1", &owner, "org", Some("edit")).unwrap(), Ok(()));
+        assert!(can_edit(&conn, "a1", &who("teammate", Some("acme"))));
+
+        let row = fetch_artifact_with_related(&conn, "a1", &who("teammate", Some("acme"))).unwrap().unwrap();
+        assert_eq!((row.visibility.as_str(), row.org_access.as_str()), ("org", "edit"));
+        assert!(!row.is_owner && row.can_edit);
+        assert_eq!(row.owner_name.as_deref(), Some("Jenn"));
+
+        assert_eq!(set_sharing(&conn, "a1", &owner, "private", None).unwrap(), Ok(()));
+        assert!(!can_read(&conn, "a1", &who("teammate", Some("acme"))));
+    }
+
+    #[test]
+    fn only_the_owner_changes_sharing_and_only_within_an_org() {
+        let conn = db();
+        let owner = who("owner", Some("acme"));
+        set_sharing(&conn, "a1", &owner, "org", Some("edit")).unwrap().unwrap();
+        assert_eq!(
+            set_sharing(&conn, "a1", &who("teammate", Some("acme")), "private", None).unwrap(),
+            Err(SharingError::NotOwner)
+        );
+        assert_eq!(
+            set_sharing(&conn, "a1", &who("stranger", Some("other")), "private", None).unwrap(),
+            Err(SharingError::NotFound)
+        );
+        assert_eq!(
+            set_sharing(&conn, "a1", &who("owner", None), "org", None).unwrap(),
+            Err(SharingError::NoOrganization)
+        );
+        assert!(matches!(set_sharing(&conn, "a1", &owner, "public", None).unwrap(), Err(SharingError::Invalid(_))));
+        assert!(matches!(set_sharing(&conn, "a1", &owner, "org", Some("admin")).unwrap(), Err(SharingError::Invalid(_))));
     }
 }
