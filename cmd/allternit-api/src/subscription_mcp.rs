@@ -29,7 +29,7 @@ use tracing::warn;
 
 use crate::auth::AuthUser;
 use crate::subscription_routes::{
-    acknowledged_version, forward, mint_human_action, provider_disclosure, DISCLOSURE_VERSION, HUMAN_ACTION_HEADER,
+    acknowledged_version, forward, mint_bound_human_action, provider_disclosure, DISCLOSURE_VERSION, HUMAN_ACTION_HEADER,
 };
 use crate::AppState;
 
@@ -104,6 +104,84 @@ fn tool_text(value: Value, is_error: bool) -> Value {
 
 fn provider_name(provider: &str) -> String {
     provider_disclosure(provider).map(|p| p.name.to_string()).unwrap_or_else(|| provider.to_string())
+}
+
+/// The task a subscription approval card confirms, exactly as it will be
+/// submitted. The card's text is built from it and the human action minted on
+/// approval is bound to its digest, so what the person reads is what runs.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CardTask {
+    pub capability: String,
+    pub provider: String,
+    pub prompt: String,
+    pub options: Value,
+}
+
+impl CardTask {
+    /// Read `{capability, provider, prompt, options?}` from a JSON object
+    /// (the card's `task`, a prepared task, or gizzi's ask metadata). None
+    /// when any of the three required fields is missing or blank: a card that
+    /// cannot show its prompt can never be approved into a task.
+    pub(crate) fn from_json(value: &Value) -> Option<Self> {
+        let field = |k: &str| value.get(k).and_then(Value::as_str).filter(|s| !s.trim().is_empty()).map(str::to_string);
+        Some(Self {
+            capability: field("capability")?,
+            provider: field("provider")?,
+            prompt: field("prompt")?,
+            options: match value.get("options") {
+                None | Some(Value::Null) => json!({}),
+                Some(v) => v.clone(),
+            },
+        })
+    }
+
+    pub(crate) fn to_json(&self) -> Value {
+        json!({"capability": self.capability, "provider": self.provider, "prompt": self.prompt, "options": self.options})
+    }
+
+    pub(crate) fn digest(&self) -> String {
+        crate::subscription_routes::task_digest(&self.capability, &self.provider, &self.prompt, Some(&self.options))
+    }
+
+    /// The card's headline. It carries the whole prompt because every
+    /// approval surface renders `summary` (the chat card, the companion chat,
+    /// bot capsules), and the person must see what is sent, not a title an
+    /// agent chose.
+    pub(crate) fn summary(&self) -> String {
+        let name = provider_name(&self.provider);
+        let mut out = format!(
+            "{} with your {name} subscription. {name} receives this prompt, exactly as written: \"{}\"",
+            capability_verb(&self.capability),
+            self.prompt
+        );
+        if self.options.as_object().map_or(false, |o| !o.is_empty()) {
+            out.push_str(&format!(" Options: {}.", self.options));
+        }
+        out
+    }
+}
+
+/// The task an approval card showed the person, or None when the card has
+/// no complete task or its headline is not the one built from that task
+/// (so the text the person approved and the task that would run differ).
+/// Only a task returned here may be approved into a human action.
+pub(crate) fn displayed_card_task(content: &str) -> Option<CardTask> {
+    let value: Value = serde_json::from_str(content).ok()?;
+    displayed_task(&value)
+}
+
+fn displayed_task(content: &Value) -> Option<CardTask> {
+    let task = CardTask::from_json(content.get("task")?)?;
+    (content.get("summary").and_then(Value::as_str) == Some(task.summary().as_str())).then_some(task)
+}
+
+/// Plain verb phrase for a capability, for approval cards.
+pub(crate) fn capability_verb(capability: &str) -> String {
+    TOOLS
+        .iter()
+        .find(|t| t.capability == capability)
+        .map(|t| t.verb.to_string())
+        .unwrap_or_else(|| format!("Run {capability}"))
 }
 
 pub async fn handle_rpc(
@@ -243,7 +321,7 @@ async fn tool_list(state: &Arc<AppState>, user: &AuthUser) -> Vec<Value> {
                     "type": "object",
                     "properties": {
                         "prompt": {"type": "string", "description": "What to make, in the user's words"},
-                        "title": {"type": "string", "description": "Short name shown on the approval card"},
+                        "title": {"type": "string", "description": "Short label for the task. The approval card shows the full prompt, not just this"},
                         "provider": {"type": "string", "enum": providers, "description": "Which subscription (default the first)"}
                     },
                     "required": ["prompt"]
@@ -307,20 +385,31 @@ async fn prepare(state: &Arc<AppState>, user: &AuthUser, tool: &CapabilityTool, 
         .take(80)
         .collect();
 
+    let task = CardTask {
+        capability: tool.capability.to_string(),
+        provider: provider.clone(),
+        prompt: prompt.to_string(),
+        options: json!({}),
+    };
     let approval_id = format!("subsprep_{}", uuid::Uuid::new_v4().simple());
+    // D16: the card shows the prompt that runs — `summary` carries it in full
+    // (the agent's `title` is only a label) — and `task` is what approval
+    // binds and submits.
     let content = json!({
         "kind": PREPARED_KIND,
         "actionId": approval_id,
         "sessionId": "",
         "riskLevel": "high",
-        "summary": format!("{} with your {name} subscription: \"{title}\"", tool.verb),
+        "summary": task.summary(),
         "details": {
             "actionType": "subscription",
-            "target": format!("{provider}: {}", tool.capability),
+            "target": format!("{provider}:{}", tool.capability),
+            "prompt": prompt,
             "consequence": format!("An agent prepared this. It runs on your {name} subscription on your Sessions computer only if you approve. Nothing has been sent to {name}."),
         },
         "requestedAt": chrono::Utc::now().to_rfc3339(),
-        "prepared": {"capability": tool.capability, "provider": provider, "prompt": prompt, "title": title},
+        "title": title,
+        "task": task.to_json(),
         "execution": Value::Null,
     });
     let db = state.db.clone();
@@ -345,7 +434,7 @@ async fn prepare(state: &Arc<AppState>, user: &AuthUser, tool: &CapabilityTool, 
         "approval_id": approval_id,
         "capability": tool.capability,
         "provider": provider,
-        "message": format!("Prepared. The user will see an approval card for \"{title}\"; it runs on {name} only if they approve. Check with task_status."),
+        "message": format!("Prepared. The user will see an approval card with the full prompt; it runs on {name} only if they approve. Check with task_status."),
     }))
 }
 
@@ -415,15 +504,12 @@ pub(crate) async fn execute_prepared(state: &Arc<AppState>, user: &AuthUser, app
     if !row.content["execution"].is_null() {
         return row.content["execution"].clone();
     }
-    let prepared = &row.content["prepared"];
-    let (Some(capability), Some(provider), Some(prompt)) = (
-        prepared["capability"].as_str(),
-        prepared["provider"].as_str(),
-        prepared["prompt"].as_str(),
-    ) else {
-        return json!({"error": "prepared task is malformed"});
+    let Some(task) = displayed_task(&row.content) else {
+        return json!({"error": "prepared_task_invalid", "detail": "The card does not show a complete task. Nothing was sent."});
     };
-    let action = match mint_human_action(&state.db, &user.user_id, "approval.confirm") {
+    // Bound to the task on the card: the forwarder refuses this action for
+    // any other prompt.
+    let action = match mint_bound_human_action(&state.db, &user.user_id, "approval.confirm", &task.digest()) {
         Ok((action, _)) => action,
         Err(e) => {
             warn!(error = %e, "subscription mcp: could not mint the human action");
@@ -435,10 +521,10 @@ pub(crate) async fn execute_prepared(state: &Arc<AppState>, user: &AuthUser, app
         headers.insert(HUMAN_ACTION_HEADER, v);
     }
     let body = json!({
-        "capability": capability,
-        "prompt": prompt,
-        "routing": {"provider": provider},
-        "options": {},
+        "capability": task.capability,
+        "prompt": task.prompt,
+        "routing": {"provider": task.provider},
+        "options": task.options,
         "priority": "normal",
         "idempotency_key": format!("mcp-{approval_id}"),
     });
@@ -718,6 +804,146 @@ mod tests {
         let reply = rpc(&app, "tools/call", json!({"name": "document_create", "arguments": {"prompt": "doc"}})).await;
         assert!(tool_result(&reply).1);
         assert_eq!(task_posts(&seen), 0);
+    }
+
+    /// POST /cowork/approvals as the given caller kind (None = no marker).
+    async fn decide(state: &Arc<AppState>, approval_id: &str, decision: &str, caller: Option<crate::auth::CallerKind>) -> (StatusCode, Value) {
+        let mut app = crate::cowork_routes::cowork_router().layer(Extension(user()));
+        if let Some(kind) = caller {
+            app = app.layer(Extension(kind));
+        }
+        let app = app.with_state(state.clone());
+        let req = Request::builder()
+            .method("POST")
+            .uri("/cowork/approvals")
+            .header("content-type", "application/json")
+            .header("x-allternit-user-id", USER)
+            .body(Body::from(json!({"actionId": approval_id, "decision": decision}).to_string()))
+            .unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        let status = res.status();
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    }
+
+    fn card(state: &Arc<AppState>, approval_id: &str) -> (Value, Option<String>) {
+        state
+            .db
+            .connect()
+            .unwrap()
+            .query_row(
+                "SELECT content, decision FROM cowork_approvals WHERE id = ?1",
+                params![approval_id],
+                |r| Ok((serde_json::from_str(&r.get::<_, String>(0)?).unwrap(), r.get(1)?)),
+            )
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn d16_the_card_shows_the_prompt_that_runs_not_the_agents_title() {
+        let (app, state, seen) = setup(true).await;
+        let secret = "Paste of the confidential board memo: revenue down 12%";
+        let reply = rpc(
+            &app,
+            "tools/call",
+            json!({"name": "presentation_create", "arguments": {"prompt": secret, "title": "Q3 summary"}}),
+        )
+        .await;
+        let approval_id = tool_result(&reply).0["approval_id"].as_str().unwrap().to_string();
+        let (content, _) = card(&state, &approval_id);
+        let summary = content["summary"].as_str().unwrap();
+        assert!(summary.contains(secret), "the card headline must carry the prompt: {summary}");
+        assert!(!summary.contains("Q3 summary"), "the agent's title is not the headline: {summary}");
+        assert_eq!(content["details"]["prompt"], secret);
+
+        let (status, body) = decide(&state, &approval_id, "approved", Some(crate::auth::CallerKind::Person)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let seen = seen.lock().unwrap();
+        let (_, _, sent) = seen.iter().find(|(m, p, _)| m == "POST" && p == "/v1/tasks").unwrap();
+        assert_eq!(sent["prompt"], secret, "what runs is what the card showed");
+    }
+
+    #[tokio::test]
+    async fn d16_an_agent_credential_cannot_approve_a_prepared_card() {
+        let (app, state, seen) = setup(true).await;
+        let reply = rpc(&app, "tools/call", json!({"name": "presentation_create", "arguments": {"prompt": "deck"}})).await;
+        let approval_id = tool_result(&reply).0["approval_id"].as_str().unwrap().to_string();
+
+        // The MCP client's own bearer (an agent credential), or a request with
+        // no caller marker at all, cannot approve.
+        for caller in [Some(crate::auth::CallerKind::Agent), None] {
+            let (status, body) = decide(&state, &approval_id, "approved", caller).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+            assert_eq!(body["error"], "person_required");
+        }
+        assert_eq!(task_posts(&seen), 0);
+        let minted: i64 = state
+            .db
+            .connect()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM subs_human_actions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(minted, 0, "a refused approval mints nothing");
+        // The card is still waiting for the person.
+        assert_eq!(card(&state, &approval_id).1, None);
+        let reply = rpc(&app, "tools/call", json!({"name": "task_status", "arguments": {"approval_id": approval_id}})).await;
+        assert_eq!(tool_result(&reply).0["status"], "pending_approval");
+
+        // The person approves it: it runs once.
+        let (status, body) = decide(&state, &approval_id, "approved", Some(crate::auth::CallerKind::Person)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["execution"]["task_id"], "task-9");
+        assert_eq!(task_posts(&seen), 1);
+    }
+
+    #[tokio::test]
+    async fn an_agent_credential_may_still_reject_a_card() {
+        let (app, state, seen) = setup(true).await;
+        let reply = rpc(&app, "tools/call", json!({"name": "presentation_create", "arguments": {"prompt": "deck"}})).await;
+        let approval_id = tool_result(&reply).0["approval_id"].as_str().unwrap().to_string();
+        let (status, _) = decide(&state, &approval_id, "rejected", Some(crate::auth::CallerKind::Agent)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(card(&state, &approval_id).1.as_deref(), Some("rejected"));
+        assert_eq!(task_posts(&seen), 0);
+    }
+
+    #[tokio::test]
+    async fn d16_a_gizzi_subscription_ask_cannot_be_approved_by_an_agent() {
+        let (_app, state, _seen) = setup(true).await;
+        // The row the agent-chat bridge writes for a tool-belt ask.
+        let content = crate::v1_routes::gizzi_permission_approval_content(&json!({
+            "id": "per_sub", "sessionID": "ses_1", "permission": "subscription",
+            "patterns": ["chatgpt:presentation.create"],
+            "metadata": {"capability": "presentation.create", "provider": "chatgpt", "prompt": "deck", "providerName": "ChatGPT"}
+        }));
+        state
+            .db
+            .connect()
+            .unwrap()
+            .execute(
+                "INSERT INTO cowork_approvals (id, user_id, content, source) VALUES ('per_sub', ?1, ?2, 'gizzi-permission')",
+                params![USER, content.to_string()],
+            )
+            .unwrap();
+        let (status, body) = decide(&state, "per_sub", "approved", Some(crate::auth::CallerKind::Agent)).await;
+        assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("person_required")));
+        assert_eq!(card(&state, "per_sub").1, None, "still pending");
+    }
+
+    #[test]
+    fn a_card_whose_headline_does_not_match_its_task_is_not_approvable() {
+        let task = CardTask {
+            capability: "image.generate".into(),
+            provider: "chatgpt".into(),
+            prompt: "a cat".into(),
+            options: json!({}),
+        };
+        let good = json!({"summary": task.summary(), "task": task.to_json()});
+        assert_eq!(displayed_card_task(&good.to_string()), Some(task.clone()));
+        let forged = json!({"summary": "Make an image with your ChatGPT subscription: \"a cat\"", "task": {"capability": "image.generate", "provider": "chatgpt", "prompt": "something else"}});
+        assert_eq!(displayed_card_task(&forged.to_string()), None);
+        assert_eq!(displayed_card_task(&json!({"summary": "x"}).to_string()), None);
+        assert_eq!(displayed_card_task("not json"), None);
     }
 
     #[tokio::test]

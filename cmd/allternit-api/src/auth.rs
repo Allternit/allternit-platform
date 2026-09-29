@@ -127,6 +127,39 @@ impl AuthConfig {
 
 // ─── Data Types ─────────────────────────────────────────────────────────────
 
+/// How a request authenticated, attached to request extensions next to
+/// [`AuthUser`] by [`auth_middleware`].
+///
+/// Subscription Fabric (HARDENING D16) needs this: a fabric task runs only
+/// after a *person* sends or confirms it, and an agent holding the user's
+/// delegated credential (an access token in an MCP config, a runtime device
+/// token, a service token) must not be able to perform that act for them.
+/// Routes that mint or spend a human action check [`CallerKind::is_person`].
+///
+/// - `Person`: an interactive app session — a Clerk session JWT, the desktop
+///   shell's bootstrap secret, the self-hosted setup wizard, or the local-app
+///   loopback fallback.
+/// - `Agent`: every delegated or machine credential — `at-…` access tokens,
+///   `allternit_access_…`/`allternit_admin_…` enterprise credentials,
+///   `allternit_runtime_…` device tokens, the internal service token, the
+///   desktop WebSocket token, and cloud-relayed data-plane JWTs (cloud-api does
+///   not yet mark which relays a person started, so they fail closed).
+///
+/// A request with no `CallerKind` extension (a route mounted outside
+/// `auth_middleware`, a test harness) counts as `Agent`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CallerKind {
+    Person,
+    Agent,
+}
+
+impl CallerKind {
+    /// True only when the request carried an interactive person session.
+    pub fn is_person(caller: Option<&axum::Extension<CallerKind>>) -> bool {
+        matches!(caller, Some(axum::Extension(CallerKind::Person)))
+    }
+}
+
 /// Authenticated user attached to request extensions
 #[derive(Clone, Debug)]
 pub struct AuthUser {
@@ -815,6 +848,7 @@ pub async fn auth_middleware(
         let headers = request.headers_mut();
         insert_user_headers(headers, &user);
         request.extensions_mut().insert(user);
+        request.extensions_mut().insert(CallerKind::Person);
         return next.run(request).await;
     }
 
@@ -828,6 +862,7 @@ pub async fn auth_middleware(
         let headers = request.headers_mut();
         insert_user_headers(headers, &user);
         request.extensions_mut().insert(user);
+        request.extensions_mut().insert(CallerKind::Person);
         return next.run(request).await;
     }
 
@@ -841,6 +876,7 @@ pub async fn auth_middleware(
         let headers = request.headers_mut();
         insert_user_headers(headers, &user);
         request.extensions_mut().insert(user);
+        request.extensions_mut().insert(CallerKind::Agent);
         return next.run(request).await;
     }
 
@@ -873,6 +909,7 @@ pub async fn auth_middleware(
                 let headers = request.headers_mut();
                 insert_user_headers(headers, &user);
                 request.extensions_mut().insert(user);
+                request.extensions_mut().insert(CallerKind::Agent);
                 return next.run(request).await;
             }
         }
@@ -927,6 +964,7 @@ pub async fn auth_middleware(
                     let headers = request.headers_mut();
                     insert_user_headers(headers, &user);
                     request.extensions_mut().insert(user);
+                    request.extensions_mut().insert(CallerKind::Agent);
                     next.run(request).await
                 }
                 Err(resp) => resp,
@@ -957,6 +995,7 @@ pub async fn auth_middleware(
                 Ok(Some(user)) => {
                     insert_user_headers(request.headers_mut(), &user);
                     request.extensions_mut().insert(user);
+                    request.extensions_mut().insert(CallerKind::Agent);
                     next.run(request).await
                 }
                 Ok(None) => AuthError::TokenDecode("Unknown, revoked, or expired access token".into()).into_response(),
@@ -981,6 +1020,7 @@ pub async fn auth_middleware(
                     }
                     insert_user_headers(request.headers_mut(), &user);
                     request.extensions_mut().insert(user);
+                    request.extensions_mut().insert(CallerKind::Agent);
                     request.extensions_mut().insert(credential);
                     return next.run(request).await;
                 }
@@ -1005,6 +1045,7 @@ pub async fn auth_middleware(
 
                 // Also attach to extensions for any middleware that needs it
                 request.extensions_mut().insert(user);
+                request.extensions_mut().insert(CallerKind::Person);
                 return next.run(request).await;
             }
             Err(e) => {
@@ -1036,6 +1077,7 @@ pub async fn auth_middleware(
         if let Some(user) = auth_user_from_desktop_ws_token(&state, request.uri()) {
             insert_user_headers(request.headers_mut(), &user);
             request.extensions_mut().insert(user);
+            request.extensions_mut().insert(CallerKind::Agent);
             return next.run(request).await;
         }
     }
@@ -1054,6 +1096,7 @@ pub async fn auth_middleware(
         let headers = request.headers_mut();
         insert_user_headers(headers, &user);
         request.extensions_mut().insert(user);
+        request.extensions_mut().insert(CallerKind::Person);
         return next.run(request).await;
     }
 
@@ -1109,6 +1152,7 @@ pub async fn optional_auth_middleware(
                 user.organization_id = organization_id;
             }
             request.extensions_mut().insert(user);
+            request.extensions_mut().insert(CallerKind::Person);
         }
     }
 

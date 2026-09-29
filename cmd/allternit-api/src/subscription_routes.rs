@@ -31,7 +31,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::warn;
 
-use crate::auth::AuthUser;
+use crate::auth::{AuthUser, CallerKind};
 use crate::computer_routes::{error_response, fetch_computer, ComputerStatus};
 use crate::AppState;
 
@@ -130,12 +130,34 @@ pub(crate) fn mint_human_action(
     user_id: &str,
     surface: &str,
 ) -> rusqlite::Result<(String, String)> {
+    mint_action(db, user_id, surface, None)
+}
+
+/// Mint a human action that can start only the task the person saw:
+/// `task_digest` is [`task_digest`] of the confirmed card's task. The
+/// forwarder refuses it for any other capability, provider, prompt or
+/// options. Use this for approval cards.
+pub(crate) fn mint_bound_human_action(
+    db: &crate::db::DbHandle,
+    user_id: &str,
+    surface: &str,
+    task_digest: &str,
+) -> rusqlite::Result<(String, String)> {
+    mint_action(db, user_id, surface, Some(task_digest))
+}
+
+fn mint_action(
+    db: &crate::db::DbHandle,
+    user_id: &str,
+    surface: &str,
+    task_digest: Option<&str>,
+) -> rusqlite::Result<(String, String)> {
     let action_id = format!("ha_{}", uuid::Uuid::new_v4().simple());
     let conn = db.connect()?;
     conn.execute(
-        "INSERT INTO subs_human_actions (action_id, user_id, surface, expires_at) \
-         VALUES (?1, ?2, ?3, datetime('now', ?4))",
-        params![action_id, user_id, surface, format!("+{HUMAN_ACTION_TTL_SECS} seconds")],
+        "INSERT INTO subs_human_actions (action_id, user_id, surface, expires_at, task_digest) \
+         VALUES (?1, ?2, ?3, datetime('now', ?4), ?5)",
+        params![action_id, user_id, surface, format!("+{HUMAN_ACTION_TTL_SECS} seconds"), task_digest],
     )?;
     let expires_at: String = conn.query_row(
         "SELECT expires_at FROM subs_human_actions WHERE action_id = ?1",
@@ -145,21 +167,57 @@ pub(crate) fn mint_human_action(
     Ok((action_id, expires_at))
 }
 
+/// The task a person confirmed, as one digest: SHA-256 over the canonical
+/// JSON of `[capability, provider, prompt, options]` (object keys sorted at
+/// every level; missing/null options count as `{}`). An approval card binds
+/// its human action to this, and the forwarder recomputes it from the body
+/// actually submitted.
+pub(crate) fn task_digest(capability: &str, provider: &str, prompt: &str, options: Option<&Value>) -> String {
+    use sha2::{Digest, Sha256};
+    let options = match options {
+        None | Some(Value::Null) => json!({}),
+        Some(v) => v.clone(),
+    };
+    let canonical = canonical_json(&json!([capability, provider, prompt, options]));
+    hex::encode(Sha256::digest(canonical.as_bytes()))
+}
+
+/// JSON text with object keys sorted at every level, independent of the
+/// `serde_json` map ordering feature.
+fn canonical_json(value: &Value) -> String {
+    match value {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let fields: Vec<String> = keys
+                .into_iter()
+                .map(|k| format!("{}:{}", Value::String(k.clone()), canonical_json(&map[k])))
+                .collect();
+            format!("{{{}}}", fields.join(","))
+        }
+        Value::Array(items) => format!("[{}]", items.iter().map(canonical_json).collect::<Vec<_>>().join(",")),
+        other => other.to_string(),
+    }
+}
+
 /// Consume `action_id` for one task submission. True when it belongs to the
-/// user, has not expired, and is unused — or was used by a retry of the same
-/// submission (same idempotency key).
+/// user, has not expired, is unused — or was used by a retry of the same
+/// submission (same idempotency key) — and, when it was minted on an approval
+/// card, `task_digest` matches the task that card showed.
 fn consume_human_action(
     db: &crate::db::DbHandle,
     user_id: &str,
     action_id: &str,
     idempotency_key: Option<&str>,
+    task_digest: &str,
 ) -> rusqlite::Result<bool> {
     let changed = db.connect()?.execute(
         "UPDATE subs_human_actions \
          SET consumed_at = COALESCE(consumed_at, datetime('now')), idempotency_key = COALESCE(idempotency_key, ?3) \
          WHERE action_id = ?1 AND user_id = ?2 AND expires_at > datetime('now') \
+           AND (task_digest IS NULL OR task_digest = ?4) \
            AND (consumed_at IS NULL OR (idempotency_key IS NOT NULL AND idempotency_key = ?3))",
-        params![action_id, user_id, idempotency_key],
+        params![action_id, user_id, idempotency_key, task_digest],
     )?;
     Ok(changed == 1)
 }
@@ -171,6 +229,18 @@ fn db_error(e: impl std::fmt::Display) -> Response {
 
 fn coded(status: StatusCode, body: Value) -> Response {
     (status, Json(body)).into_response()
+}
+
+/// 403 for a human act (minting or spending a human action, approving a
+/// subscription card) attempted with an agent's delegated credential.
+pub(crate) fn person_required() -> Response {
+    coded(
+        StatusCode::FORBIDDEN,
+        json!({
+            "error": "person_required",
+            "detail": "only a person signed in to the Allternit app can start or approve a subscription task; agents can only prepare one",
+        }),
+    )
 }
 
 // ── Status / binding ─────────────────────────────────────────────────────────
@@ -375,11 +445,20 @@ struct HumanActionRequest {
 /// POST /subscriptions/human-actions — for UI surfaces that start a fabric
 /// task directly (composer tools, Settings, approval cards). The chat send
 /// path mints its own inside allternit-api.
+///
+/// Only a person's app session can mint here (`CallerKind::Person`). An agent
+/// holding the user's delegated credential (an access token in its MCP
+/// config, a runtime device token) is refused: agents prepare tasks, people
+/// start them (D16).
 async fn post_human_action(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
+    caller: Option<Extension<CallerKind>>,
     Json(body): Json<HumanActionRequest>,
 ) -> Response {
+    if !CallerKind::is_person(caller.as_ref()) {
+        return person_required();
+    }
     let surface = body.surface.trim();
     if surface.is_empty() || surface.len() > 64 {
         return error_response(StatusCode::BAD_REQUEST, "surface must be 1-64 characters");
@@ -444,7 +523,7 @@ impl TaskRefusal {
             ),
             TaskRefusal::HumanActionInvalid => coded(
                 StatusCode::FORBIDDEN,
-                json!({"error": "human_action_invalid", "detail": "the human action is unknown, expired, another user's, or already used"}),
+                json!({"error": "human_action_invalid", "detail": "the human action is unknown, expired, another user's, already used, or was confirmed for a different task"}),
             ),
         }
     }
@@ -477,7 +556,13 @@ pub(crate) fn prepare_task_submission(
         .filter(|a| !a.is_empty())
         .ok_or(Ok(TaskRefusal::HumanActionRequired))?;
     let idempotency_key = task.get("idempotency_key").and_then(Value::as_str);
-    if !consume_human_action(db, user_id, action_id, idempotency_key).map_err(Err)? {
+    let digest = task_digest(
+        task.get("capability").and_then(Value::as_str).unwrap_or_default(),
+        &provider,
+        task.get("prompt").and_then(Value::as_str).unwrap_or_default(),
+        task.get("options"),
+    );
+    if !consume_human_action(db, user_id, action_id, idempotency_key, &digest).map_err(Err)? {
         return Err(Ok(TaskRefusal::HumanActionInvalid));
     }
     task.insert(
@@ -639,7 +724,11 @@ mod tests {
                 params![USER],
             )
             .unwrap();
-        let app = router().layer(Extension(user())).with_state(state.clone());
+        // The UI's session: a person.
+        let app = router()
+            .layer(Extension(user()))
+            .layer(Extension(CallerKind::Person))
+            .with_state(state.clone());
         (app, state, seen)
     }
 
@@ -811,6 +900,75 @@ mod tests {
         let (other, _) = mint_human_action(&state.db, "user-2", "chat.send").unwrap();
         let (status, _) = send(&app, "POST", "/subscriptions/gateway/v1/tasks", &[(HUMAN_ACTION_HEADER, &other)], task()).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn d16_an_agent_credential_cannot_mint_a_human_action() {
+        let (_app, state, _seen) = setup().await;
+        for caller in [Some(CallerKind::Agent), None] {
+            let mut app = router().layer(Extension(user()));
+            if let Some(kind) = caller {
+                app = app.layer(Extension(kind));
+            }
+            let app = app.with_state(state.clone());
+            let (status, body) =
+                send(&app, "POST", "/subscriptions/human-actions", &[], json!({"surface": "approval.confirm"})).await;
+            assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("person_required")), "{caller:?}");
+        }
+        let minted: i64 = state
+            .db
+            .connect()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM subs_human_actions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(minted, 0);
+    }
+
+    #[tokio::test]
+    async fn d16_a_card_bound_action_starts_only_the_task_the_card_showed() {
+        let (_app, state, _seen) = setup().await;
+        state
+            .db
+            .connect()
+            .unwrap()
+            .execute(
+                "INSERT INTO subs_disclosure_acks (user_id, provider, version) VALUES (?1, 'chatgpt', ?2)",
+                params![USER, DISCLOSURE_VERSION],
+            )
+            .unwrap();
+        let shown = task_digest("document.create", "chatgpt", "summarise the Q3 numbers", None);
+        let (action, _) = mint_bound_human_action(&state.db, USER, "approval.confirm", &shown).unwrap();
+        let submit = |prompt: &str, options: Value| {
+            json!({"capability": "document.create", "prompt": prompt, "routing": {"provider": "chatgpt"}, "options": options})
+                .to_string()
+                .into_bytes()
+        };
+        // A different prompt, capability, provider or options: refused, and
+        // the action is not burnt.
+        for body in [
+            submit("the pasted confidential file", json!({})),
+            submit("summarise the Q3 numbers", json!({"format": "pdf"})),
+            json!({"capability": "research.deep", "prompt": "summarise the Q3 numbers", "routing": {"provider": "chatgpt"}})
+                .to_string()
+                .into_bytes(),
+        ] {
+            assert_eq!(
+                prepare_task_submission(&state.db, USER, &body, Some(&action)).unwrap_err().unwrap(),
+                TaskRefusal::HumanActionInvalid
+            );
+        }
+        // The task that was shown (options {} and absent are the same).
+        assert!(prepare_task_submission(&state.db, USER, &submit("summarise the Q3 numbers", json!({})), Some(&action)).is_ok());
+    }
+
+    #[test]
+    fn task_digest_is_canonical() {
+        let a = task_digest("image.generate", "chatgpt", "a cat", Some(&json!({"size": "1024", "n": 1})));
+        let b = task_digest("image.generate", "chatgpt", "a cat", Some(&json!({"n": 1, "size": "1024"})));
+        assert_eq!(a, b);
+        assert_eq!(task_digest("x", "y", "z", None), task_digest("x", "y", "z", Some(&Value::Null)));
+        assert_eq!(task_digest("x", "y", "z", None), task_digest("x", "y", "z", Some(&json!({}))));
+        assert_ne!(task_digest("x", "y", "z", None), task_digest("x", "y", "z ", None));
     }
 
     #[tokio::test]

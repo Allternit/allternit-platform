@@ -202,7 +202,7 @@ async fn get_or_create_gizzi_session(
 /// raw gizzi fields the decide route needs to relay the decision back to the
 /// runtime (requestId) and the modal renders with (toolName, patterns,
 /// always, messageId).
-fn gizzi_permission_approval_content(props: &serde_json::Value) -> serde_json::Value {
+pub(crate) fn gizzi_permission_approval_content(props: &serde_json::Value) -> serde_json::Value {
     let permission = props
         .get("permission")
         .and_then(|v| v.as_str())
@@ -232,12 +232,22 @@ fn gizzi_permission_approval_content(props: &serde_json::Value) -> serde_json::V
         .unwrap_or("")
         .to_string();
 
-    // D16: a subscription task gets its own plain summary — the person is
-    // confirming work on their own subscription, not a generic tool call.
+    // D16: a subscription task is confirmed on what will actually be sent.
+    // The card text is built here from the task fields (never from a
+    // runtime-supplied summary or the model's title), carries the full
+    // prompt, and the task is stored so approving binds the human action to
+    // exactly it. An ask without a complete task cannot be approved into one
+    // (see cowork_routes::decide_approval).
     let subscription = permission == "subscription";
-    let summary = match metadata.get("summary").and_then(|v| v.as_str()) {
-        Some(s) if subscription && !s.trim().is_empty() => s.to_string(),
-        _ => format!("{} requested by {}", permission, tool_name),
+    let task = if subscription {
+        crate::subscription_mcp::CardTask::from_json(&metadata)
+    } else {
+        None
+    };
+    let summary = match (&task, subscription) {
+        (Some(task), _) => task.summary(),
+        (None, true) => "A subscription task was requested without the prompt it would send. It cannot run; reject it.".to_string(),
+        (None, false) => format!("{} requested by {}", permission, tool_name),
     };
     let consequence = if subscription {
         let provider = metadata.get("providerName").and_then(|v| v.as_str()).unwrap_or("your subscription");
@@ -246,22 +256,30 @@ fn gizzi_permission_approval_content(props: &serde_json::Value) -> serde_json::V
         "The agent is waiting on your approval to run this tool; the turn stays parked until you approve or reject.".to_string()
     };
 
-    json!({
+    let mut details = json!({
+        "actionType": permission,
+        "target": patterns.join(", "),
+        "consequence": consequence,
+    });
+    if let Some(task) = &task {
+        details["prompt"] = json!(task.prompt);
+    }
+    let mut content = json!({
         "actionId": request_id,
         "sessionId": session_id,
         "riskLevel": if subscription { "high" } else { "medium" },
         "summary": summary,
-        "details": {
-            "actionType": permission,
-            "target": patterns.join(", "),
-            "consequence": consequence,
-        },
+        "details": details,
         "toolName": tool_name,
         "patterns": patterns,
         "requestId": request_id,
         "always": always,
         "messageId": message_id,
-    })
+    });
+    if let Some(task) = &task {
+        content["task"] = task.to_json();
+    }
+    content
 }
 
 pub(crate) fn gizzi_base() -> String {
@@ -908,6 +926,7 @@ fn delta_route(part_type: &str) -> DeltaRoute {
 async fn agent_chat_bridge(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
+    caller: Option<Extension<crate::auth::CallerKind>>,
     headers: HeaderMap,
     body: Body,
 ) -> Response {
@@ -1168,7 +1187,14 @@ async fn agent_chat_bridge(
     // D16 — a send to a subscription (fabric) model is the human act behind
     // its task: mint the single-use action here, where the person pressed
     // send. gizzi hands it to the forwarder; nothing else can start the task.
-    let subscription_action = if provider_id.starts_with("subs-") {
+    // Only a person's app session counts as pressing send: a request made
+    // with an agent's delegated credential (access token, runtime device
+    // token) gets no action, so its fabric turn cannot start a task.
+    let is_person = crate::auth::CallerKind::is_person(caller.as_ref());
+    if provider_id.starts_with("subs-") && !is_person {
+        warn!(provider = %provider_id, "subscription chat send from an agent credential: no human action minted");
+    }
+    let subscription_action = if provider_id.starts_with("subs-") && is_person {
         let db = state.db.clone();
         let uid = user_id_for_record.clone();
         match tokio::task::spawn_blocking(move || {
@@ -2229,6 +2255,7 @@ mod tests {
 
     #[test]
     fn gizzi_permission_content_for_a_subscription_task_is_plain_and_high_risk() {
+        let secret = "Here is the whole pasted contract: clause 4 says ...";
         let content = gizzi_permission_approval_content(&json!({
             "id": "per_sub",
             "sessionID": "ses_1",
@@ -2236,15 +2263,52 @@ mod tests {
             "patterns": ["chatgpt:presentation.create"],
             "metadata": {
                 "toolName": "presentation.create",
+                "capability": "presentation.create",
+                "provider": "chatgpt",
                 "providerName": "ChatGPT",
+                "title": "Q3",
+                "prompt": secret,
+                // A runtime-supplied summary is never the headline.
                 "summary": "Create a presentation with your ChatGPT subscription: \"Q3\""
             }
         }));
-        assert_eq!(content["summary"], "Create a presentation with your ChatGPT subscription: \"Q3\"");
+        let summary = content["summary"].as_str().unwrap();
+        // D16: the person sees what is sent, not a title the model chose.
+        assert!(summary.starts_with("Create a presentation with your ChatGPT subscription."), "{summary}");
+        assert!(summary.contains(secret), "{summary}");
+        assert!(!summary.contains("\"Q3\""), "{summary}");
+        assert_eq!(content["details"]["prompt"], secret);
+        assert_eq!(content["task"]["prompt"], secret);
         assert_eq!(content["riskLevel"], "high");
         assert_eq!(content["details"]["actionType"], "subscription");
         assert!(content["details"]["consequence"].as_str().unwrap().contains("Nothing is sent to ChatGPT until you approve"));
         assert_eq!(content["requestId"], "per_sub");
+
+        // Approving binds the human action to this task: the digest is the
+        // one the forwarder computes from what the gizzi tool submits.
+        let task = crate::subscription_mcp::displayed_card_task(&content.to_string()).expect("approvable");
+        assert_eq!(
+            task.digest(),
+            crate::subscription_routes::task_digest("presentation.create", "chatgpt", secret, Some(&json!({})))
+        );
+        assert_ne!(
+            task.digest(),
+            crate::subscription_routes::task_digest("presentation.create", "chatgpt", "Q3", Some(&json!({})))
+        );
+    }
+
+    #[test]
+    fn a_subscription_ask_without_its_prompt_cannot_be_approved_into_a_task() {
+        let content = gizzi_permission_approval_content(&json!({
+            "id": "per_sub",
+            "permission": "subscription",
+            "patterns": ["chatgpt:presentation.create"],
+            "metadata": {"capability": "presentation.create", "provider": "chatgpt", "title": "Q3",
+                         "summary": "Create a presentation with your ChatGPT subscription: \"Q3\""}
+        }));
+        assert!(content["summary"].as_str().unwrap().contains("cannot run"));
+        assert!(content.get("task").is_none());
+        assert!(crate::subscription_mcp::displayed_card_task(&content.to_string()).is_none());
     }
 
     #[test]

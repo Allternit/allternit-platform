@@ -2213,6 +2213,7 @@ fn subscription_approval(content: &str) -> SubscriptionApproval {
 async fn decide_approval(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
+    caller: Option<Extension<crate::auth::CallerKind>>,
     headers: HeaderMap,
     body: Result<Json<ApprovalDecisionBody>, axum::extract::rejection::JsonRejection>,
 ) -> impl IntoResponse {
@@ -2273,6 +2274,11 @@ async fn decide_approval(
     let id_for_response = approval_id.clone();
     let label_for_response = decision_label.to_string();
     let approved = matches!(outcome, ApprovalOutcome::Approved);
+    // D16: approving a subscription card is the human act that starts a
+    // fabric task, so only a person's app session may do it. An agent holding
+    // the user's delegated credential (e.g. the access token in its MCP
+    // config) can reject or dismiss, never approve.
+    let person = crate::auth::CallerKind::is_person(caller.as_ref());
 
     let result = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
@@ -2300,10 +2306,25 @@ async fn decide_approval(
                 }
             })
             .optional()?;
+        if approved && !person {
+            if let Some((content, _)) = &prior {
+                if subscription_approval(content) != SubscriptionApproval::None {
+                    // Leave the card pending for the person.
+                    return Ok::<_, rusqlite::Error>(Err(()));
+                }
+            }
+        }
         let updated = apply_approval_decision(&conn, &approval_id, &outcome, &user_id)?;
-        Ok::<_, rusqlite::Error>((updated, prior))
+        Ok::<_, rusqlite::Error>(Ok((updated, prior)))
     })
     .await;
+
+    let result = match result {
+        Ok(Ok(Err(()))) => return crate::subscription_routes::person_required(),
+        Ok(Ok(Ok(decided))) => Ok(Ok(decided)),
+        Ok(Err(e)) => Ok(Err(e)),
+        Err(e) => Err(e),
+    };
 
     match result {
         Ok(Ok((0, _))) => (
@@ -2333,14 +2354,25 @@ async fn decide_approval(
                         // D16: a `subscription` ask carries back the human
                         // action minted here, where the person approved it —
                         // the only place a tool-belt task gets one.
+                        // It is bound to the task the card showed, so the
+                        // tool cannot submit a different prompt with it. A
+                        // card without a displayable task gets none (the tool
+                        // then sends nothing).
                         if approved && subscription == SubscriptionApproval::ToolAsk {
-                            match crate::subscription_routes::mint_human_action(
-                                &state.db,
-                                &auth_user.user_id,
-                                "approval.confirm",
-                            ) {
-                                Ok((action_id, _)) => relay["humanAction"] = json!(action_id),
-                                Err(e) => warn!(error = %e, "could not mint the subscription human action"),
+                            match crate::subscription_mcp::displayed_card_task(&content) {
+                                Some(task) => match crate::subscription_routes::mint_bound_human_action(
+                                    &state.db,
+                                    &auth_user.user_id,
+                                    "approval.confirm",
+                                    &task.digest(),
+                                ) {
+                                    Ok((action_id, _)) => relay["humanAction"] = json!(action_id),
+                                    Err(e) => warn!(error = %e, "could not mint the subscription human action"),
+                                },
+                                None => warn!(
+                                    approval_id = %id_for_response,
+                                    "subscription card does not show a complete task; no human action minted"
+                                ),
                             }
                         }
                         let gizzi = gizzi_base();
