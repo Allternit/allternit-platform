@@ -28,6 +28,7 @@ import {
   ComposerNotFilledError,
   composerDriftError,
   confirmSend,
+  readyToSend,
   fillComposer,
   pageShape,
   stalledError,
@@ -651,11 +652,16 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
     const userTurnsBefore = await countOf("user_turn");
     const repliesBefore = await countOf("response");
     await ctx.pacing.beforeAction();
+    const composerEl = await readyToSend(composer, task.prompt);
+    if (typeof composerEl === "string") {
+      yield { t: "error", error: composerDriftError(composerEl) };
+      return;
+    }
     await ctx.markSubmitted(null); // §A1: sent_unconfirmed BEFORE Send
-    await submit(page, resolver, { fallback: cfg.submitFallbackEnter ? "enter" : undefined });
+    const via = await submit(page, resolver, { fallback: cfg.submitFallbackEnter ? "enter" : undefined });
     // §A1: acknowledged only on ChatGPT's own evidence.
-    let threadId = await confirmSend(page, resolver, ctx, {
-      composer,
+    const ack = await confirmSend(page, resolver, ctx, {
+      composer: composerEl,
       prompt: task.prompt,
       threadUrlPattern: THREAD_URL_PATTERN,
       userTurnsBefore,
@@ -665,6 +671,8 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
       now,
       sleep,
     });
+    let threadId = ack.threadId;
+    const sendNote = `; sent by ${via}, ${ack.evidence ? `acknowledged by ${ack.evidence}` : "not acknowledged"}`;
     const url = page.url();
     yield {
       t: "submitted",
@@ -722,14 +730,14 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
       if (tracker.stalled(stallTimeoutS) && !imagesChangedRecently()) {
         yield {
           t: "error",
-          error: stalledError(ctx.attempt.submission_state, `no DOM change for ${stallTimeoutS}s${await pageShape(page)}`),
+          error: stalledError(ctx.attempt.submission_state, `no DOM change for ${stallTimeoutS}s${sendNote}${await pageShape(page)}`),
         };
         return;
       }
       if (now() - startedAt >= timeoutMs) {
         yield {
           t: "error",
-          error: timeoutError(ctx.attempt.submission_state, `no completion within ${timeoutMs}ms`),
+          error: timeoutError(ctx.attempt.submission_state, `no completion within ${timeoutMs}ms${sendNote}`),
         };
         return;
       }

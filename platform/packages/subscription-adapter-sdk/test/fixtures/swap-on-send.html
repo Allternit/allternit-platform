@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>fixture-web — composer swapped on send</title></head>
+  <body data-state="idle">
+    <header>
+      <div data-testid="fw-user-menu" class="fw-user-menu">fixture-user</div>
+    </header>
+    <main>
+      <div id="fw-transcript"></div>
+      <div
+        id="fw-composer"
+        data-testid="fw-composer"
+        role="textbox"
+        aria-label="Message fixture-web"
+        contenteditable="true"
+      ></div>
+      <textarea
+        id="fw-composer-textarea"
+        data-testid="fw-composer-textarea"
+        aria-label="Message fixture-web via plain text"
+      ></textarea>
+      <button id="fw-send" data-testid="fw-send" type="button">Send</button>
+    </main>
+    <script>
+      document.getElementById("fw-send").addEventListener("click", () => {
+        document.body.dataset.fwSubmitted = "click";
+        // Swap in a fresh, empty editor without sending (no turn, no URL):
+        // an empty composer here is not evidence of a send.
+        const old = document.getElementById("fw-composer");
+        const fresh = old.cloneNode(false);
+        old.replaceWith(fresh);
+      });
+    </script>
+  </body>
+</html>

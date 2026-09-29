@@ -160,6 +160,13 @@ describe("DeclarativeChatAdapter end-to-end (§A3.3, P2 verify)", () => {
     await page.close();
   });
 
+  it("a replaced composer is not evidence of a send: stays sent_unconfirmed", async () => {
+    const { marks, attempt, page } = await runAdapter("swap-on-send.html", { ackTimeoutMs: 300 });
+    expect(marks.map((m) => m.state)).toEqual(["sent_unconfirmed"]);
+    expect(attempt.submission_state).toBe("sent_unconfirmed");
+    await page.close();
+  });
+
   it("complete: full event sequence with reply events and markdown text", async () => {
     const { events, page } = await runAdapter("complete.html");
     const ts = types(events);
@@ -199,6 +206,8 @@ describe("DeclarativeChatAdapter end-to-end (§A3.3, P2 verify)", () => {
     expect(last.t).toBe("error");
     expect(last.error.class).toBe("stalled");
     expect(last.error.retryable).toBe(false); // submission_state = acknowledged
+    // The detail says how the send went, so live failures carry evidence.
+    expect(last.error.detail).toMatch(/sent by (click|enter), acknowledged by \w+/);
     await page.close();
   });
 
