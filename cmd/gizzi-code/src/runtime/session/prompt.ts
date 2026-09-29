@@ -26,6 +26,7 @@ import { Plugin } from "@/runtime/integrations/plugin"
 import PROMPT_PLAN from "@/runtime/session/prompt/plan.txt"
 import BUILD_SWITCH from "@/runtime/session/prompt/build-switch.txt"
 import MAX_STEPS from "@/runtime/session/prompt/max-steps.txt"
+import WRAP_UP from "@/runtime/session/prompt/wrap-up.txt"
 import { defer } from "@/shared/util/defer"
 import { ToolRegistry } from "@/runtime/tools/builtins/registry"
 import { MCP } from "@/runtime/tools/mcp"
@@ -65,6 +66,8 @@ import { isRoutineTurnText } from "@/runtime/bots/bot-routines"
 import { isMessageAgentSession, MessageAgentTool } from "@/runtime/tools/builtins/message-agent"
 import { SessionHandoff } from "@/runtime/session/handoff"
 import { SessionPause } from "@/runtime/session/pause"
+import { SessionLimit } from "@/runtime/session/limit"
+import type { QuotaWindow } from "@/runtime/providers/quota"
 import { Budget } from "@/runtime/session/budget"
 
 // @ts-ignore — suppress ai-sdk stdout warnings (see server.ts for details)
@@ -301,6 +304,12 @@ const message = await createUserMessage(input)
     return result
   })
 
+  /** The wrap-up instruction a turn gets once it crosses land_at. */
+  export function wrapUpReminder(window: { label: string; source: string; resetAt: string }): string {
+    const reset = new Date(window.resetAt).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit" })
+    return WRAP_UP.replace("{{limit}}", `the ${window.source} ${window.label.toLowerCase()} limit`).replace("{{reset}}", reset).trim()
+  }
+
   /** Hold this turn when the session is paused or about to hit a limit. */
   async function holdForLimit(session: Session.Info, model: PromptInput["model"]): Promise<boolean> {
     if (session.parentID) return false
@@ -313,15 +322,23 @@ const message = await createUserMessage(input)
     }
     const providerID = model?.providerID ?? session.defaultModel?.providerID
     if (!providerID) return false
-    const landing = await SessionPause.quotaLanding(providerID).catch(() => undefined)
-    if (!landing) return false
-    SessionPause.pause(session.id, { ...landing, providerID, reason: "quota" })
+    const modelID = model?.modelID ?? session.defaultModel?.modelID
+    // Also publishes "approaching" (or clears a reset window) for the limit strip.
+    const window = await SessionLimit.check(session, providerID, modelID).catch(() => undefined)
+    if (!window) return false
+    SessionPause.pause(
+      session.id,
+      { until: Date.parse(window.resetAt), limit: `${window.source} ${window.label.toLowerCase()} limit`, providerID, reason: "quota" },
+      { state: "paused", window },
+    )
     return true
   }
 
   /** A turn that ran into a limit pauses the session until it resets. */
   function afterTurnLimit(session: Session.Info, result: MessageV2.WithParts | undefined): boolean {
     if (session.parentID) return false
+    // Already landed by the loop's wrap-up.
+    if (SessionPause.scheduled(session.id)) return true
     const hit = SessionPause.limitFromTurn(result)
     if (!hit) return false
     const providerID = result?.info.role === "assistant" ? result.info.providerID : undefined
@@ -535,6 +552,10 @@ const message = await createUserMessage(input)
 
     let step = 0
     const session = await Session.get(sessionID)
+    // Usage-limit wrap-up: set once a step crosses land_at mid-turn.
+    let wrapUp:
+      | { left: number; done: boolean; providerID: string; window: QuotaWindow & { resetAt: string; source: string } }
+      | undefined
     while (true) {
       SessionStatus.set(sessionID, { type: "busy" })
       log.info("loop", { step, sessionID })
@@ -996,6 +1017,7 @@ const message = await createUserMessage(input)
       if (goalReminder) system.push(goalReminder)
       const validationReminder = ToolValidationRetry.reminder(sessionID)
       if (validationReminder) system.push(validationReminder)
+      if (wrapUp) system.push(wrapUpReminder(wrapUp.window))
 
       const activeGoalForDeadline = GoalEngine.getCurrentGoal(sessionID)
       const deadlineMs = activeGoalForDeadline?.state === "in_progress"
@@ -1047,6 +1069,27 @@ const message = await createUserMessage(input)
 
       // Check if model finished (finish reason is not "tool-calls" or "unknown")
       const modelFinished = processor.message.finish && !["tool-calls", "unknown"].includes(processor.message.finish)
+
+      // Usage limits (wrap-up): a turn that crosses land_at mid-task gets a
+      // few steps to finish what it is in the middle of, then lands instead
+      // of being cut off by the provider. Child sessions follow their parent.
+      if (!session.parentID && !processor.message.error && !abort.aborted) {
+        if (wrapUp) {
+          wrapUp.left--
+        } else {
+          const crossed = await SessionLimit.check(session, model.providerID, model.id).catch(() => undefined)
+          if (crossed) {
+            const { wrapUpSteps } = await SessionLimit.thresholds()
+            wrapUp = { left: wrapUpSteps, done: false, providerID: model.providerID, window: crossed }
+            SessionLimit.set(sessionID, SessionLimit.snapshot("wrapping_up", model.providerID, crossed, crossed.source), session.limit)
+            log.info("usage limit reached; wrapping up", { sessionID, window: crossed.id, usedRatio: crossed.usedRatio, steps: wrapUpSteps })
+          }
+        }
+        if (wrapUp && (modelFinished || wrapUp.left <= 0)) {
+          wrapUp.done = true
+          break
+        }
+      }
 
       if (processor.message.error) {
         await HookDispatcher.emit({
@@ -1158,6 +1201,16 @@ const message = await createUserMessage(input)
         })
       }
       continue
+    }
+    if (wrapUp) {
+      // Land: pause until the window resets. "wrapped" when the turn got to
+      // finish cleanly; "paused" when it was stopped (error, abort) mid wrap-up.
+      const { window } = wrapUp
+      SessionPause.pause(
+        sessionID,
+        { until: Date.parse(window.resetAt), limit: `${window.source} ${window.label.toLowerCase()} limit`, providerID: wrapUp.providerID, reason: "quota" },
+        { state: wrapUp.done ? "wrapped" : "paused", window },
+      )
     }
     SessionCompaction.prune({ sessionID })
     for await (const item of MessageV2.stream(sessionID)) {

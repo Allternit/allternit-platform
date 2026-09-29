@@ -12,6 +12,8 @@
  * loaded) simply means no pause.
  */
 import { SessionPause } from '@/runtime/session/pause.js'
+import { SessionLimit } from '@/runtime/session/limit.js'
+import { ProviderQuotas } from '@/runtime/providers/quota/index.js'
 import type { Message } from '../types/message.js'
 
 export type ReplPauseSuggestion = { providerID: string; modelID: string; label: string; headroom?: number }
@@ -80,3 +82,30 @@ export async function suggestionFor(providerID: string | undefined): Promise<Rep
 export const RESUME_GRACE_MS = 60_000
 
 export const CONTINUE_PROMPT = 'Continue where you left off.'
+
+/** A provider window past `limits.warn_at` (80%): the "Approaching usage limit" line. */
+export type ReplLimitWarning = {
+  providerID: string
+  /** e.g. "Kimi For Coding 5-hour limit". */
+  limit: string
+  usedRatio: number
+  /** Epoch ms when the window resets, when the provider says. */
+  resetAt?: number
+}
+
+/** The warning for this provider's tightest window, or undefined when under warn_at (or unreadable). */
+export async function approachingFor(providerID: string | undefined, modelID?: string): Promise<ReplLimitWarning | undefined> {
+  if (!providerID) return undefined
+  try {
+    const result = await ProviderQuotas.get(providerID)
+    if (result.status !== 'ok') return undefined
+    const reading = SessionLimit.classify(result.quota.windows, await SessionLimit.thresholds(), modelID)
+    if (reading.state !== 'approaching') return undefined
+    const w = reading.window
+    const limit = SessionLimit.snapshot('approaching', providerID, w, result.quota.source).label
+    const resetAt = w.resetAt ? Date.parse(w.resetAt) : undefined
+    return { providerID, limit, usedRatio: w.usedRatio, ...(resetAt ? { resetAt } : {}) }
+  } catch {
+    return undefined
+  }
+}

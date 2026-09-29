@@ -183,6 +183,8 @@ export type AppState = DeepImmutable<{
   // Paused before a usage limit (P3.17): the bar above the prompt; the
   // chat continues on its own at the reset (utils/limitPause.ts).
   replPause?: import('../utils/limitPause.js').ReplPause
+  // A provider window past limits.warn_at: "Approaching usage limit" above the prompt.
+  replLimitWarning?: import('../utils/limitPause.js').ReplLimitWarning
   // TODO (ashwin): see if we can use utility-types DeepReadonly for this
   mcp: {
     clients: MCPServerConnection[]

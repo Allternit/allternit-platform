@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Settings > Plans & Compute / Compute Billing parity.
 ///
-/// Displays the current plan, weekly usage, credits, and upgrade/buy-credits
+/// Displays the current plan, plan usage, credits, and upgrade/buy-credits
 /// actions (placeholders until the real purchase flow is wired).
 struct ComputeBillingView: View {
     @ObservedObject private var usageStore = UsageStore.shared
@@ -63,7 +63,7 @@ struct ComputeBillingView: View {
             } else if let snapshot = usageStore.snapshot, usageStore.percentUsed != nil {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text("Weekly usage")
+                        Text(usageStore.periodLabel)
                             .font(.subheadline)
                         Spacer()
                         if let percentText = usageStore.percentText {

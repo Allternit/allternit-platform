@@ -314,7 +314,7 @@ import exit from '../commands/exit/index';
 import { ExitFlow } from '../components/ExitFlow';
 import { getCurrentWorktreeSession } from '../utils/worktree';
 import { popAllEditable, enqueue, type SetAppState, getCommandQueue, getCommandQueueLength, removeByFilter } from '../utils/messageQueueManager';
-import { limitInTurn, providerOfModel, quotaLandingFor, suggestionFor } from '../utils/limitPause';
+import { approachingFor, limitInTurn, providerOfModel, quotaLandingFor, suggestionFor } from '../utils/limitPause';
 import { useLimitPauseResume } from '../hooks/useLimitPauseResume';
 import { PausedBar } from '../components/PromptInput/PausedBar';
 import { useCommandQueue } from '../hooks/useCommandQueue';
@@ -3439,6 +3439,10 @@ export function REPL({
           const hit = limitInTurn(messagesRef.current.slice(turnTelemetryBaselineRef.current?.messageCount ?? 0));
           if (hit) pauseFor(hit, 'limit_hit');
           else void quotaLandingFor(pauseProvider).then(landing => { if (landing) pauseFor(landing, 'quota'); });
+          // Past limits.warn_at, short of landing: "Approaching usage limit".
+          void approachingFor(pauseProvider, mainLoopModelParam ?? undefined).then(warning => {
+            setAppState(prev => prev.replLimitWarning === warning || (!prev.replLimitWarning && !warning) ? prev : { ...prev, replLimitWarning: warning });
+          });
         }
         // Clear the controller so CancelRequestHandler's canCancelRunningTask
         // reads false at the idle prompt. Without this, the stale non-aborted

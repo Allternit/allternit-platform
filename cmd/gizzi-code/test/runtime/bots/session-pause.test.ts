@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test"
 
 process.env.ALLTERNIT_API_TOKEN = "test-token"
-const { pausedOf, untilLabel, limitLabel, pausedLine, getSessionPaused, resumeSession } = await import(
+const { pausedOf, untilLabel, limitLabel, pausedLine, getSessionPaused, resumeSession, limitViewOf, limitLine, limitGlyph } = await import(
   "../../../src/runtime/bots/session-pause"
 )
 
@@ -65,5 +65,31 @@ describe("session pause API", () => {
       { method: "POST", path: "/api/v1/agent-sessions/s1/resume", body: {} },
       { method: "POST", path: "/api/v1/agent-sessions/s1/resume", body: { model: { providerID: "openrouter", modelID: "z-ai/glm-4.7-flash" } } },
     ])
+  })
+})
+
+describe("usage-limit strip copy (matches the web composer)", () => {
+  const now = new Date(2026, 8, 27, 9, 0).getTime() // Sun Sep 27 2026, 9:00 AM local
+  const resetAt = new Date(2026, 8, 27, 11, 55).getTime()
+  const limit = (state: string) => ({ state, providerID: "claude-cli", windowID: "5h", label: "5-hour limit", usedRatio: 0.84, resetAt, at: now })
+
+  test("approaching, wrapping up, wrapped", () => {
+    const approaching = limitViewOf({ limit: limit("approaching") }, now)!
+    expect(limitGlyph(approaching) + limitLine(approaching, now)).toBe("◔ Approaching usage limit · 84% of Claude 5-hour limit · Resets at 11:55 AM")
+    const wrapping = limitViewOf({ limit: limit("wrapping_up") }, now)!
+    expect(limitLine(wrapping, now)).toBe("Usage limit reached · Wrapping up · Resets at 11:55 AM")
+    const wrapped = limitViewOf({ limit: limit("wrapped"), paused: { until: resetAt, limit: "5-hour limit", providerID: "claude-cli", reason: "quota" } }, now)!
+    expect(wrapped.state).toBe("wrapped")
+    expect(limitGlyph(wrapped) + limitLine(wrapped, now)).toBe("✓ Wrapped up past your usage limit · Resets at 11:55 AM")
+  })
+
+  test("paused without a wrap-up keeps the pause line; nothing shows when ok or reset", () => {
+    const paused = limitViewOf({ limit: limit("paused"), paused: { until: resetAt, limit: "5-hour limit", providerID: "claude-cli", reason: "quota" } }, now)!
+    expect(limitLine(paused, now)).toBe("Paused until 11:55 AM · Claude 5-hour limit · resumes on its own")
+    expect(limitViewOf({ limit: null }, now)).toBeNull()
+    expect(limitViewOf({ limit: limit("ok") }, now)).toBeNull()
+    expect(limitViewOf({ limit: limit("approaching") }, resetAt + 1)).toBeNull()
+    // A wrapped state whose pause already lifted no longer shows.
+    expect(limitViewOf({ limit: limit("wrapped") }, now)).toBeNull()
   })
 })

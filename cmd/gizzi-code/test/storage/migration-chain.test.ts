@@ -119,7 +119,7 @@ describe("migration chain on a fresh DB (what startup runs)", () => {
     // Real columns added by later ALTER migrations
     expect(columns(sqlite, "project")).toContain("commands") // 20260211171708
     const sessionCols = columns(sqlite, "session")
-    for (const col of ["surface", "harness", "agent_id", "pinned", "permission_mode", "default_model", "source_harness", "source_session_id", "source_snapshot_hash", "source_export"]) {
+    for (const col of ["surface", "harness", "agent_id", "pinned", "permission_mode", "default_model", "source_harness", "source_session_id", "source_snapshot_hash", "source_export", "paused", "limit_state"]) {
       expect(sessionCols, `session.${col}`).toContain(col)
     }
     expect(columns(sqlite, "goal")).toContain("budget") // 20260718120100

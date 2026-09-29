@@ -9,7 +9,7 @@ struct SettingsView: View {
     @EnvironmentObject private var authManager: AuthManager
     @EnvironmentObject private var modeStore: AppModeStore
     @ObservedObject private var settings = SettingsStore.shared
-    /// Weekly usage meter (Phase 5) backing the Usage section.
+    /// Plan usage meter (Phase 5) backing the Usage section.
     @ObservedObject private var usageStore = UsageStore.shared
     /// Response-style preferences (Agent section) — backed by
     /// `GET/PUT /api/v1/agent-preferences`, not UserDefaults.
@@ -342,7 +342,7 @@ struct SettingsView: View {
 
     // MARK: - Usage
 
-    /// Weekly usage + credits (ChatGPT "Usage and limits" parity, Phase 5).
+    /// Plan usage (monthly for Allternit Cloud) + credits (ChatGPT "Usage and limits" parity, Phase 5).
     /// When the backend reports metering as not configured (UsageStore is
     /// `.unavailable` — never fake numbers) the section shows the backend's
     /// message as plain text.
@@ -355,7 +355,7 @@ struct SettingsView: View {
             if let snapshot = usageStore.snapshot, usageStore.percentUsed != nil {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text("Weekly usage")
+                        Text(usageStore.periodLabel)
                             .font(.subheadline)
                             .foregroundColor(Color("TextPrimary"))
                         Spacer()
