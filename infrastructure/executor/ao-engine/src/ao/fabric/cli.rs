@@ -212,7 +212,7 @@ async fn async_pair(
                 println!("Token expires: {}", session.expires_at);
                 println!();
                 println!(
-                    "Pick up sessions from the Fabric PWA: https://fabrictransport.allternit.com/?runtime={}",
+                    "Pick up sessions on your phone in Allternit Mobile: https://m.allternit.com/?runtime={}",
                     session.runtime_id
                 );
                 return 0;

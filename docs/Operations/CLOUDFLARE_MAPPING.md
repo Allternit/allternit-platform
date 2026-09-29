@@ -38,7 +38,7 @@ Without it, `release-desktop.yml` cannot bundle the workspace UI.
 | **allternit-docs** | docs.allternit.com | `surfaces/docs/dist` (unzipped `export.zip`) | `.github/workflows/deploy-docs-cloudflare.yml` |
 | **allternit-office** | office.allternit.com | `surfaces/office.allternit.com/dist` | `.github/workflows/deploy-office-cloudflare.yml` |
 | **allternit-office-addins** | allternit-office-addins.pages.dev | office add-in `pages-deploy/` | `.github/workflows/deploy-cloudflare-pages.yml` |
-| **allternit-remote-control** | fabrictransport.allternit.com | Fabric Session PWA (moving to Gizziio/allternit-ai) | wrangler CLI / allternit-ai |
+| **allternit-remote-control** | m.allternit.com | Allternit Mobile, the phone PWA (formerly fabrictransport.allternit.com; source in Gizziio/allternit-ai) | wrangler CLI / allternit-ai |
 
 ### Deployed from Gizziio/allternit-ai (private) — not this repo
 

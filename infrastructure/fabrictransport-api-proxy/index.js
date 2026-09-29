@@ -1,9 +1,9 @@
 /**
- * Same-origin API + WebSocket proxy for the Fabric Transport PWA.
+ * Same-origin API + WebSocket proxy for Allternit Mobile (the phone PWA, formerly Fabric Transport).
  *
  * Live cloud-api CORS on mail may lag this hostname, so the browser cannot
- * always call https://api.allternit.com from fabrictransport.allternit.com.
- * This worker owns fabrictransport.allternit.com/api/* and forwards HTTP,
+ * always call https://api.allternit.com from m.allternit.com.
+ * This worker owns m.allternit.com/api/* and forwards HTTP,
  * SSE, and WebSocket upgrades to the control plane.
  *
  * Exception: /api/web-proxy is served HERE, not forwarded. The cloud-api is
@@ -72,7 +72,7 @@ export default {
 };
 
 function corsHeaders(request) {
-  const origin = request.headers.get("Origin") || "https://fabrictransport.allternit.com";
+  const origin = request.headers.get("Origin") || "https://m.allternit.com";
   return new Headers({
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Credentials": "true",

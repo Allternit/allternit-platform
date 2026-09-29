@@ -3,5 +3,7 @@ main = "index.js"
 compatibility_date = "2025-01-01"
 
 [[routes]]
-pattern = "fabrictransport.allternit.com/api/*"
+# Allternit Mobile (the phone PWA). fabrictransport.allternit.com was its old
+# name; that DNS record now points here as m.allternit.com.
+pattern = "m.allternit.com/api/*"
 zone_id = "5ebf34ee08d574ea107bbeb83395723a"
