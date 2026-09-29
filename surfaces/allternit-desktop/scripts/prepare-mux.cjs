@@ -17,6 +17,7 @@ const { spawnSync } = require('child_process');
 
 const desktopDir = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(desktopDir, '..', '..');
+const { cargoBinaryCandidates } = require('./cargo-target.cjs');
 const resourcesBin = path.join(desktopDir, 'resources', 'bin');
 const destName = process.platform === 'win32' ? 'allternit-mux.exe' : 'allternit-mux';
 const dest = path.join(resourcesBin, destName);
@@ -35,9 +36,8 @@ function alreadyStaged() {
 }
 
 function cargoCandidates() {
-  const releaseDir = path.join(repoRoot, 'target', 'release');
   return [
-    path.join(releaseDir, cargoName),
+    ...cargoBinaryCandidates(repoRoot, cargoName, { releaseOnly: true }),
     path.join(repoRoot, 'cmd', 'allternit-mux', 'target', 'release', cargoName),
   ];
 }

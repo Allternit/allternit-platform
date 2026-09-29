@@ -12,14 +12,12 @@ const path = require('path');
 
 const desktopDir = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(desktopDir, '..', '..');
+const { cargoBinaryCandidates } = require('./cargo-target.cjs');
 const resourcesBin = path.join(desktopDir, 'resources', 'bin');
 
 const binaryName = process.platform === 'win32' ? 'allternit-api.exe' : 'allternit-api';
 
-const candidates = [
-  path.join(repoRoot, 'target', 'release', binaryName),
-  path.join(repoRoot, 'target', 'debug', binaryName),
-];
+const candidates = cargoBinaryCandidates(repoRoot, binaryName);
 
 function log(message) {
   process.stdout.write(`[stage-api-binary] ${message}\n`);

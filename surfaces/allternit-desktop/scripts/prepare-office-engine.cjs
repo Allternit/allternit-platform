@@ -19,6 +19,7 @@ const path = require('node:path');
 
 const desktopDir = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(desktopDir, '..', '..');
+const { cargoBinaryCandidates } = require('./cargo-target.cjs');
 const serviceDir = path.join(repoRoot, 'services', 'office-engine');
 const outDir = path.join(desktopDir, 'resources', 'office-engine');
 
@@ -118,7 +119,7 @@ if (stagePackage('canvas')) {
 
 const xlsxName = process.platform === 'win32' ? 'allternit-xlsx-sidecar.exe' : 'allternit-xlsx-sidecar';
 const xlsxSrcCandidates = [
-  path.join(repoRoot, 'target', 'release', xlsxName),
+  ...cargoBinaryCandidates(repoRoot, xlsxName, { releaseOnly: true }),
   path.join(
     repoRoot,
     'packages',
