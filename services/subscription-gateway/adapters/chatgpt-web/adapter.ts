@@ -18,6 +18,7 @@ import {
 } from "@allternit/subscription-fabric-contracts";
 import {
   DeclarativeChatAdapter,
+  attachFiles,
   captureImages,
   createCompletionTracker,
   createHeartbeat,
@@ -28,6 +29,7 @@ import {
   submit,
   threadIdFromUrl,
   timeoutError,
+  waitForSendReady,
   type DeclarativeChatConfig,
   type SdkPageLease,
   type SdkSelectorResolver,
@@ -82,7 +84,8 @@ export function chatGPTWebConfig(
 }
 
 // §A2/Critical #2 — fingerprint of a provider-side user turn; mirrors the
-// gateway worker's promptFingerprint for a prompt-only task (no inputs).
+// gateway worker's promptFingerprint for a task whose only inputs are images
+// (attachments don't show up in the turn's text, so neither side hashes them).
 export function userTurnFingerprint(text: string): string {
   const normalized = text.replace(/\s+/g, " ").trim();
   return createHash("sha256").update(normalized + "\n").digest("hex");
@@ -526,7 +529,51 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
     }
 
     await ctx.pacing.beforeTask();
+    // Reference photos (e.g. photo → sprite) ride along as composer
+    // attachments through the image-only file input.
+    const images = task.inputs.flatMap((input, i) =>
+      input.type === "image"
+        ? [
+            {
+              name: `reference-${i + 1}.${input.mime_type.split("/")[1] === "jpeg" ? "jpg" : input.mime_type.split("/")[1]}`,
+              mimeType: input.mime_type,
+              buffer: Buffer.from(input.data_base64, "base64"),
+            },
+          ]
+        : []
+    );
+    if (images.length > 0) {
+      const uiChanged = (detail: string): AdapterEvent => ({
+        t: "error",
+        error: {
+          class: "provider_ui_changed",
+          scope: "adapter",
+          retryable: false,
+          fallback_eligible: true,
+          cooldown_s: null,
+          user_action: null,
+          detail,
+          evidence_ref: null,
+        },
+      });
+      try {
+        await attachFiles(resolver, images, { key: "file_input_image" });
+      } catch {
+        yield uiChanged("reference image could not be attached (file_input_image)");
+        return;
+      }
+    }
     await fillComposer(page, resolver, task.prompt);
+    if (
+      images.length > 0 &&
+      !(await waitForSendReady(resolver, { timeoutMs: cfg.completion?.timeoutMs ?? 120000, now, sleep }))
+    ) {
+      yield {
+        t: "error",
+        error: timeoutError(ctx.attempt.submission_state, "reference image upload did not finish"),
+      };
+      return;
+    }
     await ctx.pacing.beforeAction();
     await ctx.markSubmitted(null); // §A1: sent_unconfirmed BEFORE Send
     await submit(page, resolver, { fallback: cfg.submitFallbackEnter ? "enter" : undefined });

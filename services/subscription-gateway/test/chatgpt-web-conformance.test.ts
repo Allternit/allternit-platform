@@ -382,6 +382,89 @@ describe("execute e2e against fixtures", () => {
     await page.close();
   }, 30000);
 
+  // Live UI shape (2026-09-29): three hidden file inputs in the composer
+  // form; uploading disables Send until the attachment chip lands.
+  function attachApp(withInputs: boolean): string {
+    const PNG =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    const inputs = withInputs
+      ? `<input type="file" multiple accept="image/*,video/*" hidden id="f1">
+         <input type="file" multiple accept="image/*" hidden id="f2">
+         <input type="file" multiple hidden id="f3">`
+      : "";
+    return `<main><div id="thread"></div>
+      <button aria-label="Open profile menu">me</button>
+      <form data-composer-body>
+        ${inputs}
+        <button type="button" aria-label="Add files and more" id="plus">+</button>
+        <span id="chips"></span><span id="files"></span>
+        <div role="textbox" aria-label="Ask ChatGPT" contenteditable="true"></div>
+        <button aria-label="Send" type="button" id="send">Send</button>
+      </form>
+      <div id="menu" hidden><div id="create">Create image</div></div></main>
+      <script>
+        plus.onclick = () => { menu.hidden = false; };
+        create.onclick = () => { menu.hidden = true; chips.innerHTML = '<button type="button" aria-label="Remove Create image">Create image</button>'; };
+        for (const input of document.querySelectorAll("input[type=file]")) {
+          input.onchange = () => {
+            send.disabled = true;
+            setTimeout(() => {
+              for (const f of input.files) files.insertAdjacentHTML("beforeend", '<span data-name="' + f.name + '" data-type="' + f.type + '" data-size="' + f.size + '" data-input="' + input.id + '"></span>');
+              send.disabled = false;
+            }, 200);
+          };
+        }
+        send.onclick = () => {
+          if (send.disabled) return;
+          document.body.dataset.sentWith = String(files.children.length);
+          thread.innerHTML = '<div data-user-message-bubble="true">p</div><div data-conversation-role="assistant"></div>';
+          setTimeout(() => {
+            const bytes = Uint8Array.from(atob("${PNG}"), (c) => c.charCodeAt(0));
+            const src = URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
+            thread.querySelector("[data-conversation-role]").innerHTML =
+              '<div data-testid="generated-image-gallery"><button data-testid="generated-image-preview"><img alt="Generated image 1" src="' + src + '"></button></div>';
+            send.remove();
+          }, 150);
+        };
+      </script>`;
+  }
+  const PHOTO = { type: "image" as const, mime_type: "image/jpeg" as const, data_base64: Buffer.from("jpeg-bytes").toString("base64") };
+
+  it("image.generate with a reference photo: attaches via the image-only input, waits for upload, then sends", async () => {
+    const adapter = new ChatGPTWebAdapter({ freshChat: false }, FAST);
+    const page = await browser.newPage();
+    await page.route("https://chatgpt.com/**", (route) => route.fulfill({ contentType: "text/html", body: attachApp(true) }));
+    await page.goto("https://chatgpt.com/");
+    const { ctx } = makeCtx(page, adapter, makeAttempt());
+    const task = { ...makeTask("image.generate"), inputs: [PHOTO] };
+    const events: AdapterEvent[] = [];
+    for await (const e of adapter.execute(task, ctx)) events.push(e);
+    const kinds = events.map((e) => e.t);
+    expect(kinds).not.toContain("error");
+    expect(kinds.filter((k) => k === "artifact.ready")).toHaveLength(1);
+    const file = page.locator("#files span");
+    expect(await file.getAttribute("data-input")).toBe("f2");
+    expect(await file.getAttribute("data-type")).toBe("image/jpeg");
+    expect(await file.getAttribute("data-name")).toBe("reference-1.jpg");
+    expect(await file.getAttribute("data-size")).toBe("10");
+    expect(await page.evaluate(() => document.body.dataset.sentWith)).toBe("1");
+    await page.close();
+  }, 30000);
+
+  it("image.generate with a reference photo but no file input → provider_ui_changed, nothing sent", async () => {
+    const adapter = new ChatGPTWebAdapter({ freshChat: false }, FAST);
+    const page = await browser.newPage();
+    await page.route("https://chatgpt.com/**", (route) => route.fulfill({ contentType: "text/html", body: attachApp(false) }));
+    await page.goto("https://chatgpt.com/");
+    const { ctx } = makeCtx(page, adapter, makeAttempt());
+    const events: AdapterEvent[] = [];
+    for await (const e of adapter.execute({ ...makeTask("image.generate"), inputs: [PHOTO] }, ctx)) events.push(e);
+    const last = events[events.length - 1];
+    expect(last.t === "error" && last.error.class === "provider_ui_changed").toBe(true);
+    expect(await page.evaluate(() => document.body.dataset.sentWith)).toBeUndefined();
+    await page.close();
+  }, 30000);
+
   // Live UI shape (2026-09-28) for the image-chat policy: sidebar Projects
   // section, composer "+" → "Create image", images as blob: gallery tiles.
   const GEN_PNG =

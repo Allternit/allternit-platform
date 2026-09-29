@@ -109,8 +109,11 @@ export const taskAttemptSchema = z.object({
 });
 export type TaskAttempt = z.infer<typeof taskAttemptSchema>;
 
-// §S4 four-variant union. `file.path` must resolve (after realpath) under an
+// §S4 input union. `file.path` must resolve (after realpath) under an
 // allowlisted root per §A6 — that is a gateway runtime rule, not a schema rule.
+// `image` carries a small reference photo inline (base64, no data: prefix) for
+// image.generate — e.g. restyling a photo into a bot sprite. 4 MiB of base64
+// (~3 MiB of image) keeps it inside the gateway's JSON body limit.
 export const taskInputSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("artifact"), artifact_id: z.string() }),
   z.object({
@@ -125,6 +128,11 @@ export const taskInputSchema = z.discriminatedUnion("type", [
     content: z.string(),
   }),
   z.object({ type: z.literal("url"), url: z.string() }),
+  z.object({
+    type: z.literal("image"),
+    mime_type: z.enum(["image/png", "image/jpeg", "image/webp"]),
+    data_base64: z.string().min(1).max(4 * 1024 * 1024).regex(/^[A-Za-z0-9+/]+={0,2}$/),
+  }),
 ]);
 export type TaskInput = z.infer<typeof taskInputSchema>;
 

@@ -42,8 +42,8 @@ export type {
   StreamingGrowthWatcher,
 } from "./progress";
 
-export { fillComposer, submit } from "./composer";
-export type { SubmitOptions } from "./composer";
+export { attachFiles, fillComposer, submit, waitForSendReady } from "./composer";
+export type { AttachFile, SendReadyOptions, SubmitOptions } from "./composer";
 
 export { extractLastAssistantTurn } from "./extract";
 

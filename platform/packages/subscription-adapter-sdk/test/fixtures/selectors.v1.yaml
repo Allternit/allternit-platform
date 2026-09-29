@@ -47,3 +47,8 @@ progress:partial_artifacts:
   critical: false
   strategies:
     - { css: "img.fw-slide-thumb" }
+file_input_image:
+  critical: false
+  strategies:
+    - { css: "form input[type=file][accept='image/*']" }
+    - { css: "form input[type=file][accept*='image']" }

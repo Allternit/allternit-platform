@@ -84,6 +84,17 @@ export function tasksRouter(deps: GatewayDeps): Router {
       return;
     }
     const body = parsed.data;
+    // Only image.generate attaches reference images; anywhere else they'd be
+    // silently dropped, so refuse them up front.
+    const imageInputs = (body.inputs ?? []).filter((i) => i.type === "image").length;
+    if (imageInputs > 0 && body.capability !== "image.generate") {
+      res.status(400).json({ error: "invalid_task", detail: "image inputs are only supported for image.generate" });
+      return;
+    }
+    if (imageInputs > 4) {
+      res.status(400).json({ error: "invalid_task", detail: "at most 4 image inputs per task" });
+      return;
+    }
     const caller = callerOf(req);
     // D16 — no fabric task runs without a human act behind it. Bots, MCP and
     // schedules prepare tasks; the surface where a human confirms stamps this.

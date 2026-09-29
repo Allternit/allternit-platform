@@ -108,7 +108,8 @@ export function requireScope(...scopes: TokenScope[]): RequestHandler {
 export function createServer(deps: GatewayDeps): Express {
   const app = express();
   app.disable("x-powered-by");
-  app.use(express.json({ limit: "1mb" }));
+  // 5 MB: image.generate may carry a reference photo inline (base64).
+  app.use(express.json({ limit: "5mb" }));
   app.use(hostGuard());
   app.use(originGuard(deps.allowedOrigins ?? []));
 

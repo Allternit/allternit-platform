@@ -98,13 +98,14 @@ export const quotaPool: QuotaPool = {
   updated_at: "2026-01-01T00:00:00.000Z",
 };
 
-// A Task exercising every TaskInput variant (artifact, file, text, url).
+// A Task exercising every TaskInput variant (artifact, file, text, url, image).
 export const task: Task = {
   task_id: "task_example_01",
   idempotency_key: "idem_example_01",
   capability: "example.create" as Task["capability"],
   capability_version: 1,
   requester: { kind: "bot", id: "bot_example", bot_id: "bot_example" },
+  initiated_by: { kind: "human", user_id: "user_example", action_id: "action_example_01" },
   thread_id: "thread_example_01",
   project_id: null,
   parent_task_id: null,
@@ -114,6 +115,7 @@ export const task: Task = {
     { type: "file", path: "workspace/notes.txt", sha256: "a".repeat(64), size_bytes: 128 },
     { type: "text", name: "brief", content: "Keep it short." },
     { type: "url", url: "https://example.test/source" },
+    { type: "image", mime_type: "image/png", data_base64: "iVBORw0KGgo=" },
   ],
   options: { count: 3, format: "pptx" },
   routing: {

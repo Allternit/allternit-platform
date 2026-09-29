@@ -41,3 +41,33 @@ describe("task enqueue wiring", () => {
     expect(scheduler.size()).toBe(0);
   });
 });
+
+describe("image inputs", () => {
+  const photo = { type: "image", mime_type: "image/jpeg", data_base64: "/9j/AAAA" };
+  const post = (body: Record<string, unknown>) => {
+    const t = issueToken(deps.db, "caller-1", "test", ["tasks:submit", "tasks:read"]).token;
+    return request(deps.app)
+      .post("/v1/tasks")
+      .set("authorization", `Bearer ${t}`)
+      .send({ initiated_by: HUMAN, priority: "interactive", ...body });
+  };
+
+  it("accepts a reference photo on image.generate and keeps it on the task", async () => {
+    const res = await post({ capability: "image.generate", prompt: "sprite of this person", inputs: [photo] });
+    expect(res.status).toBe(201);
+    expect(res.body.inputs).toEqual([photo]);
+  });
+
+  it("refuses image inputs on other capabilities and more than four", async () => {
+    const chat = await post({ capability: "chat.create", prompt: "hi", inputs: [photo] });
+    expect(chat.status).toBe(400);
+    const many = await post({ capability: "image.generate", prompt: "x", inputs: Array(5).fill(photo) });
+    expect(many.status).toBe(400);
+  });
+
+  it("takes a ~1 MB photo (over the old 1 MB JSON limit)", async () => {
+    const big = { ...photo, data_base64: "A".repeat(1_400_000) };
+    const res = await post({ capability: "image.generate", prompt: "x", inputs: [big] });
+    expect(res.status).toBe(201);
+  });
+});

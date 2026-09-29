@@ -43,9 +43,12 @@ import type { WorkerSupervisor } from "./supervisor.js";
 
 export function promptFingerprint(task: Task): string {
   const normalized = task.prompt.replace(/\s+/g, " ").trim();
-  const inputHashes = task.inputs.map((i) =>
-    i.type === "file" ? i.sha256 : JSON.stringify(i)
-  );
+  // Image attachments are invisible in the provider's user-turn text, so they
+  // stay out of the fingerprint reconcile compares against (adapter
+  // userTurnFingerprint); idempotency_key dedupes resubmits instead.
+  const inputHashes = task.inputs
+    .filter((i) => i.type !== "image")
+    .map((i) => (i.type === "file" ? i.sha256 : JSON.stringify(i)));
   return createHash("sha256")
     .update(normalized + "\n" + inputHashes.join("\n"))
     .digest("hex");
