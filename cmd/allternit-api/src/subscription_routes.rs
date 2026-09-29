@@ -32,7 +32,7 @@ use std::time::Duration;
 use tracing::warn;
 
 use crate::auth::AuthUser;
-use crate::computer_routes::{error_response, fetch_computer, ComputerStatus};
+use crate::computer_routes::{error_response, fetch_computer, ComputerKind, ComputerStatus};
 use crate::AppState;
 
 /// Bump when the disclosure text changes: every user acknowledges again.
@@ -219,6 +219,18 @@ async fn get_binding(State(state): State<Arc<AppState>>, Extension(user): Extens
     }
 }
 
+/// D15: the fabric runtime never runs on the desktop the user works on (the
+/// host computer the app registered), and a bot's computer belongs to the bot.
+fn not_a_sessions_computer(computer: &crate::computer_routes::ComputerResponse) -> Option<&'static str> {
+    if computer.kind == ComputerKind::Local && computer.provider == "host" {
+        return Some("this is the desktop you work on; subscriptions run only on a separate Sessions computer");
+    }
+    if computer.bot_id.is_some() {
+        return Some("a bot's computer can't be the Sessions computer");
+    }
+    None
+}
+
 #[derive(Debug, Deserialize)]
 struct PutBindingRequest {
     computer_id: String,
@@ -247,6 +259,9 @@ async fn put_binding(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(response) => return response,
     };
+    if let Some(detail) = not_a_sessions_computer(&computer) {
+        return coded(StatusCode::CONFLICT, json!({"error": "sessions_computer_not_allowed", "detail": detail}));
+    }
     if computer.status != ComputerStatus::Running {
         return error_response(StatusCode::CONFLICT, "computer is not running");
     }
@@ -728,6 +743,40 @@ mod tests {
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(body["error"], "sessions_computer_not_bound");
         assert!(seen.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn d15_this_desktop_and_bot_computers_cannot_be_bound() {
+        let (app, state, seen) = setup().await;
+        state
+            .db
+            .connect()
+            .unwrap()
+            .execute_batch(&format!(
+                "INSERT INTO agents (id, user_id, name, model, provider, status, type)
+                 VALUES ('bot-1', '{USER}', 'Bot', 'allternit-fast', 'allternit', 'idle', 'worker');
+                 INSERT INTO computers (id, kind, provider, status, owner_type, owner_id, name, billing_source)
+                 VALUES ('computer-mac', 'local', 'host', 'running', 'user', '{USER}', 'Studio', 'free');
+                 INSERT INTO computers (id, kind, provider, status, owner_type, owner_id, bot_id, name, billing_source)
+                 VALUES ('computer-bot', 'cloud_desktop', 'incus', 'running', 'user', '{USER}', 'bot-1', 'Bot box', 'credits');"
+            ))
+            .unwrap();
+        for id in ["computer-mac", "computer-bot"] {
+            let (status, body) = send(
+                &app,
+                "PUT",
+                "/subscriptions/binding",
+                &[],
+                json!({"computer_id": id, "token": "gw-token"}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CONFLICT, "{id}: {body}");
+            assert_eq!(body["error"], "sessions_computer_not_allowed", "{id}");
+        }
+        // Refused before any request reaches a gateway, and nothing stored.
+        assert!(seen.lock().unwrap().is_empty());
+        let (_, body) = send(&app, "GET", "/subscriptions/binding", &[], Value::Null).await;
+        assert_eq!(body["bound"], false);
     }
 
     #[tokio::test]

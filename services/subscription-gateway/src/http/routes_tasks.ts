@@ -1,4 +1,5 @@
-// POST /v1/tasks, GET /v1/tasks/:id, POST /v1/tasks/:id/cancel.
+// POST /v1/tasks, GET /v1/tasks (read-only listing), GET /v1/tasks/:id,
+// POST /v1/tasks/:id/cancel.
 // Full worker execution is later phases: tasks persist as `queued` and a
 // `task.created` ledger event fanned out to the submitting caller.
 import { randomUUID } from "node:crypto";
@@ -11,6 +12,7 @@ import {
   taskConstraintsSchema,
   taskInputSchema,
   taskRoutingSchema,
+  taskStatusSchema,
   type Task,
 } from "@allternit/subscription-fabric-contracts";
 import { needsResolution, resolveForNewTask } from "../router/dispatch.js";
@@ -19,6 +21,7 @@ import {
   getTask,
   getTaskByIdempotency,
   insertTask,
+  listTaskSummaries,
   recordRouteRejections,
   updateTaskStatus,
 } from "../store/queries.js";
@@ -41,8 +44,38 @@ const submitTaskSchema = z.object({
   initiated_by: z.unknown().optional(),
 });
 
+const LIST_DEFAULT_LIMIT = 20;
+const LIST_MAX_LIMIT = 100;
+
+// GET /v1/tasks?status=needs_user,running&limit=20 — newest first. Read-only
+// summaries (no inputs/options/results) for Settings → Sessions Computer's
+// recent-tasks and needs-user lists. `status` is a comma-separated list.
+const listQuerySchema = z.object({
+  status: z
+    .string()
+    .optional()
+    .transform((raw) => (raw ? raw.split(",").map((s) => s.trim()).filter(Boolean) : []))
+    .pipe(z.array(taskStatusSchema)),
+  limit: z.coerce.number().int().min(1).max(LIST_MAX_LIMIT).default(LIST_DEFAULT_LIMIT),
+});
+
 export function tasksRouter(deps: GatewayDeps): Router {
   const router = Router();
+
+  router.get("/v1/tasks", requireScope("tasks:read"), (req: Request, res: Response) => {
+    const { status, limit } = req.query;
+    if (Array.isArray(status) || Array.isArray(limit) || typeof status === "object" || typeof limit === "object") {
+      res.status(400).json({ error: "invalid_query", detail: "status and limit may appear once" });
+      return;
+    }
+    const parsed = listQuerySchema.safeParse({ status, limit });
+    if (!parsed.success) {
+      res.status(400).json({ error: "invalid_query", detail: parsed.error.issues });
+      return;
+    }
+    const statuses = [...new Set(parsed.data.status)];
+    res.json({ tasks: listTaskSummaries(deps.db, { statuses, limit: parsed.data.limit }) });
+  });
 
   router.post("/v1/tasks", requireScope("tasks:submit"), (req: Request, res: Response) => {
     const parsed = submitTaskSchema.safeParse(req.body);
