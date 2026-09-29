@@ -185,6 +185,16 @@ describe("stall watchdog input (D11)", () => {
     expect(shape).toContain("data-message-author-role=user");
     expect(shape).toContain("data-turn=assistant");
     expect(shape).not.toContain("secret");
+
+    // Renamed markers: still described, still no text.
+    await page.setContent(
+      '<main><div data-user-message-bubble="true">secret prompt</div>' +
+        '<section data-reply-stream="assistant"><span>secret reply</span></section></main>'
+    );
+    const renamed = await pageShape(page);
+    expect(renamed).toContain("data-user-message-bubble=true");
+    expect(renamed).toContain("data-reply-stream=assistant");
+    expect(renamed).not.toContain("secret");
     await page.close();
   });
 
