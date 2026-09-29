@@ -102,7 +102,12 @@ pub fn llm_gateway_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/files", post(files::create_file).get(files::list_files))
         .route("/files/:id", get(files::get_file).delete(files::delete_file))
         .route("/images/generations", post(images::create_images))
-        .route("/images/edits", post(images::edit_images))
+        .route(
+            "/images/edits",
+            post(images::edit_images).layer(axum::extract::DefaultBodyLimit::max(
+                crate::media::handlers::MAX_IMAGE_GENERATE_BODY_BYTES,
+            )),
+        )
         .route("/images/variations", post(images::create_image_variations))
         .route("/embeddings", post(embeddings::create_embeddings))
         .route("/estimates/tokens", post(estimation::estimate_tokens))

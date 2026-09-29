@@ -543,12 +543,13 @@ pub async fn edit_gpt_images(
     key: &ProviderKey,
     prompt: &str,
     reference_data_url: &str,
+    mask_data_url: Option<&str>,
     size: &str,
     quality: &str,
     n: u32,
 ) -> Result<Vec<ImageEntry>, String> {
     let base = key.base_or(OPENAI_DEFAULT_BASE);
-    let body = json!({
+    let mut body = json!({
         "model": "gpt-image-2",
         "prompt": prompt,
         "images": [{ "image_url": reference_data_url }],
@@ -556,6 +557,9 @@ pub async fn edit_gpt_images(
         "quality": quality,
         "n": n,
     });
+    if let Some(mask) = mask_data_url {
+        body["mask"] = json!({ "image_url": mask });
+    }
     let headers = bearer(&key.api_key);
     let (status, res) = transport
         .post_json(
