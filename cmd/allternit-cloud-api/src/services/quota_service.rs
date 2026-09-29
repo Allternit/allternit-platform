@@ -142,12 +142,12 @@ impl QuotaService {
             r#"
             SELECT
                 COUNT(DISTINCT COALESCE(
-                    LOWER(NULLIF(hostname, '')) || '|' || COALESCE(platform, ''),
+                    REGEXP_REPLACE(LOWER(NULLIF(hostname, '')), '\.local$', '') || '|' || COALESCE(platform, ''),
                     'device:' || id
                 )),
                 COALESCE(BOOL_OR(
                     $2::TEXT IS NOT NULL
-                    AND LOWER(NULLIF(hostname, '')) || '|' || COALESCE(platform, '') = $2
+                    AND REGEXP_REPLACE(LOWER(NULLIF(hostname, '')), '\.local$', '') || '|' || COALESCE(platform, '') = $2
                 ), FALSE)
             FROM runtime_devices
             WHERE user_id = $1 AND revoked_at IS NULL
@@ -829,6 +829,14 @@ mod tests {
             .check_active_device_cap("user_1", &quota, Some("joes-macbook"), Some("darwin-arm64"))
             .await
             .expect("same machine shares the slot");
+        sqlx::query("UPDATE runtime_devices SET hostname = 'Joes-MacBook.local' WHERE id = 'rt_desktop'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        service
+            .check_active_device_cap("user_1", &quota, Some("Joes-MacBook"), Some("darwin-arm64"))
+            .await
+            .expect("same machine shares the slot");
         // Another machine is over the cap.
         let other = service
             .check_active_device_cap("user_1", &quota, Some("vps-1"), Some("linux-x64"))
@@ -906,7 +914,11 @@ mod tests {
 /// (`lower(hostname)|platform`), or None without a hostname.
 pub(crate) fn machine_key(hostname: Option<&str>, platform: Option<&str>) -> Option<String> {
     let host = hostname.map(str::trim).filter(|h| !h.is_empty())?;
-    Some(format!("{}|{}", host.to_lowercase(), platform.unwrap_or("")))
+    // macOS reports "name.local" or plain "name" depending on the client;
+    // both are the same machine.
+    let host = host.to_lowercase();
+    let host = host.strip_suffix(".local").unwrap_or(&host);
+    Some(format!("{}|{}", host, platform.unwrap_or("")))
 }
 
 #[cfg(test)]
@@ -919,5 +931,7 @@ mod machine_key_tests {
         assert_ne!(machine_key(Some("a"), Some("darwin-arm64")), machine_key(Some("b"), Some("darwin-arm64")));
         assert_eq!(machine_key(Some("  "), Some("darwin-arm64")), None);
         assert_eq!(machine_key(None, None), None);
+        // Desktop paired as the mDNS name, gizzi sends the LocalHostName.
+        assert_eq!(machine_key(Some("joes-MacBook-Pro.local"), Some("darwin-arm64")), machine_key(Some("joes-MacBook-Pro"), Some("darwin-arm64")));
     }
 }
