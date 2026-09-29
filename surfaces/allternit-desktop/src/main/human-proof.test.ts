@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { applyDesktopHumanProof, applyDesktopHumanProofTo, stripDesktopHumanProof } from './human-proof.js';
+import {
+  applyDesktopHumanProof,
+  applyDesktopHumanProofTo,
+  stripDesktopHumanProof,
+  stripDesktopProofParam,
+  takeDesktopProofParam,
+} from './human-proof.js';
 
 const PROOF = 'desktop:secret';
 
@@ -32,5 +38,19 @@ describe('Desktop human proof (D16)', () => {
     const headers = new Headers({ 'X-Allternit-Human-Proof': 'desktop' });
     stripDesktopHumanProof(headers);
     expect(headers.has('X-Allternit-Human-Proof')).toBe(false);
+  });
+
+  it('reads and removes the URL marker (it survives the /api redirect)', () => {
+    const url = new URL('allternit-api://localhost/api/v1/cowork/approvals?x=1&allternit_person=desktop');
+    expect(takeDesktopProofParam(url)).toBe(true);
+    expect(url.search).toBe('?x=1');
+    const other = new URL('allternit-api://localhost/api/v1/x?allternit_person=guess');
+    expect(takeDesktopProofParam(other)).toBe(false);
+    expect(other.search).toBe('');
+  });
+
+  it('strips the URL marker from a relayed path', () => {
+    expect(stripDesktopProofParam('/api/v1/cowork/approvals?allternit_person=desktop')).toBe('/api/v1/cowork/approvals');
+    expect(stripDesktopProofParam('/api/v1/x?a=1')).toBe('/api/v1/x?a=1');
   });
 });
