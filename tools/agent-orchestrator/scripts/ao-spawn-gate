@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+# ao-spawn-gate — the spawn gate (audit S1) for every ao-spawn launch line.
+#
+# Sourced by ao-spawn (`. ao-spawn-gate; ao_gate <session> <workdir> <line>`),
+# or run directly: `ao-spawn-gate <session> <workdir> <line>` prints the gated
+# line on stdout.
+#
+# The ao engine's `ao spawn` (infrastructure/executor/ao-engine/src/cli/ao_gate.rs)
+# implements the same rules and must stay byte-for-byte identical: same gated
+# runner line, same stderr, same exit codes, same spawn-gate.log line. The
+# shared golden table lives at
+# infrastructure/executor/ao-engine/tests/ao_parity/gate_cases.tsv and is
+# checked against both implementations.
+#
+# Rules (policy from allternit-commrails `hook`, PR #965):
+#   claude / claude-code  hook     --dangerously-skip-permissions is rewritten to
+#                                  --permission-mode acceptEdits --settings <file>,
+#                                  where <file> comes from
+#                                  `allternit-commrails hook claude-settings` and
+#                                  carries the PreToolUse hook (hard floor + Gate 2).
+#                                  No bypass flag -> the same flags are inserted
+#                                  after the harness word. No commrails binary ->
+#                                  the spawn is refused.
+#   codex                 sandbox  --dangerously-bypass-approvals-and-sandbox is
+#                                  rewritten to the workspace-write sandbox flags;
+#                                  danger-full-access becomes workspace-write.
+#   anything else         ungated  line unchanged.
+# Every spawn appends "<ts> <session> gate=<gate> harness=<harness>" to
+# ~/.agent-orchestrator/logs/spawn-gate.log. With ALLTERNIT_COMMRAILS_WIH set,
+# a non-hook harness must pass `allternit-commrails hook spawn-check`.
+
+AO_GATE_WS=$' \t\n\v\f\r'
+AO_GATE_CLAUDE_BYPASS='--dangerously-skip-permissions'
+AO_GATE_CODEX_BYPASS='--dangerously-bypass-approvals-and-sandbox'
+AO_GATE_CODEX_FLAGS="-c 'sandbox_mode=\"workspace-write\"' -c 'approval_policy=\"never\"' -c sandbox_workspace_write.network_access=true"
+
+# ao_gate_sh_quote <word> — single-quote for /bin/sh.
+ao_gate_sh_quote() {
+  local q="'\\''"
+  printf "'%s'" "${1//\'/$q}"
+}
+
+# ao_gate_split <line> — sets AO_GATE_PREFIX (text through the harness word),
+# AO_GATE_REST (the remainder) and AO_GATE_HARNESS (lowercased basename).
+# Leading VAR=value words and env/exec/command/nohup wrappers are skipped.
+ao_gate_split() {
+  local s=$1 pre="" ws word base
+  AO_GATE_HARNESS=""
+  while :; do
+    ws=${s%%[!$AO_GATE_WS]*}
+    pre=$pre$ws
+    s=${s#"$ws"}
+    word=${s%%[$AO_GATE_WS]*}
+    [ -n "$word" ] || break
+    pre=$pre$word
+    s=${s#"$word"}
+    case "$word" in
+      env|exec|command|nohup) continue ;;
+    esac
+    if [[ $word =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then continue; fi
+    base=${word##*/}
+    AO_GATE_HARNESS=$(printf '%s' "$base" | LC_ALL=C tr '[:upper:]' '[:lower:]')
+    break
+  done
+  AO_GATE_PREFIX=$pre
+  AO_GATE_REST=$s
+}
+
+# ao_gate_replace_word <text> <word> <replacement> — replaces whole-word
+# occurrences (preceded by start/whitespace, followed by end/whitespace or one
+# of ; & | )). Sets AO_GATE_OUT and AO_GATE_N (replacements made).
+ao_gate_replace_word() {
+  local s=$1 w=$2 r=$3 out="" last="" before after pc nc
+  AO_GATE_N=0
+  while [[ $s == *"$w"* ]]; do
+    before=${s%%"$w"*}
+    after=${s#*"$w"}
+    if [ -n "$before" ]; then pc=${before: -1}; else pc=$last; fi
+    nc=${after:0:1}
+    out=$out$before
+    if { [ -z "$pc" ] || [[ $pc == [$AO_GATE_WS] ]]; } \
+       && { [ -z "$nc" ] || [[ $nc == [$AO_GATE_WS\;\&\|\)] ]]; }; then
+      out=$out$r
+      AO_GATE_N=$((AO_GATE_N + 1))
+    else
+      out=$out$w
+    fi
+    last=${w: -1}
+    s=$after
+  done
+  AO_GATE_OUT=$out$s
+}
+
+# ao_gate_class <harness> — hook | sandbox | ungated (commrails hook::harness_gate).
+ao_gate_class() {
+  case "$1" in
+    claude|claude-code) echo hook ;;
+    codex) echo sandbox ;;
+    *) echo ungated ;;
+  esac
+}
+
+# ao_gate_rewrite <line> <gate> <settings-file> — pure text rewrite, no I/O.
+# Sets AO_GATED_LINE and AO_GATE_NOTICE (empty when nothing was rewritten).
+ao_gate_rewrite() {
+  local line=$1 gate=$2 settings=$3 flags n=0 before
+  AO_GATE_NOTICE=""
+  case "$gate" in
+    hook)
+      flags="--permission-mode acceptEdits --settings $(ao_gate_sh_quote "$settings")"
+      ao_gate_replace_word "$line" "$AO_GATE_CLAUDE_BYPASS" "$flags"
+      line=$AO_GATE_OUT; n=$AO_GATE_N
+      local rewrote_main=$n
+      ao_gate_replace_word "$line" "--allow-dangerously-skip-permissions" ""
+      line=$AO_GATE_OUT; n=$((n + AO_GATE_N))
+      before=$line
+      line=${line//bypassPermissions/acceptEdits}
+      [ "$line" = "$before" ] || n=$((n + 1))
+      if [ "$rewrote_main" = 0 ] && [[ $line != *"$flags"* ]]; then
+        ao_gate_split "$line"
+        line="$AO_GATE_PREFIX $flags$AO_GATE_REST"
+      fi
+      [ "$n" = 0 ] || AO_GATE_NOTICE="spawn gate: rewrote claude permission bypass to --permission-mode acceptEdits --settings $settings (PreToolUse hook: hard floor + Gate 2)"
+      ;;
+    sandbox)
+      flags=$AO_GATE_CODEX_FLAGS
+      ao_gate_replace_word "$line" "$AO_GATE_CODEX_BYPASS" "$flags"
+      line=$AO_GATE_OUT; n=$AO_GATE_N
+      local rewrote_main=$n
+      before=$line
+      line=${line//danger-full-access/workspace-write}
+      [ "$line" = "$before" ] || n=$((n + 1))
+      if [ "$rewrote_main" = 0 ] && [[ $line != *"$flags"* ]]; then
+        ao_gate_split "$line"
+        line="$AO_GATE_PREFIX $flags$AO_GATE_REST"
+      fi
+      [ "$n" = 0 ] || AO_GATE_NOTICE="spawn gate: rewrote codex sandbox bypass to $flags"
+      ;;
+  esac
+  AO_GATED_LINE=$line
+}
+
+# ao_gate_bin — the allternit-commrails binary a hook runs, or empty.
+# $ALLTERNIT_COMMRAILS_BIN (must be a file), else allternit-commrails on PATH
+# (uhp-gateway spawn_gate::commrails_bin).
+ao_gate_bin() {
+  if [ -n "${ALLTERNIT_COMMRAILS_BIN:-}" ]; then
+    [ -f "$ALLTERNIT_COMMRAILS_BIN" ] && printf '%s' "$ALLTERNIT_COMMRAILS_BIN"
+    return 0
+  fi
+  local d IFS=:
+  for d in $PATH; do
+    [ -n "$d" ] || continue
+    if [ -f "$d/allternit-commrails" ]; then printf '%s' "$d/allternit-commrails"; return 0; fi
+  done
+  return 0
+}
+
+# ao_gate <session> <workdir> <line> — admit, prepare and rewrite one spawn.
+# On success sets AO_GATED_LINE, AO_GATE_CLASS, AO_GATE_HARNESS and prints any
+# rewrite notice on stderr. On refusal prints the reason and returns 1.
+ao_gate() {
+  local session=$1 workdir=$2 line=$3 bin root settings logdir reason
+  logdir="$HOME/.agent-orchestrator/logs"
+  ao_gate_split "$line"
+  local harness=$AO_GATE_HARNESS
+  AO_GATE_CLASS=$(ao_gate_class "$harness")
+  root=${ALLTERNIT_COMMRAILS_ROOT:-$HOME/.agent-orchestrator}
+  settings="$logdir/$session.claude-settings.json"
+
+  if [ "$AO_GATE_CLASS" = hook ] || [ -n "${ALLTERNIT_COMMRAILS_WIH:-}" ]; then
+    bin=$(ao_gate_bin)
+    if [ -z "$bin" ]; then
+      echo "error: spawn gate: allternit-commrails not found (set ALLTERNIT_COMMRAILS_BIN); refusing to run ${harness:-the agent} without its gate" >&2
+      return 1
+    fi
+  fi
+  if [ "$AO_GATE_CLASS" != hook ] && [ -n "${ALLTERNIT_COMMRAILS_WIH:-}" ]; then
+    if ! reason=$("$bin" --root "$root" hook spawn-check --harness "${harness:--}" --wih "$ALLTERNIT_COMMRAILS_WIH" 2>&1 >/dev/null); then
+      echo "error: spawn gate: $reason" >&2
+      return 1
+    fi
+  fi
+  if [ "$AO_GATE_CLASS" = hook ]; then
+    mkdir -p "$logdir"
+    if ! "$bin" --root "$root" hook claude-settings --workspace "$workdir" --out "$settings" >/dev/null 2>&1; then
+      echo "error: spawn gate: $bin hook claude-settings failed; refusing to run $harness without its gate" >&2
+      return 1
+    fi
+  fi
+
+  ao_gate_rewrite "$line" "$AO_GATE_CLASS" "$settings"
+  [ -z "$AO_GATE_NOTICE" ] || echo "$AO_GATE_NOTICE" >&2
+  mkdir -p "$logdir"
+  printf '%s %s gate=%s harness=%s\n' "$(date +%Y%m%d-%H%M%S)" "$session" "$AO_GATE_CLASS" "${harness:--}" \
+    >> "$logdir/spawn-gate.log" 2>/dev/null || true
+  AO_GATE_HARNESS=$harness
+  return 0
+}
+
+# Direct execution: `ao-spawn-gate <session> <workdir> <line>` or
+# `ao-spawn-gate --rewrite <line> <settings-file>` (pure rewrite, for tests).
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  set -uo pipefail
+  if [ "${1:-}" = "--rewrite" ]; then
+    [ $# -eq 3 ] || { echo "usage: ao-spawn-gate --rewrite <line> <settings-file>" >&2; exit 2; }
+    ao_gate_split "$2"
+    ao_gate_rewrite "$2" "$(ao_gate_class "$AO_GATE_HARNESS")" "$3"
+    [ -z "$AO_GATE_NOTICE" ] || echo "$AO_GATE_NOTICE" >&2
+    printf '%s' "$AO_GATED_LINE"
+    exit 0
+  fi
+  [ $# -eq 3 ] || { echo "usage: ao-spawn-gate <session> <workdir> <line>" >&2; exit 2; }
+  ao_gate "$1" "$2" "$3" || exit 1
+  printf '%s' "$AO_GATED_LINE"
+fi

@@ -401,7 +401,7 @@ impl Orchestrator {
         executors.push(probe_executor("kimi", "kimi", &["--yolo"], &[]).await);
         // Probe the flags the spawn gate actually launches with (see hook::gate_argv):
         // codex runs sandboxed, claude runs acceptEdits + a --settings PreToolUse hook.
-        executors.push(probe_executor("codex", "codex", &["--sandbox"], &["exec"]).await);
+        executors.push(probe_executor("codex", "codex", &["--config"], &["exec"]).await);
         executors.push(probe_executor("claude", "claude", &["--permission-mode", "--settings"], &["-p", "--permission-mode", "--settings"]).await);
         executors.push(probe_executor("agy", "agy", &["--dangerously-skip-permissions"], &[]).await);
 
@@ -483,15 +483,22 @@ fn sanitize_slug(slug: &str) -> String {
 }
 
 fn shell_escape(s: &str) -> String {
-    // Single-quote wrapping is sufficient for the values we inject.
-    format!("'{}'", s.replace('\\', "\\\\").replace('\'', "'\"'\"'"))
+    // POSIX single quotes: everything inside is literal, including
+    // backslashes (doubling them corrupted any argv with a `\`, e.g. an
+    // ao-spawn gated line that quotes a path with `'\''`). Only `'` needs
+    // closing, escaping and reopening.
+    format!("'{}'", s.replace('\'', "'\"'\"'"))
 }
 
 async fn tmux_has_session(session: &str) -> Result<bool> {
+    // Probe only: tmux's "can't find session" on stderr is the expected
+    // answer for a fresh slug, not an error to show the caller.
     let status = Command::new("tmux")
         .arg("has-session")
         .arg("-t")
         .arg(format!("={}:", session))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()
         .await?;
     Ok(status.success())
@@ -708,5 +715,17 @@ mod tests {
         assert_eq!(sanitize_slug("My Session"), "my-session");
         assert_eq!(sanitize_slug("foo_bar-1"), "foo_bar-1");
         assert_eq!(sanitize_slug("--trim--"), "trim");
+    }
+
+    #[test]
+    fn shell_escape_round_trips_through_sh() {
+        for word in ["plain", "it's", r"back\slash", r"sh -c 'a'\''b'", "$(nope) `x` \"q\""] {
+            let out = std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg(format!("printf %s {}", shell_escape(word)))
+                .output()
+                .expect("sh");
+            assert_eq!(String::from_utf8_lossy(&out.stdout), word);
+        }
     }
 }

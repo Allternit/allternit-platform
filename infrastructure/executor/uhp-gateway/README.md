@@ -56,3 +56,15 @@ The same classification and argv rewrite apply to
 `allternit-commrails orchestrator spawn [--wih <id>] ...`
 (`commrails/src/orchestrator`): it rewrites Claude's and Codex's bypass flags
 and refuses ungated harnesses (including `agy`) on a leased WIH.
+
+The agent-orchestrator `ao-spawn` shim and the ao engine's `ao spawn` /
+`ao recover --apply` apply the same classes to the shell launch line through
+`tools/agent-orchestrator/scripts/ao-spawn-gate` and its byte-for-byte engine
+mirror `infrastructure/executor/ao-engine/src/cli/ao_gate.rs` (parity:
+`infrastructure/executor/ao-engine/tests/ao_parity/gate_parity.sh` and
+`run.sh`). Claude's `--dangerously-skip-permissions` becomes
+`--permission-mode acceptEdits --settings <hook settings>`, codex's bypass
+becomes the `-c` sandbox flags above (the same flags `gate_argv` now emits),
+every other harness is logged `gate=ungated` in
+`~/.agent-orchestrator/logs/spawn-gate.log`, and a missing
+`allternit-commrails` binary refuses a Claude spawn.
