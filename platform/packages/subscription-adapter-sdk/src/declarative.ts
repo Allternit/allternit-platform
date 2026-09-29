@@ -347,38 +347,37 @@ const LIVE_SAMPLE_MS = 300;
  * person or the provider wrote. When a provider changes its markup this is
  * what shows which selectors stopped matching, straight from the task error.
  */
+const PAGE_SHAPE_SCRIPT = `(() => {
+  var root = document.querySelector("main") || document.body;
+  var known = root.querySelectorAll(
+    "[data-message-author-role],[data-conversation-role],[data-turn],[data-testid],[data-message-id],article,[role=article],[role=presentation]"
+  );
+  var all = known.length ? Array.prototype.slice.call(known) : Array.prototype.slice.call(root.querySelectorAll("*")).filter(function (el) {
+    return el.hasAttribute("role") || Array.prototype.some.call(el.attributes, function (a) { return a.name.indexOf("data-") === 0; });
+  });
+  var seen = {};
+  var out = [];
+  for (var i = 0; i < all.length && out.length < 40; i++) {
+    var el = all[i];
+    var parts = [el.tagName.toLowerCase()];
+    for (var j = 0; j < el.attributes.length; j++) {
+      var a = el.attributes[j];
+      if (a.name === "role" || a.name.indexOf("data-") === 0) parts.push(a.name + "=" + a.value.slice(0, 40));
+    }
+    var d = parts.join(" ");
+    if (seen[d]) continue;
+    seen[d] = true;
+    out.push(d);
+  }
+  return out.join(" | ");
+})()`;
+
 export async function pageShape(page: Page, max = 1200): Promise<string> {
   try {
-    const shape = await page.evaluate(() => {
-      const describe = (el: Element) =>
-        [
-          el.tagName.toLowerCase(),
-          ...Array.from(el.attributes)
-            .filter((a) => a.name === "role" || a.name.startsWith("data-"))
-            .map((a) => `${a.name}=${a.value.slice(0, 40)}`),
-        ].join(" ");
-      const root = document.querySelector("main") ?? document.body;
-      const seen = new Set<string>();
-      const out: string[] = [];
-      const known = root.querySelectorAll(
-        "[data-message-author-role],[data-conversation-role],[data-turn],[data-testid],[data-message-id],article,[role=article],[role=presentation]"
-      );
-      // Providers rename their markers; with none of the known ones present,
-      // describe whatever carries a data-* attribute or a role instead.
-      const candidates = known.length
-        ? Array.from(known)
-        : Array.from(root.querySelectorAll("*")).filter(
-            (el) => el.hasAttribute("role") || Array.from(el.attributes).some((a) => a.name.startsWith("data-"))
-          );
-      for (const el of candidates) {
-        const d = describe(el);
-        if (seen.has(d)) continue;
-        seen.add(d);
-        out.push(d);
-        if (out.length >= 40) break;
-      }
-      return out.join(" | ");
-    });
+    // A string, not a function: the gateway runs under tsx/esbuild, which
+    // wraps named inner functions in a __name() helper that doesn't exist in
+    // the provider's page (live: "ReferenceError: __name is not defined").
+    const shape = (await page.evaluate(PAGE_SHAPE_SCRIPT)) as string;
     return `; page shape: ${shape ? shape.slice(0, max) : "(no data-* or role elements)"}`;
   } catch (err) {
     return `; page shape unavailable: ${(err instanceof Error ? err.message : String(err)).slice(0, 120)}`;
