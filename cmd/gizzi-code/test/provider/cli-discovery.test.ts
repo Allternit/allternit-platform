@@ -4,7 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import { knownInstallPaths, SUBPROCESS_PROVIDERS } from "../../src/runtime/providers/discovery/subprocess"
 import type { Provider } from "../../src/runtime/providers/provider"
-import { cliModel } from "../../src/runtime/providers/cli-model"
+import { cliModel, stripProviderPrefix } from "../../src/runtime/providers/cli-model"
 
 function exe(file: string) {
   mkdirSync(path.dirname(file), { recursive: true })
@@ -66,5 +66,11 @@ describe("CLI models the built-in list doesn't have", () => {
     expect(cliModel(provider({ auth_type: undefined, subprocess_cmd: undefined }), "gpt-6-astra")).toBeUndefined()
     expect(cliModel(provider(), "openai/gpt-6")).toBeUndefined()
     expect(cliModel(provider(), "")).toBeUndefined()
+  })
+
+  test("a model id that repeats its provider names the model after it", () => {
+    expect(stripProviderPrefix("claude-cli", "claude-cli/claude-sonnet-5")).toBe("claude-sonnet-5")
+    expect(stripProviderPrefix("openrouter", "anthropic/claude-sonnet-4")).toBe("anthropic/claude-sonnet-4")
+    expect(stripProviderPrefix("claude-cli", "claude-sonnet-5")).toBe("claude-sonnet-5")
   })
 })

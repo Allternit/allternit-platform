@@ -21,3 +21,13 @@ export function cliModel(
   log?.info("cli model added", { providerID: provider.id, modelID })
   return model
 }
+
+/**
+ * "claude-cli" + "claude-cli/claude-sonnet-5": a client stored the whole
+ * catalog ref as the model id (every bot turn then failed with
+ * ProviderModelNotFoundError). The model it names is the part after the
+ * provider.
+ */
+export function stripProviderPrefix(providerID: string, modelID: string): string {
+  return modelID.startsWith(`${providerID}/`) ? modelID.slice(providerID.length + 1) : modelID
+}

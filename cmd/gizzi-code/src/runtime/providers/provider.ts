@@ -28,7 +28,7 @@ import { Discovery } from "@/runtime/providers/discovery"
 import { SubprocessLanguageModel } from "@/runtime/providers/adapters/loaders/subprocess"
 import { SubscriptionFabricLanguageModel } from "@/runtime/providers/fabric/language-model"
 import { isFabricProviderID } from "@/runtime/providers/fabric/client"
-import { cliModel } from "@/runtime/providers/cli-model"
+import { cliModel, stripProviderPrefix } from "@/runtime/providers/cli-model"
 import { tapRetryHint } from "@/runtime/providers/retry-hint"
 
 export namespace Provider {
@@ -776,6 +776,7 @@ export namespace Provider {
   }
 
   export async function getModel(providerID: string, modelID: string) {
+    modelID = stripProviderPrefix(providerID, modelID)
     const s = await state()
     const provider = s.providers[providerID]
     if (!provider) {
