@@ -2116,6 +2116,9 @@ struct ApprovalDecisionBody {
     /// Frontend sends `decision`; `action` is accepted as an alias.
     decision: Option<String>,
     action: Option<String>,
+    /// The person's answer to a provider question on a D16 subscription
+    /// card (relayed to the paused fabric task).
+    answer: Option<String>,
 }
 
 enum ApprovalOutcome {
@@ -2182,6 +2185,14 @@ fn extract_gizzi_request_id(content: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+enum DecideOutcome {
+    NotFound,
+    AnswerRequired,
+    /// Decided; relay `(gizzi request id, reply body)` when it answers a
+    /// live runtime ask for the first time.
+    Decided(Option<(String, serde_json::Value)>),
+}
+
 async fn decide_approval(
     State(state): State<Arc<AppState>>,
     Extension(_user): Extension<AuthUser>,
@@ -2244,6 +2255,7 @@ async fn decide_approval(
     let user_id = user.user_id;
     let id_for_response = approval_id.clone();
     let label_for_response = decision_label.to_string();
+    let answer = body.answer.clone();
 
     let result = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
@@ -2271,61 +2283,91 @@ async fn decide_approval(
                 }
             })
             .optional()?;
+        // What to relay to the runtime, decided before the row is closed: an
+        // approved subscription card mints its human action here (D16), and
+        // a provider question approved without an answer stays open.
+        let relay = match (gizzi_reply, prior.as_ref()) {
+            (Some(reply), Some((content, 0))) => match extract_gizzi_request_id(content) {
+                Some(request_id) => {
+                    let parsed: serde_json::Value =
+                        serde_json::from_str(content).unwrap_or(serde_json::Value::Null);
+                    match crate::subscription_routes::permission_reply_body(
+                        &db,
+                        &user_id,
+                        &parsed,
+                        reply,
+                        answer.as_deref(),
+                    ) {
+                        Ok(body) => Some((request_id, body)),
+                        Err(Ok(crate::subscription_routes::CardReplyRefusal::AnswerRequired)) => {
+                            return Ok(DecideOutcome::AnswerRequired);
+                        }
+                        Err(Err(e)) => return Err(e),
+                    }
+                }
+                None => None,
+            },
+            _ => None,
+        };
         let updated = apply_approval_decision(&conn, &approval_id, &outcome, &user_id)?;
-        Ok::<_, rusqlite::Error>((updated, prior))
+        if updated == 0 {
+            return Ok(DecideOutcome::NotFound);
+        }
+        Ok::<_, rusqlite::Error>(DecideOutcome::Decided(relay))
     })
     .await;
 
     match result {
-        Ok(Ok((0, _))) => (
+        Ok(Ok(DecideOutcome::NotFound)) => (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "approval not found"})),
         )
             .into_response(),
-        Ok(Ok((_, prior))) => {
+        Ok(Ok(DecideOutcome::AnswerRequired)) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "answer_required", "detail": "Type an answer to send to the provider, or reject the card."})),
+        )
+            .into_response(),
+        Ok(Ok(DecideOutcome::Decided(relay))) => {
             // Relay to the gizzi runtime when this decision answers one of
             // its permission asks. A 4xx means the ask is unanswerable
             // (unknown/expired request id) — surface that to the caller; a
             // transient transport failure only warns so a briefly unreachable
             // runtime never blocks the local decision.
-            if let (Some(reply), Some((content, dismissed))) = (gizzi_reply, prior) {
-                if dismissed == 0 {
-                    if let Some(request_id) = extract_gizzi_request_id(&content) {
-                        let gizzi = gizzi_base();
-                        let client = gizzi_client(&headers);
-                        match client
-                            .post(format!("{}/permission/{}/reply", gizzi, request_id))
-                            .json(&json!({ "reply": reply }))
-                            .send()
-                            .await
-                        {
-                            Ok(resp) if resp.status().is_success() => {}
-                            Ok(resp) => {
-                                let status = resp.status();
-                                warn!(
-                                    status = %status,
-                                    request_id = %request_id,
-                                    "gizzi rejected permission reply relay"
-                                );
-                                return (
-                                    StatusCode::BAD_GATEWAY,
-                                    Json(json!({
-                                        "error": format!(
-                                            "agent runtime rejected the permission reply ({})",
-                                            status
-                                        ),
-                                    })),
-                                )
-                                    .into_response();
-                            }
-                            Err(e) => {
-                                warn!(
-                                    error = %e,
-                                    request_id = %request_id,
-                                    "failed to relay permission reply to gizzi"
-                                );
-                            }
-                        }
+            if let Some((request_id, reply_body)) = relay {
+                let gizzi = gizzi_base();
+                let client = gizzi_client(&headers);
+                match client
+                    .post(format!("{}/permission/{}/reply", gizzi, request_id))
+                    .json(&reply_body)
+                    .send()
+                    .await
+                {
+                    Ok(resp) if resp.status().is_success() => {}
+                    Ok(resp) => {
+                        let status = resp.status();
+                        warn!(
+                            status = %status,
+                            request_id = %request_id,
+                            "gizzi rejected permission reply relay"
+                        );
+                        return (
+                            StatusCode::BAD_GATEWAY,
+                            Json(json!({
+                                "error": format!(
+                                    "agent runtime rejected the permission reply ({})",
+                                    status
+                                ),
+                            })),
+                        )
+                            .into_response();
+                    }
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            request_id = %request_id,
+                            "failed to relay permission reply to gizzi"
+                        );
                     }
                 }
             }

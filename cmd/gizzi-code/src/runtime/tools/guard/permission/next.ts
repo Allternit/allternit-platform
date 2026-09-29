@@ -90,6 +90,27 @@ export namespace PermissionNext {
   export const Reply = z.enum(["once", "always", "reject"])
   export type Reply = z.infer<typeof Reply>
 
+  /**
+   * Permission classes that always ask a person, in every mode — auto, yolo,
+   * bypassPermissions and GIZZI_SKIP_PERMISSIONS included — and are never
+   * remembered by an "always" reply. `subscription` gates Subscription Fabric
+   * work no one sent from the chat composer (a task an agent, tool or bot
+   * prepared; a provider's mid-task question): D16 makes each one a human act.
+   * Only a configured deny, plan mode or dontAsk (nobody there to ask) turn
+   * the ask into a refusal; nothing turns it into an approval.
+   */
+  export const ALWAYS_ASK = new Set(["subscription"])
+
+  /**
+   * What the person's reply carried beyond the decision. For `subscription`
+   * asks the platform relays the human action it minted when the person
+   * approved (`humanAction`) and their answer to a provider question.
+   */
+  export interface ReplyData {
+    humanAction?: string
+    answer?: string
+  }
+
   export const Mode = z.enum(["default", "manual", "plan", "acceptEdits", "dontAsk", "auto", "yolo", "bypassPermissions"])
   export type Mode = z.infer<typeof Mode>
 
@@ -122,7 +143,7 @@ export namespace PermissionNext {
       {
         info: Request
         ruleset: Ruleset
-        resolve: () => void
+        resolve: (data?: ReplyData) => void
         reject: (e: any) => void
       }
     > = {}
@@ -186,7 +207,7 @@ export namespace PermissionNext {
             sessionId: request.sessionID,
             payload: { tool: request.permission, patterns: request.patterns, requestID: id },
           })
-          return new Promise<void>((resolve, reject) => {
+          return new Promise<ReplyData | undefined>((resolve, reject) => {
             const info: Request = {
               id,
               ...request,
@@ -210,12 +231,27 @@ export namespace PermissionNext {
       requestID: Identifier.schema("permission"),
       reply: Reply,
       message: z.string().optional(),
+      /** Minted by allternit-api when a person approved a subscription card. */
+      humanAction: z.string().optional(),
+      /** The person's answer to a provider question (subscription asks). */
+      answer: z.string().optional(),
     }),
     async (input) => {
       const s = await state()
       const existing = s.pending[input.requestID]
       if (!existing) return
       delete s.pending[input.requestID]
+      // An always-ask class is never remembered: "always" counts as "once".
+      if (input.reply === "always" && ALWAYS_ASK.has(existing.info.permission)) {
+        input = { ...input, reply: "once" }
+      }
+      const data: ReplyData | undefined =
+        input.humanAction || input.answer !== undefined
+          ? {
+              ...(input.humanAction ? { humanAction: input.humanAction } : {}),
+              ...(input.answer !== undefined ? { answer: input.answer } : {}),
+            }
+          : undefined
       Bus.publish(Event.Replied, {
         sessionID: existing.info.sessionID,
         requestID: existing.info.id,
@@ -245,7 +281,7 @@ export namespace PermissionNext {
         return
       }
       if (input.reply === "once") {
-        existing.resolve()
+        existing.resolve(data)
         return
       }
       if (input.reply === "always") {
@@ -324,6 +360,8 @@ export namespace PermissionNext {
     const mode = input.mode ?? Flag.GIZZI_PERMISSION_MODE
     const skipPermissions = input.skipPermissions ?? Flag.GIZZI_SKIP_PERMISSIONS
 
+    if (ALWAYS_ASK.has(permission)) return alwaysAsk(permission, pattern, input.configured, mode)
+
     if (skipPermissions || mode === "bypassPermissions") {
       return { action: "allow", permission, pattern: "*" }
     }
@@ -374,6 +412,14 @@ export namespace PermissionNext {
     return { action: "ask", permission, pattern: "*" }
   }
 
+  /** Policy for an ALWAYS_ASK class: ask, or refuse — never allow. */
+  function alwaysAsk(permission: string, pattern: string, configured: Ruleset, mode: string | undefined): Rule {
+    const rule = lastMatch(permission, pattern, configured)
+    if (rule?.action === "deny") return rule
+    if (mode === "plan" || mode === "dontAsk") return { action: "deny", permission, pattern: "*" }
+    return { action: "ask", permission, pattern: "*" }
+  }
+
   function lastMatch(permission: string, pattern: string, ruleset: Ruleset): Rule | undefined {
     return ruleset.findLast(
       (rule) => Wildcard.match(permission, rule.permission) && Wildcard.match(pattern, rule.pattern),
@@ -382,6 +428,8 @@ export namespace PermissionNext {
 
   export function evaluate(permission: string, pattern: string, ...rulesets: Ruleset[]): Rule {
     const mode = Flag.GIZZI_PERMISSION_MODE
+
+    if (ALWAYS_ASK.has(permission)) return alwaysAsk(permission, pattern, merge(...rulesets), mode)
 
     // bypassPermissions: skip all permission checks entirely
     if (Flag.GIZZI_SKIP_PERMISSIONS || mode === "bypassPermissions") {
