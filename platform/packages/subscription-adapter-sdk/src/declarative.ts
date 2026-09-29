@@ -360,10 +360,17 @@ export async function pageShape(page: Page, max = 1200): Promise<string> {
       const root = document.querySelector("main") ?? document.body;
       const seen = new Set<string>();
       const out: string[] = [];
-      const candidates = root.querySelectorAll(
+      const known = root.querySelectorAll(
         "[data-message-author-role],[data-conversation-role],[data-turn],[data-testid],[data-message-id],article,[role=article],[role=presentation]"
       );
-      for (const el of Array.from(candidates)) {
+      // Providers rename their markers; with none of the known ones present,
+      // describe whatever carries a data-* attribute or a role instead.
+      const candidates = known.length
+        ? Array.from(known)
+        : Array.from(root.querySelectorAll("*")).filter(
+            (el) => el.hasAttribute("role") || Array.from(el.attributes).some((a) => a.name.startsWith("data-"))
+          );
+      for (const el of candidates) {
         const d = describe(el);
         if (seen.has(d)) continue;
         seen.add(d);
@@ -372,9 +379,9 @@ export async function pageShape(page: Page, max = 1200): Promise<string> {
       }
       return out.join(" | ");
     });
-    return shape ? `; page shape: ${shape.slice(0, max)}` : "";
-  } catch {
-    return "";
+    return `; page shape: ${shape ? shape.slice(0, max) : "(no data-* or role elements)"}`;
+  } catch (err) {
+    return `; page shape unavailable: ${(err instanceof Error ? err.message : String(err)).slice(0, 120)}`;
   }
 }
 
