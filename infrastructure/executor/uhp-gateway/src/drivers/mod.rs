@@ -60,19 +60,33 @@ impl DriverKind {
         }
     }
 
+    /// How this harness is held to Allternit policy (see `spawn_gate` and the
+    /// README table). Must agree with `allternit_commrails::hook::harness_gate`.
+    pub fn gate(&self) -> GateKind {
+        match self {
+            Self::Claude => GateKind::Hook,
+            Self::Codex => GateKind::Sandbox,
+            Self::Kimi | Self::Gemini | Self::Qwen | Self::OpenCode | Self::Cline | Self::Pi | Self::Dsh => {
+                GateKind::Ungated
+            }
+        }
+    }
+
     /// One-shot headless argv; the prompt rides a flag, never typed input.
     /// `resume` is the driver-native session ref captured from turn N-1.
     /// `model` is the final (already substituted) model, if any.
+    /// `claude_settings` is the spawn-gate hook settings file (Claude only).
     pub fn argv(
         &self,
         prompt: &str,
         model: Option<&str>,
         resume: Option<&str>,
         cwd: &Path,
+        claude_settings: Option<&Path>,
     ) -> Vec<String> {
         match self {
             Self::Kimi => kimi::argv(prompt, model, resume, cwd),
-            Self::Claude => claude::argv(prompt, model, resume, cwd),
+            Self::Claude => claude::argv(prompt, model, resume, cwd, claude_settings),
             Self::Codex => codex::argv(prompt, model, resume, cwd),
             Self::Gemini => gemini::argv(prompt, model, resume, cwd),
             Self::Qwen => qwen::argv(prompt, model, resume, cwd),
@@ -98,6 +112,18 @@ impl DriverKind {
             Self::Dsh => dsh::parse_line(line, state),
         }
     }
+}
+
+/// Spawn-gate classification of a harness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GateKind {
+    /// Allternit PreToolUse hook on every tool call (hard floor + Gate 2).
+    Hook,
+    /// No hook; the harness's own OS sandbox confines writes to the workspace.
+    Sandbox,
+    /// Vendor auto-approve flag, nothing in front of it. Refused on WIHs
+    /// that require lease coverage for writes.
+    Ungated,
 }
 
 /// Per-turn accumulation shared by all drivers.

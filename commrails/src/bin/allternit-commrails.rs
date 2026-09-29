@@ -102,6 +102,9 @@ enum Commands {
     /// Node-scoped wait-gates on WIH DAG nodes.
     #[command(subcommand, name = "wait-gate")]
     WaitGate(WaitGateCmd),
+    /// Spawn-gate hooks injected into third-party harnesses (Gate 2 + hard floor).
+    #[command(subcommand)]
+    Hook(HookCmd),
 }
 
 #[derive(Subcommand)]
@@ -150,6 +153,44 @@ enum WaitGateCmd {
     Pending {
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum HookCmd {
+    /// Claude Code PreToolUse hook: reads the hook JSON on stdin, prints a
+    /// deny decision (or nothing, to allow). Always exits 0; every internal
+    /// error is a deny, so a broken gate never fails open.
+    ClaudePretool {
+        /// WIH the spawned session is bound to. Without it only the hard floor applies.
+        #[arg(long, env = "ALLTERNIT_COMMRAILS_WIH")]
+        wih: Option<String>,
+        /// Harness label recorded on ledger events.
+        #[arg(long, default_value = "claude-code")]
+        harness: String,
+        /// Directory the harness works in (lease paths are relative to it).
+        /// Defaults to --root.
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+    },
+    /// Print the session-scoped Claude Code settings (for `claude --settings`).
+    ClaudeSettings {
+        #[arg(long, env = "ALLTERNIT_COMMRAILS_WIH")]
+        wih: Option<String>,
+        /// Directory the harness works in. Defaults to --root.
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+        /// Write to this file instead of stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Spawn admission: exit 0 when `harness` may run (bound to `wih` if
+    /// given), exit 3 with the reason on stderr when it must be refused.
+    SpawnCheck {
+        #[arg(long)]
+        harness: String,
+        #[arg(long)]
+        wih: Option<String>,
     },
 }
 
@@ -220,6 +261,10 @@ enum OrchestratorCmd {
         task_file: Option<PathBuf>,
         #[arg(long)]
         notes_sentinel: Option<PathBuf>,
+        /// Bind the session to a WIH: hooked harnesses (claude) enforce Gate 2
+        /// against it; unhooked harnesses are refused if its policy needs leased writes.
+        #[arg(long, env = "ALLTERNIT_COMMRAILS_WIH")]
+        wih: Option<String>,
     },
     /// Send data to a running executor session.
     Send {
@@ -383,7 +428,17 @@ enum LeaseCmd {
         wih_id: String,
         agent_id: String,
         paths: Vec<String>,
+        /// Lease TTL in seconds. (Was a positional after the variadic paths,
+        /// which clap rejects at runtime — every `lease request` panicked.)
+        #[arg(long)]
         ttl: Option<i64>,
+    },
+    /// Grant a requested lease (makes it count for Gate 2 coverage).
+    Grant {
+        lease_id: String,
+        /// Seconds until the grant expires.
+        #[arg(long, default_value_t = 3600)]
+        ttl: i64,
     },
     Release {
         lease_id: String,
@@ -873,6 +928,15 @@ async fn run() -> Result<()> {
                 let gate = stores.gate().await?;
                 let lease_id = gate.lease_request(&wih_id, &agent_id, paths, ttl).await?;
                 println!("lease_id: {lease_id}");
+            }
+            LeaseCmd::Grant { lease_id, ttl } => {
+                let lease_store = stores.leases().await?;
+                if lease_store.get(&lease_id).await?.is_none() {
+                    bail!("no lease {lease_id}");
+                }
+                let until = (Utc::now() + ChronoDuration::seconds(ttl)).to_rfc3339();
+                lease_store.grant(&lease_id, &until).await?;
+                println!("granted_until: {until}");
             }
             LeaseCmd::Release { lease_id } => {
                 let lease_store = stores.leases().await?;
@@ -1565,8 +1629,120 @@ async fn run() -> Result<()> {
                 }
             }
         },
+        Commands::Hook(cmd) => {
+            run_hook_command(&root, &stores, &ledger, cmd).await?;
+        }
     }
 
+    Ok(())
+}
+
+async fn run_hook_command(root: &Path, stores: &Stores, ledger: &Arc<Ledger>, cmd: HookCmd) -> Result<()> {
+    use allternit_commrails::hook;
+    match cmd {
+        HookCmd::ClaudePretool { wih, harness, workspace } => {
+            let lease_root = workspace.unwrap_or_else(|| root.to_path_buf());
+            // A panic would exit 101, which Claude Code treats as a
+            // non-blocking hook error (tool runs). Exit 2 blocks instead.
+            std::panic::set_hook(Box::new(|info| {
+                eprintln!("Allternit spawn gate: internal error (fail closed): {info}");
+                std::process::exit(2);
+            }));
+            let mut raw = String::new();
+            let read = tokio::io::stdin().read_to_string(&mut raw).await;
+            let home = std::env::var_os("HOME").map(PathBuf::from);
+            let parsed = read
+                .map_err(anyhow::Error::from)
+                .and_then(|_| serde_json::from_str::<Value>(&raw).map_err(anyhow::Error::from))
+                .and_then(|v| hook::HookRequest::from_json(&v));
+            let (req, decision) = match parsed {
+                Err(err) => (
+                    None,
+                    hook::Decision {
+                        verdict: hook::Verdict::Deny(format!("unreadable hook input (fail closed): {err}")),
+                        paths: Vec::new(),
+                    },
+                ),
+                Ok(req) => {
+                    let decision = match wih.as_deref() {
+                        None => hook::decide(&req, &lease_root, home.as_deref(), None).await,
+                        Some(wih_id) => match (stores.gate().await, stores.leases().await) {
+                            (Ok(gate), Ok(leases)) => {
+                                hook::decide(
+                                    &req,
+                                    &lease_root,
+                                    home.as_deref(),
+                                    Some(hook::WihBinding {
+                                        wih_id,
+                                        gate: &gate,
+                                        leases: &leases,
+                                    }),
+                                )
+                                .await
+                            }
+                            (Err(err), _) | (_, Err(err)) => hook::Decision {
+                                verdict: hook::Verdict::Deny(format!(
+                                    "Gate 2 unavailable for WIH {wih_id} (fail closed): {err}"
+                                )),
+                                paths: Vec::new(),
+                            },
+                        },
+                    };
+                    (Some(req), decision)
+                }
+            };
+            // Every WIH-bound decision and every denial is recorded. A ledger
+            // failure never flips a deny into an allow.
+            if wih.is_some() || decision.verdict.is_deny() {
+                let req_for_event = req.unwrap_or(hook::HookRequest {
+                    tool_name: "<unparsed>".to_string(),
+                    tool_input: Value::Null,
+                    cwd: None,
+                    session_id: None,
+                });
+                let event = hook::decision_event(&req_for_event, &harness, wih.as_deref(), &decision);
+                if let Err(err) = ledger.append(event).await {
+                    eprintln!("allternit spawn gate: ledger append failed: {err}");
+                }
+            }
+            if let Some(out) = hook::claude_hook_output(&decision.verdict) {
+                println!("{out}");
+            }
+        }
+        HookCmd::ClaudeSettings { wih, out, workspace } => {
+            let bin = std::env::current_exe().context("locating allternit-commrails")?;
+            let settings = hook::claude_settings(hook::HookTarget {
+                commrails_bin: &bin,
+                root,
+                workspace: workspace.as_deref(),
+                wih_id: wih.as_deref(),
+            });
+            let text = serde_json::to_string_pretty(&settings)?;
+            match out {
+                Some(path) => {
+                    fs::write(&path, &text).with_context(|| format!("writing {}", path.display()))?;
+                    println!("{}", path.display());
+                }
+                None => println!("{text}"),
+            }
+        }
+        HookCmd::SpawnCheck { harness, wih } => {
+            let policy = match wih.as_deref() {
+                Some(wih_id) => Some(hook::load_wih_policy(ledger, wih_id).await?),
+                None => None,
+            };
+            match hook::admit(&harness, policy.as_ref()) {
+                Ok(gate) => println!("admitted: {harness} ({})", gate.as_str()),
+                Err(reason) => {
+                    if let Some(wih_id) = wih.as_deref() {
+                        let _ = ledger.append(hook::spawn_refused_event(&harness, wih_id, &reason)).await;
+                    }
+                    eprintln!("{reason}");
+                    std::process::exit(3);
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1702,6 +1878,7 @@ async fn run_orchestrator_command(root: &Path, cmd: OrchestratorCmd) -> Result<(
             mode,
             task_file,
             notes_sentinel,
+            wih,
         } => {
             let result = orch
                 .spawn(SpawnOptions {
@@ -1713,6 +1890,7 @@ async fn run_orchestrator_command(root: &Path, cmd: OrchestratorCmd) -> Result<(
                     mode: &mode,
                     task_file: task_file.as_deref(),
                     notes_sentinel: notes_sentinel.as_deref(),
+                    wih: wih.as_deref(),
                 })
                 .await?;
             println!(

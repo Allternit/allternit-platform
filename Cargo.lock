@@ -566,6 +566,7 @@ dependencies = [
  "chrono",
  "clap",
  "hex",
+ "libc",
  "prost",
  "prost-types",
  "rand 0.8.6",
