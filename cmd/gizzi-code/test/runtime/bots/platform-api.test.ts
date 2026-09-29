@@ -58,5 +58,8 @@ describe("platform credentials", () => {
     expect(Pairing.desktopApprovalLink("ABCD-1234")).toBe("allternit://pair?code=ABCD-1234")
     process.env.GIZZI_PAIR_VIA = "browser"
     expect(Pairing.desktopApproval()).toBe(false)
+    // Default: the browser, even with Desktop installed.
+    delete process.env.GIZZI_PAIR_VIA
+    expect(Pairing.desktopApproval()).toBe(false)
   })
 })

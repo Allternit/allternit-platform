@@ -1,2 +1,3 @@
+/pair https://ai.allternit.com/pair 302
 /sign-in/* /sign-in/index.html 200
 /sign-up/* /sign-up/index.html 200

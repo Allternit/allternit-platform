@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 2.1.5 (2026-09-28)
+
+`gizzi login` that finishes, replies that stream as they're written, and the
+main chat pausing before usage limits instead of failing.
 
 ### Added
 - The main chat pauses before usage limits, like sessions in the app: a
@@ -46,6 +49,13 @@
   copied into `~/.config/gizzi-code` once. The old folder isn't changed.
 
 ### Fixed
+- `gizzi login` opens the approval page that works:
+  `ai.allternit.com/pair`, signed in with the same account as Desktop. It
+  used to open `platform.allternit.com/pair`, which has no approval page. You
+  saw yourself signed in, nothing approved the code, and the terminal waited
+  until the code expired. It no longer opens Desktop's approval page by
+  default either, since that page can hang on "Checking your Allternit
+  session…". Set `GIZZI_PAIR_VIA=desktop` to approve in Desktop.
 - Replies now stream as they're written. Every web request, the model
   provider's included, went through the terminal app's internal relay,
   which waited for the whole response and returned it as text: a reply

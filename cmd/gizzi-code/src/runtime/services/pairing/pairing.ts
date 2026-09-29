@@ -23,7 +23,6 @@
 // State lives in <Global.Path.data>/runtime-device.json (mode 0600): the keypair
 // (PKCS8 PEM private key), device identity, device token and its expiry. The
 // keypair is reused across re-pairs; a new token simply replaces the old one.
-import { existsSync } from "node:fs"
 import path from "path"
 import os from "node:os"
 import fs from "node:fs/promises"
@@ -260,7 +259,28 @@ export namespace Pairing {
       const body = await response.text().catch(() => "")
       throw new Error(`pairing request failed (${response.status}): ${body}`)
     }
-    return (await response.json()) as Created
+    const created = (await response.json()) as Created
+    return { ...created, verificationUrl: approvalUrl(created.verificationUrl) }
+  }
+
+  /**
+   * The approval page lives at ai.allternit.com/pair (the workspace, signed
+   * in with the same account as Desktop). platform.allternit.com has no
+   * /pair page, but the cloud API still builds links on it; a user who
+   * opened one saw themselves signed in while nothing approved the code
+   * and the CLI waited forever. Codes work on either host.
+   */
+  export function approvalUrl(url: string): string {
+    try {
+      const parsed = new URL(url)
+      if (parsed.hostname === "platform.allternit.com" && parsed.pathname.replace(/\/$/, "") === "/pair") {
+        parsed.hostname = "ai.allternit.com"
+        return parsed.toString()
+      }
+    } catch {
+      // not a URL; leave it
+    }
+    return url
   }
 
   export async function exchange(stored: Stored, pairing: Created): Promise<ExchangeResult> {
@@ -299,18 +319,13 @@ export namespace Pairing {
   // poll the exchange endpoint until the user approves or the pairing expires.
   // Resolves with the persisted device record.
   /**
-   * Allternit Desktop is installed here, so the pairing can be approved in
-   * the app where the user is already signed in (allternit://pair?code=…)
-   * instead of a browser sign-in. GIZZI_PAIR_VIA=browser|desktop overrides.
+   * Approve in Allternit Desktop (allternit://pair?code=…) instead of the
+   * browser. Opt-in only (GIZZI_PAIR_VIA=desktop): by default the CLI opens
+   * ai.allternit.com/pair in the browser, the workspace page signed in with
+   * the same account as Desktop.
    */
   export function desktopApproval(): boolean {
-    const via = process.env.GIZZI_PAIR_VIA
-    if (via === "browser") return false
-    if (via === "desktop") return true
-    if (process.platform !== "darwin") return false
-    return [path.join("/Applications", "Allternit Desktop.app"), path.join(os.homedir(), "Applications", "Allternit Desktop.app")].some(
-      (app) => existsSync(app),
-    )
+    return process.env.GIZZI_PAIR_VIA === "desktop"
   }
 
   export function desktopApprovalLink(userCode: string): string {
