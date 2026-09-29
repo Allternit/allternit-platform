@@ -40,6 +40,12 @@ done
 
 cd "$WORKSPACE_ROOT"
 
+# Cargo output: the shared target dir (AGENTS.md: every session exports
+# CARGO_TARGET_DIR) or the default ./target. Looking only in ./target made
+# every stage after a shared-cache compile fail with "binary not found".
+CARGO_OUT="${CARGO_TARGET_DIR:-$WORKSPACE_ROOT/target}"
+case "$CARGO_OUT" in /*) ;; *) CARGO_OUT="$WORKSPACE_ROOT/$CARGO_OUT" ;; esac
+
 # ── 1. Build Platform static export ──────────────────────────────────────────
 # The Electron app loads the hosted platform by default; the static export is
 # built later by prepare-platform-static (Vite) for offline fallback. The
@@ -89,7 +95,7 @@ ok "gizzi-code → $RESOURCES_DIR/bin/gizzi-code"
 # ── 2a. Vendor allternit-mux (PTY daemon gizzi auto-spawns for /pty) ────────
 step "Vendoring allternit-mux…"
 (cd "$WORKSPACE_ROOT" && cargo build --release -p allternit-mux)
-MUX_BIN="$WORKSPACE_ROOT/target/release/allternit-mux"
+MUX_BIN="$CARGO_OUT/release/allternit-mux"
 [ -f "$MUX_BIN" ] || die "allternit-mux build failed — binary not found at $MUX_BIN"
 cp "$MUX_BIN" "$RESOURCES_DIR/bin/allternit-mux"
 chmod +x "$RESOURCES_DIR/bin/allternit-mux"
@@ -112,8 +118,8 @@ step "Building bundled voice service (whisper.cpp)…"
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
 cd "$WORKSPACE_ROOT"
 cargo build --release -p voice-service
-VOICE_BIN="$WORKSPACE_ROOT/target/release/voice-service"
-[ -f "$VOICE_BIN" ] || VOICE_BIN="$WORKSPACE_ROOT/target/release/allternit-voice-service"
+VOICE_BIN="$CARGO_OUT/release/voice-service"
+[ -f "$VOICE_BIN" ] || VOICE_BIN="$CARGO_OUT/release/allternit-voice-service"
 [ -f "$VOICE_BIN" ] || die "Voice service build failed — binary not found at $VOICE_BIN"
 cp "$VOICE_BIN" "$RESOURCES_DIR/bin/allternit-voice-service"
 chmod +x "$RESOURCES_DIR/bin/allternit-voice-service"
@@ -134,8 +140,8 @@ if [ "$SKIP_API" = false ]; then
   
   # Map binary name (Cargo uses underscores, we prefer dashes for distribution)
   # In workspace builds, binary is in the root target dir
-  API_BIN="$WORKSPACE_ROOT/target/release/allternit-api"
-  [ -f "$API_BIN" ] || API_BIN="$WORKSPACE_ROOT/target/release/allternit_api"
+  API_BIN="$CARGO_OUT/release/allternit-api"
+  [ -f "$API_BIN" ] || API_BIN="$CARGO_OUT/release/allternit_api"
   [ -f "$API_BIN" ] || API_BIN="$API_DIR/target/release/allternit-api"
   [ -f "$API_BIN" ] || API_BIN="$API_DIR/target/release/allternit_api"
   [ -f "$API_BIN" ] || die "API build failed — binary not found at $API_BIN"
@@ -152,7 +158,7 @@ if [ "$SKIP_API" = false ]; then
 
   # Cargo names the bin `local-engine` (see [[bin]] in its Cargo.toml); stage
   # it as allternit-local-engine so resources/bin keeps one naming convention.
-  LOCAL_ENGINE_BIN="$WORKSPACE_ROOT/target/release/local-engine"
+  LOCAL_ENGINE_BIN="$CARGO_OUT/release/local-engine"
   [ -f "$LOCAL_ENGINE_BIN" ] || LOCAL_ENGINE_BIN="$LOCAL_ENGINE_DIR/target/release/local-engine"
   [ -f "$LOCAL_ENGINE_BIN" ] || die "local-engine build failed — binary not found at $LOCAL_ENGINE_BIN"
 

@@ -17,15 +17,13 @@ const path = require('path');
 
 const desktopDir = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(desktopDir, '..', '..');
+const { cargoBinaryCandidates } = require('./cargo-target.cjs');
 const resourcesBin = path.join(desktopDir, 'resources', 'bin');
 
 const sourceName = process.platform === 'win32' ? 'local-engine.exe' : 'local-engine';
 const stagedName = process.platform === 'win32' ? 'allternit-local-engine.exe' : 'allternit-local-engine';
 
-const candidates = [
-  path.join(repoRoot, 'target', 'release', sourceName),
-  path.join(repoRoot, 'target', 'debug', sourceName),
-];
+const candidates = cargoBinaryCandidates(repoRoot, sourceName);
 
 function log(message) {
   process.stdout.write(`[stage-local-engine-binary] ${message}\n`);
