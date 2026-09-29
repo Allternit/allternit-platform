@@ -4,6 +4,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
+use axum::http::StatusCode;
 use serde_json::{json, Value};
 
 use super::catalog;
@@ -771,6 +772,7 @@ async fn image_generate_persists_both_entry_kinds() {
         size: Some("1024x1024".to_string()),
         quality: Some("medium".to_string()),
         n: Some(2),
+        reference_image: None,
     };
     let payload = generate_image_core(&db, &t, "u1", req).await.unwrap();
     assert_eq!(payload["images"].as_array().unwrap().len(), 2);
@@ -804,6 +806,7 @@ async fn image_generate_flux_persists_artifacts() {
         size: None,
         quality: None,
         n: Some(1),
+        reference_image: None,
     };
     let payload = generate_image_core(&db, &t, "u1", req).await.unwrap();
     assert_eq!(payload["images"].as_array().unwrap().len(), 1);
@@ -821,6 +824,7 @@ async fn image_generate_requires_key() {
         size: None,
         quality: None,
         n: None,
+        reference_image: None,
     };
     let (status, body) = generate_image_core(&db, &t, "u1", req).await.unwrap_err();
     assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
@@ -987,4 +991,68 @@ fn uploads_refuse_non_media_empty_and_oversized_files() {
     let big = vec![0u8; MAX_UPLOAD_BYTES + 1];
     let (status, _) = store_uploaded_artifact_core(&db, "u1", Some("video/mp4"), &big).unwrap_err();
     assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn image_generate_with_reference_uses_gpt_image_edits() {
+    let db = db_with_credential("openai");
+    let t = MockTransport::new();
+    use base64::Engine;
+    let out = base64::engine::general_purpose::STANDARD.encode(b"sprite-png");
+    t.script_json(
+        "POST",
+        "https://api.openai.com/v1/images/edits",
+        200,
+        json!({"data": [{"b64_json": out}]}),
+    );
+    let photo = format!(
+        "data:image/jpeg;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(b"jpeg-bytes")
+    );
+    let req = GenerateImageRequest {
+        provider: "gpt-image".to_string(),
+        prompt: "pixel-art sprite of this person".to_string(),
+        size: None,
+        quality: Some("low".to_string()),
+        n: Some(1),
+        reference_image: Some(photo.clone()),
+    };
+    let payload = generate_image_core(&db, &t, "u1", req).await.unwrap();
+    assert_eq!(payload["images"].as_array().unwrap().len(), 1);
+    assert!(t.recorded_for("POST", "https://api.openai.com/v1/images/generations").is_empty());
+    let body = t.recorded_for("POST", "https://api.openai.com/v1/images/edits")[0]
+        .body
+        .clone()
+        .unwrap();
+    assert_eq!(body["model"], "gpt-image-2");
+    assert_eq!(body["images"][0]["image_url"], photo);
+    assert_eq!(body["quality"], "low");
+    let url = payload["images"][0]["artifact_url"].as_str().unwrap();
+    let artifact = get_artifact(&db, url.rsplit('/').next().unwrap(), "u1").unwrap().unwrap();
+    assert_eq!(artifact.bytes, b"sprite-png");
+}
+
+#[tokio::test]
+async fn image_generate_rejects_bad_reference_images() {
+    let db = db_with_credential("fal");
+    let t = MockTransport::new();
+    let req = |provider: &str, reference: &str| GenerateImageRequest {
+        provider: provider.to_string(),
+        prompt: "sprite".to_string(),
+        size: None,
+        quality: None,
+        n: None,
+        reference_image: Some(reference.to_string()),
+    };
+    // FLUX has no reference lane.
+    let err = generate_image_core(&db, &t, "u1", req("flux-fal", "data:image/png;base64,AAAA"))
+        .await
+        .unwrap_err();
+    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    // Not a data URL / wrong type / bad base64.
+    for bad in ["https://x.example/p.png", "data:image/gif;base64,AAAA", "data:image/png;base64,@@@"] {
+        let err = generate_image_core(&db, &t, "u1", req("gpt-image", bad)).await.unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_REQUEST, "{bad}");
+    }
+    assert!(t.recorded().is_empty());
 }
