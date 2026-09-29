@@ -2216,6 +2216,9 @@ fn subscription_approval(content: &str) -> SubscriptionApproval {
 enum DecideOutcome {
     NotFound,
     AnswerRequired,
+    /// Something other than a person's session tried to decide a
+    /// subscription card. Only a person decides those (D16).
+    PersonRequired(&'static str),
     /// Decided; relay `(gizzi request id, reply body)` when it answers a
     /// live runtime ask for the first time, and whether approving it runs a
     /// prepared subscription task.
@@ -2288,6 +2291,12 @@ async fn decide_approval(
     let id_for_response = approval_id.clone();
     let label_for_response = decision_label.to_string();
     let answer = body.answer.clone();
+    // D16: the agent runtime authenticates as the owning user (in Desktop
+    // its device token is the same one the person's UI sends), so the user
+    // id alone can't tell a person from the agent. A subscription card is
+    // decided only with a person's session proof; anything else is refused
+    // before anything is minted or relayed.
+    let not_person = crate::subscription_routes::person_acted(&state, &headers, &user_id).await.err();
 
     let result = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
@@ -2315,6 +2324,13 @@ async fn decide_approval(
                 }
             })
             .optional()?;
+        if let (Some(reason), Some((content, _))) = (not_person, prior.as_ref()) {
+            let parsed: serde_json::Value =
+                serde_json::from_str(content).unwrap_or(serde_json::Value::Null);
+            if crate::subscription_routes::is_subscription_card(&parsed) {
+                return Ok(DecideOutcome::PersonRequired(reason));
+            }
+        }
         // What to relay to the runtime, decided before the row is closed: an
         // approved subscription card mints its human action here (D16), and
         // a provider question approved without an answer stays open.
@@ -2359,6 +2375,14 @@ async fn decide_approval(
             Json(json!({"error": "approval not found"})),
         )
             .into_response(),
+        Ok(Ok(DecideOutcome::PersonRequired(reason))) => {
+            warn!(approval_id = %id_for_response, reason, "refused a subscription card decision without a person's session");
+            (
+                StatusCode::FORBIDDEN,
+                Json(json!({"error": "person_required", "detail": "Subscription cards are decided by a person signed in to Allternit, not by an agent or API token."})),
+            )
+                .into_response()
+        }
         Ok(Ok(DecideOutcome::AnswerRequired)) => (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "answer_required", "detail": "Type an answer to send to the provider, or reject the card."})),
@@ -2954,6 +2978,130 @@ mod tests {
         let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
         let err = prepare_approvals_list_stmt(&conn).unwrap_err();
         assert!(is_no_such_table(&err));
+    }
+
+    /// D16 bypass regression: gizzi's ALLTERNIT_API_TOKEN is a runtime-device
+    /// token that authenticates as the owning user (in Desktop, the same token
+    /// the person's UI sends), so an agent's bash tool could POST
+    /// /cowork/approvals and approve its own subscription card, minting
+    /// `approval.confirm`. Without a person's session proof the decision is
+    /// refused (row untouched, nothing minted); with it the card is decided,
+    /// and ordinary cards are unaffected.
+    #[tokio::test]
+    async fn only_a_person_decides_subscription_cards() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        const USER: &str = "user-1";
+        let temp = tempfile::tempdir().unwrap();
+        let state = crate::test_helpers::app_state(temp.path()).await;
+        let card = serde_json::json!({
+            "actionId": "perm_X", "requestId": "perm_X", "sessionId": "ses_1",
+            "summary": "Send to ChatGPT",
+            "details": {"actionType": "subscription", "target": "chatgpt", "consequence": "…"},
+            "subscription": {"kind": "question", "provider": "chatgpt"},
+        })
+        .to_string();
+        let plain = serde_json::json!({
+            "actionId": "perm_B", "requestId": "perm_B",
+            "details": {"actionType": "bash", "target": "ls", "consequence": "…"},
+        })
+        .to_string();
+        {
+            let conn = state.db.connect().unwrap();
+            insert_approval(&conn, "perm_X", Some(USER), &card);
+            insert_approval(&conn, "perm_B", Some(USER), &plain);
+        }
+        let app = cowork_router()
+            .layer(Extension(AuthUser {
+                user_id: USER.into(),
+                email: None,
+                name: None,
+                avatar_url: None,
+                tenant_id: None,
+                organization_id: None,
+                organization_role: None,
+                organization_slug: None,
+            }))
+            .with_state(state.clone());
+        let decide = |auth: Option<(&'static str, String)>, body: serde_json::Value| {
+            let app = app.clone();
+            async move {
+                let mut req = Request::builder()
+                    .method("POST")
+                    .uri("/cowork/approvals")
+                    .header("content-type", "application/json")
+                    .header("x-allternit-user-id", USER);
+                if let Some((k, v)) = auth {
+                    req = req.header(k, v);
+                }
+                let res = app.oneshot(req.body(Body::from(body.to_string())).unwrap()).await.unwrap();
+                let status = res.status();
+                let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+                (status, serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or_default())
+            }
+        };
+        let minted = || {
+            state
+                .db
+                .connect()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM subs_human_actions", [], |r| r.get::<_, i64>(0))
+                .unwrap()
+        };
+        let pending = |id: &str| {
+            state
+                .db
+                .connect()
+                .unwrap()
+                .query_row("SELECT dismissed FROM cowork_approvals WHERE id = ?1", params![id], |r| r.get::<_, i64>(0))
+                .unwrap()
+                == 0
+        };
+
+        let other_person =
+            crate::auth::test_clerk_token(&state.jwks, &state.auth_config.clerk_issuer, "user-2", 60).await;
+        for auth in [
+            None,
+            Some(("authorization", "Bearer allternit_runtime_abc".to_string())),
+            Some(("authorization", "Bearer at-org-token".to_string())),
+            Some(("authorization", "Bearer atok_worker".to_string())),
+            Some(("x-allternit-internal-token", "svc".to_string())),
+            Some((crate::subscription_routes::HUMAN_PROOF_HEADER, other_person)),
+        ] {
+            for decision in ["approved", "rejected", "dismissed"] {
+                let (status, body) = decide(
+                    auth.clone(),
+                    serde_json::json!({"actionId": "perm_X", "decision": decision, "answer": "yes"}),
+                )
+                .await;
+                assert_eq!(status, StatusCode::FORBIDDEN, "{auth:?} {decision}: {body}");
+                assert_eq!(body["error"], "person_required");
+            }
+        }
+        assert!(pending("perm_X"), "the card stays open for the person");
+        assert_eq!(minted(), 0, "no human action minted for an agent");
+
+        // Ordinary cards are unaffected by the subscription rule.
+        let (status, body) = decide(
+            Some(("authorization", "Bearer allternit_runtime_abc".to_string())),
+            serde_json::json!({"actionId": "perm_B", "decision": "dismissed"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+
+        // A person's session decides the subscription card. Dismissal is
+        // local-only, so the test never reaches a live gizzi on this host;
+        // the approve-mints path is covered by permission_reply_body's tests.
+        let proof = crate::auth::test_clerk_token(&state.jwks, &state.auth_config.clerk_issuer, USER, 60).await;
+        let (status, body) = decide(
+            Some((crate::subscription_routes::HUMAN_PROOF_HEADER, proof)),
+            serde_json::json!({"actionId": "perm_X", "decision": "dismissed"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(!pending("perm_X"));
     }
 
     #[test]

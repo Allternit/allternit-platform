@@ -320,6 +320,9 @@ async fn prepare(state: &Arc<AppState>, user: &AuthUser, tool: &CapabilityTool, 
             "consequence": format!("An agent prepared this. It runs on your {name} subscription on your Sessions computer only if you approve. Nothing has been sent to {name}."),
         },
         "requestedAt": chrono::Utc::now().to_rfc3339(),
+        // What the card shows the person: exactly the text that will be sent
+        // (prompts are capped at MAX_PROMPT_CHARS, so it is never cut).
+        "subscription": {"kind": "send", "provider": provider, "providerName": name, "prompt": prompt},
         "prepared": {"capability": tool.capability, "provider": provider, "prompt": prompt, "title": title},
         "execution": Value::Null,
     });
@@ -655,6 +658,14 @@ mod tests {
         assert_eq!(content["kind"], PREPARED_KIND);
         assert_eq!(content["actionId"], approval_id);
         assert!(content["summary"].as_str().unwrap().contains("ChatGPT"));
+        // A subscription card, so only a person's session can decide it
+        // (cowork_routes::only_a_person_decides_subscription_cards).
+        assert!(crate::subscription_routes::is_subscription_card(&content));
+        // The card shows exactly what will be sent to the subscription.
+        assert_eq!(
+            content["subscription"],
+            json!({"kind": "send", "provider": "chatgpt", "providerName": "ChatGPT", "prompt": "Q3 review deck"})
+        );
 
         // Status polling does not run it either.
         let reply = rpc(&app, "tools/call", json!({"name": "task_status", "arguments": {"approval_id": approval_id}})).await;

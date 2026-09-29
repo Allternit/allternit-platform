@@ -356,6 +356,7 @@ struct AckRequest {
 async fn ack_disclosure(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
+    headers: HeaderMap,
     Json(body): Json<AckRequest>,
 ) -> Response {
     if provider_disclosure(&body.provider).is_none() {
@@ -366,6 +367,15 @@ async fn ack_disclosure(
         return coded(
             StatusCode::CONFLICT,
             json!({"error": "disclosure_version_mismatch", "current_version": DISCLOSURE_VERSION}),
+        );
+    }
+    // Reading the provider's terms is the person's own act (D16), never an
+    // agent's on their behalf.
+    if let Err(reason) = person_acted(&state, &headers, &user.user_id).await {
+        warn!(reason, "refused a disclosure acknowledgement without a person's session");
+        return coded(
+            StatusCode::FORBIDDEN,
+            json!({"error": "person_required", "detail": "Only the person signed in to Allternit can acknowledge the provider's terms."}),
         );
     }
     match state.db.connect().and_then(|conn| {
@@ -433,6 +443,44 @@ pub(crate) fn permission_reply_body(
     Ok(body)
 }
 
+/// Header a person's UI sets on the calls that are human acts — approving or
+/// rejecting a subscription card, sending to a `subs-*` model, `POST
+/// /subscriptions/human-actions` — carrying that person's current Clerk
+/// session token. Every surface has one (web, Desktop renderer, phone) and
+/// passes it through every hop (cloud relay, Desktop broker); agent runtimes,
+/// bots, MCP and the CLI hold only machine credentials (runtime-device,
+/// access, worker, service tokens), never a Clerk session. In Desktop the
+/// person's requests and gizzi share the runtime-device token, which is why
+/// the bearer alone can't be the proof there (D16).
+pub(crate) const HUMAN_PROOF_HEADER: &str = "x-allternit-human-proof";
+
+/// `Ok` when this request was made by the person `user_id`: a Clerk session
+/// token — the human-proof header, else the bearer (the web calls the API
+/// directly with it) — that verifies and belongs to that user. Anything else
+/// is refused with a short reason for the log. Only an explicit local-dev
+/// bypass (`ALLTERNIT_LOCAL_DEV_BYPASS`, no Clerk) skips the check.
+pub(crate) async fn person_acted(state: &AppState, headers: &HeaderMap, user_id: &str) -> Result<(), &'static str> {
+    if state.config.local_dev_bypass() {
+        return Ok(());
+    }
+    let header_value = |name| {
+        headers
+            .get(name)
+            .and_then(|v: &axum::http::HeaderValue| v.to_str().ok())
+            .map(str::trim)
+            .map(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")).unwrap_or(v).trim())
+            .filter(|v| !v.is_empty())
+    };
+    let Some(token) = header_value(HUMAN_PROOF_HEADER).or_else(|| header_value(header::AUTHORIZATION.as_str())) else {
+        return Err("no person proof");
+    };
+    match crate::auth::verify_token(&state.jwks, token, &state.auth_config).await {
+        Ok(person) if person.user_id == user_id => Ok(()),
+        Ok(_) => Err("person proof for another user"),
+        Err(_) => Err("not a person's session token"),
+    }
+}
+
 /// Surfaces only allternit-api mints, in process, where the human act
 /// happened: the chat bridge on a send (`chat.send`) and the approval
 /// decision route when a person approves a subscription card
@@ -441,9 +489,9 @@ pub(crate) const SERVER_ONLY_SURFACES: &[&str] = &["chat.send", "approval.confir
 
 /// POST /subscriptions/human-actions — for UI surfaces that start a fabric
 /// task directly (composer tools, Settings). The chat send path and approval
-/// cards mint theirs inside allternit-api. An agent runtime (a cloud-issued
-/// runtime-device token) can never mint one: agents only *prepare* fabric
-/// tasks, a person confirms them on an approval card (D16).
+/// cards mint theirs inside allternit-api. Only a person's session mints one
+/// ([`person_acted`]): agents only *prepare* fabric tasks, a person confirms
+/// them on an approval card (D16).
 async fn post_human_action(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -460,10 +508,11 @@ async fn post_human_action(
             json!({"error": "human_action_surface_reserved", "detail": format!("{surface} actions are created by the platform where the person acted")}),
         );
     }
-    if crate::connector_routes::device_token_from_headers(&headers).is_some() {
+    if let Err(reason) = person_acted(&state, &headers, &user.user_id).await {
+        warn!(reason, "refused a human action without a person's session");
         return coded(
             StatusCode::FORBIDDEN,
-            json!({"error": "human_action_agent_caller", "detail": "agent runtimes cannot create human actions; ask the person to confirm on an approval card"}),
+            json!({"error": "person_required", "detail": "Only a person signed in to Allternit can start this. Agents prepare the task on an approval card for a person to confirm."}),
         );
     }
     match mint_human_action(&state.db, &user.user_id, surface) {
@@ -876,20 +925,23 @@ mod tests {
         assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("disclosure_required")));
         assert_eq!(body["provider"], "chatgpt");
 
-        let (status, _) = send(
-            &app,
-            "POST",
-            "/subscriptions/disclosure/ack",
-            &[],
-            json!({"provider": "chatgpt", "version": DISCLOSURE_VERSION}),
-        )
-        .await;
+        // Only the person acknowledges the terms; an agent's token can't.
+        let ack = json!({"provider": "chatgpt", "version": DISCLOSURE_VERSION});
+        let agent = [("authorization", "Bearer allternit_runtime_abc")];
+        let (status, body) = send(&app, "POST", "/subscriptions/disclosure/ack", &agent, ack.clone()).await;
+        assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("person_required")));
+        let ack_proof = person_token(&state, USER).await;
+        let (status, _) =
+            send(&app, "POST", "/subscriptions/disclosure/ack", &[(HUMAN_PROOF_HEADER, &ack_proof)], ack).await;
         assert_eq!(status, StatusCode::OK);
 
         let (status, body) = send(&app, "POST", "/subscriptions/gateway/v1/tasks", &[], task()).await;
         assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("human_action_required")));
 
-        let (_, minted) = send(&app, "POST", "/subscriptions/human-actions", &[], json!({"surface": "composer.tool"})).await;
+        let proof = person_token(&state, USER).await;
+        let (_, minted) =
+            send(&app, "POST", "/subscriptions/human-actions", &[(HUMAN_PROOF_HEADER, &proof)], json!({"surface": "composer.tool"}))
+                .await;
         let action = minted["action_id"].as_str().unwrap().to_string();
         // A caller cannot pick its own stamp: the forwarder overwrites it.
         let mut forged = task();
@@ -999,7 +1051,15 @@ mod tests {
     async fn approving_a_subscription_card_mints_the_human_action_server_side() {
         let (app, state, seen) = setup().await;
         bind(&app).await;
-        let (status, _) = send(&app, "POST", "/subscriptions/disclosure/ack", &[], json!({"provider": "chatgpt", "version": DISCLOSURE_VERSION})).await;
+        let proof = person_token(&state, USER).await;
+        let (status, _) = send(
+            &app,
+            "POST",
+            "/subscriptions/disclosure/ack",
+            &[(HUMAN_PROOF_HEADER, &proof)],
+            json!({"provider": "chatgpt", "version": DISCLOSURE_VERSION}),
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
 
         let send_card = json!({"details": {"actionType": "subscription"}, "subscription": {"kind": "send", "provider": "chatgpt"}});
@@ -1035,28 +1095,64 @@ mod tests {
         assert!(answered["humanAction"].as_str().unwrap().starts_with("ha_"));
     }
 
+    /// A fresh Clerk session token for `sub`, signed with a key seeded into
+    /// the state's JWKS cache — what a person's UI sends as the human proof.
+    pub(crate) async fn person_token(state: &AppState, sub: &str) -> String {
+        crate::auth::test_clerk_token(&state.jwks, &state.auth_config.clerk_issuer, sub, 60).await
+    }
+
+    /// `token` with one signature character flipped (well inside the
+    /// signature, so it never lands on base64 padding bits).
+    pub(crate) fn tampered(token: &str) -> String {
+        let at = token.len() - 20;
+        let flipped = if &token[at..at + 1] == "A" { "B" } else { "A" };
+        format!("{}{flipped}{}", &token[..at], &token[at + 1..])
+    }
+
     #[tokio::test]
-    async fn agents_and_reserved_surfaces_cannot_mint_human_actions() {
-        let (app, _state, _seen) = setup().await;
-        // A UI surface may ask for one.
-        let (status, body) = send(&app, "POST", "/subscriptions/human-actions", &[], json!({"surface": "composer.tool"})).await;
+    async fn only_a_persons_session_mints_human_actions() {
+        let (app, state, _seen) = setup().await;
+        let mint = |headers: Vec<(&'static str, String)>, surface: &'static str| {
+            let app = app.clone();
+            async move {
+                let headers: Vec<(&str, &str)> = headers.iter().map(|(k, v)| (*k, v.as_str())).collect();
+                send(&app, "POST", "/subscriptions/human-actions", &headers, json!({"surface": surface})).await
+            }
+        };
+        // A person's UI surface, with its Clerk session as proof.
+        let proof = person_token(&state, USER).await;
+        let (status, body) = mint(vec![(HUMAN_PROOF_HEADER, proof.clone())], "composer.tool").await;
         assert_eq!(status, StatusCode::CREATED, "{body}");
         assert!(body["action_id"].as_str().unwrap().starts_with("ha_"));
+        // The web sends its Clerk session as the bearer; that counts too.
+        let (status, body) = mint(vec![("authorization", format!("Bearer {proof}"))], "composer.tool").await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
         // chat.send / approval.confirm are minted in process only.
         for surface in SERVER_ONLY_SURFACES {
-            let (status, body) = send(&app, "POST", "/subscriptions/human-actions", &[], json!({"surface": surface})).await;
+            let (status, body) = mint(vec![(HUMAN_PROOF_HEADER, proof.clone())], surface).await;
             assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("human_action_surface_reserved")));
         }
-        // An agent runtime's device token never mints one.
-        let (status, body) = send(
-            &app,
-            "POST",
-            "/subscriptions/human-actions",
-            &[("authorization", "Bearer allternit_runtime_abc")],
-            json!({"surface": "composer.tool"}),
-        )
-        .await;
-        assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("human_action_agent_caller")));
+        // Nothing else mints one: no proof, machine credentials (Desktop's
+        // runtime-device token is the one gizzi holds too), a forged or
+        // expired token, or another person's session.
+        let other = person_token(&state, "user-2").await;
+        let expired = crate::auth::test_clerk_token(&state.jwks, &state.auth_config.clerk_issuer, USER, -600).await;
+        for headers in [
+            vec![],
+            vec![("authorization", "Bearer allternit_runtime_abc".to_string())],
+            vec![("authorization", "Bearer at-org-token".to_string())],
+            vec![("authorization", "Bearer atok_worker".to_string())],
+            vec![("x-allternit-internal-token", "svc".to_string())],
+            vec![("x-allternit-desktop-access-token", "allternit_runtime_abc".to_string())],
+            vec![(HUMAN_PROOF_HEADER, "allternit_runtime_abc".to_string())],
+            vec![(HUMAN_PROOF_HEADER, tampered(&proof))],
+            vec![(HUMAN_PROOF_HEADER, expired)],
+            vec![(HUMAN_PROOF_HEADER, other)],
+        ] {
+            let label = format!("{headers:?}");
+            let (status, body) = mint(headers, "composer.tool").await;
+            assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("person_required")), "{label}");
+        }
     }
 
     #[tokio::test]

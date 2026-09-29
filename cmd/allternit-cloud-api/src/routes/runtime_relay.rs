@@ -1329,6 +1329,11 @@ fn filtered_headers(headers: HashMap<String, String>) -> HashMap<String, String>
                     | "x-allternit-device-id"
                     | "x-allternit-device-name"
                     | "x-allternit-device-platform"
+                    // D16: the person's Clerk session on a human act. The
+                    // runtime (e.g. Desktop) replaces Authorization with its
+                    // own device token, so this is what tells the runtime a
+                    // person approved or sent, not an agent.
+                    | "x-allternit-human-proof"
             )
         })
         .collect()
@@ -1645,6 +1650,7 @@ mod tests {
         headers.insert("content-type", "application/json".parse().unwrap());
         headers.insert("cookie", "session=secret".parse().unwrap());
         headers.insert("x-request-id", "req_1".parse().unwrap());
+        headers.insert("x-allternit-human-proof", "clerk.jwt.sig".parse().unwrap());
 
         let forwarded = relay_headers_from_http(&headers);
         // Raw collection carries everything; the allow-list is enforced by
@@ -1658,6 +1664,8 @@ mod tests {
         let filtered = filtered_headers(forwarded);
         assert!(filtered.contains_key("authorization"));
         assert!(filtered.contains_key("accept"));
+        // D16: the person's session proof reaches the runtime.
+        assert_eq!(filtered["x-allternit-human-proof"], "clerk.jwt.sig");
         assert!(!filtered.contains_key("cookie"));
     }
 
