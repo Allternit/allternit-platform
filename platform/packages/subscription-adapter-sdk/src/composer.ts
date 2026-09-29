@@ -43,7 +43,10 @@ export async function fillComposer(
   opts: { key?: string } = {}
 ): Promise<Locator> {
   const locator = await resolver.resolveLocator(opts.key ?? "composer");
-  const target = (await firstVisible(locator)) ?? locator.first();
+  const target = await firstVisible(locator);
+  // Typing into a hidden match would hang until Playwright's timeout; fail
+  // fast instead, before anything is sent.
+  if (!target) throw new ComposerNotFilledError(`no visible match among ${await locator.count()}`);
   const kind = await target.evaluate((el) => {
     const tag = el.tagName.toUpperCase();
     if (tag === "TEXTAREA" || tag === "INPUT") return "field";

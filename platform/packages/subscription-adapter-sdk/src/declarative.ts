@@ -1,7 +1,7 @@
 // §A3.3 — DeclarativeChatAdapter: chat-only providers as pure config
 // (manifest + selectors YAML + thread-URL regex + banner pack), no provider TS.
 import { createHash } from "node:crypto";
-import type { Page } from "playwright";
+import type { Locator, Page } from "playwright";
 import type {
   AdapterEvent,
   AdapterManifest,
@@ -202,34 +202,18 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
     await ctx.pacing.beforeAction();
     await ctx.markSubmitted(null); // §A1: sent_unconfirmed BEFORE Send is clicked
     await submit(page, resolver, { fallback: cfg.submitFallbackEnter ? "enter" : undefined });
-    // §A1: acknowledged only on the provider's own evidence — a new user
-    // turn or reply, a thread URL, or the composer emptied by the send.
-    // Without it the attempt stays sent_unconfirmed (live: an "acknowledged"
-    // send had never left the page).
-    const expected = task.prompt.replace(/\s+/g, " ").trim().slice(0, 40);
-    const ackTimeoutMs = cfg.ackTimeoutMs ?? 10000;
-    const ackDeadline = now() + ackTimeoutMs;
-    // Bounded by rounds too: injected clocks in tests may not advance.
-    const ackRounds = Math.ceil(ackTimeoutMs / Math.max(pollIntervalMs, 1)) + 1;
-    let threadId = threadIdFromUrl(page.url(), cfg.threadUrlPattern);
-    for (let round = 0; ; round++) {
-      threadId = threadIdFromUrl(page.url(), cfg.threadUrlPattern);
-      const shown = (await composerText(composer).catch(() => "")).replace(/\s+/g, " ").trim();
-      if (
-        threadId !== null ||
-        !shown.includes(expected) ||
-        (await countKey(resolver, "user_turn")) > userTurnsBefore ||
-        (await countReplies(resolver)) > repliesBefore
-      ) {
-        await ctx.markSubmitted(threadId);
-        break;
-      }
-      if (now() >= ackDeadline || round >= ackRounds) {
-        ctx.log.warn("send not confirmed by the provider; attempt stays sent_unconfirmed");
-        break;
-      }
-      await sleep(pollIntervalMs);
-    }
+    // §A1: acknowledged only on the provider's own evidence.
+    let threadId = await confirmSend(page, resolver, ctx, {
+      composer,
+      prompt: task.prompt,
+      threadUrlPattern: cfg.threadUrlPattern,
+      userTurnsBefore,
+      repliesBefore,
+      timeoutMs: cfg.ackTimeoutMs,
+      pollIntervalMs,
+      now,
+      sleep,
+    });
     const url = page.url();
     yield {
       t: "submitted",
@@ -419,6 +403,55 @@ export async function pageShape(page: Page, max = 1200): Promise<string> {
     return `; page shape: ${shape ? shape.slice(0, max) : "(no data-* or role elements)"}`;
   } catch (err) {
     return `; page shape unavailable: ${(err instanceof Error ? err.message : String(err)).slice(0, 120)}`;
+  }
+}
+
+export interface ConfirmSendOptions {
+  composer: Locator;
+  prompt: string;
+  threadUrlPattern: RegExp;
+  userTurnsBefore: number;
+  repliesBefore: number;
+  timeoutMs?: number; // default 10000
+  pollIntervalMs: number;
+  now: () => number;
+  sleep: (ms: number) => Promise<void>;
+}
+
+/**
+ * §A1 — after Send, marks the attempt acknowledged only on the provider's own
+ * evidence: a thread URL, the composer emptied by the send, a new user turn,
+ * or a new reply. Without it the attempt stays sent_unconfirmed (live: an
+ * "acknowledged" send had never left the page). Returns the thread id seen.
+ */
+export async function confirmSend(
+  page: Page,
+  resolver: SdkSelectorResolver,
+  ctx: Pick<ExecutionContext, "markSubmitted" | "log">,
+  opts: ConfirmSendOptions
+): Promise<string | null> {
+  const expected = opts.prompt.replace(/\s+/g, " ").trim().slice(0, 40);
+  const timeoutMs = opts.timeoutMs ?? 10000;
+  const deadline = opts.now() + timeoutMs;
+  // Bounded by rounds too: injected clocks in tests may not advance.
+  const rounds = Math.ceil(timeoutMs / Math.max(opts.pollIntervalMs, 1)) + 1;
+  for (let round = 0; ; round++) {
+    const threadId = threadIdFromUrl(page.url(), opts.threadUrlPattern);
+    const shown = (await composerText(opts.composer).catch(() => "")).replace(/\s+/g, " ").trim();
+    if (
+      threadId !== null ||
+      !shown.includes(expected) ||
+      (await countKey(resolver, "user_turn")) > opts.userTurnsBefore ||
+      (await countReplies(resolver)) > opts.repliesBefore
+    ) {
+      await ctx.markSubmitted(threadId);
+      return threadId;
+    }
+    if (opts.now() >= deadline || round >= rounds) {
+      ctx.log.warn("send not confirmed by the provider; attempt stays sent_unconfirmed");
+      return threadId;
+    }
+    await opts.sleep(opts.pollIntervalMs);
   }
 }
 

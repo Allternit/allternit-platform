@@ -5,6 +5,7 @@ import type {
   CapabilityId,
   Task,
   TaskAttempt,
+  TaskError,
 } from "@allternit/subscription-fabric-contracts";
 import {
   DeclarativeChatAdapter,
@@ -137,6 +138,25 @@ describe("DeclarativeChatAdapter end-to-end (§A3.3, P2 verify)", () => {
     expect(marks[0].submittedDomFlag).toBeUndefined();
     expect(marks[1].submittedDomFlag).toBe("click");
     expect(attempt.submission_state).toBe("acknowledged");
+    await page.close();
+  });
+
+  it("composer drift: only hidden composers match → provider_ui_changed, nothing sent, never marks", async () => {
+    const { events, marks, page } = await runAdapter("composer-drift.html");
+    expect(types(events)).toEqual(["error"]);
+    const error = (events[0] as { error: TaskError }).error;
+    expect(error.class).toBe("provider_ui_changed");
+    expect(error.retryable).toBe(true);
+    expect(error.detail).toContain("no visible match");
+    expect(marks).toEqual([]);
+    expect(await page.evaluate(() => document.body.dataset.fwSubmitted)).toBeUndefined();
+    await page.close();
+  });
+
+  it("no provider evidence after Send: attempt stays sent_unconfirmed, never acknowledged", async () => {
+    const { marks, attempt, page } = await runAdapter("unacked.html", { ackTimeoutMs: 300 });
+    expect(marks.map((m) => m.state)).toEqual(["sent_unconfirmed"]);
+    expect(attempt.submission_state).toBe("sent_unconfirmed");
     await page.close();
   });
 

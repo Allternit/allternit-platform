@@ -41,6 +41,8 @@
         });
       document.querySelector("[data-testid='send-button']").addEventListener("click", () => {
         document.body.dataset.submitted = "true";
+        // Like ChatGPT: Send takes the prompt out of the composer.
+        document.getElementById("prompt-textarea").textContent = "";
       });
     </script>
   </body>
