@@ -1062,14 +1062,14 @@ export namespace Session {
       delta: z.string(),
     }),
     async (input) => {
-      SessionTrace.append({
+      const traceSeq = SessionTrace.append({
         sessionID: input.sessionID,
         kind: "part.delta",
         messageID: input.messageID,
         partID: input.partID,
         data: input,
       })
-      Bus.publish(MessageV2.Event.PartDelta, input)
+      Bus.publish(MessageV2.Event.PartDelta, traceSeq > 0 ? { ...input, traceSeq } : input)
     },
   )
 

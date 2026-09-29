@@ -13,7 +13,20 @@
  *   arrive; `done.text` is authoritative for anything not yet streamed.
  * - Abort → `POST /v1/tasks/:id/cancel`. A dropped event stream reconnects
  *   (the gateway replays missed events) until the task is terminal.
+ * - Progress: gateway `submitted` / `progress` / `progress.heartbeat` /
+ *   `artifact.ready` events → raw `__gizzi: "progress"` parts. The processor
+ *   publishes them as `session.progress` (a live status line, not stored on
+ *   the message) and the chat bridges forward them as `progress` frames.
+ * - Artifacts: when the task ends, each `result.artifact_ids` entry is
+ *   downloaded through the forwarder, its bytes checked against the
+ *   gateway's sha256, and emitted as an AI SDK `file` part (preceded by a raw
+ *   `generated_file` part with its name/title) → a FilePart on the assistant
+ *   message → an artifact card in the chat. A file over the inline limit is
+ *   not held in memory: it becomes a FilePart that points at its forwarder
+ *   download URL.
  */
+
+import { createHash } from "node:crypto"
 
 import type { LanguageModelV2, LanguageModelV2StreamPart } from "@ai-sdk/provider"
 import { Log } from "@/shared/util/log"
@@ -25,6 +38,23 @@ const log = Log.create({ service: "fabric-lm" })
 
 const TERMINAL = new Set(["completed", "partial", "failed", "needs_user", "cancelled"])
 const MAX_RECONNECTS = 20
+/** Files up to this size are inlined into the message (data URL). */
+export const FABRIC_INLINE_LIMIT_BYTES = 24 * 1024 * 1024
+
+export interface FabricProgress {
+  label?: string
+  fraction?: number
+  elapsedS?: number
+}
+
+interface FabricArtifactMeta {
+  artifact_id: string
+  type?: string
+  mime_type?: string | null
+  format?: string | null
+  title?: string | null
+  storage?: { sha256?: string | null; size_bytes?: number | null }
+}
 
 interface FabricTask {
   task_id: string
@@ -105,6 +135,9 @@ export class SubscriptionFabricLanguageModel implements LanguageModelV2 {
           streamed += delta
           controller.enqueue({ type: "text-delta", id: "text-1", delta })
         }
+        const progress = (p: FabricProgress) => {
+          controller.enqueue({ type: "raw", raw: { __gizzi: "progress", ...p } } as unknown as LanguageModelV2StreamPart)
+        }
         const finish = (reason: "stop" | "error" | "other") => {
           if (textOpen) controller.enqueue({ type: "text-end", id: "text-1" })
           const inputTokens = Token.estimate(prompt)
@@ -140,12 +173,46 @@ export class SubscriptionFabricLanguageModel implements LanguageModelV2 {
           taskID = task.task_id
           if (abortSignal?.aborted) onAbort()
 
-          const outcome = await follow(task.task_id, abortSignal, (delta) => text(delta))
+          const outcome = await follow(
+            task.task_id,
+            abortSignal,
+            (delta) => text(delta),
+            (p) => progress(p),
+            providerName(fabricProvider),
+          )
           if (outcome.status === "completed" || outcome.status === "partial") {
             const full = outcome.result?.text ?? ""
             if (full.startsWith(streamed)) text(full.slice(streamed.length))
             else if (!streamed) text(full)
             else log.warn("final text diverged from the streamed text", { taskID })
+            const ids = outcome.result?.artifact_ids ?? []
+            if (ids.length > 0) {
+              progress({ label: ids.length === 1 ? "Downloading the file" : `Downloading ${ids.length} files` })
+              const missing: string[] = []
+              for (const id of ids) {
+                const parts = await fetchArtifact(id, abortSignal).catch((error) => {
+                  log.warn("artifact download failed", { taskID, artifactID: id, error: String(error) })
+                  return undefined
+                })
+                if (!parts) {
+                  missing.push(id)
+                  continue
+                }
+                // Close the reply text first so each file follows it in order.
+                if (textOpen) {
+                  controller.enqueue({ type: "text-end", id: "text-1" })
+                  textOpen = false
+                }
+                for (const part of parts) controller.enqueue(part)
+              }
+              if (missing.length > 0) {
+                const noun = missing.length === 1 ? "A file" : `${missing.length} files`
+                text(
+                  `${streamed ? "\n\n" : ""}${noun} from this reply could not be downloaded intact. ` +
+                    `They are still on your Sessions computer (${missing.join(", ")}).`,
+                )
+              }
+            }
             finish("stop")
             return
           }
@@ -217,6 +284,8 @@ async function follow(
   taskID: string,
   signal: AbortSignal | undefined,
   onText: (delta: string) => void,
+  onProgress: (progress: FabricProgress) => void = () => {},
+  providerLabel = "The provider",
 ): Promise<FabricTask> {
   for (let attempt = 0; attempt <= MAX_RECONNECTS; attempt++) {
     try {
@@ -239,6 +308,11 @@ async function follow(
           onText(String(payload.event.delta ?? ""))
           continue
         }
+        const p = progressFromEvent(msg.event, payload, providerLabel)
+        if (p) {
+          onProgress(p)
+          continue
+        }
         if (msg.event === "task.status" && TERMINAL.has(payload?.status)) {
           return await fabricJson<FabricTask>("GET", `/v1/tasks/${taskID}`)
         }
@@ -256,8 +330,96 @@ async function follow(
   throw new Error("Lost the connection to the subscription task.")
 }
 
+/**
+ * A gateway task event → the live status line, in plain words. `null` for
+ * events that are not progress (reply text, status, needs_user, …).
+ */
+export function progressFromEvent(event: string, payload: any, providerLabel: string): FabricProgress | null {
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined)
+  switch (event) {
+    case "submitted":
+      return { label: `${providerLabel} is working on it` }
+    case "progress": {
+      const label = typeof payload?.label === "string" && payload.label.trim() ? payload.label.trim() : undefined
+      const fraction = num(payload?.fraction)
+      return label || fraction !== undefined ? { label, fraction } : null
+    }
+    case "progress.heartbeat": {
+      const elapsedS = num(payload?.elapsed_s)
+      return elapsedS !== undefined ? { elapsedS } : null
+    }
+    case "artifact.ready": {
+      const type = typeof payload?.meta?.type === "string" ? payload.meta.type : ""
+      return { label: type === "image" ? "Image ready" : "File ready" }
+    }
+    default:
+      return null
+  }
+}
+
+/**
+ * One artifact → stream parts: a raw `generated_file` part (name, title,
+ * origin) then the AI SDK `file` part with the verified bytes. Over the
+ * inline limit: only the raw part, pointing at the forwarder download URL.
+ * Throws when the bytes do not match the gateway's sha256.
+ */
+export async function fetchArtifact(artifactID: string, signal?: AbortSignal): Promise<LanguageModelV2StreamPart[]> {
+  const id = encodeURIComponent(artifactID)
+  const meta = await fabricJson<FabricArtifactMeta>("GET", `/v1/artifacts/${id}`, { signal }).catch(
+    () => undefined as FabricArtifactMeta | undefined,
+  )
+  const title = meta?.title?.trim() || undefined
+  const described = {
+    __gizzi: "generated_file",
+    title,
+    sourceUri: `fabric-artifact://${artifactID}`,
+  }
+  const size = meta?.storage?.size_bytes
+  if (typeof size === "number" && size > FABRIC_INLINE_LIMIT_BYTES) {
+    const mediaType = meta?.mime_type || "application/octet-stream"
+    return [
+      {
+        type: "raw",
+        raw: {
+          ...described,
+          mediaType,
+          filename: artifactFilename(artifactID, meta?.format),
+          url: `/api/v1/subscriptions/gateway/v1/artifacts/${id}/download`,
+        },
+      } as unknown as LanguageModelV2StreamPart,
+    ]
+  }
+  const res = await fabricFetch("GET", `/v1/artifacts/${id}/download`, { signal })
+  if (!res.ok) throw new FabricError(`artifact download failed (${res.status})`, res.status)
+  const bytes = new Uint8Array(await res.arrayBuffer())
+  const expected = (res.headers.get("x-artifact-sha256") || meta?.storage?.sha256 || "").toLowerCase()
+  const actual = createHash("sha256").update(bytes).digest("hex")
+  if (!expected || expected !== actual) {
+    throw new Error(expected ? `sha256 mismatch (expected ${expected}, got ${actual})` : "no sha256 to check against")
+  }
+  const mediaType = (res.headers.get("content-type") || meta?.mime_type || "application/octet-stream").split(";")[0].trim()
+  const filename = dispositionFilename(res.headers.get("content-disposition")) ?? artifactFilename(artifactID, meta?.format)
+  return [
+    { type: "raw", raw: { ...described, mediaType, filename } } as unknown as LanguageModelV2StreamPart,
+    { type: "file", mediaType, data: bytes } as LanguageModelV2StreamPart,
+  ]
+}
+
+function artifactFilename(artifactID: string, format?: string | null): string {
+  return format ? `${artifactID}.${format}` : artifactID
+}
+
+function dispositionFilename(header: string | null): string | undefined {
+  const match = header ? /filename="?([^";]+)"?/i.exec(header) : null
+  return match?.[1]?.trim() || undefined
+}
+
+function providerName(provider: string): string {
+  return provider === "chatgpt" ? "ChatGPT" : provider === "claude" ? "Claude" : provider === "kimi" ? "Kimi" : provider
+}
+
 function taskFailureMessage(task: FabricTask, provider: string): string {
-  const name = provider === "chatgpt" ? "ChatGPT" : provider === "claude" ? "Claude" : provider === "kimi" ? "Kimi" : provider
+  const name = providerName(provider)
   if (task.status === "needs_user") {
     return `${name} needs you: ${task.status_detail ?? task.error?.user_action ?? "open your Sessions computer to continue"}.`
   }

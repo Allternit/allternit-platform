@@ -21,6 +21,8 @@ import { SessionTrace } from "@/runtime/session/trace"
 import { ContextProjector } from "@/runtime/session/context-projector"
 import { consumeRetryHint } from "@/runtime/providers/retry-hint"
 import { SessionContext } from "./context-event"
+import { SessionProgress } from "./progress-event"
+import { generatedFileMeta, generatedFilePart, type GeneratedFileMeta } from "./generated-file"
 
 export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
@@ -150,6 +152,8 @@ export namespace SessionProcessor {
             let currentText: MessageV2.TextPart | undefined
             let currentReasoning: MessageV2.ReasoningPart | undefined
             let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
+            // Metadata a provider sent (raw `generated_file`) for the next `file` part.
+            let pendingFileMeta: GeneratedFileMeta | undefined
             const stream = await LLM.stream(streamInput)
 
             // State machine for splitting <think> tags
@@ -662,6 +666,26 @@ export namespace SessionProcessor {
                   currentReasoning = undefined
                   break
 
+                case "file": {
+                  // A generated file (image, deck, document) → FilePart on the
+                  // assistant message; bridges turn it into an artifact card.
+                  const file = (value as { file?: { mediaType?: string; base64?: string } }).file
+                  const meta = pendingFileMeta
+                  pendingFileMeta = undefined
+                  const part = generatedFilePart({
+                    id: Identifier.ascending("part"),
+                    messageID: input.assistantMessage.id,
+                    sessionID: input.assistantMessage.sessionID,
+                    mediaType: file?.mediaType,
+                    base64: file?.base64,
+                    meta,
+                  })
+                  if (!part) break
+                  await Session.updatePart(part)
+                  Bus.publish(MessageV2.Event.PartUpdated, { part })
+                  break
+                }
+
                 case "finish":
                   break
 
@@ -674,6 +698,36 @@ export namespace SessionProcessor {
                   const raw = (value as { raw?: unknown }).raw
                   if (!raw || typeof raw !== "object") break
                   const observed = raw as Record<string, unknown>
+                  if (observed.__gizzi === "generated_file") {
+                    const meta = generatedFileMeta(observed)
+                    if (!meta?.url) {
+                      pendingFileMeta = meta
+                      break
+                    }
+                    // Too large to inline: the file part points at its URL.
+                    const part = generatedFilePart({
+                      id: Identifier.ascending("part"),
+                      messageID: input.assistantMessage.id,
+                      sessionID: input.assistantMessage.sessionID,
+                      meta,
+                    })
+                    if (part) {
+                      await Session.updatePart(part)
+                      Bus.publish(MessageV2.Event.PartUpdated, { part })
+                    }
+                    break
+                  }
+                  if (observed.__gizzi === "progress") {
+                    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined)
+                    Bus.publish(SessionProgress.Event.Updated, {
+                      sessionID: input.sessionID,
+                      messageID: input.assistantMessage.id,
+                      label: typeof observed.label === "string" && observed.label.trim() ? observed.label : undefined,
+                      fraction: num(observed.fraction),
+                      elapsedS: num(observed.elapsedS),
+                    })
+                    break
+                  }
                   if (observed.__gizzi === "observed_context") {
                     Bus.publish(SessionContext.Event.Updated, {
                       sessionID: input.sessionID,

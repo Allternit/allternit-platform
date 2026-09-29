@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { discoverSubscriptionFabric, providersFromCatalog } from "../../src/runtime/providers/fabric/discovery"
-import { SubscriptionFabricLanguageModel } from "../../src/runtime/providers/fabric/language-model"
+import { createHash } from "node:crypto"
+import {
+  FABRIC_INLINE_LIMIT_BYTES,
+  SubscriptionFabricLanguageModel,
+  progressFromEvent,
+} from "../../src/runtime/providers/fabric/language-model"
 
 const originalFetch = globalThis.fetch
 
@@ -214,6 +219,114 @@ describe("SubscriptionFabricLanguageModel", () => {
     const model = new SubscriptionFabricLanguageModel("subs-chatgpt", "chatgpt", "fast")
     const parts = await run(model, { prompt: [userTurn("hi")], headers: headers() })
     expect(String(parts.find((p) => p.type === "error").error.message)).toBe("ChatGPT needs you: not logged in.")
+  })
+
+  test("gateway progress events become raw progress parts (label, fraction, heartbeat)", async () => {
+    fakeForwarder((c) => {
+      if (c.method === "POST") return json({ task_id: "t6", status: "queued" }, 201)
+      if (c.path === "/v1/tasks/t6/events")
+        return sse([
+          { event: "submitted", data: { t: "submitted", provider_url: null } },
+          { event: "progress", data: { t: "progress", label: "Searching the web", fraction: 0.25 } },
+          { event: "progress.heartbeat", data: { t: "progress.heartbeat", elapsed_s: 120, last_change_at: "x" } },
+          { event: "artifact.ready", data: { t: "artifact.ready", meta: { type: "image" } } },
+          { event: "task.status", data: { status: "completed" } },
+        ])
+      return json({ task_id: "t6", status: "completed", result: { text: "done", artifact_ids: [] } })
+    })
+    const model = new SubscriptionFabricLanguageModel("subs-chatgpt", "chatgpt", "fast")
+    const parts = await run(model, { prompt: [userTurn("hi")], headers: headers() })
+    const progress = parts.filter((p) => p.type === "raw" && p.raw.__gizzi === "progress").map((p) => p.raw)
+    expect(progress).toEqual([
+      { __gizzi: "progress", label: "ChatGPT is working on it" },
+      { __gizzi: "progress", label: "Searching the web", fraction: 0.25 },
+      { __gizzi: "progress", elapsedS: 120 },
+      { __gizzi: "progress", label: "Image ready" },
+    ])
+    // Progress never leaks into the reply text.
+    expect(parts.filter((p) => p.type === "text-delta").map((p) => p.delta).join("")).toBe("done")
+  })
+
+  test("artifacts: downloaded through the forwarder, sha256-checked, emitted as file parts after the text", async () => {
+    const png = new Uint8Array([137, 80, 78, 71, 1, 2, 3])
+    const sha = createHash("sha256").update(png).digest("hex")
+    const calls = fakeForwarder((c) => {
+      if (c.method === "POST") return json({ task_id: "t7", status: "queued" }, 201)
+      if (c.path === "/v1/tasks/t7/events")
+        return sse([
+          { event: "reply", data: { event: { type: "reply.text.delta", delta: "Here it is." } } },
+          { event: "task.status", data: { status: "completed" } },
+        ])
+      if (c.path === "/v1/tasks/t7")
+        return json({ task_id: "t7", status: "completed", result: { text: "Here it is.", artifact_ids: ["art_1"] } })
+      if (c.path === "/v1/artifacts/art_1")
+        return json({ artifact_id: "art_1", type: "image", mime_type: "image/png", format: "png", title: "A cat", storage: { sha256: sha, size_bytes: png.length } })
+      if (c.path === "/v1/artifacts/art_1/download")
+        return new Response(png, {
+          status: 200,
+          headers: { "content-type": "image/png", "content-disposition": 'attachment; filename="art_1.png"', "x-artifact-sha256": sha },
+        })
+      return json({}, 404)
+    })
+    const model = new SubscriptionFabricLanguageModel("subs-chatgpt", "chatgpt", "fast")
+    const parts = await run(model, { prompt: [userTurn("draw a cat")], headers: headers() })
+
+    expect(calls.find((c) => c.path === "/v1/artifacts/art_1/download")?.headers["authorization"]).toBe("Bearer runtime-token")
+    const types = parts.map((p) => (p.type === "raw" ? `raw:${p.raw.__gizzi}` : p.type))
+    const fileIdx = types.indexOf("file")
+    expect(fileIdx).toBeGreaterThan(types.indexOf("text-end"))
+    expect(types[fileIdx - 1]).toBe("raw:generated_file")
+    expect(parts[fileIdx - 1].raw).toEqual({
+      __gizzi: "generated_file",
+      title: "A cat",
+      sourceUri: "fabric-artifact://art_1",
+      mediaType: "image/png",
+      filename: "art_1.png",
+    })
+    expect(parts[fileIdx]).toMatchObject({ type: "file", mediaType: "image/png" })
+    expect(Array.from(parts[fileIdx].data)).toEqual(Array.from(png))
+    expect(parts.at(-1)).toMatchObject({ type: "finish", finishReason: "stop" })
+  })
+
+  test("artifacts: a sha256 mismatch drops the file and says so in the reply", async () => {
+    fakeForwarder((c) => {
+      if (c.method === "POST") return json({ task_id: "t8", status: "queued" }, 201)
+      if (c.path === "/v1/tasks/t8/events") return sse([{ event: "task.status", data: { status: "completed" } }])
+      if (c.path === "/v1/tasks/t8") return json({ task_id: "t8", status: "completed", result: { text: "ok", artifact_ids: ["art_2"] } })
+      if (c.path === "/v1/artifacts/art_2") return json({ artifact_id: "art_2", mime_type: "image/png", storage: { sha256: "00".repeat(32) } })
+      if (c.path === "/v1/artifacts/art_2/download")
+        return new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "image/png", "x-artifact-sha256": "00".repeat(32) } })
+      return json({}, 404)
+    })
+    const model = new SubscriptionFabricLanguageModel("subs-chatgpt", "chatgpt", "fast")
+    const parts = await run(model, { prompt: [userTurn("hi")], headers: headers() })
+    expect(parts.some((p) => p.type === "file")).toBe(false)
+    const text = parts.filter((p) => p.type === "text-delta").map((p) => p.delta).join("")
+    expect(text).toContain("could not be downloaded intact")
+    expect(text).toContain("art_2")
+  })
+
+  test("artifacts: a file over the inline limit is not downloaded; it points at the forwarder URL", async () => {
+    const calls = fakeForwarder((c) => {
+      if (c.method === "POST") return json({ task_id: "t9", status: "queued" }, 201)
+      if (c.path === "/v1/tasks/t9/events") return sse([{ event: "task.status", data: { status: "completed" } }])
+      if (c.path === "/v1/tasks/t9") return json({ task_id: "t9", status: "completed", result: { text: "deck", artifact_ids: ["big"] } })
+      if (c.path === "/v1/artifacts/big")
+        return json({ artifact_id: "big", mime_type: "application/pdf", format: "pdf", storage: { sha256: "ab", size_bytes: FABRIC_INLINE_LIMIT_BYTES + 1 } })
+      return json({}, 404)
+    })
+    const model = new SubscriptionFabricLanguageModel("subs-chatgpt", "chatgpt", "fast")
+    const parts = await run(model, { prompt: [userTurn("hi")], headers: headers() })
+    expect(calls.some((c) => c.path.endsWith("/download"))).toBe(false)
+    const raw = parts.find((p) => p.type === "raw" && p.raw.__gizzi === "generated_file").raw
+    expect(raw).toMatchObject({ url: "/api/v1/subscriptions/gateway/v1/artifacts/big/download", filename: "big.pdf", mediaType: "application/pdf" })
+    expect(parts.some((p) => p.type === "file")).toBe(false)
+  })
+
+  test("progressFromEvent ignores non-progress events", () => {
+    expect(progressFromEvent("reply", {}, "ChatGPT")).toBeNull()
+    expect(progressFromEvent("task.status", { status: "running" }, "ChatGPT")).toBeNull()
+    expect(progressFromEvent("progress", { label: "  " }, "ChatGPT")).toBeNull()
   })
 
   test("abort cancels the gateway task", async () => {

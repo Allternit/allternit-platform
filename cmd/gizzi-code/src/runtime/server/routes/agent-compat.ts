@@ -58,7 +58,7 @@ import { SessionSummary } from "@/runtime/session/summary"
 import { Provider } from "@/runtime/providers/provider"
 import { Bus } from "@/shared/bus"
 import { Log } from "@/shared/util/log"
-import { toolFramesForPart, usageFromMessageInfo } from "./tool-frames"
+import { fileFrameForPart, progressFrame, toolFramesForPart, usageFromMessageInfo } from "./tool-frames"
 
 const log = Log.create({ service: "agent-compat" })
 
@@ -726,6 +726,9 @@ export const AgentCompatRoutes = () =>
         // yields exactly one tool_use start and one result/error.
         const toolFramesSent = new Map<string, "start" | "end">()
         let wasBusy = false
+        // This session's assistant message ids: only their file parts are
+        // generated artifacts (user attachments are file parts too).
+        const assistantMessages = new Set<string>()
         const unsub = Bus.subscribeAll((event: any) => {
           const type = event?.type
           const props = event?.properties ?? {}
@@ -742,6 +745,11 @@ export const AgentCompatRoutes = () =>
             if (part?.type === "tool") {
               for (const frame of toolFramesForPart(part, msgID, toolFramesSent)) push(frame)
             }
+            // A file the model generated (not the user's own attachment).
+            if (part?.type === "file" && assistantMessages.has(part?.messageID)) {
+              const frame = fileFrameForPart(part, msgID)
+              if (frame) push(frame)
+            }
             return
           }
           if (type === "message.updated") {
@@ -749,7 +757,14 @@ export const AgentCompatRoutes = () =>
             // assistant usage so the finish frame can report real tokens.
             const info = props.info
             if (info?.sessionID !== sessionID || info?.role !== "assistant") return
+            if (typeof info?.id === "string") assistantMessages.add(info.id)
             lastUsage = usageFromMessageInfo(info) ?? lastUsage
+            return
+          }
+          if (type === "session.progress") {
+            if (props.sessionID !== sessionID) return
+            const frame = progressFrame(props, msgID)
+            if (frame) push(frame)
             return
           }
           const evtSession = typeof props.sessionID === "string" ? props.sessionID : ""

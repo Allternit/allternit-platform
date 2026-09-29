@@ -540,7 +540,15 @@ export namespace Provider {
             // called there. Also keeps these models out of auto-tier picks.
             toolcall: dp.options?.["runtime"] !== "fabric",
             input:  { text: true, audio: false, image: false, video: false, pdf: false },
-            output: { text: true, audio: false, image: false, video: false, pdf: false },
+            // Fabric replies can carry files the provider made (images,
+            // decks, documents); they arrive as file parts on the message.
+            output: {
+              text: true,
+              audio: false,
+              image: dp.options?.["runtime"] === "fabric",
+              video: false,
+              pdf: dp.options?.["runtime"] === "fabric",
+            },
             interleaved: false,
           },
           cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
