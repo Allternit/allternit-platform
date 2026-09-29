@@ -83,6 +83,7 @@ import {
   isCaptureAvailable,
 } from './browser-capture-manager.js';
 import { captureArtifactPreview, type CaptureWindow, type PreviewCaptureRequest } from './artifact-preview-capture.js';
+import { hostPreview, PREVIEW_SCHEME, servePreview } from './artifact-preview-host.js';
 import {
   configureSecurity,
   installSessionSecurityHandlers,
@@ -2090,6 +2091,9 @@ async function handleProtocolCallback(url: string | null): Promise<void> {
 // Register allternit-api as a privileged scheme so it supports fetch() and CORS.
 // Must happen before app ready.
 protocol.registerSchemesAsPrivileged([
+  // Build-output previews (artifact-preview-host): a real origin of their
+  // own so a page gets its own CSP instead of inheriting the app's.
+  { scheme: PREVIEW_SCHEME, privileges: { standard: true, secure: true } },
   {
     scheme: 'allternit-api',
     privileges: {
@@ -2179,6 +2183,8 @@ app.whenReady().then(async () => {
   }
 
   console.log('[Main] Registering allternit-api protocol handler...');
+  protocol.handle(PREVIEW_SCHEME, (request) => servePreview(request.url));
+
   protocol.handle('allternit-api', async (request) => {
     const url = new URL(request.url);
     const pathAndQuery = `${url.pathname}${url.search}`;
@@ -4327,6 +4333,7 @@ handleGuarded('miniApps:oauthDisconnect', (_event, appId: string, providerId: st
 // A session agent looks at the site it built (pane_artifact → Build output):
 // rendered for real in a throwaway offscreen window, in its own in-memory
 // session so it shares no cookies or storage with the app.
+handleGuarded('artifact-preview:host', (_event, html: string) => hostPreview(html));
 handleGuarded('artifact-preview:capture', (_event, req: PreviewCaptureRequest) =>
   captureArtifactPreview(req, ({ width, height }) =>
     new BrowserWindow({

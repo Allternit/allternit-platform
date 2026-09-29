@@ -25,6 +25,7 @@
 // keypair is reused across re-pairs; a new token simply replaces the old one.
 import path from "path"
 import os from "node:os"
+import { execFileSync } from "node:child_process"
 import fs from "node:fs/promises"
 import { createHash, generateKeyPairSync, createPrivateKey, sign } from "node:crypto"
 import open from "open"
@@ -352,6 +353,24 @@ export namespace Pairing {
     return `allternit://pair?code=${encodeURIComponent(userCode)}`
   }
 
+  /**
+   * This machine's name as the platform should see it. On macOS
+   * `os.hostname()` follows the network ("joes-MBP.hsd1.mn.comcast.net" on
+   * one, "joes-MacBook-Pro.local" on another), so the platform took gizzi and
+   * Desktop on one Mac for two machines. The LocalHostName doesn't change.
+   */
+  export function machineHostname(): string {
+    if (process.platform === "darwin") {
+      try {
+        const name = execFileSync("scutil", ["--get", "LocalHostName"], { encoding: "utf8", timeout: 2000 }).trim()
+        if (name) return name
+      } catch {
+        // fall back below
+      }
+    }
+    return os.hostname()
+  }
+
   export async function pair(opts: PairOptions = {}): Promise<Stored> {
     const existing = await load()
     const identity =
@@ -367,7 +386,7 @@ export namespace Pairing {
       version: 1,
       name: opts.name ?? existing?.name ?? os.hostname(),
       runtimeType: opts.runtimeType ?? existing?.runtimeType ?? "desktop",
-      hostname: os.hostname(),
+      hostname: machineHostname(),
       platform: `${process.platform}-${process.arch}`,
       ...identity,
     }

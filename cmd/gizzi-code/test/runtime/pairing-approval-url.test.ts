@@ -39,3 +39,14 @@ describe("Pairing.exchange 403", () => {
     expect(await exchangeWith({ error: "FORBIDDEN", code: "FORBIDDEN", message })).toEqual({ status: "refused", message })
   })
 })
+
+describe("Pairing.machineHostname", () => {
+  test("on macOS it is the stable LocalHostName, not the network-assigned name", () => {
+    const name = Pairing.machineHostname()
+    expect(name.length).toBeGreaterThan(0)
+    if (process.platform === "darwin") {
+      const local = require("node:child_process").execFileSync("scutil", ["--get", "LocalHostName"], { encoding: "utf8" }).trim()
+      expect(name).toBe(local)
+    }
+  })
+})

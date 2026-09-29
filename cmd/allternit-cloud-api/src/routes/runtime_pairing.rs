@@ -562,7 +562,7 @@ async fn exchange_pairing(
     let quota = state.quota_service.ensure_quota(&user_id).await?;
     state
         .quota_service
-        .check_active_device_cap(&user_id, &quota)
+        .check_active_device_cap(&user_id, &quota, pairing.hostname.as_deref(), pairing.platform.as_deref())
         .await?;
     let count_daily_pairing = pairing.hosted_instance_id.is_none()
         && pairing.byo_bootstrap_token_id.is_none()

@@ -213,6 +213,24 @@ struct GizziModelRef {
     auth_profile_id: Option<String>,
 }
 
+impl GizziModelRef {
+    fn new(provider_id: String, model_id: String, auth_profile_id: Option<String>) -> Self {
+        Self { provider_id, model_id, auth_profile_id }.normalized()
+    }
+
+    /// gizzi resolves `modelID` inside `providerID`, so a model id that repeats
+    /// its own provider (`claude-cli` + `claude-cli/claude-sonnet-5`, as the bot
+    /// editor saves them) is "model not found" there. Keep only the bare id.
+    fn normalized(mut self) -> Self {
+        if let Some(bare) = self.model_id.strip_prefix(&format!("{}/", self.provider_id)) {
+            if !bare.is_empty() {
+                self.model_id = bare.to_string();
+            }
+        }
+        self
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct GizziSessionInfo {
     id: String,
@@ -581,14 +599,14 @@ fn select_model(metadata: Option<&serde_json::Value>) -> serde_json::Value {
             model.get("providerID").and_then(|value| value.as_str()),
             model.get("modelID").and_then(|value| value.as_str()),
         ) {
-            return json!(GizziModelRef {
-                provider_id: provider_id.to_string(),
-                model_id: model_id.to_string(),
-                auth_profile_id: model
+            return json!(GizziModelRef::new(
+                provider_id.to_string(),
+                model_id.to_string(),
+                model
                     .get("authProfileId")
                     .and_then(|value| value.as_str())
                     .map(|s| s.to_string()),
-            });
+            ));
         }
     }
 
@@ -602,19 +620,11 @@ fn select_model(metadata: Option<&serde_json::Value>) -> serde_json::Value {
                 .map(|s| s.to_string()),
         ))
     }) {
-        return json!(GizziModelRef {
-            provider_id: provider_id.to_string(),
-            model_id: model_id.to_string(),
-            auth_profile_id,
-        });
+        return json!(GizziModelRef::new(provider_id.to_string(), model_id.to_string(), auth_profile_id));
     }
 
     let (provider_id, model_id) = AppConfig::load().default_model();
-    json!(GizziModelRef {
-        provider_id,
-        model_id,
-        auth_profile_id: None,
-    })
+    json!(GizziModelRef::new(provider_id, model_id, None))
 }
 
 async fn gizzi_json<T: serde::de::DeserializeOwned>(
@@ -943,13 +953,9 @@ async fn create_session(
 
     // Use the client-supplied model if present; otherwise fall back to the
     // platform default so Gizzi sessions always know which brain to use.
-    let model_ref = body.model.unwrap_or_else(|| {
+    let model_ref = body.model.map(GizziModelRef::normalized).unwrap_or_else(|| {
         let (default_provider, default_model_id) = AppConfig::load().default_model();
-        GizziModelRef {
-            provider_id: default_provider,
-            model_id: default_model_id,
-            auth_profile_id: None,
-        }
+        GizziModelRef::new(default_provider, default_model_id, None)
     });
     payload.insert("model".to_string(), json!(model_ref));
 
@@ -2159,7 +2165,7 @@ fn bot_turn_model(db: &DbHandle, session_id: &str, bot_id: &str) -> serde_json::
     });
     if let Some((Some(provider_id), Some(model_id))) = agent_model {
         if !provider_id.is_empty() && !model_id.is_empty() {
-            return json!(GizziModelRef { provider_id, model_id, auth_profile_id: None });
+            return json!(GizziModelRef::new(provider_id, model_id, None));
         }
     }
     select_model(None)
@@ -2316,7 +2322,7 @@ pub(crate) async fn create_bot_thread_session(
     payload.insert("title".to_string(), json!(title));
     payload.insert("surface".to_string(), json!(normalize_surface_for_gizzi("chat")));
     payload.insert("agentID".to_string(), json!(bot_id));
-    payload.insert("model".to_string(), json!(GizziModelRef { provider_id, model_id, auth_profile_id: None }));
+    payload.insert("model".to_string(), json!(GizziModelRef::new(provider_id, model_id, None)));
     if let Some(harness) = resolve_agent_harness(db, bot_id).await {
         payload.insert("harness".to_string(), harness);
     }
@@ -2761,6 +2767,22 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
         (addr, handle, captured)
+    }
+
+
+    #[test]
+    fn model_ref_drops_a_repeated_provider_prefix() {
+        // The bot editor saves `claude-cli` + `claude-cli/claude-sonnet-5`; gizzi
+        // wants the bare id inside the provider or it answers ProviderModelNotFound.
+        let r = GizziModelRef::new("claude-cli".into(), "claude-cli/claude-sonnet-5".into(), None);
+        assert_eq!((r.provider_id.as_str(), r.model_id.as_str()), ("claude-cli", "claude-sonnet-5"));
+        // A different vendor prefix is part of the id (router providers) and stays.
+        let r = GizziModelRef::new("openrouter".into(), "openai/gpt-5".into(), None);
+        assert_eq!(r.model_id, "openai/gpt-5");
+        let r = GizziModelRef::new("claude-cli".into(), "claude-opus-5".into(), None);
+        assert_eq!(r.model_id, "claude-opus-5");
+        let v = select_model(Some(&json!({ "model": { "providerID": "kimi-cli", "modelID": "kimi-cli/kimi-k3" } })));
+        assert_eq!(v["modelID"], "kimi-k3");
     }
 
     #[tokio::test]

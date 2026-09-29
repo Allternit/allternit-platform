@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { knownInstallPaths, SUBPROCESS_PROVIDERS } from "../../src/runtime/providers/discovery/subprocess"
+import { currentCliPath, knownInstallPaths, SUBPROCESS_PROVIDERS } from "../../src/runtime/providers/discovery/subprocess"
 import type { Provider } from "../../src/runtime/providers/provider"
 import { cliModel, stripProviderPrefix } from "../../src/runtime/providers/cli-model"
 
@@ -72,5 +72,27 @@ describe("CLI models the built-in list doesn't have", () => {
     expect(stripProviderPrefix("claude-cli", "claude-cli/claude-sonnet-5")).toBe("claude-sonnet-5")
     expect(stripProviderPrefix("openrouter", "anthropic/claude-sonnet-4")).toBe("anthropic/claude-sonnet-4")
     expect(stripProviderPrefix("claude-cli", "claude-sonnet-5")).toBe("claude-sonnet-5")
+  })
+
+  test("a CLI path that vanished mid-session is found again", async () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), "gizzi-home-"))
+    const bin = path.join(home, ".local", "share", "claude", "versions", "2.1.284")
+    exe(bin)
+    const saved = { HOME: process.env.HOME, PATH: process.env.PATH }
+    process.env.HOME = home
+    process.env.PATH = path.join(home, "empty-bin")
+    try {
+      const gone = path.join(home, ".local", "bin", "claude")
+      // Found again: the versioned binary, or an earlier PATH hit from the
+      // login shell (gizzi caches it) — either way, one that exists.
+      const found = await currentCliPath("claude-cli", gone)
+      expect(found).not.toBe(gone)
+      expect(existsSync(found)).toBe(true)
+      expect(await currentCliPath("claude-cli", bin)).toBe(bin)
+      expect(await currentCliPath("not-a-cli", gone)).toBe(gone)
+    } finally {
+      process.env.HOME = saved.HOME
+      process.env.PATH = saved.PATH
+    }
   })
 })

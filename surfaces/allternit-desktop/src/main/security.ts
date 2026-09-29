@@ -238,7 +238,7 @@ function buildContentSecurityPolicy(): string {
     ],
     'media-src': ["'self'", 'blob:'],
     'worker-src': ["'self'", 'blob:'],
-    'frame-src': ["'self'", 'https:', 'http://127.0.0.1:*', 'http://localhost:*'],
+    'frame-src': ["'self'", 'https:', 'http://127.0.0.1:*', 'http://localhost:*', 'allternit-preview:'],
     'object-src': ["'none'"],
     'base-uri': ["'self'"],
   };

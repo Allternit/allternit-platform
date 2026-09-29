@@ -130,18 +130,41 @@ impl QuotaService {
         &self,
         user_id: &str,
         quota: &UserQuota,
+        hostname: Option<&str>,
+        platform: Option<&str>,
     ) -> Result<(), ApiError> {
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM runtime_devices WHERE user_id = $1 AND revoked_at IS NULL",
+        // The cap counts machines, not sign-ins: the CLI and Desktop on the
+        // same Mac are one runtime. A device's machine is its hostname +
+        // platform (both sent by every pairing client); a device without a
+        // hostname counts as its own machine.
+        let machine = machine_key(hostname, platform);
+        let (machines, this_machine_active): (i64, bool) = sqlx::query_as(
+            r#"
+            SELECT
+                COUNT(DISTINCT COALESCE(
+                    REGEXP_REPLACE(LOWER(NULLIF(hostname, '')), '\.local$', '') || '|' || COALESCE(platform, ''),
+                    'device:' || id
+                )),
+                COALESCE(BOOL_OR(
+                    $2::TEXT IS NOT NULL
+                    AND REGEXP_REPLACE(LOWER(NULLIF(hostname, '')), '\.local$', '') || '|' || COALESCE(platform, '') = $2
+                ), FALSE)
+            FROM runtime_devices
+            WHERE user_id = $1 AND revoked_at IS NULL
+            "#,
         )
         .bind(user_id)
+        .bind(machine.as_deref())
         .fetch_one(&self.db)
         .await?;
 
-        if count >= quota.max_active_devices {
+        if this_machine_active {
+            return Ok(());
+        }
+        if machines >= quota.max_active_devices {
             return Err(ApiError::Forbidden(format!(
-                "Active runtime limit reached ({}/{}). Revoke an existing runtime or upgrade your plan.",
-                count, quota.max_active_devices
+                "Active machine limit reached ({}/{}). Revoke a runtime on another machine or upgrade your plan.",
+                machines, quota.max_active_devices
             )));
         }
         Ok(())
@@ -783,6 +806,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_runtime_cap_counts_machines_not_sign_ins() {
+        let pool = test_pool().await;
+        sqlx::query("DROP TABLE IF EXISTS runtime_devices CASCADE").execute(&pool).await.unwrap();
+        sqlx::query(
+            "CREATE TABLE runtime_devices (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, hostname TEXT, platform TEXT, revoked_at TIMESTAMPTZ)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Desktop on this Mac holds the one slot.
+        sqlx::query("INSERT INTO runtime_devices (id, user_id, hostname, platform) VALUES ('rt_desktop', 'user_1', 'Joes-MacBook', 'darwin-arm64')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let service = QuotaService::new(pool.clone());
+        let mut quota = quota_for("user_1");
+        quota.max_active_devices = 1;
+
+        // The CLI on the same Mac is the same machine.
+        service
+            .check_active_device_cap("user_1", &quota, Some("joes-macbook"), Some("darwin-arm64"))
+            .await
+            .expect("same machine shares the slot");
+        sqlx::query("UPDATE runtime_devices SET hostname = 'Joes-MacBook.local' WHERE id = 'rt_desktop'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        service
+            .check_active_device_cap("user_1", &quota, Some("Joes-MacBook"), Some("darwin-arm64"))
+            .await
+            .expect("same machine shares the slot");
+        // Another machine is over the cap.
+        let other = service
+            .check_active_device_cap("user_1", &quota, Some("vps-1"), Some("linux-x64"))
+            .await;
+        assert!(matches!(other, Err(ApiError::Forbidden(ref m)) if m.contains("1/1")), "{other:?}");
+        // No hostname: its own machine.
+        assert!(service.check_active_device_cap("user_1", &quota, None, None).await.is_err());
+        // Two sign-ins on one Mac still count once.
+        sqlx::query("INSERT INTO runtime_devices (id, user_id, hostname, platform) VALUES ('rt_cli', 'user_1', 'Joes-MacBook', 'darwin-arm64')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        quota.max_active_devices = 2;
+        service
+            .check_active_device_cap("user_1", &quota, Some("vps-1"), Some("linux-x64"))
+            .await
+            .expect("second machine fits a 2-machine plan");
+    }
+
+    #[tokio::test]
     async fn pairing_quota_counts_only_successful_increments() {
         let pool = pairing_usage_pool().await;
         let quota_service = QuotaService::new(pool.clone());
@@ -833,5 +907,31 @@ mod tests {
             stored.unwrap_or(0) == 0,
             "a rolled-back handshake must not consume a daily pairing slot, stored={stored:?}"
         );
+    }
+}
+
+/// The machine a pairing comes from, as the cap query keys it
+/// (`lower(hostname)|platform`), or None without a hostname.
+pub(crate) fn machine_key(hostname: Option<&str>, platform: Option<&str>) -> Option<String> {
+    let host = hostname.map(str::trim).filter(|h| !h.is_empty())?;
+    // macOS reports "name.local" or plain "name" depending on the client;
+    // both are the same machine.
+    let host = host.to_lowercase();
+    let host = host.strip_suffix(".local").unwrap_or(&host);
+    Some(format!("{}|{}", host, platform.unwrap_or("")))
+}
+
+#[cfg(test)]
+mod machine_key_tests {
+    use super::machine_key;
+
+    #[test]
+    fn same_mac_is_one_machine_whatever_the_case() {
+        assert_eq!(machine_key(Some("Joes-MacBook"), Some("darwin-arm64")), machine_key(Some("joes-macbook"), Some("darwin-arm64")));
+        assert_ne!(machine_key(Some("a"), Some("darwin-arm64")), machine_key(Some("b"), Some("darwin-arm64")));
+        assert_eq!(machine_key(Some("  "), Some("darwin-arm64")), None);
+        assert_eq!(machine_key(None, None), None);
+        // Desktop paired as the mDNS name, gizzi sends the LocalHostName.
+        assert_eq!(machine_key(Some("joes-MacBook-Pro.local"), Some("darwin-arm64")), machine_key(Some("joes-MacBook-Pro"), Some("darwin-arm64")));
     }
 }
