@@ -167,12 +167,21 @@ export class LocalCliDriver implements RuntimeDriver {
     let failed = false
     try {
       if (adapter.mode === "stream-json") {
-        yield* this.runStreamJson(handle, argv, {
+        for await (const event of this.runStreamJson(handle, argv, {
           prompt: message,
           promptOnStdin: adapter.promptOnStdin ?? false,
+          endsWithResult: adapter.endsWithResult ?? false,
           cwd: task?.cwd,
           env: env,
-        })
+        })) {
+          if (event.type === "error" || (event.type === "finish" && event.finishReason === "error")) failed = true
+          yield event
+        }
+        if (failed) {
+          const failedEv = { type: "status", status: "failed" } as AgentEvent
+          yield failedEv
+          await this.logEvent(handle.taskId, failedEv)
+        }
       } else if (adapter.mode === "openclaw-json") {
         yield* this.runOpenclawJson(handle, argv, message, task?.cwd, env)
       } else if (adapter.mode === "acp") {
@@ -436,6 +445,8 @@ export class LocalCliDriver implements RuntimeDriver {
     options: {
       prompt: string
       promptOnStdin: boolean
+      /** The CLI always closes a turn with a `result` event (Claude dialect). */
+      endsWithResult: boolean
       cwd?: string
       env?: Record<string, string>
     },
@@ -602,7 +613,28 @@ export class LocalCliDriver implements RuntimeDriver {
       }
 
       if (!finished) {
-        const finishEv = { type: "finish", finishReason: "stop", usage: zeroUsage() } as AgentEvent
+        // stdout closed without the turn's `result`: the CLI died or was
+        // stopped mid-turn (seen live: the Desktop app quitting killed two
+        // Claude turns mid-tool-call, and the half-finished turns — tool
+        // calls, no answer — were reported as complete replies).
+        const exitCode = await Promise.race([
+          proc.exited.then(() => proc.exitCode),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
+        ])
+        const cutShort = streamJsonCutShort({
+          cliName: this.cliName,
+          endsWithResult: options.endsWithResult,
+          exitCode,
+          signalCode: proc.signalCode ?? null,
+          stderr: stderrTail.tail(),
+        })
+        if (cutShort) {
+          log.warn("stream-json turn ended without a result", { taskId: handle.taskId, exitCode, signal: proc.signalCode })
+          const errorEv = { type: "error", error: new Error(cutShort) } as AgentEvent
+          yield errorEv
+          await this.logEvent(handle.taskId, errorEv)
+        }
+        const finishEv = { type: "finish", finishReason: cutShort ? "error" : "stop", usage: zeroUsage() } as AgentEvent
         yield finishEv
         await this.logEvent(handle.taskId, finishEv)
       }
@@ -1462,6 +1494,30 @@ export class StreamJsonBlocks {
   }
 }
 
+/**
+ * Why a stream-json turn whose stdout closed before its `result` event did
+ * not finish — or undefined when the CLI simply exited cleanly (dialects
+ * that never send `result`). A CLI that always ends a turn with `result`
+ * (Claude, CodeBuddy) and didn't was cut short, whatever its exit code.
+ */
+export function streamJsonCutShort(input: {
+  cliName: string
+  endsWithResult: boolean
+  exitCode: number | null
+  signalCode: string | null
+  stderr?: string
+}): string | undefined {
+  const failedExit = input.exitCode !== null && input.exitCode !== 0
+  if (!input.signalCode && !failedExit && !input.endsWithResult) return undefined
+  const how = input.signalCode
+    ? `was stopped (${input.signalCode})`
+    : failedExit
+      ? `exited with code ${input.exitCode}`
+      : "stopped"
+  const detail = input.stderr?.trim()
+  return `${input.cliName} ${how} before finishing the turn${detail ? `: ${detail}` : ""}`
+}
+
 export function streamJsonUserContent(evt: any): any[] | null {
   if (evt?.type !== "user") return null
   if (Array.isArray(evt.message?.content)) return evt.message.content
@@ -1475,6 +1531,11 @@ interface CliAdapter {
   supportsAttachments?: boolean
   /** For stream-json adapters: deliver the prompt as raw stdin text instead of NDJSON. */
   promptOnStdin?: boolean
+  /**
+   * For stream-json adapters: every turn ends with a `result` event, so
+   * stdout closing without one means the turn was cut short.
+   */
+  endsWithResult?: boolean
   /** Environment every run of this CLI gets (the task's own env wins). */
   env?: Record<string, string>
   /** Build the final argv. */
@@ -1502,6 +1563,7 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
   // Anthropic gizzi-code — stream-json.
   "claude-cli": {
     mode: "stream-json",
+    endsWithResult: true,
     // An Allternit session must not route work to the user's claude.ai
     // connectors (Claude Docs, Drive…): document work goes to the pane via
     // gizzi's own tools. Seen live: a Docs session wrote a claude.ai doc.
@@ -1526,6 +1588,7 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
   // CodeBuddy — same stream-json dialect as Claude.
   codebuddy: {
     mode: "stream-json",
+    endsWithResult: true,
     buildArgv: ([command]) => {
       return [
         command,
