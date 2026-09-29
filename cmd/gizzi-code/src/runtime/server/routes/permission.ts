@@ -65,6 +65,10 @@ export const PermissionRoutes = lazy(() =>
           requestID: params.requestID,
           reply: json.reply,
           message: json.message,
+          // Subscription asks: the human action allternit-api minted when the
+          // person approved, and their answer to a provider question.
+          ...(typeof json.humanAction === "string" ? { humanAction: json.humanAction } : {}),
+          ...(typeof json.answer === "string" ? { answer: json.answer } : {}),
         })
         return c.json(true)
       },

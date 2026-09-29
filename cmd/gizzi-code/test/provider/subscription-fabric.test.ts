@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { discoverSubscriptionFabric, providersFromCatalog } from "../../src/runtime/providers/fabric/discovery"
 import { SubscriptionFabricLanguageModel } from "../../src/runtime/providers/fabric/language-model"
+import { PermissionNext } from "../../src/runtime/tools/guard/permission/next"
+import { Instance } from "../../src/runtime/context/project/instance"
+import { tmpdir } from "../fixture/fixture"
 
 const originalFetch = globalThis.fetch
 
@@ -69,6 +72,22 @@ async function run(model: SubscriptionFabricLanguageModel, options: any) {
     parts.push(value)
   }
   return parts
+}
+
+/** Run `fn` inside a gizzi instance (the permission store lives there). */
+async function inInstance(fn: () => Promise<void>) {
+  await using tmp = await tmpdir({ git: true })
+  await Instance.provide({ directory: tmp.path, fn })
+}
+
+/** The next open permission ask (the D16 card), once it is published. */
+async function nextAsk(): Promise<PermissionNext.Request> {
+  for (let i = 0; i < 500; i++) {
+    const [ask] = await PermissionNext.list()
+    if (ask) return ask
+    await new Promise((r) => setTimeout(r, 10))
+  }
+  throw new Error("no permission ask was opened")
 }
 
 const userTurn = (text: string) => ({ role: "user", content: [{ type: "text", text }] })
@@ -155,16 +174,52 @@ describe("SubscriptionFabricLanguageModel", () => {
     expect(parts.filter((p) => p.type === "text-delta").map((p) => p.delta).join("")).toBe("ok")
   })
 
-  test("D16: no human action → no task is submitted, a plain error is shown", async () => {
-    const calls = fakeForwarder(() => json({}, 500))
-    const model = new SubscriptionFabricLanguageModel("subs-chatgpt", "chatgpt", "fast")
-    const parts = await run(model, {
-      prompt: [userTurn("hi")],
-      headers: { "x-gizzi-session": "ses_1" },
+  test("D16: a turn nobody sent waits on an always-ask card — even in yolo — and runs on the approved action", async () => {
+    await inInstance(async () => {
+      const posts: any[] = []
+      fakeForwarder((c) => {
+        if (c.method === "POST" && c.path === "/v1/tasks") {
+          posts.push({ body: c.body, action: c.headers["x-allternit-human-action"] })
+          return json({ task_id: "t9", status: "queued" }, 201)
+        }
+        if (c.path === "/v1/tasks/t9/events") return sse([{ event: "task.status", data: { status: "completed" } }])
+        if (c.path === "/v1/tasks/t9") return json({ task_id: "t9", status: "completed", result: { text: "done", artifact_ids: [] } })
+        return json({}, 404)
+      })
+      await PermissionNext.setMode("ses_agent", "yolo").catch(() => {})
+      const model = new SubscriptionFabricLanguageModel("subs-chatgpt", "chatgpt", "fast")
+      const running = run(model, { prompt: [userTurn("Summarize the doc")], headers: { "x-gizzi-session": "ses_agent" } })
+
+      const ask = await nextAsk()
+      expect(ask.permission).toBe("subscription")
+      expect(ask.metadata.subscription).toMatchObject({ kind: "send", provider: "chatgpt", providerName: "ChatGPT", prompt: "Summarize the doc" })
+      expect(posts).toHaveLength(0) // nothing runs before the person confirms
+
+      await PermissionNext.reply({ requestID: ask.id, reply: "once", humanAction: "ha_card" })
+      const parts = await running
+      expect(posts).toHaveLength(1)
+      expect(posts[0].action).toBe("ha_card")
+      expect(parts.filter((p) => p.type === "text-delta").map((p) => p.delta).join("")).toBe("done")
     })
-    expect(calls).toHaveLength(0)
-    const error = parts.find((p) => p.type === "error")
-    expect(String(error.error.message)).toContain("only run when you send a message yourself")
+  })
+
+  test("D16: a declined card, or an approval without a platform-minted action, submits nothing", async () => {
+    await inInstance(async () => {
+      const calls = fakeForwarder(() => json({}, 500))
+      const model = new SubscriptionFabricLanguageModel("subs-chatgpt", "chatgpt", "fast")
+
+      const declined = run(model, { prompt: [userTurn("hi")], headers: { "x-gizzi-session": "ses_1" } })
+      await PermissionNext.reply({ requestID: (await nextAsk()).id, reply: "reject" })
+      const error1 = (await declined).find((p) => p.type === "error")
+      expect(String(error1.error.message)).toBe("You chose not to send this to your ChatGPT subscription.")
+
+      // e.g. approved from a terminal UI: gizzi never mints an action itself.
+      const bare = run(model, { prompt: [userTurn("hi")], headers: { "x-gizzi-session": "ses_1" } })
+      await PermissionNext.reply({ requestID: (await nextAsk()).id, reply: "once" })
+      const error2 = (await bare).find((p) => p.type === "error")
+      expect(String(error2.error.message)).toContain("Confirm ChatGPT subscription tasks in the Allternit app")
+      expect(calls).toHaveLength(0)
+    })
   })
 
   test("disclosure_required from the forwarder surfaces in plain words", async () => {
@@ -205,15 +260,61 @@ describe("SubscriptionFabricLanguageModel", () => {
     expect(parts.filter((p) => p.type === "text-delta").map((p) => p.delta).join("")).toBe("part one part two")
   })
 
-  test("needs_user ends the turn with what the person has to do", async () => {
-    fakeForwarder((c) => {
-      if (c.method === "POST") return json({ task_id: "t4", status: "queued" }, 201)
-      if (c.path === "/v1/tasks/t4/events") return sse([{ event: "task.status", data: { status: "needs_user" } }])
-      return json({ task_id: "t4", status: "needs_user", status_detail: "not logged in", result: null, error: null })
+  test("needs_user: the provider's question goes to the person; their answer is the next turn", async () => {
+    await inInstance(async () => {
+      const posts: any[] = []
+      fakeForwarder((c) => {
+        if (c.method === "POST" && c.path === "/v1/tasks") {
+          posts.push({ body: c.body, action: c.headers["x-allternit-human-action"] })
+          return json({ task_id: posts.length === 1 ? "t4" : "t4b", status: "queued" }, 201)
+        }
+        if (c.path === "/v1/tasks/t4/events")
+          return sse([
+            { event: "reply", data: { event: { type: "reply.text.delta", delta: "Plan ready." } } },
+            { event: "task.status", data: { status: "needs_user" } },
+          ])
+        if (c.path === "/v1/tasks/t4")
+          return json({ task_id: "t4", status: "needs_user", status_detail: "Start the research?", result: null, error: { class: "confirm_dialog" } })
+        if (c.path === "/v1/tasks/t4b/events") return sse([{ event: "task.status", data: { status: "completed" } }])
+        if (c.path === "/v1/tasks/t4b") return json({ task_id: "t4b", status: "completed", result: { text: "Started.", artifact_ids: [] } })
+        return json({}, 404)
+      })
+      const model = new SubscriptionFabricLanguageModel("subs-chatgpt", "chatgpt", "fast")
+      const running = run(model, { prompt: [userTurn("research X")], headers: headers() })
+
+      const ask = await nextAsk()
+      expect(ask.metadata.subscription).toMatchObject({ kind: "question", question: "Start the research?", reason: "confirm_dialog", taskId: "t4" })
+      await PermissionNext.reply({ requestID: ask.id, reply: "once", humanAction: "ha_answer", answer: "Yes, start" })
+      const parts = await running
+
+      expect(posts.map((p) => [p.body.capability, p.body.prompt, p.action])).toEqual([
+        ["chat.create", "research X", "ha_1"],
+        ["chat.continue", "Yes, start", "ha_answer"],
+      ])
+      expect(posts[0].body.idempotency_key).not.toBe(posts[1].body.idempotency_key)
+      expect(parts.filter((p) => p.type === "text-delta").map((p) => p.delta).join("")).toBe("Plan ready.\n\nStarted.")
+      expect(parts.at(-1)).toMatchObject({ type: "finish", finishReason: "stop" })
     })
-    const model = new SubscriptionFabricLanguageModel("subs-chatgpt", "chatgpt", "fast")
-    const parts = await run(model, { prompt: [userTurn("hi")], headers: headers() })
-    expect(String(parts.find((p) => p.type === "error").error.message)).toBe("ChatGPT needs you: not logged in.")
+  })
+
+  test("needs_user declined: the turn ends with what the provider needs, nothing is answered", async () => {
+    await inInstance(async () => {
+      const posts: any[] = []
+      fakeForwarder((c) => {
+        if (c.method === "POST") {
+          posts.push(c.body)
+          return json({ task_id: "t4", status: "queued" }, 201)
+        }
+        if (c.path === "/v1/tasks/t4/events") return sse([{ event: "task.status", data: { status: "needs_user" } }])
+        return json({ task_id: "t4", status: "needs_user", status_detail: "not logged in", result: null, error: null })
+      })
+      const model = new SubscriptionFabricLanguageModel("subs-chatgpt", "chatgpt", "fast")
+      const running = run(model, { prompt: [userTurn("hi")], headers: headers() })
+      await PermissionNext.reply({ requestID: (await nextAsk()).id, reply: "reject" })
+      const parts = await running
+      expect(posts).toHaveLength(1)
+      expect(String(parts.find((p) => p.type === "error").error.message)).toBe("ChatGPT needs you: not logged in.")
+    })
   })
 
   test("abort cancels the gateway task", async () => {
