@@ -415,6 +415,15 @@ pub(crate) enum CardReplyRefusal {
     AnswerRequired,
 }
 
+/// A provider question approved without an answer: the card must stay open.
+/// Checked before a decision closes the row.
+pub(crate) fn card_needs_answer(content: &Value, reply: &str, answer: Option<&str>) -> bool {
+    reply == "once"
+        && is_subscription_card(content)
+        && content.pointer("/subscription/kind").and_then(|v| v.as_str()) == Some("question")
+        && answer.map(str::trim).filter(|a| !a.is_empty()).is_none()
+}
+
 /// The body relayed to gizzi's `POST /permission/:id/reply` for a decided
 /// approval row. For an approved subscription card this is where the human
 /// action is minted (`approval.confirm`) — server-side, at the moment a
@@ -430,11 +439,10 @@ pub(crate) fn permission_reply_body(
     if reply != "once" || !is_subscription_card(content) {
         return Ok(json!({ "reply": reply }));
     }
-    let answer = answer.map(str::trim).filter(|a| !a.is_empty());
-    let question = content.pointer("/subscription/kind").and_then(|v| v.as_str()) == Some("question");
-    if question && answer.is_none() {
+    if card_needs_answer(content, reply, answer) {
         return Err(Ok(CardReplyRefusal::AnswerRequired));
     }
+    let answer = answer.map(str::trim).filter(|a| !a.is_empty());
     let (action_id, _) = mint_human_action(db, user_id, "approval.confirm").map_err(Err)?;
     let mut body = json!({ "reply": "once", "humanAction": action_id });
     if let Some(answer) = answer {
@@ -715,6 +723,12 @@ pub(crate) async fn forward(
         Ok(None) => return coded(StatusCode::CONFLICT, json!({"error": "sessions_computer_missing"})),
         Err(response) => return response,
     };
+    // D15 on every call, not only when binding: a binding stored before the
+    // bind-time guard existed may point at the user's own desktop or a bot's
+    // computer, and must not forward.
+    if let Some(detail) = not_a_sessions_computer(&computer) {
+        return coded(StatusCode::CONFLICT, json!({"error": "sessions_computer_not_allowed", "detail": detail}));
+    }
     if computer.status != ComputerStatus::Running {
         return coded(StatusCode::SERVICE_UNAVAILABLE, json!({"error": "sessions_computer_not_running"}));
     }
@@ -890,6 +904,22 @@ mod tests {
         assert!(seen.lock().unwrap().is_empty());
         let (_, body) = send(&app, "GET", "/subscriptions/binding", &[], Value::Null).await;
         assert_eq!(body["bound"], false);
+
+        // A binding stored before the bind-time guard existed never forwards.
+        for id in ["computer-mac", "computer-bot"] {
+            state
+                .db
+                .connect()
+                .unwrap()
+                .execute(
+                    "INSERT OR REPLACE INTO subs_gateway_bindings (user_id, computer_id, guest_port, token_sealed) VALUES (?1, ?2, 7788, ?3)",
+                    params![USER, id, crate::token_crypto::seal("gw-token")],
+                )
+                .unwrap();
+            let (status, body) = send(&app, "GET", "/subscriptions/gateway/v1/accounts", &[], Value::Null).await;
+            assert_eq!((status, body["error"].as_str()), (StatusCode::CONFLICT, Some("sessions_computer_not_allowed")), "{id}");
+        }
+        assert!(seen.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

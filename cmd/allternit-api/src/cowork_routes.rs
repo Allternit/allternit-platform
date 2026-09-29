@@ -2146,15 +2146,39 @@ fn apply_approval_decision(
     outcome: &ApprovalOutcome,
     user_id: &str,
 ) -> rusqlite::Result<usize> {
+    write_approval_decision(conn, approval_id, outcome, user_id, false)
+}
+
+/// Close a still-open row with this decision. Exactly one of several
+/// concurrent decisions gets 1 back; only that one relays, mints or runs.
+fn claim_open_approval(
+    conn: &rusqlite::Connection,
+    approval_id: &str,
+    outcome: &ApprovalOutcome,
+    user_id: &str,
+) -> rusqlite::Result<usize> {
+    write_approval_decision(conn, approval_id, outcome, user_id, true)
+}
+
+fn write_approval_decision(
+    conn: &rusqlite::Connection,
+    approval_id: &str,
+    outcome: &ApprovalOutcome,
+    user_id: &str,
+    only_open: bool,
+) -> rusqlite::Result<usize> {
     let stored: Option<&str> = match outcome {
         ApprovalOutcome::Approved => Some("approved"),
         ApprovalOutcome::Rejected => Some("rejected"),
         ApprovalOutcome::Dismissed => None,
     };
+    let open = if only_open { " AND dismissed = 0" } else { "" };
     conn.execute(
-        "UPDATE cowork_approvals
-         SET dismissed = 1, decision = ?2, decided_at = CURRENT_TIMESTAMP
-         WHERE id = ?1 AND (user_id = ?3 OR user_id IS NULL)",
+        &format!(
+            "UPDATE cowork_approvals
+             SET dismissed = 1, decision = ?2, decided_at = CURRENT_TIMESTAMP
+             WHERE id = ?1 AND (user_id = ?3 OR user_id IS NULL){open}"
+        ),
         params![approval_id, stored, user_id],
     )
     .or_else(|e| {
@@ -2162,15 +2186,27 @@ fn apply_approval_decision(
         // degrade to a plain dismiss so the endpoint still resolves.
         if e.to_string().contains("no such column") {
             conn.execute(
-                "UPDATE cowork_approvals
-                 SET dismissed = 1
-                 WHERE id = ?1 AND (user_id = ?2 OR user_id IS NULL)",
+                &format!(
+                    "UPDATE cowork_approvals
+                     SET dismissed = 1
+                     WHERE id = ?1 AND (user_id = ?2 OR user_id IS NULL){open}"
+                ),
                 params![approval_id, user_id],
             )
         } else {
             Err(e)
         }
     })
+}
+
+/// Undo a claim whose follow-up (minting the human action) failed, so the
+/// card is still there for the person.
+fn reopen_approval(conn: &rusqlite::Connection, approval_id: &str, user_id: &str) {
+    let _ = conn.execute(
+        "UPDATE cowork_approvals SET dismissed = 0, decision = NULL, decided_at = NULL
+         WHERE id = ?1 AND (user_id = ?2 OR user_id IS NULL)",
+        params![approval_id, user_id],
+    );
 }
 
 /// Pull the gizzi permission request id out of a cowork_approvals content
@@ -2331,40 +2367,53 @@ async fn decide_approval(
                 return Ok(DecideOutcome::PersonRequired(reason));
             }
         }
-        // What to relay to the runtime, decided before the row is closed: an
-        // approved subscription card mints its human action here (D16), and
-        // a provider question approved without an answer stays open.
-        let relay = match (gizzi_reply, prior.as_ref()) {
-            (Some(reply), Some((content, 0))) => match extract_gizzi_request_id(content) {
-                Some(request_id) => {
-                    let parsed: serde_json::Value =
-                        serde_json::from_str(content).unwrap_or(serde_json::Value::Null);
-                    match crate::subscription_routes::permission_reply_body(
-                        &db,
-                        &user_id,
-                        &parsed,
-                        reply,
-                        answer.as_deref(),
-                    ) {
-                        Ok(body) => Some((request_id, body)),
-                        Err(Ok(crate::subscription_routes::CardReplyRefusal::AnswerRequired)) => {
-                            return Ok(DecideOutcome::AnswerRequired);
-                        }
-                        Err(Err(e)) => return Err(e),
+        let Some((content, dismissed)) = prior.as_ref() else {
+            return Ok(DecideOutcome::NotFound);
+        };
+        let parsed: serde_json::Value = serde_json::from_str(content).unwrap_or(serde_json::Value::Null);
+        if *dismissed != 0 {
+            // A re-decide of a closed row only updates the record: the
+            // runtime was answered (and any task run) by the first decision.
+            let updated = apply_approval_decision(&conn, &approval_id, &outcome, &user_id)?;
+            if updated == 0 {
+                return Ok(DecideOutcome::NotFound);
+            }
+            return Ok(DecideOutcome::Decided { relay: None, prepared: false });
+        }
+        let request_id = extract_gizzi_request_id(content);
+        // A provider question approved without an answer stays open.
+        if let (Some(reply), Some(_)) = (gizzi_reply, request_id.as_ref()) {
+            if crate::subscription_routes::card_needs_answer(&parsed, reply, answer.as_deref()) {
+                return Ok(DecideOutcome::AnswerRequired);
+            }
+        }
+        // Claim the row first, atomically: of two concurrent decisions (a
+        // double click, two devices) only the one that closes it relays,
+        // mints a human action or runs a prepared task.
+        if claim_open_approval(&conn, &approval_id, &outcome, &user_id)? == 0 {
+            return Ok(DecideOutcome::Decided { relay: None, prepared: false });
+        }
+        // What to relay to the runtime: an approved subscription card mints
+        // its human action here, where the person approved it (D16).
+        let relay = match (gizzi_reply, request_id) {
+            (Some(reply), Some(request_id)) => {
+                match crate::subscription_routes::permission_reply_body(&db, &user_id, &parsed, reply, answer.as_deref()) {
+                    Ok(body) => Some((request_id, body)),
+                    Err(Ok(crate::subscription_routes::CardReplyRefusal::AnswerRequired)) => {
+                        reopen_approval(&conn, &approval_id, &user_id);
+                        return Ok(DecideOutcome::AnswerRequired);
+                    }
+                    Err(Err(e)) => {
+                        reopen_approval(&conn, &approval_id, &user_id);
+                        return Err(e);
                     }
                 }
-                None => None,
-            },
+            }
             _ => None,
         };
         // D16: approving a task an agent prepared through the subscription
         // MCP server is the human act that runs it (once, first decision).
-        let prepared = gizzi_reply == Some("once")
-            && matches!(prior.as_ref(), Some((content, 0)) if subscription_approval(content) == SubscriptionApproval::Prepared);
-        let updated = apply_approval_decision(&conn, &approval_id, &outcome, &user_id)?;
-        if updated == 0 {
-            return Ok(DecideOutcome::NotFound);
-        }
+        let prepared = gizzi_reply == Some("once") && subscription_approval(content) == SubscriptionApproval::Prepared;
         Ok::<_, rusqlite::Error>(DecideOutcome::Decided { relay, prepared })
     })
     .await;
@@ -3095,6 +3144,18 @@ mod tests {
         // local-only, so the test never reaches a live gizzi on this host;
         // the approve-mints path is covered by permission_reply_body's tests.
         let proof = crate::auth::test_clerk_token(&state.jwks, &state.auth_config.clerk_issuer, USER, 60).await;
+        // The provider asked a question: approving without an answer is
+        // refused before the row is claimed, so the card stays open and
+        // nothing is minted.
+        let (status, body) = decide(
+            Some((crate::subscription_routes::HUMAN_PROOF_HEADER, proof.clone())),
+            serde_json::json!({"actionId": "perm_X", "decision": "approved", "answer": "  "}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"], "answer_required");
+        assert!(pending("perm_X"));
+        assert_eq!(minted(), 0);
         let (status, body) = decide(
             Some((crate::subscription_routes::HUMAN_PROOF_HEADER, proof)),
             serde_json::json!({"actionId": "perm_X", "decision": "dismissed"}),
@@ -3102,6 +3163,22 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert!(!pending("perm_X"));
+    }
+
+    /// Two concurrent decisions on one card: only one claims it, so only one
+    /// relays to the runtime, mints a human action or runs a prepared task.
+    #[test]
+    fn only_the_first_decision_claims_an_open_row() {
+        let conn = scratch_approvals_db();
+        insert_approval(&conn, "row", Some("user-a"), "A");
+        assert_eq!(claim_open_approval(&conn, "row", &ApprovalOutcome::Approved, "user-a").unwrap(), 1);
+        assert_eq!(claim_open_approval(&conn, "row", &ApprovalOutcome::Rejected, "user-a").unwrap(), 0);
+        let decision: Option<String> = conn
+            .query_row("SELECT decision FROM cowork_approvals WHERE id = 'row'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(decision.as_deref(), Some("approved"), "the losing decision doesn't overwrite the winner");
+        reopen_approval(&conn, "row", "user-a");
+        assert_eq!(claim_open_approval(&conn, "row", &ApprovalOutcome::Approved, "user-a").unwrap(), 1);
     }
 
     #[test]

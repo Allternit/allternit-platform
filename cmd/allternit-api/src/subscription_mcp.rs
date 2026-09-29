@@ -401,6 +401,15 @@ async fn store_execution(state: &Arc<AppState>, user_id: &str, approval_id: &str
     }
 }
 
+/// Record that an approved task never reached the gateway, so its status
+/// reads as failed instead of staying "starting".
+async fn record_failure(state: &Arc<AppState>, user: &AuthUser, approval_id: &str, mut content: Value, detail: &str) -> Value {
+    let execution = json!({"error": "not_started", "detail": detail});
+    content["execution"] = execution.clone();
+    store_execution(state, &user.user_id, approval_id, &content).await;
+    execution
+}
+
 /// Run a prepared task after the person approved its card. Called only from
 /// the approval decide route, as the approving user. Mints the human action
 /// here — the person's approval is the human act — and submits through the
@@ -424,13 +433,13 @@ pub(crate) async fn execute_prepared(state: &Arc<AppState>, user: &AuthUser, app
         prepared["provider"].as_str(),
         prepared["prompt"].as_str(),
     ) else {
-        return json!({"error": "prepared task is malformed"});
+        return record_failure(state, user, approval_id, row.content, "The prepared task is malformed.").await;
     };
     let action = match mint_human_action(&state.db, &user.user_id, "approval.confirm") {
         Ok((action, _)) => action,
         Err(e) => {
             warn!(error = %e, "subscription mcp: could not mint the human action");
-            return json!({"error": "database error"});
+            return record_failure(state, user, approval_id, row.content, "The approved task could not be started.").await;
         }
     };
     let mut headers = HeaderMap::new();
@@ -477,6 +486,12 @@ async fn task_status(state: &Arc<AppState>, user: &AuthUser, approval_id: &str) 
         _ => {}
     }
     let execution = &row.content["execution"];
+    // Approved, and the submit to the gateway hasn't returned yet (it can
+    // take up to the gateway timeout): not a failure.
+    if execution.is_null() {
+        return Ok(json!({"approval_id": approval_id, "status": "starting",
+            "message": "The user approved it. It is being sent to the provider; check again shortly."}));
+    }
     let Some(task_id) = execution["task_id"].as_str() else {
         return Ok(json!({
             "approval_id": approval_id,

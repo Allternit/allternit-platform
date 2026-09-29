@@ -108,7 +108,10 @@ export async function runSubscriptionTask(ctx: Tool.Context, input: Subscription
       idempotency_key: `gizzi-tool-${ctx.sessionID}-${ctx.callID ?? ctx.messageID}`,
     },
     humanAction,
-    ctx.abort,
+    // Not ctx.abort: a submit aborted mid-flight may still have created the
+    // task on the gateway, with no id to cancel. Let the short submit finish,
+    // then a stop that came meanwhile cancels it below.
+    undefined,
   )
   const onAbort = () => void cancelFabricTask(task.task_id)
   ctx.abort.addEventListener("abort", onAbort, { once: true })
