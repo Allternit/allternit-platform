@@ -81,7 +81,8 @@ export function watchStreamingGrowth(
     },
     async sample(): Promise<ProgressEvent | null> {
       const locator = await resolver.tryResolveLocator(key);
-      const text = locator ? await locator.first().innerText() : "";
+      // The newest reply: in a thread, .first() is an earlier turn that never grows.
+      const text = locator ? await locator.last().innerText() : "";
       const len = text.length;
       if (lastLen === null) {
         lastLen = len;

@@ -33,6 +33,7 @@ function makeTask(): Task {
     capability: "chat.create" as CapabilityId,
     capability_version: 1,
     requester: { kind: "user", id: "fixture-user" },
+    initiated_by: { kind: "human", user_id: "fixture-user", action_id: "action-1" },
     thread_id: null,
     project_id: null,
     parent_task_id: null,
@@ -221,6 +222,79 @@ describe("DeclarativeChatAdapter end-to-end (§A3.3, P2 verify)", () => {
     expect(events.some((e) => (e as { t: string }).t === "error")).toBe(false);
     expect(events.some((e) => (e as { t: string }).t === "progress.heartbeat")).toBe(true);
     expect(events.some((e) => (e as { t: string }).t === "progress")).toBe(true);
+    await page.close();
+  });
+
+  it("live reply: the new turn streams as text deltas that add up to done.text; the previous turn never streams", async () => {
+    let t = 1_700_000_000_000;
+    let tick = 0;
+    const words = ["Hello", " there,", " this", " reply", " grows", " word", " by", " word."];
+    const page = await fixturePage(browser, "streaming.html");
+    const config = fixtureWebConfig({
+      stallTimeoutS: 30,
+      heartbeatIntervalMs: 60_000,
+      completion: {
+        now: () => t,
+        sleep: async (ms) => {
+          t += ms;
+          tick++;
+          await page.evaluate(
+            ({ tick, words }) => {
+              const transcript = document.getElementById("fw-transcript")!;
+              let live = document.getElementById("fw-live");
+              if (tick === 2) {
+                live = document.createElement("div");
+                live.id = "fw-live";
+                live.dataset.testid = "fw-response";
+                live.className = "fw-response";
+                live.innerHTML = "<p></p>";
+                transcript.insertBefore(live, document.querySelector("[data-testid='fw-streaming']"));
+              }
+              const i = tick - 2;
+              if (live && i >= 0 && i < words.length) {
+                live.querySelector("p")!.textContent += words[i];
+              }
+              if (i === words.length + 2) {
+                document.querySelector("[data-testid='fw-stop']")?.remove();
+                document.querySelector("[data-testid='fw-streaming']")?.remove();
+                document.getElementById("fw-send")!.removeAttribute("disabled");
+              }
+            },
+            { tick, words }
+          );
+        },
+        stabilityMs: 150,
+        pollIntervalMs: 150,
+        timeoutMs: 600_000,
+      },
+    });
+    const adapter = new DeclarativeChatAdapter(config);
+    const ctx = createExecutionContext({
+      page: createPageLease(page),
+      sink: { begin: async () => "a", write: async () => {}, commit: async () => {}, fail: async () => {} },
+      pacer: createPacer(config.manifest.pacing, { rng: () => 0 }),
+      resolver: createResolver(page, adapter.pack),
+      logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+      attempt: makeAttempt(),
+      onMarkSubmitted: async () => {},
+    });
+    const events: AdapterEvent[] = [];
+    for await (const event of adapter.execute(makeTask(), ctx)) events.push(event);
+
+    const deltas = events
+      .filter((e) => e.t === "reply" && (e as { event: { type: string } }).event.type === "reply.text.delta")
+      .map((e) => (e as unknown as { event: { delta: string } }).event.delta);
+    const done = events[events.length - 1] as Extract<AdapterEvent, { t: "done" }>;
+    expect(done.t).toBe("done");
+    expect(done.text).toBe("Hello there, this reply grows word by word.");
+    // Streamed live, not in one piece at the end.
+    expect(deltas.length).toBeGreaterThan(2);
+    expect(deltas.join("")).toBe(done.text);
+    expect(deltas.join("")).not.toContain("The answer so far is");
+    const started = events.filter(
+      (e) => e.t === "reply" && (e as { event: { type: string } }).event.type === "reply.started"
+    );
+    expect(started).toHaveLength(1);
     await page.close();
   });
 

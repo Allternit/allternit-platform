@@ -379,3 +379,44 @@ describe("session.processor fallback", () => {
     })
   })
 })
+
+describe("session.processor streaming parts", () => {
+  beforeEach(() => {
+    streamCalls.length = 0
+    streamScript = []
+    unavailableModels.clear()
+  })
+
+  // Bridges (allternit-api agent-chat) hold a part's deltas until the part is
+  // declared. Declaring a text part only at text-end made every reply arrive
+  // in one burst at the end (found live on the Subscription Fabric).
+  test("a text part is declared (PartUpdated) before its first delta", async () => {
+    await withTmpdir(baseConfig(), async (tmp) => {
+      streamScript = [
+        {
+          events: [
+            { type: "start" },
+            { type: "text-start", id: "t1" },
+            { type: "text-delta", id: "t1", text: "Hel" },
+            { type: "text-delta", id: "t1", text: "lo" },
+            { type: "text-end", id: "t1" },
+          ],
+        },
+      ]
+      const order: string[] = []
+      const { MessageV2 } = await import("../../src/runtime/session/message-v2")
+      const unsubUpdated = Bus.subscribe(MessageV2.Event.PartUpdated, (e: any) => {
+        if (e.properties.part.type === "text") order.push(`updated:${e.properties.part.id}`)
+      })
+      const unsubDelta = Bus.subscribe(MessageV2.Event.PartDelta, (e: any) => order.push(`delta:${e.properties.partID}`))
+      await runProcessor(tmp)
+      unsubUpdated()
+      unsubDelta()
+      const firstDelta = order.findIndex((x) => x.startsWith("delta:"))
+      expect(firstDelta).toBeGreaterThan(-1)
+      const partID = order[firstDelta].slice("delta:".length)
+      expect(order.indexOf(`updated:${partID}`)).toBeGreaterThan(-1)
+      expect(order.indexOf(`updated:${partID}`)).toBeLessThan(firstDelta)
+    })
+  })
+})

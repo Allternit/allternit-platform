@@ -26,6 +26,8 @@ import { CUSTOM_LOADERS } from "@/runtime/providers/adapters/loaders"
 import type { CustomModelLoader } from "@/runtime/providers/types"
 import { Discovery } from "@/runtime/providers/discovery"
 import { SubprocessLanguageModel } from "@/runtime/providers/adapters/loaders/subprocess"
+import { SubscriptionFabricLanguageModel } from "@/runtime/providers/fabric/language-model"
+import { isFabricProviderID } from "@/runtime/providers/fabric/client"
 import { cliModel } from "@/runtime/providers/cli-model"
 import { tapRetryHint } from "@/runtime/providers/retry-hint"
 
@@ -531,10 +533,12 @@ export namespace Provider {
           options: {},
           release_date: "",
           capabilities: {
-            temperature: true,
+            temperature: dp.options?.["runtime"] !== "fabric",
             reasoning: false,
             attachment: false,
-            toolcall: true,
+            // Fabric chat runs in the provider's web UI: gizzi's tools cannot be
+            // called there. Also keeps these models out of auto-tier picks.
+            toolcall: dp.options?.["runtime"] !== "fabric",
             input:  { text: true, audio: false, image: false, video: false, pdf: false },
             output: { text: true, audio: false, image: false, video: false, pdf: false },
             interleaved: false,
@@ -563,7 +567,7 @@ export namespace Provider {
         key: dp.id === "allternit" ? process.env.ALLTERNIT_API_KEY : undefined,
         auth_type: dp.auth_type,
         subprocess_cmd: dp.subprocess_cmd,
-        options: dp.base_url ? { baseURL: dp.base_url } : {},
+        options: { ...(dp.base_url ? { baseURL: dp.base_url } : {}), ...(dp.options ?? {}) },
         models: dpModels,
       }
       log.info("discovered", { providerID: dp.id, source: dp.source, models: Object.keys(dpModels).length })
@@ -798,6 +802,19 @@ export namespace Provider {
 
     const provider = s.providers[model.providerID]
 
+    // Subscription Fabric providers (subs-*) — the user's web subscription on
+    // their Sessions computer, through allternit-api's forwarder.
+    if (provider?.options?.["runtime"] === "fabric") {
+      const fabricProvider = String(provider.options["fabricProvider"] ?? model.providerID.replace(/^subs-/, ""))
+      const language = new SubscriptionFabricLanguageModel(
+        model.providerID,
+        fabricProvider,
+        model.api.id,
+      ) as unknown as LanguageModelV2
+      s.models.set(key, language)
+      return language
+    }
+
     // Subprocess providers (claude-cli, llm, aichat, etc.) — bypass HTTP SDK entirely
     const policy = await resolveRuntimePolicy({ providerID: model.providerID, modelID: model.id })
     if (policy === "subprocess" || plan?.authType === "subprocess") {
@@ -1023,6 +1040,11 @@ export namespace Provider {
           }
       }
     }
+  }
+
+  /** Subscription Fabric models run only on a human send (D16): never pick one automatically. */
+  export function isFabricModel(model: { providerID: string }): boolean {
+    return isFabricProviderID(model.providerID)
   }
 
   export async function getSmallModel(providerID: string) {

@@ -2550,6 +2550,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         (await Provider.getSmallModel(input.providerID)) ?? (await Provider.getModel(input.providerID, input.modelID))
       )
     })
+    // A subscription (fabric) model runs only on a human send (D16), and the
+    // send's human action belongs to the reply — keep the default title.
+    if (Provider.isFabricModel(model)) return
     const modelMessages = MessageV2.toModelMessages(contextMessages, model)
     // Title gen calls LLM.stream directly instead of going through loop(), so it
     // doesn't get loop()'s folding of lastUser.system into the system array — fold

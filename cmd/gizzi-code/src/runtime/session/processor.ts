@@ -505,6 +505,9 @@ export namespace SessionProcessor {
                               text: "",
                               time: { start: Date.now() },
                             })) as MessageV2.TextPart
+                            // Declare the part now: bridges hold deltas for undeclared parts,
+                            // so without this the whole block arrived at once at the end.
+                            Bus.publish(MessageV2.Event.PartUpdated, { part: currentText })
                           }
                           currentText.text += safeText
                           await Session.updatePartDelta({
@@ -531,6 +534,9 @@ export namespace SessionProcessor {
                               text: "",
                               time: { start: Date.now() },
                             })) as MessageV2.TextPart
+                            // Declare the part now: bridges hold deltas for undeclared parts,
+                            // so without this the whole block arrived at once at the end.
+                            Bus.publish(MessageV2.Event.PartUpdated, { part: currentText })
                           }
                           currentText.text += before
                           await Session.updatePartDelta({
@@ -582,6 +588,9 @@ export namespace SessionProcessor {
                               text: "",
                               time: { start: Date.now() },
                             })) as MessageV2.ReasoningPart
+                            // Declare the part now: bridges hold deltas for undeclared parts,
+                            // so without this the whole block arrived at once at the end.
+                            Bus.publish(MessageV2.Event.PartUpdated, { part: currentReasoning })
                           }
                           currentReasoning.text += before
                           await Session.updatePartDelta({

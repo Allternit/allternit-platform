@@ -252,6 +252,8 @@ Keep facts, numbers, names and paths exactly as they appear. No advice, no fille
       const model = agent?.model
         ? await Provider.getModel(agent.model.providerID, agent.model.modelID)
         : await Provider.getModel(input.user.model.providerID, input.user.model.modelID)
+      // Subscription (fabric) models run only on a human send (D16).
+      if (Provider.isFabricModel(model)) return fallback()
       const ask = [
         input.context ? `Context from the caller:\n${input.context}` : "",
         input.todos.length ? `Current TODO list:\n${input.todos.join("\n")}` : "",
