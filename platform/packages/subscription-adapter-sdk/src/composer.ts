@@ -1,5 +1,5 @@
 // §A3.1 — fillComposer / submit shared primitives.
-import type { Locator, Page } from "playwright";
+import type { ElementHandle, Locator, Page } from "playwright";
 import type { SdkSelectorResolver } from "./selectors";
 
 const LONG_TEXT_THRESHOLD = 500;
@@ -36,6 +36,28 @@ export async function composerText(target: Locator): Promise<string> {
   );
 }
 
+/**
+ * Whether this exact element is still in the page and shows the prompt. A
+ * replaced element is neither "still holding" nor "emptied by a send".
+ */
+export async function composerState(
+  element: ElementHandle<Node>,
+  text: string
+): Promise<"holds" | "cleared" | "replaced"> {
+  const expected = norm(text).slice(0, 40);
+  const got = await element
+    .evaluate((node) => {
+      const el = node as HTMLElement;
+      if (!el.isConnected) return null;
+      return el.tagName === "TEXTAREA" || el.tagName === "INPUT"
+        ? (el as HTMLTextAreaElement).value
+        : el.innerText;
+    })
+    .catch(() => null);
+  if (got === null) return "replaced";
+  return norm(got).includes(expected) ? "holds" : "cleared";
+}
+
 // How long the composer must hold the prompt before it counts: some providers
 // swap a pre-hydration <textarea> for their real editor right after the first
 // input, dropping what was typed (live: ChatGPT, 2026-09-29).
@@ -58,6 +80,16 @@ export async function fillComposer(
     // fast instead, before anything is sent.
     if (!target) throw new ComposerNotFilledError(`no visible match among ${await locator.count()}`);
     const handle = await target.elementHandle();
+    // Don't type into an element the page is about to replace.
+    await page.waitForTimeout(SETTLE_MS);
+    const stable = handle
+      ? await target.evaluate((el, h) => el === h && el.isConnected, handle).catch(() => false)
+      : false;
+    if (!stable) {
+      seen.push("(replaced before typing)");
+      lastDetail = "the composer was replaced before typing";
+      continue;
+    }
     const { kind, tag } = await target.evaluate((el) => {
       const tag = el.tagName.toLowerCase();
       if (tag === "textarea" || tag === "input") return { kind: "field", tag };
@@ -109,17 +141,17 @@ export async function submit(
   page: Page,
   resolver: SdkSelectorResolver,
   opts: SubmitOptions = {}
-): Promise<void> {
+): Promise<"click" | "enter"> {
   const sendLoc = await resolver.tryResolveLocator(opts.sendKey ?? "send_button");
   if (sendLoc && (await sendLoc.first().isEnabled())) {
     await sendLoc.first().click();
-    return;
+    return "click";
   }
   if (opts.fallback === "enter") {
     const composer = await resolver.resolveLocator(opts.composerKey ?? "composer");
     await composer.first().click();
     await page.keyboard.press("Enter");
-    return;
+    return "enter";
   }
   throw new Error("submit: send button unavailable and no fallback configured");
 }

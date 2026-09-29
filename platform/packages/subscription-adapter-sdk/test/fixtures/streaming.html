@@ -24,7 +24,11 @@
     </main>
     <script>
       document.getElementById("fw-composer").addEventListener("keydown", (e) => {
-        if (e.key === "Enter") document.body.dataset.fwSubmitted = "enter";
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        document.body.dataset.fwSubmitted = "enter";
+        // Like real providers: sending takes the prompt out of the composer.
+        e.currentTarget.textContent = "";
       });
     </script>
   </body>

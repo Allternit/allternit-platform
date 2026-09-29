@@ -1,7 +1,7 @@
 // §A3.3 — DeclarativeChatAdapter: chat-only providers as pure config
 // (manifest + selectors YAML + thread-URL regex + banner pack), no provider TS.
 import { createHash } from "node:crypto";
-import type { Locator, Page } from "playwright";
+import type { ElementHandle, Locator, Page } from "playwright";
 import type {
   AdapterEvent,
   AdapterManifest,
@@ -19,7 +19,7 @@ import type {
 import { detectAuthState, threadIdFromUrl } from "./auth";
 import { createBannerClassifier, type BannerPattern } from "./banners";
 import { createCompletionTracker, type CompletionOptions } from "./completion";
-import { ComposerNotFilledError, composerText, fillComposer, submit } from "./composer";
+import { ComposerNotFilledError, composerState, fillComposer, submit } from "./composer";
 import { extractLastAssistantTurn } from "./extract";
 import { probe as probePage, type ProbeInput } from "./probe";
 import {
@@ -200,11 +200,16 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
     }
     const userTurnsBefore = await countKey(resolver, "user_turn");
     await ctx.pacing.beforeAction();
+    const composerEl = await readyToSend(composer, task.prompt);
+    if (typeof composerEl === "string") {
+      yield { t: "error", error: composerDriftError(composerEl) };
+      return;
+    }
     await ctx.markSubmitted(null); // §A1: sent_unconfirmed BEFORE Send is clicked
-    await submit(page, resolver, { fallback: cfg.submitFallbackEnter ? "enter" : undefined });
+    const via = await submit(page, resolver, { fallback: cfg.submitFallbackEnter ? "enter" : undefined });
     // §A1: acknowledged only on the provider's own evidence.
-    let threadId = await confirmSend(page, resolver, ctx, {
-      composer,
+    const ack = await confirmSend(page, resolver, ctx, {
+      composer: composerEl,
       prompt: task.prompt,
       threadUrlPattern: cfg.threadUrlPattern,
       userTurnsBefore,
@@ -214,6 +219,10 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
       now,
       sleep,
     });
+    let threadId = ack.threadId;
+    // Stall/timeout details say how the send went, so a live failure carries
+    // its own evidence.
+    const sendNote = `; sent by ${via}, ${ack.evidence ? `acknowledged by ${ack.evidence}` : "not acknowledged"}`;
     const url = page.url();
     yield {
       t: "submitted",
@@ -296,7 +305,7 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
           t: "error",
           error: stalledError(
             ctx.attempt.submission_state,
-            `no DOM change for ${stallTimeoutS}s${await pageShape(page)}`
+            `no DOM change for ${stallTimeoutS}s${sendNote}${await pageShape(page)}`
           ),
         };
         return;
@@ -306,7 +315,7 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
           t: "error",
           error: timeoutError(
             ctx.attempt.submission_state,
-            `no completion within ${timeoutMs}ms${await pageShape(page)}`
+            `no completion within ${timeoutMs}ms${sendNote}${await pageShape(page)}`
           ),
         };
         return;
@@ -407,7 +416,7 @@ export async function pageShape(page: Page, max = 1200): Promise<string> {
 }
 
 export interface ConfirmSendOptions {
-  composer: Locator;
+  composer: ElementHandle; // the element that held the prompt at Send
   prompt: string;
   threadUrlPattern: RegExp;
   userTurnsBefore: number;
@@ -418,38 +427,58 @@ export interface ConfirmSendOptions {
   sleep: (ms: number) => Promise<void>;
 }
 
+export type SendEvidence = "thread_url" | "user_turn" | "reply" | "composer_cleared";
+
+/**
+ * Right before Send: the composer that took the prompt is still the element
+ * on the page and still holds it. Returns its handle, or why not (nothing has
+ * been sent yet, so the caller fails as drift).
+ */
+export async function readyToSend(composer: Locator, prompt: string): Promise<ElementHandle | string> {
+  const el = await composer.elementHandle({ timeout: 2000 }).catch(() => null);
+  if (!el) return "the composer disappeared before Send";
+  const state = await composerState(el, prompt);
+  if (state === "holds") return el;
+  return state === "replaced" ? "the composer was replaced before Send" : "the composer lost the prompt before Send";
+}
+
 /**
  * §A1 — after Send, marks the attempt acknowledged only on the provider's own
- * evidence: a thread URL, the composer emptied by the send, a new user turn,
- * or a new reply. Without it the attempt stays sent_unconfirmed (live: an
- * "acknowledged" send had never left the page). Returns the thread id seen.
+ * evidence: a thread URL, a new user turn, a new reply, or the SAME composer
+ * element emptied (a replaced editor proves nothing — live: ChatGPT swapped
+ * its editor and the empty new one looked like a send). Without evidence the
+ * attempt stays sent_unconfirmed.
  */
 export async function confirmSend(
   page: Page,
   resolver: SdkSelectorResolver,
   ctx: Pick<ExecutionContext, "markSubmitted" | "log">,
   opts: ConfirmSendOptions
-): Promise<string | null> {
-  const expected = opts.prompt.replace(/\s+/g, " ").trim().slice(0, 40);
+): Promise<{ threadId: string | null; evidence: SendEvidence | null }> {
   const timeoutMs = opts.timeoutMs ?? 10000;
   const deadline = opts.now() + timeoutMs;
   // Bounded by rounds too: injected clocks in tests may not advance.
   const rounds = Math.ceil(timeoutMs / Math.max(opts.pollIntervalMs, 1)) + 1;
   for (let round = 0; ; round++) {
     const threadId = threadIdFromUrl(page.url(), opts.threadUrlPattern);
-    const shown = (await composerText(opts.composer).catch(() => "")).replace(/\s+/g, " ").trim();
-    if (
-      threadId !== null ||
-      !shown.includes(expected) ||
-      (await countKey(resolver, "user_turn")) > opts.userTurnsBefore ||
-      (await countReplies(resolver)) > opts.repliesBefore
-    ) {
+    const evidence: SendEvidence | null =
+      threadId !== null
+        ? "thread_url"
+        : (await countKey(resolver, "user_turn")) > opts.userTurnsBefore
+          ? "user_turn"
+          : (await countReplies(resolver)) > opts.repliesBefore
+            ? "reply"
+            : (await composerState(opts.composer, opts.prompt)) === "cleared"
+              ? "composer_cleared"
+              : null;
+    if (evidence) {
       await ctx.markSubmitted(threadId);
-      return threadId;
+      ctx.log.info(`send acknowledged by ${evidence}`);
+      return { threadId, evidence };
     }
     if (opts.now() >= deadline || round >= rounds) {
       ctx.log.warn("send not confirmed by the provider; attempt stays sent_unconfirmed");
-      return threadId;
+      return { threadId, evidence: null };
     }
     await opts.sleep(opts.pollIntervalMs);
   }
