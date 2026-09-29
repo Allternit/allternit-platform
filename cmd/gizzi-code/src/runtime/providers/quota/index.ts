@@ -375,22 +375,44 @@ export function parseGatewayRateLimits(payload: any, now = Date.now()): QuotaWin
   return [{ id: "month", label: "Key budget", usedRatio: Math.min(1, Math.max(0, 1 - remaining / limit)), resetAt: nextMonthStartUTC(now) }]
 }
 
+// Desktop hands gizzi two credentials: the gateway key (ALLTERNIT_API_KEY,
+// accepted by /v1 inference and /v1/rate-limits) and the signed-in session
+// token (ALLTERNIT_API_TOKEN, accepted by /api/v1/me/usage). Each endpoint
+// takes only one of them, so try every credential on each.
+export function allternitCredentials(env: Record<string, string | undefined> = process.env): string[] {
+  const all = [env.ALLTERNIT_API_TOKEN, env.ALLTERNIT_API_KEY].map((v) => (v ?? "").trim()).filter(Boolean)
+  return [...new Set(all)]
+}
+
 const allternit: Fetcher = async () => {
-  const token = (process.env.ALLTERNIT_API_KEY || process.env.ALLTERNIT_API_TOKEN || "").trim()
-  if (!token) return { status: "signed-out", message: "Sign in to Allternit Cloud to see plan usage." }
-  const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" }
+  const tokens = allternitCredentials()
+  if (tokens.length === 0) return { status: "signed-out", message: "Sign in to Allternit Cloud to see plan usage." }
   const origin = allternitOrigin()
+  const get = (path: string, token: string) =>
+    fetch(`${origin}${path}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      signal: AbortSignal.timeout(8000),
+    })
   try {
-    const res = await fetch(`${origin}/api/v1/me/usage`, { headers, signal: AbortSignal.timeout(8000) })
-    let windows = res.ok ? parseAllternitUsage(await res.json().catch(() => undefined)) : []
-    if (windows.length === 0) {
-      const gw = await fetch(`${origin}/v1/rate-limits`, { headers, signal: AbortSignal.timeout(8000) }).catch(() => undefined)
-      if (gw?.ok) windows = parseGatewayRateLimits(await gw.json().catch(() => undefined))
-      else if (res.status === 401 || res.status === 403) {
-        return { status: "signed-out", message: "Allternit Cloud rejected the configured API key." }
+    let rejected = 0
+    let attempts = 0
+    for (const [path, parse] of [
+      ["/api/v1/me/usage", parseAllternitUsage],
+      ["/v1/rate-limits", (p: any) => parseGatewayRateLimits(p)],
+    ] as const) {
+      for (const token of tokens) {
+        attempts++
+        const res = await get(path, token).catch(() => undefined)
+        if (res?.status === 401 || res?.status === 403) rejected++
+        if (!res?.ok) continue
+        const windows = parse(await res.json().catch(() => undefined))
+        if (windows.length > 0) {
+          return { status: "ok", quota: { providerID: "allternit", source: "Allternit Cloud", windows, fetchedAt: Date.now() } }
+        }
       }
     }
-    return { status: "ok", quota: { providerID: "allternit", source: "Allternit Cloud", windows, fetchedAt: Date.now() } }
+    if (rejected === attempts) return { status: "signed-out", message: "Allternit Cloud rejected the configured credentials." }
+    return { status: "ok", quota: { providerID: "allternit", source: "Allternit Cloud", windows: [], fetchedAt: Date.now() } }
   } catch (err) {
     log.warn("allternit quota fetch failed", { error: err instanceof Error ? err.message : String(err) })
     return { status: "error", message: "Couldn't reach Allternit Cloud to read plan usage." }
