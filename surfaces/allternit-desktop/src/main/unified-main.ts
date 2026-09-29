@@ -24,6 +24,7 @@ import { installDesktopCompanion } from './desktop-companion.js';
 import { isPairingLink, pairingCodeFromUrl } from './pairing-link.js';
 import { approvePairing, describePairingRequest } from './pairing-approval.js';
 import { backendManager } from './backend-manager.js';
+import { applyDesktopHumanProof, applyDesktopHumanProofTo } from './human-proof.js';
 import { officeEngineManager } from './office-engine-manager.js';
 import { fabricWorkerManager, type FabricWorkerState } from './fabric-worker-manager.js';
 import { readSecret, writeSecret, FABRIC_WORKER_TOKEN_KEY } from './secure-store.js';
@@ -831,6 +832,9 @@ function createMainWindow(): BrowserWindow {
         details.requestHeaders['X-Allternit-Tenant-Id'] = session.organizationId;
       }
     }
+    // D16: the window's own person-act marker becomes Desktop's proof, only
+    // on requests to this machine's API; stripped everywhere else.
+    applyDesktopHumanProof(details.requestHeaders, injectDesktop ? backendManager.getHumanProof() : null);
     if (injectDesktop) {
       Object.assign(details.requestHeaders, coworkDeviceHeaders(coworkDevice));
     }
@@ -2205,6 +2209,8 @@ app.whenReady().then(async () => {
     }
 
     const headers = new Headers(request.headers);
+    // D16: Desktop's proof only goes to this machine's API, never the cloud.
+    applyDesktopHumanProofTo(headers, isCloud ? null : backendManager.getHumanProof());
     if (isCloud) {
       // Pairing device tokens are not Clerk JWTs. Cloud-api rejects them with
       // 401. Public catalog routes take no bearer at all.

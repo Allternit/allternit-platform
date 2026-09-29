@@ -454,7 +454,51 @@ pub(crate) fn permission_reply_body(
 /// the bearer alone can't be the proof there (D16).
 pub(crate) const HUMAN_PROOF_HEADER: &str = "x-allternit-human-proof";
 
-/// `Ok` when this request was made by the person `user_id`: a Clerk session
+/// Env flag set by Allternit Desktop's main process: it writes a per-launch
+/// secret as the first line of this process's stdin. Never passed in the
+/// environment or on disk (a same-user agent can read both), so only Electron
+/// main and this process hold it.
+pub const DESKTOP_HUMAN_PROOF_STDIN_ENV: &str = "ALLTERNIT_HUMAN_PROOF_STDIN";
+
+/// Proof values Electron main puts on a Desktop person's act: `desktop:<secret>`.
+const DESKTOP_PROOF_PREFIX: &str = "desktop:";
+
+static DESKTOP_HUMAN_PROOF: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Read Desktop's per-launch human-proof secret from stdin, when Desktop
+/// launched this process ([`DESKTOP_HUMAN_PROOF_STDIN_ENV`]). Runs on its own
+/// thread so a missing line never blocks startup.
+pub fn read_desktop_human_proof_from_stdin() {
+    if std::env::var(DESKTOP_HUMAN_PROOF_STDIN_ENV).as_deref() != Ok("1") {
+        return;
+    }
+    std::thread::spawn(|| {
+        let mut line = String::new();
+        if std::io::stdin().read_line(&mut line).is_ok() {
+            let secret = line.trim();
+            if secret.len() >= 32 {
+                let _ = DESKTOP_HUMAN_PROOF.set(secret.to_string());
+                tracing::info!("desktop human proof ready");
+            } else {
+                warn!("desktop human proof missing on stdin");
+            }
+        }
+    });
+}
+
+/// In Desktop the person's Clerk session may be absent (paired by device
+/// only), so the Desktop app itself vouches: Electron main swaps the UI's
+/// marker for `desktop:<secret>` on requests its window makes as a person's
+/// act. Agents never pass through Electron main, and can't read its memory.
+fn desktop_proof_matches(token: &str) -> bool {
+    match (token.strip_prefix(DESKTOP_PROOF_PREFIX), DESKTOP_HUMAN_PROOF.get()) {
+        (Some(given), Some(secret)) => crate::auth::constant_time_eq(given, secret),
+        _ => false,
+    }
+}
+
+/// `Ok` when this request was made by the person `user_id`: Desktop's own
+/// proof (see [`desktop_proof_matches`]), or a Clerk session
 /// token — the human-proof header, else the bearer (the web calls the API
 /// directly with it) — that verifies and belongs to that user. Anything else
 /// is refused with a short reason for the log. Only an explicit local-dev
@@ -471,6 +515,9 @@ pub(crate) async fn person_acted(state: &AppState, headers: &HeaderMap, user_id:
             .map(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")).unwrap_or(v).trim())
             .filter(|v| !v.is_empty())
     };
+    if header_value(HUMAN_PROOF_HEADER).is_some_and(desktop_proof_matches) {
+        return Ok(());
+    }
     let Some(token) = header_value(HUMAN_PROOF_HEADER).or_else(|| header_value(header::AUTHORIZATION.as_str())) else {
         return Err("no person proof");
     };
@@ -1107,6 +1154,29 @@ mod tests {
         let at = token.len() - 20;
         let flipped = if &token[at..at + 1] == "A" { "B" } else { "A" };
         format!("{}{flipped}{}", &token[..at], &token[at + 1..])
+    }
+
+    #[tokio::test]
+    async fn desktop_proof_from_electron_main_counts_as_a_person() {
+        let (app, _state, _seen) = setup().await;
+        let secret = "d".repeat(64);
+        let _ = DESKTOP_HUMAN_PROOF.set(secret.clone());
+        let secret = DESKTOP_HUMAN_PROOF.get().unwrap().clone();
+        let mint = |proof: String| {
+            let app = app.clone();
+            async move {
+                send(&app, "POST", "/subscriptions/human-actions", &[(HUMAN_PROOF_HEADER, &proof)], json!({"surface": "composer.tool"}))
+                    .await
+            }
+        };
+        let (status, body) = mint(format!("desktop:{secret}")).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        // The UI's bare marker, a wrong secret, or the secret without its
+        // prefix are not proof.
+        for proof in ["desktop".to_string(), "desktop:nope".to_string(), secret.clone()] {
+            let (status, body) = mint(proof).await;
+            assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("person_required")));
+        }
     }
 
     #[tokio::test]

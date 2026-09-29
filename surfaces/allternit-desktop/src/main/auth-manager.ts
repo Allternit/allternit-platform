@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { openClerkOAuthPopup, setCookieOnSession } from './clerk-oauth-popup.js';
+import { stripDesktopHumanProof } from './human-proof.js';
 import {
   buildAuthForwardInit,
   cookieFromSetCookieHeader,
@@ -1341,6 +1342,9 @@ export class DesktopAuthManager {
       if (!session) throw new Error('Runtime is no longer paired');
       headers.set('Authorization', `Bearer ${session.accessToken}`);
       headers.set('X-Allternit-Desktop-Access-Token', session.accessToken);
+      // Another device's request: it proves a person with its own Clerk
+      // session, never with this Desktop's proof (D16).
+      stripDesktopHumanProof(headers);
       // Another device's request: the API checks that device, not this one.
       headers.set('X-Allternit-Relayed', '1');
       headers.set('X-Allternit-User-Id', session.userId);
