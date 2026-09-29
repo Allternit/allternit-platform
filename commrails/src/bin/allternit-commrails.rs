@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use allternit_commrails::bus::{Bus, BusMessage, BusOptions, NewBusMessage};
+use allternit_commrails::cli::judge::{
+    run_judge_command, run_leases_command, JudgeCmd, JudgeContext, LeasesCmd,
+};
 use allternit_commrails::cli::work::{run_work_command, WorkCmd, WorkContext};
 use allternit_commrails::core::ids::{create_event_id, create_lease_id};
 use allternit_commrails::core::io::{ensure_dir, write_json_atomic};
@@ -102,6 +105,12 @@ enum Commands {
     /// Node-scoped wait-gates on WIH DAG nodes.
     #[command(subcommand, name = "wait-gate")]
     WaitGate(WaitGateCmd),
+    /// Fail-closed judge: node verdicts, tool decisions, policy.
+    #[command(subcommand)]
+    Judge(JudgeCmd),
+    /// Lease-holder heartbeats and stale-lease reclaim.
+    #[command(subcommand)]
+    Leases(LeasesCmd),
 }
 
 #[derive(Subcommand)]
@@ -374,6 +383,11 @@ enum WihCmd {
         /// derived view nodes/<node_id>.out.md). Counts as evidence.
         #[arg(long)]
         output: Option<PathBuf>,
+        /// Who is closing: `user:<id>` or `agent:<id>` (bare id = user).
+        /// Matters under the judge policy (`close_by: verifier`,
+        /// `verify: judge`); unset counts as the worker.
+        #[arg(long)]
+        actor: Option<String>,
     },
 }
 
@@ -383,6 +397,9 @@ enum LeaseCmd {
         wih_id: String,
         agent_id: String,
         paths: Vec<String>,
+        /// Seconds. An option (was a positional after the variadic paths,
+        /// which made clap panic on every `lease request`).
+        #[arg(long)]
         ttl: Option<i64>,
     },
     Release {
@@ -845,6 +862,7 @@ async fn run() -> Result<()> {
                 status,
                 evidence,
                 output,
+                actor,
             } => {
                 let gate = stores.gate().await?;
                 let output_text = match &output {
@@ -854,12 +872,17 @@ async fn run() -> Result<()> {
                     ),
                     None => None,
                 };
-                let receipt = gate
-                    .wih_close_with(&wih_id, &status, &evidence, output_text.as_deref())
+                let closer = actor.as_deref().map(parse_actor).transpose()?;
+                let closed = gate
+                    .wih_close_as(&wih_id, &status, &evidence, output_text.as_deref(), closer.as_ref())
                     .await?;
                 println!("closed");
-                if let Some(receipt_id) = receipt {
+                if let Some(receipt_id) = &closed.output_receipt_id {
                     println!("output_receipt: {receipt_id}");
+                }
+                if let Some(v) = &closed.verdict {
+                    println!("node_status: {}", closed.node_status);
+                    println!("verdict: {}", serde_json::to_string(v)?);
                 }
             }
         },
@@ -1406,6 +1429,22 @@ async fn run() -> Result<()> {
             let receipts = stores.receipts().await?;
             let index = stores.index().await?;
             init_system(&root, &ledger, &lease_store, &receipts, &index).await?;
+        }
+        Commands::Judge(cmd) => {
+            let ctx = JudgeContext {
+                root: root.clone(),
+                ledger: ledger.clone(),
+                gate: stores.gate().await?,
+            };
+            run_judge_command(&ctx, cmd).await?
+        }
+        Commands::Leases(cmd) => {
+            let ctx = JudgeContext {
+                root: root.clone(),
+                ledger: ledger.clone(),
+                gate: stores.gate().await?,
+            };
+            run_leases_command(&ctx, cmd).await?
         }
         Commands::Work(cmd) => {
             let work_ctx = WorkContext {
@@ -3118,4 +3157,18 @@ fn load_mutations(path: Option<PathBuf>, json_inline: Option<String>) -> Result<
         return Ok(mutations);
     }
     Ok(Vec::new())
+}
+
+#[cfg(test)]
+mod cli_shape_tests {
+    use super::Cli;
+    use clap::CommandFactory;
+
+    /// clap validates argument shapes lazily, per subcommand, and panics at
+    /// run time (e.g. `lease request` had a positional after variadic paths).
+    /// Check every subcommand up front.
+    #[test]
+    fn clap_definition_is_valid() {
+        Cli::command().debug_assert();
+    }
 }

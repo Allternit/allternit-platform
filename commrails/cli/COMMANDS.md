@@ -167,14 +167,23 @@ Required events:
 ### `allternit wih context <wih_id>`
 Reads ContextPack if available, and the resolved prompt if the WIH has one (no events).
 
-### `allternit wih close <wih_id> DONE|FAILED [<evidence ref>...] [--output <file>]`
+### `allternit wih close <wih_id> DONE|FAILED [<evidence ref>...] [--output <file>] [--actor user:<id>|agent:<id>]`
 Gate: Gate 4 → Gate 5  
 `--output` stores the file's text as the node output (immutable blob +
 `node.output` receipt, derived view `nodes/<node_id>.out.md`) and counts as
 evidence. HTTP: `POST /v1/wihs/:wih_id/close` (service) and the API close route
 accept `"output": "<text>"`.
+`--actor` names the closer (bare id = user; unset = the worker). It only matters
+under the judge policy (`spec/JUDGE.md`): `close_by: verifier` refuses a DONE/PASS
+close by the worker (exit 2, `gate4.close` / `close_by_verifier`); `verify: judge`
+asks the judge and prints `node_status` (`DONE` / `EXCEPTION` / `NEEDS_HUMAN`) and
+the verdict. The service route takes `"actor"`; the API route's closer is always
+its owning `agent_id`. Both return 409 on a structured Gate 4 refusal and add
+`node_status` (+ `verdict`) to the response.
 Required events:
+- (verifier-only refusal) WIHCloseDenied — nothing else is recorded
 - (with output) ReceiptWritten + DagNodeOutputRecorded
+- (verify: judge) JudgeVerdictRecorded
 - WIHCloseRequested
 - WIHClosedSigned (gate attestation)
 - DagNodeStatusChanged
@@ -201,7 +210,60 @@ Unresolved Manual node gates across all dags ("needs you"; no events). The API
 visibility DTO (`GET /api/commrails/visibility`) appends the ones whose upstream is
 DONE to `needsYou` with `reason: "manual_gate"` and a `node` join.
 
+## Judge (fail-closed verdicts and tool decisions — `spec/JUDGE.md`)
+
+### `allternit judge policy set --dag <dag_id> [--node <node_id>] [--verify off|judge] [--close-by any|verifier] [--tool-judge true|false] [--max-continuations <n>] --actor user:<id>|agent:<id>`
+Opt-in policy (default: all off, `max_continuations` 2). Node level overrides plan
+level. An agent holding an open WIH in the dag cannot weaken it
+(`policy_self_weaken`). Required events:
+- JudgePolicySet
+
+### `allternit judge policy show --dag <dag_id> [--node <node_id>]`
+Effective policy (no events).
+
+### `allternit judge tool --wih <wih_id> --tool <tool> [--command "<cmd>"] [--paths <p>...] [--json]`
+`allow | ask | deny`. Order: Gate 2 checks (deny is final, judge not asked) → hard
+floor (deny is final) → judge. A judge timeout/error/invalid answer is `ask`, never
+`allow`. Required events:
+- JudgeToolDecision (source gate2 | hard_rule | judge | judge_failed)
+
+### `allternit judge show <dag_id>/<node_id>`
+Policy, verdict history, continuations used (no events).
+
+### `allternit judge continue <dag_id>/<node_id> --actor <actor> [--reason <text>]`
+Re-open a node in `EXCEPTION` (→ READY), counted against `max_continuations`
+(`continuation_cap_reached`, `not_in_exception`). Required events:
+- JudgeContinuationGranted (counted: true)
+- DagNodeStatusChanged
+
+### `allternit judge resolve <dag_id>/<node_id> accomplished|continue|abandon --actor user:<id> [--reason <text>]`
+A person resolves an `EXCEPTION` / `NEEDS_HUMAN` node: DONE / READY (not counted) /
+FAILED. User actors only (`resolve_requires_user`). Required events:
+- JudgeHumanResolved
+- (continue) JudgeContinuationGranted (counted: false)
+- DagNodeStatusChanged
+
+### `allternit judge pending [--json]`
+Nodes in `NEEDS_HUMAN` with reason `judge_failed` or `judge_needs_human` (no events).
+The API visibility DTO appends them to `needsYou` with the same reasons.
+
+### `allternit judge config`
+Shows `.allternit/judge/config.json` (or the defaults); an invalid file is reported
+and makes every verdict `needs_human` / every tool decision `ask`.
+
 ## Leases / Reservations
+
+### `allternit leases heartbeat <wih_id> [--pid <pid>] [--host <host>]`
+Holder heartbeat (~60s) written to `.allternit/leases/heartbeats/<wih_id>.json`.
+Required events (only when the holder pid/host/agent changes):
+- LeaseHolderHeartbeat
+
+### `allternit leases reclaim [--stale-after 5m] [--include-unbeaten] [--dry-run] [--json]`
+Stale = last beat older than `--stale-after`, or the pid is on this host and dead,
+or the WIH is already closed. Leases whose WIH never beat are skipped unless
+`--include-unbeaten` (then judged by lease age). Required events per reclaimed holder:
+- LeaseReleased + LeaseReclaimed (each lease)
+- (open WIH) WIHReclaimed + WIHClosedSigned (final_status RECLAIMED) — the node can be picked up again
 
 ### `allternit lease request <wih_id> --paths "<glob>" [--ttl <sec>]`
 Required events:

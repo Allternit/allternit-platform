@@ -831,6 +831,12 @@ struct WihCloseRequest {
 #[derive(Debug, Serialize)]
 struct WihCloseResponse {
     closed: bool,
+    /// Node status after the close (`DONE`, `EXCEPTION`, `NEEDS_HUMAN`, ...).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    node_status: Option<String>,
+    /// Judge verdict when the node policy has `verify: judge`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verdict: Option<serde_json::Value>,
 }
 
 async fn query_ledger(
@@ -1950,11 +1956,38 @@ async fn close_wih(
     match state
         .rails
         .gate
-        .wih_close_with(&wih_id, &status, &evidence, req.output.as_deref())
+        // The route's closer is always the owning agent (checked above), so
+        // under `close_by: verifier` a DONE close here is refused (409).
+        .wih_close_as(
+            &wih_id,
+            &status,
+            &evidence,
+            req.output.as_deref(),
+            Some(&allternit_commrails::Actor {
+                r#type: allternit_commrails::ActorType::Agent,
+                id: req.agent_id.clone(),
+            }),
+        )
         .await
     {
-        Ok(_) => (StatusCode::OK, Json(WihCloseResponse { closed: true })).into_response(),
+        Ok(outcome) => (
+            StatusCode::OK,
+            Json(WihCloseResponse {
+                closed: true,
+                node_status: Some(outcome.node_status),
+                verdict: outcome.verdict.and_then(|v| serde_json::to_value(v).ok()),
+            }),
+        )
+            .into_response(),
         Err(e) => {
+            if let Some(gate_error) = allternit_commrails::GateError::from_anyhow(&e) {
+                // Structured Gate 4 refusal (close_by_verifier, wih_already_closed).
+                return (
+                    StatusCode::CONFLICT,
+                    Json(json!({ "error": e.to_string(), "gate_error": gate_error })),
+                )
+                    .into_response();
+            }
             let status = if e.to_string().contains("evidence") {
                 StatusCode::BAD_REQUEST
             } else {

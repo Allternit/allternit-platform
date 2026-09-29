@@ -8,6 +8,7 @@ use allternit_commrails::core::types::LedgerQuery;
 use allternit_commrails::ledger::ledger::Ledger;
 use allternit_commrails::peer::PeerRegistry;
 use allternit_commrails::wih::active_wihs;
+use allternit_commrails::judge::{pending_judge_needs, PendingJudgeNeed};
 use allternit_commrails::work::needs_you::{pending_manual_gates, PendingManualGate};
 use allternit_commrails::project_dag;
 use serde_json::Value;
@@ -293,7 +294,10 @@ pub async fn load_visibility(root: &Path, peers: &PeerRegistry, ledger: &Ledger)
         visibility_from_peers(peers)
     };
     match ledger.query(LedgerQuery::default()).await {
-        Ok(events) => append_manual_gate_needs(&mut dto, &pending_manual_gates(&events)),
+        Ok(events) => {
+            append_manual_gate_needs(&mut dto, &pending_manual_gates(&events));
+            append_judge_needs(&mut dto, &pending_judge_needs(&events));
+        }
         Err(err) => tracing::warn!(error = %err, "needsYou manual-gate read failed; skipping"),
     }
     dto
@@ -317,10 +321,55 @@ pub fn append_manual_gate_needs(dto: &mut VisibilityDto, pending: &[PendingManua
     }
 }
 
+/// Nodes a judge verdict handed to a person (status NEEDS_HUMAN): reason
+/// `judge_failed` (timeout / error / invalid answer — fail closed) or
+/// `judge_needs_human` (continuation cap reached, or a category only a
+/// person can fix).
+pub fn append_judge_needs(dto: &mut VisibilityDto, pending: &[PendingJudgeNeed]) {
+    for need in pending {
+        dto.needs_you.push(VisibilityNeed {
+            id: format!("judge:{}/{}", need.dag_id, need.node_id),
+            label: format!("{} — {}", need.node_title, need.detail),
+            reason: need.reason.clone(),
+            node: Some(VisibilityNeedNode {
+                dag_id: need.dag_id.clone(),
+                node_id: need.node_id.clone(),
+                title: need.node_title.clone(),
+            }),
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn judge_needs_human_nodes_join_needs_you() {
+        let dir = std::env::temp_dir().join(format!("ao-vis-judge-{}", std::process::id()));
+        let peers = PeerRegistry::new(&dir).expect("peers");
+        let mut dto = visibility_from_peers(&peers);
+        let before = dto.needs_you.len();
+        append_judge_needs(
+            &mut dto,
+            &[PendingJudgeNeed {
+                dag_id: "dag_1".to_string(),
+                node_id: "cut".to_string(),
+                node_title: "Cut".to_string(),
+                wih_id: Some("wih_1".to_string()),
+                reason: "judge_failed".to_string(),
+                category: None,
+                detail: "judge timed out".to_string(),
+                at: "2026-09-29T00:00:00Z".to_string(),
+            }],
+        );
+        assert_eq!(dto.needs_you.len(), before + 1);
+        let need = dto.needs_you.last().unwrap();
+        assert_eq!(need.id, "judge:dag_1/cut");
+        assert_eq!(need.reason, "judge_failed");
+        assert_eq!(need.node.as_ref().unwrap().node_id, "cut");
+    }
 
     #[test]
     fn manual_node_gates_join_needs_you_once_upstream_is_done() {
