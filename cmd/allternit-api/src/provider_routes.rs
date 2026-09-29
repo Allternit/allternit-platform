@@ -67,7 +67,11 @@ pub fn provider_router() -> Router<Arc<AppState>> {
         )
         .route(
             "/media/image/generate",
-            post(crate::media::handlers::generate_image),
+            post(crate::media::handlers::generate_image).layer(
+                axum::extract::DefaultBodyLimit::max(
+                    crate::media::handlers::MAX_IMAGE_GENERATE_BODY_BYTES,
+                ),
+            ),
         )
         .route(
             "/media/artifacts",

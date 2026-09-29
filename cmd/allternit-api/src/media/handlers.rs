@@ -70,6 +70,41 @@ pub struct GenerateImageRequest {
     pub quality: Option<String>,
     #[serde(default)]
     pub n: Option<u32>,
+    /// Optional reference photo as a `data:image/{png,jpeg,webp};base64,...`
+    /// URL. When set, gpt-image restyles it (images/edits) instead of
+    /// generating from text alone — e.g. turning a photo into a bot sprite.
+    #[serde(default)]
+    pub reference_image: Option<String>,
+}
+
+/// Largest reference photo accepted on image generate (decoded bytes).
+pub const MAX_REFERENCE_IMAGE_BYTES: usize = 8 * 1024 * 1024;
+/// Route body limit for image generate: the base64 reference plus JSON.
+pub const MAX_IMAGE_GENERATE_BODY_BYTES: usize = 12 * 1024 * 1024;
+
+/// Validate a reference photo data URL (type, base64, size).
+fn validate_reference_image(data_url: &str) -> Result<(), CoreError> {
+    let Some((header, payload)) = data_url.split_once(',') else {
+        return Err(bad_request("reference_image must be a base64 data URL"));
+    };
+    let allowed = matches!(
+        header,
+        "data:image/png;base64" | "data:image/jpeg;base64" | "data:image/webp;base64"
+    );
+    if !allowed {
+        return Err(bad_request("reference_image must be a PNG, JPEG, or WebP base64 data URL"));
+    }
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(payload)
+        .map_err(|_| bad_request("reference_image is not valid base64"))?;
+    if bytes.is_empty() {
+        return Err(bad_request("reference_image is empty"));
+    }
+    if bytes.len() > MAX_REFERENCE_IMAGE_BYTES {
+        return Err(bad_request("reference_image is larger than 8 MB"));
+    }
+    Ok(())
 }
 
 // ─── Core logic (transport-injected) ─────────────────────────────────────────
@@ -340,6 +375,12 @@ pub async fn generate_image_core(
     if !(1..=4).contains(&n) {
         return Err(bad_request("n must be between 1 and 4"));
     }
+    if let Some(reference) = &req.reference_image {
+        if req.provider != "gpt-image" {
+            return Err(bad_request("reference_image is only supported by the gpt-image provider"));
+        }
+        validate_reference_image(reference)?;
+    }
     let cred_id = media::credential_provider_id(&req.provider)
         .ok_or_else(|| bad_request(&format!("unknown provider `{}`", req.provider)))?;
     let key = resolve_provider_key(db, user_id, &req.provider)
@@ -358,8 +399,12 @@ pub async fn generate_image_core(
             }
             let cost = catalog::estimate_gpt_image_cost(&quality, n)
                 .ok_or_else(|| bad_request("unknown quality"))?;
-            let entries = clients::generate_gpt_images(transport, &key, &req.prompt, &size, &quality, n)
-                .await
+            let entries = match &req.reference_image {
+                Some(reference) => {
+                    clients::edit_gpt_images(transport, &key, &req.prompt, reference, &size, &quality, n).await
+                }
+                None => clients::generate_gpt_images(transport, &key, &req.prompt, &size, &quality, n).await,
+            }
                 .map_err(|message| (StatusCode::BAD_GATEWAY, json!({ "error": "provider_generate_failed", "message": message })))?;
             (entries, cost)
         }

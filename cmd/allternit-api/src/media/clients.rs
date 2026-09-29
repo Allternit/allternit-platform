@@ -532,6 +532,43 @@ pub async fn generate_gpt_images(
         )
         .await?;
     require_ok(status, &res, "gpt-image generate")?;
+    extract_gpt_images(&res)
+}
+
+/// gpt-image-2 restyle of a reference photo via `{base}/v1/images/edits`
+/// (JSON body, `images: [{image_url}]` with a base64 data URL). Priced per
+/// output image like generation, plus input-image tokens.
+pub async fn edit_gpt_images(
+    transport: &dyn MediaTransport,
+    key: &ProviderKey,
+    prompt: &str,
+    reference_data_url: &str,
+    size: &str,
+    quality: &str,
+    n: u32,
+) -> Result<Vec<ImageEntry>, String> {
+    let base = key.base_or(OPENAI_DEFAULT_BASE);
+    let body = json!({
+        "model": "gpt-image-2",
+        "prompt": prompt,
+        "images": [{ "image_url": reference_data_url }],
+        "size": size,
+        "quality": quality,
+        "n": n,
+    });
+    let headers = bearer(&key.api_key);
+    let (status, res) = transport
+        .post_json(
+            &format!("{base}/v1/images/edits"),
+            &header_refs(&headers),
+            &body,
+        )
+        .await?;
+    require_ok(status, &res, "gpt-image edit")?;
+    extract_gpt_images(&res)
+}
+
+fn extract_gpt_images(res: &Value) -> Result<Vec<ImageEntry>, String> {
     let data = res
         .get("data")
         .and_then(|v| v.as_array())
