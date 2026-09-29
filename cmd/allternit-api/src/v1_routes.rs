@@ -18,7 +18,7 @@ use std::{collections::HashMap, convert::Infallible, sync::Arc, sync::Mutex};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::agent_preferences_routes::chat_style_directive;
+use crate::agent_preferences_routes::{chat_style_directive, load_preferences_row, user_profile_block, UserProfile};
 use crate::agent_session_routes::gizzi_client;
 use crate::agent_workspace_paths::workspace_dir_for;
 use crate::auth::AuthUser;
@@ -752,7 +752,7 @@ fn read_instruction_files(dir: &std::path::Path) -> Option<String> {
 /// twice) → canonical instruction files (AGENTS.md → GIZZI.md →
 /// .claude/CLAUDE.md → SYSTEM_LAW.md, mirroring pack.ts) → agent
 /// system_prompt → response-style directive → custom
-/// instructions → client-sent systemPrompt. Blank layers
+/// instructions → "About the user" profile → client-sent systemPrompt. Blank layers
 /// are skipped and layers are joined with "\n\n"; returns None when every
 /// layer is empty so the caller preserves the old no-block behavior exactly.
 fn compose_system_instructions(
@@ -762,6 +762,7 @@ fn compose_system_instructions(
     agent_prompt: Option<&str>,
     response_style: &str,
     custom_instructions: &str,
+    user_profile: Option<&str>,
     client_prompt: Option<&str>,
 ) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
@@ -778,6 +779,9 @@ fn compose_system_instructions(
             "Custom instructions from the user:\n{}",
             custom_instructions
         ));
+    }
+    if let Some(text) = user_profile.map(str::trim).filter(|t| !t.is_empty()) {
+        parts.push(text.to_string());
     }
     if let Some(text) = client_prompt.map(str::trim).filter(|t| !t.is_empty()) {
         parts.push(text.to_string());
@@ -1054,17 +1058,10 @@ async fn agent_chat_bridge(
     let gathered = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
 
-        let prefs_row: Option<(String, String)> = conn
-            .query_row(
-                "SELECT response_style, custom_instructions
-                 FROM user_agent_preferences WHERE user_id = ?1",
-                params![user_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()?;
-        let (response_style, custom_instructions) = prefs_row
+        let prefs_row = load_preferences_row(&conn, &user_id)?;
+        let (response_style, custom_instructions, profile) = prefs_row
             .clone()
-            .unwrap_or(("balanced".to_string(), String::new()));
+            .unwrap_or(("balanced".to_string(), String::new(), UserProfile::default()));
 
         let agent = match agent_id_for_task {
             Some(ref agent_id) => {
@@ -1106,11 +1103,11 @@ async fn agent_chat_bridge(
             None => None,
         };
 
-        Ok::<_, rusqlite::Error>((response_style, custom_instructions, agent))
+        Ok::<_, rusqlite::Error>((response_style, custom_instructions, profile, agent))
     })
     .await;
 
-    let (response_style, custom_instructions, agent) = match gathered {
+    let (response_style, custom_instructions, profile, agent) = match gathered {
         Ok(Ok(v)) => v,
         Ok(Err(e)) => {
             warn!("DB error composing agent-chat context: {}", e);
@@ -1172,6 +1169,7 @@ async fn agent_chat_bridge(
         agent.system_prompt.as_deref(),
         &response_style,
         &custom_instructions,
+        user_profile_block(&profile).as_deref(),
         client_system_prompt.as_deref(),
     )
     .unwrap_or_default();
@@ -2115,7 +2113,7 @@ mod tests {
     #[test]
     fn compose_empty_returns_none() {
         assert_eq!(
-            compose_system_instructions(None, None, None, None, "balanced", "", None),
+            compose_system_instructions(None, None, None, None, "balanced", "", None, None),
             None
         );
     }
@@ -2130,6 +2128,7 @@ mod tests {
                 Some("\n"),
                 "balanced",
                 "   ",
+                None,
                 Some("\t")
             ),
             None
@@ -2139,35 +2138,35 @@ mod tests {
     #[test]
     fn compose_each_layer_alone() {
         assert_eq!(
-            compose_system_instructions(Some("soul"), None, None, None, "balanced", "", None)
+            compose_system_instructions(Some("soul"), None, None, None, "balanced", "", None, None)
                 .as_deref(),
             Some("soul")
         );
         assert_eq!(
-            compose_system_instructions(None, Some("style md"), None, None, "balanced", "", None)
+            compose_system_instructions(None, Some("style md"), None, None, "balanced", "", None, None)
                 .as_deref(),
             Some("style md")
         );
         assert_eq!(
-            compose_system_instructions(None, None, Some("--- AGENTS.md ---\nrules"), None, "balanced", "", None)
+            compose_system_instructions(None, None, Some("--- AGENTS.md ---\nrules"), None, "balanced", "", None, None)
                 .as_deref(),
             Some("--- AGENTS.md ---\nrules")
         );
         assert_eq!(
-            compose_system_instructions(None, None, None, Some("agent prompt"), "balanced", "", None)
+            compose_system_instructions(None, None, None, Some("agent prompt"), "balanced", "", None, None)
                 .as_deref(),
             Some("agent prompt")
         );
         assert_eq!(
-            compose_system_instructions(None, None, None, None, "concise", "", None).as_deref(),
+            compose_system_instructions(None, None, None, None, "concise", "", None, None).as_deref(),
             Some(chat_style_directive("concise").unwrap())
         );
         assert_eq!(
-            compose_system_instructions(None, None, None, None, "balanced", "do x", None).as_deref(),
+            compose_system_instructions(None, None, None, None, "balanced", "do x", None, None).as_deref(),
             Some("Custom instructions from the user:\ndo x")
         );
         assert_eq!(
-            compose_system_instructions(None, None, None, None, "balanced", "", Some("client"))
+            compose_system_instructions(None, None, None, None, "balanced", "", None, Some("client"))
                 .as_deref(),
             Some("client")
         );
@@ -2182,8 +2181,8 @@ mod tests {
             Some("AGENT"),
             "detailed",
             "CUSTOM",
-            Some("CLIENT"),
-        )
+            None,
+            Some("CLIENT"),)
         .unwrap();
         let expected = [
             "SOUL",
@@ -2201,11 +2200,11 @@ mod tests {
     #[test]
     fn compose_no_directive_for_balanced_or_custom() {
         assert_eq!(
-            compose_system_instructions(None, None, None, None, "balanced", "", None),
+            compose_system_instructions(None, None, None, None, "balanced", "", None, None),
             None
         );
         assert_eq!(
-            compose_system_instructions(None, None, None, None, "custom", "", None),
+            compose_system_instructions(None, None, None, None, "custom", "", None, None),
             None
         );
     }
