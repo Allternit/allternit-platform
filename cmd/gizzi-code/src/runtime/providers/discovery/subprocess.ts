@@ -168,6 +168,18 @@ export async function resolveCliPath(spec: SubprocessSpec): Promise<string | nul
   return null
 }
 
+/**
+ * The CLI's path now. A path found at startup can vanish while gizzi runs
+ * (Claude Code's auto-update removed ~/.local/bin/claude and every turn failed
+ * with ENOENT posix_spawn); then look it up again the way discovery does.
+ */
+export async function currentCliPath(cliId: string, known: string): Promise<string> {
+  if (!path.isAbsolute(known) || existsSync(known)) return known
+  const spec = SUBPROCESS_PROVIDERS.find((s) => s.id === cliId)
+  if (!spec) return known
+  return (await resolveCliPath(spec)) ?? known
+}
+
 /** Directories user-level installers put CLIs in, whether or not they're on PATH. */
 function userBinDirs(home: string): string[] {
   return [
