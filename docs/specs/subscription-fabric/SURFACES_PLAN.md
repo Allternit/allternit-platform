@@ -150,6 +150,40 @@ chat picker lists what gizzi's `/provider` reports. So:
 5. **Tool belt + MCP:** wire `media_generate` subscription lane; capability
    tools (`presentation.create`, `document.create`, `research.deep`, …)
    human-confirmed; gateway MCP server for other agents.
+   **Built (2026-09-28, step-5 PR):**
+   - gizzi `PermissionNext.ALWAYS_ASK = {"subscription"}`: asks in every mode
+     (auto/yolo/bypassPermissions included); saved approvals and configured
+     allows never apply; an "always" reply counts once; only a configured
+     deny, plan or dontAsk refuse automatically. The reply carries
+     `human_action` back to the tool (`PermissionNext.Grant`); only
+     always-ask classes get one. (Overlaps the step-4 PR, which adds the same
+     class + relay; whichever lands second keeps one copy.)
+   - allternit-api `decide_approval`: approving a `subscription` ask mints the
+     human action (`approval.confirm`) and relays it as `humanAction` — the only
+     way a tool-belt call gets one. Tools never mint.
+   - gizzi tools: `media_generate` lane `subscription` (image.generate);
+     `subscription_presentation_create` / `subscription_document_create` /
+     `subscription_research_deep`, registered only when `GET /v1/capabilities`
+     reports an entitled account. Artifacts are downloaded through the
+     forwarder, sha256-checked (`x-artifact-sha256`, else the artifact row;
+     no checksum → refused) and returned as file attachments. `needs_user`
+     is relayed to the person, never answered.
+   - Gateway MCP server: `POST /api/v1/subscriptions/mcp` (allternit-api,
+     Streamable HTTP, JSON replies). Mount in gizzi as
+     `mcp: {"allternit-subscriptions": {type: "remote", url:
+     "<api>/api/v1/subscriptions/mcp", headers: {Authorization: "Bearer <token>"}}}`.
+     Tools (`image_generate`, `presentation_create`, `document_create`,
+     `research_deep`, filtered by availability, + `task_status`) only
+     **prepare**: they write a `cowork_approvals` card (kind
+     `subscription_task`) and return `pending_approval`. Approving the card
+     mints the human action (`approval.confirm`) and submits once through
+     the forwarder; `task_status` reports pending/rejected/running/
+     needs_user/completed with artifact download paths.
+   - Open: the UI shows `cowork_approvals` cards only while a cowork session
+     is active (`useApprovalGatePoller`) — MCP-prepared cards need a global
+     inbox surface (step 4/7 UI). Local gizzi TUI replies carry no human
+     action, so tool-belt calls from the bare TUI fail closed ("confirm in
+     the Allternit app").
 6. **Adapters:** claude-web → kimi-web (kimi.ai) → chatgpt-web expansion, per
    `CAPABILITY_INVENTORY.md` (probe the live UI on a copy profile first; owner
    logs in once per provider through Desktop's writable computer viewer).

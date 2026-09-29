@@ -23,7 +23,13 @@ export namespace Tool {
     extra?: { [key: string]: any }
     messages: MessageV2.WithParts[]
     metadata(input: { title?: string; metadata?: M }): void
-    ask(input: Omit<PermissionNext.Request, "id" | "sessionID" | "tool">): Promise<void>
+    /**
+     * Ask the person (per the permission rules). Resolves when allowed; an
+     * always-ask class (PermissionNext.ALWAYS_ASK) resolves with the reply data
+     * the confirming surface attached — a context without a person resolves
+     * with nothing.
+     */
+    ask(input: Omit<PermissionNext.Request, "id" | "sessionID" | "tool">): Promise<PermissionNext.ReplyData | void>
   }
   export interface Info<Parameters extends z.ZodType = z.ZodType, M extends Metadata = Metadata> {
     id: string

@@ -280,8 +280,17 @@ fn subscription_approval_content(
             format!("The {name} task is paused until you answer. Nothing is answered for you."),
         )
     } else {
+        // A tool-belt task says what it does ("Create a presentation with
+        // your ChatGPT subscription: …"); a plain send says where it goes.
+        let summary = metadata
+            .get("summary")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("Send to your {name} subscription"));
         (
-            format!("Send to your {name} subscription"),
+            summary,
             format!("An agent prepared this for your {name} subscription. It is only sent if you confirm."),
         )
     };
@@ -2270,6 +2279,26 @@ mod tests {
         assert_eq!(content["patterns"], json!(["rm -rf tmp"]));
         assert_eq!(content["always"], json!(["bash *"]));
         assert_eq!(content["messageId"], "msg_1");
+    }
+
+    #[test]
+    fn gizzi_permission_content_for_a_subscription_task_is_plain_and_high_risk() {
+        let content = gizzi_permission_approval_content(&json!({
+            "id": "per_sub",
+            "sessionID": "ses_1",
+            "permission": "subscription",
+            "patterns": ["chatgpt:presentation.create"],
+            "metadata": {
+                "toolName": "presentation.create",
+                "summary": "Create a presentation with your ChatGPT subscription: \"Q3\"",
+                "subscription": { "kind": "send", "provider": "chatgpt", "providerName": "ChatGPT" }
+            }
+        }));
+        assert_eq!(content["summary"], "Create a presentation with your ChatGPT subscription: \"Q3\"");
+        assert_eq!(content["riskLevel"], "high");
+        assert_eq!(content["details"]["actionType"], "subscription");
+        assert!(content["details"]["consequence"].as_str().unwrap().contains("ChatGPT subscription. It is only sent if you confirm"));
+        assert_eq!(content["requestId"], "per_sub");
     }
 
     #[test]

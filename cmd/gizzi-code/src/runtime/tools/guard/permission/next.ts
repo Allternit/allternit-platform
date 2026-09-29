@@ -187,7 +187,7 @@ export namespace PermissionNext {
       // read or written.
       mode: Mode.optional(),
     }),
-    async (input) => {
+    async (input): Promise<ReplyData | undefined> => {
       const s = await state()
       const { ruleset, mode: modeOverride, ...request } = input
       for (const pattern of request.patterns ?? []) {
@@ -245,8 +245,10 @@ export namespace PermissionNext {
       if (input.reply === "always" && ALWAYS_ASK.has(existing.info.permission)) {
         input = { ...input, reply: "once" }
       }
+      // Only always-ask classes carry reply data (a human action, an answer)
+      // back to the asking tool; an ordinary approval never mints one.
       const data: ReplyData | undefined =
-        input.humanAction || input.answer !== undefined
+        ALWAYS_ASK.has(existing.info.permission) && (input.humanAction || input.answer !== undefined)
           ? {
               ...(input.humanAction ? { humanAction: input.humanAction } : {}),
               ...(input.answer !== undefined ? { answer: input.answer } : {}),

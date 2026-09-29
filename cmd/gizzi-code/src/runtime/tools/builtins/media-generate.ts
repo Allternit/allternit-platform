@@ -2,10 +2,15 @@ import z from "zod/v4"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { PaneRender } from "@/runtime/integrations/pane-render"
 import DESCRIPTION from "@/runtime/tools/builtins/media-generate.txt"
+import { availableProviders, fabricCapabilities } from "@/runtime/providers/fabric/tasks"
+import { attachmentsFor, describeOutcome, providerName, runSubscriptionTask } from "@/runtime/tools/builtins/subscription"
 
 interface Meta {
   ok: boolean
   lane: string | null
+  provider?: string
+  taskID?: string
+  artifacts?: Array<{ id: string; mime: string; sha256: string }>
   format?: string
   width?: number
   height?: number
@@ -90,6 +95,52 @@ async function renderVideo(params: VideoParams, title: string, ctx: Tool.Context
   }
 }
 
+/**
+ * Subscription lane: `image.generate` on one of the user's connected
+ * subscriptions, run on their Sessions computer. The user confirms each
+ * image (D16); the image comes back checksum-verified.
+ */
+async function subscriptionImage(prompt: string, title: string, provider: string | undefined, ctx: Tool.Context) {
+  const live = availableProviders(await fabricCapabilities(), "image.generate")
+  const chosen = provider ?? live[0]
+  if (!chosen || !live.includes(chosen)) {
+    return {
+      title: "Image: subscription lane not available",
+      output: chosen && live.length
+        ? `${providerName(chosen)} cannot make images right now. Available: ${live.map(providerName).join(", ")}. Nothing was sent.`
+        : "No connected subscription can make images right now (none set up, or the Sessions computer is not reachable). Nothing was sent. Offer the native lane or ask the user how to proceed.",
+      metadata: meta({ ok: false, lane: "subscription" }),
+    }
+  }
+  const result = await runSubscriptionTask(ctx, {
+    capability: "image.generate",
+    provider: chosen,
+    prompt,
+    title,
+    summary: `Make an image with your ${providerName(chosen)} subscription: "${title}"`,
+  })
+  const images = result.files.filter((f) => f.mime.startsWith("image/"))
+  const outcome = describeOutcome({ ...result, files: images }, chosen, "image")
+  const ok = outcome.ok && images.length > 0
+  const note = result.task.result?.text?.trim()
+  return {
+    title: `Image: ${title}${ok ? "" : " — not finished"}`,
+    output: ok
+      ? `${providerName(chosen)} made "${title}". It's in the session's Outputs. The image is attached: check it against the request.${note ? `\n\n${note}` : ""}`
+      : outcome.ok
+        ? `${providerName(chosen)} finished but returned no image.`
+        : outcome.text,
+    metadata: meta({
+      ok,
+      lane: "subscription",
+      provider: chosen,
+      taskID: result.task.task_id,
+      artifacts: images.map((f) => ({ id: f.artifactID, mime: f.mime, sha256: f.sha256 })),
+    }),
+    attachments: attachmentsFor(images, title),
+  }
+}
+
 export const MediaGenerateTool = Tool.define("media_generate", {
   description: DESCRIPTION,
   parameters: z.object({
@@ -99,7 +150,11 @@ export const MediaGenerateTool = Tool.define("media_generate", {
     lane: z
       .enum(["native", "cloud", "subscription", "own_key"])
       .optional()
-      .describe("How to make it; native = you write it as code (the only lane in this build)"),
+      .describe("How to make it; native = you write it as code; subscription = a connected subscription makes the image (the user confirms each one)"),
+    provider: z
+      .string()
+      .optional()
+      .describe("Subscription lane: which subscription (chatgpt, claude, kimi); default the first that can"),
     format: PaneRender.Format.optional().describe("Native lane: svg, html or canvas (video: canvas)"),
     code: z
       .string()
@@ -119,6 +174,9 @@ export const MediaGenerateTool = Tool.define("media_generate", {
     const noun = params.kind === "video" ? "Video" : "Image"
     const title = (params.title ?? params.prompt).trim().slice(0, 80) || noun
     const lane = params.lane ?? (params.code ? "native" : undefined)
+    if (lane === "subscription" && params.kind === "image") {
+      return subscriptionImage(params.prompt, title, params.provider, ctx)
+    }
     if (lane !== "native") {
       return {
         title: `${noun}: choose how to make it`,

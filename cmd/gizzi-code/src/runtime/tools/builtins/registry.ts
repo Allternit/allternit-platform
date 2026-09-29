@@ -66,6 +66,7 @@ import {
 import { GetAgentEmailStatusTool, SendAgentEmailTool } from "@/runtime/tools/builtins/agent-email"
 import { MessageAgentTool } from "@/runtime/tools/builtins/message-agent"
 import { MdxGraphTool } from "@/runtime/tools/builtins/mdx-graph"
+import { subscriptionCapabilityTools } from "@/runtime/tools/builtins/subscription"
 
 export namespace ToolRegistry {
   const log = Log.create({ service: "tool.registry" })
@@ -197,6 +198,10 @@ export namespace ToolRegistry {
       ...(Flag.GIZZI_CLIENT === "cli" ? [PlanExitTool, PlanEnterTool] : []),
       ...(Flag.GIZZI_ENABLE_BROWSER_TOOL ? [BrowserTool] : []),
       ...(Flag.GIZZI_ENABLE_DESKTOP_TOOL ? [DesktopTool] : []),
+      // Subscription capabilities (presentations, documents, deep research)
+      // the user's connected subscriptions can run now; every call is
+      // confirmed by the user (D16). Empty when the fabric is not set up.
+      ...(await subscriptionCapabilityTools()),
       ...custom,
     ]
   }

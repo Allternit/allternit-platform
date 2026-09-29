@@ -107,7 +107,7 @@ export namespace CliBridge {
       messages: [],
       metadata: () => {},
       async ask(req) {
-        await PermissionNext.ask({ ...req, sessionID, ruleset: session.permission ?? [] })
+        return await PermissionNext.ask({ ...req, sessionID, ruleset: session.permission ?? [] })
       },
     }
     log.info("call", { sessionID, tool: tool.id })

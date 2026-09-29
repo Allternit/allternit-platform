@@ -2185,17 +2185,49 @@ fn extract_gizzi_request_id(content: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+/// What an approval row asks for, as far as Subscription Fabric (D16) cares.
+#[derive(Debug, PartialEq)]
+enum SubscriptionApproval {
+    /// Not a subscription approval.
+    None,
+    /// A gizzi `subscription` permission ask (a tool-belt call waiting on
+    /// the person): approving it mints the human action the tool submits with.
+    ToolAsk,
+    /// A task an agent prepared through the subscription MCP server:
+    /// approving it runs the task.
+    Prepared,
+}
+
+fn subscription_approval(content: &str) -> SubscriptionApproval {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
+        return SubscriptionApproval::None;
+    };
+    if value.get("kind").and_then(|v| v.as_str()) == Some(crate::subscription_mcp::PREPARED_KIND) {
+        return SubscriptionApproval::Prepared;
+    }
+    if value.get("requestId").and_then(|v| v.as_str()).is_some()
+        && value.pointer("/details/actionType").and_then(|v| v.as_str()) == Some("subscription")
+    {
+        return SubscriptionApproval::ToolAsk;
+    }
+    SubscriptionApproval::None
+}
+
 enum DecideOutcome {
     NotFound,
     AnswerRequired,
     /// Decided; relay `(gizzi request id, reply body)` when it answers a
-    /// live runtime ask for the first time.
-    Decided(Option<(String, serde_json::Value)>),
+    /// live runtime ask for the first time, and whether approving it runs a
+    /// prepared subscription task.
+    Decided {
+        relay: Option<(String, serde_json::Value)>,
+        prepared: bool,
+    },
 }
 
 async fn decide_approval(
     State(state): State<Arc<AppState>>,
-    Extension(_user): Extension<AuthUser>,
+    Extension(auth_user): Extension<AuthUser>,
     headers: HeaderMap,
     body: Result<Json<ApprovalDecisionBody>, axum::extract::rejection::JsonRejection>,
 ) -> impl IntoResponse {
@@ -2309,11 +2341,15 @@ async fn decide_approval(
             },
             _ => None,
         };
+        // D16: approving a task an agent prepared through the subscription
+        // MCP server is the human act that runs it (once, first decision).
+        let prepared = gizzi_reply == Some("once")
+            && matches!(prior.as_ref(), Some((content, 0)) if subscription_approval(content) == SubscriptionApproval::Prepared);
         let updated = apply_approval_decision(&conn, &approval_id, &outcome, &user_id)?;
         if updated == 0 {
             return Ok(DecideOutcome::NotFound);
         }
-        Ok::<_, rusqlite::Error>(DecideOutcome::Decided(relay))
+        Ok::<_, rusqlite::Error>(DecideOutcome::Decided { relay, prepared })
     })
     .await;
 
@@ -2328,7 +2364,7 @@ async fn decide_approval(
             Json(json!({"error": "answer_required", "detail": "Type an answer to send to the provider, or reject the card."})),
         )
             .into_response(),
-        Ok(Ok(DecideOutcome::Decided(relay))) => {
+        Ok(Ok(DecideOutcome::Decided { relay, prepared })) => {
             // Relay to the gizzi runtime when this decision answers one of
             // its permission asks. A 4xx means the ask is unanswerable
             // (unknown/expired request id) — surface that to the caller; a
@@ -2371,12 +2407,16 @@ async fn decide_approval(
                     }
                 }
             }
-            Json(json!({
+            let mut body = json!({
                 "ok": true,
                 "id": id_for_response,
                 "decision": label_for_response,
-            }))
-            .into_response()
+            });
+            if prepared {
+                body["execution"] =
+                    crate::subscription_mcp::execute_prepared(&state, &auth_user, &id_for_response).await;
+            }
+            Json(body).into_response()
         }
         Ok(Err(e)) => {
             warn!("DB error deciding approval: {}", e);
@@ -2995,6 +3035,24 @@ mod tests {
         let cross = apply_approval_decision(&conn, "other", &ApprovalOutcome::Approved, "user-a")
             .expect("cross update");
         assert_eq!(cross, 0, "fallback path must keep user scoping");
+    }
+
+    #[test]
+    fn subscription_approvals_are_recognised_by_content() {
+        let tool_ask = serde_json::json!({
+            "actionId": "per_1", "requestId": "per_1",
+            "details": {"actionType": "subscription"}
+        })
+        .to_string();
+        assert_eq!(subscription_approval(&tool_ask), SubscriptionApproval::ToolAsk);
+        let prepared = serde_json::json!({"kind": "subscription_task", "actionId": "subsprep_1"}).to_string();
+        assert_eq!(subscription_approval(&prepared), SubscriptionApproval::Prepared);
+        // An ordinary tool ask, a gate row without a runtime request, junk.
+        let bash = serde_json::json!({"requestId": "per_2", "details": {"actionType": "bash"}}).to_string();
+        assert_eq!(subscription_approval(&bash), SubscriptionApproval::None);
+        let no_request = serde_json::json!({"details": {"actionType": "subscription"}}).to_string();
+        assert_eq!(subscription_approval(&no_request), SubscriptionApproval::None);
+        assert_eq!(subscription_approval("not json"), SubscriptionApproval::None);
     }
 
     #[test]
