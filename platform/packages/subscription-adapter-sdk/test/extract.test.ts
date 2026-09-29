@@ -57,6 +57,43 @@ describe("extractLastAssistantTurn (§A3.1)", () => {
     await page.close();
   });
 
+  it("drops ChatGPT's suggested follow-ups: buttons and their aria-hidden measuring copy (live 2026-09-28)", async () => {
+    const page = await browser.newPage();
+    // Mirrors the live DOM under [data-markdown-text-style='assistant-message'].
+    await page.setContent(`<div class="reply">
+      <div data-testid="chatgpt-writing-block"><p>Rivers bend because flowing water wears away the land.</p></div>
+      <div class="relative mb-4 min-w-0 overflow-visible"><div class="relative min-w-0 px-3 text-base">
+        <div class="flex min-w-0 flex-col items-start">
+          <button class="relative flex group/suggested-followup"><svg></svg><span>Make the paragraph closer to 80 words</span></button>
+          <button class="relative flex group/suggested-followup"><svg></svg><span>Explain how water speed changes</span></button>
+        </div>
+        <div class="pointer-events-none invisible absolute hidden" aria-hidden="true">
+          <div class="flex"><svg></svg><span class="whitespace-nowrap">Make the paragraph closer to 80 words</span></div>
+          <div class="flex"><svg></svg><span class="whitespace-nowrap">Explain how water speed changes</span></div>
+        </div>
+      </div></div></div>`);
+    const pack = SelectorPack.fromYaml(
+      ["response:", "  critical: true", "  strategies:", "    - { css: '.reply' }"].join("\n")
+    );
+    expect(await extractLastAssistantTurn(page, createResolver(page, pack))).toBe(
+      "Rivers bend because flowing water wears away the land."
+    );
+    await page.close();
+  });
+
+  it("keeps a wrapper that holds both the reply and the follow-ups", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`<div class="reply"><div class="wrap">
+      <p>The answer.</p>
+      <div><button class="group/suggested-followup"><span>Tell me more</span></button></div>
+    </div></div>`);
+    const pack = SelectorPack.fromYaml(
+      ["response:", "  critical: true", "  strategies:", "    - { css: '.reply' }"].join("\n")
+    );
+    expect(await extractLastAssistantTurn(page, createResolver(page, pack))).toBe("The answer.");
+    await page.close();
+  });
+
   it("tolerates keepNames-transpiled helpers: __name resolves in the page", async () => {
     const page = await browser.newPage();
     await page.setContent(`<div class="reply"><p>x</p></div>`);
