@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>fixture-web — hydrating composer</title></head>
+  <body data-state="idle">
+    <header>
+      <div data-testid="fw-user-menu" class="fw-user-menu">fixture-user</div>
+    </header>
+    <main>
+      <div id="fw-transcript"></div>
+      <!-- Pre-hydration fallback: replaced by the real editor after the first
+           input, and what was typed is lost (ChatGPT, 2026-09-29). -->
+      <textarea id="fw-composer" data-testid="fw-composer" aria-label="Message fixture-web"></textarea>
+      <button id="fw-send" data-testid="fw-send" type="button">Send</button>
+    </main>
+    <script>
+      const pre = document.getElementById("fw-composer");
+      pre.addEventListener("input", () => {
+        setTimeout(() => {
+          if (!pre.isConnected) return;
+          const editor = document.createElement("div");
+          editor.id = "fw-composer";
+          editor.dataset.testid = "fw-composer";
+          editor.setAttribute("role", "textbox");
+          editor.setAttribute("aria-label", "Message fixture-web");
+          editor.contentEditable = "true";
+          pre.replaceWith(editor);
+        }, 100);
+      }, { once: true });
+      document.getElementById("fw-send").addEventListener("click", () => {
+        document.body.dataset.fwSubmitted = "click";
+        document.getElementById("fw-composer").textContent = "";
+      });
+    </script>
+  </body>
+</html>

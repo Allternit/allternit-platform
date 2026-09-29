@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Browser } from "playwright";
-import { attachFiles, fillComposer, submit, waitForSendReady } from "../src/index";
+import { attachFiles, ComposerNotFilledError, fillComposer, submit, waitForSendReady } from "../src/index";
 import { fixturePage, launchBrowser, makeResolver } from "./helpers";
 
 let browser: Browser;
@@ -36,6 +36,30 @@ describe("fillComposer (§A3.1)", () => {
     await fillComposer(page, makeResolver(page), longText);
     const text = await page.getByTestId("fw-composer").innerText();
     expect(text).toBe(longText);
+    await page.close();
+  });
+
+  it("retypes into the real editor when a pre-hydration textarea is swapped out", async () => {
+    const page = await fixturePage(browser, "hydrating.html");
+    await fillComposer(page, makeResolver(page), "a hydrating prompt");
+    const composer = page.getByTestId("fw-composer");
+    expect(await composer.evaluate((el) => el.tagName)).toBe("DIV");
+    expect(await composer.innerText()).toBe("a hydrating prompt");
+    await page.close();
+  });
+
+  it("throws ComposerNotFilledError when the prompt never shows in the composer", async () => {
+    const page = await fixturePage(browser, "idle.html");
+    // An editor that swallows every keystroke.
+    await page.evaluate(() =>
+      document.getElementById("fw-composer")!.addEventListener("beforeinput", (e) => e.preventDefault())
+    );
+    await page.getByTestId("fw-composer").evaluate((el) =>
+      el.addEventListener("keydown", (e) => e.preventDefault())
+    );
+    await expect(fillComposer(page, makeResolver(page), "swallowed prompt")).rejects.toBeInstanceOf(
+      ComposerNotFilledError
+    );
     await page.close();
   });
 
