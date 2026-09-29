@@ -29,6 +29,8 @@ import { RuntimeService, RuntimeNotFoundError, type RegisteredRuntime } from "@/
 import { ExecutionLogService } from "@/runtime/execution-log"
 import { Log } from "@/shared/util/log"
 import { PROVIDER_ENV_KEYS } from "@/runtime/runtime-discovery"
+import { resolveCliPath, SUBPROCESS_PROVIDERS } from "@/runtime/providers/discovery/subprocess"
+import { existsSync } from "node:fs"
 import {
   ClientSideConnection,
   ndJsonStream,
@@ -40,6 +42,23 @@ import { ProcessRegistry } from "@/runtime/process-registry"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
 
 const log = Log.create({ service: "local-cli-driver" })
+
+/**
+ * The path found at discovery can vanish while the app runs: Claude Code's
+ * updater swaps ~/.local/bin/claude, and several sessions updating at once
+ * can leave it missing. Spawning the stale path fails every turn with
+ * ENOENT, so look the CLI up again (PATH, then its installer's own
+ * locations, newest version last) before giving up on it.
+ */
+export async function refreshCliPath(cli: { name: string; path: string }): Promise<void> {
+  if (existsSync(cli.path)) return
+  const spec = SUBPROCESS_PROVIDERS.find((s) => s.id === cli.name)
+  const next = spec ? await resolveCliPath(spec) : null
+  if (next && next !== cli.path) {
+    log.warn("CLI path went missing; using the current install", { cli: cli.name, from: cli.path, to: next })
+    cli.path = next
+  }
+}
 
 /**
  * Coarse permission mapping for CLI-internal (ACP) tool calls. The CLI
@@ -132,6 +151,7 @@ export class LocalCliDriver implements RuntimeDriver {
     if (!cli) {
       throw new Error(`CLI ${this.cliName} not found on runtime ${this.runtimeId}`)
     }
+    await refreshCliPath(cli)
 
     const task = this.tasks.get(handle.taskId)
     const message = task?.prompt ?? ""
