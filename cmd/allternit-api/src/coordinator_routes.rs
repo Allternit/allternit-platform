@@ -29,7 +29,7 @@
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use rusqlite::{params, OptionalExtension};
 use serde::Deserialize;
@@ -48,7 +48,9 @@ pub const MAX_STEPS: usize = 6;
 const REPLY_CAP: usize = 600;
 
 pub fn coordinator_router() -> Router<Arc<AppState>> {
-    Router::new().route("/projects/:project_id/messages", get(list_messages).post(post_message))
+    Router::new()
+        .route("/projects/:project_id/messages", get(list_messages).post(post_message))
+        .route("/projects/:project_id/start", post(start_project))
 }
 
 // ─── Runtime seam ───────────────────────────────────────────────────────────
@@ -764,7 +766,7 @@ pub async fn maybe_synthesize<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user
     add_message(db, project_id, user_id, "coordinator", text, json!({ "kind": "synthesis", "threads": threads.len() })).ok()
 }
 
-/// Queued threads in the project whose dependencies are all in review/done./// Queued threads in the project whose dependencies are all in review/done.
+/// Queued threads in the project whose dependencies are all in review/done.
 pub fn ready_dependents(db: &DbHandle, project_id: &str, finished: &str) -> Vec<(String, String)> {
     let Ok(conn) = db.connect() else { return vec![] };
     let title: String = conn
@@ -873,6 +875,120 @@ async fn post_message(
         Err(e) if e.contains("not found") => err(StatusCode::NOT_FOUND, e),
         Err(e) => err(StatusCode::BAD_GATEWAY, e),
     }
+}
+
+/// Why a start request was refused.
+#[derive(Debug, PartialEq)]
+pub enum StartRefusal {
+    ProjectNotFound,
+    BadThread(String),
+    Empty,
+    Db,
+}
+
+/// Validates a request to start threads that already exist in a project
+/// (a template lays out its plan, then starts the roots here) and claims
+/// each one: `working` now, so the caller sees it move at once and a second
+/// request can't run the same kickoff twice. Returns the (thread, kickoff
+/// text) pairs to hand to `start_threads`, and the ids skipped because they
+/// were already working. Every thread must belong to this project, which
+/// must belong to the user, and have a session to run in; one bad thread
+/// refuses the whole request, so nothing starts half-way.
+pub fn accept_start(
+    db: &DbHandle,
+    user_id: &str,
+    project_id: &str,
+    requested: Vec<(String, String)>,
+) -> Result<(Vec<(String, String)>, Vec<String>), StartRefusal> {
+    let title = match project_title(db, project_id, user_id) {
+        Ok(Some(t)) => t,
+        Ok(None) => return Err(StartRefusal::ProjectNotFound),
+        Err(_) => return Err(StartRefusal::Db),
+    };
+    let mut seen = std::collections::HashSet::new();
+    let requested: Vec<(String, String)> = requested.into_iter().filter(|(id, _)| seen.insert(id.clone())).collect();
+    if requested.is_empty() {
+        return Err(StartRefusal::Empty);
+    }
+    let conn = db.connect().map_err(|_| StartRefusal::Db)?;
+    let mut views = Vec::with_capacity(requested.len());
+    for (id, text) in requested {
+        let owner: Option<(Option<String>, String)> = conn
+            .query_row("SELECT project_id, user_id FROM bot_threads WHERE id = ?1", params![id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .optional()
+            .map_err(|_| StartRefusal::Db)?;
+        match owner {
+            Some((Some(p), u)) if p == project_id && u == user_id => {}
+            _ => return Err(StartRefusal::BadThread(format!("thread {id} is not in this project"))),
+        }
+        let view = thread_routes::load_view(db, &id).map_err(|_| StartRefusal::Db)?.ok_or(StartRefusal::Db)?;
+        if view.current_session_id.is_none() {
+            return Err(StartRefusal::BadThread(format!("thread {id} has no session to run in")));
+        }
+        views.push((view, text));
+    }
+    let mut start = Vec::new();
+    let mut skipped = Vec::new();
+    for (view, text) in views {
+        let claimed = conn
+            .execute("UPDATE bot_threads SET status = 'working' WHERE id = ?1 AND status <> 'working'", params![view.id])
+            .map_err(|_| StartRefusal::Db)?;
+        if claimed == 1 {
+            let text = if text.trim().is_empty() { kickoff_text(&title, &view) } else { text };
+            start.push((view.id, text));
+        } else {
+            skipped.push(view.id);
+        }
+    }
+    Ok((start, skipped))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StartThread {
+    thread_id: String,
+    #[serde(default)]
+    text: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct StartBody {
+    threads: Vec<StartThread>,
+}
+
+/// `POST /projects/:project_id/start` — start threads that already exist in
+/// the project through the coordinator: they run in parallel, move to review
+/// (or blocked), tick their checklists, Al reports each one, ready dependents
+/// start after them and Al posts the wrap-up. Returns 202 at once; the turns
+/// run in the background, so the caller never waits on a model.
+async fn start_project(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(project_id): Path<String>,
+    Json(body): Json<StartBody>,
+) -> Response {
+    let requested: Vec<(String, String)> = body.threads.into_iter().map(|t| (t.thread_id, t.text)).collect();
+    let db = state.db.clone();
+    let uid = user.user_id.clone();
+    let pid = project_id.clone();
+    let accepted = tokio::task::spawn_blocking(move || accept_start(&db, &uid, &pid, requested)).await;
+    let (start, skipped) = match accepted {
+        Ok(Ok(v)) => v,
+        Ok(Err(StartRefusal::ProjectNotFound)) => return err(StatusCode::NOT_FOUND, "project not found"),
+        Ok(Err(StartRefusal::BadThread(m))) => return err(StatusCode::BAD_REQUEST, m),
+        Ok(Err(StartRefusal::Empty)) => return err(StatusCode::BAD_REQUEST, "threads is required"),
+        _ => return err(StatusCode::INTERNAL_SERVER_ERROR, "database error"),
+    };
+    let ids: Vec<String> = start.iter().map(|(id, _)| id.clone()).collect();
+    if !start.is_empty() {
+        let state2 = state.clone();
+        let uid = user.user_id.clone();
+        tokio::spawn(async move {
+            let rt = GizziCoordinator { state: state2.clone() };
+            start_threads(&state2.db, &rt, &uid, &project_id, start).await;
+        });
+    }
+    (StatusCode::ACCEPTED, Json(json!({ "accepted": ids, "skipped": skipped }))).into_response()
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -1185,5 +1301,91 @@ mod tests {
         let (status, line): (String, String) = conn.query_row("SELECT status, status_line FROM bot_threads WHERE project_id = 'p1'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
         assert_eq!(status, "blocked");
         assert!(line.contains("provider_rate_limit"));
+    }
+
+    /// A template's plan: two roots (Scout, Ledger) and one dependent (Forge,
+    /// waiting on the Ledger thread), created the way the UI creates them.
+    async fn template_plan(state: &Arc<AppState>, rt: &Fake) -> (String, String, String) {
+        let mk = |bot: &str, title: &str, status: &str, deps: Vec<String>| {
+            serde_json::from_value::<CreateThreadBody>(json!({
+                "botId": bot, "title": title, "projectId": "p1", "kind": "task", "objective": title,
+                "status": status, "dependsOn": deps, "createdBy": "template"
+            }))
+            .unwrap()
+        };
+        let a = thread_routes::create(&state.db, rt, "u", mk("scout", "Competitor pricing check", "idle", vec![])).await.unwrap();
+        let b = thread_routes::create(&state.db, rt, "u", mk("ledger", "Price from unit costs", "idle", vec![])).await.unwrap();
+        let c = thread_routes::create(&state.db, rt, "u", mk("forge", "Wire pricing into checkout", "queued", vec![b.id.clone()])).await.unwrap();
+        (a.id, b.id, c.id)
+    }
+
+    #[tokio::test]
+    async fn start_refuses_other_users_projects_and_threads_outside_the_project() {
+        let state = setup("start-owner").await;
+        let rt = Fake::default();
+        let (a, _, _) = template_plan(&state, &rt).await;
+        let conn = state.db.connect().unwrap();
+        conn.execute("INSERT INTO cowork_projects (id, user_id, title) VALUES ('p2', 'u', 'Other project')", []).unwrap();
+        conn.execute("INSERT INTO cowork_projects (id, user_id, title) VALUES ('px', 'someone-else', 'Not yours')", []).unwrap();
+
+        assert_eq!(accept_start(&state.db, "someone-else", "p1", vec![(a.clone(), "go".into())]), Err(StartRefusal::ProjectNotFound));
+        assert_eq!(accept_start(&state.db, "u", "px", vec![(a.clone(), "go".into())]), Err(StartRefusal::ProjectNotFound));
+        assert!(matches!(accept_start(&state.db, "u", "p2", vec![(a.clone(), "go".into())]), Err(StartRefusal::BadThread(_))));
+        assert!(matches!(accept_start(&state.db, "u", "p1", vec![(a.clone(), "go".into()), ("nope".into(), "go".into())]), Err(StartRefusal::BadThread(_))));
+        assert_eq!(accept_start(&state.db, "u", "p1", vec![]), Err(StartRefusal::Empty));
+        // Nothing was claimed by a refused request.
+        let status: String = conn.query_row("SELECT status FROM bot_threads WHERE id = ?1", params![a], |r| r.get(0)).unwrap();
+        assert_eq!(status, "idle");
+    }
+
+    #[tokio::test]
+    async fn started_template_roots_run_through_the_coordinator() {
+        let state = setup("start-run").await;
+        let rt = Fake { rendezvous: Some(Arc::new(tokio::sync::Barrier::new(2))), ..Fake::default() };
+        let (a, b, c) = template_plan(&state, &rt).await;
+
+        let (start, skipped) = accept_start(&state.db, "u", "p1", vec![(a.clone(), "Check competitor prices".into()), (b.clone(), String::new()), (a.clone(), "dup".into())]).unwrap();
+        assert!(skipped.is_empty());
+        assert_eq!(start.iter().map(|s| s.0.clone()).collect::<Vec<_>>(), vec![a.clone(), b.clone()], "deduplicated, in order");
+        assert_eq!(start[0].1, "Check competitor prices", "the caller's kickoff text is used");
+        assert!(start[1].1.contains("Objective: Price from unit costs"), "an empty text gets the coordinator's kickoff");
+        // Claimed: working at once, and a second request can't start them again.
+        let conn = state.db.connect().unwrap();
+        let status = |id: &str| conn.query_row("SELECT status FROM bot_threads WHERE id = ?1", params![id], |r| r.get::<_, String>(0)).unwrap();
+        assert_eq!(status(&a), "working");
+        let (again, skipped) = accept_start(&state.db, "u", "p1", vec![(a.clone(), "go".into())]).unwrap();
+        assert!(again.is_empty());
+        assert_eq!(skipped, vec![a.clone()]);
+
+        // The two roots run at the same time (the barrier needs both), then
+        // the dependent starts and Al wraps up.
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            // The dependent's own turn hits the barrier alone: give it a partner.
+            let rt2 = &rt;
+            futures::future::join(start_threads(&state.db, rt2, "u", "p1", start), async {
+                loop {
+                    if status(&c) == "working" {
+                        rt2.rendezvous.as_ref().unwrap().wait().await;
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await
+        })
+        .await
+        .expect("roots must run concurrently");
+        assert_eq!(rt.turns.lock().unwrap().len(), 3);
+        for id in [&a, &b, &c] {
+            assert_eq!(status(id), "review", "{id}");
+        }
+        let kinds: Vec<String> = conn
+            .prepare("SELECT json_extract(payload, '$.kind') FROM project_messages WHERE project_id = 'p1' ORDER BY created_at")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(kinds.iter().filter(|k| *k == "completed").count(), 3);
     }
 }
