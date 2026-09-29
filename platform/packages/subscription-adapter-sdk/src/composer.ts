@@ -36,43 +36,65 @@ export async function composerText(target: Locator): Promise<string> {
   );
 }
 
+// How long the composer must hold the prompt before it counts: some providers
+// swap a pre-hydration <textarea> for their real editor right after the first
+// input, dropping what was typed (live: ChatGPT, 2026-09-29).
+const SETTLE_MS = 400;
+const FILL_ATTEMPTS = 3;
+
 export async function fillComposer(
   page: Page,
   resolver: SdkSelectorResolver,
   text: string,
   opts: { key?: string } = {}
 ): Promise<Locator> {
-  const locator = await resolver.resolveLocator(opts.key ?? "composer");
-  const target = await firstVisible(locator);
-  // Typing into a hidden match would hang until Playwright's timeout; fail
-  // fast instead, before anything is sent.
-  if (!target) throw new ComposerNotFilledError(`no visible match among ${await locator.count()}`);
-  const kind = await target.evaluate((el) => {
-    const tag = el.tagName.toUpperCase();
-    if (tag === "TEXTAREA" || tag === "INPUT") return "field";
-    if ((el as HTMLElement).isContentEditable) return "contenteditable";
-    return "unknown";
-  });
-
-  if (kind === "field") {
-    await target.fill(text);
-  } else {
-    await target.click();
-    if (text.length > LONG_TEXT_THRESHOLD) {
-      await page.keyboard.insertText(text);
-    } else {
-      await target.pressSequentially(text);
-    }
-  }
-  // Verify before anything is sent: the visible composer holds the prompt.
   const expected = norm(text).slice(0, 40);
-  const shown = norm(await composerText(target).catch(() => ""));
-  if (expected && !shown.includes(expected)) {
-    const tag = await target.evaluate((el) => el.tagName.toLowerCase()).catch(() => "?");
+  const seen: string[] = [];
+  let lastDetail = "";
+  for (let attempt = 0; attempt < FILL_ATTEMPTS; attempt++) {
+    const locator = await resolver.resolveLocator(opts.key ?? "composer");
+    const target = await firstVisible(locator);
+    // Typing into a hidden match would hang until Playwright's timeout; fail
+    // fast instead, before anything is sent.
+    if (!target) throw new ComposerNotFilledError(`no visible match among ${await locator.count()}`);
+    const handle = await target.elementHandle();
+    const { kind, tag } = await target.evaluate((el) => {
+      const tag = el.tagName.toLowerCase();
+      if (tag === "textarea" || tag === "input") return { kind: "field", tag };
+      if ((el as HTMLElement).isContentEditable) return { kind: "contenteditable", tag };
+      return { kind: "unknown", tag };
+    });
+    seen.push(`<${tag}>`);
+
+    if (kind === "field") {
+      await target.fill(text);
+    } else {
+      await target.click();
+      // A retry may land on an editor still holding part of the prompt.
+      if (attempt > 0) {
+        await page.keyboard.press("ControlOrMeta+A");
+        await page.keyboard.press("Backspace");
+      }
+      if (text.length > LONG_TEXT_THRESHOLD) {
+        await page.keyboard.insertText(text);
+      } else {
+        await target.pressSequentially(text);
+      }
+    }
+    // Verify before anything is sent: after a settle, the same element is
+    // still the visible composer and holds the prompt.
+    await page.waitForTimeout(SETTLE_MS);
+    const same = handle
+      ? await target.evaluate((el, h) => el === h && el.isConnected, handle).catch(() => false)
+      : false;
+    const shown = norm(await composerText(target).catch(() => ""));
+    if (same && (!expected || shown.includes(expected))) return target;
     const visible = await target.isVisible().catch(() => false);
-    throw new ComposerNotFilledError(`${kind} <${tag}> visible=${visible}, shows ${shown.length} chars`);
+    lastDetail = same
+      ? `${kind} <${tag}> visible=${visible}, shows ${shown.length} chars`
+      : `the composer was replaced after typing (${kind} <${tag}>)`;
   }
-  return target;
+  throw new ComposerNotFilledError(`${lastDetail}; tried ${seen.join(" → ")}`);
 }
 
 export interface SubmitOptions {
