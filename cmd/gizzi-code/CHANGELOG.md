@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.1.8 (2026-09-29)
+
+`npm install -g @allternit/gizzi-code` works again, and Allternit Cloud
+usage limits wrap up like the others.
+
+### Fixed
+- The npm package installs. Every earlier npm release listed monorepo-only
+  dependencies that the registry can't resolve, so `npm install -g` failed.
+  Homebrew and the GitHub downloads were not affected.
+- Allternit Cloud usage is read with your signed-in session, so the 95%
+  wrap-up now applies to Allternit Cloud models too (it read as signed out).
+- Subscription tools: an interrupted turn cancels the task it started
+  instead of leaving it running, a task that's still starting shows as
+  starting, and listing tools no longer stalls when the Sessions computer
+  is unreachable.
+
 ## 2.1.7 (2026-09-29)
 
 A screen laid out like Claude Code's with a Kimi-style header and footer,
