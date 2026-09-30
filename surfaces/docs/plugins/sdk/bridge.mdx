@@ -1,0 +1,80 @@
+---
+title: 'apps-bridge'
+description: 'A typed, dependency-free client for the standard ui/* calls, window.allternit and the compatibility shim'
+---
+
+<Warning>
+**Preview.** The Allternit Apps SDK packages and the `allternit` CLI are not published to npm yet, so the install commands on this page do not work outside the Allternit repository today. To build an MCP App now, follow the [Quickstart](/plugins/quickstart), which uses the open MCP SDK directly. Your app will not need changes to adopt the SDK later.
+</Warning>
+
+`@allternit/apps-bridge` is for code that runs **inside** a View. It has no dependencies and no build requirement.
+
+```bash
+npm install @allternit/apps-bridge
+```
+
+## `AppsBridge`
+
+A small client for the standard MCP Apps bridge, which is JSON-RPC over `postMessage` to the host.
+
+```ts
+import { AppsBridge } from "@allternit/apps-bridge";
+
+const bridge = new AppsBridge({ appInfo: { name: "weather-card", version: "1.0.0" } });
+
+bridge.onToolResult((result) => render(result.structuredContent));
+const ctx = await bridge.connect();   // ui/initialize, applies host theme variables, sends initialized
+bridge.sendSize();                    // ui/notifications/size-changed
+
+const more = await bridge.callTool("get_temperature", { city: "Tokyo" }); // tools/call
+await bridge.openLink("https://example.com");                              // ui/open-link
+await bridge.sendMessage("Show me London too");                            // ui/message
+```
+
+| Method | Standard call |
+|---|---|
+| `connect()` | `ui/initialize`, then `ui/notifications/initialized` |
+| `onToolInput`, `onToolResult`, `onHostContextChanged` | `ui/notifications/tool-input`, `tool-result`, `host-context-changed` |
+| `callTool(name, args)` | `tools/call` |
+| `openLink(url)` | `ui/open-link` |
+| `sendMessage(text)` | `ui/message` |
+| `updateModelContext(params)` | `ui/update-model-context` |
+| `sendSize(height?)` | `ui/notifications/size-changed` |
+| `dispose()` | Removes the listener and rejects requests still waiting |
+
+The bridge only accepts messages from its own parent window, answers `ui/resource-teardown` so the host can close the View, and applies only `--`-prefixed host style variables. Requests that fail reject with a `BridgeError` carrying the JSON-RPC code.
+
+## `window.allternit`
+
+The optional host extensions. Feature-detect them so the View still runs elsewhere.
+
+```ts
+import { getAllternit } from "@allternit/apps-bridge";
+
+const allternit = await getAllternit();       // null when the host does not provide it
+if (allternit?.supports("x-allternit/saveArtifact")) {
+  await allternit.saveArtifact({ name: "report.md", content: "…" });
+}
+```
+
+The script that installs `window.allternit` is `@allternit/apps-bridge/allternit-ext.js`, a single dependency-free file. `view()` from [`apps-server`](/plugins/sdk/server) inlines it for you; if you write your own HTML, inline it in a `<script>` tag (the View CSP allows inline scripts). Methods and confirmation behavior are in the [`window.allternit` reference](/plugins/reference/window-allternit).
+
+## Compatibility shim
+
+Views written for another host's SDK read a host-specific global. `@allternit/apps-bridge/compat.js` defines that global on top of the standard bridge so those Views run unchanged, and the package exports the same opt-in rule Allternit hosts use:
+
+```ts
+import { shouldInjectOpenAiCompat } from "@allternit/apps-bridge";
+
+shouldInjectOpenAiCompat({ mimeType, toolMeta, resourceMeta });
+```
+
+It is opt-in: a View that feature-detects the global would take that host's code path everywhere, and the shim runs its own `ui/initialize`, which conflicts with Views that use `AppsBridge`. Do not load both. See [Porting](/plugins/guides/porting).
+
+## Inlining the scripts from Node
+
+```ts
+import { allternitExtSource, openaiCompatSource } from "@allternit/apps-bridge/sources";
+```
+
+These return the runtime files as strings for a server that builds View HTML.

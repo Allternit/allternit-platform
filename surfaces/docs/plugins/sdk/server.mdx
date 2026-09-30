@@ -1,0 +1,121 @@
+---
+title: 'apps-server'
+description: 'Declare tools, Views and permissions with defineApp, appTool and view, and serve them over streamable HTTP'
+---
+
+<Warning>
+**Preview.** The Allternit Apps SDK packages and the `allternit` CLI are not published to npm yet, so the install commands on this page do not work outside the Allternit repository today. To build an MCP App now, follow the [Quickstart](/plugins/quickstart), which uses the open MCP SDK directly. Your app will not need changes to adopt the SDK later.
+</Warning>
+
+`@allternit/apps-server` is a thin layer over `@modelcontextprotocol/sdk` and `@modelcontextprotocol/ext-apps`. It does not hide them: `app.createServer()` returns a normal `McpServer`.
+
+```bash
+npm install @allternit/apps-server
+```
+
+## `defineApp`
+
+```ts
+import { defineApp } from "@allternit/apps-server";
+
+export default defineApp({
+  name: "Weather",              // 30 characters or fewer
+  version: "0.1.0",
+  description: "…",
+  tools: [/* appTool(...) */],
+  views: [/* view(...) */],
+  lookPack: { /* see Look packs */ },
+  permissions: { auth: "none" },   // "none" | "oauth"; optional network, notes
+  instructions: "…",               // shown to the model
+});
+```
+
+`defineApp` throws on mistakes you would otherwise find in review: duplicate tool names or View URIs, a tool that points at a View you did not list, a malformed or over-broad CSP domain, an invalid look pack.
+
+It returns an app with four members:
+
+| Member | What it does |
+|---|---|
+| `manifest({ url? })` | The [`allternit.app.json`](/plugins/sdk/overview#the-manifest) object. |
+| `lint()` | The directory scan rules over the declared tools and Views. |
+| `createServer()` | A new `McpServer` with every tool and View registered. |
+| `input` | What you passed in. |
+
+## `appTool`
+
+```ts
+import { appTool, z } from "@allternit/apps-server";
+
+appTool({
+  name: "delete_item",
+  title: "Delete item",
+  description: "Permanently delete an item by id.",
+  input: { id: z.string() },
+  annotations: { readOnlyHint: false, destructiveHint: true },
+  view: "ui://items/confirmation.html", // optional: a view() or its URI
+  handler: async ({ id }) => ({ content: [{ type: "text", text: `Deleted ${id}` }] }),
+});
+```
+
+`readOnlyHint` and `destructiveHint` are required and must be booleans. Stating them is the point: the host decides when to ask the user, and directory review checks them against the tool's name. A tool cannot be both read-only and destructive.
+
+When a tool has a `view`, the SDK registers it with `registerAppTool`, which sets `_meta.ui.resourceUri` and the older flat `_meta["ui/resourceUri"]` key.
+
+`z` is re-exported from `zod` so the `input` shape and your code use one version.
+
+## `view`
+
+A View is a `ui://` resource. Build it from the [view kit](/plugins/sdk/ui) or write the HTML yourself.
+
+```ts
+import { view } from "@allternit/apps-server";
+
+// From the view kit: no HTML to write.
+view({
+  uri: "ui://items/list.html",
+  name: "Items",
+  kit: { tag: "allternit-table", path: "items", fields: { columns: ["name", "status"] } },
+});
+
+// Hand-written HTML.
+view({
+  uri: "ui://items/custom.html",
+  name: "Custom",
+  html: "<!doctype html><html><head></head><body>…</body></html>",
+  csp: { connectDomains: ["https://api.example.com"] },
+});
+```
+
+| Option | Meaning |
+|---|---|
+| `uri` | `ui://<app>/<name>.html` |
+| `kit` | `{ tag, path?, fields?, submitTool? }`. `path` is a dot path into the tool result's `structuredContent`. For a form, `submitTool` is called with the values on submit. |
+| `html` | Your own document. Give exactly one of `kit` or `html`. |
+| `csp` | Domains the View may reach. Default: none. Wildcards and malformed hosts are refused. |
+| `prefersBorder` | Default `true`. |
+| `openaiCompat` | Inline the compatibility shim for a View written for another host. See [Porting](/plugins/guides/porting). |
+| `allternitExt` | Install `window.allternit`. Default `true`. |
+
+The app's look pack is written into every View as CSS variables, so a Views' colors come from the pack and change when it does. A kit View also runs a small script that speaks the standard bridge: `ui/initialize`, host theme variables, `ui/notifications/tool-result` and size changes.
+
+## Serve it
+
+```ts
+import { listen } from "@allternit/apps-server";
+import app from "./server.js";
+
+const running = await listen(app, { port: 3000 });
+console.log(running.url); // http://localhost:3000/mcp
+```
+
+`listen` runs streamable HTTP in stateless mode, a fresh server per request. It also answers `GET /healthz` and `GET /allternit.app.json`. `allternit dev` calls it for you.
+
+## Validating a manifest
+
+```ts
+import { validateManifest, hasErrors } from "@allternit/apps-server";
+
+hasErrors(validateManifest(app.manifest()));
+```
+
+`validateManifest` applies the plugin package rules (name length, required annotations, Views that exist) plus the look pack validator. The scan rules are the same code directory review uses: `scanInput`, `lintTools`, `lintResources`.
