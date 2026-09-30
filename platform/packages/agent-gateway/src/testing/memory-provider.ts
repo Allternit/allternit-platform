@@ -1,12 +1,12 @@
 // In-memory AAI provider used to prove the conformance harness discriminates: healthy by default,
 // each `defects` flag breaks exactly one contract area.
 import { agentCapabilityManifestSchema } from "@allternit/subscription-fabric-contracts";
-import { BaseAaiProvider } from "../provider";
+import { BaseAaiProvider } from "../provider.js";
 import {
   fail, ok, type AaiResult, type AgentCapabilityManifest, type AgentDetail, type AgentIdentity, type AgentSummary, type ApprovalsInput,
   type ApprovalsResult, type Approval, type CancelResult, type CursoredEvent, type EventsInput, type EventsResult, type MemoryInput,
   type MemoryResult, type MessageInput, type MessageResult, type OpenContextInput, type OpenContextResult, type HealthResult,
-} from "../types";
+} from "../types.js";
 
 export interface MemoryDefects {
   /** Messages leak into every other open context. */

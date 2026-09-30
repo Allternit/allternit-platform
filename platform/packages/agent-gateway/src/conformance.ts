@@ -2,7 +2,7 @@
 // manifest: `exact` providers get strict ordering/dedup/replay checks, `best_effort` get them relaxed,
 // and anything the manifest does not declare must answer UNSUPPORTED (never ok, never a raw throw).
 import { agentCapabilityManifestSchema, gatewayEventSchema, mirrorFieldStateSchema } from "@allternit/subscription-fabric-contracts";
-import type { AaiProvider, AaiResult, AAIError, AAIErrorCode, AgentCapabilityManifest, CursoredEvent } from "./types";
+import type { AaiProvider, AaiResult, AAIError, AAIErrorCode, AgentCapabilityManifest, CursoredEvent } from "./types.js";
 
 export type FaultKind = "vendor_down" | "rate_limited" | "auth_revoked" | "account_banned" | "ui_changed";
 
