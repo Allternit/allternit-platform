@@ -120,11 +120,14 @@ export interface PoolFilter {
   mode?: Mode
 }
 
-export function buildModelPool(models: ProviderModelView[], filter: PoolFilter = {}): ModelPoolEntryV1[] {
+export function buildModelPool(
+  models: ProviderModelView[],
+  filter: PoolFilter = {},
+  extra: ModelPoolEntryV1[] = [],
+): ModelPoolEntryV1[] {
   const seen = new Set<string>()
   const out: ModelPoolEntryV1[] = []
-  for (const m of models) {
-    const e = toPoolEntry(m)
+  for (const e of [...models.map(toPoolEntry), ...extra]) {
     if (!e || seen.has(e.backend_id)) continue
     seen.add(e.backend_id)
     if (filter.capability && !e.capabilities.includes(filter.capability)) continue
@@ -180,4 +183,60 @@ export function viewsFromProviders(providers: Record<string, { models?: Record<s
     }
   }
   return views
+}
+
+// ---------------------------------------------------------------- S1 decision runtime
+
+/** WP8 decision operations → capability ids (`cap.decide.<op>`). */
+export const DECISION_OPERATIONS = ["BELIEF", "CHOICE", "SCORE", "RANK", "SUBSET", "ESTIMATE", "GATE", "VERIFY", "PAIR_SCORE"] as const
+export const DECISION_RUNTIME_BACKEND_ID = "be.s1.decision_runtime"
+
+/** The slice of a WP8 `DecisionCalibrationManifestV1` the pool publishes. */
+export interface DecisionManifestView {
+  manifest_id: string
+  primitive_id: string
+  gate: { passed: boolean }
+}
+
+/**
+ * The canonical S1 decision runtime (tools/system-one-local, `POST /v1/decision`)
+ * as a pool entry. Calibration status is derived from its manifests only:
+ * with no gate-passing manifest it is UNCALIBRATED, offers M1 (uncalibrated
+ * readout) only, and is shadow — which the router refuses for S1 authority.
+ * It is live only if `s1Mode === "live"` AND a manifest passed the Q22 gate.
+ */
+export function decisionRuntimeEntry(opts: {
+  manifests?: DecisionManifestView[]
+  s1Mode?: "shadow" | "live"
+  endpoint?: string
+} = {}): ModelPoolEntryV1 {
+  const manifests = opts.manifests ?? []
+  const passed = manifests.filter((m) => m.gate?.passed === true)
+  const calibrated = passed.length > 0
+  return {
+    schema_id: POOL_ENTRY_SCHEMA_ID,
+    schema_version: SCHEMA_VERSION,
+    backend_id: DECISION_RUNTIME_BACKEND_ID,
+    cognitive_roles: ["S1"],
+    modes: calibrated ? ["M2.CALIBRATED_READOUT"] : ["M1.LOGIT_READOUT"],
+    capabilities: DECISION_OPERATIONS.map((op) => `cap.decide.${op.toLowerCase()}`),
+    trust_tags: ["PUBLIC", "INTERNAL", "RESTRICTED", "SECRET"],
+    // Uncalibrated numbers are never trusted.
+    confidence_estimate: calibrated ? 0.9 : 0,
+    latency_ms: 50,
+    cost: 0,
+    residency: "WARM",
+    extensions: {
+      "x-source": "system-one-local",
+      "x-endpoint": opts.endpoint ?? "http://127.0.0.1:7717/v1/decision",
+      "x-calibration_status": calibrated ? "calibrated" : "uncalibrated",
+      "x-s1_mode": calibrated && opts.s1Mode === "live" ? "live" : "shadow",
+      "x-calibrations": manifests.map((m) => ({
+        primitive_id: m.primitive_id,
+        manifest_id: m.manifest_id,
+        level: "L1",
+        gate_passed: m.gate?.passed === true,
+      })),
+    },
+  }
 }

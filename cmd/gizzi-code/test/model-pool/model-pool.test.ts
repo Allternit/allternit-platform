@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { createModelPoolRoutes } from "../../src/runtime/server/routes/model-pool"
-import { buildModelPool, viewsFromProviders, type ProviderModelView } from "../../src/runtime/model-pool/pool"
+import { buildModelPool, decisionRuntimeEntry, viewsFromProviders, type ProviderModelView } from "../../src/runtime/model-pool/pool"
 
 // Registry data only: concrete ids live in the fixture, never in a plan.
 const PROVIDERS = {
@@ -31,7 +31,7 @@ const PROVIDERS = {
 }
 
 const source = async (): Promise<ProviderModelView[]> => viewsFromProviders(PROVIDERS)
-const app = createModelPoolRoutes(source)
+const app = createModelPoolRoutes(source, async () => [decisionRuntimeEntry()])
 
 const schema = JSON.parse(
   readFileSync(join(import.meta.dir, "../../../../spec/Contracts/kernel/v1/schemas/capability.schema.json"), "utf8"),
@@ -44,16 +44,16 @@ describe("ModelPool HTTP", () => {
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.schema_version).toBe("1.0.0")
-    expect(body.entries).toHaveLength(2) // deprecated one dropped
+    expect(body.entries).toHaveLength(3) // deprecated one dropped; + S1 decision runtime
     for (const e of body.entries) {
       for (const k of Object.keys(e)) expect(Object.keys(entryDef.properties)).toContain(k)
       for (const k of entryDef.required) expect(e).toHaveProperty(k)
       expect(e.schema_id).toBe("allternit.kernel.ModelPoolEntryV1")
-      expect(e.backend_id).toMatch(/^be\.[0-9a-f]{16}$/) // opaque: no vendor/model name
+      expect(e.backend_id).toMatch(/^be\.([0-9a-f]{16}|s1\.decision_runtime)$/) // opaque: no vendor/model name
       for (const x of Object.keys(e.extensions)) expect(x).toMatch(/^x-[a-z0-9_.-]+$/)
     }
     const remote = body.entries.find((e: any) => e.residency === "REMOTE")
-    const local = body.entries.find((e: any) => e.residency === "WARM")
+    const local = body.entries.find((e: any) => e.extensions["x-source"] === "gizzi.provider")
     expect(remote.extensions["x-source"]).toBe("allternit.model_catalog")
     expect(remote.modes).toEqual(["M5.GENERATIVE", "M6.DEEP_SOLVER"])
     expect(remote.cognitive_roles).toEqual(["S2", "S3"])
@@ -69,6 +69,7 @@ describe("ModelPool HTTP", () => {
     const s3 = await (await app.request("/?role=S3")).json()
     expect(s3.entries).toHaveLength(1)
     const vision = await (await app.request("/?capability=cap.vision.read&mode=M5.GENERATIVE")).json()
+    expect(vision.entries).toHaveLength(1)
     expect(vision.entries[0].residency).toBe("WARM")
     expect((await app.request("/?capability=Bad Cap")).status).toBe(400)
     expect((await app.request("/?role=S9")).status).toBe(400)
@@ -78,7 +79,7 @@ describe("ModelPool HTTP", () => {
     const res = await app.request("/capabilities")
     expect(res.status).toBe(200)
     const { capabilities } = await res.json()
-    const ids = capabilities.map((c: any) => c.capability)
+    const ids = capabilities.map((c: any) => c.capability).filter((c: string) => !c.startsWith("cap.decide."))
     expect(ids).toEqual(["cap.agent.tool_use", "cap.code.edit", "cap.reason.deep", "cap.text.generate", "cap.vision.read"])
     const edit = capabilities.find((c: any) => c.capability === "cap.code.edit")
     expect(edit.backends).toBe(2)
@@ -90,5 +91,31 @@ describe("ModelPool HTTP", () => {
     const a = buildModelPool([...views, ...views])
     expect(a).toHaveLength(2)
     expect(buildModelPool(views)).toEqual(a)
+  })
+
+  test("S1 decision runtime is listed uncalibrated and shadow-only", async () => {
+    const { entries } = await (await app.request("/?role=S1&capability=cap.decide.choice")).json()
+    expect(entries).toHaveLength(1)
+    const e = entries[0]
+    expect(e.backend_id).toBe("be.s1.decision_runtime")
+    expect(e.modes).toEqual(["M1.LOGIT_READOUT"]) // never M2 without a passing manifest
+    expect(e.confidence_estimate).toBe(0)
+    expect(e.extensions["x-calibration_status"]).toBe("uncalibrated")
+    expect(e.extensions["x-s1_mode"]).toBe("shadow")
+    expect(e.extensions["x-calibrations"]).toEqual([])
+    const { capabilities } = await (await app.request("/capabilities")).json()
+    expect(capabilities.find((c: any) => c.capability === "cap.decide.gate").roles).toEqual(["S1"])
+  })
+
+  test("S1 calibration comes only from gate-passing manifests; live needs both", () => {
+    const failed = decisionRuntimeEntry({ manifests: [{ manifest_id: "m1", primitive_id: "p", gate: { passed: false } }], s1Mode: "live" })
+    expect(failed.extensions["x-calibration_status"]).toBe("uncalibrated")
+    expect(failed.extensions["x-s1_mode"]).toBe("shadow")
+    const ok = [{ manifest_id: "m1", primitive_id: "p", gate: { passed: true } }]
+    expect(decisionRuntimeEntry({ manifests: ok }).extensions["x-s1_mode"]).toBe("shadow") // default
+    const live = decisionRuntimeEntry({ manifests: ok, s1Mode: "live" })
+    expect(live.modes).toEqual(["M2.CALIBRATED_READOUT"])
+    expect(live.extensions["x-s1_mode"]).toBe("live")
+    expect(live.extensions["x-calibrations"]).toEqual([{ primitive_id: "p", manifest_id: "m1", level: "L1", gate_passed: true }])
   })
 })
