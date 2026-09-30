@@ -417,6 +417,12 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Provider token management: Clerk session per-request, tokens
         // encrypted at rest, never echoed back.
         .merge(routes::providers::clerk_routes())
+        // Agency API (WP11) + public receipt JWKS, forwarded to the node on
+        // this host. Clerk session or allternit_* token verified per-request
+        // before anything reaches the node (see routes::agency_forward).
+        .merge(routes::agency_forward::routes(Arc::new(
+            routes::agency_forward::AgencyForward::from_env(),
+        )))
         .layer(axum_middleware::from_fn_with_state(
             state.public_rate_limiter.clone(),
             crate::middleware::rate_limit::rate_limit_middleware,
@@ -518,6 +524,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
                 header::HeaderName::from_static("x-allternit-human-proof"),
                 // Subscriptions: the one-use human action a task send carries.
                 header::HeaderName::from_static("x-allternit-human-action"),
+                // Agency API: idempotent creates and SSE resume.
+                header::HeaderName::from_static("idempotency-key"),
+                header::HeaderName::from_static("last-event-id"),
             ])
             .allow_credentials(true)
             .max_age(std::time::Duration::from_secs(3600))
