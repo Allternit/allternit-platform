@@ -803,6 +803,19 @@ async fn main() {
         bot_desktop_queue::spawn_provision_queue_worker(Arc::clone(&state), period);
     }
 
+    // Agent Gateway accounts that sign in through Settings → Subscriptions
+    // follow that login's health (bots move to Needs auth when it lapses).
+    {
+        let state = Arc::clone(&state);
+        let mut shutdown_rx = shutdown_tx.subscribe();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = shutdown_rx.recv() => {}
+                _ = allternit_api::subscription_sync::run_sync_loop(state) => {}
+            }
+        });
+    }
+
     // OfficeCLI idle reaper: evicts stale docs, closes idle resident sessions,
     // kills idle watch processes and MCP sessions.
     {
@@ -1096,7 +1109,7 @@ async fn main() {
     let mut public = Router::new()
         .nest("/health", health_router())
         .merge(web_proxy)
-        .merge(enrollment_router())
+        .nest("/beta", enrollment_router())
         .merge(status_router())
         .merge(webhook_router())
         .merge(webhook_trigger_public_router())
