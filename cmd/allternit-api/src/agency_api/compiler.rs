@@ -11,9 +11,9 @@
 //! * the emitted WIH policy always has `requires_lease_for_write: true`
 //!   (08 residual gap) — even if a template asks for `false`.
 //!
-//! Templates are looked up through [`TemplateRegistry`]. Until WP10's BUG_FIX
-//! graph template lands, [`StubBugFixTemplate`] fills the BUG_FIX slot and the
-//! TaskIR says `template_source: "stub"`.
+//! Templates are looked up through [`TemplateRegistry`]. BUG_FIX is the
+//! kernel's WP10 graph (`commrails::kernel::bug_fix::agency_graph`); it fails
+//! closed without a declared workspace/write set, which maps to a 422.
 
 use super::catalog;
 use allternit_commrails::judge::policy::{CloseBy, JudgePolicy, PolicyOrigin, VerifyMode};
@@ -59,26 +59,22 @@ pub trait RunTemplate: Send + Sync {
     /// `stub` until the real template is registered, then e.g. `kernel`.
     fn source(&self) -> &'static str;
     fn completion_policy(&self) -> &'static str;
-    fn instantiate(&self, goal: &str, params: &Value) -> TemplateGraph;
+    /// Fails (→ 422) when the template can't be instantiated safely, e.g. no
+    /// declared workspace or write set.
+    fn instantiate(&self, goal: &str, params: &Value) -> Result<TemplateGraph, String>;
 }
 
-/// Stand-in BUG_FIX template (WP10 pending). Same node roles as the v1.4
-/// seed BUG_FIX graph at a coarse grain; replaced wholesale when WP10 merges.
-pub struct StubBugFixTemplate;
+/// The kernel BUG_FIX graph template (WP10).
+pub struct KernelBugFixTemplate;
 
-impl RunTemplate for StubBugFixTemplate {
+impl RunTemplate for KernelBugFixTemplate {
     fn id(&self) -> &'static str { "BUG_FIX" }
-    fn version(&self) -> u32 { 0 }
-    fn source(&self) -> &'static str { "stub" }
+    fn version(&self) -> u32 { 1 }
+    fn source(&self) -> &'static str { "kernel" }
     fn completion_policy(&self) -> &'static str { "completion.bug_fix" }
-    fn instantiate(&self, _goal: &str, _params: &Value) -> TemplateGraph {
-        let ids = ["reproduce", "diagnose", "patch", "verify", "review"];
-        let nodes = ids
-            .iter()
-            .map(|id| json!({ "id": id, "role": id, "writes": *id == "patch" }))
-            .collect();
-        let edges = ids.windows(2).map(|w| json!({ "from": w[0], "to": w[1] })).collect();
-        TemplateGraph { nodes, edges, wih_policy: json!({ "requires_lease_for_write": true }) }
+    fn instantiate(&self, goal: &str, params: &Value) -> Result<TemplateGraph, String> {
+        let g = allternit_commrails::kernel::bug_fix::agency_graph(goal, params).map_err(|e| e.to_string())?;
+        Ok(TemplateGraph { nodes: g.nodes, edges: g.edges, wih_policy: g.wih_policy })
     }
 }
 
@@ -89,7 +85,7 @@ pub struct TemplateRegistry {
 }
 
 impl Default for TemplateRegistry {
-    fn default() -> Self { Self { bug_fix: Arc::new(StubBugFixTemplate) } }
+    fn default() -> Self { Self { bug_fix: Arc::new(KernelBugFixTemplate) } }
 }
 
 impl TemplateRegistry {
@@ -270,7 +266,11 @@ pub fn compile(req: &Value, run_id: &str, templates: &TemplateRegistry) -> Resul
 
     let tname = manifest["default_template"].as_str().unwrap_or("BUG_FIX");
     let template = templates.get(tname).ok_or_else(|| CompileError::unresolvable("agent", format!("template {tname} unavailable")))?;
-    let graph = template.instantiate(&goal, &json!({ "workspace": workspace }));
+    // The template takes the workspace as one locator string (repo, else ref).
+    let ws_locator = workspace.get("repo").or_else(|| workspace.get("ref")).and_then(Value::as_str).unwrap_or_default();
+    let graph = template
+        .instantiate(&goal, &json!({ "workspace": ws_locator, "task_id": format!("task.bug_fix.{run_id}") }))
+        .map_err(|e| CompileError::new(422, "INPUT", "ERR_INPUT_INVALID", format!("cannot instantiate {}: {e}", template.id()), Some("workspace")))?;
     let dag_id = format!("agency-{run_id}");
     let judge_policy = JudgePolicy {
         verify: Some(VerifyMode::Judge),

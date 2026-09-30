@@ -8,7 +8,7 @@
 //!
 //! Runs execute nothing yet: after the compiler records `Run.resolved` and the
 //! TaskIR, the run parks in `waiting` for the kernel executor hand-off. The
-//! BUG_FIX template is a stub behind `compiler::RunTemplate` until WP10 lands.
+//! BUG_FIX template is WP10's kernel graph behind `compiler::RunTemplate`.
 
 pub mod catalog;
 pub mod compiler;
@@ -527,7 +527,8 @@ async fn run_graph(
     let rec = owned(store(&st).load_run(&run_id).await.map_err(|e| ApiError::internal(e, &rid))?, &user, &rid)?;
     let ir = &rec.task_ir;
     let nodes: Vec<Value> = ir["nodes"].as_array().cloned().unwrap_or_default().iter().map(|n| json!({
-        "node_id": n["id"], "primitive_id": n["role"], "role": n["role"], "kind": "task", "lifecycle": "DECLARE"
+        "node_id": n.get("node_id").unwrap_or(&n["id"]), "primitive_id": n["primitive_id"],
+        "role": n.get("cognitive_role").unwrap_or(&n["role"]), "kind": n.get("node_kind").cloned().unwrap_or(json!("task")), "lifecycle": "DECLARE"
     })).collect();
     Ok(Json(json!({ "object": "graph", "graph_id": ir["dag_id"], "version": 1, "template_id": ir["template"]["id"],
                     "template_source": ir["template"]["source"], "nodes": nodes, "edges": ir["edges"] })).into_response())

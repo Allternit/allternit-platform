@@ -90,7 +90,8 @@ async fn agency_goal_only_creates_durable_run_with_resolved_defaults() {
     let rec = fresh.load_run(id).await.unwrap().expect("run persisted");
     assert_eq!(rec.run["resolved"], run["resolved"]);
     assert_eq!(rec.task_ir["task_type"], "BUG_FIX");
-    assert_eq!(rec.task_ir["template"]["source"], "stub", "WP10 template not merged yet");
+    assert_eq!(rec.task_ir["template"]["source"], "kernel", "WP10 BUG_FIX graph");
+    assert!(!rec.task_ir["nodes"].as_array().unwrap().is_empty());
 
     // Idempotent replay returns the same run.
     let (s, h, b) = call(&t.app, post("/v1/agency", "u1", Some("idem-key-0001"), json!({ "goal": "Fix the failing checkout tests" }))).await;
@@ -213,7 +214,8 @@ async fn agency_forces_verifier_owned_completion_and_leased_writes() {
     let rec = s.load_run(id).await.unwrap().unwrap();
     let dag = rec.task_ir["dag_id"].as_str().unwrap();
     // The real commrails judge sees an agency-origin plan: judge + verifier close.
-    let eff = effective_policy(&s.raw_events().await.unwrap(), dag, Some("patch"));
+    let node = rec.task_ir["nodes"][0]["id"].as_str().unwrap().to_string();
+    let eff = effective_policy(&s.raw_events().await.unwrap(), dag, Some(&node));
     assert_eq!(eff.origin, Some(PolicyOrigin::Agency));
     assert_eq!(eff.verify, VerifyMode::Judge);
     assert_eq!(eff.close_by, CloseBy::Verifier);
@@ -226,8 +228,8 @@ impl compiler::RunTemplate for PermissiveTemplate {
     fn version(&self) -> u32 { 9 }
     fn source(&self) -> &'static str { "test" }
     fn completion_policy(&self) -> &'static str { "completion.bug_fix" }
-    fn instantiate(&self, _: &str, _: &Value) -> compiler::TemplateGraph {
-        compiler::TemplateGraph { nodes: vec![], edges: vec![], wih_policy: json!({ "requires_lease_for_write": false, "x": 1 }) }
+    fn instantiate(&self, _: &str, _: &Value) -> Result<compiler::TemplateGraph, String> {
+        Ok(compiler::TemplateGraph { nodes: vec![], edges: vec![], wih_policy: json!({ "requires_lease_for_write": false, "x": 1 }) })
     }
 }
 
@@ -320,4 +322,28 @@ async fn agency_campaign_wake_scheduling_stays_off() {
     let id = c["id"].as_str().unwrap();
     let (_, _, b) = call(&t.app, post(&format!("/v1/campaigns/{id}/resume"), "u1", None, json!({}))).await;
     assert_eq!(serde_json::from_str::<Value>(&b).unwrap()["scheduling"], "disabled_pending_golive");
+}
+
+#[tokio::test]
+async fn agency_template_instantiation_failure_is_422_not_500() {
+    let t = setup().await;
+    // A workspace with no locator declares no write set: BUG_FIX fails closed.
+    let (s, _, b) = call(&t.app, post("/v1/agency", "u1", Some("idem-key-0060"), json!({ "goal": "x", "workspace": { "resources": [] } }))).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{b}");
+    assert!(b.contains("ERR_INPUT_INVALID") && b.contains("\"param\":\"workspace\""), "{b}");
+    let (_, _, b) = call(&t.app, get_req("/v1/runs", "u1")).await;
+    assert_eq!(serde_json::from_str::<Value>(&b).unwrap()["data"], json!([]), "no run was created");
+}
+
+#[tokio::test]
+async fn agency_graph_view_reads_primitive_ids() {
+    let t = setup().await;
+    let run = create(&t, "idem-key-0070").await;
+    let (s, _, b) = call(&t.app, get_req(&format!("/v1/runs/{}/graph", run["id"].as_str().unwrap()), "u1")).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let g: Value = serde_json::from_str(&b).unwrap();
+    for n in g["nodes"].as_array().unwrap() {
+        assert!(n["primitive_id"].is_string(), "{n}");
+    }
+    assert_no_vendor(&b);
 }
