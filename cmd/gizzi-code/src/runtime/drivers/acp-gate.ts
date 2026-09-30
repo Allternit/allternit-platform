@@ -9,6 +9,7 @@
 import { existsSync } from "node:fs"
 import { spawn } from "node:child_process"
 import { delimiter, join } from "node:path"
+import { Catastrophic } from "@/runtime/tools/guard/permission/catastrophic"
 
 export type AcpToolCall = {
   kind?: unknown
@@ -17,7 +18,22 @@ export type AcpToolCall = {
   locations?: unknown
 }
 
-export type AcpGateVerdict = { allow: true } | { allow: false; reason: string }
+export type AcpGateVerdict = { allow: true; fallback?: boolean } | { allow: false; reason: string; fallback?: boolean }
+
+/** Plan mode is read-only: same rule as PermissionNext.evaluatePolicy. */
+export function planModeDenies(mode: string | undefined, permission: string): boolean {
+  return mode === "plan" && permission !== "read"
+}
+
+/** In-process floor used when the commrails binary is unavailable. */
+export function inProcessFloor(toolCall: AcpToolCall, cwd: string): AcpGateVerdict {
+  const payload = acpToolToHookPayload(toolCall, cwd)
+  const command = payload.tool_name === "Bash" ? String((payload.tool_input as { command?: string }).command ?? "") : ""
+  const hit = command ? Catastrophic.check(command) : undefined
+  return hit
+    ? { allow: false, reason: `hard floor: ${hit.reason}`, fallback: true }
+    : { allow: true, fallback: true }
+}
 
 /** Map an ACP tool call onto the hook payload `{tool_name, tool_input, cwd}`. */
 export function acpToolToHookPayload(toolCall: AcpToolCall, cwd: string, sessionId?: string) {
@@ -87,9 +103,9 @@ export function parseHookOutput(stdout: string, exitCode: number | null): AcpGat
 }
 
 /**
- * Ask the gate about one ACP tool call. Returns `undefined` when no gate
- * binary is installed, so the caller keeps its existing behaviour instead of
- * denying everything.
+ * Decide one ACP tool call, never prompting. Order: plan-mode read-only
+ * (deny write/exec first), then the commrails gate; with no commrails binary,
+ * gizzi's in-process catastrophic floor (deny catastrophic, allow the rest).
  */
 export async function acpGateDecision(opts: {
   toolCall: AcpToolCall
@@ -100,9 +116,15 @@ export async function acpGateDecision(opts: {
   root?: string
   bin?: string
   timeoutMs?: number
-}): Promise<AcpGateVerdict | undefined> {
+  /** Session permission mode and the tool's permission class ("read" | "edit" | "bash"). */
+  mode?: string
+  permission?: string
+}): Promise<AcpGateVerdict> {
+  if (opts.permission && planModeDenies(opts.mode, opts.permission)) {
+    return { allow: false, reason: "plan mode is read-only" }
+  }
   const bin = opts.bin ?? findCommrailsBin()
-  if (!bin) return undefined
+  if (!bin) return inProcessFloor(opts.toolCall, opts.cwd)
   const args = ["--root", opts.root ?? opts.cwd, "hook", "claude-pretool", "--harness", opts.harness, "--workspace", opts.cwd]
   if (opts.wihId) args.push("--wih", opts.wihId)
   const payload = JSON.stringify(acpToolToHookPayload(opts.toolCall, opts.cwd, opts.sessionId))

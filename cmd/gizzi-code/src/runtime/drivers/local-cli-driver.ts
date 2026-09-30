@@ -954,9 +954,14 @@ export class LocalCliDriver implements RuntimeDriver {
         const sessionID = task?.sessionID
 
         // Allternit spawn gate (hard floor + Gate 2): answer right away, so
-        // the turn never waits on a person. Only when the gate binary is
-        // missing do we fall through to the legacy policy below.
+        // the turn never waits on a person. Plan mode (read-only) is checked
+        // first; with no commrails binary the in-process catastrophic floor
+        // decides. Nothing here prompts.
+        const gateTool = (request.toolCall ?? {}) as { kind?: unknown; title?: unknown }
+        const gateMode = await PermissionNext.getMode(sessionID).catch(() => "default" as const)
         const verdict = await acpGateDecision({
+          mode: gateMode,
+          permission: acpPermissionFor(gateTool).permission,
           toolCall: (request.toolCall ?? {}) as Record<string, unknown>,
           cwd: taskCwd,
           harness: this.cliName,
@@ -964,8 +969,8 @@ export class LocalCliDriver implements RuntimeDriver {
           wihId: process.env.ALLTERNIT_COMMRAILS_WIH,
           root: process.env.ALLTERNIT_COMMRAILS_ROOT,
         })
-        if (verdict) {
-          log.info("acp gate decision", { taskId: handle.taskId, allow: verdict.allow, ...(verdict.allow ? {} : { reason: verdict.reason }) })
+        {
+          log.info("acp gate decision", { taskId: handle.taskId, allow: verdict.allow, fallback: verdict.fallback ?? false, ...(verdict.allow ? {} : { reason: verdict.reason }) })
           const chosen = verdict.allow
             ? pickAllow()
             : options.find((item) => String(item.kind).includes("reject"))

@@ -20,16 +20,29 @@ describe("acp gate mapping", () => {
     expect(parseHookOutput("nope", 0).allow).toBe(false)
     expect(parseHookOutput("", 2).allow).toBe(false)
   })
-  test("no gate binary means no verdict (caller keeps legacy policy)", async () => {
+  test("no gate binary: in-process floor denies rm -rf ~/, allows ls, never prompts", async () => {
     const saved = { bin: process.env.ALLTERNIT_COMMRAILS_BIN, path: process.env.PATH }
     process.env.ALLTERNIT_COMMRAILS_BIN = ""
     process.env.PATH = "/nonexistent"
     try {
-      expect(await acpGateDecision({ toolCall: { kind: "execute" }, cwd: "/w", harness: "kimi", root: "/w" })).toBeUndefined()
+      const deny = await acpGateDecision({ toolCall: { kind: "execute", rawInput: { command: "rm -rf ~/" } }, cwd: "/w", harness: "kimi", root: "/w" })
+      expect(deny.allow).toBe(false)
+      expect(deny.fallback).toBe(true)
+      const ok = await acpGateDecision({ toolCall: { kind: "execute", rawInput: { command: "ls" } }, cwd: "/w", harness: "kimi", root: "/w" })
+      expect(ok).toEqual({ allow: true, fallback: true })
     } finally {
       process.env.ALLTERNIT_COMMRAILS_BIN = saved.bin
       process.env.PATH = saved.path
     }
+  })
+  test("plan mode denies a write even when the gate would allow it", async () => {
+    const write = { kind: "edit", locations: [{ path: "/w/a.ts" }] }
+    // Gate (fallback floor) alone allows this write.
+    expect((await acpGateDecision({ toolCall: write, cwd: "/w", harness: "kimi", root: "/w", bin: undefined })).allow).toBe(true)
+    const planned = await acpGateDecision({ toolCall: write, cwd: "/w", harness: "kimi", root: "/w", mode: "plan", permission: "edit" })
+    expect(planned.allow).toBe(false)
+    const read = await acpGateDecision({ toolCall: { kind: "read" }, cwd: "/w", harness: "kimi", root: "/w", mode: "plan", permission: "read" })
+    expect(read.allow).toBe(true)
   })
 })
 
