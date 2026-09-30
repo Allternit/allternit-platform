@@ -1,0 +1,73 @@
+---
+title: "Routing: the router, the model pool and M0–M6"
+description: "How a capability request becomes an execution plan, and why model identity is evidence rather than workflow"
+---
+
+**Status: DESIGN — NOT YET IMPLEMENTED (Cognitive Execution Router, model pool) · RESEARCH (cross-model KV state transfer).** See [status labels](/architecture#status-labels).
+
+A graph node asks for a capability. The **Cognitive Execution Router** decides how to provide it: which execution mode, which component, with which context and fallbacks. The **model pool** keeps components loaded and ready.
+
+## Architecture contract
+
+### Execution modes M0–M6
+
+Cognitive role (S0–S3) and execution mode are separate axes. Any role may use any legal mode.
+
+| Mode | Name | Meaning |
+|------|------|---------|
+| M0 | Deterministic | Code, no model |
+| M1 | Logit readout | Read label probabilities from a model. Uncalibrated. |
+| M2 | Calibrated readout | A logit readout with a valid calibration artifact |
+| M3 | Hidden head | A small trained head on an intermediate hidden state, with early exit |
+| M4 | Dedicated decider | A component built only for decisions |
+| M5 | Generative | Structured or free generation |
+| M6 | Deep solver | A larger solver, an ensemble, a specialist or a human |
+
+### The router
+
+1. Resolve the role.
+2. Enumerate the legal modes.
+3. Apply policy, trust and locality filters. These run before any scoring.
+4. Find eligible components.
+5. Score quality, calibration, residency, cache and transfer cost, latency and cost.
+6. Emit an **ExecutionPlanV1**.
+7. Execute and verify.
+8. Escalate mode, depth or component if the evidence floor is not met.
+
+The execution plan records the role, capability, mode, chosen component and revision, readout and calibration references, context projection, cache and state strategy, floors, budgets and a fallback chain. It is the unit that gets traced.
+
+Graph topology never depends on which component is chosen. When a component fails, the router tries the next eligible one; the graph's failure policy applies only after all eligible components are exhausted.
+
+### The model pool
+
+The pool tracks resident backbones, hot decision heads, warm adapters, prefix and KV state, a decision embedding cache, cold models and remote capabilities. It exposes load, preload, touch and evict, and emits residency events. Pinned entries are never silently evicted. Residency is an accelerator only: it never changes eligibility, policy or evidence, and a pool event never changes [AgentState](/architecture/state).
+
+### State transfer (KV)
+
+Reusing one component's attention state in another is an optional optimization. Native reuse is preferred, semantic rebuild from canonical state is the universal fallback, and a missing cache never aborts a run. Translating state **between different models** is **RESEARCH**.
+
+Why: choosing the component per step, from measured capability, lets the system use the cheapest correct option and swap components without touching the graph. Naming a model in the workflow would make both impossible.
+
+## Current implementation
+
+None of the router or model pool is on main. Model calls today go through the [Gizzi runtime](/core/gizzi-runtime) and its provider configuration. The [decision runtime](/architecture/cognitive-runtime/decision-runtime) has its own small internal router for decision requests, which is not this component.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Capability request, execution plan, model capability profile and pool entry schemas | **AVAILABLE** (contract) |
+| Cognitive Execution Router | **DESIGN — NOT YET IMPLEMENTED** |
+| Model pool | **DESIGN — NOT YET IMPLEMENTED** |
+| Native cache reuse and semantic rebuild | **DESIGN — NOT YET IMPLEMENTED** |
+| Cross-model KV translation | **RESEARCH** |
+
+## Developer relevance
+
+When you add a model provider, you will describe it with a capability profile (capabilities, measured ranges, context limit, trust classes, residency) instead of wiring it into a workflow. Until the router ships, keep model choice in runtime configuration, never in a graph.
+
+## Related
+
+- [S0–S3](/architecture/cognition-levels)
+- [Why no vendor names in graphs](/architecture/cognitive-runtime/no-vendor-names)
+- [Local models](/byoc/local-models)

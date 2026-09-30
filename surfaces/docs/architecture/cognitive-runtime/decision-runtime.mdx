@@ -1,0 +1,66 @@
+---
+title: "Decision runtime"
+description: "The S1 service that answers bounded questions over known candidates with a typed result, and why it starts in shadow mode"
+---
+
+**Status: PREVIEW (merged; shadow mode by default; S1 acts on nothing until a primitive passes its calibration gate).** See [status labels](/architecture#status-labels).
+
+The **decision runtime** answers questions where every legal answer is known in advance: which of these files, is this safe, is this criterion met, how do these rank. It is the S1 level of the [Cognitive Machine](/architecture/cognitive-machine).
+
+## Architecture contract
+
+### Operations
+
+| Operation | Answers |
+|-----------|---------|
+| `BELIEF` | Probability that a proposition is true |
+| `CHOICE` | One candidate from a set |
+| `SCORE` | A level on an ordered scale |
+| `RANK` | An order over a candidate set |
+| `SUBSET` | Zero or more candidates |
+| `ESTIMATE` | A bounded numeric estimate |
+| `GATE` | A graph-transition recommendation. Consumed by hard policy; never authorization. |
+| `VERIFY` | Semantic accept or reject with criterion evidence. Never a deterministic proof. |
+| `PAIR_SCORE` | Compatibility between a state and a candidate |
+
+### Request and result
+
+A `DecisionRequestV1` carries the envelope, the operation, a state projection, instructions, the candidates or scale, constraints, an optional calibration domain and a latency limit. A `DecisionResultV1` returns the typed answer, the probabilities, a confidence, the calibration reference, evidence references, the component identity as evidence, and a threshold action: `AUTO`, `REVIEW`, `ESCALATE` or `REJECT`.
+
+### Rules
+
+- **The caller supplies the candidates.** A decision backend never invents options. Every candidate set has an unknown or fallback path.
+- **Illegal candidates are removed before cognition**, by policy.
+- **Thresholds are policy**, never model output.
+- **No threshold acts without valid calibration.** A missing calibration artifact means fallback, never a made-up confidence.
+- **An uncalibrated margin is never shown as a probability.**
+- **Decision backends are interchangeable** behind the contract: rules, schema encoders, contrastive rankers, decoder readouts, specialists or remote services.
+
+Why a separate runtime: a scored choice over known answers is cheaper, faster and more checkable than generating text and parsing it. Putting it behind one contract lets any backend serve it and lets the system measure each one.
+
+## Current implementation
+
+On main there is one canonical decision server. It speaks the frozen Kernel ABI 1.0.0 decision contracts on a local, loopback-only endpoint. Its local readout provider serves `BELIEF`, `GATE`, `VERIFY`, `CHOICE`, `SCORE`, `ESTIMATE`, `RANK`, `SUBSET` and `PAIR_SCORE` by reading label probabilities from a local model over a constrained label set; it does not parse probabilities out of free text.
+
+Its router runs in **shadow mode by default**. Without a bound calibration manifest that has passed the go-live gate, every result is marked uncalibrated and abstains; it is never `AUTO`. `AUTO` needs live mode, a passing manifest for that primitive, the caller attesting the decision is reversible, and a confidence inside the calibrated region. **No calibration manifests exist yet**, so nothing acts on S1 today.
+
+A pre-tool safety hook uses the server in log-only mode: deterministic hard rules decide first and last, and the decision server can only add friction, never allow.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Decision contracts | **AVAILABLE** (contract) |
+| Canonical decision server, nine operations | **PREVIEW** (shadow) |
+| S1 acting on a decision (`AUTO`) | **PREVIEW** (gated; no primitive has passed) |
+| Backend federation across backend classes | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+To add a decision backend, implement the request and result contract and report your probability semantics honestly (calibrated, relative to the set, or uncalibrated). Your backend will run in shadow until a calibration manifest for each primitive passes.
+
+## Related
+
+- [Readouts](/architecture/cognitive-runtime/readouts)
+- [Calibration](/architecture/cognitive-runtime/calibration)
+- [Abstain and escalate](/architecture/cognitive-runtime/abstain-escalate)

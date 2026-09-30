@@ -44,12 +44,46 @@
               "architecture",
               "architecture/agents",
               "architecture/kernel",
+              "architecture/planes",
+              "architecture/cognitive-machine",
+              "architecture/work-machine",
+              "architecture/cognition-levels",
+              "architecture/state",
+              "architecture/graphs",
+              "architecture/context",
+              "architecture/routing",
               "architecture/policy",
               "architecture/verification",
               "architecture/receipts",
               "architecture/replay",
               "architecture/kernel-contracts",
               "architecture/kernel-contracts-reference"
+            ]
+          },
+          {
+            "group": "Work Runtime",
+            "pages": [
+              "architecture/work-runtime/lifecycle",
+              "architecture/work-runtime/leases",
+              "architecture/work-runtime/heartbeat-reclaim",
+              "architecture/work-runtime/admission",
+              "architecture/work-runtime/wait-gates",
+              "architecture/work-runtime/retries",
+              "architecture/work-runtime/campaigns",
+              "architecture/work-runtime/wake",
+              "architecture/work-runtime/attention",
+              "architecture/work-runtime/human-in-the-loop"
+            ]
+          },
+          {
+            "group": "Cognitive Runtime",
+            "pages": [
+              "architecture/cognitive-runtime/decision-runtime",
+              "architecture/cognitive-runtime/primitives",
+              "architecture/cognitive-runtime/readouts",
+              "architecture/cognitive-runtime/calibration",
+              "architecture/cognitive-runtime/abstain-escalate",
+              "architecture/cognitive-runtime/no-vendor-names"
             ]
           },
           {
