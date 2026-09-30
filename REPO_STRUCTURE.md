@@ -127,6 +127,23 @@ Where new code goes — adopted 2026-09-18 (S0 of the folder reorganization):
 
 `packages/@allternit/` was dissolved into `platform/packages/` on 2026-09-18 (S3): all internal `@allternit/*` TypeScript libraries now live there (workspace resolution is by package `name`, so consumers were unaffected). The former `api/` root was dissolved into `services/` on 2026-09-18 (S2): `gateway/routing` (allternit-tools-gateway), `workspace-service`, `ssh-bridge`, and `replies-runtime` now live under `services/`.
 
+## Eight-plane module ownership (Kernel ABI 1.0.0)
+
+Adopted with the Agency Kernel (WP2). Authority: `spec/Contracts/kernel/v1`. New kernel code belongs to exactly one plane; "Where" is the current home, not a promise to move.
+
+| # | Plane | Owns | Where today |
+|---|-------|------|-------------|
+| 1 | Experience / API | one external agent identity, SDK/API, streams, threads, artifacts | `cmd/`, `services/`, `sdk/` |
+| 2 | Agent | TaskIR, AgentState, Agent ISA, capability semantics | `commrails/src/kernel/{registry,isa}.rs`, `spec/Contracts/kernel/v1` |
+| 3 | Work Orchestration | ComputeGraph, node lifecycle, leases, campaigns, wait/wake, WIH projection | `commrails/src/kernel/{lifecycle,graph,projection}.rs`, `domains/kernel/drivers/dag-wih-integration` |
+| 4 | Cognition | S0-S3, Decision and Judge runtimes, verification cognition | `domains/kernel/drivers/` |
+| 5 | Context + State | ContextCompiler, ChunkStore, memory, cognitive state | `domains/kernel/drivers/context-pack-builder`, `services/memory` |
+| 6 | Execution / Model | execution router, model pool, tool runtimes, fabric placement | `domains/kernel/drivers/allternit-providers`, `services/tools` |
+| 7 | Governance + Observability | policy, receipts, replay, evals, provenance, budgets | `domains/kernel/drivers/system-law`, `platform/` |
+| 8 | Product Operations | attention, approvals, channels, remote control, needs-you queue | `surfaces/` |
+
+Q2: the Work Runtime ledger owns lifecycle. Q3: ComputeGraphIR is authoritative; the WIH DAG is a one-way disposable projection.
+
 ## Three SDKs
 
 The repo carries three distinct SDKs — keep them straight:

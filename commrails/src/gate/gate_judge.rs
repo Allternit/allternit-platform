@@ -24,7 +24,11 @@ use crate::judge::backends::{judge_node, judge_tool, Judge};
 use crate::judge::config::judge_for_root;
 use crate::judge::hard_rules::hard_deny;
 use crate::judge::heartbeat::{self, Heartbeat};
-use crate::judge::policy::{effective_policy, CloseBy, EffectivePolicy, JudgePolicy, VerifyMode};
+use crate::judge::completion::{load_policy, missing_evidence};
+use crate::judge::policy::{
+    effective_completion_policy, effective_policy, CloseBy, EffectivePolicy, JudgePolicy,
+    VerifyMode,
+};
 use crate::judge::state::project_node_judge;
 use crate::judge::types::{
     JudgedNode, NodeJudgeRequest, NodeOutcome, ReceiptSummary, ToolCallVerdict, ToolDecision,
@@ -221,6 +225,33 @@ impl Gate {
                 .into());
             }
         }
+        // Origin-marked (agency/kernel) work is not weakenable by anyone,
+        // and its completion policy cannot be swapped out by an agent.
+        {
+            let current = effective_policy(&dag_events, dag_id, node_id);
+            let swaps_completion = actor.r#type != ActorType::User
+                && policy.completion_policy.is_some()
+                && effective_completion_policy(&dag_events, dag_id, node_id).is_some()
+                && policy.completion_policy
+                    != effective_completion_policy(&dag_events, dag_id, node_id);
+            if current.origin.is_some() && (policy.weakens(&current) || swaps_completion) {
+                let code = if actor.r#type == ActorType::Agent {
+                    "policy_self_weaken"
+                } else {
+                    "policy_origin_locked"
+                };
+                return Err(GateError::new(
+                    gate_ids::PLAN,
+                    code,
+                    format!(
+                        "{dag_id} is origin={}; its verifier-owned completion policy cannot be weakened",
+                        current.origin.map(|o| o.as_str()).unwrap_or("?")
+                    ),
+                )
+                .at(dag_id, node_id)
+                .into());
+            }
+        }
         if actor.r#type != ActorType::User {
             let current = effective_policy(&dag_events, dag_id, node_id);
             let holds_open_wih = dag.nodes.values().any(|n| {
@@ -264,6 +295,7 @@ impl Gate {
         wih: &WihState,
         status_in: &str,
         closer: Option<&Actor>,
+        evidence_refs: &[String],
     ) -> Result<EffectivePolicy> {
         if wih.final_status.is_some() {
             return Err(GateError::new(
@@ -279,6 +311,51 @@ impl Gate {
             .into());
         }
         let policy = self.judge_policy(&wih.dag_id, Some(&wih.node_id)).await?;
+        if is_success(status_in) && policy.origin.is_some() && closer_is_worker(closer, wih) {
+            // Completion law: the builder proposes; only the verifier path
+            // (another agent, judged) or a human performs DONE.
+            let reason = format!(
+                "node {} is origin={}; {} cannot mark it {status_in}: recorded as a CompletionProposal, awaiting a verifier (the worker is {})",
+                wih.node_id,
+                policy.origin.map(|o| o.as_str()).unwrap_or("?"),
+                actor_label(closer),
+                wih.agent_id.as_deref().unwrap_or("unknown")
+            );
+            self.emit(event(
+                closer.cloned().unwrap_or_else(|| gate_actor(&self.actor_id)),
+                events::COMPLETION_PROPOSED,
+                json!({
+                    "wih_id": wih.wih_id,
+                    "dag_id": wih.dag_id,
+                    "node_id": wih.node_id,
+                    "proposed_status": status_in,
+                    "proposer": actor_label(closer),
+                    "evidence_refs": evidence_refs,
+                }),
+            ))
+            .await?;
+            self.emit(event(
+                gate_actor(&self.actor_id),
+                events::CLOSE_DENIED,
+                json!({
+                    "wih_id": wih.wih_id, "dag_id": wih.dag_id, "node_id": wih.node_id,
+                    "status": status_in, "code": "completion_proposed",
+                    "closer": actor_label(closer), "reason": reason,
+                }),
+            ))
+            .await?;
+            self.set_node_status(
+                &wih.dag_id,
+                &wih.node_id,
+                status::VERIFYING,
+                gate_actor(&self.actor_id),
+            )
+            .await?;
+            return Err(GateError::new(gate_ids::CLOSE, "completion_proposed", reason)
+                .at(&wih.dag_id, Some(&wih.node_id))
+                .with_details(json!({ "closer": actor_label(closer), "worker": wih.agent_id }))
+                .into());
+        }
         if is_success(status_in)
             && policy.close_by == CloseBy::Verifier
             && policy.verify != VerifyMode::Judge
@@ -395,6 +472,35 @@ impl Gate {
             judge_node(h.judge.as_ref(), &req, h.node_timeout).await
         };
 
+        // Origin work: a PASS still needs evidence for every required
+        // criterion of the node's completion policy (a human is the override).
+        let mut judged = judged;
+        if policy.origin.is_some()
+            && judged.outcome == NodeOutcome::Accomplished
+            && !closer.is_some_and(|a| a.r#type == ActorType::User)
+        {
+            if let Some(pid) =
+                effective_completion_policy(&dag_events, &wih.dag_id, Some(&wih.node_id))
+            {
+                let missing = match load_policy(&pid) {
+                    Some(p) => missing_evidence(&p, evidence_refs),
+                    None => vec![format!("(unknown completion policy {pid})")],
+                };
+                if !missing.is_empty() {
+                    judged = JudgedNode {
+                        outcome: NodeOutcome::NeedsHuman,
+                        category: None,
+                        reason: format!(
+                            "missing completion evidence under {pid}: {}",
+                            missing.join(", ")
+                        ),
+                        backend: judged.backend.clone(),
+                        source: judged.source.clone(),
+                        failure: None,
+                    };
+                }
+            }
+        }
         let st = project_node_judge(&dag_events, &wih.dag_id, &wih.node_id);
         let mut note = None;
         let node_status = match judged.outcome {

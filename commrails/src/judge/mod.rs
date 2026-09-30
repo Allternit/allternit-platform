@@ -19,6 +19,7 @@
 //! output. A verdict forged inside the output therefore never parses.
 
 pub mod backends;
+pub mod completion;
 pub mod config;
 pub mod hard_rules;
 pub mod heartbeat;
@@ -33,7 +34,10 @@ pub use backends::{
     SystemOneFirstPass,
 };
 pub use config::{build_judge, load_config, JudgeConfig};
-pub use policy::{effective_policy, CloseBy, EffectivePolicy, JudgePolicy, VerifyMode};
+pub use policy::{
+    effective_completion_policy, effective_policy, CloseBy, EffectivePolicy, JudgePolicy,
+    PolicyOrigin, VerifyMode,
+};
 pub use state::{pending_judge_needs, project_node_judge, NodeJudgeState, PendingJudgeNeed};
 pub use types::*;
 
@@ -47,6 +51,7 @@ pub mod events {
     pub const CONTINUATION_GRANTED: &str = "JudgeContinuationGranted";
     pub const HUMAN_RESOLVED: &str = "JudgeHumanResolved";
     pub const TOOL_DECISION: &str = "JudgeToolDecision";
+    pub const COMPLETION_PROPOSED: &str = "CompletionProposed";
     pub const CLOSE_DENIED: &str = "WIHCloseDenied";
     pub const LEASE_HEARTBEAT: &str = "LeaseHolderHeartbeat";
     pub const LEASE_RECLAIMED: &str = "LeaseReclaimed";
@@ -55,6 +60,8 @@ pub mod events {
 
 /// Node statuses introduced by the judge.
 pub mod status {
+    /// Builder proposed completion; waiting on the verifier path.
+    pub const VERIFYING: &str = "VERIFYING";
     /// Judge said not accomplished; a continuation can re-open the node.
     pub const EXCEPTION: &str = "EXCEPTION";
     /// Waiting on a person: judge failed, continuation cap hit, or the
