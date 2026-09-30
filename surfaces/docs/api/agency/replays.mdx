@@ -1,0 +1,229 @@
+---
+title: 'Replays'
+description: 'Re-run a finished run from its recording, with recorded effects only, and read the divergence report.'
+---
+
+<Warning>
+**PREVIEW.** The Agency API is not live yet. This page describes the published v0.3 contract so you can review and build against it; details may change before alpha. Implementation status: DESIGN — NOT YET IMPLEMENTED.
+</Warning>
+
+A **replay** re-runs a finished run at the decision and tool boundary, using the run's trace, receipts and recording (its cassette). It answers whether the system makes the same decisions given the same recorded world. For the concepts see [Replay](/architecture/replay).
+
+Replay and cassette recording are not built yet. Replay is one of the five conditions of the alpha gate: a run must survive restart, resume, verify, replay and receipt-backed completion before alpha opens.
+
+## Replays never cause effects
+
+`effects` is always `recorded_only`. It is the only allowed value.
+
+- Every external effect is served from the recorded, content-addressed result.
+- A call with no recording fails that node with `ERR_REPLAY_UNRECORDED`. It is never executed live.
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/replays` | [Create a replay](#create-a-replay) |
+| `GET` | `/v1/replays/{replay_id}` | [Get a replay](#get-a-replay) |
+| `GET` | `/v1/replays/{replay_id}/results` | [Get replay results](#get-replay-results) |
+
+## The Replay object
+
+{{fields:Replay}}
+
+Replay IDs match `^rpl_[A-Za-z0-9]+$`.
+
+### Status
+
+[ReplayStatus](/api/agency/schemas#replaystatus)
+
+| `status` | Meaning |
+|----------|---------|
+| `queued` | Accepted, not started. |
+| `running` | In progress. |
+| `completed` | Finished; results are available. |
+| `failed` | The replay itself failed; see `error`. |
+| `cancelled` | The replay was cancelled. |
+
+### Verdict
+
+| `verdict` | Meaning |
+|-----------|---------|
+| `equivalent` | The replay made the same decisions as the source run. |
+| `diverged_expected` | The replay differed, and the differences are explained by what you overrode. |
+| `diverged_unexpected` | The replay differed in a way the overrides do not explain. |
+| `null` | Not finished yet. |
+
+## Create a replay
+
+```http
+POST /v1/replays
+```
+
+### Parameters
+
+{{params:createReplay}}
+
+### Request body
+
+[ReplayRequest](/api/agency/schemas#replayrequest)
+
+{{fields:ReplayRequest}}
+
+`overrides` selects what to vary. Anything not overridden is taken from the source run's recording. `overrides.completion` is a [CompletionCriteria](/api/agency/schemas#completioncriteria), `overrides.models` is a [ModelConstraints](/api/agency/schemas#modelconstraints) and `overrides.runtime` is a [RuntimeHints](/api/agency/schemas#runtimehints). No other override keys are accepted.
+
+A source run records a cassette when `runtime.record_cassette` is `true`, which is the default.
+
+### Responses
+
+{{responses:createReplay}}
+
+### Example
+
+Replay a run unchanged:
+
+```bash
+curl -X POST https://api.allternit.com/v1/replays \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Idempotency-Key: e1a3c5e7-9b0d-4f2a-8c4e-6a8c0e2a4c6e" \
+  -H "Content-Type: application/json" \
+  -d '{"source_run_id": "run_01JB2K4Y7MQ8"}'
+```
+
+Replay with a stricter completion contract and a local-only model constraint:
+
+```bash
+curl -X POST https://api.allternit.com/v1/replays \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Idempotency-Key: f3b5d7f9-1c2e-4a4b-9d6f-8b0d2f4b6d8f" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source_run_id": "run_01JB2K4Y7MQ8",
+    "effects": "recorded_only",
+    "overrides": {
+      "completion": {"require": ["tests_pass", "no_new_regressions", "lint_clean"]},
+      "models": {"locality": "local_only"}
+    }
+  }'
+```
+
+```http
+HTTP/1.1 202 Accepted
+Location: /v1/replays/rpl_01JB2N5C8W
+```
+
+```json
+{
+  "id": "rpl_01JB2N5C8W",
+  "object": "replay",
+  "source_run_id": "run_01JB2K4Y7MQ8",
+  "status": "queued",
+  "effects": "recorded_only",
+  "verdict": null,
+  "created_at": "2026-09-29T19:00:00Z",
+  "finished_at": null,
+  "results_url": "/v1/replays/rpl_01JB2N5C8W/results",
+  "error": null
+}
+```
+
+## Get a replay
+
+```http
+GET /v1/replays/{replay_id}
+```
+
+### Parameters
+
+{{params:getReplay}}
+
+### Responses
+
+{{responses:getReplay}}
+
+### Example
+
+```bash
+curl https://api.allternit.com/v1/replays/rpl_01JB2N5C8W \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+```json
+{
+  "id": "rpl_01JB2N5C8W",
+  "object": "replay",
+  "source_run_id": "run_01JB2K4Y7MQ8",
+  "status": "completed",
+  "effects": "recorded_only",
+  "verdict": "diverged_expected",
+  "created_at": "2026-09-29T19:00:00Z",
+  "finished_at": "2026-09-29T19:01:12Z",
+  "results_url": "/v1/replays/rpl_01JB2N5C8W/results",
+  "error": null
+}
+```
+
+## Get replay results
+
+```http
+GET /v1/replays/{replay_id}/results
+```
+
+The divergence report. It is available when the replay's status is `completed`; before that the endpoint returns `409`.
+
+### Parameters
+
+{{params:getReplayResults}}
+
+### Responses
+
+{{responses:getReplayResults}}
+
+[ReplayResults](/api/agency/schemas#replayresults). `divergences` is paginated with `cursor` and `limit`.
+
+{{fields:ReplayResults}}
+
+### Example
+
+```bash
+curl https://api.allternit.com/v1/replays/rpl_01JB2N5C8W/results \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+```json
+{
+  "replay_id": "rpl_01JB2N5C8W",
+  "verdict": "diverged_expected",
+  "decisions_total": 22,
+  "decisions_matched": 21,
+  "completion_matched": false,
+  "divergences": [
+    {
+      "step_ref": "n14",
+      "kind": "expected",
+      "description": "Added criterion lint_clean was evaluated; the source run did not require it.",
+      "source_receipt_id": null,
+      "replay_receipt_id": "rcpt_01JB2N6D02"
+    }
+  ],
+  "has_more": false,
+  "next_cursor": null
+}
+```
+
+## Polling pattern
+
+```python
+import time, requests
+
+def wait_for_replay(replay_id):
+    while True:
+        rpl = requests.get(f"{BASE}/v1/replays/{replay_id}", headers=H).json()
+        if rpl["status"] in ("completed", "failed", "cancelled"):
+            return rpl
+        time.sleep(2)
+
+rpl = wait_for_replay("rpl_01JB2N5C8W")
+if rpl["status"] == "completed":
+    report = requests.get(f"{BASE}{rpl['results_url']}", headers=H).json()
+    print(report["verdict"], report["decisions_matched"], "/", report["decisions_total"])
+```

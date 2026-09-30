@@ -1,0 +1,61 @@
+---
+title: 'Idempotency'
+description: 'How Idempotency-Key works on effectful requests, and why a retried effect is never duplicated.'
+---
+
+<Warning>
+**PREVIEW.** The Agency API is not live yet. This page describes the published v0.3 contract so you can review and build against it; details may change before alpha. Implementation status: DESIGN — NOT YET IMPLEMENTED.
+</Warning>
+
+Networks fail. A client that times out does not know whether its request was applied. The `Idempotency-Key` header makes retrying safe: the same request with the same key is applied at most once.
+
+## Where it is required
+
+`Idempotency-Key` is **required** on every effectful `POST`:
+
+- create a run, submit input, pause, resume and cancel a run;
+- create a campaign and its pause, resume and cancel controls;
+- respond to an attention request;
+- create a replay.
+
+It is **optional** on `POST /v1/decisions`, which has no effects.
+
+The key is a string of 8 to 255 characters. The SDKs generate one for you. If you call the API directly, use a random UUID per logical operation, and reuse it for every retry of that operation.
+
+## Behavior
+
+| Situation | Response |
+|-----------|----------|
+| First request with this key | Processed normally. |
+| Same key, same body, within 24 hours | The stored original response, with header `Idempotency-Replayed: true`. Nothing runs twice. |
+| Same key, different body | `409 ERR_IDEMPOTENCY_KEY_REUSED`. |
+| Same key while the first request is still being processed | `409 ERR_IDEMPOTENCY_IN_PROGRESS`. Retry after a short wait. |
+
+The key's scope is the caller principal, the HTTP method and the canonical resource path (path parameters normalized). The same key on two different paths is two different keys.
+
+## Beyond the 24-hour window
+
+The 24-hour window covers stored API responses. The effects themselves are protected for longer:
+
+- The key is written into the receipt the request produces.
+- The run derives a key for every external effect it performs, so a retried effect inside the run is never duplicated.
+- Responses link the durable effect receipts on `Run.effect_receipt_ids`. Those receipts stay durable after the response window closes.
+
+This is the API side of a kernel rule: an externally visible action is retried only when it has an idempotency key and an action receipt. See [Receipts](/architecture/receipts) and [Policy](/architecture/policy).
+
+## Example
+
+```bash
+KEY=$(uuidgen)
+curl -X POST https://api.allternit.com/v1/agency \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Idempotency-Key: $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"goal": "Fix the failing date parser test"}'
+# On a timeout, send the identical request again with the same $KEY.
+```
+
+## Related
+
+- [Errors](/api/agency/errors)
+- [Runs](/api/agency/runs)
