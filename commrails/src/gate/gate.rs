@@ -1169,6 +1169,9 @@ impl Gate {
             wih_id: Some(wih_id.to_string()),
             ..Default::default()
         };
+        if self.is_replaying(wih_id) {
+            return Ok(GateResult { allowed: false, reason: Some(replay_deny_reason(wih_id)) });
+        }
         self.ensure_policy_scope(&scope).await?;
         let wih_events = self.events_for_wih(wih_id).await?;
         let wih = project_wih(&wih_events, wih_id).ok_or_else(|| anyhow!("wih not found"))?;
@@ -3235,37 +3238,77 @@ fn replay_run_id(wih_id: &str) -> String {
     format!("run_{}", wih_id)
 }
 
+/// Deny reason every pre-execution path (hooked harnesses, ACP gate, Gate 2) gives
+/// while a run replays: the tool must not run; `post_tool` serves the recording.
+pub fn replay_deny_reason(wih_id: &str) -> String {
+    format!("replay: recorded result served by the gate (run {} is replaying, effects: recorded_only)", replay_run_id(wih_id))
+}
+
 impl Gate {
     /// Put `wih_id`'s run into replay mode (effects: recorded_only) against `cassette`.
     /// Until [`Gate::end_replay`], side-effecting `post_tool` calls are answered from
     /// the recording and never execute, write a receipt, or append to any chain.
     pub fn begin_replay(&self, wih_id: &str, cassette: crate::replay::CassetteV1) -> Result<()> {
         let run = replay_run_id(wih_id);
+        // Persist the mode so separate hook/ACP-gate processes see it.
+        let dir = self.receipts.receipts_dir().join("_cassettes");
+        crate::replay::save_cassette(&dir, &cassette)?;
+        let state = self.replay_state_path(wih_id)?;
+        std::fs::create_dir_all(state.parent().unwrap())?;
+        std::fs::write(&state, serde_json::to_vec_pretty(&json!({
+            "run_id": run, "wih_id": wih_id, "cassette_id": cassette.cassette_id,
+            "recorded_run_id": cassette.run_id, "effects": "recorded_only",
+            "since": Utc::now().to_rfc3339(), "pid": std::process::id()
+        }))?)?;
         let r = crate::replay::Replayer::new_owned(
             self.receipts.chain_store()?, cassette, &run, crate::replay::EffectsMode::RecordedOnly)?;
         self.replay.lock().unwrap_or_else(|p| p.into_inner()).insert(run, r);
         Ok(())
     }
 
+    /// `<receipts>/_replay/run_<wih>.json` marks a replaying run for every process.
+    fn replay_state_path(&self, wih_id: &str) -> Result<std::path::PathBuf> {
+        let run = replay_run_id(wih_id);
+        if run.contains(['/', '\\', '\0']) || wih_id.starts_with('.') {
+            return Err(anyhow!("invalid wih id for replay: {wih_id:?}"));
+        }
+        Ok(self.receipts.receipts_dir().join("_replay").join(format!("{run}.json")))
+    }
+
+    /// True while `wih_id`'s run replays, in this process or any other.
     pub fn is_replaying(&self, wih_id: &str) -> bool {
         self.replay.lock().unwrap_or_else(|p| p.into_inner()).contains_key(&replay_run_id(wih_id))
+            || self.replay_state_path(wih_id).map(|p| p.exists()).unwrap_or(false)
+    }
+
+    /// Cassette-producing helper: record `wih_id`'s run from its receipt chain.
+    pub fn record_cassette(&self, wih_id: &str, graph_id: Option<&str>, graph_version: u64) -> Result<crate::replay::CassetteV1> {
+        crate::replay::record_cassette(&self.receipts.chain_store()?, &replay_run_id(wih_id), graph_id, graph_version)
     }
 
     /// Leave replay mode and return the divergence report.
     pub fn end_replay(&self, wih_id: &str) -> Result<crate::replay::DivergenceReportV1> {
-        let r = self.replay.lock().unwrap_or_else(|p| p.into_inner()).remove(&replay_run_id(wih_id))
-            .ok_or_else(|| anyhow!("run {} is not replaying", replay_run_id(wih_id)))?;
-        r.finish()
+        let r = self.replay.lock().unwrap_or_else(|p| p.into_inner()).remove(&replay_run_id(wih_id));
+        if let Ok(p) = self.replay_state_path(wih_id) {
+            let _ = std::fs::remove_file(p);
+        }
+        r.ok_or_else(|| anyhow!("run {} is not replaying in this process", replay_run_id(wih_id)))?.finish()
     }
 
     fn replay_tool_effect(&self, wih_id: &str, tool: &str, payload: &serde_json::Value) -> Result<Option<String>> {
         use crate::replay::{ReplayStep, StepOutcome};
         let class = payload.get("effect_class").and_then(|v| v.as_str()).unwrap_or("EXECUTE");
         let mut map = self.replay.lock().unwrap_or_else(|p| p.into_inner());
-        let Some(r) = map.get_mut(&replay_run_id(wih_id)) else { return Ok(None) };
         if class == "NONE" || class == "READ" {
             return Ok(None); // read-only calls are not effects; legacy path unchanged
         }
+        let Some(r) = map.get_mut(&replay_run_id(wih_id)) else {
+            // Replaying in another process: fail closed rather than record a live effect.
+            if self.replay_state_path(wih_id).map(|p| p.exists()).unwrap_or(false) {
+                return Err(anyhow!("replay: run {} replays in another process; refused, not executed", replay_run_id(wih_id)));
+            }
+            return Ok(None);
+        };
         // Gate effects carry no node id, so they were recorded at the run node.
         let node = r.cassette().run_id.clone();
         let mut st = ReplayStep::tool(&node, tool, payload, class)?;
