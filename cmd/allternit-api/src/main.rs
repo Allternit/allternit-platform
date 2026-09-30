@@ -1047,6 +1047,9 @@ async fn main() {
         // Agency API alpha (WP11): public /v1 developer surface, behind the
         // same auth_middleware as everything else on this router.
         .merge(allternit_api::agency_api::agency_router())
+        // Kernel UI backend: agent rules, routing policy, decision types, templates, activity.
+        .merge(allternit_api::kernel_ui::router())
+        .merge(allternit_api::kernel_ui::api_router())
         .nest("/api/v1", v1_routes)
         .nest("/api/v1", bb_router())
         // The tool registry is also served under /api/v1 because the
