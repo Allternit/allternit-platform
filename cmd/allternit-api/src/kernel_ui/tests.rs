@@ -394,6 +394,8 @@ async fn spend_threshold_raises_attention_once() {
     let rec = s.load_run("run_sp").await.unwrap().unwrap();
     assert_eq!(rec.run["status"], "needs_attention");
     assert_eq!(rec.attention[0]["reason"], crate::agency_api::guard::SPEND_REASON);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn model_template_compiles_and_runs_on_the_executor_with_scripted_cognition() {
     use crate::agency_api::template_exec;

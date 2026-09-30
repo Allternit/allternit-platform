@@ -1,7 +1,7 @@
 //! Kernel UI backend (spec sections 1-6): agent rules, routing policy,
 //! decision types, templates, activity. Mounted on the authed router like the
 //! agency routes; adds no auth path. Storage is the node's sqlite DB, one JSON
-//! document per scope (`migrations/V206__kernel_ui.sql`, also applied
+//! document per scope (`migrations/V205__kernel_ui.sql`, also applied
 //! idempotently on first use).
 
 pub mod activity;
@@ -26,7 +26,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
 
-pub const SCHEMA: &str = include_str!("../../migrations/V206__kernel_ui.sql");
+pub const SCHEMA: &str = include_str!("../../migrations/V205__kernel_ui.sql");
 
 pub struct KErr(pub StatusCode, pub String);
 impl KErr {
