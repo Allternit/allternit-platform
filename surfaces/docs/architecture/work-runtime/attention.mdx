@@ -3,7 +3,14 @@ title: "Attention"
 description: "How an agent asks for a person: typed requests, one controller for delivery, and fail-closed approvals"
 ---
 
-**Status: AVAILABLE (attention gate, internal) · PREVIEW (AttentionRequestV1 on the Agency API).** See [status labels](/architecture#status-labels).
+**Implementation: ENABLED · Exposure: INTERNAL · PUBLIC PREVIEW (contract).** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Agents request attention; they never notify people directly. |
+| **Implemented today** | The internal attention gate. |
+| **Active path** | Yes, inside the internal work runtime. |
+| **Public exposure** | Not yet. Planned through the Agency API (contract published, endpoint not served). |
 
 Agents **request attention**. They never send a push notification, an email or a chat message themselves. An attention controller owns delivery.
 

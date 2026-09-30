@@ -3,7 +3,14 @@ title: "Graphs: ComputeGraphIR and the Agent ISA"
 description: "Plans are typed graphs of registered primitives, checked by a validator before anything runs"
 ---
 
-**Status: AVAILABLE (primitive registry and graph schema, as contracts) · PREVIEW (graph validator and Agent ISA in the runtime).** See [status labels](/architecture#status-labels).
+**Implementation: IMPLEMENTED (graph schema, registry, validator library) · Exposure: PUBLIC (docs) · INTERNAL (validator).** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Every workflow is a typed compute graph, validated before it runs. |
+| **Implemented today** | Graph schema and primitive registry as contracts. Graph validator and Agent ISA as library code. |
+| **Active path** | No. The validator is not enforced on every graph. |
+| **Public exposure** | Documentation only. No endpoint serves it. |
 
 A plan in Allternit is not prose. It is a **ComputeGraphIR**: a typed graph whose nodes are registered primitives and whose edges are explicit conditions. Models may propose a graph or a patch to one. The runtime validates it and owns execution.
 

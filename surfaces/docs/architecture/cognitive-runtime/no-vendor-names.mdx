@@ -3,7 +3,14 @@ title: "Why no vendor names in graphs"
 description: "Contracts and graphs name capabilities, never models or vendors, and how that is enforced"
 ---
 
-**Status: AVAILABLE (design law; registry IDs contain no vendor or model names) · PREVIEW (graph validator rejects model pinning).** See [status labels](/architecture#status-labels).
+**Implementation: ENABLED (design law, registry) · IMPLEMENTED (validator rule) · Exposure: PUBLIC (docs).** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Graphs, plans and contracts never name a vendor or model. |
+| **Implemented today** | Registry IDs carry no vendor or model names. The graph validator rejects model pinning as library code. |
+| **Active path** | Partial. The validator is not enforced on every graph. |
+| **Public exposure** | Documentation only. No endpoint serves it. |
 
 No contract, graph, primitive ID or capability request in Allternit names a model or a vendor. This is design law 6: **contracts, never model names**.
 

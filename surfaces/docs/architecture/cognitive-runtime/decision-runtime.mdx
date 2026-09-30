@@ -3,7 +3,14 @@ title: "Decision runtime"
 description: "The S1 service that answers bounded questions over known candidates with a typed result, and why it starts in shadow mode"
 ---
 
-**Status: PREVIEW (merged; shadow mode by default; S1 acts on nothing until a primitive passes its calibration gate).** See [status labels](/architecture#status-labels).
+**Implementation: SHADOW · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | S1 decision heads answer bounded questions once calibrated. |
+| **Implemented today** | The decision runtime is on main and runs in shadow mode by default. |
+| **Active path** | No. S1 cannot act until a primitive passes its calibration gate. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 The **decision runtime** answers questions where every legal answer is known in advance: which of these files, is this safe, is this criterion met, how do these rank. It is the S1 level of the [Cognitive Machine](/architecture/cognitive-machine).
 

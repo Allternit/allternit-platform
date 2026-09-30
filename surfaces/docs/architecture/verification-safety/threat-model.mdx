@@ -3,7 +3,14 @@ title: "Threat model"
 description: "What the kernel defends against, what it assumes, and what it does not claim"
 ---
 
-**Status: AVAILABLE (defenses listed as on main) · DESIGN — NOT YET IMPLEMENTED (defenses listed as design).** See [status labels](/architecture#status-labels).
+**Implementation: Mixed, per defense (see the table) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Defenses for every trust boundary in the kernel. |
+| **Implemented today** | Each defense is labeled below as on main or design. |
+| **Active path** | Per defense. |
+| **Public exposure** | — |
 
 Safety is a floor that holds even when a component misbehaves. This page lists the threats and which defense answers each.
 

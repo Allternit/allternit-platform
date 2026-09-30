@@ -3,7 +3,14 @@ title: "Projections and visibility"
 description: "Chunks, visibility decisions, fingerprints and how a projection is compiled"
 ---
 
-**Status: DESIGN — NOT YET IMPLEMENTED (context compiler) · AVAILABLE (contracts).** See [status labels](/architecture#status-labels).
+**Implementation: SHADOW (context compiler) · IMPLEMENTED (contracts) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Each component sees a projection of state, never the raw transcript. |
+| **Implemented today** | Projection contracts are frozen. The compiler that builds them runs only in shadow behind a flag. |
+| **Active path** | No. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 A projection is the exact set of chunks one component sees, with a fingerprint that identifies it. This page covers the records and the reasoning behind hide, short, long and full.
 

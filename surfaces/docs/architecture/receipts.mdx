@@ -3,7 +3,14 @@ title: Receipts
 description: What a receipt proves, the receipt types, the hash chain and signatures, and how to verify a chain
 ---
 
-**Status: AVAILABLE (signed per-run receipt chain and effect receipts, internal) · PREVIEW (keys and chain-check routes on the internal work runtime service; not exposed through `api.allternit.com`).** See [status labels](/architecture#status-labels).
+**Implementation: ENABLED (signed chain for effect receipts) · IMPLEMENTED (keys and chain-check routes) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Every effect, input and verdict is a signed, hash-chained receipt that a client can verify. |
+| **Implemented today** | Ed25519-signed, hash-chained effect receipts. Keys and a chain check served by the internal work runtime service. Policy receipts are not yet on the signed chain. |
+| **Active path** | Partial. Effect receipts on the gate's tool path; not every receipt type. |
+| **Public exposure** | No. Public keys (JWKS) are not served on `api.allternit.com`. |
 
 A **receipt** is the durable evidence that something happened in a run: an effect, an input, a policy decision, a verification result, a control action. Receipts are what completion, resume, audit and replay are built on.
 

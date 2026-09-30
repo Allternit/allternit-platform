@@ -3,7 +3,14 @@ title: "Primitive packs"
 description: "Bundling primitives, tool schemas, validators and policy hooks for a domain"
 ---
 
-**Status: DESIGN — NOT YET IMPLEMENTED (pack schema) · AVAILABLE (registry and descriptors).** See [status labels](/architecture#status-labels).
+**Implementation: IMPLEMENTED (registry, descriptors) · DESIGN (pack schema) · Exposure: PUBLIC (docs).** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Primitive packs extend the registry through a stable plugin ABI. |
+| **Implemented today** | Registry and descriptors in the contract package. No pack schema. |
+| **Active path** | No. |
+| **Public exposure** | Documentation only. No endpoint serves it. |
 
 A pack is how a domain such as code repair ships everything the kernel needs to run it, so the kernel stays generic.
 

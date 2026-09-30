@@ -3,7 +3,14 @@ title: "Trust classes and sensitivity"
 description: "How content is labeled by origin and by how sensitive it is"
 ---
 
-**Status: AVAILABLE (contract; nonce fencing internal).** See [status labels](/architecture#status-labels).
+**Implementation: IMPLEMENTED (contract) · ENABLED (nonce fencing in the work runtime) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Every input carries a trust class; untrusted content is fenced. |
+| **Implemented today** | Trust class contracts; nonce-fenced untrusted content in work-runtime context packs. |
+| **Active path** | Partial. Fencing in the work runtime; trust classes not checked on every path. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 Two labels travel with content. Trust says how far to believe it. Sensitivity says who may see it.
 

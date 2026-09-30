@@ -4,7 +4,7 @@ description: 'How Idempotency-Key works on effectful requests, and why a retried
 ---
 
 <Warning>
-**PREVIEW.** The Agency API is not live yet. This page describes the published v0.3 contract so you can review and build against it; details may change before alpha. Implementation status: DESIGN — NOT YET IMPLEMENTED.
+**Implementation: DESIGN (server) · Exposure: PUBLIC PREVIEW (contract).** The Agency API is not live yet. This page describes the published v0.3 contract so you can review and build against it; details may change before alpha.
 </Warning>
 
 Networks fail. A client that times out does not know whether its request was applied. The `Idempotency-Key` header makes retrying safe: the same request with the same key is applied at most once.

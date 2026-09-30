@@ -3,7 +3,14 @@ title: "Cassettes"
 description: "Recording a run at the decision and tool boundary so it can be replayed"
 ---
 
-**Status: PREVIEW (internal; not exposed through api.allternit.com).** See [status labels](/architecture#status-labels).
+**Implementation: IMPLEMENTED · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | A finished run can be re-run from a cassette of recorded effects. |
+| **Implemented today** | Cassette recording from the receipt chain, served by the internal work runtime service. |
+| **Active path** | Internal. On demand; not part of normal execution. |
+| **Public exposure** | No. Not exposed through `api.allternit.com`. |
 
 A cassette is a content-addressed recording of the results a run received from the outside world, so replay can substitute them for live effects.
 

@@ -3,7 +3,14 @@ title: "State: AgentState and TaskIR"
 description: "The typed records that hold a run's truth, and why a transcript is never the record"
 ---
 
-**Status: AVAILABLE (schemas in Kernel ABI 1.0.0) · DESIGN — NOT YET IMPLEMENTED (runtime state store).** See [status labels](/architecture#status-labels).
+**Implementation: IMPLEMENTED (schemas) · DESIGN (runtime state store) · Exposure: PUBLIC (docs).** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Run state lives in typed, versioned records, not a transcript. |
+| **Implemented today** | AgentState and related schemas in Kernel ABI 1.0.0. No runtime state store. |
+| **Active path** | No. |
+| **Public exposure** | Documentation only. No endpoint serves it. |
 
 Two records hold what an agent knows and what it was asked to do: **TaskIR**, the compiled form of the request, and **AgentState**, the canonical semantic truth of the run.
 

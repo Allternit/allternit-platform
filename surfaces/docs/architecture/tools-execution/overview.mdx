@@ -3,7 +3,14 @@ title: "Tools and execution"
 description: "The agent instruction set, how tools are called, and where every effect is fenced"
 ---
 
-**Status: AVAILABLE (execution environment, egress guard, effect receipts; internal) · PREVIEW (Tool Call Compiler, flag off by default, shadow).** See [status labels](/architecture#status-labels).
+**Implementation: ENABLED (environment recording, effect receipts, egress guard on some paths) · SHADOW (tool call compiler) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Tools run in a compiled environment, behind policy, and every effect is receipted. |
+| **Implemented today** | See each page. Environment stripping is opt-in; the egress guard covers named paths only; the tool call compiler is shadow. |
+| **Active path** | Partial. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 Tools are how a run changes the world. The kernel treats every tool call as a typed, authorized, receipted effect, not as text a model emits.
 

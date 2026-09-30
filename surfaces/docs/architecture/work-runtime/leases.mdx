@@ -3,7 +3,14 @@ title: "Leases and fencing"
 description: "Who may run a node right now, and how a stale holder is kept from writing"
 ---
 
-**Status: AVAILABLE (leases, internal) · DESIGN — NOT YET IMPLEMENTED (fencing tokens on state writes).** See [status labels](/architecture#status-labels).
+**Implementation: ENABLED (leases) · DESIGN (fencing tokens on state writes) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Every node is leased; stale writers are fenced out. |
+| **Implemented today** | Leases in the internal work runtime. No fencing tokens on state writes. |
+| **Active path** | Yes, inside the internal work runtime. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 Before a node runs, exactly one holder takes a **lease** on it. The lease says who holds the node, where and until when.
 

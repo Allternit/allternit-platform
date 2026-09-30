@@ -3,7 +3,14 @@ title: "Heartbeat and reclaim"
 description: "How the work runtime detects a dead executor and takes the work back without repeating effects"
 ---
 
-**Status: AVAILABLE (internal work runtime).** See [status labels](/architecture#status-labels).
+**Implementation: ENABLED · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | A dead executor's work is reclaimed from stale leases. |
+| **Implemented today** | Heartbeat and stale-lease reclaim in the internal work runtime. |
+| **Active path** | Yes, inside the internal work runtime. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 A running node's holder sends **heartbeats**. When they stop, the system **reclaims** the lease and decides what happens to the node.
 

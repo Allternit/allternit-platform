@@ -3,7 +3,14 @@ title: "Trace events"
 description: "The typed event record emitted at every node and primitive"
 ---
 
-**Status: AVAILABLE (contract) · AVAILABLE (internal work-runtime ledger).** See [status labels](/architecture#status-labels).
+**Implementation: IMPLEMENTED (contract) · ENABLED (work-runtime ledger) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Every run emits typed trace events. |
+| **Implemented today** | Trace event contracts are frozen; the internal work-runtime ledger records events. |
+| **Active path** | Yes, inside the internal work runtime. |
+| **Public exposure** | Not yet. Planned through the Agency API (contract published, endpoint not served). |
 
 A trace event is a small typed record of what happened at one step. Together with receipts it is enough to explain a run.
 

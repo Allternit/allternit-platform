@@ -3,7 +3,14 @@ title: Policy and safety
 description: The policy floor, hard policy before probabilistic judgment, authority profiles, the fail-closed judge, and execution environment and network policy
 ---
 
-**Status: AVAILABLE (permission floor) · PREVIEW (fail-closed judge, opt-in).** See [status labels](/architecture#status-labels).
+**Implementation: ENABLED (permission floor) · IMPLEMENTED (fail-closed judge, opt-in) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Every effect passes hard policy, then a fail-closed judge, under an explicit authority profile. |
+| **Implemented today** | Permission floor on by default. The fail-closed judge runs for internal flows when opted in. |
+| **Active path** | Partial. Work-bound executor paths are being converged on the Allternit policy gate; direct interactive runtime behavior may differ from Agency/work-runtime execution. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 Policy in Allternit is owned by the system. A model can propose an action; it cannot grant itself permission to take it. This page describes the **policy floor**: the rules that hold for every run regardless of which executor or model is doing the work.
 

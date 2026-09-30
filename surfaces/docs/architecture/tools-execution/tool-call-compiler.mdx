@@ -3,7 +3,14 @@ title: "Tool Call Compiler"
 description: "Turning intent into a validated, authorized tool invocation without free-form generation where it is not needed"
 ---
 
-**Status: PREVIEW (on main behind an off-by-default flag, shadow).** See [status labels](/architecture#status-labels).
+**Implementation: SHADOW · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Every tool call is compiled into a typed, provenance-checked invocation. |
+| **Implemented today** | On main behind an off-by-default flag; with the flag on it runs alongside the real call and changes nothing. |
+| **Active path** | No. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 The compiler narrows a decision to one concrete, checkable call. Free generation is used only for values that cannot be derived.
 

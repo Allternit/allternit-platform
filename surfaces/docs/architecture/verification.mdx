@@ -3,7 +3,14 @@ title: Verification and completion
 description: Verifier-owned completion, the completion predicate, and the completion criteria registry
 ---
 
-**Status: AVAILABLE (contracts) · PREVIEW (opt-in verifier-owned close; not on by default).** See [status labels](/architecture#status-labels).
+**Implementation: IMPLEMENTED (completion contracts, fail-closed judge, verifier-owned close) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | The verifier and the system, not a model, decide a run is done. |
+| **Implemented today** | Completion contracts and criteria. The judge and verifier-owned close run for internal flows when opted in, and are forced on for agency-origin work. |
+| **Active path** | Partial. Opt-in; not on by default. |
+| **Public exposure** | Not yet. Planned through the Agency API (contract published, endpoint not served). |
 
 A run is done when the system can prove it is done, not when a model says so. This page describes who decides completion and what evidence they need.
 
