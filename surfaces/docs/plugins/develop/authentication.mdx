@@ -53,6 +53,8 @@ When a user connects your server, Allternit runs the authorization-code flow wit
 
 3. **Callback.** Your authorization server redirects back with `code` and `state`. Allternit exchanges the code at the `token_endpoint` from your authorization-server metadata (`grant_type=authorization_code`, `code`, `code_verifier`, `redirect_uri`, `resource`, `state`, and `client_id`), then stores the tokens encrypted. When an access token expires, Allternit uses your refresh token at the same endpoint, again with `resource`. Tokens are used only in an `Authorization: Bearer` header on requests to your server, and are never logged or returned to the browser.
 
+Allternit picks its client in this order: a client ID configured on the connector, then the client ID metadata document (when your metadata sets `client_id_metadata_document_supported`), then [dynamic client registration](#dynamic-client-registration) (when your metadata has a `registration_endpoint`). If none applies, the connect step fails with a message saying so.
+
 Every fetch Allternit makes during discovery refuses private, loopback, and link-local addresses.
 
 <Note>
@@ -87,8 +89,26 @@ To accept it, your authorization server:
 The URLs come from the API's configured public base URL. The values above are the ones the code's tests use; check the document itself for the values your deployment serves.
 
 <Tip>
-If your authorization server does not support CIMD, Allternit needs a client ID registered for it. Registering a client ID and secret on the connector is possible through the connector API (`oauth_client_id`, `oauth_client_secret`). When CIMD is unsupported and no client ID is configured on the connector, the connect step fails with a message saying so.
+If your authorization server supports neither CIMD nor dynamic client registration, Allternit needs a client ID registered for it. Registering a client ID and secret on the connector is possible through the connector API (`oauth_client_id`, `oauth_client_secret`). When none of the three options applies, the connect step fails with a message saying so.
 </Tip>
+
+## Dynamic client registration
+
+If your authorization server advertises a `registration_endpoint`, Allternit registers itself there ([RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591)) the first time a user connects, unless the connector already has a client ID or your server supports CIMD. The request is a JSON `POST` with:
+
+```json
+{
+  "redirect_uris": ["https://api.allternit.com/mcp/oauth/callback"],
+  "client_name": "Allternit",
+  "client_uri": "https://api.allternit.com",
+  "grant_types": ["authorization_code", "refresh_token"],
+  "response_types": ["code"],
+  "token_endpoint_auth_method": "none",
+  "application_type": "web"
+}
+```
+
+Your response must include a `client_id`. If you return a `client_secret` and a `token_endpoint_auth_method` of `client_secret_basic` or `client_secret_post`, Allternit stores the secret encrypted and uses that method. The registration is stored on that user's connector, so every user gets their own client, and it is reused for later connects and token refreshes. If your token endpoint answers `invalid_client`, Allternit discards a client it registered and registers again on the next connect. A client ID configured on the connector is never discarded. The registration endpoint must be an `https` URL on a public host, like the other discovery endpoints, and Allternit does not follow redirects.
 
 ## Redirect URI
 

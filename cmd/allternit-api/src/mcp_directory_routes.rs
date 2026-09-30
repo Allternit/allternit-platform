@@ -35,7 +35,8 @@ use url::Url;
 use crate::auth::AuthUser;
 use crate::db::DbHandle;
 use crate::mcp_directory_guard::{
-    check_domain_challenge, extract_public_host, generate_domain_token, guarded_get, hash_token, parse_guarded_url,
+    check_domain_challenge, extract_public_host, generate_domain_token, guarded_get, guarded_post_json, hash_token,
+    parse_guarded_url,
     ReqwestTransport, Transport, DOMAIN_CHALLENGE_PATH,
 };
 use crate::mcp_directory_held::{
@@ -959,6 +960,8 @@ pub struct Discovery {
     /// callback and later refreshes use it instead of guessing from the
     /// connector URL (the auth server is often on another host).
     pub token_endpoint: Option<String>,
+    /// RFC 7591 Dynamic Client Registration endpoint, when the server has one.
+    pub registration_endpoint: Option<String>,
 }
 
 async fn fetch_json<T: Transport>(t: &T, url: &str) -> Option<Value> {
@@ -996,15 +999,23 @@ pub async fn discover_authorization<T: Transport>(t: &T, connector_url: &str) ->
                     }
                     None => None,
                 };
+                let registration_endpoint = match meta.get("registration_endpoint").and_then(Value::as_str) {
+                    Some(re) => {
+                        parse_guarded_url(re).map_err(|e| format!("Registration endpoint rejected: {e}"))?;
+                        Some(re.to_string())
+                    }
+                    None => None,
+                };
                 return Ok(Discovery {
                     authorization_endpoint: ep.to_string(),
                     cimd_supported: meta.get("client_id_metadata_document_supported").and_then(Value::as_bool).unwrap_or(false),
                     token_endpoint,
+                    registration_endpoint,
                 });
             }
         }
     }
-    Ok(Discovery { authorization_endpoint: format!("{issuer}/authorize"), cimd_supported: false, token_endpoint: None })
+    Ok(Discovery { authorization_endpoint: format!("{issuer}/authorize"), cimd_supported: false, token_endpoint: None, registration_endpoint: None })
 }
 
 struct ConnectorRef {
@@ -1022,10 +1033,129 @@ fn load_connector(conn: &Connection, user_id: &str, id: &str) -> Result<Connecto
     .ok_or(DirError::NotFound("Connector"))
 }
 
+// ─── Dynamic Client Registration (RFC 7591) ─────────────────────────────────
+
+/// A client issued by an authorization server's registration endpoint.
+#[derive(Clone, PartialEq)]
+pub struct DcrClient {
+    pub client_id: String,
+    pub client_secret: Option<String>,
+    /// `none`, `client_secret_basic` or `client_secret_post`.
+    pub auth_method: String,
+}
+
+impl std::fmt::Debug for DcrClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DcrClient")
+            .field("client_id", &self.client_id)
+            .field("client_secret", &self.client_secret.as_ref().map(|_| "<redacted>"))
+            .field("auth_method", &self.auth_method)
+            .finish()
+    }
+}
+
+const DCR_MAX_RESPONSE: usize = 64 * 1024;
+
+pub fn dcr_request_body(base: &str) -> Value {
+    json!({
+        "redirect_uris": [oauth_redirect_uri(base)],
+        "client_name": "Allternit",
+        "client_uri": base.trim_end_matches('/'),
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "none",
+        "application_type": "web",
+    })
+}
+
+/// Register Allternit with the auth server. The endpoint is re-validated and
+/// the POST goes through the same SSRF-guarded, redirect-free transport as discovery.
+pub async fn register_client<T: Transport>(t: &T, registration_endpoint: &str, base: &str) -> Result<DcrClient, String> {
+    let target = parse_guarded_url(registration_endpoint).map_err(|e| format!("Registration endpoint rejected: {e}"))?;
+    let res = guarded_post_json(t, &target, &dcr_request_body(base).to_string(), DCR_MAX_RESPONSE)
+        .await
+        .map_err(|e| format!("Client registration failed: {e}"))?;
+    if !matches!(res.status, 200 | 201) {
+        return Err(format!("Client registration was refused (HTTP {}).", res.status));
+    }
+    let doc: Value = serde_json::from_str(&res.body).map_err(|_| "Client registration returned invalid JSON.".to_string())?;
+    let client_id = doc
+        .get("client_id")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or("Client registration returned no client_id.")?
+        .to_string();
+    let secret = doc.get("client_secret").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_string);
+    let default_method = if secret.is_some() { "client_secret_basic" } else { "none" };
+    let auth_method = match doc.get("token_endpoint_auth_method").and_then(Value::as_str) {
+        None => default_method,
+        Some(m @ ("none" | "client_secret_basic" | "client_secret_post")) => m,
+        Some(_) => return Err("Client registration chose an unsupported token auth method.".into()),
+    };
+    if auth_method != "none" && secret.is_none() {
+        return Err("Client registration chose secret authentication but returned no client_secret.".into());
+    }
+    let client_secret = if auth_method == "none" { None } else { secret };
+    Ok(DcrClient { client_id, client_secret, auth_method: auth_method.to_string() })
+}
+
+/// True when the connector has no usable client, CIMD is unavailable and the
+/// server offers registration — the only case that registers.
+pub fn needs_registration(configured_client_id: Option<&str>, discovery: &Discovery) -> bool {
+    configured_client_id.map_or(true, str::is_empty) && !discovery.cimd_supported && discovery.registration_endpoint.is_some()
+}
+
+/// Was `client_id` issued to this connector by DCR (as opposed to configured by the user or our CIMD)?
+/// The marker lives in `mcp_oauth_sessions.client_info`, so no schema change is needed.
+pub fn is_dcr_client(conn: &Connection, connector_id: &str, client_id: &str) -> bool {
+    conn.query_row(
+        "SELECT 1 FROM mcp_oauth_sessions WHERE mcp_connector_id = ?1
+           AND json_extract(client_info, '$.clientId') = ?2 AND json_extract(client_info, '$.dcr') = 1 LIMIT 1",
+        params![connector_id, client_id],
+        |_| Ok(()),
+    )
+    .optional()
+    .map(|r| r.is_some())
+    .unwrap_or(false)
+}
+
+/// Token-endpoint auth method recorded for a DCR client's session (`None` for any other client).
+pub fn dcr_auth_method(client_info: Option<&str>) -> Option<String> {
+    let v: Value = serde_json::from_str(client_info?).ok()?;
+    if v.get("dcr").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    v.get("authMethod").and_then(Value::as_str).map(str::to_string)
+}
+
+/// The auth server rejected our client (`invalid_client`): drop a DCR-issued
+/// one so the next start re-registers. A user-configured client (or the CIMD
+/// URL) is never touched. Returns whether a client was cleared.
+pub fn clear_dcr_client(conn: &Connection, connector_id: &str, client_id: &str) -> bool {
+    if !is_dcr_client(conn, connector_id, client_id) {
+        return false;
+    }
+    conn.execute(
+        "UPDATE mcp_connectors SET oauth_client_id = NULL, oauth_client_secret = NULL, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?1 AND oauth_client_id = ?2",
+        params![connector_id, client_id],
+    )
+    .map(|n| n > 0)
+    .unwrap_or(false)
+}
+
+/// Does a token-endpoint error body say `invalid_client` (RFC 6749 §5.2)?
+pub fn is_invalid_client(body: &str) -> bool {
+    serde_json::from_str::<Value>(body).ok().and_then(|v| v.get("error").and_then(Value::as_str).map(|e| e == "invalid_client")).unwrap_or(false)
+        || body.contains("\"invalid_client\"")
+}
+
 /// Persist the PKCE session in `mcp_oauth_sessions` (read back by
-/// `/mcp/oauth/callback`) and return the browser URL. When we authenticate with
-/// our CIMD, the connector row's `oauth_client_id` is set so the callback's
-/// token exchange presents the same public client.
+/// `/mcp/oauth/callback`) and return the browser URL. Client choice order:
+/// the connector's configured client → our CIMD (`cimd_supported`) → a
+/// freshly registered DCR client (`registered`, see `register_client`) → a
+/// Conflict. A CIMD or DCR client is saved on the connector row so the
+/// callback's token exchange and later refreshes present the same client.
 pub fn persist_oauth_start(
     conn: &Connection,
     user_id: &str,
@@ -1033,24 +1163,55 @@ pub fn persist_oauth_start(
     connector_url: &str,
     discovery: &Discovery,
     configured_client_id: Option<&str>,
+    registered: Option<&DcrClient>,
     base: &str,
 ) -> Result<String, DirError> {
     let cimd = client_metadata_url(base);
-    let client_id = match configured_client_id.filter(|s| !s.is_empty()) {
+    let configured = configured_client_id.filter(|s| !s.is_empty());
+    let mut dcr: Option<DcrClient> = None;
+    let client_id = match configured {
         Some(id) => id.to_string(),
         None if discovery.cimd_supported => cimd.clone(),
-        None => {
-            return Err(DirError::Conflict(
-                "This server does not support client ID metadata documents and the connector has no OAuth client configured."
-                    .into(),
-            ))
+        None => match (discovery.registration_endpoint.as_ref(), registered) {
+            (Some(_), Some(client)) => {
+                dcr = Some(client.clone());
+                client.client_id.clone()
+            }
+            _ => {
+                return Err(DirError::Conflict(
+                    "This server supports neither client ID metadata documents nor dynamic client registration, and the connector has no OAuth client configured."
+                        .into(),
+                ))
+            }
+        },
+    };
+    // A configured client may itself be a DCR client from an earlier start; carry the marker forward.
+    let (dcr_marked, auth_method) = match (&dcr, configured) {
+        (Some(c), _) => (true, Some(c.auth_method.clone())),
+        (None, Some(id)) if is_dcr_client(conn, connector_id, id) => {
+            let prev: Option<String> = conn
+                .query_row(
+                    "SELECT client_info FROM mcp_oauth_sessions WHERE mcp_connector_id = ?1
+                       AND json_extract(client_info, '$.clientId') = ?2 AND json_extract(client_info, '$.dcr') = 1
+                     ORDER BY created_at DESC LIMIT 1",
+                    params![connector_id, id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            (true, dcr_auth_method(prev.as_deref()))
         }
+        _ => (false, None),
     };
     let verifier = random_b64url(32);
     let state = random_b64url(32);
     let redirect = oauth_redirect_uri(base);
     let url = build_authorize_url(&discovery.authorization_endpoint, &client_id, &redirect, &state, &pkce_challenge(&verifier), connector_url)
         .map_err(DirError::Upstream)?;
+    let mut client_info = json!({"clientId": client_id, "cimd": client_id == cimd});
+    if dcr_marked {
+        client_info["dcr"] = json!(true);
+        client_info["authMethod"] = json!(auth_method.unwrap_or_else(|| "none".into()));
+    }
     let tx = conn.unchecked_transaction()?;
     tx.execute(
         "DELETE FROM mcp_oauth_sessions WHERE mcp_connector_id = ?1 AND is_authenticated = 0
@@ -1065,7 +1226,7 @@ pub fn persist_oauth_start(
             connector_id,
             state,
             verifier,
-            json!({"clientId": client_id, "cimd": client_id == cimd}).to_string(),
+            client_info.to_string(),
             json!({
                 "userId": user_id,
                 "authorizationEndpoint": discovery.authorization_endpoint,
@@ -1077,7 +1238,13 @@ pub fn persist_oauth_start(
             .to_string(),
         ],
     )?;
-    if client_id == cimd {
+    if let Some(c) = &dcr {
+        tx.execute(
+            "UPDATE mcp_connectors SET oauth_client_id = ?1, oauth_client_secret = ?2, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?3 AND user_id = ?4 AND (oauth_client_id IS NULL OR oauth_client_id = '')",
+            params![c.client_id, c.client_secret.as_deref().map(token_crypto::seal), connector_id, user_id],
+        )?;
+    } else if client_id == cimd {
         tx.execute(
             "UPDATE mcp_connectors SET oauth_client_id = ?1, updated_at = CURRENT_TIMESTAMP
              WHERE id = ?2 AND user_id = ?3 AND (oauth_client_id IS NULL OR oauth_client_id = '')",
@@ -1097,8 +1264,24 @@ pub async fn start_connector_oauth(
     let (uid, cid) = (user.user_id.clone(), id.clone());
     let connector = blocking(state.db.clone(), move |c| load_connector(c, &uid, &cid)).await?;
     let discovery = discover_authorization(&ReqwestTransport, &connector.url).await.map_err(DirError::Upstream)?;
+    let base = public_base();
+    let registered = if needs_registration(connector.oauth_client_id.as_deref(), &discovery) {
+        let endpoint = discovery.registration_endpoint.clone().unwrap_or_default();
+        Some(register_client(&ReqwestTransport, &endpoint, &base).await.map_err(DirError::Upstream)?)
+    } else {
+        None
+    };
     let url = blocking(state.db.clone(), move |c| {
-        persist_oauth_start(c, &user.user_id, &id, &connector.url, &discovery, connector.oauth_client_id.as_deref(), &public_base())
+        persist_oauth_start(
+            c,
+            &user.user_id,
+            &id,
+            &connector.url,
+            &discovery,
+            connector.oauth_client_id.as_deref(),
+            registered.as_ref(),
+            &base,
+        )
     })
     .await?;
     Ok(Json(json!({ "authorize_url": url })))
@@ -1539,13 +1722,14 @@ mod tests {
                 authorization_endpoint: "https://auth.example.com/oauth/authorize".into(),
                 cimd_supported: true,
                 token_endpoint: Some("https://auth.example.com/oauth/token".into()),
+                registration_endpoint: None,
             });
     }
 
     #[tokio::test]
     async fn discovery_falls_back_and_refuses_unsafe_urls() {
         let d = discover_authorization(&Meta(HashMap::new()), "https://mcp.example.com/mcp").await.unwrap();
-        assert_eq!(d, Discovery { authorization_endpoint: "https://mcp.example.com/authorize".into(), cimd_supported: false, token_endpoint: None });
+        assert_eq!(d, Discovery { authorization_endpoint: "https://mcp.example.com/authorize".into(), cimd_supported: false, token_endpoint: None, registration_endpoint: None });
         for bad in ["http://mcp.example.com/mcp", "https://127.0.0.1/mcp", "https://localhost/mcp", "https://mcp.example.com:9000/mcp"] {
             assert!(discover_authorization(&Meta(HashMap::new()), bad).await.is_err(), "{bad}");
         }
@@ -1561,9 +1745,9 @@ mod tests {
     fn oauth_start_persists_pkce_session_and_cimd_client() {
         let c = db();
         connector(&c, "conn-a", "alice");
-        let disc = Discovery { authorization_endpoint: "https://auth.example.com/authorize".into(), cimd_supported: true, token_endpoint: Some("https://auth.example.com/token".into()) };
+        let disc = Discovery { authorization_endpoint: "https://auth.example.com/authorize".into(), cimd_supported: true, token_endpoint: Some("https://auth.example.com/token".into()), registration_endpoint: None };
         let base = "https://api.allternit.com";
-        let url = persist_oauth_start(&c, "alice", "conn-a", "https://mcp.example.com/mcp", &disc, None, base).unwrap();
+        let url = persist_oauth_start(&c, "alice", "conn-a", "https://mcp.example.com/mcp", &disc, None, None, base).unwrap();
         let q: HashMap<_, _> = Url::parse(&url).unwrap().query_pairs().into_owned().collect();
         assert_eq!(q["client_id"], "https://api.allternit.com/oauth/client.json");
         assert_eq!(q["redirect_uri"], "https://api.allternit.com/mcp/oauth/callback");
@@ -1590,7 +1774,7 @@ mod tests {
         assert_eq!(cid.as_deref(), Some("https://api.allternit.com/oauth/client.json"));
 
         // Two starts never share state or verifier.
-        let url2 = persist_oauth_start(&c, "alice", "conn-a", "https://mcp.example.com/mcp", &disc, cid.as_deref(), base).unwrap();
+        let url2 = persist_oauth_start(&c, "alice", "conn-a", "https://mcp.example.com/mcp", &disc, cid.as_deref(), None, base).unwrap();
         assert_ne!(url, url2);
     }
 
@@ -1598,15 +1782,15 @@ mod tests {
     fn oauth_start_uses_configured_client_and_refuses_when_no_client_possible() {
         let c = db();
         connector(&c, "conn-a", "alice");
-        let no_cimd = Discovery { authorization_endpoint: "https://auth.example.com/authorize".into(), cimd_supported: false, token_endpoint: None };
+        let no_cimd = Discovery { authorization_endpoint: "https://auth.example.com/authorize".into(), cimd_supported: false, token_endpoint: None, registration_endpoint: None };
         let base = "https://api.allternit.com";
         assert!(matches!(
-            persist_oauth_start(&c, "alice", "conn-a", "https://mcp.example.com/mcp", &no_cimd, None, base),
+            persist_oauth_start(&c, "alice", "conn-a", "https://mcp.example.com/mcp", &no_cimd, None, None, base),
             Err(DirError::Conflict(_))
         ));
         let n: i64 = c.query_row("SELECT COUNT(*) FROM mcp_oauth_sessions", [], |r| r.get(0)).unwrap();
         assert_eq!(n, 0);
-        let url = persist_oauth_start(&c, "alice", "conn-a", "https://mcp.example.com/mcp", &no_cimd, Some("preregistered"), base).unwrap();
+        let url = persist_oauth_start(&c, "alice", "conn-a", "https://mcp.example.com/mcp", &no_cimd, Some("preregistered"), None, base).unwrap();
         assert!(url.contains("client_id=preregistered"));
         let cid: Option<String> = c.query_row("SELECT oauth_client_id FROM mcp_connectors WHERE id='conn-a'", [], |r| r.get(0)).unwrap();
         assert_eq!(cid, None, "a configured client is never overwritten or invented");
@@ -1618,5 +1802,233 @@ mod tests {
         connector(&c, "conn-a", "alice");
         assert!(load_connector(&c, "alice", "conn-a").is_ok());
         assert!(matches!(load_connector(&c, "bob", "conn-a"), Err(DirError::NotFound(_))));
+    }
+
+    // ── Dynamic Client Registration ─────────────────────────────────────────
+
+    /// Serves auth-server metadata on GET and records / answers registration POSTs.
+    struct DcrServer {
+        meta: Meta,
+        reply: Fetched,
+        posts: std::sync::Mutex<Vec<(String, String)>>,
+    }
+    impl DcrServer {
+        fn new(reply: Value) -> Self {
+            Self {
+                meta: Meta(HashMap::new()),
+                reply: Fetched { status: 201, content_type: Some("application/json".into()), body: reply.to_string() },
+                posts: Default::default(),
+            }
+        }
+        fn count(&self) -> usize {
+            self.posts.lock().unwrap().len()
+        }
+    }
+    impl Transport for DcrServer {
+        async fn resolve(&self, h: &str) -> Result<Vec<IpAddr>, String> {
+            self.meta.resolve(h).await
+        }
+        async fn get(&self, u: &Url, a: IpAddr, c: &str, m: usize) -> Result<Fetched, String> {
+            self.meta.get(u, a, c, m).await
+        }
+        async fn post_json(&self, u: &Url, _a: IpAddr, body: &str, _m: usize) -> Result<Fetched, String> {
+            self.posts.lock().unwrap().push((u.to_string(), body.to_string()));
+            Ok(self.reply.clone())
+        }
+    }
+
+    const BASE: &str = "https://api.allternit.com";
+    const MCP: &str = "https://mcp.example.com/mcp";
+
+    fn dcr_discovery() -> Discovery {
+        Discovery {
+            authorization_endpoint: "https://auth.example.com/authorize".into(),
+            cimd_supported: false,
+            token_endpoint: Some("https://auth.example.com/token".into()),
+            registration_endpoint: Some("https://auth.example.com/register".into()),
+        }
+    }
+
+    #[tokio::test]
+    async fn discovery_parses_and_guards_the_registration_endpoint() {
+        let meta = |reg: &str| {
+            Meta(HashMap::from([(
+                "mcp.example.com/.well-known/oauth-authorization-server",
+                json!({"authorization_endpoint": "https://auth.example.com/authorize", "registration_endpoint": reg}),
+            )]))
+        };
+        let d = discover_authorization(&meta("https://auth.example.com/register"), MCP).await.unwrap();
+        assert_eq!(d.registration_endpoint.as_deref(), Some("https://auth.example.com/register"));
+        for bad in ["http://auth.example.com/register", "https://169.254.169.254/register", "https://localhost/register"] {
+            assert!(discover_authorization(&meta(bad), MCP).await.is_err(), "{bad}");
+        }
+    }
+
+    #[tokio::test]
+    async fn registration_posts_the_spec_body_and_requires_a_client_id() {
+        let t = DcrServer::new(json!({"client_id": "abc123"}));
+        let c = register_client(&t, "https://auth.example.com/register", BASE).await.unwrap();
+        assert_eq!(c, DcrClient { client_id: "abc123".into(), client_secret: None, auth_method: "none".into() });
+        let (url, body) = t.posts.lock().unwrap()[0].clone();
+        assert_eq!(url, "https://auth.example.com/register");
+        let body: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(body["redirect_uris"], json!(["https://api.allternit.com/mcp/oauth/callback"]));
+        assert_eq!(body["client_name"], "Allternit");
+        assert_eq!(body["client_uri"], BASE);
+        assert_eq!(body["grant_types"], json!(["authorization_code", "refresh_token"]));
+        assert_eq!(body["response_types"], json!(["code"]));
+        assert_eq!(body["token_endpoint_auth_method"], "none");
+        assert_eq!(body["application_type"], "web");
+
+        for reply in [json!({}), json!({"client_id": ""}), json!({"client_id": 7})] {
+            assert!(register_client(&DcrServer::new(reply), "https://auth.example.com/register", BASE).await.is_err());
+        }
+        let mut refused = DcrServer::new(json!({"error": "invalid_redirect_uri"}));
+        refused.reply.status = 400;
+        assert!(register_client(&refused, "https://auth.example.com/register", BASE).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn registration_refuses_unsafe_endpoints_and_never_posts() {
+        let t = DcrServer::new(json!({"client_id": "x"}));
+        for bad in ["http://auth.example.com/register", "https://127.0.0.1/register", "https://auth.example.com:8443/register"] {
+            assert!(register_client(&t, bad, BASE).await.is_err(), "{bad}");
+        }
+        assert_eq!(t.count(), 0);
+        // A private resolution is refused by the guard before any POST.
+        struct Private;
+        impl Transport for Private {
+            async fn resolve(&self, _h: &str) -> Result<Vec<IpAddr>, String> {
+                Ok(vec!["10.0.0.5".parse().unwrap()])
+            }
+            async fn get(&self, _u: &Url, _a: IpAddr, _c: &str, _m: usize) -> Result<Fetched, String> {
+                unreachable!()
+            }
+            async fn post_json(&self, _u: &Url, _a: IpAddr, _b: &str, _m: usize) -> Result<Fetched, String> {
+                panic!("must not connect")
+            }
+        }
+        assert!(register_client(&Private, "https://auth.example.com/register", BASE).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn registration_accepts_a_server_issued_secret_and_method() {
+        let t = DcrServer::new(json!({"client_id": "c", "client_secret": "s3", "token_endpoint_auth_method": "client_secret_post"}));
+        let c = register_client(&t, "https://auth.example.com/register", BASE).await.unwrap();
+        assert_eq!((c.client_secret.as_deref(), c.auth_method.as_str()), (Some("s3"), "client_secret_post"));
+        let t = DcrServer::new(json!({"client_id": "c", "client_secret": "s3"}));
+        assert_eq!(register_client(&t, "https://auth.example.com/register", BASE).await.unwrap().auth_method, "client_secret_basic");
+        for bad in [
+            json!({"client_id": "c", "token_endpoint_auth_method": "private_key_jwt"}),
+            json!({"client_id": "c", "token_endpoint_auth_method": "client_secret_basic"}),
+        ] {
+            assert!(register_client(&DcrServer::new(bad), "https://auth.example.com/register", BASE).await.is_err());
+        }
+        assert!(!format!("{c:?}").contains("s3"));
+    }
+
+    fn stored(c: &Connection, id: &str) -> (Option<String>, Option<String>) {
+        c.query_row("SELECT oauth_client_id, oauth_client_secret FROM mcp_connectors WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
+    }
+
+    #[test]
+    fn dcr_start_persists_the_client_sealed_and_reuses_it() {
+        let c = db();
+        connector(&c, "conn-a", "alice");
+        let disc = dcr_discovery();
+        assert!(needs_registration(None, &disc));
+        let issued = DcrClient { client_id: "dcr-1".into(), client_secret: Some("hush".into()), auth_method: "client_secret_basic".into() };
+        let url = persist_oauth_start(&c, "alice", "conn-a", MCP, &disc, None, Some(&issued), BASE).unwrap();
+        assert!(url.contains("client_id=dcr-1"));
+
+        let (id, secret) = stored(&c, "conn-a");
+        assert_eq!(id.as_deref(), Some("dcr-1"));
+        let secret = secret.unwrap();
+        assert!(!secret.contains("hush") || !token_crypto::encryption_enabled());
+        assert_eq!(token_crypto::open(&secret), "hush");
+
+        // Session carries the DCR marker and the auth method for the callback.
+        let info: String = c.query_row("SELECT client_info FROM mcp_oauth_sessions", [], |r| r.get(0)).unwrap();
+        assert_eq!(dcr_auth_method(Some(&info)).as_deref(), Some("client_secret_basic"));
+
+        // Second start: the stored client is used, nothing is registered again, the marker carries over.
+        assert!(!needs_registration(id.as_deref(), &disc));
+        let url2 = persist_oauth_start(&c, "alice", "conn-a", MCP, &disc, id.as_deref(), None, BASE).unwrap();
+        assert!(url2.contains("client_id=dcr-1"));
+        assert!(is_dcr_client(&c, "conn-a", "dcr-1"));
+        assert_eq!(stored(&c, "conn-a").0.as_deref(), Some("dcr-1"));
+        let infos: i64 = c
+            .query_row("SELECT COUNT(*) FROM mcp_oauth_sessions WHERE json_extract(client_info,'$.dcr') = 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(infos, 2);
+    }
+
+    #[test]
+    fn dcr_clients_are_per_connector_row_never_shared_across_users() {
+        let c = db();
+        connector(&c, "conn-a", "alice");
+        connector(&c, "conn-b", "bob");
+        let disc = dcr_discovery();
+        let alice = DcrClient { client_id: "alice-client".into(), client_secret: None, auth_method: "none".into() };
+        persist_oauth_start(&c, "alice", "conn-a", MCP, &disc, None, Some(&alice), BASE).unwrap();
+        // Bob's connector has no client of its own, so it needs its own registration.
+        let (bob_id, _) = stored(&c, "conn-b");
+        assert_eq!(bob_id, None);
+        assert!(needs_registration(bob_id.as_deref(), &disc));
+        assert!(matches!(persist_oauth_start(&c, "bob", "conn-b", MCP, &disc, None, None, BASE), Err(DirError::Conflict(_))));
+        assert!(!is_dcr_client(&c, "conn-b", "alice-client"));
+        // A client registered for alice's row cannot be written onto bob's.
+        persist_oauth_start(&c, "alice", "conn-b", MCP, &disc, None, Some(&alice), BASE).unwrap();
+        assert_eq!(stored(&c, "conn-b").0, None);
+    }
+
+    #[test]
+    fn client_choice_order_is_configured_then_cimd_then_dcr_then_conflict() {
+        let c = db();
+        let issued = DcrClient { client_id: "dcr".into(), client_secret: None, auth_method: "none".into() };
+        let mut both = dcr_discovery();
+        both.cimd_supported = true;
+        let cid = |url: &str| Url::parse(url).unwrap().query_pairs().find(|(k, _)| k == "client_id").unwrap().1.into_owned();
+
+        connector(&c, "c1", "alice");
+        let u = persist_oauth_start(&c, "alice", "c1", MCP, &both, Some("mine"), Some(&issued), BASE).unwrap();
+        assert_eq!(cid(&u), "mine");
+        assert!(!needs_registration(Some("mine"), &both));
+
+        connector(&c, "c2", "alice");
+        assert!(!needs_registration(None, &both), "CIMD wins over DCR");
+        let u = persist_oauth_start(&c, "alice", "c2", MCP, &both, None, Some(&issued), BASE).unwrap();
+        assert_eq!(cid(&u), client_metadata_url(BASE));
+
+        connector(&c, "c3", "alice");
+        let u = persist_oauth_start(&c, "alice", "c3", MCP, &dcr_discovery(), None, Some(&issued), BASE).unwrap();
+        assert_eq!(cid(&u), "dcr");
+
+        connector(&c, "c4", "alice");
+        let mut none = dcr_discovery();
+        none.registration_endpoint = None;
+        assert!(!needs_registration(None, &none));
+        assert!(matches!(persist_oauth_start(&c, "alice", "c4", MCP, &none, None, Some(&issued), BASE), Err(DirError::Conflict(_))));
+    }
+
+    #[test]
+    fn invalid_client_clears_only_a_dcr_issued_client() {
+        let c = db();
+        connector(&c, "conn-a", "alice");
+        let disc = dcr_discovery();
+        let issued = DcrClient { client_id: "dcr-1".into(), client_secret: Some("hush".into()), auth_method: "client_secret_basic".into() };
+        persist_oauth_start(&c, "alice", "conn-a", MCP, &disc, None, Some(&issued), BASE).unwrap();
+        assert!(clear_dcr_client(&c, "conn-a", "dcr-1"));
+        assert_eq!(stored(&c, "conn-a"), (None, None));
+        assert!(needs_registration(None, &disc), "next start re-registers");
+
+        // A user-configured client is never cleared, even on invalid_client.
+        c.execute("UPDATE mcp_connectors SET oauth_client_id = 'mine', oauth_client_secret = 'x' WHERE id = 'conn-a'", []).unwrap();
+        persist_oauth_start(&c, "alice", "conn-a", MCP, &disc, Some("mine"), None, BASE).unwrap();
+        assert!(!clear_dcr_client(&c, "conn-a", "mine"));
+        assert_eq!(stored(&c, "conn-a").0.as_deref(), Some("mine"));
+
+        assert!(is_invalid_client(r#"{"error":"invalid_client"}"#));
+        assert!(!is_invalid_client(r#"{"error":"invalid_grant"}"#));
     }
 }

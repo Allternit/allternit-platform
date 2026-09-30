@@ -115,8 +115,17 @@ opens sealed values and passes legacy unprefixed plaintext through. Expired acce
   issues JWTs; `mcp_agents.rs` accepts an OAuth access token only with a matching `aud` (`MCP_PUBLIC_URL`) and scope
   `agents:read`, and then exposes six read-only agent tools (`list_agents`, `get_agent`, `list_runs`, `get_run`,
   `get_run_result`, `render_run_status`). Session tokens keep their existing access.
-- **Connector OAuth** uses PKCE S256 and the `resource` parameter. When the connector's auth server supports client ID
-  metadata documents, our client is `<ALLTERNIT_PUBLIC_BASE_URL>/oauth/client.json`.
+- **Connector OAuth** uses PKCE S256 and the `resource` parameter. The client is chosen in this order: the connector's
+  own `oauth_client_id`; else, when the auth server supports client ID metadata documents, our client
+  `<ALLTERNIT_PUBLIC_BASE_URL>/oauth/client.json`; else, when its metadata has a `registration_endpoint`, a client
+  registered there by RFC 7591 Dynamic Client Registration (public client, `token_endpoint_auth_method: none`; a
+  server-issued secret and other method are accepted); else the start fails with a conflict. The registration POST uses
+  the same SSRF-guarded, redirect-free transport as discovery and its response is size-bounded. The issued client is
+  saved on that connector row (`oauth_client_id`, `oauth_client_secret` sealed), so registration is per connector and
+  therefore per user, and later starts and refreshes reuse it. DCR-issued clients are marked in
+  `mcp_oauth_sessions.client_info` (`dcr`, `authMethod`; no migration). An `invalid_client` answer from the token
+  endpoint (code exchange or refresh) clears a DCR-issued client so the next start registers again; a user-configured
+  client is never cleared.
 - **Directory reviewers** are admins of the Clerk org in `ALLTERNIT_DIRECTORY_REVIEW_ORG_ID`. Unset means nobody can review.
 - **Commerce operators** are user ids in `ALLTERNIT_COMMERCE_OPERATOR_USER_IDS`.
 
