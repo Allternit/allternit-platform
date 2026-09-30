@@ -20,6 +20,8 @@ send_button:
     - { role: button, name: /^send$|send message/i }
     - { css: ".send-button-container:not(.stop) .send-button" }
     - { css: ".send-button" }
+    # Live (2026-09-30): the control is the container itself (a div, .disabled while empty).
+    - { css: ".send-button-container:not(.stop)" }
 stop_button:
   critical: false
   strategies:
@@ -44,14 +46,17 @@ streaming:
     - { css: ".segment-assistant[data-streaming='true']" }
 logged_in_probe:
   critical: true
+  # Verified 2026-09-30 on www.kimi.ai. Logged out still renders div.user-info
+  # (with .not-login-icon), so match only what a signed-in sidebar has.
   strategies:
-    - { role: button, name: /account|profile|user center/i }
-    - { css: ".user-info .avatar" }
-    - { css: ".sidebar-footer .user-info" }
+    - { testid: sidebar-user-menu-trigger }
+    - { css: ".user-info img.user-avatar" }
+    - { css: ".user-info a.membership-plan" }
 model_picker:
   critical: false
   strategies:
     - { role: button, name: /model|^k\d/i }
+    - { testid: model-select-trigger }
     - { css: ".current-model" }
 banner:
   critical: false
