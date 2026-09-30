@@ -230,3 +230,17 @@ describe("remaining operations via the local logit provider", () => {
     expect(c[0] + c[1]).toBeCloseTo(1, 5); // symmetric here, but not forced to sum by softmax
   });
 });
+
+describe("manifest source shared with the ModelPool", () => {
+  test("ALLTERNIT_S1_MANIFESTS unset or unreadable -> no manifests (fail closed)", async () => {
+    const { loadManifests } = await import("../src/server");
+    expect(loadManifests(undefined)).toEqual([]);
+    expect(loadManifests("/nonexistent/manifests.json")).toEqual([]);
+  });
+  test("reads a JSON array of manifests", async () => {
+    const { loadManifests } = await import("../src/server");
+    const f = `${require("node:os").tmpdir()}/s1-manifests-${Date.now()}.json`;
+    require("node:fs").writeFileSync(f, JSON.stringify([{ manifest_id: "m1" }]));
+    expect(loadManifests(f)).toEqual([{ manifest_id: "m1" }]);
+  });
+});

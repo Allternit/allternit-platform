@@ -37,6 +37,12 @@ pub struct GraphNode {
     pub cognitive_role: Option<String>,
     #[serde(default)]
     pub capability_request: Option<Value>,
+    /// ABI `allowed_modes` (M0–M6 strings); empty = every legal mode for the role.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_modes: Vec<String>,
+    /// ABI `budget` (ResourceBudget); read by the router (WP7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<Value>,
     #[serde(default)]
     pub inputs: Vec<String>,
     #[serde(default)]
