@@ -225,6 +225,13 @@ impl Orchestrator {
         } else {
             String::new()
         };
+        // Claude refuses bypassPermissions as root unless told it is in a
+        // sandbox; Allternit's execution environment is that sandbox.
+        let env_prefix = if gate == HarnessGate::Hook {
+            if env_prefix.is_empty() { "env IS_SANDBOX=1 ".to_string() } else { format!("{env_prefix}IS_SANDBOX=1 ") }
+        } else {
+            env_prefix
+        };
 
         // Write the runner file to sidestep shell quoting issues.
         let mut runner_text = cmd
