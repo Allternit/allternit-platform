@@ -27,6 +27,7 @@ import * as os from 'node:os';
 import log from 'electron-log';
 import WebSocket from 'ws';
 import { URLS } from './config.js';
+import { dropRuntimeCredentialForGizzi } from './relay-gizzi-credential.js';
 import { isDesktopAuthNavigation } from './desktop-auth-url.js';
 import { ClerkTokenBroker } from './clerk-token-broker.js';
 
@@ -1369,6 +1370,7 @@ export class DesktopAuthManager {
       }
 
       const localUrl = this.relayLocalUrl(stripDesktopProofParam(requestPath));
+      dropRuntimeCredentialForGizzi(localUrl, headers);
       const response = await fetch(localUrl, { method, headers, body });
       const responseHeaders: Record<string, string> = {};
       for (const name of ['content-type', 'cache-control', 'content-disposition', 'etag', 'last-modified', 'x-request-id']) {
