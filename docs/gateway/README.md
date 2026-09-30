@@ -19,7 +19,7 @@ Channels (Slack, Teams, Discord, WhatsApp) use the same tables and event ledger.
 
 ## Locked architecture statement
 
-These are decisions from the spec, locked 2026-09-29. The full log is in [ARCHITECTURE.md](ARCHITECTURE.md#decisions-log).
+These are decisions from the spec, locked 2026-09-29. The full log is in [ARCHITECTURE.md](ARCHITECTURE.md#12-decisions-log).
 
 - The Agent Gateway and AAI are the long-term product, separate from subsfab. Today they use subsfab's lanes underneath. If vendors open official APIs, lanes change and AAI does not.
 - Bots stay the one worker model. There is no VendorAgent, VendorTask or VendorSession object and no second thread hierarchy.

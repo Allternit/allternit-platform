@@ -211,4 +211,4 @@ for ev in aai.stream_events(thread_id, after=0):
 aai.respond_approval(approval_id, "approve", human_intent=True)
 ```
 
-More in [FACADES.md](FACADES.md). If a step fails, [ARCHITECTURE.md](ARCHITECTURE.md#how-to-debug-a-vendor-turn) lists what to check at each hop.
+More in [FACADES.md](FACADES.md). If a step fails, [ARCHITECTURE.md](ARCHITECTURE.md#14-how-to-debug-a-vendor-turn) lists what to check at each hop.
