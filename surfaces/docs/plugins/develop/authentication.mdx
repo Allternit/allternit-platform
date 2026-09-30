@@ -38,7 +38,7 @@ Do not accept a token just because it is well-formed. A token issued for another
 
 When a user connects your server, Allternit runs the authorization-code flow with PKCE:
 
-1. **Discovery.** It fetches `/.well-known/oauth-protected-resource` on your server's origin and takes the first entry of `authorization_servers`. If that document is missing, it uses your server's origin as the authorization server. It then reads `/.well-known/oauth-authorization-server` (then `/.well-known/openid-configuration`) on that issuer for `authorization_endpoint`. If neither is found, it falls back to `<issuer>/authorize`.
+1. **Discovery.** It fetches `/.well-known/oauth-protected-resource` on your server's origin and takes the first entry of `authorization_servers`. If that document is missing, it uses your server's origin as the authorization server. It then reads `/.well-known/oauth-authorization-server` (then `/.well-known/openid-configuration`) on that issuer for `authorization_endpoint` and `token_endpoint`. If neither is found, it falls back to `<issuer>/authorize`, and to token-endpoint discovery under your MCP server URL (`/.well-known/oauth-authorization-server`, then `/oauth/token`, `/token`, `/v1/token`).
 2. **Authorization request.** It redirects the user's browser to your `authorization_endpoint` with these query parameters:
 
    | Parameter | Value |
@@ -51,16 +51,12 @@ When a user connects your server, Allternit runs the authorization-code flow wit
    | `code_challenge_method` | `S256` |
    | `resource` | Your MCP server URL, as registered in the connector |
 
-3. **Callback.** Your authorization server redirects back with `code` and `state`. Allternit exchanges the code at your token endpoint (`grant_type=authorization_code`, `code`, `code_verifier`, and `client_id`), then stores the tokens. Tokens are used only in an `Authorization: Bearer` header on requests to your server, and are never logged or returned to the browser.
+3. **Callback.** Your authorization server redirects back with `code` and `state`. Allternit exchanges the code at the `token_endpoint` from your authorization-server metadata (`grant_type=authorization_code`, `code`, `code_verifier`, `redirect_uri`, `resource`, `state`, and `client_id`), then stores the tokens encrypted. When an access token expires, Allternit uses your refresh token at the same endpoint, again with `resource`. Tokens are used only in an `Authorization: Bearer` header on requests to your server, and are never logged or returned to the browser.
 
 Every fetch Allternit makes during discovery refuses private, loopback, and link-local addresses.
 
 <Note>
 Allternit does not send a `scope` parameter in the authorization request. Configure your authorization server to grant your default scopes when none are requested, and advertise them in `scopes_supported`.
-</Note>
-
-<Note>
-Token-endpoint discovery in Allternit's callback currently looks for `/.well-known/oauth-authorization-server` under your MCP server URL, then tries `/oauth/token`, `/token`, and `/v1/token` under that URL. If your authorization server is on a different host, expose the same metadata document, or a token endpoint at one of those paths, on your MCP server's host. This behavior may change.
 </Note>
 
 ## Client ID metadata documents
@@ -120,7 +116,7 @@ Every installed app has a permission mode. It decides when Allternit asks the us
 The decision comes from your tool annotations, so accurate annotations matter. See [annotations](/plugins/develop/mcp-server#annotations). A tool with no `readOnlyHint` is treated as a change.
 
 <Note>
-Allternit stores each install's permission mode and has the decision logic, but the tool-call path in the chat client does not enforce it yet. **Planned.** Design your tools as though it will, and expect users to change the mode.
+The host enforces the install's permission mode on tool calls your View makes, using the annotations from your server's own `tools/list`. A tool it cannot find is treated as destructive. Tool calls the model makes during a chat turn do not go through this check yet (**Planned**). Expect users to change the mode.
 </Note>
 
 Separately, the [`x-allternit/*` extensions](/plugins/reference/window-allternit) that write data or start work show a confirmation prompt drawn by the host over the View. The View cannot skip or answer it.

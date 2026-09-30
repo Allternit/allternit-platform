@@ -4,7 +4,7 @@ description: 'Preview: checkout sessions, requestCheckout, complete_checkout, se
 ---
 
 <Warning>
-**Preview. Not yet available for live payments.** Commerce for MCP Apps runs against Stripe test mode only. The API refuses to start commerce with a live Stripe key. You can build and test the flow with test cards; you cannot take real payments. Behavior, fields, and fees may change before general availability, and nothing on this page is a commitment to a launch date or to any pricing.
+**Preview. Not yet available for live payments.** Commerce for MCP Apps runs against Stripe test mode only. With a live Stripe key configured, commerce stays off and its endpoints answer 503. You can build and test the flow with test cards; you cannot take real payments. Behavior, fields, and fees may change before general availability, and nothing on this page is a commitment to a launch date or to any pricing.
 </Warning>
 
 ## How it works
@@ -72,13 +72,13 @@ const result = await window.allternit.requestCheckout({ session });
 The host handler for this request returns one of:
 
 ```json
-{ "status": "completed", "order": { "id": "ord_…", "status": "fulfilled" } }
+{ "status": "completed", "order": { "id": "ord_…", "status": "fulfilled", "currency": "usd", "total_minor": 1200, "app_result": { } } }
 { "status": "cancelled" }
 { "status": "failed", "message": "…" }
 ```
 
 <Note>
-The `x-allternit/requestCheckout` method currently returns `{ "error": "unavailable" }` in the extension bridge that ships with the host. The payment sheet and the handler that produces the results above are built but not yet connected to that method. Feature-detect and handle `unavailable`. **Planned.**
+The host shows the payment sheet itself, outside your View, using the server's validated copy of your session. You get `{ "error": "unavailable" }` instead when commerce is not enabled for that Allternit deployment or the host has no payment sheet. Feature-detect and handle it.
 </Note>
 
 ## `complete_checkout`

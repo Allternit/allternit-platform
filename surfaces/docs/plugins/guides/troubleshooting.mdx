@@ -74,7 +74,7 @@ The inline frame is sized from the height you report. Send `ui/notifications/siz
 | "does not support client ID metadata documents" | Your authorization server does not advertise `client_id_metadata_document_supported: true`, and no client ID is configured on the connector. Enable CIMD, or register a client for Allternit. |
 | Redirect mismatch | The `redirect_uri` is not in the `redirect_uris` of Allternit's client ID document. Allow it. |
 | No scopes granted | Allternit sends no `scope`. Grant your default scopes when none is requested. |
-| Token endpoint not found | Allternit's callback looks for `/.well-known/oauth-authorization-server`, `/oauth/token`, `/token`, and `/v1/token` under your MCP server URL. See [Authentication](/plugins/develop/authentication#what-allternit-does). |
+| Token endpoint not found | Publish `token_endpoint` in your authorization-server metadata. Without it, Allternit looks for `/.well-known/oauth-authorization-server`, `/oauth/token`, `/token`, and `/v1/token` under your MCP server URL. See [Authentication](/plugins/develop/authentication#what-allternit-does). |
 | Tools return `401` after connecting | The token's `aud` does not equal your MCP resource URL, or your server validates a different issuer. |
 
 ## Domain verification fails

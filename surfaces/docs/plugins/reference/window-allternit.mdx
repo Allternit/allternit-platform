@@ -75,7 +75,7 @@ const result = await request("x-allternit/saveArtifact", { title, mimeType, cont
 | `x-allternit/openInAci` | `{ url }` or `{ resourceUri }` | `{ opened: true }` | No |
 | `x-allternit/dispatchAgent` | `{ agentId?, prompt }` | `{ taskId }` | Always |
 | `x-allternit/handoffToComputer` | `{ url?, instructions }` | `{ accepted: true }` | Yes |
-| `x-allternit/requestCheckout` | see [Selling](/plugins/guides/selling) | `{ error: "unavailable" }` in the extension bridge today | n/a |
+| `x-allternit/requestCheckout` | see [Selling](/plugins/guides/selling) | `{ status, order? }`, or `{ error: "unavailable" }` when commerce is off | The payment sheet is the consent |
 | `x-allternit/capabilities` | none | the advertisement above | No |
 
 ### `x-allternit/saveArtifact`
@@ -125,7 +125,7 @@ Returns `{ accepted: true }` after the user confirms. It opens Allternit's brows
 
 ### `x-allternit/requestCheckout`
 
-Reserved for [selling in your MCP App](/plugins/guides/selling), which is a preview. In the extension bridge this method returns `{ "error": "unavailable" }` and never draws payment UI in your View. Treat that as "not supported here."
+Reserved for [selling in your MCP App](/plugins/guides/selling), which is a preview. The host draws the payment sheet outside your View; your View never renders payment UI. When commerce is off the method returns `{ "error": "unavailable" }`. Treat that as "not supported here."
 
 ## Confirmation behavior
 
