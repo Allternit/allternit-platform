@@ -205,8 +205,10 @@ if [ "$SKIP_ELECTRON" = false ]; then
   step "Building Electron app bundle…"
   cd "$DESKTOP_DIR"
   
-  # Ensure dependencies are current
-  pnpm install
+  # Ensure dependencies are current. Frozen: a plain `pnpm install` re-resolves
+  # and rewrote the shared pnpm-lock.yaml on every Desktop build (bumping jest's
+  # @babel/core 7 -> 8); a lockfile that is really out of date should fail here.
+  pnpm install --frozen-lockfile
 
   # Build the renderer and main process
   pnpm run build
