@@ -1598,8 +1598,10 @@ mod tests {
         let v = read_vendor_memory(&st.db, &Mem(Ok(json!({ "opaque": true }))), "user-a", "bot-1").await.unwrap();
         assert_eq!((v["observability"].as_str(), v["promotable"].as_bool()), (Some("opaque"), Some(false)));
         assert!(v.get("records").is_none());
-        let (s, _) = call(&st, "PATCH", "/bots/bot-1/execution-binding", "user-a", Some(json!({"capabilities": {"memory": {"opaque": true}}}))).await;
-        assert_eq!(s, StatusCode::OK);
+        // The capability snapshot is set when binding (PUT); PATCH only moves state/health.
+        let aid: String = st.db.connect().unwrap().query_row("SELECT account_binding_id FROM bot_execution_bindings WHERE bot_id='bot-1'", [], |r| r.get(0)).unwrap();
+        let (s, v) = call(&st, "PUT", "/bots/bot-1/execution-binding", "user-a", Some(json!({"vendor": "openai", "accountBindingId": aid, "capabilities": {"memory": {"opaque": true}}}))).await;
+        assert!(s == StatusCode::OK || s == StatusCode::CREATED, "{v}");
         let v = read_vendor_memory(&st.db, &Mem(Err(("INTERNAL", "must not be called"))), "user-a", "bot-1").await.unwrap();
         assert_eq!(v["observability"], "opaque");
         // Unsupported -> unavailable with a reason.

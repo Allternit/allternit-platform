@@ -16,9 +16,9 @@ Status: FIXED (TS/web/SDK, with a regression test), RUST (Rust change required, 
 | A7 | `channel.message.pending` | ignored | emitted for unconfirmed posts (`channel_gateway.rs:523`) | FIXED (delivery=unconfirmed) |
 | A8 | Channel author/time | `author{name}`, `ts` | `actor{type,id}`, `occurredAt` on the row | FIXED |
 | A9 | Approval `detail` | typed `string` | `detail_json` surfaced as object `detail` (`gateway_runner.rs:827`, `agent_gateway_routes.rs camel()`) | FIXED (type `unknown`) |
-| A10 | Vendor memory | `GET/POST /gateway/bots/:id/vendor-memory[...]` (`api.ts`) | no route exists | FIXED web (404 -> unavailable); RUST R6 |
-| A11 | Approval id on vendor cards | card `id` = vendor `approvalId` (event payload) | `POST /gateway/approvals/:id/respond` takes the gateway row id (`gap_...`, `gateway_runner.rs:791`), vendor id is `remoteRef` | RUST R5 |
-| A12 | Channel display names | `channelName`, `workspaceName` | not in `CHAN_COLS` (`agent_gateway_routes.rs:~262`) | web falls back to ids; RUST R7 |
+| A10 | Vendor memory | `GET/POST /gateway/bots/:id/vendor-memory[...]` (`api.ts`) | no route exists | FIXED web (404 -> unavailable); FIXED Rust R6 (routes + `memoryRecordSchema` gains optional `id`,`text`) |
+| A11 | Approval id on vendor cards | card `id` = vendor `approvalId` (event payload) | `POST /gateway/approvals/:id/respond` takes the gateway row id (`gap_...`, `gateway_runner.rs:791`), vendor id is `remoteRef` | FIXED R5 (raw `agent.approval.requested` event carries `data.gatewayApprovalId`; web already dedupes by `remoteRef`) |
+| A12 | Channel display names | `channelName`, `workspaceName` | not in `CHAN_COLS` (`agent_gateway_routes.rs:~262`) | FIXED R7 (V201 `channel_name`,`workspace_name`; set on create/PATCH) |
 | A13 | Sync/connection/exec/remote states, parity, severity, gap status | upper-case sets, `full/partial/blocked` | `agent_gateway_routes.rs:43-50,110-117` | OK |
 | A14 | Envelopes `{account}`,`{accounts}`,`{binding}`,`{bindings}`,`{gap}`,`{gaps}`,`{approvals}`,`{agents}`, `{deleted,dependentBots}` | same | same | OK |
 | A15 | 409 transition body `{error,from,to,allowed}`; 409 delete `{dependentBots}` | `conflictOf` | `agent_gateway_routes.rs:107,497` | OK |
@@ -38,10 +38,10 @@ Status: FIXED (TS/web/SDK, with a regression test), RUST (Rust change required, 
 | B6 | events result | `events`, `cursor` | `{events, cursor: nextCursor}` | OK |
 | B7 | Result envelope | `{ok,value}` / `{ok:false,error}` | same, HTTP 200 | OK |
 | B8 | Error fields | `code,retryable,retryAfterMs,humanMessage` | `aaiErrorSchema` | OK |
-| B9 | `agent.list` element | `externalAgentId`\|`id`, `name` (`agent_gateway_routes.rs:582`) | `{agentId, displayName, vendor, state}` | RUST R1 (every discovered agent is dropped) |
-| B10 | approvals respond actor | `actor.type: "user"` (`gateway_runner.rs:880`) | `ApprovalsInput` actor `"human"\|"system"` (types.ts) | RUST R2 |
-| B11 | `generationId` | integer (`gateway_runner.rs:713`) | contracts `z.string()` (`agent.ts:159`) | RUST R4 (or contracts to number; events never parsed with the schema today) |
-| B12 | Error code -> status map | uses `BOT_DETECTED`,`BOT_DETECTION`,`ACCOUNT_RISK`,`REMOTE_CLOSED` | not in `aaiErrorCodeSchema` | RUST R3 (map only known codes; extras are dead branches) |
+| B9 | `agent.list` element | `externalAgentId`\|`id`, `name` (`agent_gateway_routes.rs:582`) | `{agentId, displayName, vendor, state}` | FIXED R1 (reads `agentId`/`displayName`, old keys as fallback) |
+| B10 | approvals respond actor | `actor.type: "user"` (`gateway_runner.rs:880`) | `ApprovalsInput` actor `"human"\|"system"` (types.ts) | FIXED R2 (`actor.type: "human"`) |
+| B11 | `generationId` | integer (`gateway_runner.rs:713`) | contracts `z.string()` (`agent.ts:159`) | FIXED R4 (string on the wire) |
+| B12 | Error code -> status map | uses `BOT_DETECTED`,`BOT_DETECTION`,`ACCOUNT_RISK`,`REMOTE_CLOSED` | not in `aaiErrorCodeSchema` | FIXED R3 (every `aaiErrorCodeSchema` code mapped; dead codes removed) |
 
 ## C. SDKs <-> allternit-api
 
@@ -50,8 +50,8 @@ Status: FIXED (TS/web/SDK, with a regression test), RUST (Rust change required, 
 | C1 | Request body key case | TS `snake()` and Python `_snake` sent `auth_type`, `display_name`, `account_binding_id`, ... | camelCase only (`agent_gateway_routes.rs:349..929`) | FIXED both, tests updated + new `aai-sdk/test/contract.test.ts` |
 | C2 | Secret body | `{api_key}` | `SecretBody{apiKey}` | FIXED |
 | C3 | Paths, methods, envelopes, 428/409/429 error body | same as A | same | OK |
-| C4 | `accounts.list({state})` | sends `state` | `AccountFilter` only `vendor`; state silently ignored | RUST R8 (or drop from SDK) |
-| C5 | `vendorPacks.updateGap({severity})` | body may lack `status` | `PatchGap{status}` required, severity ignored | RUST R9 |
+| C4 | `accounts.list({state})` | sends `state` | `AccountFilter` only `vendor`; state silently ignored | FIXED R8 |
+| C5 | `vendorPacks.updateGap({severity})` | body may lack `status` | `PatchGap{status}` required, severity ignored | FIXED R9 (`status` optional, `severity` accepted) |
 | C6 | docs `AAI_REST.md` said bodies are snake_case | | | FIXED (doc) |
 
 ## D. contracts package <-> Rust constants
@@ -69,9 +69,9 @@ Status: FIXED (TS/web/SDK, with a regression test), RUST (Rust change required, 
 | E1 | `agent.*` | `{data, envelope}` | flat | FIXED (A2) |
 | E2 | `approval.requested/resolved`, `gateway.*` | ledger only | not consumed by packs | OK |
 | E3 | `channel.*` | see A5-A8 | fold expects message fields | FIXED |
-| E4 | `channel.message.delivery` | emitted (`channel_gateway.rs:55`) | not in `CHANNEL_TYPES` | RUST R10 (payload has no messageId/state contract; web ignores it) |
+| E4 | `channel.message.delivery` | emitted (`channel_gateway.rs:55`) | not in `CHANNEL_TYPES` | FIXED R10 (payload `{messageId, state: confirmed\|failed, delivery}`; web folds it, ai #291) |
 
-## Rust fixes required (not edited)
+## Rust fixes (all landed on `gateway/accept-rust`, tests in `agent_gateway_routes`, `gateway_runner`, `channel_transports`)
 
 - R1 `agent_gateway_routes.rs:582-585` discover_agents: read `agentId` (fallback `externalAgentId`/`id`) and `displayName` (fallback `name`). Today all agents returned by the real host are filtered out.
 - R2 `gateway_runner.rs:880`: send `actor: {"type":"human", ...}` for the AAI `agent.approvals` respond (router refuses non-human).

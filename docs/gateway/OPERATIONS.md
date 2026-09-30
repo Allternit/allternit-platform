@@ -62,13 +62,14 @@ Teams, Discord and WhatsApp secrets are not env vars. They are sealed JSON on th
 
 ## Migrations
 
-`V198__agent_gateway_bindings.sql`, `V199__gateway_runner.sql` and `V200__channel_message_log.sql` in `cmd/allternit-api/migrations/`. All are additive (`CREATE TABLE IF NOT EXISTS` and indexes; no existing table is altered). Refinery applies them when allternit-api starts. On production they apply on the first start after the Contabo deploy. Prod migrations are otherwise run manually as postgres for other services, so confirm the target is the allternit-api SQLite path and not a manual step.
+`V198__agent_gateway_bindings.sql`, `V199__gateway_runner.sql`, `V200__channel_message_log.sql` and `V201__channel_binding_names.sql` in `cmd/allternit-api/migrations/`. All are additive: V198–V200 are `CREATE TABLE IF NOT EXISTS` and indexes; V201 adds two nullable columns to V198's `channel_conversation_bindings` (no table that exists on `main` today is altered). Refinery applies them when allternit-api starts. On production they apply on the first start after the Contabo deploy. Prod migrations are otherwise run manually as postgres for other services, so confirm the target is the allternit-api SQLite path and not a manual step.
 
 | Migration | Tables |
 |---|---|
 | V198 | `provider_account_bindings`, `bot_execution_bindings`, `remote_thread_bindings`, `channel_conversation_bindings`, `vendor_pack_registry`, `vendor_pack_gaps`, `connection_audit` |
 | V199 | `gateway_approvals`, `gateway_sends` |
 | V200 | `channel_message_log` |
+| V201 | `channel_conversation_bindings` + `channel_name`, `workspace_name` |
 
 ## The `gateway/integration` gate
 
@@ -104,6 +105,6 @@ Nothing below has run except where marked. Each step needs the named person's co
 | 10 | WhatsApp and Muse: Business account and Meta app, webhook handshake and signature, a Muse conversation | The account holder | Not run |
 | 11 | Vendor memory promote flow, after `gateway/accept-rust` merges | Eoj | Blocked on backend PR |
 | 12 | Look pack gaps: run a real thread per pack and read `GET /gateway/vendor-packs/:vendor/parity` | Eoj | Only Grok Bot has real traffic |
-| 13 | Migrations V198 to V200 on the production allternit-api after the Contabo deploy | Eoj (deploy owner) | Not run |
+| 13 | Migrations V198 to V201 on the production allternit-api after the Contabo deploy | Eoj (deploy owner) | Not run |
 
 For a UI-bridge lane, never retry through a bot check, never solve a challenge, and stop if the vendor shows an account-risk warning. The lane is latched and disabled by design.
