@@ -42,6 +42,8 @@ Costs are computed in cents per unit. The default rates are:
 | `sandbox_runtime` | `seconds` | `0.02` |
 | `vcpu_seconds` | `seconds` | `0.01` |
 | `gpu_seconds` | `seconds` | `0.5` |
+| `llm_tokens` | `tokens` | `0.0002` (telemetry only, not charged to Cloud Agents) |
+| `computer_minute` | `minutes` | `0.5` Linux, `1.0` Windows, `1.5` macOS (base 4 GB desktop) |
 
 These defaults are placeholders pending final margin decisions. Override any rate at runtime with an environment variable:
 

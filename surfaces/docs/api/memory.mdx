@@ -37,6 +37,23 @@ All endpoints require a valid bearer token in the `Authorization` header. See [A
 | `GET`  | `/api/memory/session/list` | List all keys for a session. |
 | `POST` | `/api/memory/session` | Write a session memory key. |
 | `DELETE` | `/api/memory/session` | Delete a session memory key. |
+| `POST` | `/api/memory/v2/observation` | Record one observation. |
+| `GET` | `/api/memory/v2/observations` | List observations. |
+| `POST` | `/api/memory/v2/recall` | Recall facts for a query. |
+| `POST` | `/api/memory/v2/retain` | Retain a conversation turn as facts. |
+| `GET` | `/api/memory/v2/facts` | List retained facts. |
+| `DELETE` | `/api/memory/v2/facts/:id` | Delete a fact. |
+| `GET` | `/api/memory/v2/entities` | List v2 entities. |
+| `POST` | `/api/memory/browser-history/visit` | Record a browser visit. |
+| `GET` | `/api/memory/browser-history` | List browser history. |
+| `GET` | `/api/memory/browser-history/search` | Search browser history. |
+| `GET` / `POST` | `/api/memory/procedural` | List or create procedural memories. |
+| `POST` | `/api/memory/procedural/extract` | Extract procedural memories. |
+| `GET` | `/api/memory/procedural/match` | Match procedural memories to a task. |
+| `GET` / `POST` / `DELETE` | `/api/memory/procedural/:id` | Get, update, or delete one. |
+| `POST` | `/api/memory/procedural/:id/use` | Record a use of a procedural memory. |
+| `GET` / `POST` | `/api/memory/notes` | List or create memory notes. |
+| `GET` / `POST` / `DELETE` | `/api/memory/notes/:id` | Get, update, or delete a note. |
 
 ## Health
 
