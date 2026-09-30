@@ -212,11 +212,8 @@ export namespace KernelTurn {
    * this call, and record a ToolReceiptV1. The run's result or error passes
    * through as-is.
    *
-   * TODO(WP9 follow-up): append receipts to the run's commrails chain. commrails
-   * only appends in-process (gate `record_tool_effect`); it exposes no HTTP route
-   * or CLI subcommand to append an external ToolReceiptV1, so that needs a Rust
-   * change (e.g. POST /v1/receipts/chain/:run_id). Until then receipts stay in
-   * this in-memory ledger.
+   * External receipts are appended to the local commrails chain after the
+   * unchanged tool call. Transport errors are logged and never break a turn.
    */
   export async function withToolReceipt<T>(
     input: {
@@ -234,7 +231,7 @@ export namespace KernelTurn {
     if (!enabled()) return run()
     const rec = entry(input.sessionID)
     const started_at = new Date().toISOString()
-    const finish = (exit: ToolReceiptV1["exit_class"], output?: string) => {
+    const finish = async (exit: ToolReceiptV1["exit_class"], output?: string) => {
       const gate = takeGateDecisions(input.callID)
       try {
         const args = (input.args && typeof input.args === "object" ? input.args : {}) as Record<string, unknown>
@@ -271,8 +268,9 @@ export namespace KernelTurn {
           ...(gate.length
             ? { "x-gate_decisions": gate }
             : { "x-gate_reason": "no PermissionNext check was made for this call (tool did not ask)" }),
-          "x-chain_append": "pending: commrails exposes no external append path (see turn-hook TODO)",
+          "x-chain_append": "pending",
         }
+        await appendReceipt(receipt, rec)
         rec.receipts.push(receipt)
         if (rec.receipts.length > MAX_RECEIPTS) rec.receipts.splice(0, rec.receipts.length - MAX_RECEIPTS)
       } catch (e) {
@@ -282,11 +280,36 @@ export namespace KernelTurn {
     try {
       const result = await run()
       const out = (result as any)?.output
-      finish("SUCCESS", typeof out === "string" ? out : undefined)
+      await finish("SUCCESS", typeof out === "string" ? out : undefined)
       return result
     } catch (e) {
-      finish("FAILURE")
+      await finish("FAILURE")
       throw e
+    }
+  }
+
+  /** Direct local service (3011), or an explicitly configured existing rails URL.
+   * Read per call so long-lived sessions can follow service configuration.
+   * No retries: an uncertain response must not blindly duplicate evidence.
+   */
+  async function appendReceipt(receipt: ToolReceiptV1, rec: TurnRecord): Promise<void> {
+    const base = (process.env.GIZZI_COMMRAILS_URL ?? process.env.GIZZI_RAILS_URL ?? "http://127.0.0.1:3011").replace(/\/+$/, "")
+    try {
+      const response = await fetch(`${base}/v1/receipts/chain/${encodeURIComponent(receipt.envelope.run_id)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(receipt),
+        signal: AbortSignal.timeout(1_000),
+      })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const chained = await response.json() as { chain?: { receipt_id?: string; run_id?: string } }
+      if (!chained.chain?.receipt_id || chained.chain.run_id !== receipt.envelope.run_id) throw new Error("invalid chain acknowledgement")
+      receipt.extensions = { ...receipt.extensions, "x-chain_append": "appended", "x-chain_receipt_id": chained.chain.receipt_id }
+    } catch (e) {
+      const message = `chain_append:${(e as Error).message}`
+      rec.errors.push(message)
+      receipt.extensions = { ...receipt.extensions, "x-chain_append": "failed" }
+      console.warn(`[kernel-turn] ${message}`)
     }
   }
 

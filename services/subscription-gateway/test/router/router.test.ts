@@ -405,3 +405,26 @@ describe("lane derivation (contract gap — manifest has no lane field)", () => 
     expect(one.primary?.adapter_id).toBe("adapter-z1");
   });
 });
+
+describe("two logins of one subscription (Eoj: switch between them)", () => {
+  const provider = "prov-two" as Account["provider"];
+  const manifest = makeManifest({ adapter_id: "adapter-two", provider });
+  const first = makeAccount({ account_id: "acct-1", provider });
+  const second = makeAccount({ account_id: "acct-2", provider, preferred: true });
+  const pools = (s1: QuotaPool["state"], s2: QuotaPool["state"]) => [
+    makePool({ pool_key: `${provider}:acct-1:${POOL_ID}`, state: s1 }),
+    makePool({ pool_key: `${provider}:acct-2:${POOL_ID}`, state: s2 }),
+  ];
+
+  it("the preferred login goes first when both are equally healthy", () => {
+    const snap = makeSnapshot({ accounts: [first, second], manifests: [manifest], pools: pools("available", "available") });
+    const d = router().resolve(task(), snap);
+    expect(d.primary?.account_id).toBe("acct-2");
+    expect(d.fallbacks.map((f) => f.account_id)).toEqual(["acct-1"]);
+  });
+
+  it("a limited preferred login falls back to the other one", () => {
+    const snap = makeSnapshot({ accounts: [first, second], manifests: [manifest], pools: pools("available", "estimated") });
+    expect(router().resolve(task(), snap).primary?.account_id).toBe("acct-1");
+  });
+});

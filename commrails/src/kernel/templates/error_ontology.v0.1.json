@@ -1,0 +1,26 @@
+{
+  "bank_id": "error_ontology.v0.1",
+  "version": "0.1.0",
+  "primitive_id": "dec.classify_error",
+  "classes": [
+    "SYNTAX_ERROR",
+    "TYPE_ERROR",
+    "IMPORT_ERROR",
+    "DEPENDENCY_ERROR",
+    "BUILD_ERROR",
+    "LINK_ERROR",
+    "TEST_ASSERTION",
+    "TEST_TIMEOUT",
+    "RUNTIME_EXCEPTION",
+    "RESOURCE_EXHAUSTION",
+    "PERMISSION_ERROR",
+    "NETWORK_ERROR",
+    "ENVIRONMENT_ERROR",
+    "VERSION_MISMATCH",
+    "FLAKY_TEST",
+    "REGRESSION",
+    "LOGIC_ERROR",
+    "UNKNOWN"
+  ],
+  "unknown": "UNKNOWN"
+}

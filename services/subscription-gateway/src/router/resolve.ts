@@ -128,6 +128,7 @@ interface ScoredCandidate {
   laneRank: number;
   poolRank: number;
   budgetRank: number;
+  preferRank?: number;
 }
 
 export interface FabricRouterOptions {
@@ -318,16 +319,19 @@ export class FabricRouter implements CapabilityRouter {
           laneRank: policy.lane_cost_rank[lane],
           poolRank: POOL_STATE_RANK[state],
           budgetRank: budgetBreached ? 1 : 0,
+          preferRank: account?.preferred ? 0 : 1,
         });
       }
     }
 
     // Deterministic order: lane cost class → pool state rank → budget-breach
-    // demotion → stable tiebreak (adapter_id, account_id). No randomness.
+    // demotion → the provider's preferred account → stable tiebreak
+    // (adapter_id, account_id). No randomness.
     scored.sort((a, b) =>
       a.laneRank - b.laneRank ||
       a.poolRank - b.poolRank ||
       a.budgetRank - b.budgetRank ||
+      (a.preferRank ?? 1) - (b.preferRank ?? 1) ||
       a.candidate.adapter_id.localeCompare(b.candidate.adapter_id) ||
       (a.candidate.account_id ?? "").localeCompare(b.candidate.account_id ?? "")
     );
