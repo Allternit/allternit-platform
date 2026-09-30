@@ -189,6 +189,17 @@ pub fn agency_router() -> Router<Arc<AppState>> {
         .layer(axum::middleware::from_fn(version_layer))
 }
 
+/// Read aliases for the Kernel UI: the paired-runtime relay only forwards
+/// `/api/v1/*`, and `/api/v1/runs` belongs to Cowork, so runs are read at
+/// `/v1/kernel/runs/{id}[/events]` (nested under `/api` in `main.rs`). Same
+/// handlers, auth and version layer as `/v1/runs/{id}[/events]`.
+pub fn kernel_alias_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/v1/kernel/runs/:run_id", get(get_run))
+        .route("/v1/kernel/runs/:run_id/events", get(run_events))
+        .layer(axum::middleware::from_fn(version_layer))
+}
+
 /// Public receipt verification keys. No auth; public keys only.
 pub fn jwks_public_router() -> Router<Arc<AppState>> {
     Router::new().route("/.well-known/jwks.json", get(jwks))
@@ -253,7 +264,7 @@ async fn create_run(
     }
 
     let run_id = new_id("run");
-    let compiled = compiler::compile(&req, &run_id, &compiler::TemplateRegistry::default()).map_err(|e| {
+    let mut compiled = compiler::compile(&req, &run_id, &compiler::TemplateRegistry::default()).map_err(|e| {
         ApiError::new(e.status, e.family, e.code, e.message, &rid).param(e.param)
     })?;
     let ts = now();
@@ -283,6 +294,8 @@ async fn create_run(
     task_ir["request_hash"] = json!(request_hash(&req));
     let org = guard::org_of(&user);
     task_ir["org_id"] = json!(org);
+    // Kernel UI rules: the org's credential-read allowlist joins the JudgePolicy.
+    crate::kernel_ui::agent_rules::apply_to_policy(&st, &org, &mut compiled.judge_policy).await;
     let err = |e| ApiError::internal(e, &rid);
     // Durable before 202: the snapshot carries resolved defaults + TaskIR.
     let rec = s

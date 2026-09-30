@@ -71,6 +71,7 @@ mod gateway_acceptance;
 pub mod aai_facade;
 pub mod a2a_routes;
 pub mod agency_api;
+pub mod kernel_ui;
 pub mod teams_auth;
 pub mod discord_gateway;
 pub mod channel_gateway;

@@ -326,6 +326,14 @@ impl AgencyStore {
         u["seconds"] = json!(u["seconds"].as_f64().unwrap_or(0.0) + seconds);
         u["cost_usd"] = json!(u["cost_usd"].as_f64().unwrap_or(0.0) + cost_usd);
         u["steps"] = json!(u["steps"].as_i64().unwrap_or(0) + steps);
+        // Section 6 run summary totals (model time only counts token steps).
+        let ms = (seconds * 1000.0) as u64;
+        let (dur, mms, tk) = (u["duration_ms"].as_u64().unwrap_or(0) + ms,
+            u["model_ms"].as_u64().unwrap_or(0) + if tokens > 0 { ms } else { 0 }, u["tokens"].as_u64().unwrap_or(0));
+        u["duration_ms"] = json!(dur);
+        u["model_ms"] = json!(mms);
+        rec.run["speed"] = json!({ "duration_ms": dur, "tokens": tk, "model_ms": mms, "wait_ms": 0,
+            "tok_per_s": (tk > 0 && mms > 0).then(|| (tk as f64 * 10000.0 / mms as f64).round() / 10.0) });
         let b = rec.run["budget"].clone();
         let u = rec.run["budget_usage"].clone();
         let over = |lim: &str, used: &str| b[lim].as_f64().is_some_and(|l| u[used].as_f64().unwrap_or(0.0) >= l);

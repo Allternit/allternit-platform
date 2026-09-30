@@ -106,8 +106,8 @@ pub(crate) fn start(st: Arc<AppState>, run_id: String) {
 pub(crate) async fn admit_and_start(st: Arc<AppState>, run_id: String, limits: Limits) -> bool {
     let s = super::store(&st);
     let Ok(Some(rec)) = s.load_run(&run_id).await else { return false };
-    if rec.run["status"] != "waiting" {
-        return false;
+    if rec.run["status"] != "waiting" || rec.task_ir["task_type"] == "TEMPLATE" {
+        return false; // kernel-UI template runs are driven by kernel_ui::templates
     }
     let org = super::guard::run_org(&rec.task_ir);
     if !limits.org_allowed(&org) {
@@ -293,7 +293,7 @@ fn scripted() -> bool {
     std::env::var("ALLTERNIT_AGENCY_COGNITION").is_ok_and(|v| v == "scripted")
 }
 
-fn gizzi_url() -> String {
+pub(crate) fn gizzi_url() -> String {
     crate::APP_CONFIG.get().map(|c| c.terminal_server_url()).unwrap_or_else(|| "http://127.0.0.1:4096".into())
 }
 
@@ -435,6 +435,12 @@ struct Exec<'a> {
     org: String,
     /// Output of the most recent S0 test run (input to the S1 shadow classification).
     last_test_output: String,
+    /// Section-6 run speed: the current step's clock, tokens and model time
+    /// (reset after each `run.progress`). Usage reports a token total only.
+    mark: std::cell::Cell<Instant>,
+    mark_at: std::cell::RefCell<String>,
+    step_tokens: std::cell::Cell<u64>,
+    step_model_ms: std::cell::Cell<u64>,
 }
 
 /// Deterministic (S0) error code for a failing test run's output. Only a known
@@ -518,6 +524,20 @@ impl Exec<'_> {
         Ok(())
     }
 
+    /// Section 6: speed fields for the step that just ended, then restart the
+    /// step clock. `tok_per_s` only for model (S2) steps; `tokens_in/out` are
+    /// null because usage reports a total; `wait_ms` is 0 (this executor has
+    /// no approval wait path yet).
+    fn take_speed(&self) -> Value {
+        let started_at = self.mark_at.replace(super::store::now());
+        let duration_ms = self.mark.replace(Instant::now()).elapsed().as_millis() as u64;
+        let tokens = self.step_tokens.replace(0);
+        let model_ms = self.step_model_ms.replace(0);
+        let tok_per_s = (tokens > 0 && model_ms > 0).then(|| (tokens as f64 * 1000.0 / model_ms as f64 * 10.0).round() / 10.0);
+        json!({ "started_at": started_at, "duration_ms": duration_ms, "tokens_in": null, "tokens_out": null,
+                "tokens": tokens, "tok_per_s": tok_per_s, "wait_ms": 0 })
+    }
+
     fn admit(&self) -> Step<()> {
         match self.h.block_on(self.s.admit_effect(&self.run_id)) {
             Ok(()) => Ok(()),
@@ -540,6 +560,10 @@ impl Exec<'_> {
     }
 
     fn charge_tokens(&self, secs: f64, usd: f64, steps: i64, tokens: u64) -> Step<()> {
+        if tokens > 0 {
+            self.step_tokens.set(self.step_tokens.get() + tokens);
+            self.step_model_ms.set(self.step_model_ms.get() + (secs * 1000.0) as u64);
+        }
         let rec = self.h.block_on(self.s.charge_usage(&self.run_id, secs, usd, steps, tokens))?;
         if rec.run["budget_usage"]["spend_halted"] == true {
             return Err(StepErr::Stop);
@@ -616,8 +640,12 @@ impl Exec<'_> {
         let primitive = self.graph.node(&ran).map(|n| n.primitive_id.clone()).unwrap_or_default();
         self.h.block_on(self.s.append_raw(EV_PLAN, &self.run_id,
             json!({ "run_id": self.run_id, "node_id": ran, "attempt": attempt, "plan": plan, "outcome": if verified { "committed" } else { "failed" } })))?;
+        let speed = self.take_speed();
         self.emit("run.progress", json!({ "step": ran, "attempt": attempt, "primitive_id": primitive,
-            "cognitive_role": plan.cognitive_role, "outcome": if verified { "committed" } else { "failed" } }))?;
+            "cognitive_role": plan.cognitive_role, "outcome": if verified { "committed" } else { "failed" },
+            "started_at": speed["started_at"], "duration_ms": speed["duration_ms"], "tokens_in": speed["tokens_in"],
+            "tokens_out": speed["tokens_out"], "tokens": speed["tokens"], "tok_per_s": speed["tok_per_s"],
+            "wait_ms": speed["wait_ms"] }))?;
         Ok(Some((ran, plan)))
     }
 
@@ -915,6 +943,8 @@ fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str, limits: &Limi
     };
     let mut x = Exec {
         last_test_output: String::new(),
+        mark: std::cell::Cell::new(Instant::now()), mark_at: std::cell::RefCell::new(super::store::now()),
+        step_tokens: Default::default(), step_model_ms: Default::default(),
         h, st, s, run_id: run_id.to_string(), dag_id: ir["dag_id"].as_str().unwrap_or_default().to_string(), seq: 0,
         ws: Ws::new(run_id)?, graph, pool, cfg, attempts: Default::default(), limits: limits.clone(), org: org.to_string(),
     };
