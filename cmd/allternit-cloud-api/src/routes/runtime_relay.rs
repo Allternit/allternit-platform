@@ -323,15 +323,25 @@ async fn detach_connection(runtime_id: &str, connection: &Arc<RuntimeConnection>
 /// desktop app for shared core capabilities), and the most recently attached
 /// connection breaks ties. Returns exactly one connection, never a fan-out,
 /// so requests are never duplicated across connections.
+///
+/// A `node.core` connection (the allternit-node daemon) is only eligible for
+/// the paths the daemon serves; everything else under `/api/v1` (sessions,
+/// computers, subscriptions, …) belongs to the desktop app's allternit-api,
+/// which the daemon would 404.
 fn select_connection(
     entries: &[RelayConnectionEntry],
     required: &str,
+    path: &str,
 ) -> Option<Arc<RuntimeConnection>> {
+    let node_path = node_core_serves(path);
     entries
         .iter()
         .enumerate()
         .filter(|(_, entry)| match &entry.capabilities {
-            Some(caps) => caps.iter().any(|cap| cap == required),
+            Some(caps) => {
+                caps.iter().any(|cap| cap == required)
+                    && (node_path || !caps.iter().any(|cap| cap == "node.core"))
+            }
             // Legacy clients grant the full pairing surface.
             None => true,
         })
@@ -346,6 +356,12 @@ fn select_connection(
             )
         })
         .map(|(_, entry)| entry.connection.clone())
+}
+
+/// Paths the allternit-node daemon answers (cmd/allternit-node handlers.rs).
+fn node_core_serves(path: &str) -> bool {
+    let path = path.split('?').next().unwrap_or(path).to_ascii_lowercase();
+    path.starts_with("/api/v1/node/") || path.starts_with("/terminal/")
 }
 
 /// Live relay connections for a runtime as presence metadata (PWA node
@@ -393,12 +409,13 @@ async fn connect_or_wake_runtime(
     quota_service: &crate::services::SharedQuotaService,
     runtime_id: &str,
     required: &str,
+    path: &str,
 ) -> Result<RelayConnect, ApiError> {
     if let Some(connection) = relay_hub()
         .read()
         .await
         .get(runtime_id)
-        .and_then(|entries| select_connection(entries, required))
+        .and_then(|entries| select_connection(entries, required, path))
     {
         return Ok(RelayConnect::Connected(connection));
     }
@@ -424,7 +441,7 @@ async fn connect_or_wake_runtime(
             .read()
             .await
             .get(runtime_id)
-            .and_then(|entries| select_connection(entries, required))
+            .and_then(|entries| select_connection(entries, required, path))
         {
             return Ok(RelayConnect::Connected(connection));
         }
@@ -507,6 +524,7 @@ pub(crate) async fn issue_socket_ticket(
         &state.quota_service,
         runtime_id,
         &required,
+        &validation.path,
     )
     .await?
     {
@@ -717,7 +735,7 @@ async fn browser_socket(
         .read()
         .await
         .get(&runtime_id)
-        .and_then(|entries| select_connection(entries, &required_capability));
+        .and_then(|entries| select_connection(entries, &required_capability, &path));
     let Some(connection) = connection else {
         let _ = quota_service.close_relay_socket(&relay_socket_id, 0).await;
         return;
@@ -1075,6 +1093,7 @@ pub(crate) async fn relay_request_to_runtime(
         quota_service,
         runtime_id,
         &required_capability,
+        &request.path,
     )
     .await?
     {
@@ -1745,7 +1764,7 @@ mod tests {
                 ]),
             ),
         ];
-        let daemon = select_connection(&entries, "runtime:terminal")
+        let daemon = select_connection(&entries, "runtime:terminal", "/terminal/create")
             .expect("daemon grants runtime:terminal");
         assert!(
             entries
@@ -1754,7 +1773,7 @@ mod tests {
                 .map(|e| Arc::ptr_eq(&e.connection, &daemon))
                 .unwrap()
         );
-        let desktop = select_connection(&entries, "runtime:remote_control")
+        let desktop = select_connection(&entries, "runtime:remote_control", "/api/v1/x")
             .expect("desktop grants runtime:remote_control");
         assert!(
             entries
@@ -1763,9 +1782,21 @@ mod tests {
                 .map(|e| Arc::ptr_eq(&e.connection, &desktop))
                 .unwrap()
         );
-        // The node.core advertisement is inert for routing: no path maps to
-        // it, and it must not make the daemon grant what it did not claim.
-        let providers = select_connection(&entries, "providers:use")
+        // node.core scopes the daemon to its own paths: the desktop's
+        // allternit-api routes (sessions, subscriptions, …) share
+        // runtime:execute but must never reach the daemon (live: every
+        // /api/v1/* 404'd from allternit-node), while node paths still do.
+        for path in ["/api/v1/sessions", "/api/v1/subscriptions/accounts", "/api/v1/computers?x=1"] {
+            let to = select_connection(&entries, "runtime:execute", path).expect("desktop serves it");
+            assert!(
+                entries.iter().find(|e| e.client == "desktop").map(|e| Arc::ptr_eq(&e.connection, &to)).unwrap(),
+                "{path} must route to the desktop"
+            );
+        }
+        let exec = select_connection(&entries, "runtime:execute", "/api/v1/node/exec").unwrap();
+        assert!(entries.iter().find(|e| e.client == "allternit-node").map(|e| Arc::ptr_eq(&e.connection, &exec)).unwrap());
+        // It must not make the daemon grant what it did not claim.
+        let providers = select_connection(&entries, "providers:use", "/api/v1/x")
             .expect("desktop grants providers:use");
         assert!(
             entries
@@ -1788,8 +1819,8 @@ mod tests {
                 Some(vec!["runtime:execute".to_string()]),
             ),
         ];
-        let first = select_connection(&entries, "runtime:execute").unwrap();
-        let second = select_connection(&entries, "runtime:execute").unwrap();
+        let first = select_connection(&entries, "runtime:execute", "/api/v1/node/exec").unwrap();
+        let second = select_connection(&entries, "runtime:execute", "/api/v1/node/exec").unwrap();
         assert!(Arc::ptr_eq(&first, &second));
         assert!(
             entries
@@ -1802,12 +1833,13 @@ mod tests {
         // No connection grants the capability → no candidate at all.
         assert!(select_connection(
             &entries,
-            "runtime:remote_control"
+            "runtime:remote_control",
+            "/api/v1/x"
         )
         .is_none());
         // Legacy full connections always remain candidates.
         let legacy = vec![test_entry("desktop", None)];
-        assert!(select_connection(&legacy, "providers:connect").is_some());
+        assert!(select_connection(&legacy, "providers:connect", "/api/v1/x").is_some());
     }
 
     #[tokio::test]
@@ -1865,11 +1897,11 @@ mod tests {
         // deterministic target on repeat (no cross-talk, no duplication).
         let hub = relay_hub().read().await;
         let entries = hub.get(&runtime_id).unwrap();
-        let to_daemon = select_connection(entries, "runtime:execute").unwrap();
+        let to_daemon = select_connection(entries, "runtime:execute", "/api/v1/node/exec").unwrap();
         assert!(Arc::ptr_eq(&to_daemon, &daemon2));
-        let again = select_connection(entries, "runtime:execute").unwrap();
+        let again = select_connection(entries, "runtime:execute", "/api/v1/node/exec").unwrap();
         assert!(Arc::ptr_eq(&again, &to_daemon));
-        let to_desktop = select_connection(entries, "runtime:remote_control").unwrap();
+        let to_desktop = select_connection(entries, "runtime:remote_control", "/api/v1/x").unwrap();
         assert!(
             entries
                 .iter()
@@ -1887,7 +1919,7 @@ mod tests {
         let entries = hub.get(&runtime_id).unwrap();
         assert_eq!(entries.len(), 1);
         assert!(
-            select_connection(entries, "runtime:execute")
+            select_connection(entries, "runtime:execute", "/api/v1/node/exec")
                 .map(|c| !Arc::ptr_eq(&c, &daemon2))
                 .unwrap()
         );
