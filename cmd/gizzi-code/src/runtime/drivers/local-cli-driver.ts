@@ -38,6 +38,7 @@ import {
 import { spawn as nodeSpawn } from "node:child_process"
 import { Readable, Writable } from "node:stream"
 import { ProcessRegistry } from "@/runtime/process-registry"
+import { acpGateDecision } from "@/runtime/drivers/acp-gate"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
 
 const log = Log.create({ service: "local-cli-driver" })
@@ -951,6 +952,27 @@ export class LocalCliDriver implements RuntimeDriver {
         const pickAllow = () =>
           allowOnce ?? allowAlways ?? options.find((item) => !String(item.kind).includes("reject"))
         const sessionID = task?.sessionID
+
+        // Allternit spawn gate (hard floor + Gate 2): answer right away, so
+        // the turn never waits on a person. Only when the gate binary is
+        // missing do we fall through to the legacy policy below.
+        const verdict = await acpGateDecision({
+          toolCall: (request.toolCall ?? {}) as Record<string, unknown>,
+          cwd: taskCwd,
+          harness: this.cliName,
+          sessionId: sessionID,
+          wihId: process.env.ALLTERNIT_COMMRAILS_WIH,
+          root: process.env.ALLTERNIT_COMMRAILS_ROOT,
+        })
+        if (verdict) {
+          log.info("acp gate decision", { taskId: handle.taskId, allow: verdict.allow, ...(verdict.allow ? {} : { reason: verdict.reason }) })
+          const chosen = verdict.allow
+            ? pickAllow()
+            : options.find((item) => String(item.kind).includes("reject"))
+          return chosen
+            ? { outcome: { outcome: "selected" as const, optionId: chosen.optionId } }
+            : { outcome: { outcome: "cancelled" as const } }
+        }
 
         // No session context (raw driver use outside a session turn): keep
         // the legacy best-effort behavior rather than guessing a policy.
