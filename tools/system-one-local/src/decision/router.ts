@@ -6,6 +6,7 @@ import type { CalibrationScope, DecisionCalibrationManifestV1, DecisionRequestV1
 import { evaluateQ22Gate, type GateOptions } from "./gate.ts";
 import { candidateSchemaHash, candidateSetHash, checkBinding } from "./manifest.ts";
 import { calibrateProbs, shapeAnswer, type DecisionReadoutProvider } from "./readout.ts";
+import type { ShadowLedger } from "./shadow.ts";
 import { actionFor, DEFAULT_PROFILE, validateProfile, type ThresholdProfile } from "./threshold.ts";
 
 export type RouterMode = "shadow" | "live";
@@ -23,6 +24,8 @@ export interface RouterConfig {
   mode?: RouterMode;
   primitiveId?: string;
   gate?: GateOptions;
+  /** When set, every decision appends a shadow record (raw readout, scope) for later harvest + calibration. */
+  ledger?: ShadowLedger;
 }
 
 export class DecisionRouter {
@@ -65,6 +68,13 @@ export class DecisionRouter {
       }
     }
     const shaped = shapeAnswer(req.operation, raw.options, probs, req.scale);
+    const primitive_id = String(req.extensions?.["x-primitive_id"] ?? this.cfg.primitiveId ?? req.decision_bank_id);
+    const decision_id = this.cfg.ledger?.logDecision({
+      primitive_id, operation: req.operation, question_id: req.question_id ?? "", instructions: req.instructions,
+      subject_ref: typeof req.extensions?.["x-subject_ref"] === "string" ? (req.extensions["x-subject_ref"] as string) : null,
+      state, candidates: (req.candidates ?? []).map((c) => ({ candidate_id: c.candidate_id, label: c.label ?? null })),
+      options: raw.options, shape: raw.shape ?? "categorical", probs: raw.probs, readout_method: raw.method, scope, mode: this.mode,
+    });
     return {
       envelope: { ...req.envelope, schema_id: "allternit.kernel.DecisionResultV1" },
       operation: req.operation,
@@ -80,7 +90,7 @@ export class DecisionRouter {
       threshold_action: action,
       latency_ms: raw.latency_ms,
       abstained,
-      extensions: { ...(raw.usage ? { "x-usage": raw.usage } : {}), "x-mode": this.mode, "x-readout_kind": raw.kind, "x-readout_method": raw.method, "x-refused_uncalibrated": !served, "x-reasons": reasons },
+      extensions: { ...(raw.usage ? { "x-usage": raw.usage } : {}), "x-mode": this.mode, "x-readout_kind": raw.kind, "x-readout_method": raw.method, "x-refused_uncalibrated": !served, ...(decision_id ? { "x-decision_id": decision_id } : {}), "x-reasons": reasons },
     };
   }
 

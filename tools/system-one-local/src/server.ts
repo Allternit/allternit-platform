@@ -10,6 +10,9 @@
 import { SystemOne } from "./engine.ts";
 import { DecisionRouter } from "./decision/router.ts";
 import { LocalLogitReadoutProvider } from "./decision/local-provider.ts";
+import { ShadowLedger } from "./decision/shadow.ts";
+import { BASE_DIR } from "./log.ts";
+import { join } from "node:path";
 import { SystemOneError, type ErrorBody } from "./types.ts";
 
 export const HOST = "127.0.0.1";
@@ -44,16 +47,26 @@ export function loadManifests(path = process.env.ALLTERNIT_S1_MANIFESTS?.trim())
   }
 }
 
+/** Shadow ledger is opt-in (ALLTERNIT_S1_SHADOW_DIR, or SYSTEM_ONE_SHADOW_LOG=1 for the default dir) so tests never write to $HOME. */
+export function shadowLedger(): ShadowLedger | undefined {
+  const dir = process.env.ALLTERNIT_S1_SHADOW_DIR?.trim();
+  if (dir) return new ShadowLedger(dir);
+  if (process.env.SYSTEM_ONE_SHADOW_LOG === "1") return new ShadowLedger(join(BASE_DIR, "shadow"));
+  return undefined;
+}
+
 export function createHandler(opts: ServeOptions = {}) {
   const engine = opts.engine ?? new SystemOne();
   const token = opts.token ?? process.env.SYSTEM_ONE_TOKEN;
   const maxInflight = opts.maxInflight ?? Number(process.env.SYSTEM_ONE_MAX_INFLIGHT ?? 8);
   let inflight = 0;
+  const ledger = shadowLedger();
   const decision = opts.decision ?? new DecisionRouter({
     provider: new LocalLogitReadoutProvider(engine, {
       model_ref: engine.config.runtimeModel, model_revision: "unpinned", tokenizer_id: "unknown", quantization: "unknown", runtime_backend: engine.config.runtimeUrl.includes(":11434") ? "ollama" : "openai-compat",
     }),
     manifests: loadManifests(),
+    ledger,
     mode: process.env.ALLTERNIT_S1_MODE === "live" ? "live" : "shadow",
   });
 
@@ -74,6 +87,14 @@ export function createHandler(opts: ServeOptions = {}) {
       } catch (e) {
         return err(500, "api_error", (e as Error).message);
       }
+    }
+    if (url.pathname === "/v1/decision/outcome" && req.method === "POST") {
+      // Ground truth from deterministic code: {decision_id|subject_ref, question_id?, truth, source}
+      if (!ledger) return err(409, "invalid_request_error", "shadow ledger disabled (set ALLTERNIT_S1_SHADOW_DIR)");
+      let b: any;
+      try { b = await req.json(); } catch { return err(422, "invalid_request_error", "body is not valid JSON"); }
+      try { return json(200, ledger.recordOutcome({ decision_id: b?.decision_id, subject_ref: b?.subject_ref, question_id: b?.question_id, truth: b?.truth, source: b?.source })); }
+      catch (e) { return err(422, "invalid_request_error", (e as Error).message); }
     }
     if (url.pathname !== "/v1/systemone") return err(404, "not_found_error", `no route ${req.method} ${url.pathname}`);
     if (req.method !== "POST") return err(404, "not_found_error", "use POST /v1/systemone");

@@ -199,3 +199,31 @@ Its only calibration logic is the 5-bin reliability table, already covered by `m
 Operations served by `LocalLogitReadoutProvider`: BELIEF/GATE/VERIFY (yes/no), CHOICE, SCORE, ESTIMATE (expected level), RANK (order by P(best)), SUBSET (independent P(include), calibrated per option), PAIR_SCORE (exactly 2 candidates, both orders averaged).
 
 Python side (in this repo): `domains/computer-use/core/core/{decision_head,laya_head,semif_head}.py` are in-process `DecisionHead` backends for the computer-use planning loop, not servers. They stay as thin adapters (backend profiles of kind `decoder_readout` / `schema_encoder`) to be consumed through a `DecisionReadoutProvider`; no second server is kept.
+
+## Calibration pipeline (Q22): from shadow logs to a live primitive
+
+S1 stays in shadow until a primitive has a gate-passing calibration manifest built from REAL labeled outcomes. Nothing here generates data; synthetic fixtures exist only in `test/calibrate.test.ts`. Model agreement is never a metric.
+
+**1. Data accumulates in shadow.** Set `ALLTERNIT_S1_SHADOW_DIR` (or `SYSTEM_ONE_SHADOW_LOG=1` for `~/.allternit/system-one/shadow`) on the server. Every `POST /v1/decision` then appends a record to `decisions/<day>.jsonl`: raw (uncalibrated) readout, options, scope (model/revision/runtime/question/candidate hashes), a SHA-256 of the state (never the state), and `x-decision_id` in the response extensions. Set `request.extensions["x-primitive_id"]` and, for batch joins, `x-subject_ref` (a test-run or tool-call id).
+
+**2. Deterministic code reports ground truth.** When the parser/test/verifier later settles the answer, record it (source is mandatory):
+
+```
+POST /v1/decision/outcome  {"decision_id"|"subject_ref", "question_id"?, "truth": "<candidate id>", "source": "verifier:tests"}
+system-one outcome --truth <candidate_id> --source parser:tsc --decision-id <id>   # or --subject-ref <ref>
+```
+
+A decision with no outcome is never a row. The latest outcome per decision wins; outcomes whose truth is not one of the decision's options, and SUBSET (independent) decisions, are skipped and counted.
+
+**3. Harvest and calibrate.**
+
+```
+system-one harvest   --out data.jsonl [--primitive dec.choice] [--model <ref>]
+system-one calibrate --data data.jsonl --primitive dec.choice --model <ref> [--holdout 0.4] [--strict] [--manifests path] [--report path]
+```
+
+`calibrate` groups rows by exact scope (a manifest binds to its scope fingerprint, so candidate sets must be stable per question), splits by time (newest 40% held out), fits temperature on the earlier part, picks the auto-act confidence floor on the earlier part, then computes ECE, Brier, NLL, accuracy, F1, coverage-at-risk, flip/order sensitivity (when the dataset carries `probs_flipped`/`probs_reordered`) and runs the Q22 gate on the held-out part. Pass: the manifest is appended atomically (temp file + rename) to `ALLTERNIT_S1_MANIFESTS` (a JSON array, created if missing). Fail: nothing is written, exit code 3, and `<data>.calibration-report.json` says why and roughly what is missing.
+
+**4. Go live, per primitive.** With the manifest in `ALLTERNIT_S1_MANIFESTS` (the ModelPool reads the same file) set `ALLTERNIT_S1_MODE=live` and restart. `AUTO` still needs the caller to attest reversibility and confidence inside the calibrated region; anything outside the scope or coverage abstains. Hard policy and deterministic verification stay authoritative.
+
+**How much data.** Floors are held-out n >= 300 and auto-act subset n >= 100, so with a 40% hold-out expect roughly 750 to 1,000+ labeled rows per scope, more if few decisions are high-confidence. The auto-act subset must also show <= 5% error and ECE <= 0.05 on the held-out part. Too little data fails cleanly; a weak model fails regardless of volume.
