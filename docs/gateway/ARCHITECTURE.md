@@ -74,7 +74,7 @@ Mirror mode has an engine (`platform/packages/agent-gateway/src/mirror.ts`) but 
 | Channels | `cmd/allternit-api/src/{channel_gateway,channel_transports,teams_auth,discord_gateway}.rs` |
 | Facades | `cmd/allternit-api/src/{aai_facade,a2a_routes,mcp_server_routes}.rs`; SDKs `platform/packages/aai-sdk`, `platform/python/allternit-aai` |
 | Vendor CLI groundwork | `cmd/gizzi-code/src/runtime/session/{vendor-message,vendor-session}.ts`; routes `POST /:sessionID/vendor-message` in `server/routes/session.ts`, `POST /v1/agent-sessions/:sessionID/vendor-message` in `agent-compat.ts` |
-| Migrations | `cmd/allternit-api/migrations/V198__agent_gateway_bindings.sql`, `V199__gateway_runner.sql`, `V200__channel_message_log.sql` |
+| Migrations | `cmd/allternit-api/migrations/V198__agent_gateway_bindings.sql`, `V199__gateway_runner.sql`, `V200__channel_message_log.sql`, `V201__channel_binding_names.sql` |
 | UI | allternit-ai repo, `docs/gateway-ui.md` |
 
 ## 5. Request flow: one vendor turn

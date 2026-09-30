@@ -91,7 +91,7 @@ export ALLTERNIT_ENCRYPTION_KEY=$(openssl rand -hex 32)   # needed to store user
 cargo run -p allternit-api                       # uses the shared CARGO_TARGET_DIR, see OPERATIONS.md
 ```
 
-On startup the refinery migrations apply V198, V199 and V200 ([OPERATIONS.md](OPERATIONS.md#migrations)). Every request below needs `Authorization: Bearer <your user token>`, the same token the web app sends. Resources are owner-scoped: another user's id returns 404.
+On startup the refinery migrations apply V198, V199, V200 and V201 ([OPERATIONS.md](OPERATIONS.md#migrations)). Every request below needs `Authorization: Bearer <your user token>`, the same token the web app sends. Resources are owner-scoped: another user's id returns 404.
 
 ```bash
 export API=http://127.0.0.1:18013/api/v1 ; export UT=...   # user token

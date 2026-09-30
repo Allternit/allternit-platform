@@ -246,7 +246,7 @@ pub(crate) const REMOTE_COLS: &str = "id, owner, thread_id, generation, bot_id, 
     created_at, updated_at, closed_at";
 const CHAN_COLS: &str = "id, owner, thread_id, provider, account_binding_id, external_workspace_id, external_channel_id, \
     external_conversation_id, external_thread_id, canonical_url, bidirectional, read_only, posting_identity_id, \
-    last_inbound_cursor, last_outbound_cursor, sync_state, created_at, updated_at";
+    last_inbound_cursor, last_outbound_cursor, sync_state, channel_name, workspace_name, created_at, updated_at";
 const GAP_COLS: &str = "id, owner, vendor, capability, surface, fallback_used, severity, status, first_seen_at, \
     last_seen_at, occurrences, sample_ref";
 
@@ -339,7 +339,9 @@ pub fn agent_gateway_router() -> Router<Arc<AppState>> {
         .route("/channel-bindings/:id", patch(patch_channel))
         .route("/vendor-packs/:vendor/gaps", post(record_gap).get(list_gaps))
         .route("/vendor-packs/:vendor/parity", get(parity))
-        .route("/vendor-pack-gaps/:id", patch(patch_gap));
+        .route("/vendor-pack-gaps/:id", patch(patch_gap))
+        .route("/bots/:bot_id/vendor-memory", get(vendor_memory_h))
+        .route("/bots/:bot_id/vendor-memory/:record_id/promote", post(promote_memory_h));
     Router::new().nest("/gateway", g)
 }
 
@@ -394,6 +396,7 @@ async fn create_account(State(state): State<Arc<AppState>>, Extension(user): Ext
 #[derive(Deserialize)]
 struct AccountFilter {
     vendor: Option<String>,
+    state: Option<String>,
 }
 
 async fn list_accounts(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Query(q): Query<AccountFilter>) -> Response {
@@ -401,8 +404,8 @@ async fn list_accounts(State(state): State<Arc<AppState>>, Extension(user): Exte
         let conn = db.connect()?;
         let v = rows(
             &conn,
-            &format!("SELECT {ACCT_COLS} FROM provider_account_bindings WHERE owner = ?1 AND (?2 IS NULL OR vendor = ?2) ORDER BY created_at"),
-            &[&user.user_id, &q.vendor],
+            &format!("SELECT {ACCT_COLS} FROM provider_account_bindings WHERE owner = ?1 AND (?2 IS NULL OR vendor = ?2) AND (?3 IS NULL OR state = ?3) ORDER BY created_at"),
+            &[&user.user_id, &q.vendor, &q.state],
         )?;
         ok(json!({ "accounts": v }))
     })
@@ -563,22 +566,15 @@ pub(crate) async fn discover_agents(db: &DbHandle, tx: &dyn crate::gateway_runne
         get_account(&conn, owner, aid).map_err(|ApiErr(s, v)| (s, "NOT_FOUND".to_string(), v["error"].as_str().unwrap_or("error").to_string()))?
     };
     let binding = json!({ "type": "vendor", "vendor": s(&acct, "vendor"), "accountBindingId": aid });
-    let v = crate::gateway_runner::vcall(db, tx, owner, "agent.list", &binding, json!({})).await.map_err(|e| {
-        let status = match e.code.as_str() {
-            "AUTH_REQUIRED" | "AUTH_REVOKED" => StatusCode::UNAUTHORIZED,
-            "RATE_LIMITED" => StatusCode::TOO_MANY_REQUESTS,
-            "LANE_BLOCKED" | "BOT_DETECTED" | "BOT_DETECTION" | "ACCOUNT_RISK" => StatusCode::FORBIDDEN,
-            "INTERNAL" => StatusCode::INTERNAL_SERVER_ERROR,
-            _ => StatusCode::BAD_GATEWAY,
-        };
-        (status, e.code, e.human_message)
-    })?;
+    let v = crate::gateway_runner::vcall(db, tx, owner, "agent.list", &binding, json!({})).await.map_err(map_aai_err)?;
     let list = v["agents"].as_array().or_else(|| v.as_array()).cloned().unwrap_or_default();
     Ok(list
         .iter()
         .filter_map(|a| {
-            let ext = a["externalAgentId"].as_str().or_else(|| a["id"].as_str())?;
-            let mut o = json!({ "externalAgentId": ext, "name": a["name"].as_str().unwrap_or(ext) });
+            // The AAI host lists `{agentId, displayName}`; older adapters used `externalAgentId|id` and `name`.
+            let ext = a["agentId"].as_str().or_else(|| a["externalAgentId"].as_str()).or_else(|| a["id"].as_str())?;
+            let name = a["displayName"].as_str().or_else(|| a["name"].as_str()).unwrap_or(ext);
+            let mut o = json!({ "externalAgentId": ext, "name": name });
             if let Some(d) = a["description"].as_str() {
                 o["description"] = json!(d);
             }
@@ -853,6 +849,8 @@ struct CreateChannel {
     bidirectional: Option<bool>,
     read_only: Option<bool>,
     posting_identity_id: Option<String>,
+    channel_name: Option<String>,
+    workspace_name: Option<String>,
 }
 
 async fn create_channel(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(thread_id): Path<String>, Json(b): Json<CreateChannel>) -> Response {
@@ -868,11 +866,11 @@ async fn create_channel(State(state): State<Arc<AppState>>, Extension(user): Ext
         conn.execute(
             "INSERT INTO channel_conversation_bindings (id, owner, thread_id, provider, account_binding_id, external_workspace_id,
                 external_channel_id, external_conversation_id, external_thread_id, canonical_url, bidirectional, read_only,
-                posting_identity_id, sync_state, created_at, updated_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,'LIVE',?14,?14)",
+                posting_identity_id, channel_name, workspace_name, sync_state, created_at, updated_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?15,?16,'LIVE',?14,?14)",
             params![cid, owner, thread_id, b.provider, b.account_binding_id, b.external_workspace_id, b.external_channel_id,
                     b.external_conversation_id, b.external_thread_id, b.canonical_url, b.bidirectional.unwrap_or(true) as i64,
-                    b.read_only.unwrap_or(false) as i64, b.posting_identity_id, now()],
+                    b.read_only.unwrap_or(false) as i64, b.posting_identity_id, now(), b.channel_name, b.workspace_name],
         )?;
         let row = one(&conn, &format!("SELECT {CHAN_COLS} FROM channel_conversation_bindings WHERE id = ?1"), &[&cid])?;
         Ok((StatusCode::CREATED, json!({ "binding": row })))
@@ -897,6 +895,8 @@ struct PatchChannel {
     last_inbound_cursor: Option<String>,
     last_outbound_cursor: Option<String>,
     read_only: Option<bool>,
+    channel_name: Option<String>,
+    workspace_name: Option<String>,
 }
 
 async fn patch_channel(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(cid): Path<String>, Json(b): Json<PatchChannel>) -> Response {
@@ -913,8 +913,9 @@ async fn patch_channel(State(state): State<Arc<AppState>>, Extension(user): Exte
         conn.execute(
             "UPDATE channel_conversation_bindings SET sync_state = COALESCE(?1, sync_state),
                 last_inbound_cursor = COALESCE(?2, last_inbound_cursor), last_outbound_cursor = COALESCE(?3, last_outbound_cursor),
-                read_only = COALESCE(?4, read_only), updated_at = ?5 WHERE id = ?6",
-            params![b.sync_state, b.last_inbound_cursor, b.last_outbound_cursor, b.read_only.map(|x| x as i64), now(), cid],
+                read_only = COALESCE(?4, read_only), channel_name = COALESCE(?7, channel_name),
+                workspace_name = COALESCE(?8, workspace_name), updated_at = ?5 WHERE id = ?6",
+            params![b.sync_state, b.last_inbound_cursor, b.last_outbound_cursor, b.read_only.map(|x| x as i64), now(), cid, b.channel_name, b.workspace_name],
         )?;
         let row = one(&conn, &format!("SELECT {CHAN_COLS} FROM channel_conversation_bindings WHERE id = ?1"), &[&cid])?;
         ok(json!({ "binding": row }))
@@ -998,16 +999,30 @@ async fn list_gaps(State(state): State<Arc<AppState>>, Extension(user): Extensio
 
 #[derive(Deserialize)]
 struct PatchGap {
-    status: String,
+    status: Option<String>,
+    severity: Option<String>,
 }
 
 async fn patch_gap(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(gid): Path<String>, Json(b): Json<PatchGap>) -> Response {
     run(&state, move |db| {
-        if !GAP_STATUSES.contains(&b.status.as_str()) {
-            return Err(ApiErr::bad(format!("status must be one of {GAP_STATUSES:?}")));
+        if b.status.is_none() && b.severity.is_none() {
+            return Err(ApiErr::bad("nothing to update: send status and/or severity"));
+        }
+        if let Some(st) = &b.status {
+            if !GAP_STATUSES.contains(&st.as_str()) {
+                return Err(ApiErr::bad(format!("status must be one of {GAP_STATUSES:?}")));
+            }
+        }
+        if let Some(sev) = &b.severity {
+            if !GAP_SEVERITIES.contains(&sev.as_str()) {
+                return Err(ApiErr::bad(format!("severity must be one of {GAP_SEVERITIES:?}")));
+            }
         }
         let conn = db.connect()?;
-        let n = conn.execute("UPDATE vendor_pack_gaps SET status = ?1 WHERE id = ?2 AND owner = ?3", params![b.status, gid, user.user_id])?;
+        let n = conn.execute(
+            "UPDATE vendor_pack_gaps SET status = COALESCE(?1, status), severity = COALESCE(?2, severity) WHERE id = ?3 AND owner = ?4",
+            params![b.status, b.severity, gid, user.user_id],
+        )?;
         if n == 0 {
             return Err(ApiErr::nf("gap not found"));
         }
@@ -1026,6 +1041,143 @@ async fn parity(State(state): State<Arc<AppState>>, Extension(user): Extension<A
         ok(json!({ "vendor": vendor, "parity": parity_of(&pairs), "openGaps": open, "blockingGaps": blocking }))
     })
     .await
+}
+
+// ---------------------------------------------------------------- vendor memory
+// Vendor memory is a separate partition (authority "vendor"): it is read through
+// `agent.memory`, never merged into Allternit memory silently, and only an
+// explicit human promote copies a record into a native note (`memory.promoted`).
+
+type GwErr = (StatusCode, String, String);
+
+fn map_aai_err(e: crate::gateway_runner::AaiError) -> GwErr {
+    // `aaiErrorCodeSchema` (subscription-fabric-contracts agent.ts), plus the local
+    // transport's own INTERNAL. Anything else is an unknown vendor failure.
+    let status = match e.code.as_str() {
+        "AUTH_REQUIRED" | "AUTH_REVOKED" => StatusCode::UNAUTHORIZED,
+        "RATE_LIMITED" => StatusCode::TOO_MANY_REQUESTS,
+        "LANE_BLOCKED" | "POLICY_DENIED" => StatusCode::FORBIDDEN,
+        "CONTEXT_NOT_FOUND" => StatusCode::NOT_FOUND,
+        "CONTEXT_BUSY" | "APPROVAL_REQUIRED" | "SYNC_CONFLICT" => StatusCode::CONFLICT,
+        "UNSUPPORTED" => StatusCode::NOT_IMPLEMENTED,
+        "VENDOR_UNAVAILABLE" | "ADAPTER_DRIFT" => StatusCode::SERVICE_UNAVAILABLE,
+        "INTERNAL" => StatusCode::INTERNAL_SERVER_ERROR,
+        _ => StatusCode::BAD_GATEWAY,
+    };
+    (status, e.code, e.human_message)
+}
+
+/// The vendor-memory view for a vendor-backed bot. 404 for native or unknown bots.
+pub(crate) async fn read_vendor_memory(db: &DbHandle, tx: &dyn crate::gateway_runner::AaiTransport, owner: &str, bot_id: &str) -> Result<Value, GwErr> {
+    let nf = || (StatusCode::NOT_FOUND, "NOT_FOUND".to_string(), "vendor-backed bot not found".to_string());
+    let bx = {
+        let conn = db.connect().map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL".to_string(), "database error".to_string()))?;
+        load_exec(&conn, owner, bot_id).map_err(|_| nf())?
+    };
+    if s(&bx, "type") != "vendor" {
+        return Err(nf());
+    }
+    let vendor = s(&bx, "vendor");
+    let caps = bx["capabilities"].clone();
+    if caps.pointer("/memory/opaque").and_then(Value::as_bool).unwrap_or(false) || crate::gateway_placement::has_capability(&caps, "memory.opaque") {
+        return Ok(json!({ "vendor": vendor, "authority": "vendor", "observability": "opaque", "promotable": false,
+            "reason": "this vendor keeps memory it does not let Allternit read" }));
+    }
+    let binding = json!({ "type": "vendor", "vendor": vendor, "accountBindingId": bx["accountBindingId"], "externalAgentId": bx["externalAgentId"] });
+    let v = match crate::gateway_runner::vcall(db, tx, owner, "agent.memory", &binding, json!({ "op": "read" })).await {
+        Ok(v) => v,
+        Err(e) if e.code == "UNSUPPORTED" => {
+            return Ok(json!({ "vendor": vendor, "authority": "vendor", "observability": "unavailable", "promotable": false, "reason": e.human_message }));
+        }
+        Err(e) => return Err(map_aai_err(e)),
+    };
+    if v["opaque"].as_bool().unwrap_or(false) {
+        return Ok(json!({ "vendor": vendor, "authority": "vendor", "observability": "opaque", "promotable": false,
+            "reason": "this vendor keeps memory it does not let Allternit read" }));
+    }
+    let list = v["records"].as_array().or_else(|| v.as_array()).cloned().unwrap_or_default();
+    let records: Vec<Value> = list
+        .iter()
+        .filter_map(|r| {
+            let text = r["text"].as_str().or_else(|| r["content"].as_str())?;
+            let rid = r["id"].as_str().or_else(|| r["remoteRef"].as_str())?;
+            let mut o = json!({ "id": rid, "scope": r["scope"].as_str().unwrap_or("bot"), "text": text });
+            if let Some(x) = r["remoteRef"].as_str() {
+                o["remoteRef"] = json!(x);
+            }
+            if let Some(x) = r["updatedAt"].as_str() {
+                o["updatedAt"] = json!(x);
+            }
+            Some(o)
+        })
+        .collect();
+    Ok(json!({ "vendor": vendor, "authority": "vendor", "observability": "readable", "records": records, "promotable": true }))
+}
+
+/// Explicit, human-driven copy of one vendor record into a native note.
+pub(crate) async fn promote_vendor_memory(db: &DbHandle, tx: &dyn crate::gateway_runner::AaiTransport, owner: &str, bot_id: &str, record_id: &str, scope: &str) -> Result<Value, GwErr> {
+    if !["bot", "project", "thread"].contains(&scope) {
+        return Err((StatusCode::BAD_REQUEST, "BAD_REQUEST".into(), "scope must be bot|project|thread".into()));
+    }
+    let view = read_vendor_memory(db, tx, owner, bot_id).await?;
+    if view["observability"] != "readable" {
+        return Err((StatusCode::CONFLICT, "NOT_PROMOTABLE".into(), view["reason"].as_str().unwrap_or("vendor memory is not readable").to_string()));
+    }
+    let rec = view["records"].as_array().and_then(|a| a.iter().find(|r| r["id"] == record_id).cloned())
+        .ok_or((StatusCode::NOT_FOUND, "NOT_FOUND".to_string(), "vendor memory record not found".to_string()))?;
+    let vendor = s(&view, "vendor");
+    let remote_ref = rec["remoteRef"].as_str().unwrap_or(record_id).to_string();
+    let text = s(&rec, "text");
+    let conn = db.connect().map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL".to_string(), "database error".to_string()))?;
+    let ref_tag = format!("remoteRef:{remote_ref}");
+    let tags = json!(["source:vendor", format!("vendor:{vendor}"), ref_tag, format!("bot:{bot_id}"), format!("scope:{scope}")]);
+    // Promoting the same record twice never duplicates it.
+    let dup: Option<String> = conn
+        .query_row(
+            "SELECT id FROM memory_notes WHERE user_id = ?1 AND tags LIKE ?2 AND tags LIKE ?3",
+            params![owner, format!("%\"{ref_tag}\"%"), format!("%\"bot:{bot_id}\"%")],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL".to_string(), e.to_string()))?;
+    if let Some(nid) = dup {
+        return Ok(json!({ "noteId": nid, "promoted": false, "alreadyPromoted": true }));
+    }
+    let nid = format!("mn_{}", uuid::Uuid::new_v4().simple());
+    let title: String = text.chars().take(80).collect();
+    conn.execute(
+        "INSERT INTO memory_notes (id, user_id, note_type, title, content, tags, entity_id) VALUES (?1, ?2, 'general', ?3, ?4, ?5, NULL)",
+        params![nid, owner, title, text, tags.to_string()],
+    )
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL".to_string(), e.to_string()))?;
+    ledger(db, owner, bot_id, None, "memory.promoted", json!({
+        "source": "vendor", "vendor": vendor, "remoteRef": remote_ref, "recordId": record_id, "scope": scope, "noteId": nid, "authority": "allternit", "actor": "human" }));
+    Ok(json!({ "noteId": nid, "promoted": true }))
+}
+
+fn gw_err(e: GwErr) -> Response {
+    (e.0, Json(json!({ "error": e.2, "code": e.1 }))).into_response()
+}
+
+async fn vendor_memory_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(bot_id): Path<String>) -> Response {
+    let tx = crate::gateway_runner::transport(&state);
+    match read_vendor_memory(&state.db, tx.as_ref(), &user.user_id, &bot_id).await {
+        Ok(v) => (StatusCode::OK, Json(v)).into_response(),
+        Err(e) => gw_err(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct PromoteBody {
+    scope: String,
+}
+
+async fn promote_memory_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path((bot_id, record_id)): Path<(String, String)>, Json(b): Json<PromoteBody>) -> Response {
+    let tx = crate::gateway_runner::transport(&state);
+    match promote_vendor_memory(&state.db, tx.as_ref(), &user.user_id, &bot_id, &record_id, &b.scope).await {
+        Ok(v) => (StatusCode::OK, Json(v)).into_response(),
+        Err(e) => gw_err(e),
+    }
 }
 
 fn err_resp(status: StatusCode, message: &str) -> Response {
@@ -1409,5 +1561,175 @@ mod tests {
         assert_eq!(v["bindings"].as_array().unwrap().len(), 2);
         let (_, other) = call(&st, "GET", "/execution-bindings", "user-b", None).await;
         assert_eq!(other["bindings"].as_array().unwrap().len(), 0);
+    }
+
+    // ---- vendor memory
+
+    struct Mem(Result<Value, (&'static str, &'static str)>);
+    #[async_trait::async_trait]
+    impl crate::gateway_runner::AaiTransport for Mem {
+        async fn call(&self, _o: &str, op: &str, _b: &Value, _i: Value) -> Result<Value, crate::gateway_runner::AaiError> {
+            assert_eq!(op, "agent.memory");
+            self.0.clone().map_err(|(c, m)| crate::gateway_runner::AaiError::new(c, m))
+        }
+    }
+
+    fn events(st: &Arc<AppState>, ty: &str) -> i64 {
+        st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM bot_events WHERE bot_id='bot-1' AND event_type=?1", params![ty], |r| r.get(0)).unwrap()
+    }
+
+    async fn bound(tag: &str) -> Arc<AppState> {
+        let st = setup(tag).await;
+        let aid = account(&st).await;
+        connect(&st, &aid).await;
+        bind(&st, "bot-1", &aid).await;
+        st
+    }
+
+    #[tokio::test]
+    async fn vendor_memory_readable_opaque_unavailable_and_native_404() {
+        let st = bound("vmem").await;
+        let ok = Mem(Ok(json!({ "records": [{ "id": "r1", "scope": "bot", "text": "likes tea", "remoteRef": "vm-1", "updatedAt": "2026-01-01" }, { "text": "no id" }] })));
+        let v = read_vendor_memory(&st.db, &ok, "user-a", "bot-1").await.unwrap();
+        assert_eq!((v["authority"].as_str(), v["observability"].as_str(), v["promotable"].as_bool()), (Some("vendor"), Some("readable"), Some(true)));
+        assert_eq!(v["records"].as_array().unwrap().len(), 1);
+        assert_eq!(v["records"][0]["remoteRef"], "vm-1");
+        // Opaque via reported flag and via the capability snapshot (no records either way).
+        let v = read_vendor_memory(&st.db, &Mem(Ok(json!({ "opaque": true }))), "user-a", "bot-1").await.unwrap();
+        assert_eq!((v["observability"].as_str(), v["promotable"].as_bool()), (Some("opaque"), Some(false)));
+        assert!(v.get("records").is_none());
+        // The capability snapshot is set when binding (PUT); PATCH only moves state/health.
+        let aid: String = st.db.connect().unwrap().query_row("SELECT account_binding_id FROM bot_execution_bindings WHERE bot_id='bot-1'", [], |r| r.get(0)).unwrap();
+        let (s, v) = call(&st, "PUT", "/bots/bot-1/execution-binding", "user-a", Some(json!({"vendor": "openai", "accountBindingId": aid, "capabilities": {"memory": {"opaque": true}}}))).await;
+        assert!(s == StatusCode::OK || s == StatusCode::CREATED, "{v}");
+        let v = read_vendor_memory(&st.db, &Mem(Err(("INTERNAL", "must not be called"))), "user-a", "bot-1").await.unwrap();
+        assert_eq!(v["observability"], "opaque");
+        // Unsupported -> unavailable with a reason.
+        let v = read_vendor_memory(&st.db, &Mem(Err(("UNSUPPORTED", "no memory op"))), "user-a", "bot-2").await.unwrap_err();
+        assert_eq!(v.0, StatusCode::NOT_FOUND, "unbound/native bot");
+        let st2 = bound("vmem2").await;
+        let v = read_vendor_memory(&st2.db, &Mem(Err(("UNSUPPORTED", "no memory op"))), "user-a", "bot-1").await.unwrap();
+        assert_eq!((v["observability"].as_str(), v["reason"].as_str()), (Some("unavailable"), Some("no memory op")));
+    }
+
+    #[tokio::test]
+    async fn promote_creates_one_native_note_with_provenance_and_one_event() {
+        let st = bound("vprom").await;
+        let m = Mem(Ok(json!({ "records": [{ "id": "r1", "scope": "bot", "text": "likes tea", "remoteRef": "vm-1" }] })));
+        let (s0, _, _) = promote_vendor_memory(&st.db, &m, "user-a", "bot-1", "r1", "galaxy").await.unwrap_err();
+        assert_eq!(s0, StatusCode::BAD_REQUEST);
+        assert_eq!(promote_vendor_memory(&st.db, &m, "user-a", "bot-1", "nope", "bot").await.unwrap_err().0, StatusCode::NOT_FOUND);
+        assert_eq!(events(&st, "memory.promoted"), 0, "reading never promotes");
+        let v = promote_vendor_memory(&st.db, &m, "user-a", "bot-1", "r1", "project").await.unwrap();
+        assert_eq!(v["promoted"], true);
+        let again = promote_vendor_memory(&st.db, &m, "user-a", "bot-1", "r1", "project").await.unwrap();
+        assert_eq!(again["alreadyPromoted"], true);
+        let c = st.db.connect().unwrap();
+        let (n, tags, content): (i64, String, String) = c
+            .query_row("SELECT COUNT(*), MAX(tags), MAX(content) FROM memory_notes WHERE user_id='user-a'", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap();
+        assert_eq!((n, content.as_str()), (1, "likes tea"));
+        assert!(tags.contains("source:vendor") && tags.contains("vendor:openai") && tags.contains("remoteRef:vm-1"), "{tags}");
+        assert_eq!(events(&st, "memory.promoted"), 1);
+        // Opaque memory can never be promoted.
+        let o = Mem(Ok(json!({ "opaque": true })));
+        assert_eq!(promote_vendor_memory(&st.db, &o, "user-a", "bot-1", "r1", "bot").await.unwrap_err().0, StatusCode::CONFLICT);
+    }
+
+    // ---- contract fixes (docs/gateway/CONTRACT_AUDIT.md R1, R3, R7, R8, R9), real TS wire shapes
+
+    /// `agent.list` as the AAI host returns it: a bare array of `{agentId, displayName, vendor, state}`
+    /// (services/subscription-gateway/test/chatgpt-dots-adapter.test.ts).
+    struct HostList;
+    #[async_trait::async_trait]
+    impl crate::gateway_runner::AaiTransport for HostList {
+        async fn call(&self, _o: &str, _op: &str, _b: &Value, _i: Value) -> Result<Value, crate::gateway_runner::AaiError> {
+            Ok(json!([
+                { "agentId": "agent_1:nova-dot", "displayName": "Nova", "vendor": "openai", "state": "ready" },
+                { "agentId": "agent_1:atlas-dot", "displayName": "Atlas", "vendor": "openai", "state": "ready" }
+            ]))
+        }
+    }
+
+    #[tokio::test]
+    async fn r1_discovery_reads_the_hosts_agent_id_and_display_name() {
+        let st = setup("r1").await;
+        let aid = account(&st).await;
+        let agents = discover_agents(&st.db, &HostList, "user-a", &aid).await.unwrap();
+        assert_eq!(agents, vec![json!({ "externalAgentId": "agent_1:nova-dot", "name": "Nova" }), json!({ "externalAgentId": "agent_1:atlas-dot", "name": "Atlas" })]);
+    }
+
+    #[test]
+    fn r3_every_contract_error_code_maps_to_a_status() {
+        let st = |c: &str| map_aai_err(crate::gateway_runner::AaiError::new(c, "m")).0;
+        assert_eq!(st("AUTH_REVOKED"), StatusCode::UNAUTHORIZED);
+        assert_eq!(st("POLICY_DENIED"), StatusCode::FORBIDDEN);
+        assert_eq!(st("CONTEXT_NOT_FOUND"), StatusCode::NOT_FOUND);
+        assert_eq!(st("CONTEXT_BUSY"), StatusCode::CONFLICT);
+        assert_eq!(st("UNSUPPORTED"), StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(st("VENDOR_UNAVAILABLE"), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(st("UNKNOWN"), StatusCode::BAD_GATEWAY);
+        let (_, code, msg) = map_aai_err(crate::gateway_runner::AaiError::new("RATE_LIMITED", "slow down"));
+        assert_eq!((code.as_str(), msg.as_str()), ("RATE_LIMITED", "slow down"));
+    }
+
+    #[tokio::test]
+    async fn r7_channel_bindings_carry_display_names() {
+        let st = setup("r7").await;
+        let (s, v) = call(&st, "POST", "/threads/th-1/channel-bindings", "user-a", Some(json!({"provider": "slack", "externalConversationId": "C1:1.2", "externalChannelId": "C1", "channelName": "#ops", "workspaceName": "Acme"}))).await;
+        assert_eq!(s, StatusCode::CREATED, "{v}");
+        assert_eq!((v["binding"]["channelName"].as_str(), v["binding"]["workspaceName"].as_str()), (Some("#ops"), Some("Acme")));
+        let cid = v["binding"]["id"].as_str().unwrap();
+        let (_, v) = call(&st, "PATCH", &format!("/channel-bindings/{cid}"), "user-a", Some(json!({"channelName": "#ops-2"}))).await;
+        assert_eq!((v["binding"]["channelName"].as_str(), v["binding"]["workspaceName"].as_str()), (Some("#ops-2"), Some("Acme")));
+        let (_, v) = call(&st, "POST", "/threads/th-1/channel-bindings", "user-a", Some(json!({"provider": "slack", "externalConversationId": "C2:1"}))).await;
+        assert!(v["binding"]["channelName"].is_null(), "names are optional");
+    }
+
+    #[tokio::test]
+    async fn r8_accounts_filter_by_state() {
+        let st = setup("r8").await;
+        let a = account(&st).await;
+        connect(&st, &a).await;
+        account(&st).await;
+        let (_, v) = call(&st, "GET", "/provider-accounts?state=CONNECTED", "user-a", None).await;
+        let ids: Vec<&str> = v["accounts"].as_array().unwrap().iter().map(|x| x["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, vec![a.as_str()]);
+        let (_, v) = call(&st, "GET", "/provider-accounts?vendor=openai", "user-a", None).await;
+        assert_eq!(v["accounts"].as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn r9_gap_patch_takes_severity_and_optional_status() {
+        let st = setup("r9").await;
+        let (_, v) = call(&st, "POST", "/vendor-packs/openai/gaps", "user-a", Some(json!({"capability": "c", "surface": "card", "severity": "visual_parity"}))).await;
+        let gid = v["gap"]["id"].as_str().unwrap().to_string();
+        let (s, v) = call(&st, "PATCH", &format!("/vendor-pack-gaps/{gid}"), "user-a", Some(json!({"severity": "data_loss"}))).await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+        assert_eq!((v["gap"]["severity"].as_str(), v["gap"]["status"].as_str()), (Some("data_loss"), Some("open")));
+        let (s, _) = call(&st, "PATCH", &format!("/vendor-pack-gaps/{gid}"), "user-a", Some(json!({"severity": "cosmetic"}))).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+        let (s, _) = call(&st, "PATCH", &format!("/vendor-pack-gaps/{gid}"), "user-a", Some(json!({}))).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn vendor_memory_reads_the_contract_record_shape() {
+        // memoryRecordSchema: {id?, text?, scope, source, vendor?, remoteRef?, authority, promotable}
+        let st = bound("vmemc").await;
+        let m = Mem(Ok(json!([{ "text": "prefers metric", "scope": "bot", "source": "vendor", "vendor": "openai", "remoteRef": "mem_9", "authority": "vendor", "promotable": true }])));
+        let v = read_vendor_memory(&st.db, &m, "user-a", "bot-1").await.unwrap();
+        assert_eq!(v["records"][0]["id"], "mem_9");
+        assert_eq!(v["records"][0]["text"], "prefers metric");
+    }
+
+    #[tokio::test]
+    async fn vendor_memory_is_owner_scoped() {
+        let st = bound("vown").await;
+        let m = Mem(Ok(json!({ "records": [{ "id": "r1", "text": "x" }] })));
+        assert_eq!(read_vendor_memory(&st.db, &m, "user-b", "bot-1").await.unwrap_err().0, StatusCode::NOT_FOUND);
+        assert_eq!(promote_vendor_memory(&st.db, &m, "user-b", "bot-1", "r1", "bot").await.unwrap_err().0, StatusCode::NOT_FOUND);
+        let (s, _) = call(&st, "GET", "/bots/bot-1/vendor-memory", "user-b", None).await;
+        assert!(s == StatusCode::NOT_FOUND, "{s}");
     }
 }
