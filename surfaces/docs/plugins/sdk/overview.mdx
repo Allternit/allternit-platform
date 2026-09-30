@@ -1,0 +1,68 @@
+---
+title: 'Apps SDK overview'
+description: 'One standard for building Allternit Mini apps, built on the open MCP Apps spec'
+---
+
+The Allternit Apps SDK is a set of small packages for building Mini apps. A Mini app has three layers:
+
+| Layer | What it is | Package |
+|---|---|---|
+| **Server** | MCP tools the model calls | [`@allternit/apps-server`](/plugins/sdk/server) |
+| **Views** | Screens shown in chat (`ui://` resources) | [`@allternit/apps-ui`](/plugins/sdk/ui), [`@allternit/apps-bridge`](/plugins/sdk/bridge) |
+| **Look pack** | Design tokens (DTCG) the Views read | [`@allternit/look-packs`](/plugins/sdk/look-packs) |
+
+The [`allternit` CLI](/plugins/sdk/cli) scaffolds, runs, tests, packages and submits an app.
+
+## Built on the open standard
+
+Everything the SDK produces is plain MCP Apps ([SEP-1865](https://github.com/modelcontextprotocol/ext-apps)): a streamable-HTTP MCP server whose tools point at `ui://` resources. The SDK adds no private protocol. An app built with it runs in any host that supports MCP Apps; Allternit-only features ([`window.allternit`](/plugins/reference/window-allternit)) are optional and feature-detected.
+
+## The packages
+
+<CardGroup cols={2}>
+  <Card title="apps-server" href="/plugins/sdk/server">`defineApp`, `appTool`, `view`, a streamable-HTTP starter and the `allternit.app.json` manifest.</Card>
+  <Card title="apps-bridge" href="/plugins/sdk/bridge">A typed, dependency-free client for the standard `ui/*` calls, plus `window.allternit` and a compatibility shim.</Card>
+  <Card title="apps-ui" href="/plugins/sdk/ui">Web components for Views: Card, Table, List, Form, Detail.</Card>
+  <Card title="look-packs" href="/plugins/sdk/look-packs">DTCG token types, a validator, CSS variable output and a contrast check.</Card>
+</CardGroup>
+
+## The manifest
+
+`defineApp` emits one manifest, `allternit.app.json`, listing the tools, Views, look pack and permissions. It carries the same `plugin.json` and `mcp.json` fields the [plugin package](/plugins/publish/package) uses, so the package is built from it with no second source of truth.
+
+```json allternit.app.json
+{
+  "schema": "allternit.app/1",
+  "name": "Weather",
+  "version": "0.1.0",
+  "server": { "name": "weather", "transport": "streamable-http", "path": "/mcp" },
+  "tools": [
+    {
+      "name": "show_weather",
+      "title": "Show weather card",
+      "description": "Display a weather card for a city. Call only when the user wants to see it.",
+      "inputs": ["city"],
+      "annotations": { "readOnlyHint": true, "destructiveHint": false },
+      "view": "ui://weather/card.html"
+    }
+  ],
+  "views": [
+    {
+      "uri": "ui://weather/card.html",
+      "name": "Weather card",
+      "csp": { "connectDomains": [], "resourceDomains": [] },
+      "prefersBorder": true,
+      "source": "kit",
+      "kit": { "tag": "allternit-detail" }
+    }
+  ],
+  "lookPack": { "id": "weather", "name": "Weather", "tokens": { "color": { "brand": { "$value": "#1f1e1d" } } } },
+  "permissions": { "auth": "none", "network": [], "writes": false, "destructive": false }
+}
+```
+
+`permissions` is derived, not typed by hand: `writes` is true when any tool is not read-only, `destructive` when any tool is destructive, and `network` is every host the Views declare in their CSP. The install prompt and directory review read it.
+
+## Get started
+
+Follow the [Quickstart](/plugins/quickstart).

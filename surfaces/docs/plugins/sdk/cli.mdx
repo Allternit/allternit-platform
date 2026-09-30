@@ -1,0 +1,78 @@
+---
+title: 'allternit CLI'
+description: 'create-allternit-app, allternit dev, test, package and submit'
+---
+
+`@allternit/apps-cli` installs two commands: `allternit` and `create-allternit-app`.
+
+```bash
+npm install --save-dev @allternit/apps-cli
+```
+
+Commands take an optional entry file. By default they look for `server.ts`, `src/server.ts`, `server.js` or `src/server.js`, which must `export default` the result of [`defineApp()`](/plugins/sdk/server#defineapp). TypeScript runs as is.
+
+## `create-allternit-app`
+
+```bash
+npx create-allternit-app weather
+```
+
+Scaffolds the [quickstart](/plugins/quickstart) app (the weather server, a kit View and a look pack) into `./weather`. It refuses a directory that is not empty.
+
+## `allternit dev`
+
+```bash
+npx allternit dev [entry] [--port 3000]
+```
+
+Runs the server, then prints the MCP URL, the manifest URL, the tools and Views, and how to add the server as a connector. Allternit reaches your server from its own infrastructure, so connecting needs a public `https` URL; expose the port through a tunnel.
+
+## `allternit test`
+
+```bash
+npx allternit test [entry] [--url <mcp url>] [--strict]
+```
+
+Runs the directory review rules and checks what a real client sees.
+
+Without `--url` it validates the manifest, runs `app.lint()`, starts the server on a free port, and scans it over MCP: `tools/list`, `resources/list`, and a `resources/read` of every `ui://` View (non-empty HTML, the `text/html;profile=mcp-app` MIME type, the CSP). With `--url` it scans a server that is already running, yours or anyone's.
+
+Checks include: `readOnlyHint` and `destructiveHint` stated and consistent with the tool's name, descriptions that steer the model away from other tools, every tool's View existing, and CSP domains that are exact, minimal and `https`.
+
+Exit code 1 on any error, and on warnings too with `--strict`.
+
+## `allternit package`
+
+```bash
+npx allternit package [entry] --url https://your-host.example.com/mcp [--out app.zip]
+```
+
+Builds the plugin zip: `plugin.json`, `mcp.json` (exactly one streamable-HTTP server), `allternit.app.json` and one generated skill. It refuses to package an app with lint errors, a URL that is not `https`, or an app name over 30 characters. The layout is the one [Package your plugin](/plugins/publish/package) describes.
+
+## `allternit submit`
+
+```bash
+npx allternit domain your-host.example.com           # get the domain-verification token
+npx allternit domain your-host.example.com --check   # after serving it at /.well-known/allternit-apps-challenge
+npx allternit submit app.zip [--dry-run] [--api <url>] [--app-id <id>]
+```
+
+`submit` reads the listing fields from `allternit.submission.json`:
+
+```json allternit.submission.json
+{
+  "longDescription": "What the app does, in full.",
+  "developer": "Acme Ltd",
+  "privacyUrl": "https://example.com/privacy",
+  "termsUrl": "https://example.com/terms",
+  "icon": "https://example.com/icon.png",
+  "screenshots": ["https://example.com/screenshot.png"],
+  "positiveTests": [{ "prompt": "Show me the weather in Tokyo", "expected": "Calls show_weather and shows the card" }],
+  "negativeTests": [{ "prompt": "Write a poem", "expected": "Does not use the app" }],
+  "reviewerCredentials": "test account details for the reviewer"
+}
+```
+
+It needs 5 positive and 3 negative test cases, public `https` privacy and terms URLs, and the same length limits as the directory form. It then scans the hosted server the package points at, and posts the submission for review. Give the token with `--token` or `ALLTERNIT_TOKEN`; it is sent only as a bearer header and never printed. `--dry-run` prints the payload with reviewer credentials redacted and sends nothing.
+
+Submitting puts the **listing** in review. Using your own app does not wait for it. See [Submit and review](/plugins/publish/submit-and-review).

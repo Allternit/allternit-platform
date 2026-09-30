@@ -1,0 +1,68 @@
+---
+title: 'apps-ui'
+description: 'The Allternit view kit: framework-free web components for Views that read look-pack variables'
+---
+
+`@allternit/apps-ui` is the view kit for Views that run **inside** the sandbox. It is five web components: Card, Table, List, Form and Detail.
+
+```bash
+npm install @allternit/apps-ui
+```
+
+## Why web components
+
+A View is a single HTML document with a strict CSP and no build step you can count on. Web components need no framework, no bundler and no runtime dependency: the whole kit is one script (`@allternit/apps-ui/allternit-ui.js`) that you can inline. They also carry their own styles in a shadow root, so a View's CSS cannot break them, and CSS variables from the look pack pass straight through. A React build would add a runtime and a bundling step to every View for no gain, and a host that wants React screens (as Allternit's own chat does for connector tools) renders them itself.
+
+## Using it
+
+With [`view({ kit })`](/plugins/sdk/server#view) you write no HTML: the server inlines the kit and a mount script. In your own HTML:
+
+```html
+<allternit-table id="t"></allternit-table>
+<script>/* inline allternit-ui.js here */</script>
+<script>
+  const t = document.getElementById("t");
+  t.fields = { columns: ["name", "status"], labels: { status: "State" } };
+  t.data = [{ name: "Build", status: "passing" }];
+</script>
+```
+
+Or from TypeScript, with types:
+
+```ts
+import { mount } from "@allternit/apps-ui";
+
+mount("allternit-card", document.body, { name: "Ada", role: "Admin" }, { title: "name" });
+```
+
+Each element has two properties: `data` and `fields`. `fields` says where to find things; every value is a key into the data, never code.
+
+| Element | `data` | `fields` used |
+|---|---|---|
+| `<allternit-card>` | an object | `title`, `subtitle`, `description`, `url`, `image`, `meta`, `labels` |
+| `<allternit-detail>` | an object | `title`, `columns`, `labels` |
+| `<allternit-table>` | an array of objects (first 200 rows shown) | `columns`, `labels` |
+| `<allternit-list>` | an array of objects or strings (first 100 shown) | `title`, `subtitle`, `url` |
+| `<allternit-form>` | `{ fields: [{ name, label?, type?, required?, options?, value? }], submitLabel? }` | — |
+
+A form fires `allternit-submit` with `{ values }` in `detail`. With `view({ kit: { submitTool } })` the mount script calls that tool with the values.
+
+## Safety
+
+Tool output is untrusted. The kit writes data only as text, never as markup. Links and images must be `https`; anything else (`javascript:`, `data:`, `http:`) is dropped, and links open with `rel="noopener noreferrer"`. A component that cannot render its data shows an empty state instead of throwing.
+
+## Look
+
+Every color, radius, spacing and font comes from a look-pack variable with the Allternit default as fallback, so a View with no pack still looks right:
+
+| Variable | Default |
+|---|---|
+| `--vp-color-surface` | white |
+| `--vp-color-text`, `--vp-color-text-muted` | neutral ink |
+| `--vp-color-brand`, `--vp-color-on-brand` | neutral, for buttons |
+| `--vp-color-border`, `--vp-color-fill` | neutral hairlines and fills |
+| `--vp-radius-card` | `10px` |
+| `--vp-spacing-sm`, `--vp-spacing-md` | `8px`, `12px` |
+| `--vp-font-body` | system UI |
+
+Focus rings use the brand color, buttons only animate when the user has not asked for reduced motion, and tables use real `th scope="col"` headers. See [Look packs](/plugins/sdk/look-packs).

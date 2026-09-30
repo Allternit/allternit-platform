@@ -431,6 +431,17 @@
             ]
           },
           {
+            "group": "Apps SDK",
+            "pages": [
+              "plugins/sdk/overview",
+              "plugins/sdk/server",
+              "plugins/sdk/bridge",
+              "plugins/sdk/ui",
+              "plugins/sdk/look-packs",
+              "plugins/sdk/cli"
+            ]
+          },
+          {
             "group": "Build",
             "pages": [
               "plugins/develop/mcp-server",
@@ -458,7 +469,8 @@
           {
             "group": "Reference",
             "pages": [
-              "plugins/reference/window-allternit"
+              "plugins/reference/window-allternit",
+              "plugins/sdk/raw-mcp-quickstart"
             ]
           }
         ]

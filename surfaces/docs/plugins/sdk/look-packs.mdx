@@ -1,0 +1,89 @@
+---
+title: 'look-packs'
+description: 'DTCG design tokens for Mini apps: types, a validator, CSS variable output and a contrast check'
+---
+
+A look pack is a set of [DTCG](https://www.designtokens.org/) design tokens that styles an app's Views. `@allternit/look-packs` defines the type, validates it, turns it into CSS variables and warns about unreadable color pairs.
+
+```bash
+npm install @allternit/look-packs
+```
+
+## A pack
+
+```ts
+import type { LookPack } from "@allternit/look-packs";
+
+const pack: LookPack = {
+  id: "acme",                 // lowercase letters, digits, single dashes
+  name: "Acme",
+  tokens: {
+    color: {
+      $type: "color",
+      surface: { $value: "#ffffff" },
+      text: { $value: "#111111" },
+      brand: { $value: "#0b5fff" },
+      "on-brand": { $value: "#ffffff" },
+    },
+    radius: { card: { $value: "8px" } },
+    spacing: { sm: { $value: "8px" }, md: { $value: "12px" } },
+    font: { body: { $type: "fontFamily", $value: ["Inter", "sans-serif"] } },
+  },
+  dark: {                     // optional overrides for dark mode
+    color: { $type: "color", surface: { $value: "#111111" }, text: { $value: "#f5f4f2" } },
+  },
+};
+```
+
+Supported groups are color, typography (`font`), radius and spacing. Aliases (`"{color.base}"`) and `$type` inheritance from groups are resolved.
+
+## CSS variables
+
+```ts
+import { toCssVariables, toCss } from "@allternit/look-packs";
+
+toCssVariables(pack.tokens);
+// { "--vp-color-surface": "#ffffff", "--vp-color-brand": "#0b5fff", "--vp-radius-card": "8px", … }
+
+toCss(pack);
+// [data-look-pack="acme"] { --vp-color-surface: #ffffff; … }
+// [data-theme="dark"] [data-look-pack="acme"] { … }
+```
+
+Token paths become `--vp-<path>`: `color.on-brand` is `--vp-color-on-brand`. The [view kit](/plugins/sdk/ui#look) reads these names.
+
+Values that could break out of a CSS declaration (`;`, braces, `url(`, `@import`, comments) are dropped and reported, never emitted. Alias cycles and unknown aliases are reported too.
+
+## Validate
+
+```ts
+import { validateLookPack } from "@allternit/look-packs";
+
+const findings = validateLookPack(pack); // { severity, code, message, subject? }[]
+```
+
+Errors (bad id, missing name, tokens that do not import) block use. `defineApp` throws on errors.
+
+## Contrast check
+
+```ts
+import { checkContrast, contrastRatio } from "@allternit/look-packs";
+
+contrastRatio("#777777", "#ffffff"); // 4.48
+checkContrast(pack);                 // warnings for pairs under 4.5:1
+```
+
+`checkContrast` measures these foreground/background pairs, in light mode and again with the dark overrides applied, and skips any pair the pack does not define:
+
+| Foreground | Background |
+|---|---|
+| `color.on-brand` | `color.brand` |
+| `color.text` | `color.surface` |
+| `color.text-muted` | `color.surface` |
+| `color.brand` | `color.surface` |
+
+A pair under 4.5:1 is a **warning**, not an error: it shows in `validateLookPack`, `app.lint()` and `allternit test`, and does not block. Colors the checker cannot parse (for example `oklch()`) are reported as `info`, since they cannot be measured here.
+
+## The default look
+
+`ALLTERNIT_DEFAULT_LOOK` is the pack Allternit uses when an app has none: a white surface and neutral ink. Start from it if you only want to change one or two tokens.
