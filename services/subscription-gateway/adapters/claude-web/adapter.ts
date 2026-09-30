@@ -55,6 +55,9 @@ export class ClaudeWebAdapter extends WebChatAdapter {
   async readAccount(_signal: AbortSignal): Promise<AccountObservation> {
     const page = this.attachedPage();
     if (!page) throw new Error("readAccount called before attach()");
+    // tsx wraps the named helpers below in __name(...), absent in the page
+    // (see the SDK's extract.ts).
+    await page.evaluate("globalThis.__name ??= (fn) => fn");
     const read = await page.evaluate(async () => {
       const getJson = async (url: string): Promise<unknown> => {
         try {

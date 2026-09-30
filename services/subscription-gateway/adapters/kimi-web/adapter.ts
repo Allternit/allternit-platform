@@ -54,6 +54,9 @@ export class KimiWebAdapter extends WebChatAdapter {
   async readAccount(_signal: AbortSignal): Promise<AccountObservation> {
     const page = this.attachedPage();
     if (!page) throw new Error("readAccount called before attach()");
+    // tsx wraps the named helpers below in __name(...), absent in the page
+    // (see the SDK's extract.ts).
+    await page.evaluate("globalThis.__name ??= (fn) => fn");
     const read = await page.evaluate(async () => {
       const tok = localStorage.getItem("access_token");
       const rpc = async (svc: string): Promise<unknown> => {
