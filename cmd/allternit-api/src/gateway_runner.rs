@@ -165,7 +165,7 @@ static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 pub(crate) fn transport(state: &Arc<AppState>) -> Arc<dyn AaiTransport> {
     match RUNTIME.get() {
         Some(r) => r.tx.clone(),
-        None => Arc::new(SubsTransport(state.clone())),
+        None => Arc::new(crate::channel_transports::ChannelLaneTransport::new(state.clone(), Arc::new(SubsTransport(state.clone())))),
     }
 }
 
@@ -716,6 +716,10 @@ fn bridge_event(db: &DbHandle, cx: &Cx, remote: &Value, ev: &Value) -> Result<bo
         "adapter": pick("adapter", cx.exec["adapterId"].clone()),
         "lane": pick("lane", remote["lane"].clone()),
         "guarantee": pick("guarantee", json!("best_effort")),
+        // who answered / whose product / over what surface (e.g. Muse / Meta / WhatsApp)
+        "who": pick("who", Value::Null),
+        "whose": pick("whose", Value::Null),
+        "how": pick("how", Value::Null),
         "remoteEventId": remote_event,
         "remoteContextId": pick("remote_context_id", remote["externalContextId"].clone()),
         "causationId": ev.get("causation_id"),

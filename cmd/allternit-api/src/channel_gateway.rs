@@ -41,6 +41,8 @@ pub enum InboundKind {
     ReactionUpdated,
     Edited,
     Deleted,
+    /// Delivery receipt for one of our posts (WhatsApp statuses).
+    Delivery,
 }
 
 impl InboundKind {
@@ -50,6 +52,7 @@ impl InboundKind {
             InboundKind::ReactionUpdated => "channel.reaction.updated",
             InboundKind::Edited => "channel.message.edited",
             InboundKind::Deleted => "channel.message.deleted",
+            InboundKind::Delivery => "channel.message.delivery",
         }
     }
     fn as_str(self) -> &'static str {
@@ -58,6 +61,7 @@ impl InboundKind {
             InboundKind::ReactionUpdated => "reaction",
             InboundKind::Edited => "edited",
             InboundKind::Deleted => "deleted",
+            InboundKind::Delivery => "delivery",
         }
     }
 }
@@ -148,9 +152,10 @@ pub struct BindingRow {
     pub read_only: bool,
     pub bidirectional: bool,
     pub posting_identity: Option<String>,
+    pub account: Option<String>,
 }
 
-const B_COLS: &str = "id, owner, thread_id, provider, external_channel_id, external_workspace_id, external_conversation_id, external_thread_id, last_inbound_cursor, read_only, bidirectional, posting_identity_id";
+const B_COLS: &str = "id, owner, thread_id, provider, external_channel_id, external_workspace_id, external_conversation_id, external_thread_id, last_inbound_cursor, read_only, bidirectional, posting_identity_id, account_binding_id";
 
 fn b_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<BindingRow> {
     Ok(BindingRow {
@@ -166,6 +171,7 @@ fn b_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<BindingRow> {
         read_only: r.get::<_, i64>(9)? != 0,
         bidirectional: r.get::<_, i64>(10)? != 0,
         posting_identity: r.get(11)?,
+        account: r.get(12)?,
     })
 }
 
@@ -291,6 +297,15 @@ pub fn record_inbound(db: &DbHandle, b: &BindingRow, ev: &Inbound) -> Result<Rec
         .map_err(|e| e.to_string())?;
     if inserted == 0 {
         return Ok(Recorded::Duplicate);
+    }
+    if ev.kind == InboundKind::Delivery {
+        let status = ev.text.clone().unwrap_or_default();
+        let to = if status == "failed" { "failed" } else { "confirmed" };
+        let _ = conn.execute(
+            "UPDATE channel_message_log SET state = ?1, updated_at = ?2, detail_json = json_set(detail_json, '$.delivery', ?3)
+             WHERE binding_id = ?4 AND direction = 'outbound' AND remote_id = ?5",
+            params![to, now(), status, b.id, ev.message_id],
+        );
     }
     if ev.kind == InboundKind::Message {
         if let Some(c) = &ev.cursor {
@@ -533,15 +548,15 @@ struct SendBody {
 }
 
 /// The transport for a thread's binding (production: real platform clients).
-fn transport_for(state: &Arc<AppState>, provider: &str) -> Option<Arc<dyn ChannelTransport>> {
-    crate::channel_transports::transport_for(state, provider)
+fn transport_for(state: &Arc<AppState>, b: &BindingRow) -> Option<Arc<dyn ChannelTransport>> {
+    crate::channel_transports::transport_for(state, b)
 }
 
 async fn channel_send_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(thread_id): Path<String>, Json(b): Json<SendBody>) -> Response {
     let Some(binding) = binding_for_thread(&state.db, &user.user_id, &thread_id) else {
         return (StatusCode::NOT_FOUND, Json(json!({ "error": "this thread has no channel binding", "code": "NO_BINDING" }))).into_response();
     };
-    let Some(tx) = transport_for(&state, &binding.provider) else {
+    let Some(tx) = transport_for(&state, &binding) else {
         return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": format!("{} is not configured", binding.provider), "code": "CHANNEL_OFFLINE" }))).into_response();
     };
     let req = SendReq { text: b.text, posting_identity_id: b.posting_identity_id, correlation_id: b.correlation_id, consequential: b.consequential, allternit_approval_id: b.allternit_approval_id };

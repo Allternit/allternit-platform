@@ -566,7 +566,10 @@ async fn main() {
             allternit_api::deployment_scheduler::DeploymentSchedulerState::new(),
         ),
     });
-    allternit_api::gateway_runner::install(state.db.clone(), Arc::new(allternit_api::gateway_runner::SubsTransport(state.clone())));
+    allternit_api::gateway_runner::install(
+        state.db.clone(),
+        Arc::new(allternit_api::channel_transports::ChannelLaneTransport::new(state.clone(), Arc::new(allternit_api::gateway_runner::SubsTransport(state.clone())))),
+    );
     allternit_api::computer_idle::spawn_idle_sweeper(state.clone(), shutdown_tx.subscribe());
 
     // BYOK credential revalidation sweep (P1.7): re-probe every active
@@ -1084,6 +1087,7 @@ async fn main() {
         // this is public the same way `webhook_router()` above is — no
         // Clerk session exists for a server-to-server call from Slack.
         .merge(allternit_api::slack_webhook_routes::slack_webhook_router())
+        .merge(allternit_api::channel_transports::channel_webhook_router())
         // Photon.codes inbound-message webhook is also server-to-server and
         // carries no Clerk session; route it to the recipient bot's inbox.
         .merge(allternit_bus_webhook_router())
