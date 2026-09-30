@@ -42,6 +42,8 @@ use allternit_commrails::kernel::router::{
     fetch_model_pool, BudgetLedger, ExecutionPlan, Mode, PoolEntry, Residency, Role, RouteError, Router, RouterConfig,
     RouterPolicy, StaticModelPool, POOL_ENTRY_SCHEMA_ID, SCHEMA_VERSION,
 };
+use allternit_commrails::kernel::router::{apply_s1_result_recording, DecisionResultView};
+use allternit_commrails::kernel::s1_outcome::OutcomeReporter;
 use allternit_commrails::kernel::{CloseOutcome, NodeState};
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Map, Value};
@@ -431,6 +433,63 @@ struct Exec<'a> {
     attempts: std::collections::BTreeMap<String, u32>,
     limits: Limits,
     org: String,
+    /// Output of the most recent S0 test run (input to the S1 shadow classification).
+    last_test_output: String,
+}
+
+/// Deterministic (S0) error code for a failing test run's output. Only a known
+/// class is returned; anything uncertain is "UNKNOWN" (never guessed).
+fn s0_error_code(out: &str) -> &'static str {
+    let o = out.to_lowercase();
+    let has = |ks: &[&str]| ks.iter().any(|k| o.contains(k));
+    if has(&["syntaxerror", "syntax error"]) { "SYNTAX_ERROR" }
+    else if has(&["modulenotfounderror", "importerror", "cannot find module"]) { "IMPORT_ERROR" }
+    else if has(&["typeerror"]) { "TYPE_ERROR" }
+    else if has(&["assertionerror", "assertion failed", "expected"]) { "TEST_ASSERTION" }
+    else if has(&["timed out", "timeout"]) { "TEST_TIMEOUT" }
+    else { "UNKNOWN" }
+}
+
+/// Ask the S1 decision runtime (SHADOW, POST /v1/decision, CLASSIFY_ERROR) to
+/// classify the failure S0 just reproduced, record the result, then report the
+/// S0 truth as ground truth. Advisory only: the verdict is ignored, every error
+/// (incl. an unreachable runtime) is swallowed, and control flow never changes.
+fn s1_shadow_classify(h: &Handle, reporter: &OutcomeReporter, run_id: &str, failure: &str, evidence: &mut Vec<String>) {
+    if !reporter.enabled {
+        return;
+    }
+    let bank = bug_fix::error_ontology();
+    let candidates: Vec<Value> = bank.classes.iter().map(|c| json!({ "candidate_id": c, "label": c }))
+        .chain(std::iter::once(json!({ "candidate_id": bank.unknown, "label": bank.unknown, "is_unknown": true }))).collect();
+    let tail: String = failure.chars().rev().take(4000).collect::<Vec<_>>().into_iter().rev().collect();
+    let body = json!({ "state": tail, "reversible": true, "request": {
+        "envelope": { "abi_version": "1.0.0", "schema_id": "allternit.kernel.DecisionRequestV1", "schema_version": "1.0.0",
+            "run_id": run_id, "node_id": "N10" },
+        "operation": "CHOICE", "state_projection_ref": format!("run:{run_id}:N10"),
+        "instructions": "classify the error class of this failing test output", "decision_bank_id": bank.bank_id,
+        "candidates": candidates, "calibration_domain": bank.primitive_id } });
+    let url = format!("{}/v1/decision", reporter.base_url);
+    let (timeout, token) = (reporter.timeout, reporter.token.clone());
+    let result: Option<DecisionResultView> = h.block_on(async move {
+        let c = reqwest::Client::builder().timeout(timeout).build().ok()?;
+        let mut rq = c.post(url).json(&body);
+        if let Some(t) = token { rq = rq.bearer_auth(t); }
+        let r = rq.send().await.ok()?;
+        if !r.status().is_success() { return None; }
+        r.json::<DecisionResultView>().await.ok()
+    });
+    let Some(result) = result else { return };
+    // The plan is a record of the shadow call; the verdict is deliberately unused.
+    let plan: Option<ExecutionPlan> = serde_json::from_value(json!({
+        "schema_id": "allternit.kernel.ExecutionPlanV1", "schema_version": "1.0.0", "plan_id": format!("s1shadow:{run_id}:N10"),
+        "node_id": "N10", "cognitive_role": "S1", "capability_id": bank.primitive_id, "execution_mode": "M2.CALIBRATED_READOUT",
+        "backend_id": "system-one-local", "confidence_floor": 1.0, "fallback_chain": [] })).ok();
+    if let Some(plan) = plan {
+        let _ = apply_s1_result_recording(&plan, &result, evidence);
+    }
+    // spawn_report needs a runtime context; the executor thread has none.
+    let _g = h.enter();
+    bug_fix::reconcile_s0_classification(reporter, Some(&result), s0_error_code(failure));
 }
 
 /// Why the drive stopped early without an error (the run is already settled
@@ -564,11 +623,14 @@ impl Exec<'_> {
 
     fn tests(&mut self, node: &str, phase: &str) -> Step<(bool, String)> {
         let cmd = self.ws.test_command().ok_or_else(|| anyhow!("no test command detected in the workspace"))?;
+        let mut captured = String::new();
         let id = self.effect(node, "tool.test_run", "EXECUTE", json!({ "phase": phase, "command": cmd }), |ws| {
             let (ok, out) = ws.cmd(&ws.repo, &cmd)?;
+            captured = out.clone();
             let digest = allternit_commrails::receipts::jcs::sha256_tagged(out.as_bytes());
             Ok(format!("tests:{phase}:{}:{digest}", if ok { "PASS" } else { "FAIL" }))
         })?;
+        self.last_test_output = captured;
         Ok((id.contains(":PASS:"), id))
     }
 
@@ -685,6 +747,12 @@ impl Exec<'_> {
         let (ok, before) = self.tests("N10", "before")?;
         if ok {
             return Err(StepErr::Fail(anyhow!("could not reproduce: the test suite already passes, so a fix cannot be verified")));
+        }
+        // S1 shadow CLASSIFY_ERROR on the reproduced failure: advisory only, never changes flow.
+        {
+            let out = self.last_test_output.clone();
+            let mut evidence = Vec::new(); // s1-verify refs; kept for the node's completion decision
+            s1_shadow_classify(self.h, &OutcomeReporter::from_env(), &self.run_id, &out, &mut evidence);
         }
         let mut passed: Option<(String, String, String)> = None; // (target receipt ref, path, content)
         let mut failure = before.clone();
@@ -846,6 +914,7 @@ fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str, limits: &Limi
         }
     };
     let mut x = Exec {
+        last_test_output: String::new(),
         h, st, s, run_id: run_id.to_string(), dag_id: ir["dag_id"].as_str().unwrap_or_default().to_string(), seq: 0,
         ws: Ws::new(run_id)?, graph, pool, cfg, attempts: Default::default(), limits: limits.clone(), org: org.to_string(),
     };
@@ -867,4 +936,89 @@ fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str, limits: &Limi
         }
     }
     result
+}
+
+#[cfg(test)]
+mod s1_shadow_tests {
+    use super::*;
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    /// Mock decision runtime: answers /v1/decision with a shadow result, records every request.
+    async fn mock() -> (String, tokio::sync::mpsc::UnboundedReceiver<String>) {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut s, _)) = l.accept().await else { return };
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    let (mut buf, mut got) = (vec![0u8; 16384], Vec::new());
+                    loop {
+                        let n = s.read(&mut buf).await.unwrap_or(0);
+                        if n == 0 { break; }
+                        got.extend_from_slice(&buf[..n]);
+                        let txt = String::from_utf8_lossy(&got).to_string();
+                        if let Some(i) = txt.find("\r\n\r\n") {
+                            let len = txt.lines().find_map(|l| l.to_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0))).unwrap_or(0);
+                            if got.len() >= i + 4 + len {
+                                let first = txt.lines().next().unwrap_or("").to_string();
+                                let resp = if first.contains("/v1/decision/outcome") { "{}".to_string() } else {
+                                    json!({ "confidence": 0.4, "confidence_semantics": "UNCALIBRATED", "calibration_level_served": "RAW",
+                                        "threshold_action": "REVIEW", "extensions": { "x-decision_id": "dec-123" } }).to_string() };
+                                let _ = tx.send(format!("{first}|{}", &txt[i + 4..]));
+                                let _ = s.write_all(format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\ncontent-type: application/json\r\n\r\n{resp}", resp.len()).as_bytes()).await;
+                                break;
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        (url, rx)
+    }
+
+    fn reporter(url: &str) -> OutcomeReporter {
+        OutcomeReporter { base_url: url.to_string(), token: None, timeout: Duration::from_millis(800), enabled: true }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn agency_s1_shadow_requests_decision_and_reports_outcome() {
+        let (url, mut rx) = mock().await;
+        let h = Handle::current();
+        let r = reporter(&url);
+        let ev = tokio::task::spawn_blocking(move || {
+            let mut ev = vec![];
+            s1_shadow_classify(&h, &r, "run_1", "FAILED: AssertionError: expected 2 got 3", &mut ev);
+            ev
+        }).await.unwrap();
+        assert_eq!(ev, vec!["s1-verify:dec-123".to_string()]);
+        let first = rx.recv().await.unwrap();
+        assert!(first.starts_with("POST /v1/decision "), "{first}");
+        assert!(first.contains("error_ontology.v0.1") && first.contains("AssertionError"), "{first}");
+        let second = tokio::time::timeout(Duration::from_secs(3), rx.recv()).await.expect("outcome reported").unwrap();
+        assert!(second.starts_with("POST /v1/decision/outcome"), "{second}");
+        assert!(second.contains("dec-123") && second.contains("TEST_ASSERTION"), "{second}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn agency_s1_shadow_unreachable_runtime_changes_nothing() {
+        let h = Handle::current();
+        // Nothing listens on port 1.
+        let r = reporter("http://127.0.0.1:1");
+        let ev = tokio::task::spawn_blocking(move || {
+            let mut ev = vec![];
+            s1_shadow_classify(&h, &r, "run_1", "AssertionError", &mut ev);
+            ev
+        }).await.unwrap();
+        assert!(ev.is_empty());
+    }
+
+    #[test]
+    fn agency_s0_error_code_known_and_unknown() {
+        assert_eq!(s0_error_code("SyntaxError: bad"), "SYNTAX_ERROR");
+        assert_eq!(s0_error_code("something odd"), "UNKNOWN");
+    }
 }
