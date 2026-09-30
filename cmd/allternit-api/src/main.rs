@@ -138,6 +138,12 @@ use tokio::sync::RwLock;
 
 #[tokio::main]
 async fn main() {
+    // P5 commerce is Stripe test-mode only. A live key configured for it
+    // disables commerce (every commerce route answers 503 via service()); it
+    // must not take the rest of the API down with it.
+    if let Err(e) = allternit_api::commerce_routes::check_startup_config() {
+        eprintln!("commerce disabled: {e}");
+    }
     // Structured logging + local spans (`#[tracing::instrument]` on the LLM
     // gateway, DLP, MCP-server, Slack-webhook, and eval-run handlers), plus —
     // only when OTEL_EXPORTER_OTLP_ENDPOINT is set — distributed trace export:
@@ -967,6 +973,7 @@ async fn main() {
         .merge(allternit_api::admin_spend_limit_routes::router())
         .merge(allternit_api::admin_rate_limit_routes::router())
         .merge(allternit_api::marketplace_routes::router())
+        .merge(allternit_api::commerce_routes::router())
         .merge(admin_mcp_tunnel_router())
         .merge(outcome_rubric_router())
         .merge(federation_router())
@@ -1102,6 +1109,9 @@ async fn main() {
         // OAuth protected-resource metadata (RFC 9728) for /mcp/server.
         .merge(allternit_api::mcp_agents::well_known_router())
         .merge(webhook_router())
+        // Stripe signs MCP App commerce webhooks (verified per handler with
+        // ALLTERNIT_COMMERCE_STRIPE_WEBHOOK_SECRET; no unsigned fallback).
+        .merge(allternit_api::commerce_routes::webhook_router())
         .merge(webhook_trigger_public_router())
         .merge(allternit_api::benchmark_routes::benchmark_router())
         // Slack signs every request itself (`verify_slack_signature`), so

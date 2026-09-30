@@ -183,6 +183,8 @@ pub mod mcp_routes;
 pub mod mcp_agents;
 pub mod mcp_server_routes;
 pub mod mcp_tunnel_auth;
+pub mod commerce;
+pub mod commerce_routes;
 pub mod marketplace_routes;
 pub mod me_routes;
 pub mod mailflare_client;
