@@ -20,9 +20,9 @@ Exit 0 = at least one executor usable; 1 = none; 2 = transport broken. Trust its
 | Agent | Interactive TUI | Headless one-shot | Notes |
 |---|---|---|---|
 | kimi | `kimi --yolo` | ❌ `-p` CANNOT combine with `--yolo`/`--auto` | resume: `kimi -S <session-id>` |
-| codex | `codex --dangerously-bypass-approvals-and-sandbox` | `codex exec "..."` | `--yolo` no longer exposed (July 2026 CLI) |
-| claude | `claude --dangerously-skip-permissions` | `claude -p "..." --dangerously-skip-permissions` | |
-| agy | `agy --dangerously-skip-permissions` | check `agy --help` | | **Pick the cheapest mode that fits the phase**: headless one-shots for mechanical/bulk phases (deterministic completion, no TUI steering needed); interactive TUI for phases that may need steering or span multiple prompts (session context persists across phases — cheaper than cold restarts).
+| codex | `codex` (ao-spawn adds the workspace-write sandbox flags) | `codex exec "..."` | `--dangerously-bypass-approvals-and-sandbox` is rewritten to the sandbox by the spawn gate |
+| claude | `claude --permission-mode acceptEdits` (ao-spawn adds `--settings <hook>`) | `claude -p "..." --permission-mode acceptEdits` | `--dangerously-skip-permissions` is rewritten by the spawn gate; no commrails binary = refused |
+| agy | `agy --dangerously-skip-permissions` | check `agy --help` | **ungated** (logged in `spawn-gate.log`) | **Pick the cheapest mode that fits the phase**: headless one-shots for mechanical/bulk phases (deterministic completion, no TUI steering needed); interactive TUI for phases that may need steering or span multiple prompts (session context persists across phases — cheaper than cold restarts).
 
 ## Phase 1 — Scope and plan (you, in this session)
 
@@ -45,9 +45,14 @@ Exit 0 = at least one executor usable; 1 = none; 2 = transport broken. Trust its
 - **Use `--worktree` whenever the repo allows it.** It creates `<repo>-ao-<slug>` on branch `ao/<slug>`: the executor cannot collide with other agents, and review becomes `git -C <worktree> diff` instead of mtime forensics. The script refuses when the git root is `$HOME` (Eoj's home is a git root — a worktree would checkout everything); in that case spawn without it and fall back to mtime attribution in review.
 - Headless one-shot pattern — chain the sentinel so completion is the command exiting, no polling ambiguity:
   ```bash
-  ao-spawn <slug> <repo> "claude -p \"\$(cat docs/X_TASK.md)\" --dangerously-skip-permissions; touch docs/X_NOTES.sentinel"
+  ao-spawn <slug> <repo> "claude -p \"\$(cat docs/X_TASK.md)\" --permission-mode acceptEdits; touch docs/X_NOTES.sentinel"
   ```
   (Still require the real NOTES file in the task spec; the `.sentinel` guards against the agent forgetting it.)
+- **Spawn gate (audit S1).** Every launch line goes through `ao-spawn-gate` (bash) / `ao_gate.rs` (engine `ao spawn` and `ao recover --apply`), byte-for-byte identical:
+  - **claude / claude-code → hook.** Launched with `--permission-mode acceptEdits --settings ~/.agent-orchestrator/logs/ao-<slug>.claude-settings.json`; the settings file comes from `allternit-commrails hook claude-settings` and runs the PreToolUse hook (hard floor + Gate 2) on every tool call. `--dangerously-skip-permissions` (and `--permission-mode bypassPermissions`) is rewritten, with a one-line `spawn gate: rewrote ...` notice. No `allternit-commrails` binary (`$ALLTERNIT_COMMRAILS_BIN`, else PATH) → the spawn is refused, never run unhooked.
+  - **codex → sandbox.** `--dangerously-bypass-approvals-and-sandbox` becomes `-c 'sandbox_mode="workspace-write"' -c 'approval_policy="never"' -c sandbox_workspace_write.network_access=true`; `danger-full-access` becomes `workspace-write`.
+  - **everything else (kimi, agy, gemini, sh, ...) → ungated.** Unchanged, and labeled `gate=ungated` in `~/.agent-orchestrator/logs/spawn-gate.log` (every spawn is logged there with its class). With `ALLTERNIT_COMMRAILS_WIH` set, an ungated harness must pass `allternit-commrails hook spawn-check` or the spawn is refused.
+  The gate classifies by the first command word (after `VAR=value`/`env`/`exec`), so launch the harness directly — `bash -c 'claude ...'` is logged as ungated `bash`.
 
 ## Phase 3 — Send prompts (verified protocol, scripted)
 

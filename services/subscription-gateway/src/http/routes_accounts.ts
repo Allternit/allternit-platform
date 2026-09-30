@@ -13,7 +13,7 @@ import {
   listAccounts,
   upsertAccount,
 } from "../store/queries.js";
-import { firefoxProfileFor, readFirefoxCookies, type ImportableCookie } from "../worker/login_browser.js";
+import { firefoxProfileFor, readFirefoxCookies, type ImportableCookie, type SessionStorageKey } from "../worker/login_browser.js";
 import { callerOf, requireScope, type GatewayDeps } from "./server.js";
 
 const connectSchema = z.object({
@@ -79,32 +79,54 @@ interface LoginSession {
   baseline: Map<string, string>;
   timer: ReturnType<typeof setInterval> | null;
   finishing: boolean;
+  // Signed in, but the provider showed its verification check to the
+  // adapter's window: re-probe (non-spending) until it's cleared.
+  challengeUntil?: number;
 }
 
 export interface AccountsRouterOptions {
   loginPollMs?: number; // default 2000
+  challengePollMs?: number; // default 5000
+  challengeWaitMs?: number; // default 10 min
   readLoginCookies?: (firefoxProfile: string) => ImportableCookie[]; // tests
+  readLoginStorage?: (profile: string, entries: SessionStorageKey[]) => Map<string, string>; // tests
 }
 
 export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = {}): Router {
   const router = Router();
-  const readCookies = opts.readLoginCookies ?? ((profile: string) => readFirefoxCookies(profile));
+  const readCookies =
+    opts.readLoginCookies ??
+    ((profile: string) => (deps.loginBrowser ? deps.loginBrowser.readCookies(profile) : readFirefoxCookies(profile)));
+  const readStorage =
+    opts.readLoginStorage ??
+    ((profile: string, entries: SessionStorageKey[]) => deps.loginBrowser?.readStorage?.(profile, entries) ?? new Map<string, string>());
+  const loginProfileFor = (userDataDir: string) =>
+    deps.loginBrowser ? deps.loginBrowser.profileFor(userDataDir) : firefoxProfileFor(userDataDir);
   const logins = new Map<string, LoginSession>();
 
   const manifestFor = (provider: string) =>
     deps.adapterRegistry?.adapters.find((a) => a.manifest.provider === provider)?.manifest;
 
-  // The provider's signed-in cookies in the account's login-browser profile.
+  // The provider's signed-in cookies (and localStorage session keys) in the
+  // account's login-browser profile.
   const sessionCookies = (account: Account): Map<string, string> => {
     const out = new Map<string, string>();
     const manifest = manifestFor(account.provider);
     const names = manifest?.auth.session_cookies ?? [];
-    if (!deps.pool || names.length === 0) return out;
-    const host = new URL(manifest!.origins[0]).hostname;
-    const profile = firefoxProfileFor(deps.pool.userDataDirFor(account.profile_ref));
+    const storage = manifest?.auth.session_storage ?? [];
+    if (!deps.pool) return out;
+    if (storage.length > 0) {
+      const udd = deps.pool.userDataDirFor(account.profile_ref);
+      for (const [k, v] of readStorage(loginProfileFor(udd), storage)) out.set(k, v);
+    }
+    if (names.length === 0) return out;
+    // Every origin: a sign-in can land on another of the provider's domains
+    // (kimi.com → kimi.ai).
+    const hosts = manifest!.origins.map((o) => new URL(o).hostname);
+    const profile = loginProfileFor(deps.pool.userDataDirFor(account.profile_ref));
     for (const c of readCookies(profile)) {
       const domain = c.domain.replace(/^\./, "");
-      if (!(host === domain || host.endsWith(`.${domain}`))) continue;
+      if (!hosts.some((host) => host === domain || host.endsWith(`.${domain}`))) continue;
       if (names.some((n) => c.name.startsWith(n))) out.set(c.name, c.value);
     }
     return out;
@@ -127,7 +149,7 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
     s.timer = null;
   };
 
-  // Login done: close Firefox so cookies.sqlite is flushed, relaunch the
+  // Login done: close the login browser so its cookie store is flushed, relaunch the
   // adapter's Chrome (it imports the new session) and probe.
   const finishLogin = async (account: Account, s: LoginSession) => {
     s.finishing = true;
@@ -141,6 +163,14 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
       if (fresh?.session_health === "ready") {
         s.state = "signed_in";
         s.detail = null;
+      } else if (fresh?.session_health === "challenge_presented") {
+        // The adapter's window shows the check; the person clears it there
+        // and this keeps probing until the account is ready.
+        s.state = "waiting";
+        s.detail = `Finish the security check in the ${providerName(account.provider)} window on the computer`;
+        s.challengeUntil = Date.now() + (opts.challengeWaitMs ?? 10 * 60_000);
+        s.timer = setInterval(() => void challengeTick(account.account_id), opts.challengePollMs ?? 5000);
+        s.timer.unref?.();
       } else {
         s.state = "failed";
         s.detail = fresh ? userActionFor(fresh).label || fresh.session_health : "account removed";
@@ -150,6 +180,39 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
       s.detail = err instanceof Error ? err.message : String(err);
     } finally {
       s.finishing = false;
+    }
+  };
+
+  const challengeTick = async (accountId: string) => {
+    const s = logins.get(accountId);
+    if (!s || s.state !== "waiting" || s.finishing || s.challengeUntil === undefined) return;
+    const account = getAccount(deps.db, accountId);
+    if (!account) {
+      stopWatch(s);
+      logins.delete(accountId);
+      return;
+    }
+    s.finishing = true;
+    try {
+      await deps.pool!.activate({ provider: account.provider, account_id: accountId });
+    } catch {
+      // provider_down for a moment; the next tick probes again
+    } finally {
+      s.finishing = false;
+    }
+    const fresh = getAccount(deps.db, accountId);
+    if (fresh?.session_health === "ready") {
+      stopWatch(s);
+      s.state = "signed_in";
+      s.detail = null;
+    } else if (fresh?.session_health !== "challenge_presented" && fresh?.session_health !== "provider_down") {
+      stopWatch(s);
+      s.state = "failed";
+      s.detail = fresh ? userActionFor(fresh).label || fresh.session_health : "account removed";
+    } else if (Date.now() > s.challengeUntil) {
+      stopWatch(s);
+      s.state = "failed";
+      s.detail = "The security check wasn't finished in time.";
     }
   };
 
@@ -172,7 +235,7 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
     try {
       now = sessionCookies(account);
     } catch {
-      return; // Firefox mid-write; next tick
+      return; // cookie store mid-write; next tick
     }
     const signedIn = [...now].some(([name, value]) => s.baseline.get(name) !== value);
     if (signedIn) await finishLogin(account, s);
@@ -183,6 +246,34 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
     const origin = manifestFor(account.provider)?.origins[0];
     if (!origin) return { error: 409, body: { error: "no_adapter_for_provider", provider: account.provider } };
     const lane = { provider: account.provider, account_id: account.account_id };
+    const previous = logins.get(account.account_id);
+    if (previous) stopWatch(previous);
+    let baseline = new Map<string, string>();
+    try {
+      baseline = sessionCookies(account);
+    } catch {
+      // unreadable now: any session cookie seen later counts as a sign-in
+    }
+    // Already signed in (the profile holds a session): a probe settles it
+    // without a login window.
+    if (baseline.size > 0) {
+      try {
+        await deps.pool!.activate(lane);
+      } catch {
+        // fall through to the login window
+      }
+      if (getAccount(deps.db, account.account_id)?.session_health === "ready") {
+        logins.set(account.account_id, {
+          state: "signed_in",
+          detail: null,
+          opened_at: new Date().toISOString(),
+          baseline,
+          timer: null,
+          finishing: false,
+        });
+        return { error: null, body: null };
+      }
+    }
     await deps.pool!.deactivate(lane);
     try {
       await deps.loginBrowser!.open(account.account_id, deps.pool!.userDataDirFor(account.profile_ref), origin);
@@ -191,14 +282,6 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
         error: 502,
         body: { error: "login_browser_failed", detail: err instanceof Error ? err.message : String(err) },
       };
-    }
-    const previous = logins.get(account.account_id);
-    if (previous) stopWatch(previous);
-    let baseline = new Map<string, string>();
-    try {
-      baseline = sessionCookies(account);
-    } catch {
-      // unreadable now: any session cookie seen later counts as a sign-in
     }
     const s: LoginSession = {
       state: "waiting",
@@ -254,6 +337,13 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
     const parsed = connectSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: "invalid_account", detail: parsed.error.issues });
+      return;
+    }
+    // Only providers an adapter is loaded for: an unknown one would sit as a
+    // dead auth_required row nothing can ever sign in to.
+    const adapters = deps.adapterRegistry?.adapters;
+    if (adapters && !adapters.some((a) => a.manifest.provider === parsed.data.provider)) {
+      res.status(400).json({ error: "unknown_provider", provider: parsed.data.provider });
       return;
     }
     const caller = callerOf(req);
@@ -349,10 +439,11 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
   );
 
   // Login mode: providers that sign in through Google refuse automated
-  // Chrome, so the human signs in inside a plain Firefox window on the
-  // account's own Firefox profile. The adapter's Chrome is closed so the next
-  // connect relaunches it and imports the new session. Never automates the
-  // login itself and never sees credentials.
+  // Chrome, so the human signs in inside a plain, non-automated browser
+  // window (Chrome on the account's own profile; Firefox on a side profile
+  // whose session is imported). The adapter's Chrome is closed so the next
+  // connect relaunches it with the new session. Never automates the login
+  // itself and never sees credentials.
   router.post(
     "/v1/accounts/:id/login",
     requireScope("accounts:manage"),
@@ -369,7 +460,7 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
       if (!deps.pool || !deps.loginBrowser) {
         res.status(501).json({
           error: "login_browser_unavailable",
-          detail: "no login browser configured (install Firefox or set SUBS_GATEWAY_LOGIN_BROWSER)",
+          detail: "no login browser configured (install Google Chrome or set SUBS_GATEWAY_LOGIN_BROWSER)",
         });
         return;
       }
@@ -383,8 +474,7 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
       res.json({
         account_id: account.account_id,
         status: "login_window_open",
-        browser: "firefox",
-        next: `Sign in in the Firefox window; the gateway connects by itself (or POST /v1/accounts/${account.account_id}/connect)`,
+        next: `Sign in in the login window; the gateway connects by itself (or POST /v1/accounts/${account.account_id}/connect)`,
         ...loginState(account.account_id),
       });
     }

@@ -1,0 +1,14 @@
+{
+  "schema_id": "allternit.kernel.DecisionDeploymentUnitV1",
+  "schema_version": "1.0.0",
+  "model_ref": "id-0001",
+  "model_revision": "x",
+  "tokenizer_id": "x",
+  "quantization": "x",
+  "runtime_backend": "x",
+  "readout_point": "x",
+  "schema_hash": "sha256:abababababababababababababababababababababababababababababababab",
+  "candidate_set_hash": "sha256:abababababababababababababababababababababababababababababababab",
+  "calibration_artifact_id": "id-0001",
+  "threshold_profile": "id-0001"
+}

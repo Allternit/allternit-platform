@@ -1,0 +1,12 @@
+{
+  "schema_id": "allternit.kernel.ExecutionPlanV1",
+  "schema_version": "1.0.0",
+  "plan_id": "id-0001",
+  "cognitive_role": "S0",
+  "capability_id": "cap.code.edit",
+  "execution_mode": "M0.DETERMINISTIC",
+  "backend_id": "id-0001",
+  "confidence_floor": 0,
+  "fallback_chain": [],
+  "unknown_required_field": "x"
+}

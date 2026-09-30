@@ -1,0 +1,151 @@
+---
+title: 'Decisions'
+description: 'An optional low-level surface for one bounded, side-effect-free decision over candidates you supply.'
+---
+
+<Warning>
+**PREVIEW.** The Agency API is not live yet. This page describes the published v0.3 contract so you can review and build against it; details may change before alpha. Implementation status: DESIGN — NOT YET IMPLEMENTED.
+</Warning>
+
+The decision surface makes one bounded decision over caller-supplied candidates and returns a typed answer with a confidence. It is optional and low-level. Most integrations create [runs](/api/agency/runs) and never call it. It opens with the rest of the API, after a run can survive restart, resume, verify, replay and receipt-backed completion.
+
+Three properties define it:
+
+- **Pure.** A decision has no side effects. That is why `Idempotency-Key` is optional here.
+- **Bounded.** The backend chooses among the candidates you supply. It never invents options.
+- **Not authorization.** A `gate` result is a recommendation about a transition. It is never a permission, and it never stands in for a policy decision.
+
+Which backend served the decision is shown only with `view=debug`.
+
+## Create a decision
+
+```http
+POST /v1/decisions
+```
+
+### Parameters
+
+{{params:createDecision}}
+
+### Request body
+
+[DecisionRequest](/api/agency/schemas#decisionrequest)
+
+{{fields:DecisionRequest}}
+
+### Operations
+
+| `operation` | Question it answers | Needs | `answer` type |
+|-------------|--------------------|-------|---------------|
+| `belief` | Is this statement true of the state? | | boolean |
+| `choice` | Which one candidate? | `candidates` | candidate ID |
+| `score` | Where on an ordered scale? | `scale` | a label from `scale` |
+| `rank` | In what order? | `candidates` | list of candidate IDs |
+| `subset` | Which of these apply? | `candidates` | list of candidate IDs |
+| `estimate` | What number within bounds? | `range` | number |
+| `gate` | Should this transition proceed? (recommendation only) | `candidates` | candidate ID |
+| `verify` | Does the state satisfy the question? | | boolean |
+| `pair_score` | How do two candidates compare? | `candidates` | number |
+
+`candidates` is required for `choice`, `rank`, `subset`, `gate` and `pair_score`. The contract types `answer` as a candidate ID, a list of IDs, a number or a boolean; the per-operation `answer` types in this table are the expected mapping and are not pinned individually in v0.3.
+
+### Calibration level
+
+`require_level` sets the minimum calibration level the answer must be served at: `L0`, `L1`, `L2` or `auto` (default). Raw uncalibrated readouts are never served for action. The level that was used is returned in `calibration.level_served`.
+
+### Responses
+
+{{responses:createDecision}}
+
+[DecisionResult](/api/agency/schemas#decisionresult):
+
+{{fields:DecisionResult}}
+
+`threshold_action` tells you what the calibrated thresholds recommend doing with the answer:
+
+| `threshold_action` | Meaning |
+|--------------------|---------|
+| `auto` | Confidence is high enough to act on without review. |
+| `review` | Have a person or a verifier review it. |
+| `escalate` | Route to a stronger solver or a person. |
+| `reject` | Do not act on this answer. |
+| `null` | No threshold applies. |
+
+### Examples
+
+Choose among candidates:
+
+```bash
+curl -X POST https://api.allternit.com/v1/decisions \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operation": "choice",
+    "question": "Which file most likely contains the rounding bug?",
+    "state": {"failing_test": "cart totals round half up", "error": "expected 10.01, got 10.00"},
+    "candidates": [
+      {"id": "a", "label": "checkout/cart.ts"},
+      {"id": "b", "label": "checkout/tax.ts"},
+      {"id": "c", "label": "shared/format.ts"}
+    ],
+    "require_level": "auto",
+    "max_latency_ms": 500
+  }'
+```
+
+```json
+{
+  "operation": "choice",
+  "answer": "a",
+  "probabilities": { "a": 0.81, "b": 0.14, "c": 0.05 },
+  "confidence": 0.81,
+  "calibration": { "level_served": "L1", "calibrated": true, "calibration_id": "cal_01JB2P0Q1R" },
+  "threshold_action": "review",
+  "evidence_refs": [],
+  "debug": null
+}
+```
+
+Score on an ordered scale:
+
+```bash
+curl -X POST https://api.allternit.com/v1/decisions \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operation": "score",
+    "question": "How risky is this change?",
+    "state": "A 14-line change to cart total rounding, covered by 3 unit tests.",
+    "scale": ["low", "medium", "high"]
+  }'
+```
+
+Estimate within bounds:
+
+```json
+{
+  "operation": "estimate",
+  "question": "How many test files are affected by this change?",
+  "state": { "changed_files": ["checkout/cart.ts"] },
+  "range": { "min": 0, "max": 50 }
+}
+```
+
+Missing candidates for an operation that needs them:
+
+```json
+{
+  "error": {
+    "family": "INPUT",
+    "code": "ERR_INPUT_UNSUPPORTED",
+    "message": "candidates is required for operation choice.",
+    "retryable": false,
+    "request_id": "req_c93d02",
+    "param": "candidates"
+  }
+}
+```
+
+## Using a gate result
+
+A `gate` decision returns a recommendation. Treat it as input to your own logic or to a run's graph. It does not grant anything. Inside a run, permission always comes from policy: hard rules run first, and a probabilistic result can only add caution. See [Policy and safety](/architecture/policy#hard-policy-before-probabilistic-judgment).

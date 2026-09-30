@@ -311,13 +311,14 @@ const message = await createUserMessage(input)
   }
 
   /** Hold this turn when the session is paused or about to hit a limit. */
-  async function holdForLimit(session: Session.Info, model: PromptInput["model"]): Promise<boolean> {
+  export async function holdForLimit(session: Session.Info, model: PromptInput["model"]): Promise<boolean> {
     if (session.parentID) return false
     if (SessionPause.isPaused(session)) return true
     // Spend limits (P8.1): a bot's monthly budget or the thread's own.
-    const over = await Budget.exceeded(session).catch(() => undefined)
-    if (over) {
-      SessionPause.pause(session.id, { ...over, reason: "budget" })
+    // A failed check pauses bot / budgeted sessions ("budget-check-failed").
+    const hold = await Budget.gate(session)
+    if (hold) {
+      SessionPause.pause(session.id, hold)
       return true
     }
     const providerID = model?.providerID ?? session.defaultModel?.providerID

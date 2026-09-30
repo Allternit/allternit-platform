@@ -15,13 +15,22 @@
 #      ao exit 1 + "exited immediately" error whose transcript tail carries the
 #      fixture marker. ao is deterministic-strict; the wrapper is timing-flaky.
 #
-# Usage: run.sh [-v]   (builds the engine first unless AO_BIN is set)
+#
+# Spawn gate (audit S1): when the script world ships ao-spawn-gate, both worlds
+# also spawn a stub claude/codex/sh through the gate (fake allternit-commrails
+# via ALLTERNIT_COMMRAILS_BIN) and must agree byte-for-byte on stdout/stderr/
+# exit, the gated runner line, the hook settings file and the spawn-gate.log
+# label; a missing commrails binary must refuse the claude spawn identically.
+# The rewrite table itself is covered by gate_parity.sh.
+#
+# Usage: run.sh [-v]   (builds the engine first unless AO_BIN is set;
+#                       AO_SCRIPTS_DIR overrides the script world's directory)
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 WORKSPACE_ROOT="$(cd "$REPO_ROOT/../.." && pwd)"
-AO_BIN="${AO_BIN:-$WORKSPACE_ROOT/target/debug/ao}"
-SCRIPTS="$HOME/.claude/skills/agent-orchestrator/scripts"
+AO_BIN="${AO_BIN:-${CARGO_TARGET_DIR:-$WORKSPACE_ROOT/target}/debug/ao}"
+SCRIPTS="${AO_SCRIPTS_DIR:-$HOME/.claude/skills/agent-orchestrator/scripts}"
 VERBOSE=0
 [ "${1:-}" = "-v" ] && VERBOSE=1
 
@@ -45,12 +54,34 @@ EXIT_MARKER="DIED-IMMEDIATELY-LINE"
 printf '#!/bin/sh\necho %s\nexit 7\n' "$EXIT_MARKER" > "$TDIR/agent-exit.sh"
 printf '#!/bin/sh\necho WT-AGENT-READY\nexec cat\n' > "$TDIR/agent-wt.sh"
 printf '#!/bin/sh\ni=0\nwhile [ $i -lt 2000 ]; do echo "burst-line-$i-payload-abcdefghijklmnopqrstuvwxyz0123456789"; i=$((i+1)); done\necho BURST-END\nsleep 300\n' > "$TDIR/agent-burst.sh"
+GATE_CASES=0
+[ -f "$SCRIPTS/ao-spawn-gate" ] && GATE_CASES=1
+GATEBIN="$TDIR/gatebin"
+mkdir -p "$GATEBIN"
+# Fake allternit-commrails: `hook claude-settings --out F` writes its argv to F.
+cat > "$GATEBIN/allternit-commrails" <<'FAKE'
+#!/bin/sh
+out=""; prev=""
+for a in "$@"; do [ "$prev" = "--out" ] && out=$a; prev=$a; done
+case " $* " in
+  *" hook claude-settings "*) printf '{"fake-settings":"%s"}\n' "$*" > "$out" ;;
+  *" hook spawn-check "*) exit 0 ;;
+  *) exit 64 ;;
+esac
+FAKE
+# Stub harnesses named like the real ones (absolute paths: tmux panes do not
+# inherit this shell's PATH).
+printf '#!/bin/sh\necho "STUB-ARGS: $*"\nexec cat\n' > "$GATEBIN/claude"
+printf '#!/bin/sh\necho "STUB-ARGS: $*"\nexec cat\n' > "$GATEBIN/codex"
+chmod +x "$GATEBIN/allternit-commrails" "$GATEBIN/claude" "$GATEBIN/codex"
+GATE_LOG="$HOME/.agent-orchestrator/logs/spawn-gate.log"
 PASS=0; FAIL=0
 
 cleanup() {
   "$SCRIPTS/ao-kill" gold 2>/dev/null; "$AO_BIN" kill gold 2>/dev/null
   "$SCRIPTS/ao-kill" goldwt 2>/dev/null; "$AO_BIN" kill goldwt 2>/dev/null
   "$SCRIPTS/ao-kill" golddx 2>/dev/null; "$AO_BIN" kill golddx 2>/dev/null
+  for g in gategc gategx gateun gatemiss; do "$SCRIPTS/ao-kill" $g >/dev/null 2>&1; "$AO_BIN" kill $g >/dev/null 2>&1; done
   if [ $FAIL -gt 0 ]; then
     local ev="$HOME/.agent-orchestrator/evidence/ao-parity-$(date +%Y%m%d-%H%M%S)"
     cp -R "$TDIR" "$ev" && echo "evidence preserved: $ev"
@@ -131,6 +162,28 @@ impl_run() {
   sleep 0.5
   $kill golddx > /dev/null 2>&1
   { i=0; while [ $i -lt 2000 ]; do echo "burst-line-$i-payload-abcdefghijklmnopqrstuvwxyz0123456789"; i=$((i+1)); done; echo BURST-END; } > "$out/burst-expected.txt"
+  # 14. spawn gate (only when the script world has it)
+  if [ "$GATE_CASES" = 1 ]; then
+    local L="$HOME/.agent-orchestrator/logs" before
+    before=$(wc -l < "$GATE_LOG" 2>/dev/null || echo 0)
+    ALLTERNIT_COMMRAILS_BIN="$GATEBIN/allternit-commrails" \
+      $spawn gategc "$REPO" "$GATEBIN/claude" -p hi --dangerously-skip-permissions > "$out/gate-claude.out" 2> "$out/gate-claude.err"; echo $? > "$out/gate-claude.code"
+    cp "$L/ao-gategc.cmd.sh" "$out/gate-claude.runner" 2>/dev/null
+    cp "$L/ao-gategc.claude-settings.json" "$out/gate-claude.settings" 2>/dev/null
+    sleep 1; $status gategc 5 > "$out/gate-claude.tail" 2>&1
+    $kill gategc > /dev/null 2>&1
+    ALLTERNIT_COMMRAILS_BIN="$GATEBIN/allternit-commrails" \
+      $spawn gategx "$REPO" "$GATEBIN/codex" exec go --dangerously-bypass-approvals-and-sandbox > "$out/gate-codex.out" 2> "$out/gate-codex.err"; echo $? > "$out/gate-codex.code"
+    cp "$L/ao-gategx.cmd.sh" "$out/gate-codex.runner" 2>/dev/null
+    $kill gategx > /dev/null 2>&1
+    $spawn gateun "$REPO" sh "$TDIR/agent-cat.sh" > "$out/gate-ungated.out" 2> "$out/gate-ungated.err"; echo $? > "$out/gate-ungated.code"
+    cp "$L/ao-gateun.cmd.sh" "$out/gate-ungated.runner" 2>/dev/null
+    $kill gateun > /dev/null 2>&1
+    ALLTERNIT_COMMRAILS_BIN="$TDIR/no-such-commrails" \
+      $spawn gatemiss "$REPO" "$GATEBIN/claude" --dangerously-skip-permissions > "$out/gate-missing.out" 2> "$out/gate-missing.err"; echo $? > "$out/gate-missing.code"
+    $status gatemiss > "$out/gate-missing-status.out" 2>&1; echo $? >> "$out/gate-missing-status.out"
+    tail -n +"$((before + 1))" "$GATE_LOG" 2>/dev/null | sed -E 's/^[0-9]{8}-[0-9]{6} //' > "$out/gate-log.out"
+  fi
 }
 
 normalize() {
@@ -187,6 +240,29 @@ for f in spawn.out spawn.err spawn.code dup.out dup.err dup.code \
          wt-list.out wt-branch.out spawn-burst.out spawn-burst.err burst-expected.txt; do
   compare "$f"
 done
+if [ "$GATE_CASES" = 1 ]; then
+  for f in gate-claude.out gate-claude.err gate-claude.code gate-claude.runner gate-claude.settings \
+           gate-codex.out gate-codex.err gate-codex.code gate-codex.runner \
+           gate-ungated.out gate-ungated.err gate-ungated.code gate-ungated.runner \
+           gate-missing.out gate-missing.err gate-missing.code gate-missing-status.out gate-log.out; do
+    compare "$f"
+  done
+  # The stub saw the gated argv, not the bypass flag (both worlds).
+  for impl in script ao; do
+    # (pane lines wrap, so join them before matching)
+    if tr -d '\n' < "$TDIR/$impl/gate-claude.tail" | grep -q 'STUB-ARGS: -p hi --permission-mode acceptEdits --settings .*ao-gategc.claude-settings.json' \
+       && ! grep -q 'dangerously' "$TDIR/$impl/gate-claude.runner" "$TDIR/$impl/gate-codex.runner" \
+       && grep -q 'gate=ungated harness=sh' "$TDIR/$impl/gate-log.out" \
+       && [ "$(cat "$TDIR/$impl/gate-missing.code")" = 1 ]; then
+      PASS=$((PASS+1)); [ $VERBOSE -eq 1 ] && echo "  ok: spawn gate enforced ($impl)"
+    else
+      FAIL=$((FAIL+1)); echo "  MISMATCH: spawn gate not enforced ($impl)"
+      cat "$TDIR/$impl/gate-claude.tail" "$TDIR/$impl/gate-claude.runner" "$TDIR/$impl/gate-log.out" 2>&1 | sed 's/^/    /' | head -20
+    fi
+  done
+else
+  echo "  SKIP: spawn-gate cases ($SCRIPTS has no ao-spawn-gate)"
+fi
 compare status.out normalize_scenario
 compare status-after.out normalize_scenario
 compare status-tail.out normalize_tail

@@ -13,6 +13,7 @@ pub mod drivers;
 pub mod engine;
 pub mod protocol;
 pub mod routes;
+pub mod spawn_gate;
 pub mod store;
 pub mod turn;
 
@@ -233,7 +234,6 @@ mod tests {
             assert!(!backend.default.is_empty());
             assert!(!backend.models.is_empty());
             for model in &backend.models {
-                assert!(model.available || !model.available); // boolean, either way
                 assert!(!model.id.is_empty());
             }
         }

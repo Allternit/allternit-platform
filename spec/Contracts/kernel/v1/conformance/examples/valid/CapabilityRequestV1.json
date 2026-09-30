@@ -1,0 +1,9 @@
+{
+  "schema_id": "allternit.kernel.CapabilityRequestV1",
+  "schema_version": "1.0.0",
+  "capability": "cap.code.edit",
+  "modality": "TEXT",
+  "latency_class": "INTERACTIVE",
+  "trust_requirement": "PUBLIC",
+  "budget": {}
+}

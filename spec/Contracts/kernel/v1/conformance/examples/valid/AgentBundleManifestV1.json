@@ -1,0 +1,11 @@
+{
+  "schema_id": "allternit.kernel.AgentBundleManifestV1",
+  "schema_version": "1.0.0",
+  "name": "coder",
+  "version": "v1",
+  "stable": false,
+  "profiles": [
+    "read-only"
+  ],
+  "bundle_ref": "id-0001"
+}

@@ -1,0 +1,15 @@
+{
+  "schema_id": "allternit.kernel.NetworkAccessPolicyV1",
+  "schema_version": "1.0.0",
+  "policy_id": "id-0001",
+  "network_default": "DENY",
+  "domains": [],
+  "private_ip_policy": "DENY",
+  "redirect_policy": {
+    "max_redirects": 0,
+    "scope": "SAME_DOMAIN"
+  },
+  "dns_rebind_policy": "PIN_RESOLUTION",
+  "defaults_version": "x",
+  "unknown_required_field": "x"
+}

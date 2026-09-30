@@ -1,0 +1,21 @@
+{
+  "schema_id": "allternit.kernel.NodeOutputV1",
+  "schema_version": "1.0.0",
+  "dag_id": "id-0001",
+  "node_id": "id-0001",
+  "artifact_id": "id-0001",
+  "mime_type": "x",
+  "hash": "sha256:abababababababababababababababababababababababababababababababab",
+  "producer": {
+    "component_id": "id-0001",
+    "component_version": "x",
+    "kind": "RUNTIME"
+  },
+  "state_version": 0,
+  "trust_class": "PUBLIC",
+  "sensitivity": "PUBLIC",
+  "verification_status": "UNVERIFIED",
+  "receipt_ref": "id-0001",
+  "created_at": "2026-09-30T00:00:00Z",
+  "unknown_required_field": "x"
+}

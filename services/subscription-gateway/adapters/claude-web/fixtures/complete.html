@@ -1,0 +1,41 @@
+<!doctype html>
+<!-- fixture: complete — full assistant turn, no stop/streaming -->
+<html lang="en">
+  <head><meta charset="utf-8"><title>claude-web fixture — complete</title></head>
+  <body data-state="complete">
+    <nav>
+      <button data-testid="user-menu-button" aria-label="User menu">E</button>
+    </nav>
+    <main>
+      <div id="thread">
+        <div data-testid="user-message">Summarize the migration plan.</div>
+        <div data-is-streaming="false">
+          <div class="font-claude-response">
+            <h3>Migration plan</h3>
+            <p>The migration happens in three stages, each independently reversible.</p>
+            <pre><code class="language-ts">const stages: string[] = ["freeze", "move", "cutover"];</code></pre>
+            <ul>
+              <li>freeze writes</li>
+              <li>move state</li>
+              <li>cut over reads</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="ProseMirror" data-testid="chat-input" role="textbox" aria-label="Reply to Claude" contenteditable="true"></div>
+      <button aria-label="Send message" type="button">Send</button>
+    </main>
+    <script>
+      document.querySelector("button[aria-label='Send message']").addEventListener("click", () => {
+        const input = document.querySelector("[data-testid='chat-input']");
+        const prompt = input.textContent;
+        document.body.dataset.submitted = "true";
+        input.textContent = "";
+        const turn = document.createElement("div");
+        turn.dataset.testid = "user-message";
+        turn.textContent = prompt;
+        document.getElementById("thread").appendChild(turn);
+      });
+    </script>
+  </body>
+</html>

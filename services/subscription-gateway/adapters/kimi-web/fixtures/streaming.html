@@ -1,0 +1,20 @@
+<!doctype html>
+<!-- fixture: streaming — assistant turn in flight, Send swapped for Stop -->
+<html lang="en">
+  <head><meta charset="utf-8"><title>kimi-web fixture — streaming</title></head>
+  <body data-state="streaming">
+    <aside class="sidebar">
+      <div class="sidebar-footer"><div class="user-info"><button type="button" class="user-profile-trigger" data-testid="sidebar-user-menu-trigger"><img class="user-avatar" alt="" /></button><span>Eoj</span></div></div>
+    </aside>
+    <main>
+      <div id="thread">
+        <div class="segment segment-user"><div class="segment-content">Summarize the migration plan.</div></div>
+        <div class="segment segment-assistant streaming">
+          <div class="segment-content"><div class="markdown-container"><p>The migration happens in three stages…</p></div></div>
+        </div>
+      </div>
+      <div class="chat-input-editor" role="textbox" aria-label="Ask Anything..." contenteditable="true"></div>
+      <div class="send-button-container stop"><button type="button" aria-label="Stop">■</button></div>
+    </main>
+  </body>
+</html>

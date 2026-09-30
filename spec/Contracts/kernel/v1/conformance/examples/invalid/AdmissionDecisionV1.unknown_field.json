@@ -1,0 +1,9 @@
+{
+  "schema_id": "allternit.kernel.AdmissionDecisionV1",
+  "schema_version": "1.0.0",
+  "request_id": "id-0001",
+  "decision": "ADMIT",
+  "spawn_cap_key": "x",
+  "reason_codes": [],
+  "unknown_required_field": "x"
+}

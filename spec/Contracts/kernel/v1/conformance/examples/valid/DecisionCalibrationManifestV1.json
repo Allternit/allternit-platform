@@ -1,0 +1,44 @@
+{
+  "schema_id": "allternit.kernel.DecisionCalibrationManifestV1",
+  "schema_version": "1.0.0",
+  "manifest_id": "id-0001",
+  "primitive_id": "obs.observe_environment",
+  "scope": {
+    "backend_id": "id-0001",
+    "model_ref": "id-0001",
+    "model_revision": "x",
+    "tokenizer_id": "x",
+    "quantization": "x",
+    "runtime_backend": "x",
+    "question_id": "id-0001",
+    "candidate_schema_hash": "sha256:abababababababababababababababababababababababababababababababab",
+    "candidate_set_hash": "sha256:abababababababababababababababababababababababababababababababab",
+    "threshold_profile": "id-0001"
+  },
+  "scope_fingerprint": "sha256:abababababababababababababababababababababababababababababababab",
+  "metrics": {
+    "ece": 0,
+    "brier": 0,
+    "nll": 0,
+    "accuracy": 0,
+    "f1": 0,
+    "coverage_at_risk": 0,
+    "flip_sensitivity": 0,
+    "order_sensitivity": 0
+  },
+  "held_out": {
+    "n": 1,
+    "ci_level": 0,
+    "ci_method": "x",
+    "ece_upper_bound": 0,
+    "auto_act_n": 0,
+    "auto_act_error_rate": 0,
+    "auto_act_error_upper_bound": 0
+  },
+  "gate": {
+    "ece_max": 0.05,
+    "auto_act_error_max": 0.05,
+    "reversible_only": true,
+    "passed": false
+  }
+}

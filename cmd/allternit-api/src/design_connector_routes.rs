@@ -753,34 +753,15 @@ impl ImportError {
 
 // ─── SSRF guard ──────────────────────────────────────────────────────────────
 
-/// True for loopback (127.0.0.0/8, ::1), private (10/8, 172.16/12, 192.168/16,
-/// fc00::/7), link-local (169.254/16, fe80::/10), unspecified (0.0.0.0, ::),
-/// and IPv4-mapped forms of any of the above (::ffff:127.0.0.1 etc).
-fn is_forbidden_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_unspecified()
-                // 100.64.0.0/10 CGNAT — not routable on the public internet.
-                // (Ipv4Addr::is_shared is unstable on this toolchain, so
-                // match the prefix explicitly.)
-                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 0x40)
-        }
-        IpAddr::V6(v6) => {
-            if let Some(mapped) = v6.to_ipv4_mapped() {
-                return is_forbidden_ip(IpAddr::V4(mapped));
-            }
-            v6.is_loopback() || v6.is_unique_local() || v6.is_unicast_link_local() || v6.is_unspecified()
-        }
-    }
-}
-
 /// Rejects the URL when its host is a literal IP (v4 or v6, including
-/// IPv4-mapped v6) that classifies as local/private.
+/// IPv4-mapped v6) that is not publicly routable. Delegates to the shared
+/// egress guard.
 fn host_ip_literal_is_forbidden(host: &str) -> bool {
-    host.parse::<IpAddr>().map(is_forbidden_ip).unwrap_or(false)
+    host.trim_start_matches('[')
+        .trim_end_matches(']')
+        .parse::<IpAddr>()
+        .map(|ip| !allternit_commrails::egress::is_public_ip(ip))
+        .unwrap_or(false)
 }
 
 /// Validates scheme, literal-IP host, and every DNS-resolved address.
@@ -810,7 +791,7 @@ async fn validate_target(url: &url::Url) -> Result<(), ImportError> {
     if addrs.is_empty() {
         return Err(ImportError::Fetch(format!("Could not resolve {}", host)));
     }
-    if addrs.iter().any(|a| is_forbidden_ip(a.ip())) {
+    if addrs.iter().any(|a| !allternit_commrails::egress::is_public_ip(a.ip())) {
         return Err(ImportError::ForbiddenTarget(
             "URL resolves to a local or private address, which is not allowed".to_string(),
         ));
@@ -1333,7 +1314,7 @@ mod import_url_tests {
             "::ffff:10.0.0.1".parse::<IpAddr>().unwrap(),
         ];
         for ip in forbidden {
-            assert!(is_forbidden_ip(ip), "{} should be forbidden", ip);
+            assert!(!allternit_commrails::egress::is_public_ip(ip), "{} should be forbidden", ip);
         }
 
         let allowed: Vec<IpAddr> = vec![
@@ -1343,7 +1324,7 @@ mod import_url_tests {
             "2606:4700:4700::1111".parse::<IpAddr>().unwrap(),
         ];
         for ip in allowed {
-            assert!(!is_forbidden_ip(ip), "{} should be allowed", ip);
+            assert!(allternit_commrails::egress::is_public_ip(ip), "{} should be allowed", ip);
         }
     }
 

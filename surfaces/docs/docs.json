@@ -35,8 +35,21 @@
             "pages": [
               "introduction",
               "quickstart",
-              "architecture",
               "api/overview"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture",
+              "architecture/agents",
+              "architecture/kernel",
+              "architecture/policy",
+              "architecture/verification",
+              "architecture/receipts",
+              "architecture/replay",
+              "architecture/kernel-contracts",
+              "architecture/kernel-contracts-reference"
             ]
           },
           {
@@ -263,6 +276,27 @@
               "api/status",
               "api/me",
               "api/quickstart"
+            ]
+          },
+          {
+            "group": "Agency API (Preview)",
+            "pages": [
+              "api/agency/overview",
+              "api/agency/quickstart",
+              "api/agency/runs",
+              "api/agency/events",
+              "api/agency/attention",
+              "api/agency/artifacts",
+              "api/agency/receipts",
+              "api/agency/campaigns",
+              "api/agency/replays",
+              "api/agency/decisions",
+              "api/agency/catalog",
+              "api/agency/errors",
+              "api/agency/idempotency",
+              "api/agency/versioning",
+              "api/agency/schemas",
+              "api/agency/openapi"
             ]
           },
           {

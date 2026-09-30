@@ -1,0 +1,10 @@
+{
+  "schema_id": "allternit.kernel.DecisionReadoutProfileV1",
+  "schema_version": "1.0.0",
+  "profile_id": "id-0001",
+  "backend_id": "id-0001",
+  "readout_kind": "RAW_LOGIT",
+  "calibration_level": "RAW",
+  "question_id": "id-0001",
+  "schema_hash": "sha256:abababababababababababababababababababababababababababababababab"
+}

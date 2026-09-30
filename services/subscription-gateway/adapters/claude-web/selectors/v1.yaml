@@ -1,0 +1,67 @@
+# claude-web selectors v1 — §A3.2 named keys, ordered fallbacks
+# (data-testid / role+name first, CSS last).
+# *** v1-unverified: written from public knowledge of the claude.ai UI, NOT
+# *** validated against a logged-in session. The fixtures are shaped to these
+# *** selectors, so the suite proves internal consistency, not live fidelity.
+# Known shape: composer is a ProseMirror contenteditable; assistant messages
+# sit in a [data-is-streaming] wrapper (true while the reply streams) around
+# .font-claude-response (older UI: .font-claude-message); user turns are
+# [data-testid=user-message]; threads live under /chat/<uuid>.
+
+composer:
+  critical: true
+  strategies:
+    - { testid: chat-input }
+    - { role: textbox, name: /write your prompt|talk to claude|how can i help|reply to claude/i }
+    - { css: "div.ProseMirror[contenteditable=true]" }
+    - { css: "div[contenteditable=true][role=textbox]" }
+send_button:
+  critical: true
+  strategies:
+    - { role: button, name: /^send message$|^send$/i }
+    - { css: "button[aria-label='Send message']" }
+stop_button:
+  critical: false
+  strategies:
+    - { role: button, name: /stop response|^stop$/i }
+    - { css: "button[aria-label='Stop response']" }
+response:
+  critical: true # extraction target; idle pages legitimately lack it
+  strategies:
+    - { css: "[data-is-streaming] .font-claude-response" }
+    - { css: ".font-claude-response" }
+    - { css: ".font-claude-message" }
+user_turn:
+  critical: false
+  strategies:
+    - { testid: user-message }
+    - { css: "[data-testid='user-message']" }
+streaming:
+  critical: false
+  strategies:
+    - { css: "[data-is-streaming='true']" }
+logged_in_probe:
+  critical: true
+  strategies:
+    - { testid: user-menu-button }
+    - { role: button, name: /user menu|open profile|account/i }
+model_picker:
+  critical: false
+  strategies:
+    - { testid: model-selector-dropdown }
+    - { role: button, name: /model/i }
+banner:
+  critical: false
+  strategies:
+    - { testid: usage-limit-banner }
+    - { role: alert }
+    - { role: status }
+challenge:
+  critical: false
+  strategies:
+    # Top-frame heading of Cloudflare's interstitial: the Turnstile iframe is in
+    # a closed shadow root and its label is cross-origin, so only this matches.
+    - { text: /performing security verification|verifying you are human|checking your browser|checking if the site connection is secure/i }
+    - { css: "iframe[src*='challenges.cloudflare.com']" }
+    - { css: "#challenge-form" }
+    - { text: /verify you are human/i }

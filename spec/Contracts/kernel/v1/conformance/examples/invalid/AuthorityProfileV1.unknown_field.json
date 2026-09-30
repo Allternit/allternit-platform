@@ -1,0 +1,12 @@
+{
+  "schema_id": "allternit.kernel.AuthorityProfileV1",
+  "schema_version": "1.0.0",
+  "profile_id": "read-only",
+  "profile_version": 1,
+  "capabilities": [],
+  "denied_capabilities": [],
+  "filesystem_scope": [],
+  "network_policy_id": "id-0001",
+  "approval_requirements": [],
+  "unknown_required_field": "x"
+}

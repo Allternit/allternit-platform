@@ -1,0 +1,404 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allternit.com/kernel/1.0.0/tool.schema.json",
+  "title": "Allternit Kernel ABI 1.0.0 — tool",
+  "$comment": "FROZEN 2026-09-30 (ABI Package 1.0.0). Authority: Living Architecture v1.4 > 07/09 > 02. Additive changes need a minor bump; breaking changes need 2.0.",
+  "$defs": {
+    "ToolInvocationV1": {
+      "type": "object",
+      "required": [
+        "envelope",
+        "tool_id",
+        "operation_id",
+        "arguments",
+        "argument_provenance",
+        "read_set",
+        "write_set",
+        "effect_class",
+        "policy_decision_id",
+        "timeout_ms",
+        "environment_id"
+      ],
+      "properties": {
+        "envelope": {
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/AbiEnvelopeV1"
+            },
+            {
+              "properties": {
+                "schema_id": {
+                  "const": "allternit.kernel.ToolInvocationV1"
+                }
+              }
+            }
+          ]
+        },
+        "invocation_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tool_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "arguments": {
+          "type": "object"
+        },
+        "argument_provenance": {
+          "type": "object",
+          "additionalProperties": {
+            "enum": [
+              "STATE",
+              "RETRIEVAL",
+              "POLICY",
+              "GENERATED",
+              "USER"
+            ]
+          }
+        },
+        "read_set": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ResourceRef"
+          }
+        },
+        "write_set": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ResourceRef"
+          }
+        },
+        "effect_class": {
+          "enum": [
+            "NONE",
+            "READ",
+            "WORKSPACE_WRITE",
+            "EXECUTE",
+            "NETWORK",
+            "EXTERNAL_WRITE",
+            "FINANCIAL",
+            "PUBLISH",
+            "PERMISSION_CHANGE"
+          ]
+        },
+        "policy_decision_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "idempotency_key": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 8
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "environment_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "network_policy_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sandbox_ref": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "ToolInvocationV1",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "effect_class": {
+                "enum": [
+                  "EXTERNAL_WRITE",
+                  "FINANCIAL",
+                  "PUBLISH",
+                  "PERMISSION_CHANGE",
+                  "NETWORK"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "idempotency_key"
+            ],
+            "properties": {
+              "idempotency_key": {
+                "type": "string",
+                "minLength": 8
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "effect_class": {
+                "const": "NETWORK"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "network_policy_id"
+            ],
+            "properties": {
+              "network_policy_id": {
+                "$ref": "common.schema.json#/$defs/Id"
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "External/harmful effects require idempotency_key + durable ActionReceiptV1 before retry. environment_id -> ExecutionEnvironmentV1 (no raw env inheritance)."
+    },
+    "ToolReceiptV1": {
+      "type": "object",
+      "required": [
+        "envelope",
+        "invocation_id",
+        "tool_id",
+        "operation_id",
+        "started_at",
+        "finished_at",
+        "exit_class",
+        "policy_receipt_id",
+        "content_hashes"
+      ],
+      "properties": {
+        "envelope": {
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/AbiEnvelopeV1"
+            },
+            {
+              "properties": {
+                "schema_id": {
+                  "const": "allternit.kernel.ToolReceiptV1"
+                }
+              }
+            }
+          ]
+        },
+        "invocation_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "tool_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "started_at": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "finished_at": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "exit_class": {
+          "enum": [
+            "SUCCESS",
+            "FAILURE",
+            "PARTIAL",
+            "TIMEOUT",
+            "DENIED",
+            "CANCELLED"
+          ]
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stdout_ref": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stderr_ref": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outputs": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ArtifactRef"
+          }
+        },
+        "observed_reads": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ResourceRef"
+          }
+        },
+        "observed_writes": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ResourceRef"
+          }
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "policy_receipt_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "content_hashes": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ContentHash"
+          }
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/ErrorV1"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "ToolReceiptV1"
+    },
+    "RecoveryDecisionV1": {
+      "type": "object",
+      "required": [
+        "envelope",
+        "failure_class_ref",
+        "action",
+        "attempt",
+        "changed"
+      ],
+      "properties": {
+        "envelope": {
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/AbiEnvelopeV1"
+            },
+            {
+              "properties": {
+                "schema_id": {
+                  "const": "allternit.kernel.RecoveryDecisionV1"
+                }
+              }
+            }
+          ]
+        },
+        "failure_class_ref": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "action": {
+          "enum": [
+            "RETRY",
+            "WAIT",
+            "CHANGE_ARGUMENT",
+            "CHANGE_TOOL",
+            "ESCALATE",
+            "FAIL"
+          ]
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "changed": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "EVIDENCE",
+              "STRATEGY",
+              "CONTEXT",
+              "MODEL"
+            ]
+          }
+        },
+        "hard_limit_reached": {
+          "type": "boolean"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "RecoveryDecisionV1",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "RETRY"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "changed": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "Output of tool.recover. Input = dec.classify_tool_failure result. Hard retry limits are deterministic."
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "schema_id": "allternit.kernel.WakeEventV1",
+  "schema_version": "1.0.0",
+  "wake_id": "id-0001",
+  "wake_key": "x",
+  "source": "TIMER",
+  "fired_at": "2026-09-30T00:00:00Z",
+  "targets": [
+    {
+      "kind": "WAIT_GATE",
+      "id": "id-0001"
+    }
+  ]
+}

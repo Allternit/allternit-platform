@@ -1,0 +1,36 @@
+{
+  "schema_id": "allternit.kernel.AgentStateV1",
+  "schema_version": "1.0.0",
+  "identity": {
+    "run_id": "id-0001",
+    "session_id": "id-0001",
+    "task_id": "id-0001",
+    "state_version": 0
+  },
+  "user_intent": {
+    "objective": "x"
+  },
+  "acceptance": [],
+  "constraints": [],
+  "environment": {
+    "workspace_root": "x"
+  },
+  "active_packs": [],
+  "plan": {},
+  "graph_cursor": {
+    "graph_id": "id-0001",
+    "graph_version": 0
+  },
+  "evidence": [],
+  "permissions": {
+    "grant_ids": []
+  },
+  "budgets": {},
+  "completion": {
+    "coverage": []
+  },
+  "instruction_predicates": [],
+  "sensitivity_labels": [],
+  "retrieval_snapshot_refs": [],
+  "unknown_required_field": "x"
+}

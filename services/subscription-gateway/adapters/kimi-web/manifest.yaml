@@ -1,0 +1,58 @@
+# kimi-web — Kimi web UI adapter (ui_bridge_web), §S2 shape.
+# v1-unverified: origins/selectors/cookie written from public knowledge of the
+# international Kimi site (kimi.ai now serves from www.kimi.com); NOT yet
+# validated against a logged-in session. Probe the live UI after the owner's
+# first login (SURFACES_PLAN step 6), then fix selectors/v1.yaml and the
+# fixtures together. Mainland-only flows (+86 phone login) are out of scope.
+adapter_id: kimi-web
+adapter_version: 0.1.0
+provider: kimi
+interface: ui_bridge_web
+origins:
+  # Verified 2026-09-30 on a signed-in account: www.kimi.ai serves the app
+  # without redirecting, and the session (localStorage access_token) lives on
+  # that origin. www.kimi.com has separate storage and shows logged out.
+  - https://www.kimi.ai # app surface (chat, composer, threads under /chat/<id>)
+  - https://kimi.ai
+  - https://www.kimi.com
+  - https://kimi.com
+auth:
+  login_url: https://www.kimi.ai/
+  logged_in_probe: logged_in_probe
+  # Set once signed in; the login watcher finishes a login when it appears in
+  # the login browser. (unverified)
+  # Kimi sets no session cookie; the session is localStorage (verified).
+  session_storage:
+    - { origin: "https://www.kimi.ai", key: access_token }
+plans:
+  - plan_id: free
+    label: Adagio (free)
+  - plan_id: moderato
+    label: Moderato
+  - plan_id: allegretto
+    label: Allegretto
+  - plan_id: allegro
+    label: Allegro
+  - plan_id: vivace
+    label: Vivace
+capabilities:
+  - id: chat.create
+    min_capability_version: 1
+    plans: [free, moderato, allegretto, allegro, vivace]
+    pool_id: chat-msgs
+    detachable: false
+    export_formats: []
+    status: beta
+  - id: chat.continue
+    min_capability_version: 1
+    plans: [free, moderato, allegretto, allegro, vivace]
+    pool_id: chat-msgs
+    detachable: false
+    export_formats: []
+    status: beta
+pacing: # §A5 — same conservative defaults as chatgpt-web until real signals are observed
+  min_action_gap_ms: [1200, 3500]
+  min_task_gap_s: 8
+  max_tasks_per_hour: 30
+  max_tasks_per_day: 150
+selectors_version: v1

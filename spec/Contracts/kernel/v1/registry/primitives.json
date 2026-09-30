@@ -1,0 +1,2186 @@
+{
+  "schema_id": "allternit.kernel.PrimitiveRegistryV1",
+  "schema_version": "1.0.0",
+  "registry_version": "1.0.0",
+  "source": "05 ledger rows CL-021..027 (ISA), CL-034 (decision family), CL-086..094 (leaf 16.3-16.11); UPPER_SNAKE deduplicated. 191 unique ids (09 §E Q1, resolved 2026-09-30).",
+  "count": 191,
+  "class_legend": {
+    "D": "deterministic",
+    "S": "System-1",
+    "G": "generative",
+    "V": "verifier",
+    "P": "policy (only P may grant authority)",
+    "M": "memory/state",
+    "R": "routing/resources",
+    "_note": "Legend from Living Architecture v1.4 §1 L93-125 / ledger CL-004 (09 §E Q7). Phase-A classes were inferred under a different legend (D=decision, M=mutation, R=retrieval); only letters whose meaning is unchanged (P, V, G) are kept. All other per-id classes are null until confirmed against the §16 matrix."
+  },
+  "primitives": [
+    {
+      "id": "obs.observe_environment",
+      "alias": "OBSERVE_ENVIRONMENT",
+      "extra_aliases": [],
+      "family": "isa.observation",
+      "ledger_rows": [
+        "CL-021"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.list_files",
+      "alias": "LIST_FILES",
+      "extra_aliases": [],
+      "family": "isa.observation",
+      "ledger_rows": [
+        "CL-021"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.read_file",
+      "alias": "READ_FILE",
+      "extra_aliases": [],
+      "family": "isa.observation",
+      "ledger_rows": [
+        "CL-021"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.read_range",
+      "alias": "READ_RANGE",
+      "extra_aliases": [],
+      "family": "isa.observation",
+      "ledger_rows": [
+        "CL-021"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.read_symbol",
+      "alias": "READ_SYMBOL",
+      "extra_aliases": [],
+      "family": "isa.observation",
+      "ledger_rows": [
+        "CL-021"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.find_symbol",
+      "alias": "FIND_SYMBOL",
+      "extra_aliases": [],
+      "family": "isa.observation",
+      "ledger_rows": [
+        "CL-021"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.find_reference",
+      "alias": "FIND_REFERENCE",
+      "extra_aliases": [],
+      "family": "isa.observation",
+      "ledger_rows": [
+        "CL-021"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.find_definition",
+      "alias": "FIND_DEFINITION",
+      "extra_aliases": [],
+      "family": "isa.observation",
+      "ledger_rows": [
+        "CL-021"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.search_text",
+      "alias": "SEARCH_TEXT",
+      "extra_aliases": [],
+      "family": "isa.observation",
+      "ledger_rows": [
+        "CL-021"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.search_semantic",
+      "alias": "SEARCH_SEMANTIC",
+      "extra_aliases": [],
+      "family": "isa.observation",
+      "ledger_rows": [
+        "CL-021"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.search_filename",
+      "alias": "SEARCH_FILENAME",
+      "extra_aliases": [],
+      "family": "isa.observation",
+      "ledger_rows": [
+        "CL-021"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.read_diagnostics",
+      "alias": "READ_DIAGNOSTICS",
+      "extra_aliases": [],
+      "family": "isa.observation",
+      "ledger_rows": [
+        "CL-021"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.read_git_state",
+      "alias": "READ_GIT_STATE",
+      "extra_aliases": [],
+      "family": "isa.observation",
+      "ledger_rows": [
+        "CL-021"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.read_diff",
+      "alias": "READ_DIFF",
+      "extra_aliases": [],
+      "family": "isa.observation",
+      "ledger_rows": [
+        "CL-021"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.read_test_results",
+      "alias": "READ_TEST_RESULTS",
+      "extra_aliases": [],
+      "family": "isa.observation",
+      "ledger_rows": [
+        "CL-021"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.read_build_output",
+      "alias": "READ_BUILD_OUTPUT",
+      "extra_aliases": [],
+      "family": "isa.observation",
+      "ledger_rows": [
+        "CL-021"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.read_dependencies",
+      "alias": "READ_DEPENDENCIES",
+      "extra_aliases": [],
+      "family": "isa.observation",
+      "ledger_rows": [
+        "CL-021"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.read_call_graph",
+      "alias": "READ_CALL_GRAPH",
+      "extra_aliases": [],
+      "family": "isa.observation",
+      "ledger_rows": [
+        "CL-021"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.read_type_graph",
+      "alias": "READ_TYPE_GRAPH",
+      "extra_aliases": [],
+      "family": "isa.observation",
+      "ledger_rows": [
+        "CL-021"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.read_repo_map",
+      "alias": "READ_REPO_MAP",
+      "extra_aliases": [],
+      "family": "isa.observation",
+      "ledger_rows": [
+        "CL-021"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.classify_task",
+      "alias": "CLASSIFY_TASK",
+      "extra_aliases": [],
+      "family": "isa.decision",
+      "ledger_rows": [
+        "CL-022",
+        "CL-034",
+        "CL-086"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.classify_error",
+      "alias": "CLASSIFY_ERROR",
+      "extra_aliases": [],
+      "family": "isa.decision",
+      "ledger_rows": [
+        "CL-022",
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.classify_file",
+      "alias": "CLASSIFY_FILE",
+      "extra_aliases": [],
+      "family": "isa.decision",
+      "ledger_rows": [
+        "CL-022"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.select_scope",
+      "alias": "SELECT_SCOPE",
+      "extra_aliases": [],
+      "family": "isa.decision",
+      "ledger_rows": [
+        "CL-022"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.select_file",
+      "alias": "SELECT_FILE",
+      "extra_aliases": [],
+      "family": "isa.decision",
+      "ledger_rows": [
+        "CL-022",
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.select_symbol",
+      "alias": "SELECT_SYMBOL",
+      "extra_aliases": [],
+      "family": "isa.decision",
+      "ledger_rows": [
+        "CL-022",
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.select_tool",
+      "alias": "SELECT_TOOL",
+      "extra_aliases": [],
+      "family": "isa.decision",
+      "ledger_rows": [
+        "CL-022",
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.select_test",
+      "alias": "SELECT_TEST",
+      "extra_aliases": [],
+      "family": "isa.decision",
+      "ledger_rows": [
+        "CL-022",
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.select_strategy",
+      "alias": "SELECT_STRATEGY",
+      "extra_aliases": [],
+      "family": "isa.decision",
+      "ledger_rows": [
+        "CL-022"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.rank_candidates",
+      "alias": "RANK_CANDIDATES",
+      "extra_aliases": [],
+      "family": "isa.decision",
+      "ledger_rows": [
+        "CL-022"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.assess_risk",
+      "alias": "ASSESS_RISK",
+      "extra_aliases": [],
+      "family": "isa.decision",
+      "ledger_rows": [
+        "CL-022"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.assess_completeness",
+      "alias": "ASSESS_COMPLETENESS",
+      "extra_aliases": [],
+      "family": "isa.decision",
+      "ledger_rows": [
+        "CL-022"
+      ],
+      "class": null,
+      "note": "output is CompletionProposalV1 only"
+    },
+    {
+      "id": "dec.assess_confidence",
+      "alias": "ASSESS_CONFIDENCE",
+      "extra_aliases": [],
+      "family": "isa.decision",
+      "ledger_rows": [
+        "CL-022"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.assess_regression_risk",
+      "alias": "ASSESS_REGRESSION_RISK",
+      "extra_aliases": [],
+      "family": "isa.decision",
+      "ledger_rows": [
+        "CL-022"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "mut.create_file",
+      "alias": "CREATE_FILE",
+      "extra_aliases": [],
+      "family": "isa.mutation",
+      "ledger_rows": [
+        "CL-023"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "mut.delete_file",
+      "alias": "DELETE_FILE",
+      "extra_aliases": [],
+      "family": "isa.mutation",
+      "ledger_rows": [
+        "CL-023"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "mut.move_file",
+      "alias": "MOVE_FILE",
+      "extra_aliases": [],
+      "family": "isa.mutation",
+      "ledger_rows": [
+        "CL-023"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "mut.rename_file",
+      "alias": "RENAME_FILE",
+      "extra_aliases": [],
+      "family": "isa.mutation",
+      "ledger_rows": [
+        "CL-023"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "mut.replace_range",
+      "alias": "REPLACE_RANGE",
+      "extra_aliases": [],
+      "family": "isa.mutation",
+      "ledger_rows": [
+        "CL-023"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "mut.replace_symbol",
+      "alias": "REPLACE_SYMBOL",
+      "extra_aliases": [],
+      "family": "isa.mutation",
+      "ledger_rows": [
+        "CL-023"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "mut.insert_node",
+      "alias": "INSERT_NODE",
+      "extra_aliases": [],
+      "family": "isa.mutation",
+      "ledger_rows": [
+        "CL-023"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "mut.delete_node",
+      "alias": "DELETE_NODE",
+      "extra_aliases": [],
+      "family": "isa.mutation",
+      "ledger_rows": [
+        "CL-023"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "mut.rename_symbol",
+      "alias": "RENAME_SYMBOL",
+      "extra_aliases": [],
+      "family": "isa.mutation",
+      "ledger_rows": [
+        "CL-023"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "mut.apply_patch",
+      "alias": "APPLY_PATCH",
+      "extra_aliases": [],
+      "family": "isa.mutation",
+      "ledger_rows": [
+        "CL-023"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "mut.apply_codemod",
+      "alias": "APPLY_CODEMOD",
+      "extra_aliases": [],
+      "family": "isa.mutation",
+      "ledger_rows": [
+        "CL-023"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "mut.update_dependency",
+      "alias": "UPDATE_DEPENDENCY",
+      "extra_aliases": [],
+      "family": "isa.mutation",
+      "ledger_rows": [
+        "CL-023"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "mut.update_config",
+      "alias": "UPDATE_CONFIG",
+      "extra_aliases": [],
+      "family": "isa.mutation",
+      "ledger_rows": [
+        "CL-023"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "tool.run_command",
+      "alias": "RUN_COMMAND",
+      "extra_aliases": [],
+      "family": "isa.execution",
+      "ledger_rows": [
+        "CL-024"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "tool.run_script",
+      "alias": "RUN_SCRIPT",
+      "extra_aliases": [],
+      "family": "isa.execution",
+      "ledger_rows": [
+        "CL-024"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "tool.run_test",
+      "alias": "RUN_TEST",
+      "extra_aliases": [],
+      "family": "isa.execution",
+      "ledger_rows": [
+        "CL-024"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "tool.run_test_set",
+      "alias": "RUN_TEST_SET",
+      "extra_aliases": [],
+      "family": "isa.execution",
+      "ledger_rows": [
+        "CL-024"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "tool.run_build",
+      "alias": "RUN_BUILD",
+      "extra_aliases": [],
+      "family": "isa.execution",
+      "ledger_rows": [
+        "CL-024"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "tool.run_linter",
+      "alias": "RUN_LINTER",
+      "extra_aliases": [],
+      "family": "isa.execution",
+      "ledger_rows": [
+        "CL-024"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "tool.run_formatter",
+      "alias": "RUN_FORMATTER",
+      "extra_aliases": [],
+      "family": "isa.execution",
+      "ledger_rows": [
+        "CL-024"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "tool.run_typecheck",
+      "alias": "RUN_TYPECHECK",
+      "extra_aliases": [],
+      "family": "isa.execution",
+      "ledger_rows": [
+        "CL-024"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "tool.run_benchmark",
+      "alias": "RUN_BENCHMARK",
+      "extra_aliases": [],
+      "family": "isa.execution",
+      "ledger_rows": [
+        "CL-024"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.vcs.status",
+      "alias": "STATUS",
+      "extra_aliases": [],
+      "family": "isa.version_control",
+      "ledger_rows": [
+        "CL-025"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.vcs.diff",
+      "alias": "DIFF",
+      "extra_aliases": [],
+      "family": "isa.version_control",
+      "ledger_rows": [
+        "CL-025"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.vcs.blame",
+      "alias": "BLAME",
+      "extra_aliases": [],
+      "family": "isa.version_control",
+      "ledger_rows": [
+        "CL-025"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.vcs.log",
+      "alias": "LOG",
+      "extra_aliases": [],
+      "family": "isa.version_control",
+      "ledger_rows": [
+        "CL-025"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.vcs.show",
+      "alias": "SHOW",
+      "extra_aliases": [],
+      "family": "isa.version_control",
+      "ledger_rows": [
+        "CL-025"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.vcs.branch_info",
+      "alias": "BRANCH_INFO",
+      "extra_aliases": [],
+      "family": "isa.version_control",
+      "ledger_rows": [
+        "CL-025"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "mut.vcs.stage",
+      "alias": "STAGE",
+      "extra_aliases": [],
+      "family": "isa.version_control",
+      "ledger_rows": [
+        "CL-025"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "mut.vcs.unstage",
+      "alias": "UNSTAGE",
+      "extra_aliases": [],
+      "family": "isa.version_control",
+      "ledger_rows": [
+        "CL-025"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "mut.vcs.restore",
+      "alias": "RESTORE",
+      "extra_aliases": [],
+      "family": "isa.version_control",
+      "ledger_rows": [
+        "CL-025"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "ver.parse",
+      "alias": "PARSE",
+      "extra_aliases": [],
+      "family": "isa.verification",
+      "ledger_rows": [
+        "CL-026"
+      ],
+      "class": [
+        "V"
+      ],
+      "note": null
+    },
+    {
+      "id": "ver.compile",
+      "alias": "COMPILE",
+      "extra_aliases": [],
+      "family": "isa.verification",
+      "ledger_rows": [
+        "CL-026"
+      ],
+      "class": [
+        "V"
+      ],
+      "note": null
+    },
+    {
+      "id": "ver.format_check",
+      "alias": "FORMAT_CHECK",
+      "extra_aliases": [],
+      "family": "isa.verification",
+      "ledger_rows": [
+        "CL-026"
+      ],
+      "class": [
+        "V"
+      ],
+      "note": null
+    },
+    {
+      "id": "ver.lint",
+      "alias": "LINT",
+      "extra_aliases": [],
+      "family": "isa.verification",
+      "ledger_rows": [
+        "CL-026"
+      ],
+      "class": [
+        "V"
+      ],
+      "note": null
+    },
+    {
+      "id": "ver.typecheck",
+      "alias": "TYPECHECK",
+      "extra_aliases": [],
+      "family": "isa.verification",
+      "ledger_rows": [
+        "CL-026"
+      ],
+      "class": [
+        "V"
+      ],
+      "note": null
+    },
+    {
+      "id": "ver.unit_test",
+      "alias": "UNIT_TEST",
+      "extra_aliases": [],
+      "family": "isa.verification",
+      "ledger_rows": [
+        "CL-026"
+      ],
+      "class": [
+        "V"
+      ],
+      "note": null
+    },
+    {
+      "id": "ver.integration_test",
+      "alias": "INTEGRATION_TEST",
+      "extra_aliases": [],
+      "family": "isa.verification",
+      "ledger_rows": [
+        "CL-026"
+      ],
+      "class": [
+        "V"
+      ],
+      "note": null
+    },
+    {
+      "id": "ver.behavior_check",
+      "alias": "BEHAVIOR_CHECK",
+      "extra_aliases": [],
+      "family": "isa.verification",
+      "ledger_rows": [
+        "CL-026"
+      ],
+      "class": [
+        "V"
+      ],
+      "note": null
+    },
+    {
+      "id": "ver.api_compat_check",
+      "alias": "API_COMPAT_CHECK",
+      "extra_aliases": [],
+      "family": "isa.verification",
+      "ledger_rows": [
+        "CL-026"
+      ],
+      "class": [
+        "V"
+      ],
+      "note": null
+    },
+    {
+      "id": "ver.regression_check",
+      "alias": "REGRESSION_CHECK",
+      "extra_aliases": [],
+      "family": "isa.verification",
+      "ledger_rows": [
+        "CL-026"
+      ],
+      "class": [
+        "V"
+      ],
+      "note": null
+    },
+    {
+      "id": "ver.security_check",
+      "alias": "SECURITY_CHECK",
+      "extra_aliases": [],
+      "family": "isa.verification",
+      "ledger_rows": [
+        "CL-026"
+      ],
+      "class": [
+        "V"
+      ],
+      "note": null
+    },
+    {
+      "id": "ver.diff_review",
+      "alias": "DIFF_REVIEW",
+      "extra_aliases": [],
+      "family": "isa.verification",
+      "ledger_rows": [
+        "CL-026"
+      ],
+      "class": [
+        "V"
+      ],
+      "note": null
+    },
+    {
+      "id": "ver.requirement_check",
+      "alias": "REQUIREMENT_CHECK",
+      "extra_aliases": [],
+      "family": "isa.verification",
+      "ledger_rows": [
+        "CL-026"
+      ],
+      "class": [
+        "V"
+      ],
+      "note": null
+    },
+    {
+      "id": "ctl.branch",
+      "alias": "BRANCH",
+      "extra_aliases": [],
+      "family": "isa.control",
+      "ledger_rows": [
+        "CL-027"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "ctl.parallel",
+      "alias": "PARALLEL",
+      "extra_aliases": [],
+      "family": "isa.control",
+      "ledger_rows": [
+        "CL-027"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "ctl.join",
+      "alias": "JOIN",
+      "extra_aliases": [],
+      "family": "isa.control",
+      "ledger_rows": [
+        "CL-027"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "ctl.retry",
+      "alias": "RETRY",
+      "extra_aliases": [],
+      "family": "isa.control",
+      "ledger_rows": [
+        "CL-027",
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "ctl.rollback",
+      "alias": "ROLLBACK",
+      "extra_aliases": [],
+      "family": "isa.control",
+      "ledger_rows": [
+        "CL-027",
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "ctl.checkpoint",
+      "alias": "CHECKPOINT",
+      "extra_aliases": [],
+      "family": "isa.control",
+      "ledger_rows": [
+        "CL-027"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "ctl.request_evidence",
+      "alias": "REQUEST_EVIDENCE",
+      "extra_aliases": [],
+      "family": "isa.control",
+      "ledger_rows": [
+        "CL-027"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "ctl.escalate",
+      "alias": "ESCALATE",
+      "extra_aliases": [],
+      "family": "isa.control",
+      "ledger_rows": [
+        "CL-027",
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "ctl.wait_for_dependency",
+      "alias": "WAIT_FOR_DEPENDENCY",
+      "extra_aliases": [],
+      "family": "isa.control",
+      "ledger_rows": [
+        "CL-027"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "ctl.finish",
+      "alias": "FINISH",
+      "extra_aliases": [],
+      "family": "isa.control",
+      "ledger_rows": [
+        "CL-027",
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.classify_intent",
+      "alias": "CLASSIFY_INTENT",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.classify_risk",
+      "alias": "CLASSIFY_RISK",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.classify_resource",
+      "alias": "CLASSIFY_RESOURCE",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.is_complete",
+      "alias": "IS_COMPLETE",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": "proposal only; system evaluates L2882"
+    },
+    {
+      "id": "dec.is_relevant",
+      "alias": "IS_RELEVANT",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.is_supported",
+      "alias": "IS_SUPPORTED",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.is_reversible",
+      "alias": "IS_REVERSIBLE",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.is_duplicate",
+      "alias": "IS_DUPLICATE",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.is_regression",
+      "alias": "IS_REGRESSION",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.risk_level",
+      "alias": "RISK_LEVEL",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.complexity_level",
+      "alias": "COMPLEXITY_LEVEL",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.urgency",
+      "alias": "URGENCY",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.novelty",
+      "alias": "NOVELTY",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.impact",
+      "alias": "IMPACT",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.select_model",
+      "alias": "SELECT_MODEL",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.select_branch",
+      "alias": "SELECT_BRANCH",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.rank_documents",
+      "alias": "RANK_DOCUMENTS",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.rank_files",
+      "alias": "RANK_FILES",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034",
+        "CL-088"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.rank_symbols",
+      "alias": "RANK_SYMBOLS",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034",
+        "CL-088"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.rank_patches",
+      "alias": "RANK_PATCHES",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.rank_plans",
+      "alias": "RANK_PLANS",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.select_relevant_context",
+      "alias": "SELECT_RELEVANT_CONTEXT",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.select_affected_tests",
+      "alias": "SELECT_AFFECTED_TESTS",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034",
+        "CL-092"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.select_changed_dependencies",
+      "alias": "SELECT_CHANGED_DEPENDENCIES",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.expected_success",
+      "alias": "EXPECTED_SUCCESS",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.expected_cost",
+      "alias": "EXPECTED_COST",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.expected_latency",
+      "alias": "EXPECTED_LATENCY",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.expected_information_gain",
+      "alias": "EXPECTED_INFORMATION_GAIN",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "ctl.continue",
+      "alias": "CONTINUE",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": "decision-family control outcome"
+    },
+    {
+      "id": "ctl.review",
+      "alias": "REVIEW",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": "decision-family control outcome"
+    },
+    {
+      "id": "ctl.block",
+      "alias": "BLOCK",
+      "extra_aliases": [],
+      "family": "decision_family",
+      "ledger_rows": [
+        "CL-034"
+      ],
+      "class": null,
+      "note": "decision-family control outcome"
+    },
+    {
+      "id": "obs.parse_task_request",
+      "alias": "PARSE_TASK_REQUEST",
+      "extra_aliases": [],
+      "family": "leaf.16_3.task_intake",
+      "ledger_rows": [
+        "CL-086"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.extract_explicit_deliverables",
+      "alias": "EXTRACT_EXPLICIT_DELIVERABLES",
+      "extra_aliases": [],
+      "family": "leaf.16_3.task_intake",
+      "ledger_rows": [
+        "CL-086"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.extract_hard_constraints",
+      "alias": "EXTRACT_HARD_CONSTRAINTS",
+      "extra_aliases": [],
+      "family": "leaf.16_3.task_intake",
+      "ledger_rows": [
+        "CL-086"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.infer_acceptance_criteria",
+      "alias": "INFER_ACCEPTANCE_CRITERIA",
+      "extra_aliases": [],
+      "family": "leaf.16_3.task_intake",
+      "ledger_rows": [
+        "CL-086"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.detect_ambiguity",
+      "alias": "DETECT_AMBIGUITY",
+      "extra_aliases": [],
+      "family": "leaf.16_3.task_intake",
+      "ledger_rows": [
+        "CL-086"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.select_clarify_or_default",
+      "alias": "SELECT_CLARIFY_OR_DEFAULT",
+      "extra_aliases": [],
+      "family": "leaf.16_3.task_intake",
+      "ledger_rows": [
+        "CL-086"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "state.initialize_task_state",
+      "alias": "INITIALIZE_TASK_STATE",
+      "extra_aliases": [],
+      "family": "leaf.16_3.task_intake",
+      "ledger_rows": [
+        "CL-086"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.fingerprint_environment",
+      "alias": "FINGERPRINT_ENVIRONMENT",
+      "extra_aliases": [],
+      "family": "leaf.16_4.environment_repo",
+      "ledger_rows": [
+        "CL-087"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.detect_project_roots",
+      "alias": "DETECT_PROJECT_ROOTS",
+      "extra_aliases": [],
+      "family": "leaf.16_4.environment_repo",
+      "ledger_rows": [
+        "CL-087"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.detect_languages",
+      "alias": "DETECT_LANGUAGES",
+      "extra_aliases": [],
+      "family": "leaf.16_4.environment_repo",
+      "ledger_rows": [
+        "CL-087"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.detect_build_system",
+      "alias": "DETECT_BUILD_SYSTEM",
+      "extra_aliases": [],
+      "family": "leaf.16_4.environment_repo",
+      "ledger_rows": [
+        "CL-087"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "state.activate_primitive_packs",
+      "alias": "ACTIVATE_PRIMITIVE_PACKS",
+      "extra_aliases": [],
+      "family": "leaf.16_4.environment_repo",
+      "ledger_rows": [
+        "CL-087"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.build_repo_index",
+      "alias": "BUILD_REPO_INDEX",
+      "extra_aliases": [],
+      "family": "leaf.16_4.environment_repo",
+      "ledger_rows": [
+        "CL-087"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.build_symbol_graph",
+      "alias": "BUILD_SYMBOL_GRAPH",
+      "extra_aliases": [],
+      "family": "leaf.16_4.environment_repo",
+      "ledger_rows": [
+        "CL-087"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "obs.build_dependency_graph",
+      "alias": "BUILD_DEPENDENCY_GRAPH",
+      "extra_aliases": [],
+      "family": "leaf.16_4.environment_repo",
+      "ledger_rows": [
+        "CL-087"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "ctx.generate_search_intent",
+      "alias": "GENERATE_SEARCH_INTENT",
+      "extra_aliases": [],
+      "family": "leaf.16_5.localization_context",
+      "ledger_rows": [
+        "CL-088"
+      ],
+      "class": [
+        "G"
+      ],
+      "note": null
+    },
+    {
+      "id": "ctx.retrieve_candidate_files",
+      "alias": "RETRIEVE_CANDIDATE_FILES",
+      "extra_aliases": [],
+      "family": "leaf.16_5.localization_context",
+      "ledger_rows": [
+        "CL-088"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "ctx.retrieve_candidate_symbols",
+      "alias": "RETRIEVE_CANDIDATE_SYMBOLS",
+      "extra_aliases": [],
+      "family": "leaf.16_5.localization_context",
+      "ledger_rows": [
+        "CL-088"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "ctx.expand_structural_context",
+      "alias": "EXPAND_STRUCTURAL_CONTEXT",
+      "extra_aliases": [],
+      "family": "leaf.16_5.localization_context",
+      "ledger_rows": [
+        "CL-088"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.score_context_relevance",
+      "alias": "SCORE_CONTEXT_RELEVANCE",
+      "extra_aliases": [],
+      "family": "leaf.16_5.localization_context",
+      "ledger_rows": [
+        "CL-088"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "ctx.compile_model_context",
+      "alias": "COMPILE_MODEL_CONTEXT",
+      "extra_aliases": [],
+      "family": "leaf.16_5.localization_context",
+      "ledger_rows": [
+        "CL-088"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.select_workflow_template",
+      "alias": "SELECT_WORKFLOW_TEMPLATE",
+      "extra_aliases": [],
+      "family": "leaf.16_6.planning_graph",
+      "ledger_rows": [
+        "CL-089"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "plan.instantiate_compute_graph",
+      "alias": "INSTANTIATE_COMPUTE_GRAPH",
+      "extra_aliases": [],
+      "family": "leaf.16_6.planning_graph",
+      "ledger_rows": [
+        "CL-089"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "plan.propose_plan_branches",
+      "alias": "PROPOSE_PLAN_BRANCHES",
+      "extra_aliases": [],
+      "family": "leaf.16_6.planning_graph",
+      "ledger_rows": [
+        "CL-089"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.score_plan_branch",
+      "alias": "SCORE_PLAN_BRANCH",
+      "extra_aliases": [],
+      "family": "leaf.16_6.planning_graph",
+      "ledger_rows": [
+        "CL-089"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "plan.prune_branches",
+      "alias": "PRUNE_BRANCHES",
+      "extra_aliases": [],
+      "family": "leaf.16_6.planning_graph",
+      "ledger_rows": [
+        "CL-089"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "plan.detect_information_gap",
+      "alias": "DETECT_INFORMATION_GAP",
+      "extra_aliases": [],
+      "family": "leaf.16_6.planning_graph",
+      "ledger_rows": [
+        "CL-089"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.select_next_graph_node",
+      "alias": "SELECT_NEXT_GRAPH_NODE",
+      "extra_aliases": [],
+      "family": "leaf.16_6.planning_graph",
+      "ledger_rows": [
+        "CL-089"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.assess_completion",
+      "alias": "ASSESS_COMPLETION",
+      "extra_aliases": [],
+      "family": "leaf.16_6.planning_graph",
+      "ledger_rows": [
+        "CL-089"
+      ],
+      "class": null,
+      "note": "output is CompletionProposalV1 only; never completes a run"
+    },
+    {
+      "id": "dec.select_tool_family",
+      "alias": "SELECT_TOOL_FAMILY",
+      "extra_aliases": [],
+      "family": "leaf.16_7.tool_call",
+      "ledger_rows": [
+        "CL-090"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.select_tool_operation",
+      "alias": "SELECT_TOOL_OPERATION",
+      "extra_aliases": [],
+      "family": "leaf.16_7.tool_call",
+      "ledger_rows": [
+        "CL-090"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "tool.resolve_argument_from_state",
+      "alias": "RESOLVE_ARGUMENT_FROM_STATE",
+      "extra_aliases": [],
+      "family": "leaf.16_7.tool_call",
+      "ledger_rows": [
+        "CL-090"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "tool.generate_free_argument",
+      "alias": "GENERATE_FREE_ARGUMENT",
+      "extra_aliases": [],
+      "family": "leaf.16_7.tool_call",
+      "ledger_rows": [
+        "CL-090"
+      ],
+      "class": [
+        "G"
+      ],
+      "note": null
+    },
+    {
+      "id": "tool.validate_tool_schema",
+      "alias": "VALIDATE_TOOL_SCHEMA",
+      "extra_aliases": [],
+      "family": "leaf.16_7.tool_call",
+      "ledger_rows": [
+        "CL-090"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "policy.authorize_tool_call",
+      "alias": "AUTHORIZE_TOOL_CALL",
+      "extra_aliases": [],
+      "family": "leaf.16_7.tool_call",
+      "ledger_rows": [
+        "CL-090"
+      ],
+      "class": [
+        "P"
+      ],
+      "note": null
+    },
+    {
+      "id": "tool.execute",
+      "alias": "EXECUTE_TOOL",
+      "extra_aliases": [],
+      "family": "leaf.16_7.tool_call",
+      "ledger_rows": [
+        "CL-090"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.classify_tool_failure",
+      "alias": "CLASSIFY_TOOL_FAILURE",
+      "extra_aliases": [],
+      "family": "leaf.16_7.tool_call",
+      "ledger_rows": [
+        "CL-090"
+      ],
+      "class": null,
+      "note": "09 A#29: input to tool.recover"
+    },
+    {
+      "id": "tool.recover",
+      "alias": "SELECT_RECOVERY_ACTION",
+      "extra_aliases": [
+        "RECOVER_TOOL_FAILURE"
+      ],
+      "family": "leaf.16_7.tool_call",
+      "ledger_rows": [
+        "CL-090"
+      ],
+      "class": null,
+      "note": "09 A#29: single retry/recovery primitive"
+    },
+    {
+      "id": "mut.define_mutation_scope",
+      "alias": "DEFINE_MUTATION_SCOPE",
+      "extra_aliases": [],
+      "family": "leaf.16_8.mutation_synthesis",
+      "ledger_rows": [
+        "CL-091"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.select_edit_representation",
+      "alias": "SELECT_EDIT_REPRESENTATION",
+      "extra_aliases": [],
+      "family": "leaf.16_8.mutation_synthesis",
+      "ledger_rows": [
+        "CL-091"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "mut.generate_patch_candidate",
+      "alias": "GENERATE_PATCH_CANDIDATE",
+      "extra_aliases": [],
+      "family": "leaf.16_8.mutation_synthesis",
+      "ledger_rows": [
+        "CL-091"
+      ],
+      "class": [
+        "G"
+      ],
+      "note": null
+    },
+    {
+      "id": "mut.generate_test_candidate",
+      "alias": "GENERATE_TEST_CANDIDATE",
+      "extra_aliases": [],
+      "family": "leaf.16_8.mutation_synthesis",
+      "ledger_rows": [
+        "CL-091"
+      ],
+      "class": [
+        "G"
+      ],
+      "note": null
+    },
+    {
+      "id": "mut.apply_patch_transactionally",
+      "alias": "APPLY_PATCH_TRANSACTIONALLY",
+      "extra_aliases": [],
+      "family": "leaf.16_8.mutation_synthesis",
+      "ledger_rows": [
+        "CL-091"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "mut.format_changed_code",
+      "alias": "FORMAT_CHANGED_CODE",
+      "extra_aliases": [],
+      "family": "leaf.16_8.mutation_synthesis",
+      "ledger_rows": [
+        "CL-091"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "ctx.update_affected_context",
+      "alias": "UPDATE_AFFECTED_CONTEXT",
+      "extra_aliases": [],
+      "family": "leaf.16_8.mutation_synthesis",
+      "ledger_rows": [
+        "CL-091"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.compare_patch_candidates",
+      "alias": "COMPARE_PATCH_CANDIDATES",
+      "extra_aliases": [],
+      "family": "leaf.16_8.mutation_synthesis",
+      "ledger_rows": [
+        "CL-091"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "ver.parse_validate",
+      "alias": "PARSE_VALIDATE",
+      "extra_aliases": [],
+      "family": "leaf.16_9.verification_recovery",
+      "ledger_rows": [
+        "CL-092"
+      ],
+      "class": [
+        "V"
+      ],
+      "note": null
+    },
+    {
+      "id": "ver.typecheck_affected",
+      "alias": "TYPECHECK_AFFECTED",
+      "extra_aliases": [],
+      "family": "leaf.16_9.verification_recovery",
+      "ledger_rows": [
+        "CL-092"
+      ],
+      "class": [
+        "V"
+      ],
+      "note": null
+    },
+    {
+      "id": "ver.run_target_tests",
+      "alias": "RUN_TARGET_TESTS",
+      "extra_aliases": [],
+      "family": "leaf.16_9.verification_recovery",
+      "ledger_rows": [
+        "CL-092"
+      ],
+      "class": [
+        "V"
+      ],
+      "note": null
+    },
+    {
+      "id": "dec.classify_diagnostic",
+      "alias": "CLASSIFY_DIAGNOSTIC",
+      "extra_aliases": [],
+      "family": "leaf.16_9.verification_recovery",
+      "ledger_rows": [
+        "CL-092"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.localize_failure_cause",
+      "alias": "LOCALIZE_FAILURE_CAUSE",
+      "extra_aliases": [],
+      "family": "leaf.16_9.verification_recovery",
+      "ledger_rows": [
+        "CL-092"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "dec.select_repair_strategy",
+      "alias": "SELECT_REPAIR_STRATEGY",
+      "extra_aliases": [],
+      "family": "leaf.16_9.verification_recovery",
+      "ledger_rows": [
+        "CL-092"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "ctl.rollback_mutation",
+      "alias": "ROLLBACK_MUTATION",
+      "extra_aliases": [],
+      "family": "leaf.16_9.verification_recovery",
+      "ledger_rows": [
+        "CL-092"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "ver.verify_requirements",
+      "alias": "VERIFY_REQUIREMENTS",
+      "extra_aliases": [],
+      "family": "leaf.16_9.verification_recovery",
+      "ledger_rows": [
+        "CL-092"
+      ],
+      "class": [
+        "V"
+      ],
+      "note": null
+    },
+    {
+      "id": "ver.check_unresolved_failures",
+      "alias": "CHECK_UNRESOLVED_FAILURES",
+      "extra_aliases": [],
+      "family": "leaf.16_10.completion_durable_state",
+      "ledger_rows": [
+        "CL-093"
+      ],
+      "class": [
+        "V"
+      ],
+      "note": null
+    },
+    {
+      "id": "ver.check_artifact_existence",
+      "alias": "CHECK_ARTIFACT_EXISTENCE",
+      "extra_aliases": [],
+      "family": "leaf.16_10.completion_durable_state",
+      "ledger_rows": [
+        "CL-093"
+      ],
+      "class": [
+        "V"
+      ],
+      "note": null
+    },
+    {
+      "id": "ver.check_acceptance_evidence",
+      "alias": "CHECK_ACCEPTANCE_EVIDENCE",
+      "extra_aliases": [],
+      "family": "leaf.16_10.completion_durable_state",
+      "ledger_rows": [
+        "CL-093"
+      ],
+      "class": [
+        "V"
+      ],
+      "note": null
+    },
+    {
+      "id": "dec.decide_finish_continue_escalate",
+      "alias": "DECIDE_FINISH_CONTINUE_ESCALATE",
+      "extra_aliases": [],
+      "family": "leaf.16_10.completion_durable_state",
+      "ledger_rows": [
+        "CL-093"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "ctl.compose_final_report",
+      "alias": "COMPOSE_FINAL_REPORT",
+      "extra_aliases": [],
+      "family": "leaf.16_10.completion_durable_state",
+      "ledger_rows": [
+        "CL-093"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "state.persist_run_receipt",
+      "alias": "PERSIST_RUN_RECEIPT",
+      "extra_aliases": [],
+      "family": "leaf.16_10.completion_durable_state",
+      "ledger_rows": [
+        "CL-093"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "mem.update_long_term_memory",
+      "alias": "UPDATE_LONG_TERM_MEMORY",
+      "extra_aliases": [],
+      "family": "leaf.16_10.completion_durable_state",
+      "ledger_rows": [
+        "CL-093"
+      ],
+      "class": null,
+      "note": "vault -> candidate lesson -> human-approved promotion"
+    },
+    {
+      "id": "state.close_task_state",
+      "alias": "CLOSE_TASK_STATE",
+      "extra_aliases": [],
+      "family": "leaf.16_10.completion_durable_state",
+      "ledger_rows": [
+        "CL-093"
+      ],
+      "class": null,
+      "note": "runs only after the completion gate passes"
+    },
+    {
+      "id": "route.describe_cognitive_requirement",
+      "alias": "DESCRIBE_COGNITIVE_REQUIREMENT",
+      "extra_aliases": [],
+      "family": "leaf.16_11.routing_residency_state",
+      "ledger_rows": [
+        "CL-094"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "route.filter_eligible_models",
+      "alias": "FILTER_ELIGIBLE_MODELS",
+      "extra_aliases": [],
+      "family": "leaf.16_11.routing_residency_state",
+      "ledger_rows": [
+        "CL-094"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "route.predict_model_success",
+      "alias": "PREDICT_MODEL_SUCCESS",
+      "extra_aliases": [],
+      "family": "leaf.16_11.routing_residency_state",
+      "ledger_rows": [
+        "CL-094"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "route.estimate_route_cost",
+      "alias": "ESTIMATE_ROUTE_COST",
+      "extra_aliases": [],
+      "family": "leaf.16_11.routing_residency_state",
+      "ledger_rows": [
+        "CL-094"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "route.select_logical_model",
+      "alias": "SELECT_LOGICAL_MODEL",
+      "extra_aliases": [],
+      "family": "leaf.16_11.routing_residency_state",
+      "ledger_rows": [
+        "CL-094"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "route.select_state_transfer_mode",
+      "alias": "SELECT_STATE_TRANSFER_MODE",
+      "extra_aliases": [],
+      "family": "leaf.16_11.routing_residency_state",
+      "ledger_rows": [
+        "CL-094"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "route.preload_model",
+      "alias": "PRELOAD_MODEL",
+      "extra_aliases": [],
+      "family": "leaf.16_11.routing_residency_state",
+      "ledger_rows": [
+        "CL-094"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "route.evict_model",
+      "alias": "EVICT_MODEL",
+      "extra_aliases": [],
+      "family": "leaf.16_11.routing_residency_state",
+      "ledger_rows": [
+        "CL-094"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "state.validate_translated_state",
+      "alias": "VALIDATE_TRANSLATED_STATE",
+      "extra_aliases": [],
+      "family": "leaf.16_11.routing_residency_state",
+      "ledger_rows": [
+        "CL-094"
+      ],
+      "class": null,
+      "note": null
+    },
+    {
+      "id": "ctx.reconstruct_semantic_context",
+      "alias": "RECONSTRUCT_SEMANTIC_CONTEXT",
+      "extra_aliases": [],
+      "family": "leaf.16_11.routing_residency_state",
+      "ledger_rows": [
+        "CL-094"
+      ],
+      "class": null,
+      "note": null
+    }
+  ]
+}

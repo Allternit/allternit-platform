@@ -1,0 +1,12 @@
+{
+  "schema_id": "allternit.kernel.DecisionBackendProfileV1",
+  "schema_version": "1.0.0",
+  "backend_id": "id-0001",
+  "kind": "rules",
+  "decision_modes": [
+    "BELIEF"
+  ],
+  "probability_semantics": "CALIBRATED",
+  "trust_location": "LOCAL",
+  "unknown_required_field": "x"
+}

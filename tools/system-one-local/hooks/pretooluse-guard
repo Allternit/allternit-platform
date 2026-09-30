@@ -1,0 +1,6 @@
+#!/bin/sh
+# Claude Code PreToolUse hook: hard rules first, then an advisory local System One
+# hazard pack that can only raise friction. See ../README.md ("Claude Code hook").
+# No bun → emit nothing (normal permission flow).
+command -v bun >/dev/null 2>&1 || exit 0
+exec bun "$(dirname "$0")/pretooluse-guard.ts"

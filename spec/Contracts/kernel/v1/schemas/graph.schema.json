@@ -1,0 +1,516 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allternit.com/kernel/1.0.0/graph.schema.json",
+  "title": "Allternit Kernel ABI 1.0.0 — graph",
+  "$comment": "FROZEN 2026-09-30 (ABI Package 1.0.0). Authority: Living Architecture v1.4 > 07/09 > 02. Additive changes need a minor bump; breaking changes need 2.0.",
+  "$defs": {
+    "RetryPolicy": {
+      "type": "object",
+      "required": [
+        "max_attempts",
+        "must_change"
+      ],
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "backoff_ms": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "must_change": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "EVIDENCE",
+              "STRATEGY",
+              "CONTEXT",
+              "MODEL"
+            ]
+          },
+          "minItems": 1,
+          "$comment": "A retry must change evidence, strategy, context or model (L2738)."
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false
+    },
+    "OnFailure": {
+      "type": "object",
+      "required": [
+        "strategy"
+      ],
+      "properties": {
+        "strategy": {
+          "enum": [
+            "RETRY",
+            "FALLBACK",
+            "ROLLBACK",
+            "ESCALATE",
+            "FAIL"
+          ]
+        },
+        "target": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "strategy": {
+                "enum": [
+                  "FALLBACK",
+                  "ROLLBACK",
+                  "ESCALATE"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "target"
+            ],
+            "properties": {
+              "target": {
+                "$ref": "common.schema.json#/$defs/Id"
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "Fallback/rollback/escalation targets are explicit nodes (static gate)."
+    },
+    "GraphNodeV1": {
+      "type": "object",
+      "required": [
+        "node_id",
+        "primitive_id",
+        "node_kind",
+        "inputs",
+        "outputs",
+        "read_set",
+        "write_set",
+        "lock_scope",
+        "on_failure"
+      ],
+      "properties": {
+        "node_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "primitive_id": {
+          "$ref": "common.schema.json#/$defs/PrimitiveId"
+        },
+        "node_kind": {
+          "enum": [
+            "COMPUTE",
+            "POLICY",
+            "VERIFY",
+            "WAIT",
+            "CONTROL"
+          ]
+        },
+        "cognitive_role": {
+          "anyOf": [
+            {
+              "enum": [
+                "S0",
+                "S1",
+                "S2",
+                "S3"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowed_modes": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "M0.DETERMINISTIC",
+              "M1.LOGIT_READOUT",
+              "M2.CALIBRATED_READOUT",
+              "M3.HIDDEN_HEAD",
+              "M4.DEDICATED_DECIDER",
+              "M5.GENERATIVE",
+              "M6.DEEP_SOLVER"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "capability_request": {
+          "anyOf": [
+            {
+              "$ref": "capability.schema.json#/$defs/CapabilityRequestV1"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "outputs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "read_set": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ResourceRef"
+          }
+        },
+        "write_set": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ResourceRef"
+          }
+        },
+        "lock_scope": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ResourceRef"
+          }
+        },
+        "context_projection_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wait_gate": {
+          "anyOf": [
+            {
+              "$ref": "campaign.schema.json#/$defs/WaitGateV1"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "output_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "preconditions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "postconditions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "verifier": {
+          "anyOf": [
+            {
+              "enum": [
+                "PARSE",
+                "FORMAT",
+                "LINT",
+                "TYPECHECK",
+                "UNIT_TEST",
+                "INTEGRATION_TEST",
+                "BUILD",
+                "SEMANTIC_RULE",
+                "REQUIREMENT",
+                "SECURITY",
+                "REGRESSION",
+                "DIFF_REVIEW",
+                "HUMAN"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "retry_policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RetryPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "timeout_ms": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "budget": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/ResourceBudget"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parallel_group": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rollback": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/PrimitiveId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "on_failure": {
+          "$ref": "#/$defs/OnFailure"
+        },
+        "evidence_required": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "node_kind": {
+                "const": "WAIT"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "wait_gate"
+            ]
+          }
+        }
+      ],
+      "$comment": "09 §C: execution_class renamed node_kind, orthogonal to cognitive_role (S0-S3) and mode (M0-M6). Graphs never name a backend, model or prompt."
+    },
+    "GraphEdgeV1": {
+      "type": "object",
+      "required": [
+        "from",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "to": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "type": "string",
+              "$comment": "PredicateRef or DecisionResultSelector id."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "priority": {
+          "type": "integer"
+        },
+        "edge_kind": {
+          "enum": [
+            "NORMAL",
+            "FAILURE",
+            "LOOP"
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ComputeGraphIRV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "graph_id",
+        "task_type",
+        "graph_version",
+        "nodes",
+        "edges",
+        "entry_nodes",
+        "completion_nodes",
+        "global_budget",
+        "failure_policy"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.ComputeGraphIRV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "graph_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "task_type": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "graph_version": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GraphNodeV1"
+          },
+          "minItems": 1
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GraphEdgeV1"
+          }
+        },
+        "entry_nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          },
+          "minItems": 1
+        },
+        "completion_nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          },
+          "minItems": 1
+        },
+        "global_budget": {
+          "$ref": "common.schema.json#/$defs/ResourceBudget"
+        },
+        "failure_policy": {
+          "type": "object",
+          "required": [
+            "on_unhandled"
+          ],
+          "properties": {
+            "on_unhandled": {
+              "enum": [
+                "FAIL",
+                "ESCALATE",
+                "NEEDS_HUMAN"
+              ]
+            },
+            "max_total_retries": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "invariants": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "completion_policy": {
+          "anyOf": [
+            {
+              "$ref": "completion.schema.json#/$defs/CompletionPolicyRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "ComputeGraphIRV1",
+      "$comment": "Q3: ComputeGraphIR is the only workflow truth. The WIH DAG is a read-only projection (node_id -> WIH task, edges -> deps); it is never parsed back into a graph. Completion is evaluated by the system (L2882) at completion_nodes; a model node can only emit CompletionProposalV1."
+    }
+  }
+}

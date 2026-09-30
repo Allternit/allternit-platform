@@ -48,6 +48,10 @@ pub fn project_wih(events: &[AllternitEvent], wih_id: &str) -> Option<WihState> 
                     .get("context_pack_path")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string()),
+                resolved_prompt_path: payload
+                    .get("resolved_prompt_path")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
                 loop_policy,
                 loop_state: None,
                 pending_elicitation: None,

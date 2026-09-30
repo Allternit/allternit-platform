@@ -1,0 +1,46 @@
+# claude-web — Claude web UI adapter (ui_bridge_web), §S2 shape.
+# v1-unverified: origins/selectors/cookie written from public knowledge of the
+# claude.ai UI; NOT yet validated against a logged-in session. Probe the live
+# UI after the owner's first login (SURFACES_PLAN step 6), then fix
+# selectors/v1.yaml and the fixtures together.
+adapter_id: claude-web
+adapter_version: 0.1.0
+provider: claude
+interface: ui_bridge_web
+origins:
+  - https://claude.ai # app surface (chat, composer, threads under /chat/<id>)
+  - https://assets.claude.ai # static assets
+auth:
+  login_url: https://claude.ai/login
+  logged_in_probe: logged_in_probe
+  # Set by claude.ai only once signed in; the login watcher finishes a login
+  # when it appears in the login browser. (unverified)
+  session_cookies: [sessionKey]
+plans:
+  - plan_id: free
+    label: Free
+  - plan_id: pro
+    label: Pro
+  - plan_id: max
+    label: Max
+capabilities:
+  - id: chat.create
+    min_capability_version: 1
+    plans: [free, pro, max]
+    pool_id: chat-msgs
+    detachable: false
+    export_formats: []
+    status: beta
+  - id: chat.continue
+    min_capability_version: 1
+    plans: [free, pro, max]
+    pool_id: chat-msgs
+    detachable: false
+    export_formats: []
+    status: beta
+pacing: # §A5 — same conservative defaults as chatgpt-web until real signals are observed
+  min_action_gap_ms: [1200, 3500]
+  min_task_gap_s: 8
+  max_tasks_per_hour: 30
+  max_tasks_per_day: 150
+selectors_version: v1

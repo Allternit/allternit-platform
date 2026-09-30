@@ -399,3 +399,94 @@ describe("tool.bash truncation", () => {
     })
   })
 })
+
+describe("tool.bash environment", () => {
+  const SECRETS = {
+    OPENROUTER_API_KEY: "sk-or-test-secret",
+    ANTHROPIC_API_KEY: "sk-ant-test-secret",
+    HOMEBREW_GITHUB_API_TOKEN: "ghp-test-secret",
+  }
+  const withEnv = async (vars: Record<string, string | undefined>, fn: () => Promise<void>) => {
+    const saved = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]))
+    for (const [k, v] of Object.entries(vars)) {
+      if (v === undefined) delete process.env[k]
+      else process.env[k] = v
+    }
+    try {
+      await fn()
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k]
+        else process.env[k] = v
+      }
+    }
+  }
+
+  test("commands do not inherit API keys from the gizzi process", async () => {
+    await withEnv({ ...SECRETS, GIZZI_BASH_ENV_PASSTHROUGH: undefined }, async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const bash = await BashTool.init()
+          const result = await bash.execute({ command: "env", description: "Print environment" }, ctx)
+          expect(result.metadata.exit).toBe(0)
+          expect(result.output).toContain("PATH=")
+          expect(result.output).toContain("HOME=")
+          expect(result.output).not.toContain("OPENROUTER_API_KEY")
+          expect(result.output).not.toContain("ANTHROPIC_API_KEY")
+          expect(result.output).not.toContain("HOMEBREW_GITHUB_API_TOKEN")
+          expect(result.output).not.toContain("test-secret")
+        },
+      })
+    })
+  })
+
+  test("bash.env_passthrough in config opts variables back in", async () => {
+    await withEnv({ ...SECRETS, GIZZI_BASH_ENV_PASSTHROUGH: undefined }, async () => {
+      await using tmp = await tmpdir({ git: true, config: { bash: { env_passthrough: ["OPENROUTER_*"] } } })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const bash = await BashTool.init()
+          const result = await bash.execute({ command: "env", description: "Print environment" }, ctx)
+          expect(result.output).toContain("OPENROUTER_API_KEY=sk-or-test-secret")
+          expect(result.output).not.toContain("ANTHROPIC_API_KEY")
+        },
+      })
+    })
+  })
+
+  test("GIZZI_BASH_ENV_PASSTHROUGH opts variables in by name", async () => {
+    await withEnv({ ...SECRETS, GIZZI_BASH_ENV_PASSTHROUGH: "ANTHROPIC_API_KEY" }, async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const bash = await BashTool.init()
+          const result = await bash.execute({ command: "env", description: "Print environment" }, ctx)
+          expect(result.output).toContain("ANTHROPIC_API_KEY=sk-ant-test-secret")
+          expect(result.output).not.toContain("OPENROUTER_API_KEY")
+        },
+      })
+    })
+  })
+})
+
+describe("tool.bash safety floor", () => {
+  test("refuses a catastrophic command before asking or running, even when asks auto-approve", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bash = await BashTool.init()
+        let asked = 0
+        const testCtx = { ...ctx, ask: async () => void asked++ }
+        for (const command of [":(){ :|:& };:", "rm -rf ~", "git push -f origin main"]) {
+          await expect(bash.execute({ command, description: "floor" }, testCtx)).rejects.toThrow("safety floor")
+        }
+        expect(asked).toBe(0)
+      },
+    })
+  })
+})

@@ -1,0 +1,10 @@
+{
+  "schema_id": "allternit.kernel.ContextProjectionV1",
+  "schema_version": "1.0.0",
+  "projection_id": "id-0001",
+  "target_capability": "cap.code.edit",
+  "selected": [],
+  "compiled_tokens_estimate": 0,
+  "context_fingerprint": "sha256:abababababababababababababababababababababababababababababababab",
+  "unknown_required_field": "x"
+}

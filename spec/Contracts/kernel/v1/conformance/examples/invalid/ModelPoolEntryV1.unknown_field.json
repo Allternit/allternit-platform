@@ -1,0 +1,13 @@
+{
+  "schema_id": "allternit.kernel.ModelPoolEntryV1",
+  "schema_version": "1.0.0",
+  "backend_id": "id-0001",
+  "cognitive_roles": [],
+  "modes": [],
+  "capabilities": [],
+  "residency": "PINNED",
+  "confidence_estimate": 0,
+  "latency_ms": 0,
+  "cost": 0,
+  "unknown_required_field": "x"
+}

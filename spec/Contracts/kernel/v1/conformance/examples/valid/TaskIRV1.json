@@ -1,0 +1,18 @@
+{
+  "schema_id": "allternit.kernel.TaskIRV1",
+  "schema_version": "1.0.0",
+  "task_id": "id-0001",
+  "task_type": "OBSERVE_ENVIRONMENT",
+  "objective": "x",
+  "acceptance_criteria": [],
+  "constraints": [],
+  "allowed_scope": [],
+  "forbidden_scope": [],
+  "risk_class": "LOW",
+  "interaction_mode": "AUTONOMOUS",
+  "privacy_class": "PUBLIC",
+  "completion_policy": {
+    "policy_id": "id-0001",
+    "policy_version": 1
+  }
+}

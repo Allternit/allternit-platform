@@ -334,6 +334,8 @@ impl allternit_cowork_runtime::RailsClient for LocalRailsClient {
             title: format!("cowork-run-{}", run_id),
             parent_node_id: None,
             execution_mode: "shared".to_string(),
+            description: None,
+            executor: None,
         };
 
         self.rails
@@ -362,6 +364,8 @@ impl allternit_cowork_runtime::RailsClient for LocalRailsClient {
             title: format!("Job {}", job_id),
             parent_node_id: Some(self.root_node_id(dag_id)),
             execution_mode: "shared".to_string(),
+            description: None,
+            executor: None,
         };
 
         self.rails

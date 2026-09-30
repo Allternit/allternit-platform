@@ -1,0 +1,18 @@
+{
+  "schema_id": "allternit.kernel.LeaseV1",
+  "schema_version": "1.0.0",
+  "lease_id": "id-0001",
+  "holder": "id-0001",
+  "host": "x",
+  "process_or_session": "x",
+  "scope": [
+    "x"
+  ],
+  "acquired_at": "2026-09-30T00:00:00Z",
+  "heartbeat_at": "2026-09-30T00:00:00Z",
+  "heartbeat_interval_ms": 1,
+  "expires_after_ms": 1,
+  "reclaim_policy": "REQUEUE",
+  "state_version": 0,
+  "unknown_required_field": "x"
+}

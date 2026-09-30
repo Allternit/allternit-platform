@@ -1,0 +1,209 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allternit.com/kernel/1.0.0/bundle.schema.json",
+  "title": "Allternit Kernel ABI 1.0.0 — bundle",
+  "$comment": "FROZEN 2026-09-30 (ABI Package 1.0.0). Authority: Living Architecture v1.4 > 07/09 > 02. Additive changes need a minor bump; breaking changes need 2.0.",
+  "$defs": {
+    "CompositeModelBundleV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "logical_model_id",
+        "bundle_version",
+        "required_abi_versions",
+        "primitive_packs",
+        "compute_graphs",
+        "decision_banks",
+        "model_components",
+        "router_policy",
+        "context_policy",
+        "verification_policy",
+        "deployment_profiles",
+        "signatures"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.CompositeModelBundleV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "logical_model_id": {
+          "$ref": "common.schema.json#/$defs/LogicalModelId"
+        },
+        "bundle_version": {
+          "$ref": "common.schema.json#/$defs/SemVer"
+        },
+        "required_abi_versions": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/AbiVersion"
+          },
+          "minItems": 1
+        },
+        "primitive_packs": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "compute_graphs": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "decision_banks": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "model_components": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "adapters": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "decision_backends": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "shared_backbone_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "decision_head_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "calibration_manifest_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "router_policy": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "context_policy": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "verification_policy": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "completion_policies": {
+          "type": "array",
+          "items": {
+            "$ref": "completion.schema.json#/$defs/CompletionPolicyRef"
+          }
+        },
+        "deployment_profiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "$comment": "Opaque ids; DeploymentProfileV1 is DEFERRED to ABI 1.1 (09 A#18)."
+        },
+        "eval_profile": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hashes": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "common.schema.json#/$defs/ContentHash"
+          }
+        },
+        "signatures": {
+          "type": "array",
+          "items": {
+            "$ref": "receipts.schema.json#/$defs/ReceiptSignature"
+          }
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "CompositeModelBundleV1"
+    },
+    "AgentBundleManifestV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "name",
+        "version",
+        "stable",
+        "profiles",
+        "bundle_ref"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.AgentBundleManifestV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^v\\d+$"
+        },
+        "stable": {
+          "type": "boolean"
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "read-only",
+              "code-safe",
+              "code-write"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "bundle_ref": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "AgentBundleManifestV1",
+      "$comment": "agent = name | name@vN; bare name -> latest stable vN, recorded in Run.resolved; logical_model_id = <name>-v<N>-<profile>."
+    }
+  }
+}

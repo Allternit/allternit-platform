@@ -1,0 +1,48 @@
+{
+  "schema_id": "allternit.kernel.CampaignV1",
+  "schema_version": "1.0.0",
+  "campaign_id": "id-0001",
+  "objective": "x",
+  "graph_template": "id-0001",
+  "agent_state_ref": {
+    "store": "AGENT_STATE",
+    "run_id": "id-0001",
+    "state_version": 0
+  },
+  "budget": {
+    "per_run": {},
+    "on_exhaustion": "REQUEST_ATTENTION"
+  },
+  "wake_policy": {
+    "schema_id": "allternit.kernel.WakePolicyV1",
+    "schema_version": "1.0.0",
+    "triggers": [
+      {
+        "kind": "TIMER"
+      }
+    ],
+    "min_interval_seconds": 0,
+    "max_wakes_per_day": 0,
+    "skip_if_run_active": false,
+    "defaults_version": "x"
+  },
+  "attention_policy": {
+    "schema_id": "allternit.kernel.AttentionPolicyV1",
+    "schema_version": "1.0.0",
+    "channels": [],
+    "max_per_hour": 0,
+    "max_per_day": 0,
+    "dedupe_window_seconds": 0,
+    "defaults_version": "x"
+  },
+  "completion_criteria": {
+    "policy_id": "id-0001",
+    "policy_version": 1
+  },
+  "next_wake": "2026-09-30T00:00:00Z",
+  "owner": "id-0001",
+  "status": "active",
+  "scheduling": "disabled_pending_golive",
+  "defaults_version": "x",
+  "unknown_required_field": "x"
+}

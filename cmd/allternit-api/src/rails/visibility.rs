@@ -8,6 +8,9 @@ use allternit_commrails::core::types::LedgerQuery;
 use allternit_commrails::ledger::ledger::Ledger;
 use allternit_commrails::peer::PeerRegistry;
 use allternit_commrails::wih::active_wihs;
+use allternit_commrails::judge::{pending_judge_needs, PendingJudgeNeed};
+use allternit_commrails::attention::{open_needs_you, AttentionItem};
+use allternit_commrails::work::needs_you::{pending_manual_gates, PendingManualGate};
 use allternit_commrails::project_dag;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -279,7 +282,7 @@ async fn run_ao_visibility(root: &Path) -> Option<Value> {
 }
 
 pub async fn load_visibility(root: &Path, peers: &PeerRegistry, ledger: &Ledger) -> VisibilityDto {
-    if let Some(json) = run_ao_visibility(root).await {
+    let mut dto = if let Some(json) = run_ao_visibility(root).await {
         let need_nodes = match resolve_need_nodes(&json, ledger).await {
             Ok(join) => join,
             Err(err) => {
@@ -287,15 +290,152 @@ pub async fn load_visibility(root: &Path, peers: &PeerRegistry, ledger: &Ledger)
                 NeedNodeJoin::new()
             }
         };
-        return visibility_from_ao_json(&json, peers, &need_nodes);
+        visibility_from_ao_json(&json, peers, &need_nodes)
+    } else {
+        visibility_from_peers(peers)
+    };
+    match ledger.query(LedgerQuery::default()).await {
+        Ok(events) => {
+            append_manual_gate_needs(&mut dto, &pending_manual_gates(&events));
+            append_judge_needs(&mut dto, &pending_judge_needs(&events));
+            append_attention_needs(&mut dto, &open_needs_you(&events));
+        }
+        Err(err) => tracing::warn!(error = %err, "needsYou manual-gate read failed; skipping"),
     }
-    visibility_from_peers(peers)
+    dto
+}
+
+/// Unresolved Manual wait-gates on DAG nodes are human-owned work: surface
+/// them in `needsYou` (reason `manual_gate`), only once the node's upstream
+/// is DONE so the list holds what is actually waiting on a person now.
+pub fn append_manual_gate_needs(dto: &mut VisibilityDto, pending: &[PendingManualGate]) {
+    for gate in pending.iter().filter(|g| g.deps_done) {
+        dto.needs_you.push(VisibilityNeed {
+            id: format!("gate:{}", gate.gate_id),
+            label: format!("{} — {}", gate.node_title, gate.description),
+            reason: "manual_gate".to_string(),
+            node: Some(VisibilityNeedNode {
+                dag_id: gate.dag_id.clone(),
+                node_id: gate.node_id.clone(),
+                title: gate.node_title.clone(),
+            }),
+        });
+    }
+}
+
+/// Nodes a judge verdict handed to a person (status NEEDS_HUMAN): reason
+/// `judge_failed` (timeout / error / invalid answer — fail closed) or
+/// `judge_needs_human` (continuation cap reached, or a category only a
+/// person can fix).
+pub fn append_judge_needs(dto: &mut VisibilityDto, pending: &[PendingJudgeNeed]) {
+    for need in pending {
+        dto.needs_you.push(VisibilityNeed {
+            id: format!("judge:{}/{}", need.dag_id, need.node_id),
+            label: format!("{} — {}", need.node_title, need.detail),
+            reason: need.reason.clone(),
+            node: Some(VisibilityNeedNode {
+                dag_id: need.dag_id.clone(),
+                node_id: need.node_id.clone(),
+                title: need.node_title.clone(),
+            }),
+        });
+    }
+}
+
+/// Delivered, un-acked attention-gate items (campaign checks the sweep did
+/// not run, budget exhaustion, failed check commands). Items still queued by
+/// quiet hours / the hourly cap are not shown until released.
+pub fn append_attention_needs(dto: &mut VisibilityDto, items: &[AttentionItem]) {
+    for item in items {
+        dto.needs_you.push(VisibilityNeed {
+            id: format!("attention:{}", item.item_id),
+            label: item.title.clone(),
+            reason: "attention".to_string(),
+            node: None,
+        });
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn judge_needs_human_nodes_join_needs_you() {
+        let dir = std::env::temp_dir().join(format!("ao-vis-judge-{}", std::process::id()));
+        let peers = PeerRegistry::new(&dir).expect("peers");
+        let mut dto = visibility_from_peers(&peers);
+        let before = dto.needs_you.len();
+        append_judge_needs(
+            &mut dto,
+            &[PendingJudgeNeed {
+                dag_id: "dag_1".to_string(),
+                node_id: "cut".to_string(),
+                node_title: "Cut".to_string(),
+                wih_id: Some("wih_1".to_string()),
+                reason: "judge_failed".to_string(),
+                category: None,
+                detail: "judge timed out".to_string(),
+                at: "2026-09-29T00:00:00Z".to_string(),
+            }],
+        );
+        assert_eq!(dto.needs_you.len(), before + 1);
+        let need = dto.needs_you.last().unwrap();
+        assert_eq!(need.id, "judge:dag_1/cut");
+        assert_eq!(need.reason, "judge_failed");
+        assert_eq!(need.node.as_ref().unwrap().node_id, "cut");
+    }
+
+    #[test]
+    fn manual_node_gates_join_needs_you_once_upstream_is_done() {
+        let dir = std::env::temp_dir().join(format!("ao-vis-gates-{}", std::process::id()));
+        let peers = PeerRegistry::new(&dir).expect("peers");
+        let mut dto = visibility_from_peers(&peers);
+        let gate = |id: &str, deps_done: bool| PendingManualGate {
+            dag_id: "dag_1".to_string(),
+            node_id: format!("review-{id}"),
+            node_title: "Gate-2 review".to_string(),
+            gate_id: id.to_string(),
+            description: "Eoj reviews the cut".to_string(),
+            created_at: "2026-09-29T00:00:00Z".to_string(),
+            deps_done,
+        };
+        append_manual_gate_needs(&mut dto, &[gate("wg_1", true), gate("wg_2", false)]);
+        assert_eq!(dto.needs_you.len(), 1);
+        let need = &dto.needs_you[0];
+        assert_eq!(need.id, "gate:wg_1");
+        assert_eq!(need.reason, "manual_gate");
+        let node = need.node.as_ref().expect("node join");
+        assert_eq!(node.dag_id, "dag_1");
+        assert_eq!(node.node_id, "review-wg_1");
+    }
+
+    #[test]
+    fn open_attention_items_join_needs_you() {
+        use allternit_commrails::attention::{AttentionChannel, ItemState};
+        let dir = std::env::temp_dir().join(format!("ao-vis-att-{}", std::process::id()));
+        let peers = PeerRegistry::new(&dir).expect("peers");
+        let mut dto = visibility_from_peers(&peers);
+        let item = AttentionItem {
+            item_id: "att_1".to_string(),
+            key: "campaign:c1:check".to_string(),
+            channel: AttentionChannel::NeedsYou,
+            title: "Campaign c1 check due".to_string(),
+            body: "b".to_string(),
+            content_hash: "h".to_string(),
+            source: "campaign:c1".to_string(),
+            submitted_at: "2026-09-29T00:00:00Z".to_string(),
+            state: ItemState::Delivered {
+                delivered_at: "2026-09-29T00:00:00Z".to_string(),
+            },
+        };
+        append_attention_needs(&mut dto, &[item]);
+        let need = dto.needs_you.last().expect("need");
+        assert_eq!(need.id, "attention:att_1");
+        assert_eq!(need.reason, "attention");
+        assert_eq!(need.label, "Campaign c1 check due");
+    }
 
     #[test]
     fn maps_engine_blocked_to_needs_you_and_blocked_pane() {

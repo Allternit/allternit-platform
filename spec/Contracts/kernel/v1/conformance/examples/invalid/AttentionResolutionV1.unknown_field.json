@@ -1,0 +1,10 @@
+{
+  "schema_id": "allternit.kernel.AttentionResolutionV1",
+  "schema_version": "1.0.0",
+  "attention_id": "id-0001",
+  "type": "approval",
+  "outcome": "approved",
+  "resolved_at": "2026-09-30T00:00:00Z",
+  "receipt_id": "id-0001",
+  "unknown_required_field": "x"
+}

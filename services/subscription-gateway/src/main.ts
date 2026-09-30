@@ -28,7 +28,11 @@ import { FabricRouter } from "./router/resolve.js";
 import type { DispatchDeps } from "./router/dispatch.js";
 import { WorkerSupervisor } from "./worker/supervisor.js";
 import { WorkerPool } from "./worker/pool.js";
-import { createFirefoxLoginBrowser, importFirefoxSessionIfNewer } from "./worker/login_browser.js";
+import {
+  createChromeLoginBrowser,
+  createFirefoxLoginBrowser,
+  importFirefoxSessionIfNewer,
+} from "./worker/login_browser.js";
 import { startDrain } from "./worker/drain.js";
 import { createWatchScheduler } from "./worker/detach.js";
 import { createActivityTracker } from "./worker/progress.js";
@@ -126,6 +130,9 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
     makeReconcileCtx: (attempt, adapter) => pool.reconcileCtx(attempt, adapter),
     stallTimeoutS: (capability) => stallTimeoutFor(config, capability),
   });
+  // Firefox logins sign in on a separate profile whose session is copied
+  // into Chrome at launch; Chrome logins sign in on Chrome's own profile.
+  const firefoxLogin = config.loginBrowser !== null && /firefox/i.test(config.loginBrowser);
   pool = new WorkerPool({
     db,
     registry: adapterRegistry,
@@ -133,11 +140,13 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
     profilesDir: config.stateDir,
     log,
     logger,
-    sessionImport: importFirefoxSessionIfNewer,
+    sessionImport: firefoxLogin ? importFirefoxSessionIfNewer : undefined,
   });
   await supervisor.sweepAtBoot();
   const loginBrowser = config.loginBrowser
-    ? createFirefoxLoginBrowser({ executable: config.loginBrowser })
+    ? firefoxLogin
+      ? createFirefoxLoginBrowser({ executable: config.loginBrowser })
+      : createChromeLoginBrowser({ executable: config.loginBrowser })
     : undefined;
   logger(
     `subscription-gateway: login browser ${config.loginBrowser ?? "unavailable (login mode disabled)"}`
