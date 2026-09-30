@@ -918,6 +918,7 @@ async fn main() {
         .merge(inference_router_router())
         .merge(bot_event_router())
         .merge(allternit_api::thread_routes::thread_router())
+        .merge(allternit_api::agent_gateway_routes::agent_gateway_router())
         .merge(allternit_api::spend_limits::spend_limit_router())
         .merge(allternit_api::channel_tools::channel_tools_router())
         .merge(allternit_api::templates_routes::templates_router())
