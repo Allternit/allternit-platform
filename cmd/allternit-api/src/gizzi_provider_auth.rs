@@ -23,6 +23,29 @@ fn client() -> Result<Client, String> {
     client_with_timeout(std::time::Duration::from_secs(15))
 }
 
+/// Default headers for any allternit-api -> gizzi-code call: HTTP basic auth
+/// from `GIZZI_PASSWORD` / `GIZZI_SERVER_PASSWORD` when set (the service login
+/// a Clerk-protected gizzi accepts), otherwise none (loopback dev mode).
+pub fn gizzi_auth_headers() -> reqwest::header::HeaderMap {
+    let mut headers = reqwest::header::HeaderMap::new();
+    let password = std::env::var("GIZZI_PASSWORD")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .or_else(|| std::env::var("GIZZI_SERVER_PASSWORD").ok().filter(|v| !v.is_empty()));
+    if let Some(password) = password {
+        let username = std::env::var("GIZZI_USERNAME")
+            .or_else(|_| std::env::var("GIZZI_SERVER_USERNAME"))
+            .unwrap_or_else(|_| "gizzi".to_string());
+        if let Ok(value) = reqwest::header::HeaderValue::from_str(&format!(
+            "Basic {}",
+            STANDARD.encode(format!("{username}:{password}"))
+        )) {
+            headers.insert(header::AUTHORIZATION, value);
+        }
+    }
+    headers
+}
+
 fn client_with_timeout(timeout: std::time::Duration) -> Result<Client, String> {
     let mut headers = reqwest::header::HeaderMap::new();
     let password = std::env::var("GIZZI_PASSWORD")
