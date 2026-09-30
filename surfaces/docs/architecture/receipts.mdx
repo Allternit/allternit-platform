@@ -1,15 +1,15 @@
 ---
-title: Receipts and replay
-description: What a receipt proves, how the hash chain and signatures work, and how a run is replayed from recorded effects only
+title: Receipts
+description: What a receipt proves, the receipt types, the hash chain and signatures, and how to verify a chain
 ---
+
+**Status: AVAILABLE (content-hash receipts) · DESIGN — NOT YET IMPLEMENTED (hash chain, signatures, keys endpoint).** See [status labels](/architecture#status-labels).
 
 A **receipt** is the durable evidence that something happened in a run: an effect, an input, a policy decision, a verification result, a control action. Receipts are what completion, resume, audit and replay are built on.
 
-<Warning>
-**Status.** Receipts exist today as content hashes. The per-run hash chain, signatures, the verification keys endpoint, and replay with cassette recording are designed and specified but **not built yet**. This page describes the design in the kernel contracts and the Agency API v0.3 contract.
-</Warning>
+## Architecture contract
 
-## What a receipt proves
+### What a receipt proves
 
 A receipt proves that a specific, typed event was recorded at a specific position in a run's history, with specific content, by the platform.
 
@@ -24,8 +24,7 @@ It does not prove:
 
 - That a recorded result is correct. A verification receipt records that a verifier ran and what it returned. Whether the verifier is adequate is a separate question.
 - Anything about events that were never receipted.
-
-## Receipt types
+### Receipt types
 
 | Type | Records |
 |------|---------|
@@ -40,16 +39,14 @@ It does not prove:
 | `attention` | An attention request and its resolution. |
 | `control` | Pause, resume or cancel. |
 | `spawn` | The start of an executor for a node. |
-
-## Rules
+### Rules
 
 - **Append-only.** A receipt is never edited or deleted. A correction is a new receipt whose `supersedes` field points at the old one.
 - **Content-addressed.** Each receipt is identified by the hash of its content.
 - **Input before effect.** Human input and control requests are receipted before they take effect.
 - **Idempotency before retry.** An action with an external or irreversible effect needs an idempotency key and an action receipt before it may be retried.
 - **Sufficient for replay.** Every node emits a receipt or trace event sufficient to reconstruct what it saw and did.
-
-## Hash chain
+### Hash chain
 
 Receipts for one run form a chain in `index` order.
 
@@ -65,8 +62,7 @@ index 0                 index 1                 index 2
 - `prev_hash` is the `content_hash` of the previous receipt in the same run. It is `null` only at index 0.
 
 Because `prev_hash` is part of the hashed content, changing, removing or inserting any earlier receipt changes every hash after it.
-
-## Signature and domain tag
+### Signature and domain tag
 
 Each receipt is signed with Ed25519. The signed material is not the raw content hash alone. It is the JCS-canonical form of this object:
 
@@ -82,8 +78,7 @@ Each receipt is signed with Ed25519. The signed material is not the raw content 
 Binding the schema ID, schema version and the domain-separation tag `allternit.receipt.v1` into the signature means a signature made for one kind of receipt cannot be presented as a signature over a different schema, a different version, or a different protocol that happens to use the same key.
 
 The signature object carries `alg` (`ed25519`), `key_id`, `value` (base64url), `domain` and `jwks_url`. Public keys are published as a JWKS document at `/.well-known/jwks.json`.
-
-## Verifying a chain
+### Verifying a chain
 
 To verify a run's receipts independently:
 
@@ -95,28 +90,26 @@ To verify a run's receipts independently:
 
 The Agency API also offers a server-side check. It is a convenience, not the trust root: a client that needs assurance verifies with the published keys itself. Code for both is in [Agency API: Receipts](/api/agency/receipts#verify-independently).
 
-## Replay
+## Current implementation
 
-Replay re-runs a finished run at the decision and tool boundary to answer one question: given the same recorded world, does the system make the same decisions?
+Receipts exist today as content hashes. The per-run hash chain, Ed25519 signatures and the verification keys endpoint are designed and specified in the kernel contracts and the Agency API v0.3 contract, but not built yet.
 
-```text
-live run → trace + receipts → cassette → replay → divergence report
-```
+## Availability
 
-A **cassette** is the recording of a run's external results, stored by content address. During replay:
+| Part | Status | Notes |
+|------|--------|-------|
+| Content-hashed receipts | **AVAILABLE** | Internal. |
+| Receipt contracts | **AVAILABLE** | Kernel ABI 1.0.0. |
+| Per-run hash chain and signatures | **DESIGN — NOT YET IMPLEMENTED** |  |
+| Verification keys (`/.well-known/jwks.json`) and server-side chain check | **DESIGN — NOT YET IMPLEMENTED** | Specified in API v0.3. |
 
-- **Effects are recorded-only.** Every external call is served from the recording. This is the only replay mode.
-- **Nothing is executed live.** A call with no recording fails that step with `ERR_REPLAY_UNRECORDED`. It is never sent to the real system.
-- **Decisions are recomputed.** The replay reconstructs which node ran, the evidence it saw, the capability or tool it resolved, and why it branched. Generated text does not need to be reproduced token for token.
-- **Divergence is reported.** The result is `equivalent`, `diverged_expected` (a difference caused by something you deliberately changed) or `diverged_unexpected`.
+## Developer relevance
 
-A replay can vary the authority profile, the completion criteria, the model class constraints or the runtime hints. Everything not overridden comes from the source run's recording. This makes replay the way to test a change to the system against real past runs without touching the outside world.
-
-Replay is on the critical path for the Agency API alpha: the API does not open until a run can be replayed.
+Receipts are how you audit a run without trusting the platform's word for it. Once the chain ships, verify it yourself with the published keys; the server-side check is a convenience, not the trust root. Store `receipt_id` values from errors and attention answers, because they point at the exact evidence.
 
 ## Related
 
+- [Replay](/architecture/replay)
 - [Agency API: Receipts](/api/agency/receipts)
-- [Agency API: Replays](/api/agency/replays)
-- [Runs and completion](/core/runs-and-completion)
+- [Kernel](/architecture/kernel)
 - [Git DAG](/core/git-dag)

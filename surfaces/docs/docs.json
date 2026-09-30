@@ -35,17 +35,26 @@
             "pages": [
               "introduction",
               "quickstart",
-              "architecture",
               "api/overview"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture",
+              "architecture/agents",
+              "architecture/kernel",
+              "architecture/policy",
+              "architecture/verification",
+              "architecture/receipts",
+              "architecture/replay",
+              "architecture/kernel-contracts",
+              "architecture/kernel-contracts-reference"
             ]
           },
           {
             "group": "Core Concepts",
             "pages": [
-              "core/runs-and-completion",
-              "core/receipts-and-replay",
-              "core/policy-and-safety",
-              "core/kernel-contracts",
               "core/gizzi-runtime",
               "core/gizzi-core",
               "core/commrails",
@@ -286,7 +295,8 @@
               "api/agency/errors",
               "api/agency/idempotency",
               "api/agency/versioning",
-              "api/agency/schemas"
+              "api/agency/schemas",
+              "api/agency/openapi"
             ]
           },
           {

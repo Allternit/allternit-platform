@@ -1,0 +1,51 @@
+---
+title: Replay
+description: Re-running a finished run from its recording with recorded effects only, and the divergence report
+---
+
+**Status: DESIGN — NOT YET IMPLEMENTED.** See [status labels](/architecture#status-labels).
+
+Replay answers one question: given the same recorded world, does the system make the same decisions? It is how a change to the system is tested against real past runs without touching the outside world.
+
+## Architecture contract
+
+### How replay works
+
+Replay re-runs a finished run at the decision and tool boundary to answer one question: given the same recorded world, does the system make the same decisions?
+
+```text
+live run → trace + receipts → cassette → replay → divergence report
+```
+
+A **cassette** is the recording of a run's external results, stored by content address. During replay:
+
+- **Effects are recorded-only.** Every external call is served from the recording. This is the only replay mode.
+- **Nothing is executed live.** A call with no recording fails that step with `ERR_REPLAY_UNRECORDED`. It is never sent to the real system.
+- **Decisions are recomputed.** The replay reconstructs which node ran, the evidence it saw, the capability or tool it resolved, and why it branched. Generated text does not need to be reproduced token for token.
+- **Divergence is reported.** The result is `equivalent`, `diverged_expected` (a difference caused by something you deliberately changed) or `diverged_unexpected`.
+
+A replay can vary the authority profile, the completion criteria, the model class constraints or the runtime hints. Everything not overridden comes from the source run's recording. This makes replay the way to test a change to the system against real past runs without touching the outside world.
+
+Replay is on the critical path for the Agency API alpha: the API does not open until a run can be replayed.
+
+## Current implementation
+
+Replay and cassette recording are designed and specified (`CassetteV1`, `DivergenceReportV1` in the kernel ABI, and the replay endpoints in the Agency API v0.3 contract). No implementation exists yet. Replay is on the critical path for the Agency API alpha.
+
+## Availability
+
+| Part | Status | Notes |
+|------|--------|-------|
+| Replay contracts (`CassetteV1`, `DivergenceReportV1`) | **AVAILABLE** | Kernel ABI 1.0.0; specification only. |
+| Cassette recording | **DESIGN — NOT YET IMPLEMENTED** |  |
+| Replay execution and divergence reports | **DESIGN — NOT YET IMPLEMENTED** |  |
+| Agency API replay endpoints | **PREVIEW** | Contract only. |
+
+## Developer relevance
+
+Replay never causes effects, so you can use it freely to compare a changed authority profile, completion criteria or model class constraints against a real run. Treat `diverged_unexpected` as a regression signal. A step that fails with `ERR_REPLAY_UNRECORDED` means the recording is incomplete, not that the system called out.
+
+## Related
+
+- [Receipts](/architecture/receipts)
+- [Agency API: Replays](/api/agency/replays)

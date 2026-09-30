@@ -3,6 +3,38 @@ title: Living Agent Architecture
 description: How Allternit builds the agent as a system, what each part owns, and what is live today
 ---
 
+## Kernel and Agency API
+
+Two names appear throughout these docs. They are different things:
+
+- **The kernel** is the system that runs agent work: it compiles a goal into typed contracts, carries the run durably, enforces policy, verifies results and writes receipts. See [The kernel](/architecture/kernel).
+- **The Agency API** is the public HTTP surface over the kernel: send a goal, get one durable, verified run. It is **PREVIEW**: the [v0.3 contract](/api/agency/overview) is published and the endpoint is not served yet.
+
+There is one public origin, `https://api.allternit.com`. `/v1/agency` is a new surface of the existing [Cloud API](/api/overview), not a separate service.
+
+```mermaid
+flowchart LR
+    C[Your app, SDK or CLI] --> O["https://api.allternit.com"]
+    O --> CA["Cloud API routes (AVAILABLE)"]
+    O --> AG["/v1/agency — Agency API (PREVIEW)"]
+    AG --> K[Kernel: compiler, work runtime, cognition, policy, verification, receipts]
+    CA --> N[Paired node: Allternit API + Gizzi runtime]
+    K --> N
+```
+
+The detailed path of one request inside the kernel is in [Request path](#request-path).
+
+## Status labels
+
+Every page and feature in the architecture docs carries one of these labels.
+
+| Label | Meaning |
+|-------|---------|
+| **AVAILABLE** | On main and enabled by default. You can use it today. |
+| **PREVIEW** | Published for review or opt-in only. It may change, and it is not on by default. |
+| **DESIGN — NOT YET IMPLEMENTED** | Specified and designed. No working implementation yet. |
+| **RESEARCH** | Being investigated. No committed design. |
+
 ## The invariant
 
 Allternit does not use a model to simulate an agent. Allternit implements the agent as a system and uses models as interchangeable cognitive components.
@@ -110,10 +142,10 @@ Every transition records its evidence, state version, capability, confidence and
 
 Four further rules follow from these and are covered on their own pages:
 
-- Models cannot own permission, lifecycle, completion, durable truth or policy. See [Policy and safety](/core/policy-and-safety).
-- Completion is owned by the verifier and the system. See [Runs and completion](/core/runs-and-completion).
-- Effectful retries need idempotency keys and receipts. Run state survives model eviction, cache loss, executor death and process restart. See [Receipts and replay](/core/receipts-and-replay).
-- The contracts between all of these parts are frozen and versioned. See [Kernel contracts](/core/kernel-contracts).
+- Models cannot own permission, lifecycle, completion, durable truth or policy. See [Policy and safety](/architecture/policy).
+- Completion is owned by the verifier and the system. See [Verification](/architecture/verification).
+- Effectful retries need idempotency keys and receipts. Run state survives model eviction, cache loss, executor death and process restart. See [Receipts](/architecture/receipts).
+- The contracts between all of these parts are frozen and versioned. See [Kernel contracts](/architecture/kernel-contracts).
 
 ## How today's pieces map
 
@@ -123,13 +155,13 @@ The architecture is a target that the existing product is being moved onto. Thes
 |-------|--------------------------|------|
 | **Gizzi Code** | The agent runtime and CLI. It executes work: sessions, tools, sandboxing, model calls. | [Gizzi runtime](/core/gizzi-runtime), [CLI](/cli/overview) |
 | **CommRails** | The work runtime (Work Orchestration plane). It carries work as a graph of nodes with outputs, wait gates, leases and campaigns. | [CommRails](/core/commrails) |
-| **Permission floor** | The start of the Governance plane. Hard policy runs first and no executor's native bypass mode is honored. | [Policy and safety](/core/policy-and-safety) |
-| **Kernel ABI 1.0.0** | The frozen contract package that every plane is built against. | [Kernel contracts](/core/kernel-contracts) |
+| **Permission floor** | The start of the Governance plane. Hard policy runs first and no executor's native bypass mode is honored. | [Policy and safety](/architecture/policy) |
+| **Kernel ABI 1.0.0** | The frozen contract package that every plane is built against. | [Kernel contracts](/architecture/kernel-contracts) |
 | **Surfaces** | The Experience plane today: desktop, web, mobile, extensions. | [Desktop](/surfaces/desktop), [Platform](/surfaces/platform) |
 
 ### One Brain, Many Faces
 
-Earlier docs described Allternit as "One Brain, Many Faces". That description still holds and maps onto the planes above.
+Earlier docs described Allternit as "One Brain, Many Faces". That description still holds and maps onto the planes above. The Brain is the runtime system, never a model; see [Agents](/architecture/agents).
 
 - **The Brain (Gizzi)** is the runtime that manages agent lifecycle, code execution and sandboxing, model interaction, state and event coordination. In the architecture it spans the Agent, Cognition and Execution planes.
 - **The Faces (Surfaces)** are the user-facing interfaces. They belong to the Experience plane and hold no agent logic of their own.
@@ -151,20 +183,21 @@ Earlier docs described Allternit as "One Brain, Many Faces". That description st
 
 | Part | Status | Notes |
 |------|--------|-------|
-| Gizzi Code runtime and CLI | Live | See [CLI overview](/cli/overview). |
-| CommRails work runtime: node outputs | Live | Outputs are first-class and consumed by reference. |
-| CommRails wait gates | Live | Manual and timer gates on graph nodes. |
-| CommRails leases and reclaim | Live | Heartbeat plus reclaim of stale leases. |
-| Campaigns | Live in the work runtime | Scheduled autonomous waking through the Agency API stays off until an explicit go-live. |
-| Attention gate | Live | Agents request attention; they do not notify people directly. |
-| Fail-closed judge | Live, opt-in | The judge and verifier-owned close are opt-in for internal flows today. They will be always on for Agency API runs. |
-| Permission floor | Live | Hard policy before probabilistic judgment; no bypass through an executor's native mode. |
-| Kernel ABI 1.0.0 contracts | Frozen | Schemas, registry and schema conformance tests are in the repository. |
-| Cognitive Execution Router | Not built | Designed; no implementation yet. |
-| Replay and cassette recording | Not built | Designed; no implementation yet. |
-| Agency API (`/v1/agency`) | Not built | The v0.3 contract is published as a [preview reference](/api/agency/overview). |
-| Signed receipt chain | Not built | Receipts exist as hashes today. The per-run chain and signatures are designed, not implemented. |
-| Runtime conformance suite | Not built | Only the contract-level schema tests exist. |
+| Gizzi Code runtime and CLI | **AVAILABLE** | See [CLI overview](/cli/overview). |
+| Work runtime: node outputs | **AVAILABLE** | Outputs are first-class and consumed by reference. |
+| Work runtime: wait gates | **AVAILABLE** | Manual and timer gates on graph nodes. |
+| Work runtime: leases and reclaim | **AVAILABLE** | Heartbeat plus reclaim of stale leases. |
+| Campaigns in the work runtime | **AVAILABLE** | Scheduled waking through the Agency API stays off until an explicit go-live. |
+| Attention gate | **AVAILABLE** | Agents request attention; they do not notify people directly. |
+| Permission floor | **AVAILABLE** | Hard policy before probabilistic judgment; no bypass through an executor's native mode. |
+| Kernel ABI 1.0.0 contracts | **AVAILABLE** | Frozen contract package, registry and schema tests. See [Kernel contracts](/architecture/kernel-contracts). |
+| Fail-closed judge and verifier-owned close | **PREVIEW** | Opt-in for internal flows; not on by default. Designed to be always on for Agency API runs. |
+| Agency API (`/v1/agency`) | **PREVIEW** | The v0.3 contract is published as a [preview reference](/api/agency/overview). The endpoint is not served. |
+| Cognitive Execution Router and model pool | **DESIGN — NOT YET IMPLEMENTED** | |
+| Replay and cassette recording | **DESIGN — NOT YET IMPLEMENTED** | See [Replay](/architecture/replay). |
+| Signed receipt chain | **DESIGN — NOT YET IMPLEMENTED** | Receipts exist as content hashes today. See [Receipts](/architecture/receipts). |
+| Runtime conformance suite | **DESIGN — NOT YET IMPLEMENTED** | Only contract-level schema tests exist. |
+| Cross-component cache and state transfer | **RESEARCH** | Contracts reserve the shape; no committed design for the mechanism. |
 
 The Agency API opens for alpha only after one end-to-end run can survive restart, resume, verify, replay and receipt-backed completion. That gate is not met.
 
@@ -215,16 +248,35 @@ See [BYOC Overview](/byoc/overview).
 ## Next
 
 <CardGroup cols={2}>
-  <Card title="Runs and completion" icon="list-check" href="/core/runs-and-completion">
-    The durable run, its statuses and who decides it is done.
+  <Card title="Agents" icon="user-gear" href="/architecture/agents">
+    What an agent is, and why a model is never the brain.
   </Card>
-  <Card title="Receipts and replay" icon="receipt" href="/core/receipts-and-replay">
-    What a receipt proves and how a run is replayed without effects.
+  <Card title="The kernel" icon="microchip" href="/architecture/kernel">
+    The durable run, its statuses, attention and budgets.
   </Card>
-  <Card title="Policy and safety" icon="shield" href="/core/policy-and-safety">
-    The policy floor and why there is no bypass profile.
+  <Card title="Policy and safety" icon="shield" href="/architecture/policy">
+    The policy floor, authority profiles and the fail-closed judge.
   </Card>
-  <Card title="Kernel contracts" icon="file-contract" href="/core/kernel-contracts">
+  <Card title="Verification" icon="list-check" href="/architecture/verification">
+    Who decides a run is done, and on what evidence.
+  </Card>
+  <Card title="Receipts" icon="receipt" href="/architecture/receipts">
+    What a receipt proves and how a chain is verified.
+  </Card>
+  <Card title="Replay" icon="rotate-left" href="/architecture/replay">
+    Re-running a finished run with recorded effects only.
+  </Card>
+  <Card title="Kernel contracts" icon="file-contract" href="/architecture/kernel-contracts">
     The frozen ABI 1.0.0 package.
   </Card>
+  <Card title="Agency API" icon="code" href="/api/agency/overview">
+    The public surface over the kernel (PREVIEW).
+  </Card>
 </CardGroup>
+
+## Related systems
+
+These systems have their own pages and map onto the planes above:
+
+- [Intent Graph Kernel](/core/intent-graph-kernel): the durable graph of intents, tasks, decisions and memories behind UI, context and memory projections (Agent and Context + State planes).
+- [Canonical Computer Use](/core/canonical-computer-use): the neutral contract and trust core for computer-use tools (Execution plane, under the same policy floor).

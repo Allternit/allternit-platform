@@ -1,15 +1,15 @@
 ---
 title: Policy and safety
-description: The policy floor, hard policy before probabilistic judgment, no bypass profiles, the fail-closed judge, and execution environment and network policy
+description: The policy floor, hard policy before probabilistic judgment, authority profiles, the fail-closed judge, and execution environment and network policy
 ---
+
+**Status: AVAILABLE (permission floor) · PREVIEW (fail-closed judge, opt-in).** See [status labels](/architecture#status-labels).
 
 Policy in Allternit is owned by the system. A model can propose an action; it cannot grant itself permission to take it. This page describes the **policy floor**: the rules that hold for every run regardless of which executor or model is doing the work.
 
-<Note>
-**Design and status.** The permission floor (hard policy first, no bypass through an executor's native mode) is live. The fail-closed judge is live and opt-in for internal flows today; it will be always on, and not client-disableable, for runs created through the Agency API. The typed policy contracts below are frozen in [kernel ABI 1.0.0](/core/kernel-contracts). Signed policy receipts are part of the receipt chain, which is not built yet.
-</Note>
+## Architecture contract
 
-## Policy decisions
+### Policy decisions
 
 Every proposed action is checked before it runs. The check names the principal, the task, the action, the resources it touches, the sensitivity of the data involved, the class of external effect, and any spend.
 
@@ -19,12 +19,11 @@ The decision is one of four values:
 |----------|---------|
 | `ALLOW` | The action may proceed under the listed grants. |
 | `ALLOW_WITH_LIMITS` | The action may proceed within stated limits. |
-| `ASK` | A human must approve. The run raises an [attention request](/core/runs-and-completion#attention-and-approvals). |
+| `ASK` | A human must approve. The run raises an [attention request](/architecture/kernel#attention-and-approvals). |
 | `DENY` | The action is not permitted. This is final. |
 
 Decisions carry reason codes and are recorded as receipts. Grants are explicit, scoped and expiring. Permissions are scoped to the task and end with it.
-
-## The policy floor
+### The policy floor
 
 <Steps>
   <Step title="No executor bypasses policy">
@@ -37,7 +36,7 @@ Decisions carry reason codes and are recorded as receipts. Grants are explicit, 
     A judge failure, a timeout, missing calibration or low confidence all resolve to ASK or a human, never to ALLOW.
   </Step>
   <Step title="Completion is owned by the verifier">
-    The system closes a run from verification evidence. See [Runs and completion](/core/runs-and-completion#verifier-owned-completion).
+    The system closes a run from verification evidence. See [Runs and completion](/architecture/verification#verifier-owned-completion).
   </Step>
   <Step title="Network tools pass the network policy">
     Every network-capable tool call is checked against the run's network access policy.
@@ -52,8 +51,7 @@ Decisions carry reason codes and are recorded as receipts. Grants are explicit, 
     Untrusted content carries trust metadata and is kept apart from control instructions when context is built.
   </Step>
 </Steps>
-
-## Hard policy before probabilistic judgment
+### Hard policy before probabilistic judgment
 
 The architecture separates three kinds of decision:
 
@@ -68,18 +66,38 @@ The order is fixed. Hard rules run first. If a hard rule denies, evaluation stop
 Only when hard policy does not deny do soft decisions apply, and they can only move the result toward more caution.
 
 A related rule covers the decision surface: a `gate` result from a decision step is a recommendation about a transition. It is never an authorization.
+### Authority profiles
 
-## No bypass profiles
+Authority is explicit. A run carries a named **authority profile** that compiles into capabilities and policy. A profile is a typed, versioned definition, not a magic string. Runs record the profile as `id@version`.
 
-There are three [authority profiles](/core/runs-and-completion#authority-profiles): `read-only`, `code-safe` and `code-write`. There is no profile that turns policy off.
+Three profiles exist:
+
+| Profile | Intent |
+|---------|--------|
+| `read-only` | Read the workspace. No writes, no effects. |
+| `code-safe` | Work on code within the workspace under sandboxing, asking before effects outside it. |
+| `code-write` | Write to the workspace paths declared writable. |
+
+<Note>
+The intent column is a summary. The exact semantics of each profile are its typed definition: granted and denied capabilities, a filesystem scope (read, write, execute, and deny outside the workspace), a network policy, and an approval requirement per effect type (`never_allowed`, `always_ask`, `ask_unless_granted`, `allowed`). The Agency API will serve these definitions from [`GET /v1/authority-profiles`](/api/agency/catalog#list-authority-profiles).
+</Note>
+
+Rules that hold for every profile:
+
+- Grants are explicit, scoped and expire with the run. A grant never outlives its run.
+- Extra grants can only add scope within the caller's own entitlement. Nothing can weaken a hard policy deny.
+- The interaction mode (`autonomous`, `approval_gated`, `recommend_only`) changes how much discretionary review happens. `autonomous` still stops at every policy ASK.
+- **There is no bypass profile.** Names such as `yolo`, `bypass` or `auto-approve` are rejected, and no executor's native bypass mode is honored. See [Policy and safety](/architecture/policy).
+### No bypass profiles
+
+There are three [authority profiles](/architecture/policy#authority-profiles): `read-only`, `code-safe` and `code-write`. There is no profile that turns policy off.
 
 - No public profile is equivalent to yolo, bypass or auto-approve.
 - Requests naming such a profile, with or without a version suffix, are rejected with `ERR_AUTHORITY_PROFILE_FORBIDDEN`.
 - An executor's own bypass mode is not honored.
 - The `autonomous` interaction mode removes discretionary review only. It still stops at every policy ASK.
 - Fields that try to disable the fail-closed judge or verifier-owned completion are rejected as unknown fields.
-
-## The fail-closed judge
+### The fail-closed judge
 
 Some policy questions cannot be settled by a deterministic rule alone, so a judge component assesses risk. The judge can be wrong or unavailable, and the design assumes it will be.
 
@@ -95,8 +113,7 @@ Some policy questions cannot be settled by a deterministic rule alone, so a judg
 The same direction applies to expiry. An approval request that nobody answers resolves as a rejection.
 
 Human escalation is targeted, not blanket. It is driven by confidence, consequence, irreversibility, cost, novelty and verification failure.
-
-## Execution environment
+### Execution environment
 
 Processes started on behalf of a run get a compiled environment, not the parent's.
 
@@ -108,8 +125,7 @@ Processes started on behalf of a run get a compiled environment, not the parent'
 | Filesystem scope | What the process may read, write and execute. Access outside the workspace is denied. |
 
 Through the Agency API, callers can set `allowed_env_keys` and `secret_refs`. Raw environment inheritance is never available.
-
-## Network policy
+### Network policy
 
 | Setting | Values | Default |
 |---------|--------|---------|
@@ -127,18 +143,35 @@ Three defenses are always on and cannot be turned off by a request:
 - **DNS-rebinding defense.** The resolved address is pinned, so a name cannot be re-pointed at an internal address between the check and the connection.
 
 Numeric limits such as the redirect maximum are versioned platform defaults, reported with a `defaults_version`. They are not fixed constants of the architecture.
-
-## Trust classes
+### Trust classes
 
 Data carries one of five trust classes: `PUBLIC`, `INTERNAL`, `RESTRICTED`, `SECRET`, `UNTRUSTED`.
 
 - Context supplied by a caller enters as `UNTRUSTED` unless policy grants it a trust class. Untrusted text is never concatenated into control instructions.
 - Which compute may see which data is an eligibility rule applied before any cost or quality preference. A request can cap the highest trust class allowed to leave for remote compute.
 
+## Current implementation
+
+The permission floor is on main and on by default: hard policy runs first, and no executor's native bypass mode is honored. The fail-closed judge runs today for internal flows when opted in; it is designed to be always on, and not client-disableable, for Agency API runs. The typed policy contracts are frozen in [kernel ABI 1.0.0](/architecture/kernel-contracts). Signed policy receipts are part of the receipt chain, which is not built yet.
+
+## Availability
+
+| Part | Status | Notes |
+|------|--------|-------|
+| Permission floor (hard policy first, no bypass) | **AVAILABLE** | On by default. |
+| Fail-closed judge | **PREVIEW** | Opt-in for internal flows. |
+| Policy, authority and environment contracts | **AVAILABLE** | Kernel ABI 1.0.0. |
+| Authority profiles served over the API | **PREVIEW** | `GET /v1/authority-profiles` in the v0.3 contract. |
+| Signed policy receipts | **DESIGN — NOT YET IMPLEMENTED** | Part of the receipt chain. |
+
+## Developer relevance
+
+Pick the narrowest authority profile that can do the job, and expect `ASK` decisions to arrive as attention requests you must answer. A `403 ERR_POLICY_DENIED` is final: change the request, not the retry count. If you build a tool, declare its network and filesystem needs up front, because the process only receives the compiled environment.
+
 ## Related
 
-- [Runs and completion](/core/runs-and-completion)
-- [Receipts and replay](/core/receipts-and-replay)
+- [Kernel](/architecture/kernel)
+- [Receipts](/architecture/receipts)
 - [Permission profiles (CLI)](/cli/permission-profiles)
 - [Permission policies](/security/permission-policies)
 - [Agency API: Errors](/api/agency/errors)
