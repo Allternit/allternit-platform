@@ -489,7 +489,7 @@ impl Orchestrator {
         let mut executors = Vec::new();
         executors.push(probe_executor("kimi", "kimi", &["--yolo"], &[]).await);
         // Probe the flags the spawn gate actually launches with (see hook::gate_argv):
-        // codex runs sandboxed, claude runs acceptEdits + a --settings PreToolUse hook.
+        // all auto-approve; claude also gets a --settings PreToolUse hook.
         executors.push(probe_executor("codex", "codex", &["--config"], &["exec"]).await);
         executors.push(probe_executor("claude", "claude", &["--permission-mode", "--settings"], &["-p", "--permission-mode", "--settings"]).await);
         executors.push(probe_executor("agy", "agy", &["--dangerously-skip-permissions"], &[]).await);
