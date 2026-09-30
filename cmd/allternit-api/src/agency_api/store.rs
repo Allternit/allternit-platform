@@ -314,9 +314,15 @@ impl AgencyStore {
     /// `budget.threshold`, then (on_exhaustion=request_attention) open a
     /// `budget_exhausted` attention request, else fail the run.
     pub async fn charge(&self, run_id: &str, seconds: f64, cost_usd: f64, steps: i64) -> anyhow::Result<RunRecord> {
+        self.charge_usage(run_id, seconds, cost_usd, steps, 0).await
+    }
+
+    /// [`charge`] plus model tokens (counted toward the daily caps).
+    pub async fn charge_usage(&self, run_id: &str, seconds: f64, cost_usd: f64, steps: i64, tokens: u64) -> anyhow::Result<RunRecord> {
         let _g = self.lock().await;
         let mut rec = self.load_run(run_id).await?.ok_or_else(|| anyhow::anyhow!("run not found"))?;
         let u = &mut rec.run["budget_usage"];
+        u["tokens"] = json!(u["tokens"].as_u64().unwrap_or(0) + tokens);
         u["seconds"] = json!(u["seconds"].as_f64().unwrap_or(0.0) + seconds);
         u["cost_usd"] = json!(u["cost_usd"].as_f64().unwrap_or(0.0) + cost_usd);
         u["steps"] = json!(u["steps"].as_i64().unwrap_or(0) + steps);
@@ -349,6 +355,38 @@ impl AgencyStore {
         rec.attention.push(att.clone());
         self.emit(run_id, v, "attention.requested", json!({ "data": { "attention": att } })).await?;
         self.transition(rec, "needs_attention", Some("budget_exhausted")).await
+    }
+
+    /// Today's spend (UTC, by run creation day) globally and for `org`.
+    pub async fn daily_spend(&self, org: &str) -> anyhow::Result<(super::guard::Spend, super::guard::Spend)> {
+        let g = self.index().await?;
+        Ok(super::guard::spend_today(g.runs.values().map(|(r, _)| (&r.run, &r.task_ir)), org))
+    }
+
+    /// A daily spending cap (global or org) is reached: halt spend durably
+    /// first, then open the "budget cap reached" attention request and park
+    /// the run in `needs_attention` (Q11 ordering, same as `charge`).
+    pub async fn park_for_cap(&self, run_id: &str, scope: &str, dimension: &str) -> anyhow::Result<RunRecord> {
+        let _g = self.lock().await;
+        let mut rec = self.load_run(run_id).await?.ok_or_else(|| anyhow::anyhow!("run not found"))?;
+        let st = rec.run["status"].as_str().unwrap_or_default().to_string();
+        if TERMINAL.contains(&st.as_str()) || st == "needs_attention" {
+            return Ok(rec);
+        }
+        rec.run["budget_usage"]["spend_halted"] = json!(true);
+        let rec = self.save(rec).await?;
+        let v = rec.run["version"].as_i64().unwrap_or(0);
+        self.emit(run_id, v, "budget.threshold", json!({ "data": { "dimension": format!("daily_{scope}_{dimension}"), "percent": 100, "spend_halted": true } })).await?;
+        let mut rec = rec;
+        let att = json!({
+            "id": new_id("att"), "object": "attention_request", "run_id": run_id, "status": "open",
+            "reason": super::guard::CAP_REASON, "title": super::guard::CAP_TITLE,
+            "detail": format!("The {scope} daily {dimension} cap is reached. Spend stopped; approve after the cap resets or is raised to continue."),
+            "created_at": now(), "resolution": null
+        });
+        rec.attention.push(att.clone());
+        self.emit(run_id, v, "attention.requested", json!({ "data": { "attention": att } })).await?;
+        self.transition(rec, "needs_attention", Some(super::guard::CAP_TITLE)).await
     }
 
     // ── campaigns / replays: snapshot records keyed by id ────────────────────

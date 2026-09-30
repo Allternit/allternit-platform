@@ -22,7 +22,7 @@ pub async fn complete(
     system: Option<&str>,
     model: Option<&(String, String)>,
 ) -> Option<String> {
-    run(prompt, system, model, false).await
+    run(prompt, system, model, false).await.map(|(t, _)| t)
 }
 
 /// Like [`complete`], but deletes the temporary Gizzi session afterwards, so
@@ -33,6 +33,24 @@ pub async fn complete_ephemeral(
     system: Option<&str>,
     model: Option<&(String, String)>,
 ) -> Option<String> {
+    run(prompt, system, model, true).await.map(|(t, _)| t)
+}
+
+/// Model usage gizzi-code reported for a completion (summed over the
+/// assistant messages of the temporary session).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Usage {
+    pub tokens: u64,
+    pub cost_usd: f64,
+}
+
+/// [`complete_ephemeral`] that also returns the reported token/cost usage
+/// (the Agency executor charges it against its daily caps).
+pub async fn complete_ephemeral_usage(
+    prompt: &str,
+    system: Option<&str>,
+    model: Option<&(String, String)>,
+) -> Option<(String, Usage)> {
     run(prompt, system, model, true).await
 }
 
@@ -41,7 +59,7 @@ async fn run(
     system: Option<&str>,
     model: Option<&(String, String)>,
     delete_after: bool,
-) -> Option<String> {
+) -> Option<(String, Usage)> {
     let gizzi = crate::APP_CONFIG
         .get()
         .map(|c| c.terminal_server_url())
@@ -112,7 +130,11 @@ async fn collect(
     session_id: &str,
     prompt: &str,
     system: Option<&str>,
-) -> Option<String> {
+) -> Option<(String, Usage)> {
+    let mut usage: std::collections::HashMap<String, Usage> = std::collections::HashMap::new();
+    let total = |u: &std::collections::HashMap<String, Usage>| {
+        u.values().fold(Usage::default(), |a, b| Usage { tokens: a.tokens + b.tokens, cost_usd: a.cost_usd + b.cost_usd })
+    };
 
     // Subscribe to events before sending the message.
     let event_resp = match client
@@ -197,6 +219,17 @@ async fn collect(
                     }
 
                     match event_type {
+                        "message.updated" => {
+                            let info = &props["info"];
+                            if info["role"] == "assistant" {
+                                let t = &info["tokens"];
+                                let n = |v: &serde_json::Value| v.as_u64().unwrap_or(0);
+                                usage.insert(info["id"].as_str().unwrap_or_default().to_string(), Usage {
+                                    tokens: n(&t["input"]) + n(&t["output"]) + n(&t["reasoning"]),
+                                    cost_usd: info["cost"].as_f64().unwrap_or(0.0),
+                                });
+                            }
+                        }
                         "message.part.delta" => {
                             if let Some(delta) = props.get("delta").and_then(|v| v.as_str()) {
                                 text_parts.push(delta.to_string());
@@ -211,7 +244,7 @@ async fn collect(
                             if status_type == "busy" {
                                 was_busy = true;
                             } else if status_type == "idle" && was_busy {
-                                return Some(text_parts.concat());
+                                return Some((text_parts.concat(), total(&usage)));
                             }
                         }
                         _ => {}
@@ -230,6 +263,6 @@ async fn collect(
     if text_parts.is_empty() {
         None
     } else {
-        Some(text_parts.concat())
+        Some((text_parts.concat(), total(&usage)))
     }
 }

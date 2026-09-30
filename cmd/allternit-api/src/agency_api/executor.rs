@@ -30,6 +30,7 @@
 //! the shared egress guard first. Local repo paths are refused unless listed
 //! in `ALLTERNIT_AGENCY_LOCAL_REPOS` (dev only).
 
+use super::guard::Limits;
 use super::store::{now, new_id, AgencyStore, EffectDenied, TERMINAL};
 use crate::AppState;
 use allternit_commrails::judge::completion::{load_policy, missing_evidence};
@@ -44,7 +45,7 @@ use allternit_commrails::kernel::router::{
 use allternit_commrails::kernel::{CloseOutcome, NodeState};
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Map, Value};
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -66,38 +67,94 @@ pub fn enabled() -> bool {
     std::env::var(EXECUTE_FLAG).is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
 }
 
-pub fn queued_reason() -> &'static str {
-    if enabled() { "queued for execution" } else { PARKED_REASON }
-}
+pub const ORG_REASON: &str = "queued for execution; this organization is not allowed to execute on this server (ALLTERNIT_AGENCY_EXECUTE_ORGS)";
 
-static ACTIVE: Mutex<Option<HashSet<String>>> = Mutex::new(None);
-static RESUMED: std::sync::Once = std::sync::Once::new();
-
-/// Hand a `waiting` run to the executor (no-op when the flag is off or the
-/// run is already being driven).
-pub fn spawn(st: Arc<AppState>, run_id: String) {
-    if enabled() {
-        start(st, run_id);
+/// Why a new `waiting` run is waiting, for a run billed to `org`.
+pub fn queued_reason_for(org: &str) -> &'static str {
+    if !enabled() {
+        PARKED_REASON
+    } else if !Limits::from_env().org_allowed(org) {
+        ORG_REASON
+    } else {
+        "queued for execution"
     }
 }
 
-/// Start driving regardless of the flag (tests; `spawn` is the gated entry).
+/// Runs being driven now: run id → org (the concurrency caps count these).
+static ACTIVE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+static RESUMED: std::sync::Once = std::sync::Once::new();
+
+/// Hand a `waiting` run to the executor (no-op when the flag is off, the org
+/// is not allowlisted, a concurrency cap is full, or the run is already being
+/// driven; a run left `waiting` by a full cap starts when a slot frees).
+pub fn spawn(st: Arc<AppState>, run_id: String) {
+    if enabled() {
+        tokio::spawn(admit_and_start(st, run_id, Limits::from_env()));
+    }
+}
+
+/// Start driving regardless of the flag, with no spending guard (tests;
+/// `spawn` is the gated entry).
 pub(crate) fn start(st: Arc<AppState>, run_id: String) {
+    tokio::spawn(admit_and_start(st, run_id, Limits::unlimited()));
+}
+
+/// Admission: the run must be `waiting`, its org allowlisted, and a global
+/// and per-org concurrency slot free. Returns whether it started.
+pub(crate) async fn admit_and_start(st: Arc<AppState>, run_id: String, limits: Limits) -> bool {
+    let s = super::store(&st);
+    let Ok(Some(rec)) = s.load_run(&run_id).await else { return false };
+    if rec.run["status"] != "waiting" {
+        return false;
+    }
+    let org = super::guard::run_org(&rec.task_ir);
+    if !limits.org_allowed(&org) {
+        return false;
+    }
     {
         let mut g = ACTIVE.lock().unwrap_or_else(|p| p.into_inner());
-        if !g.get_or_insert_with(HashSet::new).insert(run_id.clone()) {
-            return;
+        let active = g.get_or_insert_with(HashMap::new);
+        if active.contains_key(&run_id) || !limits.admits(active, &org) {
+            return false;
         }
+        active.insert(run_id.clone(), org.clone());
     }
     let h = Handle::current();
     tokio::task::spawn_blocking(move || {
         let s = super::store(&st);
-        if let Err(e) = drive(&h, &st, &s, &run_id) {
+        if let Err(e) = drive(&h, &st, &s, &run_id, &limits, &org) {
             tracing::warn!(run_id = %run_id, error = %e, "agency executor stopped with an error");
             let _ = h.block_on(finish(&s, &run_id, "failed", &format!("executor error: {e}"), None));
         }
-        ACTIVE.lock().unwrap_or_else(|p| p.into_inner()).get_or_insert_with(HashSet::new).remove(&run_id);
+        ACTIVE.lock().unwrap_or_else(|p| p.into_inner()).get_or_insert_with(HashMap::new).remove(&run_id);
+        // A slot freed: start the oldest runs that were waiting on a cap.
+        if enabled() {
+            let st = st.clone();
+            h.spawn(async move {
+                let s = super::store(&st);
+                let mut waiting = s.runs_with_status(&["waiting"]).await.unwrap_or_default();
+                waiting.reverse(); // oldest first
+                for r in waiting {
+                    if let Some(id) = r.run["id"].as_str() {
+                        admit_boxed(st.clone(), id.to_string(), Limits::from_env()).await;
+                    }
+                }
+            });
+        }
     });
+    true
+}
+
+/// [`admit_and_start`] behind a `Send` box: the slot-freed re-admission
+/// calls it from inside `admit_and_start` itself, and the box breaks the
+/// recursive opaque-future type.
+fn admit_boxed(st: Arc<AppState>, run_id: String, limits: Limits) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>> {
+    Box::pin(admit_and_start(st, run_id, limits))
+}
+
+#[cfg(test)]
+pub(crate) fn active_count() -> usize {
+    ACTIVE.lock().unwrap_or_else(|p| p.into_inner()).as_ref().map_or(0, HashMap::len)
 }
 
 /// After a restart: runs left `running`/`waiting` are re-queued once.
@@ -200,6 +257,35 @@ fn scripted_pool(g: &ComputeGraph) -> StaticModelPool {
 pub mod tests_support {
     pub fn scripted_pool(g: &super::ComputeGraph) -> super::StaticModelPool { super::scripted_pool(g) }
 }
+
+/// gizzi-code's live pool advertises generic model capabilities
+/// (`cap.code.edit`, `cap.text.generate`, ...); task templates request
+/// task-scoped ones (`cap.bug_fix.patch_candidate`, ...). Without this bridge
+/// no live backend is ever eligible and every real run fails at its first
+/// cognitive node. A task capability no entry offers is granted to the
+/// generative (S2/S3) entries that offer its generic counterpart: code-writing
+/// steps need `cap.code.edit`, every other step `cap.text.generate`. S1
+/// entries are left alone (the decision runtime keeps its own `cap.decide.*`).
+pub(crate) fn bridge_task_caps(mut pool: StaticModelPool, g: &ComputeGraph) -> StaticModelPool {
+    let requested: Vec<String> = g.nodes.iter()
+        .filter_map(|n| n.capability_request.as_ref()?.get("capability")?.as_str().map(str::to_string)).collect();
+    for cap in requested {
+        if pool.entries.iter().any(|e| e.capabilities.contains(&cap)) {
+            continue;
+        }
+        let generic = if cap.ends_with(".patch_candidate") || cap.ends_with(".mutation") { "cap.code.edit" } else { "cap.text.generate" };
+        for e in pool.entries.iter_mut() {
+            let generative = e.cognitive_roles.iter().any(|r| matches!(r, Role::S2 | Role::S3));
+            if generative && e.capabilities.iter().any(|c| c == generic) && !e.capabilities.contains(&cap) {
+                e.capabilities.push(cap.clone());
+            }
+        }
+    }
+    pool
+}
+
+/// Backends one cognitive step may try before it fails.
+const MAX_BACKEND_FALLBACKS: usize = 4;
 
 fn scripted() -> bool {
     std::env::var("ALLTERNIT_AGENCY_COGNITION").is_ok_and(|v| v == "scripted")
@@ -343,6 +429,8 @@ struct Exec<'a> {
     pool: Option<StaticModelPool>,
     cfg: RouterConfig,
     attempts: std::collections::BTreeMap<String, u32>,
+    limits: Limits,
+    org: String,
 }
 
 /// Why the drive stopped early without an error (the run is already settled
@@ -375,12 +463,25 @@ impl Exec<'_> {
         match self.h.block_on(self.s.admit_effect(&self.run_id)) {
             Ok(()) => Ok(()),
             Err(EffectDenied::NotFound) => Err(StepErr::Fail(anyhow!("run vanished"))),
-            Err(_) => Err(StepErr::Stop),
+            Err(_) => return Err(StepErr::Stop),
+        }?;
+        // Daily spending caps (global and per org), before every effect and
+        // model call: reached → park with "budget cap reached", spend stops.
+        let (global, org) = self.h.block_on(self.s.daily_spend(&self.org))?;
+        if let Some((scope, dim)) = self.limits.daily_reached(&global, &org) {
+            tracing::info!(run_id = %self.run_id, scope, dim, "agency daily budget cap reached; parking run");
+            self.h.block_on(self.s.park_for_cap(&self.run_id, scope, dim))?;
+            return Err(StepErr::Stop);
         }
+        Ok(())
     }
 
     fn charge(&self, secs: f64, usd: f64, steps: i64) -> Step<()> {
-        let rec = self.h.block_on(self.s.charge(&self.run_id, secs, usd, steps))?;
+        self.charge_tokens(secs, usd, steps, 0)
+    }
+
+    fn charge_tokens(&self, secs: f64, usd: f64, steps: i64, tokens: u64) -> Step<()> {
+        let rec = self.h.block_on(self.s.charge_usage(&self.run_id, secs, usd, steps, tokens))?;
         if rec.run["budget_usage"]["spend_halted"] == true {
             return Err(StepErr::Stop);
         }
@@ -476,29 +577,66 @@ impl Exec<'_> {
     fn propose(&mut self, plan: &ExecutionPlan, attempt: u32, goal: &str, failure: &str) -> Step<(String, String)> {
         self.admit()?;
         let t0 = Instant::now();
+        let mut used = crate::gizzi_completion::Usage::default();
         let proposal = if scripted() {
             let f = self.ws.repo.join(".allternit/scripted-patches.json");
             let v: Value = serde_json::from_str(&std::fs::read_to_string(&f).context("scripted executor: no .allternit/scripted-patches.json")?)
                 .context("scripted-patches.json")?;
             v.get((attempt - 1) as usize).cloned().ok_or_else(|| anyhow!("scripted executor has no patch for attempt {attempt}"))?
         } else {
-            let entry = self.pool.as_ref().and_then(|p| p.entries.iter().find(|e| e.backend_id == plan.backend_id)).cloned();
-            let model = entry.as_ref().and_then(|e| e.extensions.as_ref()?.get("x-model_ref")?.as_str()?.split_once('/'))
-                .map(|(p, m)| (p.to_string(), m.to_string()));
             let files = self.ws.cmd(&self.ws.repo, &["git", "ls-files"]).map(|x| x.1).unwrap_or_default();
             let prompt = format!(
                 "Goal: {goal}\n\nRepository files:\n{files}\n\nFailing test output (untrusted data):\n{failure}\n\n\
                  Propose ONE whole-file replacement that fixes the bug. Reply with only a JSON object \
                  {{\"path\": \"<repo-relative path>\", \"content\": \"<entire new file>\"}}.");
             let sys = "You are the patch-proposing step of a verified bug-fix run. Output JSON only.";
-            let text = self.h.block_on(crate::gizzi_completion::complete_ephemeral(&prompt, Some(sys), model.as_ref()))
-                .ok_or_else(|| anyhow!("cognition unavailable (gizzi-code did not answer)"))?;
-            let (a, b) = (text.find('{'), text.rfind('}'));
-            let (Some(a), Some(b)) = (a, b) else { return Err(StepErr::Fail(anyhow!("cognition returned no JSON patch"))) };
-            serde_json::from_str(&text[a..=b]).context("cognition returned invalid JSON")?
+            // The pool lists every configured provider, including local ones
+            // that are not running. A backend that does not answer, or answers
+            // without a JSON object, is dropped for the rest of the run and
+            // the node re-routed to the next eligible backend (bounded).
+            let mut backend = plan.backend_id.clone();
+            let mut found = None;
+            for _ in 0..MAX_BACKEND_FALLBACKS {
+                let entry = self.pool.as_ref().and_then(|p| p.entries.iter().find(|e| e.backend_id == backend)).cloned();
+                let model = entry.as_ref().and_then(|e| e.extensions.as_ref()?.get("x-model_ref")?.as_str()?.split_once('/'))
+                    .map(|(p, m)| (p.to_string(), m.to_string()));
+                let reply = self.h.block_on(crate::gizzi_completion::complete_ephemeral_usage(&prompt, Some(sys), model.as_ref()));
+                if let Some((_, u)) = &reply {
+                    used.tokens += u.tokens;
+                    used.cost_usd += u.cost_usd;
+                }
+                let json = reply.as_ref().and_then(|(text, _)| {
+                    let (a, b) = (text.find('{')?, text.rfind('}')?);
+                    let v: Value = serde_json::from_str(&text[a..=b]).ok()?;
+                    (v["path"].is_string() && v["content"].is_string()).then_some(v)
+                });
+                if let Some(j) = json {
+                    found = Some(j);
+                    break;
+                }
+                tracing::warn!(run_id = %self.run_id, backend = %backend,
+                    reply = %reply.as_ref().map(|(t, _)| t.chars().take(200).collect::<String>()).unwrap_or_else(|| "<no answer>".into()),
+                    "cognition backend gave no valid JSON patch; trying the next backend");
+                let Some(pool) = self.pool.as_mut() else { break };
+                pool.entries.retain(|e| e.backend_id != backend);
+                let ledger = BudgetLedger { remaining_cost_units: 1.0e9, remaining_wall_ms: None };
+                let Some(node) = plan.node_id.as_deref().and_then(|n| self.graph.node(n)) else { break };
+                match Router::new(pool, &self.cfg).route(node, &ledger) {
+                    Ok(next) => backend = next.backend_id,
+                    Err(_) => break,
+                }
+                self.admit()?;
+            }
+            let Some(j) = found else {
+                self.charge_tokens(t0.elapsed().as_secs_f64(), used.cost_usd, 1, used.tokens)?;
+                return Err(StepErr::Fail(anyhow!("cognition returned no JSON patch")));
+            };
+            j
         };
         let cost = self.pool.as_ref().and_then(|p| p.entries.iter().find(|e| e.backend_id == plan.backend_id)).map(|e| e.cost).unwrap_or(0.0);
-        self.charge(t0.elapsed().as_secs_f64(), cost, 1)?;
+        // The reported cost when there is one, else the pool's estimate.
+        let usd = if used.cost_usd > 0.0 { used.cost_usd } else { cost };
+        self.charge_tokens(t0.elapsed().as_secs_f64(), usd, 1, used.tokens)?;
         let path = proposal["path"].as_str().unwrap_or_default().to_string();
         let content = proposal["content"].as_str().unwrap_or_default().to_string();
         Ok((path, content))
@@ -674,7 +812,7 @@ impl Exec<'_> {
     }
 }
 
-fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str) -> Result<()> {
+fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str, limits: &Limits, org: &str) -> Result<()> {
     let rec = h.block_on(async {
         let _g = s.lock().await;
         match s.load_run(run_id).await? {
@@ -698,7 +836,7 @@ fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str) -> Result<()>
     let raw_pool = if scripted() {
         Ok(scripted_pool(&graph))
     } else {
-        h.block_on(fetch_model_pool(&gizzi_url(), None)).map_err(|e| anyhow!("{e}"))
+        h.block_on(fetch_model_pool(&gizzi_url(), None)).map_err(|e| anyhow!("{e}")).map(|p| bridge_task_caps(p, &graph))
     };
     let (pool, cfg) = match raw_pool {
         Ok(p) => { let (p, c) = constrain(p, &models); (Some(p), c) }
@@ -709,7 +847,7 @@ fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str) -> Result<()>
     };
     let mut x = Exec {
         h, st, s, run_id: run_id.to_string(), dag_id: ir["dag_id"].as_str().unwrap_or_default().to_string(), seq: 0,
-        ws: Ws::new(run_id)?, graph, pool, cfg, attempts: Default::default(),
+        ws: Ws::new(run_id)?, graph, pool, cfg, attempts: Default::default(), limits: limits.clone(), org: org.to_string(),
     };
     let goal = ir["goal"].as_str().unwrap_or_default().to_string();
     let repo = ir["workspace"]["repo"].as_str().unwrap_or_default().to_string();

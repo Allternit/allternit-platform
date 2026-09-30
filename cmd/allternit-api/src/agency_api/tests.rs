@@ -533,3 +533,206 @@ async fn agency_store_bench_large_ledger() {
     }
     println!("BENCH first call {first:?}; 20x(get+list) {:?}", t1.elapsed());
 }
+
+// ── spending guard (agency-exec-readiness) ─────────────────────────────────
+
+fn limits(pairs: &[(&str, &str)]) -> guard::Limits {
+    let m: std::collections::HashMap<String, String> = pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    guard::Limits::from_lookup(|k| m.get(k).cloned())
+}
+
+#[test]
+fn agency_guard_org_allowlist_empty_means_no_org_executes() {
+    let none = limits(&[]);
+    assert!(!none.org_allowed("org_a") && !none.org_allowed(""), "unset allowlist: nobody executes");
+    assert!(!limits(&[(guard::ORGS_ENV, " , ")]).org_allowed("org_a"));
+    let some = limits(&[(guard::ORGS_ENV, "org_a, user:u1")]);
+    assert!(some.org_allowed("org_a") && some.org_allowed("user:u1") && !some.org_allowed("org_b"));
+    assert!(limits(&[(guard::ORGS_ENV, "*")]).org_allowed("anyone"));
+}
+
+#[test]
+fn agency_guard_daily_caps_parse_default_and_reach() {
+    use guard::{Cap, Spend};
+    let d = limits(&[]);
+    assert_eq!((d.daily, d.org_daily), (guard::DEFAULT_DAILY, guard::DEFAULT_ORG_DAILY));
+    assert_eq!(Cap::parse("tokens=1000,usd=2.5"), Cap { tokens: Some(1000), usd: Some(2.5) });
+    assert_eq!(Cap::parse("3"), Cap { tokens: None, usd: Some(3.0) });
+    assert_eq!(Cap::parse("off"), Cap::OFF);
+    assert_eq!(Cap::parse("tokens=lots"), Cap { tokens: Some(0), usd: Some(0.0) }, "garbage fails closed");
+    let l = limits(&[(guard::DAILY_ENV, "tokens=1000,usd=10"), (guard::ORG_DAILY_ENV, "tokens=100")]);
+    let s = |tokens, usd| Spend { tokens, usd };
+    assert_eq!(l.daily_reached(&s(500, 1.0), &s(50, 0.5)), None);
+    assert_eq!(l.daily_reached(&s(500, 1.0), &s(100, 0.5)), Some(("org", "tokens")));
+    assert_eq!(l.daily_reached(&s(999, 10.0), &s(0, 0.0)), Some(("global", "usd")));
+    assert_eq!(l.daily_reached(&s(1000, 0.0), &s(0, 0.0)), Some(("global", "tokens")));
+}
+
+#[test]
+fn agency_guard_concurrency_caps_global_and_per_org() {
+    let l = limits(&[(guard::MAX_CONC_ENV, "2"), (guard::ORG_MAX_CONC_ENV, "1")]);
+    let d = limits(&[]);
+    assert_eq!((d.max_concurrent, d.org_max_concurrent), (guard::DEFAULT_MAX_CONCURRENT, guard::DEFAULT_ORG_MAX_CONCURRENT));
+    let mut active = std::collections::HashMap::new();
+    assert!(l.admits(&active, "a"));
+    active.insert("run_1".to_string(), "a".to_string());
+    assert!(!l.admits(&active, "a"), "per-org cap");
+    assert!(l.admits(&active, "b"));
+    active.insert("run_2".to_string(), "b".to_string());
+    assert!(!l.admits(&active, "c"), "global cap");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn agency_guard_admission_refuses_unlisted_org_and_full_slots() {
+    let t = setup().await;
+    let run = create(&t, "guard-admit-0001").await;
+    let id = run["id"].as_str().unwrap().to_string();
+    let s = AgencyStore::new(t.st.rails.ledger.clone());
+    assert_eq!(s.load_run(&id).await.unwrap().unwrap().task_ir["org_id"], "user:u1");
+    // Flag on but no allowlist: nothing starts.
+    assert!(!executor::admit_and_start(t.st.clone(), id.clone(), limits(&[])).await);
+    // Allowlisted but no free slot.
+    let full = limits(&[(guard::ORGS_ENV, "user:u1"), (guard::MAX_CONC_ENV, "0")]);
+    assert!(!executor::admit_and_start(t.st.clone(), id.clone(), full).await);
+    let full_org = limits(&[(guard::ORGS_ENV, "user:u1"), (guard::ORG_MAX_CONC_ENV, "0")]);
+    assert!(!executor::admit_and_start(t.st.clone(), id.clone(), full_org).await);
+    assert_eq!(s.load_run(&id).await.unwrap().unwrap().run["status"], "waiting", "left queued");
+    let _ = executor::active_count();
+}
+
+async fn wait_settled(s: &AgencyStore, id: &str) -> store::RunRecord {
+    for _ in 0..200 {
+        let r = s.load_run(id).await.unwrap().unwrap();
+        if r.run["status"] != "waiting" && r.run["status"] != "running" { return r; }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("run {id} never settled");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn agency_guard_org_daily_cap_parks_run_before_any_effect() {
+    let t = setup().await;
+    let run = create(&t, "guard-cap-org-0001").await;
+    let id = run["id"].as_str().unwrap().to_string();
+    let s = AgencyStore::new(t.st.rails.ledger.clone());
+    let l = limits(&[(guard::ORGS_ENV, "user:u1"), (guard::DAILY_ENV, "off"), (guard::ORG_DAILY_ENV, "usd=0")]);
+    assert!(executor::admit_and_start(t.st.clone(), id.clone(), l).await);
+    let rec = wait_settled(&s, &id).await;
+    assert_eq!(rec.run["status"], "needs_attention", "{}", rec.run);
+    assert_eq!(rec.run["budget_usage"]["spend_halted"], true);
+    assert_eq!(rec.run["attention"]["title"], "budget cap reached");
+    assert_eq!(rec.run["attention"]["reason"], guard::CAP_REASON);
+    assert_eq!(rec.run["budget_usage"]["steps"], 0, "no effect ran");
+    assert!(matches!(s.admit_effect(&id).await, Err(store::EffectDenied::SpendHalted)));
+    let evs = s.events(&id).await.unwrap();
+    assert!(!evs.iter().any(|e| e["type"] == "receipt.appended"), "no receipts: spend stopped before the first effect");
+    // Stopping it is always allowed.
+    let att_id = rec.run["attention"]["id"].as_str().unwrap();
+    let (st, _, b) = call(&t.app, post(&format!("/v1/attention/{att_id}/responses"), "u1", None, json!({ "type": "rejection" }))).await;
+    assert_eq!(st, StatusCode::OK, "{b}");
+    assert_eq!(serde_json::from_str::<Value>(&b).unwrap()["run"]["status"], "failed");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn agency_guard_global_daily_cap_counts_other_orgs_spend() {
+    let t = setup().await;
+    let s = AgencyStore::new(t.st.rails.ledger.clone());
+    // Org A (user:u1) already spent 150 tokens today on another run.
+    let a = create(&t, "guard-cap-glob-0001").await;
+    s.charge_usage(a["id"].as_str().unwrap(), 1.0, 0.0, 1, 150).await.unwrap();
+    // Org B's first run is refused by the global cap, not its own.
+    let (st, _, b) = call(&t.app, post("/v1/agency", "u2", Some("guard-cap-glob-0002"), json!({ "goal": "Fix the failing checkout tests" }))).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{b}");
+    let id = serde_json::from_str::<Value>(&b).unwrap()["id"].as_str().unwrap().to_string();
+    let (g, o) = s.daily_spend("user:u2").await.unwrap();
+    assert!(g.tokens >= 150 && o.tokens == 0);
+    let l = limits(&[(guard::ORGS_ENV, "user:u2"), (guard::DAILY_ENV, "tokens=100"), (guard::ORG_DAILY_ENV, "off")]);
+    assert!(executor::admit_and_start(t.st.clone(), id.clone(), l).await);
+    let rec = wait_settled(&s, &id).await;
+    assert_eq!(rec.run["status"], "needs_attention", "{}", rec.run);
+    assert_eq!(rec.run["attention"]["title"], "budget cap reached");
+    let evs = s.events(&id).await.unwrap();
+    assert!(evs.iter().any(|e| e["type"] == "budget.threshold" && e["data"]["dimension"] == "daily_global_tokens"), "{evs:?}");
+    // The server's own caps (env defaults here) are not reached, so approving
+    // lifts the halt and re-queues the run; it stays `waiting` because
+    // execution is off in tests.
+    let att_id = rec.run["attention"]["id"].as_str().unwrap();
+    let (st, _, b) = call(&t.app, post(&format!("/v1/attention/{att_id}/responses"), "u2", None, json!({ "type": "approval" }))).await;
+    assert_eq!(st, StatusCode::OK, "{b}");
+    let v: Value = serde_json::from_str(&b).unwrap();
+    assert_eq!(v["run"]["status"], "waiting", "{v}");
+    assert_eq!(v["run"]["budget_usage"]["spend_halted"], false, "{v}");
+}
+
+/// Real-model local end-to-end: the same seeded-bug fixture as the scripted
+/// e2e, but cognition goes to the live gizzi-code at TERMINAL_SERVER_URL /
+/// 127.0.0.1:4096 with `locality: local_only` (no metered model can be
+/// routed). Opt-in: `AGENCY_REAL_MODEL_E2E=1 cargo test -p allternit-api --lib
+/// agency_real_model_local_e2e -- --ignored --exact --nocapture`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs a live gizzi-code with a local model"]
+async fn agency_real_model_local_e2e() {
+    if std::env::var("AGENCY_REAL_MODEL_E2E").as_deref() != Ok("1") {
+        eprintln!("AGENCY_REAL_MODEL_E2E!=1; skipping");
+        return;
+    }
+    let _ = tracing_subscriber::fmt().with_env_filter("allternit_api::agency_api=debug,allternit_api::gizzi_completion=debug").with_test_writer().try_init();
+    let repo = tempfile::tempdir().unwrap();
+    let runs = tempfile::tempdir().unwrap();
+    let w = |p: &str, c: &str| { let f = repo.path().join(p); std::fs::create_dir_all(f.parent().unwrap()).unwrap(); std::fs::write(f, c).unwrap(); };
+    w("package.json", r#"{"name":"fx","private":true,"scripts":{"test":"node test.js"}}"#);
+    w("math.js", "exports.add = (a, b) => a - b;\n");
+    w("test.js", "const { add } = require('./math');\nif (add(2, 3) !== 5 || add(-2, 3) !== 1) { console.error('FAIL'); process.exit(1); }\n");
+    let git = |args: &[&str]| assert!(std::process::Command::new("git").args(args).current_dir(repo.path())
+        .env("GIT_CONFIG_GLOBAL", "/dev/null").status().unwrap().success());
+    git(&["init", "-q", "-b", "main"]);
+    git(&["add", "."]);
+    git(&["-c", "user.name=f", "-c", "user.email=f@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "seeded bug"]);
+    std::env::remove_var("ALLTERNIT_AGENCY_COGNITION");
+    std::env::set_var("ALLTERNIT_AGENCY_RUNS_DIR", runs.path());
+    std::env::set_var("ALLTERNIT_AGENCY_LOCAL_REPOS", repo.path());
+
+    let t = setup().await;
+    let body = json!({ "goal": "Fix add so the tests pass", "workspace": { "repo": repo.path().display().to_string(), "ref": "main" },
+                       "models": { "locality": "local_only" },
+                       "budget": { "max_seconds": 900, "max_cost_usd": 0.5 } });
+    let (s, _, b) = call(&t.app, post("/v1/agency", "u1", Some("real-model-e2e-0001"), body)).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{b}");
+    let id = serde_json::from_str::<Value>(&b).unwrap()["id"].as_str().unwrap().to_string();
+    let l = limits(&[(guard::ORGS_ENV, "user:u1"), (guard::DAILY_ENV, "tokens=200000,usd=0.5"), (guard::ORG_DAILY_ENV, "tokens=200000,usd=0.5")]);
+    assert!(executor::admit_and_start(t.st.clone(), id.clone(), l).await);
+    let mut run = Value::Null;
+    for _ in 0..1800 {
+        let (_, _, b) = call(&t.app, get_req(&format!("/v1/runs/{id}"), "u1")).await;
+        run = serde_json::from_str(&b).unwrap();
+        if run["terminal"] == true || run["status"] == "needs_attention" { break; }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    let s = AgencyStore::new(t.st.rails.ledger.clone());
+    for e in s.events(&id).await.unwrap() {
+        eprintln!("EVENT {} {}", e["type"], e["data"].to_string().chars().take(300).collect::<String>());
+    }
+    eprintln!("RUN status={} completion={} usage={} reason={}", run["status"], run["completion"], run["budget_usage"], run["status_reason"]);
+    eprintln!("math.js now: {:?}", std::fs::read_to_string(repo.path().join("math.js")).ok());
+    assert_eq!(run["status"], "completed", "{run}");
+    assert_eq!(run["completion"]["status"], "verified");
+}
+
+#[test]
+fn agency_live_pool_bridges_task_caps_to_generic_model_caps() {
+    use allternit_commrails::kernel::router::Role;
+    let g = allternit_commrails::kernel::bug_fix::instantiate("task.bug_fix", &["fs:math.js".to_string()]).unwrap();
+    let mut pool = executor::tests_support::scripted_pool(&g);
+    for e in pool.entries.iter_mut() {
+        e.capabilities = vec!["cap.text.generate".into()];
+    }
+    pool.entries[0].capabilities.push("cap.code.edit".into());
+    let mut s1 = pool.entries[0].clone();
+    s1.cognitive_roles = vec![Role::S1];
+    pool.entries.push(s1);
+    let b = executor::bridge_task_caps(pool, &g);
+    let has = |i: usize, c: &str| b.entries[i].capabilities.iter().any(|x| x == c);
+    assert!(has(0, "cap.bug_fix.patch_candidate") && has(0, "cap.bug_fix.acceptance"));
+    assert!(!has(1, "cap.bug_fix.patch_candidate"), "no code.edit, no patch step");
+    assert!(b.entries.iter().filter(|e| e.cognitive_roles.iter().all(|r| *r == Role::S1)).all(|e| !e.capabilities.iter().any(|c| c.starts_with("cap.bug_fix."))), "S1 entries untouched");
+}

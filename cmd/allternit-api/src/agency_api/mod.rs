@@ -15,6 +15,7 @@
 pub mod catalog;
 pub mod compiler;
 pub mod executor;
+pub mod guard;
 pub mod store;
 
 #[cfg(test)]
@@ -280,6 +281,8 @@ async fn create_run(
     });
     let mut task_ir = compiled.task_ir.clone();
     task_ir["request_hash"] = json!(request_hash(&req));
+    let org = guard::org_of(&user);
+    task_ir["org_id"] = json!(org);
     let err = |e| ApiError::internal(e, &rid);
     // Durable before 202: the snapshot carries resolved defaults + TaskIR.
     let rec = s
@@ -299,7 +302,7 @@ async fn create_run(
         .map_err(|e| ApiError::internal(e, &rid))?;
     // Resolution recorded → leave `accepted`; wait for the executor hand-off.
     let rec = s
-        .transition(rec, "waiting", Some(executor::queued_reason()))
+        .transition(rec, "waiting", Some(executor::queued_reason_for(&org)))
         .await
         .map_err(|e| ApiError::internal(e, &rid))?;
     drop(_g);
@@ -438,7 +441,7 @@ async fn control(
         "pause" => ("paused", "paused by caller"),
         "resume" if status != "paused" => return Err(ApiError::new(409, "STATE", "ERR_STATE_CONFLICT", "run is not paused", &rid)),
         "resume" if rec.run["budget_usage"]["spend_halted"] == true => ("needs_attention", "budget_exhausted"),
-        "resume" => ("waiting", executor::queued_reason()),
+        "resume" => ("waiting", executor::queued_reason_for(&guard::run_org(&rec.task_ir))),
         // The executor checks admission before every effect, so cancel settles
         // now and the drive stops at its next step.
         _ => ("cancelled", "cancelled by caller"),
@@ -501,6 +504,18 @@ async fn respond_attention(
     }
     let mut rec = s.load_run(rec.run["id"].as_str().unwrap_or_default()).await.map_err(|e| ApiError::internal(e, &rid))?
         .ok_or_else(|| ApiError::not_found("run", &rid))?;
+    // A daily cap only lifts when the cap itself allows spend again (next UTC
+    // day, or an operator raised it); an approval cannot override it.
+    let cap_org = guard::run_org(&rec.task_ir);
+    let cap_lifted = if att["reason"] == guard::CAP_REASON && kind == "approval" {
+        let (g, o) = s.daily_spend(&cap_org).await.map_err(|e| ApiError::internal(e, &rid))?;
+        if guard::Limits::from_env().daily_reached(&g, &o).is_some() {
+            return Err(ApiError::new(409, "STATE", "ERR_BUDGET_CAP_REACHED", "the daily budget cap is still reached", &rid));
+        }
+        true
+    } else {
+        false
+    };
     let outcome = match kind.as_str() { "approval" => "approved", "rejection" => "rejected", _ => "answered" };
     let resolution = json!({ "type": kind, "resolved_by": user.user_id, "resolved_at": now(), "receipt_id": new_id("rcpt"), "outcome": outcome });
     for a in rec.attention.iter_mut().filter(|a| a["id"] == id.as_str()) {
@@ -532,6 +547,15 @@ async fn respond_attention(
                 to = Some(("waiting", "budget raised; queued for execution"));
                 requeue = true;
             }
+        }
+    }
+    if att["reason"] == guard::CAP_REASON {
+        if kind == "rejection" {
+            to = Some(("failed", "budget cap reached; caller stopped the run"));
+        } else if cap_lifted {
+            rec.run["budget_usage"]["spend_halted"] = json!(false);
+            to = Some(("waiting", "budget cap lifted; queued for execution"));
+            requeue = true;
         }
     }
     let rec = match to {
