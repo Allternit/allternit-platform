@@ -98,6 +98,10 @@ async fn agency_goal_only_creates_durable_run_with_resolved_defaults() {
     assert_eq!(s, StatusCode::ACCEPTED);
     assert_eq!(h.get("idempotency-replayed").unwrap(), "true");
     assert_eq!(serde_json::from_str::<Value>(&b).unwrap()["id"], id);
+    // Same key, different body → 409.
+    let (s, _, b) = call(&t.app, post("/v1/agency", "u1", Some("idem-key-0001"), json!({ "goal": "Fix the failing checkout tests", "budget": { "max_seconds": 60 } }))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{b}");
+    assert!(b.contains("ERR_IDEMPOTENCY_KEY_REUSED"));
 }
 
 #[tokio::test]

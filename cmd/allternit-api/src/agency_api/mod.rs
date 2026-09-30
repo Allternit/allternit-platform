@@ -201,6 +201,12 @@ async fn jwks(State(st): State<Arc<AppState>>) -> Response {
     }
 }
 
+/// Stable hash of a create body (serde_json maps are key-sorted).
+fn request_hash(req: &Value) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(req.to_string().as_bytes()))
+}
+
 fn page(data: Vec<Value>) -> Value {
     json!({ "object": "list", "data": data, "has_more": false, "next_cursor": null })
 }
@@ -233,7 +239,7 @@ async fn create_run(
     let s = store(&st);
     let _g = s.lock().await;
     if let Some(prev) = s.find_by_idempotency(&user.user_id, &key).await.map_err(|e| ApiError::internal(e, &rid))? {
-        if prev.run["goal"] != req["goal"] {
+        if prev.task_ir["request_hash"] != json!(request_hash(&req)) {
             return Err(ApiError::new(409, "IDEMPOTENCY", "ERR_IDEMPOTENCY_KEY_REUSED", "Idempotency-Key was used with a different request", &rid));
         }
         let mut r = (StatusCode::ACCEPTED, Json(public_run(&prev))).into_response();
@@ -264,10 +270,12 @@ async fn create_run(
                    "attention": format!("/v1/runs/{run_id}/attention") },
         "metadata": compiled.metadata, "resolved": resolved, "effect_receipt_ids": [],
     });
+    let mut task_ir = compiled.task_ir.clone();
+    task_ir["request_hash"] = json!(request_hash(&req));
     let err = |e| ApiError::internal(e, &rid);
     // Durable before 202: the snapshot carries resolved defaults + TaskIR.
     let rec = s
-        .save(RunRecord { owner: user.user_id.clone(), idempotency_key: Some(key), run, task_ir: compiled.task_ir.clone(), attention: vec![] })
+        .save(RunRecord { owner: user.user_id.clone(), idempotency_key: Some(key), run, task_ir, attention: vec![] })
         .await
         .map_err(err)?;
     // Judge fail-closed + verifier-owned completion, origin agency (Q18).
