@@ -49,106 +49,22 @@ https://api.allternit.com/api/v1/swarm
 | `open` | Failure threshold exceeded, requests blocked |
 | `half_open` | Testing whether the agent has recovered |
 
-## Endpoints / commands
+## Endpoints
+
+Status: the dashboard view is a UI; its data endpoints are not all backed.
+
+The API routes that exist on `cmd/allternit-api` today (see `swarm_routes.rs`):
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/v1/swarm/circuit-breakers` | List circuit breaker statuses |
-| `POST` | `/api/v1/swarm/circuit-breakers/:id/reset` | Reset a breaker |
-| `GET` | `/api/v1/swarm/quarantine` | List quarantined agents |
-| `POST` | `/api/v1/swarm/quarantine/:id/release` | Release an agent from quarantine |
-| `GET` | `/api/v1/swarm/messages/stats` | Get message statistics |
+| `GET` | `/api/v1/swarms` | List swarms |
+| `POST` | `/api/v1/swarms` | Create a swarm |
+| `POST` | `/api/v1/swarms/:id/execute` | Execute a swarm |
+| `GET` | `/api/v1/swarm/threads` | List swarm threads |
+| `GET` | `/api/v1/swarm/health` | Swarm health |
+| `GET` | `/api/v1/swarm/executions/:id` | Get an execution |
 
-## JSON request / response examples
-
-### List circuit breakers
-
-```bash
-curl https://api.allternit.com/api/v1/swarm/circuit-breakers \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-Response:
-
-```json
-[
-  {
-    "agent_id": "agent_018f3a7c...",
-    "state": "open",
-    "failure_count": 5,
-    "success_count": 0,
-    "last_failure_at": "2026-08-13T17:55:00Z",
-    "last_state_change": "2026-08-13T17:55:00Z"
-  }
-]
-```
-
-### Reset a circuit breaker
-
-```bash
-curl -X POST https://api.allternit.com/api/v1/swarm/circuit-breakers/agent_018f3a7c.../reset \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-Response:
-
-```json
-{
-  "success": true,
-  "agent_id": "agent_018f3a7c...",
-  "state": "closed"
-}
-```
-
-### List quarantined agents
-
-```bash
-curl https://api.allternit.com/api/v1/swarm/quarantine \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-Response:
-
-```json
-[
-  {
-    "agent_id": "agent_9b2c...",
-    "quarantined_at": "2026-08-13T17:50:00Z",
-    "expires_at": "2026-08-13T18:50:00Z",
-    "reason": "repeated_policy_violation",
-    "remaining_minutes": 48
-  }
-]
-```
-
-### Get message statistics
-
-```bash
-curl https://api.allternit.com/api/v1/swarm/messages/stats \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-Response:
-
-```json
-{
-  "messages_sent": 12400,
-  "messages_received": 12310,
-  "messages_failed": 90,
-  "avg_latency_ms": 142.5,
-  "active_streams": 12
-}
-```
-
-## Error codes
-
-| HTTP | Code | Meaning |
-|---|---|---|
-| 200 | — | Request succeeded |
-| 401 | `unauthorized` | Missing or invalid bearer token |
-| 404 | `not_found` | Agent or breaker not found |
-| 409 | `invalid_state` | Cannot reset a breaker that is already closed |
-| 500 | `internal_error` | Swarm service failure |
+The dashboard UI calls `/api/v1/swarm/circuit-breakers`, `/quarantine` and `/messages/stats` (plus the reset and release actions). **These routes do not exist in the API on main**, so the Circuit Breakers, Quarantine and Statistics tabs have no live backend (DESIGN, not implemented). Earlier versions of this page showed request and response examples for them; those were not real contracts and have been removed.
 
 ## Related links
 

@@ -1,146 +1,25 @@
 ---
-title: Autonomous Code Factory
-description: Self-improving code generation surface for the Allternit platform
+title: 'Autonomous Code Factory'
+description: 'Placeholder shell view for risk-tiered code generation governance. Design only; no backend yet.'
 ---
 
-## Overview
+## Status
 
-The **Autonomous Code Factory** (ACF) is the platform surface for self-improving code generation. It orchestrates risk-tiered policies, evidence-bound artifacts, merge governance, and deterministic remediation loops so that generated code can be validated and applied safely.
+Implementation: **DESIGN**. Exposure: **INTERNAL** (shell view only).
 
-## Base URL / usage
+The Autonomous Code Factory (ACF) is registered as a singleton shell view (`acf`), but the view is a short placeholder. There is **no ACF backend**: the `/api/v1/acf/generate`, `/validate`, `/merge` and `/remediate` endpoints that earlier versions of this page listed do not exist in `cmd/allternit-api` or anywhere else in the platform, and no request/response contract is available.
 
-ACF runs inside the platform shell:
+## Intended design
 
-```text
-https://app.allternit.com/shell?view=acf
-```
-
-Open programmatically:
-
-```typescript
-open('acf');
-```
-
-## Governance pillars
+ACF is intended to govern generated code with four pillars:
 
 | Pillar | Purpose |
 |---|---|
 | **RiskPolicy** | Classify changes by risk tier |
-| **Evidence Validation** | Bind artifacts to SHA-bound evidence |
-| **Merge Governance** | Apply risk-tiered auto-merge rules |
-| **Remediation Loop** | Re-apply deterministic patches until clean |
+| **Evidence validation** | Bind artifacts to SHA-bound evidence |
+| **Merge governance** | Apply risk-tiered auto-merge rules |
+| **Remediation loop** | Re-apply deterministic patches until clean |
 
-## Risk tiers
+Risk tiers (`low`, `medium`, `high`, `critical`) are part of this design and are not enforced by any shipped service.
 
-| Tier | Description |
-|---|---|
-| `low` | Safe documentation, comment, and test-only changes |
-| `medium` | Localized logic changes with passing tests |
-| `high` | Structural changes requiring human review |
-| `critical` | Changes blocked for manual approval |
-
-## Endpoints / commands
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/api/v1/acf/generate` | Submit a generation request |
-| `POST` | `/api/v1/acf/validate` | Validate evidence for a proposed change |
-| `POST` | `/api/v1/acf/merge` | Request merge governance decision |
-| `POST` | `/api/v1/acf/remediate` | Run a deterministic remediation loop |
-
-## JSON request / response examples
-
-### Request code generation
-
-```bash
-curl -X POST https://api.allternit.com/api/v1/acf/generate \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "prompt": "Add input validation to the login handler",
-    "context": {
-      "repository": "allternit/api",
-      "file_paths": ["src/auth.ts"]
-    },
-    "risk_tier": "medium"
-  }'
-```
-
-Response:
-
-```json
-{
-  "generation_id": "gen_1a2b...",
-  "status": "completed",
-  "risk_tier": "medium",
-  "artifacts": [
-    {
-      "path": "src/auth.ts",
-      "diff": "@@ -10,6 +10,10 @@...",
-      "evidence_sha": "sha256:abc123..."
-    }
-  ]
-}
-```
-
-### Validate evidence
-
-```bash
-curl -X POST https://api.allternit.com/api/v1/acf/validate \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "generation_id": "gen_1a2b...",
-    "artifact_path": "src/auth.ts",
-    "expected_sha": "sha256:abc123..."
-  }'
-```
-
-Response:
-
-```json
-{
-  "valid": true,
-  "artifact_path": "src/auth.ts",
-  "evidence_sha": "sha256:abc123..."
-}
-```
-
-### Request merge governance
-
-```bash
-curl -X POST https://api.allternit.com/api/v1/acf/merge \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "generation_id": "gen_1a2b...",
-    "risk_tier": "medium"
-  }'
-```
-
-Response:
-
-```json
-{
-  "decision": "approved",
-  "conditions": ["tests_pass", "no_security_alerts"]
-}
-```
-
-## Error codes
-
-| HTTP | Code | Meaning |
-|---|---|---|
-| 200 | — | Operation succeeded |
-| 400 | `invalid_risk_tier` | Risk tier not recognized |
-| 401 | `unauthorized` | Missing or invalid bearer token |
-| 409 | `evidence_mismatch` | Artifact SHA does not match evidence |
-| 422 | `merge_blocked` | Governance conditions not met |
-| 500 | `internal_error` | Factory service failure |
-
-## Related links
-
-- [Self-Improve](/core/self-improve)
-- [Gizzi Code CLI](/cli/overview)
-- [GitHub Action](/ci-cd/github-action)
-- [Agent Studio](/surfaces/agent-studio)
+For code changes that are governed today, see the Rails gate and the review process in [Gizzi Code](/surfaces/native-agent).
