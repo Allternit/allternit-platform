@@ -1068,6 +1068,11 @@ async fn main() {
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
+        ))
+        // Outermost: adds the RFC 9728 `WWW-Authenticate` challenge to 401s
+        // from `/mcp/server` so OAuth clients can discover Clerk.
+        .layer(axum::middleware::from_fn(
+            allternit_api::mcp_agents::mcp_challenge_layer,
         ));
 
     // ── Web proxy (SSRF surface) ──────────────────────────────────────────────
@@ -1094,6 +1099,8 @@ async fn main() {
         // Client ID Metadata Document for connector OAuth (must be public).
         .merge(allternit_api::mcp_directory_routes::oauth_client_router())
         .merge(status_router())
+        // OAuth protected-resource metadata (RFC 9728) for /mcp/server.
+        .merge(allternit_api::mcp_agents::well_known_router())
         .merge(webhook_router())
         .merge(webhook_trigger_public_router())
         .merge(allternit_api::benchmark_routes::benchmark_router())
