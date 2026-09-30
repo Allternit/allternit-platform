@@ -570,6 +570,7 @@ async fn main() {
         state.db.clone(),
         Arc::new(allternit_api::channel_transports::ChannelLaneTransport::new(state.clone(), Arc::new(allternit_api::gateway_runner::SubsTransport(state.clone())))),
     );
+    allternit_api::discord_gateway::spawn_bound(state.clone());
     allternit_api::computer_idle::spawn_idle_sweeper(state.clone(), shutdown_tx.subscribe());
 
     // BYOK credential revalidation sweep (P1.7): re-probe every active
@@ -924,6 +925,7 @@ async fn main() {
         .merge(allternit_api::thread_routes::thread_router())
         .merge(allternit_api::agent_gateway_routes::agent_gateway_router())
         .merge(allternit_api::gateway_runner::gateway_runner_router())
+        .merge(allternit_api::a2a_routes::a2a_router())
         .merge(allternit_api::channel_gateway::channel_gateway_router())
         .merge(allternit_api::spend_limits::spend_limit_router())
         .merge(allternit_api::channel_tools::channel_tools_router())

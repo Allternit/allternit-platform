@@ -7,7 +7,7 @@
 //! the injected [`HttpSend`]. Secrets come from `provider_account_bindings`
 //! sealed `secret_ref` (JSON object per provider), never from Bot records:
 //!
-//! * teams:    `{ securityToken, accessToken }`  (outgoing-webhook HMAC + Bot Framework bearer)
+//! * teams:    `{ securityToken, accessToken }` (outgoing-webhook HMAC + static bearer) or `{ appId, appPassword }` (Bot Framework JWT in, client-credentials token out; see `teams_auth`)
 //! * discord:  `{ publicKey, webhookUrl }`        (Ed25519 interactions key + channel webhook)
 //! * whatsapp: `{ appSecret, verifyToken, accessToken, phoneNumberId }`
 
@@ -55,6 +55,14 @@ pub struct HttpResp {
 pub trait HttpSend: Send + Sync {
     /// `Err` = the request may not have reached the platform (timeout, connection).
     async fn post_json(&self, req: HttpReq) -> Result<HttpResp, String>;
+    /// GET a JSON document (OpenID metadata, JWKS).
+    async fn get_json(&self, _url: &str) -> Result<HttpResp, String> {
+        Err("GET is not supported by this transport".into())
+    }
+    /// POST `application/x-www-form-urlencoded` (OAuth token endpoints).
+    async fn post_form(&self, _url: &str, _form: Vec<(String, String)>) -> Result<HttpResp, String> {
+        Err("form POST is not supported by this transport".into())
+    }
 }
 
 pub struct ReqwestSend;
@@ -70,6 +78,16 @@ impl HttpSend for ReqwestSend {
         let status = resp.status().as_u16();
         let body = resp.json::<Value>().await.unwrap_or(Value::Null);
         Ok(HttpResp { status, body })
+    }
+    async fn get_json(&self, url: &str) -> Result<HttpResp, String> {
+        let resp = reqwest::Client::new().get(url).timeout(std::time::Duration::from_secs(15)).send().await.map_err(|e| e.to_string())?;
+        let status = resp.status().as_u16();
+        Ok(HttpResp { status, body: resp.json::<Value>().await.unwrap_or(Value::Null) })
+    }
+    async fn post_form(&self, url: &str, form: Vec<(String, String)>) -> Result<HttpResp, String> {
+        let resp = reqwest::Client::new().post(url).timeout(std::time::Duration::from_secs(15)).form(&form).send().await.map_err(|e| e.to_string())?;
+        let status = resp.status().as_u16();
+        Ok(HttpResp { status, body: resp.json::<Value>().await.unwrap_or(Value::Null) })
     }
 }
 
@@ -93,7 +111,7 @@ fn s_of(v: &Value, ptr: &str) -> Option<String> {
 }
 
 /// A secret field: `key` from a JSON object secret, else the raw string.
-fn pick(secret: &str, key: &str) -> String {
+pub(crate) fn pick(secret: &str, key: &str) -> String {
     serde_json::from_str::<Value>(secret).ok().and_then(|v| v.get(key).and_then(Value::as_str).map(str::to_string)).unwrap_or_else(|| if secret.trim_start().starts_with('{') { String::new() } else { secret.to_string() })
 }
 
@@ -115,6 +133,8 @@ fn ev(kind: InboundKind, conversation: String, channel: String, remote_id: Strin
 // ---------------------------------------------------------------- Teams
 
 pub struct TeamsTransport {
+    /// Bot Framework app credentials (client-credentials token + inbound JWT), when configured.
+    pub auth: Option<Arc<crate::teams_auth::TeamsAuth>>,
     pub http: Arc<dyn HttpSend>,
     pub access_token: Option<String>,
     pub own_identity: Option<String>,
@@ -190,7 +210,10 @@ impl ChannelTransport for TeamsTransport {
         exact(requested, self.own_identity.as_deref())
     }
     async fn post(&self, out: &Outbound) -> Result<Receipt, PostError> {
-        let token = self.access_token.clone().ok_or_else(|| PostError::Rejected("no Teams access token configured".into()))?;
+        let token = match &self.auth {
+            Some(a) => a.access_token().await.map_err(|e| PostError::Rejected(format!("Teams token: {e}")))?,
+            None => self.access_token.clone().ok_or_else(|| PostError::Rejected("no Teams access token configured".into()))?,
+        };
         let service = out.workspace.clone().ok_or_else(|| PostError::Rejected("no Teams serviceUrl for this conversation".into()))?;
         let relayed = !self.identity(out.identity.as_deref()).exact;
         let url = format!("{}/v3/conversations/{}/activities", service.trim_end_matches('/'), out.channel);
@@ -394,7 +417,7 @@ pub struct Account {
     pub secret: String,
 }
 
-fn accounts(db: &DbHandle, provider: &str, only: Option<&str>) -> Vec<Account> {
+pub(crate) fn accounts(db: &DbHandle, provider: &str, only: Option<&str>) -> Vec<Account> {
     let Ok(conn) = db.connect() else { return vec![] };
     let sql = "SELECT id, owner, restricted_bot_id, secret_ref FROM provider_account_bindings WHERE vendor = ?1 AND secret_ref IS NOT NULL AND secret_ref <> '' AND (?2 IS NULL OR id = ?2)";
     let Ok(mut q) = conn.prepare(sql) else { return vec![] };
@@ -412,7 +435,13 @@ pub fn build_transport(provider: &str, secret: &str, http: Arc<dyn HttpSend>) ->
     let token = |k: &str| Some(pick(secret, k)).filter(|s| !s.is_empty());
     Some(match provider {
         "slack" => Arc::new(SlackTransport::from_env()),
-        "teams" => Arc::new(TeamsTransport { http, access_token: token("accessToken"), own_identity: token("botId") }),
+        "teams" => Arc::new(TeamsTransport {
+            auth: match (token("appId"), token("appPassword")) {
+                (Some(id), Some(pw)) => Some(crate::teams_auth::shared(http.clone(), &id, &pw)),
+                _ => None,
+            },
+            http,
+            access_token: token("accessToken"), own_identity: token("botId") }),
         "discord" => Arc::new(DiscordTransport { http, webhook_url: token("webhookUrl"), own_identity: token("botId") }),
         "whatsapp" => Arc::new(WhatsAppTransport { http, access_token: token("accessToken"), own_identity: token("phoneNumberId") }),
         _ => return None,
@@ -506,14 +535,58 @@ async fn whatsapp_challenge(State(state): State<Arc<AppState>>, Path(provider): 
     StatusCode::FORBIDDEN.into_response()
 }
 
+/// Route normalized inbound events into threads, run the resulting turns, and post replies back.
+/// Shared by the webhook and the Discord gateway websocket.
+pub async fn dispatch_events(st: &Arc<AppState>, acct: &Account, tx: Arc<dyn ChannelTransport>, events: Vec<Inbound>) {
+    let rt = crate::thread_routes::GizziRuntime { db: st.db.clone() };
+    for e in events {
+        match route_inbound(&st.db, &rt, acct, tx.provider(), &e).await {
+            Ok(Routed { binding: Some(b), turn: Some((session, bot, text)), .. }) => {
+                match crate::agent_session_routes::send_bot_turn(&st.db, &session, &bot, &text).await {
+                    Ok(reply) => {
+                        let thread = b.external_thread.clone().unwrap_or_default();
+                        if let Err(err) = post_reply(&st.db, tx.as_ref(), &b, &thread, &reply).await {
+                            warn!(provider = %b.provider, "channel reply failed: {err}");
+                        }
+                    }
+                    Err(err) => warn!("channel turn failed: {err}"),
+                }
+            }
+            Ok(_) => {}
+            Err(err) => warn!("channel inbound failed: {err}"),
+        }
+    }
+}
+
 async fn webhook_h(State(state): State<Arc<AppState>>, Path(provider): Path<String>, headers: HeaderMap, body: Bytes) -> Response {
     if provider == "slack" || !PROVIDERS.contains(&provider.as_str()) {
         return StatusCode::NOT_FOUND.into_response();
     }
     let candidates = accounts(&state.db, &provider, None);
-    let matched = candidates.into_iter().find_map(|a| {
-        let tx = build_transport(&provider, &a.secret, Arc::new(ReqwestSend))?;
-        tx.verify(&a.secret, &headers, &body).ok().map(|_| (a, tx))
+    // Bot Framework: a Bearer JWT (validated against Microsoft's JWKS, audience = the bot's app id).
+    let mut matched = None;
+    if provider == "teams" {
+        if let (Some(authz), Ok(activity)) = (hdr(&headers, "authorization").filter(|a| a.starts_with("Bearer ")), serde_json::from_slice::<Value>(&body)) {
+            for a in &candidates {
+                let (id, pw) = (pick(&a.secret, "appId"), pick(&a.secret, "appPassword"));
+                if id.is_empty() {
+                    continue;
+                }
+                let auth = crate::teams_auth::shared(Arc::new(ReqwestSend), &id, &pw);
+                if auth.validate(authz, &activity).await.is_ok() {
+                    if let Some(tx) = build_transport(&provider, &a.secret, Arc::new(ReqwestSend)) {
+                        matched = Some((a.clone(), tx));
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    let matched = matched.or_else(|| {
+        candidates.into_iter().find_map(|a| {
+            let tx = build_transport(&provider, &a.secret, Arc::new(ReqwestSend))?;
+            tx.verify(&a.secret, &headers, &body).ok().map(|_| (a, tx))
+        })
     });
     let Some((acct, tx)) = matched else {
         return (StatusCode::UNAUTHORIZED, Json(json!({ "error": "invalid_signature" }))).into_response();
@@ -523,26 +596,7 @@ async fn webhook_h(State(state): State<Arc<AppState>>, Path(provider): Path<Stri
     };
     let events = tx.normalize(&payload);
     let st = state.clone();
-    tokio::spawn(async move {
-        let rt = crate::thread_routes::GizziRuntime { db: st.db.clone() };
-        for e in events {
-            match route_inbound(&st.db, &rt, &acct, tx.provider(), &e).await {
-                Ok(Routed { binding: Some(b), turn: Some((session, bot, text)), .. }) => {
-                    match crate::agent_session_routes::send_bot_turn(&st.db, &session, &bot, &text).await {
-                        Ok(reply) => {
-                            let thread = b.external_thread.clone().unwrap_or_default();
-                            if let Err(err) = post_reply(&st.db, tx.as_ref(), &b, &thread, &reply).await {
-                                warn!(provider = %b.provider, "channel reply failed: {err}");
-                            }
-                        }
-                        Err(err) => warn!("channel turn failed: {err}"),
-                    }
-                }
-                Ok(_) => {}
-                Err(err) => warn!("channel inbound failed: {err}"),
-            }
-        }
-    });
+    tokio::spawn(async move { dispatch_events(&st, &acct, tx, events).await });
     Json(json!({ "ok": true })).into_response()
 }
 
@@ -705,7 +759,7 @@ mod tests {
         let token = base64::engine::general_purpose::STANDARD.encode(key);
         let body = br#"{"type":"message"}"#;
         let good = format!("HMAC {}", base64::engine::general_purpose::STANDARD.encode(hmac_raw(key, body)));
-        let t = TeamsTransport { http: Arc::new(FakeHttp::default()), access_token: None, own_identity: None };
+        let t = TeamsTransport { auth: None, http: Arc::new(FakeHttp::default()), access_token: None, own_identity: None };
         assert!(t.verify(&json!({ "securityToken": token }).to_string(), &headers(&[("authorization", &good)]), body).is_ok());
         assert!(t.verify(&token, &headers(&[("authorization", &good)]), body).is_ok());
         assert!(t.verify(&token, &headers(&[("authorization", &good)]), br#"{"type":"tampered"}"#).is_err());
@@ -742,7 +796,7 @@ mod tests {
     async fn teams_posts_to_the_service_url_and_reads_the_activity_id() {
         let http = Arc::new(FakeHttp::default());
         *http.reply.lock().unwrap() = reply(201, json!({ "id": "1700000000999" }));
-        let t = TeamsTransport { http: http.clone(), access_token: Some("tok".into()), own_identity: Some("28:bot".into()) };
+        let t = TeamsTransport { auth: None, http: http.clone(), access_token: Some("tok".into()), own_identity: Some("28:bot".into()) };
         let out = Outbound { workspace: Some("https://smba.trafficmanager.net/amer/".into()), channel: "19:abc@thread.tacv2".into(), thread: None, text: "hi".into(), identity: None };
         assert_eq!(t.post(&out).await.unwrap(), Receipt { remote_id: "1700000000999".into(), relayed: false });
         let sent = http.sent.lock().unwrap()[0].clone();

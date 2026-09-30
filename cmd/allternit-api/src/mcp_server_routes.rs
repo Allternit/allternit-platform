@@ -184,6 +184,8 @@ async fn tool_catalog(state: &AppState) -> Vec<Value> {
         }));
     }
 
+    tools.extend(aai_tool_descriptors());
+
     // Attached MCP servers from the dispatcher registry.
     for remote in state.mcp_dispatcher.list_tools().await {
         tools.push(remote);
@@ -373,7 +375,9 @@ async fn handle_rpc_inner_value(
                 .cloned()
                 .unwrap_or_else(|| json!({}));
 
-            let result = if name.starts_with("inference.") || name == "time.now" {
+            let result = if is_aai_tool(&name) {
+                call_aai_tool(state, user_id, &name, arguments).await
+            } else if name.starts_with("inference.") || name == "time.now" {
                 handle_builtin_dotted_tool(state, user_id, org_id, &name, arguments).await
             } else if name.contains('.') {
                 state
@@ -411,6 +415,59 @@ async fn handle_rpc_inner_value(
         }
 
         other => rpc_error(id, -32601, format!("Method not found: {other}")),
+    }
+}
+
+fn is_aai_tool(name: &str) -> bool {
+    matches!(name, "agents_list" | "agent_send" | "thread_events" | "approvals_list" | "approval_respond")
+}
+
+/// AAI as MCP tools, scoped to the authenticated user. MCP callers are not
+/// human, so `approval_respond` always refuses.
+pub(crate) fn aai_tool_descriptors() -> Vec<Value> {
+    vec![
+        json!({ "name": "agents_list", "description": "List the user's bots, including vendor-backed ones, with provenance (vendor, lane, guarantee).",
+            "inputSchema": { "type": "object", "properties": {} } }),
+        json!({ "name": "agent_send", "description": "Send a turn to a bot on a thread (a new task thread when thread_id is omitted). Vendor bots run through the Agent Gateway. If an approval is required the call fails with the approval id; approve it in Allternit.",
+            "inputSchema": { "type": "object", "properties": { "bot_id": { "type": "string" }, "text": { "type": "string" }, "thread_id": { "type": "string" },
+                "correlation_id": { "type": "string" }, "consequential": { "type": "boolean" }, "allternit_approval_id": { "type": "string" } }, "required": ["bot_id", "text"] } }),
+        json!({ "name": "thread_events", "description": "Thread activity events, ascending after a sequence cursor (newest first when after is omitted).",
+            "inputSchema": { "type": "object", "properties": { "thread_id": { "type": "string" }, "after": { "type": "integer" }, "limit": { "type": "integer" } }, "required": ["thread_id"] } }),
+        json!({ "name": "approvals_list", "description": "Approvals on a thread (optionally filtered by state, e.g. pending).",
+            "inputSchema": { "type": "object", "properties": { "thread_id": { "type": "string" }, "state": { "type": "string" } }, "required": ["thread_id"] } }),
+        json!({ "name": "approval_respond", "description": "Not available over MCP: approvals are answered by a person in Allternit.",
+            "inputSchema": { "type": "object", "properties": { "approval_id": { "type": "string" }, "decision": { "type": "string" } } } }),
+    ]
+}
+
+pub(crate) async fn call_aai_tool(state: &Arc<AppState>, user_id: &str, name: &str, a: Value) -> Result<Value, String> {
+    use crate::aai_facade as f;
+    let req = |k: &str| a[k].as_str().filter(|s| !s.is_empty()).ok_or_else(|| format!("{k} is required"));
+    let fail = |e: f::FacadeErr| e.to_json().to_string();
+    match name {
+        "agents_list" => f::agents_list(state, user_id, None).map(|v| json!({ "agents": v })).map_err(fail),
+        "agent_send" => f::send(
+            state,
+            user_id,
+            f::SendIn {
+                bot_id: req("bot_id")?,
+                thread_id: a["thread_id"].as_str().filter(|s| !s.is_empty()),
+                text: req("text")?,
+                correlation_id: a["correlation_id"].as_str().map(str::to_string),
+                consequential: a["consequential"].as_bool().unwrap_or(false),
+                allternit_approval_id: a["allternit_approval_id"].as_str().map(str::to_string),
+                via: "mcp",
+            },
+        )
+        .await
+        .map_err(fail),
+        "thread_events" => f::thread_events(state, user_id, req("thread_id")?, a["after"].as_i64(), a["limit"].as_i64()).map_err(fail),
+        "approvals_list" => f::approvals_list(state, user_id, req("thread_id")?, a["state"].as_str()).map(|v| json!({ "approvals": v })).map_err(fail),
+        _ => Err(json!({
+            "error": "MCP callers are not a human. Approve or deny this in Allternit.",
+            "code": "HUMAN_REQUIRED", "status": 403,
+        })
+        .to_string()),
     }
 }
 
@@ -468,6 +525,32 @@ async fn handle_builtin_dotted_tool(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn aai_tools_are_listed_scoped_and_never_approve() {
+        let names: Vec<_> = aai_tool_descriptors().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect();
+        assert_eq!(names, ["agents_list", "agent_send", "thread_events", "approvals_list", "approval_respond"]);
+        let st = crate::aai_facade::test_util::setup("mcp", "READY").await;
+        let a = call_aai_tool(&st, "user-a", "agents_list", json!({})).await.unwrap();
+        assert_eq!(a["agents"].as_array().unwrap().len(), 2);
+        assert!(call_aai_tool(&st, "user-b", "agents_list", json!({})).await.unwrap()["agents"].as_array().unwrap().is_empty());
+        // 428 comes back as a tool error carrying the approval id.
+        let e = call_aai_tool(&st, "user-a", "agent_send", json!({ "bot_id": "bot-vendor", "thread_id": "th-vendor", "text": "wire $5k", "consequential": true })).await.unwrap_err();
+        let e: Value = serde_json::from_str(&e).unwrap();
+        assert_eq!(e["status"], 428);
+        let aid = e["approvalId"].as_str().unwrap().to_string();
+        let l = call_aai_tool(&st, "user-a", "approvals_list", json!({ "thread_id": "th-vendor", "state": "pending" })).await.unwrap();
+        assert_eq!(l["approvals"][0]["id"], aid.as_str());
+        // MCP can never answer it, and it stays pending.
+        let r = call_aai_tool(&st, "user-a", "approval_respond", json!({ "approval_id": aid, "decision": "approve" })).await.unwrap_err();
+        assert!(r.contains("HUMAN_REQUIRED"));
+        let l = call_aai_tool(&st, "user-a", "approvals_list", json!({ "thread_id": "th-vendor", "state": "pending" })).await.unwrap();
+        assert_eq!(l["approvals"].as_array().unwrap().len(), 1);
+        // The tool call also flows through the JSON-RPC dispatcher.
+        let req: JsonRpcRequest = serde_json::from_value(json!({ "id": 1, "method": "tools/call", "params": { "name": "thread_events", "arguments": { "thread_id": "th-vendor" } } })).unwrap();
+        let out = handle_rpc_inner_value(&st, "user-a", None, req).await;
+        assert_eq!(out["result"]["isError"], false);
+    }
 
     #[test]
     fn success_response_has_jsonrpc_shape() {
