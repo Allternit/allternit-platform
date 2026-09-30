@@ -117,6 +117,7 @@ export class ChatGPTDotsProvider extends BaseAaiProvider {
       html = await this.o.driver.html();
     } catch (e) {
       if (e instanceof DriverError) {
+        if (e.fault === "not_trusted") return fail("AUTH_REQUIRED", e.message);
         if (e.fault === "consent_required") return fail("LANE_BLOCKED", e.message);
         return fail("VENDOR_UNAVAILABLE", e.fault === "not_running" ? `${APP_NAME}: the ChatGPT browser session is not open. Connect it and sign in, then try again.` : e.message);
       }

@@ -1,6 +1,6 @@
 // Transport seam between the AAI provider and the ChatGPT dots UI. Two implementations:
 // BrowserDotsDriver (live Playwright, browser-driver.ts) and ReplayDotsDriver (offline fixtures, replay-driver.ts).
-export type DriverFault = "unreachable" | "not_running" | "consent_required" | "already_running";
+export type DriverFault = "unreachable" | "not_running" | "consent_required" | "already_running" | "not_trusted";
 export class DriverError extends Error {
   constructor(readonly fault: DriverFault, message: string) { super(message); this.name = "DriverError"; }
 }

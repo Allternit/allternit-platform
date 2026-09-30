@@ -7,6 +7,10 @@ import { chatgptDots, PACING } from "./index.js";
 export function createAaiRegistration(env: NodeJS.ProcessEnv) {
   return {
     provider: chatgptDots.create({
+      // SUBS_GATEWAY_DOTS_TRANSPORT=chatgpt-app: native ChatGPT.app via macOS Accessibility (needs the bridge bin + explicit consent).
+      transport: env.SUBS_GATEWAY_DOTS_TRANSPORT === "chatgpt-app" && env.SUBS_GATEWAY_AX_BRIDGE_BIN ? "chatgpt-app" : "browser",
+      axBinPath: env.SUBS_GATEWAY_AX_BRIDGE_BIN || undefined,
+      axConsented: env.SUBS_GATEWAY_CHATGPT_APP_AX_CONSENT === "1",
       profileDir: env.SUBS_GATEWAY_DOTS_PROFILE_DIR || undefined,
       userConsented: env.SUBS_GATEWAY_DOTS_CONSENT === "1",
       dotRef: env.SUBS_GATEWAY_DOTS_DEFAULT_DOT || undefined,

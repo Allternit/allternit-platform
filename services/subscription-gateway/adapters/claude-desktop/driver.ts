@@ -1,6 +1,6 @@
 // Transport seam between the AAI provider and Claude's renderer. Two implementations:
 // CdpClaudeDesktopDriver (live, cdp-driver.ts) and ReplayClaudeDesktopDriver (offline fixtures, replay-driver.ts).
-export type DriverFault = "unreachable" | "not_running" | "consent_required" | "already_running";
+export type DriverFault = "unreachable" | "not_running" | "consent_required" | "already_running" | "not_trusted";
 export class DriverError extends Error {
   constructor(readonly fault: DriverFault, message: string) { super(message); this.name = "DriverError"; }
 }
