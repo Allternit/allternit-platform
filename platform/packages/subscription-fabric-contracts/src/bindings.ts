@@ -119,7 +119,7 @@ export const remoteThreadBindingSchema = z.object({
 export type RemoteThreadBinding = z.infer<typeof remoteThreadBindingSchema>;
 
 // ---- ChannelConversationBinding ----
-export const channelSyncStateSchema = z.enum(["live", "delayed", "reconnecting", "paused", "error"]);
+export const channelSyncStateSchema = z.enum(["LIVE", "DELAYED", "RECONNECTING", "DEGRADED", "DISCONNECTED"]);
 export type ChannelSyncState = z.infer<typeof channelSyncStateSchema>;
 
 export const channelConversationBindingSchema = z.object({

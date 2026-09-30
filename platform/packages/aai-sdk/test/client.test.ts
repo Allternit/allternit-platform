@@ -13,12 +13,12 @@ function mock(responses: Array<[number, unknown]>) {
 }
 
 describe("AllternitAgents", () => {
-  it("creates accounts with snake_case body and bearer auth", async () => {
+  it("creates accounts with camelCase body and bearer auth", async () => {
     const { calls, client } = mock([[201, { account: { id: "a1" } }]]);
     const r = await client.accounts.create({ vendor: "grok", authType: "api_key", displayName: "G" });
     expect(r.account.id).toBe("a1");
     expect(calls[0].url).toBe("http://x/api/v1/gateway/provider-accounts");
-    expect(calls[0].body).toEqual({ vendor: "grok", auth_type: "api_key", display_name: "G" });
+    expect(calls[0].body).toEqual({ vendor: "grok", authType: "api_key", displayName: "G" });
     expect(calls[0].headers.authorization).toBe("Bearer t");
   });
 
@@ -79,6 +79,6 @@ describe("AllternitAgents", () => {
       "POST /threads/t1/gateway/sync",
       "POST /gateway/threads/t1/channel-bindings",
     ]);
-    expect(calls[1].body).toEqual({ vendor: "grok", account_binding_id: "a1" });
+    expect(calls[1].body).toEqual({ vendor: "grok", accountBindingId: "a1" });
   });
 });

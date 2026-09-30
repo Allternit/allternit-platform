@@ -132,3 +132,26 @@ describe("vendor adapter registration", () => {
     expect(ids).toContain("grok-bot");
   });
 });
+
+describe("wire shapes sent by allternit-api (gateway_runner.rs / agent_gateway_routes.rs)", () => {
+  it("accepts SQL-null binding columns and a transient discovery binding", async () => {
+    // exec row as rows() emits it: NULL columns are JSON null
+    const row = binding({ vendor: null, accountBindingId: null, preferredLane: null, capabilities: null, health: null, owner: "u1", createdAt: "t" });
+    expect((await call("agent.list", {}, row).expect(200)).body.ok).toBe(true);
+    // discover_agents: no id/botId/mode/state, no adapterId (vendor is the adapter id)
+    const r = await call("agent.list", {}, { type: "vendor", vendor: "memory-test", accountBindingId: "acct1" }).expect(200);
+    expect(r.body.ok).toBe(true);
+  });
+  it("agent.context.open takes externalAgentId, and agent.events are flat with snake_case ids", async () => {
+    const open = await call("agent.context.open", { threadId: "t1", generation: 1, correlationId: "corr1", externalAgentId: "mem-agent" }).expect(200);
+    expect(open.body.ok).toBe(true);
+    const contextId = open.body.value.contextId;
+    await call("agent.context.message", { contextId, correlationId: "c1", text: "hi" });
+    const ev = await call("agent.events", { contextId, limit: 200 }).expect(200);
+    const first = ev.body.value.events[0];
+    expect(typeof first.type).toBe("string");            // not nested under `event`
+    expect(first.event).toBeUndefined();
+    expect(typeof first.remote_event_id).toBe("string");  // read by gateway_runner::bridge_event
+    expect(first.remote_event_id).toBe(first.remoteEventId);
+  });
+});

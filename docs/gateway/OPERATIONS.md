@@ -84,7 +84,6 @@ Gateway work merges into `gateway/integration`, not `main`, in both repos. Each 
 
 - The Rust gateway tests (`gateway_runner`, `gateway_placement`, `channel_*`, `aai_facade`, `a2a_routes`) were not run while writing these docs. `ACCEPTANCE.md` marks them `verified (automated, Rust: not run)`.
 - The Rust tests set `ALLTERNIT_ENCRYPTION_KEY` with `std::env::set_var`, which is process-wide. Run them in a way that tolerates that.
-- The SDK tests check a snake_case request body that the Rust handlers do not accept ([FACADES.md](FACADES.md#sdks)).
 - I have no information on other local test-environment problems from this pass. Add them here when found.
 
 ## Live-verification checklist

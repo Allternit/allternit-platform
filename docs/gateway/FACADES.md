@@ -47,8 +47,6 @@ for await (const ev of aai.threads.streamEvents(threadId, { after: 0 })) console
 
 `streamEvents` pages the ascending event log by `sequence` with idle backoff. Errors: `AaiHttpError` (base), `ConflictError` (409), `ApprovalRequiredError` (428), `RateLimitedError` (429), `HumanIntentRequiredError` (client-side refusal). The Python module has the same set.
 
-**Known defect:** SDK methods that send a body convert field names to snake_case, but the Rust handlers accept camelCase only, so `accounts.create`, `accounts.update`, `bots.bindExecution`, `vendorPacks.recordGap`, `channels.bind` and `setSecret` do not match the server at this commit. The SDK tests check the snake_case body, not a live server. See [QUICKSTART.md](QUICKSTART.md#9-the-same-flow-with-the-sdks) for the workaround (`request()` with a camelCase body).
-
 ## MCP tools
 
 Server: `POST /mcp/server` (`mcp_server_routes.rs`), MCP Streamable HTTP as single JSON-RPC requests with plain JSON responses. Same auth gate as the rest of `/mcp`. Limits stated in the code: no batch arrays, no `Mcp-Session-Id`. The local gizzi runtime uses the internal sibling at `/internal/tools/mcp` with a shared secret and `x-allternit-user-id`.

@@ -7,6 +7,23 @@ import { botExecutionBindingSchema } from "@allternit/subscription-fabric-contra
 import { requireScope, type GatewayDeps } from "./server.js";
 import { parseCredential, runWithCallScope } from "../aai/call-scope.js";
 
+/**
+ * allternit-api sends its binding rows as stored: SQL NULL columns arrive as JSON null (the schema has only
+ * optional), and discovery (`agent.list` before a bot exists) sends a transient `{ type, vendor,
+ * accountBindingId }` with no id/botId/mode/state and no adapterId (the vendor id is the adapter id).
+ */
+export function normalizeWireBinding(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const b: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) if (v !== null) b[k] = v;
+  b.id ??= "transient";
+  b.botId ??= "";
+  b.mode ??= "hosted";
+  b.state ??= "READY";
+  if (b.adapterId === undefined && typeof b.vendor === "string") b.adapterId = b.vendor;
+  return b;
+}
+
 export function aaiRouter(deps: GatewayDeps): Router {
   const router = Router();
   const host = deps.aai;
@@ -14,7 +31,7 @@ export function aaiRouter(deps: GatewayDeps): Router {
   router.post("/aai/call", requireScope("tasks:submit"), async (req: Request, res: Response) => {
     if (!host) { res.status(503).json({ error: "aai_host_unavailable" }); return; }
     const body = (req.body ?? {}) as Record<string, unknown>;
-    const binding = botExecutionBindingSchema.safeParse(body.binding);
+    const binding = botExecutionBindingSchema.safeParse(normalizeWireBinding(body.binding));
     if (typeof body.op !== "string" || !binding.success ||
         (body.input !== undefined && (typeof body.input !== "object" || body.input === null || Array.isArray(body.input)))) {
       res.status(400).json({ error: "invalid_body", detail: "expected { op: string, binding: BotExecutionBinding, input: object }" });
