@@ -240,3 +240,32 @@ describe("live driver consent gate (no browser is ever launched here)", () => {
     expect(await p.contextOpen({ agentId: DOT })).toMatchObject({ ok: false, error: { code: "LANE_BLOCKED" } });
   });
 });
+
+describe("dots use the ChatGPT subscription account (one login system)", () => {
+  it("asks the gateway for the subscription profile at connect time; none ready → sign-in hint", async () => {
+    const { BrowserDotsDriver } = await import("../adapters/chatgpt-dots/browser-driver.js");
+    const asked: string[] = [];
+    const driver = new BrowserDotsDriver({
+      userConsented: true,
+      resolveProfileDir: async () => {
+        asked.push("chatgpt");
+        return undefined;
+      },
+    });
+    await expect(driver.connect()).rejects.toThrow(/Settings → Subscriptions/);
+    expect(asked).toEqual(["chatgpt"]);
+  });
+
+  it("the registration resolves the preferred ChatGPT subscription through the gateway context", async () => {
+    const { createAaiRegistration } = await import("../adapters/chatgpt-dots/aai.js");
+    const providers: string[] = [];
+    const reg = createAaiRegistration({ SUBS_GATEWAY_DOTS_CONSENT: "1" } as NodeJS.ProcessEnv, {
+      subscriptionProfile: async (p) => {
+        providers.push(p);
+        return null;
+      },
+    });
+    expect(reg.provider).toBeTruthy();
+    expect(providers).toEqual([]); // lazy: nothing resolved until a dot is opened
+  });
+});

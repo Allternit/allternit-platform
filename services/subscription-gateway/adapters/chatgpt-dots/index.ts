@@ -25,11 +25,11 @@ export interface CreateOptions extends Partial<ChatGPTDotsProviderOptions>, Brow
 }
 /** Factory: live browser driver unless a driver is supplied (tests/replay). Nothing launches until first use + consent. */
 export function createChatGPTDotsProvider(opts: CreateOptions = {}): ChatGPTDotsProvider {
-  const { profileDir, userConsented, openPage, driver, transport, ax, axBinPath, axConsented, ...rest } = opts;
+  const { profileDir, resolveProfileDir, userConsented, openPage, driver, transport, ax, axBinPath, axConsented, ...rest } = opts;
   if (!driver && transport === "chatgpt-app") {
     if (!ax && !axBinPath) throw new Error("chatgpt-dots transport \"chatgpt-app\" needs `ax` or `axBinPath`");
     return new ChatGPTDotsProvider({ ...rest, driver: new AxChatGptAppDriver(ax ?? new AxBridgeDriver({ binPath: axBinPath! }), axConsented === true) });
   }
-  return new ChatGPTDotsProvider({ ...rest, driver: driver ?? new BrowserDotsDriver({ profileDir, userConsented, openPage }) });
+  return new ChatGPTDotsProvider({ ...rest, driver: driver ?? new BrowserDotsDriver({ profileDir, resolveProfileDir, userConsented, openPage }) });
 }
 export const chatgptDots = { adapterId: ADAPTER_ID, manifest: CHATGPT_DOTS_MANIFEST, create: createChatGPTDotsProvider } as const;
