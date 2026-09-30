@@ -1,0 +1,36 @@
+---
+title: "Build a tool"
+description: "Expose an operation with strict schemas and an honest effect class"
+---
+
+**Status: AVAILABLE (tool belt and MCP tools) · DESIGN — NOT YET IMPLEMENTED (compiled invocation).** See [status labels](/architecture#status-labels).
+
+A tool is an operation with a typed input, a typed output and a declared effect.
+
+## Architecture contract
+
+Define strict input and output schemas. Declare an effect class from `NONE` through `PERMISSION_CHANGE`, the read set and write set, a timeout, and for external effects an idempotency key rule. Route network access through the shared guard. Return results the receipt can reference, not free text only.
+
+For today's tool surfaces see [Build a tool](/tools/build-a-tool). The kernel-level compiled invocation adds argument provenance and policy tokens.
+
+Validate against the schema in `spec/Contracts/kernel/v1/schemas/` before anything else. Receivers fail closed, so a document that does not validate is rejected, not repaired.
+
+## Current implementation
+
+Existing tool surfaces work today. The compiled path that validates provenance is not on main.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Existing tool surfaces | **AVAILABLE** |
+| Compiled invocation | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+Declare the strictest effect class that is honest.
+
+## Related
+
+- [Tool Call Compiler](/architecture/tools-execution/tool-call-compiler)
+- [Build a tool (tools)](/tools/build-a-tool)

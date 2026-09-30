@@ -5,6 +5,9 @@
  * same decision path the hooked harnesses use (`allternit-commrails hook
  * claude-pretool`: hard floor + Gate 2 when a WIH is bound), so nothing waits
  * on a person and a headless turn never hangs.
+ * While the bound run replays (effects: recorded_only) that decision path
+ * denies every tool with "replay: recorded result served by the gate"; the
+ * gate's post-call step serves the recorded result instead.
  */
 import { existsSync } from "node:fs"
 import { spawn } from "node:child_process"

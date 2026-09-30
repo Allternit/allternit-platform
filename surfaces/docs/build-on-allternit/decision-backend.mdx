@@ -1,0 +1,38 @@
+---
+title: "Build a decision backend"
+description: "Supply the model behind a decision primitive without changing any graph"
+---
+
+**Status: AVAILABLE (contracts; decision runtime with S1 shadow-only).** See [status labels](/architecture#status-labels).
+
+A decision backend answers a typed question over typed candidates. The graph names the primitive, never the backend.
+
+## Architecture contract
+
+Produce a `DecisionBackendProfileV1`, a `DecisionReadoutProfileV1` and a `DecisionCalibrationManifestV1` co-versioned with the backend. The manifest is bound to the exact model, revision, runtime, question and candidate schema. Your backend returns a `DecisionResultV1` over the given candidates; output outside the candidate set is a malformed decision and is rejected.
+
+Gate to leave shadow: [calibration metrics](/architecture/observability/calibration-metrics). Agreement with another model is not a criterion.
+
+Validate against the schema in `spec/Contracts/kernel/v1/schemas/` before anything else. Receivers fail closed, so a document that does not validate is rejected, not repaired.
+
+## Current implementation
+
+The runtime is on main and runs S1 shadow-only. A backend you add will run in shadow and record decisions without acting.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Backend contracts | **AVAILABLE (contract)** |
+| Running in shadow | **AVAILABLE** |
+| Acting authority | **DESIGN — NOT YET IMPLEMENTED (per-primitive promotion)** |
+
+## Developer relevance
+
+Report abstain when uncertain. A calibrated abstention is worth more than a confident guess.
+
+## Related
+
+- [Decision runtime](/architecture/cognitive-runtime/decision-runtime)
+- [Readouts](/architecture/cognitive-runtime/readouts)
+- [Contracts: decision](/architecture/contracts/decision)

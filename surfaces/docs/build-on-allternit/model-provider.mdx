@@ -1,0 +1,34 @@
+---
+title: "Build a model provider"
+description: "Describe a model by capabilities so the router can select it"
+---
+
+**Status: DESIGN — NOT YET IMPLEMENTED (router and ModelPool); AVAILABLE (contract).** See [status labels](/architecture#status-labels).
+
+A provider is described by what it can do, not by its name.
+
+## Architecture contract
+
+Produce a `ModelCapabilityProfileV1` and a `ModelPoolEntryV1`. Requests come as `CapabilityRequestV1`; the router returns an `ExecutionPlanV1`. Eligibility by sensitivity and trust is a policy check applied before any utility scoring. If no entry qualifies, the answer is an alternate implementation or a failure, never an invented model name.
+
+Validate against the schema in `spec/Contracts/kernel/v1/schemas/` before anything else. Receivers fail closed, so a document that does not validate is rejected, not repaired.
+
+## Current implementation
+
+The router and ModelPool are not on main, so a provider profile cannot be selected today.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Capability contracts | **AVAILABLE (contract)** |
+| Router and ModelPool | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+Publish measured capabilities, not marketing ones.
+
+## Related
+
+- [Routing](/architecture/routing)
+- [Contracts: capability](/architecture/contracts/capability)

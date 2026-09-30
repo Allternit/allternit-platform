@@ -1,0 +1,34 @@
+---
+title: "Build a template"
+description: "Author a graph template that any conformant backend can run"
+---
+
+**Status: AVAILABLE (graph contract, validator library).** See [status labels](/architecture#status-labels).
+
+A template is a `ComputeGraphIRV1` with parameters. It is the only workflow type.
+
+## Architecture contract
+
+Nodes name primitives and capabilities, never vendors or models. Edges declare data and control flow, retry and failure paths. Every node has a receipt path and a budget. The graph validator on main checks structure, read and write conflicts and reachability as a library.
+
+Validate against the schema in `spec/Contracts/kernel/v1/schemas/` before anything else. Receivers fail closed, so a document that does not validate is rejected, not repaired.
+
+## Current implementation
+
+The validator is a library. It is not yet the enforced gate at every submission point.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Graph contract and validator library | **AVAILABLE** |
+| Enforced at every submission | **PREVIEW** |
+
+## Developer relevance
+
+Include a repair path for every verification node.
+
+## Related
+
+- [Graphs](/architecture/graphs)
+- [Contracts: graph](/architecture/contracts/graph)

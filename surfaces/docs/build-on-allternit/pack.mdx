@@ -1,0 +1,31 @@
+---
+title: "Build a pack"
+description: "Ship a domain as versioned data"
+---
+
+**Status: DESIGN — NOT YET IMPLEMENTED.** See [status labels](/architecture#status-labels).
+
+A pack bundles what a domain needs: primitives, tool schemas, validators, policy hooks, graph fragments and eval fixtures.
+
+## Architecture contract
+
+The pack schema is not defined. Prepare the parts: primitive descriptors, tool schemas, error classes, environment assumptions, validators, context projection rules, graph fragments, policy hooks, capability requirements and eval fixtures. Each part validates on its own today.
+
+## Current implementation
+
+Nothing loads a pack on main.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Pack loading | **DESIGN — NOT YET IMPLEMENTED** |
+| Individual parts | **AVAILABLE (contracts)** |
+
+## Developer relevance
+
+Build the fixtures first.
+
+## Related
+
+- [Primitive packs](/architecture/tools-execution/primitive-packs)

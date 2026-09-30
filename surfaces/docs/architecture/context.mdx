@@ -1,0 +1,58 @@
+---
+title: "Context"
+description: "How the input a component sees is compiled from canonical state, and why context is a projection, not a transcript"
+---
+
+**Status: DESIGN — NOT YET IMPLEMENTED (context compiler) · AVAILABLE (deterministic context packs for work items, internal).** See [status labels](/architecture#status-labels).
+
+Context is what a component sees for one step. In Allternit it is compiled from [canonical state](/architecture/state) for that step, not accumulated in a growing transcript.
+
+## Architecture contract
+
+### Pipeline
+
+```text
+canonical state → projection → retrieval → dedup → ranking → diversity
+  → dependency expansion → provenance and trust checks → compression
+  → token budgeting → serialization for the target component
+```
+
+### Records
+
+- **ContextChunkV1**: one unit of context (a user turn, file, symbol, tool input or output, diagnostic, plan, instruction, diff or summary) with its provenance, trust class, sensitivity and token estimates.
+- **ContextVisibilityDecisionV1**: for each chunk, `HIDE`, `SHORT`, `LONG` or `FULL`, with a relevance score and a reason code.
+- **ContextProjectionV1**: the selected chunks for a target capability, the instruction fragments, a token estimate and a context fingerprint.
+
+### Rules
+
+- **Hide is not delete.** Visibility is a projection. The chunk stays in state.
+- **Conditional instructions are pinned by predicate**, so they appear exactly when their condition holds.
+- **Compress after the next operation is known**, so compression keeps what that operation needs.
+- **Projections are cacheable, fingerprinted and disposable.** They can always be rebuilt from state.
+- **Untrusted content is fenced**, never concatenated into control instructions.
+- **On failure**, fall back to a minimal projection or deterministic retrieval, never a transcript dump.
+
+Why: when context is a transcript, the agent's behavior depends on how long it has run and which model's window it fits. Compiling context from state makes each step reproducible and lets different components see different, right-sized views of the same truth.
+
+## Current implementation
+
+The context compiler is not on main. The work runtime today builds deterministic context packs to rehydrate a work item, and wraps untrusted text (a predecessor node's output, ledger payloads) in a fence with a random per-render nonce. These are internal and predate the compiler contract.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Context schemas (`context.schema.json`) | **AVAILABLE** (contract) |
+| Deterministic context packs, nonce-fenced untrusted content | **AVAILABLE** (internal) |
+| Context compiler | **DESIGN — NOT YET IMPLEMENTED** |
+| Chunk store, shared retrieval snapshots | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+Do not rely on a component "remembering" earlier turns. Put what matters in state, and expect each step to receive a compiled projection. Treat any content from outside the run as untrusted data.
+
+## Related
+
+- [Intent Graph Kernel](/core/intent-graph-kernel)
+- [Memory Kernel](/core/memory-kernel)
+- [Routing](/architecture/routing)

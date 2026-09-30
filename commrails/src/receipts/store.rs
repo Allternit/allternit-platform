@@ -117,6 +117,11 @@ impl ReceiptStore {
         self.store_blob_bytes(content.as_bytes())
     }
 
+    /// Root receipts directory (chain, effects, keys and cassettes live under it).
+    pub fn receipts_dir(&self) -> &std::path::Path {
+        &self.receipts_dir
+    }
+
     pub fn blob_path(&self, blob_id: &str) -> PathBuf {
         self.blobs_dir.join(blob_id)
     }

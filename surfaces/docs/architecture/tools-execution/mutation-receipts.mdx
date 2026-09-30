@@ -1,0 +1,36 @@
+---
+title: "Mutation and effect receipts"
+description: "How writes are requested, validated against a base, and proven afterwards"
+---
+
+**Status: AVAILABLE (signed receipt chain and effect receipts, internal) · AVAILABLE (contract).** See [status labels](/architecture#status-labels).
+
+A write is a request with a declared target and expected base, and a receipt that records what changed. Neither a model's claim nor a tool's exit code stands in for the receipt.
+
+## Architecture contract
+
+`MutationRequestV1` names a target, a mutation type (create, delete, move, rename, replace range or symbol, insert or delete node, apply patch, codemod), the proposed change, an `expected_base_hash`, invariants and a rollback plan. `MutationReceiptV1` records before and after hashes, a diff reference, a structural parse result, changed symbols and the state versions before and after.
+
+A mutation needs both an authorization result and a declared write set. External or harmful effects need an idempotency key and a durable action receipt before any retry, so a retry cannot repeat the effect. Receipts are append-only and content-addressed; a correction is a new receipt that references the old one.
+
+## Current implementation
+
+On main, a signed receipt chain and effect receipts exist inside the work runtime. They are internal and are not reachable through api.allternit.com. Patch representation is still open, so the contract fixes the receipt, not the patch format.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Receipt chain and effect receipts | **AVAILABLE (internal)** |
+| Mutation schemas | **AVAILABLE (contract)** |
+| Receipts over the public API | **PREVIEW (contract only)** |
+
+## Developer relevance
+
+Provide an expected base whenever you can. A stale base should fail, not overwrite.
+
+## Related
+
+- [Receipts](/architecture/receipts)
+- [Contracts: mutation](/architecture/contracts/mutation)
+- [Retries](/architecture/work-runtime/retries)

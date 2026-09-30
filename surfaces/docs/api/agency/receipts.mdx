@@ -9,7 +9,7 @@ description: 'Read a run receipt chain, check it on the server, fetch the verifi
 
 A **receipt** is append-only, content-addressed evidence of an effect, an input, a policy decision or a verification result. Receipts for a run form a hash chain and each one is signed. For the concepts see [Receipts](/architecture/receipts).
 
-Today receipts exist as hashes only. The chain, the signatures and the keys endpoint are not built. Receipt-backed completion is part of the alpha gate (restart, resume, verify, replay, receipt-backed completion).
+Today the signed, hash-chained receipt chain runs inside the internal work runtime, covering effect receipts. The keys and chain-check routes are served only by that internal service; they are not exposed through `https://api.allternit.com`, and the Agency API endpoints on this page are not served yet. Receipt-backed completion is part of the alpha gate (restart, resume, verify, replay, receipt-backed completion).
 
 ## Endpoints
 
@@ -357,7 +357,7 @@ verifyChain(receipts, jwks); // `receipts` = every page of GET /v1/runs/{run_id}
 </CodeGroup>
 
 <Note>
-This code follows the v0.3 contract text. Because the chain and signatures are not implemented yet, it has not been run against a live server. Expect details to be confirmed at alpha.
+This code follows the v0.3 contract text. The chain and signatures are implemented in the internal work runtime, but the Agency API endpoints and public keys route are not served yet, so this code has not been run against the public API. Expect details to be confirmed at alpha.
 </Note>
 
 ## Related

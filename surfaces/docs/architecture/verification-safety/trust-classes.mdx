@@ -1,0 +1,38 @@
+---
+title: "Trust classes and sensitivity"
+description: "How content is labeled by origin and by how sensitive it is"
+---
+
+**Status: AVAILABLE (contract; nonce fencing internal).** See [status labels](/architecture#status-labels).
+
+Two labels travel with content. Trust says how far to believe it. Sensitivity says who may see it.
+
+## Architecture contract
+
+| Trust class | Use |
+|-------------|-----|
+| `PUBLIC`, `INTERNAL`, `RESTRICTED`, `SECRET` | Ordered by how tightly the content is held |
+| `UNTRUSTED` | Content from outside the run, such as web pages, files a user did not author and predecessor output |
+
+Sensitivity uses `PUBLIC`, `INTERNAL`, `RESTRICTED`, `SECRET`. Eligibility is a policy function applied before utility, so a component that may not see a chunk never has it ranked. Untrusted content is fenced and compiled, never concatenated into control instructions.
+
+## Current implementation
+
+On main, untrusted text passed between nodes is wrapped in a fence with a random per-render nonce. The compiler-level enforcement across all context is not on main.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Trust and sensitivity enums | **AVAILABLE (contract)** |
+| Nonce-fenced untrusted text | **AVAILABLE (internal)** |
+| Compiler-enforced fencing | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+Label everything you emit. Treat unlabeled input as `UNTRUSTED`.
+
+## Related
+
+- [Projections](/architecture/context-memory/projections)
+- [Threat model](/architecture/verification-safety/threat-model)

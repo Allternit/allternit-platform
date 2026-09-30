@@ -1,0 +1,54 @@
+---
+title: "Glossary"
+description: "Terms used across the architecture and API docs"
+---
+
+**Status: AVAILABLE.** See [status labels](/architecture#status-labels).
+
+Short definitions. Follow the linked pages for detail.
+
+## Architecture contract
+
+| Term | Meaning |
+|------|---------|
+| Agent ISA | The instruction set of seven groups (observation, decision, mutation, execution, version control, verification, control) that graphs are made of. |
+| ABI package | The frozen set of kernel schemas, registry and examples, version 1.0.0. |
+| Action receipt | A durable record that an effect happened. Required before retrying an external effect. |
+| Attention | A request for a person to answer or approve. |
+| Cassette | A recording of a run's external results for replay. Design. |
+| Compute graph | The only workflow type; nodes are primitives and capabilities. |
+| Context projection | The compiled set of chunks one component sees for one step. |
+| Decision primitive | A typed question over candidates answered by a decision backend. |
+| Divergence | A difference between a replay and its cassette. |
+| Effect class | The declared kind of change a tool can make, from `NONE` to `PERMISSION_CHANGE`. |
+| ExecutionEnvironment | The resolved working directory, environment allowlist and scope a node runs in. |
+| Fencing token | A value that stops a former lease holder from writing. |
+| Gate | Allternit's policy check in front of every executor. |
+| Idempotency key | A caller-supplied key that makes a repeated request safe. |
+| Lease | Time-bound permission for one holder to run a node. |
+| Primitive | One named operation in the registry. |
+| Receipt | A signed, append-only, content-addressed record of an action. |
+| S0 to S3 | The cognition levels, from deterministic code (S0) to the strongest model (S3). See cognition levels. |
+| Shadow | A mode where a decision backend records what it would decide and takes no action. |
+| System lift | The measured improvement of the system over the same model run without it. Design. |
+| Trust class | A label of how far content is believed, including `UNTRUSTED`. |
+| Verifier-owned completion | Completion decided by the system from verifier evidence, never by a model's statement. |
+
+## Current implementation
+
+Terms marked design describe things that are not on main. See [status labels](/architecture#status-labels).
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Glossary | **AVAILABLE** |
+
+## Developer relevance
+
+Use these terms as written in issues and integrations.
+
+## Related
+
+- [Architecture](/architecture)
+- [Cognition levels](/architecture/cognition-levels)

@@ -1,0 +1,32 @@
+---
+title: "System lift"
+description: "Measuring what the system adds over the same model run without it"
+---
+
+**Status: DESIGN — NOT YET IMPLEMENTED.** See [status labels](/architecture#status-labels).
+
+System lift is the claim the architecture has to earn: the same backbone, run inside the kernel, does measurably better than the same backbone run naked.
+
+## Architecture contract
+
+A lift measurement runs an identical task set with and without the kernel's graphs, verification and recovery, and reports the difference in verified completion, cost and latency. It needs recorded runs and a fixed evaluation set. A small model showing lift over itself is the intended first milestone.
+
+## Current implementation
+
+Not on main. No lift result is published, and this page makes no performance claim.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Lift telemetry fields in traces | **AVAILABLE (contract)** |
+| Lift measurement | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+Do not quote lift figures. None exist yet.
+
+## Related
+
+- [Alpha gate](/architecture/observability/alpha-gate)
+- [Cassettes](/architecture/observability/cassettes)

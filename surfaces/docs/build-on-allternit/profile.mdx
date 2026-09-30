@@ -1,0 +1,34 @@
+---
+title: "Build a profile"
+description: "Define an authority profile that bounds what a run may do"
+---
+
+**Status: AVAILABLE (contract).** See [status labels](/architecture#status-labels).
+
+An authority profile lists the capabilities a run may use, the ones it may not, its filesystem scope, its network policy and the approvals it needs.
+
+## Architecture contract
+
+`AuthorityProfileV1` has `profile_id` (`read-only`, `code-safe` or `code-write`), a version, capabilities, denied capabilities, filesystem scope, a `network_policy_id` and approval requirements. Bypass-style profiles are rejected with `ERR_AUTHORITY_PROFILE_FORBIDDEN`. Omitted fields resolve to safe defaults, or the run fails with `ERR_DEFAULTS_UNRESOLVABLE`.
+
+Steps: start from the narrowest built-in profile; list only capabilities you need; put denials in `denied_capabilities`, which win over grants; name a network policy; add approvals for irreversible effects; Validate against the schema in `spec/Contracts/kernel/v1/schemas/` before anything else. Receivers fail closed, so a document that does not validate is rejected, not repaired.
+
+## Current implementation
+
+The profile contract is frozen. Extending the built-in set of profile IDs is a contract change (a minor ABI bump).
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Profile contract | **AVAILABLE (contract)** |
+| Custom profile IDs | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+Prefer read-only and widen only when a run needs it.
+
+## Related
+
+- [Contracts: policy](/architecture/contracts/policy)
+- [Permission profiles](/cli/permission-profiles)
