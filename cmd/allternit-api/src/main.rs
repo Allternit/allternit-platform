@@ -913,6 +913,8 @@ async fn main() {
         .merge(user_profile_router())
         .merge(allternit_api::mcp_directory_routes::directory_router())
         .nest("/api", allternit_api::mcp_directory_routes::directory_router())
+        .merge(allternit_api::studio_apps_routes::studio_router())
+        .nest("/api", allternit_api::studio_apps_routes::studio_router())
         .merge(canvas_router())
         .merge(v1_router())
         .merge(allternit_bus_router())
