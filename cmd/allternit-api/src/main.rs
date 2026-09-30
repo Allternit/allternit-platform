@@ -1133,7 +1133,7 @@ async fn main() {
     let mut public = Router::new()
         .nest("/health", health_router())
         .merge(web_proxy)
-        .nest("/beta", enrollment_router())
+        .merge(enrollment_router()) // router already declares /beta/enroll
         // Client ID Metadata Document for connector OAuth (must be public).
         .merge(allternit_api::mcp_directory_routes::oauth_client_router())
         .merge(status_router())
