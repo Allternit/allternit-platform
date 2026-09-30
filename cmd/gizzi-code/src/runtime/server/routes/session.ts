@@ -1,5 +1,6 @@
 import { Hono } from "hono"
 import { SessionHandoff } from "@/runtime/session/handoff"
+import { VendorMessage } from "@/runtime/session/vendor-message"
 import { SessionPause } from "@/runtime/session/pause"
 import { Budget } from "@/runtime/session/budget"
 import { stream } from "hono/streaming"
@@ -502,6 +503,26 @@ export const SessionRoutes = lazy(() =>
         const { sessionID } = c.req.valid("param") as any
         const result = await Session.fork({ sessionID })
         return c.json(result)
+      },
+    )
+    .post(
+      "/:sessionID/vendor-message",
+      describeRoute({
+        summary: "Append a vendor reply",
+        description:
+          "Append an assistant message attributed to a vendor bot (Agent Gateway) without running a turn. Deduped by metadata.remote_event_id.",
+        operationId: "session.vendorMessage",
+        responses: {
+          200: { description: "The stored (or already-stored) message", content: { "application/json": { schema: resolver(z.any()) } } },
+          ...errors(400, 404),
+        },
+      }),
+      validator("param", z.object({ sessionID: z.string() })),
+      validator("json", z.object({ text: z.string().min(1), metadata: z.record(z.string(), z.any()).optional() })),
+      async (c) => {
+        const { sessionID } = c.req.valid("param")
+        const body = c.req.valid("json")
+        return c.json(await VendorMessage.append({ sessionID, text: body.text, metadata: body.metadata }))
       },
     )
     .post(

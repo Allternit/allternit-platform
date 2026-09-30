@@ -2587,6 +2587,23 @@ pub(crate) async fn seed_session_message(db: &DbHandle, session_id: &str, text: 
         .map_err(|_| "gizzi refused the checkpoint message".to_string())
 }
 
+/// Agent Gateway: append a vendor bot's reply to a session as an assistant
+/// message (no model turn). gizzi dedupes by `metadata.remote_event_id`.
+pub(crate) async fn append_vendor_message(db: &DbHandle, session_id: &str, text: &str, metadata: serde_json::Value) -> Result<(), String> {
+    let payload = json!({ "text": text, "metadata": metadata });
+    if let Some(target) = crate::placement::session_target(db, session_id) {
+        let path = format!("/agent-sessions/{}/vendor-message", urlencoding::encode(session_id));
+        crate::placement::call(&target, reqwest::Method::POST, &path, Some(payload)).await?;
+        return Ok(());
+    }
+    let client = gizzi_client(&HeaderMap::new());
+    let path = format!("/v1/session/{}/vendor-message", urlencoding::encode(session_id));
+    gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(payload))
+        .await
+        .map(|_| ())
+        .map_err(|_| "gizzi refused the vendor reply".to_string())
+}
+
 /// gizzi's native context handoff for a session. Returns the new session id
 /// and the checkpoint baton gizzi wrote (or used, when `baton` is given).
 pub(crate) async fn gizzi_handoff(

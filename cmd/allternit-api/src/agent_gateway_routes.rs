@@ -328,6 +328,9 @@ pub(crate) fn set_exec_state(db: &DbHandle, conn: &Connection, owner: &str, bind
 pub fn agent_gateway_router() -> Router<Arc<AppState>> {
     let g = Router::new()
         .route("/provider-accounts", post(create_account).get(list_accounts))
+        .route("/provider-accounts/:id/secret", post(set_secret).delete(clear_secret))
+        .route("/provider-accounts/:id/agents", get(list_agents))
+        .route("/execution-bindings", get(list_exec))
         .route("/provider-accounts/:id", get(get_account_h).patch(patch_account).delete(delete_account))
         .route("/bots/:bot_id/execution-binding", put(put_exec).get(get_exec).patch(patch_exec))
         .route("/threads/:thread_id/remote-bindings", post(create_remote).get(list_remote))
@@ -501,6 +504,105 @@ async fn delete_account(State(state): State<Arc<AppState>>, Extension(user): Ext
         conn.execute("DELETE FROM provider_account_bindings WHERE id = ?1 AND owner = ?2", params![aid, owner])?;
         audit(&conn, &owner, &aid, "account.deleted", Some(&s(&acct, "state")), None, json!({ "force": q.force, "dependentBots": moved }));
         ok(json!({ "deleted": true, "dependentBots": moved }))
+    })
+    .await
+}
+
+// ---------------------------------------------------------------- provider keys, discovery, bindings list
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SecretBody {
+    api_key: String,
+}
+
+/// Seal a per-user provider key with `token_crypto` (AES-256-GCM, the same
+/// mechanism `aci_credentials` uses for user-owned secrets). STRICT: with no
+/// encryption key available nothing is stored, never a `plain:` fallback.
+fn seal_strict(plain: &str) -> Option<String> {
+    if !crate::token_crypto::ensure_platform_key() {
+        return None;
+    }
+    let sealed = crate::token_crypto::seal(plain);
+    sealed.starts_with("enc:v1:").then_some(sealed)
+}
+
+async fn set_secret(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(aid): Path<String>, Json(b): Json<SecretBody>) -> Response {
+    run(&state, move |db| {
+        let conn = db.connect()?;
+        let owner = user.user_id;
+        get_account(&conn, &owner, &aid)?;
+        let key = b.api_key.trim();
+        if key.is_empty() {
+            return Err(ApiErr::bad("apiKey is required"));
+        }
+        let sealed = seal_strict(key).ok_or_else(|| ApiErr::new(StatusCode::SERVICE_UNAVAILABLE, "no encryption key is configured; the key was not stored"))?;
+        conn.execute("UPDATE provider_account_bindings SET secret_ref = ?1, updated_at = ?2 WHERE id = ?3 AND owner = ?4", params![sealed, now(), aid, owner])?;
+        audit(&conn, &owner, &aid, "secret_set", None, None, json!({}));
+        ok(json!({ "account": get_account(&conn, &owner, &aid)? }))
+    })
+    .await
+}
+
+async fn clear_secret(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(aid): Path<String>) -> Response {
+    run(&state, move |db| {
+        let conn = db.connect()?;
+        let owner = user.user_id;
+        get_account(&conn, &owner, &aid)?;
+        conn.execute("UPDATE provider_account_bindings SET secret_ref = NULL, updated_at = ?1 WHERE id = ?2 AND owner = ?3", params![now(), aid, owner])?;
+        audit(&conn, &owner, &aid, "secret_cleared", None, None, json!({}));
+        ok(json!({ "account": get_account(&conn, &owner, &aid)? }))
+    })
+    .await
+}
+
+/// `agent.list` for an account's vendor adapter, via a transient binding.
+pub(crate) async fn discover_agents(db: &DbHandle, tx: &dyn crate::gateway_runner::AaiTransport, owner: &str, aid: &str) -> Result<Vec<Value>, (StatusCode, String, String)> {
+    let acct = {
+        let conn = db.connect().map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL".to_string(), "database error".to_string()))?;
+        get_account(&conn, owner, aid).map_err(|ApiErr(s, v)| (s, "NOT_FOUND".to_string(), v["error"].as_str().unwrap_or("error").to_string()))?
+    };
+    let binding = json!({ "type": "vendor", "vendor": s(&acct, "vendor"), "accountBindingId": aid });
+    let v = crate::gateway_runner::vcall(db, tx, owner, "agent.list", &binding, json!({})).await.map_err(|e| {
+        let status = match e.code.as_str() {
+            "AUTH_REQUIRED" | "AUTH_REVOKED" => StatusCode::UNAUTHORIZED,
+            "RATE_LIMITED" => StatusCode::TOO_MANY_REQUESTS,
+            "LANE_BLOCKED" | "BOT_DETECTED" | "BOT_DETECTION" | "ACCOUNT_RISK" => StatusCode::FORBIDDEN,
+            "INTERNAL" => StatusCode::INTERNAL_SERVER_ERROR,
+            _ => StatusCode::BAD_GATEWAY,
+        };
+        (status, e.code, e.human_message)
+    })?;
+    let list = v["agents"].as_array().or_else(|| v.as_array()).cloned().unwrap_or_default();
+    Ok(list
+        .iter()
+        .filter_map(|a| {
+            let ext = a["externalAgentId"].as_str().or_else(|| a["id"].as_str())?;
+            let mut o = json!({ "externalAgentId": ext, "name": a["name"].as_str().unwrap_or(ext) });
+            if let Some(d) = a["description"].as_str() {
+                o["description"] = json!(d);
+            }
+            if let Some(u) = a["avatarUrl"].as_str() {
+                o["avatarUrl"] = json!(u);
+            }
+            Some(o)
+        })
+        .collect())
+}
+
+async fn list_agents(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(aid): Path<String>) -> Response {
+    let tx = crate::gateway_runner::transport(&state);
+    match discover_agents(&state.db, tx.as_ref(), &user.user_id, &aid).await {
+        Ok(agents) => (StatusCode::OK, Json(json!({ "agents": agents }))).into_response(),
+        Err((status, code, msg)) => (status, Json(json!({ "error": msg, "code": code }))).into_response(),
+    }
+}
+
+async fn list_exec(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>) -> Response {
+    run(&state, move |db| {
+        let conn = db.connect()?;
+        let bindings = rows(&conn, &format!("SELECT {EXEC_COLS} FROM bot_execution_bindings WHERE owner = ?1 ORDER BY created_at"), &[&user.user_id])?;
+        ok(json!({ "bindings": bindings }))
     })
     .await
 }
@@ -1207,5 +1309,105 @@ mod tests {
         assert_eq!(v["gaps"].as_array().unwrap().len(), 1);
         let (_, v) = call(&st, "GET", "/vendor-packs/openai/parity", "user-b", None).await;
         assert_eq!(v["parity"], "full", "gaps are owner-scoped");
+    }
+
+    // ---- provider keys, discovery, bindings list
+
+    struct Disco {
+        creds: std::sync::Mutex<Vec<Option<Value>>>,
+        calls: std::sync::Mutex<usize>,
+    }
+    #[async_trait::async_trait]
+    impl crate::gateway_runner::AaiTransport for Disco {
+        async fn call(&self, _o: &str, op: &str, _b: &Value, _i: Value) -> Result<Value, crate::gateway_runner::AaiError> {
+            *self.calls.lock().unwrap() += 1;
+            assert_eq!(op, "agent.list");
+            Ok(json!({ "agents": [{ "id": "a1", "name": "Alpha", "description": "d", "avatarUrl": "https://x/a.png" }, { "externalAgentId": "a2" }] }))
+        }
+        async fn call_cred(&self, o: &str, op: &str, b: &Value, c: Option<&Value>, i: Value) -> Result<Value, crate::gateway_runner::AaiError> {
+            self.creds.lock().unwrap().push(c.cloned());
+            self.call(o, op, b, i).await
+        }
+    }
+
+    async fn key_account(st: &Arc<AppState>, auth: &str) -> String {
+        let (s, v) = call(st, "POST", "/provider-accounts", "user-a", Some(json!({"vendor": "openai", "authType": auth}))).await;
+        assert_eq!(s, StatusCode::CREATED, "{v}");
+        v["account"]["id"].as_str().unwrap().to_string()
+    }
+
+    #[tokio::test]
+    async fn secret_is_sealed_owner_checked_and_never_echoed() {
+        std::env::set_var("ALLTERNIT_ENCRYPTION_KEY", "unit-test-encryption-key");
+        let st = setup("secret").await;
+        let aid = key_account(&st, "api_key").await;
+        let k = "sk-LEAK-CHECK-9999";
+        let (s, v) = call(&st, "POST", &format!("/provider-accounts/{aid}/secret"), "user-a", Some(json!({"apiKey": k}))).await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+        assert_eq!(v["account"]["hasSecretRef"], true);
+        assert!(!v.to_string().contains(k));
+        let (_, g) = call(&st, "GET", &format!("/provider-accounts/{aid}"), "user-a", None).await;
+        assert!(!g.to_string().contains(k));
+        let conn = st.db.connect().unwrap();
+        let sealed: String = conn.query_row("SELECT secret_ref FROM provider_account_bindings WHERE id=?1", params![aid], |r| r.get(0)).unwrap();
+        assert!(sealed.starts_with("enc:v1:") && !sealed.contains(k));
+        assert_eq!(crate::token_crypto::open(&sealed), k);
+        let audits: String = conn.query_row("SELECT group_concat(event || detail_json) FROM connection_audit WHERE account_binding_id=?1", params![aid], |r| r.get(0)).unwrap();
+        assert!(audits.contains("secret_set") && !audits.contains(k));
+        let bot_events: String = conn.query_row("SELECT COALESCE(group_concat(payload), '') FROM bot_events", [], |r| r.get(0)).unwrap();
+        assert!(!bot_events.contains(k));
+        // Another user can neither set nor clear it.
+        let (s, _) = call(&st, "POST", &format!("/provider-accounts/{aid}/secret"), "user-b", Some(json!({"apiKey": "x"}))).await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+        let (s, _) = call(&st, "DELETE", &format!("/provider-accounts/{aid}/secret"), "user-b", None).await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+        let (s, _) = call(&st, "POST", &format!("/provider-accounts/{aid}/secret"), "user-a", Some(json!({"apiKey": "  "}))).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+        let (s, v) = call(&st, "DELETE", &format!("/provider-accounts/{aid}/secret"), "user-a", None).await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(v["account"]["hasSecretRef"], false);
+    }
+
+    #[tokio::test]
+    async fn discovery_uses_a_transient_binding_and_attaches_the_key_only_when_present() {
+        std::env::set_var("ALLTERNIT_ENCRYPTION_KEY", "unit-test-encryption-key");
+        let st = setup("disco").await;
+        let with_key = key_account(&st, "api_key").await;
+        let (s, _) = call(&st, "POST", &format!("/provider-accounts/{with_key}/secret"), "user-a", Some(json!({"apiKey": "sk-disco"}))).await;
+        assert_eq!(s, StatusCode::OK);
+        let d = Disco { creds: Default::default(), calls: Default::default() };
+        let agents = discover_agents(&st.db, &d, "user-a", &with_key).await.unwrap();
+        assert_eq!(agents.len(), 2);
+        assert_eq!(agents[0], json!({ "externalAgentId": "a1", "name": "Alpha", "description": "d", "avatarUrl": "https://x/a.png" }));
+        assert_eq!(agents[1]["externalAgentId"], "a2");
+        assert_eq!(d.creds.lock().unwrap()[0].as_ref().unwrap()["apiKey"], "sk-disco");
+
+        // browser-session account: no credential is sent.
+        let plain = account(&st).await;
+        discover_agents(&st.db, &d, "user-a", &plain).await.unwrap();
+        assert!(d.creds.lock().unwrap()[1].is_none());
+
+        // api_key account without a key: AUTH_REQUIRED before any call is made.
+        let empty = key_account(&st, "api_key").await;
+        let before = *d.calls.lock().unwrap();
+        let (status, code, _) = discover_agents(&st.db, &d, "user-a", &empty).await.unwrap_err();
+        assert_eq!((status, code.as_str()), (StatusCode::UNAUTHORIZED, "AUTH_REQUIRED"));
+        assert_eq!(*d.calls.lock().unwrap(), before);
+        // Someone else's account is invisible.
+        assert_eq!(discover_agents(&st.db, &d, "user-b", &with_key).await.unwrap_err().0, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn execution_bindings_list_returns_only_the_owners() {
+        let st = setup("list").await;
+        let aid = account(&st).await;
+        connect(&st, &aid).await;
+        bind(&st, "bot-1", &aid).await;
+        bind(&st, "bot-2", &aid).await;
+        let (s, v) = call(&st, "GET", "/execution-bindings", "user-a", None).await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(v["bindings"].as_array().unwrap().len(), 2);
+        let (_, other) = call(&st, "GET", "/execution-bindings", "user-b", None).await;
+        assert_eq!(other["bindings"].as_array().unwrap().len(), 0);
     }
 }
