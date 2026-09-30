@@ -16,8 +16,8 @@ export function claudeWebConfig(overrides: Partial<DeclarativeChatConfig> = {}):
     selectorsYaml: readFileSync(new URL("./selectors/v1.yaml", import.meta.url), "utf8"),
     threadUrlPattern: THREAD_URL_PATTERN,
     banners: [
-      { kind: "limit_banner", pattern: /out of (free )?messages/i },
-      { kind: "limit_banner", pattern: /(you'?ve )?(hit|reached) (your|the) (usage |message )?limit/i },
+      { kind: "limit_banner", pattern: /out of (free )?messages/i, blocksSend: true },
+      { kind: "limit_banner", pattern: /(you'?ve )?(hit|reached) (your|the) (usage |message )?limit/i, blocksSend: true },
       { kind: "limit_banner", pattern: /approaching (your |the )?(usage |message )?limit/i },
       { kind: "reset_notice", pattern: /(limit|usage|messages?) (will )?resets? (at|in|on)/i },
     ],

@@ -16,8 +16,8 @@ export function kimiWebConfig(overrides: Partial<DeclarativeChatConfig> = {}): D
     selectorsYaml: readFileSync(new URL("./selectors/v1.yaml", import.meta.url), "utf8"),
     threadUrlPattern: THREAD_URL_PATTERN,
     banners: [
-      { kind: "limit_banner", pattern: /(reached|hit) (the |your )?(usage |daily |message |chat )?limit/i },
-      { kind: "limit_banner", pattern: /(not enough|insufficient|out of) credits/i },
+      { kind: "limit_banner", pattern: /(reached|hit) (the |your )?(usage |daily |message |chat )?limit/i, blocksSend: true },
+      { kind: "limit_banner", pattern: /(not enough|insufficient|out of) credits/i, blocksSend: true },
       { kind: "reset_notice", pattern: /(limit|quota|credits?) (will )?(reset|refresh)(es)? (at|in|on)/i },
     ],
     // send_button is not probed: it may render only once the composer has
