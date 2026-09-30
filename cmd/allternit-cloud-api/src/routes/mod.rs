@@ -16,6 +16,7 @@ pub mod contabo_hosted_runtimes;
 pub mod continuation;
 pub mod costs;
 pub mod data_plane;
+pub mod data_plane_fallback;
 pub mod deployments;
 pub mod dispatch_handoff;
 pub mod gizzi_instances;
