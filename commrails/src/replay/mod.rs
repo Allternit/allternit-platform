@@ -186,7 +186,8 @@ pub fn tool_request_hash(tool_id: &str, args_hash: &str, effect_class: &str) -> 
     hash_value(&json!({"boundary": "TOOL", "tool_id": tool_id, "args_hash": args_hash, "effect_class": effect_class}))
 }
 
-fn boundary_request_hash(boundary: Boundary, node_id: &str, schema_id: &str) -> Result<String> {
+/// Request hash of a non-effect boundary (policy/decision/...) at `node_id`.
+pub fn boundary_request_hash(boundary: Boundary, node_id: &str, schema_id: &str) -> Result<String> {
     hash_value(&json!({"boundary": boundary, "node_id": node_id, "schema_id": schema_id}))
 }
 
@@ -377,8 +378,23 @@ pub enum StepOutcome {
     Refused(Divergence),
 }
 
+enum Cs<'a> {
+    Borrowed(&'a ChainStore),
+    Owned(ChainStore),
+}
+
+impl std::ops::Deref for Cs<'_> {
+    type Target = ChainStore;
+    fn deref(&self) -> &ChainStore {
+        match self {
+            Cs::Borrowed(c) => c,
+            Cs::Owned(c) => c,
+        }
+    }
+}
+
 pub struct Replayer<'a> {
-    cs: &'a ChainStore,
+    cs: Cs<'a>,
     cassette: CassetteV1,
     replay_run_id: String,
     receipts: HashMap<String, Value>,
@@ -391,7 +407,18 @@ pub struct Replayer<'a> {
 impl<'a> Replayer<'a> {
     /// Open a replay of `cassette` against the recorded chain in `cs`. Only
     /// `EffectsMode::RecordedOnly` exists, so there is no executor to pass.
-    pub fn new(cs: &'a ChainStore, cassette: CassetteV1, replay_run_id: &str, _effects: EffectsMode) -> Result<Self> {
+    pub fn new(cs: &'a ChainStore, cassette: CassetteV1, replay_run_id: &str, effects: EffectsMode) -> Result<Self> {
+        Self::open(Cs::Borrowed(cs), cassette, replay_run_id, effects)
+    }
+
+    /// Owning variant, for long-lived replay sessions (e.g. the gate's replay mode).
+    pub fn new_owned(cs: ChainStore, cassette: CassetteV1, replay_run_id: &str, effects: EffectsMode) -> Result<Replayer<'static>> {
+        Replayer::open(Cs::Owned(cs), cassette, replay_run_id, effects)
+    }
+
+    pub fn cassette(&self) -> &CassetteV1 { &self.cassette }
+
+    fn open(cs: Cs<'a>, cassette: CassetteV1, replay_run_id: &str, _effects: EffectsMode) -> Result<Self> {
         if cassette.schema_id != CASSETTE_SCHEMA_ID { bail!("not a CassetteV1"); }
         let mut me = Self {
             cs, replay_run_id: id_or(Some(replay_run_id), "replay"),
@@ -399,12 +426,12 @@ impl<'a> Replayer<'a> {
             steps: 0, divergences: vec![], expected: vec![], cassette,
         };
         let run_id = me.cassette.run_id.clone();
-        let rep = cs.verify_chain(&run_id)?;
+        let rep = me.cs.verify_chain(&run_id)?;
         if let Some(b) = rep.first_break {
             me.push(b.index, "chain", DivergenceKind::ResultHash, None, None,
                     format!("recorded receipt chain does not verify at index {}: {}", b.index, b.reason));
         }
-        let all = cs.read_run(&run_id)?;
+        let all = me.cs.read_run(&run_id)?;
         let head = all.last().and_then(|r| r["chain"]["content_hash"].as_str()).map(String::from);
         if head.as_deref() != Some(me.cassette.run_receipt_hash.as_str()) {
             let rec = Some(me.cassette.run_receipt_hash.clone());
@@ -435,6 +462,25 @@ impl<'a> Replayer<'a> {
         let matched = self.cassette.entries.iter().enumerate()
             .position(|(i, e)| !self.consumed[i] && e.boundary == s.boundary && e.request_hash == s.request_hash);
         let Some(i) = matched else {
+            // WP3 dedupe: a repeated idempotency key was answered from the recorded
+            // receipt live (no second receipt), so replay answers it the same way.
+            if let Some(k) = &s.idempotency_key {
+                let found = self.cs.find_effect(k).ok().flatten().map(|v| receipt_id(&v));
+                let prior = self.cassette.entries.iter().enumerate().find(|(j, e)| self.consumed[*j]
+                    && e.boundary == s.boundary && e.request_hash == s.request_hash
+                    && Some(e.result_ref.as_str()) == found.as_deref());
+                if let Some((_, e)) = prior {
+                    if let Some(r) = self.receipts.get(&e.result_ref) {
+                        if r["status"].as_str() == Some("COMMITTED") {
+                            return StepOutcome::Recorded(RecordedResult {
+                                seq: e.seq, receipt_id: e.result_ref.clone(), result_hash: e.recorded_result_hash.clone(),
+                                status: Some("COMMITTED".into()),
+                                external_ref: r["external_ref"].as_str().map(String::from), branch_taken: None,
+                            });
+                        }
+                    }
+                }
+            }
             let rec = next.map(|n| self.cassette.entries[n].request_hash.clone());
             return StepOutcome::Refused(self.push(step_no, &s.node_id.clone(), DivergenceKind::ExtraEntry, rec,
                 Some(s.request_hash.clone()),

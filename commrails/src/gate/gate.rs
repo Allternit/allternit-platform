@@ -73,6 +73,8 @@ pub struct Gate {
     visual_config: Option<VisualConfig>,
     /// Installed judge (`with_judge`); None = load `.allternit/judge/config.json`.
     judge: Option<JudgeHandle>,
+    /// WP5 replay sessions (effects: recorded_only), keyed by replaying run id.
+    replay: std::sync::Mutex<HashMap<String, crate::replay::Replayer<'static>>>,
 }
 
 #[derive(Debug)]
@@ -220,6 +222,7 @@ impl Gate {
             visual_provider: opts.visual_provider,
             visual_config: opts.visual_config,
             judge: None,
+            replay: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -1226,6 +1229,11 @@ impl Gate {
         }
         if output_tokens.is_none() {
             output_tokens = Some(10); // Minimum output estimate
+        }
+
+        // Replay mode: answer from the cassette; never execute, write or append.
+        if let Some(served) = self.replay_tool_effect(wih_id, tool, &receipt_payload)? {
+            return Ok(served);
         }
 
         let receipt_id = create_receipt_id();
@@ -3218,5 +3226,87 @@ fn gate_actor(actor_id: &str) -> Actor {
     Actor {
         r#type: ActorType::Gate,
         id: actor_id.to_string(),
+    }
+}
+
+// ---------------------------------------------------------------- WP5 replay mode
+
+fn replay_run_id(wih_id: &str) -> String {
+    format!("run_{}", wih_id)
+}
+
+impl Gate {
+    /// Put `wih_id`'s run into replay mode (effects: recorded_only) against `cassette`.
+    /// Until [`Gate::end_replay`], side-effecting `post_tool` calls are answered from
+    /// the recording and never execute, write a receipt, or append to any chain.
+    pub fn begin_replay(&self, wih_id: &str, cassette: crate::replay::CassetteV1) -> Result<()> {
+        let run = replay_run_id(wih_id);
+        let r = crate::replay::Replayer::new_owned(
+            self.receipts.chain_store()?, cassette, &run, crate::replay::EffectsMode::RecordedOnly)?;
+        self.replay.lock().unwrap_or_else(|p| p.into_inner()).insert(run, r);
+        Ok(())
+    }
+
+    pub fn is_replaying(&self, wih_id: &str) -> bool {
+        self.replay.lock().unwrap_or_else(|p| p.into_inner()).contains_key(&replay_run_id(wih_id))
+    }
+
+    /// Leave replay mode and return the divergence report.
+    pub fn end_replay(&self, wih_id: &str) -> Result<crate::replay::DivergenceReportV1> {
+        let r = self.replay.lock().unwrap_or_else(|p| p.into_inner()).remove(&replay_run_id(wih_id))
+            .ok_or_else(|| anyhow!("run {} is not replaying", replay_run_id(wih_id)))?;
+        r.finish()
+    }
+
+    fn replay_tool_effect(&self, wih_id: &str, tool: &str, payload: &serde_json::Value) -> Result<Option<String>> {
+        use crate::replay::{ReplayStep, StepOutcome};
+        let class = payload.get("effect_class").and_then(|v| v.as_str()).unwrap_or("EXECUTE");
+        let mut map = self.replay.lock().unwrap_or_else(|p| p.into_inner());
+        let Some(r) = map.get_mut(&replay_run_id(wih_id)) else { return Ok(None) };
+        if class == "NONE" || class == "READ" {
+            return Ok(None); // read-only calls are not effects; legacy path unchanged
+        }
+        // Gate effects carry no node id, so they were recorded at the run node.
+        let node = r.cassette().run_id.clone();
+        let mut st = ReplayStep::tool(&node, tool, payload, class)?;
+        if let Some(k) = payload.get("idempotency_key").and_then(|v| v.as_str()).filter(|k| k.len() >= 8) {
+            st = st.with_key(k);
+        }
+        match r.step(&st) {
+            StepOutcome::Recorded(res) if res.status.as_deref() == Some("COMMITTED") =>
+                Ok(Some(res.external_ref.unwrap_or_default())),
+            StepOutcome::Recorded(res) => Err(anyhow!(
+                "replay: recorded effect {} ended {:?}; not re-executed", res.receipt_id, res.status)),
+            StepOutcome::Refused(d) => Err(anyhow!(
+                "replay: no trustworthy recording for {tool} ({:?} at seq {}); refused, not executed", d.kind, d.seq)),
+        }
+    }
+
+    /// Record a policy decision at `node_id` on the run's receipt chain
+    /// (`PolicyReceiptV1`). In replay mode it is compared with the recording instead.
+    pub fn record_policy_decision(&self, wih_id: &str, node_id: &str, decision: &str) -> Result<()> {
+        let run = replay_run_id(wih_id);
+        let schema = "allternit.kernel.PolicyReceiptV1";
+        {
+            let mut map = self.replay.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some(r) = map.get_mut(&run) {
+                let b = crate::replay::Boundary::Policy;
+                let st = crate::replay::ReplayStep {
+                    boundary: b, node_id: node_id.into(),
+                    request_hash: crate::replay::boundary_request_hash(b, node_id, schema)?,
+                    branch: Some(decision.into()), result_hash: None, idempotency_key: None,
+                };
+                r.step(&st);
+                return Ok(());
+            }
+        }
+        self.receipts.chain_store()?.append(json!({
+            "envelope": {"abi_version": "1.0.0", "schema_id": schema, "schema_version": "1.0.0",
+                         "run_id": run, "node_id": node_id,
+                         "created_at": Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)},
+            "decision": decision,
+            "extensions": {"x-actor": self.actor_id}
+        }))?;
+        Ok(())
     }
 }
