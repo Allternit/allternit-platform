@@ -66,6 +66,8 @@ pub mod routine_local_scheduler;
 pub mod agent_gateway_routes;
 pub mod thread_routes;
 pub mod gateway_runner;
+pub mod aai_facade;
+pub mod a2a_routes;
 pub mod channel_gateway;
 pub mod channel_transports;
 pub mod spend_limits;
