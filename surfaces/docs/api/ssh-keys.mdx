@@ -40,7 +40,7 @@ Response:
   {
     "id": "key_2f8a9c4e5d3b",
     "name": "Laptop key",
-    "fingerprint": "a1:b2:c3:d4:e5:f6",
+    "fingerprint": "9e107d9d372bb6826bd81d3542a419d6",
     "public_key": "ssh-ed25519 AAAAC3NzaC1...",
     "key_type": "ed25519",
     "bits": 256,
@@ -76,7 +76,7 @@ Response:
 {
   "id": "key_2f8a9c4e5d3b",
   "name": "Laptop key",
-  "fingerprint": "a1:b2:c3:d4:e5:f6",
+  "fingerprint": "9e107d9d372bb6826bd81d3542a419d6",
   "public_key": "ssh-ed25519 AAAAC3NzaC1...",
   "key_type": "ed25519",
   "bits": 256
@@ -107,11 +107,11 @@ Response:
   "name": "CI deploy key",
   "public_key": "ssh-ed25519 AAAAC3NzaC1...",
   "private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\n...",
-  "fingerprint": "a1:b2:c3:d4:e5:f6"
+  "fingerprint": "9e107d9d372bb6826bd81d3542a419d6"
 }
 ```
 
-Supported key types: `ed25519`, `rsa`, `ecdsa`. RSA defaults to 4096 bits; others default to 256 bits.
+Supported key types: `ed25519`, `rsa`, `ecdsa`. RSA defaults to 4096 bits; `ed25519` and `ecdsa` are always 256 bits. The `fingerprint` is the lowercase hex MD5 digest of the trimmed public key text, not the colon-separated `ssh-keygen -l` form.
 
 ## Import key
 
@@ -135,7 +135,7 @@ Response:
 {
   "id": "key_5e6f7a8b",
   "name": "Imported key",
-  "fingerprint": "a1:b2:c3:d4:e5:f6",
+  "fingerprint": "9e107d9d372bb6826bd81d3542a419d6",
   "public_key": "ssh-ed25519 AAAAC3NzaC1...",
   "created_at": "2026-08-13T10:00:00Z"
 }
@@ -150,9 +150,9 @@ Response:
 | 400 | `Name is required` | Missing key name. |
 | 400 | `private_key is required` | Import request missing private key. |
 | 400 | `Failed to derive public key from private key` | Import failed. |
-| 401 | `unauthorized` | Missing or invalid authentication. |
+| 401 | — | Missing or invalid authentication. |
 | 404 | `SSH key not found` | Key does not exist. |
-| 500 | `internal_error` | Unexpected server error. |
+| 500 | `internal error` / `ssh-keygen failed` | Unexpected server error, or key generation failed. |
 
 ## Related links
 

@@ -69,7 +69,7 @@ The response returns the stored bytes with the original `Content-Type`. If the s
 | 400 | `invalid_base64` | `dataBase64` is not valid base64. |
 | 400 | `empty_upload` | The decoded payload is empty. |
 | 400 | `invalid_upload_id` | Upload ID is empty or contains non-alphanumeric characters. |
-| 401 | `unauthorized` | Missing or invalid authentication. |
+| 401 | — | Missing or invalid authentication. |
 | 404 | `upload_not_found` | Upload does not exist. |
 | 413 | `too_large` | Decoded payload exceeds 20 MB. |
 | 500 | `storage_error` | Failed to write upload or sidecar to disk. |

@@ -211,12 +211,12 @@ The `/files/raw` endpoint detects the following common types from the file exten
 
 ## Error codes
 
-| HTTP status | Code | Meaning |
+| HTTP status | Body | Meaning |
 |-------------|------|---------|
-| 400 | `allternit.invalid_request` | Missing `path` parameter. |
-| 401 | `allternit.authentication_failed` | Missing or invalid bearer token. |
-| 404 | `allternit.not_found` | File or directory does not exist. |
-| 500 | `allternit.internal_error` | Read/write/delete failure. |
+| 400 | `{"error": "Missing path"}` | Missing `path` on write. |
+| 401 | — | Missing or invalid bearer token. |
+| 404 | `{"error": "Not found"}` | File or directory does not exist. |
+| 500 | `{"error": "Cannot read file" \| "Cannot create directory" \| "Cannot delete" \| "Cannot write file"}` | Filesystem failure. |
 
 ## Related pages
 

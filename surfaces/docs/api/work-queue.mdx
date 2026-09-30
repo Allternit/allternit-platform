@@ -42,7 +42,7 @@ All requests require a Bearer token. See [Authentication](/api/authentication).
 | `id` | string | Unique task identifier. |
 | `session_id` | string? | Optional linked session. |
 | `deployment_id` | string? | Optional linked deployment. |
-| `status` | string | `queued`, `leased`, `running`, `succeeded`, or `cancelled`. |
+| `status` | string | `queued`, `leased`, `running`, `succeeded`, or `cancelled` (the schema also reserves `failed`, but `stop` records `cancelled`). |
 | `payload` | object | Caller-provided job payload. |
 | `sandbox_image` | string? | Sandbox image for the worker. |
 | `env` | object | Environment variables for the worker. |
