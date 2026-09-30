@@ -23,7 +23,7 @@ import type {
   RuntimeDriver,
   TaskHandle,
 } from "@/runtime/runtime-driver"
-import { acpCanLoadSession, acpMcpServers, claudeSessionFlags, claudeSessionIdFromEvent, codexMcpConfig, withInstructions } from "@/runtime/drivers/cli-session-flags"
+import { acpCanLoadSession, acpMcpServers, claudeSessionFlags, codexThreadRequest, opencodeResumeFlags, qwenResumeFlags, vendorSessionIdFromEvent, codexMcpConfig, withInstructions } from "@/runtime/drivers/cli-session-flags"
 import { attachmentsToAcpContent } from "./attachments"
 import { RuntimeService, RuntimeNotFoundError, type RegisteredRuntime } from "@/runtime/runtime-service"
 import { ExecutionLogService } from "@/runtime/execution-log"
@@ -514,8 +514,8 @@ export class LocalCliDriver implements RuntimeDriver {
         try {
           const evt = JSON.parse(line) as StreamJsonEvent
 
-          const vendorId = claudeSessionIdFromEvent(evt)
-          if (vendorId && vendorId !== lastVendorId && this.cliName === "claude-cli") {
+          const vendorId = vendorSessionIdFromEvent(this.cliName, evt)
+          if (vendorId && vendorId !== lastVendorId) {
             lastVendorId = vendorId
             const vEv = { type: "vendor_session", id: vendorId } as AgentEvent
             yield vEv
@@ -1384,14 +1384,28 @@ export class LocalCliDriver implements RuntimeDriver {
       notify("initialized", {})
 
       const mcpConfig = codexMcpConfig(this.tasks.get(handle.taskId)?.mcp)
-      const thread = (await request("thread/start", {
+      const startParams = {
         cwd: cwd || process.cwd(),
         ...(model ? { model } : {}),
         developerInstructions: systemPrompt,
         ...(mcpConfig ? { config: mcpConfig } : {}),
-      })) as unknown
+      }
+      const resumeId = this.tasks.get(handle.taskId)?.vendorSessionId
+      let thread: unknown
+      if (resumeId) {
+        const req = codexThreadRequest(resumeId, startParams)
+        try {
+          thread = await request(req.method, req.params)
+        } catch (err) {
+          log.warn("codex thread/resume failed; starting a fresh thread", {
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+      }
+      thread ??= await request("thread/start", startParams)
       const threadId = codexThreadId(thread)
       if (!threadId) throw new Error("codex app-server did not return thread.id")
+      events.push({ type: "vendor_session", id: threadId })
 
       await request("turn/start", {
         threadId,
@@ -1659,6 +1673,7 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
         "--format", "json",
         "--dangerously-skip-permissions",
         "--dir", ctx.cwd || process.cwd(),
+        ...opencodeResumeFlags(ctx.vendorSessionId),
         ...modelFlag(PROVIDER_ENV_KEYS["opencode"]?.model ? process.env[PROVIDER_ENV_KEYS["opencode"]!.model!] : undefined),
       ]
     },
@@ -1705,12 +1720,13 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
   // Alibaba Qwen Code — stream-json.
   "qwen-cli": {
     mode: "stream-json",
-    buildArgv: ([command], message) => {
+    buildArgv: ([command], message, ctx) => {
       return [
         command,
         "-p", message,
         "--output-format", "stream-json",
         "--yolo",
+        ...qwenResumeFlags(ctx.vendorSessionId),
         ...modelFlag(PROVIDER_ENV_KEYS["qwen-cli"]?.model ? process.env[PROVIDER_ENV_KEYS["qwen-cli"]!.model!] : undefined),
       ]
     },
