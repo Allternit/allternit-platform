@@ -160,7 +160,7 @@ fn gizzi_base() -> String {
 /// `v0:{timestamp}:{raw_body}`, `X-Slack-Request-Timestamp` within 5 minutes
 /// — same HMAC-and-replay-window shape as `webhook_routes.rs`'s Svix check,
 /// different vendor scheme.
-fn verify_slack_signature(secret: &str, headers: &HeaderMap, body: &[u8]) -> Result<(), String> {
+pub(crate) fn verify_slack_signature(secret: &str, headers: &HeaderMap, body: &[u8]) -> Result<(), String> {
     let timestamp = headers
         .get("x-slack-request-timestamp")
         .and_then(|v| v.to_str().ok())
@@ -244,6 +244,21 @@ async fn handle_event(
             // messages should reach the agent.
             let is_plain = event.get("subtype").is_none();
 
+            let ty = event.get("type").and_then(|v| v.as_str()).unwrap_or_default();
+            let side = matches!(ty, "reaction_added" | "reaction_removed")
+                || (is_message && (is_bot || matches!(event.get("subtype").and_then(|v| v.as_str()), Some("message_changed" | "message_deleted"))));
+            if side {
+                // Edits, deletes, reactions and our own echoes: recorded on the
+                // thread's channel binding, never a new turn.
+                let db = state.db.clone();
+                let event = event.clone();
+                tokio::spawn(async move {
+                    let tx = crate::channel_gateway::SlackTransport::from_env();
+                    if let Err(e) = crate::channel_gateway::ingest_slack_side_event(&db, &tx, &event) {
+                        warn!("Slack side event failed: {e}");
+                    }
+                });
+            }
             if is_message && is_plain && !is_bot {
                 let state = state.clone();
                 let event = event.clone();
@@ -292,9 +307,18 @@ async fn handle_message_event(state: &Arc<AppState>, event: &Value) -> Result<()
         let title: String = first.chars().take(80).collect();
         let session = crate::thread_routes::channel_thread(&state.db, &rt, &bot_id, "slack", &key, &title, &text).await?;
         info!(channel = %channel, bot = %bot_id, session_id = %session, "routing Slack message to the bot's thread");
+        // One binding per Slack thread; a replayed event (Slack retry, reconnect) is not run twice.
+        let tx = crate::channel_gateway::SlackTransport::from_env();
+        let gw = crate::channel_gateway::bind_slack_turn(&state.db, &tx, &session, event)?;
+        if let Some((_, crate::channel_gateway::Recorded::Duplicate)) = &gw {
+            return Ok(());
+        }
         let turn = format!("[slack from <@{from}>] {text}");
         let reply = crate::agent_session_routes::send_bot_turn(&state.db, &session, &bot_id, &turn).await?;
-        return post_slack_message(&channel, &thread_ts, &reply).await;
+        return match gw {
+            Some((b, _)) => crate::channel_gateway::post_reply(&state.db, &tx, &b, &thread_ts, &reply).await,
+            None => post_slack_message(&channel, &thread_ts, &reply).await,
+        };
     }
 
     let session_id = get_or_create_session(state, &channel, &thread_ts).await?;
