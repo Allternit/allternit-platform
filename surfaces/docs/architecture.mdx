@@ -214,7 +214,8 @@ The surfaces are the Experience plane today. They hold no agent logic of their o
 | Gate in front of every CLI harness | **AVAILABLE** | Internal. Every CLI harness runs in its own auto-approve mode with Allternit's gate in front of it. See [Policy](/architecture/policy). |
 | Decision runtime (S1) | **PREVIEW** | Shadow only. No calibration manifests exist yet, so S1 acts on nothing. See [Decision runtime](/architecture/cognitive-runtime/decision-runtime). |
 | Context compiler and tool call compiler | **PREVIEW** | On main behind a flag that is off by default; shadow only. See [Context](/architecture/context). |
-| Runtime conformance suite and alpha gate | **DESIGN — NOT YET IMPLEMENTED** | Only contract-level schema tests exist. |
+| Runtime conformance suite (kernel layer) | **PREVIEW** | Kernel-level conformance tests run on main: restart, resume, verify, replay, fault, rollback, idempotency, concurrency, security, model swap. |
+| Agency API conformance and alpha gate | **DESIGN — NOT YET IMPLEMENTED** | API-level tests are written; the gate stays closed until they pass against a running Agency API. |
 | End-to-end bug-fix run through the Agency API | **DESIGN — NOT YET IMPLEMENTED** | The first task type the alpha gate is measured on. |
 | Cross-component cache and state transfer | **RESEARCH** | Contracts reserve the shape; no committed design for the mechanism. See [Routing](/architecture/routing). |
 
