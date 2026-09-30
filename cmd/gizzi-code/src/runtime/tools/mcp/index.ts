@@ -28,7 +28,7 @@ import { createHash } from "crypto"
 import { buildMcpToolName } from "@/runtime/services/mcp/mcpStringUtils"
 import { RuntimeTelemetry } from "@/runtime/telemetry"
 import {
-  MCP_APPROVED_META_KEY,
+  MCP_APPROVED_META,
   MCP_APPS_CLIENT_CAPABILITIES,
   MCP_CONNECTOR_META_KEY,
   isVisibleToModel,
@@ -143,7 +143,7 @@ export namespace MCP {
           {
             name: mcpTool.name,
             arguments: (args || {}) as Record<string, unknown>,
-            ...(approved ? { _meta: { [MCP_APPROVED_META_KEY]: true } } : {}),
+            ...(approved ? { _meta: { [MCP_APPROVED_META]: true } } : {}),
           },
           CallToolResultSchema,
           {

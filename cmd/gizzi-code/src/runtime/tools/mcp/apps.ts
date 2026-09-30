@@ -81,7 +81,7 @@ export const MCP_CONNECTOR_META_KEY = "allternit/connector"
 /** `_meta` on a proxied tool: the user must approve each call (set by allternit-api from the install's permission mode). */
 export const MCP_REQUIRES_CONFIRMATION_META_KEY = "allternit/requiresConfirmation"
 /** `_meta` on a proxied `tools/call`: the user approved this call. Sent only after gizzi's permission ask. */
-export const MCP_APPROVED_META_KEY = "allternit/approved"
+export const MCP_APPROVED_META = "allternit/approved"
 
 const ALLOW_DIRECTIVES: Array<[string, string]> = [
   ["camera", "camera"],

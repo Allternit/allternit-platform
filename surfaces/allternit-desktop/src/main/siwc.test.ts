@@ -1,3 +1,4 @@
+import { get as httpGet } from 'node:http';
 import { createSign, generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
@@ -35,6 +36,20 @@ interface Fake {
   revokeStatus: { code: number };
   /** What the "browser" does after the authorize URL opens. */
   browser: { mode: 'approve' | 'deny' | 'badstate'; scope?: string; sub?: string; nonceOverride?: string; clientId?: string | null };
+}
+
+/**
+ * The fake browser's request to the loopback callback. A fresh connection each
+ * time (`agent: false`): global fetch pools keep-alive sockets per host:port,
+ * and every test starts a new server on the same port, so a pooled socket from
+ * the previous test's closed server made the request fail silently and the
+ * sign-in hang. Retries once if the server is not accepting yet.
+ */
+function hitCallback(url: URL, attempt = 0): void {
+  const req = httpGet(url, { agent: false }, (res) => res.resume());
+  req.on('error', () => {
+    if (attempt < 3) setTimeout(() => hitCallback(url, attempt + 1), 25);
+  });
 }
 
 function json(body: unknown, status = 200): Response {
@@ -121,7 +136,7 @@ function setup(): Fake {
             { scope: f.browser.scope ?? SIWC_SCOPES.join(' '), id_token: idToken({ nonce: f.browser.nonceOverride ?? nonce, ...(f.browser.sub ? { sub: f.browser.sub } : {}) }) },
           )));
         }
-        void fetch(cb).catch(() => undefined);
+        hitCallback(cb);
         if (f.browser.mode === 'badstate') {
           // A wrong-state callback is ignored; the real one then completes the flow.
           setTimeout(() => {
@@ -130,7 +145,7 @@ function setup(): Fake {
             real.searchParams.set('state', state);
             real.searchParams.set('client_id', ISSUED);
             f.tokenResponses.push(() => json(tokenBody({ id_token: idToken({ nonce }) })));
-            void fetch(real).catch(() => undefined);
+            hitCallback(real);
           }, 30);
         }
       }, 10);
@@ -210,7 +225,6 @@ describe('validateIdToken', () => {
   });
 });
 
-// Real loopback callback + token exchange per test: slow on shared CI runners.
 describe('sign in', { timeout: 20_000 }, () => {
   it('registers, exchanges with the issued client id, and stores credentials', async () => {
     const f = setup();
