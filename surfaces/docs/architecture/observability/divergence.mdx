@@ -1,0 +1,32 @@
+---
+title: "Divergence"
+description: "Comparing a replay to its cassette and classifying the differences"
+---
+
+**Status: DESIGN — NOT YET IMPLEMENTED.** See [status labels](/architecture#status-labels).
+
+A divergence report says whether a replay matched its recording and whether any difference was expected.
+
+## Architecture contract
+
+`DivergenceReportV1` names the cassette and the replay run and gives a verdict: `IDENTICAL`, `EXPECTED_DIVERGENCE` or `UNEXPECTED_DIVERGENCE`, plus the list of divergences. Expected divergence is recorded in advance, for example a timestamp. Unexpected divergence is a defect signal.
+
+## Current implementation
+
+Not on main. The schema is frozen; no runtime produces reports.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Report schema | **AVAILABLE (contract)** |
+| Divergence checking | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+When replay lands, treat an unexpected divergence as a failing test.
+
+## Related
+
+- [Cassettes](/architecture/observability/cassettes)
+- [Replay](/architecture/replay)

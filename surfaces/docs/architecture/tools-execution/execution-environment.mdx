@@ -1,0 +1,39 @@
+---
+title: "ExecutionEnvironment"
+description: "The resolved working directory, environment allowlist and filesystem scope every node runs inside"
+---
+
+**Status: AVAILABLE (internal).** See [status labels](/architecture#status-labels).
+
+An execution environment is compiled once per node and recorded. It replaces ambient inheritance from whatever process happened to launch the work.
+
+## Architecture contract
+
+`ExecutionEnvironmentV1` holds `allowed_env_keys`, `secret_refs`, `cwd`, `tmp_scope`, `filesystem_scope`, `inherit_process_env` and a `network_policy_id`. Raw process-environment inheritance is forbidden. Secrets are referenced, not embedded.
+
+Why: without a fence, the strength of safety depends on which tool the executor happens to be. With one, the same limits apply to every executor.
+
+## Current implementation
+
+On main, every spawned node gets a resolved environment (working directory, environment-key allowlist, filesystem scope, network policy) and the resolved document is recorded in the ledger.
+
+Every CLI executor is launched in its own auto-approve mode, with Allternit's gate in front of it. Where the CLI supports a pre-tool hook, the gate is that hook. Where it speaks the Agent Client Protocol, Allternit answers its permission requests. One CLI has neither, so it runs inside the execution environment fence only. Allternit never refuses an executor and never holds one out of auto-approve, because it would then wait on its own prompt and a headless turn would hang. The gate is Allternit's.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Environment recorded per node | **AVAILABLE (internal)** |
+| Gate in front of every executor via hook or ACP client | **AVAILABLE (internal)** |
+| One executor fenced by environment only | **AVAILABLE (internal), weaker guarantee** |
+| Environment compiler as a separate contract | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+If you write an executor, assume you receive an environment and cannot widen it. Do not read variables that are not on the allowlist.
+
+## Related
+
+- [Network and SSRF](/architecture/tools-execution/network-ssrf)
+- [Contracts: environment](/architecture/contracts/environment)
+- [Build an executor](/build/executor)

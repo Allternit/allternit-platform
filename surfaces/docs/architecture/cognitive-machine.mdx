@@ -1,0 +1,54 @@
+---
+title: "The Cognitive Machine"
+description: "The half of the agent that decides and produces: cognition levels, the decision runtime, context, routing and verification"
+---
+
+**Status: PREVIEW (decision runtime, shadow only) · DESIGN — NOT YET IMPLEMENTED (router, model pool, context compiler).** See [status labels](/architecture#status-labels).
+
+The agent is two machines that share a policy layer and a compute fabric. The **Cognitive Machine** decides and produces. The [Work Machine](/architecture/work-machine) makes that work durable. This page covers the first.
+
+## Architecture contract
+
+The Cognitive Machine owns every step where the system has to judge, choose or generate. Its job is to pick the cheapest correct form of inference for each step, and to treat anything a model produces as a candidate until it is verified.
+
+| Part | What it does | Page |
+|------|--------------|------|
+| Cognition levels S0–S3 | Classify each graph node by the kind of inference it needs | [S0–S3](/architecture/cognition-levels) |
+| Decision runtime | Answer bounded questions over known candidates with a calibrated confidence | [Decision runtime](/architecture/cognitive-runtime/decision-runtime) |
+| Context compiler | Build the exact input a component sees from canonical state | [Context](/architecture/context) |
+| Cognitive Execution Router and model pool | Pick the execution mode and component for each capability request | [Routing](/architecture/routing) |
+| Verification | Decide whether a candidate meets its criteria | [Verification](/architecture/verification) |
+
+Three rules hold across all of it:
+
+- **Select before generate.** If every legal answer is known, the system scores candidates instead of generating text.
+- **Candidate, not truth.** Generated output is never durable state until a verifier passes it.
+- **Cognition owns no authority.** No cognitive component grants permissions, raises spend, crosses a workspace boundary or closes work. Policy and the system do that.
+
+Why split it this way: the parts of an agent that must be dependable (state, authority, lifecycle, completion) cannot depend on which model happens to be loaded. Keeping cognition in its own machine, behind typed requests and results, is what makes models interchangeable.
+
+## Current implementation
+
+- The canonical decision runtime is on main. It serves the nine decision operations from the kernel contracts and runs in **shadow mode by default**: it records what it would decide, abstains, and never acts. No calibration manifest exists yet, so no decision primitive has passed its go-live gate.
+- Verifier-owned completion is enforced for agency-origin work. See [Verification](/architecture/verification).
+- The router, model pool, context compiler and tool call compiler are designed but not on main.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Decision runtime (shadow) | **PREVIEW** |
+| Verifier-owned completion for agency-origin work | **PREVIEW** |
+| Cognitive Execution Router, model pool | **DESIGN — NOT YET IMPLEMENTED** |
+| Context compiler, tool call compiler | **DESIGN — NOT YET IMPLEMENTED** |
+| Cross-component state transfer | **RESEARCH** |
+
+## Developer relevance
+
+If you contribute a decision backend, a verifier or a model provider, you plug into one of these parts through its contract, never by editing the agent loop. Your component receives a typed request and returns a typed result with evidence. See [Cognitive runtime](/architecture/cognitive-runtime/decision-runtime).
+
+## Related
+
+- [The Work Machine](/architecture/work-machine)
+- [Eight planes](/architecture/planes)
+- [Why no vendor names in graphs](/architecture/cognitive-runtime/no-vendor-names)

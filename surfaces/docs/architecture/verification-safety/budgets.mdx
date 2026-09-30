@@ -1,0 +1,34 @@
+---
+title: "Budgets"
+description: "Bounding cost, tokens, time, tool calls, attempts and spawns for a run"
+---
+
+**Status: AVAILABLE (contract) · PREVIEW (spawn caps in the drive runner).** See [status labels](/architecture#status-labels).
+
+A budget turns "keep going until done" into a bounded, auditable contract.
+
+## Architecture contract
+
+`ResourceBudget` has `max_cost_units`, `max_tokens`, `max_wall_ms`, `max_tool_calls`, `max_attempts` and `max_spawns`. Budgets are enforced by the system, never by the component being budgeted. Exhaustion is an explicit `BUDGET` error family outcome, and hard limits are deterministic. A retry must change something, so attempts cannot loop silently.
+
+## Current implementation
+
+The drive runner, an opt-in operator command, applies spawn caps. A general per-run budget enforcer is not claimed as on main.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Budget contract | **AVAILABLE (contract)** |
+| Spawn caps in drive runner | **PREVIEW (opt-in)** |
+| Uniform per-run enforcement of every limit | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+Set budgets on every run you start through the API, and treat a budget error as a result, not a fault.
+
+## Related
+
+- [Admission](/architecture/work-runtime/admission)
+- [Retries](/architecture/work-runtime/retries)
+- [Error codes](/reference/error-codes)

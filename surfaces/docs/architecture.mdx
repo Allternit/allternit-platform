@@ -54,7 +54,7 @@ This page describes both the design and the current state of the build. Each sec
 
 ## Two machines
 
-The agent is two machines that share a policy layer and a compute fabric.
+The agent is two machines that share a policy layer and a compute fabric. Each has its own page: [The Cognitive Machine](/architecture/cognitive-machine) and [The Work Machine](/architecture/work-machine).
 
 | Machine | What it does | Main parts |
 |---------|--------------|------------|
@@ -92,7 +92,7 @@ A caller sends a goal. The compiler turns it into explicit internal contracts: a
 
 ## The eight planes
 
-Each responsibility in the system has one owner. The architecture groups owners into eight planes.
+Each responsibility in the system has one owner. The architecture groups owners into eight planes. Per-plane status is on [The eight planes](/architecture/planes).
 
 | # | Plane | Owns |
 |---|-------|------|
@@ -107,7 +107,7 @@ Each responsibility in the system has one owner. The architecture groups owners 
 
 ## Cognition levels S0–S3
 
-Each graph node is assigned one cognition level. The levels are roles within one agent, not separate agents.
+Each graph node is assigned one cognition level. The levels are roles within one agent, not separate agents. Details and status: [Cognition levels S0–S3](/architecture/cognition-levels).
 
 | Level | What it is | Output | Limits |
 |-------|-----------|--------|--------|
@@ -191,13 +191,19 @@ Earlier docs described Allternit as "One Brain, Many Faces". That description st
 | Attention gate | **AVAILABLE** | Agents request attention; they do not notify people directly. |
 | Permission floor | **AVAILABLE** | Hard policy before probabilistic judgment; no bypass through an executor's native mode. |
 | Kernel ABI 1.0.0 contracts | **AVAILABLE** | Frozen contract package, registry and schema tests. See [Kernel contracts](/architecture/kernel-contracts). |
-| Fail-closed judge and verifier-owned close | **PREVIEW** | Opt-in for internal flows. Always on, and not client-disableable, for agency-origin work. |
+| Fail-closed judge and verifier-owned close | **PREVIEW** | Opt-in for internal flows. Forced on, and not client-disableable, for agency-origin work. |
 | Agency API (`/v1/agency`) | **PREVIEW** | The v0.3 contract is published as a [preview reference](/api/agency/overview). The endpoint is not served. |
-| Cognitive Execution Router and model pool | **DESIGN — NOT YET IMPLEMENTED** | |
+| Cognitive Execution Router and model pool | **DESIGN — NOT YET IMPLEMENTED** | See [Routing](/architecture/routing). |
 | Replay and cassette recording | **DESIGN — NOT YET IMPLEMENTED** | See [Replay](/architecture/replay). |
-| Signed receipt chain | **DESIGN — NOT YET IMPLEMENTED** | Receipts exist as content hashes today. See [Receipts](/architecture/receipts). |
+| Signed receipt chain and effect receipts | **AVAILABLE** | Internal. Ed25519-signed, hash-chained effect receipts, at most once per idempotency key. See [Receipts](/architecture/receipts). |
+| Receipt keys (JWKS) and chain check | **PREVIEW** | Served by the internal work runtime service. Not exposed through `https://api.allternit.com` yet. |
+| Primitive registry (191 IDs) | **AVAILABLE** | Contract. See [Primitives](/architecture/cognitive-runtime/primitives). |
+| Typed node lifecycle and graph validator | **PREVIEW** | Merged as library code; not yet enforced on every graph. See [Lifecycle](/architecture/work-runtime/lifecycle), [Graphs](/architecture/graphs). |
+| Per-node execution environment and egress guard | **AVAILABLE** | Internal. Every CLI harness launches auto-approve with Allternit's gate in front. See [Admission](/architecture/work-runtime/admission). |
+| Decision runtime (S1) | **PREVIEW** | Shadow only. No calibration manifests exist yet, so S1 acts on nothing. See [Decision runtime](/architecture/cognitive-runtime/decision-runtime). |
+| Context compiler and tool call compiler | **DESIGN — NOT YET IMPLEMENTED** | See [Context](/architecture/context). |
 | Runtime conformance suite | **DESIGN — NOT YET IMPLEMENTED** | Only contract-level schema tests exist. |
-| Cross-component cache and state transfer | **RESEARCH** | Contracts reserve the shape; no committed design for the mechanism. |
+| Cross-component cache and state transfer | **RESEARCH** | Contracts reserve the shape; no committed design for the mechanism. See [Routing](/architecture/routing). |
 
 The Agency API opens for alpha only after one end-to-end run can survive restart, resume, verify, replay and receipt-backed completion. That gate is not met.
 

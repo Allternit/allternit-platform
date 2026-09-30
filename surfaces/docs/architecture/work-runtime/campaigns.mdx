@@ -1,0 +1,41 @@
+---
+title: "Campaigns"
+description: "Objectives that span many runs over time, with their own budget, wake policy and completion criteria"
+---
+
+**Status: AVAILABLE (campaigns in the work runtime, internal) · PREVIEW (campaigns on the Agency API) · waking through the Agency API not enabled.** See [status labels](/architecture#status-labels).
+
+A **campaign** is an objective that takes more than one run: watch a deployment for a week, follow up until a reply arrives, re-check a metric daily until it recovers.
+
+## Architecture contract
+
+`CampaignV1` holds `campaign_id`, `objective`, `graph_template`, `state`, `budget`, `wake_policy`, `attention_policy`, `completion_criteria`, `next_wake`, `owner` and `status`.
+
+- **Campaigns are not cron.** A campaign owns its objective, budget, state, completion criteria and the logic for when another check is useful. A schedule only fires; a campaign decides.
+- A campaign creates and drives runs over time, each a normal durable run.
+- It has exactly one pending check at a time, scheduled through the [wake](/architecture/work-runtime/wake) queue.
+- It raises [attention](/architecture/work-runtime/attention) under its attention policy, never by notifying anyone directly.
+
+Why: long-running objectives need memory of what was tried and a budget across attempts. A scheduled job that starts from scratch each time has neither.
+
+## Current implementation
+
+The work runtime on main has campaigns: a declared objective with an owner, a budget, an executor and one pending check. The ledger is the truth: campaign events plus the campaign's keyed wake events. Each campaign's current view is rebuilt from those events. Scheduled autonomous waking of campaigns through the Agency API stays off until an explicit go-live.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Campaigns in the work runtime | **AVAILABLE** (internal) |
+| Campaigns on the Agency API | **PREVIEW** (contract). See [Agency API: Campaigns](/api/agency/campaigns). |
+| Autonomous waking through the Agency API | **PREVIEW** (not enabled) |
+| Campaign state and wake-policy enums in the contract | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+Model a recurring objective as a campaign with a completion criterion and a budget, not as a scheduled script. It will stop when it is done or out of budget.
+
+## Related
+
+- [Wake](/architecture/work-runtime/wake)
+- [The kernel: budgets](/architecture/kernel#budgets)

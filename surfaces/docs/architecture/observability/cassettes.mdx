@@ -1,0 +1,35 @@
+---
+title: "Cassettes"
+description: "Recording a run at the decision and tool boundary so it can be replayed"
+---
+
+**Status: DESIGN — NOT YET IMPLEMENTED.** See [status labels](/architecture#status-labels).
+
+A cassette is a content-addressed recording of the results a run received from the outside world, so replay can substitute them for live effects.
+
+## Architecture contract
+
+Pipeline: live run, trace and receipts, cassette, replay, eval, capability evaluation registry, router. A `CassetteV1` holds the run and graph identity, the ABI version, its entries and the run receipt hash. Replay reconstructs which node ran, what evidence it saw, what tool resolved, what side effects occurred and why it branched. External effects are replaced by recorded results.
+
+Why: replay turns every real run into a regression test and gives the router evidence about which components work.
+
+## Current implementation
+
+Not on main. The cassette and divergence schemas are frozen. Recording and replay (WP5) are not implemented.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Cassette schema | **AVAILABLE (contract)** |
+| Recording and replay | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+Do not depend on replay yet. Do keep effects behind the tool boundary so they can be recorded later.
+
+## Related
+
+- [Replay](/architecture/replay)
+- [Divergence](/architecture/observability/divergence)
+- [Contracts: replay](/architecture/contracts/replay)

@@ -1,0 +1,36 @@
+---
+title: "Trace events"
+description: "The typed event record emitted at every node and primitive"
+---
+
+**Status: AVAILABLE (contract) · AVAILABLE (internal work-runtime ledger).** See [status labels](/architecture#status-labels).
+
+A trace event is a small typed record of what happened at one step. Together with receipts it is enough to explain a run.
+
+## Architecture contract
+
+`TraceEventV1` carries the envelope, an `event_type`, the primitive, capability, backend, model reference and tool where relevant, latency, token counts, cache hit, confidence, cost units, a `status` (`STARTED`, `SUCCEEDED`, `FAILED`, `SKIPPED`), the state versions before and after, receipt references and an error. Every node emits a receipt or trace event sufficient for semantic replay. Generated tokens need not be reproduced.
+
+The event-type vocabulary is not frozen; see [event types](/reference/event-types).
+
+## Current implementation
+
+The work runtime records lifecycle and effect events in its internal ledger. Emitting the full `TraceEventV1` from every primitive is not claimed.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| TraceEventV1 contract | **AVAILABLE (contract)** |
+| Internal ledger events | **AVAILABLE (internal)** |
+| Per-primitive trace emission | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+Emit an event at every boundary you own, with the state version and receipt references.
+
+## Related
+
+- [Contracts: receipts](/architecture/contracts/receipts)
+- [Receipts](/architecture/receipts)
+- [Event types](/reference/event-types)

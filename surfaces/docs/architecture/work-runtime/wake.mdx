@@ -1,0 +1,38 @@
+---
+title: "Wake"
+description: "A durable, keyed queue of 'look at this again at time T', shared by timers and campaigns"
+---
+
+**Status: AVAILABLE (keyed wake queue, internal) · PREVIEW (autonomous waking through the Agency API, not enabled).** See [status labels](/architecture#status-labels).
+
+A **wake** means "look at this again at time T". The wake controller holds these durably, so nothing has to stay running to remember them.
+
+## Architecture contract
+
+- Wakes are **keyed** (for example one key per campaign, or one per graph node).
+- Wakes **coalesce**: scheduling a wake for a key that already has one pending replaces it. A key never has two pending wakes.
+- A due wake is **claimed at most once** by a sweep, then completed with an outcome.
+- Waking a node or campaign goes through admission and policy like any other start. A wake is a reason to look, not a permission to act.
+
+Why: timers held in memory are lost on restart and duplicate when two processes run. A keyed, ledger-backed queue survives restarts and cannot fire the same check twice.
+
+## Current implementation
+
+The work runtime on main has a keyed wake queue stored in its ledger as scheduled, cancelled, fired and completed events. The pending set is rebuilt from those events. Timer wait gates and campaign checks both use it. Waking campaigns autonomously through the Agency API stays off until an explicit go-live.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Keyed wake queue with coalescing and at-most-once claim | **AVAILABLE** (internal) |
+| Autonomous waking through the Agency API | **PREVIEW** (not enabled) |
+| Wake aggregation across campaigns | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+Schedule follow-ups as wakes on a stable key. Rescheduling replaces the earlier wake, so you do not need to cancel it first.
+
+## Related
+
+- [Campaigns](/architecture/work-runtime/campaigns)
+- [Wait gates](/architecture/work-runtime/wait-gates)

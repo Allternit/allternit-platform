@@ -1,0 +1,38 @@
+---
+title: "Operations"
+description: "Running and supporting the work runtime"
+---
+
+**Status: AVAILABLE (internal work runtime) · PREVIEW (opt-in drive runner).** See [status labels](/architecture#status-labels).
+
+This section is for operators. It covers what is on by default, what is opt-in, and how to recover.
+
+## Architecture contract
+
+| Topic | Page |
+|-------|------|
+| What is on and off | [Rollout and flags](/operations/rollout) |
+| Recovering stuck or lost work | [Recovery](/operations/recovery) |
+
+The receipt chain and effect receipts are internal. Nothing here is reachable through api.allternit.com.
+
+## Current implementation
+
+The work runtime runs inside CommRails. The drive runner, which walks a graph and spawns executors under spawn caps, is an operator command you run on purpose. It is not a daemon.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Work runtime | **AVAILABLE (internal)** |
+| Drive runner | **PREVIEW (opt-in)** |
+| Hosted Agency API operations | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+If you operate a private deployment, read both pages before enabling anything.
+
+## Related
+
+- [Work Machine](/architecture/work-machine)
+- [CommRails](/core/commrails)
