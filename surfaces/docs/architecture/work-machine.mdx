@@ -3,7 +3,14 @@ title: "The Work Machine"
 description: "The half of the agent that makes work durable: graph lifecycle, node outputs, leases, admission, wait gates, campaigns, wake and attention"
 ---
 
-**Status: AVAILABLE (internal work runtime) · PREVIEW (typed lifecycle, drive runner, Agency API surface).** See [status labels](/architecture#status-labels).
+**Implementation: ENABLED (work runtime) · IMPLEMENTED (typed lifecycle, drive runner) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Work lives as durable graphs with leases, gates, campaigns and wake. |
+| **Implemented today** | The internal work runtime. Typed lifecycle as library code; the drive runner is opt-in. |
+| **Active path** | Yes, inside the internal work runtime. |
+| **Public exposure** | Not yet. Planned through the Agency API (contract published, endpoint not served). |
 
 The agent is [two machines](/architecture/two-machines). The Work Machine decides how work persists and progresses; the [Cognitive Machine](/architecture/cognitive-machine) decides how cognition is performed. This page covers the first: **"How does work live?"** The Work Machine carries a run across time, processes and restarts. A model never drives it; the work runtime does.
 

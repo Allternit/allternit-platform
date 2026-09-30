@@ -3,7 +3,14 @@ title: "The Two Machines"
 description: "One external agent, two internal machines: the Cognitive Machine decides how to think, the Work Machine decides how work lives"
 ---
 
-**Status: AVAILABLE (Work Machine, internal work runtime) · PREVIEW (Cognitive Machine: decision runtime, router, compilers, all shadow or library).** See [status labels](/architecture#status-labels).
+**Implementation: ENABLED (Work Machine) · SHADOW / IMPLEMENTED (Cognitive Machine) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | A Work Machine carries work across time; a Cognitive Machine decides how each step is thought. |
+| **Implemented today** | The internal work runtime runs today. Decision runtime and compilers are shadow; router and pool are library code. |
+| **Active path** | Partial. Work Machine yes; Cognitive Machine no. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 Callers see one agent. Inside, that agent is two machines with a hard boundary between them.
 

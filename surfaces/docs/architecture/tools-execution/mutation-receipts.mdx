@@ -3,7 +3,14 @@ title: "Mutation and effect receipts"
 description: "How writes are requested, validated against a base, and proven afterwards"
 ---
 
-**Status: AVAILABLE (signed receipt chain and effect receipts, internal) · AVAILABLE (contract).** See [status labels](/architecture#status-labels).
+**Implementation: ENABLED · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Every effect produces a signed receipt, at most once per idempotency key. |
+| **Implemented today** | Signed, hash-chained effect receipts on the gate's tool path. |
+| **Active path** | Yes on the gate's tool path; not every receipt type is on the chain. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 A write is a request with a declared target and expected base, and a receipt that records what changed. Neither a model's claim nor a tool's exit code stands in for the receipt.
 

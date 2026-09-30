@@ -3,7 +3,14 @@ title: "Network access and SSRF"
 description: "The default-deny network policy and the shared egress guard"
 ---
 
-**Status: AVAILABLE (internal).** See [status labels](/architecture#status-labels).
+**Implementation: ENABLED (web proxy, design connector import) · DESIGN (spawned node processes) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Every server-side fetch of an untrusted URL goes through one egress guard. |
+| **Implemented today** | The shared egress guard is used by the web proxy and design connector import. For work-runtime nodes the network policy is recorded, not enforced by the guard. |
+| **Active path** | Partial. Per path, as listed. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 Network access is a policy, not a capability a tool assumes. One guard implements it for every caller.
 

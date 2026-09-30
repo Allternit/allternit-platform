@@ -3,7 +3,14 @@ title: "Context and memory"
 description: "How Allternit separates canonical state, memory and the context a component sees, and what exists today"
 ---
 
-**Status: DESIGN — NOT YET IMPLEMENTED (context compiler, chunk store) · AVAILABLE (deterministic work-item context packs, internal).** See [status labels](/architecture#status-labels).
+**Implementation: SHADOW (context compiler) · ENABLED (work-item context packs) · DESIGN (chunk store) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Context is compiled per step from typed chunks with visibility decisions. |
+| **Implemented today** | Deterministic work-item context packs run in the work runtime. The context compiler is behind an off-by-default flag, shadow only. |
+| **Active path** | Partial. Context packs yes; compiler no. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 Three things are kept apart on purpose: **state** is the truth about a run, **memory** is what can be retrieved later, and **context** is the projection one component sees for one step. Mixing them is how agents end up depending on transcript length.
 

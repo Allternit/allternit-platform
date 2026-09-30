@@ -3,7 +3,14 @@ title: "Divergence"
 description: "Comparing a replay to its cassette and classifying the differences"
 ---
 
-**Status: PREVIEW (internal; not exposed through api.allternit.com).** See [status labels](/architecture#status-labels).
+**Implementation: IMPLEMENTED · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | A replay reports every point where it diverges from the recorded run. |
+| **Implemented today** | Divergence reports from recorded-only replay, internal. |
+| **Active path** | Internal. On demand. |
+| **Public exposure** | No. Not exposed through `api.allternit.com`. |
 
 A divergence report says whether a replay matched its recording and whether any difference was expected.
 

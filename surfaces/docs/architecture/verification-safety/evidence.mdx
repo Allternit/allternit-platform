@@ -3,7 +3,14 @@ title: "Evidence"
 description: "What counts as evidence, and why a model's statement is not"
 ---
 
-**Status: AVAILABLE (contracts; verifier-owned completion for agency-origin work).** See [status labels](/architecture#status-labels).
+**Implementation: IMPLEMENTED (contracts, verifier-owned completion) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Completion is decided from verification evidence, never from a model saying it is done. |
+| **Implemented today** | Completion and evidence contracts. Verifier-owned close is opt-in for internal flows and forced on for agency-origin work. |
+| **Active path** | Partial. Opt-in for internal flows. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 Evidence is a durable, referenced record that something is true. Completion, approval and escalation all consume evidence, not assertions.
 

@@ -3,7 +3,14 @@ title: "ExecutionEnvironment"
 description: "The resolved working directory, environment allowlist and filesystem scope every node runs inside"
 ---
 
-**Status: AVAILABLE (internal).** See [status labels](/architecture#status-labels).
+**Implementation: ENABLED (resolution and ledger recording) · IMPLEMENTED (process-env stripping, opt-in) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Each node runs in a compiled environment; raw process-environment inheritance is forbidden. |
+| **Implemented today** | The work runtime resolves an environment per node and records it in the ledger, with `inherit_process_env: false` in the resolved document. Stripping the process env to the allowlist runs only when enforcement is switched on (`ALLTERNIT_EXEC_ENV_ENFORCE=1`); it is off by default. |
+| **Active path** | Partial. Resolution and recording on every work-runtime spawn; stripping not by default. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 An execution environment is compiled once per node and recorded. It replaces ambient inheritance from whatever process happened to launch the work.
 

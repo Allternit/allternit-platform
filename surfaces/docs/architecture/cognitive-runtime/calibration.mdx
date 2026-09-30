@@ -3,7 +3,14 @@ title: "Calibration"
 description: "The calibration manifest, the per-primitive go-live gate, and why agreement with another model is not evidence"
 ---
 
-**Status: PREVIEW (manifest binding and go-live gate merged) · no calibration manifests exist yet, so S1 is shadow-only.** See [status labels](/architecture#status-labels).
+**Implementation: IMPLEMENTED (manifest binding, go-live gate) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | S1 may act on a primitive only after its calibration manifest passes the gate. |
+| **Implemented today** | Manifest binding and the go-live gate are on main. No calibration manifest exists yet. |
+| **Active path** | No. S1 acts on nothing. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 A decision is only allowed to act when its confidence is **calibrated**: when a stated 0.9 is right about 90% of the time on data the component has not seen. Calibration is measured per primitive and recorded in a manifest.
 

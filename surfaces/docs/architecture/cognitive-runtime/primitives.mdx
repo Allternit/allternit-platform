@@ -3,7 +3,14 @@ title: "Primitives"
 description: "The 191 registered primitive IDs every graph node is built from, their contract, and how packs group them"
 ---
 
-**Status: AVAILABLE (primitive registry, 191 IDs, as a contract) · PREVIEW (registry and ISA used by the graph validator) · DESIGN — NOT YET IMPLEMENTED (primitive packs, plugin ABI).** See [status labels](/architecture#status-labels).
+**Implementation: IMPLEMENTED (registry, 191 IDs) · DESIGN (primitive packs, plugin ABI) · Exposure: PUBLIC (docs).** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Every step names a registered primitive; packs extend the registry. |
+| **Implemented today** | The 191-ID registry is in the contract package; the graph validator reads it as library code. |
+| **Active path** | Partial. Registry used by the validator, which is not enforced on every graph. |
+| **Public exposure** | Documentation only. No endpoint serves it. |
 
 A **primitive** is one registered unit of agent behavior: list files, classify a failure, apply a patch, run the target tests, decide whether to finish. Every graph node runs exactly one primitive, referenced by ID.
 

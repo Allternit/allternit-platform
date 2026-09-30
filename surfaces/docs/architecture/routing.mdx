@@ -3,7 +3,14 @@ title: "Routing: the router, the model pool and M0–M6"
 description: "How a capability request becomes an execution plan, and why model identity is evidence rather than workflow"
 ---
 
-**Status: PREVIEW (Cognitive Execution Router as library code, model pool registry served internally; nothing calls the router in production yet) · RESEARCH (cross-model KV state transfer).** See [status labels](/architecture#status-labels).
+**Implementation: IMPLEMENTED (router, model pool) · RESEARCH (cross-model KV transfer) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | A cognitive router maps capability requests to implementations in a model pool. |
+| **Implemented today** | Router as library code; model pool registry served internally. |
+| **Active path** | No. Nothing calls the router on the normal path yet. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 A graph node asks for a capability. The **Cognitive Execution Router** decides how to provide it: which execution mode, which component, with which context and fallbacks. The **model pool** keeps components loaded and ready.
 

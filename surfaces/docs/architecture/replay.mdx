@@ -3,7 +3,14 @@ title: Replay
 description: Re-running a finished run from its recording with recorded effects only, and the divergence report
 ---
 
-**Status: PREVIEW (internal: cassette recording, recorded-only replay, divergence reports, gate replay mode) · Agency API replay endpoints not served.** See [status labels](/architecture#status-labels).
+**Implementation: IMPLEMENTED · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Any finished run can be replayed with recorded effects only. |
+| **Implemented today** | Cassettes, recorded-only replay, divergence reports, `POST /v1/replays` on the internal work runtime service, and a replay mode in the gate. |
+| **Active path** | Internal. On demand; not part of normal execution. |
+| **Public exposure** | No. Agency API replay endpoints are not served. |
 
 Replay answers one question: given the same recorded world, does the system make the same decisions? It is how a change to the system is tested against real past runs without touching the outside world.
 

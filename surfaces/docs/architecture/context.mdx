@@ -3,7 +3,14 @@ title: "Context"
 description: "How the input a component sees is compiled from canonical state, and why context is a projection, not a transcript"
 ---
 
-**Status: PREVIEW (context compiler on main behind an off-by-default flag, shadow) · AVAILABLE (deterministic context packs for work items, internal).** See [status labels](/architecture#status-labels).
+**Implementation: SHADOW (context compiler) · ENABLED (work-item context packs) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Context is compiled per step, with untrusted content fenced. |
+| **Implemented today** | Context compiler on main behind an off-by-default flag (shadow). Deterministic, nonce-fenced context packs for work items run today. |
+| **Active path** | Partial. Context packs yes; compiler no. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 Context is what a component sees for one step. In Allternit it is compiled from [canonical state](/architecture/state) for that step, not accumulated in a growing transcript.
 

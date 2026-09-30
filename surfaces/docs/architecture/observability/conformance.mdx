@@ -3,7 +3,14 @@ title: "Conformance"
 description: "The pre-model gates and failure-injection matrix an implementation must pass"
 ---
 
-**Status: PREVIEW (kernel-level conformance suite) · DESIGN — NOT YET IMPLEMENTED (Agency API conformance and alpha gate) · AVAILABLE (schema validation examples in the ABI package).** See [status labels](/architecture#status-labels).
+**Implementation: IMPLEMENTED (kernel conformance suite) · DESIGN (Agency API conformance, alpha gate) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | The runtime proves restart, resume, verify, replay and fault behavior with tests. |
+| **Implemented today** | Kernel-level conformance tests run on main. API-level tests are written but have no server to run against. |
+| **Active path** | Internal. Tests, not a runtime path. |
+| **Public exposure** | No. |
 
 Conformance is the test that a component honors the contracts, not just their shape.
 

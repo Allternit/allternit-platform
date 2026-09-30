@@ -3,7 +3,14 @@ title: "Budgets"
 description: "Bounding cost, tokens, time, tool calls, attempts and spawns for a run"
 ---
 
-**Status: AVAILABLE (contract) · PREVIEW (spawn caps in the drive runner).** See [status labels](/architecture#status-labels).
+**Implementation: IMPLEMENTED (contract, spawn caps in the opt-in drive runner) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Every run carries explicit budgets the runtime enforces. |
+| **Implemented today** | Budget contracts; spawn caps in the drive runner, which is opt-in. |
+| **Active path** | Partial. Only in the opt-in drive runner. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 A budget turns "keep going until done" into a bounded, auditable contract.
 

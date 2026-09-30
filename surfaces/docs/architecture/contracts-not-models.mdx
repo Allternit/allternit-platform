@@ -3,7 +3,14 @@ title: "Contracts, not models"
 description: "Graph nodes request a capability, not a named model. The router picks an eligible implementation behind the contract."
 ---
 
-**Status: AVAILABLE (capability contracts, Kernel ABI 1.0.0) · PREVIEW (router and model pool: library code on main, nothing calls the router in production yet).** See [status labels](/architecture#status-labels).
+**Implementation: IMPLEMENTED (capability contracts, router, model pool) · Exposure: PUBLIC (docs) · INTERNAL (router, pool).** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Graphs request capabilities; the router picks an implementation. |
+| **Implemented today** | Capability contracts in Kernel ABI 1.0.0. Router as library code; model pool registry served internally. |
+| **Active path** | No. Nothing calls the router on the normal path yet. |
+| **Public exposure** | Documentation only. No endpoint serves it. |
 
 A graph node never says which model to use. It says which **capability** it needs, with its constraints. The system decides what provides it.
 

@@ -3,7 +3,14 @@ title: "Admission"
 description: "Whether a node may start, checked against policy, capacity and budget before anything is spawned"
 ---
 
-**Status: AVAILABLE (spawn gate on every spawn, internal) · PREVIEW (spawn caps and capacity admission in the opt-in drive runner).** See [status labels](/architecture#status-labels).
+**Implementation: ENABLED (spawn gate) · IMPLEMENTED (spawn caps, capacity admission in the opt-in drive runner) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Nothing runs until it is admitted against policy, capacity and budget. |
+| **Implemented today** | The spawn gate runs on every work-runtime spawn. Spawn caps and capacity admission live in the opt-in drive runner. |
+| **Active path** | Partial. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 **Admission** is the step between a node being declared and being ready. It answers: may this node start now?
 

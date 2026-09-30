@@ -3,7 +3,14 @@ title: "Campaigns"
 description: "Objectives that span many runs over time, with their own budget, wake policy and completion criteria"
 ---
 
-**Status: AVAILABLE (campaigns in the work runtime, internal) · PREVIEW (campaigns on the Agency API) · waking through the Agency API not enabled.** See [status labels](/architecture#status-labels).
+**Implementation: ENABLED (campaigns) · DESIGN (waking through the Agency API) · Exposure: INTERNAL · PUBLIC PREVIEW (contract).** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Long-lived campaigns wake work on schedules and triggers. |
+| **Implemented today** | Campaigns in the internal work runtime. |
+| **Active path** | Yes, inside the internal work runtime. Waking through the Agency API is off. |
+| **Public exposure** | Not yet. Planned through the Agency API (contract published, endpoint not served). |
 
 A **campaign** is an objective that takes more than one run: watch a deployment for a week, follow up until a reply arrives, re-check a metric daily until it recovers.
 

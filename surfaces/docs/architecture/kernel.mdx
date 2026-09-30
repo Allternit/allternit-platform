@@ -3,7 +3,14 @@ title: The kernel
 description: What the agent kernel owns, the durable run, its lifecycle and statuses, attention, budgets and resolved defaults
 ---
 
-**Status: AVAILABLE (work runtime, internal) · PREVIEW (Agency API surface).** See [status labels](/architecture#status-labels).
+**Implementation: ENABLED (work runtime) · DESIGN (Agency API server) · Exposure: INTERNAL · PUBLIC PREVIEW (Agency API contract).** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | One durable run per goal, with statuses, attention and budgets. |
+| **Implemented today** | The internal work runtime carries work as graphs with leases, gates and campaigns. The Agency API contract is published; its server is not. |
+| **Active path** | Internal only. |
+| **Public exposure** | Not yet. Planned through the Agency API (contract published, endpoint not served). |
 
 The **kernel** is the system that runs agent work: it compiles a goal into typed contracts, carries the resulting **Run** durably across time, checks every action against policy, closes work only from verification evidence, and writes receipts. The [Agency API](/api/agency/overview) is the public HTTP surface over the kernel; it is not the kernel itself. See [Kernel and Agency API](/architecture#kernel-and-agency-api).
 

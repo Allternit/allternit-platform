@@ -3,7 +3,14 @@ title: "The Cognitive Machine"
 description: "The half of the agent that decides and produces: cognition levels, the decision runtime, context, routing and verification"
 ---
 
-**Status: PREVIEW (decision runtime shadow only; router and model pool as library; context and tool call compilers behind an off-by-default flag).** See [status labels](/architecture#status-labels).
+**Implementation: SHADOW (decision runtime, compilers) · IMPLEMENTED (router, model pool) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | The system decides how each step is thought through: S0–S3, context compiler, cognitive router. |
+| **Implemented today** | Decision runtime (shadow), router and model pool (library and internal registry), context and tool call compilers (behind an off-by-default flag). |
+| **Active path** | No. None of these change normal execution yet. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 The agent is [two machines](/architecture/two-machines). The Cognitive Machine decides how cognition is performed. The [Work Machine](/architecture/work-machine) decides how work persists and progresses. This page covers the first: **"How should we think?"**
 

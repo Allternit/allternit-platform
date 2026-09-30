@@ -3,7 +3,14 @@ title: "Cognition levels S0–S3"
 description: "The four kinds of inference a graph node can use, what each may and may not do, and how the cheapest correct one is chosen"
 ---
 
-**Status: AVAILABLE (S0) · PREVIEW (S1, shadow only) · AVAILABLE (S2 generation) with PREVIEW candidate enforcement · PREVIEW (policy-routed S3; router not yet called).** See [status labels](/architecture#status-labels).
+**Implementation: ENABLED (S0, S2 generation) · SHADOW (S1) · IMPLEMENTED (S3 routing, not called) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Every step runs at the lowest sufficient cognition level, chosen by the system. |
+| **Implemented today** | Deterministic S0 and S2 generation run today. The S1 decision runtime runs in shadow. Policy-routed S3 exists as router library code. |
+| **Active path** | Partial. S0 and S2 yes; S1 shadow only; the router is not called on the normal path. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 Each graph node is assigned one cognition level. The levels are roles within one agent, not separate agents, and they are independent of which [execution mode](/architecture/routing) provides them.
 
