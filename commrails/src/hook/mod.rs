@@ -4,14 +4,17 @@
 //! Before this module, every spawned harness ran in full-bypass mode and Gate 2
 //! was a CLI call the agent had to choose to make. Now:
 //!
-//! * Harnesses with a PreToolUse hook mechanism (Claude Code) get a
-//!   session-scoped settings file whose hook runs
-//!   `allternit-commrails hook claude-pretool`, which evaluates every tool
+//! * Harnesses with a PreToolUse hook mechanism (Claude Code, codex, qwen) get
+//!   a per-spawn hook (settings file, or `-c` for codex) that runs
+//!   `allternit-commrails hook {claude,codex,qwen}-pretool` (one decision
+//!   path), which evaluates every tool
 //!   call against the hard floor and, when a WIH is bound, against Gate 2 and
 //!   the WIH's own lease. Denials are written to the ledger.
-//! * Harnesses without one are classified here ([`HarnessGate`]); spawn paths
-//!   call [`admit`] and refuse to run them on a WIH whose policy requires
-//!   lease coverage for writes, because nothing could enforce it.
+//! * ACP servers (kimi, gemini) are gated by their client: gizzi-code answers
+//!   every `session/request_permission` from the same decision path.
+//! * Harnesses with neither (agy) run inside Allternit's execution
+//!   environment only. Every harness is admitted in its own auto-approve
+//!   mode ([`admit`] never refuses).
 
 pub mod floor;
 pub mod shell;
