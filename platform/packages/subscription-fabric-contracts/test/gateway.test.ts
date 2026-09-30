@@ -123,6 +123,7 @@ describe("bindings", () => {
   it("remote thread transitions", () => {
     expect(canTransitionRemoteThread("UNBOUND", "OPENING")).toBe(true);
     expect(canTransitionRemoteThread("OPENING", "ACTIVE")).toBe(true);
+    expect(canTransitionRemoteThread("OPENING", "UNBOUND")).toBe(true); // failed open, retried next turn
     expect(canTransitionRemoteThread("ACTIVE", "HANDOFF_PENDING")).toBe(true);
     expect(canTransitionRemoteThread("CLOSED", "ACTIVE")).toBe(false);
     expect(canTransitionRemoteThread("UNBOUND", "ACTIVE")).toBe(false);

@@ -6,6 +6,7 @@ import { Router, type Request, type Response } from "express";
 import { botExecutionBindingSchema } from "@allternit/subscription-fabric-contracts";
 import { requireScope, type GatewayDeps } from "./server.js";
 import { parseCredential, runWithCallScope } from "../aai/call-scope.js";
+import { defaultAdaptersDir } from "../adapters/registry.js";
 
 /**
  * allternit-api sends its binding rows as stored: SQL NULL columns arrive as JSON null (the schema has only
@@ -51,7 +52,10 @@ export function aaiRouter(deps: GatewayDeps): Router {
 
   router.post("/aai/conformance/:adapterId", requireScope("tasks:submit"), async (req: Request, res: Response) => {
     if (!host) { res.status(503).json({ error: "aai_host_unavailable" }); return; }
-    const report = await host.conformance(req.params.adapterId);
+    // `?offline=1`: run against the adapter's shipped offline fixtures (no vendor needed).
+    const offline = req.query.offline === "1" || req.query.offline === "true";
+    const report = offline ? await host.offlineConformance(req.params.adapterId, defaultAdaptersDir()) : await host.conformance(req.params.adapterId);
+    if (report === null) { res.status(404).json({ error: "no_offline_fixtures" }); return; }
     if (!report) { res.status(404).json({ error: "unknown_adapter" }); return; }
     res.json(report);
   });

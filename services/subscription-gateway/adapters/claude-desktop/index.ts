@@ -26,13 +26,16 @@ export interface CreateOptions extends Partial<ClaudeDesktopProviderOptions> {
   /** Explicit per-app OK to drive Claude through Accessibility (default false: calls answer LANE_BLOCKED). */
   axConsented?: boolean;
 }
-/** Factory: live CDP driver on cdpPort (default 9222) unless a driver is supplied (tests/replay). */
+/** Default debugging port (not 9222, which Allternit Desktop and Chrome use; grok-bot has 9231). */
+export const CLAUDE_DESKTOP_CDP_PORT = 9232;
+
+/** Factory: live CDP driver on cdpPort (default CLAUDE_DESKTOP_CDP_PORT) unless a driver is supplied (tests/replay). */
 export function createClaudeDesktopProvider(opts: CreateOptions = {}): ClaudeDesktopProvider {
   const { cdpPort, driver, transport, ax, axBinPath, axConsented, ...rest } = opts;
   if (!driver && transport === "ax") {
     if (!ax && !axBinPath) throw new Error("claude-desktop transport \"ax\" needs `ax` or `axBinPath`");
     return new ClaudeDesktopProvider({ ...rest, driver: new AxClaudeDesktopDriver(ax ?? new AxBridgeDriver({ binPath: axBinPath! }), axConsented === true) });
   }
-  return new ClaudeDesktopProvider({ ...rest, driver: driver ?? new CdpClaudeDesktopDriver({ port: cdpPort ?? 9222 }) });
+  return new ClaudeDesktopProvider({ ...rest, driver: driver ?? new CdpClaudeDesktopDriver({ port: cdpPort ?? CLAUDE_DESKTOP_CDP_PORT }) });
 }
 export const claudeDesktop = { adapterId: ADAPTER_ID, manifest: CLAUDE_DESKTOP_MANIFEST, create: createClaudeDesktopProvider } as const;
