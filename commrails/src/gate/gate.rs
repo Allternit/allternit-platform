@@ -3353,3 +3353,18 @@ impl Gate {
         Ok(())
     }
 }
+
+impl Gate {
+    /// Consume a typed non-tool runtime boundary (or an already gated effect)
+    /// during recorded-only replay. This API has no executor and cannot append
+    /// evidence; callers get the recording or a refusal.
+    pub fn replay_boundary(&self, wih_id: &str, step: &crate::replay::ReplayStep) -> Result<crate::replay::RecordedResult> {
+        let mut map = self.replay.lock().unwrap_or_else(|p| p.into_inner());
+        let run = replay_run_id(wih_id);
+        let r = map.get_mut(&run).ok_or_else(|| anyhow!("run {run} is not replaying"))?;
+        match r.step(step) {
+            crate::replay::StepOutcome::Recorded(v) => Ok(v),
+            crate::replay::StepOutcome::Refused(d) => Err(anyhow!("replay boundary refused: {:?} at {}", d.kind, d.seq)),
+        }
+    }
+}
