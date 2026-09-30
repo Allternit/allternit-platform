@@ -328,6 +328,7 @@ pub fn compile(req: &Value, run_id: &str, templates: &TemplateRegistry) -> Resul
         // Q25: hosted / Agency API runs always use the strict fence (#1045).
         fence: Some(Fence::Strict),
         allow_credential_read: None,
+        ..Default::default()
     };
     let task_ir = json!({
         "schema_id": "allternit.agency.TaskIR",

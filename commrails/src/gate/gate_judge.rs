@@ -776,6 +776,13 @@ impl Gate {
         Ok(crate::judge::policy::effective_credential_allow(&events, &wih.dag_id, Some(&wih.node_id)))
     }
 
+    /// Agent rules (ask/deny) carried in the run's policy; empty by default.
+    pub async fn wih_rules(&self, wih_id: &str) -> Result<crate::judge::policy::RuleSet> {
+        let wih = self.wih_state(wih_id).await?;
+        let events = self.events_for_dag(&wih.dag_id).await?;
+        Ok(crate::judge::policy::effective_rules(&events, &wih.dag_id, Some(&wih.node_id)))
+    }
+
     /// Gate 2's share of the Q25 blocklist: a command line naming a metadata
     /// target or an undeclared credential store is denied.
     async fn gate2_blocklist(&self, wih_id: &str, command: Option<&str>) -> Result<Option<String>> {
@@ -803,6 +810,25 @@ impl Gate {
             }
         }
         let wih = self.wih_state(wih_id).await?;
+        // Agent rules: private network / custom rules produce ask or deny.
+        if base.allowed {
+            let rs = self.wih_rules(wih_id).await.unwrap_or_default();
+            let hit = crate::hook::rules::custom_hit(&rs.custom, tool, command, paths).or_else(|| {
+                (rs.ask_private_network)
+                    .then(|| command.and_then(crate::hook::blocklist::check_private_egress))
+                    .flatten()
+                    .map(|r| crate::hook::rules::Hit::Ask(format!("private network: {r}")))
+            });
+            if let Some(hit) = hit {
+                let (decision, reason) = match hit {
+                    crate::hook::rules::Hit::Ask(r) => (ToolDecision::Ask, r),
+                    crate::hook::rules::Hit::Deny(r) => (ToolDecision::Deny, r),
+                };
+                let v = ToolCallVerdict { decision, source: ToolDecisionSource::Gate2, reason, backend: None };
+                self.record_tool_decision(&wih, tool, command, paths, &v, None).await?;
+                return Ok(v);
+            }
+        }
         if !base.allowed {
             let v = ToolCallVerdict {
                 decision: ToolDecision::Deny,

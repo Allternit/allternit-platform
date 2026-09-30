@@ -226,6 +226,7 @@ pub async fn run_judge_command(ctx: &JudgeContext, cmd: JudgeCmd) -> Result<()> 
                 completion_policy,
                 fence,
                 allow_credential_read: (!allow_credential_read.is_empty()).then_some(allow_credential_read),
+                ..Default::default()
             };
             let eff = ctx
                 .gate

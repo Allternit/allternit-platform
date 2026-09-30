@@ -295,7 +295,10 @@ async fn create_run(
     let org = guard::org_of(&user);
     task_ir["org_id"] = json!(org);
     // Kernel UI rules: the org's credential-read allowlist joins the JudgePolicy.
-    crate::kernel_ui::agent_rules::apply_to_policy(&st, &org, &mut compiled.judge_policy).await;
+    // Workspace/project scopes come from request metadata; inheritance is project -> workspace -> org.
+    let extra: Vec<String> = [("project_id", "project"), ("workspace_id", "workspace")].iter()
+        .filter_map(|(k, kind)| req["metadata"][*k].as_str().map(|id| format!("{kind}:{id}"))).collect();
+    crate::kernel_ui::agent_rules::apply_to_run(&st, &org, extra, &mut compiled.judge_policy, &mut task_ir).await;
     let err = |e| ApiError::internal(e, &rid);
     // Durable before 202: the snapshot carries resolved defaults + TaskIR.
     let rec = s
@@ -560,6 +563,14 @@ async fn respond_attention(
                 to = Some(("waiting", "budget raised; queued for execution"));
                 requeue = true;
             }
+        }
+    }
+    if att["reason"] == guard::SPEND_REASON {
+        if kind == "rejection" {
+            to = Some(("failed", "spend threshold reached; caller stopped the run"));
+        } else {
+            to = Some(("waiting", "spend approved; queued for execution"));
+            requeue = true;
         }
     }
     if att["reason"] == guard::CAP_REASON {
