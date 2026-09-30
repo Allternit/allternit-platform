@@ -375,3 +375,64 @@ describe("claude-web readAccount", () => {
     await page.close();
   }, 30000);
 });
+
+describe("claude-web readAccount usage", () => {
+  it("reads the active org's tightest usage window, never a token", async () => {
+    const adapter = new ClaudeWebAdapter({ freshChat: false }, FAST);
+    const page = await browser.newPage();
+    await page.context().addCookies([{ name: "lastActiveOrg", value: "org-b", url: "https://claude.ai" }]);
+    const usage = (util5: number, util7: number) => ({
+      five_hour: { utilization: util5, resets_at: "2026-09-30T21:30:00+00:00" },
+      seven_day: { utilization: util7, resets_at: "2026-10-06T12:00:00+00:00" },
+    });
+    await page.route("https://claude.ai/**", (route) => {
+      const url = route.request().url();
+      if (url.endsWith("/api/account"))
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify({ email_address: "eoj@example.com", session_token: "sk-secret" }) });
+      if (url.endsWith("/api/organizations/org-b/usage"))
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify(usage(20, 49)) });
+      if (url.endsWith("/api/organizations/org-a/usage"))
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify(usage(100, 80)) });
+      return route.fulfill({ contentType: "text/html", body: fixtureHtml("claude-web", "idle") });
+    });
+    await page.goto("https://claude.ai/new");
+    await adapter.attach({ page } as never);
+    const read = await adapter.readAccount(new AbortController().signal);
+    expect(read.identity).toBe("eoj@example.com");
+    expect(read.usage).toMatchObject({ remaining_pct: 51, resets_at: "2026-10-06T12:00:00+00:00" });
+    expect(JSON.stringify(read)).not.toContain("sk-secret");
+    await page.close();
+  }, 30000);
+});
+
+describe("kimi-web readAccount", () => {
+  it("reads the nickname and subscription usage from Kimi's RPCs, never a token", async () => {
+    const adapter = new KimiWebAdapter({ freshChat: false }, FAST);
+    const page = await browser.newPage();
+    const auths: (string | undefined)[] = [];
+    await page.route("https://www.kimi.ai/**", (route) => {
+      const url = route.request().url();
+      if (url.includes("/apiv2/")) auths.push(route.request().headers()["authorization"]);
+      if (url.endsWith("UserService/GetCurrentUser"))
+        return route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify({ user: { id: "u1", nickname: "gizzi", phone: { countryCode: "1", number: "77****158" } } }),
+        });
+      if (url.endsWith("MembershipService/GetSubscriptionStats"))
+        return route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify({ subscriptionBalance: { amountUsedRatio: 0.413, expireTime: "2026-10-19T00:00:00Z" } }),
+        });
+      return route.fulfill({ contentType: "text/html", body: fixtureHtml("kimi-web", "idle") });
+    });
+    await page.goto("https://www.kimi.ai/");
+    await page.evaluate(() => localStorage.setItem("access_token", "kimi-secret"));
+    await adapter.attach({ page } as never);
+    const read = await adapter.readAccount(new AbortController().signal);
+    expect(read.identity).toBe("gizzi");
+    expect(read.usage).toMatchObject({ remaining_pct: 58.7, resets_at: "2026-10-19T00:00:00Z" });
+    expect(auths).toEqual(["Bearer kimi-secret", "Bearer kimi-secret"]);
+    expect(JSON.stringify(read)).not.toContain("kimi-secret");
+    await page.close();
+  }, 30000);
+});
