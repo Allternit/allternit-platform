@@ -11,7 +11,7 @@ use crate::core::types::{Actor, ActorType};
 use crate::gate::gate::HumanDecision;
 use crate::judge::config::{config_path, load_config};
 use crate::judge::heartbeat::parse_duration;
-use crate::judge::policy::{CloseBy, JudgePolicy, VerifyMode};
+use crate::judge::policy::{CloseBy, JudgePolicy, PolicyOrigin, VerifyMode};
 use crate::judge::state::{pending_judge_needs, project_node_judge};
 use crate::{Gate, Ledger, LedgerQuery};
 
@@ -87,6 +87,12 @@ pub enum JudgePolicyCmd {
         tool_judge: Option<bool>,
         #[arg(long = "max-continuations")]
         max_continuations: Option<u32>,
+        /// Origin marker; forces verifier-owned completion and cannot be unset.
+        #[arg(long)]
+        origin: Option<PolicyOrigin>,
+        /// Completion policy id, e.g. `completion.bug_fix`.
+        #[arg(long = "completion-policy")]
+        completion_policy: Option<String>,
         /// `user:<id>` or `agent:<id>` (bare id = user).
         #[arg(long)]
         actor: String,
@@ -163,6 +169,8 @@ pub async fn run_judge_command(ctx: &JudgeContext, cmd: JudgeCmd) -> Result<()> 
             close_by,
             tool_judge,
             max_continuations,
+            origin,
+            completion_policy,
             actor,
         }) => {
             let actor = parse_actor(&actor)?;
@@ -171,6 +179,8 @@ pub async fn run_judge_command(ctx: &JudgeContext, cmd: JudgeCmd) -> Result<()> 
                 close_by,
                 tool_judge,
                 max_continuations,
+                origin,
+                completion_policy,
             };
             let eff = ctx
                 .gate
