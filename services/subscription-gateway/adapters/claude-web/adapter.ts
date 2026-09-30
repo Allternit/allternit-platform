@@ -47,24 +47,59 @@ export class ClaudeWebAdapter extends WebChatAdapter {
     );
   }
 
-  // Who is signed in. Non-spending: claude.ai's own account endpoint, read
-  // in the page (same-origin); only the email leaves the page, never a token.
-  // Usage is not read yet (the UI shows it only near a limit).
+  // Who is signed in and how much is left. Non-spending: claude.ai's own
+  // account and usage endpoints, read in the page (same-origin); only the
+  // email and numbers leave the page, never a token. Usage is the active org's
+  // (lastActiveOrg cookie, else the first chat org) tightest window: whichever
+  // of the 5-hour / 7-day limits is most used.
   async readAccount(_signal: AbortSignal): Promise<AccountObservation> {
     const page = this.attachedPage();
     if (!page) throw new Error("readAccount called before attach()");
-    const identity = await page.evaluate(async () => {
-      try {
-        const r = await fetch("/api/account", { credentials: "include" });
-        if (!r.ok) return null;
-        const j = (await r.json()) as { email_address?: unknown; account?: { email_address?: unknown } };
-        const email = j?.email_address ?? j?.account?.email_address;
-        return typeof email === "string" ? email : null;
-      } catch {
-        return null; // not signed in, or the endpoint moved: identity unknown
+    const read = await page.evaluate(async () => {
+      const getJson = async (url: string): Promise<unknown> => {
+        try {
+          const r = await fetch(url, { credentials: "include" });
+          return r.ok ? await r.json() : null;
+        } catch {
+          return null; // not signed in, or the endpoint moved: unknown
+        }
+      };
+      const acct = (await getJson("/api/account")) as { email_address?: unknown; account?: { email_address?: unknown } } | null;
+      const email = acct?.email_address ?? acct?.account?.email_address;
+      const identity = typeof email === "string" ? email : null;
+
+      type Window = { utilization?: unknown; resets_at?: unknown } | null;
+      let pct: number | null = null;
+      let resetsAt: string | null = null;
+      const cookieOrg = /(?:^|;\s*)lastActiveOrg=([^;]+)/.exec(document.cookie)?.[1];
+      let org = cookieOrg ? decodeURIComponent(cookieOrg) : null;
+      if (!org) {
+        const orgs = (await getJson("/api/organizations")) as { uuid?: unknown; capabilities?: unknown }[] | null;
+        const chat = Array.isArray(orgs)
+          ? orgs.find((o) => Array.isArray(o?.capabilities) && o.capabilities.includes("chat"))
+          : undefined;
+        org = typeof chat?.uuid === "string" ? chat.uuid : null;
       }
+      if (org) {
+        const u = (await getJson(`/api/organizations/${org}/usage`)) as Record<string, Window> | null;
+        for (const w of [u?.five_hour, u?.seven_day]) {
+          if (!w || typeof w.utilization !== "number") continue;
+          const left = Math.max(0, Math.round(100 - w.utilization));
+          if (pct === null || left < pct) {
+            pct = left;
+            resetsAt = typeof w.resets_at === "string" ? w.resets_at : null;
+          }
+        }
+      }
+      return { identity, pct, resetsAt };
     });
-    return { identity, usage: null };
+    return {
+      identity: read.identity,
+      usage:
+        read.pct === null
+          ? null
+          : { remaining_pct: read.pct, resets_at: read.resetsAt, observed_at: new Date().toISOString() },
+    };
   }
 }
 
