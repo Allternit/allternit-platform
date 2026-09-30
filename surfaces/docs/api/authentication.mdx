@@ -10,10 +10,11 @@ The only public origin is `https://api.allternit.com` ([Cloud API](/api/cloud-ap
 | Credential | Header | Used for |
 |------------|--------|----------|
 | Clerk session JWT | `Authorization: Bearer <sess>` | Browser console: pairing, relay, agent-sessions, office, beta, billing, provisioned instances |
-| Virtual key (`ak-`) | `Authorization: Bearer ak-…` | LLM gateway `/v1/chat/completions`, embeddings, files, batches |
+| Allternit API token (`allternit_…`) | `Authorization: Bearer allternit_…` | Cloud API `POST /v1/chat/completions` and API-key protected routes; keys are managed at `/api/v1/api-keys` |
+| Virtual key (`ak-`) | `Authorization: Bearer ak-…` | LLM gateway on the data-plane node (`http://127.0.0.1:8013/v1`): chat completions, embeddings, files, batches, caches |
 | Runtime device token (`allternit_runtime_…`) | `Authorization: Bearer allternit_runtime_…` | Node → Cloud API: heartbeat, relay connect, rotate |
 
-Organization-scoped admin routes under `/api/v1/gateway/*` require a Clerk JWT and an organization owner or admin role.
+Organization-scoped gateway admin routes under `/api/v1/gateway/*` (virtual-key management) are served by the Allternit API node, not by the hosted Cloud API, and require an organization owner or admin role.
 
 The [Allternit API](/api/allternit-api) on `:8013` is not a public auth surface. Production clients do not send tokens there. Relayed requests forward the original Clerk `Authorization` header to the node.
 
@@ -23,14 +24,14 @@ Local development may call `http://127.0.0.1:8013` on the same machine. That is 
 
 ## LLM gateway virtual keys
 
-The Allternit LLM gateway uses virtual keys for authentication. Each virtual key is a scoped, rotatable credential that maps to a tenant, organization, or user profile. Virtual keys are used for all public `/v1` gateway routes, including chat completions, embeddings, files, and batches.
+The Allternit LLM gateway uses virtual keys for authentication. Each virtual key is a scoped, rotatable credential that maps to a tenant, organization, or user profile. Virtual keys are used for the `/v1` gateway routes served by the Allternit API node, including chat completions, embeddings, files, and batches. The hosted Cloud API at `api.allternit.com` serves only `POST /v1/chat/completions` and `GET /v1/models` under `/v1`, and authenticates them with an `allternit_` token.
 
 ## Virtual keys
 
 Virtual keys start with `ak-`. The gateway stores only the SHA-256 hash of the key; the plaintext is shown once at creation and cannot be recovered.
 
 ```bash
-curl https://api.allternit.com/v1/chat/completions \
+curl http://127.0.0.1:8013/v1/chat/completions \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"auto","messages":[{"role":"user","content":"Hello"}]}'
@@ -38,13 +39,7 @@ curl https://api.allternit.com/v1/chat/completions \
 
 ## Base URL
 
-Public Cloud API (LLM gateway):
-
-```
-https://api.allternit.com/v1
-```
-
-Local Allternit API (desktop / `cargo run -p allternit-api` only):
+Data-plane node LLM gateway (desktop, provisioned or paired node; `cargo run -p allternit-api` locally):
 
 ```
 http://127.0.0.1:8013/v1
@@ -57,7 +52,7 @@ This endpoint requires a Clerk JWT and organization owner or admin role.
 </Note>
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/gateway/keys \
+curl -X POST http://127.0.0.1:8013/api/v1/gateway/keys \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -96,7 +91,7 @@ curl -X POST https://api.allternit.com/api/v1/gateway/keys \
 ## List virtual keys
 
 ```bash
-curl https://api.allternit.com/api/v1/gateway/keys \
+curl http://127.0.0.1:8013/api/v1/gateway/keys \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN"
 ```
 
@@ -119,7 +114,7 @@ curl https://api.allternit.com/api/v1/gateway/keys \
 ## Update a virtual key
 
 ```bash
-curl -X PATCH https://api.allternit.com/api/v1/gateway/keys/key_abc123 \
+curl -X PATCH http://127.0.0.1:8013/api/v1/gateway/keys/key_abc123 \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -131,7 +126,7 @@ curl -X PATCH https://api.allternit.com/api/v1/gateway/keys/key_abc123 \
 ## Revoke a virtual key
 
 ```bash
-curl -X DELETE https://api.allternit.com/api/v1/gateway/keys/key_abc123 \
+curl -X DELETE http://127.0.0.1:8013/api/v1/gateway/keys/key_abc123 \
   -H "Authorization: Bearer $ALLTERNIT_TOKEN"
 ```
 

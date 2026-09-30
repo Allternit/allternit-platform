@@ -12,14 +12,14 @@ A background worker validates each batch, submits it to the configured batch pro
 ## Base URL
 
 ```
-https://api.allternit.com/v1
-```
-
-For local development:
-
-```
 http://127.0.0.1:8013/v1
 ```
+
+This is the Allternit API data-plane node (your own paired or provisioned node).
+
+<Note>
+The hosted Cloud API at `api.allternit.com` serves only `POST /v1/chat/completions` and `GET /v1/models` under `/v1`. The endpoints on this page are served by the Allternit API data-plane node (`http://127.0.0.1:8013/v1` locally); they are not routed on the public Cloud API origin. See [Cloud API](/api/cloud-api).
+</Note>
 
 ## Endpoints
 
@@ -38,7 +38,7 @@ http://127.0.0.1:8013/v1
 Submit the requests inline as a JSON array. Each element is a chat-completion request body.
 
 ```bash
-curl -X POST https://api.allternit.com/v1/batches \
+curl -X POST http://127.0.0.1:8013/v1/batches \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -60,7 +60,7 @@ curl -X POST https://api.allternit.com/v1/batches \
 Submit a batch that references a JSONL file uploaded to the gateway's batch input directory.
 
 ```bash
-curl -X POST https://api.allternit.com/v1/batches \
+curl -X POST http://127.0.0.1:8013/v1/batches \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -115,7 +115,7 @@ Each line is a JSON object. The standard shape includes `custom_id`, `method`, `
 ## List batches
 
 ```bash
-curl https://api.allternit.com/v1/batches \
+curl http://127.0.0.1:8013/v1/batches \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -147,21 +147,21 @@ curl https://api.allternit.com/v1/batches \
 ## Get a batch
 
 ```bash
-curl https://api.allternit.com/v1/batches/batch_abc123 \
+curl http://127.0.0.1:8013/v1/batches/batch_abc123 \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
 ## Cancel a batch
 
 ```bash
-curl -X POST https://api.allternit.com/v1/batches/batch_abc123/cancel \
+curl -X POST http://127.0.0.1:8013/v1/batches/batch_abc123/cancel \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
 ## Retrieve results
 
 ```bash
-curl https://api.allternit.com/v1/batches/batch_abc123/results \
+curl http://127.0.0.1:8013/v1/batches/batch_abc123/results \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 

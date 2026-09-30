@@ -7,10 +7,14 @@ description: 'Register, monitor, and dispatch jobs to agent runtimes.'
 
 The Agent Runtimes API manages external or local agent runtimes. A runtime record tracks a host, a status, a heartbeat, a list of CLI binaries the runtime can execute, and an optional workspace association. Jobs can be dispatched to a runtime; the gateway persists the queued job, runs it through the local agent runtime, and updates the record with the result.
 
+<Note>
+This namespace is served by the Allternit API data-plane node (`http://127.0.0.1:8013` on the same machine, or your paired or provisioned node). The hosted Cloud API at `https://api.allternit.com` does not route it; it relays only agent sessions, canvases, office and beta research/sessions. See [Cloud API](/api/cloud-api).
+</Note>
+
 ## Base URL
 
 ```
-https://api.allternit.com/api
+http://127.0.0.1:8013/api
 ```
 
 ## Authentication
@@ -64,7 +68,7 @@ Returns all runtimes owned by the caller.
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-  https://api.allternit.com/api/agent-runtimes
+  http://127.0.0.1:8013/api/agent-runtimes
 ```
 
 #### Example response
@@ -105,7 +109,7 @@ POST /api/agent-runtimes
 #### Example request
 
 ```bash
-curl -X POST https://api.allternit.com/api/agent-runtimes \
+curl -X POST http://127.0.0.1:8013/api/agent-runtimes \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -171,7 +175,7 @@ At least one field must be provided.
 #### Example request
 
 ```bash
-curl -X PATCH https://api.allternit.com/api/agent-runtimes/rt_1a2b... \
+curl -X PATCH http://127.0.0.1:8013/api/agent-runtimes/rt_1a2b... \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -205,7 +209,7 @@ Updates `last_heartbeat`. Optionally updates `status`.
 #### Example request
 
 ```bash
-curl -X POST https://api.allternit.com/api/agent-runtimes/rt_1a2b.../heartbeat \
+curl -X POST http://127.0.0.1:8013/api/agent-runtimes/rt_1a2b.../heartbeat \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"status": "online"}'
@@ -283,7 +287,7 @@ Queues and immediately dispatches a job on the runtime. The gateway updates the 
 #### Example request
 
 ```bash
-curl -X POST https://api.allternit.com/api/agent-runtimes/rt_1a2b.../jobs \
+curl -X POST http://127.0.0.1:8013/api/agent-runtimes/rt_1a2b.../jobs \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

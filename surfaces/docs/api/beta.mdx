@@ -14,6 +14,8 @@ Two different `/api/v1/beta` surfaces exist. Do not mix them.
 
 The Beta Deployments API lets you turn an agent into a scheduled service. A deployment binds an agent to a cron expression and tracks every execution in a separate run history. The scheduler recomputes `next_run_at` whenever a deployment is created, updated, or triggered.
 
+On the Allternit API node, the same deployment handlers are also mounted under `/api/v1/schedules` (`GET/POST /schedules`, `GET /schedules/:id`, `GET/POST /schedules/:id/runs`, `PATCH /schedules/:id/runs/:run_id`). The node also serves other `/api/v1/beta` families that this page does not cover: `/beta/sessions` (with events, resources, files, `run`, `interrupt`), `/beta/memory-stores` (with entries and search) and `/beta/work` (with `queue`, `heartbeat`, `ack`, `stop`).
+
 ## Base URL
 
 Public Cloud API origin (relayed namespaces use this host):

@@ -10,8 +10,10 @@ The Backend Install API is a legacy compatibility surface that returns installat
 ## Base URL
 
 ```
-https://api.allternit.com/api/v1/backend-install
+http://127.0.0.1:8013/api/v1/backend-install
 ```
+
+This legacy surface is registered only on the Allternit API data-plane node. The hosted Cloud API does not route it.
 
 ## Authentication
 
@@ -38,7 +40,7 @@ Returns a simple health/status payload for the legacy `backend-install` surface.
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-  https://api.allternit.com/api/v1/backend-install
+  http://127.0.0.1:8013/api/v1/backend-install
 ```
 
 ### Example response
@@ -69,7 +71,7 @@ Returns metadata describing the legacy install flow and points callers to the ca
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-  https://api.allternit.com/api/v1/backend-install/progress
+  http://127.0.0.1:8013/api/v1/backend-install/progress
 ```
 
 ### Example response
@@ -112,7 +114,7 @@ Legacy install completion stub. The endpoint accepts any JSON body (or an empty 
 ### Example request
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/backend-install/progress \
+curl -X POST http://127.0.0.1:8013/api/v1/backend-install/progress \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{}'
@@ -155,7 +157,7 @@ Returns a stubbed system-info payload for a legacy connection test. Real connect
 ### Example request
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/backend-install/test \
+curl -X POST http://127.0.0.1:8013/api/v1/backend-install/test \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{}'

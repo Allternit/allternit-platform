@@ -7,10 +7,14 @@ description: 'Manage cowork sessions, projects, personas, memory, and execution 
 
 The Cowork API powers shared, agent-assisted workspaces in Allternit. It lets you create and manage cowork sessions, projects, personas, project files, memory entries, and lightweight execution jobs. Everything is scoped to the authenticated user.
 
+<Note>
+This namespace is served by the Allternit API data-plane node (`http://127.0.0.1:8013` on the same machine, or your paired or provisioned node). The hosted Cloud API at `https://api.allternit.com` does not route it; it relays only agent sessions, canvases, office and beta research/sessions. See [Cloud API](/api/cloud-api).
+</Note>
+
 ## Base URL
 
 ```
-https://api.allternit.com/v1/cowork
+http://127.0.0.1:8013/api/v1/cowork
 ```
 
 All endpoints require a valid Bearer token in the `Authorization` header. See [Authentication](/api/authentication) for details.
@@ -42,6 +46,8 @@ All endpoints require a valid Bearer token in the `Authorization` header. See [A
 | POST | `/cowork/memory` | Store a memory entry. |
 | GET / POST | `/cowork/memory/search` | Search memory entries. |
 | GET | `/cowork/memory/health` | Memory store health check. |
+| DELETE | `/cowork/memory/:id` | Delete a memory entry. |
+| GET | `/cowork/sessions/:id/dag` | Session execution DAG. |
 | GET | `/cowork/connectors` | List cowork connectors. |
 | GET | `/cowork/approvals` | List pending approvals. |
 | GET | `/cowork/suggestions` | List suggestions. |
