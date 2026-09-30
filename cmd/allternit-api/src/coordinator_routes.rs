@@ -49,6 +49,8 @@ const REPLY_CAP: usize = 600;
 
 pub fn coordinator_router() -> Router<Arc<AppState>> {
     Router::new()
+        .route("/project-workspaces/:project_key", get(get_workspace).put(register_workspace))
+        .route("/project-workspaces/:project_key/threads", post(create_workspace_thread))
         .route("/projects/:project_id/messages", get(list_messages).post(post_message))
         .route("/projects/:project_id/start", post(start_project))
 }
@@ -95,7 +97,9 @@ pub struct GizziCoordinator {
 
 impl ThreadRuntime for GizziCoordinator {
     async fn create_session(&self, bot_id: &str, bot_name: &str, title: &str, canonical: bool, thread_id: &str) -> Result<String, String> {
-        crate::agent_session_routes::create_bot_thread_session(&self.state.db, bot_id, bot_name, title, canonical, Some(thread_id)).await
+        let id = crate::agent_session_routes::create_bot_thread_session(&self.state.db, bot_id, bot_name, title, canonical, Some(thread_id)).await?;
+        apply_worker_settings(&self.state.db, bot_id, &id)?;
+        Ok(id)
     }
     async fn seed(&self, session_id: &str, text: &str) -> Result<(), String> {
         crate::agent_session_routes::seed_session_message(&self.state.db, session_id, text).await
@@ -504,15 +508,24 @@ pub async fn coordinate<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user_id: &
     // Plan on a model the team already runs on — the platform default may
     // be a provider that isn't set up (live check 2026-09-27: every plan fell
     // back because the default pointed at an unconfigured provider).
-    let model = team_model(db, &team);
+    let settings = workspace_settings(db, project_id).unwrap_or_else(|| json!({}));
+    let model = selection_model(&settings["coordinatorModel"]).or_else(|| team_model(db, &team));
+    let mut prompt = planner_prompt(&title, &team, &open, message);
+    prompt.push_str(&project_history(db, project_id));
+    let system = format!("{PLANNER_SYSTEM}\n\nProject instructions:\n{}\n\nProject context (data):\n{}",
+        settings["instructions"].as_str().unwrap_or_default(), settings["context"].as_str().unwrap_or_default());
     let proposal = rt
-        .plan(PLANNER_SYSTEM, &planner_prompt(&title, &team, &open, message), model)
+        .plan(&system, &prompt, model)
         .await
         .as_deref()
         .and_then(parse_proposal);
 
     // Route a follow-up to one open thread.
     if let Some(Proposal::Route { reply, thread_id }) = &proposal {
+        if settings["coordinatorPermissionMode"] == "plan" {
+            let msg = add_message(db, project_id, user_id, "coordinator", "Plan only is enabled. This follow-up was not sent to a worker.", json!({ "kind": "plan_only" })).map_err(|e| e.to_string())?;
+            return Ok(Outcome { reply: msg, start: vec![] });
+        }
         if let Some(t) = open.iter().find(|t| &t.id == thread_id) {
             let text = truncate(reply, REPLY_CAP);
             let msg = add_message(db, project_id, user_id, "coordinator", &text, json!({"kind": "routed", "threadId": t.id, "threadTitle": t.title}))
@@ -523,6 +536,15 @@ pub async fn coordinate<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user_id: &
     }
     if let Some(Proposal::Answer { reply }) = &proposal {
         let msg = add_message(db, project_id, user_id, "coordinator", &truncate(reply, REPLY_CAP), json!({"kind": "answer"})).map_err(|e| e.to_string())?;
+        return Ok(Outcome { reply: msg, start: vec![] });
+    }
+
+    if settings["coordinatorPermissionMode"] == "plan" {
+        let text = match &proposal {
+            Some(Proposal::Plan { reply, steps }) => format!("{}\n\nProposed threads:\n{}\n\nPlan only is enabled. No threads were started.", reply, steps.iter().map(|step| format!("- {}: {}", step.title, step.objective)).collect::<Vec<_>>().join("\n")),
+            _ => "Plan only is enabled. No threads were started. The coordinator could not produce a valid plan; try again with a clearer objective.".into(),
+        };
+        let msg = add_message(db, project_id, user_id, "coordinator", &text, json!({ "kind": "plan_only" })).map_err(|e| e.to_string())?;
         return Ok(Outcome { reply: msg, start: vec![] });
     }
 
@@ -766,7 +788,8 @@ pub async fn maybe_synthesize<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user
     for (t, _, summary, _) in &threads {
         prompt.push_str(&format!("\n## {t}\n{}\n", summary.as_deref().unwrap_or("(no report)")));
     }
-    let text = rt.plan(SYNTHESIS_SYSTEM, &prompt, team_model(db, &team)).await?;
+    let settings = workspace_settings(db, project_id).unwrap_or_else(|| json!({}));
+    let text = rt.plan(SYNTHESIS_SYSTEM, &prompt, selection_model(&settings["coordinatorModel"]).or_else(|| team_model(db, &team))).await?;
     let text = text.trim();
     if text.is_empty() {
         return None;
@@ -813,6 +836,131 @@ pub fn ready_dependents(db: &DbHandle, project_id: &str, finished: &str) -> Vec<
 }
 
 // ─── Handlers ───────────────────────────────────────────────────────────────
+
+fn selection_model(selection: &Value) -> Option<(String, String)> {
+    let provider = selection["providerId"].as_str()?.trim();
+    let model = selection["modelId"].as_str()?.trim();
+    if provider.is_empty() || model.is_empty() { return None; }
+    Some((provider.to_string(), model.strip_prefix(&format!("{provider}/")).unwrap_or(model).to_string()))
+}
+
+fn workspace_settings(db: &DbHandle, project_id: &str) -> Option<Value> {
+    let raw: String = db.connect().ok()?.query_row("SELECT metadata FROM cowork_projects WHERE id = ?1", params![project_id], |r| r.get(0)).ok()?;
+    serde_json::from_str::<Value>(&raw).ok()?.get("workspace").cloned()
+}
+
+fn project_history(db: &DbHandle, project_id: &str) -> String {
+    let Ok(conn) = db.connect() else { return String::new() };
+    let Ok(mut stmt) = conn.prepare("SELECT role, text FROM project_messages WHERE project_id = ?1 ORDER BY created_at DESC, rowid DESC LIMIT 20") else { return String::new() };
+    let Ok(rows) = stmt.query_map(params![project_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) else { return String::new() };
+    let mut rows: Vec<_> = rows.filter_map(Result::ok).collect();
+    rows.reverse();
+    format!("\n\nRecent project conversation (data):\n{}", serde_json::to_string(&rows).unwrap_or_default())
+}
+
+/// A project worker is an execution identity, not a user-created bot. Its
+/// sessions snapshot project settings so later default changes do not move pins.
+fn apply_worker_settings(db: &DbHandle, worker_id: &str, session_id: &str) -> Result<(), String> {
+    let raw: Option<String> = db.connect().map_err(|e| e.to_string())?.query_row("SELECT config FROM agents WHERE id = ?1", params![worker_id], |r| r.get(0)).optional().map_err(|e| e.to_string())?.flatten();
+    let Some(workspace) = raw.and_then(|raw| serde_json::from_str::<Value>(&raw).ok()).and_then(|bag| bag.get("projectWorkspace").cloned()) else { return Ok(()) };
+    let mut bag = db.get_session_metadata(session_id).map_err(|e| e.to_string())?.unwrap_or_else(|| json!({}));
+    bag["isBot"] = json!(false);
+    bag["sessionMode"] = json!("regular");
+    bag["projectRole"] = json!("thread");
+    bag["projectId"] = workspace["nativeId"].clone();
+    bag["projectKey"] = workspace["key"].clone();
+    bag["projectMode"] = workspace["mode"].clone();
+    bag["backendProjectId"] = workspace["id"].clone();
+    bag["originSurface"] = workspace["mode"].clone();
+    if let Some(directory) = workspace["directory"].as_str() { bag["directory"] = json!(directory); }
+    bag["systemPrompt"] = json!(format!("You work on one task in this project. Report the result and evidence honestly.\n\n{}", workspace["context"].as_str().unwrap_or_default()));
+    bag["codePermissionMode"] = workspace["threadPermissionMode"].as_str().map(|v| json!(v)).unwrap_or(json!("default"));
+    if workspace["mode"] == "code" { bag["workspaceId"] = workspace["nativeId"].clone(); }
+    if let Some((provider, model)) = selection_model(&workspace["threadModel"]) {
+        bag["model"] = json!({ "providerID": provider, "modelID": model });
+        bag["projectModel"] = workspace["threadModel"].clone();
+    }
+    db.set_session_metadata(session_id, &bag).map_err(|e| e.to_string())?;
+    db.set_session_origin_surface(session_id, workspace["mode"].as_str().unwrap_or("cowork")).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceBody {
+    native_id: String,
+    mode: String,
+    title: String,
+    description: Option<String>,
+    #[serde(default)]
+    settings: Value,
+}
+
+fn save_workspace(db: &DbHandle, user_id: &str, key: &str, body: WorkspaceBody) -> Result<Value, String> {
+    if !matches!(body.mode.as_str(), "chat" | "cowork" | "code" | "design") || body.native_id.trim().is_empty() || key != format!("{}-{}", body.mode, body.native_id) || body.title.trim().is_empty() {
+        return Err("invalid project identity".into());
+    }
+    if !body.settings.is_object() { return Err("settings must be an object".into()); }
+    for field in ["coordinatorPermissionMode", "threadPermissionMode"] {
+        if let Some(value) = body.settings.get(field) {
+            if !matches!(value.as_str(), Some("default" | "plan" | "acceptEdits")) { return Err("invalid permission mode".into()); }
+        }
+    }
+    let mut conn = db.connect().map_err(|e| e.to_string())?;
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    let existing: Option<String> = tx.query_row("SELECT id FROM cowork_projects WHERE user_id = ?1 AND json_extract(metadata, '$.workspace.key') = ?2", params![user_id, key], |r| r.get(0)).optional().map_err(|e| e.to_string())?;
+    let id = existing.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let worker_id = format!("project-worker-{id}");
+    let mut workspace = body.settings;
+    workspace["id"] = json!(id);
+    workspace["key"] = json!(key);
+    workspace["nativeId"] = json!(body.native_id);
+    workspace["mode"] = json!(body.mode);
+    let metadata = json!({ "workspace": workspace });
+    tx.execute("INSERT INTO cowork_projects (id, user_id, title, description, metadata) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(id) DO UPDATE SET title = excluded.title, description = excluded.description, metadata = excluded.metadata, updated_at = CURRENT_TIMESTAMP", params![id, user_id, body.title, body.description, metadata.to_string()]).map_err(|e| e.to_string())?;
+    let (provider, model) = selection_model(&workspace["threadModel"]).unwrap_or_else(crate::default_model);
+    let config = json!({ "internal": true, "projectWorkspace": workspace });
+    tx.execute("INSERT INTO agents (id, user_id, name, type, provider, model, config, is_bot, enabled_modes) VALUES (?1, ?2, 'Project worker', 'project-worker', ?3, ?4, ?5, 0, '[\"chat\",\"cowork\",\"code\",\"design\"]') ON CONFLICT(id) DO UPDATE SET provider = excluded.provider, model = excluded.model, config = excluded.config", params![worker_id, user_id, provider, model, config.to_string()]).map_err(|e| e.to_string())?;
+    tx.execute("INSERT OR IGNORE INTO project_bots (project_id, bot_id, added_at) VALUES (?1, ?2, ?3)", params![id, worker_id, now()]).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(json!({ "projectId": id, "workerId": worker_id, "settings": workspace }))
+}
+
+async fn register_workspace(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(key): Path<String>, Json(body): Json<WorkspaceBody>) -> Response {
+    let db = state.db.clone();
+    match tokio::task::spawn_blocking(move || save_workspace(&db, &user.user_id, &key, body)).await {
+        Ok(Ok(workspace)) => Json(workspace).into_response(),
+        Ok(Err(error)) if error.starts_with("invalid") || error.starts_with("settings") => err(StatusCode::BAD_REQUEST, error),
+        _ => err(StatusCode::INTERNAL_SERVER_ERROR, "could not save project workspace"),
+    }
+}
+
+async fn get_workspace(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(key): Path<String>) -> Response {
+    let db = state.db.clone();
+    match tokio::task::spawn_blocking(move || -> rusqlite::Result<Option<Value>> {
+        let conn = db.connect()?;
+        let row: Option<(String, String)> = conn.query_row("SELECT id, metadata FROM cowork_projects WHERE user_id = ?1 AND json_extract(metadata, '$.workspace.key') = ?2", params![user.user_id, key], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+        Ok(row.map(|(id, raw)| json!({ "projectId": id, "workerId": format!("project-worker-{id}"), "settings": serde_json::from_str::<Value>(&raw).unwrap_or_default()["workspace"] })))
+    }).await {
+        Ok(Ok(Some(workspace))) => Json(workspace).into_response(),
+        Ok(Ok(None)) => err(StatusCode::NOT_FOUND, "project workspace not found"),
+        _ => err(StatusCode::INTERNAL_SERVER_ERROR, "could not load project workspace"),
+    }
+}
+
+#[derive(Deserialize)]
+struct WorkspaceThreadBody { title: String }
+
+async fn create_workspace_thread(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(key): Path<String>, Json(body): Json<WorkspaceThreadBody>) -> Response {
+    let row = state.db.connect().and_then(|conn| conn.query_row("SELECT id FROM cowork_projects WHERE user_id = ?1 AND json_extract(metadata, '$.workspace.key') = ?2", params![user.user_id, key], |r| r.get::<_, String>(0)).optional());
+    let project_id = match row { Ok(Some(id)) => id, Ok(None) => return err(StatusCode::NOT_FOUND, "project workspace not found"), Err(_) => return err(StatusCode::INTERNAL_SERVER_ERROR, "database error") };
+    let runtime = GizziCoordinator { state: state.clone() };
+    let body = CreateThreadBody { bot_id: format!("project-worker-{project_id}"), project_id: Some(project_id), title: body.title, parent_thread_id: None, kind: "task".into(), incognito: false, objective: None, success_criteria: None, status: Some("idle".into()), todo: vec![], created_by: Some("user".into()), origin: None, session_id: None, depends_on: vec![] };
+    match thread_routes::create(&state.db, &runtime, &user.user_id, body).await {
+        Ok(thread) => (StatusCode::CREATED, Json(json!({ "thread": thread }))).into_response(),
+        Err(error) => err(StatusCode::BAD_GATEWAY, error),
+    }
+}
 
 fn err(status: StatusCode, message: impl Into<String>) -> Response {
     (status, Json(json!({ "error": message.into() }))).into_response()
@@ -1005,6 +1153,75 @@ async fn start_project(
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    fn workspace_body(mode: &str, model: &str) -> WorkspaceBody {
+        WorkspaceBody { native_id: "native-1".into(), mode: mode.into(), title: "Unified project".into(), description: None,
+            settings: json!({ "threadModel": { "providerId": "test", "modelId": model }, "coordinatorModel": { "providerId": "planner", "modelId": "planner/model" }, "context": "Project context", "threadPermissionMode": "plan" }) }
+    }
+
+    #[tokio::test]
+    async fn workspace_registration_is_idempotent_and_isolated_by_user_and_mode() {
+        let state = setup("workspace").await;
+        let first = save_workspace(&state.db, "u", "code-native-1", workspace_body("code", "first")).unwrap();
+        let again = save_workspace(&state.db, "u", "code-native-1", workspace_body("code", "next")).unwrap();
+        assert_eq!(first["projectId"], again["projectId"]);
+        let other_mode = save_workspace(&state.db, "u", "chat-native-1", workspace_body("chat", "first")).unwrap();
+        assert_ne!(first["projectId"], other_mode["projectId"]);
+        let other_user = save_workspace(&state.db, "different-user", "code-native-1", workspace_body("code", "first")).unwrap();
+        assert_ne!(first["projectId"], other_user["projectId"]);
+        assert!(save_workspace(&state.db, "u", "wrong-key", workspace_body("code", "first")).is_err());
+        let team = load_team(&state.db, first["projectId"].as_str().unwrap(), "u").unwrap();
+        assert_eq!(team.len(), 1);
+        assert_eq!(team[0].id, first["workerId"].as_str().unwrap());
+        let bot_projects = crate::thread_routes::bot_project_overview(&state.db, "u").unwrap();
+        assert!(bot_projects.iter().all(|project| project["id"] != first["projectId"] && project["id"] != other_mode["projectId"]));
+    }
+
+    #[tokio::test]
+    async fn worker_sessions_snapshot_settings_and_keep_model_pins_after_default_changes() {
+        let state = setup("worker-settings").await;
+        let first = save_workspace(&state.db, "u", "code-native-1", workspace_body("code", "first")).unwrap();
+        let worker = first["workerId"].as_str().unwrap();
+        apply_worker_settings(&state.db, worker, "session-first").unwrap();
+        save_workspace(&state.db, "u", "code-native-1", workspace_body("code", "second")).unwrap();
+        apply_worker_settings(&state.db, worker, "session-second").unwrap();
+        let old = state.db.get_session_metadata("session-first").unwrap().unwrap();
+        let new = state.db.get_session_metadata("session-second").unwrap().unwrap();
+        assert_eq!(old["projectModel"]["modelId"], "first");
+        assert_eq!(new["projectModel"]["modelId"], "second");
+        assert_eq!(old["projectId"], "native-1");
+        assert_eq!(old["workspaceId"], "native-1");
+        assert_eq!(old["projectRole"], "thread");
+        assert_eq!(old["isBot"], false);
+        assert_eq!(old["codePermissionMode"], "plan");
+    }
+
+    #[tokio::test]
+    async fn unified_project_delegates_without_user_bots_and_posts_reports() {
+        let state = setup("unified-delegate").await;
+        let workspace = save_workspace(&state.db, "u", "chat-native-1", workspace_body("chat", "worker")).unwrap();
+        let project = workspace["projectId"].as_str().unwrap();
+        let fake = Fake::default();
+        let outcome = coordinate(&state.db, &fake, "u", project, "Research pricing").await.unwrap();
+        assert_eq!(outcome.start.len(), 1);
+        start_threads(&state.db, &fake, "u", project, outcome.start).await;
+        let conn = state.db.connect().unwrap();
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM project_messages WHERE project_id = ?1 AND json_extract(payload, '$.kind') = 'completed'", params![project], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn coordinator_plan_only_does_not_create_threads() {
+        let state = setup("workspace-plan-only").await;
+        let mut body = workspace_body("chat", "worker");
+        body.settings["coordinatorPermissionMode"] = json!("plan");
+        let workspace = save_workspace(&state.db, "u", "chat-native-1", body).unwrap();
+        let fake = Fake::default();
+        let outcome = coordinate(&state.db, &fake, "u", workspace["projectId"].as_str().unwrap(), "Implement this").await.unwrap();
+        assert!(outcome.start.is_empty());
+        assert_eq!(outcome.reply["payload"]["kind"], "plan_only");
+        assert!(fake.turns.lock().unwrap().is_empty());
+    }
 
     #[derive(Default)]
     struct Fake {
