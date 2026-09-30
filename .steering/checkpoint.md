@@ -1,4 +1,4 @@
-Goal: Execute WP10 exactly in allternit-wt-wp10; draft PR only, never merge.
-Just did: Completed graph template (N00–N23 + explicit fallbacks, deep escalation, rollback and response acceptance), seven registered packs, 18-code domain bank, 11-step ladder. Targeted cargo wp10: 2/2 pass, including all seven static invariants and pack coverage. DAG node n_4839 closed; next n_3103 picked up.
-Next: Verify external chain append and flagged compiler transport; then disposable TS/Vitest end-to-end test and draft PR.
-Open questions: None. Receipt routes have no auth; new append must enforce peer loopback and reject missing connection identity. No production auto-deploy paths planned. Shared checkout is read-only; only allowed dependency symlinks created. Required final WP10_NOTES report/sentinel is the task's explicit reporting exception outside the worktree.
+Goal: Fix assigned review findings #14, #18–#22 in F5 worktree; draft PR only.
+Just did: Read binding rules/authority and relocated all findings at ed3598a21. Created dag:dag_211503; wih:wih_3058 tracks #14. Reproduced live AUTO for mismatched deployed head, then bound calibration to actual runtime scope.
+Next: Run decision regression suite, commit/push #14; implement lifecycle and graph/router regressions, compiler regressions.
+Open questions: None. gate.rs changes limited to #18 status mutations; no replay/idempotency edits. No deploy paths intended.
