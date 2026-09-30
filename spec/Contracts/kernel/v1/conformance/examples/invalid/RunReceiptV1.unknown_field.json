@@ -1,0 +1,47 @@
+{
+  "envelope": {
+    "abi_version": "1.0.0",
+    "schema_id": "allternit.kernel.RunReceiptV1",
+    "schema_version": "1.0.0",
+    "run_id": "id-0001",
+    "session_id": "id-0001",
+    "task_id": "id-0001",
+    "state_version": 0,
+    "created_at": "2026-09-30T00:00:00Z",
+    "producer": {
+      "component_id": "id-0001",
+      "component_version": "x",
+      "kind": "RUNTIME"
+    },
+    "trace_id": "id-0001",
+    "provenance": [
+      {
+        "source_type": "USER",
+        "source_id": "x",
+        "trust_class": "PUBLIC"
+      }
+    ]
+  },
+  "chain": {
+    "receipt_id": "id-0001",
+    "run_id": "id-0001",
+    "index": 0,
+    "prev_hash": null,
+    "content_hash": "sha256:abababababababababababababababababababababababababababababababab",
+    "schema_id": "allternit.kernel.RunReceiptV1",
+    "schema_version": "1.0.0",
+    "domain": "allternit.receipt.v1",
+    "canonicalization": "RFC8785-JCS"
+  },
+  "task_id": "id-0001",
+  "final_state_version": 0,
+  "final_work_state_version": 0,
+  "completion_status": "COMPLETE",
+  "completion_decision_id": "id-0001",
+  "acceptance_results": [],
+  "replay_fingerprint": "sha256:abababababababababababababababababababababababababababababababab",
+  "retries": 0,
+  "implementation_resolution": [],
+  "router_telemetry": {},
+  "unknown_required_field": "x"
+}

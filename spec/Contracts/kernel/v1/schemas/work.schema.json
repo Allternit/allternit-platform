@@ -1,0 +1,772 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allternit.com/kernel/1.0.0/work.schema.json",
+  "title": "Allternit Kernel ABI 1.0.0 — work",
+  "$comment": "FROZEN 2026-09-30 (ABI Package 1.0.0). Authority: Living Architecture v1.4 > 07/09 > 02. Additive changes need a minor bump; breaking changes need 2.0.",
+  "$defs": {
+    "LifecycleState": {
+      "enum": [
+        "DECLARED",
+        "ADMITTED",
+        "READY",
+        "LEASED",
+        "SPAWNED",
+        "RUNNING",
+        "OUTPUT_READY",
+        "VERIFYING",
+        "COMMITTED",
+        "CONTINUE",
+        "REPLAN",
+        "NEEDS_HUMAN",
+        "WAITING",
+        "CANCELLING",
+        "CLOSED"
+      ]
+    },
+    "RunStatus": {
+      "enum": [
+        "accepted",
+        "running",
+        "waiting",
+        "needs_attention",
+        "paused",
+        "cancelling",
+        "completed",
+        "partial",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "WorkNodeLifecycleV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "run_id",
+        "node_id",
+        "attempt",
+        "state",
+        "work_state_version",
+        "agent_state_ref"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.WorkNodeLifecycleV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "node_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "state": {
+          "$ref": "#/$defs/LifecycleState"
+        },
+        "close_outcome": {
+          "anyOf": [
+            {
+              "enum": [
+                "COMMITTED",
+                "PARTIAL",
+                "FAILED",
+                "CANCELLED"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lease_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wait_gate_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "attention_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "work_state_version": {
+          "$ref": "common.schema.json#/$defs/StateVersion"
+        },
+        "agent_state_ref": {
+          "$ref": "common.schema.json#/$defs/StateVersionRef"
+        },
+        "updated_at": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "WorkNodeLifecycleV1",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "CLOSED"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "close_outcome"
+            ],
+            "properties": {
+              "close_outcome": {
+                "enum": [
+                  "COMMITTED",
+                  "PARTIAL",
+                  "FAILED",
+                  "CANCELLED"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "DECLARE->ADMIT->READY->LEASE->SPAWN->RUN(+HEARTBEAT)->OUTPUT->VERIFY->{COMMIT|CONTINUE|REPLAN|NEEDS_HUMAN}->CLOSE. No executor goes RUNNING->CLOSED(COMMITTED) directly. VAULT/LEARN are post-terminal and not lifecycle states."
+    },
+    "WorkNodeTransitionV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "run_id",
+        "node_id",
+        "from",
+        "to",
+        "guard",
+        "work_state_version_before",
+        "work_state_version_after",
+        "actor"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.WorkNodeTransitionV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "node_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "from": {
+          "$ref": "#/$defs/LifecycleState"
+        },
+        "to": {
+          "$ref": "#/$defs/LifecycleState"
+        },
+        "guard": {
+          "enum": [
+            "ADMISSION_OK",
+            "DEPS_MET",
+            "LEASE_ACQUIRED",
+            "SPAWN_OK",
+            "HEARTBEAT",
+            "OUTPUT_RECORDED",
+            "VERIFY_PASS",
+            "VERIFY_FAIL",
+            "COMPLETION_DECIDED",
+            "REPLAN_ACCEPTED",
+            "ATTENTION_OPENED",
+            "ATTENTION_RESOLVED",
+            "WAIT_GATE_ARMED",
+            "WAKE",
+            "LEASE_EXPIRED",
+            "BUDGET_STOP",
+            "CANCEL_REQUESTED",
+            "EFFECTS_SETTLED",
+            "UNRECOVERABLE"
+          ]
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/EvidenceRef"
+          }
+        },
+        "work_state_version_before": {
+          "$ref": "common.schema.json#/$defs/StateVersion"
+        },
+        "work_state_version_after": {
+          "$ref": "common.schema.json#/$defs/StateVersion"
+        },
+        "actor": {
+          "enum": [
+            "SYSTEM",
+            "EXECUTOR",
+            "HUMAN"
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "WorkNodeTransitionV1",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "to": {
+                "const": "COMMITTED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "actor": {
+                "const": "SYSTEM"
+              },
+              "guard": {
+                "const": "COMPLETION_DECIDED"
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "DONE is a system transition backed by completion evidence."
+    },
+    "WorkRunRecordV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "run_id",
+        "status",
+        "work_state_version",
+        "agent_state_ref",
+        "resolved"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.WorkRunRecordV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "status": {
+          "$ref": "#/$defs/RunStatus"
+        },
+        "work_state_version": {
+          "$ref": "common.schema.json#/$defs/StateVersion"
+        },
+        "agent_state_ref": {
+          "$ref": "common.schema.json#/$defs/StateVersionRef"
+        },
+        "campaign_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "budget_usage": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/ResourceBudget"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "billable_stopped": {
+          "type": "boolean"
+        },
+        "resolved": {
+          "type": "object",
+          "required": [
+            "agent",
+            "logical_model_id",
+            "authority_profile",
+            "budget",
+            "completion_policy",
+            "defaults_version"
+          ],
+          "properties": {
+            "agent": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]*@v\\d+$"
+            },
+            "logical_model_id": {
+              "$ref": "common.schema.json#/$defs/LogicalModelId"
+            },
+            "authority_profile": {
+              "enum": [
+                "read-only",
+                "code-safe",
+                "code-write"
+              ]
+            },
+            "workspace": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "budget": {
+              "$ref": "common.schema.json#/$defs/ResourceBudget"
+            },
+            "completion_policy": {
+              "$ref": "completion.schema.json#/$defs/CompletionPolicyRef"
+            },
+            "defaults_version": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "WorkRunRecordV1",
+      "$comment": "Operational truth for a run. Q9: resolved defaults are explicit and recorded before execution. Q11: budget exhaustion sets billable_stopped before needs_attention."
+    },
+    "NodeOutputV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "dag_id",
+        "node_id",
+        "artifact_id",
+        "mime_type",
+        "hash",
+        "producer",
+        "state_version",
+        "trust_class",
+        "sensitivity",
+        "verification_status",
+        "receipt_ref",
+        "created_at"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.NodeOutputV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "dag_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "node_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "artifact_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "mime_type": {
+          "type": "string"
+        },
+        "hash": {
+          "$ref": "common.schema.json#/$defs/ContentHash"
+        },
+        "producer": {
+          "$ref": "common.schema.json#/$defs/ComponentIdentity"
+        },
+        "state_version": {
+          "$ref": "common.schema.json#/$defs/StateVersion"
+        },
+        "trust_class": {
+          "$ref": "common.schema.json#/$defs/TrustClass"
+        },
+        "sensitivity": {
+          "$ref": "common.schema.json#/$defs/SensitivityClass"
+        },
+        "verification_status": {
+          "enum": [
+            "UNVERIFIED",
+            "PASS",
+            "FAIL",
+            "INCONCLUSIVE",
+            "ERROR"
+          ]
+        },
+        "receipt_ref": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "NodeOutputV1",
+      "$comment": "dag_id = ComputeGraphIRV1.graph_id (Q3)."
+    },
+    "LeaseV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "lease_id",
+        "holder",
+        "host",
+        "process_or_session",
+        "scope",
+        "acquired_at",
+        "heartbeat_at",
+        "heartbeat_interval_ms",
+        "expires_after_ms",
+        "reclaim_policy",
+        "state_version"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.LeaseV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "lease_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "holder": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "host": {
+          "type": "string"
+        },
+        "process_or_session": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ResourceRef"
+          },
+          "minItems": 1
+        },
+        "acquired_at": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "heartbeat_at": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "heartbeat_interval_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "expires_after_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reclaim_policy": {
+          "enum": [
+            "REQUEUE",
+            "RESUME_FROM_CHECKPOINT",
+            "FAIL_NODE",
+            "NEEDS_HUMAN"
+          ]
+        },
+        "state_version": {
+          "$ref": "common.schema.json#/$defs/StateVersion"
+        },
+        "defaults_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "LeaseV1",
+      "$comment": "Interval/expiry values are versioned defaults, not constants (Q15). Lease scope is also the lock scope."
+    },
+    "AdmissionRequestV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "request_id",
+        "run_id",
+        "node_id",
+        "executor_class",
+        "requested_scope"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.AdmissionRequestV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "request_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "node_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "executor_class": {
+          "type": "string"
+        },
+        "requested_scope": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ResourceRef"
+          }
+        },
+        "budget": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/ResourceBudget"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "priority": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "AdmissionRequestV1"
+    },
+    "AdmissionDecisionV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "request_id",
+        "decision",
+        "spawn_cap_key",
+        "reason_codes"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.AdmissionDecisionV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "request_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "decision": {
+          "enum": [
+            "ADMIT",
+            "QUEUE",
+            "REJECT"
+          ]
+        },
+        "spawn_cap_key": {
+          "type": "string"
+        },
+        "cap_limit": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cap_in_use": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "probe_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason_codes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "retry_after_ms": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "AdmissionDecisionV1"
+    },
+    "ExecutorProbeV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "probe_id",
+        "executor_class",
+        "available",
+        "auth_state",
+        "probed_at"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.ExecutorProbeV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "probe_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "executor_class": {
+          "type": "string"
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "auth_state": {
+          "enum": [
+            "AUTHENTICATED",
+            "UNAUTHENTICATED",
+            "EXPIRED",
+            "UNKNOWN"
+          ]
+        },
+        "capacity": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "in_use": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "probed_at": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/ErrorV1"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "ExecutorProbeV1"
+    }
+  }
+}

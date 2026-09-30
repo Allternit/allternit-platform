@@ -1,0 +1,15 @@
+{
+  "schema_id": "allternit.kernel.WorkNodeLifecycleV1",
+  "schema_version": "1.0.0",
+  "run_id": "id-0001",
+  "node_id": "id-0001",
+  "attempt": 0,
+  "state": "DECLARED",
+  "work_state_version": 0,
+  "agent_state_ref": {
+    "store": "AGENT_STATE",
+    "run_id": "id-0001",
+    "state_version": 0
+  },
+  "unknown_required_field": "x"
+}

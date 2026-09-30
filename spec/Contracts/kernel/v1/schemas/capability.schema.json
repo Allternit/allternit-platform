@@ -1,0 +1,729 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allternit.com/kernel/1.0.0/capability.schema.json",
+  "title": "Allternit Kernel ABI 1.0.0 — capability",
+  "$comment": "FROZEN 2026-09-30 (ABI Package 1.0.0). Authority: Living Architecture v1.4 > 07/09 > 02. Additive changes need a minor bump; breaking changes need 2.0.",
+  "$defs": {
+    "CapabilityRequestV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "capability",
+        "modality",
+        "latency_class",
+        "trust_requirement",
+        "budget"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.CapabilityRequestV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "capability": {
+          "$ref": "common.schema.json#/$defs/CapabilityId"
+        },
+        "task_shape": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "language": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "modality": {
+          "enum": [
+            "TEXT",
+            "CODE",
+            "IMAGE",
+            "MULTI"
+          ]
+        },
+        "min_context_tokens": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "required_output_schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "quality_floor": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "latency_class": {
+          "enum": [
+            "INTERACTIVE",
+            "NORMAL",
+            "BACKGROUND"
+          ]
+        },
+        "trust_requirement": {
+          "$ref": "common.schema.json#/$defs/TrustClass"
+        },
+        "state_transfer_preference": {
+          "anyOf": [
+            {
+              "enum": [
+                "NATIVE_KV",
+                "TRANSLATED_KV",
+                "PREFIX",
+                "SEMANTIC"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "budget": {
+          "$ref": "common.schema.json#/$defs/ResourceBudget"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "CapabilityRequestV1"
+    },
+    "ModelCapabilityProfileV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "model_id",
+        "capabilities",
+        "context_limit",
+        "trust_classes",
+        "residency",
+        "hidden_state_access",
+        "early_exit_support",
+        "logits_access"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.ModelCapabilityProfileV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "model_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "locality": {
+          "anyOf": [
+            {
+              "enum": [
+                "LOCAL",
+                "PRIVATE_REMOTE",
+                "PUBLIC_REMOTE"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "capability",
+              "score"
+            ],
+            "properties": {
+              "capability": {
+                "$ref": "common.schema.json#/$defs/CapabilityId"
+              },
+              "score": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "measured_range": {
+                "anyOf": [
+                  {
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "context_limit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output_schemas": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "trust_classes": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/TrustClass"
+          }
+        },
+        "hardware_backends": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "residency": {
+          "enum": [
+            "PINNED",
+            "HOT",
+            "WARM",
+            "COLD",
+            "REMOTE"
+          ]
+        },
+        "memory_footprint_mb": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "benchmark_profile": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state_transfer": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "hidden_state_access": {
+          "type": "boolean"
+        },
+        "early_exit_support": {
+          "type": "boolean"
+        },
+        "logits_access": {
+          "type": "boolean"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "ModelCapabilityProfileV1",
+      "$comment": "02's optional `provider` field is dropped from the ABI: vendor identity is adapter config/evidence, not a routable field (Q15, standing note 5)."
+    },
+    "ModelPoolEntryV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "backend_id",
+        "cognitive_roles",
+        "modes",
+        "capabilities",
+        "residency",
+        "confidence_estimate",
+        "latency_ms",
+        "cost"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.ModelPoolEntryV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "backend_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "cognitive_roles": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "S0",
+              "S1",
+              "S2",
+              "S3"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "modes": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "M0.DETERMINISTIC",
+              "M1.LOGIT_READOUT",
+              "M2.CALIBRATED_READOUT",
+              "M3.HIDDEN_HEAD",
+              "M4.DEDICATED_DECIDER",
+              "M5.GENERATIVE",
+              "M6.DEEP_SOLVER"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/CapabilityId"
+          },
+          "uniqueItems": true
+        },
+        "trust_tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "confidence_estimate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "latency_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "cost": {
+          "type": "number",
+          "minimum": 0
+        },
+        "residency": {
+          "enum": [
+            "PINNED",
+            "HOT",
+            "WARM",
+            "COLD",
+            "REMOTE"
+          ]
+        },
+        "backbone_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model_revision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runtime": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "quantization": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "layer_stop": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "readout_head_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "calibration_manifest_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "memory_mb": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "load_latency_ms": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "ModelPoolEntryV1"
+    },
+    "ExecutionPlanV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "plan_id",
+        "cognitive_role",
+        "capability_id",
+        "execution_mode",
+        "backend_id",
+        "confidence_floor",
+        "fallback_chain"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.ExecutionPlanV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "plan_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "node_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cognitive_role": {
+          "enum": [
+            "S0",
+            "S1",
+            "S2",
+            "S3"
+          ]
+        },
+        "capability_id": {
+          "$ref": "common.schema.json#/$defs/CapabilityId"
+        },
+        "execution_mode": {
+          "enum": [
+            "M0.DETERMINISTIC",
+            "M1.LOGIT_READOUT",
+            "M2.CALIBRATED_READOUT",
+            "M3.HIDDEN_HEAD",
+            "M4.DEDICATED_DECIDER",
+            "M5.GENERATIVE",
+            "M6.DEEP_SOLVER"
+          ]
+        },
+        "backend_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "backbone_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model_revision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runtime": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "quantization": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "layer_start": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "layer_stop": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expected_forward_fraction": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "readout_head_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "calibration_manifest_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "calibration_level": {
+          "anyOf": [
+            {
+              "enum": [
+                "RAW",
+                "L0",
+                "L1",
+                "L2"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "context_projection_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cache_strategy": {
+          "anyOf": [
+            {
+              "enum": [
+                "REUSE",
+                "EXTEND",
+                "REBUILD",
+                "SEMANTIC_RECONSTRUCT"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state_transfer_strategy": {
+          "anyOf": [
+            {
+              "$ref": "state_transfer.schema.json#/$defs/TransferMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "residency_requirement": {
+          "anyOf": [
+            {
+              "enum": [
+                "PINNED",
+                "HOT",
+                "WARM",
+                "COLD",
+                "REMOTE"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "confidence_floor": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "latency_budget_ms": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cost_budget": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "memory_budget_mb": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fallback_chain": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "ExecutionPlanV1"
+    }
+  }
+}

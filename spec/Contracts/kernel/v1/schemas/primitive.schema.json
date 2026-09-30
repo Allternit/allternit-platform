@@ -1,0 +1,435 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allternit.com/kernel/1.0.0/primitive.schema.json",
+  "title": "Allternit Kernel ABI 1.0.0 — primitive",
+  "$comment": "FROZEN 2026-09-30 (ABI Package 1.0.0). Authority: Living Architecture v1.4 > 07/09 > 02. Additive changes need a minor bump; breaking changes need 2.0.",
+  "$defs": {
+    "PrimitiveDescriptorV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "primitive_id",
+        "class",
+        "authority",
+        "input_schema",
+        "output_schema",
+        "read_set",
+        "write_set",
+        "side_effect_class",
+        "reversibility",
+        "determinism",
+        "idempotency",
+        "evidence_required",
+        "failure_modes"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.PrimitiveDescriptorV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "primitive_id": {
+          "$ref": "common.schema.json#/$defs/PrimitiveId"
+        },
+        "aliases": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]*$"
+          }
+        },
+        "plugin_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "class": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "D",
+              "S",
+              "G",
+              "V",
+              "P",
+              "M",
+              "R"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "authority": {
+          "enum": [
+            "PROPOSE",
+            "DECIDE",
+            "VERIFY",
+            "AUTHORIZE"
+          ]
+        },
+        "default_role": {
+          "anyOf": [
+            {
+              "enum": [
+                "S0",
+                "S1",
+                "S2",
+                "S3"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "input_schema": {
+          "type": "string"
+        },
+        "output_schema": {
+          "type": "string"
+        },
+        "read_set": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ResourceRef"
+          }
+        },
+        "write_set": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ResourceRef"
+          }
+        },
+        "side_effect_class": {
+          "enum": [
+            "NONE",
+            "READ",
+            "WORKSPACE_WRITE",
+            "EXECUTE",
+            "NETWORK",
+            "EXTERNAL_WRITE",
+            "FINANCIAL",
+            "PUBLISH",
+            "PERMISSION_CHANGE"
+          ]
+        },
+        "reversibility": {
+          "enum": [
+            "REVERSIBLE",
+            "COMPENSATABLE",
+            "IRREVERSIBLE"
+          ]
+        },
+        "determinism": {
+          "enum": [
+            "DETERMINISTIC",
+            "PROBABILISTIC",
+            "GENERATIVE"
+          ]
+        },
+        "idempotency": {
+          "enum": [
+            "IDEMPOTENT",
+            "DEDUPLICATED",
+            "NON_IDEMPOTENT"
+          ]
+        },
+        "evidence_required": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "failure_modes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "fallback": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/PrimitiveId"
+          }
+        },
+        "capability_requirements": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/CapabilityId"
+          }
+        },
+        "timeout_ms": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "eval_ref": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "PrimitiveDescriptorV1",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "authority": {
+                "const": "AUTHORIZE"
+              }
+            },
+            "required": [
+              "authority"
+            ]
+          },
+          "then": {
+            "properties": {
+              "class": {
+                "contains": {
+                  "const": "P"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "Only class P may grant authority (L1006-1025)."
+    },
+    "PrimitiveMaturityV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "primitive_id",
+        "stage",
+        "observations",
+        "labels",
+        "active_profile_id",
+        "authority_stage"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.PrimitiveMaturityV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "primitive_id": {
+          "$ref": "common.schema.json#/$defs/PrimitiveId"
+        },
+        "stage": {
+          "enum": [
+            "UNTRAINED",
+            "BOOTSTRAP_L0",
+            "CALIBRATED_L1",
+            "SPECIALIZED_L2",
+            "MONITORED_PRODUCTION",
+            "INVALIDATED"
+          ]
+        },
+        "observations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "labels": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "active_profile_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_fit_at": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "drift_status": {
+          "enum": [
+            "UNKNOWN",
+            "STABLE",
+            "WATCH",
+            "INVALIDATE"
+          ]
+        },
+        "fallback_profile_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "authority_stage": {
+          "enum": [
+            "SHADOW",
+            "AUTO_ACT_REVERSIBLE",
+            "AUTO_ACT_EXPANDED"
+          ]
+        },
+        "calibration_manifest_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "PrimitiveMaturityV1",
+      "$comment": "Q22: authority_stage leaves SHADOW only when the referenced DecisionCalibrationManifestV1.gate.passed is true for this primitive."
+    },
+    "PrimitiveRegistryV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "registry_version",
+        "count",
+        "primitives"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.PrimitiveRegistryV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "registry_version": {
+          "$ref": "common.schema.json#/$defs/SemVer"
+        },
+        "source": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "class_legend": {
+          "type": "object"
+        },
+        "primitives": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "alias",
+              "family",
+              "ledger_rows"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "common.schema.json#/$defs/PrimitiveId"
+              },
+              "alias": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]*$"
+              },
+              "extra_aliases": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Z][A-Z0-9_]*$"
+                }
+              },
+              "family": {
+                "type": "string"
+              },
+              "ledger_rows": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^CL-\\d{3}$"
+                },
+                "minItems": 1
+              },
+              "class": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "enum": [
+                        "D",
+                        "S",
+                        "G",
+                        "V",
+                        "P",
+                        "M",
+                        "R"
+                      ]
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "note": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "PrimitiveRegistryV1"
+    }
+  }
+}

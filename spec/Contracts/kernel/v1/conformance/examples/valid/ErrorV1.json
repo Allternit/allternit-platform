@@ -1,0 +1,6 @@
+{
+  "family": "INPUT",
+  "code": "ERR_EXAMPLE",
+  "message": "x",
+  "retryable": false
+}

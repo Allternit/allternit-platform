@@ -1,0 +1,8 @@
+{
+  "schema_id": "allternit.kernel.ContextVisibilityDecisionV1",
+  "schema_version": "1.0.0",
+  "chunk_id": "id-0001",
+  "visibility": "HIDE",
+  "relevance": 0,
+  "reason_code": "x"
+}

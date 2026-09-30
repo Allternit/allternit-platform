@@ -90,7 +90,7 @@ echo "== pnpm install (gateway + workspace deps)"
 pnpm install --filter subscription-gateway... --reporter=append-only
 
 # 7. Boot the gateway (file keychain — D3/D15 Sessions-machine store). DISPLAY
-#    puts the adapter's Chrome and the login Firefox on the streamed desktop.
+#    puts the adapter's Chrome and the login Chrome on the streamed desktop.
 mkdir -p "$STATE_DIR"
 chmod 700 "$STATE_DIR"
 # Stop a previous gateway. Its command line is `node …/tsx/dist/cli.mjs
@@ -103,12 +103,17 @@ for _ in $(seq 1 20); do
 done
 pkill -9 -f "src/main.ts" 2>/dev/null || true
 cd "$REPO/services/subscription-gateway"
+# Logins run in a plain (non-automated) Google Chrome on the account's own
+# profile: Google sign-in and Cloudflare accept it, where Firefox got
+# challenged. Firefox is only the fallback when Chrome is missing.
+LOGIN_BROWSER="$(command -v google-chrome-stable || command -v google-chrome || echo "$FIREFOX_DIR/firefox")"
+echo "login browser: $LOGIN_BROWSER"
 DISPLAY="$DISPLAY_NUM" \
 SUBS_GATEWAY_STATE_DIR="$STATE_DIR" \
 SUBS_GATEWAY_KEYCHAIN=file \
 SUBS_GATEWAY_TCP=1 \
 SUBS_GATEWAY_TCP_HOST=0.0.0.0 \
-SUBS_GATEWAY_LOGIN_BROWSER="$FIREFOX_DIR/firefox" \
+SUBS_GATEWAY_LOGIN_BROWSER="$LOGIN_BROWSER" \
 setsid nohup ./node_modules/.bin/tsx src/main.ts > "$LOG" 2>&1 < /dev/null &
 echo "gateway pid: $!"
 

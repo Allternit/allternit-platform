@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allternit.com/kernel/1.0.0/verification.schema.json",
+  "title": "Allternit Kernel ABI 1.0.0 — verification",
+  "$comment": "FROZEN 2026-09-30 (ABI Package 1.0.0). Authority: Living Architecture v1.4 > 07/09 > 02. Additive changes need a minor bump; breaking changes need 2.0.",
+  "$defs": {
+    "VerificationRequestV1": {
+      "type": "object",
+      "required": [
+        "envelope",
+        "subject",
+        "verifier",
+        "criteria"
+      ],
+      "properties": {
+        "envelope": {
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/AbiEnvelopeV1"
+            },
+            {
+              "properties": {
+                "schema_id": {
+                  "const": "allternit.kernel.VerificationRequestV1"
+                }
+              }
+            }
+          ]
+        },
+        "subject": {
+          "type": "object",
+          "required": [
+            "kind",
+            "ref"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "ARTIFACT",
+                "MUTATION_RECEIPT",
+                "CLAIM",
+                "COMPLETION_PROPOSAL"
+              ]
+            },
+            "ref": {
+              "$ref": "common.schema.json#/$defs/Id"
+            }
+          },
+          "additionalProperties": false
+        },
+        "verifier": {
+          "enum": [
+            "PARSE",
+            "FORMAT",
+            "LINT",
+            "TYPECHECK",
+            "UNIT_TEST",
+            "INTEGRATION_TEST",
+            "BUILD",
+            "SEMANTIC_RULE",
+            "REQUIREMENT",
+            "SECURITY",
+            "REGRESSION",
+            "DIFF_REVIEW",
+            "HUMAN"
+          ]
+        },
+        "criteria": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "evidence_inputs": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/EvidenceRef"
+          }
+        },
+        "required_confidence": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "VerificationRequestV1"
+    },
+    "VerificationReceiptV1": {
+      "type": "object",
+      "required": [
+        "envelope",
+        "verification_id",
+        "subject_ref",
+        "verifier",
+        "result",
+        "findings",
+        "evidence_refs",
+        "deterministic",
+        "retryable"
+      ],
+      "properties": {
+        "envelope": {
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/AbiEnvelopeV1"
+            },
+            {
+              "properties": {
+                "schema_id": {
+                  "const": "allternit.kernel.VerificationReceiptV1"
+                }
+              }
+            }
+          ]
+        },
+        "verification_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "subject_ref": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "verifier": {
+          "enum": [
+            "PARSE",
+            "FORMAT",
+            "LINT",
+            "TYPECHECK",
+            "UNIT_TEST",
+            "INTEGRATION_TEST",
+            "BUILD",
+            "SEMANTIC_RULE",
+            "REQUIREMENT",
+            "SECURITY",
+            "REGRESSION",
+            "DIFF_REVIEW",
+            "HUMAN"
+          ]
+        },
+        "result": {
+          "enum": [
+            "PASS",
+            "FAIL",
+            "INCONCLUSIVE",
+            "ERROR"
+          ]
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/EvidenceRef"
+          }
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "deterministic": {
+          "type": "boolean"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "generated_followups": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "criteria_results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "criterion_id",
+              "result"
+            ],
+            "properties": {
+              "criterion_id": {
+                "$ref": "common.schema.json#/$defs/Id"
+              },
+              "result": {
+                "enum": [
+                  "PASS",
+                  "FAIL",
+                  "INCONCLUSIVE",
+                  "ERROR"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "VerificationReceiptV1",
+      "$comment": "INCONCLUSIVE is never PASS. Deterministic outranks semantic."
+    }
+  }
+}

@@ -1,0 +1,257 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allternit.com/kernel/1.0.0/mutation.schema.json",
+  "title": "Allternit Kernel ABI 1.0.0 — mutation",
+  "$comment": "FROZEN 2026-09-30 (ABI Package 1.0.0). Authority: Living Architecture v1.4 > 07/09 > 02. Additive changes need a minor bump; breaking changes need 2.0.",
+  "$defs": {
+    "UnifiedDiffV1": {
+      "type": "object",
+      "required": [
+        "format",
+        "diff_ref",
+        "diff_hash",
+        "base_hashes"
+      ],
+      "properties": {
+        "format": {
+          "const": "unified_diff"
+        },
+        "diff_ref": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "diff_hash": {
+          "$ref": "common.schema.json#/$defs/ContentHash"
+        },
+        "base_hashes": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "common.schema.json#/$defs/ContentHash"
+          }
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "$comment": "Q5: the canonical recorded mutation is a unified diff."
+    },
+    "MutationRequestV1": {
+      "type": "object",
+      "required": [
+        "envelope",
+        "target",
+        "mutation_type",
+        "canonical_change",
+        "source_representation",
+        "write_set",
+        "policy_decision_id"
+      ],
+      "properties": {
+        "envelope": {
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/AbiEnvelopeV1"
+            },
+            {
+              "properties": {
+                "schema_id": {
+                  "const": "allternit.kernel.MutationRequestV1"
+                }
+              }
+            }
+          ]
+        },
+        "target": {
+          "$ref": "common.schema.json#/$defs/ResourceRef"
+        },
+        "mutation_type": {
+          "enum": [
+            "CREATE",
+            "DELETE",
+            "MOVE",
+            "RENAME",
+            "REPLACE_RANGE",
+            "REPLACE_SYMBOL",
+            "INSERT_NODE",
+            "DELETE_NODE",
+            "APPLY_PATCH",
+            "CODEMOD"
+          ]
+        },
+        "canonical_change": {
+          "$ref": "#/$defs/UnifiedDiffV1"
+        },
+        "source_representation": {
+          "enum": [
+            "UNIFIED_DIFF",
+            "SEARCH_REPLACE"
+          ]
+        },
+        "source_ref": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expected_base_hash": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/ContentHash"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "write_set": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ResourceRef"
+          },
+          "minItems": 1
+        },
+        "invariants": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rollback_plan": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "policy_decision_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "MutationRequestV1",
+      "$comment": "S2 may emit SEARCH_REPLACE; deterministic S0 compiles + validates it into canonical_change before this request exists. AST mutation is a later backend (not in 1.0.0 enum)."
+    },
+    "MutationReceiptV1": {
+      "type": "object",
+      "required": [
+        "envelope",
+        "mutation_id",
+        "target",
+        "status",
+        "canonical_change",
+        "structural_parse",
+        "state_version_before",
+        "state_version_after"
+      ],
+      "properties": {
+        "envelope": {
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/AbiEnvelopeV1"
+            },
+            {
+              "properties": {
+                "schema_id": {
+                  "const": "allternit.kernel.MutationReceiptV1"
+                }
+              }
+            }
+          ]
+        },
+        "mutation_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "target": {
+          "$ref": "common.schema.json#/$defs/ResourceRef"
+        },
+        "status": {
+          "enum": [
+            "APPLIED",
+            "REJECTED",
+            "ROLLED_BACK",
+            "FAILED"
+          ]
+        },
+        "before_hash": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/ContentHash"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "after_hash": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/ContentHash"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "canonical_change": {
+          "$ref": "#/$defs/UnifiedDiffV1"
+        },
+        "structural_parse": {
+          "enum": [
+            "PASS",
+            "FAIL",
+            "NOT_APPLICABLE"
+          ]
+        },
+        "rollback_ref": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "changed_symbols": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "affected_resources": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ResourceRef"
+          }
+        },
+        "state_version_before": {
+          "$ref": "common.schema.json#/$defs/StateVersion"
+        },
+        "state_version_after": {
+          "$ref": "common.schema.json#/$defs/StateVersion"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "MutationReceiptV1"
+    }
+  }
+}

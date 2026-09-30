@@ -1,0 +1,838 @@
+{
+  "abi": "compute.graph",
+  "version": "1.0",
+  "graph_id": "coding.bug_fix.v1",
+  "graph_type": "BUG_FIX",
+  "entry_node": "normalize_task",
+  "invariants": [
+    "No node may name a concrete model vendor or model ID.",
+    "Mutations require policy authorization and a MutationReceipt.",
+    "Completion requires acceptance evidence; model self-assertion is insufficient.",
+    "Every probabilistic decision exposes confidence and fallback.",
+    "System 3 is escalation, not the default control path."
+  ],
+  "nodes": [
+    {
+      "node_id": "normalize_task",
+      "primitive_id": "obs.normalize_task",
+      "system_level": "S0",
+      "capability_id": null,
+      "read_set": [
+        "request"
+      ],
+      "write_set": [
+        "task"
+      ],
+      "evidence_required": [],
+      "on_failure": {
+        "strategy": "fail",
+        "max_attempts": 0
+      }
+    },
+    {
+      "node_id": "fingerprint_environment",
+      "primitive_id": "obs.fingerprint_environment",
+      "system_level": "S0",
+      "capability_id": null,
+      "read_set": [
+        "workspace"
+      ],
+      "write_set": [
+        "environment"
+      ],
+      "evidence_required": [],
+      "on_failure": {
+        "strategy": "fallback",
+        "target": "minimal_environment",
+        "max_attempts": 1
+      }
+    },
+    {
+      "node_id": "classify_task",
+      "primitive_id": "dec.classify_task",
+      "system_level": "S1",
+      "capability_id": "decision.task_classification",
+      "read_set": [
+        "task",
+        "environment"
+      ],
+      "write_set": [
+        "task.task_type"
+      ],
+      "evidence_required": [
+        "task.intent"
+      ],
+      "on_failure": {
+        "strategy": "fallback",
+        "target": "default_bug_fix",
+        "max_attempts": 1
+      }
+    },
+    {
+      "node_id": "build_repo_map",
+      "primitive_id": "obs.build_repo_map",
+      "system_level": "S0",
+      "capability_id": null,
+      "read_set": [
+        "environment"
+      ],
+      "write_set": [
+        "repo_map"
+      ],
+      "evidence_required": [],
+      "on_failure": {
+        "strategy": "fallback",
+        "target": "lexical_repo_map",
+        "max_attempts": 1
+      }
+    },
+    {
+      "node_id": "rank_files",
+      "primitive_id": "dec.rank_files",
+      "system_level": "S1",
+      "capability_id": "decision.file_ranking",
+      "read_set": [
+        "task",
+        "repo_map"
+      ],
+      "write_set": [
+        "candidate_files"
+      ],
+      "evidence_required": [
+        "repo_map"
+      ],
+      "on_failure": {
+        "strategy": "fallback",
+        "target": "search_files",
+        "max_attempts": 1
+      }
+    },
+    {
+      "node_id": "rank_symbols",
+      "primitive_id": "dec.rank_symbols",
+      "system_level": "S1",
+      "capability_id": "decision.symbol_ranking",
+      "read_set": [
+        "task",
+        "candidate_files",
+        "repo_map"
+      ],
+      "write_set": [
+        "candidate_symbols"
+      ],
+      "evidence_required": [
+        "candidate_files"
+      ],
+      "on_failure": {
+        "strategy": "fallback",
+        "target": "lexical_symbols",
+        "max_attempts": 1
+      }
+    },
+    {
+      "node_id": "compile_context",
+      "primitive_id": "ctx.compile_projection",
+      "system_level": "S0",
+      "capability_id": null,
+      "read_set": [
+        "task",
+        "environment",
+        "candidate_files",
+        "candidate_symbols",
+        "chunk_store"
+      ],
+      "write_set": [
+        "context_projection"
+      ],
+      "evidence_required": [
+        "candidate_symbols"
+      ],
+      "on_failure": {
+        "strategy": "fallback",
+        "target": "minimal_context",
+        "max_attempts": 1
+      }
+    },
+    {
+      "node_id": "generate_hypothesis",
+      "primitive_id": "gen.debug_hypothesis",
+      "system_level": "S2",
+      "capability_id": "reasoning.debug_hypothesis",
+      "read_set": [
+        "task",
+        "context_projection"
+      ],
+      "write_set": [
+        "hypotheses"
+      ],
+      "evidence_required": [
+        "context_projection"
+      ],
+      "on_failure": {
+        "strategy": "escalate",
+        "target": "deep_hypothesis",
+        "max_attempts": 1
+      }
+    },
+    {
+      "node_id": "select_hypothesis",
+      "primitive_id": "dec.rank_hypotheses",
+      "system_level": "S1",
+      "capability_id": "decision.hypothesis_ranking",
+      "read_set": [
+        "hypotheses",
+        "context_projection"
+      ],
+      "write_set": [
+        "selected_hypothesis"
+      ],
+      "evidence_required": [
+        "hypotheses"
+      ],
+      "on_failure": {
+        "strategy": "escalate",
+        "target": "deep_hypothesis",
+        "max_attempts": 0
+      }
+    },
+    {
+      "node_id": "generate_patch",
+      "primitive_id": "gen.code_patch",
+      "system_level": "S2",
+      "capability_id": "code.patch_generation",
+      "read_set": [
+        "task",
+        "selected_hypothesis",
+        "context_projection"
+      ],
+      "write_set": [
+        "candidate_patch"
+      ],
+      "evidence_required": [
+        "selected_hypothesis"
+      ],
+      "on_failure": {
+        "strategy": "escalate",
+        "target": "deep_patch",
+        "max_attempts": 1
+      }
+    },
+    {
+      "node_id": "validate_patch_structure",
+      "primitive_id": "ver.parse_patch",
+      "system_level": "S0",
+      "capability_id": null,
+      "read_set": [
+        "candidate_patch"
+      ],
+      "write_set": [
+        "verification.parse"
+      ],
+      "evidence_required": [
+        "candidate_patch"
+      ],
+      "on_failure": {
+        "strategy": "retry",
+        "target": "generate_patch",
+        "max_attempts": 2
+      }
+    },
+    {
+      "node_id": "authorize_mutation",
+      "primitive_id": "policy.authorize_mutation",
+      "system_level": "S0",
+      "capability_id": null,
+      "read_set": [
+        "task",
+        "candidate_patch",
+        "permissions"
+      ],
+      "write_set": [
+        "policy.mutation"
+      ],
+      "evidence_required": [
+        "verification.parse"
+      ],
+      "on_failure": {
+        "strategy": "fail",
+        "max_attempts": 0
+      }
+    },
+    {
+      "node_id": "apply_patch",
+      "primitive_id": "mut.apply_patch",
+      "system_level": "S0",
+      "capability_id": null,
+      "read_set": [
+        "candidate_patch",
+        "policy.mutation"
+      ],
+      "write_set": [
+        "mutation_receipt",
+        "workspace"
+      ],
+      "evidence_required": [
+        "policy.mutation"
+      ],
+      "on_failure": {
+        "strategy": "rollback",
+        "target": "pre_patch_checkpoint",
+        "max_attempts": 1
+      }
+    },
+    {
+      "node_id": "run_target_tests",
+      "primitive_id": "ver.run_target_tests",
+      "system_level": "S0",
+      "capability_id": null,
+      "read_set": [
+        "workspace",
+        "task",
+        "mutation_receipt"
+      ],
+      "write_set": [
+        "verification.target_tests"
+      ],
+      "evidence_required": [
+        "mutation_receipt"
+      ],
+      "on_failure": {
+        "strategy": "fallback",
+        "target": "classify_failure",
+        "max_attempts": 0
+      }
+    },
+    {
+      "node_id": "classify_failure",
+      "primitive_id": "dec.classify_failure",
+      "system_level": "S1",
+      "capability_id": "decision.error_classification",
+      "read_set": [
+        "verification.target_tests",
+        "workspace"
+      ],
+      "write_set": [
+        "failure_class"
+      ],
+      "evidence_required": [
+        "verification.target_tests"
+      ],
+      "on_failure": {
+        "strategy": "escalate",
+        "target": "deep_repair",
+        "max_attempts": 0
+      }
+    },
+    {
+      "node_id": "repair_patch",
+      "primitive_id": "gen.repair_patch",
+      "system_level": "S2",
+      "capability_id": "code.repair",
+      "read_set": [
+        "failure_class",
+        "verification.target_tests",
+        "context_projection",
+        "mutation_receipt"
+      ],
+      "write_set": [
+        "candidate_patch"
+      ],
+      "evidence_required": [
+        "failure_class"
+      ],
+      "on_failure": {
+        "strategy": "escalate",
+        "target": "deep_repair",
+        "max_attempts": 1
+      }
+    },
+    {
+      "node_id": "run_affected_tests",
+      "primitive_id": "ver.run_affected_tests",
+      "system_level": "S0",
+      "capability_id": null,
+      "read_set": [
+        "workspace",
+        "mutation_receipt",
+        "repo_map"
+      ],
+      "write_set": [
+        "verification.affected_tests"
+      ],
+      "evidence_required": [
+        "verification.target_tests"
+      ],
+      "on_failure": {
+        "strategy": "fallback",
+        "target": "classify_failure",
+        "max_attempts": 0
+      }
+    },
+    {
+      "node_id": "review_diff",
+      "primitive_id": "ver.review_diff",
+      "system_level": "S1",
+      "capability_id": "verification.semantic_diff_review",
+      "read_set": [
+        "task",
+        "mutation_receipt",
+        "verification.target_tests",
+        "verification.affected_tests"
+      ],
+      "write_set": [
+        "verification.diff_review"
+      ],
+      "evidence_required": [
+        "mutation_receipt"
+      ],
+      "on_failure": {
+        "strategy": "escalate",
+        "target": "deep_review",
+        "max_attempts": 0
+      }
+    },
+    {
+      "node_id": "assess_completion",
+      "primitive_id": "dec.assess_completion",
+      "system_level": "S1",
+      "capability_id": "decision.completion_assessment",
+      "read_set": [
+        "task",
+        "verification.target_tests",
+        "verification.affected_tests",
+        "verification.diff_review"
+      ],
+      "write_set": [
+        "completion_assessment"
+      ],
+      "evidence_required": [
+        "verification.target_tests",
+        "verification.affected_tests"
+      ],
+      "on_failure": {
+        "strategy": "escalate",
+        "target": "deep_review",
+        "max_attempts": 0
+      }
+    },
+    {
+      "node_id": "finalize_receipts",
+      "primitive_id": "state.finalize_run_receipt",
+      "system_level": "S0",
+      "capability_id": null,
+      "read_set": [
+        "task",
+        "mutation_receipt",
+        "verification.target_tests",
+        "verification.affected_tests",
+        "verification.diff_review",
+        "completion_assessment"
+      ],
+      "write_set": [
+        "run_receipt"
+      ],
+      "evidence_required": [
+        "completion_assessment"
+      ],
+      "on_failure": {
+        "strategy": "fail",
+        "max_attempts": 0
+      }
+    },
+    {
+      "node_id": "compose_response",
+      "primitive_id": "gen.compose_final_response",
+      "system_level": "S2",
+      "capability_id": "communication.final_response",
+      "read_set": [
+        "task",
+        "run_receipt"
+      ],
+      "write_set": [
+        "final_response"
+      ],
+      "evidence_required": [
+        "run_receipt"
+      ],
+      "on_failure": {
+        "strategy": "fallback",
+        "target": "deterministic_summary",
+        "max_attempts": 1
+      }
+    },
+    {
+      "node_id": "deep_hypothesis",
+      "primitive_id": "gen.deep_hypothesis",
+      "system_level": "S3",
+      "capability_id": "reasoning.deep_debug",
+      "read_set": [
+        "task",
+        "context_projection"
+      ],
+      "write_set": [
+        "hypotheses"
+      ],
+      "evidence_required": [
+        "context_projection"
+      ],
+      "on_failure": {
+        "strategy": "fail",
+        "max_attempts": 0
+      }
+    },
+    {
+      "node_id": "deep_patch",
+      "primitive_id": "gen.deep_patch",
+      "system_level": "S3",
+      "capability_id": "code.deep_repair",
+      "read_set": [
+        "task",
+        "context_projection",
+        "selected_hypothesis"
+      ],
+      "write_set": [
+        "candidate_patch"
+      ],
+      "evidence_required": [
+        "selected_hypothesis"
+      ],
+      "on_failure": {
+        "strategy": "fail",
+        "max_attempts": 0
+      }
+    },
+    {
+      "node_id": "deep_repair",
+      "primitive_id": "gen.deep_repair",
+      "system_level": "S3",
+      "capability_id": "code.deep_repair",
+      "read_set": [
+        "failure_class",
+        "verification.target_tests",
+        "context_projection"
+      ],
+      "write_set": [
+        "candidate_patch"
+      ],
+      "evidence_required": [
+        "failure_class"
+      ],
+      "on_failure": {
+        "strategy": "fail",
+        "max_attempts": 0
+      }
+    },
+    {
+      "node_id": "deep_review",
+      "primitive_id": "ver.deep_review",
+      "system_level": "S3",
+      "capability_id": "verification.deep_review",
+      "read_set": [
+        "task",
+        "workspace",
+        "mutation_receipt"
+      ],
+      "write_set": [
+        "verification.diff_review",
+        "completion_assessment"
+      ],
+      "evidence_required": [
+        "mutation_receipt"
+      ],
+      "on_failure": {
+        "strategy": "fail",
+        "max_attempts": 0
+      }
+    },
+    {
+      "node_id": "minimal_environment",
+      "primitive_id": "obs.minimal_environment",
+      "system_level": "S0",
+      "capability_id": null,
+      "read_set": [
+        "request"
+      ],
+      "write_set": [
+        "environment"
+      ],
+      "evidence_required": [],
+      "on_failure": {
+        "strategy": "fail",
+        "max_attempts": 0
+      }
+    },
+    {
+      "node_id": "default_bug_fix",
+      "primitive_id": "state.default_bug_fix",
+      "system_level": "S0",
+      "capability_id": null,
+      "read_set": [
+        "task"
+      ],
+      "write_set": [
+        "task.task_type"
+      ],
+      "evidence_required": [],
+      "on_failure": {
+        "strategy": "fail",
+        "max_attempts": 0
+      }
+    },
+    {
+      "node_id": "lexical_repo_map",
+      "primitive_id": "obs.lexical_repo_map",
+      "system_level": "S0",
+      "capability_id": null,
+      "read_set": [
+        "environment.repo_root"
+      ],
+      "write_set": [
+        "repo_map"
+      ],
+      "evidence_required": [],
+      "on_failure": {
+        "strategy": "fail",
+        "max_attempts": 0
+      }
+    },
+    {
+      "node_id": "search_files",
+      "primitive_id": "obs.search_files",
+      "system_level": "S0",
+      "capability_id": null,
+      "read_set": [
+        "repo_map",
+        "task"
+      ],
+      "write_set": [
+        "candidate_files"
+      ],
+      "evidence_required": [],
+      "on_failure": {
+        "strategy": "fail",
+        "max_attempts": 0
+      }
+    },
+    {
+      "node_id": "lexical_symbols",
+      "primitive_id": "obs.lexical_symbols",
+      "system_level": "S0",
+      "capability_id": null,
+      "read_set": [
+        "candidate_files"
+      ],
+      "write_set": [
+        "candidate_symbols"
+      ],
+      "evidence_required": [],
+      "on_failure": {
+        "strategy": "fail",
+        "max_attempts": 0
+      }
+    },
+    {
+      "node_id": "minimal_context",
+      "primitive_id": "ctx.minimal_projection",
+      "system_level": "S0",
+      "capability_id": null,
+      "read_set": [
+        "task",
+        "candidate_files",
+        "candidate_symbols"
+      ],
+      "write_set": [
+        "context_projection"
+      ],
+      "evidence_required": [],
+      "on_failure": {
+        "strategy": "fail",
+        "max_attempts": 0
+      }
+    },
+    {
+      "node_id": "pre_patch_checkpoint",
+      "primitive_id": "state.rollback_checkpoint",
+      "system_level": "S0",
+      "capability_id": null,
+      "read_set": [
+        "mutations",
+        "graph"
+      ],
+      "write_set": [
+        "mutations",
+        "graph"
+      ],
+      "evidence_required": [],
+      "on_failure": {
+        "strategy": "fail",
+        "max_attempts": 0
+      }
+    },
+    {
+      "node_id": "deterministic_summary",
+      "primitive_id": "state.compose_deterministic_summary",
+      "system_level": "S0",
+      "capability_id": null,
+      "read_set": [
+        "task",
+        "verifications",
+        "mutations",
+        "evidence"
+      ],
+      "write_set": [
+        "final_response"
+      ],
+      "evidence_required": [],
+      "on_failure": {
+        "strategy": "fail",
+        "max_attempts": 0
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "normalize_task",
+      "to": "fingerprint_environment"
+    },
+    {
+      "from": "fingerprint_environment",
+      "to": "classify_task"
+    },
+    {
+      "from": "classify_task",
+      "to": "build_repo_map"
+    },
+    {
+      "from": "build_repo_map",
+      "to": "rank_files"
+    },
+    {
+      "from": "rank_files",
+      "to": "rank_symbols"
+    },
+    {
+      "from": "rank_symbols",
+      "to": "compile_context"
+    },
+    {
+      "from": "compile_context",
+      "to": "generate_hypothesis"
+    },
+    {
+      "from": "generate_hypothesis",
+      "to": "select_hypothesis"
+    },
+    {
+      "from": "select_hypothesis",
+      "to": "generate_patch"
+    },
+    {
+      "from": "generate_patch",
+      "to": "validate_patch_structure"
+    },
+    {
+      "from": "validate_patch_structure",
+      "to": "authorize_mutation",
+      "condition": "parse_pass"
+    },
+    {
+      "from": "authorize_mutation",
+      "to": "apply_patch",
+      "condition": "allow"
+    },
+    {
+      "from": "apply_patch",
+      "to": "run_target_tests"
+    },
+    {
+      "from": "run_target_tests",
+      "to": "run_affected_tests",
+      "condition": "pass"
+    },
+    {
+      "from": "run_target_tests",
+      "to": "classify_failure",
+      "condition": "fail"
+    },
+    {
+      "from": "classify_failure",
+      "to": "repair_patch"
+    },
+    {
+      "from": "repair_patch",
+      "to": "validate_patch_structure"
+    },
+    {
+      "from": "run_affected_tests",
+      "to": "review_diff",
+      "condition": "pass"
+    },
+    {
+      "from": "run_affected_tests",
+      "to": "classify_failure",
+      "condition": "fail"
+    },
+    {
+      "from": "review_diff",
+      "to": "assess_completion"
+    },
+    {
+      "from": "assess_completion",
+      "to": "finalize_receipts",
+      "condition": "complete"
+    },
+    {
+      "from": "assess_completion",
+      "to": "classify_failure",
+      "condition": "incomplete_repairable"
+    },
+    {
+      "from": "finalize_receipts",
+      "to": "compose_response"
+    },
+    {
+      "from": "deep_hypothesis",
+      "to": "select_hypothesis"
+    },
+    {
+      "from": "deep_patch",
+      "to": "validate_patch_structure"
+    },
+    {
+      "from": "deep_repair",
+      "to": "validate_patch_structure"
+    },
+    {
+      "from": "deep_review",
+      "to": "finalize_receipts"
+    },
+    {
+      "from": "minimal_environment",
+      "to": "classify_task"
+    },
+    {
+      "from": "default_bug_fix",
+      "to": "build_repo_map"
+    },
+    {
+      "from": "lexical_repo_map",
+      "to": "rank_files"
+    },
+    {
+      "from": "search_files",
+      "to": "rank_symbols"
+    },
+    {
+      "from": "lexical_symbols",
+      "to": "compile_context"
+    },
+    {
+      "from": "minimal_context",
+      "to": "generate_hypothesis"
+    },
+    {
+      "from": "pre_patch_checkpoint",
+      "to": "classify_failure"
+    }
+  ]
+}

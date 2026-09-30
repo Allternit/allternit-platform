@@ -1,6 +1,7 @@
 // Settings › Subscriptions hub: providers, per-state user actions, one-step
 // add + login, the login watcher that finishes a sign-in by itself, cancel,
 // and remove. Fakes only — no browser, no provider.
+import { firefoxProfileFor } from "../src/worker/login_browser.js";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import request from "supertest";
@@ -68,6 +69,8 @@ describe("subscriptions hub", () => {
     } as unknown as WorkerPool;
     let open = false;
     const loginBrowser: LoginBrowser = {
+      profileFor: firefoxProfileFor,
+      readCookies: () => [],
       open: async () => {
         calls.push("open");
         open = true;
@@ -103,6 +106,14 @@ describe("subscriptions hub", () => {
     expect(byId[provider]).toMatchObject({ supported: true, login_supported: true });
     expect(byId.claude).toMatchObject({ name: "Claude", supported: false, login_supported: false });
     expect(byId.kimi).toMatchObject({ name: "Kimi", supported: false });
+  });
+
+  it("add refuses a provider no adapter is loaded for; nothing is created", async () => {
+    const { api } = setup();
+    const res = await api("post", "/v1/accounts").send({ provider: "nonexistent-probe" });
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ error: "unknown_provider", provider: "nonexistent-probe" });
+    expect((await api("get", "/v1/accounts")).body).toEqual([]);
   });
 
   it("one-step add opens the login; the watcher finishes the sign-in by itself", async () => {

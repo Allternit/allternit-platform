@@ -88,7 +88,11 @@ export interface AccountsRouterOptions {
 
 export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = {}): Router {
   const router = Router();
-  const readCookies = opts.readLoginCookies ?? ((profile: string) => readFirefoxCookies(profile));
+  const readCookies =
+    opts.readLoginCookies ??
+    ((profile: string) => (deps.loginBrowser ? deps.loginBrowser.readCookies(profile) : readFirefoxCookies(profile)));
+  const loginProfileFor = (userDataDir: string) =>
+    deps.loginBrowser ? deps.loginBrowser.profileFor(userDataDir) : firefoxProfileFor(userDataDir);
   const logins = new Map<string, LoginSession>();
 
   const manifestFor = (provider: string) =>
@@ -101,7 +105,7 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
     const names = manifest?.auth.session_cookies ?? [];
     if (!deps.pool || names.length === 0) return out;
     const host = new URL(manifest!.origins[0]).hostname;
-    const profile = firefoxProfileFor(deps.pool.userDataDirFor(account.profile_ref));
+    const profile = loginProfileFor(deps.pool.userDataDirFor(account.profile_ref));
     for (const c of readCookies(profile)) {
       const domain = c.domain.replace(/^\./, "");
       if (!(host === domain || host.endsWith(`.${domain}`))) continue;
@@ -127,7 +131,7 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
     s.timer = null;
   };
 
-  // Login done: close Firefox so cookies.sqlite is flushed, relaunch the
+  // Login done: close the login browser so its cookie store is flushed, relaunch the
   // adapter's Chrome (it imports the new session) and probe.
   const finishLogin = async (account: Account, s: LoginSession) => {
     s.finishing = true;
@@ -172,7 +176,7 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
     try {
       now = sessionCookies(account);
     } catch {
-      return; // Firefox mid-write; next tick
+      return; // cookie store mid-write; next tick
     }
     const signedIn = [...now].some(([name, value]) => s.baseline.get(name) !== value);
     if (signedIn) await finishLogin(account, s);
@@ -254,6 +258,13 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
     const parsed = connectSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: "invalid_account", detail: parsed.error.issues });
+      return;
+    }
+    // Only providers an adapter is loaded for: an unknown one would sit as a
+    // dead auth_required row nothing can ever sign in to.
+    const adapters = deps.adapterRegistry?.adapters;
+    if (adapters && !adapters.some((a) => a.manifest.provider === parsed.data.provider)) {
+      res.status(400).json({ error: "unknown_provider", provider: parsed.data.provider });
       return;
     }
     const caller = callerOf(req);
@@ -349,10 +360,11 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
   );
 
   // Login mode: providers that sign in through Google refuse automated
-  // Chrome, so the human signs in inside a plain Firefox window on the
-  // account's own Firefox profile. The adapter's Chrome is closed so the next
-  // connect relaunches it and imports the new session. Never automates the
-  // login itself and never sees credentials.
+  // Chrome, so the human signs in inside a plain, non-automated browser
+  // window (Chrome on the account's own profile; Firefox on a side profile
+  // whose session is imported). The adapter's Chrome is closed so the next
+  // connect relaunches it with the new session. Never automates the login
+  // itself and never sees credentials.
   router.post(
     "/v1/accounts/:id/login",
     requireScope("accounts:manage"),
@@ -369,7 +381,7 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
       if (!deps.pool || !deps.loginBrowser) {
         res.status(501).json({
           error: "login_browser_unavailable",
-          detail: "no login browser configured (install Firefox or set SUBS_GATEWAY_LOGIN_BROWSER)",
+          detail: "no login browser configured (install Google Chrome or set SUBS_GATEWAY_LOGIN_BROWSER)",
         });
         return;
       }
@@ -383,8 +395,7 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
       res.json({
         account_id: account.account_id,
         status: "login_window_open",
-        browser: "firefox",
-        next: `Sign in in the Firefox window; the gateway connects by itself (or POST /v1/accounts/${account.account_id}/connect)`,
+        next: `Sign in in the login window; the gateway connects by itself (or POST /v1/accounts/${account.account_id}/connect)`,
         ...loginState(account.account_id),
       });
     }

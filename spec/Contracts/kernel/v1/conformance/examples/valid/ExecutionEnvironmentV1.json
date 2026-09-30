@@ -1,0 +1,11 @@
+{
+  "schema_id": "allternit.kernel.ExecutionEnvironmentV1",
+  "schema_version": "1.0.0",
+  "environment_id": "id-0001",
+  "allowed_env_keys": [],
+  "secret_refs": [],
+  "cwd": "x",
+  "tmp_scope": "x",
+  "filesystem_scope": [],
+  "inherit_process_env": false
+}

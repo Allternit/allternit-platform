@@ -1,0 +1,298 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allternit.com/kernel/1.0.0/context.schema.json",
+  "title": "Allternit Kernel ABI 1.0.0 — context",
+  "$comment": "FROZEN 2026-09-30 (ABI Package 1.0.0). Authority: Living Architecture v1.4 > 07/09 > 02. Additive changes need a minor bump; breaking changes need 2.0.",
+  "$defs": {
+    "ContextChunkV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "chunk_id",
+        "kind",
+        "content_ref",
+        "source_ref",
+        "trust_class",
+        "sensitivity",
+        "created_at",
+        "content_hash"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.ContextChunkV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "chunk_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "kind": {
+          "enum": [
+            "USER_TURN",
+            "FILE",
+            "SYMBOL",
+            "TOOL_INPUT",
+            "TOOL_OUTPUT",
+            "DIAGNOSTIC",
+            "PLAN",
+            "INSTRUCTION",
+            "DIFF",
+            "SUMMARY",
+            "RECEIPT",
+            "MEMORY",
+            "OTHER"
+          ]
+        },
+        "content_ref": {
+          "type": "string"
+        },
+        "content_hash": {
+          "$ref": "common.schema.json#/$defs/ContentHash"
+        },
+        "source_ref": {
+          "$ref": "common.schema.json#/$defs/Provenance"
+        },
+        "trust_class": {
+          "$ref": "common.schema.json#/$defs/TrustClass"
+        },
+        "sensitivity": {
+          "$ref": "common.schema.json#/$defs/SensitivityClass"
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "supersedes": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "pinned_conditions": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "freshness": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dependency_distance": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "token_estimates": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "$comment": "Keyed by tokenizer family id (logical), not vendor."
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "ContextChunkV1"
+    },
+    "ContextVisibilityDecisionV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "chunk_id",
+        "visibility",
+        "relevance",
+        "reason_code"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.ContextVisibilityDecisionV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "chunk_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "visibility": {
+          "enum": [
+            "HIDE",
+            "SHORT",
+            "LONG",
+            "FULL"
+          ]
+        },
+        "relevance": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "reason_code": {
+          "type": "string"
+        },
+        "compression_method": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence_pointers": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "estimated_tokens": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "assembly_order": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "ContextVisibilityDecisionV1"
+    },
+    "ContextProjectionV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "projection_id",
+        "target_capability",
+        "selected",
+        "compiled_tokens_estimate",
+        "context_fingerprint"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.ContextProjectionV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "projection_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "target_capability": {
+          "$ref": "common.schema.json#/$defs/CapabilityId"
+        },
+        "target_model_family": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "selected": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContextVisibilityDecisionV1"
+          }
+        },
+        "compiled_tokens_estimate": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "budget_tokens": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "instruction_fragments": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "retrieval_snapshot_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "context_fingerprint": {
+          "$ref": "common.schema.json#/$defs/ContentHash"
+        },
+        "cache_strategy": {
+          "anyOf": [
+            {
+              "enum": [
+                "REUSE",
+                "EXTEND",
+                "REBUILD",
+                "SEMANTIC_RECONSTRUCT"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "ContextProjectionV1",
+      "$comment": "ContextPack is an alias of this contract (09 B#30). HIDE != delete."
+    }
+  }
+}

@@ -1,0 +1,73 @@
+[
+ {
+  "schema_id": "allternit.kernel.CompletionCriterionV1",
+  "schema_version": "1.0.0",
+  "criterion_id": "target_tests_pass",
+  "criterion_version": 1,
+  "verifier_kind": "unit_test",
+  "verifier_semantics": "The test(s) reproducing the reported bug fail before the change and pass after it, run by the deterministic verifier.",
+  "evidence_kinds": [
+   "verification_receipt"
+  ],
+  "built_in": true,
+  "deprecated": false,
+  "blocking_default": true
+ },
+ {
+  "schema_id": "allternit.kernel.CompletionCriterionV1",
+  "schema_version": "1.0.0",
+  "criterion_id": "affected_tests_pass",
+  "criterion_version": 1,
+  "verifier_kind": "unit_test",
+  "verifier_semantics": "Every test selected by ver.select_affected_tests/dec.select_affected_tests passes on the post-change tree.",
+  "evidence_kinds": [
+   "verification_receipt"
+  ],
+  "built_in": true,
+  "deprecated": false,
+  "blocking_default": true
+ },
+ {
+  "schema_id": "allternit.kernel.CompletionCriterionV1",
+  "schema_version": "1.0.0",
+  "criterion_id": "no_new_regressions",
+  "criterion_version": 1,
+  "verifier_kind": "regression",
+  "verifier_semantics": "No test that passed on the base commit fails after the change (base vs head comparison over the affected set).",
+  "evidence_kinds": [
+   "verification_receipt"
+  ],
+  "built_in": true,
+  "deprecated": false,
+  "blocking_default": true
+ },
+ {
+  "schema_id": "allternit.kernel.CompletionCriterionV1",
+  "schema_version": "1.0.0",
+  "criterion_id": "diff_review_accept",
+  "criterion_version": 1,
+  "verifier_kind": "diff_review",
+  "verifier_semantics": "Diff review returns PASS; INCONCLUSIVE or ERROR is not PASS.",
+  "evidence_kinds": [
+   "verification_receipt"
+  ],
+  "built_in": true,
+  "deprecated": false,
+  "blocking_default": true
+ },
+ {
+  "schema_id": "allternit.kernel.CompletionCriterionV1",
+  "schema_version": "1.0.0",
+  "criterion_id": "requirements_satisfied",
+  "criterion_version": 1,
+  "verifier_kind": "requirement",
+  "verifier_semantics": "Each required acceptance criterion has PASS evidence (100% coverage of required criteria, L1448-1453).",
+  "evidence_kinds": [
+   "verification_receipt",
+   "evidence_ref"
+  ],
+  "built_in": true,
+  "deprecated": false,
+  "blocking_default": true
+ }
+]

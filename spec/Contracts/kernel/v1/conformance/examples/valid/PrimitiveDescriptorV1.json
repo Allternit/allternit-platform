@@ -1,0 +1,19 @@
+{
+  "schema_id": "allternit.kernel.PrimitiveDescriptorV1",
+  "schema_version": "1.0.0",
+  "primitive_id": "obs.observe_environment",
+  "class": [
+    "D"
+  ],
+  "authority": "PROPOSE",
+  "input_schema": "x",
+  "output_schema": "x",
+  "read_set": [],
+  "write_set": [],
+  "side_effect_class": "NONE",
+  "reversibility": "REVERSIBLE",
+  "determinism": "DETERMINISTIC",
+  "idempotency": "IDEMPOTENT",
+  "evidence_required": [],
+  "failure_modes": []
+}

@@ -30,8 +30,9 @@ export interface Config {
   stallTimeouts: { defaultS: number; byCapability: Record<string, number> };
   // Base URL of the local allternit-api (CommRails peer messages, D12).
   apiBase: string;
-  // Login mode browser (plain, non-automated Firefox). null → auto-detect at
-  // boot; unset and undetected → POST /v1/accounts/:id/login answers 501.
+  // Login mode browser (plain, non-automated Google Chrome; Firefox still
+  // works when set explicitly). null → auto-detect at boot; unset and
+  // undetected → POST /v1/accounts/:id/login answers 501.
   // Env: SUBS_GATEWAY_LOGIN_BROWSER.
   loginBrowser: string | null;
   // Image-chat history policy: image tasks run in this provider project
@@ -43,10 +44,14 @@ export interface Config {
 
 const ENV_PREFIX = "SUBS_GATEWAY_";
 
-// Sessions machines install Firefox to /opt/firefox (sessions-setup.sh);
-// desktops usually have it on PATH or in /Applications.
-function detectFirefox(): string | null {
+// Google Chrome first (Sessions machines ship it for the adapter; Google
+// sign-in and Cloudflare accept a plain Chrome window), then Firefox.
+function detectLoginBrowser(): string | null {
   const candidates = [
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/google-chrome",
+    "/opt/google/chrome/chrome",
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "/opt/firefox/firefox",
     "/usr/bin/firefox",
     "/Applications/Firefox.app/Contents/MacOS/firefox",
@@ -144,7 +149,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     policy,
     stallTimeouts: stallTimeoutsFromPolicy(policy),
     apiBase: env[`${ENV_PREFIX}API_BASE`] ?? "http://127.0.0.1:18013",
-    loginBrowser: env[`${ENV_PREFIX}LOGIN_BROWSER`] ?? detectFirefox(),
+    loginBrowser: env[`${ENV_PREFIX}LOGIN_BROWSER`] ?? detectLoginBrowser(),
     imageChats: {
       project: (env[`${ENV_PREFIX}IMAGE_PROJECT`] ?? "Allternit").trim() || null,
       max: positiveInt(env[`${ENV_PREFIX}IMAGE_CHAT_MAX`], 20, `${ENV_PREFIX}IMAGE_CHAT_MAX`),

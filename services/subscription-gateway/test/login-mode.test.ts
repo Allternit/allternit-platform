@@ -11,6 +11,7 @@ import type { AdapterRegistry } from "../src/adapters/registry.js";
 import { issueToken } from "../src/security/tokens.js";
 import { upsertAccount } from "../src/store/queries.js";
 import {
+  createChromeLoginBrowser,
   createFirefoxLoginBrowser,
   firefoxProfileFor,
   importFirefoxSessionIfNewer,
@@ -136,6 +137,29 @@ describe("createFirefoxLoginBrowser", () => {
     expect(signals).toEqual(["SIGTERM"]);
     expect(lb.isOpen("acct-1")).toBe(false);
   });
+
+  it("Chrome login browser: plain Chrome on the account's own profile, no automation flags", async () => {
+    const spawned: Array<{ exe: string; args: string[] }> = [];
+    const spawnFn = ((exe: string, args: string[]) => {
+      spawned.push({ exe, args });
+      const child = new EventEmitter() as EventEmitter & { kill: (s: string) => boolean };
+      child.kill = () => {
+        setImmediate(() => child.emit("exit", 0));
+        return true;
+      };
+      return child;
+    }) as unknown as typeof import("node:child_process").spawn;
+    const lb = createChromeLoginBrowser({ executable: "/usr/bin/google-chrome-stable", spawnFn });
+    const userDataDir = join(dir, "profiles", "acct-1");
+    expect(lb.profileFor(userDataDir)).toBe(userDataDir);
+    await lb.open("acct-1", userDataDir, "https://claude.ai/");
+    expect(spawned[0].args).toContain(`--user-data-dir=${userDataDir}`);
+    expect(spawned[0].args).toContain("--password-store=basic");
+    expect(spawned[0].args.at(-1)).toBe("https://claude.ai/");
+    expect(spawned[0].args.join(" ")).not.toMatch(/remote-debugging|enable-automation|headless/);
+    await lb.close("acct-1");
+    expect(lb.isOpen("acct-1")).toBe(false);
+  });
 });
 
 describe("POST /v1/accounts/:id/login + connect", () => {
@@ -154,6 +178,8 @@ describe("POST /v1/accounts/:id/login + connect", () => {
     } as unknown as WorkerPool;
     let open = false;
     const loginBrowser: LoginBrowser = {
+      profileFor: firefoxProfileFor,
+      readCookies: () => [],
       open: async (id, udd, url) => {
         calls.push(`open:${id}:${udd.endsWith("profiles/acct-1")}:${url}`);
         open = true;

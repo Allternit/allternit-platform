@@ -1,0 +1,1111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allternit.com/kernel/1.0.0/receipts.schema.json",
+  "title": "Allternit Kernel ABI 1.0.0 — receipts",
+  "$comment": "FROZEN 2026-09-30 (ABI Package 1.0.0). Authority: Living Architecture v1.4 > 07/09 > 02. Additive changes need a minor bump; breaking changes need 2.0.",
+  "$defs": {
+    "ReceiptSignature": {
+      "type": "object",
+      "required": [
+        "alg",
+        "key_id",
+        "value",
+        "domain"
+      ],
+      "properties": {
+        "alg": {
+          "const": "ed25519"
+        },
+        "key_id": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        },
+        "domain": {
+          "const": "allternit.receipt.v1"
+        },
+        "jwks_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ReceiptChainV1": {
+      "type": "object",
+      "required": [
+        "receipt_id",
+        "run_id",
+        "index",
+        "prev_hash",
+        "content_hash",
+        "schema_id",
+        "schema_version",
+        "domain",
+        "canonicalization"
+      ],
+      "properties": {
+        "receipt_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "prev_hash": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/ContentHash"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "content_hash": {
+          "$ref": "common.schema.json#/$defs/ContentHash"
+        },
+        "schema_id": {
+          "type": "string",
+          "pattern": "^allternit\\.kernel\\.[A-Za-z]+V\\d+$"
+        },
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/SemVer"
+        },
+        "domain": {
+          "const": "allternit.receipt.v1"
+        },
+        "canonicalization": {
+          "const": "RFC8785-JCS"
+        },
+        "signature": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReceiptSignature"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "supersedes": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "idempotency_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "index": {
+                "const": 0
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "prev_hash": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "index": {
+                "minimum": 1
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "prev_hash": {
+                "$ref": "common.schema.json#/$defs/ContentHash"
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "Q14: content_hash = SHA-256 over RFC 8785 JCS of the receipt minus content_hash/signature. Signed material = JCS {schema_id, schema_version, domain, content_hash}; Ed25519; keys via JWKS. Append-only; corrections append with supersedes."
+    },
+    "ActionReceiptV1": {
+      "type": "object",
+      "required": [
+        "envelope",
+        "chain",
+        "action_id",
+        "effect_class",
+        "idempotency_key",
+        "status",
+        "policy_decision_id"
+      ],
+      "properties": {
+        "envelope": {
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/AbiEnvelopeV1"
+            },
+            {
+              "properties": {
+                "schema_id": {
+                  "const": "allternit.kernel.ActionReceiptV1"
+                }
+              }
+            }
+          ]
+        },
+        "chain": {
+          "$ref": "#/$defs/ReceiptChainV1"
+        },
+        "action_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "effect_class": {
+          "enum": [
+            "NONE",
+            "READ",
+            "WORKSPACE_WRITE",
+            "EXECUTE",
+            "NETWORK",
+            "EXTERNAL_WRITE",
+            "FINANCIAL",
+            "PUBLISH",
+            "PERMISSION_CHANGE"
+          ]
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 8
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "enum": [
+            "INTENDED",
+            "COMMITTED",
+            "FAILED",
+            "COMPENSATED",
+            "UNKNOWN"
+          ]
+        },
+        "policy_decision_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "tool_receipt_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "external_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result_hash": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/ContentHash"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "ActionReceiptV1",
+      "$comment": "Written durably (status INTENDED) before an external effect; required before any retry."
+    },
+    "PolicyReceiptV1": {
+      "type": "object",
+      "required": [
+        "envelope",
+        "chain",
+        "check_id",
+        "decision_id",
+        "decision",
+        "precedence",
+        "reason_codes",
+        "evaluated_rules"
+      ],
+      "properties": {
+        "envelope": {
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/AbiEnvelopeV1"
+            },
+            {
+              "properties": {
+                "schema_id": {
+                  "const": "allternit.kernel.PolicyReceiptV1"
+                }
+              }
+            }
+          ]
+        },
+        "chain": {
+          "$ref": "#/$defs/ReceiptChainV1"
+        },
+        "check_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "decision_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "decision": {
+          "enum": [
+            "ALLOW",
+            "ALLOW_WITH_LIMITS",
+            "ASK",
+            "DENY"
+          ]
+        },
+        "precedence": {
+          "enum": [
+            "HARD_DENY",
+            "HARD_ALLOW",
+            "SOFT",
+            "COGNITIVE",
+            "FAIL_CLOSED"
+          ]
+        },
+        "reason_codes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evaluated_rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "rule_id",
+              "outcome"
+            ],
+            "properties": {
+              "rule_id": {
+                "$ref": "common.schema.json#/$defs/Id"
+              },
+              "rule_version": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "outcome": {
+                "enum": [
+                  "MATCH",
+                  "NO_MATCH",
+                  "ERROR"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "judge_ref": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "grant_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "attention_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "PolicyReceiptV1"
+    },
+    "SpawnReceiptV1": {
+      "type": "object",
+      "required": [
+        "envelope",
+        "chain",
+        "spawn_id",
+        "executor_class",
+        "admission_decision_id",
+        "lease_id",
+        "environment_id",
+        "authority_profile"
+      ],
+      "properties": {
+        "envelope": {
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/AbiEnvelopeV1"
+            },
+            {
+              "properties": {
+                "schema_id": {
+                  "const": "allternit.kernel.SpawnReceiptV1"
+                }
+              }
+            }
+          ]
+        },
+        "chain": {
+          "$ref": "#/$defs/ReceiptChainV1"
+        },
+        "spawn_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "parent_node_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executor_class": {
+          "type": "string",
+          "$comment": "Logical executor class, never a vendor CLI name."
+        },
+        "admission_decision_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "lease_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "environment_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "network_policy_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "authority_profile": {
+          "enum": [
+            "read-only",
+            "code-safe",
+            "code-write"
+          ]
+        },
+        "policy_gate_injected": {
+          "const": true
+        },
+        "process_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "subgoal_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "SpawnReceiptV1",
+      "$comment": "policy_gate_injected const true: no unattended executor bypasses policy even if its native CLI is in bypass mode."
+    },
+    "RunReceiptV1": {
+      "type": "object",
+      "required": [
+        "envelope",
+        "chain",
+        "task_id",
+        "final_state_version",
+        "final_work_state_version",
+        "completion_status",
+        "completion_decision_id",
+        "acceptance_results",
+        "replay_fingerprint",
+        "retries",
+        "implementation_resolution",
+        "router_telemetry"
+      ],
+      "properties": {
+        "envelope": {
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/AbiEnvelopeV1"
+            },
+            {
+              "properties": {
+                "schema_id": {
+                  "const": "allternit.kernel.RunReceiptV1"
+                }
+              }
+            }
+          ]
+        },
+        "chain": {
+          "$ref": "#/$defs/ReceiptChainV1"
+        },
+        "task_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "graph_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "final_state_version": {
+          "$ref": "common.schema.json#/$defs/StateVersion"
+        },
+        "final_work_state_version": {
+          "$ref": "common.schema.json#/$defs/StateVersion"
+        },
+        "completion_status": {
+          "enum": [
+            "COMPLETE",
+            "PARTIAL",
+            "FAILED",
+            "CANCELLED",
+            "WAITING_APPROVAL"
+          ]
+        },
+        "completion_decision_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "acceptance_results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "criterion_id",
+              "satisfied"
+            ],
+            "properties": {
+              "criterion_id": {
+                "$ref": "common.schema.json#/$defs/Id"
+              },
+              "satisfied": {
+                "type": "boolean"
+              },
+              "evidence_refs": {
+                "type": "array",
+                "items": {
+                  "$ref": "common.schema.json#/$defs/EvidenceRef"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "mutation_receipts": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "verification_receipts": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "tool_receipts": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "policy_receipts": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "action_receipts": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "models_used": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ComponentIdentity"
+          }
+        },
+        "total_cost_units": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "total_latency_ms": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unresolved_items": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "user_result_ref": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "replay_fingerprint": {
+          "$ref": "common.schema.json#/$defs/ContentHash"
+        },
+        "retries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "implementation_resolution": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "node_id",
+              "backend_id",
+              "execution_mode"
+            ],
+            "properties": {
+              "node_id": {
+                "$ref": "common.schema.json#/$defs/Id"
+              },
+              "backend_id": {
+                "$ref": "common.schema.json#/$defs/Id"
+              },
+              "execution_mode": {
+                "enum": [
+                  "M0.DETERMINISTIC",
+                  "M1.LOGIT_READOUT",
+                  "M2.CALIBRATED_READOUT",
+                  "M3.HIDDEN_HEAD",
+                  "M4.DEDICATED_DECIDER",
+                  "M5.GENERATIVE",
+                  "M6.DEEP_SOLVER"
+                ]
+              },
+              "calibration_level": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "RAW",
+                      "L0",
+                      "L1",
+                      "L2"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "layer_stop": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "router_telemetry": {
+          "type": "object",
+          "required": [],
+          "properties": {
+            "context_build_tokens": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "prefill_tokens": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "transfer_latency_ms": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "effective_route_cost": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reuse_mode": {
+              "anyOf": [
+                {
+                  "$ref": "state_transfer.schema.json#/$defs/TransferMode"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "provider_trust_class": {
+              "anyOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/TrustClass"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "RunReceiptV1",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "completion_status": {
+                "enum": [
+                  "COMPLETE",
+                  "PARTIAL"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "completion_decision_id": {
+                "$ref": "common.schema.json#/$defs/Id"
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "COMPLETE/PARTIAL require a system CompletionDecisionV1. PARTIAL only when the completion policy has allow_partial (Q7)."
+    },
+    "TraceEventV1": {
+      "type": "object",
+      "required": [
+        "envelope",
+        "event_type",
+        "status"
+      ],
+      "properties": {
+        "envelope": {
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/AbiEnvelopeV1"
+            },
+            {
+              "properties": {
+                "schema_id": {
+                  "const": "allternit.kernel.TraceEventV1"
+                }
+              }
+            }
+          ]
+        },
+        "event_type": {
+          "type": "string"
+        },
+        "primitive_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/PrimitiveId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "capability_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/CapabilityId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "backend_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model_ref": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tool_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cognitive_role": {
+          "anyOf": [
+            {
+              "enum": [
+                "S0",
+                "S1",
+                "S2",
+                "S3"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "execution_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "M0.DETERMINISTIC",
+                "M1.LOGIT_READOUT",
+                "M2.CALIBRATED_READOUT",
+                "M3.HIDDEN_HEAD",
+                "M4.DEDICATED_DECIDER",
+                "M5.GENERATIVE",
+                "M6.DEEP_SOLVER"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "calibration_level": {
+          "anyOf": [
+            {
+              "enum": [
+                "RAW",
+                "L0",
+                "L1",
+                "L2"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "layer_stop": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "latency_ms": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "output_tokens": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "memory_bytes": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cache_hit": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kv_transfer_mode": {
+          "anyOf": [
+            {
+              "$ref": "state_transfer.schema.json#/$defs/TransferMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cost_units": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "enum": [
+            "SUCCEEDED",
+            "FAILED",
+            "SKIPPED",
+            "STARTED"
+          ]
+        },
+        "state_version_before": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/StateVersion"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state_version_after": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/StateVersion"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "receipt_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/ErrorV1"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "TraceEventV1"
+    }
+  }
+}
