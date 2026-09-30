@@ -1,87 +1,55 @@
 ---
 title: 'Voice Service'
-description: 'HTTP API for text-to-speech, speech-to-text, voice session management, and voice cloning'
+description: 'Local speech-to-text sidecar (whisper.cpp) with a metadata-only text-to-speech contract.'
 ---
 
 ## Overview
 
-The **Allternit Voice Service** provides a unified HTTP API for speech synthesis and recognition. It exposes endpoints for text-to-speech (TTS), speech-to-text (STT), voice cloning, session management, and service introspection.
+The **Allternit Voice Service** (`services/voice`, crate `voice-service`) is a Rust HTTP sidecar used by Gizzi Code and Allternit Desktop. Speech-to-text is real: it runs [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (`whisper-cli` with the `ggml-tiny.en.bin` model) on the host, with no cloud STT.
 
-The service is distributed in two forms:
+<Warning>
+Text-to-speech is **DESIGN, not implemented**. `POST /v1/tts` and `POST /v1/tts/stream` return metadata only (an `audio_url`, an estimated duration and a format); no audio is synthesized and nothing is served at that URL. Voice cloning and the Chatterbox, XTTS and Piper engines are not part of this service. The full TTS product is specified in `docs/specs/tts-product.md`.
+</Warning>
 
-1. **Rust service** (`services/voice`) — a lightweight, standalone HTTP server that ships with the Allternit workspace. It simulates the voice API contract and is ideal for local development, CI, and integration testing.
-2. **Python service** (`services/voice/api`) — a full-featured FastAPI wrapper backed by Chatterbox, XTTS, Piper, and Whisper for real inference.
-
-Both implementations speak the same REST contract so callers can develop against the Rust service and deploy against the Python inference backend without code changes.
-
-<Note>
-The Python inference backend runs models locally or on hardware you control. Audio data and model state stay on the host.
-</Note>
+Status: Implementation IMPLEMENTED (STT only) / Exposure INTERNAL.
 
 ## Base URL
 
-Default bind address:
+The service binds to `127.0.0.1` on `PORT` (default `8001`).
 
 ```text
-http://0.0.0.0:8001
+http://127.0.0.1:8001
 ```
-
-The Rust service is started with:
 
 ```bash
 cargo run -p voice-service
+# or
+./services/voice/start.sh
 ```
 
-The Python service can be started from the `api/` directory with your preferred ASGI server.
-
-## Key features
-
-| Feature | Description |
-|---------|-------------|
-| **Text-to-speech** | Convert text into spoken audio with selectable voices and output formats. |
-| **Speech-to-text** | Upload audio and receive transcribed text with segmented timestamps. |
-| **Streaming TTS/STT** | Request streaming audio URLs and WebSocket endpoints for real-time use cases. |
-| **Voice cloning** | Clone a voice from reference audio (Python inference backend). |
-| **Session management** | Create, inspect, and delete TTS/STT sessions. |
-| **Model introspection** | List available TTS voices and STT models. |
-
-## Supported backends
-
-| Backend | Engine | Capability |
-|---------|--------|------------|
-| Chatterbox | `chatterbox` | TTS, voice cloning |
-| XTTS v2 | `xtts_v2` | Multilingual TTS with speaker prompts |
-| Piper | `piper` | Fast local TTS |
-| Whisper | `whisper` | STT transcription |
-
-Preset voices are configured in the Python service and exposed through the voices API.
+Build `whisper-cli` with `services/voice/build-whisper.sh`. The ggml model downloads on the first `POST /v1/stt` into `~/.allternit/models/whisper/` unless `WHISPER_MODEL` is set. `WHISPER_CLI` points at a specific `whisper-cli` binary.
 
 ## REST endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/health` | Service health check (unversioned) |
-| GET | `/v1/health` | Service health check |
-| GET | `/v1/voices` | List available TTS voices |
-| GET | `/v1/voices/:id` | Get a specific voice |
-| GET | `/v1/stt/models` | List available STT models |
-| POST | `/v1/tts` | Convert text to speech |
-| POST | `/v1/tts/stream` | Request a streaming TTS session |
-| POST | `/v1/stt` | Transcribe uploaded audio |
-| POST | `/v1/stt/stream` | Request a streaming STT WebSocket |
-| GET | `/v1/sessions` | List active sessions |
-| POST | `/v1/sessions` | Create a new session |
-| GET | `/v1/sessions/:id` | Get a session |
-| DELETE | `/v1/sessions/:id` | Delete a session |
+| GET | `/health`, `/v1/health` | Health, including `engine`, `cli_ok` and `model_ok` |
+| GET | `/v1/voices` | List TTS voice metadata |
+| GET | `/v1/voices/:id` | Get one voice (404 if unknown) |
+| GET | `/v1/stt/models` | List STT models |
+| POST | `/v1/tts` | Metadata-only TTS response (no audio) |
+| POST | `/v1/tts/stream` | Metadata-only streaming response (no audio) |
+| POST | `/v1/stt` | Transcribe uploaded audio (multipart) with whisper.cpp |
+| POST | `/v1/stt/stream` | Returns a WebSocket URL descriptor |
+| GET, POST | `/v1/sessions` | List or create sessions |
+| GET, DELETE | `/v1/sessions/:id` | Get or delete a session |
 | GET | `/v1/stats` | Service metrics |
 
 ## Health check
 
 ```bash
-curl -X GET http://127.0.0.1:8001/v1/health
+curl http://127.0.0.1:8001/v1/health
 ```
-
-Response:
 
 ```json
 {
@@ -89,288 +57,24 @@ Response:
   "status": "healthy",
   "version": "0.1.0",
   "timestamp": 1712345678901,
-  "features": ["tts", "stt", "streaming"]
+  "features": ["tts", "stt", "streaming"],
+  "engine": "whisper.cpp",
+  "cli_ok": true,
+  "model_ok": true
 }
 ```
 
-## Voices and models
+## Transcribe audio
 
-### List TTS voices
-
-```bash
-curl -X GET http://127.0.0.1:8001/v1/voices
-```
-
-Response:
-
-```json
-[
-  {
-    "id": "default",
-    "name": "Default Voice",
-    "language": "en",
-    "gender": "neutral",
-    "sample_rate": 24000
-  },
-  {
-    "id": "en-us-female",
-    "name": "US English Female",
-    "language": "en-US",
-    "gender": "female",
-    "sample_rate": 24000
-  }
-]
-```
-
-### Get a voice
+Send the audio as a multipart form upload. Audio is converted to 16 kHz 16-bit mono WAV before it is passed to `whisper-cli`.
 
 ```bash
-curl -X GET http://127.0.0.1:8001/v1/voices/default
+curl -X POST http://127.0.0.1:8001/v1/stt -F "audio=@meeting.wav"
 ```
 
-### List STT models
-
-```bash
-curl -X GET http://127.0.0.1:8001/v1/stt/models
-```
-
-Response:
-
-```json
-[
-  {
-    "id": "whisper-base",
-    "name": "Whisper Base",
-    "language": "multilingual",
-    "supports_streaming": true
-  }
-]
-```
-
-## Text-to-speech
-
-### Synthesize speech
-
-```bash
-curl -X POST http://127.0.0.1:8001/v1/tts \
-  -H "Content-Type: application/json" \
-  -d '{
-    "text": "Hello from Allternit",
-    "voice_id": "default",
-    "language": "en",
-    "speed": 1.0
-  }'
-```
-
-Response:
-
-```json
-{
-  "audio_url": "/v1/audio/550e8400-e29b-41d4-a716-446655440000.wav",
-  "duration_secs": 1.5,
-  "sample_rate": 24000,
-  "format": "wav"
-}
-```
-
-### Request fields
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `text` | string | yes | Text to synthesize |
-| `voice_id` | string | no | Voice preset identifier (defaults to `default`) |
-| `language` | string | no | Language hint |
-| `speed` | number | no | Playback speed factor |
-
-### Streaming TTS
-
-```bash
-curl -X POST http://127.0.0.1:8001/v1/tts/stream \
-  -H "Content-Type: application/json" \
-  -d '{"text": "Hello from Allternit"}'
-```
-
-Response:
-
-```json
-{
-  "stream_url": "/v1/streams/550e8400-e29b-41d4-a716-446655440000.mp3",
-  "duration_secs": 1.5,
-  "format": "mp3"
-}
-```
-
-## Speech-to-text
-
-### Transcribe audio
-
-```bash
-curl -X POST http://127.0.0.1:8001/v1/stt \
-  -F "audio=@recording.wav" \
-  -F "language=en"
-```
-
-Response:
-
-```json
-{
-  "text": "This is a simulated transcription result from the voice service.",
-  "confidence": 0.95,
-  "language": "en",
-  "segments": [
-    {
-      "start_time": 0.0,
-      "end_time": 1.5,
-      "text": "Simulated transcription",
-      "confidence": 0.95
-    }
-  ]
-}
-```
-
-### Streaming STT
-
-```bash
-curl -X POST http://127.0.0.1:8001/v1/stt/stream
-```
-
-Response:
-
-```json
-{
-  "websocket_url": "ws://localhost:8001/v1/stt/ws/550e8400-e29b-41d4-a716-446655440000",
-  "status": "ready"
-}
-```
-
-## Session management
-
-Voice sessions track TTS/STT context and activity timestamps. A session can be created in `tts`, `stt`, or `both` mode.
-
-### Create a session
-
-```bash
-curl -X POST http://127.0.0.1:8001/v1/sessions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "mode": "both",
-    "language": "en"
-  }'
-```
-
-Response:
-
-```json
-{
-  "session_id": "550e8400-e29b-41d4-a716-446655440000",
-  "created_at": "2026-04-01T12:00:00Z",
-  "last_activity": "2026-04-01T12:00:00Z",
-  "mode": "both",
-  "language": "en"
-}
-```
-
-### List sessions
-
-```bash
-curl -X GET http://127.0.0.1:8001/v1/sessions
-```
-
-### Get a session
-
-```bash
-curl -X GET http://127.0.0.1:8001/v1/sessions/550e8400-e29b-41d4-a716-446655440000
-```
-
-### Delete a session
-
-```bash
-curl -X DELETE http://127.0.0.1:8001/v1/sessions/550e8400-e29b-41d4-a716-446655440000
-```
-
-Response is HTTP `204 No Content` on success.
-
-## Service stats
-
-```bash
-curl -X GET http://127.0.0.1:8001/v1/stats
-```
-
-Response:
-
-```json
-{
-  "active_sessions": 0,
-  "tts_models": 3,
-  "stt_models": 1,
-  "total_requests": 42,
-  "timestamp": 1712345678901
-}
-```
-
-## Rust client
-
-The `voice-service` crate includes an async HTTP client for callers that want a typed interface.
-
-```rust
-use voice_service::{VoiceClient, TTSRequest};
-
-let client = VoiceClient::default();
-let request = TTSRequest {
-    text: "Hello from Rust".to_string(),
-    voice: "default".to_string(),
-    format: "wav".to_string(),
-    use_paralinguistic: true,
-};
-
-let response = client.text_to_speech(request).await?;
-println!("Audio URL: {}", response.audio_url);
-```
-
-The default client points to `http://localhost:8001`. Point it at another host with `VoiceClient::new(base_url)`.
-
-## Voice cloning (Python backend)
-
-The Python inference backend supports voice cloning from a reference audio URL.
-
-```bash
-curl -X POST http://127.0.0.1:8001/v1/voice/clone \
-  -H "Content-Type: application/json" \
-  -d '{
-    "text": "This sentence uses the cloned voice.",
-    "reference_audio_url": "https://example.com/speaker.wav",
-    "format": "wav"
-  }'
-```
-
-Upload reference audio first if needed:
-
-```bash
-curl -X POST http://127.0.0.1:8001/v1/voice/upload \
-  -F "file=@speaker.wav"
-```
-
-## Error handling
-
-| HTTP | Meaning |
-|------|---------|
-| 200 | Successful request |
-| 204 | Session deleted successfully |
-| 400 | Invalid request, missing audio, or unknown voice id |
-| 404 | Voice or session not found |
-| 502 | Inference backend unavailable (Python service) |
-
-## Testing
-
-The Rust service includes integration tests that exercise the router in-process via Tower's `ServiceExt::oneshot`, so no network port is required.
-
-```bash
-cargo test -p voice-service
-```
+If `whisper-cli` or the model is missing the request fails; check `cli_ok` and `model_ok` on `/v1/health`.
 
 ## Related pages
 
 - [Native Tool Belt](/tools/tool-belt)
-- [MCP Servers](/tools/mcp)
-- [Allternit Computer Interface (ACI)](/tools/computer-use)
-- [Build a Custom Tool](/tools/build-a-tool)
+- [Gizzi Code](/surfaces/native-agent)

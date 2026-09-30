@@ -3,7 +3,14 @@ title: "Human in the loop"
 description: "Where people enter a run: approvals, clarifications, reviews, unsafe resumes and overrides, all receipted"
 ---
 
-**Status: AVAILABLE (needs-you queue, manual gates, human close, internal) · PREVIEW (answers through the Agency API).** See [status labels](/architecture#status-labels).
+**Implementation: ENABLED (needs-you queue, manual gates, human close) · Exposure: INTERNAL · PUBLIC PREVIEW (contract).** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | People answer typed attention requests, not chat pings. |
+| **Implemented today** | Needs-you queue, manual gates and human close in the internal work runtime. |
+| **Active path** | Yes, inside the internal work runtime. |
+| **Public exposure** | Not yet. Planned through the Agency API (contract published, endpoint not served). |
 
 People are part of the system, not an afterthought. A run brings in a person at defined points, and every answer is evidence.
 
@@ -43,9 +50,9 @@ On main, in the work runtime:
 
 | Part | Status |
 |------|--------|
-| Needs-you list, manual gates, human close | **AVAILABLE** (internal) |
-| `NEEDS_HUMAN` on judge failure (agency-origin work) | **PREVIEW** |
-| Answering through the Agency API | **PREVIEW**. See [Agency API: Attention](/api/agency/attention). |
+| Needs-you list, manual gates, human close | **ENABLED** · INTERNAL |
+| `NEEDS_HUMAN` on judge failure (agency-origin work) | **IMPLEMENTED** · INTERNAL |
+| Answering through the Agency API | **PUBLIC PREVIEW** (contract; not served). See [Agency API: Attention](/api/agency/attention). |
 
 ## Developer relevance
 

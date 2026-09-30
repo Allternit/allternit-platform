@@ -15,12 +15,6 @@ Local development:
 http://127.0.0.1:5055
 ```
 
-When mounted behind the Allternit platform gateway:
-
-```text
-https://api.allternit.com/api/notebooks
-```
-
 ## Endpoints
 
 | Method | Path | Description |
@@ -38,12 +32,16 @@ https://api.allternit.com/api/notebooks
 | DELETE | `/api/notebooks/{id}/sources/{source_id}` | Remove a source |
 | GET | `/api/notebooks/{id}/chat/messages` | List chat messages |
 | POST | `/api/notebooks/{id}/chat` | Stream a grounded chat response |
-| GET | `/api/search` | Search across notebooks |
-| POST | `/api/transform` | Transform content |
-| POST | `/api/podcast` | Generate podcast audio |
-| GET/POST | `/api/connectors/*` | Connector integrations |
-| POST | `/api/canvas-sync/*` | Canvas LMS sync |
-| GET/POST | `/api/reddit/*` | Reddit research helpers |
+| POST | `/api/notebooks/{id}/search` | Search within a notebook |
+| POST | `/api/notebooks/{id}/transform` | Transform notebook content |
+| POST | `/api/notebooks/{id}/podcast` | Generate podcast audio |
+| GET | `/api/notebooks/{id}/connectors/available` | List available connectors |
+| POST | `/api/notebooks/{id}/connectors/{connector_type}/sync` | Sync a connector into the notebook |
+| POST | `/api/notebooks/{id}/canvas-sync` | Canvas LMS sync |
+| GET | `/api/reddit/r/{subreddit}` | Reddit subreddit research helper |
+| GET | `/api/reddit/user/{username}` | Reddit user research helper |
+
+Static generated files (audio, exports) are served under `/data`.
 
 ## JSON examples
 
@@ -125,12 +123,13 @@ data: {"done":true}
 | Variable | Purpose |
 |----------|---------|
 | `PORT` | HTTP port (default `5055`) |
-| `SURREALDB_URL` | SurrealDB connection URL |
-| `SURREALDB_NS` | SurrealDB namespace |
-| `SURREALDB_DB` | SurrealDB database |
-| `SURREALDB_USER` / `SURREALDB_PASS` | SurrealDB credentials |
-| `QDRANT_URL` | Qdrant vector store URL |
-| `ALLTERNIT_API_KEY` | Allternit gateway key for LLM proxy |
+| `SURREAL_URL` | SurrealDB connection URL (default `ws://127.0.0.1:9800/rpc`) |
+| `SURREAL_NAMESPACE` / `SURREAL_DATABASE` | SurrealDB namespace and database (default `open_notebook`) |
+| `SURREAL_USER` / `SURREAL_PASSWORD` | SurrealDB credentials (default `root`) |
+| `ALLTERNIT_AI_URL` | LLM proxy base URL (default `http://127.0.0.1:8765`) |
+| `ALLTERNIT_API_KEY` | Key sent to the LLM proxy |
+| `OLLAMA_URL` | Ollama fallback (default `http://127.0.0.1:11434`) |
+| `TTS_PROVIDER` | Podcast TTS: `piper` (default), ElevenLabs or OpenAI; uses `ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `PIPER_MODEL_PATH` |
 
 ## Error codes
 

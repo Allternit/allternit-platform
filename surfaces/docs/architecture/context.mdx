@@ -3,7 +3,14 @@ title: "Context"
 description: "How the input a component sees is compiled from canonical state, and why context is a projection, not a transcript"
 ---
 
-**Status: DESIGN — NOT YET IMPLEMENTED (context compiler) · AVAILABLE (deterministic context packs for work items, internal).** See [status labels](/architecture#status-labels).
+**Implementation: SHADOW (context compiler) · ENABLED (work-item context packs) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Context is compiled per step, with untrusted content fenced. |
+| **Implemented today** | Context compiler on main behind an off-by-default flag (shadow). Deterministic, nonce-fenced context packs for work items run today. |
+| **Active path** | Partial. Context packs yes; compiler no. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 Context is what a component sees for one step. In Allternit it is compiled from [canonical state](/architecture/state) for that step, not accumulated in a growing transcript.
 
@@ -36,16 +43,17 @@ Why: when context is a transcript, the agent's behavior depends on how long it h
 
 ## Current implementation
 
-The context compiler is not on main. The work runtime today builds deterministic context packs to rehydrate a work item, and wraps untrusted text (a predecessor node's output, ledger payloads) in a fence with a random per-render nonce. These are internal and predate the compiler contract.
+The context compiler is on main behind a flag that is off by default; with the flag on it runs in shadow and does not change what a component sees. Separately, the work runtime builds deterministic context packs to rehydrate a work item, and wraps untrusted text (a predecessor node's output, ledger payloads) in a fence with a random per-render nonce. These are internal and predate the compiler contract.
 
 ## Availability
 
 | Part | Status |
 |------|--------|
-| Context schemas (`context.schema.json`) | **AVAILABLE** (contract) |
-| Deterministic context packs, nonce-fenced untrusted content | **AVAILABLE** (internal) |
-| Context compiler | **DESIGN — NOT YET IMPLEMENTED** |
-| Chunk store, shared retrieval snapshots | **DESIGN — NOT YET IMPLEMENTED** |
+| Context schemas (`context.schema.json`) | **IMPLEMENTED** (contract) |
+| Deterministic context packs, nonce-fenced untrusted content | **ENABLED** · INTERNAL |
+| Context compiler | **SHADOW** · INTERNAL |
+| Chunk store | **DESIGN** |
+| Shared retrieval snapshots | **SHADOW** · INTERNAL |
 
 ## Developer relevance
 

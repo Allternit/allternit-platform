@@ -12,10 +12,14 @@ The Agent Operations API groups quality-assurance and maintenance endpoints for 
 - **Factory tasks** — create and approve/reject autonomous spec-driven tasks.
 - **GC agents** — run repository-analyzer agents that find code-quality issues and compute entropy reduction.
 
+<Note>
+This namespace is served by the Allternit API data-plane node (`http://127.0.0.1:8013` on the same machine, or your paired or provisioned node). The hosted Cloud API at `https://api.allternit.com` does not route it; it relays only agent sessions, canvases, office and beta research/sessions. See [Cloud API](/api/cloud-api).
+</Note>
+
 ## Base URL
 
 ```
-https://api.allternit.com/api
+http://127.0.0.1:8013/api
 ```
 
 ## Authentication
@@ -74,7 +78,7 @@ A test case object has the following shape:
 #### Example request
 
 ```bash
-curl -X POST https://api.allternit.com/api/agents/operations/evaluations \
+curl -X POST http://127.0.0.1:8013/api/agents/operations/evaluations \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -223,7 +227,7 @@ POST /api/agents/operations/factory/tasks
 #### Example request
 
 ```bash
-curl -X POST https://api.allternit.com/api/agents/operations/factory/tasks \
+curl -X POST http://127.0.0.1:8013/api/agents/operations/factory/tasks \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -338,7 +342,7 @@ PUT /api/agents/operations/gc/policies/:id?projectId=:project_id
 #### Example request
 
 ```bash
-curl -X PUT "https://api.allternit.com/api/agents/operations/gc/policies/duplicate_detector?projectId=proj_4d5e..." \
+curl -X PUT "http://127.0.0.1:8013/api/agents/operations/gc/policies/duplicate_detector?projectId=proj_4d5e..." \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"enabled": true, "threshold": 0.85}'
@@ -393,7 +397,7 @@ Clones or pulls the project's repository into a cached workspace, runs the analy
 #### Example request
 
 ```bash
-curl -X POST "https://api.allternit.com/api/agents/operations/gc/agents/duplicate_detector/run?projectId=proj_4d5e..." \
+curl -X POST "http://127.0.0.1:8013/api/agents/operations/gc/agents/duplicate_detector/run?projectId=proj_4d5e..." \
   -H "Authorization: Bearer $TOKEN"
 ```
 

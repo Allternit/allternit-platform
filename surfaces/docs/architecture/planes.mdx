@@ -3,7 +3,14 @@ title: "The eight planes"
 description: "One owner for every responsibility: what each plane owns, how the planes map to the two machines, and what exists today"
 ---
 
-**Status: AVAILABLE (ownership model, recorded in the repository) · per-plane status below.** See [status labels](/architecture#status-labels).
+**Implementation: — (ownership model) · Exposure: —.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Eight planes, each owning one concern. |
+| **Implemented today** | The ownership model is recorded in the repository. Per-plane status is in the table below. |
+| **Active path** | See the table below. |
+| **Public exposure** | — |
 
 Every responsibility in the system has exactly one owner. The architecture groups owners into eight **planes**. New kernel code belongs to exactly one plane.
 
@@ -37,14 +44,14 @@ The ownership map is recorded in the repository structure guide and is used to p
 
 | Plane | What exists on main | Status |
 |-------|---------------------|--------|
-| 1 Experience / API | Cloud API, SDK, surfaces. Agency API contract published, endpoint not served. | **AVAILABLE** (existing API) · **PREVIEW** (Agency API) |
-| 2 Agent | Primitive registry, Agent ISA enum, state schemas | **AVAILABLE** (contracts) · **PREVIEW** (runtime use) |
-| 3 Work Orchestration | Work runtime: outputs, leases, wait gates, campaigns, wake. Typed lifecycle and graph validator as library. | **AVAILABLE** (internal) · **PREVIEW** (typed lifecycle) |
-| 4 Cognition | Decision runtime in shadow mode, fail-closed judge | **PREVIEW** |
-| 5 Context + State | Context packs, memory services. No context compiler. | **DESIGN — NOT YET IMPLEMENTED** (compiler) |
-| 6 Execution / Model | Tool runtimes, execution environment, egress guard. No router or model pool. | **AVAILABLE** (tools, internal) · **DESIGN — NOT YET IMPLEMENTED** (router) |
-| 7 Governance + Observability | Permission floor, signed receipt chain. No replay. | **AVAILABLE** (internal) · **DESIGN — NOT YET IMPLEMENTED** (replay) |
-| 8 Product Operations | Attention gate, needs-you queue, surfaces | **AVAILABLE** |
+| 1 Experience / API | Cloud API, SDK, surfaces. Agency API contract published, endpoint not served. | **ENABLED** (existing API) · **PUBLIC PREVIEW** (Agency API; not served) |
+| 2 Agent | Primitive registry, Agent ISA enum, state schemas | **IMPLEMENTED** (contract) · **IMPLEMENTED** (runtime use) |
+| 3 Work Orchestration | Work runtime: outputs, leases, wait gates, campaigns, wake. Typed lifecycle and graph validator as library. | **ENABLED** · INTERNAL · **IMPLEMENTED** (typed lifecycle) |
+| 4 Cognition | Decision runtime in shadow mode, fail-closed judge | **SHADOW** · INTERNAL |
+| 5 Context + State | Context packs, memory services. Context compiler behind an off-by-default flag, shadow. | **ENABLED** (packs, internal) · **SHADOW** · INTERNAL |
+| 6 Execution / Model | Tool runtimes, execution environment, egress guard. Router as library code and an internal model pool registry; nothing calls the router on the normal path yet. | **ENABLED** (tools, internal) · **IMPLEMENTED** (router, model pool) |
+| 7 Governance + Observability | Permission floor, policy gate on work-bound executor paths (converging), signed receipt chain for effect receipts, recorded-only replay with divergence reports, kernel-layer conformance suite. | **ENABLED** (floor, receipts; internal) · **IMPLEMENTED** (replay, internal) |
+| 8 Product Operations | Attention gate, needs-you queue, surfaces | **ENABLED** · INTERNAL |
 
 ## Developer relevance
 

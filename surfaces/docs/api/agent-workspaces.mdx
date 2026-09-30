@@ -9,10 +9,14 @@ Every agent has a private workspace directory on the local filesystem. The Agent
 
 The gateway rejects any path that is absolute, contains `..`, or includes backslashes or NUL bytes.
 
+<Note>
+This namespace is served by the Allternit API data-plane node (`http://127.0.0.1:8013` on the same machine, or your paired or provisioned node). The hosted Cloud API at `https://api.allternit.com` does not route it; it relays only agent sessions, canvases, office and beta research/sessions. See [Cloud API](/api/cloud-api).
+</Note>
+
 ## Base URL
 
 ```
-https://api.allternit.com/api
+http://127.0.0.1:8013/api
 ```
 
 ## Authentication
@@ -46,7 +50,7 @@ Creates the agent's workspace directory and writes a batch of documents. Parent 
 #### Example request
 
 ```bash
-curl -X POST https://api.allternit.com/api/agents/agent_018f3a7c.../workspace/initialize \
+curl -X POST http://127.0.0.1:8013/api/agents/agent_018f3a7c.../workspace/initialize \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -79,7 +83,7 @@ Recursively lists all files in the agent's workspace.
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-  https://api.allternit.com/api/agents/agent_018f3a7c.../workspace/files
+  http://127.0.0.1:8013/api/agents/agent_018f3a7c.../workspace/files
 ```
 
 #### Example response
@@ -124,7 +128,7 @@ Reads a single file as UTF-8 text.
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-  "https://api.allternit.com/api/agents/agent_018f3a7c.../workspace/file?path=README.md"
+  "http://127.0.0.1:8013/api/agents/agent_018f3a7c.../workspace/file?path=README.md"
 ```
 
 #### Example response
@@ -154,7 +158,7 @@ Writes a file to the workspace. Parent directories are created as needed. Existi
 #### Example request
 
 ```bash
-curl -X PUT https://api.allternit.com/api/agents/agent_018f3a7c.../workspace/file \
+curl -X PUT http://127.0.0.1:8013/api/agents/agent_018f3a7c.../workspace/file \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

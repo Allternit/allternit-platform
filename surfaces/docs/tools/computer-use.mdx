@@ -3,6 +3,10 @@ title: 'Allternit Computer Interface (ACI)'
 description: 'Browser and desktop automation endpoints that stream run progress over SSE'
 ---
 
+<Note>
+**Status:** Implementation IMPLEMENTED × Exposure PUBLIC PREVIEW. Routes verified against `cmd/allternit-api/src/aci_routes.rs`; batch and code routes added (they were undocumented). Batch and code grants are enforced by `aci_batch.rs`, `aci_code.rs` and `aci_safety.rs`.
+</Note>
+
 ## Overview
 
 The **Allternit Computer Interface (ACI)** is the platform layer that lets an agent observe and control a computer — typically a browser — through a live screenshot stream, mouse/keyboard actions, and human-in-the-loop approvals.
@@ -31,6 +35,13 @@ ACI runs on infrastructure you control. Code, screenshots, and credentials stay 
 | POST | `/api/aci/stop/:id` | Cancel a run |
 | POST | `/api/aci/approve/:id` | Approve a pending action |
 | POST | `/api/aci/approve/:id?deny=true` | Deny a pending action |
+| GET | `/api/aci/approvals/:id` | Status of a pending approval. |
+| GET | `/api/aci/policy/audit` | Policy audit listing. |
+| GET | `/api/aci/handoff/:id` | Status of a sensitive-action handoff. |
+| POST | `/api/aci/handoff/:id/approve` | Approve a handoff. |
+| POST | `/api/aci/handoff/:id/deny` | Deny a handoff. |
+| POST | `/api/aci/batch` | Submit an ordered batch of whitelisted browser actions under one hash-bound, single-use grant. Halts at first failure; the batch receipt is written before execution. |
+| POST | `/api/aci/code` | Code-mode execution under its own single-use grant. Credential patterns, destructive calls, undeclared network targets and host-path access are refused with a 400. Never the default. |
 
 ## Start a run
 

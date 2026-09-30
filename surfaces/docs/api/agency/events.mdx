@@ -4,7 +4,7 @@ description: 'The typed run event stream: SSE format, every event type, polling,
 ---
 
 <Warning>
-**PREVIEW.** The Agency API is not live yet. This page describes the published v0.3 contract so you can review and build against it; details may change before alpha. Implementation status: DESIGN — NOT YET IMPLEMENTED.
+**Implementation: DESIGN (server) · Exposure: PUBLIC PREVIEW (contract).** The Agency API is not live yet. This page describes the published v0.3 contract so you can review and build against it; details may change before alpha.
 </Warning>
 
 Every material transition in a run is published as a typed event. Events are durable, ordered by a gap-free sequence number, and can be read as a live Server-Sent Events (SSE) stream or as pages of JSON. Work-runtime runs have no event stream today; this is one of the items the alpha gate (restart, resume, verify, replay, receipt-backed completion) depends on.

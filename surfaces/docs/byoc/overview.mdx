@@ -14,13 +14,17 @@ You get:
 - **One public origin** — browsers talk only to `api.allternit.com`
 - **Same binary everywhere** — local desktop, your VPS, or a provisioned instance
 
+<Note>
+**Status:** Implementation IMPLEMENTED × Exposure PUBLIC PREVIEW. `allternit-api` binds `0.0.0.0` on `ALLTERNIT_API_PORT` (default dev `18013`; pin `8013` in production), not loopback. Firewall it.
+</Note>
+
 ## Architecture
 
 ```
 ┌─────────────────────────────┐         ┌──────────────────────────────┐
 │  Control plane              │         │  Data plane                  │
 │  Cloud API                  │◄───────►│  Allternit API               │
-│  api.allternit.com          │  WSS    │  :8013, not public           │
+│  api.allternit.com          │  WSS    │  :8013, firewalled           │
 │                             │  relay  │                              │
 │  • Auth (Clerk)             │         │  • allternit-api             │
 │  • Pairing & device tokens  │         │  • Per-instance SQLite       │
@@ -51,7 +55,7 @@ Mode 3 is the hosted data-plane lane (provisioned instances), distinct from [Fly
 
 ## Pair a node (mode 2)
 
-1. Start Allternit API and `agent-daemon` on the box (loopback only).
+1. Start Allternit API and `agent-daemon` on the box (firewall the API port; only the daemon needs it).
 2. The daemon creates a pairing: `POST https://api.allternit.com/api/v1/runtime-pairings`.
 3. Approve the user code at `https://platform.allternit.com/pair`.
 4. The node exchanges the pairing for a device token and connects:

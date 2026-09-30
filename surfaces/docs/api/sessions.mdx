@@ -14,7 +14,7 @@ Sessions are scoped to the authenticated user. Accessing another user's session 
 All beta session endpoints are mounted under:
 
 ```
-https://api.allternit.com/v1/beta/sessions
+https://api.allternit.com/api/v1/beta/sessions
 ```
 
 Authentication is required via a Bearer token in the `Authorization` header. See [Authentication](/api/authentication) for details.
@@ -90,6 +90,7 @@ When `context_window` is set and projected usage crosses 80%, a `context_warning
 | GET | `/api/v1/beta/sessions/:id/events/ws` | Stream events over WebSocket. |
 | GET | `/api/v1/beta/sessions/:id/memory/search` | Search session event memory. |
 | POST | `/api/v1/beta/sessions/:id/interrupt` | Send a user interrupt. |
+| POST | `/api/v1/beta/sessions/:id/run` | Queue a run for the session on the work queue. |
 | GET | `/api/v1/beta/sessions/:id/resources` | List attached resources. |
 | POST | `/api/v1/beta/sessions/:id/resources` | Attach a resource. |
 | DELETE | `/api/v1/beta/sessions/:id/resources/:resource_id` | Delete a resource. |
@@ -104,7 +105,7 @@ When `context_window` is set and projected usage crosses 80%, a `context_warning
 ## List sessions
 
 ```bash
-curl -G https://api.allternit.com/v1/beta/sessions \
+curl -G https://api.allternit.com/api/v1/beta/sessions \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -d "status=active" \
   -d "parent_thread_id=sess_parent"
@@ -136,7 +137,7 @@ curl -G https://api.allternit.com/v1/beta/sessions \
 ## Create a session
 
 ```bash
-curl -X POST https://api.allternit.com/v1/beta/sessions \
+curl -X POST https://api.allternit.com/api/v1/beta/sessions \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -197,7 +198,7 @@ curl -X POST https://api.allternit.com/v1/beta/sessions \
 ## Get a session
 
 ```bash
-curl https://api.allternit.com/v1/beta/sessions/sess_2f8a9c4e5d3b \
+curl https://api.allternit.com/api/v1/beta/sessions/sess_2f8a9c4e5d3b \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -212,7 +213,7 @@ curl https://api.allternit.com/v1/beta/sessions/sess_2f8a9c4e5d3b \
 ## Update a session
 
 ```bash
-curl -X PATCH https://api.allternit.com/v1/beta/sessions/sess_2f8a9c4e5d3b \
+curl -X PATCH https://api.allternit.com/api/v1/beta/sessions/sess_2f8a9c4e5d3b \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -245,7 +246,7 @@ At least one field must be provided.
 Archiving sets `status` to `archived`, sets `archived_at`, and prevents new events from being appended or the session from being interrupted.
 
 ```bash
-curl -X DELETE https://api.allternit.com/v1/beta/sessions/sess_2f8a9c4e5d3b \
+curl -X DELETE https://api.allternit.com/api/v1/beta/sessions/sess_2f8a9c4e5d3b \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -266,7 +267,7 @@ curl -X DELETE https://api.allternit.com/v1/beta/sessions/sess_2f8a9c4e5d3b \
 Events are the immutable audit trail of a session. Only a subset of event types may be appended by callers.
 
 ```bash
-curl -X POST https://api.allternit.com/v1/beta/sessions/sess_2f8a9c4e5d3b/events \
+curl -X POST https://api.allternit.com/api/v1/beta/sessions/sess_2f8a9c4e5d3b/events \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -314,7 +315,7 @@ If the event would exceed a budget limit, `accepted` is `false` and the returned
 ## List events
 
 ```bash
-curl https://api.allternit.com/v1/beta/sessions/sess_2f8a9c4e5d3b/events/list \
+curl https://api.allternit.com/api/v1/beta/sessions/sess_2f8a9c4e5d3b/events/list \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -340,7 +341,7 @@ The list is ordered by descending sequence and limited to the most recent 200 ev
 Open a long-lived Server-Sent Events stream. Each event corresponds to one row in `beta_session_events`.
 
 ```bash
-curl -N https://api.allternit.com/v1/beta/sessions/sess_2f8a9c4e5d3b/events \
+curl -N https://api.allternit.com/api/v1/beta/sessions/sess_2f8a9c4e5d3b/events \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -382,7 +383,7 @@ Use the `after` query parameter to resume from a known sequence.
 Performs a simple substring search across the most recent 200 events.
 
 ```bash
-curl -G https://api.allternit.com/v1/beta/sessions/sess_2f8a9c4e5d3b/memory/search \
+curl -G https://api.allternit.com/api/v1/beta/sessions/sess_2f8a9c4e5d3b/memory/search \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -d "q=cargo"
 ```
@@ -406,7 +407,7 @@ curl -G https://api.allternit.com/v1/beta/sessions/sess_2f8a9c4e5d3b/memory/sear
 Emit a `user_interrupt` event into an active session. The payload must be an object.
 
 ```bash
-curl -X POST https://api.allternit.com/v1/beta/sessions/sess_2f8a9c4e5d3b/interrupt \
+curl -X POST https://api.allternit.com/api/v1/beta/sessions/sess_2f8a9c4e5d3b/interrupt \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{ "data": { "reason": "user_requested_stop" } }'
@@ -426,12 +427,29 @@ curl -X POST https://api.allternit.com/v1/beta/sessions/sess_2f8a9c4e5d3b/interr
 }
 ```
 
+## Run a session
+
+```bash
+POST /api/v1/beta/sessions/:id/run
+```
+
+Queues the given messages as a session-tied task on the [work queue](/api/work-queue) and records a run event. Archived sessions return `400`.
+
+```json
+{
+  "messages": [{ "role": "user", "content": "Summarize the failing tests." }],
+  "tools": ["read_file"]
+}
+```
+
+`messages` must be non-empty, each with a known role and a non-empty string `content`. `tools` is an optional array of non-empty tool names. The response is `{"run": <queued task>, "session_id": "..."}`. This call enqueues work; it does not execute it inline.
+
 ## Edit context
 
 Delete or summarize ranges of events to manage the context window. This mutates event history and reduces `tokens_used`.
 
 ```bash
-curl -X POST https://api.allternit.com/v1/beta/sessions/sess_2f8a9c4e5d3b/context/edit \
+curl -X POST https://api.allternit.com/api/v1/beta/sessions/sess_2f8a9c4e5d3b/context/edit \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -491,7 +509,7 @@ Resources attach credentials or references to a session. Values are encrypted at
 ### Attach a resource
 
 ```bash
-curl -X POST https://api.allternit.com/v1/beta/sessions/sess_2f8a9c4e5d3b/resources \
+curl -X POST https://api.allternit.com/api/v1/beta/sessions/sess_2f8a9c4e5d3b/resources \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -519,14 +537,14 @@ Either `value` or `ref` must be provided, but not both.
 ### List resources
 
 ```bash
-curl https://api.allternit.com/v1/beta/sessions/sess_2f8a9c4e5d3b/resources \
+curl https://api.allternit.com/api/v1/beta/sessions/sess_2f8a9c4e5d3b/resources \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
 ### Delete a resource
 
 ```bash
-curl -X DELETE https://api.allternit.com/v1/beta/sessions/sess_2f8a9c4e5d3b/resources/res_4b7c8d9e \
+curl -X DELETE https://api.allternit.com/api/v1/beta/sessions/sess_2f8a9c4e5d3b/resources/res_4b7c8d9e \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -539,7 +557,7 @@ Upload and retrieve binary files scoped to a session. Files are stored on the se
 ### Upload a file
 
 ```bash
-curl -X POST https://api.allternit.com/v1/beta/sessions/sess_2f8a9c4e5d3b/files \
+curl -X POST https://api.allternit.com/api/v1/beta/sessions/sess_2f8a9c4e5d3b/files \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -568,14 +586,14 @@ curl -X POST https://api.allternit.com/v1/beta/sessions/sess_2f8a9c4e5d3b/files 
 ### List files
 
 ```bash
-curl https://api.allternit.com/v1/beta/sessions/sess_2f8a9c4e5d3b/files \
+curl https://api.allternit.com/api/v1/beta/sessions/sess_2f8a9c4e5d3b/files \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
 ### Get a file
 
 ```bash
-curl https://api.allternit.com/v1/beta/sessions/sess_2f8a9c4e5d3b/files/file_a1b2c3d4 \
+curl https://api.allternit.com/api/v1/beta/sessions/sess_2f8a9c4e5d3b/files/file_a1b2c3d4 \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -598,7 +616,7 @@ The response includes the base64 content:
 ### Delete a file
 
 ```bash
-curl -X DELETE https://api.allternit.com/v1/beta/sessions/sess_2f8a9c4e5d3b/files/file_a1b2c3d4 \
+curl -X DELETE https://api.allternit.com/api/v1/beta/sessions/sess_2f8a9c4e5d3b/files/file_a1b2c3d4 \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -611,7 +629,7 @@ Control how tool results occupy the active context window.
 ### Get tool context
 
 ```bash
-curl https://api.allternit.com/v1/beta/sessions/sess_2f8a9c4e5d3b/tool-context \
+curl https://api.allternit.com/api/v1/beta/sessions/sess_2f8a9c4e5d3b/tool-context \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -641,7 +659,7 @@ curl https://api.allternit.com/v1/beta/sessions/sess_2f8a9c4e5d3b/tool-context \
 ### Set tool context
 
 ```bash
-curl -X PUT https://api.allternit.com/v1/beta/sessions/sess_2f8a9c4e5d3b/tool-context \
+curl -X PUT https://api.allternit.com/api/v1/beta/sessions/sess_2f8a9c4e5d3b/tool-context \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{

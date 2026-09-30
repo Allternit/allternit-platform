@@ -1,209 +1,38 @@
 ---
 title: Production Deployment
-description: Deploy Allternit runtime to production
+description: Hardening and operating a self-hosted Allternit API node
 ---
 
-## Security Checklist
+<Note>
+**Status:** Implementation IMPLEMENTED × Exposure PUBLIC PREVIEW. Earlier versions of this page described an `allternit-runtime` service on port 8080 with a `runtime.yaml`, `/status` and a Metrics endpoint. Those do not exist on main.
+</Note>
 
-Before deploying to production:
+## Network posture
 
-<Check>
-  Use a strong API key (generate new one, don't use development key)
-</Check>
-<Check>
-  Enable TLS/SSL (Let's Encrypt or commercial certificate)
-</Check>
-<Check>
-  Restrict CORS origins to known domains only
-</Check>
-<Check>
-  Set up firewall rules (allow only necessary ports)
-</Check>
-<Check>
-  Configure automatic backups
-</Check>
-<Check>
-  Set up log rotation
-</Check>
-<Check>
-  Enable monitoring and alerting
-</Check>
+- `allternit-api` binds `0.0.0.0:$ALLTERNIT_API_PORT`. Block that port at the host firewall; only the local `agent-daemon` needs it.
+- The node needs only outbound HTTPS/WSS to `api.allternit.com`. The relay (`/api/v1/runtime-relay/connect/:runtimeId`) carries browser and SDK traffic to the node, so no reverse proxy, TLS certificate or inbound port is required.
+- If nothing is paired and online, relayed routes return HTTP 428.
 
-## Reverse Proxy Setup
-
-### Caddy (Recommended)
-
-```caddyfile
-your-domain.com {
-    reverse_proxy localhost:8080
-    
-    # Automatic HTTPS
-    tls {
-        protocols tls1.2 tls1.3
-    }
-    
-    # Security headers
-    header {
-        X-Content-Type-Options nosniff
-        X-Frame-Options DENY
-        X-XSS-Protection "1; mode=block"
-    }
-}
-```
-
-### Nginx
-
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name your-domain.com;
-    
-    ssl_certificate /path/to/cert.pem;
-    ssl_certificate_key /path/to/key.pem;
-    
-    location / {
-        proxy_pass http://localhost:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}
-```
-
-## Cloudflare Tunnel (Alternative)
-
-For easy deployment without opening ports:
+## Health checks
 
 ```bash
-# Install cloudflared
-brew install cloudflared  # macOS
-# or
-wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-
-# Create tunnel
-cloudflared tunnel create allternit-runtime
-
-# Configure and run
-cloudflared tunnel route dns <tunnel-id> runtime.your-domain.com
-cloudflared tunnel run <tunnel-id>
+curl http://127.0.0.1:8013/health
+curl http://127.0.0.1:8013/health/live
+curl http://127.0.0.1:8013/health/ready
 ```
 
-## Monitoring
+## Backups
 
-### Health Checks
+State lives under `ALLTERNIT_DATA_DIR` (per-instance SQLite). Stop the process, copy the directory, start it again. A device identity file (`ALLTERNIT_RUNTIME_IDENTITY_PATH`) belongs to the paired daemon; losing it means re-pairing.
 
-The runtime exposes health endpoints:
+## Revoking a node
 
-```bash
-# Basic health
-curl https://your-domain.com/health
-
-# Detailed status (authenticated)
-curl -H "Authorization: Bearer $API_KEY" \
-  https://your-domain.com/status
-```
-
-### Metrics
-
-Enable Prometheus metrics:
-
-```yaml
-metrics:
-  enabled: true
-  path: /metrics
-  port: 9090
-```
-
-### Log Aggregation
-
-Send logs to external services:
-
-```yaml
-logging:
-  forward:
-    - type: loki
-      url: https://logs.example.com
-      labels:
-        service: allternit-runtime
-```
-
-## Backup Strategy
-
-### Automated Backups
-
-```bash
-#!/bin/bash
-# /opt/allternit/backup.sh
-
-BACKUP_DIR="/backups/allternit"
-DATE=$(date +%Y%m%d_%H%M%S)
-DB_PATH="/var/lib/allternit/data.sqlite"
-
-# Create backup
-sqlite3 $DB_PATH ".backup '$BACKUP_DIR/backup_$DATE.sqlite'"
-
-# Keep only last 7 days
-find $BACKUP_DIR -name "backup_*.sqlite" -mtime +7 -delete
-```
-
-Add to crontab:
-```
-0 2 * * * /opt/allternit/backup.sh
-```
-
-### Disaster Recovery
-
-1. Stop the runtime: `sudo systemctl stop allternit-runtime`
-2. Restore from backup: `cp backup_YYYYMMDD.sqlite data.sqlite`
-3. Start the runtime: `sudo systemctl start allternit-runtime`
+A paired device can be revoked through the Cloud API (`/api/v1/runtime-devices/:id`, `/api/v1/runtime-devices/:id/revoke-self`). See [Cloud API](/api/cloud-api#runtime-pairing).
 
 ## Scaling
 
-### Vertical Scaling
+One paired node is one runtime. Provisioned and hosted instances are managed through the Cloud API (`/api/v1/provisioned-instances`, `/api/v1/hosted-runtimes`). There is no built-in horizontal scaling of a single node.
 
-Increase resources on single server:
-- CPU: 4+ cores for high throughput
-- RAM: 8+ GB for many concurrent agents
-- Disk: SSD for better SQLite performance
+## How this relates to the Agency Kernel
 
-### Horizontal Scaling (Future)
-
-For high availability, deploy multiple runtime agents behind a load balancer with shared storage.
-
-## Troubleshooting Production Issues
-
-<AccordionGroup>
-  <Accordion title="High CPU usage">
-    - Check active agent count
-    - Review query patterns in logs
-    - Consider upgrading server or limiting concurrent agents
-  </Accordion>
-  
-  <Accordion title="Database locks">
-    - SQLite has concurrency limits
-    - Reduce parallel operations
-    - Consider WAL mode for better concurrency
-  </Accordion>
-  
-  <Accordion title="Memory leaks">
-    - Monitor heap usage over time
-    - Restart service periodically if needed
-    - Report issues with heap dumps
-  </Accordion>
-  
-  <Accordion title="WebSocket disconnections">
-    - Check proxy timeout settings
-    - Enable WebSocket ping/pong
-    - Review network stability
-  </Accordion>
-</AccordionGroup>
-
-## Support
-
-Need help with production deployment?
-
-- Email: support@allternit.com
-- Discord: [discord.gg/allternit](https://discord.gg/allternit)
-- Status: [status.allternit.com](https://status.allternit.com)
+BYOC is where the Allternit API data plane and Gizzi runtime run on hardware you control. The [Agency Kernel](/architecture) contracts are served through the Cloud API. Nothing on this page changes them.

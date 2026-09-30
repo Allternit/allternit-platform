@@ -5,7 +5,24 @@ description: 'Create, configure, run, and manage agents on the Allternit platfor
 
 ## Overview
 
-The Agents API is the central surface for creating, configuring, running, and managing agents on the Allternit platform. Agents are persistent, user-owned entities that combine a brain (provider + model), a system prompt, a tool policy, a harness configuration, and a set of enabled surfaces. Once created, an agent can be run on demand, instantiated from a template, published to the marketplace, or wired as a subagent under an orchestrator.
+The Agents API is the central surface for creating, configuring, running, and managing agents on the Allternit platform. Agents are persistent, user-owned records. Each one has a profile (name, description, system prompt), capabilities, a tool policy, a harness configuration, a set of enabled surfaces, and a `model` + `provider` pair. `POST /api/agents/:id/runs` calls that model and provider directly today. Once created, an agent can be run on demand, instantiated from a template, published to the marketplace, or wired as a subagent under an orchestrator.
+
+<Note>
+Existing runtime/provider APIs expose implementation controls intentionally. The Agency API is the abstraction that hides those controls behind capabilities and one durable agent identity. On this API, `model`, `provider` and the template `brain` object are real, returned fields and are documented as such.
+</Note>
+
+## Agents API vs Agency API
+
+**An Agent is configuration and identity. Agency is execution of work.**
+
+| API | What it is for |
+|-----|----------------|
+| [Agents API](/api/agents) | Configure persistent agent identities and profiles: instructions, capabilities, policies, a default model preference. |
+| [Agency API](/api/agency/overview) | Submit durable autonomous work: a goal becomes one verified Run. **PREVIEW.** |
+| [Runs](/api/agency/runs) | Observe and control execution: stream, steer, pause, cancel, audit. **PREVIEW.** |
+| [Decisions](/api/agency/decisions) | Make a bounded, typed decision with no side effects. **PREVIEW.** |
+
+## Routes
 
 All agent routes are mounted under `/api` and require a valid bearer token via the platform auth middleware.
 
@@ -30,8 +47,8 @@ All requests must include a valid bearer token in the `Authorization` header. Se
 | `type` | string | Agent type, e.g. `worker`, `orchestrator`. |
 | `parent_agent_id` | string \| null | For subagents, the orchestrator they belong to. |
 | `mode` | string | `primary`, `subagent`, `orchestrator`, or `council`. |
-| `model` | string | Model identifier. |
-| `provider` | string | Provider identifier. |
+| `model` | string | Model identifier used when the agent runs, e.g. `qwen2.5:0.5b`. |
+| `provider` | string | Provider identifier, e.g. `ollama`. |
 | `capabilities` | object \| null | Capability flags. |
 | `system_prompt` | string \| null | System prompt text. |
 | `tools` | array \| object \| null | Declared tools. |
@@ -87,6 +104,7 @@ Returns all agents owned by the authenticated user, newest first.
 | `workspace_id` | string | Filter by workspace. |
 | `status` | string | Filter by status. |
 | `type` | string | Filter by agent type. |
+| `include` | string | `prototypes` also returns Agent Studio drafts (status `prototype`), which are hidden by default. |
 
 #### Example request
 
@@ -202,10 +220,13 @@ curl -X POST https://api.allternit.com/api/agents \
 
 #### Example response
 
+Returns `201 Created`. `principal_token` is present only when a fabric-transport bearer token was issued, and it is shown exactly once.
+
 ```json
 {
   "agent": {
-    "id": "agent_018f3a7c..."
+    "id": "agent_018f3a7c...",
+    "is_bot": false
   }
 }
 ```
@@ -272,6 +293,39 @@ curl -X PUT https://api.allternit.com/api/agents/agent_018f3a7c... \
   "success": true
 }
 ```
+
+### Patch an agent
+
+```http
+PATCH /api/agents/:id
+```
+
+Merge-semantics partial update: only provided fields change. A successful change bumps the agent's `version` and writes an `agent_versions` snapshot. Returns the updated agent. Unknown or un-owned IDs return `404` (unlike `PUT`, which keeps its lenient `{"success": true}` shape).
+
+### Archive an agent
+
+```http
+POST /api/agents/:id/archive
+```
+
+One-way archive: status becomes `archived` and `archived_at` is stamped. There is no unarchive endpoint in this release. Unknown IDs return `404`.
+
+### Save an Agent Studio prototype
+
+```http
+POST /api/agents/prototype
+```
+
+Saves an Agent Studio draft as a real agent row with status `prototype`, keyed by user + name (saving again with the same name updates it). Requires `name` (at least 2 characters) and `model`; `max_tokens`, if given, must be at least 1. Prototypes are hidden from `GET /api/agents` unless `include=prototypes` is passed.
+
+### Agent toolset
+
+```http
+GET /api/agents/:id/toolset
+PUT /api/agents/:id/toolset
+```
+
+Reads or replaces the agent's toolset fields. `PUT` uses merge semantics, bumps `version`, and writes an `agent_versions` snapshot. Unknown permission values, or permission keys naming tools the agent does not have, return `400`.
 
 ### Delete an agent
 
@@ -367,7 +421,7 @@ curl -X POST https://api.allternit.com/api/agents/agent_018f3a7c.../subagents \
 POST /api/agents/companion/ensure
 ```
 
-Idempotently ensures the user has a primary "Allternit Companion" agent. If one already exists, the existing agent is returned; otherwise a new orchestrator is created using a runnable local brain fallback.
+Idempotently ensures the user has a primary "Allternit Companion" agent. If one already exists, the existing agent is returned; otherwise a new orchestrator is created with a runnable local model. If the user's configured default is empty or an unconfigured fallback, the Companion uses `ollama` / `qwen2.5:0.5b` so it runs out of the box.
 
 #### Example response (created)
 
@@ -437,14 +491,14 @@ Returns all agent templates, built-ins first.
 POST /api/agents/from-template
 ```
 
-Creates a live orchestrator and its subagents from a template. The brain can be overridden; otherwise the user's default model is used, falling back to a local Ollama brain.
+Creates a live orchestrator and its subagents from a template. The model can be overridden with `brain`; otherwise the user's default model is used, falling back to a local Ollama model.
 
 #### Request body
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `template_id` | string | Yes | Template ID. |
-| `brain` | object | No | `{ "provider": "...", "model": "..." }`. |
+| `brain` | object | No | `{ "provider": "...", "model": "..." }` for the orchestrator and its subagents. |
 | `name_override` | string | No | Override the orchestrator name. |
 
 #### Example request
@@ -484,7 +538,7 @@ curl -X POST https://api.allternit.com/api/agents/from-template \
 POST /api/agents/:id/runs
 ```
 
-Sends `input` through the Gizzi runtime using the agent's configured brain and system prompt. The call records a run, persists the outcome, and emits CommRails ledger events.
+Sends `input` through the Gizzi runtime using the agent's system prompt and its configured `model` and `provider`. The call records a run, persists the outcome, and emits CommRails ledger events.
 
 #### Request body
 
@@ -517,7 +571,7 @@ curl -X POST https://api.allternit.com/api/agents/agent_018f3a7c.../runs \
 }
 ```
 
-#### Example response (brain error)
+#### Example response (model error)
 
 ```json
 {
@@ -581,6 +635,14 @@ event: message
 data: {"event_type":"agent.run.completed","agent_id":"agent_018f3a7c...","run_id":"run_3f8a...","timestamp":"2026-08-13T14:22:01Z","data":{"duration_ms":1240}}
 ```
 
+### Ingest an agent event
+
+```http
+POST /api/agents/:id/events/ingest
+```
+
+Appends a runtime-bridged event to the CommRails ledger so it appears on `GET /api/agents/:id/events` (for example `waiting_approval`, `waiting_input` or `blocked` states). The payload must be a JSON object and is merged under `agent_id` (and `run_id` when given). Unsupported event types return `400`; success returns `202` with `{"ok": true}`.
+
 ## Agent identity
 
 ### Get agent identity
@@ -635,6 +697,14 @@ curl -X POST https://api.allternit.com/api/agents/identity \
   "public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAID..."
 }
 ```
+
+### Provision an agent wallet
+
+```http
+POST /api/agents/:id/identity/wallet
+```
+
+Provisions an Etrid wallet for the agent. The platform owns the wallet-service relationship, so clients never handle wallet key material.
 
 ## Agent metrics
 
@@ -748,7 +818,7 @@ curl -X POST https://api.allternit.com/api/agents/suites \
 POST /api/agents/test
 ```
 
-Runs a single real round-trip against the agent's brain using the last user message in `messages`, or a default connectivity probe.
+Runs a single real round-trip against the agent's configured model using the last user message in `messages`, or a default connectivity probe.
 
 #### Request body
 

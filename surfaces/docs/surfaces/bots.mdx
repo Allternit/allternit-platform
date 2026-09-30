@@ -27,6 +27,8 @@ Several threads can belong to one bot. A new thread does not replace the bot's s
 
 Choose a model and harness the runtime can actually use. Connect the needed tools, skills, secrets, and computer before assigning dependent work. Configure role instructions and review requirements for external actions. A template is a starting recipe, not evidence that every dependency is connected.
 
+The canonical contract lives in the allternit-ai repo, `src/lib/bots/BOT_AGENT_CONTRACT.md` and is enforced by `validateBot()` in `src/lib/bots/bot-contract.ts`.
+
 Bot secrets use server-side secret references rather than credential values in shared recipes. Saved templates omit credentials, memory, and live threads.
 
 ## Work and deliverables

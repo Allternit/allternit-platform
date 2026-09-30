@@ -5,6 +5,9 @@ description: Manage vector stores and search attached files through the Allterni
 
 ## Overview
 
+**Status:** Implementation IMPLEMENTED for store and file records (stored in the gateway database; a store or attached file is `completed` immediately, with no indexing step), and DESIGN - NOT YET IMPLEMENTED for search. `POST /v1/vector_stores/:id/search` validates the request and always returns an empty result list, because no embedding or similarity search is wired in yet. Exposure INTERNAL.
+
+
 The Vector Store API lets you create collections of files for retrieval-augmented generation (RAG). Files uploaded via `/v1/files` can be attached to a vector store, and the store can be searched semantically to retrieve relevant passages.
 
 ## Base URL
@@ -66,7 +69,7 @@ curl -X POST https://api.allternit.com/v1/vector_stores \
   "id": "vs_abc123",
   "object": "vector_store",
   "name": "platform-documentation",
-  "status": "in_progress",
+  "status": "completed",
   "created_at": 1723500000,
   "file_counts": {
     "in_progress": 0,
@@ -125,7 +128,7 @@ curl -X POST https://api.allternit.com/v1/vector_stores/vs_abc123/files \
   "object": "vector_store.file",
   "vector_store_id": "vs_abc123",
   "file_id": "file_abc123",
-  "status": "in_progress",
+  "status": "completed",
   "created_at": 1723500000
 }
 ```
@@ -175,19 +178,14 @@ curl -X POST https://api.allternit.com/v1/vector_stores/vs_abc123/search \
   }'
 ```
 
-### Example response
+### Response
+
+The response is always an empty list today:
 
 ```json
 {
   "object": "list",
-  "data": [
-    {
-      "id": "vsf_abc123_chunk_1",
-      "score": 0.92,
-      "content": "Bring-your-own-compute (BYOC) lets you run Allternit agents on infrastructure you control...",
-      "metadata": {"file_id": "file_abc123", "page": 4}
-    }
-  ],
+  "data": [],
   "has_more": false
 }
 ```
@@ -217,7 +215,7 @@ curl -X DELETE https://api.allternit.com/v1/vector_stores/vs_abc123 \
 | 429 | `allternit.rate_limited` | Per-key rate limit exceeded. |
 | 429 | `allternit.budget_exceeded` | Monthly key or tenant budget exhausted. |
 | 500 | `allternit.internal_error` | Internal gateway error. |
-| 502 | `allternit.upstream_error` | Embedding or search provider error. |
+| 502 | `allternit.upstream_error` | Database failure while reading or writing store records. |
 
 ## Related pages
 

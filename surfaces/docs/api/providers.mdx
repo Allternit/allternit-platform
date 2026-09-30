@@ -5,7 +5,11 @@ description: Discover, connect, and authenticate LLM providers and media generat
 
 # Providers
 
-The Providers API lists available LLM providers, reports their authentication status, discovers models, and connects subscription or API-key providers through the Gizzi runtime. Provider credentials are stored by Gizzi; the API only reads connection metadata.
+The Providers API lists available LLM providers, reports their authentication status, discovers models, and connects subscription or API-key providers through the Gizzi runtime. Provider credentials are stored by Gizzi; the API only reads connection metadata. The same routes are also mounted under `/api` without the `v1` prefix.
+
+<Note>
+Existing runtime/provider APIs expose implementation controls intentionally. The Agency API is the abstraction that hides those controls behind capabilities and one durable agent identity.
+</Note>
 
 ## Base URL
 
@@ -26,17 +30,25 @@ http://127.0.0.1:8013/api/v1
 | `GET` | `/api/v1/providers` | List providers |
 | `GET` | `/api/v1/providers/:id` | Get a provider |
 | `GET` | `/api/v1/providers/:id/auth/status` | Get provider auth status |
+| `GET` | `/api/v1/providers/:id/quota` | Plan usage windows (5-hour, weekly) for a subscription provider, relayed from the Gizzi runtime. Always `200` with a `status` field (`signed out` / `unsupported` instead of an error). |
 | `GET` | `/api/v1/providers/:id/models` | Discover provider models |
 | `POST` | `/api/v1/providers/:id/connect` | Start a provider connect flow |
 | `GET` | `/api/v1/providers/:id/connect/status` | Check connect status |
 | `POST` | `/api/v1/providers/:id/connect/confirm` | Confirm a completed connect flow |
 | `GET` | `/api/v1/providers/auth/status` | List auth status for all providers |
 | `POST` | `/api/v1/providers/video/generate` | Generate a video via a media provider |
+| `GET` | `/api/v1/media/catalog` | Media generation catalog |
+| `POST` | `/api/v1/media/video/jobs` | Submit a video generation job |
+| `GET` | `/api/v1/media/video/jobs/:job_id` | Get a video job |
+| `GET` | `/api/v1/media/video/jobs/:job_id/download` | Download a finished video |
+| `POST` | `/api/v1/media/image/generate` | Generate an image |
+| `POST` | `/api/v1/media/artifacts` | Upload a media artifact |
+| `GET` | `/api/v1/media/artifacts/:artifact_id` | Get a media artifact |
 | `GET` | `/api/v1/media/providers` | List media providers |
 | `GET` | `/api/v1/media/:mode/providers` | List media providers for a mode |
 | `POST` | `/api/v1/media/:mode/generate` | Generate media for a mode |
-| `GET` | `/api/v1/provider/ollama/status` | Probe local brain status |
-| `GET` | `/api/v1/provider/ollama/models` | List local brain models |
+| `GET` | `/api/v1/provider/ollama/status` | Probe local Ollama status |
+| `GET` | `/api/v1/provider/ollama/models` | List local Ollama models |
 | `GET` | `/api/v1/provider/huggingface/search` | Search public GGUF model registry |
 
 ## List providers

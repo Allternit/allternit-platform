@@ -15,6 +15,8 @@ Local development:
 http://127.0.0.1:8099
 ```
 
+The port is set with `OFFICE_ENGINE_PORT` (default `8099`).
+
 When mounted behind the Allternit platform gateway:
 
 ```text
@@ -33,6 +35,7 @@ https://api.allternit.com/api/office
 | POST | `/extract` | Extract text from supported formats |
 | POST | `/markdown` | Convert supported files to GFM Markdown |
 | POST | `/markdown-url` | Fetch a URL and convert to Markdown |
+| POST | `/deliverable/render` | Render markdown to a minimal DOCX, XLSX or PPTX (`template`: `report`, `sheet`, `deck`; body `title`, `markdown`; returns `ext`, `mimeType`, `bytesBase64`) |
 | POST | `/xlsx/parse` | Parse an XLSX workbook |
 | POST | `/xlsx/read` | Read sheet cells for grid rendering |
 | POST | `/xlsx/recalc` | Apply edits and recalculate formulas |

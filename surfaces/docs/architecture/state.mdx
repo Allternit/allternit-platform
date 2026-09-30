@@ -3,9 +3,34 @@ title: "State: AgentState and TaskIR"
 description: "The typed records that hold a run's truth, and why a transcript is never the record"
 ---
 
-**Status: AVAILABLE (schemas in Kernel ABI 1.0.0) · DESIGN — NOT YET IMPLEMENTED (runtime state store).** See [status labels](/architecture#status-labels).
+**Implementation: IMPLEMENTED (schemas) · DESIGN (runtime state store) · Exposure: PUBLIC (docs).** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Run state lives in typed, versioned records, not a transcript. |
+| **Implemented today** | AgentState and related schemas in Kernel ABI 1.0.0. No runtime state store. |
+| **Active path** | No. |
+| **Public exposure** | Documentation only. No endpoint serves it. |
 
 Two records hold what an agent knows and what it was asked to do: **TaskIR**, the compiled form of the request, and **AgentState**, the canonical semantic truth of the run.
+
+## Where each kind of state lives
+
+```mermaid
+flowchart TD
+    K["Intent Graph Kernel<br/>long-lived intent, knowledge<br/>and projections"] -->|"informs"| T["TaskIR + AgentState<br/>run-level semantic state"]
+    T --> G["ComputeGraphIR<br/>executable work plan"]
+    G --> L["Work runtime ledger<br/>operational lifecycle,<br/>leases and attempts"]
+```
+
+| Store | Is the store for | Is not the store for |
+|-------|------------------|----------------------|
+| [Intent Graph Kernel](/core/intent-graph-kernel) | Long-lived intent, knowledge and memory across runs, and the projections built from them | The state of any one run, or where a node is in its lifecycle |
+| [TaskIR and AgentState](/architecture/state) | What one run was asked to do, and its canonical semantic truth (facts, hypotheses, artifacts, verification, completion) | Long-lived knowledge, or lease and attempt bookkeeping |
+| [ComputeGraphIR](/architecture/graphs) | The executable plan for one run: nodes, edges, capabilities, levels | Whether a node is running right now |
+| Work runtime ledger | Operational lifecycle: node status, leases, heartbeats, attempts, outputs, receipts | Semantic truth about the task or long-lived knowledge |
+
+Information flows down. The Intent Graph Kernel informs a run; it does not drive it.
 
 ## Architecture contract
 
@@ -27,7 +52,7 @@ Ambiguity is represented explicitly. Unresolved ambiguity escalates instead of b
 
 ### AgentState
 
-AgentState is the run's truth. It holds identity and `state_version`, the user intent, acceptance criteria, constraints, environment and repository state, the plan and graph cursor, hypotheses kept apart from facts, selected context, generated artifacts, mutation and tool receipts, diagnostics, verification results, unresolved failures, permissions, budgets, subgoals, locks and completion state.
+AgentState is the run's truth. It holds identity and `state_version`, the user intent, acceptance criteria, constraints, environment and repository state, the plan and current position in the graph, hypotheses kept apart from facts, selected context, generated artifacts, mutation and tool receipts, diagnostics, verification results, unresolved failures, permissions, budgets, subgoals, locks and completion state.
 
 The rules:
 
@@ -49,10 +74,10 @@ The AgentState and TaskIR schemas are frozen in [Kernel ABI 1.0.0](/architecture
 
 | Part | Status |
 |------|--------|
-| `agent_state` and `task_ir` schemas | **AVAILABLE** (contract) |
-| Work runtime ledger | **AVAILABLE** (internal) |
-| AgentState store with compare-and-swap commits | **DESIGN — NOT YET IMPLEMENTED** |
-| Goal-to-TaskIR compiler | **DESIGN — NOT YET IMPLEMENTED** |
+| `agent_state` and `task_ir` schemas | **IMPLEMENTED** (contract) |
+| Work runtime ledger | **ENABLED** · INTERNAL |
+| AgentState store with compare-and-swap commits | **DESIGN** |
+| Goal-to-TaskIR compiler | **DESIGN** |
 
 ## Developer relevance
 

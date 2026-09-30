@@ -3,7 +3,14 @@ title: "Network access and SSRF"
 description: "The default-deny network policy and the shared egress guard"
 ---
 
-**Status: AVAILABLE (internal).** See [status labels](/architecture#status-labels).
+**Implementation: ENABLED (web proxy, design connector import) · DESIGN (spawned node processes) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Every server-side fetch of an untrusted URL goes through one egress guard. |
+| **Implemented today** | The shared egress guard is used by the web proxy and design connector import. For work-runtime nodes the network policy is recorded, not enforced by the guard. |
+| **Active path** | Partial. Per path, as listed. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 Network access is a policy, not a capability a tool assumes. One guard implements it for every caller.
 
@@ -19,15 +26,15 @@ Why: a tool that fetches a URL supplied by a model or by retrieved content is an
 
 ## Current implementation
 
-On main, egress from work-runtime tools goes through one shared guard, and the network policy is part of the environment recorded per node.
+The shared egress guard is on main. It allows only publicly routable unicast addresses, resolves a name once and dials that same address, so rebinding cannot swap in a private one. Which paths use it, on main today:
 
-## Availability
-
-| Part | Status |
-|------|--------|
-| Shared egress and SSRF guard | **AVAILABLE (internal)** |
-| Policy contract | **AVAILABLE (contract)** |
-| Guard on every network-capable tool | **AVAILABLE for work-runtime tools; other paths not claimed** |
+| Call path | Implementation | Exposure |
+|-----------|----------------|----------|
+| Web proxy | **ENABLED** (guard in the request path) | **INTERNAL** |
+| Design connector import | **ENABLED** (guard in the request path) | **INTERNAL** |
+| Work-runtime nodes (spawned executors) | **DESIGN** (network policy recorded in the environment, not enforced by the guard) | **INTERNAL** |
+| Other network-capable tools and connectors | Not claimed | — |
+| `NetworkAccessPolicyV1` contract | **IMPLEMENTED** (contract) | **PUBLIC** (docs) |
 
 ## Developer relevance
 
