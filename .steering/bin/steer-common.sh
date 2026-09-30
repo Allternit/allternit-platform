@@ -70,15 +70,7 @@ steer_consult() {
     # Test/override path, e.g. STEER_CONSULT_CMD="cat canned-answer.txt"
     $STEER_CONSULT_CMD < "$prompt_file"
   elif command -v allternit-rails >/dev/null 2>&1; then
-    # The installed ao-consult shim calls this coordinator again. Select a real
-    # stdin review backend explicitly so the coordinator cannot recurse into it.
-    if command -v claude >/dev/null 2>&1; then
-      STEER_CONSULT_CMD='claude --dangerously-skip-permissions -p' \
-        allternit-rails --root "$cwd" steer consult --cwd "$cwd" --prompt-file "$prompt_file"
-    else
-      printf 'steering: no direct review backend available; refusing recursive ao-consult\n' >&2
-      return 1
-    fi
+    allternit-rails --root "$cwd" steer consult --cwd "$cwd" --prompt-file "$prompt_file"
   elif command -v ao-consult >/dev/null 2>&1; then
     ao-consult < "$prompt_file"
   else
