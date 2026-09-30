@@ -1,6 +1,6 @@
 import { Hono } from "hono"
 import { lazy } from "@/shared/util/lazy"
-import { isEgressHostAllowed } from "@/shared/utils/hooks/ssrfGuard"
+import { isEgressHostAllowed, pinnedFetchOnce } from "@/shared/utils/hooks/ssrfGuard"
 
 /**
  * SSRF-safe web proxy that fetches a URL server-side and strips
@@ -63,7 +63,7 @@ export const WebProxyRoutes = lazy(() =>
         if (!(await isPublicHostname(hopUrl.hostname))) {
           return c.json({ error: "Requests to private/loopback addresses are blocked" }, 403)
         }
-        const res = await fetch(currentUrl, {
+        const res = await pinnedFetchOnce(currentUrl, {
           headers: {
             "User-Agent":
               "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -72,7 +72,7 @@ export const WebProxyRoutes = lazy(() =>
           },
           redirect: "manual",
           signal: AbortSignal.timeout(15_000),
-        })
+        }, { allowLoopback: false })
         if (REDIRECT_STATUSES.includes(res.status)) {
           const location = res.headers.get("location")
           if (!location || hop === MAX_REDIRECTS) {

@@ -2,6 +2,9 @@ import type { AddressFamily, LookupAddress as AxiosLookupAddress } from 'axios'
 import { lookup as dnsLookup } from 'dns'
 import { promises as dnsPromises } from 'dns'
 import { isIP } from 'net'
+import http from 'node:http'
+import https from 'node:https'
+import { Readable } from 'node:stream'
 
 /**
  * SSRF guard for HTTP hooks.
@@ -12,6 +15,11 @@ import { isIP } from 'net'
  *
  * Loopback (127.0.0.0/8, ::1) is intentionally ALLOWED — local dev policy
  * servers are a primary HTTP hook use case.
+ *
+ * Fetch-level paths (MCP remote, web fetch, web proxy) use `createGuardedFetch`
+ * / `pinnedFetchOnce` below: resolve once, vet every address, then connect to
+ * that vetted IP (node:http(s) `lookup` override; Bun honors it), so there is
+ * no DNS-rebinding window. HTTPS still verifies the original hostname.
  *
  * When a global proxy or the sandbox network proxy is in use, the guard is
  * effectively bypassed for the target host because the proxy performs DNS
@@ -375,27 +383,140 @@ export async function assertEgressAllowed(
   return u
 }
 
+export type ResolvedAddress = { address: string; family: number }
+
+export type PinnedEgressOptions = EgressOptions & {
+  /** Test seam: replaces DNS. Must return every address for the host. */
+  resolve?: (hostname: string) => Promise<ResolvedAddress[]>
+}
+
+async function resolveVetted(
+  hostname: string,
+  opts: PinnedEgressOptions,
+): Promise<ResolvedAddress> {
+  const host = hostname.replace(/^\[|\]$/g, '')
+  const fam = isIP(host)
+  const addrs: ResolvedAddress[] =
+    fam !== 0
+      ? [{ address: host, family: fam }]
+      : await (opts.resolve ?? (h => dnsPromises.lookup(h, { all: true })))(host)
+  const lower = host.replace(/\.$/, '').toLowerCase()
+  if (
+    fam === 0 &&
+    (lower === 'localhost' || lower.endsWith('.localhost')) &&
+    opts.allowLoopback !== true
+  ) {
+    throw new EgressBlockedError(hostname)
+  }
+  // One bad record among several is enough to refuse.
+  const first = addrs[0]
+  if (!first || !addrs.every(a => isAllowedAddress(a.address, opts))) {
+    throw new EgressBlockedError(hostname)
+  }
+  return first
+}
+
 /**
- * fetch() that vets the destination before every hop. Redirects are followed
- * manually so a public host cannot bounce the request to a metadata or
- * private address. Drop-in for the MCP SDK transports' `fetch` option.
+ * One fetch hop with the destination pinned. The hostname is resolved exactly
+ * once, every address is vetted, and the socket then connects to that vetted
+ * address through node:http(s) with a `lookup` that returns it. The URL and
+ * Host header keep the original hostname, so HTTPS uses it for SNI and
+ * certificate verification. There is no second DNS lookup to rebind.
+ * Redirects are NOT followed (the caller re-vets each hop).
  */
-export function createGuardedFetch(opts: EgressOptions = {}) {
+export async function pinnedFetchOnce(
+  input: string | URL | Request,
+  init: RequestInit | undefined,
+  opts: PinnedEgressOptions = {},
+): Promise<Response> {
+  const req0 = input instanceof Request ? input : undefined
+  const u = new URL(req0 ? req0.url : (input as string | URL))
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    throw new EgressBlockedError(u.protocol)
+  }
+  const pin = await resolveVetted(u.hostname, opts)
+
+  const method = (init?.method ?? req0?.method ?? 'GET').toUpperCase()
+  const headers = new Headers(req0?.headers)
+  new Headers(init?.headers).forEach((v, k) => headers.set(k, v))
+  // node:http does not decompress, so never advertise encodings we won't decode.
+  if (!headers.has('accept-encoding')) headers.set('accept-encoding', 'identity')
+  let body: Uint8Array | undefined
+  const rawBody = init?.body ?? (req0 && method !== 'GET' && method !== 'HEAD' ? await req0.arrayBuffer() : undefined)
+  if (rawBody !== undefined && rawBody !== null) {
+    if (typeof rawBody === 'string') body = new TextEncoder().encode(rawBody)
+    else if (rawBody instanceof Uint8Array) body = rawBody
+    else if (rawBody instanceof ArrayBuffer) body = new Uint8Array(rawBody)
+    else if (ArrayBuffer.isView(rawBody)) body = new Uint8Array(rawBody.buffer, rawBody.byteOffset, rawBody.byteLength)
+    else if (rawBody instanceof URLSearchParams) {
+      body = new TextEncoder().encode(rawBody.toString())
+      if (!headers.has('content-type')) headers.set('content-type', 'application/x-www-form-urlencoded')
+    } else throw new Error('egress: unsupported request body type for pinned fetch')
+  }
+  const signal = init?.signal ?? req0?.signal ?? undefined
+  const lib = u.protocol === 'https:' ? https : http
+
+  return new Promise<Response>((resolve, reject) => {
+    const reqOut = lib.request(
+      {
+        protocol: u.protocol,
+        hostname: u.hostname.replace(/^\[|\]$/g, ''),
+        port: u.port || undefined,
+        path: u.pathname + u.search,
+        method,
+        headers: Object.fromEntries(headers.entries()),
+        servername: isIP(u.hostname.replace(/^\[|\]$/g, '')) ? undefined : u.hostname,
+        lookup: ((_h: string, o: { all?: boolean }, cb: (...a: unknown[]) => void) => {
+          if (o && o.all) cb(null, [{ address: pin.address, family: pin.family }])
+          else cb(null, pin.address, pin.family)
+        }) as never,
+      },
+      res => {
+        const h = new Headers()
+        for (let i = 0; i < res.rawHeaders.length; i += 2) {
+          h.append(res.rawHeaders[i]!, res.rawHeaders[i + 1]!)
+        }
+        const status = res.statusCode ?? 502
+        const nullBody = status === 204 || status === 205 || status === 304 || method === 'HEAD'
+        if (nullBody) res.resume()
+        resolve(
+          new Response(nullBody ? null : (Readable.toWeb(res) as unknown as ReadableStream), {
+            status,
+            statusText: res.statusMessage,
+            headers: h,
+          }),
+        )
+      },
+    )
+    reqOut.on('error', reject)
+    if (signal) {
+      const abort = () => reqOut.destroy(signal.reason ?? new Error('aborted'))
+      if (signal.aborted) abort()
+      else signal.addEventListener('abort', abort, { once: true })
+    }
+    reqOut.end(body)
+  })
+}
+
+/**
+ * fetch() that vets and pins the destination on every hop. Redirects are
+ * followed manually so a public host cannot bounce the request to a metadata
+ * or private address. Drop-in for the MCP SDK transports' `fetch` option.
+ */
+export function createGuardedFetch(opts: PinnedEgressOptions = {}) {
   return async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-    let current: string | URL =
-      input instanceof Request ? input.url : input
+    let current: string | URL | Request = input
     let reqInit: RequestInit | undefined = init
     for (let hop = 0; hop <= MAX_EGRESS_REDIRECTS; hop++) {
-      const u = await assertEgressAllowed(current, opts)
-      const res = await fetch(input instanceof Request && hop === 0 ? input : u, {
-        ...reqInit,
-        redirect: 'manual',
-      })
+      const res = await pinnedFetchOnce(current, reqInit, opts)
       if (!REDIRECT_STATUSES.has(res.status)) return res
       const location = res.headers.get('location')
       if (!location) return res
-      current = new URL(location, u)
+      await res.body?.cancel().catch(() => {})
+      const base = current instanceof Request ? current.url : current
+      current = new URL(location, base).toString()
       if (res.status === 303) reqInit = { ...reqInit, method: 'GET', body: undefined }
+      else if (hop === 0 && input instanceof Request) reqInit = { ...reqInit }
     }
     throw new Error('egress: too many redirects')
   }
