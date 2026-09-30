@@ -29,6 +29,24 @@ pub enum CloseBy {
     Verifier,
 }
 
+/// Where a plan/node came from. A marked origin forces `verify: judge` and
+/// `close_by: verifier`; it is sticky (never unset) and cannot be weakened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyOrigin {
+    Agency,
+    Kernel,
+}
+
+impl PolicyOrigin {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PolicyOrigin::Agency => "agency",
+            PolicyOrigin::Kernel => "kernel",
+        }
+    }
+}
+
 /// One `JudgePolicySet` payload's `policy`. Absent fields are unchanged.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JudgePolicy {
@@ -40,6 +58,13 @@ pub struct JudgePolicy {
     pub tool_judge: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_continuations: Option<u32>,
+    /// Origin marker (`agency` / `kernel`); forces verifier-owned completion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<PolicyOrigin>,
+    /// Completion policy id (e.g. `completion.bug_fix`) whose required
+    /// criteria need evidence before DONE.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion_policy: Option<String>,
 }
 
 impl JudgePolicy {
@@ -59,6 +84,12 @@ impl JudgePolicy {
         }
         if other.max_continuations.is_some() {
             self.max_continuations = other.max_continuations;
+        }
+        if other.origin.is_some() {
+            self.origin = other.origin;
+        }
+        if other.completion_policy.is_some() {
+            self.completion_policy = other.completion_policy.clone();
         }
     }
 
@@ -81,6 +112,7 @@ pub struct EffectivePolicy {
     pub close_by: CloseBy,
     pub tool_judge: bool,
     pub max_continuations: u32,
+    pub origin: Option<PolicyOrigin>,
 }
 
 impl Default for EffectivePolicy {
@@ -90,6 +122,7 @@ impl Default for EffectivePolicy {
             close_by: CloseBy::Any,
             tool_judge: false,
             max_continuations: DEFAULT_MAX_CONTINUATIONS,
+            origin: None,
         }
     }
 }
@@ -122,12 +155,48 @@ pub fn effective_policy(
     }
     plan.overlay(&node);
     let d = EffectivePolicy::default();
-    EffectivePolicy {
+    let mut eff = EffectivePolicy {
         verify: plan.verify.unwrap_or(d.verify),
         close_by: plan.close_by.unwrap_or(d.close_by),
         tool_judge: plan.tool_judge.unwrap_or(d.tool_judge),
         max_continuations: plan.max_continuations.unwrap_or(d.max_continuations),
+        origin: plan.origin,
+    };
+    // Origin-marked work is forced on, whatever the author or worker set.
+    if eff.origin.is_some() {
+        eff.verify = VerifyMode::Judge;
+        eff.close_by = CloseBy::Verifier;
     }
+    eff
+}
+
+/// Completion policy id in force for `node_id` (node-level over plan-level).
+pub fn effective_completion_policy(
+    events: &[AllternitEvent],
+    dag_id: &str,
+    node_id: Option<&str>,
+) -> Option<String> {
+    let mut plan: Option<String> = None;
+    let mut node: Option<String> = None;
+    for evt in events.iter().filter(|e| e.r#type == events::POLICY_SET) {
+        if evt.payload.get("dag_id").and_then(|v| v.as_str()) != Some(dag_id) {
+            continue;
+        }
+        let Some(id) = evt
+            .payload
+            .get("policy")
+            .and_then(|p| p.get("completion_policy"))
+            .and_then(|v| v.as_str())
+        else {
+            continue;
+        };
+        match evt.payload.get("node_id").and_then(|v| v.as_str()) {
+            None => plan = Some(id.to_string()),
+            Some(n) if Some(n) == node_id => node = Some(id.to_string()),
+            Some(_) => {}
+        }
+    }
+    node.or(plan)
 }
 
 #[cfg(test)]
@@ -149,6 +218,19 @@ mod tests {
             payload: json!({"dag_id": dag, "node_id": node, "policy": policy}),
             provenance: None,
         }
+    }
+
+    #[test]
+    fn origin_forces_policy_and_cannot_be_unset() {
+        let evs = vec![
+            set("d", None, json!({"origin": "agency"})),
+            set("d", None, json!({"verify": "off", "close_by": "any"})),
+        ];
+        let e = effective_policy(&evs, "d", Some("n"));
+        assert_eq!(e.verify, VerifyMode::Judge);
+        assert_eq!(e.close_by, CloseBy::Verifier);
+        assert_eq!(e.origin, Some(PolicyOrigin::Agency));
+        assert_eq!(effective_policy(&evs, "other", None), EffectivePolicy::default());
     }
 
     #[test]
