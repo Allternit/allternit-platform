@@ -197,7 +197,7 @@ Rules for entries:
 
 - Each entry must be an origin: `scheme://host[:port]`, optionally with a leading `*.` wildcard, for example `https://api.example.com` or `https://*.example.com`.
 - Entries that contain whitespace, `;`, `,`, or quotes, or that are bare keywords, a lone `*`, or bare schemes like `data:` or `blob:`, are dropped.
-- Declare only what the View needs. The [review scan](/plugins/publish/submit-and-review#automated-scan) warns on wildcards, non-TLS schemes, more than 10 domains in total, and any `frameDomains`, which need a written justification.
+- Declare only what the View needs. The [review scan](/plugins/publish/submit-and-review#2-automated-scan) warns on wildcards, non-TLS schemes, more than 10 domains in total, and any `frameDomains`, which need a written justification.
 
 The CSP is applied as a `<meta>` element placed before your document's own content. Inline scripts and styles are allowed, so a single self-contained HTML file works. Because `<script src>` and stylesheet links resolve against an opaque origin, use absolute URLs on a declared `resourceDomains` entry, or inline the code.
 
