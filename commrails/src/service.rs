@@ -2581,6 +2581,9 @@ pub struct ReceiptVerificationResult {
     pub is_valid: bool,
     pub hash_matches: bool,
     pub signature_valid: Option<bool>,
+    /// "chained-signed", "legacy (unsigned, unchained)" or "missing".
+    #[serde(default)]
+    pub integrity: String,
     pub errors: Vec<String>,
 }
 
@@ -2853,6 +2856,7 @@ async fn receipts_verify(
             is_valid: sr.is_valid,
             hash_matches: sr.hash_matches,
             signature_valid: sr.signature_valid,
+            integrity: sr.integrity,
             errors: sr.errors,
         }).collect(),
         Err(e) => {
@@ -3096,4 +3100,71 @@ async fn init_stores(root: &PathBuf) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+
+#[cfg(test)]
+mod wp3_http_tests {
+    use super::*;
+    use serde_json::{json, Value};
+
+    async fn serve() -> (tempfile::TempDir, Arc<ServiceState>, String) {
+        let d = tempfile::tempdir().unwrap();
+        let state = Arc::new(ServiceState::new(d.path().to_path_buf()).await.unwrap());
+        let app = create_router(state.clone());
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+        (d, state, base)
+    }
+
+    fn append(state: &ServiceState, run: &str, n: u32) -> String {
+        let cs = state.receipts.chain_store().unwrap();
+        let mut last = String::new();
+        for i in 0..n {
+            let r = cs.append(json!({"envelope": {"schema_id":"allternit.kernel.PolicyReceiptV1",
+                "schema_version":"1.0.0","run_id":run}, "n": i})).unwrap();
+            last = r["chain"]["receipt_id"].as_str().unwrap().to_string();
+        }
+        last
+    }
+
+    #[tokio::test]
+    async fn jwks_routes_publish_no_private_material() {
+        let (_d, _s, base) = serve().await;
+        for path in ["/v1/receipts/jwks", "/.well-known/jwks.json"] {
+            let text = reqwest::get(format!("{base}{path}")).await.unwrap().text().await.unwrap();
+            let v: Value = serde_json::from_str(&text).unwrap();
+            let k = &v["keys"][0];
+            assert_eq!((k["kty"].as_str(), k["crv"].as_str()), (Some("OKP"), Some("Ed25519")));
+            assert!(k.get("d").is_none() && !text.contains("\"d\""), "private material leaked: {text}");
+        }
+    }
+
+    #[tokio::test]
+    async fn chain_verify_route_valid_and_tampered() {
+        let (d, s, base) = serve().await;
+        append(&s, "runh", 3);
+        let ok: Value = reqwest::get(format!("{base}/v1/receipts/chain/runh/verify")).await.unwrap().json().await.unwrap();
+        assert_eq!(ok["ok"], true, "{ok}");
+        let p = d.path().join(".allternit/receipts/_chains/runh/0000000001.json");
+        let mut v: Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+        v["n"] = json!(999);
+        std::fs::write(&p, serde_json::to_vec(&v).unwrap()).unwrap();
+        let bad: Value = reqwest::get(format!("{base}/v1/receipts/chain/runh/verify")).await.unwrap().json().await.unwrap();
+        assert_eq!(bad["ok"], false, "{bad}");
+        assert_eq!(bad["first_break"]["index"], 1);
+    }
+
+    #[tokio::test]
+    async fn verify_route_chained_receipt() {
+        let (_d, s, base) = serve().await;
+        let id = append(&s, "runv", 1);
+        let r: Value = reqwest::Client::new().post(format!("{base}/v1/receipts/verify"))
+            .json(&json!({"receipt_ids": [id, "rcpt_missing"]})).send().await.unwrap().json().await.unwrap();
+        assert_eq!(r["results"][0]["integrity"], "chained-signed", "{r}");
+        assert_eq!(r["results"][0]["signature_valid"], true);
+        assert_eq!(r["results"][0]["is_valid"], true);
+        assert_eq!(r["results"][1]["integrity"], "missing");
+    }
 }
