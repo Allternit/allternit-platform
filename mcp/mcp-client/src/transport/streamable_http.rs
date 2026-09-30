@@ -101,6 +101,9 @@ impl StreamableHttpTransport {
     pub fn new(config: StreamableHttpConfig) -> Result<Arc<Self>> {
         let client = Client::builder()
             .timeout(Duration::from_secs(config.timeout_secs))
+            // No redirects: the connector URL is SSRF-checked by the host, and a
+            // redirect could send the request (and token) to an unchecked address.
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| TransportError::Http {
                 status: 0,
