@@ -13,7 +13,10 @@ use allternit_commrails::bus::{Bus, BusMessage, BusOptions, NewBusMessage};
 use allternit_commrails::cli::judge::{
     run_judge_command, run_leases_command, JudgeCmd, JudgeContext, LeasesCmd,
 };
+use allternit_commrails::cli::lessons::{run_lessons_command, LessonsCmd};
+use allternit_commrails::cli::observe::{run_observe_command, ObserveArgs};
 use allternit_commrails::cli::work::{run_work_command, WorkCmd, WorkContext};
+use allternit_commrails::observer;
 use allternit_commrails::core::ids::{create_event_id, create_lease_id};
 use allternit_commrails::core::io::{ensure_dir, write_json_atomic};
 use allternit_commrails::dependencies::load_graph;
@@ -114,6 +117,12 @@ enum Commands {
     /// Lease-holder heartbeats and stale-lease reclaim.
     #[command(subcommand)]
     Leases(LeasesCmd),
+    /// Read-only observer: consult an advisor on a DAG/WIH and post the
+    /// answer as an informational mail message (no leases, no writes).
+    Observe(ObserveArgs),
+    /// Vault memory candidates and lesson triage (Brain drafts only).
+    #[command(subcommand)]
+    Lessons(LessonsCmd),
 }
 
 #[derive(Subcommand)]
@@ -739,6 +748,7 @@ async fn run() -> Result<()> {
                         for (step, node) in &result.nodes {
                             println!("step {step} -> {node}");
                         }
+                        observe_plan_hook(&root, &ledger, &result.dag_id).await;
                     }
                     None => {
                         if !params.is_empty() {
@@ -747,6 +757,7 @@ async fn run() -> Result<()> {
                         let text = text.context("plan new needs <text> or --template")?;
                         let (prompt_id, dag_id, node_id) = gate.plan_new(&text, None).await?;
                         println!("prompt_id: {prompt_id}\ndag_id: {dag_id}\nnode_id: {node_id}");
+                        observe_plan_hook(&root, &ledger, &dag_id).await;
                     }
                 }
             }
@@ -917,6 +928,16 @@ async fn run() -> Result<()> {
                 actor,
             } => {
                 let gate = stores.gate().await?;
+                // Opt-in policy `observe_before_close`: advisory, never blocks.
+                if let Some(out) = observer::run_hook_advisory(&root, "pre-close", |r, cfg| {
+                    let ledger = ledger.clone();
+                    let wih_id = wih_id.clone();
+                    async move { observer::before_wih_close(&r, ledger, &cfg, &wih_id).await }
+                })
+                .await
+                {
+                    println!("observer: {} {}", out.thread_id, out.message_id);
+                }
                 let output_text = match &output {
                     Some(path) => Some(
                         std::fs::read_to_string(path)
@@ -935,6 +956,15 @@ async fn run() -> Result<()> {
                 if let Some(v) = &closed.verdict {
                     println!("node_status: {}", closed.node_status);
                     println!("verdict: {}", serde_json::to_string(v)?);
+                }
+                if let Some(out) = observer::run_hook_advisory(&root, "repeat-failure", |r, cfg| {
+                    let ledger = ledger.clone();
+                    let wih_id = wih_id.clone();
+                    async move { observer::after_wih_close(&r, ledger, &cfg, &wih_id).await }
+                })
+                .await
+                {
+                    println!("observer: {} {}", out.thread_id, out.message_id);
                 }
             }
         },
@@ -1572,6 +1602,12 @@ async fn run() -> Result<()> {
         Commands::Hook(cmd) => {
             run_hook_command(&root, &stores, &ledger, cmd).await?;
         }
+        Commands::Observe(args) => {
+            run_observe_command(&root, ledger.clone(), args).await?;
+        }
+        Commands::Lessons(cmd) => {
+            run_lessons_command(&root, ledger.clone(), cmd).await?;
+        }
         Commands::WaitGate(cmd) => match cmd {
             WaitGateCmd::Add {
                 node,
@@ -1780,6 +1816,19 @@ async fn run_hook_command(root: &Path, stores: &Stores, ledger: &Arc<Ledger>, cm
         }
     }
     Ok(())
+}
+
+/// Opt-in `observe_on_plan` hook after `plan new` (advisory).
+async fn observe_plan_hook(root: &Path, ledger: &Arc<Ledger>, dag_id: &str) {
+    if let Some(out) = observer::run_hook_advisory(root, "plan", |r, cfg| {
+        let ledger = ledger.clone();
+        let dag_id = dag_id.to_string();
+        async move { observer::on_plan_created(&r, ledger, &cfg, &dag_id).await }
+    })
+    .await
+    {
+        println!("observer: {} {}", out.thread_id, out.message_id);
+    }
 }
 
 async fn run_steer_command(root: &Path, cmd: SteerCmd) -> Result<()> {

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use allternit_commrails::fence::Fence;
 use allternit_commrails::gate::gate::DagMutation as Mutation;
 use allternit_commrails::leases::leases::LeasesOptions;
 use allternit_commrails::ledger::ledger::LedgerOptions;
@@ -307,7 +308,17 @@ async fn pickup_resolves_output_placeholders_into_wih_context() {
         .unwrap();
     let text = pickup.resolved_description.clone().expect("resolved text");
     let abs = root.join(format!(".allternit/work/dags/{dag_id}/nodes/{a}.out.md"));
-    assert_eq!(text, format!("Cut from:\nCAPTURE-NOTES\nfile: {}", abs.display()));
+    // S7: the inlined output is nonce-fenced and the rule is stated once.
+    let fence = Fence::with_nonce(pickup.fence_nonce.clone());
+    assert_eq!(
+        text,
+        format!(
+            "{}\n\nCut from:\n{}\nfile: {}",
+            fence.instruction(),
+            fence.wrap(&format!("node:{a}"), "CAPTURE-NOTES"),
+            abs.display()
+        )
+    );
     let prompt_path = pickup.resolved_prompt_path.clone().unwrap();
     assert_eq!(std::fs::read_to_string(&prompt_path).unwrap(), text);
 
@@ -322,7 +333,8 @@ async fn pickup_resolves_output_placeholders_into_wih_context() {
     let outputs = pack["dependency_outputs"].as_array().unwrap();
     assert_eq!(outputs.len(), 1);
     assert_eq!(outputs[0]["node_id"], json!(a));
-    assert_eq!(outputs[0]["text"], json!("CAPTURE-NOTES"));
+    assert_eq!(outputs[0]["text"], json!(fence.wrap(&format!("node:{a}"), "CAPTURE-NOTES")));
+    assert_eq!(pack["untrusted_fence"]["nonce"], json!(pickup.fence_nonce));
     assert_eq!(outputs[0]["truncated"], json!(false));
     assert_eq!(pack["resolved_description"], json!(text));
 
@@ -354,7 +366,13 @@ async fn context_pack_truncates_large_outputs() {
             .unwrap();
     let out = &pack["dependency_outputs"][0];
     assert_eq!(out["truncated"], json!(true));
-    assert!(out["text"].as_str().unwrap().len() <= allternit_commrails::gate::CONTEXT_PACK_OUTPUT_INLINE_CAP);
+    // The cap applies to the output; the fence markers wrap the capped text.
+    let fence = Fence::with_nonce(pickup.fence_nonce.clone());
+    let overhead = fence.wrap(&format!("node:{a}"), "").len();
+    assert!(
+        out["text"].as_str().unwrap().len()
+            <= allternit_commrails::gate::CONTEXT_PACK_OUTPUT_INLINE_CAP + overhead
+    );
     assert_eq!(out["size_bytes"], json!(big.len()));
 }
 
@@ -414,7 +432,11 @@ async fn transitive_predecessor_ref_is_allowed() {
         .wih_pickup_detailed(&dag_id, "tr_c", "agent", WihPickupOptions::default())
         .await
         .unwrap();
-    assert_eq!(pickup.resolved_description.as_deref(), Some("from a: A-OUT"));
+    let fence = Fence::with_nonce(pickup.fence_nonce.clone());
+    assert_eq!(
+        pickup.resolved_description,
+        Some(format!("{}\n\nfrom a: {}", fence.instruction(), fence.wrap("node:tr_a", "A-OUT")))
+    );
 }
 
 #[tokio::test]
@@ -677,9 +699,14 @@ async fn template_instantiates_wih_dag_with_params_edges_gates_and_provenance() 
         .wih_pickup_detailed(&result.dag_id, cut, "agent", WihPickupOptions::default())
         .await
         .unwrap();
+    let fence = Fence::with_nonce(pickup.fence_nonce.clone());
     assert_eq!(
-        pickup.resolved_description.as_deref(),
-        Some("Cut the promo from these capture notes:\nclip-01 00:12 hero shot")
+        pickup.resolved_description,
+        Some(format!(
+            "{}\n\nCut the promo from these capture notes:\n{}",
+            fence.instruction(),
+            fence.wrap(&format!("node:{capture}"), "clip-01 00:12 hero shot")
+        ))
     );
     gate.wih_close_with(&pickup.wih_id, "DONE", &[], Some("cut v1"))
         .await

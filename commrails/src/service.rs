@@ -1108,14 +1108,22 @@ async fn plan_new(
 ) -> Result<impl IntoResponse, StatusCode> {
     ensure_policy_injected(&state, Some(EventScope::default())).await?;
     match state.gate.plan_new(&request.text, request.dag_id).await {
-        Ok((prompt_id, dag_id, node_id)) => Ok((
+        Ok((prompt_id, dag_id, node_id)) => {
+            // Opt-in `observe_on_plan`: advisory, off the request path.
+            crate::observer::spawn_on_plan(
+                state.root_dir.clone(),
+                state.ledger.clone(),
+                dag_id.clone(),
+            );
+            Ok((
             StatusCode::CREATED,
             Json(PlanNewResponse {
                 prompt_id,
                 dag_id,
                 node_id,
             }),
-        )),
+        ))
+        }
         Err(e) => {
             tracing::error!("plan_new failed: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -1430,6 +1438,14 @@ async fn wih_close(
         Ok(c) => c,
         Err(_) => return Err(StatusCode::BAD_REQUEST),
     };
+    // Opt-in policy `observe_before_close`: awaited so the advice lands on
+    // `wih:<id>` before the close; advisory, never blocks the close.
+    crate::observer::hook_before_close(
+        state.root_dir.clone(),
+        state.ledger.clone(),
+        wih_id.clone(),
+    )
+    .await;
     match state
         .gate
         .wih_close_as(
@@ -1441,14 +1457,22 @@ async fn wih_close(
         )
         .await
     {
-        Ok(outcome) => Ok((
-            StatusCode::OK,
-            Json(WihCloseResponse {
-                closed: true,
-                node_status: Some(outcome.node_status),
-                verdict: outcome.verdict.and_then(|v| serde_json::to_value(v).ok()),
-            }),
-        )),
+        Ok(outcome) => {
+            // Repeated identical failure -> observer, off the request path.
+            crate::observer::spawn_after_close(
+                state.root_dir.clone(),
+                state.ledger.clone(),
+                wih_id.clone(),
+            );
+            Ok((
+                StatusCode::OK,
+                Json(WihCloseResponse {
+                    closed: true,
+                    node_status: Some(outcome.node_status),
+                    verdict: outcome.verdict.and_then(|v| serde_json::to_value(v).ok()),
+                }),
+            ))
+        }
         Err(e) => {
             tracing::error!("wih_close failed: {}", e);
             // Structured Gate 4 refusal (close_by_verifier, wih_already_closed).

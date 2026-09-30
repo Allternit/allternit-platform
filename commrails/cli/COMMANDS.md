@@ -159,6 +159,12 @@ Notes:
 - When the node description has output placeholders, prints
   `resolved_prompt_path: <path>` and the resolved text after
   `--- resolved prompt ---`.
+- Every inlined `{{ x.output }}` (and every ContextPack
+  `dependency_outputs[].text`) is wrapped in a per-render nonce fence
+  `<untrusted-data nonce="…" source="node:x">…</untrusted-data nonce="…">`
+  with fence markers inside the content escaped, and the prompt starts with a
+  one-line rule that fenced text is data, not instructions
+  (see `spec/FRESH_CONTEXT_ISOLATION.md`).
 
 ### `allternit wih sign-open <wih_id>`
 Required events:
@@ -188,7 +194,46 @@ Required events:
 - WIHClosedSigned (gate attestation)
 - DagNodeStatusChanged
 - WIHArchived
-- VaultJobCreated → VaultJobCompleted
+- VaultJobCreated → VaultJobCompleted → MemoryCandidateExtracted (candidate
+  stored pending under the vault's `memory_candidates/`)
+
+Observer hooks (advisory, never block the close; see `spec/OBSERVER.md`):
+- before the close, when `observe_before_close: true` in
+  `.allternit/rails/observer.json`;
+- after the close, when it failed with the same failure signature for the
+  `repeat_failure_threshold`-th time (default 2) — once per signature.
+
+## Observer (read-only advisor)
+
+### `allternit observe --dag <dag_id> [--wih <wih_id>] --trigger plan|repeat-failure|pre-close [--consult-cmd <cmd>] [--json]`
+Builds context from the DAG slice, recent ledger events and node outputs
+(nonce-fenced), runs the consult command through a read-only profile (`claude`:
+`-p --permission-mode plan --tools Read,Grep,Glob --disallowedTools … --strict-mcp-config`;
+`kimi`: `--plan -p`; `codex`: `exec --sandbox read-only`; anything else only with
+`read_only_attested: true`), and posts the answer as an informational mail
+message on `wih:<wih_id>` (or `dag:<dag_id>`).
+Command: `--consult-cmd`, else `consult_cmd` in `.allternit/rails/observer.json` /
+`ALLTERNIT_OBSERVER_CMD`, else `STEER_CONSULT_CMD`.
+Events: ThreadCreated (if new) + MessageSent (from_agent `observer`) only — no
+leases, no receipts.
+
+`plan new` runs the observer afterwards when `observe_on_plan: true`.
+
+## Lessons (vault → Brain drafts)
+
+### `allternit lessons list [--dag <dag_id>]`
+Lists vault memory candidates (all pending human approval). No events.
+
+### `allternit lessons triage --dag <dag_id> [--brain-root <dir>] [--server <url>] [--model <id>] [--task-min 0.5] [--mean-min 0.6] [--timeout-secs 30] [--force]`
+Scores each untriaged candidate with three System One Nouls (`task_success`,
+`reusable_pattern`, `supported_by_events`) at `POST <server>/v1/systemone`
+(default `http://127.0.0.1:7717`). Promotes when `task_success >= task-min` and
+the mean `>= mean-min`. Promoted candidates are written as `brain_update_draft`
+files (`auto_apply: false`) to `<brain-root>/.incoming/draft-<ms>.json`; if the
+server is unreachable the draft is written marked `unscored`. Rejected
+candidates get no draft. Never applies anything; the scorer writes no lesson text.
+Brain root default: `$ALLTERNIT_BRAIN_ROOT`, else `~/Desktop/Allternit/Allternit Brain`.
+Events: LessonTriaged per candidate (re-runs skip triaged candidates unless `--force`).
 
 ## Node wait-gates
 

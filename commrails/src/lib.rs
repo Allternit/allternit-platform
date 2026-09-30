@@ -9,6 +9,7 @@ pub mod doctor;
 #[cfg(feature = "dolt")]
 pub mod dolt;
 pub mod echoes;
+pub mod fence;
 pub mod gate;
 pub mod graph;
 pub mod hook;
@@ -17,8 +18,10 @@ pub mod judge;
 pub mod killswitch;
 pub mod leases;
 pub mod ledger;
+pub mod lessons;
 pub mod mail;
 pub mod mcp;
+pub mod observer;
 pub mod memory;
 pub mod merge_locks;
 pub mod orchestrator;
