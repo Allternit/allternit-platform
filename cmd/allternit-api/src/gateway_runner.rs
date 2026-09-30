@@ -201,7 +201,7 @@ fn set_thread_status(db: &DbHandle, bot_id: &str, thread_id: &str, status: &str,
     led(db, bot_id, thread_id, None, ev, ("system", "gateway"), json!({ "status": status, "statusLine": line }), None);
 }
 
-struct Cx {
+pub(crate) struct Cx {
     owner: String,
     thread_id: String,
     bot_id: String,

@@ -331,7 +331,7 @@ struct GizziMessageError {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
-struct GizziMessagePart {
+pub(crate) struct GizziMessagePart {
     #[serde(rename = "type")]
     part_type: String,
     #[serde(default)]
