@@ -11,8 +11,8 @@
 //! - Plans carry capability / role / mode / backend ids only. Concrete model
 //!   identity is execution *evidence*, never plan semantics (L3591); vendor or
 //!   model names never enter a plan (asserted in tests).
-//! - S1 (System-1) is refused unless the primitive has a bound calibration
-//!   manifest that passed the Q22 gate; S1 is SHADOW by default, mirroring the
+//! - S1 (System-1) is refused unless the primitive's S1 ModelPool entry lists
+//!   a calibration manifest that passed the Q22 gate; S1 is SHADOW by default, mirroring the
 //!   WP8 decision runtime (`tools/system-one-local`, `POST /v1/decision`).
 //! - An exhausted budget fails closed: no plan, not even M0.
 //! - The router is pure: no I/O. The ModelPool is injected; `fetch_model_pool`
@@ -310,8 +310,6 @@ impl Default for RouterPolicy {
 #[derive(Debug, Clone, Default)]
 pub struct RouterConfig {
     pub s1_mode: S1Mode,
-    /// primitive_id → calibration manifest.
-    pub calibrations: HashMap<String, CalibrationBinding>,
     pub policy: RouterPolicy,
 }
 
@@ -413,26 +411,7 @@ impl<'a, P: ModelPool> Router<'a, P> {
             .and_then(|r| r.get("trust_requirement"))
             .and_then(|t| serde_json::from_value(t.clone()).ok());
 
-        // S1 calibration gate (Q22 / WP8): refuse uncalibrated S1.
-        let calibration = if role == Role::S1 {
-            match self.config.calibrations.get(&node.primitive_id) {
-                Some(b) if b.gate_passed => Some(b.clone()),
-                _ => {
-                    return Err(RouteError::UncalibratedS1 { node: nid, primitive: node.primitive_id.clone() })
-                }
-            }
-        } else {
-            None
-        };
-
-        let mut ext = Map::new();
-        if role == Role::S1 {
-            let m = match self.config.s1_mode {
-                S1Mode::Shadow => "shadow",
-                S1Mode::Live => "live",
-            };
-            ext.insert("x-s1_mode".into(), Value::String(m.into()));
-        }
+        let ext = Map::new();
 
         // S0 → PrimitiveRegistry, not the pool.
         if role == Role::S0 {
@@ -441,6 +420,23 @@ impl<'a, P: ModelPool> Router<'a, P> {
         }
         let capability = capability.ok_or_else(|| RouteError::MissingCapability(nid.clone()))?;
 
+        // S1 calibration gate (Q22 / WP8), resolved THROUGH THE POOL: an S1
+        // backend is eligible only if its pool entry lists a gate-passing
+        // calibration manifest for this primitive. No out-of-band bindings.
+        let mut s1_cal: HashMap<String, CalibrationBinding> = HashMap::new();
+        if role == Role::S1 {
+            for e in self.pool.entries().iter().filter(|e| {
+                e.cognitive_roles.contains(&Role::S1) && e.capabilities.iter().any(|c| c == &capability)
+            }) {
+                if let Some(b) = s1_calibration(e, &node.primitive_id) {
+                    s1_cal.insert(e.backend_id.clone(), b);
+                }
+            }
+            if s1_cal.is_empty() {
+                return Err(RouteError::UncalibratedS1 { node: nid, primitive: node.primitive_id.clone() });
+            }
+        }
+
         // 3. candidates by capability / role / mode.
         let candidates: Vec<&PoolEntry> = self
             .pool
@@ -448,6 +444,7 @@ impl<'a, P: ModelPool> Router<'a, P> {
             .iter()
             .filter(|e| e.capabilities.iter().any(|c| c == &capability))
             .filter(|e| e.cognitive_roles.contains(&role))
+            .filter(|e| role != Role::S1 || s1_cal.contains_key(&e.backend_id))
             .filter(|e| e.modes.iter().any(|m| modes.contains(m)))
             .collect();
         if candidates.is_empty() {
@@ -503,6 +500,13 @@ impl<'a, P: ModelPool> Router<'a, P> {
         });
         let chosen = fits[0];
         let fallback: Vec<String> = fits[1..].iter().map(|e| e.backend_id.clone()).collect();
+        let calibration = s1_cal.get(&chosen.backend_id).cloned();
+        let mut ext = ext;
+        if role == Role::S1 {
+            // Live only when BOTH the router config and the pool entry say live.
+            let live = self.config.s1_mode == S1Mode::Live && entry_s1_live(chosen);
+            ext.insert("x-s1_mode".into(), Value::String(if live { "live" } else { "shadow" }.into()));
+        }
 
         let mut plan = self.plan(node, role, best_mode(chosen), capability, chosen.backend_id.clone(),
             Some(chosen.residency), quality_floor, cost_cap, wall_cap, fallback, calibration.as_ref(), ext);
@@ -585,8 +589,39 @@ pub enum S1Verdict {
     Refused { reason: String },
 }
 
-/// Apply a WP8 decision result to an S1 plan.
-pub fn apply_s1_result(plan: &ExecutionPlan, result: &DecisionResultView, mode: S1Mode) -> S1Verdict {
+fn ext_str<'e>(x: &'e Option<Map<String, Value>>, k: &str) -> Option<&'e str> {
+    x.as_ref()?.get(k)?.as_str()
+}
+
+/// `x-s1_mode` on a pool entry; anything but "live" is shadow.
+fn entry_s1_live(e: &PoolEntry) -> bool {
+    ext_str(&e.extensions, "x-s1_mode") == Some("live")
+}
+
+/// A gate-passing, non-RAW calibration for `primitive` listed in the entry's
+/// `x-calibrations` (published by gizzi-code's ModelPool from the decision
+/// runtime's `DecisionCalibrationManifestV1`s).
+pub fn s1_calibration(e: &PoolEntry, primitive: &str) -> Option<CalibrationBinding> {
+    if ext_str(&e.extensions, "x-calibration_status") != Some("calibrated") {
+        return None;
+    }
+    let cals = e.extensions.as_ref()?.get("x-calibrations")?.as_array()?;
+    cals.iter().find_map(|c| {
+        if c.get("primitive_id")?.as_str()? != primitive || !c.get("gate_passed")?.as_bool()? {
+            return None;
+        }
+        let level: CalibrationLevel = serde_json::from_value(c.get("level")?.clone()).ok()?;
+        if level == CalibrationLevel::Raw {
+            return None;
+        }
+        Some(CalibrationBinding { manifest_id: c.get("manifest_id")?.as_str()?.to_string(), level, gate_passed: true })
+    })
+}
+
+/// Apply a WP8 decision result to an S1 plan. The S1 mode comes from the plan
+/// (`x-s1_mode`), which the router set from config AND the pool entry.
+pub fn apply_s1_result(plan: &ExecutionPlan, result: &DecisionResultView) -> S1Verdict {
+    let mode = if ext_str(&plan.extensions, "x-s1_mode") == Some("live") { S1Mode::Live } else { S1Mode::Shadow };
     let refused_flag = result
         .extensions
         .as_ref()

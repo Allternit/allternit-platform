@@ -37,11 +37,23 @@ fn entry(id: &str, roles: &[Role], modes: &[Mode], cap: &str, conf: f64, cost: f
     }
 }
 
+/// Publish S1 calibration status on a pool entry the way gizzi-code's ModelPool does.
+fn calibrate(mut e: PoolEntry, status: &str, s1_mode: &str, gate_passed: bool) -> PoolEntry {
+    let x = e.extensions.get_or_insert_with(Map::new);
+    x.insert("x-calibration_status".into(), json!(status));
+    x.insert("x-s1_mode".into(), json!(s1_mode));
+    x.insert(
+        "x-calibrations".into(),
+        json!([{"primitive_id": "decide.choice", "manifest_id": "calib.decide.choice.v1", "level": "L1", "gate_passed": gate_passed}]),
+    );
+    e
+}
+
 fn pool() -> StaticModelPool {
     StaticModelPool {
         entries: vec![
-            entry("be.s1.head", &[Role::S1], &[Mode::M2CalibratedReadout, Mode::M3HiddenHead], "cap.decide.choice", 0.9, 0.01, Residency::Hot),
-            entry("be.s1.decider", &[Role::S1], &[Mode::M4DedicatedDecider], "cap.decide.choice", 0.95, 0.02, Residency::Warm),
+            calibrate(entry("be.s1.head", &[Role::S1], &[Mode::M2CalibratedReadout, Mode::M3HiddenHead], "cap.decide.choice", 0.9, 0.01, Residency::Hot), "calibrated", "live", true),
+            calibrate(entry("be.s1.decider", &[Role::S1], &[Mode::M4DedicatedDecider], "cap.decide.choice", 0.95, 0.02, Residency::Warm), "calibrated", "live", true),
             entry("be.gen.remote", &[Role::S2], &[Mode::M5Generative], "cap.code.edit", 0.8, 0.5, Residency::Remote),
             entry("be.gen.local", &[Role::S2], &[Mode::M5Generative], "cap.code.edit", 0.7, 0.1, Residency::Warm),
             entry("be.deep", &[Role::S2, Role::S3], &[Mode::M5Generative, Mode::M6DeepSolver], "cap.code.edit", 0.95, 2.0, Residency::Remote),
@@ -72,13 +84,9 @@ fn ledger(c: f64) -> BudgetLedger {
     BudgetLedger { remaining_cost_units: c, remaining_wall_ms: None }
 }
 
+/// Calibration now comes from the pool; the config carries none.
 fn calibrated() -> RouterConfig {
-    let mut cfg = RouterConfig::default();
-    cfg.calibrations.insert(
-        "decide.choice".into(),
-        CalibrationBinding { manifest_id: "calib.decide.choice.v1".into(), level: CalibrationLevel::L1, gate_passed: true },
-    );
-    cfg
+    RouterConfig::default()
 }
 
 // ---- plan generation per mode
@@ -223,16 +231,53 @@ fn nothing_affordable_fails_closed_and_node_budget_caps() {
 
 // ---- S1 calibration gate + shadow default
 
+/// The WP8 decision runtime exactly as gizzi-code's ModelPool lists it today:
+/// no gate-passing manifests → uncalibrated, M1 readout only, shadow.
+fn decision_runtime_today() -> PoolEntry {
+    serde_json::from_value(json!({
+        "schema_id": "allternit.kernel.ModelPoolEntryV1", "schema_version": "1.0.0",
+        "backend_id": "be.s1.decision_runtime", "cognitive_roles": ["S1"], "modes": ["M1.LOGIT_READOUT"],
+        "capabilities": ["cap.decide.choice", "cap.decide.gate"],
+        "trust_tags": ["PUBLIC", "INTERNAL", "RESTRICTED", "SECRET"],
+        "confidence_estimate": 0, "latency_ms": 50, "cost": 0, "residency": "WARM",
+        "extensions": {"x-source": "system-one-local", "x-calibration_status": "uncalibrated",
+                       "x-s1_mode": "shadow", "x-calibrations": []}
+    }))
+    .unwrap()
+}
+
 #[test]
 fn uncalibrated_s1_is_refused() {
-    let p = pool();
     let cfg = RouterConfig::default();
-    let r = Router::new(&p, &cfg).route(&node("s1", Some("S1"), Some("cap.decide.choice"), "PUBLIC"), &ledger(1.0));
-    assert!(matches!(r, Err(RouteError::UncalibratedS1 { .. })));
-    let mut cfg = calibrated();
-    cfg.calibrations.get_mut("decide.choice").unwrap().gate_passed = false;
-    let r = Router::new(&p, &cfg).route(&node("s1", Some("S1"), Some("cap.decide.choice"), "PUBLIC"), &ledger(1.0));
-    assert!(matches!(r, Err(RouteError::UncalibratedS1 { .. })), "a failed Q22 gate is refused like no manifest");
+    let n = node("s1", Some("S1"), Some("cap.decide.choice"), "PUBLIC");
+    // Pool with only the decision runtime as it is today.
+    let p = StaticModelPool { entries: vec![decision_runtime_today()] };
+    assert!(matches!(Router::new(&p, &cfg).route(&n, &ledger(1.0)), Err(RouteError::UncalibratedS1 { .. })));
+    // A manifest that failed the Q22 gate is refused like no manifest.
+    let mut p = pool();
+    for e in p.entries.iter_mut().filter(|e| e.cognitive_roles.contains(&Role::S1)) {
+        *e = calibrate(e.clone(), "calibrated", "live", false);
+    }
+    assert!(matches!(Router::new(&p, &cfg).route(&n, &ledger(1.0)), Err(RouteError::UncalibratedS1 { .. })));
+    // Even live config cannot promote an uncalibrated runtime.
+    let live = RouterConfig { s1_mode: S1Mode::Live, ..RouterConfig::default() };
+    let p = StaticModelPool { entries: vec![decision_runtime_today()] };
+    assert!(matches!(Router::new(&p, &live).route(&n, &ledger(1.0)), Err(RouteError::UncalibratedS1 { .. })));
+}
+
+#[test]
+fn shadow_only_pool_entry_never_yields_s1_auto() {
+    // Calibrated but the pool publishes shadow: live config still ends in Shadow.
+    let e = calibrate(decision_runtime_today(), "calibrated", "shadow", true);
+    let mut e = e;
+    e.modes = vec![Mode::M2CalibratedReadout];
+    let p = StaticModelPool { entries: vec![e] };
+    let cfg = RouterConfig { s1_mode: S1Mode::Live, ..RouterConfig::default() };
+    let plan = Router::new(&p, &cfg).route(&node("s1", Some("S1"), Some("cap.decide.choice"), "PUBLIC"), &ledger(1.0)).unwrap();
+    assert_eq!(plan.backend_id, "be.s1.decision_runtime");
+    assert_eq!(plan.extensions.as_ref().unwrap()["x-s1_mode"], json!("shadow"));
+    let auto = result("CALIBRATED", "L1", Some("calib.decide.choice.v1"), "AUTO", 0.99);
+    assert_eq!(apply_s1_result(&plan, &auto), S1Verdict::Shadow { confidence: 0.99 });
 }
 
 fn result(semantics: &str, level: &str, calib: Option<&str>, action: &str, conf: f64) -> DecisionResultView {
@@ -252,7 +297,7 @@ fn s1_is_shadow_by_default() {
     let plan = Router::new(&p, &cfg).route(&node("s1", Some("S1"), Some("cap.decide.choice"), "PUBLIC"), &ledger(1.0)).unwrap();
     assert_eq!(plan.extensions.as_ref().unwrap()["x-s1_mode"], json!("shadow"));
     let good = result("CALIBRATED", "L1", Some("calib.decide.choice.v1"), "AUTO", 0.99);
-    assert_eq!(apply_s1_result(&plan, &good, cfg.s1_mode), S1Verdict::Shadow { confidence: 0.99 });
+    assert_eq!(apply_s1_result(&plan, &good), S1Verdict::Shadow { confidence: 0.99 });
 }
 
 #[test]
@@ -261,10 +306,10 @@ fn s1_live_accepts_only_calibrated_auto_matching_manifest() {
     cfg.s1_mode = S1Mode::Live;
     let plan = Router::new(&p, &cfg).route(&node("s1", Some("S1"), Some("cap.decide.choice"), "PUBLIC"), &ledger(1.0)).unwrap();
     let id = Some("calib.decide.choice.v1");
-    assert_eq!(apply_s1_result(&plan, &result("CALIBRATED", "L1", id, "AUTO", 0.99), S1Mode::Live), S1Verdict::Accept);
-    assert!(matches!(apply_s1_result(&plan, &result("CALIBRATED", "L1", id, "REVIEW", 0.99), S1Mode::Live), S1Verdict::Escalate { .. }));
-    assert!(matches!(apply_s1_result(&plan, &result("UNCALIBRATED", "NONE", None, "REVIEW", 0.99), S1Mode::Live), S1Verdict::Refused { .. }));
-    assert!(matches!(apply_s1_result(&plan, &result("CALIBRATED", "L1", Some("calib.other"), "AUTO", 0.99), S1Mode::Live), S1Verdict::Refused { .. }));
+    assert_eq!(apply_s1_result(&plan, &result("CALIBRATED", "L1", id, "AUTO", 0.99)), S1Verdict::Accept);
+    assert!(matches!(apply_s1_result(&plan, &result("CALIBRATED", "L1", id, "REVIEW", 0.99)), S1Verdict::Escalate { .. }));
+    assert!(matches!(apply_s1_result(&plan, &result("UNCALIBRATED", "NONE", None, "REVIEW", 0.99)), S1Verdict::Refused { .. }));
+    assert!(matches!(apply_s1_result(&plan, &result("CALIBRATED", "L1", Some("calib.other"), "AUTO", 0.99)), S1Verdict::Refused { .. }));
 }
 
 // ---- vendor neutrality + ABI shape
