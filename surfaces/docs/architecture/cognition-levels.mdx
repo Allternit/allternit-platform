@@ -60,18 +60,18 @@ Why levels: most agent steps do not need generation. Classifying each step lets 
 - **S0**: deterministic policy and tool execution run today through the gate and the permission floor.
 - **S1**: the decision runtime is on main and runs in shadow mode by default. It records its answers and abstains. S1 does not act on anything until a primitive passes its [calibration gate](/architecture/cognitive-runtime/calibration), and no primitive has yet.
 - **S2**: generation runs today through the agent runtime. The rule that generated output is a candidate is enforced by the verifier for agency-origin work, and by the graph validator where the validator is used.
-- **S3**: a human route goes through the attention gate today. The router that selects escalation to a stronger component is on main as library code, but nothing calls it in production yet.
+- **S3**: a human route goes through the attention gate today. The router that selects escalation to a stronger component is on main as library code, but nothing calls it on the normal path yet.
 
 ## Availability
 
 | Level | Status |
 |-------|--------|
-| S0 | **AVAILABLE** |
-| S1 | **PREVIEW** (shadow only) |
-| S2 generation | **AVAILABLE** |
-| S2 candidate-until-verified enforcement | **PREVIEW** (agency-origin work) |
-| S3 human route via attention | **AVAILABLE** (internal) |
-| S3 policy-routed escalation | **PREVIEW** (router is library code; not called in production) |
+| S0 | **ENABLED** · INTERNAL |
+| S1 | **SHADOW** · INTERNAL |
+| S2 generation | **ENABLED** · INTERNAL |
+| S2 candidate-until-verified enforcement | **IMPLEMENTED** (agency-origin work) |
+| S3 human route via attention | **ENABLED** · INTERNAL |
+| S3 policy-routed escalation | **IMPLEMENTED** (router is library code; not called on the normal path) |
 
 ## Developer relevance
 

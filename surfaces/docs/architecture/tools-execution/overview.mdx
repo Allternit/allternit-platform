@@ -12,7 +12,7 @@ description: "The agent instruction set, how tools are called, and where every e
 | **Active path** | Partial. |
 | **Public exposure** | No. Not reachable by an external developer. |
 
-Tools are how a run changes the world. The kernel treats every tool call as a typed, authorized, receipted effect, not as text a model emits.
+Tools are how a run changes the world. In the target design, the kernel treats every tool call as a typed, authorized, receipted effect, not as text a model emits.
 
 ## Architecture contract
 
@@ -32,10 +32,12 @@ On main, every spawned node has an execution environment recorded in the ledger,
 
 | Part | Status |
 |------|--------|
-| ISA groups and primitive registry | **AVAILABLE (contract)** |
-| Per-node ExecutionEnvironment, shared egress guard | **AVAILABLE (internal)** |
-| Effect receipts | **AVAILABLE (internal; not reachable through api.allternit.com)** |
-| Tool Call Compiler | **PREVIEW** (flag off by default, shadow) |
+| ISA groups and primitive registry | **IMPLEMENTED (contract)** |
+| Per-node ExecutionEnvironment resolution and recording | **ENABLED · INTERNAL** |
+| Process-env stripping | **IMPLEMENTED (opt-in, off by default) · INTERNAL** |
+| Shared egress guard | **ENABLED on the web proxy and design connector import · DESIGN for work-runtime nodes** |
+| Effect receipts | **ENABLED (internal; not reachable through api.allternit.com)** |
+| Tool Call Compiler | **SHADOW** · INTERNAL |
 
 ## Developer relevance
 

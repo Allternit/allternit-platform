@@ -65,16 +65,16 @@ On main, in the work runtime:
 - The graph validator with the seven invariants above.
 - A projection that renders a graph as the existing work-item view, so current tools keep working.
 
-These are merged as library code with tests. They are not yet called on every graph the runtime accepts, so enforcement is PREVIEW. There is no graph compiler from a goal yet.
+These are merged as library code with tests. They are not yet called on every graph the runtime accepts, so enforcement is IMPLEMENTED but not on the active path. There is no graph compiler from a goal yet.
 
 ## Availability
 
 | Part | Status |
 |------|--------|
-| Primitive registry (191 IDs) and graph schema | **AVAILABLE** (contract) |
-| Graph validator, Agent ISA enum, work-item projection | **PREVIEW** |
-| Validator enforced on every accepted graph | **DESIGN — NOT YET IMPLEMENTED** |
-| Goal-to-graph compiler | **DESIGN — NOT YET IMPLEMENTED** |
+| Primitive registry (191 IDs) and graph schema | **IMPLEMENTED** (contract) |
+| Graph validator, Agent ISA enum, work-item projection | **IMPLEMENTED** · INTERNAL |
+| Validator enforced on every accepted graph | **DESIGN** |
+| Goal-to-graph compiler | **DESIGN** |
 
 ## Developer relevance
 

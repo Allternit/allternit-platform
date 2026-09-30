@@ -39,16 +39,16 @@ Why: a system that must always answer will guess. Making abstention a normal, ty
 
 - The decision runtime on main marks every result without a passing calibration manifest as uncalibrated and abstains. Since no manifests exist yet, every S1 result abstains today.
 - For agency-origin work, a judge timeout, error or invalid answer moves the node to `NEEDS_HUMAN`, never to done.
-- Escalation to a stronger mode or component needs the [router](/architecture/routing), which is on main as library code but not yet called in production.
+- Escalation to a stronger mode or component needs the [router](/architecture/routing), which is on main as library code but not yet called on the normal path.
 
 ## Availability
 
 | Part | Status |
 |------|--------|
-| Abstain when uncalibrated | **PREVIEW** |
-| Judge failure goes to a human (agency-origin work) | **PREVIEW** |
-| Threshold policy and decision motifs | **PREVIEW** |
-| Router-driven escalation | **DESIGN — NOT YET IMPLEMENTED** |
+| Abstain when uncalibrated | **IMPLEMENTED** · INTERNAL |
+| Judge failure goes to a human (agency-origin work) | **IMPLEMENTED** · INTERNAL |
+| Threshold policy and decision motifs | **IMPLEMENTED** · INTERNAL |
+| Router-driven escalation | **DESIGN** |
 
 ## Developer relevance
 

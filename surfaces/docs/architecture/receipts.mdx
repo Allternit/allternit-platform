@@ -112,13 +112,13 @@ Other receipt types (run, verification, policy, input and so on) are still writt
 
 | Part | Status | Notes |
 |------|--------|-------|
-| Content-hashed receipts | **AVAILABLE** | Internal. |
-| Receipt contracts | **AVAILABLE** | Kernel ABI 1.0.0. |
-| Per-run hash chain and Ed25519 signatures | **AVAILABLE** | Internal. Covers effect receipts from the gate's tool path. |
-| Effect receipts, at most once per idempotency key | **AVAILABLE** | Internal. |
-| All receipt types on the signed chain | **DESIGN — NOT YET IMPLEMENTED** | Other types are content-hashed only. |
-| Keys (`/.well-known/jwks.json`) and server-side chain check | **PREVIEW** | Served by the internal work runtime service only. |
-| Keys and chain check through `https://api.allternit.com` | **DESIGN — NOT YET IMPLEMENTED** | Specified in API v0.3; not publicly reachable. |
+| Content-hashed receipts | **ENABLED** · INTERNAL | Internal. |
+| Receipt contracts | **IMPLEMENTED** | Kernel ABI 1.0.0. |
+| Per-run hash chain and Ed25519 signatures | **ENABLED** · INTERNAL | Internal. Covers effect receipts from the gate's tool path. |
+| Effect receipts, at most once per idempotency key | **ENABLED** · INTERNAL | Internal. |
+| All receipt types on the signed chain | **DESIGN** | Other types are content-hashed only. |
+| Keys (`/.well-known/jwks.json`) and server-side chain check | **IMPLEMENTED** · INTERNAL | Served by the internal work runtime service only. |
+| Keys and chain check through `https://api.allternit.com` | **DESIGN** | Specified in API v0.3; not publicly reachable. |
 
 ## Developer relevance
 

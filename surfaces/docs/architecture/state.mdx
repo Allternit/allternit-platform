@@ -52,7 +52,7 @@ Ambiguity is represented explicitly. Unresolved ambiguity escalates instead of b
 
 ### AgentState
 
-AgentState is the run's truth. It holds identity and `state_version`, the user intent, acceptance criteria, constraints, environment and repository state, the plan and graph cursor, hypotheses kept apart from facts, selected context, generated artifacts, mutation and tool receipts, diagnostics, verification results, unresolved failures, permissions, budgets, subgoals, locks and completion state.
+AgentState is the run's truth. It holds identity and `state_version`, the user intent, acceptance criteria, constraints, environment and repository state, the plan and current position in the graph, hypotheses kept apart from facts, selected context, generated artifacts, mutation and tool receipts, diagnostics, verification results, unresolved failures, permissions, budgets, subgoals, locks and completion state.
 
 The rules:
 
@@ -74,10 +74,10 @@ The AgentState and TaskIR schemas are frozen in [Kernel ABI 1.0.0](/architecture
 
 | Part | Status |
 |------|--------|
-| `agent_state` and `task_ir` schemas | **AVAILABLE** (contract) |
-| Work runtime ledger | **AVAILABLE** (internal) |
-| AgentState store with compare-and-swap commits | **DESIGN — NOT YET IMPLEMENTED** |
-| Goal-to-TaskIR compiler | **DESIGN — NOT YET IMPLEMENTED** |
+| `agent_state` and `task_ir` schemas | **IMPLEMENTED** (contract) |
+| Work runtime ledger | **ENABLED** · INTERNAL |
+| AgentState store with compare-and-swap commits | **DESIGN** |
+| Goal-to-TaskIR compiler | **DESIGN** |
 
 ## Developer relevance
 

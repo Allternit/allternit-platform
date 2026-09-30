@@ -26,15 +26,15 @@ Why: a tool that fetches a URL supplied by a model or by retrieved content is an
 
 ## Current implementation
 
-On main, egress from work-runtime tools goes through one shared guard, and the network policy is part of the environment recorded per node.
+The shared egress guard is on main. It allows only publicly routable unicast addresses, resolves a name once and dials that same address, so rebinding cannot swap in a private one. Which paths use it, on main today:
 
-## Availability
-
-| Part | Status |
-|------|--------|
-| Shared egress and SSRF guard | **AVAILABLE (internal)** |
-| Policy contract | **AVAILABLE (contract)** |
-| Guard on every network-capable tool | **AVAILABLE for work-runtime tools; other paths not claimed** |
+| Call path | Implementation | Exposure |
+|-----------|----------------|----------|
+| Web proxy | **ENABLED** (guard in the request path) | **INTERNAL** |
+| Design connector import | **ENABLED** (guard in the request path) | **INTERNAL** |
+| Work-runtime nodes (spawned executors) | **DESIGN** (network policy recorded in the environment, not enforced by the guard) | **INTERNAL** |
+| Other network-capable tools and connectors | Not claimed | — |
+| `NetworkAccessPolicyV1` contract | **IMPLEMENTED** (contract) | **PUBLIC** (docs) |
 
 ## Developer relevance
 

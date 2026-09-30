@@ -38,17 +38,17 @@ Why split it this way: the parts of an agent that must be dependable (state, aut
 
 - The canonical decision runtime is on main. It serves the nine decision operations from the kernel contracts and runs in **shadow mode by default**: it records what it would decide, abstains, and never acts. No calibration manifest exists yet, so no decision primitive has passed its go-live gate.
 - Verifier-owned completion is enforced for agency-origin work. See [Verification](/architecture/verification).
-- The Cognitive Execution Router is on main as library code, and the model pool registry is served internally by the runtime. Nothing calls the router in production yet.
+- The Cognitive Execution Router is on main as library code, and the model pool registry is served internally by the runtime. Nothing calls the router on the normal path yet.
 - The context compiler and tool call compiler are on main behind a flag that is off by default. With the flag on they run in shadow.
 
 ## Availability
 
 | Part | Status |
 |------|--------|
-| Decision runtime (shadow) | **PREVIEW** |
-| Verifier-owned completion for agency-origin work | **PREVIEW** |
-| Cognitive Execution Router, model pool | **PREVIEW** (library; not called in production) |
-| Context compiler, tool call compiler | **PREVIEW** (flag off by default, shadow) |
+| Decision runtime (shadow) | **SHADOW** · INTERNAL |
+| Verifier-owned completion for agency-origin work | **IMPLEMENTED** · INTERNAL |
+| Cognitive Execution Router, model pool | **IMPLEMENTED** (library; not called on the normal path) |
+| Context compiler, tool call compiler | **SHADOW** · INTERNAL |
 | Cross-component state transfer | **RESEARCH** |
 
 ## Developer relevance
