@@ -955,6 +955,10 @@ pub fn build_authorize_url(
 pub struct Discovery {
     pub authorization_endpoint: String,
     pub cimd_supported: bool,
+    /// From the same auth-server metadata; recorded on the session so the
+    /// callback and later refreshes use it instead of guessing from the
+    /// connector URL (the auth server is often on another host).
+    pub token_endpoint: Option<String>,
 }
 
 async fn fetch_json<T: Transport>(t: &T, url: &str) -> Option<Value> {
@@ -985,14 +989,22 @@ pub async fn discover_authorization<T: Transport>(t: &T, connector_url: &str) ->
         if let Some(meta) = fetch_json(t, &format!("{issuer}{path}")).await {
             if let Some(ep) = meta.get("authorization_endpoint").and_then(Value::as_str) {
                 parse_guarded_url(ep).map_err(|e| format!("Authorization endpoint rejected: {e}"))?;
+                let token_endpoint = match meta.get("token_endpoint").and_then(Value::as_str) {
+                    Some(te) => {
+                        parse_guarded_url(te).map_err(|e| format!("Token endpoint rejected: {e}"))?;
+                        Some(te.to_string())
+                    }
+                    None => None,
+                };
                 return Ok(Discovery {
                     authorization_endpoint: ep.to_string(),
                     cimd_supported: meta.get("client_id_metadata_document_supported").and_then(Value::as_bool).unwrap_or(false),
+                    token_endpoint,
                 });
             }
         }
     }
-    Ok(Discovery { authorization_endpoint: format!("{issuer}/authorize"), cimd_supported: false })
+    Ok(Discovery { authorization_endpoint: format!("{issuer}/authorize"), cimd_supported: false, token_endpoint: None })
 }
 
 struct ConnectorRef {
@@ -1057,6 +1069,7 @@ pub fn persist_oauth_start(
             json!({
                 "userId": user_id,
                 "authorizationEndpoint": discovery.authorization_endpoint,
+                "tokenEndpoint": discovery.token_endpoint,
                 "redirectUri": redirect,
                 "resource": connector_url,
                 "startedAt": now(),
@@ -1518,17 +1531,21 @@ mod tests {
             ("mcp.example.com/.well-known/oauth-protected-resource", json!({"authorization_servers": ["https://auth.example.com"]})),
             (
                 "auth.example.com/.well-known/oauth-authorization-server",
-                json!({"authorization_endpoint": "https://auth.example.com/oauth/authorize", "client_id_metadata_document_supported": true}),
+                json!({"authorization_endpoint": "https://auth.example.com/oauth/authorize", "token_endpoint": "https://auth.example.com/oauth/token", "client_id_metadata_document_supported": true}),
             ),
         ]));
         let d = discover_authorization(&t, "https://mcp.example.com/mcp").await.unwrap();
-        assert_eq!(d, Discovery { authorization_endpoint: "https://auth.example.com/oauth/authorize".into(), cimd_supported: true });
+        assert_eq!(d, Discovery {
+                authorization_endpoint: "https://auth.example.com/oauth/authorize".into(),
+                cimd_supported: true,
+                token_endpoint: Some("https://auth.example.com/oauth/token".into()),
+            });
     }
 
     #[tokio::test]
     async fn discovery_falls_back_and_refuses_unsafe_urls() {
         let d = discover_authorization(&Meta(HashMap::new()), "https://mcp.example.com/mcp").await.unwrap();
-        assert_eq!(d, Discovery { authorization_endpoint: "https://mcp.example.com/authorize".into(), cimd_supported: false });
+        assert_eq!(d, Discovery { authorization_endpoint: "https://mcp.example.com/authorize".into(), cimd_supported: false, token_endpoint: None });
         for bad in ["http://mcp.example.com/mcp", "https://127.0.0.1/mcp", "https://localhost/mcp", "https://mcp.example.com:9000/mcp"] {
             assert!(discover_authorization(&Meta(HashMap::new()), bad).await.is_err(), "{bad}");
         }
@@ -1544,7 +1561,7 @@ mod tests {
     fn oauth_start_persists_pkce_session_and_cimd_client() {
         let c = db();
         connector(&c, "conn-a", "alice");
-        let disc = Discovery { authorization_endpoint: "https://auth.example.com/authorize".into(), cimd_supported: true };
+        let disc = Discovery { authorization_endpoint: "https://auth.example.com/authorize".into(), cimd_supported: true, token_endpoint: Some("https://auth.example.com/token".into()) };
         let base = "https://api.allternit.com";
         let url = persist_oauth_start(&c, "alice", "conn-a", "https://mcp.example.com/mcp", &disc, None, base).unwrap();
         let q: HashMap<_, _> = Url::parse(&url).unwrap().query_pairs().into_owned().collect();
@@ -1561,6 +1578,12 @@ mod tests {
             .unwrap();
         assert_eq!((connector_id.as_str(), authed), ("conn-a", 0));
         assert_eq!(pkce_challenge(&verifier), q["code_challenge"]);
+        let meta: String = c
+            .query_row("SELECT metadata FROM mcp_oauth_sessions WHERE state = ?1", [&q["state"]], |r| r.get(0))
+            .unwrap();
+        let meta: Value = serde_json::from_str(&meta).unwrap();
+        assert_eq!(meta["tokenEndpoint"], "https://auth.example.com/token");
+        assert_eq!(meta["resource"], "https://mcp.example.com/mcp");
         assert!(verifier.len() >= 43);
         // Connector now presents the CIMD as its (public) client for the token exchange.
         let cid: Option<String> = c.query_row("SELECT oauth_client_id FROM mcp_connectors WHERE id='conn-a'", [], |r| r.get(0)).unwrap();
@@ -1575,7 +1598,7 @@ mod tests {
     fn oauth_start_uses_configured_client_and_refuses_when_no_client_possible() {
         let c = db();
         connector(&c, "conn-a", "alice");
-        let no_cimd = Discovery { authorization_endpoint: "https://auth.example.com/authorize".into(), cimd_supported: false };
+        let no_cimd = Discovery { authorization_endpoint: "https://auth.example.com/authorize".into(), cimd_supported: false, token_endpoint: None };
         let base = "https://api.allternit.com";
         assert!(matches!(
             persist_oauth_start(&c, "alice", "conn-a", "https://mcp.example.com/mcp", &no_cimd, None, base),

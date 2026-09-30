@@ -156,6 +156,9 @@ struct OAuthMaterial {
     client_secret: Option<String>,
     /// The whole stored token-exchange response, kept so a refresh can merge into it.
     tokens: Option<Value>,
+    /// Recorded by the OAuth start from the auth server's metadata.
+    token_endpoint: Option<String>,
+    resource: Option<String>,
 }
 
 impl std::fmt::Debug for Connector {
@@ -237,13 +240,13 @@ fn read_connector(conn: &rusqlite::Connection, row: ConnectorRow) -> rusqlite::R
     if row.enabled == 0 {
         return Ok(None);
     }
-    let session: Option<(String, String, Option<String>)> = conn
+    let session: Option<(String, String, Option<String>, Option<String>)> = conn
         .query_row(
-            "SELECT id, tokens, updated_at FROM mcp_oauth_sessions
+            "SELECT id, tokens, updated_at, metadata FROM mcp_oauth_sessions
              WHERE mcp_connector_id = ?1 AND is_authenticated = 1 AND tokens IS NOT NULL
              ORDER BY updated_at DESC LIMIT 1",
             params![row.id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .ok();
     let mut oauth = OAuthMaterial {
@@ -256,7 +259,9 @@ fn read_connector(conn: &rusqlite::Connection, row: ConnectorRow) -> rusqlite::R
         ..OAuthMaterial::default()
     };
     let mut token = None;
-    if let Some((session_row, stored, updated_at)) = session {
+    if let Some((session_row, stored, updated_at, metadata)) = session {
+        oauth.token_endpoint = crate::mcp_routes::session_meta_str(metadata.as_deref(), "tokenEndpoint");
+        oauth.resource = crate::mcp_routes::session_meta_str(metadata.as_deref(), "resource");
         // Sealed rows open; legacy plaintext rows pass through unchanged.
         let tokens_json = crate::token_crypto::open(&stored);
         token = access_token_of(&tokens_json);
@@ -339,13 +344,21 @@ async fn refresh_if_needed(state: &Arc<AppState>, connector: &mut Connector, all
 async fn request_refresh(connector: &Connector, refresh_token: &str, allow_private: bool) -> Result<Value, &'static str> {
     // Every URL here derives from the user-supplied connector URL and ends up receiving the refresh
     // token and client secret: each is validated and pinned like a connector call.
-    let probe = guarded_client(&connector.url, allow_private).await.map_err(|_| "connector URL not allowed")?;
-    let token_url = crate::mcp_routes::discover_token_endpoint(&probe, &connector.url)
-        .await
-        .ok_or("token endpoint not found")?;
+    let token_url = match connector.oauth.token_endpoint.clone() {
+        Some(url) => url,
+        None => {
+            let probe = guarded_client(&connector.url, allow_private).await.map_err(|_| "connector URL not allowed")?;
+            crate::mcp_routes::discover_token_endpoint(&probe, &connector.url)
+                .await
+                .ok_or("token endpoint not found")?
+        }
+    };
     let client = guarded_client(&token_url, allow_private).await.map_err(|_| "token endpoint not allowed")?;
 
     let mut form = vec![("grant_type", "refresh_token"), ("refresh_token", refresh_token)];
+    if let Some(resource) = connector.oauth.resource.as_deref() {
+        form.push(("resource", resource));
+    }
     if let Some(id) = connector.oauth.client_id.as_deref() {
         form.push(("client_id", id));
     }

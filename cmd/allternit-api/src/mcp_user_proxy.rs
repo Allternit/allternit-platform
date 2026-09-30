@@ -826,6 +826,14 @@ mod e2e {
                     Json(json!({ "access_token": TOKEN, "token_type": "Bearer", "expires_in": 3600 })).into_response()
                 }),
             )
+            // A separate auth server's token endpoint, recorded at OAuth start.
+            .route(
+                "/as/token",
+                post(|State(log): State<OAuthLog>, body: String| async move {
+                    log.forms.lock().unwrap().push(format!("AS {body}"));
+                    Json(json!({ "access_token": TOKEN, "token_type": "Bearer", "expires_in": 3600 })).into_response()
+                }),
+            )
             .with_state(log)
     }
 
@@ -893,6 +901,24 @@ mod e2e {
         // a second call within the new lifetime does not refresh again
         rpc(&state, "user-1", "tools/list", json!({})).await;
         assert_eq!(log.forms.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn refresh_uses_the_token_endpoint_recorded_at_oauth_start() {
+        let (state, _server, log) = expired_fixture(false).await;
+        let conn = state.db.connect().unwrap();
+        let url: String = conn.query_row("SELECT url FROM mcp_connectors WHERE id = 'conn-r'", [], |r| r.get(0)).unwrap();
+        let origin = url.trim_end_matches("/mcp").to_string();
+        conn.execute(
+            "UPDATE mcp_oauth_sessions SET metadata = ?1 WHERE id = 's-r'",
+            params![json!({ "tokenEndpoint": format!("{origin}/as/token"), "resource": url }).to_string()],
+        )
+        .unwrap();
+        rpc(&state, "user-1", "tools/list", json!({})).await;
+        let forms = log.forms.lock().unwrap().clone();
+        assert_eq!(forms.len(), 1, "{forms:?}");
+        assert!(forms[0].starts_with("AS "), "went to the discovered endpoint instead: {}", forms[0]);
+        assert!(forms[0].contains("resource="), "{}", forms[0]);
     }
 
     #[tokio::test]

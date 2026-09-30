@@ -175,6 +175,8 @@ async fn complete_oauth_callback(
         client_id.as_deref(),
         client_secret.as_deref(),
         &redirect_uri,
+        session_meta_str(metadata_json.as_deref(), "tokenEndpoint").as_deref(),
+        session_meta_str(metadata_json.as_deref(), "resource").as_deref(),
         allow_private,
     )
     .await;
@@ -220,6 +222,15 @@ async fn complete_oauth_callback(
             ))
         }
     }
+}
+
+/// A string field the OAuth start recorded on the session (`tokenEndpoint`,
+/// `resource`), if any.
+pub(crate) fn session_meta_str(metadata_json: Option<&str>, key: &str) -> Option<String> {
+    metadata_json
+        .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+        .and_then(|m| m.get(key).and_then(|v| v.as_str()).map(String::from))
+        .filter(|v| !v.is_empty())
 }
 
 /// The `redirect_uri` the authorization request used: the session's own record
@@ -318,18 +329,25 @@ async fn exchange_code_for_tokens(
     client_id: Option<&str>,
     client_secret: Option<&str>,
     redirect_uri: &str,
+    recorded_token_endpoint: Option<&str>,
+    resource: Option<&str>,
     allow_private: bool,
 ) -> Result<serde_json::Value, String> {
     // The connector URL is user-supplied and so is whatever token endpoint it advertises; the code,
     // verifier and client secret go there. Both hops are validated and pinned like a connector call.
-    let discovery = crate::mcp_apps::guarded_client(server_url, allow_private)
-        .await
-        .map_err(|e| e.message)?;
-
-    // 1. Discover token endpoint
-    let token_url = discover_token_endpoint(&discovery, server_url).await.ok_or_else(|| {
-        "Could not discover token endpoint. Tried .well-known/oauth-authorization-server and common paths.".to_string()
-    })?;
+    // 1. Token endpoint: the one the OAuth start found in the auth server's
+    // metadata, else discovery under the connector URL (older sessions).
+    let token_url = match recorded_token_endpoint {
+        Some(url) => url.to_string(),
+        None => {
+            let discovery = crate::mcp_apps::guarded_client(server_url, allow_private)
+                .await
+                .map_err(|e| e.message)?;
+            discover_token_endpoint(&discovery, server_url).await.ok_or_else(|| {
+                "Could not discover token endpoint. Tried .well-known/oauth-authorization-server and common paths.".to_string()
+            })?
+        }
+    };
     let client = crate::mcp_apps::guarded_client(&token_url, allow_private)
         .await
         .map_err(|e| e.message)?;
@@ -345,6 +363,10 @@ async fn exchange_code_for_tokens(
 
     if let Some(verifier) = code_verifier {
         params.push(("code_verifier", verifier));
+    }
+    // RFC 8707 / MCP authorization: name the resource the token is for.
+    if let Some(resource) = resource {
+        params.push(("resource", resource));
     }
 
     // Add client credentials to params
@@ -873,7 +895,7 @@ mod tests {
     async fn token_exchange_refuses_private_token_endpoints_and_never_sends_the_secret() {
         let (origin, forms) = spawn_token_server().await;
         // the same loopback server, without the development override: refused before any request
-        let err = exchange_code_for_tokens(&origin, "code", "st", Some("v"), Some("id"), Some("secret"), "https://app.test/cb", false)
+        let err = exchange_code_for_tokens(&origin, "code", "st", Some("v"), Some("id"), Some("secret"), "https://app.test/cb", None, None, false)
             .await
             .unwrap_err();
         assert!(err.contains("local or private"), "{err}");
