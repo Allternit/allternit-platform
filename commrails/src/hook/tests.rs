@@ -380,3 +380,60 @@ async fn one_decision_path_for_codex_and_qwen_payloads() {
         assert!(!decide(&ok, Path::new("/w"), Some(Path::new(HOME)), None).await.verdict.is_deny(), "{tool}");
     }
 }
+
+/// A second Gate on the same root: stands in for the separate hook / ACP-gate
+/// process, which only sees persisted replay state.
+fn other_process_gate(f: &Fixture) -> Gate {
+    let receipts = Arc::new(
+        ReceiptStore::new(ReceiptStoreOptions {
+            root_dir: Some(f.root.clone()),
+            receipts_dir: Some(PathBuf::from(".allternit/receipts")),
+            blobs_dir: Some(PathBuf::from(".allternit/blobs")),
+        })
+        .unwrap(),
+    );
+    Gate::new(GateOptions {
+        ledger: f.ledger.clone(), leases: f.leases.clone(), receipts, index: None, vault: None, oauth_vault: None,
+        root_dir: Some(f.root.clone()), actor_id: Some("hook".to_string()), strict_provenance: None,
+        visual_provider: None, visual_config: None,
+    })
+}
+
+#[tokio::test]
+async fn replay_hook_denies_during_replay_and_allows_after_end() {
+    let f = fixture().await;
+    let wih = bound_wih(&f).await;
+    let home = Some(Path::new(HOME));
+    let hook_gate = other_process_gate(&f);
+    let bind = |g| WihBinding { wih_id: &wih, gate: g, leases: &f.leases };
+    let inside = || write(&f.root.join("src/lib.rs").to_string_lossy(), &f.root);
+
+    assert!(!decide(&inside(), &f.root, home, Some(bind(&hook_gate))).await.verdict.is_deny());
+
+    // Record a run, then put the bound WIH's run into replay.
+    f.gate.record_policy_decision("recorded", "plan", "ALLOW").unwrap();
+    f.gate.post_tool("recorded", "shell", json!({"cmd": "touch src/x", "idempotency_key": "hook-replay-01"})).await.unwrap();
+    let cassette = f.gate.record_cassette("recorded", None, 0).unwrap();
+    f.gate.begin_replay(&wih, cassette).unwrap();
+
+    // Hook process (separate Gate, no in-memory session) denies every tool, reads included.
+    for req in [inside(), bash("ls src", &f.root)] {
+        let d = decide(&req, &f.root, home, Some(bind(&hook_gate))).await;
+        assert!(d.verdict.is_deny(), "{:?}", d.verdict);
+        assert!(d.verdict.reason().starts_with("replay: recorded result served by the gate"), "{:?}", d.verdict);
+    }
+    // Gate 2 pre_tool denies too; post_tool in the other process fails closed.
+    let pre = hook_gate.pre_tool(&wih, "Write", &["src/lib.rs".to_string()]).await.unwrap();
+    assert!(!pre.allowed && pre.reason.unwrap().starts_with("replay:"));
+    let err = hook_gate.post_tool(&wih, "shell", json!({"cmd": "touch src/x", "idempotency_key": "hook-replay-01"})).await.unwrap_err();
+    assert!(err.to_string().contains("another process"), "{err}");
+    // The owning process serves the recorded result.
+    f.gate.record_policy_decision(&wih, "plan", "ALLOW").unwrap();
+    f.gate.post_tool(&wih, "shell", json!({"cmd": "touch src/x", "idempotency_key": "hook-replay-01"})).await.unwrap();
+
+    let rep = f.gate.end_replay(&wih).unwrap();
+    assert_eq!(rep.verdict, crate::replay::Verdict::Identical, "{rep:?}");
+    assert!(!hook_gate.is_replaying(&wih));
+    let d = decide(&inside(), &f.root, home, Some(bind(&hook_gate))).await;
+    assert!(!d.verdict.is_deny(), "allowed again after end_replay: {:?}", d.verdict);
+}
