@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { unsupported, type AaiProvider, type AaiResult } from "./types";
+import { unsupported, type AaiProvider, type AaiResult } from "./types.js";
 
 /** Base class: every op answers UNSUPPORTED until a subclass overrides it. */
 export abstract class BaseAaiProvider implements AaiProvider {

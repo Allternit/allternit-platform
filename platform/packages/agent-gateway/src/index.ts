@@ -1,7 +1,7 @@
-export * from "./types";
-export { BaseAaiProvider } from "./provider";
-export { AaiRouter } from "./router";
-export { LoopbackProvider, type LoopbackConfig } from "./loopback";
-export { runConformance, withFaults, type ConformanceFixtures, type ConformanceReport, type AreaResult, type FaultKind } from "./conformance";
-export { createReplayFetch, faultFetch, type RecordedSession, type RecordedInteraction, type ReplayFetch } from "./replay";
-export { MemoryProvider, type MemoryDefects } from "./testing/memory-provider";
+export * from "./types.js";
+export { BaseAaiProvider } from "./provider.js";
+export { AaiRouter } from "./router.js";
+export { LoopbackProvider, type LoopbackConfig } from "./loopback.js";
+export { runConformance, withFaults, type ConformanceFixtures, type ConformanceReport, type AreaResult, type FaultKind } from "./conformance.js";
+export { createReplayFetch, faultFetch, type RecordedSession, type RecordedInteraction, type ReplayFetch } from "./replay.js";
+export { MemoryProvider, type MemoryDefects } from "./testing/memory-provider.js";

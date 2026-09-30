@@ -1,0 +1,39 @@
+// POST /aai/call, GET /aai/providers, POST /aai/conformance/:adapterId — AAI v0.1 host.
+// Auth: the gateway-wide bearer middleware (applied before this router) + scope checks below.
+// Both AAI success and AAI failure answer HTTP 200 ({ok,value} | {ok:false,error}); only transport
+// problems (bad body, unknown adapter) use non-200.
+import { Router, type Request, type Response } from "express";
+import { botExecutionBindingSchema } from "@allternit/subscription-fabric-contracts";
+import { requireScope, type GatewayDeps } from "./server.js";
+
+export function aaiRouter(deps: GatewayDeps): Router {
+  const router = Router();
+  const host = deps.aai;
+
+  router.post("/aai/call", requireScope("tasks:submit"), async (req: Request, res: Response) => {
+    if (!host) { res.status(503).json({ error: "aai_host_unavailable" }); return; }
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const binding = botExecutionBindingSchema.safeParse(body.binding);
+    if (typeof body.op !== "string" || !binding.success ||
+        (body.input !== undefined && (typeof body.input !== "object" || body.input === null || Array.isArray(body.input)))) {
+      res.status(400).json({ error: "invalid_body", detail: "expected { op: string, binding: BotExecutionBinding, input: object }" });
+      return;
+    }
+    const result = await host.call(body.op, binding.data, (body.input as Record<string, unknown> | undefined) ?? {});
+    res.status(200).json(result);
+  });
+
+  router.get("/aai/providers", requireScope("tasks:read"), async (_req: Request, res: Response) => {
+    if (!host) { res.status(503).json({ error: "aai_host_unavailable" }); return; }
+    res.json({ providers: await host.providers() });
+  });
+
+  router.post("/aai/conformance/:adapterId", requireScope("tasks:submit"), async (req: Request, res: Response) => {
+    if (!host) { res.status(503).json({ error: "aai_host_unavailable" }); return; }
+    const report = await host.conformance(req.params.adapterId);
+    if (!report) { res.status(404).json({ error: "unknown_adapter" }); return; }
+    res.json(report);
+  });
+
+  return router;
+}

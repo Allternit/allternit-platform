@@ -2531,6 +2531,9 @@ importers:
 
   services/subscription-gateway:
     dependencies:
+      '@allternit/agent-gateway':
+        specifier: workspace:*
+        version: link:../../platform/packages/agent-gateway
       '@allternit/subscription-adapter-sdk':
         specifier: workspace:*
         version: link:../../platform/packages/subscription-adapter-sdk

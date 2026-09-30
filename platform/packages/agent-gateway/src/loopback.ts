@@ -1,13 +1,13 @@
 // Loopback provider: exposes an Allternit Bot through AAI by calling the existing allternit-api
 // HTTP endpoints (thread_routes.rs + agent_session_routes.rs). Thread <-> Agent Context.
 import { agentCapabilityManifestSchema, type GatewayEventType } from "@allternit/subscription-fabric-contracts";
-import { BaseAaiProvider } from "./provider";
+import { BaseAaiProvider } from "./provider.js";
 import {
   fail, ok,
   type AaiResult, type AgentCapabilityManifest, type AgentDetail, type AgentIdentity, type AgentSummary,
   type ApprovalsInput, type ApprovalsResult, type CancelResult, type CursoredEvent, type EventsInput, type EventsResult,
   type GatewayEvent, type HealthResult, type MessageInput, type MessageResult, type OpenContextInput, type OpenContextResult,
-} from "./types";
+} from "./types.js";
 
 export interface LoopbackConfig {
   /** e.g. http://127.0.0.1:3010/api/v1 */
