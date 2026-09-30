@@ -73,6 +73,10 @@ describe("acp gate mapping", () => {
     const result = await acpGateDecision({ bin: gate.bin, cwd: "/repo", harness: "kimi", toolCall: { kind } })
     expect(result).toMatchObject({ allow: false, reason: expect.stringContaining("write paths") })
   })
+  test("finding 7: move with only its source path denies", async () => {
+    const gate = pathCheckingGate()
+    expect(await acpGateDecision({ bin: gate.bin, cwd: "/repo", harness: "kimi", toolCall: { kind: "move", locations: [{ path: "/repo/leased/source" }] } })).toMatchObject({ allow: false, reason: expect.stringContaining("source and destination") })
+  })
   test("hook output: silence allows, deny denies, garbage fails closed", () => {
     expect(parseHookOutput("", 0)).toEqual({ allow: true })
     expect(parseHookOutput('{"hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":"x"}}', 0)).toEqual({ allow: false, reason: "x" })
@@ -127,8 +131,10 @@ describe("acp gate mapping", () => {
     const marker = join(markerDir, "run_wih1.json")
     // Presence alone is authoritative, matching Gate.is_replaying; do not trust mutable contents.
     writeFileSync(marker, "{}")
-    const result = await acpGateDecision({ bin: "", wihId: "wih1", cwd: explicitRoot ? join(root, "worktree") : root, root: explicitRoot ? root : undefined, harness: "kimi", toolCall: { kind: "read" }, permission: "read" })
-    expect(result).toMatchObject({ allow: false, fallback: true, reason: "replay: recorded result served by the gate (run run_wih1 is replaying, effects: recorded_only)" })
+    for (const kind of ["read", "edit", "execute"]) {
+      const result = await acpGateDecision({ bin: "", wihId: "wih1", cwd: explicitRoot ? join(root, "worktree") : root, root: explicitRoot ? root : undefined, harness: "kimi", toolCall: { kind }, permission: kind === "read" ? "read" : "edit" })
+      expect(result).toMatchObject({ allow: false, fallback: true, reason: "replay: recorded result served by the gate (run run_wih1 is replaying, effects: recorded_only)" })
+    }
     expect(Bun.file(marker).size).toBe(2)
   })
   test("plan mode denies a write even when the gate would allow it", async () => {
@@ -143,10 +149,32 @@ describe("acp gate mapping", () => {
 // Real gate binary (set ALLTERNIT_COMMRAILS_BIN to run).
 describe.skipIf(!BIN)("acp gate against the real commrails binary", () => {
   test("catastrophic command denied, normal allowed", async () => {
-    const root = "/tmp"
+    const root = fixtureRoot()
     const deny = await acpGateDecision({ toolCall: { kind: "execute", rawInput: { command: "rm -rf ~/" } }, cwd: root, root, harness: "kimi", bin: BIN })
     expect(deny?.allow).toBe(false)
     const ok = await acpGateDecision({ toolCall: { kind: "execute", rawInput: { command: "ls" } }, cwd: root, root, harness: "kimi", bin: BIN })
     expect(ok?.allow).toBe(true)
+  })
+  test("finding 7: real WIH lease admits source but denies an outside destination", async () => {
+    const root = fixtureRoot()
+    const cli = (...args: string[]) => {
+      const result = Bun.spawnSync([BIN!, "--root", root, ...args], { cwd: root, stdout: "pipe", stderr: "pipe" })
+      if (!result.success) throw new Error(result.stderr.toString())
+      return result.stdout.toString()
+    }
+    const plan = cli("plan", "new", "ACP multi-path lease test")
+    const dag = plan.match(/dag_id: (\S+)/)![1]
+    const node = plan.match(/node_id: (\S+)/)![1]
+    const wih = cli("wih", "pickup", node, "--dag", dag, "--agent", "acp-test").match(/wih_id: (\S+)/)![1]
+    cli("wih", "sign-open", wih, "test-signature")
+    const lease = cli("lease", "request", wih, "acp-test", "leased/**").match(/lease_id: (\S+)/)![1]
+    cli("lease", "grant", lease)
+    mkdirSync(join(root, "leased"))
+    const source = join(root, "leased", "source")
+    const options = { cwd: root, root, harness: "kimi", bin: BIN, wihId: wih }
+    expect(await acpGateDecision({ ...options, toolCall: { kind: "edit", locations: [{ path: source }] } })).toEqual({ allow: true })
+    const denied = await acpGateDecision({ ...options, toolCall: { kind: "move", locations: [{ path: source }, { path: "/outside/destination" }] } })
+    expect(denied).toMatchObject({ allow: false, reason: expect.stringContaining("outside") })
+    expect(await acpGateDecision({ ...options, toolCall: { kind: "move", locations: [{ path: source }, { path: join(root, "leased", "destination") }] } })).toEqual({ allow: true })
   })
 })
