@@ -385,7 +385,10 @@ impl ChainStore {
         Ok(rec)
     }
 
-    /// Latest recorded effect receipt for `idempotency_key`, if any.
+    /// Latest recorded effect receipt for `idempotency_key`, if any. This is the raw
+    /// index lookup; it neither authenticates the receipt nor binds it to an operation.
+    /// Callers deciding whether an effect may run use [`ChainStore::run_effect_once`] /
+    /// [`ChainStore::reserve_effect`], which do both.
     pub fn find_effect(&self, idempotency_key: &str) -> Result<Option<Value>> {
         let Ok(b) = std::fs::read(self.effect_index(idempotency_key)) else { return Ok(None) };
         let idx: Value = serde_json::from_slice(&b)?;
@@ -394,28 +397,113 @@ impl ChainStore {
         Ok(std::fs::read(p).ok().and_then(|b| serde_json::from_slice(&b).ok()))
     }
 
+    /// Per-key lock spanning lookup, INTENDED publication, execution and the terminal
+    /// receipt (review #9). Cross-process (flock) and cross-thread (a separate open
+    /// file description per acquire).
+    fn key_lock(&self, key: &str) -> Result<FileLock> {
+        FileLock::acquire(&self.effect_index(key).with_extension("lock"))
+    }
+
+    /// Prior effect for `r`'s key, authenticated (signature + chain up to it) and
+    /// bound to the same operation (review #15). A key reused for a different
+    /// run/tool/arguments/effect class/target is a conflict, never a replay.
+    fn prior_effect(&self, cx: &EffectContext, r: &EffectRequest) -> Result<Option<Value>> {
+        let Some(prev) = self.find_effect(&r.idempotency_key)? else { return Ok(None) };
+        let rid = s(&prev, &["chain", "receipt_id"]).unwrap_or("").to_string();
+        let v = verify_chained(self, &rid, &prev);
+        if !v.is_valid {
+            bail!("idempotency key {} resolves to an unauthenticated effect receipt {rid}: {:?}", r.idempotency_key, v.errors);
+        }
+        let prev_op = effect_op_hash(
+            s(&prev, &["envelope", "run_id"]).unwrap_or(""),
+            s(&prev, &["extensions", "x-tool-id"]).unwrap_or(""),
+            s(&prev, &["extensions", "x-args-hash"]).unwrap_or(""),
+            prev["effect_class"].as_str().unwrap_or(""),
+            prev["target"].as_str(),
+        )?;
+        if prev_op != effect_op_hash(&cx.run_id, &r.tool_id, &r.args_hash, &r.effect_class, r.target.as_deref())? {
+            bail!("idempotency key conflict: {} was already used for a different operation (receipt {rid})", r.idempotency_key);
+        }
+        Ok(Some(prev))
+    }
+
     /// Execute `exec` at most once per idempotency key. Writes INTENDED before the
     /// effect and COMMITTED/FAILED after. A retry after COMMITTED returns the recorded
     /// receipt; a retry after a bare INTENDED (crash mid-effect) is an error requiring
-    /// reconciliation, since the effect may or may not have happened.
+    /// reconciliation, since the effect may or may not have happened. The whole
+    /// sequence runs under a per-key lock: a concurrent duplicate waits and then
+    /// gets `Replayed`; it never re-executes (review #9).
     pub fn run_effect_once<F>(&self, cx: &EffectContext, r: &EffectRequest, exec: F) -> Result<EffectOutcome>
     where F: FnOnce() -> Result<(String, Option<String>)> {
-        if let Some(prev) = self.find_effect(&r.idempotency_key)? {
-            match prev["status"].as_str() {
+        self.effect_locked(cx, r, exec, false)
+    }
+
+    /// Settle an effect reserved earlier with [`ChainStore::reserve_effect`]: a
+    /// matching INTENDED is superseded by COMMITTED/FAILED. With no reservation this
+    /// behaves like [`ChainStore::run_effect_once`].
+    pub fn complete_effect<F>(&self, cx: &EffectContext, r: &EffectRequest, exec: F) -> Result<EffectOutcome>
+    where F: FnOnce() -> Result<(String, Option<String>)> {
+        self.effect_locked(cx, r, exec, true)
+    }
+
+    fn effect_locked<F>(&self, cx: &EffectContext, r: &EffectRequest, exec: F, settle_intended: bool) -> Result<EffectOutcome>
+    where F: FnOnce() -> Result<(String, Option<String>)> {
+        if r.idempotency_key.len() < 8 { bail!("idempotency_key must be >= 8 chars"); }
+        let _k = self.key_lock(&r.idempotency_key)?;
+        let iid = match self.prior_effect(cx, r)? {
+            Some(prev) => match prev["status"].as_str() {
                 Some("COMMITTED") => return Ok(EffectOutcome::Replayed(prev)),
+                Some("INTENDED") if settle_intended => s(&prev, &["chain", "receipt_id"]).unwrap_or("").to_string(),
                 Some("INTENDED") | Some("UNKNOWN") => bail!(
                     "effect {} has an unresolved INTENDED receipt; reconcile before retrying", r.idempotency_key),
-                _ => {} // FAILED / COMPENSATED: a fresh attempt is allowed
-            }
-        }
-        let intent = self.record_effect(cx, r, "INTENDED", None, None, None)?;
-        let iid = intent["chain"]["receipt_id"].as_str().unwrap_or("").to_string();
+                _ => String::new(), // FAILED / COMPENSATED: a fresh attempt is allowed
+            },
+            None => String::new(),
+        };
+        let iid = if iid.is_empty() {
+            let intent = self.record_effect(cx, r, "INTENDED", None, None, None)?;
+            intent["chain"]["receipt_id"].as_str().unwrap_or("").to_string()
+        } else { iid };
         match exec() {
             Ok((result_hash, ext)) => Ok(EffectOutcome::Executed(
                 self.record_effect(cx, r, "COMMITTED", Some(&result_hash), ext.as_deref(), Some(&iid))?)),
             Err(_) => Ok(EffectOutcome::Executed(self.record_effect(cx, r, "FAILED", None, None, Some(&iid))?)),
         }
     }
+
+    /// Pre-effect admission (review #10): atomically claim `r`'s key BEFORE the tool
+    /// runs (reserve -> execute -> [`ChainStore::complete_effect`]). A key already
+    /// COMMITTED for the same operation returns that receipt (do not execute); a key
+    /// already reserved or unresolved is refused (another caller holds it).
+    pub fn reserve_effect(&self, cx: &EffectContext, r: &EffectRequest) -> Result<EffectReservation> {
+        if r.idempotency_key.len() < 8 { bail!("idempotency_key must be >= 8 chars"); }
+        let _k = self.key_lock(&r.idempotency_key)?;
+        if let Some(prev) = self.prior_effect(cx, r)? {
+            match prev["status"].as_str() {
+                Some("COMMITTED") => return Ok(EffectReservation::Committed(prev)),
+                Some("INTENDED") | Some("UNKNOWN") => bail!(
+                    "effect {} is already reserved or unresolved; not executed", r.idempotency_key),
+                _ => {}
+            }
+        }
+        Ok(EffectReservation::Reserved(self.record_effect(cx, r, "INTENDED", None, None, None)?))
+    }
+}
+
+/// Outcome of [`ChainStore::reserve_effect`].
+#[derive(Debug, Clone)]
+pub enum EffectReservation {
+    /// The INTENDED receipt: the caller now owns the key and may execute once.
+    Reserved(Value),
+    /// Already COMMITTED for this operation: do not execute; this is the result.
+    Committed(Value),
+}
+
+/// Operation identity an idempotency key is bound to: run + tool + canonical args
+/// hash + effect class + target.
+pub fn effect_op_hash(run_id: &str, tool_id: &str, args_hash: &str, effect_class: &str, target: Option<&str>) -> Result<String> {
+    hash_value(&json!({"run_id": run_id, "tool_id": tool_id, "args_hash": args_hash,
+                       "effect_class": effect_class, "target": target}))
 }
 
 use sha2::Digest;
@@ -531,5 +619,68 @@ mod tests {
         s.record_effect(&cx(), &req("idem-key-2"), "INTENDED", None, None, None).unwrap();
         assert!(s.run_effect_once(&cx(), &req("idem-key-2"), || Ok((sha256_tagged(b"x"), None))).is_err());
         assert!(s.record_effect(&cx(), &req("short"), "INTENDED", None, None, None).is_err());
+    }
+
+    #[test]
+    fn review9_concurrent_identical_requests_execute_once() {
+        let (_d, s) = store();
+        let s = std::sync::Arc::new(s);
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let bar = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let hs: Vec<_> = (0..2).map(|_| {
+            let (s, calls, bar) = (s.clone(), calls.clone(), bar.clone());
+            std::thread::spawn(move || {
+                bar.wait();
+                s.run_effect_once(&cx(), &req("pay-key-0001"), || {
+                    calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    std::thread::sleep(std::time::Duration::from_millis(150));
+                    Ok((sha256_tagged(b"paid"), Some("pay-ref".into())))
+                }).unwrap()
+            })
+        }).collect();
+        let outs: Vec<_> = hs.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1, "effect ran more than once");
+        assert_eq!(outs.iter().filter(|o| matches!(o, EffectOutcome::Replayed(_))).count(), 1);
+        assert!(s.verify_chain("runE").unwrap().ok);
+    }
+
+    #[test]
+    fn review10_reserve_before_effect_blocks_duplicate_admission() {
+        let (_d, s) = store();
+        let EffectReservation::Reserved(_) = s.reserve_effect(&cx(), &req("res-key-0001")).unwrap() else { panic!() };
+        // A second pre-tool admission for the same key is refused before any effect.
+        assert!(s.reserve_effect(&cx(), &req("res-key-0001")).is_err());
+        let o = s.complete_effect(&cx(), &req("res-key-0001"), || Ok((sha256_tagged(b"r"), Some("ext".into())))).unwrap();
+        let EffectOutcome::Executed(rec) = o else { panic!() };
+        assert_eq!(rec["status"], "COMMITTED");
+        let EffectReservation::Committed(c) = s.reserve_effect(&cx(), &req("res-key-0001")).unwrap() else { panic!("must not re-admit") };
+        assert_eq!(c["external_ref"], "ext");
+        assert!(s.verify_chain("runE").unwrap().ok);
+    }
+
+    #[test]
+    fn review15_reused_key_for_different_operation_is_conflict() {
+        let (_d, s) = store();
+        s.run_effect_once(&cx(), &req("shared-key"), || Ok((sha256_tagged(b"a"), Some("extA".into())))).unwrap();
+        let mut other = req("shared-key");
+        other.tool_id = "tool.publish".into();
+        other.args_hash = sha256_tagged(b"argsB");
+        let mut ran = false;
+        let e = s.run_effect_once(&cx(), &other, || { ran = true; Ok((sha256_tagged(b"b"), None)) }).unwrap_err();
+        assert!(e.to_string().contains("conflict"), "{e}");
+        assert!(!ran);
+        // Same op in another run is also a conflict.
+        let mut cx2 = cx();
+        cx2.run_id = "runOther".into();
+        assert!(s.run_effect_once(&cx2, &req("shared-key"), || Ok((sha256_tagged(b"c"), None))).is_err());
+        // A FAILED receipt edited to COMMITTED is not trusted.
+        s.run_effect_once(&cx(), &req("fail-key-01"), || anyhow::bail!("boom")).unwrap();
+        let prev = s.find_effect("fail-key-01").unwrap().unwrap();
+        let p = s.run_dir("runE").unwrap().join(format!("{:010}.json", prev["chain"]["index"].as_u64().unwrap()));
+        let mut v = prev.clone();
+        v["status"] = json!("COMMITTED");
+        std::fs::write(&p, serde_json::to_vec(&v).unwrap()).unwrap();
+        let e = s.run_effect_once(&cx(), &req("fail-key-01"), || Ok((sha256_tagged(b"x"), None))).unwrap_err();
+        assert!(e.to_string().contains("unauthenticated"), "{e}");
     }
 }
