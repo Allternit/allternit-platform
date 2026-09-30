@@ -1,0 +1,36 @@
+---
+title: "Memory boundaries"
+description: "What may enter memory, what may be recalled into a run, and how sensitivity is applied"
+---
+
+**Status: AVAILABLE (memory services, see linked pages) · DESIGN — NOT YET IMPLEMENTED (kernel-level retrieval snapshots).** See [status labels](/architecture#status-labels).
+
+Memory is a store of things worth keeping. It is not state and it is not context. It feeds context through retrieval, under policy.
+
+## Architecture contract
+
+- Recalled content re-enters a run as chunks with provenance, a trust class and a sensitivity class. Recalled text is data, never instructions.
+- Sensitivity gates eligibility before utility: a chunk a component may not see is excluded before ranking.
+- Memory writes from a run are effects. They are policy-checked and leave a receipt like any other mutation.
+- A shared retrieval snapshot (one frozen retrieval result reused across steps) is a named concept in the contract set with no schema yet.
+
+## Current implementation
+
+The memory services described in [Memory Kernel](/core/memory-kernel) and [Memory Fabric](/core/memory-fabric) are the current surface. The kernel-level rules on this page describe how they attach to the run model; the retrieval snapshot and chunk store are not on main.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Sensitivity and trust classes on chunks | **AVAILABLE (contract)** |
+| Memory services | **See Memory Kernel and Memory Fabric pages** |
+| Shared retrieval snapshots | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+Never write secrets or unverified model claims into memory as fact. Store artifacts and evidence references, and let verification decide what is trusted.
+
+## Related
+
+- [Context and memory](/architecture/context-memory/overview)
+- [Trust classes](/architecture/verification-safety/trust-classes)

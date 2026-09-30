@@ -1,0 +1,39 @@
+---
+title: "Network access and SSRF"
+description: "The default-deny network policy and the shared egress guard"
+---
+
+**Status: AVAILABLE (internal).** See [status labels](/architecture#status-labels).
+
+Network access is a policy, not a capability a tool assumes. One guard implements it for every caller.
+
+## Architecture contract
+
+`NetworkAccessPolicyV1` has `network_default` (`DENY` or `ALLOWLIST`), a domain list, a private-address policy, a redirect policy and a DNS-rebinding policy. Three attacks are defended explicitly:
+
+- **Private addresses.** A request that resolves to a loopback, link-local or private range is refused unless the policy allows it.
+- **Redirects.** Each hop is re-checked against the policy, with a hop limit.
+- **DNS rebinding.** The address checked is the address used.
+
+Why: a tool that fetches a URL supplied by a model or by retrieved content is an SSRF path by default.
+
+## Current implementation
+
+On main, egress from work-runtime tools goes through one shared guard, and the network policy is part of the environment recorded per node.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Shared egress and SSRF guard | **AVAILABLE (internal)** |
+| Policy contract | **AVAILABLE (contract)** |
+| Guard on every network-capable tool | **AVAILABLE for work-runtime tools; other paths not claimed** |
+
+## Developer relevance
+
+Do not open sockets directly from a tool. Use the shared client, and declare the domains you need.
+
+## Related
+
+- [ExecutionEnvironment](/architecture/tools-execution/execution-environment)
+- [Threat model](/architecture/verification-safety/threat-model)
