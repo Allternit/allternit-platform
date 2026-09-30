@@ -149,16 +149,22 @@ describe("createFirefoxLoginBrowser", () => {
       };
       return child;
     }) as unknown as typeof import("node:child_process").spawn;
-    const lb = createChromeLoginBrowser({ executable: "/usr/bin/google-chrome-stable", spawnFn });
+    const lb = createChromeLoginBrowser({ executable: "/usr/bin/google-chrome-stable", spawnFn, isRoot: false });
     const userDataDir = join(dir, "profiles", "acct-1");
     expect(lb.profileFor(userDataDir)).toBe(userDataDir);
     await lb.open("acct-1", userDataDir, "https://claude.ai/");
     expect(spawned[0].args).toContain(`--user-data-dir=${userDataDir}`);
     expect(spawned[0].args).toContain("--password-store=basic");
     expect(spawned[0].args.at(-1)).toBe("https://claude.ai/");
-    expect(spawned[0].args.join(" ")).not.toMatch(/remote-debugging|enable-automation|headless/);
+    expect(spawned[0].args.join(" ")).not.toMatch(/remote-debugging|enable-automation|headless|no-sandbox/);
     await lb.close("acct-1");
     expect(lb.isOpen("acct-1")).toBe(false);
+
+    // As root (Sessions machines), Chrome only starts with --no-sandbox.
+    const asRoot = createChromeLoginBrowser({ executable: "/usr/bin/google-chrome-stable", spawnFn, isRoot: true });
+    await asRoot.open("acct-2", join(dir, "profiles", "acct-2"), "https://kimi.com/");
+    expect(spawned[1].args).toContain("--no-sandbox");
+    await asRoot.close("acct-2");
   });
 });
 
