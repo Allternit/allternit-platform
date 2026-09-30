@@ -41,6 +41,9 @@ use crate::wait_gates::WaitGateKind;
 use crate::work::placeholders;
 use crate::work::types::{validate_executor, DagEdge};
 
+/// Kernel templates keep ComputeGraphIR authoritative (the WIH DAG is a projection).
+pub use crate::kernel::bug_fix as bug_fix;
+
 /// Default directory for templates, relative to workspace root.
 pub const TEMPLATE_DIR: &str = ".allternit/rails/templates";
 
