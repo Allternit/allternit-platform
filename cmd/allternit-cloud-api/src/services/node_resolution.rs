@@ -153,6 +153,19 @@ pub async fn resolve_default_node(
     store: &dyn NodeStore,
     user_id: &str,
 ) -> Result<ResolvedNode, ApiError> {
+    resolve_default_node_preferring(store, user_id, &std::collections::HashSet::new()).await
+}
+
+/// [`resolve_default_node`], but a node holding a live relay connection
+/// (`connected`) beats one that only heartbeats: a registration that
+/// heartbeats without relaying would otherwise win on recency and answer
+/// `runtime_offline`. Disconnected nodes stay eligible (hosted runtimes wake
+/// on demand).
+pub async fn resolve_default_node_preferring(
+    store: &dyn NodeStore,
+    user_id: &str,
+    connected: &std::collections::HashSet<String>,
+) -> Result<ResolvedNode, ApiError> {
     let candidates = store.candidate_nodes(user_id).await?;
     let stale_before = Utc::now() - staleness_window();
 
@@ -170,8 +183,10 @@ pub async fn resolve_default_node(
     // Most recent activity wins; ties break on the id so the choice is
     // deterministic across calls.
     healthy.sort_by(|a, b| {
-        b.recency()
-            .cmp(&a.recency())
+        connected
+            .contains(&b.device_id)
+            .cmp(&connected.contains(&a.device_id))
+            .then_with(|| b.recency().cmp(&a.recency()))
             .then_with(|| a.device_id.cmp(&b.device_id))
     });
 
@@ -385,6 +400,24 @@ mod tests {
         assert_eq!(node.device_id, "tolerant");
 
         std::env::remove_var(STALE_AFTER_SECS_ENV);
+    }
+
+    #[tokio::test]
+    async fn relay_connected_node_beats_a_fresher_heartbeat_only_one() {
+        // Live 2026-09-30: a heartbeat-only registration won on recency and
+        // every relayed call answered runtime_offline.
+        let store = MockStore {
+            candidates: vec![
+                online("heartbeat-only", NodeKind::PAIRED, 5),
+                online("relaying", NodeKind::PAIRED, 60),
+            ],
+        };
+        let connected = std::collections::HashSet::from(["relaying".to_string()]);
+        let node = resolve_default_node_preferring(&store, "user_1", &connected).await.unwrap();
+        assert_eq!(node.device_id, "relaying");
+        // Without presence info, recency still decides.
+        let node = resolve_default_node(&store, "user_1").await.unwrap();
+        assert_eq!(node.device_id, "heartbeat-only");
     }
 
     #[tokio::test]

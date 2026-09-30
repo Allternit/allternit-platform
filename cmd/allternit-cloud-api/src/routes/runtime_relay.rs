@@ -364,6 +364,17 @@ fn node_core_serves(path: &str) -> bool {
     path.starts_with("/api/v1/node/") || path.starts_with("/terminal/")
 }
 
+/// Runtime ids holding at least one live relay connection right now.
+pub(crate) async fn connected_runtime_ids() -> std::collections::HashSet<String> {
+    relay_hub()
+        .read()
+        .await
+        .iter()
+        .filter(|(_, entries)| !entries.is_empty())
+        .map(|(id, _)| id.clone())
+        .collect()
+}
+
 /// Live relay connections for a runtime as presence metadata (PWA node
 /// rail). Empty unless multi-connection mode is on.
 pub(crate) async fn relay_connection_presence(runtime_id: &str) -> Vec<serde_json::Value> {

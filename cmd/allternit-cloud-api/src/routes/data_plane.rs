@@ -30,7 +30,7 @@ use std::sync::Arc;
 
 use super::runtime_relay::{relay_headers_from_http, RelayRequest};
 use crate::{
-    services::{resolve_default_node, ContaboRuntimeService, PgNodeStore, ResolvedNode, SharedQuotaService},
+    services::{resolve_default_node_preferring, ContaboRuntimeService, PgNodeStore, ResolvedNode, SharedQuotaService},
     ApiError, ApiState,
 };
 
@@ -72,7 +72,8 @@ impl PgDataPlaneGateway {
 #[async_trait]
 impl DataPlaneGateway for PgDataPlaneGateway {
     async fn resolve_default_node(&self, user_id: &str) -> Result<ResolvedNode, ApiError> {
-        resolve_default_node(&PgNodeStore::new(&self.db), user_id).await
+        let connected = crate::routes::runtime_relay::connected_runtime_ids().await;
+        resolve_default_node_preferring(&PgNodeStore::new(&self.db), user_id, &connected).await
     }
 
     async fn relay(
