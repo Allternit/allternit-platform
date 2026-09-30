@@ -5,8 +5,14 @@ import type { AgentTask } from "@/runtime/runtime-driver"
  * (appended to Claude's own system prompt) and gizzi's session tools as an
  * MCP server (see CliBridge).
  */
-export function claudeSessionFlags(ctx: { systemPrompt?: string; mcp?: AgentTask["mcp"] }): string[] {
+export function claudeSessionFlags(ctx: {
+  systemPrompt?: string
+  mcp?: AgentTask["mcp"]
+  vendorSessionId?: string
+}): string[] {
   const flags: string[] = []
+  // Continue the vendor's own conversation from the previous turn.
+  if (ctx.vendorSessionId) flags.push("--resume", ctx.vendorSessionId)
   if (ctx.systemPrompt?.trim()) flags.push("--append-system-prompt", ctx.systemPrompt)
   if (ctx.mcp) {
     flags.push(
@@ -44,4 +50,16 @@ export function acpMcpServers(mcp: AgentTask["mcp"], agentCapabilities: unknown)
 export function withInstructions(prompt: string, systemPrompt?: string): string {
   if (!systemPrompt?.trim()) return prompt
   return `<session_instructions>\n${systemPrompt.trim()}\n</session_instructions>\n\n${prompt}`
+}
+
+/** Claude stream-json events carry the vendor session id as `session_id` (system init and result). */
+export function claudeSessionIdFromEvent(evt: unknown): string | undefined {
+  const e = evt as { type?: string; session_id?: unknown } | null
+  if (!e || (e.type !== "system" && e.type !== "result")) return undefined
+  return typeof e.session_id === "string" && e.session_id ? e.session_id : undefined
+}
+
+/** ACP `session/load` is only available when the agent advertises `loadSession`. */
+export function acpCanLoadSession(agentCapabilities: unknown): boolean {
+  return (agentCapabilities as { loadSession?: boolean } | undefined)?.loadSession === true
 }

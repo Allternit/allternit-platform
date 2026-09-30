@@ -22,6 +22,12 @@ export interface AgentTask {
    */
   sessionID?: string
   /**
+   * The vendor CLI's own session id from an earlier turn of this gizzi session.
+   * Drivers resume it (claude `--resume`, ACP `session/load`) so the vendor's
+   * memory survives across turns; unset on the first turn.
+   */
+  vendorSessionId?: string
+  /**
    * An MCP server (HTTP) the CLI should load for this task: gizzi's CLI tool
    * bridge, which gives the CLI the session's own tools (see CliBridge).
    */
@@ -47,6 +53,8 @@ export type AgentEvent =
   | { type: "context"; used: number; size: number }
   | { type: "tool_call"; id: string; name: string; arguments: unknown }
   | { type: "tool_result"; id: string; content: string; isError?: boolean }
+  /** The vendor CLI's session id for this turn; persisted so the next turn can resume it. */
+  | { type: "vendor_session"; id: string }
   | { type: "error"; error: unknown }
   | {
       type: "finish"
