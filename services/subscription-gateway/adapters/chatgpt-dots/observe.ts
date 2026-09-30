@@ -8,7 +8,7 @@ export type Policy = "ask_first" | "hand_off";
 export interface Confirmation { id: string; policy: Policy; text: string }
 export interface DotRef { id: string; name: string; handle?: string; avatar?: string }
 export interface DotTask { id: string; title: string; state: "in_progress" | "scheduled" | "completed" }
-export type PageKind = "ok" | "unreachable" | "logged_out" | "rate_limited" | "blocked" | "paused" | "drift";
+export type PageKind = "ok" | "unreachable" | "logged_out" | "plan_required" | "rate_limited" | "blocked" | "paused" | "drift";
 export interface PageState {
   kind: PageKind;
   detail: string;
@@ -93,6 +93,9 @@ export function classify(html: string): PageState {
   const base: PageState = { kind: "ok", detail: "", view: "dot", composer: false, streaming: false, dots: [], turns: [], confirmations: [], tasks: [], missing: [] };
   if (!html || !html.trim()) return { ...base, kind: "unreachable", detail: "empty page" };
   const root = parseHtml(html);
+  // The upsell renders without the app shell, so check it before appRoot or it reads as "still loading".
+  const plan = textOf(root).match(PATTERNS.planRequired);
+  if (plan) return { ...base, kind: "plan_required", detail: plan[0] };
   if (!firstMatch(root, "appRoot")) return { ...base, kind: "unreachable", detail: "app root not present (page still loading?)" };
 
   const composer = !!firstMatch(root, "composer");
