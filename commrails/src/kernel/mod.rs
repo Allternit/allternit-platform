@@ -10,5 +10,6 @@ pub mod isa;
 pub mod lifecycle;
 pub mod projection;
 pub mod registry;
+pub mod router;
 
 pub use lifecycle::{CloseOutcome, LifecycleError, NodeState};
