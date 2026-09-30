@@ -437,3 +437,230 @@ async fn replay_hook_denies_during_replay_and_allows_after_end() {
     let d = decide(&inside(), &f.root, home, Some(bind(&hook_gate))).await;
     assert!(!d.verdict.is_deny(), "allowed again after end_replay: {:?}", d.verdict);
 }
+
+// ------------------------------------------------ review fixes #2 #3 #4 #5
+
+fn bind<'a>(f: &'a Fixture, wih: &'a str) -> WihBinding<'a> {
+    WihBinding {
+        wih_id: wih,
+        gate: &f.gate,
+        leases: &f.leases,
+    }
+}
+
+/// An open-signed WIH holding `src/**`, with an optional node policy.
+async fn bound_wih_with(f: &Fixture, policy: Option<crate::judge::policy::JudgePolicy>) -> String {
+    let (_, dag_id, node_id) = f.gate.plan_new("spawn gate test", None).await.unwrap();
+    if let Some(p) = policy {
+        f.gate
+            .set_judge_policy(
+                &dag_id,
+                Some(&node_id),
+                p,
+                &Actor {
+                    r#type: ActorType::User,
+                    id: "eoj".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+    }
+    let wih_id = f.gate.wih_pickup(&dag_id, &node_id, "agent-1").await.unwrap();
+    f.gate.wih_sign_open(&wih_id, "sig").await.unwrap();
+    let lease_id = f
+        .gate
+        .lease_request(&wih_id, "agent-1", vec!["src/**".to_string()], Some(3600))
+        .await
+        .unwrap();
+    let until = (Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
+    f.leases.grant(&lease_id, &until).await.unwrap();
+    wih_id
+}
+
+/// Unscannable programs used in the #2 tests. None of them name a path
+/// literal outside the lease.
+const UNSCANNABLE: &[&str] = &[
+    "cargo test",
+    "npm test",
+    "python -c 'print(1)'",
+    r#"python3 -c 'open(p,"w").write("x")'"#,
+    "bash ./script.sh",
+    "make -j4",
+    "sed -n 'w out.txt' src/a.rs",
+    "if true; then python3 -c 'x'; fi",
+];
+
+/// #2 under Q25 (guardrails, not walls): inline interpreter code and
+/// unscannable programs are allowed and recorded as `unresolved_effect`,
+/// denied when a statically visible path literal lands outside the lease or
+/// workspace.
+#[tokio::test]
+async fn unresolved_effects_are_allowed_and_recorded_under_wih() {
+    let f = fixture().await;
+    let wih = bound_wih(&f).await;
+    let home = Some(Path::new(HOME));
+    for cmd in UNSCANNABLE {
+        let req = bash(cmd, &f.root);
+        let d = decide(&req, &f.root, home, Some(bind(&f, &wih))).await;
+        assert!(!d.verdict.is_deny(), "{cmd}: {:?}", d.verdict);
+        assert!(d.verdict.reason().contains("unresolved_effect recorded"), "{cmd}: {:?}", d.verdict);
+        let evt = decision_event(&req, "claude-code", Some(&wih), &d);
+        let rec = evt.payload["unresolved_effect"].as_array().expect("recorded");
+        assert!(!rec.is_empty(), "{cmd}: {}", evt.payload);
+        assert_eq!(evt.payload["command"], *cmd);
+        assert_eq!(evt.scope.as_ref().unwrap().wih_id.as_deref(), Some(wih.as_str()));
+    }
+    // A path literal outside the workspace or the lease is denied.
+    for cmd in [
+        r#"python3 -c 'open("/outside/x","w").write("x")'"#,
+        r#"node -e 'require("fs").writeFileSync("/outside/x","x")'"#,
+        r#"perl -e 'open(F,">/outside/x")'"#,
+        r#"ruby -e 'File.write("../x","x")'"#,
+        "./custom-tool --out /outside/x",
+        "awk 'BEGIN{print 1 > \"/outside/x\"}'",
+        "find . -name x -exec sh -c 'echo hi > /outside/x' +",
+        "sed -n 'w /outside/x' src/a.rs",
+        "sort -o /outside/x input.txt",
+    ] {
+        let d = decide(&bash(cmd, &f.root), &f.root, home, Some(bind(&f, &wih))).await;
+        assert!(d.verdict.is_deny(), "{cmd}: {:?}", d.verdict);
+    }
+    let docs = f.root.join("docs/x.md");
+    let cmd = format!("python3 -c 'open(\"{}\",\"w\")'", docs.display());
+    let d = decide(&bash(&cmd, &f.root), &f.root, home, Some(bind(&f, &wih))).await;
+    assert!(d.verdict.is_deny(), "in workspace, outside lease: {:?}", d.verdict);
+    let inside = f.root.join("src/x.rs");
+    let cmd = format!("python3 -c 'open(\"{}\",\"w\")'", inside.display());
+    let d = decide(&bash(&cmd, &f.root), &f.root, home, Some(bind(&f, &wih))).await;
+    assert!(!d.verdict.is_deny(), "inside lease: {:?}", d.verdict);
+    // Ordinary read-only commands record nothing.
+    for cmd in [
+        "ls -la",
+        "cat src/lib.rs | head -5",
+        "git status",
+        "rg foo src",
+        "sed -n '1,5p' src/a.rs",
+        "sed 's/world/there/g' src/a.rs",
+        "if [ -f src/x ]; then cat src/x; fi",
+        "for f in a b; do echo $f; done",
+    ] {
+        let req = bash(cmd, &f.root);
+        let d = decide(&req, &f.root, home, Some(bind(&f, &wih))).await;
+        assert!(!d.verdict.is_deny(), "{cmd}: {:?}", d.verdict);
+        assert!(req.unresolved_effects().is_empty(), "{cmd}");
+    }
+    // No WIH bound: only the hard floor applies (Q24 auto-approve unchanged).
+    let d = decide(&bash("python3 -c 'print(1)'", &f.root), &f.root, home, None).await;
+    assert!(!d.verdict.is_deny(), "{:?}", d.verdict);
+}
+
+/// #2 with the opt-in strict fence: every unresolved effect is denied.
+#[tokio::test]
+async fn strict_fence_denies_unresolved_effects() {
+    let f = fixture().await;
+    let wih = bound_wih_with(
+        &f,
+        Some(crate::judge::policy::JudgePolicy {
+            fence: Some(crate::judge::policy::Fence::Strict),
+            ..Default::default()
+        }),
+    )
+    .await;
+    for cmd in UNSCANNABLE {
+        let d = decide(&bash(cmd, &f.root), &f.root, None, Some(bind(&f, &wih))).await;
+        assert!(d.verdict.is_deny(), "{cmd}: {:?}", d.verdict);
+        assert!(d.verdict.reason().contains("strict fence"), "{cmd}: {:?}", d.verdict);
+    }
+    let d = decide(&bash("git status && ls", &f.root), &f.root, None, Some(bind(&f, &wih))).await;
+    assert!(!d.verdict.is_deny(), "{:?}", d.verdict);
+}
+
+/// #3: a symlink inside the leased directory that points outside the
+/// workspace does not make its target writable.
+#[tokio::test]
+async fn symlink_escape_from_lease_is_denied() {
+    let f = fixture().await;
+    let wih = bound_wih(&f).await;
+    let outside = TempDir::new().unwrap();
+    std::fs::create_dir_all(f.root.join("src")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), f.root.join("src/link")).unwrap();
+    let target = f.root.join("src/link/x");
+    let d = decide(&write(&target.to_string_lossy(), &f.root), &f.root, None, Some(bind(&f, &wih))).await;
+    assert!(d.verdict.is_deny(), "{:?}", d.verdict);
+    let d = decide(&write("src/link/x", &f.root), &f.root, None, Some(bind(&f, &wih))).await;
+    assert!(d.verdict.is_deny(), "{:?}", d.verdict);
+    let d = decide(&bash("touch src/link/x", &f.root), &f.root, None, Some(bind(&f, &wih))).await;
+    assert!(d.verdict.is_deny(), "{:?}", d.verdict);
+    // A symlink that stays in the workspace is checked at its destination.
+    std::fs::create_dir_all(f.root.join("docs")).unwrap();
+    std::os::unix::fs::symlink(f.root.join("docs"), f.root.join("src/docs-link")).unwrap();
+    let d = decide(&write("src/docs-link/x.md", &f.root), &f.root, None, Some(bind(&f, &wih))).await;
+    assert!(d.verdict.is_deny(), "{:?}", d.verdict);
+    // A plain file under the lease is still fine.
+    let d = decide(&write("src/real.rs", &f.root), &f.root, None, Some(bind(&f, &wih))).await;
+    assert!(!d.verdict.is_deny(), "{:?}", d.verdict);
+}
+
+/// #4: `src/**` covers `src` and `src/...`, never a sibling like `src-private`.
+#[tokio::test]
+async fn recursive_lease_does_not_cover_sibling_prefix() {
+    let f = fixture().await;
+    let wih = bound_wih(&f).await;
+    for p in ["src-private/secret.ts", "src2/x"] {
+        let d = decide(&write(p, &f.root), &f.root, None, Some(bind(&f, &wih))).await;
+        assert!(d.verdict.is_deny(), "{p}: {:?}", d.verdict);
+    }
+    for p in ["src/a.rs", "src/deep/b.rs"] {
+        let d = decide(&write(p, &f.root), &f.root, None, Some(bind(&f, &wih))).await;
+        assert!(!d.verdict.is_deny(), "{p}: {:?}", d.verdict);
+    }
+    let d = decide(&bash("mkdir src", &f.root), &f.root, None, Some(bind(&f, &wih))).await;
+    assert!(!d.verdict.is_deny(), "{:?}", d.verdict);
+}
+
+/// #5: the judge hard rules see the actual command, so a judge that says
+/// allow cannot approve `sudo`.
+#[tokio::test]
+async fn hook_passes_command_to_judge_hard_rules() {
+    let f = fixture().await;
+    let f = Fixture {
+        gate: f.gate.with_judge(
+            Arc::new(crate::judge::StubJudge::new("accomplished", "allow")),
+            std::time::Duration::from_millis(300),
+            std::time::Duration::from_millis(300),
+        ),
+        ..f
+    };
+    let (_, dag_id, node_id) = f.gate.plan_new("judge hook test", None).await.unwrap();
+    let wih = f.gate.wih_pickup(&dag_id, &node_id, "agent-1").await.unwrap();
+    f.gate.wih_sign_open(&wih, "sig").await.unwrap();
+    f.gate
+        .set_judge_policy(
+            &dag_id,
+            Some(&node_id),
+            crate::judge::policy::JudgePolicy {
+                tool_judge: Some(true),
+                ..Default::default()
+            },
+            &Actor {
+                r#type: ActorType::User,
+                id: "eoj".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+    // The stub judge allows ordinary commands...
+    let d = decide(&bash("ls", &f.root), &f.root, None, Some(bind(&f, &wih))).await;
+    assert!(!d.verdict.is_deny(), "{:?}", d.verdict);
+    // ...but the hard rule on the actual command wins.
+    let d = decide(&bash("sudo id", &f.root), &f.root, None, Some(bind(&f, &wih))).await;
+    assert!(d.verdict.is_deny(), "{:?}", d.verdict);
+    let events = f.ledger.query(crate::core::types::LedgerQuery::default()).await.unwrap();
+    let judged = events
+        .iter()
+        .filter(|e| e.r#type == "JudgeToolDecision")
+        .last()
+        .expect("tool decision recorded");
+    assert_eq!(judged.payload["decision"], "deny", "{}", judged.payload);
+    assert!(judged.payload.to_string().contains("sudo id"), "{}", judged.payload);
+}

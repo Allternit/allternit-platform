@@ -11,7 +11,7 @@ use crate::core::types::{Actor, ActorType};
 use crate::gate::gate::HumanDecision;
 use crate::judge::config::{config_path, load_config};
 use crate::judge::heartbeat::parse_duration;
-use crate::judge::policy::{CloseBy, JudgePolicy, PolicyOrigin, VerifyMode};
+use crate::judge::policy::{CloseBy, Fence, JudgePolicy, PolicyOrigin, VerifyMode};
 use crate::judge::state::{pending_judge_needs, project_node_judge};
 use crate::{Gate, Ledger, LedgerQuery};
 
@@ -93,6 +93,9 @@ pub enum JudgePolicyCmd {
         /// Completion policy id, e.g. `completion.bug_fix`.
         #[arg(long = "completion-policy")]
         completion_policy: Option<String>,
+        /// Fence profile (Q25): `guardrail` (default) or opt-in `strict`.
+        #[arg(long)]
+        fence: Option<Fence>,
         /// `user:<id>` or `agent:<id>` (bare id = user).
         #[arg(long)]
         actor: String,
@@ -204,6 +207,7 @@ pub async fn run_judge_command(ctx: &JudgeContext, cmd: JudgeCmd) -> Result<()> 
             max_continuations,
             origin,
             completion_policy,
+            fence,
             actor,
         }) => {
             let actor = parse_actor(&actor)?;
@@ -215,6 +219,7 @@ pub async fn run_judge_command(ctx: &JudgeContext, cmd: JudgeCmd) -> Result<()> 
                 max_continuations,
                 origin,
                 completion_policy,
+                fence,
             };
             let eff = ctx
                 .gate
