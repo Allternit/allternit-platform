@@ -159,7 +159,8 @@ fn replay_detects_tampered_and_missing_recordings() {
     std::fs::write(&p, serde_json::to_vec(&v).unwrap()).unwrap();
     let mut r = Replayer::new(&s, c.clone(), "r", EffectsMode::RecordedOnly).unwrap();
     r.step(&policy_step());
-    assert!(matches!(r.step(&step(0)), StepOutcome::Recorded(_)));
+    // The chain no longer verifies: nothing is served, not even untouched entries (#12).
+    assert!(matches!(r.step(&step(0)), StepOutcome::Refused(_)));
     let StepOutcome::Refused(dv) = r.step(&step(1)) else { panic!("tampered result must not be served") };
     assert_eq!((dv.kind, dv.seq), (DivergenceKind::ResultHash, target.seq));
     let rep = r.finish().unwrap();
@@ -250,4 +251,49 @@ fn replay_gate_recorded_tool_effects_replay_by_payload() {
     let StepOutcome::Recorded(res) = r.step(&st) else { panic!() };
     assert_eq!(res.external_ref.as_deref(), Some(id.as_str()));
     assert_eq!(r.finish().unwrap().verdict, Verdict::Identical);
+}
+
+#[test]
+fn review12_replay_serves_nothing_after_signature_chain_fails() {
+    let (d, s) = store();
+    let calls = Cell::new(0);
+    live_run(&s, "run1", &calls);
+    let c = record_cassette(&s, "run1", None, 0).unwrap();
+    // Corrupt only the signature of a COMMITTED effect receipt; body/hash/cassette unchanged.
+    let target = c.entries[1].clone();
+    let idx = s.read_run("run1").unwrap().iter()
+        .position(|r| r["chain"]["receipt_id"] == json!(target.result_ref)).unwrap() as u64;
+    let p = rp(&d, "run1", idx);
+    let mut v: Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+    let mut sig = v["chain"]["signature"]["value"].as_str().unwrap().to_string();
+    let first = if sig.starts_with('A') { "B" } else { "A" };
+    sig.replace_range(0..1, first);
+    v["chain"]["signature"]["value"] = json!(sig);
+    std::fs::write(&p, serde_json::to_vec(&v).unwrap()).unwrap();
+    assert!(!s.verify_chain("run1").unwrap().ok);
+    let mut r = Replayer::new(&s, c, "r", EffectsMode::RecordedOnly).unwrap();
+    r.step(&policy_step());
+    for n in 0..3 {
+        assert!(matches!(r.step(&step(n)), StepOutcome::Refused(_)), "step {n} served from an unverified chain");
+    }
+    let rep = r.finish().unwrap();
+    assert_eq!(rep.verdict, Verdict::UnexpectedDivergence);
+    assert!(rep.divergences.iter().any(|d| d.node_id == "chain"), "{rep:?}");
+}
+
+#[test]
+fn review13_relabelled_cassette_entry_is_refused() {
+    let (_d, s) = store();
+    let calls = Cell::new(0);
+    live_run(&s, "run1", &calls);
+    let mut c = record_cassette(&s, "run1", None, 0).unwrap();
+    // Relabel recorded request A (node0's write) as a different request B.
+    let b = ReplayStep::tool("node0", "tool.fs_write", &json!({"path": "evil.txt", "content": 9}), "WORKSPACE_WRITE").unwrap();
+    c.entries[1].request_hash = b.request_hash.clone();
+    let mut r = Replayer::new(&s, c, "r", EffectsMode::RecordedOnly).unwrap();
+    r.step(&policy_step());
+    let StepOutcome::Refused(d) = r.step(&b) else { panic!("relabelled entry served for a different request") };
+    assert_eq!(d.kind, DivergenceKind::ResultHash);
+    assert!(d.explanation.unwrap().contains("signed receipt"));
+    assert_eq!(r.finish().unwrap().verdict, Verdict::UnexpectedDivergence);
 }
