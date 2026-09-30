@@ -74,7 +74,8 @@ describe("AAI schemas", () => {
     rt(approvalSchema, { authority: "vendor", actor: "openai", action: "send", threadId: "t", remoteRef: "r", state: "pending" });
     rt(threadOriginSchema, { type: "channel", provider: "slack", externalConversationId: "C1", externalMessageId: "m1" });
     rt(memoryRecordSchema, { scope: "bot", source: "vendor", authority: "vendor", promotable: false });
-    rt(mirrorFieldStateSchema, { field: "instructions", state: "conflict" });
+    rt(mirrorFieldStateSchema, { field: "instructions", authority: "vendor", observability: "partial", status: "conflict" });
+    expect(mirrorFieldStateSchema.safeParse({ field: "x", observability: "exact", status: "in_sync" }).success).toBe(false);
   });
   it("lists all 18 operations incl. agent.context.*", () => {
     expect(aaiOperationSchema.options).toHaveLength(18);

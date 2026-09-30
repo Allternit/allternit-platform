@@ -207,12 +207,18 @@ export const memoryRecordSchema = z.object({
 });
 export type MemoryRecord = z.infer<typeof memoryRecordSchema>;
 
-// Field-level Mirror drift state (agent.sync).
+// Field-level Mirror sync state (agent.sync). Spec "Mirror rules": the vendor is the authority for
+// mirrored fields; a field the adapter cannot read is `unobservable`, never claimed `synced`.
+// `partial` = in sync on the part the adapter can observe; `stale` = one side moved (see `direction`).
 export const mirrorFieldStateSchema = z.object({
   field: z.string(),
-  state: z.enum(["in_sync", "local_ahead", "remote_ahead", "conflict", "unsupported"]),
-  localValueRef: z.string().optional(),
-  remoteValueRef: z.string().optional(),
+  authority: z.literal("vendor").default("vendor"),
+  observability: z.enum(["exact", "partial", "none"]),
+  status: z.enum(["synced", "partial", "stale", "conflict", "unobservable"]),
+  /** Which side moved, for `stale`. */
+  direction: z.enum(["remote_ahead", "local_ahead"]).optional(),
+  remoteVersion: z.string().optional(),
+  localVersion: z.string().optional(),
   checkedAt: z.string().optional(),
 });
 export type MirrorFieldState = z.infer<typeof mirrorFieldStateSchema>;

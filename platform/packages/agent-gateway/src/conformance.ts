@@ -365,7 +365,7 @@ async function sync(a: Area, e: Env) {
   if (fx.remoteMutation) {
     await fx.remoteMutation();
     const after = await safe(a, "sync after remote change", () => p.sync({ agentId: fx.agentId }));
-    a.expect("remote change detected (drift shown honestly)", after.ok && after.value.fields.some((f) => f.state !== "in_sync"), "remote change not reflected");
+    a.expect("remote change detected (drift shown honestly)", after.ok && after.value.fields.some((f) => f.status !== "synced"), "remote change not reflected");
   } else a.skip("remote change detection", "no remoteMutation fixture");
 }
 

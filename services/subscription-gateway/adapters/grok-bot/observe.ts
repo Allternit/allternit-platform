@@ -51,6 +51,20 @@ function findApprovals(root: El): ApprovalCard[] {
   return out;
 }
 
+/** Bot names listed in the New-chat picker: buttons under the smallest ancestor holding both the close and create controls. */
+export function pickerBots(html: string): string[] {
+  const root = parseHtml(html);
+  const close = buttons(root).find((b) => nameRe("closePicker").test(nameOf(b).trim()));
+  if (!close) return [];
+  const isCreate = (b: El) => /^create new bot$/i.test(nameOf(b).trim());
+  let scope: El | null = close.parent;
+  while (scope && !buttons(scope).some(isCreate)) scope = scope.parent;
+  if (!scope) scope = close.parent;
+  const skip = new RegExp(NAMES.pickerControls, "i");
+  const names = buttons(scope ?? root).map((b) => nameOf(b).trim()).filter((n) => n && !skip.test(n));
+  return [...new Set(names)];
+}
+
 export function classify(html: string): PageState {
   const base: PageState = { kind: "ok", detail: "", composer: false, streaming: false, picker: false, turns: [], approvals: [], routineCues: [], missing: [] };
   if (!html || !html.trim()) return { ...base, kind: "unreachable", detail: "empty page" };
