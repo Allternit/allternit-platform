@@ -1,0 +1,132 @@
+---
+title: Receipts
+description: What a receipt proves, the receipt types, the hash chain and signatures, and how to verify a chain
+---
+
+**Implementation: ENABLED (signed chain for effect receipts) · IMPLEMENTED (keys and chain-check routes) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Every effect, input and verdict is a signed, hash-chained receipt that a client can verify. |
+| **Implemented today** | Ed25519-signed, hash-chained effect receipts. Keys and a chain check served by the internal work runtime service. Policy receipts are not yet on the signed chain. |
+| **Active path** | Partial. Effect receipts on the gate's tool path; not every receipt type. |
+| **Public exposure** | No. Public keys (JWKS) are not served on `api.allternit.com`. |
+
+A **receipt** is the durable evidence that something happened in a run: an effect, an input, a policy decision, a verification result, a control action. Receipts are what completion, resume, audit and replay are built on.
+
+## Architecture contract
+
+### What a receipt proves
+
+A receipt proves that a specific, typed event was recorded at a specific position in a run's history, with specific content, by the platform.
+
+It does prove:
+
+- **Content.** The receipt body has not changed since it was written (content hash).
+- **Order and completeness.** The receipt sits at a fixed index after a specific predecessor, and nothing was inserted or removed before it (hash chain).
+- **Origin.** The platform's key signed it, for this schema and this purpose (signature with domain tag).
+- **Source and trust.** Each receipt lists where its inputs came from and their trust class (provenance).
+
+It does not prove:
+
+- That a recorded result is correct. A verification receipt records that a verifier ran and what it returned. Whether the verifier is adequate is a separate question.
+- Anything about events that were never receipted.
+### Receipt types
+
+| Type | Records |
+|------|---------|
+| `run` | The run's terminal state and what backs it. |
+| `tool` | A tool invocation and its result class. |
+| `action` | An external or irreversible action. Carries the idempotency key. |
+| `mutation` | A change to the workspace, recorded as a unified diff. |
+| `verification` | A verifier's result for a criterion. |
+| `policy` | A policy decision: allow, allow with limits, ask or deny. |
+| `node_output` | An artifact produced by a graph node. |
+| `input` | Human or caller input to the run. |
+| `attention` | An attention request and its resolution. |
+| `control` | Pause, resume or cancel. |
+| `spawn` | The start of an executor for a node. |
+### Rules
+
+- **Append-only.** A receipt is never edited or deleted. A correction is a new receipt whose `supersedes` field points at the old one.
+- **Content-addressed.** Each receipt is identified by the hash of its content.
+- **Input before effect.** Human input and control requests are receipted before they take effect.
+- **Idempotency before retry.** An action with an external or irreversible effect needs an idempotency key and an action receipt before it may be retried.
+- **Sufficient for replay.** Every node emits a receipt or trace event sufficient to reconstruct what it saw and did.
+### Hash chain
+
+Receipts for one run form a chain in `index` order.
+
+```text
+index 0                 index 1                 index 2
+┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
+│ prev_hash: null  │    │ prev_hash: H0    │    │ prev_hash: H1    │
+│ content_hash: H0 │◄───│ content_hash: H1 │◄───│ content_hash: H2 │
+└──────────────────┘    └──────────────────┘    └──────────────────┘
+```
+
+- `content_hash` is SHA-256 over the canonical JSON (RFC 8785, JCS) of every field of the receipt except `content_hash` and `signature`. It is written `sha256:` followed by 64 lowercase hex characters.
+- `prev_hash` is the `content_hash` of the previous receipt in the same run. It is `null` only at index 0.
+
+Because `prev_hash` is part of the hashed content, changing, removing or inserting any earlier receipt changes every hash after it.
+### Signature and domain tag
+
+Each receipt is signed with Ed25519. The signed material is not the raw content hash alone. It is the JCS-canonical form of this object:
+
+```json
+{
+  "schema_id": "<receipt schema id>",
+  "schema_version": "<receipt schema version>",
+  "domain": "allternit.receipt.v1",
+  "content_hash": "sha256:<64 hex>"
+}
+```
+
+Binding the schema ID, schema version and the domain-separation tag `allternit.receipt.v1` into the signature means a signature made for one kind of receipt cannot be presented as a signature over a different schema, a different version, or a different protocol that happens to use the same key.
+
+The signature object carries `alg` (`ed25519`), `key_id`, `value` (base64url), `domain` and `jwks_url`. Public keys are published as a JWKS document at `/.well-known/jwks.json`. Today that document is served by the internal work runtime service, not through the public origin. See [Availability](#availability).
+### Verifying a chain
+
+To verify a run's receipts independently:
+
+1. Fetch all receipts for the run in chain order.
+2. For each receipt, remove `content_hash` and `signature`, canonicalize the rest with RFC 8785, hash with SHA-256, and compare with `content_hash`.
+3. Check that `prev_hash` equals the previous receipt's `content_hash`, and is `null` at index 0. Check that `index` increases by one each step.
+4. For each signature, build the four-field object above, canonicalize it, and verify the Ed25519 signature with the JWKS key whose `kid` equals `signature.key_id`.
+5. Check that the run's terminal receipt (`Run.output.run_receipt_id`) is in the chain you verified.
+
+The Agency API also offers a server-side check. It is a convenience, not the trust root: a client that needs assurance verifies with the published keys itself. Code for both is in [Agency API: Receipts](/api/agency/receipts#verify-independently).
+
+## Current implementation
+
+The per-run receipt chain is on main in the work runtime:
+
+- **Hashing and chaining.** `content_hash` is SHA-256 over the RFC 8785 canonical form of the receipt without `content_hash` and `signature`, and `prev_hash` links each receipt to the one before it, `null` at index 0, as described above.
+- **Signatures.** Each chained receipt is signed with Ed25519 over the four-field object with the domain tag `allternit.receipt.v1`. The signing key is loaded from configuration. Outside production a key is generated on first use, with a warning; in production, key generation is refused.
+- **Effect receipts.** Tool calls that go through the gate are recorded on the chain as effect (action) receipts. Each effect runs at most once per idempotency key; a repeat returns the recorded result, and a failed effect is recorded as failed. Calls marked read-only or no-effect are not chained. See [Retries and idempotent effects](/architecture/work-runtime/retries).
+- **Keys and verification routes.** The work runtime service serves the public keys (at `/.well-known/jwks.json` and `/v1/receipts/jwks`, with no private material) and a server-side chain check for a run (`/v1/receipts/chain/{run_id}/verify`). This service is internal. **These routes are not exposed through `https://api.allternit.com` yet**, so an outside client cannot fetch the keys or run the check today.
+
+Other receipt types (run, verification, policy, input and so on) are still written as content-hashed records and are not yet on the signed chain.
+
+## Availability
+
+| Part | Status | Notes |
+|------|--------|-------|
+| Content-hashed receipts | **ENABLED** · INTERNAL | Internal. |
+| Receipt contracts | **IMPLEMENTED** | Kernel ABI 1.0.0. |
+| Per-run hash chain and Ed25519 signatures | **ENABLED** · INTERNAL | Internal. Covers effect receipts from the gate's tool path. |
+| Effect receipts, at most once per idempotency key | **ENABLED** · INTERNAL | Internal. |
+| All receipt types on the signed chain | **DESIGN** | Other types are content-hashed only. |
+| Keys (`/.well-known/jwks.json`) and server-side chain check | **IMPLEMENTED** · INTERNAL | Served by the internal work runtime service only. |
+| Keys and chain check through `https://api.allternit.com` | **DESIGN** | Specified in API v0.3; not publicly reachable. |
+
+## Developer relevance
+
+Receipts are how you audit a run without trusting the platform's word for it. Once the keys are reachable through the public origin, verify chains yourself with them; the server-side check is a convenience, not the trust root. Store `receipt_id` values from errors and attention answers, because they point at the exact evidence.
+
+## Related
+
+- [Replay](/architecture/replay)
+- [Agency API: Receipts](/api/agency/receipts)
+- [Kernel](/architecture/kernel)
+- [Git DAG](/core/git-dag)

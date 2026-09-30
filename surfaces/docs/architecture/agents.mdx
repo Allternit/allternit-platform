@@ -1,0 +1,72 @@
+---
+title: Agents
+description: What "agent" means in Allternit, why a model is never the brain, and how the product metaphor maps onto the system
+---
+
+**Implementation: — (terminology) · Exposure: —.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | An agent is a profile and one durable identity, not a model. |
+| **Implemented today** | Explainer page. The parts it names each carry their own status. |
+| **Active path** | See [current reality](/architecture#current-reality). |
+| **Public exposure** | — |
+
+<Note>
+**A model is never the brain.** In Allternit the system is the agent. Models are interchangeable cognitive components that the system calls for specific steps. State, authority, lifecycle and completion belong to the system. If swapping one model for another changes the agent loop, the state model, tool authority, completion semantics or the workflow graph, the implementation does not conform to the architecture.
+</Note>
+
+## Architecture contract
+
+### What an agent is
+
+An **agent** is one external identity backed by a system:
+
+- a typed task and agent state record, not a transcript;
+- explicit, scoped, expiring authority checked by [policy](/architecture/policy);
+- a durable [run](/architecture/kernel) carried by the work runtime;
+- completion decided from [verification evidence](/architecture/verification);
+- [receipts](/architecture/receipts) for every effect, input and verdict.
+
+A model contributes to some steps inside that system: a bounded decision, a piece of generated text, a proposed plan. Its output is a proposal. It carries no authority, owns no durable state, and cannot declare the work complete.
+
+### Terms
+
+| Term | Meaning |
+|------|---------|
+| **Agent** | The system that pursues a goal on someone's behalf, with one external identity. |
+| **Run** | One durable execution of a goal. |
+| **Model** | An interchangeable cognitive component the system calls for a step. Never the decider of authority or completion. |
+| **Executor** | A process that performs a work node under a lease. It proposes outputs; the system closes the node. |
+| **Kernel** | The system underneath: compiler, work runtime, cognition, policy, verification and receipts. |
+| **Agency API** | The public HTTP surface over the kernel. See [Kernel and Agency API](/architecture#kernel-and-agency-api). |
+
+### The product metaphor
+
+Allternit's product story is "One Brain, Many Faces, One Nervous System". It still describes the product, and it sits under the rule above:
+
+- **The Brain** is the whole runtime system (the kernel and the Gizzi runtime), not a model.
+- **The Faces** are the surfaces: desktop, web, extensions, CLI. They hold no agent logic of their own.
+- **The Nervous System** is the SDK and communication layer that connects surfaces to the runtime.
+
+## Current implementation
+
+The Gizzi runtime and the CommRails work runtime implement the system-owned parts that are live today. The full split, including what is not built, is in [what is live today](/architecture#what-is-live-today). Architecture pages never name a specific model or vendor: which model serves a step is execution evidence recorded in receipts, not part of any contract.
+
+## Availability
+
+| Part | Status | Notes |
+|------|--------|-------|
+| Terminology on this page | **IMPLEMENTED** | Used across these docs. |
+| Model classes in the Agency API catalog | **PUBLIC PREVIEW** (contract; not served) | Constraints by class, never by vendor. See [Catalog](/api/agency/catalog#list-model-classes). |
+| Cognitive Execution Router and model pool | **IMPLEMENTED** · INTERNAL | Library on main; nothing calls the router on the normal path yet. |
+
+## Developer relevance
+
+Do not build against a specific model's behavior. Build against contracts: request a capability or a model class, supply completion criteria, and read receipts. That is what keeps your integration working when the model behind a step changes.
+
+## Related
+
+- [Living Agent Architecture](/architecture)
+- [Intent Graph Kernel](/core/intent-graph-kernel)
+- [Canonical Computer Use](/core/canonical-computer-use)

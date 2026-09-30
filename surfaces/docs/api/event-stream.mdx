@@ -10,7 +10,7 @@ Allternit exposes two real-time channels for observing beta session events:
 - **Server-Sent Events (SSE)** at `GET /api/v1/beta/sessions/:id/events`
 - **WebSocket** at `GET /api/v1/beta/sessions/:id/events/ws`
 
-Both streams emit the same underlying events. Use SSE for simple one-way observation. Use WebSockets when you need bidirectional communication, such as closing the connection from the client side or sending an interrupt through a separate HTTP call.
+`GET /api/v1/beta/sessions/:id/events/list` returns the same events as one JSON page. Both streams emit the same underlying events. Use SSE for simple one-way observation. Use WebSockets when you need bidirectional communication, such as closing the connection from the client side or sending an interrupt through a separate HTTP call.
 
 ## Authentication
 
@@ -38,7 +38,7 @@ Only `thinking_delta`, `content_block_delta`, `tool_calls`, and `refusal` may be
 
 ```bash
 curl -N -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
-  https://api.allternit.com/v1/beta/sessions/sess_123/events
+  https://api.allternit.com/api/v1/beta/sessions/sess_123/events
 ```
 
 Add `?after=<sequence>` to resume from a known sequence number.
@@ -55,7 +55,7 @@ data: {"calls":[{"name":"bash","input":{"command":"cargo test"}}]}
 
 ```bash
 websocat -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
-  wss://api.allternit.com/v1/beta/sessions/sess_123/events/ws
+  wss://api.allternit.com/api/v1/beta/sessions/sess_123/events/ws
 ```
 
 Each message is a JSON object:

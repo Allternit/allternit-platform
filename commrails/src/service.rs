@@ -6,7 +6,7 @@
 //! All CLI commands are exposed as HTTP endpoints.
 
 use axum::{
-    extract::{Json, Path, Query, State},
+    extract::{ConnectInfo, Json, Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{delete, get, post},
@@ -1424,6 +1424,22 @@ async fn wih_sign_open(
     }
 }
 
+/// Map the caller-supplied `actor` claim on a WIH close to the closer the
+/// gate may act on. Human (`user:` / bare id) claims are refused (403): human
+/// completion goes through the local interactive CLI. An `agent:` claim is
+/// downgraded to "unspecified" (= the worker), so a worker cannot pose as an
+/// independent verifier agent either. Malformed claims are 400.
+fn closer_from_claim(
+    claim: Option<&str>,
+) -> Result<Option<crate::core::types::Actor>, StatusCode> {
+    let Some(raw) = claim else { return Ok(None) };
+    let actor = crate::cli::judge::parse_actor(raw).map_err(|_| StatusCode::BAD_REQUEST)?;
+    match actor.r#type {
+        crate::core::types::ActorType::User => Err(StatusCode::FORBIDDEN),
+        _ => Ok(None),
+    }
+}
+
 async fn wih_close(
     State(state): State<Arc<ServiceState>>,
     Path(wih_id): Path<String>,
@@ -1434,9 +1450,12 @@ async fn wih_close(
         ..Default::default()
     };
     ensure_policy_injected(&state, Some(scope)).await?;
-    let closer = match request.actor.as_deref().map(crate::cli::judge::parse_actor).transpose() {
+    // The service has no authenticated-user channel, so `request.actor` is
+    // only a claim by the caller (a worker). It can never confer human or
+    // verifier authority: see `closer_from_claim`.
+    let closer = match closer_from_claim(request.actor.as_deref()) {
         Ok(c) => c,
-        Err(_) => return Err(StatusCode::BAD_REQUEST),
+        Err(code) => return Err(code),
     };
     // Opt-in policy `observe_before_close`: awaited so the advice lands on
     // `wih:<id>` before the close; advisory, never blocks the close.
@@ -2581,6 +2600,9 @@ pub struct ReceiptVerificationResult {
     pub is_valid: bool,
     pub hash_matches: bool,
     pub signature_valid: Option<bool>,
+    /// "chained-signed", "legacy (unsigned, unchained)" or "missing".
+    #[serde(default)]
+    pub integrity: String,
     pub errors: Vec<String>,
 }
 
@@ -2815,6 +2837,116 @@ async fn receipts_query(
     }).into_response()
 }
 
+async fn receipts_jwks(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<impl IntoResponse, StatusCode> {
+    match state.receipts.chain_store().and_then(|c| c.jwks()) {
+        Ok(j) => Ok((StatusCode::OK, Json(j))),
+        Err(e) => {
+            tracing::error!("receipts_jwks failed: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReplayRequest {
+    /// Record a fresh cassette from this run's receipt chain...
+    #[serde(default)]
+    run_id: Option<String>,
+    /// ...or replay a supplied cassette.
+    #[serde(default)]
+    cassette: Option<crate::replay::CassetteV1>,
+    #[serde(default)]
+    graph_id: Option<String>,
+    #[serde(default)]
+    graph_version: Option<u64>,
+    /// Boundaries the replaying run crossed; omitted = the recording's own (integrity check).
+    #[serde(default)]
+    steps: Option<Vec<crate::replay::ReplayStep>>,
+    #[serde(default)]
+    replay_run_id: Option<String>,
+    /// Only "recorded_only" is accepted.
+    #[serde(default)]
+    effects: Option<String>,
+}
+
+async fn replays_create(
+    State(state): State<Arc<ServiceState>>,
+    Json(req): Json<ReplayRequest>,
+) -> axum::response::Response {
+    let bad = |m: &str| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": m}))).into_response();
+    if req.effects.as_deref().unwrap_or("recorded_only") != "recorded_only" {
+        return bad("effects must be \"recorded_only\"; replay never runs live effects");
+    }
+    let cs = match state.receipts.chain_store() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("replays_create chain store: {}", e);
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    let (cassette, saved) = match (req.cassette, req.run_id.as_deref()) {
+        (Some(c), None) => (c, None),
+        (None, Some(run)) => match crate::replay::record_cassette(&cs, run, req.graph_id.as_deref(), req.graph_version.unwrap_or(0)) {
+            Ok(c) => {
+                let p = crate::replay::save_cassette(&state.receipts.receipts_dir().join("_cassettes"), &c).ok();
+                (c, p.map(|p| p.display().to_string()))
+            }
+            Err(e) => return (StatusCode::UNPROCESSABLE_ENTITY, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+        },
+        _ => return bad("give exactly one of run_id or cassette"),
+    };
+    let rid = req.replay_run_id.unwrap_or_else(|| format!("replay_{}", uuid::Uuid::new_v4().simple()));
+    match crate::replay::replay_report(&cs, cassette.clone(), req.steps, &rid) {
+        Ok(report) => (StatusCode::OK, Json(serde_json::json!({
+            "effects": "recorded_only", "cassette": cassette, "cassette_path": saved, "report": report
+        }))).into_response(),
+        Err(e) => (StatusCode::UNPROCESSABLE_ENTITY, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+    }
+}
+
+// Existing receipts routes have no bearer auth. External writes require the
+// actual TCP peer to be loopback; forwarded/browser requests and missing peer
+// identity fail closed. Never infer locality from a client-supplied header.
+async fn receipts_chain_append(
+    State(state): State<Arc<ServiceState>>,
+    Path(run_id): Path<String>,
+    peer: Option<ConnectInfo<std::net::SocketAddr>>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !peer.is_some_and(|p| p.0.ip().is_loopback())
+        || ["forwarded", "x-forwarded-for", "x-real-ip", "origin"].iter().any(|k| headers.contains_key(*k)) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    if let Err(e) = crate::receipts::external::validate_tool_receipt(&run_id, &body) {
+        tracing::warn!("invalid external ToolReceiptV1: {}", e);
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let receipts = state.receipts.clone();
+    tokio::task::spawn_blocking(move || crate::receipts::external::append_tool_receipt(&receipts, &run_id, body))
+        .await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map(Json).map_err(|e| {
+            tracing::warn!("external receipt append failed: {}", e);
+            StatusCode::UNPROCESSABLE_ENTITY
+        })
+}
+
+async fn receipts_chain_verify(
+    State(state): State<Arc<ServiceState>>,
+    axum::extract::Path(run_id): axum::extract::Path<String>,
+) -> Result<impl IntoResponse, StatusCode> {
+    match state.receipts.chain_store().and_then(|c| c.verify_chain(&run_id)) {
+        Ok(r) => Ok((StatusCode::OK, Json(r))),
+        Err(e) => {
+            tracing::error!("receipts_chain_verify failed: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
 async fn receipts_verify(
     State(state): State<Arc<ServiceState>>,
     Json(req): Json<ReceiptVerifyRequest>,
@@ -2828,6 +2960,7 @@ async fn receipts_verify(
             is_valid: sr.is_valid,
             hash_matches: sr.hash_matches,
             signature_valid: sr.signature_valid,
+            integrity: sr.integrity,
             errors: sr.errors,
         }).collect(),
         Err(e) => {
@@ -2956,6 +3089,12 @@ pub fn create_router(state: Arc<ServiceState>) -> Router {
         .route("/v1/receipts/query", get(receipts_query))
         .route("/v1/receipts/verify", post(receipts_verify))
         .route("/v1/receipts/summary", post(receipts_summary))
+        .route("/v1/receipts/jwks", get(receipts_jwks))
+        .route("/.well-known/jwks.json", get(receipts_jwks))
+        .route("/v1/receipts/chain/:run_id", post(receipts_chain_append))
+        .route("/v1/receipts/chain/:run_id/verify", get(receipts_chain_verify))
+        // REPLAY (WP5): effects: recorded_only enforced
+        .route("/v1/replays", post(replays_create))
         // INIT
         .route("/v1/init", post(init_system))
         .with_state(state)
@@ -2987,7 +3126,7 @@ pub async fn run_service(bind_addr: &str, root_dir: PathBuf) -> anyhow::Result<(
         bind_addr
     );
 
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await?;
     Ok(())
 }
 
@@ -3068,4 +3207,185 @@ async fn init_stores(root: &PathBuf) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+
+#[cfg(test)]
+mod wp3_http_tests {
+    use super::*;
+    use serde_json::{json, Value};
+
+    async fn serve() -> (tempfile::TempDir, Arc<ServiceState>, String) {
+        let d = tempfile::tempdir().unwrap();
+        let state = Arc::new(ServiceState::new(d.path().to_path_buf()).await.unwrap());
+        let app = create_router(state.clone());
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+        (d, state, base)
+    }
+
+    fn append(state: &ServiceState, run: &str, n: u32) -> String {
+        let cs = state.receipts.chain_store().unwrap();
+        let mut last = String::new();
+        for i in 0..n {
+            let r = cs.append(json!({"envelope": {"schema_id":"allternit.kernel.PolicyReceiptV1",
+                "schema_version":"1.0.0","run_id":run}, "n": i})).unwrap();
+            last = r["chain"]["receipt_id"].as_str().unwrap().to_string();
+        }
+        last
+    }
+
+    #[tokio::test]
+    async fn jwks_routes_publish_no_private_material() {
+        let (_d, _s, base) = serve().await;
+        for path in ["/v1/receipts/jwks", "/.well-known/jwks.json"] {
+            let text = reqwest::get(format!("{base}{path}")).await.unwrap().text().await.unwrap();
+            let v: Value = serde_json::from_str(&text).unwrap();
+            let k = &v["keys"][0];
+            assert_eq!((k["kty"].as_str(), k["crv"].as_str()), (Some("OKP"), Some("Ed25519")));
+            assert!(k.get("d").is_none() && !text.contains("\"d\""), "private material leaked: {text}");
+        }
+    }
+
+    #[tokio::test]
+    async fn chain_verify_route_valid_and_tampered() {
+        let (d, s, base) = serve().await;
+        append(&s, "runh", 3);
+        let ok: Value = reqwest::get(format!("{base}/v1/receipts/chain/runh/verify")).await.unwrap().json().await.unwrap();
+        assert_eq!(ok["ok"], true, "{ok}");
+        let p = d.path().join(".allternit/receipts/_chains/runh/0000000001.json");
+        let mut v: Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+        v["n"] = json!(999);
+        std::fs::write(&p, serde_json::to_vec(&v).unwrap()).unwrap();
+        let bad: Value = reqwest::get(format!("{base}/v1/receipts/chain/runh/verify")).await.unwrap().json().await.unwrap();
+        assert_eq!(bad["ok"], false, "{bad}");
+        assert_eq!(bad["first_break"]["index"], 1);
+    }
+
+    #[tokio::test]
+    async fn verify_route_chained_receipt() {
+        let (_d, s, base) = serve().await;
+        let id = append(&s, "runv", 1);
+        let r: Value = reqwest::Client::new().post(format!("{base}/v1/receipts/verify"))
+            .json(&json!({"receipt_ids": [id, "rcpt_missing"]})).send().await.unwrap().json().await.unwrap();
+        assert_eq!(r["results"][0]["integrity"], "chained-signed", "{r}");
+        assert_eq!(r["results"][0]["signature_valid"], true);
+        assert_eq!(r["results"][0]["is_valid"], true);
+        assert_eq!(r["results"][1]["integrity"], "missing");
+    }
+}
+
+#[cfg(test)]
+mod wp5_replay_http_tests {
+    use super::*;
+    use crate::receipts::chain::{EffectContext, EffectRequest};
+    use crate::receipts::jcs::sha256_tagged;
+    use serde_json::{json, Value};
+
+    #[tokio::test]
+    async fn replay_http_records_replays_and_enforces_recorded_only() {
+        let d = tempfile::tempdir().unwrap();
+        let state = Arc::new(ServiceState::new(d.path().to_path_buf()).await.unwrap());
+        let app = create_router(state.clone());
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+
+        let cs = state.receipts.chain_store().unwrap();
+        let cx = EffectContext { run_id: "runH".into(), session_id: "s".into(), task_id: "t".into(), node_id: Some("n1".into()),
+            trace_id: "tr".into(), state_version: 0, producer_id: "test".into(), policy_decision_id: "p".into() };
+        let rq = EffectRequest { action_id: "a1".into(), tool_id: "tool.fs_write".into(), args_hash: sha256_tagged(b"a"),
+            idempotency_key: "http-key-001".into(), effect_class: "WORKSPACE_WRITE".into(), target: None };
+        cs.run_effect_once(&cx, &rq, || Ok((sha256_tagged(b"r"), Some("ext".into())))).unwrap();
+
+        let c = reqwest::Client::new();
+        let post = |b: Value| c.post(format!("{base}/v1/replays")).json(&b).send();
+        let r = post(json!({"run_id": "runH", "effects": "live"})).await.unwrap();
+        assert_eq!(r.status(), 400, "live effects must be refused");
+
+        let v: Value = post(json!({"run_id": "runH"})).await.unwrap().json().await.unwrap();
+        assert_eq!(v["effects"], "recorded_only");
+        assert_eq!(v["report"]["verdict"], "IDENTICAL", "{v}");
+        assert_eq!(v["cassette"]["schema_id"], "allternit.kernel.CassetteV1");
+        assert!(std::path::Path::new(v["cassette_path"].as_str().unwrap()).exists());
+
+        // Replay the stored cassette with an unrecorded call: divergence, not a live call.
+        let steps = json!([{"boundary": "TOOL", "node_id": "n1", "request_hash": sha256_tagged(b"never")}]);
+        let v2: Value = post(json!({"cassette": v["cassette"], "steps": steps})).await.unwrap().json().await.unwrap();
+        assert_eq!(v2["report"]["verdict"], "UNEXPECTED_DIVERGENCE");
+        let kinds: Vec<&str> = v2["report"]["divergences"].as_array().unwrap().iter().filter_map(|d| d["kind"].as_str()).collect();
+        assert_eq!(kinds, vec!["EXTRA_ENTRY", "MISSING_ENTRY"]);
+        assert_eq!(cs.read_run("runH").unwrap().len(), 2, "replay wrote nothing to the chain");
+
+        assert_eq!(post(json!({})).await.unwrap().status(), 400);
+        assert_eq!(post(json!({"run_id": "no-such-run"})).await.unwrap().status(), 422);
+    }
+}
+
+#[cfg(test)]
+mod wp10_chain_append_tests {
+    use super::*;
+    use crate::receipts::external_tests::tool_receipt;
+    use std::net::SocketAddr;
+
+    #[tokio::test]
+    async fn wp10_chain_append_http_signs_rejects_invalid_and_refuses_replay() {
+        let d = tempfile::tempdir().unwrap();
+        let state = Arc::new(ServiceState::new(d.path().to_path_buf()).await.unwrap());
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", l.local_addr().unwrap());
+        let app = create_router(state.clone());
+        let task = tokio::spawn(async move { axum::serve(l, app.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap() });
+        let client = reqwest::Client::new();
+        let url = format!("{base}/v1/receipts/chain/run.test");
+        let body = tool_receipt("run.test");
+        let r = client.post(&url).json(&body).send().await.unwrap();
+        assert_eq!(r.status(), 200);
+        let signed: serde_json::Value = r.json().await.unwrap();
+        assert_eq!(signed["chain"]["index"], 0);
+        assert_eq!(signed["chain"]["run_id"], "run.test");
+        assert_eq!(signed["chain"]["signature"]["alg"], "ed25519");
+        assert!(state.receipts.chain_store().unwrap().verify_chain("run.test").unwrap().ok);
+        let wrong = tool_receipt("other.run");
+        assert_eq!(client.post(&url).json(&wrong).send().await.unwrap().status(), 400);
+        for header in ["x-forwarded-for", "forwarded", "x-real-ip", "origin"] {
+            assert_eq!(client.post(&url).header(header,"127.0.0.1").json(&body).send().await.unwrap().status(), 403);
+        }
+        let replay = state.receipts.receipts_dir().join("_replay");
+        std::fs::create_dir_all(&replay).unwrap();
+        std::fs::write(replay.join("run.test.json"), "{}").unwrap();
+        assert_eq!(client.post(&url).json(&body).send().await.unwrap().status(), 422);
+        assert_eq!(state.receipts.chain_store().unwrap().read_run("run.test").unwrap().len(), 1);
+        task.abort(); let _ = task.await;
+    }
+
+    #[tokio::test]
+    async fn wp10_chain_append_missing_or_remote_peer_is_forbidden() {
+        let d = tempfile::tempdir().unwrap();
+        let state = Arc::new(ServiceState::new(d.path().to_path_buf()).await.unwrap());
+        for peer in [None, Some(ConnectInfo("192.0.2.1:4000".parse::<SocketAddr>().unwrap()))] {
+            let err = receipts_chain_append(State(state.clone()), Path("run.test".into()), peer,
+                axum::http::HeaderMap::new(), Json(tool_receipt("run.test"))).await.unwrap_err();
+            assert_eq!(err, StatusCode::FORBIDDEN);
+        }
+    }
+}
+
+#[cfg(test)]
+mod closer_claim_tests {
+    use super::*;
+
+    #[test]
+    fn worker_claiming_a_human_is_refused() {
+        assert_eq!(closer_from_claim(Some("user:eoj")).err(), Some(StatusCode::FORBIDDEN));
+        assert_eq!(closer_from_claim(Some("eoj")).err(), Some(StatusCode::FORBIDDEN));
+    }
+
+    #[test]
+    fn agent_claim_is_downgraded_to_worker_and_none_stays_none() {
+        assert!(matches!(closer_from_claim(Some("agent:other")), Ok(None)));
+        assert!(matches!(closer_from_claim(None), Ok(None)));
+        assert_eq!(closer_from_claim(Some("bogus:x")).err(), Some(StatusCode::BAD_REQUEST));
+    }
 }

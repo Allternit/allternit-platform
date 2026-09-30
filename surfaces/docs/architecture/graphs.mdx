@@ -1,0 +1,87 @@
+---
+title: "Graphs: ComputeGraphIR and the Agent ISA"
+description: "Plans are typed graphs of registered primitives, checked by a validator before anything runs"
+---
+
+**Implementation: IMPLEMENTED (graph schema, registry, validator library) · Exposure: PUBLIC (docs) · INTERNAL (validator).** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Every workflow is a typed compute graph, validated before it runs. |
+| **Implemented today** | Graph schema and primitive registry as contracts. Graph validator and Agent ISA as library code. |
+| **Active path** | No. The validator is not enforced on every graph. |
+| **Public exposure** | Documentation only. No endpoint serves it. |
+
+A plan in Allternit is not prose. It is a **ComputeGraphIR**: a typed graph whose nodes are registered primitives and whose edges are explicit conditions. Models may propose a graph or a patch to one. The runtime validates it and owns execution.
+
+## Architecture contract
+
+### ComputeGraphIR
+
+A graph has `graph_id`, `task_id`, `graph_version`, `nodes`, `edges`, `entry_nodes`, `completion_nodes`, a global budget and a failure policy.
+
+Each node declares:
+
+| Field | Meaning |
+|-------|---------|
+| `primitive_id` | Which registered primitive runs. Never a function name, prompt or model. |
+| `execution_class` | `SYSTEM0`–`SYSTEM3`, `POLICY` or `VERIFY`. See [S0–S3](/architecture/cognition-levels). |
+| `capability_request` | For cognitive nodes, the capability needed, not the model that provides it |
+| `inputs`, `outputs` | State selectors and paths |
+| `read_set`, `write_set` | The concurrency contract: drives locking, conflict detection and replay |
+| `preconditions`, `postconditions`, `verifier` | What must hold before and after |
+| `retry_policy`, `timeout`, `budget`, `rollback` | Failure handling, all explicit |
+
+Edges carry a predicate or a decision result selector. Loops are edges. Parallelism is allowed only when read and write sets and policy permit it.
+
+### The seven graph invariants
+
+The validator rejects a graph that breaks any of these:
+
+1. **Mutation is authorized.** A node that writes declares a write set and a capability request.
+2. **Completion has evidence.** A completion node declares the evidence it needs, and a verify node sits upstream of it.
+3. **S2 output is a candidate.** A generating node does not write state directly, and its output reaches a verify or policy node.
+4. **A retry changes something.** A retry has a policy that names what must change between attempts.
+5. **Every node is receipted.** Each node declares a receipt-backed output.
+6. **Projections are disposable.** No node treats a projection (a view built from the ledger) as truth.
+7. **No model pinning.** No node or capability request names a model or provider.
+
+Static checks also require unique IDs, resolvable entry, edge and failure targets, and explicit fallback, retry, rollback and escalation nodes.
+
+### The Agent ISA
+
+Every node's primitive comes from one registry. The Agent ISA groups primitives into Observation, Decision, Mutation, Execution, Version Control, Verification and Control. Control covers branch, parallel, join, retry, rollback, checkpoint, request evidence, escalate, wait for dependency and finish.
+
+Each primitive has a stable dotted ID (for example `obs.list_files`) and an upper-snake alias. Namespaces include `obs`, `dec`, `ctx`, `plan`, `tool`, `mut`, `ver`, `ctl`, `route`, `state`, `policy`, `bg` and `mem`. A primitive declares its inputs and outputs, its class, its authority (propose, decide, verify or authorize) and the evidence it produces. Only policy primitives may grant authority.
+
+Why graphs and a fixed ISA: a typed graph can be checked before it runs, replayed after, and executed the same way whichever model is loaded. Free-form loops can do none of these.
+
+## Current implementation
+
+On main, in the work runtime:
+
+- The primitive registry with all **191** canonical primitive IDs of Kernel ABI 1.0.0, loaded at build time from the frozen registry file, with lookup by dotted ID or alias.
+- The Agent ISA as a generated enum over the same 191 IDs.
+- The graph validator with the seven invariants above.
+- A projection that renders a graph as the existing work-item view, so current tools keep working.
+
+These are merged as library code with tests. They are not yet called on every graph the runtime accepts, so enforcement is IMPLEMENTED but not on the active path. There is no graph compiler from a goal yet.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Primitive registry (191 IDs) and graph schema | **IMPLEMENTED** (contract) |
+| Graph validator, Agent ISA enum, work-item projection | **IMPLEMENTED** · INTERNAL |
+| Validator enforced on every accepted graph | **DESIGN** |
+| Goal-to-graph compiler | **DESIGN** |
+
+## Developer relevance
+
+To add behavior, you add a primitive (with its contract) or a graph fragment, not code inside an agent loop. Reference primitives by ID only. A graph that names a model will fail validation.
+
+## Related
+
+- [Primitives](/architecture/cognitive-runtime/primitives)
+- [Why no vendor names in graphs](/architecture/cognitive-runtime/no-vendor-names)
+- [Lifecycle](/architecture/work-runtime/lifecycle)

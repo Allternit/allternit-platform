@@ -159,15 +159,15 @@ impl Orchestrator {
             (opts.repo.to_path_buf(), false)
         };
 
-        let settings_path = match &commrails_bin {
-            Some(bin) => {
-                let path = logdir.join(format!("{}.claude-settings.json", session));
-                let settings = hook::claude_settings(HookTarget {
-                    commrails_bin: bin,
-                    root: &self.root_dir,
-                    workspace: Some(&workdir),
-                    wih_id: opts.wih,
-                });
+        let hook_target = commrails_bin.as_deref().map(|bin| HookTarget {
+            commrails_bin: bin,
+            root: &self.root_dir,
+            workspace: Some(&workdir),
+            wih_id: opts.wih,
+        });
+        let settings_path = match hook_target.and_then(|t| hook::hook_settings_file(harness, t)) {
+            Some((suffix, settings)) => {
+                let path = logdir.join(format!("{}.{}", session, suffix));
                 if let Err(err) = tokio::fs::write(&path, serde_json::to_string_pretty(&settings)?).await {
                     if wt_created {
                         let _ = remove_worktree(&workdir).await;
@@ -178,7 +178,69 @@ impl Orchestrator {
             }
             None => None,
         };
-        let cmd = hook::gate_argv(opts.cmd, settings_path.as_deref());
+        let gated = hook::gate_spawn(opts.cmd, settings_path.as_deref(), hook_target);
+        let cmd = gated.argv;
+
+        // ExecutionEnvironmentV1: resolve per node, write beside the log, and
+        // record in the ledger. `ALLTERNIT_EXEC_ENV_ENFORCE=1` additionally
+        // strips the node's process env to the allowlist (`env -i`).
+        let node_env = crate::execenv::resolve(&crate::execenv::EnvRequest {
+            node_id: &session,
+            workdir: &workdir,
+            worktree: opts.worktree,
+            extra_env_keys: &std::env::var("ALLTERNIT_EXEC_ENV_ALLOW")
+                .map(|v| v.split(',').map(|k| k.trim().to_string()).filter(|k| !k.is_empty()).collect::<Vec<_>>())
+                .unwrap_or_default(),
+            mounts: &[],
+            secret_refs: &[],
+            network_policy_id: None,
+        });
+        let _ = tokio::fs::write(
+            logdir.join(format!("{}.exec-env.json", session)),
+            serde_json::to_string_pretty(&node_env).unwrap_or_default(),
+        )
+        .await;
+        let _ = ledger.append(crate::execenv::resolved_event(opts.wih, &node_env)).await;
+        let env_prefix = if std::env::var("ALLTERNIT_EXEC_ENV_ENFORCE").as_deref() == Ok("1") {
+            let kept = crate::execenv::filter_env(&node_env, std::env::vars());
+            let mut p = String::from("env -i");
+            for (k, v) in kept {
+                p.push_str(&format!(" {}={}", k, shell_escape(&v)));
+            }
+            // The per-session exports above live in the tmux shell; carry them across.
+            let mut names = vec![
+                "ALLTERNIT_AO_PANE_ID", "ALLTERNIT_COMMRAILS_PEER_NAME", "ALLTERNIT_COMMRAILS_INBOX",
+                "ALLTERNIT_COMMRAILS_ROOT", "ALLTERNIT_RAILS_PEER_NAME", "ALLTERNIT_RAILS_INBOX", "ALLTERNIT_RAILS_ROOT",
+            ];
+            if opts.wih.is_some() {
+                names.push("ALLTERNIT_COMMRAILS_WIH");
+            }
+            if opts.task_file.is_some() {
+                names.extend(["ALLTERNIT_COMMRAILS_TASK_FILE", "ALLTERNIT_RAILS_TASK_FILE"]);
+            }
+            for n in names {
+                p.push_str(&format!(" {n}=\"${n}\""));
+            }
+            p.push(' ');
+            p
+        } else {
+            String::new()
+        };
+        // Claude refuses bypassPermissions as root unless told it is in a
+        // sandbox; Allternit's execution environment is that sandbox.
+        let mut gate_env = gated.env;
+        if hook::HookFlavor::of(harness) == Some(hook::HookFlavor::Claude) {
+            gate_env.push(("IS_SANDBOX".to_string(), "1".to_string()));
+        }
+        let env_prefix = if gate_env.is_empty() {
+            env_prefix
+        } else {
+            let mut p = if env_prefix.is_empty() { "env ".to_string() } else { env_prefix };
+            for (k, v) in &gate_env {
+                p.push_str(&format!("{k}={} ", shell_escape(v)));
+            }
+            p
+        };
 
         // Write the runner file to sidestep shell quoting issues.
         let mut runner_text = cmd
@@ -234,7 +296,8 @@ impl Orchestrator {
             ));
         }
         inner.push_str(&format!(
-            "script -q {} /bin/sh {}",
+            "{}script -q {} /bin/sh {}",
+            env_prefix,
             shell_escape(&log.to_string_lossy()),
             shell_escape(&runner.to_string_lossy())
         ));
@@ -442,8 +505,9 @@ impl Orchestrator {
         let mut executors = Vec::new();
         executors.push(probe_executor("kimi", "kimi", &["--yolo"], &[]).await);
         // Probe the flags the spawn gate actually launches with (see hook::gate_argv):
-        // codex runs sandboxed, claude runs acceptEdits + a --settings PreToolUse hook.
-        executors.push(probe_executor("codex", "codex", &["--config"], &["exec"]).await);
+        // all auto-approve; claude also gets a --settings PreToolUse hook.
+        executors.push(probe_executor("codex", "codex", &["--config", "--dangerously-bypass-hook-trust"], &["exec"]).await);
+        executors.push(probe_executor("qwen", "qwen", &["--yolo"], &[]).await);
         executors.push(probe_executor("claude", "claude", &["--permission-mode", "--settings"], &["-p", "--permission-mode", "--settings"]).await);
         executors.push(probe_executor("agy", "agy", &["--dangerously-skip-permissions"], &[]).await);
 

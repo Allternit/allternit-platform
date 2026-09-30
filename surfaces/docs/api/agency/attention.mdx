@@ -1,0 +1,278 @@
+---
+title: 'Attention'
+description: 'The needs-you queue: list, read and respond to requests for human input or approval.'
+---
+
+<Warning>
+**Implementation: DESIGN (server) · Exposure: PUBLIC PREVIEW (contract).** The Agency API is not live yet. This page describes the published v0.3 contract so you can review and build against it; details may change before alpha.
+</Warning>
+
+An **attention request** is how a run asks for a person. Agents request attention; they never notify people directly. An attention controller owns delivery, quiet hours, deduplication and quotas. These endpoints open with the rest of the API, after a run can survive restart, resume, verify, replay and receipt-backed completion.
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/v1/attention` | [List attention](#list-attention) across runs and campaigns |
+| `GET` | `/v1/runs/{run_id}/attention` | [List attention for a run](#list-attention-for-a-run) |
+| `GET` | `/v1/attention/{attention_id}` | [Get an attention request](#get-an-attention-request) |
+| `POST` | `/v1/attention/{attention_id}/responses` | [Respond to an attention request](#respond-to-an-attention-request) |
+
+You can also answer with [`POST /v1/runs/{run_id}/input`](/api/agency/runs#submit-input) and an `attention_id`. The two are equivalent.
+
+## How it works
+
+1. Policy returns ASK, or the run needs data, reaches its budget, gets an inconclusive verification, falls below a confidence threshold, or cannot safely resume an interrupted effect. The run emits an attention request and moves to `needs_attention`.
+2. The request has a `kind`: `approval` (a policy ask) or `informational`.
+3. The attention controller delivers it under the applicable attention policy.
+4. A person answers. The first valid answer wins. The answer is written as a receipt before it takes effect.
+5. If nobody answers before `expires_at`: an `approval` resolves as a rejection (fail closed, `outcome: rejected`); an `informational` request becomes `expired` with no rejection implied (`outcome: none`).
+
+Only policy ASK outcomes become approval requests. A hard policy deny never becomes an attention request, and an approval can never override one (`403 ERR_POLICY_DENIED`).
+
+## The AttentionRequest object
+
+{{fields:AttentionRequest}}
+
+Attention IDs match `^att_[A-Za-z0-9]+$`.
+
+### Reasons
+
+| `reason` | Trigger |
+|----------|---------|
+| `approval_required` | Policy returned ASK for a proposed action. |
+| `clarification_needed` | The run needs information only a person has. |
+| `budget_exhausted` | A budget limit was reached. Billable and effectful execution is already halted. |
+| `verification_inconclusive` | A required verification reached neither pass nor fail. |
+| `low_confidence` | A decision fell below its threshold. |
+| `unsafe_resume` | An interrupted effect cannot be safely resumed. |
+| `review_requested` | A review step asked for a person. |
+
+### Status
+
+[AttentionStatus](/api/agency/schemas#attentionstatus)
+
+| `status` | Meaning |
+|----------|---------|
+| `open` | Waiting for an answer. |
+| `resolved` | Answered. |
+| `expired` | `expires_at` passed without an answer. |
+| `withdrawn` | The run no longer needs it, for example after a cancel. |
+
+### Proposed action
+
+`proposed_action` ([ProposedAction](/api/agency/schemas#proposedaction)) describes what an approval would allow.
+
+{{fields:ProposedAction}}
+
+### Resolution
+
+`resolution` ([AttentionResolution](/api/agency/schemas#attentionresolution)) is set once the request is no longer open.
+
+{{fields:AttentionResolution}}
+
+## List attention
+
+```http
+GET /v1/attention
+```
+
+The needs-you queue across runs and campaigns. Returns attention requests visible to the caller, most urgent first.
+
+### Parameters
+
+{{params:listAttention}}
+
+`status` takes a comma-separated list, for example `?status=open`.
+
+### Responses
+
+{{responses:listAttention}}
+
+[AttentionPage](/api/agency/schemas#attentionpage):
+
+{{fields:AttentionPage}}
+
+### Example
+
+```bash
+curl "https://api.allternit.com/v1/attention?status=open" \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "att_01JB2K61QF",
+      "object": "attention_request",
+      "run_id": "run_01JB2K4Y7MQ8",
+      "campaign_id": null,
+      "kind": "approval",
+      "reason": "approval_required",
+      "urgency": "normal",
+      "topic": "Write changes to checkout/cart.ts",
+      "summary": "The fix needs a 14-line change to checkout/cart.ts.",
+      "expected_loss": "The run stays blocked and the tests keep failing.",
+      "proposed_action": {
+        "description": "Apply a 14-line patch to checkout/cart.ts",
+        "effect_class": "reversible",
+        "resources": ["repo://acme/store/checkout/cart.ts"],
+        "estimated_cost_usd": null
+      },
+      "response_options": ["approval", "rejection"],
+      "requested_channel": null,
+      "expires_at": "2026-09-29T18:00:00Z",
+      "on_expiry": "reject",
+      "evidence_refs": ["rcpt_01JB2K7Q02"],
+      "status": "open",
+      "resolution": null,
+      "created_at": "2026-09-29T17:02:10Z",
+      "defaults_version": "2026-09-29"
+    }
+  ],
+  "has_more": false,
+  "next_cursor": null
+}
+```
+
+## List attention for a run
+
+```http
+GET /v1/runs/{run_id}/attention
+```
+
+Attention requests raised by one run.
+
+### Parameters
+
+{{params:listRunAttention}}
+
+### Responses
+
+{{responses:listRunAttention}}
+
+### Example
+
+```bash
+curl https://api.allternit.com/v1/runs/run_01JB2K4Y7MQ8/attention \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+The response is an [AttentionPage](/api/agency/schemas#attentionpage) with the same shape as above.
+
+## Get an attention request
+
+```http
+GET /v1/attention/{attention_id}
+```
+
+### Parameters
+
+{{params:getAttention}}
+
+### Responses
+
+{{responses:getAttention}}
+
+### Example
+
+```bash
+curl https://api.allternit.com/v1/attention/att_01JB2K61QF \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+The response is one [AttentionRequest](#the-attentionrequest-object).
+
+## Respond to an attention request
+
+```http
+POST /v1/attention/{attention_id}/responses
+```
+
+Equivalent to `POST /v1/runs/{run_id}/input` with this `attention_id`. The first valid response wins; later ones get `409 ERR_ATTENTION_RESOLVED`. Expired requests resolve as `expired` and, for approvals, are treated as a rejection.
+
+### Parameters
+
+{{params:respondToAttention}}
+
+### Request body
+
+[AttentionResponse](/api/agency/schemas#attentionresponse). `type` must be one of the request's `response_options`.
+
+{{fields:AttentionResponse}}
+
+| `type` | Use |
+|--------|-----|
+| `approval` | Approve the proposed action. |
+| `rejection` | Reject it. |
+| `data` | Supply the requested data in `value`. |
+| `message` | Answer in free text in `value`. |
+
+### Responses
+
+{{responses:respondToAttention}}
+
+### Examples
+
+Approve:
+
+```bash
+curl -X POST https://api.allternit.com/v1/attention/att_01JB2K61QF/responses \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Idempotency-Key: 7a0e2b51-52c1-4a41-8d0b-2d3f7c1b9e10" \
+  -H "Content-Type: application/json" \
+  -d '{"type": "approval", "comment": "Patch looks scoped to the failing test."}'
+```
+
+The `202` response is the updated AttentionRequest (shortened):
+
+```json
+{
+  "id": "att_01JB2K61QF",
+  "object": "attention_request",
+  "run_id": "run_01JB2K4Y7MQ8",
+  "kind": "approval",
+  "reason": "approval_required",
+  "status": "resolved",
+  "resolution": {
+    "type": "approval",
+    "resolved_by": "user_42",
+    "resolved_at": "2026-09-29T17:03:30Z",
+    "receipt_id": "rcpt_01JB2K7Q04",
+    "outcome": "approved"
+  }
+}
+```
+
+Raise a budget after `budget_exhausted` by supplying data. The shape of `value` for a given request is described by that request's `summary` and `proposed_action`; the v0.3 contract leaves `value` untyped.
+
+```bash
+curl -X POST https://api.allternit.com/v1/attention/att_01JB2K7H2C/responses \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Idempotency-Key: 2e4b6a80-1c3d-4e5f-9a7b-0c1d2e3f4a5b" \
+  -H "Content-Type: application/json" \
+  -d '{"type": "data", "value": {"max_cost_usd": 4.0}, "comment": "Raise the cap once."}'
+```
+
+Already answered:
+
+```json
+{
+  "error": {
+    "family": "STATE",
+    "code": "ERR_ATTENTION_RESOLVED",
+    "message": "Attention request att_01JB2K61QF was already resolved.",
+    "retryable": false,
+    "request_id": "req_a41b7e",
+    "run_id": "run_01JB2K4Y7MQ8"
+  }
+}
+```
+
+## Attention policy
+
+Delivery limits are set by an [AttentionPolicy](/api/agency/schemas#attentionpolicy), which a [campaign](/api/agency/campaigns) can supply. The numeric defaults are versioned platform defaults (`defaults_version`), not fixed constants.
+
+{{fields:AttentionPolicy}}

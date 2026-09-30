@@ -1,0 +1,166 @@
+---
+title: 'Artifacts'
+description: 'List and fetch the immutable, content-addressed outputs of a run.'
+---
+
+<Warning>
+**Implementation: DESIGN (server) · Exposure: PUBLIC PREVIEW (contract).** The Agency API is not live yet. This page describes the published v0.3 contract so you can review and build against it; details may change before alpha.
+</Warning>
+
+An **artifact** is an output produced by a run: a patch, a file, a report, a dataset, a log. Artifacts are immutable and content-addressed, and each one is recorded by a receipt. These endpoints open with the rest of the API, after a run can survive restart, resume, verify, replay and receipt-backed completion.
+
+<Note>
+This page covers artifacts of Agency API runs. The existing [Artifacts API](/api/artifacts) for the collaboration surface is a separate, live API.
+</Note>
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/v1/runs/{run_id}/artifacts` | [List artifacts](#list-artifacts) |
+| `GET` | `/v1/runs/{run_id}/artifacts/{artifact_id}` | [Get an artifact](#get-an-artifact) |
+
+## The Artifact object
+
+The Artifact is the public view of the kernel's node output contract.
+
+{{fields:Artifact}}
+
+Notes:
+
+- `hash` is `sha256:` followed by 64 lowercase hex characters. Use it to check the bytes you download.
+- `verification_status` says whether a verifier has checked this artifact. `unverified` means no verifier has run on it. `inconclusive` is not a pass.
+- `content_url` is short-lived. Fetch the artifact again to get a fresh URL.
+- `metadata` is an open object.
+- `trust_class` is a [TrustClass](/api/agency/schemas#trustclass): `PUBLIC`, `INTERNAL`, `RESTRICTED`, `SECRET` or `UNTRUSTED`.
+
+## List artifacts
+
+```http
+GET /v1/runs/{run_id}/artifacts
+```
+
+Artifacts produced by the run.
+
+### Parameters
+
+{{params:listRunArtifacts}}
+
+### Responses
+
+{{responses:listRunArtifacts}}
+
+[ArtifactPage](/api/agency/schemas#artifactpage):
+
+{{fields:ArtifactPage}}
+
+### Example
+
+```bash
+curl https://api.allternit.com/v1/runs/run_01JB2K4Y7MQ8/artifacts \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "art_01JB2K8Z11",
+      "object": "artifact",
+      "run_id": "run_01JB2K4Y7MQ8",
+      "name": "cart-rounding.patch",
+      "kind": "patch",
+      "mime_type": "text/x-diff",
+      "size_bytes": 912,
+      "hash": "sha256:4b1f0c6d2e8a9b7c5d3e1f0a2b4c6d8e0f1a3b5c7d9e1f3a5b7c9d1e3f5a7b9c",
+      "trust_class": "INTERNAL",
+      "verification_status": "pass",
+      "receipt_id": "rcpt_01JB2K7Q06",
+      "content_url": null,
+      "created_at": "2026-09-29T17:06:02Z",
+      "metadata": {}
+    }
+  ],
+  "has_more": false,
+  "next_cursor": null
+}
+```
+
+## Get an artifact
+
+```http
+GET /v1/runs/{run_id}/artifacts/{artifact_id}
+```
+
+Returns artifact metadata with a content link.
+
+### Parameters
+
+{{params:getRunArtifact}}
+
+### Responses
+
+{{responses:getRunArtifact}}
+
+### Example
+
+```bash
+curl https://api.allternit.com/v1/runs/run_01JB2K4Y7MQ8/artifacts/art_01JB2K8Z11 \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+```json
+{
+  "id": "art_01JB2K8Z11",
+  "object": "artifact",
+  "run_id": "run_01JB2K4Y7MQ8",
+  "name": "cart-rounding.patch",
+  "kind": "patch",
+  "mime_type": "text/x-diff",
+  "size_bytes": 912,
+  "hash": "sha256:4b1f0c6d2e8a9b7c5d3e1f0a2b4c6d8e0f1a3b5c7d9e1f3a5b7c9d1e3f5a7b9c",
+  "trust_class": "INTERNAL",
+  "verification_status": "pass",
+  "receipt_id": "rcpt_01JB2K7Q06",
+  "content_url": "https://api.allternit.com/v1/content/…",
+  "created_at": "2026-09-29T17:06:02Z",
+  "metadata": {}
+}
+```
+
+The `content_url` value is illustrative. The contract specifies only that it is a short-lived download URL.
+
+## Download and check content
+
+```python
+import hashlib, requests
+
+artifact = requests.get(
+    f"{BASE}/v1/runs/{run_id}/artifacts/{artifact_id}",
+    headers={"Authorization": f"Bearer {KEY}"},
+).json()
+
+body = requests.get(artifact["content_url"]).content
+assert "sha256:" + hashlib.sha256(body).hexdigest() == artifact["hash"]
+```
+
+```typescript
+import { createHash } from "node:crypto";
+
+const artifact = await (
+  await fetch(`${BASE}/v1/runs/${runId}/artifacts/${artifactId}`, {
+    headers: { Authorization: `Bearer ${KEY}` },
+  })
+).json();
+
+const body = Buffer.from(await (await fetch(artifact.content_url)).arrayBuffer());
+const digest = "sha256:" + createHash("sha256").update(body).digest("hex");
+if (digest !== artifact.hash) throw new Error("artifact content does not match its hash");
+```
+
+## Related
+
+- The `artifact.created` [event](/api/agency/events#artifactcreated)
+- `Run.output.artifact_ids` on the [Run](/api/agency/runs#the-run-object)
+- The `artifact_exists` [completion criterion](/api/agency/catalog#list-completion-criteria)

@@ -1,0 +1,64 @@
+---
+title: "The Work Machine"
+description: "The half of the agent that makes work durable: graph lifecycle, node outputs, leases, admission, wait gates, campaigns, wake and attention"
+---
+
+**Implementation: ENABLED (work runtime) · IMPLEMENTED (typed lifecycle, drive runner) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Work lives as durable graphs with leases, gates, campaigns and wake. |
+| **Implemented today** | The internal work runtime. Typed lifecycle as library code; the drive runner is opt-in. |
+| **Active path** | Yes, inside the internal work runtime. |
+| **Public exposure** | Not yet. Planned through the Agency API (contract published, endpoint not served). |
+
+The agent is [two machines](/architecture/two-machines). The Work Machine decides how work persists and progresses; the [Cognitive Machine](/architecture/cognitive-machine) decides how cognition is performed. This page covers the first: **"How does work live?"** The Work Machine carries a run across time, processes and restarts. A model never drives it; the work runtime does.
+
+## Architecture contract
+
+| Part | What it owns | Page |
+|------|--------------|------|
+| Node lifecycle | The typed states every work node moves through | [Lifecycle](/architecture/work-runtime/lifecycle) |
+| Node outputs and receipts | First-class outputs consumed by reference, backed by receipts | [Receipts](/architecture/receipts) |
+| Leases and fencing | Who may run a node right now | [Leases and fencing](/architecture/work-runtime/leases) |
+| Heartbeat and reclaim | Detecting dead holders and taking work back | [Heartbeat and reclaim](/architecture/work-runtime/heartbeat-reclaim) |
+| Admission | Whether a node may start, given capacity and policy | [Admission](/architecture/work-runtime/admission) |
+| Wait gates | Holding a node until a time, a person or a dependency | [Wait gates](/architecture/work-runtime/wait-gates) |
+| Retries and idempotent effects | Re-running safely without repeating side effects | [Retries](/architecture/work-runtime/retries) |
+| Campaigns | Objectives that span many runs over time | [Campaigns](/architecture/work-runtime/campaigns) |
+| Wake | "Look at this again at time T" | [Wake](/architecture/work-runtime/wake) |
+| Attention and humans | Asking a person, and taking their answer | [Attention](/architecture/work-runtime/attention), [Human in the loop](/architecture/work-runtime/human-in-the-loop) |
+
+Why this is separate from cognition: a run has to survive a model being evicted, a process dying and a machine restarting. That only works if lifecycle, leases and waiting are durable records owned by the system, not steps inside a model loop.
+
+## Current implementation
+
+The work runtime is [CommRails](/core/commrails). On main today:
+
+- Node outputs, manual and timer wait gates, leases with heartbeat and reclaim, campaigns, a keyed wake queue and the attention gate.
+- A typed node lifecycle with a legal-transition table and a mapping from the stored node statuses. It is merged as a library and is not yet the enforced path for every transition.
+- Every spawned node gets a resolved execution environment: a working directory, an allowlist of environment keys, filesystem scope and a network policy. The resolved document is recorded in the ledger.
+- Work-bound executor paths are being converged on the Allternit policy gate; direct interactive runtime behavior may differ from Agency/work-runtime execution.
+- The drive runner, which walks a graph and spawns executors under spawn caps, is an opt-in operator command, not a daemon.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Node outputs, wait gates, leases, heartbeat and reclaim | **ENABLED** · INTERNAL |
+| Campaigns and wake queue | **ENABLED** · INTERNAL |
+| Attention gate | **ENABLED** · INTERNAL |
+| Per-node execution environment and shared egress guard | **ENABLED** · INTERNAL |
+| Typed lifecycle as the enforced path | **IMPLEMENTED** · INTERNAL |
+| Drive runner and spawn caps | **IMPLEMENTED** (opt-in) |
+| Agency API run surface | **PUBLIC PREVIEW** (contract; not served) |
+
+## Developer relevance
+
+If you write an executor, a tool or a verifier, you run inside a node. You receive a lease, heartbeat while you work, produce outputs and evidence, and stop. You never mark a node done and you never notify a person directly.
+
+## Related
+
+- [The kernel](/architecture/kernel)
+- [CommRails](/core/commrails)
+- [Policy and safety](/architecture/policy)

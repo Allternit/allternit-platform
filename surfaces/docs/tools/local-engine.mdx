@@ -78,6 +78,11 @@ The service creates two directories on startup:
 | POST | `/runtimes/launch` | Launch a backend runtime |
 | POST | `/runtimes/:id/stop` | Stop a runtime |
 | POST | `/v1/chat/completions` | Proxy chat completions to a healthy runtime |
+| GET | `/catalog` | List the model catalog (query: `source`, `limit`) |
+| POST | `/catalog/refresh` | Refresh the model catalog |
+| POST | `/recommend` | Recommend models for the host |
+| POST | `/assess` | Assess whether one model fits the host |
+| POST | `/assess/batch` | Assess several models in one call |
 
 ## Model cache
 

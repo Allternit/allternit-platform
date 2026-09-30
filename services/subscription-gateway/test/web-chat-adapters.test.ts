@@ -66,9 +66,9 @@ const CASES: Case[] = [
   {
     id: "kimi-web",
     make: (opts = {}) => new KimiWebAdapter(opts, FAST),
-    newChatUrl: "https://www.kimi.com/",
-    threadUrl: (id) => `https://www.kimi.com/chat/${id}`,
-    routeGlob: "https://www.kimi.com/**",
+    newChatUrl: "https://www.kimi.ai/",
+    threadUrl: (id) => `https://www.kimi.ai/chat/${id}`,
+    routeGlob: "https://www.kimi.ai/**",
     threadPattern: KIMI_THREAD,
     goodThreadUrls: [
       ["https://www.kimi.com/chat/d3k5a1b2c3d4e5f6g7h8", "d3k5a1b2c3d4e5f6g7h8"],

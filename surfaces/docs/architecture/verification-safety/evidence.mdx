@@ -1,0 +1,43 @@
+---
+title: "Evidence"
+description: "What counts as evidence, and why a model's statement is not"
+---
+
+**Implementation: IMPLEMENTED (contracts, verifier-owned completion) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Completion is decided from verification evidence, never from a model saying it is done. |
+| **Implemented today** | Completion and evidence contracts. Verifier-owned close is opt-in for internal flows and forced on for agency-origin work. |
+| **Active path** | Partial. Opt-in for internal flows. |
+| **Public exposure** | No. Not reachable by an external developer. |
+
+Evidence is a durable, referenced record that something is true. Completion, approval and escalation all consume evidence, not assertions.
+
+## Architecture contract
+
+`COMPLETE(task)` holds when acceptance criteria are satisfied, required verifications pass, no blocking failure is unresolved, required artifacts exist, policy obligations are met, and the completion evidence points to durable receipts.
+
+Verification results are `PASS`, `FAIL`, `INCONCLUSIVE` or `ERROR`. `INCONCLUSIVE` is never `PASS`. A deterministic verifier outranks a semantic one, and a verifier's score is evidence, not proof. Precedence runs deterministic, specialist semantic, stronger judge, human. A judge that fails, times out or lacks calibration fails closed to a human.
+
+## Current implementation
+
+On main, completion of agency-origin work is owned by the verifier: a builder proposes, verifiers and people supply evidence, and the system performs the close. Non-agency work keeps its existing close path.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Verification and completion contracts | **IMPLEMENTED (contract)** |
+| Verifier-owned completion, agency-origin work | **IMPLEMENTED** · INTERNAL (forced on for agency-origin work) |
+| Full verification ladder | **IMPLEMENTED** · INTERNAL |
+
+## Developer relevance
+
+Attach receipts to every claim you make. If you cannot show evidence for a criterion, report it as unmet.
+
+## Related
+
+- [Verification and completion](/architecture/verification)
+- [Contracts: verification](/architecture/contracts/verification)
+- [Build a verifier](/build-on-allternit/verifier)

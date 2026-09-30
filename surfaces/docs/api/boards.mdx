@@ -7,13 +7,11 @@ description: Manage workspace board items, assignments, and comments on the Allt
 
 The Boards API stores workspace-scoped board items such as tasks, tickets, or planning cards. Access is enforced through workspace membership (owner or member). Items support status, priority, labels, deadlines, dependencies, assignment, and comments.
 
+<Note>
+This namespace is served by the Allternit API data-plane node (`http://127.0.0.1:8013` on the same machine, or your paired or provisioned node). The hosted Cloud API at `https://api.allternit.com` does not route it; it relays only agent sessions, canvases, office and beta research/sessions. See [Cloud API](/api/cloud-api).
+</Note>
+
 ## Base URL
-
-```text
-https://api.allternit.com/api
-```
-
-For local development:
 
 ```text
 http://127.0.0.1:8013/api
@@ -58,7 +56,7 @@ All requests require a valid bearer token in the `Authorization` header. See [Au
 ## List board items
 
 ```bash
-curl "https://api.allternit.com/api/board-items?workspace_id=ws_01hqx8x7x7x7x7x7x7x7x7x" \
+curl "http://127.0.0.1:8013/api/board-items?workspace_id=ws_01hqx8x7x7x7x7x7x7x7x7x" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -91,7 +89,7 @@ curl "https://api.allternit.com/api/board-items?workspace_id=ws_01hqx8x7x7x7x7x7
 ## Create board item
 
 ```bash
-curl -X POST https://api.allternit.com/api/board-items \
+curl -X POST http://127.0.0.1:8013/api/board-items \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -136,7 +134,7 @@ curl -X POST https://api.allternit.com/api/board-items \
 ## Update board item
 
 ```bash
-curl -X PUT https://api.allternit.com/api/board-items/bi_02hqx8x7x7x7x7x7x7x7x7x \
+curl -X PUT http://127.0.0.1:8013/api/board-items/bi_02hqx8x7x7x7x7x7x7x7x7x \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -156,7 +154,7 @@ curl -X PUT https://api.allternit.com/api/board-items/bi_02hqx8x7x7x7x7x7x7x7x7x
 ## Assign board item
 
 ```bash
-curl -X POST https://api.allternit.com/api/board-items/bi_02hqx8x7x7x7x7x7x7x7x7x/assign \
+curl -X POST http://127.0.0.1:8013/api/board-items/bi_02hqx8x7x7x7x7x7x7x7x7x/assign \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"assigneeId": "user_2d9e..."}'
@@ -173,7 +171,7 @@ curl -X POST https://api.allternit.com/api/board-items/bi_02hqx8x7x7x7x7x7x7x7x7
 ## Add comment
 
 ```bash
-curl -X POST https://api.allternit.com/api/board-items/bi_02hqx8x7x7x7x7x7x7x7x7x/comments \
+curl -X POST http://127.0.0.1:8013/api/board-items/bi_02hqx8x7x7x7x7x7x7x7x7x/comments \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"body": "Draft is ready for review."}'

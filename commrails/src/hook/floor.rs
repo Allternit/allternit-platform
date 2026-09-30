@@ -146,7 +146,7 @@ fn is_catastrophic_root(word: &str, home: Option<&Path>) -> bool {
     }
     let resolved = match resolve(if trimmed.is_empty() { "/" } else { trimmed }, Path::new("/"), home) {
         Target::Path(p) => p,
-        Target::Unresolved(_) => return false,
+        Target::Unresolved(_) | Target::UnknownEffect { .. } => return false,
     };
     if resolved == Path::new("/") {
         return true;

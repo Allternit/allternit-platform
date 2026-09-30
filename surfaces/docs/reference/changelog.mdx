@@ -1,0 +1,44 @@
+---
+title: "Kernel and docs changelog"
+description: "What changed in the kernel contracts and their documentation"
+---
+
+**Status: AVAILABLE.** See [status labels](/architecture#status-labels).
+
+This log covers the kernel contracts and the architecture docs. The platform changelog is in [release notes](/release-notes).
+
+## Architecture contract
+
+### 2026-09-30
+
+- Kernel ABI 1.0.0 frozen: 21 schema files, 65 contracts, 191-ID primitive registry.
+- Agency API v0.3 contract published as a preview.
+- Architecture, work runtime and cognitive runtime pages added, with status labels.
+- Per-contract reference pages, registries, enums and error codes generated from the schemas.
+
+### On main at this date
+
+Node lifecycle library, primitive registry and graph validator library; signed receipt chain and effect receipts (internal); per-node execution environment and shared egress guard; a gate in front of every executor; verifier-owned completion for agency-origin work; decision runtime with S1 shadow only; replay and cassettes with divergence reports and a gate replay mode (internal); Cognitive Execution Router (library, not yet called in production) and ModelPool registry (internal); context and tool call compilers behind an off-by-default flag (shadow).
+
+### Not on main
+
+The Agency API server, the request compiler, the conformance suite and the alpha gate, and an end-to-end bug-fix run.
+
+## Current implementation
+
+Entries record what is merged, not what is planned.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Changelog | **AVAILABLE** |
+
+## Developer relevance
+
+Watch this page for contract changes. Additive changes bump the ABI minor version.
+
+## Related
+
+- [Kernel contracts](/architecture/kernel-contracts)
+- [Release notes](/release-notes)

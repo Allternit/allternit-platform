@@ -1,0 +1,327 @@
+---
+title: 'Events'
+description: 'The typed run event stream: SSE format, every event type, polling, and resuming with Last-Event-ID.'
+---
+
+<Warning>
+**Implementation: DESIGN (server) · Exposure: PUBLIC PREVIEW (contract).** The Agency API is not live yet. This page describes the published v0.3 contract so you can review and build against it; details may change before alpha.
+</Warning>
+
+Every material transition in a run is published as a typed event. Events are durable, ordered by a gap-free sequence number, and can be read as a live Server-Sent Events (SSE) stream or as pages of JSON. Work-runtime runs have no event stream today; this is one of the items the alpha gate (restart, resume, verify, replay, receipt-backed completion) depends on.
+
+## Stream or list events
+
+```http
+GET /v1/runs/{run_id}/events
+```
+
+One endpoint serves both modes. The `Accept` header selects which.
+
+| `Accept` | Result |
+|----------|--------|
+| `text/event-stream` | A live SSE stream. |
+| `application/json` | The same events as a cursor page ([RunEventPage](/api/agency/schemas#runeventpage)), for polling. |
+
+### Parameters
+
+{{params:streamRunEvents}}
+
+`types` takes a comma-separated list, for example `?types=run.status_changed,attention.requested`. `debug.trace` events are delivered only with `view=debug` (scope `debug:read`).
+
+### Responses
+
+{{responses:streamRunEvents}}
+
+`410` is returned when the cursor or `Last-Event-ID` is older than the retention window (`ERR_CURSOR_EXPIRED`).
+
+## SSE format
+
+Each message has three fields:
+
+```text
+id: <event.id>
+event: <event.type>
+data: <RunEvent JSON on one line>
+```
+
+- The server sends a `retry:` hint when the connection opens.
+- The server sends a comment heartbeat (`: ping`) at least every 15 seconds. Comment lines carry no event; ignore them.
+- Messages are separated by a blank line.
+- The stream closes after the terminal `run.status_changed` event.
+
+Example stream:
+
+```text
+retry: 3000
+
+id: evt_01JB2K50000001
+event: run.status_changed
+data: {"id":"evt_01JB2K50000001","seq":1,"run_id":"run_01JB2K4Y7MQ8","type":"run.status_changed","created_at":"2026-09-29T17:00:01Z","run_version":2,"data":{"from":"accepted","to":"running","terminal":false,"reason":null,"run_receipt_id":null}}
+
+id: evt_01JB2K50000002
+event: run.progress
+data: {"id":"evt_01JB2K50000002","seq":2,"run_id":"run_01JB2K4Y7MQ8","type":"run.progress","created_at":"2026-09-29T17:00:04Z","data":{"step":"Running affected tests","completed_steps":1,"estimated_steps":6}}
+
+: ping
+
+id: evt_01JB2K50000003
+event: receipt.appended
+data: {"id":"evt_01JB2K50000003","seq":3,"run_id":"run_01JB2K4Y7MQ8","type":"receipt.appended","created_at":"2026-09-29T17:00:09Z","data":{"receipt_id":"rcpt_01JB2K7Q01","receipt_type":"tool","content_hash":"sha256:9f2c…","summary":"Ran test suite"}}
+```
+
+The `retry` value and the IDs are illustrative, and the hash is shortened.
+
+```bash
+curl -N https://api.allternit.com/v1/runs/run_01JB2K4Y7MQ8/events \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Accept: text/event-stream"
+```
+
+## Resume
+
+Events are durable for the life of the run plus the retention window. A client that was offline, including across a server restart, can replay what it missed.
+
+1. Remember the `id` of the last event you processed.
+2. Reconnect with the `Last-Event-ID` header set to that `id`. You can use `?cursor=` instead; if both are sent, `Last-Event-ID` takes precedence.
+3. Delivery restarts strictly after that event, in `seq` order, with no gaps.
+
+```bash
+curl -N https://api.allternit.com/v1/runs/run_01JB2K4Y7MQ8/events \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Accept: text/event-stream" \
+  -H "Last-Event-ID: evt_01JB2K50000003"
+```
+
+`seq` starts at 1 and increases by one per event within a run. If you ever see a gap, reconnect from your last processed `id`.
+
+If the resume point is older than the retention window the server returns `410` with `ERR_CURSOR_EXPIRED`. Fetch the run with [`GET /v1/runs/{run_id}`](/api/agency/runs#get-a-run) to get current state, then start a new stream.
+
+## Polling
+
+```bash
+curl "https://api.allternit.com/v1/runs/run_01JB2K4Y7MQ8/events?limit=100" \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Accept: application/json"
+```
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "evt_01JB2K50000001",
+      "seq": 1,
+      "run_id": "run_01JB2K4Y7MQ8",
+      "type": "run.status_changed",
+      "created_at": "2026-09-29T17:00:01Z",
+      "run_version": 2,
+      "data": { "from": "accepted", "to": "running", "terminal": false, "reason": null, "run_receipt_id": null }
+    }
+  ],
+  "has_more": true,
+  "next_cursor": "evt_01JB2K50000001"
+}
+```
+
+Pass `next_cursor` as `?cursor=` to get the next page.
+
+## Event envelope
+
+Every event has the same base fields ([RunEventBase](/api/agency/schemas#runeventbase)) plus a `data` object whose shape depends on `type`. [RunEvent](/api/agency/schemas#runevent) is the union of all event types, discriminated on `type`.
+
+{{fields:RunEventBase}}
+
+Clients must ignore event types they do not recognize.
+
+## Event types
+
+| Type | Emitted when | `data` |
+|------|--------------|--------|
+| [`run.status_changed`](#runstatus_changed) | The run's status changes | from, to, terminal |
+| [`run.progress`](#runprogress) | The run reports a plain-language step | step and step counts |
+| [`run.message`](#runmessage) | A message is added to the run | role and text |
+| [`attention.requested`](#attentionrequested) | The run needs a person | AttentionRequest |
+| [`attention.resolved`](#attentionresolved) | An attention request is answered, expires or is withdrawn | AttentionRequest |
+| [`input.accepted`](#inputaccepted) | Input was accepted and receipted | InputAccepted |
+| [`artifact.created`](#artifactcreated) | The run produced an artifact | Artifact |
+| [`receipt.appended`](#receiptappended) | A receipt was appended to the chain | receipt reference |
+| [`verification.completed`](#verificationcompleted) | A verifier returned a result | criterion and result |
+| [`budget.threshold`](#budgetthreshold) | Budget use crossed 50%, 80% or 100% | dimension and fraction |
+| [`debug.trace`](#debugtrace) | Kernel trace, only with `view=debug` | open object |
+
+### run.status_changed
+
+[RunStatusChangedEvent](/api/agency/schemas#runstatuschangedevent). The event with `data.terminal: true` is the last event of the stream. `data.run_receipt_id` is set on the terminal event.
+
+{{fields:RunStatusChangedEvent}}
+
+```json
+{
+  "id": "evt_01JB2K50000031", "seq": 31, "run_id": "run_01JB2K4Y7MQ8",
+  "type": "run.status_changed", "created_at": "2026-09-29T17:09:42Z", "run_version": 31,
+  "data": { "from": "running", "to": "completed", "terminal": true, "reason": null, "run_receipt_id": "rcpt_01JB2K9A03" }
+}
+```
+
+### run.progress
+
+[RunProgressEvent](/api/agency/schemas#runprogressevent)
+
+{{fields:RunProgressEvent}}
+
+```json
+{
+  "id": "evt_01JB2K50000002", "seq": 2, "run_id": "run_01JB2K4Y7MQ8",
+  "type": "run.progress", "created_at": "2026-09-29T17:00:04Z",
+  "data": { "step": "Running affected tests", "completed_steps": 1, "estimated_steps": 6 }
+}
+```
+
+### run.message
+
+[RunMessageEvent](/api/agency/schemas#runmessageevent). There are no Thread endpoints; messages arrive here. When `delta` is `true`, append `text` to the previous message.
+
+{{fields:RunMessageEvent}}
+
+```json
+{
+  "id": "evt_01JB2K50000005", "seq": 5, "run_id": "run_01JB2K4Y7MQ8",
+  "type": "run.message", "created_at": "2026-09-29T17:01:12Z",
+  "data": { "role": "agent", "text": "Two tests fail on a rounding error in cart totals.", "delta": false }
+}
+```
+
+### attention.requested
+
+[AttentionRequestedEvent](/api/agency/schemas#attentionrequestedevent). `data` is an [AttentionRequest](/api/agency/attention#the-attentionrequest-object).
+
+{{fields:AttentionRequestedEvent}}
+
+```json
+{
+  "id": "evt_01JB2K50000008", "seq": 8, "run_id": "run_01JB2K4Y7MQ8",
+  "type": "attention.requested", "created_at": "2026-09-29T17:02:10Z",
+  "data": {
+    "id": "att_01JB2K61QF", "object": "attention_request", "run_id": "run_01JB2K4Y7MQ8",
+    "kind": "approval", "reason": "approval_required", "urgency": "normal",
+    "topic": "Write changes to checkout/cart.ts",
+    "response_options": ["approval", "rejection"],
+    "status": "open", "created_at": "2026-09-29T17:02:10Z"
+  }
+}
+```
+
+### attention.resolved
+
+[AttentionResolvedEvent](/api/agency/schemas#attentionresolvedevent). `data` is the AttentionRequest with `status` and `resolution` set.
+
+{{fields:AttentionResolvedEvent}}
+
+```json
+{
+  "id": "evt_01JB2K50000010", "seq": 10, "run_id": "run_01JB2K4Y7MQ8",
+  "type": "attention.resolved", "created_at": "2026-09-29T17:03:30Z",
+  "data": {
+    "id": "att_01JB2K61QF", "object": "attention_request", "run_id": "run_01JB2K4Y7MQ8",
+    "kind": "approval", "reason": "approval_required", "urgency": "normal",
+    "topic": "Write changes to checkout/cart.ts",
+    "response_options": ["approval", "rejection"],
+    "status": "resolved",
+    "resolution": { "type": "approval", "resolved_by": "user_42", "resolved_at": "2026-09-29T17:03:30Z", "receipt_id": "rcpt_01JB2K7Q04", "outcome": "approved" },
+    "created_at": "2026-09-29T17:02:10Z"
+  }
+}
+```
+
+### input.accepted
+
+[InputAcceptedEvent](/api/agency/schemas#inputacceptedevent). `data` is an [InputAccepted](/api/agency/schemas#inputaccepted).
+
+{{fields:InputAcceptedEvent}}
+
+```json
+{
+  "id": "evt_01JB2K50000009", "seq": 9, "run_id": "run_01JB2K4Y7MQ8",
+  "type": "input.accepted", "created_at": "2026-09-29T17:03:30Z",
+  "data": { "run_id": "run_01JB2K4Y7MQ8", "receipt_id": "rcpt_01JB2K7Q04", "attention_id": "att_01JB2K61QF", "status": "running" }
+}
+```
+
+### artifact.created
+
+[ArtifactCreatedEvent](/api/agency/schemas#artifactcreatedevent). `data` is an [Artifact](/api/agency/artifacts#the-artifact-object).
+
+{{fields:ArtifactCreatedEvent}}
+
+```json
+{
+  "id": "evt_01JB2K50000020", "seq": 20, "run_id": "run_01JB2K4Y7MQ8",
+  "type": "artifact.created", "created_at": "2026-09-29T17:06:02Z",
+  "data": {
+    "id": "art_01JB2K8Z11", "object": "artifact", "run_id": "run_01JB2K4Y7MQ8",
+    "name": "cart-rounding.patch", "kind": "patch", "mime_type": "text/x-diff",
+    "hash": "sha256:4b1f0c6d2e8a9b7c5d3e1f0a2b4c6d8e0f1a3b5c7d9e1f3a5b7c9d1e3f5a7b9c",
+    "verification_status": "unverified", "receipt_id": "rcpt_01JB2K7Q06",
+    "created_at": "2026-09-29T17:06:02Z"
+  }
+}
+```
+
+### receipt.appended
+
+[ReceiptAppendedEvent](/api/agency/schemas#receiptappendedevent). `receipt_type` is a [ReceiptType](/api/agency/schemas#receipttype).
+
+{{fields:ReceiptAppendedEvent}}
+
+```json
+{
+  "id": "evt_01JB2K50000021", "seq": 21, "run_id": "run_01JB2K4Y7MQ8",
+  "type": "receipt.appended", "created_at": "2026-09-29T17:06:02Z",
+  "data": {
+    "receipt_id": "rcpt_01JB2K7Q06", "receipt_type": "node_output",
+    "content_hash": "sha256:7c9d1e3f5a7b9c4b1f0c6d2e8a9b7c5d3e1f0a2b4c6d8e0f1a3b5c7d9e1f3a5b",
+    "summary": "Patch artifact recorded"
+  }
+}
+```
+
+### verification.completed
+
+[VerificationCompletedEvent](/api/agency/schemas#verificationcompletedevent). `result` is a [VerificationResult](/api/agency/schemas#verificationresult): `pending`, `pass`, `fail`, `inconclusive` or `error`.
+
+{{fields:VerificationCompletedEvent}}
+
+```json
+{
+  "id": "evt_01JB2K50000028", "seq": 28, "run_id": "run_01JB2K4Y7MQ8",
+  "type": "verification.completed", "created_at": "2026-09-29T17:09:30Z",
+  "data": { "criterion": "tests_pass", "verifier": "unit_test", "result": "pass", "receipt_id": "rcpt_01JB2K9A01" }
+}
+```
+
+### budget.threshold
+
+[BudgetThresholdEvent](/api/agency/schemas#budgetthresholdevent). Emitted at fractions `0.5`, `0.8` and `1.0` of a budget dimension.
+
+{{fields:BudgetThresholdEvent}}
+
+```json
+{
+  "id": "evt_01JB2K50000024", "seq": 24, "run_id": "run_01JB2K4Y7MQ8",
+  "type": "budget.threshold", "created_at": "2026-09-29T17:08:00Z",
+  "data": { "dimension": "seconds", "fraction_used": 0.5 }
+}
+```
+
+### debug.trace
+
+[DebugTraceEvent](/api/agency/schemas#debugtraceevent). Only delivered with `view=debug`. `data` is an open object and may change without a major version.
+
+{{fields:DebugTraceEvent}}
+
+## Client checklist
+
+- Track the last `id` and resume with `Last-Event-ID`.
+- Process events in `seq` order and tolerate redelivery by deduplicating on `id`.
+- Ignore comment lines and unknown event types.
+- Treat the stream as finished only after a `run.status_changed` event with `data.terminal: true`.

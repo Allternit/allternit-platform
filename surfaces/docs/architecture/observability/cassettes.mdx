@@ -1,0 +1,42 @@
+---
+title: "Cassettes"
+description: "Recording a run at the decision and tool boundary so it can be replayed"
+---
+
+**Implementation: IMPLEMENTED · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | A finished run can be re-run from a cassette of recorded effects. |
+| **Implemented today** | Cassette recording from the receipt chain, served by the internal work runtime service. |
+| **Active path** | Internal. On demand; not part of normal execution. |
+| **Public exposure** | No. Not exposed through `api.allternit.com`. |
+
+A cassette is a content-addressed recording of the results a run received from the outside world, so replay can substitute them for live effects.
+
+## Architecture contract
+
+Pipeline: live run, trace and receipts, cassette, replay, eval, capability evaluation registry, router. A `CassetteV1` holds the run and graph identity, the ABI version, its entries and the run receipt hash. Replay reconstructs which node ran, what evidence it saw, what tool resolved, what side effects occurred and why it branched. External effects are replaced by recorded results.
+
+Why: replay turns every real run into a regression test and gives the router evidence about which components work.
+
+## Current implementation
+
+On main, internal only. Cassettes are recorded from a run's receipt chain; replay runs in recorded-only mode and produces a divergence report; the gate has a replay mode that serves recorded results and denies live execution; and the internal work runtime service accepts `POST /v1/replays`. None of this is reachable through `https://api.allternit.com` yet.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Cassette schema | **IMPLEMENTED (contract)** |
+| Recording and replay | **IMPLEMENTED** · INTERNAL |
+
+## Developer relevance
+
+Do not depend on replay yet. Do keep effects behind the tool boundary so they can be recorded later.
+
+## Related
+
+- [Replay](/architecture/replay)
+- [Divergence](/architecture/observability/divergence)
+- [Contracts: replay](/architecture/contracts/replay)

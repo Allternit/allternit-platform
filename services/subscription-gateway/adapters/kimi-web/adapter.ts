@@ -1,6 +1,6 @@
 // kimi-web adapter — the shared web-chat base (fresh chat, mapped-thread
 // continue with the divergence check, fingerprint reconcile) over
-// www.kimi.com. chat.create / chat.continue only; model_class is not applied
+// www.kimi.ai (where the session lives; www.kimi.com has separate storage). chat.create / chat.continue only; model_class is not applied
 // yet (the account's default model answers), and identity/usage are not read
 // yet (no known same-origin account endpoint — added after the live probe).
 // Selectors are v1-unverified (see selectors/v1.yaml).
@@ -23,7 +23,7 @@ export function kimiWebConfig(overrides: Partial<DeclarativeChatConfig> = {}): D
     // send_button is not probed: it may render only once the composer has
     // text. Submit resolves it after fillComposer.
     criticalKeys: ["composer", "logged_in_probe"],
-    sampleThreadUrl: "https://www.kimi.com/chat/d3k5a1b2c3d4e5f6g7h8",
+    sampleThreadUrl: "https://www.kimi.ai/chat/d3k5a1b2c3d4e5f6g7h8",
     sampleThreadId: "d3k5a1b2c3d4e5f6g7h8",
     submitFallbackEnter: true,
     ...overrides,
@@ -38,8 +38,8 @@ export class KimiWebAdapter extends WebChatAdapter {
   constructor(opts: WebChatOptions = {}, configOverrides: Partial<DeclarativeChatConfig> = {}) {
     super(
       {
-        newChatUrl: "https://www.kimi.com/",
-        threadUrl: (id) => `https://www.kimi.com/chat/${id}`,
+        newChatUrl: "https://www.kimi.ai/",
+        threadUrl: (id) => `https://www.kimi.ai/chat/${id}`,
       },
       kimiWebConfig(configOverrides),
       opts

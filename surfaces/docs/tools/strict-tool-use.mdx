@@ -5,36 +5,40 @@ description: Strict JSON Schema validation for tool arguments
 
 ## Overview
 
-Allternit supports **strict tool schemas** — a mode where the LLM provider validates tool arguments against the declared JSON Schema before the tool is executed. Arguments outside the schema are rejected at the provider level, preventing malformed inputs from reaching your tool's `execute` function.
+Allternit supports **strict tool schemas**. When a tool is registered with `strict: true`, the registry rewrites its `input_schema` so every object schema is closed (`additionalProperties: false`), recursively through `properties` and `items`. That closed schema is what is sent to providers that require strict tools, and it is what `registry.validateInput()` checks arguments against.
+
+Source: `sdk/allternit-sdk/src/ai-runtime/tools/schema.ts` and `registry.ts`. Whether a given model provider also enforces the schema on its side depends on that provider; the registry does not add provider-side checks.
 
 ## Enabling strict mode
 
-Strict mode is enabled per-tool at registration:
+Strict mode is enabled per tool at registration:
 
 ```typescript
 registry.registerTool(myTool, { strict: true });
 ```
 
-All native tools in the `NativeToolBelt` are registered with `strict: true` by default.
+The `NativeToolBelt` tools and MCP tools registered through the SDK are registered with `strict: true`.
 
-## What strict mode enforces
+## What validation enforces
+
+`validateInput` uses a small built-in validator for the JSON Schema subset tools use:
 
 | Check | Behavior |
 |-------|----------|
-| Required properties | Missing required fields are rejected |
-| Type matching | Wrong types (`string` vs `number`) are rejected |
-| Enum values | Values outside declared enums are rejected |
-| Additional properties | Unknown keys are rejected (closed schema) |
-| Array items | Items that don't match `items` schema are rejected |
+| Required properties | Missing required fields are reported |
+| Type matching | Wrong types (`string` vs `number`) are reported |
+| Enum values | Values outside declared enums are reported |
+| Additional properties | Unknown keys are reported as `$.key is not allowed` |
+| Array items | Items that do not match `items` are reported |
 
-## Schema requirements
+`validateInput` returns `{ valid, errors }`; it does not throw on invalid input (it throws only when the tool is not registered).
 
-For strict mode to work with provider-level validation, your schema must:
+## Schema guidance
 
 1. Declare `type: "object"` at the root.
-2. List all properties explicitly in `properties`.
-3. Include a `required` array listing all mandatory fields.
-4. Not use `$ref`, `oneOf`, `anyOf`, or `allOf` at the top level (provider limitation).
+2. List every property in `properties`.
+3. Include a `required` array for mandatory fields.
+4. Avoid `$ref`, `oneOf`, `anyOf` and `allOf` at the top level; the built-in validator does not evaluate them and some providers reject them.
 
 ```json
 {
@@ -48,24 +52,10 @@ For strict mode to work with provider-level validation, your schema must:
 }
 ```
 
-## Error handling
-
-When strict validation fails, the provider returns an error before your tool is called. The harness surfaces this as a tool error:
-
-```json
-{
-  "type": "error",
-  "error": {
-    "type": "invalid_tool_input",
-    "message": "Validation failed: $.timezone is not allowed"
-  }
-}
-```
-
 ## When to use strict mode
 
-- **Use strict mode** for tools with well-defined, stable schemas — especially tools exposed to external models or MCP clients.
-- **Skip strict mode** for tools that accept freeform input or that need to evolve their schema without versioning.
+- **Use strict mode** for tools with stable schemas, especially tools exposed to external models or MCP clients.
+- **Skip strict mode** for tools that accept freeform input or need to evolve their schema without versioning.
 
 ## Related pages
 

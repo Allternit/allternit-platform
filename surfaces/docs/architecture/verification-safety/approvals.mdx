@@ -1,0 +1,43 @@
+---
+title: "Approvals"
+description: "When the system asks a person, and what an answer can and cannot change"
+---
+
+**Implementation: ENABLED (attention gate) · DESIGN (Agency API attention surface) · Exposure: INTERNAL · PUBLIC PREVIEW (contract).** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Consequential actions wait for a scoped human approval. |
+| **Implemented today** | The internal attention gate and needs-you queue. |
+| **Active path** | Yes, inside the internal work runtime. |
+| **Public exposure** | Not yet. Planned through the Agency API (contract published, endpoint not served). |
+
+An approval is a recorded decision by a person, tied to a specific action. It does not weaken a hard deny.
+
+## Architecture contract
+
+Policy decisions are `ALLOW`, `ALLOW_WITH_LIMITS`, `ASK` and `DENY`, with a precedence of hard deny, hard allow, soft, cognitive, then fail-closed. `ASK` creates an attention request; the answer becomes a scoped, expiring grant. Escalation is driven by confidence, consequence, irreversibility, cost, novelty and verification failure, not by blanket review. Money and client communication are always human-approved.
+
+Missing calibration, low confidence, a judge timeout or a judge error all resolve to `ASK`, never `ALLOW`.
+
+## Current implementation
+
+The attention gate is on main inside the work runtime. Agency API attention endpoints are a preview contract.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Attention gate | **ENABLED · INTERNAL** |
+| Approval over the Agency API | **PUBLIC PREVIEW** (contract; not served) |
+| Irreversible-action class in the policy struct | **DESIGN** |
+
+## Developer relevance
+
+Design actions so an approval answers one specific question. Do not batch unrelated effects behind one approval.
+
+## Related
+
+- [Attention](/architecture/work-runtime/attention)
+- [Human in the loop](/architecture/work-runtime/human-in-the-loop)
+- [Policy](/architecture/policy)

@@ -1,0 +1,46 @@
+---
+title: "Heartbeat and reclaim"
+description: "How the work runtime detects a dead executor and takes the work back without repeating effects"
+---
+
+**Implementation: ENABLED · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | A dead executor's work is reclaimed from stale leases. |
+| **Implemented today** | Heartbeat and stale-lease reclaim in the internal work runtime. |
+| **Active path** | Yes, inside the internal work runtime. |
+| **Public exposure** | No. Not reachable by an external developer. |
+
+A running node's holder sends **heartbeats**. When they stop, the system **reclaims** the lease and decides what happens to the node.
+
+## Architecture contract
+
+- The holder heartbeats while it works. `heartbeat_at` on the lease records the last one.
+- A lease past `expires_after` without a heartbeat is stale.
+- Reclaim releases the stale lease and returns the node to the scheduler, or holds it for a person.
+- **A node interrupted in the middle of an effect is not blindly re-run.** It resumes only if the effect carries an idempotency key and a receipt. Otherwise the run raises an attention request with reason `unsafe_resume`.
+- Run state survives executor death, process restart, model eviction and cache loss. Resume works from durable state and receipts, never from a transcript.
+
+Why: executors die. A laptop sleeps, a process is killed, a machine restarts. Heartbeats turn "is it still working?" into a durable fact, and reclaim lets the run continue without a person noticing, unless continuing would be unsafe.
+
+## Current implementation
+
+The work runtime on main has heartbeat and stale-lease reclaim. The opt-in drive runner closes a dead or timed-out session's node as failed with a receipt, and restarts an interrupted attempt only for nodes labelled safe to retry; otherwise it places a manual wait gate so a person decides. The heartbeat interval and reclaim policy values are not yet fixed in the contract.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Heartbeat and stale-lease reclaim | **ENABLED** · INTERNAL |
+| Unsafe-resume hold for a person | **ENABLED** (internal, via the drive runner's wait gate) |
+| Contracted heartbeat interval and reclaim policies | **DESIGN** |
+
+## Developer relevance
+
+If your executor can be interrupted mid-effect, give each effect an idempotency key. Then a reclaim can resume it safely instead of asking a person.
+
+## Related
+
+- [Leases and fencing](/architecture/work-runtime/leases)
+- [Retries and idempotent effects](/architecture/work-runtime/retries)

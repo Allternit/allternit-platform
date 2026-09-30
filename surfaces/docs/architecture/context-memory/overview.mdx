@@ -1,0 +1,50 @@
+---
+title: "Context and memory"
+description: "How Allternit separates canonical state, memory and the context a component sees, and what exists today"
+---
+
+**Implementation: SHADOW (context compiler) · ENABLED (work-item context packs) · DESIGN (chunk store) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Context is compiled per step from typed chunks with visibility decisions. |
+| **Implemented today** | Deterministic work-item context packs run in the work runtime. The context compiler is behind an off-by-default flag, shadow only. |
+| **Active path** | Partial. Context packs yes; compiler no. |
+| **Public exposure** | No. Not reachable by an external developer. |
+
+Three things are kept apart on purpose: **state** is the truth about a run, **memory** is what can be retrieved later, and **context** is the projection one component sees for one step. Mixing them is how agents end up depending on transcript length.
+
+## Architecture contract
+
+| Layer | What it is | Who owns it |
+|-------|------------|-------------|
+| Canonical state | The versioned semantic truth of a run ([AgentState](/architecture/state)) | The state store; only validated transitions change it |
+| Memory | Durable facts and artifacts that can be retrieved into a run | The memory layer, under policy |
+| Context | A compiled, fingerprinted, disposable projection for one step | The [context compiler](/architecture/context-memory/projections) |
+
+Rules that follow from this: context is always rebuildable from state; nothing lives only in context; retrieval results enter context as chunks with provenance and a [trust class](/architecture/verification-safety/trust-classes); and untrusted content is fenced, never merged into control instructions.
+
+## Current implementation
+
+On main today the work runtime builds deterministic context packs to rehydrate a work item and fences untrusted text (a predecessor node's output, ledger payloads) with a random per-render nonce. These are internal and predate the compiler contract. The context compiler, chunk store and shared retrieval snapshots are not on main. The compiler work (WP9) is in draft behind a flag that is off by default.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Context schemas | **IMPLEMENTED (contract)** |
+| Deterministic context packs and nonce-fenced untrusted content | **ENABLED · INTERNAL** |
+| Context compiler | **DESIGN** |
+| Chunk store and retrieval snapshots | **DESIGN** |
+
+## Developer relevance
+
+Put anything that must survive a step into state, not into a prompt. Assume each step receives a right-sized projection, and that a component may be replaced between steps.
+
+## Related
+
+- [Context](/architecture/context)
+- [Projections and visibility](/architecture/context-memory/projections)
+- [Memory boundaries](/architecture/context-memory/memory)
+- [Memory Kernel](/core/memory-kernel)
+- [Memory Fabric](/core/memory-fabric)

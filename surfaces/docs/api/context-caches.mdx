@@ -10,14 +10,14 @@ The Context Cache API stores entire message prefixes — such as long system ins
 ## Base URL
 
 ```
-https://api.allternit.com/v1
-```
-
-For local development:
-
-```
 http://127.0.0.1:8013/v1
 ```
+
+This is the Allternit API data-plane node (your own paired or provisioned node).
+
+<Note>
+The hosted Cloud API at `api.allternit.com` serves only `POST /v1/chat/completions` and `GET /v1/models` under `/v1`. The endpoints on this page are served by the Allternit API data-plane node (`http://127.0.0.1:8013/v1` locally); they are not routed on the public Cloud API origin. See [Cloud API](/api/cloud-api).
+</Note>
 
 ## Endpoints
 
@@ -33,7 +33,7 @@ http://127.0.0.1:8013/v1
 All requests require a virtual key in the `Authorization` header. See [Authentication](/api/authentication).
 
 ```bash
-curl https://api.allternit.com/v1/context-caches \
+curl http://127.0.0.1:8013/v1/context-caches \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -50,7 +50,7 @@ curl https://api.allternit.com/v1/context-caches \
 ### Example request
 
 ```bash
-curl -X POST https://api.allternit.com/v1/context-caches \
+curl -X POST http://127.0.0.1:8013/v1/context-caches \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -89,7 +89,7 @@ curl -X POST https://api.allternit.com/v1/context-caches \
 ## List context caches
 
 ```bash
-curl https://api.allternit.com/v1/context-caches \
+curl http://127.0.0.1:8013/v1/context-caches \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -112,14 +112,14 @@ curl https://api.allternit.com/v1/context-caches \
 ## Retrieve a context cache
 
 ```bash
-curl https://api.allternit.com/v1/context-caches/ctxcache_abc123 \
+curl http://127.0.0.1:8013/v1/context-caches/ctxcache_abc123 \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
 ## Delete a context cache
 
 ```bash
-curl -X DELETE https://api.allternit.com/v1/context-caches/ctxcache_abc123 \
+curl -X DELETE http://127.0.0.1:8013/v1/context-caches/ctxcache_abc123 \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -136,7 +136,7 @@ curl -X DELETE https://api.allternit.com/v1/context-caches/ctxcache_abc123 \
 Pass the cache id in the `context_cache_id` field of a chat-completion request. The cached messages are prepended to the request messages before routing.
 
 ```bash
-curl https://api.allternit.com/v1/chat/completions \
+curl http://127.0.0.1:8013/v1/chat/completions \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -150,7 +150,7 @@ curl https://api.allternit.com/v1/chat/completions \
 
 ## Cache lifecycle
 
-- Caches are keyed by content hash, so identical messages return the same cache object.
+- Each create call returns a new cache id; caches are not deduplicated by content.
 - Caches expire automatically after `ttl_seconds`.
 - Deleting a cache removes it immediately; subsequent requests referencing it return a `404`.
 

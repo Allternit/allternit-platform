@@ -3,9 +3,13 @@ title: 'Platform Launcher'
 description: 'Single-binary launcher that embeds the Allternit API and UI assets.'
 ---
 
+<Note>
+**Status:** Implementation IMPLEMENTED × Exposure INTERNAL (build-it-yourself; not a published download).
+</Note>
+
 ## Overview
 
-The Allternit Platform Launcher is a single-binary distribution of the Allternit platform. It embeds the Rust `allternit-api` binary and the static UI assets from `surfaces/ai.allternit.com`, then self-extracts to the user's cache directory on first run. This gives users a true double-clickable executable that starts both the API server and the local UI.
+The Allternit Platform Launcher is a single-binary distribution of the Allternit platform. It embeds the Rust `allternit-api` binary and the workspace UI static assets (built from the `allternit-ai` repository, resolved by `scripts/hosted-ui.sh`), then self-extracts to the user's cache directory on first run. This gives users a true double-clickable executable that starts both the API server and the local UI.
 
 The launcher lives in `cmd/launcher` and is published as `allternit-platform-launcher`.
 
@@ -68,6 +72,7 @@ The launcher sets the following environment variables for the API child process:
 
 | Variable | Value | Purpose |
 |----------|-------|---------|
+| `ALLTERNIT_API_PORT` | `3010` | Port the API binds. |
 | `ALLTERNIT_OPERATOR_URL` | `http://127.0.0.1:3010` | API self-reference. |
 | `ALLTERNIT_DATA_DIR` | `<cache>/data` | Local data directory. |
 | `RUST_LOG` | `info` | Logging level. |

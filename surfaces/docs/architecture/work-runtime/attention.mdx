@@ -1,0 +1,58 @@
+---
+title: "Attention"
+description: "How an agent asks for a person: typed requests, one controller for delivery, and fail-closed approvals"
+---
+
+**Implementation: ENABLED · Exposure: INTERNAL · PUBLIC PREVIEW (contract).** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Agents request attention; they never notify people directly. |
+| **Implemented today** | The internal attention gate. |
+| **Active path** | Yes, inside the internal work runtime. |
+| **Public exposure** | Not yet. Planned through the Agency API (contract published, endpoint not served). |
+
+Agents **request attention**. They never send a push notification, an email or a chat message themselves. An attention controller owns delivery.
+
+## Architecture contract
+
+`AttentionRequestV1` carries `run_id`, `campaign_id` (optional), `reason`, `urgency`, `expected_loss`, `topic`, `requested_channel` (optional), `dedupe_key`, `expires_at` (optional) and `evidence_refs`.
+
+The attention controller owns:
+
+- **Delivery** and the channel used
+- **Quiet hours** and **quotas**
+- **Deduplication** by `dedupe_key`
+- **Escalation** when a request is not answered
+
+Rules:
+
+- Any route to a human, including an S3 escalation, goes through an attention request.
+- An approval that expires resolves as a rejection. It fails closed.
+- A hard policy deny never becomes an attention request, and no approval can override one.
+- The first valid answer wins, and it is written as a receipt before it takes effect.
+
+The reasons a run raises attention (`approval_required`, `budget_exhausted`, `unsafe_resume` and others) are listed on [The kernel](/architecture/kernel#attention-and-approvals).
+
+Why: an agent that can message people directly will eventually message them too often, at the wrong time, on the wrong channel. Making attention a request that one controller decides keeps people in charge of their own interruptions.
+
+## Current implementation
+
+The work runtime on main has the attention gate: agents raise requests through it and do not notify people directly. The request and answer contract is part of the Agency API v0.3 preview.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Attention gate | **ENABLED** · INTERNAL |
+| `AttentionRequestV1` and answers on the Agency API | **PUBLIC PREVIEW** (contract; not served). See [Agency API: Attention](/api/agency/attention). |
+| Urgency scale and resolution contract in the kernel ABI | **DESIGN** |
+
+## Developer relevance
+
+Never add a notification call to an agent, tool or executor. Raise an attention request with evidence and a dedupe key, and let the controller deliver it.
+
+## Related
+
+- [Human in the loop](/architecture/work-runtime/human-in-the-loop)
+- [Policy and safety](/architecture/policy)

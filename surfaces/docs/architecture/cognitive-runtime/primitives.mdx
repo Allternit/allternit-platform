@@ -1,0 +1,59 @@
+---
+title: "Primitives"
+description: "The 191 registered primitive IDs every graph node is built from, their contract, and how packs group them"
+---
+
+**Implementation: IMPLEMENTED (registry, 191 IDs) · DESIGN (primitive packs, plugin ABI) · Exposure: PUBLIC (docs).** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Every step names a registered primitive; packs extend the registry. |
+| **Implemented today** | The 191-ID registry is in the contract package; the graph validator reads it as library code. |
+| **Active path** | Partial. Registry used by the validator, which is not enforced on every graph. |
+| **Public exposure** | Documentation only. No endpoint serves it. |
+
+A **primitive** is one registered unit of agent behavior: list files, classify a failure, apply a patch, run the target tests, decide whether to finish. Every graph node runs exactly one primitive, referenced by ID.
+
+## Architecture contract
+
+### The registry
+
+Kernel ABI 1.0.0 freezes **191** primitive IDs. Each has a dotted ID (`obs.list_files`), an upper-snake alias (`LIST_FILES`), a family and a class. Families cover the Agent ISA groups (observation, decision, mutation, execution, version control, verification, control), the decision families, and leaf primitives for task intake, environment and repository, localization and context, planning, tool calls, mutation synthesis, verification and recovery, completion and durable state, and routing and residency.
+
+### The primitive contract
+
+Each primitive declares:
+
+- inputs and outputs, as schemas
+- its class: deterministic, S1 decision, generation, verification, policy, mutation or retrieval
+- its authority: propose, decide, verify or authorize. **Only policy primitives may authorize.**
+- the evidence it must produce, its failure modes, its fallback and how it is evaluated
+
+No S1 primitive may mint permissions, raise spend, cross a workspace boundary or skip a verifier that policy requires. A `primitive_id` never contains a vendor or model name.
+
+### Packs
+
+A **primitive pack** bundles what a domain needs: decision sets, tool schemas, error classes, environment assumptions, validators, commands, context rules, graph fragments, policy hooks, capability requirements and evaluation fixtures.
+
+Why a fixed registry: a graph that references stable IDs can be validated, compared, replayed and evaluated across versions. Free-form steps can't be.
+
+## Current implementation
+
+On main, the work runtime loads the frozen registry file at build time (one source, no copy to drift) and looks primitives up by ID or alias. A generated Agent ISA enum covers the same 191 IDs, and the graph validator uses the registry to check nodes. The pack schema and the primitive plugin ABI are named in the architecture but not yet defined.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Primitive registry (191 IDs) | **IMPLEMENTED** (contract) |
+| Registry lookup, ISA enum, validator use | **IMPLEMENTED** · INTERNAL |
+| Primitive packs and plugin ABI | **DESIGN** |
+
+## Developer relevance
+
+Reference primitives by dotted ID. When you need behavior the registry does not have, propose a new primitive with its full contract rather than embedding logic in a prompt or a tool.
+
+## Related
+
+- [Graphs and the Agent ISA](/architecture/graphs)
+- [Kernel contracts](/architecture/kernel-contracts)

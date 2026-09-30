@@ -1,165 +1,40 @@
 ---
 title: Configuration
-description: Configure the Allternit runtime agent
+description: Environment variables for the Allternit API data plane and agent-daemon
 ---
 
 <Note>
-Paired nodes talk to the Cloud API at `https://api.allternit.com`. Allternit API binds loopback `:8013` and is not a public listener. See [BYOC Overview](/byoc/overview) and [Allternit API](/api/allternit-api).
+**Status:** Implementation IMPLEMENTED × Exposure PUBLIC PREVIEW. Earlier versions of this page documented `/etc/allternit/runtime.yaml`. No such file is read by any binary on main; configuration is environment-based.
 </Note>
 
-## Configuration File
+## allternit-api
 
-The runtime uses a YAML configuration file located at `/etc/allternit/runtime.yaml`:
+Verified in `cmd/allternit-api/src/main.rs`:
 
-```yaml
-# Server configuration
-server:
-  host: 0.0.0.0
-  port: 8080
-  tls:
-    enabled: false
-    cert: /path/to/cert.pem
-    key: /path/to/key.pem
+| Variable | Purpose |
+|---|---|
+| `ALLTERNIT_API_PORT` | Listen port. Default `18013` (dev); pin `8013` in production. Binds `0.0.0.0`. |
+| `ALLTERNIT_DATA_DIR` | Data directory (per-instance SQLite) |
+| `ALLTERNIT_ENCRYPTION_KEY` | Key for encrypted local secrets |
+| `ALLTERNIT_LOG_FORMAT` | Log format selector |
+| `ALLTERNIT_PASSKEY_RP_ID`, `ALLTERNIT_PASSKEY_RP_ORIGIN` | Passkey relying-party settings |
+| `ALLTERNIT_MESH_PROVIDER`, `ALLTERNIT_MESH_SERVER_URL`, `ALLTERNIT_MESH_AUTH_KEY`, `ALLTERNIT_MESH_TAGS` | Mesh enrollment |
+| `ALLTERNIT_FABRIC_TRANSPORT_LEASE_SECS`, `ALLTERNIT_FABRIC_TRANSPORT_SWEEP_SECS` | CommRails fabric transport timing |
 
-# Authentication
-auth:
-  api_key: ${ALLTERNIT_API_KEY}
-  allowed_origins:
-    - https://platform.gizziio.com
-    - https://app.allternit.com
+This is the set read directly in `main.rs`; other modules read further variables.
 
-# Control plane connection
-control_plane:
-  endpoint: https://api.allternit.com
-  heartbeat_interval: 30
-  
-# Database
-storage:
-  path: /var/lib/allternit/data.sqlite
-  backup_interval: 3600
+## agent-daemon
 
-# Logging
-logging:
-  level: info  # debug, info, warn, error
-  format: json  # json, text
-  output: stdout  # stdout, file, both
-  file: /var/log/allternit/runtime.log
+| Variable | Default |
+|---|---|
+| `ALLTERNIT_CLOUD_API_URL` | `https://api.allternit.com` |
+| `ALLTERNIT_RUNTIME_NAME` | `<hostname> VPS` |
+| `ALLTERNIT_GATEWAY_URL` | `http://127.0.0.1:8013` |
+| `ALLTERNIT_RUNTIME_IDENTITY_PATH` | daemon default |
+| `ALLTERNIT_PAIRING_MODE` | unset (`hosted_auto` for provisioned instances) |
 
-# Limits
-limits:
-  max_connections: 100
-  max_message_size: 10485760  # 10MB
-  request_timeout: 30
+See [Installation](/byoc/installation).
 
-# Features
-features:
-  websockets: true
-  sse: true
-  webhooks: true
-```
+## How this relates to the Agency Kernel
 
-## Environment Variables
-
-You can also use environment variables (they override config file values):
-
-```bash
-export ALLTERNIT_API_KEY=your_api_key
-export ALLTERNIT_SERVER_PORT=8080
-export ALLTERNIT_STORAGE_PATH=/data/allternit.db
-export ALLTERNIT_LOG_LEVEL=debug
-```
-
-## Authentication
-
-### API Key
-
-Get your API key from [platform.gizziio.com](https://platform.gizziio.com/settings/api-keys):
-
-```yaml
-auth:
-  api_key: allternit_live_xxxxxxxxxxxxxxxx
-```
-
-### CORS Origins
-
-Specify which origins can connect to your runtime:
-
-```yaml
-auth:
-  allowed_origins:
-    - https://platform.gizziio.com
-    - http://localhost:3000  # Development
-```
-
-## Storage
-
-The runtime uses SQLite by default. For production, consider:
-
-```yaml
-storage:
-  path: /var/lib/allternit/data.sqlite
-  backup_interval: 3600  # Backup every hour
-  backup_retention: 7    # Keep 7 backups
-```
-
-Backup location: `/var/lib/allternit/backups/`
-
-## TLS/SSL
-
-For production, enable TLS:
-
-```yaml
-server:
-  tls:
-    enabled: true
-    cert: /etc/letsencrypt/live/your-domain.com/fullchain.pem
-    key: /etc/letsencrypt/live/your-domain.com/privkey.pem
-```
-
-Or use a reverse proxy (nginx, Caddy, Traefik).
-
-## WebSocket Configuration
-
-WebSockets enable real-time communication:
-
-```yaml
-features:
-  websockets: true
-  
-limits:
-  max_connections: 100
-  websocket:
-    ping_interval: 30
-    pong_timeout: 10
-```
-
-## Logging Levels
-
-<ParamField path="logging.level" type="string">
-  - `debug` - Verbose output for troubleshooting
-  - `info` - Normal operational messages
-  - `warn` - Warning conditions
-  - `error` - Error conditions only
-</ParamField>
-
-## Validation
-
-Validate your configuration:
-
-```bash
-allternit-runtime --config /etc/allternit/runtime.yaml --validate
-```
-
-## Reload Configuration
-
-Restart the service to apply changes:
-
-```bash
-sudo systemctl restart allternit-runtime
-```
-
-Or send SIGHUP for graceful reload (some settings):
-
-```bash
-sudo kill -HUP $(pgrep allternit-runtime)
-```
+BYOC is where the Allternit API data plane and Gizzi runtime run on hardware you control. The [Agency Kernel](/architecture) contracts are served through the Cloud API. Nothing on this page changes them.

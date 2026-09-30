@@ -28,6 +28,7 @@ http://127.0.0.1:8013/sandbox
 | POST | `/sandbox/execute/stream` | Execute code with streaming output |
 | GET | `/sandbox/capabilities` | Driver capabilities |
 | GET | `/sandbox/health` | Driver health |
+| GET | `/sandbox/pool` | Warm VM pool status |
 
 ### Get capabilities
 
@@ -134,19 +135,10 @@ OK
 
 ## Security
 
-- Each sandbox runs in an isolated VM — no shared state between executions.
-- Network access is disabled by default; enable explicitly with `network_enabled`.
-- Resource limits prevent runaway processes.
-- Execution timeout is enforced even if the process ignores signals.
-
-## Resource limits
-
-| Resource | Min | Max |
-|----------|-----|-----|
-| CPU cores | 1 | 4 |
-| Memory (MB) | 128 | 4096 |
-| Timeout (seconds) | 5 | 3600 |
-| Disk (MB) | 100 | 10240 |
+- Buffered `/sandbox/execute` runs on the VM driver; when a warm pool is configured it checks out a health-checked VM and returns it afterwards, and a checkout failure returns 503 rather than falling back to an unsandboxed run.
+- `/sandbox/execute/stream` spawns the process directly with a cleared, allow-listed environment and caps the timeout at 300 seconds. It does not use the VM driver.
+- `network_enabled` defaults to `false`.
+- Execution timeout is enforced by the server.
 
 ## Error codes
 

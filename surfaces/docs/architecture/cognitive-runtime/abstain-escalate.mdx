@@ -1,0 +1,60 @@
+---
+title: "Abstain and escalate"
+description: "What happens when a decision is not confident enough, and why falling back is always safer than guessing"
+---
+
+**Implementation: SHADOW (abstain) · DESIGN (router-driven escalation) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Uncertain results abstain and escalate to a stronger level or a human. |
+| **Implemented today** | Uncalibrated decision results abstain in the shadow decision runtime; judge failures go to a human. |
+| **Active path** | Partial. Judge failures reach a human; router-driven escalation does not exist. |
+| **Public exposure** | No. Not reachable by an external developer. |
+
+Every cognitive step has an honest way to say "not me": **abstain** (do not answer) or **escalate** (hand to something stronger or to a person).
+
+## Architecture contract
+
+A decision result carries a threshold action set by policy, not by the component:
+
+| Action | Meaning |
+|--------|---------|
+| `AUTO` | Confident inside the calibrated region. May act, if the decision is reversible and policy allows. |
+| `REVIEW` | Act only after a check |
+| `ESCALATE` | Hand to a stronger mode or component, or to a person |
+| `REJECT` | Do not use this result |
+
+Rules:
+
+- **Without valid calibration, abstain.** An uncalibrated result never reaches `AUTO`.
+- **Outside the calibrated coverage region, abstain or escalate.**
+- **Escalation is chosen by policy and routing**, never by a weaker component judging itself.
+- **The degradation chain** is: alternate local component, a stronger component, deterministic reconstruction, then a person or an explicit failure. It never fails open.
+- **A human route** always goes through an [attention request](/architecture/work-runtime/attention) with reason `low_confidence` or `verification_inconclusive`.
+
+Why: a system that must always answer will guess. Making abstention a normal, typed outcome lets the system be right when it acts and honest when it cannot.
+
+## Current implementation
+
+- The decision runtime on main marks every result without a passing calibration manifest as uncalibrated and abstains. Since no manifests exist yet, every S1 result abstains today.
+- For agency-origin work, a judge timeout, error or invalid answer moves the node to `NEEDS_HUMAN`, never to done.
+- Escalation to a stronger mode or component needs the [router](/architecture/routing), which is on main as library code but not yet called on the normal path.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Abstain when uncalibrated | **IMPLEMENTED** · INTERNAL |
+| Judge failure goes to a human (agency-origin work) | **IMPLEMENTED** · INTERNAL |
+| Threshold policy and decision motifs | **IMPLEMENTED** · INTERNAL |
+| Router-driven escalation | **DESIGN** |
+
+## Developer relevance
+
+Treat abstention as a result, not an error. Your graph should have an explicit path for it: an escalation node, a deterministic fallback, or an attention request.
+
+## Related
+
+- [Calibration](/architecture/cognitive-runtime/calibration)
+- [Human in the loop](/architecture/work-runtime/human-in-the-loop)

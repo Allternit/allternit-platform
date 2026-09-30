@@ -49,10 +49,12 @@
 //!   gizzi's session table has no columns for them). A process restart
 //!   forgets the flags; abandoned ephemeral sessions would reappear in list
 //!   responses until deleted.
+import { VendorMessage } from "@/runtime/session/vendor-message"
 import { Hono } from "hono"
 import { streamSSE } from "hono/streaming"
 import { Session } from "@/runtime/session"
 import { SessionPrompt } from "@/runtime/session/prompt"
+import { McpUserProxy } from "@/runtime/tools/mcp/user-proxy"
 import { SessionRevert } from "@/runtime/session/revert"
 import { SessionSummary } from "@/runtime/session/summary"
 import { Provider } from "@/runtime/providers/provider"
@@ -526,6 +528,14 @@ export const AgentCompatRoutes = () =>
       })
       return c.json(transformMessage(result))
     })
+    .post("/v1/agent-sessions/:sessionID/vendor-message", async (c) => {
+      // Agent Gateway: append a vendor bot's reply as an assistant message.
+      const sessionID = c.req.param("sessionID")
+      const body = await c.req.json().catch(() => ({}))
+      if (typeof body.text !== "string" || body.text === "") return c.json({ error: "text required" }, 400)
+      if (!(await findSession(sessionID))) return c.json({ error: "Session not found" }, 404)
+      return c.json(await VendorMessage.append({ sessionID, text: body.text, metadata: body.metadata }))
+    })
     .post("/v1/agent-sessions/:sessionID/abort", async (c) => {
       // abort_session: stop the loop; incognito sessions are purged on abort.
       const sessionID = c.req.param("sessionID")
@@ -664,6 +674,9 @@ export const AgentCompatRoutes = () =>
       // metadata like the bridge does (runtime may ignore them).
       const tools = body?.metadata?.tools
       const metadata = tools && typeof tools === "object" ? { tools } : undefined
+      // The caller's per-user connector proxy for this turn (allternit-api's `mcpProxy`), if any. It
+      // goes to the prompt as its own field — never into `metadata`, which is stored on the message.
+      const mcpProxy = McpUserProxy.parse(body?.mcpProxy)
 
       c.header("X-Accel-Buffering", "no")
       return streamSSE(c, async (stream) => {
@@ -733,6 +746,9 @@ export const AgentCompatRoutes = () =>
         // callID → last tool frame sent ("start" | "end"), so each call
         // yields exactly one tool_use start and one result/error.
         const toolFramesSent = new Map<string, "start" | "end">()
+        // `mcp_app` frames are built asynchronously; the finish frame waits for them.
+        const appFramesRequested = new Set<string>()
+        const pendingApps = new Set<Promise<void>>()
         let wasBusy = false
         const unsub = Bus.subscribeAll((event: any) => {
           const type = event?.type
@@ -749,6 +765,17 @@ export const AgentCompatRoutes = () =>
             }
             if (part?.type === "tool") {
               for (const frame of toolFramesForPart(part, msgID, toolFramesSent)) push(frame)
+              // MCP Apps: a completed connector tool with a ui:// resource also yields an
+              // `mcp_app` frame, like allternit-api's bridge (only when the per-user proxy is registered).
+              if (mcpProxy && part.state?.status === "completed" && !appFramesRequested.has(part.callID)) {
+                appFramesRequested.add(part.callID)
+                const pending = McpUserProxy.appFrameForPart(sessionID, part, msgID)
+                  .then((frame) => {
+                    if (frame) push(frame)
+                  })
+                  .finally(() => pendingApps.delete(pending))
+                pendingApps.add(pending)
+              }
             }
             return
           }
@@ -800,7 +827,7 @@ export const AgentCompatRoutes = () =>
         // The session's working folder (its project's folder), same field
         // allternit-api's bridge forwards.
         const workdir = typeof body.workdir === "string" ? body.workdir : undefined
-        const turn = SessionPrompt.prompt({ sessionID, parts, model: modelRef, metadata, workdir })
+        const turn = SessionPrompt.prompt({ sessionID, parts, model: modelRef, metadata, workdir, mcpProxy })
           .then(() => push(finish("complete")))
           .catch((err: any) => {
             // Pass the engine's structured error through so clients can
@@ -825,6 +852,11 @@ export const AgentCompatRoutes = () =>
                 // Deltas whose part was never declared can only be reply text.
                 for (const d of pendingDeltas) await write(deltaFrame(d.partID, d.delta))
                 pendingDeltas = []
+              }
+              if (frame?.type === "finish" && pendingApps.size > 0) {
+                // `mcp_app` frames still being built belong before the finish frame.
+                await Promise.allSettled([...pendingApps])
+                while (queue.length > 0 && queue[0]?.type !== "finish") await write(queue.shift())
               }
               await write(frame)
               if (frame?.type === "finish") return

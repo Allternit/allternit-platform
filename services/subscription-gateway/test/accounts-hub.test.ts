@@ -43,11 +43,19 @@ describe("subscriptions hub", () => {
   let deps: TestDeps;
   afterEach(() => deps.cleanup());
 
-  function setup(opts: { probe?: "ready" | "auth_required" } = {}) {
+  function setup(opts: { probe?: "ready" | "auth_required" | "challenge_presented"; origins?: string[]; storage?: boolean } = {}) {
     const manifest = {
       ...fixtureWebConfig().manifest,
-      auth: { ...fixtureWebConfig().manifest.auth, session_cookies: ["session-token"] },
+      ...(opts.origins ? { origins: opts.origins } : {}),
+      auth: {
+        ...fixtureWebConfig().manifest.auth,
+        ...(opts.storage
+          ? { session_storage: [{ origin: "https://app.provider.test", key: "access_token" }] }
+          : { session_cookies: ["session-token"] }),
+      },
     };
+    const store = new Map<string, string>();
+    const probe = { health: opts.probe ?? "ready" };
     const host = new URL(manifest.origins[0]).hostname;
     const jar: { cookies: ImportableCookie[] } = { cookies: [] };
     const calls: string[] = [];
@@ -59,7 +67,7 @@ describe("subscriptions hub", () => {
         const a = getAccount(deps.db, lane.account_id)!;
         upsertAccount(deps.db, {
           ...a,
-          session_health: opts.probe ?? "ready",
+          session_health: probe.health,
           identity: "eoj@example.com",
           usage: { remaining_pct: 8, resets_at: null, observed_at: "2026-09-29T14:54:00.000Z" },
         });
@@ -90,12 +98,17 @@ describe("subscriptions hub", () => {
       pool,
       adapterRegistry,
       loginBrowser,
-      accountsOptions: { loginPollMs: 20, readLoginCookies: () => jar.cookies },
+      accountsOptions: {
+        loginPollMs: 20,
+        challengePollMs: 20,
+        readLoginCookies: () => jar.cookies,
+        readLoginStorage: () => new Map(store),
+      },
     });
     const tok = issueToken(deps.db, "admin-1", "test", ["accounts:manage"]).token;
-    const api = (method: "get" | "post" | "delete", path: string) =>
+    const api = (method: "get" | "post" | "patch" | "delete", path: string) =>
       request(deps.app)[method](path).set("authorization", `Bearer ${tok}`);
-    return { api, jar, calls, host, provider: manifest.provider, closeWindow: () => (open = false) };
+    return { api, jar, store, calls, host, probe, provider: manifest.provider, closeWindow: () => (open = false) };
   }
 
   it("lists providers: registered ones are supported, the rest are coming soon", async () => {
@@ -148,14 +161,50 @@ describe("subscriptions hub", () => {
     expect(calls.slice(2)).toEqual(["close", "deactivate", "activate"]);
   });
 
-  it("a session cookie already there when the window opened is not a new sign-in", async () => {
-    const { api, jar, host, provider } = setup();
+  it("already signed in: a probe settles it, no login window", async () => {
+    const { api, jar, calls, host, provider } = setup();
+    jar.cookies = [cookie("session-token", "live", host)];
+    const created = await api("post", "/v1/accounts").send({ provider, login: true });
+    expect(created.body.login.state).toBe("signed_in");
+    expect(calls).toEqual(["activate"]);
+  });
+
+  it("a stale session cookie opens the window, and only a new cookie counts as the sign-in", async () => {
+    const { api, jar, calls, host, probe, provider } = setup({ probe: "auth_required" });
     jar.cookies = [cookie("session-token", "old", host)];
     const created = await api("post", "/v1/accounts").send({ provider, login: true });
     const id = created.body.account_id as string;
+    expect(calls).toEqual(["activate", "deactivate", "open"]);
     await new Promise((r) => setTimeout(r, 80));
     expect((await api("get", `/v1/accounts/${id}/login`)).body.state).toBe("waiting");
+    probe.health = "ready";
     jar.cookies = [cookie("session-token", "new", host)];
+    await until(async () => (await api("get", `/v1/accounts/${id}/login`)).body.state === "signed_in");
+  });
+
+  it("a sign-in that lands on the provider's other domain is still seen", async () => {
+    const { api, jar, provider } = setup({ origins: ["https://www.provider.test", "https://provider.example"] });
+    const id = (await api("post", "/v1/accounts").send({ provider, login: true })).body.account_id as string;
+    jar.cookies = [cookie("session-token", "abc", ".provider.example")];
+    await until(async () => (await api("get", `/v1/accounts/${id}/login`)).body.state === "signed_in");
+  });
+
+  it("a provider that keeps its session in localStorage is seen too (Kimi)", async () => {
+    const { api, store, provider } = setup({ storage: true });
+    const id = (await api("post", "/v1/accounts").send({ provider, login: true })).body.account_id as string;
+    await new Promise((r) => setTimeout(r, 80));
+    expect((await api("get", `/v1/accounts/${id}/login`)).body.state).toBe("waiting");
+    store.set("https://app.provider.test access_token", "fingerprint-1");
+    await until(async () => (await api("get", `/v1/accounts/${id}/login`)).body.state === "signed_in");
+  });
+
+  it("a security check after sign-in keeps waiting and finishes once it's cleared", async () => {
+    const { api, jar, host, probe, provider } = setup({ probe: "challenge_presented" });
+    const id = (await api("post", "/v1/accounts").send({ provider, login: true })).body.account_id as string;
+    jar.cookies = [cookie("session-token", "abc", host)];
+    await until(async () => /security check/.test((await api("get", `/v1/accounts/${id}/login`)).body.detail ?? ""));
+    expect((await api("get", `/v1/accounts/${id}/login`)).body.state).toBe("waiting");
+    probe.health = "ready";
     await until(async () => (await api("get", `/v1/accounts/${id}/login`)).body.state === "signed_in");
   });
 
@@ -225,4 +274,26 @@ describe("subscriptions hub", () => {
     expect(existsSync(chrome)).toBe(false);
     expect(existsSync(`${chrome}-firefox`)).toBe(false);
   });
+
+  it("two logins of one subscription: the first is preferred, switching and renaming work, deleting promotes the other", async () => {
+    const { api, provider } = setup();
+    const a = (await api("post", "/v1/accounts").send({ provider, label: "Personal" })).body;
+    const b = (await api("post", "/v1/accounts").send({ provider, label: "Work" })).body;
+    expect(a.preferred).toBe(true);
+    expect(b.preferred).toBe(false);
+
+    const switched = await api("patch", `/v1/accounts/${b.account_id}`).send({ preferred: true });
+    expect(switched.status).toBe(200);
+    expect(switched.body.preferred).toBe(true);
+    const rows = (await api("get", "/v1/accounts")).body as Array<{ account_id: string; preferred: boolean }>;
+    expect(rows.filter((r) => r.preferred).map((r) => r.account_id)).toEqual([b.account_id]);
+
+    const renamed = await api("patch", `/v1/accounts/${a.account_id}`).send({ label: "Home" });
+    expect(renamed.body).toMatchObject({ label: "Home", preferred: false });
+    expect((await api("patch", `/v1/accounts/${a.account_id}`).send({ preferred: false })).status).toBe(400);
+
+    expect((await api("delete", `/v1/accounts/${b.account_id}`)).status).toBe(204);
+    expect((await api("get", "/v1/accounts")).body[0]).toMatchObject({ account_id: a.account_id, preferred: true });
+  });
 });
+

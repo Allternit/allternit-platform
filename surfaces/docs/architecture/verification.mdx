@@ -1,0 +1,98 @@
+---
+title: Verification and completion
+description: Verifier-owned completion, the completion predicate, and the completion criteria registry
+---
+
+**Implementation: IMPLEMENTED (completion contracts, fail-closed judge, verifier-owned close) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | The verifier and the system, not a model, decide a run is done. |
+| **Implemented today** | Completion contracts and criteria. The judge and verifier-owned close run for internal flows when opted in, and are forced on for agency-origin work. |
+| **Active path** | Partial. Opt-in; not on by default. |
+| **Public exposure** | Not yet. Planned through the Agency API (contract published, endpoint not served). |
+
+A run is done when the system can prove it is done, not when a model says so. This page describes who decides completion and what evidence they need.
+
+## Architecture contract
+
+### Verifier-owned completion
+
+A model saying "done" is a proposal. It carries no authority. The builder or a decision step may propose completion; verifiers and humans supply evidence; the system performs the close.
+
+```mermaid
+flowchart TD
+    W["Worker or model"] --> P["CompletionProposal"]
+    P --> E["Required evidence<br/>target tests · affected tests<br/>diff review · requirement check"]
+    E --> V["Verifier(s)<br/>not the builder"]
+    V --> D["CompletionDecision"]
+    D --> S["The SYSTEM transitions<br/>node / run → DONE"]
+    V -. fail or inconclusive .-> A["stay open, retry<br/>or attention request"]
+```
+
+**Workers propose completion. They do not grant it.**
+
+A run is complete only when all of the following hold:
+
+```text
+COMPLETE(task) :=
+      acceptance criteria satisfied
+  AND required verifications pass
+  AND no unresolved blocking failures
+  AND required artifacts exist
+  AND policy obligations satisfied
+  AND completion evidence references durable receipts
+```
+
+Verification results are `pending`, `pass`, `fail`, `inconclusive` or `error`. `inconclusive` is never treated as `pass`. An inconclusive required verification raises an attention request (`verification_inconclusive`) instead of closing the run.
+
+`Run.completion` shows each criterion, its result and the receipt IDs that back it.
+### Completion criteria registry
+
+Completion criteria are entries in a versioned, extensible registry, not a fixed enum. Each entry has an `id`, a `version`, a `verifier_kind`, and `verifier_semantics`: the precise text of what a pass means.
+
+Built-in criteria:
+
+| ID | Checks |
+|----|--------|
+| `tests_pass` | The target tests pass. |
+| `no_new_regressions` | No test that passed before now fails. |
+| `build_passes` | The build succeeds. |
+| `typecheck_passes` | The type checker reports no errors. |
+| `lint_clean` | The linter reports no findings. |
+| `artifact_exists` | A required artifact was produced. |
+| `requirement_verified` | A stated requirement was checked and met. |
+| `human_review` | A human reviewed and approved. |
+
+<Note>
+The one-line descriptions above are summaries. The authoritative wording for each criterion is its `verifier_semantics` text in the registry.
+</Note>
+
+A request refers to a criterion by ID (latest version at resolution time) or by a pinned `{id, version}`. The version that was resolved is recorded on the run, so a later registry change does not alter what an existing run had to prove. Callers can also register custom criteria inline for one run, each with a verifier kind:
+
+`parse`, `format`, `lint`, `typecheck`, `unit_test`, `integration_test`, `build`, `semantic_rule`, `requirement`, `security`, `regression`, `diff_review`, `human`.
+
+The kernel package ships minimum completion evidence for one task type so far, bug fixes: target test passes, affected tests pass, no new failures, a diff-review verdict and a requirement check. Bug-fix runs do not allow partial completion. Evidence sets for other task types are defined as those task types are built.
+
+## Current implementation
+
+The completion contracts (`CompletionCriterionV1`, `CompletionPolicyV1`, `CompletionProposalV1`, `CompletionDecisionV1`), the built-in criteria data and the bug-fix completion policy are in the kernel ABI package on main. The fail-closed judge and verifier-owned close run today for internal flows only when opted in; they are not on by default. For agency-origin work the kernel already forces them on and they are not client-disableable; the Agency API that creates such runs is in Preview.
+
+## Availability
+
+| Part | Status | Notes |
+|------|--------|-------|
+| Completion contracts and criteria registry data | **IMPLEMENTED** | Kernel ABI 1.0.0 package. |
+| Verifier-owned close | **IMPLEMENTED** · INTERNAL | Opt-in for internal flows; not enabled by default. |
+| Always-on verifier-owned completion for Agency API runs | **PUBLIC PREVIEW** (contract; not served) | Enforced in the kernel for agency-origin work: verification is forced on, a builder's close becomes a proposal, and the verifier must differ from the builder. The Agency API that creates these runs is in Preview. |
+| Evidence sets beyond bug fixes | **DESIGN** | Defined as each task type is built. |
+
+## Developer relevance
+
+When you create a run, the `completion` block is your acceptance test: pick registry criteria by ID or pin `{id, version}`. Read `Run.completion` for each criterion, its result and the receipts behind it. If you write a verifier, return `inconclusive` rather than guessing: an inconclusive required check raises an attention request instead of closing the run.
+
+## Related
+
+- [Kernel](/architecture/kernel)
+- [Policy: the fail-closed judge](/architecture/policy#the-fail-closed-judge)
+- [Agency API: Catalog](/api/agency/catalog#list-completion-criteria)

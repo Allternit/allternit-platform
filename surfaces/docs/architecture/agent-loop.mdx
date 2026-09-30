@@ -1,0 +1,61 @@
+---
+title: "Why this is different from an agent loop"
+description: "A conventional agent is a model in a loop. Allternit compiles a goal into typed work that the system runs, checks and records."
+---
+
+**Implementation: — (explainer) · Exposure: —.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | The agent loop is owned by the system, never by a model. |
+| **Implemented today** | Explainer page. Each component it names carries its own status. |
+| **Active path** | See [current reality](/architecture#current-reality). |
+| **Public exposure** | — |
+
+Most agent frameworks put a model in a loop and let it decide what happens next. Allternit does not.
+
+## A conventional agent loop
+
+```mermaid
+flowchart TD
+    P["prompt"] --> L1["LLM"]
+    L1 --> T1["tool"]
+    T1 --> L2["LLM"]
+    L2 --> T2["tool"]
+    T2 --> D["LLM says 'done'"]
+```
+
+The model decides what to do, when to call a tool, what to remember and when the work is finished. The transcript is the state. If the model changes, the agent changes.
+
+## Allternit
+
+```mermaid
+flowchart TD
+    G["goal"] --> C["typed task + graph + state<br/>TaskIR · ComputeGraphIR · AgentState"]
+    C --> W["work runtime<br/>admits and leases a node"]
+    W --> P["cognitive primitive<br/>at the lowest sufficient level"]
+    P --> X["tool · model ·<br/>deterministic computation"]
+    X --> V["verification"]
+    V --> E["evidence<br/>receipts"]
+    E --> S["state transition<br/>by the system"]
+    S -. next node .-> W
+```
+
+Each step is owned by an explicit component, and each hand-off is a typed contract.
+
+**In Allternit, an LLM does not decide that a task exists, that it has permission, that a side effect may run, that work is complete, or that state should persist. Those responsibilities belong to explicit system components.**
+
+| Responsibility | Conventional loop | Allternit |
+|----------------|-------------------|-----------|
+| A task exists | The model's plan | The request compiler and the compute graph |
+| Permission | Whatever the tool wrapper allows | [Policy](/architecture/policy): hard floor first, grants are explicit |
+| A side effect may run | The model calls the tool | The gate, with an idempotency key and an effect [receipt](/architecture/receipts) |
+| Work is complete | The model says "done" | [Verification](/architecture/verification) and the system |
+| State persists | The transcript | Typed, versioned [AgentState](/architecture/state) and the work runtime ledger |
+| Which model runs | Hard-coded | The [router](/architecture/contracts-not-models), per capability request |
+
+## Related
+
+- [Living Agent Architecture](/architecture)
+- [The Two Machines](/architecture/two-machines)
+- [Contracts, not models](/architecture/contracts-not-models)

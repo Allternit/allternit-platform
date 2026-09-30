@@ -10,7 +10,7 @@ The Usage API aggregates `usage_events` into an on-demand invoice draft for an o
 ## Base URL
 
 ```
-https://api.allternit.com/v1/usage/summary
+https://api.allternit.com/api/v1/usage/summary
 ```
 
 All endpoints require a valid Bearer token in the `Authorization` header. See [Authentication](/api/authentication) for details.
@@ -52,9 +52,9 @@ Response:
     }
   ],
   "total_cents": 2500,
-  "seller_legal_name": "Allternit, Inc.",
-  "seller_address_lines": ["123 Example St", "San Francisco, CA 94102"],
-  "payment_terms": "Net 30"
+  "seller_legal_name": "Allternit Labs, Inc.",
+  "seller_address_lines": ["123 Main Street, Suite 400", "Saint Paul, MN 55117"],
+  "payment_terms": "Net 15"
 }
 ```
 

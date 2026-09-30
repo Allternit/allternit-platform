@@ -109,6 +109,11 @@ Kept at depth 1 deliberately: [NATIVE_SESSIONS.md](./NATIVE_SESSIONS.md) and [AG
 
 ---
 
+## Agent Gateway
+- [Agent Gateway docs](./gateway/README.md) — AAI, adapters, look packs, channels, facades, operations
+
+---
+
 ## 📦 8. Archive
 - [Legacy Relics & Summaries](./Archive/)
 - [Agent Examples & Workspaces](./Archive/Examples/)

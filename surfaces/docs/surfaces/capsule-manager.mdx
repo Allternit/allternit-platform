@@ -38,94 +38,9 @@ open('capsules');
 | `js` | string | Capsule client script |
 | `permissions` | string[] | Required permissions |
 
-## Endpoints / commands
+## Commands
 
-| Command | Description |
-|---|---|
-| `capsule.create` | Create a new capsule for a tool |
-| `capsule.render` | Render a capsule in the platform shell |
-| `capsule.event` | Send an event between capsule and platform |
-| `capsule.invoke` | Invoke a platform tool from the capsule |
-| `capsule.close` | Dismiss the capsule |
-
-## JSON request / response examples
-
-### Capsule object
-
-```json
-{
-  "id": "cap_1a2b...",
-  "type": "form",
-  "state": "active",
-  "toolId": "test-tool",
-  "surface": {
-    "html": "<div>Test Capsule</div>",
-    "css": "",
-    "js": "",
-    "permissions": []
-  },
-  "createdAt": "2026-08-13T18:00:00Z",
-  "updatedAt": "2026-08-13T18:00:00Z"
-}
-```
-
-### Send a capsule event
-
-```bash
-curl -X POST https://api.allternit.com/api/v1/capsules/cap_1a2b.../events \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "id": "event-001",
-    "capsuleId": "cap_1a2b...",
-    "direction": "to_ui",
-    "type": "form_submit",
-    "payload": { "value": "hello" },
-    "timestamp": "2026-08-13T18:00:00Z",
-    "source": "user"
-  }'
-```
-
-Response:
-
-```json
-{
-  "success": true,
-  "event_id": "event-001"
-}
-```
-
-### Invoke a platform tool from a capsule
-
-```bash
-curl -X POST https://api.allternit.com/api/v1/capsules/cap_1a2b.../invoke \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "tool_name": "test-tool",
-    "params": { "test": true }
-  }'
-```
-
-Response:
-
-```json
-{
-  "success": true,
-  "result": { "acknowledged": true }
-}
-```
-
-## Error codes
-
-| HTTP | Code | Meaning |
-|---|---|---|
-| 200 | — | Event sent or tool invoked |
-| 400 | `invalid_capsule` | Capsule payload is malformed |
-| 401 | `unauthorized` | Missing or invalid bearer token |
-| 404 | `not_found` | Capsule or tool not found |
-| 403 | `forbidden` | Capsule lacks required permission |
-| 500 | `internal_error` | Capsule runtime failure |
+The `capsule.create`, `capsule.render`, `capsule.event`, `capsule.invoke` and `capsule.close` commands and the standalone capsule REST examples that earlier versions of this page showed could not be found in the platform UI or the API on main, so they have been removed. There is no public capsule HTTP API. Capsules are created and rendered in-process by the platform shell and the capsule registry, and the Capsule Manager view lists and manages them.
 
 ## Related links
 

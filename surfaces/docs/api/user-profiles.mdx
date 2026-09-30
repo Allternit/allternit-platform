@@ -14,7 +14,7 @@ Profiles are scoped to an organization. All profile-management endpoints require
 Protected profile endpoints:
 
 ```
-https://api.allternit.com/v1/beta/user-profiles
+https://api.allternit.com/api/v1/beta/user-profiles
 ```
 
 Public enrollment endpoint:
@@ -78,7 +78,7 @@ See [Authentication](/api/authentication) for Bearer-token usage.
 ## List profiles
 
 ```bash
-curl https://api.allternit.com/v1/beta/user-profiles \
+curl https://api.allternit.com/api/v1/beta/user-profiles \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -106,7 +106,7 @@ curl https://api.allternit.com/v1/beta/user-profiles \
 ## Create a profile
 
 ```bash
-curl -X POST https://api.allternit.com/v1/beta/user-profiles \
+curl -X POST https://api.allternit.com/api/v1/beta/user-profiles \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -151,7 +151,7 @@ Creating a duplicate profile for the same organization returns `400 Bad Request`
 ## Get a profile
 
 ```bash
-curl https://api.allternit.com/v1/beta/user-profiles/up_1a2b3c4d \
+curl https://api.allternit.com/api/v1/beta/user-profiles/up_1a2b3c4d \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -166,7 +166,7 @@ curl https://api.allternit.com/v1/beta/user-profiles/up_1a2b3c4d \
 ## Update a profile
 
 ```bash
-curl -X PATCH https://api.allternit.com/v1/beta/user-profiles/up_1a2b3c4d \
+curl -X PATCH https://api.allternit.com/api/v1/beta/user-profiles/up_1a2b3c4d \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -198,7 +198,7 @@ At least one field must be provided.
 ## Delete a profile
 
 ```bash
-curl -X DELETE https://api.allternit.com/v1/beta/user-profiles/up_1a2b3c4d \
+curl -X DELETE https://api.allternit.com/api/v1/beta/user-profiles/up_1a2b3c4d \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -207,7 +207,7 @@ Returns `204 No Content`.
 ## Create an enrollment URL
 
 ```bash
-curl -X POST https://api.allternit.com/v1/beta/user-profiles/up_1a2b3c4d/enrollment-url \
+curl -X POST https://api.allternit.com/api/v1/beta/user-profiles/up_1a2b3c4d/enrollment-url \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 

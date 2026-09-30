@@ -1,0 +1,311 @@
+---
+title: 'Catalog'
+description: 'Read-only registries: capabilities, agents, model classes, authority profiles and completion criteria.'
+---
+
+<Warning>
+**Implementation: DESIGN (server) · Exposure: PUBLIC PREVIEW (contract).** The Agency API is not live yet. This page describes the published v0.3 contract so you can review and build against it; details may change before alpha.
+</Warning>
+
+The catalog endpoints list what a request can refer to. They are read-only, cursor-paginated and need scope `catalog:read`. They open with the rest of the API, after a run can survive restart, resume, verify, replay and receipt-backed completion.
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/v1/capabilities` | [List capabilities](#list-capabilities) |
+| `GET` | `/v1/agents` | [List agents](#list-agents) |
+| `GET` | `/v1/models` | [List model classes](#list-model-classes) |
+| `GET` | `/v1/authority-profiles` | [List authority profiles](#list-authority-profiles) |
+| `GET` | `/v1/completion-criteria` | [List completion criteria](#list-completion-criteria) |
+
+All five take the same query parameters:
+
+| Parameter | In | Type | Description |
+|-----------|----|------|-------------|
+| `cursor` | query | string | Opaque cursor from a previous page's `next_cursor`. |
+| `limit` | query | integer | 1 to 200. Default 50. |
+
+<Note>
+The registry entries in the examples on this page (capability IDs, model class IDs, profile contents, semantics text) are illustrative. The real entries are whatever the registries return.
+</Note>
+
+## List capabilities
+
+```http
+GET /v1/capabilities
+```
+
+The capability registry. A capability is a stable semantic ability with an ID starting `cap.`. IDs are independent of whichever backend provides the ability. Use them in `capabilities.allow` and `capabilities.deny` on a [run request](/api/agency/runs#capabilities-tier-b) and in authority grants.
+
+### Parameters
+
+{{params:listCapabilities}}
+
+### Responses
+
+{{responses:listCapabilities}}
+
+[CapabilityPage](/api/agency/schemas#capabilitypage) of [Capability](/api/agency/schemas#capability):
+
+{{fields:Capability}}
+
+### Example
+
+```bash
+curl https://api.allternit.com/v1/capabilities \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "cap.code.edit",
+      "object": "capability",
+      "description": "Propose and apply source code changes in the workspace.",
+      "status": "available",
+      "trust_classes": ["PUBLIC", "INTERNAL"],
+      "localities": ["local", "remote"]
+    }
+  ],
+  "has_more": false,
+  "next_cursor": null
+}
+```
+
+## List agents
+
+```http
+GET /v1/agents
+```
+
+Logical composite agents. An agent is the external identity you address in `agent` on a request, optionally pinned to a version (`allternit-code@v1`). The default agent is `allternit-code`.
+
+### Parameters
+
+{{params:listAgents}}
+
+### Responses
+
+{{responses:listAgents}}
+
+[AgentPage](/api/agency/schemas#agentpage) of [Agent](/api/agency/schemas#agent):
+
+{{fields:Agent}}
+
+### Example
+
+```bash
+curl https://api.allternit.com/v1/agents \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "allternit-code",
+      "object": "agent",
+      "description": "Code agent.",
+      "versions": ["v1"],
+      "default_version": "v1",
+      "capabilities": ["cap.code.read", "cap.code.edit", "cap.test.run"],
+      "completion_criteria": ["tests_pass", "no_new_regressions", "build_passes", "typecheck_passes", "lint_clean"],
+      "authority_profiles": ["read-only", "code-safe", "code-write"],
+      "templates": []
+    }
+  ],
+  "has_more": false,
+  "next_cursor": null
+}
+```
+
+## List model classes
+
+```http
+GET /v1/models
+```
+
+Logical model classes by trust class and locality. This endpoint returns **classes, not models**. Concrete models are interchangeable components and are never listed. No vendor or model name appears in a default response.
+
+Use class IDs (they start `mc.`) in `models.allow_classes` and `models.deny_classes` on a [run request](/api/agency/runs#models-tier-b). Model or vendor names in those fields are rejected.
+
+### Parameters
+
+{{params:listModelClasses}}
+
+### Responses
+
+{{responses:listModelClasses}}
+
+[ModelClassPage](/api/agency/schemas#modelclasspage) of [ModelClass](/api/agency/schemas#modelclass):
+
+{{fields:ModelClass}}
+
+### Example
+
+```bash
+curl https://api.allternit.com/v1/models \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "mc.local.general",
+      "object": "model_class",
+      "description": "General-purpose class running on the local node.",
+      "trust_classes": ["PUBLIC", "INTERNAL", "RESTRICTED"],
+      "locality": "local",
+      "capabilities": ["cap.code.edit"],
+      "latency_class": "interactive"
+    },
+    {
+      "id": "mc.remote.general",
+      "object": "model_class",
+      "description": "General-purpose class running on remote compute.",
+      "trust_classes": ["PUBLIC", "INTERNAL"],
+      "locality": "remote",
+      "capabilities": ["cap.code.edit"],
+      "latency_class": "normal"
+    }
+  ],
+  "has_more": false,
+  "next_cursor": null
+}
+```
+
+`trust_classes` is the set of data trust classes a class may receive. `locality` is `local`, `fabric` or `remote`.
+
+## List authority profiles
+
+```http
+GET /v1/authority-profiles
+```
+
+Named authority profiles and the grants each expands to. Three profiles exist: `read-only`, `code-safe` and `code-write`. No bypass equivalent is ever public. Each definition is versioned; a run records the profile as `id@version` in `Run.resolved.authority`.
+
+### Parameters
+
+{{params:listAuthorityProfiles}}
+
+### Responses
+
+{{responses:listAuthorityProfiles}}
+
+[AuthorityProfilePage](/api/agency/schemas#authorityprofilepage) of [AuthorityProfile](/api/agency/schemas#authorityprofile):
+
+{{fields:AuthorityProfile}}
+
+`filesystem_scope` ([FilesystemScope](/api/agency/schemas#filesystemscope)):
+
+{{fields:FilesystemScope}}
+
+`approval_requirements` items ([ApprovalRequirement](/api/agency/schemas#approvalrequirement)):
+
+{{fields:ApprovalRequirement}}
+
+| `mode` | Meaning |
+|--------|---------|
+| `never_allowed` | The effect is not permitted under this profile. |
+| `always_ask` | Every occurrence raises an approval request. |
+| `ask_unless_granted` | Raises an approval request unless an explicit grant covers it. |
+| `allowed` | Permitted without asking, subject to hard policy. |
+
+`grants` items are [Grant](/api/agency/schemas#grant) objects and `network` is a [NetworkPolicy](/api/agency/schemas#networkpolicy); both are described under [Create a run](/api/agency/runs#authority).
+
+### Example
+
+```bash
+curl https://api.allternit.com/v1/authority-profiles \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "read-only",
+      "object": "authority_profile",
+      "description": "Read the workspace. No writes and no effects.",
+      "version": 1,
+      "grants": [
+        { "scope": "cap.code.read", "actions": ["read"], "effect_class": "none", "requires_approval": false }
+      ],
+      "network": { "default": "deny", "private_ip": "deny", "max_redirects": 3, "redirect_scope": "allowlist", "dns_rebind": "pin_resolution" },
+      "capabilities": ["cap.code.read"],
+      "denied_capabilities": ["cap.code.edit"],
+      "filesystem_scope": { "read": "workspace", "write": "none", "execute": "none", "outside_workspace": "deny" },
+      "approval_requirements": [
+        { "effect": "write", "mode": "never_allowed" },
+        { "effect": "execute", "mode": "never_allowed" },
+        { "effect": "network", "mode": "never_allowed" },
+        { "effect": "spend", "mode": "never_allowed" },
+        { "effect": "external", "mode": "never_allowed" },
+        { "effect": "irreversible", "mode": "never_allowed" }
+      ],
+      "defaults_version": "2026-09-29"
+    }
+  ],
+  "has_more": true,
+  "next_cursor": "code-safe"
+}
+```
+
+## List completion criteria
+
+```http
+GET /v1/completion-criteria
+```
+
+The versioned, extensible completion-criteria registry. Each criterion states, in `verifier_semantics`, exactly what a pass means, and names the kind of verifier that checks it.
+
+Built-in criterion IDs: `tests_pass`, `no_new_regressions`, `build_passes`, `typecheck_passes`, `lint_clean`, `artifact_exists`, `requirement_verified`, `human_review`.
+
+Refer to a criterion in `completion.require` by ID (latest version at resolution time) or as `{id, version}` to pin it. The resolved version is recorded in `Run.resolved.completion`.
+
+### Parameters
+
+{{params:listCompletionCriteria}}
+
+### Responses
+
+{{responses:listCompletionCriteria}}
+
+[CompletionCriterionPage](/api/agency/schemas#completioncriterionpage) of [CompletionCriterion](/api/agency/schemas#completioncriterion):
+
+{{fields:CompletionCriterion}}
+
+### Example
+
+```bash
+curl https://api.allternit.com/v1/completion-criteria \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "no_new_regressions",
+      "object": "completion_criterion",
+      "version": 1,
+      "description": "No previously passing test fails after the change.",
+      "verifier_semantics": "PASS when no test that passed on the base commit fails after the change. INCONCLUSIVE is never PASS.",
+      "verifier_kind": "regression",
+      "built_in": true,
+      "deprecated": false,
+      "blocking_default": true
+    }
+  ],
+  "has_more": true,
+  "next_cursor": "requirement_verified"
+}
+```

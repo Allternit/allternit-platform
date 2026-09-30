@@ -26,7 +26,7 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use mcp::gateway_integration::{McpToolProvider, McpClientPool};
+//! use mcp::gateway_integration::{McpClientPool, McpToolProvider, ToolProvider};
 //! use mcp::tools_registry::McpToolsRegistry;
 //! use std::sync::Arc;
 //!

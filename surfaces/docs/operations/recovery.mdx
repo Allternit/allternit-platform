@@ -1,0 +1,37 @@
+---
+title: "Recovery"
+description: "What happens when a holder dies, a node stalls or a person does not answer"
+---
+
+**Status: AVAILABLE (internal).** See [status labels](/architecture#status-labels).
+
+Recovery is built from leases, heartbeats and durable records, not from a process staying alive.
+
+## Architecture contract
+
+- **Lost holder.** A lease without heartbeats expires and the node is reclaimed. A fencing token stops the old holder from writing.
+- **Restart.** Work state is in durable records and the ledger, so a run resumes from them.
+- **Stalled wait.** Timer and manual wait gates hold nodes and wake on their condition.
+- **Unanswered attention.** The request stays open; nothing proceeds without an answer.
+- **Repeated effect.** Retries of external effects need an idempotency key and an action receipt.
+
+## Current implementation
+
+These behaviors are on main in the work runtime.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Lease reclaim and fencing | **AVAILABLE (internal)** |
+| Wait gates and attention | **AVAILABLE (internal)** |
+
+## Developer relevance
+
+Check the ledger before intervening manually.
+
+## Related
+
+- [Leases](/architecture/work-runtime/leases)
+- [Heartbeat and reclaim](/architecture/work-runtime/heartbeat-reclaim)
+- [Retries](/architecture/work-runtime/retries)

@@ -5,7 +5,7 @@ description: Subscribe to session and deployment events with signed delivery.
 
 # Webhooks
 
-Webhooks deliver real-time events for sessions and deployments to an HTTPS endpoint you control. Each delivery is signed with `X-Allternit-Signature` using HMAC-SHA256.
+Webhooks deliver real-time events for sessions and deployments to an HTTP or HTTPS endpoint you control. Each delivery is signed with `X-Allternit-Signature` using HMAC-SHA256.
 
 Webhook subscriptions are scoped to an organization.
 
@@ -30,14 +30,28 @@ http://127.0.0.1:8013/api/v1/beta/webhooks
 | `GET` | `/api/v1/beta/webhooks/:id` | Get a subscription |
 | `PATCH` | `/api/v1/beta/webhooks/:id` | Update a subscription |
 | `DELETE` | `/api/v1/beta/webhooks/:id` | Delete a subscription |
+| `GET` | `/api/v1/beta/webhooks/:id/deliveries` | List delivery attempts |
 
 ## Events
 
 | Event | Description |
 |-------|-------------|
+| `agent.created` | An agent was created |
+| `agent.updated` | An agent was updated |
+| `agent.archived` | An agent was archived |
+| `session.created` | A session was created |
 | `session.event_created` | A new event was appended to a managed session |
+| `session.archived` | A session was archived |
+| `session.over_budget` | A session exceeded its budget |
+| `deployment.run_created` | A deployment run was created |
 | `deployment.run_updated` | A deployment run reached a terminal status |
-| `*` | Wildcard — subscribe to all events |
+| `billing.credit_purchase` | A credit purchase completed |
+| `key.created` | An API key was created |
+| `key.revoked` | An API key was revoked |
+| `*` | Wildcard: subscribe to all events |
+
+
+Delivery makes up to 3 attempts per event. Connect errors, timeouts and 5xx responses are retried with a backoff of 5 s, then 20 s (base overridable with `ALLTERNIT_WEBHOOK_RETRY_BASE_SECS`); a 4xx response is not retried. Each attempt is recorded and visible through the deliveries endpoint. Only `session.event_created` and `deployment.run_updated` are documented with a payload here; check the deliveries list for the exact body of the others.
 
 ## Create a subscription
 

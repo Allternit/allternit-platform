@@ -68,6 +68,9 @@ pub(crate) fn gizzi_client(headers: &HeaderMap) -> Client {
         }
     }
 
+    if let Some(directory) = headers.get("x-gizzi-directory") {
+        if let Ok(value) = reqwest::header::HeaderValue::from_bytes(directory.as_bytes()) { default_headers.insert("x-gizzi-directory", value); }
+    }
     if !default_headers.is_empty() {
         builder = builder.default_headers(default_headers);
     }
@@ -331,7 +334,7 @@ struct GizziMessageError {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
-struct GizziMessagePart {
+pub(crate) struct GizziMessagePart {
     #[serde(rename = "type")]
     part_type: String,
     #[serde(default)]
@@ -1176,6 +1179,9 @@ async fn send_message(
         .into_response();
     }
 
+    if let Some(resp) = crate::gateway_runner::intercept_message(&session_id, &body.text, body.metadata.as_ref()).await {
+        return resp;
+    }
     let client = gizzi_client(&headers);
     let path = format!("/v1/session/{}/message", urlencoding::encode(&session_id));
     let payload = send_message_payload(&body);
@@ -2271,6 +2277,14 @@ async fn get_native_origin(headers: HeaderMap, Path(id): Path<String>) -> Respon
 /// platform default — a routine never silently changes the bot's brain.
 fn bot_turn_model(db: &DbHandle, session_id: &str, bot_id: &str) -> serde_json::Value {
     let stored = db.get_session_metadata(session_id).ok().flatten();
+    if let Some(pick) = stored.as_ref().and_then(|bag| bag.get("projectModel")) {
+        if let (Some(provider), Some(model)) = (pick["providerId"].as_str(), pick["modelId"].as_str()) {
+            if !provider.is_empty() && !model.is_empty() {
+                let model = model.strip_prefix(&format!("{provider}/")).unwrap_or(model);
+                return json!(GizziModelRef::new(provider.to_string(), model.to_string(), None));
+            }
+        }
+    }
     let has_model = stored.as_ref().map_or(false, |bag| {
         bag.get("model").map_or(false, |m| m.is_object()) || bag.get("modelID").is_some()
     });
@@ -2438,7 +2452,12 @@ pub(crate) async fn create_bot_thread_session(
         let _ = db.set_session_metadata(&id, &bag);
         return Ok(id);
     }
-    let client = gizzi_client(&HeaderMap::new());
+    let mut headers = HeaderMap::new();
+    let directory: Option<String> = db.connect().ok().and_then(|conn| conn.query_row("SELECT json_extract(config, '$.projectWorkspace.directory') FROM agents WHERE id = ?1", params![bot_id], |r| r.get(0)).ok()).flatten();
+    if let Some(directory) = directory.filter(|value| !value.is_empty()) {
+        if let Ok(value) = axum::http::HeaderValue::from_str(&directory) { headers.insert("x-gizzi-directory", value); }
+    }
+    let client = gizzi_client(&headers);
     let (provider_id, model_id) = AppConfig::load().default_model();
     let mut payload = serde_json::Map::new();
     payload.insert("title".to_string(), json!(title));
@@ -2463,6 +2482,10 @@ pub(crate) async fn create_bot_thread_session(
 
 /// Run one user turn in a session and return the assistant's text.
 pub(crate) async fn send_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str, text: &str) -> Result<String, String> {
+    // Vendor-bound bots run through the Agent Gateway; never a native brain.
+    if let Some(vendor) = crate::gateway_runner::intercept_turn(session_id, text, Default::default()).await {
+        return vendor;
+    }
     if let Some(target) = crate::placement::session_target(db, session_id) {
         let mut body = json!({ "text": text, "metadata": { "model": bot_turn_model(db, session_id, bot_id) } });
         if let Some(system) = bot_turn_system(db, session_id, bot_id) {
@@ -2472,7 +2495,16 @@ pub(crate) async fn send_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str,
         let reply = crate::placement::call(&target, reqwest::Method::POST, &path, Some(body)).await?;
         return placed_turn_report(&reply);
     }
-    let client = gizzi_client(&HeaderMap::new());
+    let mut headers = HeaderMap::new();
+    if let Some(directory) = db.get_session_metadata(session_id).ok().flatten().and_then(|bag| bag["directory"].as_str().map(str::to_owned)) {
+        if let Ok(value) = axum::http::HeaderValue::from_str(&directory) { headers.insert("x-gizzi-directory", value); }
+    }
+    let client = gizzi_client(&headers);
+    if let Some(bag) = db.get_session_metadata(session_id).ok().flatten().filter(|bag| bag["projectRole"] == "thread") {
+        let mode = match bag["codePermissionMode"].as_str() { Some("plan") => "plan", Some("acceptEdits") => "acceptEdits", _ => "default" };
+        let response = client.put(format!("{}/permission/mode/{}", gizzi_base(), urlencoding::encode(session_id))).json(&json!({ "mode": mode })).send().await.map_err(|e| format!("could not enforce project permissions: {e}"))?;
+        if !response.status().is_success() { return Err(format!("runtime refused project permission mode ({})", response.status())); }
+    }
     let path = format!("/v1/session/{}/message", urlencoding::encode(session_id));
     let mut payload = json!({
         "parts": [{ "type": "text", "text": text }],
@@ -2578,6 +2610,23 @@ pub(crate) async fn seed_session_message(db: &DbHandle, session_id: &str, text: 
         .await
         .map(|_| ())
         .map_err(|_| "gizzi refused the checkpoint message".to_string())
+}
+
+/// Agent Gateway: append a vendor bot's reply to a session as an assistant
+/// message (no model turn). gizzi dedupes by `metadata.remote_event_id`.
+pub(crate) async fn append_vendor_message(db: &DbHandle, session_id: &str, text: &str, metadata: serde_json::Value) -> Result<(), String> {
+    let payload = json!({ "text": text, "metadata": metadata });
+    if let Some(target) = crate::placement::session_target(db, session_id) {
+        let path = format!("/agent-sessions/{}/vendor-message", urlencoding::encode(session_id));
+        crate::placement::call(&target, reqwest::Method::POST, &path, Some(payload)).await?;
+        return Ok(());
+    }
+    let client = gizzi_client(&HeaderMap::new());
+    let path = format!("/v1/session/{}/vendor-message", urlencoding::encode(session_id));
+    gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(payload))
+        .await
+        .map(|_| ())
+        .map_err(|_| "gizzi refused the vendor reply".to_string())
 }
 
 /// gizzi's native context handoff for a session. Returns the new session id

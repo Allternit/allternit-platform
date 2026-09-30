@@ -10,13 +10,13 @@ The Playground API is a stub surface reserved for interactive experiments in the
 ## Base URL
 
 ```
-https://api.allternit.com/api/v1/playground
+https://api.allternit.com/api/playground
 ```
 
 For local development:
 
 ```
-http://127.0.0.1:8013/api/v1/playground
+http://127.0.0.1:8013/api/playground
 ```
 
 ## Authentication
@@ -27,12 +27,12 @@ The playground route inherits the standard bearer-token auth middleware. See [Au
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/v1/playground` | Stub playground handler. |
+| `POST` | `/api/playground` | Stub playground handler. |
 
 ## Example request
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/playground \
+curl -X POST https://api.allternit.com/api/playground \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"experiment": "example"}'

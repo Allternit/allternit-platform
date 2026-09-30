@@ -1,0 +1,46 @@
+---
+title: "Network access and SSRF"
+description: "The default-deny network policy and the shared egress guard"
+---
+
+**Implementation: ENABLED (web proxy, design connector import) · DESIGN (spawned node processes) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Every server-side fetch of an untrusted URL goes through one egress guard. |
+| **Implemented today** | The shared egress guard is used by the web proxy and design connector import. For work-runtime nodes the network policy is recorded, not enforced by the guard. |
+| **Active path** | Partial. Per path, as listed. |
+| **Public exposure** | No. Not reachable by an external developer. |
+
+Network access is a policy, not a capability a tool assumes. One guard implements it for every caller.
+
+## Architecture contract
+
+`NetworkAccessPolicyV1` has `network_default` (`DENY` or `ALLOWLIST`), a domain list, a private-address policy, a redirect policy and a DNS-rebinding policy. Three attacks are defended explicitly:
+
+- **Private addresses.** A request that resolves to a loopback, link-local or private range is refused unless the policy allows it.
+- **Redirects.** Each hop is re-checked against the policy, with a hop limit.
+- **DNS rebinding.** The address checked is the address used.
+
+Why: a tool that fetches a URL supplied by a model or by retrieved content is an SSRF path by default.
+
+## Current implementation
+
+The shared egress guard is on main. It allows only publicly routable unicast addresses, resolves a name once and dials that same address, so rebinding cannot swap in a private one. Which paths use it, on main today:
+
+| Call path | Implementation | Exposure |
+|-----------|----------------|----------|
+| Web proxy | **ENABLED** (guard in the request path) | **INTERNAL** |
+| Design connector import | **ENABLED** (guard in the request path) | **INTERNAL** |
+| Work-runtime nodes (spawned executors) | **DESIGN** (network policy recorded in the environment, not enforced by the guard) | **INTERNAL** |
+| Other network-capable tools and connectors | Not claimed | — |
+| `NetworkAccessPolicyV1` contract | **IMPLEMENTED** (contract) | **PUBLIC** (docs) |
+
+## Developer relevance
+
+Do not open sockets directly from a tool. Use the shared client, and declare the domains you need.
+
+## Related
+
+- [ExecutionEnvironment](/architecture/tools-execution/execution-environment)
+- [Threat model](/architecture/verification-safety/threat-model)

@@ -7,7 +7,7 @@ description: 'Canonical registry and reference implementations for tools that Al
 
 **Agent Swarm** is Allternit's canonical tool registry and the home for agent-facing tool implementations. It defines the JSON Schema contracts, safety metadata, and entrypoints that the runtime uses to discover and execute tools, and it ships reference implementations for browser automation, document generation, and implementation-run landing.
 
-The registry lives at `tools/agent-swarm/tool_registry.json` and is validated by the platform's law/audit scripts. Each entry declares:
+The registry lives at `tools/agent-swarm/tool_registry.json` (30 tools) and is validated by the platform's law/audit scripts. Each entry declares:
 
 - A stable tool `id` and human-readable title.
 - `kind` (`read`, `write`, `exec`, `destructive`) for permission policy matching.
@@ -131,7 +131,11 @@ await execute({ action: 'click', selector: '@e5' });
 
 ## Autoland
 
-The `autoland` tool requests that a completed and validated implementation run be landed into the project root. It acts as the agent-facing proxy for the Rails autoland gate.
+The `autoland` tool is the agent-facing contract for landing a completed implementation run. Its registry entry is `write` / `danger`.
+
+<Warning>
+Autoland is a **stub**. `execute` does not call Rails or merge anything: it returns `success: true` with a message and nothing else. The Rails call (`POST /api/v1/rails/gate/autoland`) appears only as a comment in the source. Do not treat a successful result as a landed change.
+</Warning>
 
 ### Input
 
@@ -139,16 +143,12 @@ The `autoland` tool requests that a completed and validated implementation run b
 |-------|------|-------------|
 | `wih_id` | string | ID of the WIH / implementation run to land |
 
-### Example
-
 ```typescript
 import { execute } from 'tools/agent-swarm/autoland/mod.ts';
 
 const result = await execute({ wih_id: 'wih_2026_001' });
 // { success: true, message: 'Autoland request for WIH wih_2026_001 initiated.' }
 ```
-
-In production the platform routes this call to the internal Rails service at `POST /api/v1/rails/gate/autoland`. The tool itself only exposes the contract; the actual merge happens inside the gated Rails flow.
 
 ## Document Generator
 

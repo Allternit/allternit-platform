@@ -1,0 +1,48 @@
+---
+title: "Leases and fencing"
+description: "Who may run a node right now, and how a stale holder is kept from writing"
+---
+
+**Implementation: ENABLED (leases) · DESIGN (fencing tokens on state writes) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Every node is leased; stale writers are fenced out. |
+| **Implemented today** | Leases in the internal work runtime. No fencing tokens on state writes. |
+| **Active path** | Yes, inside the internal work runtime. |
+| **Public exposure** | No. Not reachable by an external developer. |
+
+Before a node runs, exactly one holder takes a **lease** on it. The lease says who holds the node, where and until when.
+
+## Architecture contract
+
+`LeaseV1` records `lease_id`, `holder`, `host`, `process_or_session`, `scope`, `acquired_at`, `heartbeat_at`, `expires_after`, `reclaim_policy` and `state_version`.
+
+- One active lease per node scope.
+- A lease is kept alive by [heartbeats](/architecture/work-runtime/heartbeat-reclaim) and expires if they stop.
+- An expired lease can be reclaimed by the system, and the node rescheduled.
+
+**Fencing** is what stops a holder whose lease has expired, but whose process is still alive, from writing after someone else took over. The design binds each lease to the `state_version` it was granted at, and every durable write is compare-and-swap on that version. A stale holder's write fails with `STATE_CONFLICT` instead of overwriting newer work. See [State](/architecture/state).
+
+Why: without leases, two executors can run the same node. Without fencing, a slow executor that lost its lease can still corrupt the result of the one that replaced it.
+
+## Current implementation
+
+The work runtime has leases with holders, expiry and heartbeat, and reclaims stale ones. Compare-and-swap commits on a versioned AgentState, and with them state-version fencing, are not built yet. Side effects are protected separately: each effect carries an idempotency key and is recorded at most once. See [Retries and idempotent effects](/architecture/work-runtime/retries).
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Leases with holder and expiry | **ENABLED** · INTERNAL |
+| At-most-once effects by idempotency key | **ENABLED** · INTERNAL |
+| State-version fencing on writes | **DESIGN** |
+
+## Developer relevance
+
+If you run as an executor, hold your lease by heartbeating and stop when you lose it. Do not assume you are the only process that ever ran this node.
+
+## Related
+
+- [Heartbeat and reclaim](/architecture/work-runtime/heartbeat-reclaim)
+- [Admission](/architecture/work-runtime/admission)

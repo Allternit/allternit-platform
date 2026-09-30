@@ -59,6 +59,14 @@ banner:
 challenge:
   critical: false
   strategies:
+    # Verified 2026-09-30 on chatgpt.com: the interstitial can have no text at
+    # all (title "Just a moment...", logo, widget); Turnstile's hidden
+    # response input sits in the light DOM next to its closed shadow host.
+    - { css: "input[name='cf-turnstile-response']" }
+    - { css: "[id^='cf-chl-widget-']" }
+    # Top-frame heading of Cloudflare's interstitial: the Turnstile iframe is in
+    # a closed shadow root and its label is cross-origin, so only this matches.
+    - { text: /performing security verification|verifying you are human|checking your browser|checking if the site connection is secure/i }
     - { css: "iframe[src*='challenges.cloudflare.com']" }
     - { css: "#challenge-form" }
     - { text: /verify you are human/i }

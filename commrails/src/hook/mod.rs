@@ -4,14 +4,17 @@
 //! Before this module, every spawned harness ran in full-bypass mode and Gate 2
 //! was a CLI call the agent had to choose to make. Now:
 //!
-//! * Harnesses with a PreToolUse hook mechanism (Claude Code) get a
-//!   session-scoped settings file whose hook runs
-//!   `allternit-commrails hook claude-pretool`, which evaluates every tool
+//! * Harnesses with a PreToolUse hook mechanism (Claude Code, codex, qwen) get
+//!   a per-spawn hook (settings file, or `-c` for codex) that runs
+//!   `allternit-commrails hook {claude,codex,qwen}-pretool` (one decision
+//!   path), which evaluates every tool
 //!   call against the hard floor and, when a WIH is bound, against Gate 2 and
 //!   the WIH's own lease. Denials are written to the ledger.
-//! * Harnesses without one are classified here ([`HarnessGate`]); spawn paths
-//!   call [`admit`] and refuse to run them on a WIH whose policy requires
-//!   lease coverage for writes, because nothing could enforce it.
+//! * ACP servers (kimi, gemini) are gated by their client: gizzi-code answers
+//!   every `session/request_permission` from the same decision path.
+//! * Harnesses with neither (agy) run inside Allternit's execution
+//!   environment only. Every harness is admitted in its own auto-approve
+//!   mode ([`admit`] never refuses).
 
 pub mod floor;
 pub mod shell;
@@ -43,10 +46,15 @@ pub enum HarnessGate {
     /// Every tool call passes through the Allternit PreToolUse hook
     /// (hard floor + Gate 2 when a WIH is bound).
     Hook,
-    /// No hook; writes are confined by the harness's own OS sandbox to the
-    /// workspace (codex `workspace-write`). Not lease-precise.
+    /// No hook, but an ACP server: when driven over ACP the client answers
+    /// every `session/request_permission` with the gate's verdict
+    /// (gizzi-code `acp-gate.ts`), so nothing waits on a person.
+    Acp,
+    /// No hook; runs auto-approve inside Allternit's execution environment
+    /// (worktree, env allowlist, egress guard). Not lease-precise.
     Sandbox,
-    /// Runs with the vendor's auto-approve flag and nothing in front of it.
+    /// Runs with the vendor's auto-approve flag; only Allternit's execution
+    /// environment (worktree, env allowlist, egress guard) sits in front of it.
     Ungated,
 }
 
@@ -54,6 +62,7 @@ impl HarnessGate {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Hook => "hook",
+            Self::Acp => "acp",
             Self::Sandbox => "sandbox",
             Self::Ungated => "ungated",
         }
@@ -65,7 +74,8 @@ pub fn harness_gate(harness: &str) -> HarnessGate {
     let name = shell::basename(harness.trim()).to_ascii_lowercase();
     match name.as_str() {
         "claude" | "claude-code" => HarnessGate::Hook,
-        "codex" => HarnessGate::Sandbox,
+        "codex" | "qwen" | "qwen-code" => HarnessGate::Hook,
+        "kimi" | "kimi-code" | "gemini" => HarnessGate::Acp,
         _ => HarnessGate::Ungated,
     }
 }
@@ -105,24 +115,15 @@ pub async fn load_wih_policy(ledger: &Ledger, wih_id: &str) -> Result<WihPolicy>
     })
 }
 
-/// Spawn admission. `Ok` means the spawn may proceed.
-///
-/// A harness that cannot enforce lease coverage (anything but [`HarnessGate::Hook`])
-/// is refused on a WIH whose policy requires a lease for writes — without a
-/// hook, that harness could write anywhere the OS lets it, so the WIH's policy
-/// would be a fiction. Unbound runs (no WIH) are admitted: the hard floor still
-/// applies to hooked harnesses and nothing changes for the others.
-pub fn admit(harness: &str, wih: Option<&WihPolicy>) -> std::result::Result<HarnessGate, String> {
-    let gate = harness_gate(harness);
-    let Some(wih) = wih else { return Ok(gate) };
-    if gate == HarnessGate::Hook || !wih.writes_need_lease() {
-        return Ok(gate);
-    }
-    Err(format!(
-        "refusing to spawn {harness}: it is {} (no PreToolUse hook), and WIH {} requires lease coverage for writes that it could not enforce. Use a hooked harness (claude-code) for this WIH, or run without a WIH binding.",
-        gate.as_str(),
-        wih.wih_id
-    ))
+/// Spawn admission. Every harness is admitted and launched in its own
+/// auto-approve mode (Eoj, 2026-09-30): Allternit's gate is the gate. A CLI
+/// held out of auto-approve asks for permission on its own side, and a
+/// headless turn then hangs waiting for an answer nobody streams back.
+/// The returned [`HarnessGate`] records what enforcement sits in front of it:
+/// the PreToolUse hook (S0 floor + Gate 2) for hooked harnesses, and the
+/// execution environment (worktree, env allowlist, egress guard) for the rest.
+pub fn admit(harness: &str, _wih: Option<&WihPolicy>) -> std::result::Result<HarnessGate, String> {
+    Ok(harness_gate(harness))
 }
 
 /// A PreToolUse request, normalized across harnesses (Claude Code and codex
@@ -153,7 +154,7 @@ impl HookRequest {
     fn is_shell(&self) -> bool {
         matches!(
             self.tool_name.as_str(),
-            "Bash" | "shell" | "local_shell" | "exec_command" | "container.exec" | "unified_exec"
+            "Bash" | "run_shell_command" | "shell" | "local_shell" | "exec_command" | "container.exec" | "unified_exec"
         )
     }
 
@@ -175,6 +176,18 @@ impl HookRequest {
             }
             _ => None,
         }
+    }
+
+    /// Descriptions of the programs in this call whose write effect the gate
+    /// cannot scan (Q25: recorded as `unresolved_effect`).
+    pub fn unresolved_effects(&self) -> Vec<String> {
+        self.write_targets(None)
+            .into_iter()
+            .filter_map(|t| match t {
+                Target::UnknownEffect { what, .. } => Some(what),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Paths this tool call writes, resolved against its cwd.
@@ -243,7 +256,8 @@ pub struct Decision {
     pub paths: Vec<String>,
 }
 
-/// Evaluate one PreToolUse request. Order: hard floor (always) → write-target
+/// Evaluate one PreToolUse request. Order: hard floor (always) → replay deny
+/// (bound run replaying: nothing executes) → write-target
 /// resolution → Gate 2 `pre_tool` → WIH-own lease coverage. Every error path
 /// is a deny.
 pub async fn decide(req: &HookRequest, root: &Path, home: Option<&Path>, wih: Option<WihBinding<'_>>) -> Decision {
@@ -262,26 +276,92 @@ pub async fn decide(req: &HookRequest, root: &Path, home: Option<&Path>, wih: Op
         };
     };
 
+    // Replay (effects: recorded_only): no hooked or ACP harness runs a real tool;
+    // the gate's post-call step serves the recorded result.
+    if wih.gate.is_replaying(wih.wih_id) {
+        return Decision {
+            verdict: Verdict::Deny(crate::gate::gate::replay_deny_reason(wih.wih_id)),
+            paths: Vec::new(),
+        };
+    }
+
     let root_forms = path_forms(root);
     let mut rel_paths = Vec::new();
+    let mut unresolved_effects = Vec::new();
+    let mut strict: Option<bool> = None;
     for target in req.write_targets(home) {
         match target {
             Target::Unresolved(raw) => {
                 return Decision {
                     verdict: Verdict::Deny(format!(
-                        "cannot resolve write target `{raw}`, so WIH {} lease coverage cannot be checked",
+                        "unresolved write target `{raw}`, so WIH {} lease coverage cannot be checked; use the file-edit tools or a command the gate can scan",
                         wih.wih_id
                     )),
                     paths: rel_paths,
                 };
             }
+            // Q25 guardrails, not walls: an unscannable program is allowed and
+            // recorded, unless a path literal it names lands outside the
+            // workspace/lease or the WIH runs under the opt-in strict fence.
+            Target::UnknownEffect { what, literals } => {
+                let is_strict = match strict {
+                    Some(s) => s,
+                    None => match wih.gate.wih_fence_strict(wih.wih_id).await {
+                        Ok(s) => *strict.insert(s),
+                        Err(err) => {
+                            return Decision {
+                                verdict: Verdict::Deny(format!(
+                                    "fence policy lookup failed for WIH {} (fail closed): {err}",
+                                    wih.wih_id
+                                )),
+                                paths: rel_paths,
+                            }
+                        }
+                    },
+                };
+                if is_strict {
+                    return Decision {
+                        verdict: Verdict::Deny(format!(
+                            "unresolved write effect `{what}` under WIH {}'s strict fence; use the file-edit tools or a command the gate can scan",
+                            wih.wih_id
+                        )),
+                        paths: rel_paths,
+                    };
+                }
+                for lit in literals {
+                    let Target::Path(p) = lit else { continue };
+                    match relative_to_root(&p, &root_forms) {
+                        // Checked below by Gate 2 and the own-lease check.
+                        Some(rel) => rel_paths.push(rel),
+                        None => {
+                            rel_paths.push(p.to_string_lossy().to_string());
+                            return Decision {
+                                verdict: Verdict::Deny(format!(
+                                    "write outside WIH {} lease: `{what}` names path {} outside {}",
+                                    wih.wih_id,
+                                    canonical_lenient(&p).display(),
+                                    root.display()
+                                )),
+                                paths: rel_paths,
+                            };
+                        }
+                    }
+                }
+                unresolved_effects.push(what);
+            }
             Target::Path(p) => match relative_to_root(&p, &root_forms) {
                 Some(rel) => rel_paths.push(rel),
                 None => {
                     rel_paths.push(p.to_string_lossy().to_string());
+                    let dest = canonical_lenient(&p);
+                    let via = if dest != shell::normalize(&p) {
+                        format!(" (resolves to {})", dest.display())
+                    } else {
+                        String::new()
+                    };
                     return Decision {
                         verdict: Verdict::Deny(format!(
-                            "write outside WIH {} lease: {} is outside {}",
+                            "write outside WIH {} lease: {}{via} is outside {}",
                             wih.wih_id,
                             p.display(),
                             root.display()
@@ -293,7 +373,14 @@ pub async fn decide(req: &HookRequest, root: &Path, home: Option<&Path>, wih: Op
         }
     }
 
-    match wih.gate.pre_tool(wih.wih_id, &req.tool_name, &rel_paths).await {
+    // The actual command goes to Gate 2 so the judge's hard rules and the
+    // judge request both see it (a judge that says allow cannot approve `sudo`).
+    let command = req.command();
+    match wih
+        .gate
+        .pre_tool_with(wih.wih_id, &req.tool_name, &rel_paths, command.as_deref())
+        .await
+    {
         Ok(res) if !res.allowed => {
             return Decision {
                 verdict: Verdict::Deny(format!(
@@ -337,21 +424,20 @@ pub async fn decide(req: &HookRequest, root: &Path, home: Option<&Path>, wih: Op
         }
     }
 
+    let recorded = if unresolved_effects.is_empty() {
+        String::new()
+    } else {
+        format!("; unresolved_effect recorded: {}", unresolved_effects.join("; "))
+    };
     Decision {
-        verdict: Verdict::Allow(format!("Gate 2 allowed {} for WIH {}", req.tool_name, wih.wih_id)),
+        verdict: Verdict::Allow(format!("Gate 2 allowed {} for WIH {}{recorded}", req.tool_name, wih.wih_id)),
         paths: rel_paths,
     }
 }
 
-/// Same matching rule as `Leases::check_coverage`.
+/// Same matching rule as `Leases::check_coverage` (one implementation).
 fn lease_matches(lease_path: &str, candidate: &str) -> bool {
-    if let Some(prefix) = lease_path.strip_suffix("/**") {
-        return candidate.starts_with(prefix);
-    }
-    if let Some(prefix) = lease_path.strip_suffix('*') {
-        return candidate.starts_with(prefix);
-    }
-    candidate == lease_path || candidate.starts_with(&format!("{lease_path}/"))
+    crate::leases::leases::matches_path(lease_path, candidate)
 }
 
 /// A path and its symlink-resolved form (macOS `/tmp` → `/private/tmp`).
@@ -388,16 +474,55 @@ fn canonical_lenient(path: &Path) -> PathBuf {
     }
 }
 
+/// Workspace-relative form of `path`'s canonical, symlink-resolved
+/// destination, or `None` when that destination leaves the workspace. The
+/// lexical path is never trusted on its own: `src/link/x` with
+/// `src/link -> /outside` resolves to `/outside/x` and is outside, and a link
+/// that stays in the workspace is judged by where it lands, not by its name.
 fn relative_to_root(path: &Path, root_forms: &[PathBuf]) -> Option<String> {
-    for candidate in path_forms(path) {
-        for root in root_forms {
-            if let Ok(rel) = candidate.strip_prefix(root) {
-                let rel = rel.to_string_lossy().to_string();
-                return Some(if rel.is_empty() { ".".to_string() } else { rel });
-            }
+    let dest = canonical_lenient(path);
+    for root in root_forms {
+        if let Ok(rel) = dest.strip_prefix(root) {
+            let rel = rel.to_string_lossy().to_string();
+            return Some(if rel.is_empty() { ".".to_string() } else { rel });
         }
     }
     None
+}
+
+/// Which vendor hook dialect a `HarnessGate::Hook` harness speaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookFlavor {
+    Claude,
+    Codex,
+    Qwen,
+}
+
+impl HookFlavor {
+    pub fn of(harness: &str) -> Option<Self> {
+        match shell::basename(harness.trim()).to_ascii_lowercase().as_str() {
+            "claude" | "claude-code" => Some(Self::Claude),
+            "codex" => Some(Self::Codex),
+            "qwen" | "qwen-code" => Some(Self::Qwen),
+            _ => None,
+        }
+    }
+    /// Subcommand of `allternit-commrails hook`. All three run the same
+    /// decision path (`decide`); the names only label the harness.
+    pub fn subcommand(self) -> &'static str {
+        match self {
+            Self::Claude => "claude-pretool",
+            Self::Codex => "codex-pretool",
+            Self::Qwen => "qwen-pretool",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Claude => "claude-code",
+            Self::Codex => "codex",
+            Self::Qwen => "qwen",
+        }
+    }
 }
 
 /// Claude Code PreToolUse stdout for a verdict. Allow prints nothing so the
@@ -441,6 +566,8 @@ pub fn decision_event(req: &HookRequest, harness: &str, wih_id: Option<&str>, de
             "reason": decision.verdict.reason(),
             "paths": decision.paths,
             "command": req.command(),
+            // Q25 audit trail: unscannable programs that ran under a WIH.
+            "unresolved_effect": req.unresolved_effects(),
         }),
         provenance: None,
     }
@@ -466,9 +593,8 @@ pub fn spawn_refused_event(harness: &str, wih_id: &str, reason: &str) -> Alltern
 }
 
 /// Tools a headless Claude Code run needs without a prompt. The session runs
-/// in `acceptEdits`; these allow rules replace `--dangerously-skip-permissions`
-/// so nothing blocks on a prompt, while the PreToolUse hook still sees (and
-/// can deny) every call.
+/// in `bypassPermissions` so nothing blocks on a CLI-side prompt; the
+/// PreToolUse hook still sees (and can deny) every call.
 pub const CLAUDE_ALLOWED_TOOLS: &[&str] = &[
     "Bash",
     "Edit",
@@ -507,10 +633,17 @@ pub struct HookTarget<'a> {
 
 /// The hook command line Claude Code runs for every tool call.
 pub fn claude_hook_command(target: HookTarget<'_>) -> String {
+    hook_command(HookFlavor::Claude, target)
+}
+
+/// The hook command line for any hooked harness.
+pub fn hook_command(flavor: HookFlavor, target: HookTarget<'_>) -> String {
     let mut cmd = format!(
-        "{} --root {} hook claude-pretool --harness claude-code",
+        "{} --root {} hook {} --harness {}",
         sh_quote(&target.commrails_bin.to_string_lossy()),
-        sh_quote(&target.root.to_string_lossy())
+        sh_quote(&target.root.to_string_lossy()),
+        flavor.subcommand(),
+        flavor.label()
     );
     if let Some(ws) = target.workspace {
         cmd.push_str(" --workspace ");
@@ -527,7 +660,7 @@ pub fn claude_hook_command(target: HookTarget<'_>) -> String {
 pub fn claude_settings(target: HookTarget<'_>) -> Value {
     json!({
         "permissions": {
-            "defaultMode": "acceptEdits",
+            "defaultMode": "bypassPermissions",
             "allow": CLAUDE_ALLOWED_TOOLS,
         },
         "hooks": {
@@ -541,6 +674,47 @@ pub fn claude_settings(target: HookTarget<'_>) -> Value {
             }]
         }
     })
+}
+
+/// Session-scoped qwen settings (`QWEN_CODE_SYSTEM_SETTINGS_PATH=<file>`).
+/// Same PreToolUse schema and `permissionDecision` output as Claude Code;
+/// the user's `~/.qwen/settings.json` is never touched.
+pub fn qwen_settings(target: HookTarget<'_>) -> Value {
+    json!({
+        "hooks": {
+            "PreToolUse": [{
+                "matcher": "*",
+                "hooks": [{
+                    "type": "command",
+                    "command": hook_command(HookFlavor::Qwen, target),
+                    "timeout": 30,
+                }]
+            }]
+        }
+    })
+}
+
+/// TOML basic string.
+fn toml_str(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// The per-spawn `-c` override registering codex's PreToolUse hook.
+pub fn codex_hook_override(target: HookTarget<'_>) -> String {
+    format!(
+        "hooks.PreToolUse=[{{matcher=\"*\",hooks=[{{type=\"command\",command={},timeout=30}}]}}]",
+        toml_str(&hook_command(HookFlavor::Codex, target))
+    )
+}
+
+/// Session settings file a hooked harness reads, if it uses one:
+/// `(file suffix, contents)`. Codex takes its hook via `-c`, no file.
+pub fn hook_settings_file(harness: &str, target: HookTarget<'_>) -> Option<(&'static str, Value)> {
+    match HookFlavor::of(harness)? {
+        HookFlavor::Claude => Some(("claude-settings.json", claude_settings(target))),
+        HookFlavor::Qwen => Some(("qwen-settings.json", qwen_settings(target))),
+        HookFlavor::Codex => None,
+    }
 }
 
 /// Locate the `allternit-commrails` binary a hook should run:
@@ -574,6 +748,106 @@ pub fn find_commrails_bin() -> Option<PathBuf> {
 /// Returns the new argv; `settings_path` must already contain
 /// [`claude_settings`] for Claude.
 pub fn gate_argv(cmd: &[String], settings_path: Option<&Path>) -> Vec<String> {
+    gate_spawn(cmd, settings_path, None).argv
+}
+
+/// A gated launch: rewritten argv plus env the harness needs to find its
+/// per-spawn gate config.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GatedSpawn {
+    pub argv: Vec<String>,
+    pub env: Vec<(String, String)>,
+}
+
+/// [`gate_argv`] for every hooked harness. `settings_path` holds the session
+/// settings ([`hook_settings_file`]); `target` is needed for codex, whose
+/// hook rides `-c`.
+pub fn gate_spawn(cmd: &[String], settings_path: Option<&Path>, target: Option<HookTarget<'_>>) -> GatedSpawn {
+    let Some(first) = cmd.first() else {
+        return GatedSpawn { argv: Vec::new(), env: Vec::new() };
+    };
+    match HookFlavor::of(first) {
+        Some(HookFlavor::Codex) => return gate_codex(cmd, target),
+        Some(HookFlavor::Qwen) => return gate_qwen(cmd, settings_path),
+        _ => {}
+    }
+    let argv = gate_argv_claude_or_other(cmd, settings_path);
+    GatedSpawn { argv, env: Vec::new() }
+}
+
+/// codex: full auto-approve/no codex sandbox, plus our PreToolUse hook, all
+/// per spawn (`-c` + the hook-trust flag; `~/.codex` is never written).
+/// Global options go right after the binary so they precede `exec`,
+/// `exec resume`, or no subcommand.
+fn gate_codex(cmd: &[String], target: Option<HookTarget<'_>>) -> GatedSpawn {
+    let mut rest = Vec::with_capacity(cmd.len());
+    let mut skip_next = false;
+    for (i, w) in cmd.iter().enumerate().skip(1) {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        let overrides_policy = |v: &str| {
+            v.starts_with("sandbox_mode") || v.starts_with("approval_policy") || v.starts_with("hooks.PreToolUse")
+        };
+        if (w == "-c" || w == "--config") && cmd.get(i + 1).map(|v| overrides_policy(v)).unwrap_or(false) {
+            skip_next = true;
+            continue;
+        }
+        if w == "--dangerously-bypass-approvals-and-sandbox"
+            || w == "--yolo"
+            || w == "--dangerously-bypass-hook-trust"
+            || w.starts_with("--sandbox=")
+        {
+            continue;
+        }
+        if w == "--sandbox" || w == "-s" {
+            skip_next = true;
+            continue;
+        }
+        rest.push(w.clone());
+    }
+    let mut argv = vec![cmd[0].clone()];
+    for config in ["sandbox_mode=\"danger-full-access\"", "approval_policy=\"never\""] {
+        argv.push("-c".to_string());
+        argv.push(config.to_string());
+    }
+    if let Some(target) = target {
+        argv.push("-c".to_string());
+        argv.push(codex_hook_override(target));
+        argv.push("--dangerously-bypass-hook-trust".to_string());
+    }
+    argv.extend(rest);
+    GatedSpawn { argv, env: Vec::new() }
+}
+
+/// qwen: keep `--yolo`; the hook comes from a system-settings file.
+fn gate_qwen(cmd: &[String], settings_path: Option<&Path>) -> GatedSpawn {
+    let mut argv = vec![cmd[0].clone()];
+    let mut skip_next = false;
+    for w in &cmd[1..] {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        match w.as_str() {
+            "--yolo" | "-y" => continue,
+            "--approval-mode" => {
+                skip_next = true;
+                continue;
+            }
+            _ if w.starts_with("--approval-mode=") => continue,
+            _ => argv.push(w.clone()),
+        }
+    }
+    argv.push("--yolo".to_string());
+    let env = settings_path
+        .map(|p| vec![("QWEN_CODE_SYSTEM_SETTINGS_PATH".to_string(), p.to_string_lossy().to_string())])
+        .unwrap_or_default();
+    GatedSpawn { argv, env }
+}
+
+fn gate_argv_claude_or_other(cmd: &[String], settings_path: Option<&Path>) -> Vec<String> {
     let Some(first) = cmd.first() else { return Vec::new() };
     match harness_gate(first) {
         HarnessGate::Hook => {
@@ -594,8 +868,10 @@ pub fn gate_argv(cmd: &[String], settings_path: Option<&Path>) -> Vec<String> {
                     _ => out.push(w.clone()),
                 }
             }
+            // Auto-approve on the CLI's side; the PreToolUse hook in
+            // --settings still runs in bypass mode and its deny wins.
             out.push("--permission-mode".to_string());
-            out.push("acceptEdits".to_string());
+            out.push("bypassPermissions".to_string());
             if let Some(settings) = settings_path {
                 out.push("--settings".to_string());
                 out.push(settings.to_string_lossy().to_string());
@@ -603,8 +879,8 @@ pub fn gate_argv(cmd: &[String], settings_path: Option<&Path>) -> Vec<String> {
             out
         }
         HarnessGate::Sandbox => {
-            // Any caller-chosen sandbox (e.g. danger-full-access) is replaced:
-            // the Sandbox classification is only true under workspace-write.
+            // Caller-chosen sandbox/approval flags are replaced by one
+            // consistent auto-approve setting.
             let mut out = Vec::with_capacity(cmd.len() + 4);
             let mut skip_next = false;
             for (i, w) in cmd.iter().enumerate() {
@@ -626,20 +902,20 @@ pub fn gate_argv(cmd: &[String], settings_path: Option<&Path>) -> Vec<String> {
                 }
                 out.push(w.clone());
             }
-            // Same flags as the uhp-gateway codex driver and ao-spawn-gate:
+            // Auto-approve with no codex-side sandbox (the yolo equivalent).
             // `-c` rides every codex subcommand (`codex exec resume` has no
-            // `--sandbox`), and network stays on so dependency fetches work.
+            // `--sandbox` or bypass flag). Confinement comes from Allternit's
+            // execution environment, not from codex.
             for config in [
-                "sandbox_mode=\"workspace-write\"",
+                "sandbox_mode=\"danger-full-access\"",
                 "approval_policy=\"never\"",
-                "sandbox_workspace_write.network_access=true",
             ] {
                 out.push("-c".to_string());
                 out.push(config.to_string());
             }
             out
         }
-        HarnessGate::Ungated => cmd.to_vec(),
+        HarnessGate::Acp | HarnessGate::Ungated => cmd.to_vec(),
     }
 }
 

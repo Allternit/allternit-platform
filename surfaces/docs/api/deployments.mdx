@@ -9,10 +9,14 @@ The `/beta/deployments` API turns an agent into a scheduled service. A deploymen
 
 Deployments are scoped to the authenticated user.
 
+<Note>
+This namespace is served by the Allternit API data-plane node (`http://127.0.0.1:8013` on the same machine, or your paired or provisioned node). The hosted Cloud API at `https://api.allternit.com` does not route it; it relays only agent sessions, canvases, office and beta research/sessions. See [Cloud API](/api/cloud-api).
+</Note>
+
 ## Base URL
 
 ```
-https://api.allternit.com/v1/beta/deployments
+http://127.0.0.1:8013/api/v1/beta/deployments
 ```
 
 All requests require a Bearer token. See [Authentication](/api/authentication).
@@ -85,7 +89,7 @@ All requests require a Bearer token. See [Authentication](/api/authentication).
 ## List deployments
 
 ```bash
-curl -G https://api.allternit.com/v1/beta/deployments \
+curl -G http://127.0.0.1:8013/api/v1/beta/deployments \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -d "status=active"
 ```
@@ -119,7 +123,7 @@ curl -G https://api.allternit.com/v1/beta/deployments \
 ## Create a deployment
 
 ```bash
-curl -X POST https://api.allternit.com/v1/beta/deployments \
+curl -X POST http://127.0.0.1:8013/api/v1/beta/deployments \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -161,7 +165,7 @@ Invalid cron expressions return `400 Bad Request`.
 ## Get a deployment
 
 ```bash
-curl https://api.allternit.com/v1/beta/deployments/dep_7a8b9c0d \
+curl http://127.0.0.1:8013/api/v1/beta/deployments/dep_7a8b9c0d \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -176,7 +180,7 @@ curl https://api.allternit.com/v1/beta/deployments/dep_7a8b9c0d \
 ## Update a deployment
 
 ```bash
-curl -X PATCH https://api.allternit.com/v1/beta/deployments/dep_7a8b9c0d \
+curl -X PATCH http://127.0.0.1:8013/api/v1/beta/deployments/dep_7a8b9c0d \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -212,7 +216,7 @@ At least one field must be provided.
 Deleting a deployment cascades to its run history.
 
 ```bash
-curl -X DELETE https://api.allternit.com/v1/beta/deployments/dep_7a8b9c0d \
+curl -X DELETE http://127.0.0.1:8013/api/v1/beta/deployments/dep_7a8b9c0d \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -221,7 +225,7 @@ Returns `204 No Content`.
 ## List runs
 
 ```bash
-curl https://api.allternit.com/v1/beta/deployments/dep_7a8b9c0d/runs \
+curl http://127.0.0.1:8013/api/v1/beta/deployments/dep_7a8b9c0d/runs \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -248,7 +252,7 @@ curl https://api.allternit.com/v1/beta/deployments/dep_7a8b9c0d/runs \
 Manually enqueue a run and advance the deployment's schedule. This is useful for testing or for forcing an out-of-cycle execution.
 
 ```bash
-curl -X POST https://api.allternit.com/v1/beta/deployments/dep_7a8b9c0d/runs \
+curl -X POST http://127.0.0.1:8013/api/v1/beta/deployments/dep_7a8b9c0d/runs \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -276,7 +280,7 @@ Triggering a run also updates `last_run_at` and recomputes `next_run_at` on the 
 Report the terminal outcome of a run. Only `succeeded`, `failed`, and `cancelled` are accepted.
 
 ```bash
-curl -X PATCH https://api.allternit.com/v1/beta/deployments/dep_7a8b9c0d/runs/run_3d4e5f6a \
+curl -X PATCH http://127.0.0.1:8013/api/v1/beta/deployments/dep_7a8b9c0d/runs/run_3d4e5f6a \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{

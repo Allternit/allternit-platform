@@ -5,9 +5,11 @@ use serde_json::Value;
 
 pub mod sse;
 pub mod stdio;
+pub mod streamable_http;
 
 pub use sse::{ReconnectConfig, SseConfig, SseTransport};
 pub use stdio::StdioTransport;
+pub use streamable_http::{StreamableHttpConfig, StreamableHttpTransport};
 
 use crate::types::JsonRpcMessage;
 
@@ -19,6 +21,8 @@ pub enum TransportType {
     Stdio,
     /// Server-Sent Events transport (HTTP)
     Sse,
+    /// Streamable HTTP transport (MCP spec 2025-06-18)
+    StreamableHttp,
 }
 
 impl std::fmt::Display for TransportType {
@@ -26,6 +30,7 @@ impl std::fmt::Display for TransportType {
         match self {
             TransportType::Stdio => write!(f, "stdio"),
             TransportType::Sse => write!(f, "sse"),
+            TransportType::StreamableHttp => write!(f, "streamable_http"),
         }
     }
 }
@@ -136,6 +141,8 @@ pub enum TransportConfig {
         /// Request timeout
         timeout_secs: u64,
     },
+    /// Streamable HTTP transport configuration
+    StreamableHttp(StreamableHttpConfig),
 }
 
 impl TransportConfig {
@@ -172,11 +179,17 @@ impl TransportConfig {
         }
     }
 
+    /// Create a new streamable HTTP transport configuration
+    pub fn streamable_http(url: impl Into<String>) -> Self {
+        TransportConfig::StreamableHttp(StreamableHttpConfig::new(url))
+    }
+
     /// Get the transport type
     pub fn transport_type(&self) -> TransportType {
         match self {
             TransportConfig::Stdio { .. } => TransportType::Stdio,
             TransportConfig::Sse { .. } => TransportType::Sse,
+            TransportConfig::StreamableHttp(_) => TransportType::StreamableHttp,
         }
     }
 }

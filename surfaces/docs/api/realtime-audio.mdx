@@ -5,6 +5,9 @@ description: Low-latency speech-to-text and text-to-speech sessions through the 
 
 ## Overview
 
+**Status:** Implementation IMPLEMENTED (session registry only), Exposure INTERNAL. Session create/list/get/delete are real. The WebSocket is a placeholder loop: it does not run speech-to-text, a model, or text-to-speech. Session creation returns `501 allternit.not_configured` ("no realtime audio provider configured") unless the gateway is started with `ALLTERNIT_GATEWAY_ALLOW_FAKE_PROVIDERS=1`.
+
+
 The Realtime Audio API provides session-based voice interaction. A session defines the model, voice, modalities, and turn-detection behavior. Clients connect to a session over WebSocket and stream audio or text in real time.
 
 ## Base URL
@@ -43,11 +46,11 @@ REST endpoints require a virtual key in the `Authorization` header. The WebSocke
 | `modalities` | string[] | no | `text` and/or `audio`. Defaults to `["text", "audio"]`. |
 | `voice` | string | no | Voice id. Defaults to `alloy`. |
 | `instructions` | string | no | System instructions for the session. |
-| `temperature` | number | no | Sampling temperature. Defaults to `0.8`. |
+| `temperature` | number | no | Sampling temperature, 0.0 to 2.0. Defaults to `0.8`. |
 | `max_response_output_tokens` | integer | no | Maximum output tokens per response. |
-| `input_audio_format` | string | no | Audio format for input. |
-| `output_audio_format` | string | no | Audio format for output. |
-| `turn_detection` | object | no | Turn-detection configuration. |
+| `input_audio_format` | string | no | Stored on the session; not used by the WebSocket loop. |
+| `output_audio_format` | string | no | Stored on the session; not used by the WebSocket loop. |
+| `turn_detection` | object | no | Stored on the session; no server-side turn detection runs. |
 
 ### Voices
 
@@ -64,7 +67,7 @@ REST endpoints require a virtual key in the `Authorization` header. The WebSocke
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `type` | string | Turn-detection strategy. |
+| `type` | string | Turn-detection strategy (free-form string, stored only). |
 | `threshold` | number | Activation threshold. |
 | `prefix_padding_ms` | integer | Audio padding before the detected speech. |
 | `silence_duration_ms` | integer | Silence required to end a turn. |
@@ -158,12 +161,11 @@ Connect to the session WebSocket and exchange events:
 
 | Event | Direction | Description |
 |-------|-----------|-------------|
-| `session.created` | server → client | Sent when the session is ready. |
-| `input_audio_buffer.append` | client → server | Stream raw audio chunks. |
-| `input_audio_buffer.commit` | client → server | Signal end of user audio. |
-| `response.created` | client → server | Ask the model to generate a response. |
-| `response.done` | server → client | Response generation finished. |
-| `error` | server → client | Session or transport error. |
+| `session.created` | server → client | Sent when the socket connects. |
+| `input_audio_buffer.append` | client → server | Accepted; the server replies `input_audio_buffer.committed`. Audio is not processed. |
+| `input_audio_buffer.commit` | client → server | The server replies `response.created`, then `response.done` with a fixed placeholder text ("Audio session placeholder response."). |
+| `response.created` | server → client | Sent after a commit. Not a client event. |
+| `response.done` | server → client | Sent about 100 ms after `response.created`. |
 
 ### Example WebSocket connection
 
@@ -195,6 +197,7 @@ ws.onmessage = (event) => {
 | 429 | `allternit.rate_limited` | Per-key rate limit exceeded. |
 | 429 | `allternit.budget_exceeded` | Monthly key or tenant budget exhausted. |
 | 500 | `allternit.internal_error` | Internal gateway error. |
+| 501 | `allternit.not_configured` | No realtime audio provider configured (fake-provider flag unset). |
 | 503 | `allternit.upstream_error` | Session store unavailable. |
 
 ## Related pages

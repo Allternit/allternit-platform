@@ -84,9 +84,9 @@ The response is passed through directly from Udemy.
 
 | HTTP status | Code | Meaning |
 |-------------|------|---------|
-| 400 | `allternit.invalid_request` | Missing or empty `query`. |
-| 401 | `allternit.authentication_failed` | Missing or invalid bearer token. |
-| 502 | `allternit.bad_gateway` | Udemy request failed or returned a non-success status. |
+| 400 | — | Body `{"error": "query is required"}`: missing or empty `query`. |
+| 401 | — | Missing or invalid bearer token. |
+| 502 | — | Body `{"error": "Udemy request failed" \| "Failed to decode Udemy response", "details": ...}`. |
 
 ## Related pages
 

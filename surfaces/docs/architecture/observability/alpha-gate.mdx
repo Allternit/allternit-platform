@@ -1,0 +1,39 @@
+---
+title: "Alpha gate"
+description: "The bar for calling the Agency API alpha"
+---
+
+**Implementation: DESIGN · Exposure: —.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | The Agency API opens for alpha only after one end-to-end run passes restart, resume, verify, replay and receipt-backed completion. |
+| **Implemented today** | API-level tests are written. The gate cannot run: there is no Agency API server. |
+| **Active path** | No. |
+| **Public exposure** | No. |
+
+The alpha gate is the list of things that must be demonstrably true before the Agency API leaves preview.
+
+## Architecture contract
+
+Intended criteria: a real bug-to-patch-to-failed-test-to-repair-to-verified workflow runs with no monolithic model loop; every decision can be replayed from state and versioned artifacts; a backend can be swapped without graph edits; restart reconstructs a run from state and receipts; an unauthorized write is blocked; a run receipt proves completion; provenance and cost telemetry exist on every transition; and the system shows measured lift over the same backbone run naked.
+
+## Current implementation
+
+The gate is a design target. It has not been run and the Agency API is not live.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Alpha gate | **DESIGN** |
+
+## Developer relevance
+
+Build against the preview contract, and expect changes before the gate passes.
+
+## Related
+
+- [Agency API overview](/api/agency/overview)
+- [Conformance](/architecture/observability/conformance)
+- [System lift](/architecture/observability/system-lift)

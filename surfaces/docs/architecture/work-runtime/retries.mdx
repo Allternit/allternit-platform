@@ -1,0 +1,48 @@
+---
+title: "Retries and idempotent effects"
+description: "How a step is retried without repeating a side effect, and why a retry must change something"
+---
+
+**Implementation: ENABLED (idempotent effect receipts on the gate's tool path) · IMPLEMENTED (retry checks in the validator) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Effectful retries are safe because every effect has an idempotency key and a receipt. |
+| **Implemented today** | Effect receipts with idempotency keys on the gate's tool path. Retry-policy checks as validator library code. |
+| **Active path** | Partial. |
+| **Public exposure** | No. Not reachable by an external developer. |
+
+Retrying a step that only reads is easy. Retrying a step that changed something outside the run (sent a message, charged a card, pushed a commit) can do it twice. Allternit treats those two cases differently.
+
+## Architecture contract
+
+- **Effects are recorded at most once per idempotency key.** An action with an external or irreversible effect carries an idempotency key and writes an action receipt. A second attempt with the same key returns the recorded result instead of running the effect again.
+- **No key, no blind retry.** An effect interrupted without an idempotency key and receipt is not re-run. The run asks a person (`unsafe_resume`).
+- **A retry must change something.** A node's retry policy names what must differ between attempts: the input, the context, the component or the strategy. Retrying the same thing the same way is rejected by the graph validator.
+- **Retries are explicit.** Retry, fallback and rollback targets are nodes in the graph, not hidden loops.
+
+Why: most costly agent failures are repeats: the same failing step run again, or the same effect applied twice. Idempotency keys make re-execution safe, and requiring a change makes retries useful.
+
+## Current implementation
+
+- The receipt chain on main records tool-call effects through the gate as effect receipts. Calls marked as read-only or no-effect skip the chain. A supplied idempotency key of at least eight characters dedupes; otherwise a unique key is generated. A replayed call returns the recorded external reference, and a failed effect is recorded on the chain as failed.
+- The graph validator checks that a retrying node has a retry policy naming what must change, and that it allows at least one attempt. The validator is merged as library code and not yet run on every accepted graph.
+- The drive runner restarts an interrupted attempt only for nodes labelled safe to retry.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| At-most-once effects and effect receipts on the gate's tool path | **ENABLED** · INTERNAL |
+| Unsafe-resume hold | **ENABLED** (internal, drive runner) |
+| Retry-must-change check | **IMPLEMENTED** (graph validator) |
+| Idempotency on the Agency API | **PUBLIC PREVIEW** (contract; not served). See [Idempotency](/api/agency/idempotency). |
+
+## Developer relevance
+
+Give every side-effecting tool call a stable idempotency key derived from what it does, not a random one, so a retry after a crash is recognized as the same effect. Mark read-only calls as such so they do not add chain entries.
+
+## Related
+
+- [Receipts](/architecture/receipts)
+- [Heartbeat and reclaim](/architecture/work-runtime/heartbeat-reclaim)

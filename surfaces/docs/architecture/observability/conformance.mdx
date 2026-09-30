@@ -1,0 +1,51 @@
+---
+title: "Conformance"
+description: "The pre-model gates and failure-injection matrix an implementation must pass"
+---
+
+**Implementation: IMPLEMENTED (kernel conformance suite) · DESIGN (Agency API conformance, alpha gate) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | The runtime proves restart, resume, verify, replay and fault behavior with tests. |
+| **Implemented today** | Kernel-level conformance tests run on main. API-level tests are written but have no server to run against. |
+| **Active path** | Internal. Tests, not a runtime path. |
+| **Public exposure** | No. |
+
+Conformance is the test that a component honors the contracts, not just their shape.
+
+## Architecture contract
+
+Gates before any model is trusted: schema validation at every boundary, static graph validation, read and write conflict checks, policy precedence, receipt completeness, deterministic replay, failure injection at every node, and fallback when a backend or preferred model is unavailable.
+
+| Injected failure | Declared path | Forbidden |
+|------------------|---------------|-----------|
+| Unavailable capability | Alternate implementation, then fail | Inventing a model name |
+| Malformed decision | Changed evidence or fallback backend | Ad hoc prose parsing |
+| Tool timeout | Classify, then bounded retry | Full re-prompt |
+| Policy deny | Deny or ask edge | Model override |
+| Verification fail | Repair graph | Declaring success |
+| State conflict | Re-read, then recompute | Last writer wins |
+| Context build fail | Minimal projection | Transcript dump |
+| Transfer fail | Semantic rebuild | Abort |
+
+## Current implementation
+
+The ABI package carries valid and invalid example documents and a schema-level test that validates them. The runtime conformance suite, including failure injection and replay determinism, is not on main.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Schema examples and validation test | **ENABLED (contract package)** |
+| Runtime conformance suite, kernel layer | **IMPLEMENTED** · INTERNAL |
+| Agency API conformance and alpha gate | **DESIGN** |
+
+## Developer relevance
+
+Use the schema examples today. See the [conformance checklist](/build-on-allternit/conformance-checklist) for what to prepare.
+
+## Related
+
+- [Conformance checklist](/build-on-allternit/conformance-checklist)
+- [Kernel contracts](/architecture/kernel-contracts)

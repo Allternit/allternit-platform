@@ -1,0 +1,42 @@
+{
+  "vendorId": "grok-bot",
+  "avatarTreatment": "vendor_icon_rounded_square",
+  "accentTokens": {
+    "accent": "#1c1c1e",
+    "accentForeground": "#f5f5f7",
+    "surface": "#ffffff",
+    "surfaceMuted": "#f2f2f4",
+    "border": "#d9d9de",
+    "orb": "#c9c9ce"
+  },
+  "typographyHints": {
+    "sans": "SF Pro, system-ui, sans-serif",
+    "icons": "cursor-icons",
+    "mono": "SF Mono, ui-monospace, monospace"
+  },
+  "iconAssets": { "app": "assets/grok-bot.png" },
+  "threadHeader": "bot_name_with_status",
+  "activityView": "inline_working_indicator",
+  "statusVocabulary": {
+    "idle": "Ready",
+    "streaming": "Generating…",
+    "working": "Working",
+    "thinking": "Thinking",
+    "running": "Running",
+    "paused": "Paused",
+    "needs_approval": "Needs your approval",
+    "routines": "Routines",
+    "routine": "Routine",
+    "rate_limited": "Usage limit reached",
+    "reconnecting": "Reconnecting",
+    "signed_out": "Sign in"
+  },
+  "approvalCard": "allow_once_always_allow_deny",
+  "taskCard": "none",
+  "routineCard": "routine_row",
+  "composer": "rounded_prompt_with_send_stop",
+  "contentRenderers": ["markdown", "code", "image"],
+  "viaBadge": "via Allternit",
+  "verifiedBadge": "Grok Bot",
+  "laneBadge": "UI bridge"
+}

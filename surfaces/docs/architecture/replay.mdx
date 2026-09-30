@@ -1,0 +1,58 @@
+---
+title: Replay
+description: Re-running a finished run from its recording with recorded effects only, and the divergence report
+---
+
+**Implementation: IMPLEMENTED · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Any finished run can be replayed with recorded effects only. |
+| **Implemented today** | Cassettes, recorded-only replay, divergence reports, `POST /v1/replays` on the internal work runtime service, and a replay mode in the gate. |
+| **Active path** | Internal. On demand; not part of normal execution. |
+| **Public exposure** | No. Agency API replay endpoints are not served. |
+
+Replay answers one question: given the same recorded world, does the system make the same decisions? It is how a change to the system is tested against real past runs without touching the outside world.
+
+## Architecture contract
+
+### How replay works
+
+Replay re-runs a finished run at the decision and tool boundary to answer one question: given the same recorded world, does the system make the same decisions?
+
+```text
+live run → trace + receipts → cassette → replay → divergence report
+```
+
+A **cassette** is the recording of a run's external results, stored by content address. During replay:
+
+- **Effects are recorded-only.** Every external call is served from the recording. This is the only replay mode.
+- **Nothing is executed live.** A call with no recording fails that step with `ERR_REPLAY_UNRECORDED`. It is never sent to the real system.
+- **Decisions are recomputed.** The replay reconstructs which node ran, the evidence it saw, the capability or tool it resolved, and why it branched. Generated text does not need to be reproduced token for token.
+- **Divergence is reported.** The result is `equivalent`, `diverged_expected` (a difference caused by something you deliberately changed) or `diverged_unexpected`.
+
+A replay can vary the authority profile, the completion criteria, the model class constraints or the runtime hints. Everything not overridden comes from the source run's recording. This makes replay the way to test a change to the system against real past runs without touching the outside world.
+
+Replay is on the critical path for the Agency API alpha: the API does not open until a run can be replayed.
+
+## Current implementation
+
+Replay is on main, internal only. A cassette is recorded from a finished run's receipt chain. Replay runs in recorded-only mode and produces a `DivergenceReportV1`. The gate has a replay mode: tool results and policy decisions are served from the recording, and any attempt to execute live is denied on every gate path. The internal work runtime service accepts `POST /v1/replays` and enforces `effects: recorded_only`, and an operator command records and checks replays. None of this is reachable through `https://api.allternit.com` yet. Replay remains on the critical path for the Agency API alpha, which also needs the public endpoint.
+
+## Availability
+
+| Part | Status | Notes |
+|------|--------|-------|
+| Replay contracts (`CassetteV1`, `DivergenceReportV1`) | **IMPLEMENTED** | Kernel ABI 1.0.0; specification only. |
+| Cassette recording | **IMPLEMENTED** · INTERNAL | Internal. Recorded from the receipt chain. |
+| Replay execution and divergence reports | **IMPLEMENTED** · INTERNAL | Internal. Recorded-only; the gate denies live execution in replay mode. |
+| Agency API replay endpoints | **PUBLIC PREVIEW** (contract; not served) · **DESIGN** (public server) | Not served through `https://api.allternit.com`. |
+
+## Developer relevance
+
+Replay never causes effects, so you can use it freely to compare a changed authority profile, completion criteria or model class constraints against a real run. Treat `diverged_unexpected` as a regression signal. A step that fails with `ERR_REPLAY_UNRECORDED` means the recording is incomplete, not that the system called out.
+
+## Related
+
+- [Receipts](/architecture/receipts)
+- [Agency API: Replays](/api/agency/replays)

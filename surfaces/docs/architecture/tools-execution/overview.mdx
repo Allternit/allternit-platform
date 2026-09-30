@@ -1,0 +1,52 @@
+---
+title: "Tools and execution"
+description: "The agent instruction set, how tools are called, and where every effect is fenced"
+---
+
+**Implementation: ENABLED (environment recording, effect receipts, egress guard on some paths) · SHADOW (tool call compiler) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Tools run in a compiled environment, behind policy, and every effect is receipted. |
+| **Implemented today** | See each page. Environment stripping is opt-in; the egress guard covers named paths only; the tool call compiler is shadow. |
+| **Active path** | Partial. |
+| **Public exposure** | No. Not reachable by an external developer. |
+
+Tools are how a run changes the world. In the target design, the kernel treats every tool call as a typed, authorized, receipted effect, not as text a model emits.
+
+## Architecture contract
+
+### The Agent ISA
+
+The instruction set has seven groups: Observation, Decision, Mutation, Execution, Version Control, Verification and Control. Control covers `BRANCH`, `PARALLEL`, `JOIN`, `RETRY`, `ROLLBACK`, `CHECKPOINT`, `REQUEST_EVIDENCE`, `ESCALATE`, `WAIT_FOR_DEPENDENCY` and `FINISH`. Each instruction declares input and output schemas, side-effect class, reversibility, evidence produced, permissions and timeout. The [primitive registry](/reference/primitive-registry) lists the 191 registered IDs.
+
+### The path of one effect
+
+Tool family, operation, candidate arguments, schema validation, policy validation, a signed intent, execution inside an [ExecutionEnvironment](/architecture/tools-execution/execution-environment), a typed result and a receipt. Compile and execute are separate steps, with authorization between them.
+
+## Current implementation
+
+On main, every spawned node has an execution environment recorded in the ledger, network egress goes through one shared guard, and effects leave signed receipts in an internal receipt chain. The typed Tool Call Compiler is on main behind a flag that is off by default, and runs in shadow when enabled.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| ISA groups and primitive registry | **IMPLEMENTED (contract)** |
+| Per-node ExecutionEnvironment resolution and recording | **ENABLED · INTERNAL** |
+| Process-env stripping | **IMPLEMENTED (opt-in, off by default) · INTERNAL** |
+| Shared egress guard | **ENABLED on the web proxy and design connector import · DESIGN for work-runtime nodes** |
+| Effect receipts | **ENABLED (internal; not reachable through api.allternit.com)** |
+| Tool Call Compiler | **SHADOW** · INTERNAL |
+
+## Developer relevance
+
+Declare an honest effect class for every tool. Assume the call will be gated, fenced and receipted, and that a retry of an external effect needs an idempotency key.
+
+## Related
+
+- [Tool Call Compiler](/architecture/tools-execution/tool-call-compiler)
+- [Argument provenance](/architecture/tools-execution/argument-provenance)
+- [Mutation receipts](/architecture/tools-execution/mutation-receipts)
+- [Primitive packs](/architecture/tools-execution/primitive-packs)
+- [Kernel tools](/tools/kernel-tools)

@@ -1,0 +1,53 @@
+---
+title: "Admission"
+description: "Whether a node may start, checked against policy, capacity and budget before anything is spawned"
+---
+
+**Implementation: ENABLED (spawn gate) · IMPLEMENTED (spawn caps, capacity admission in the opt-in drive runner) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Nothing runs until it is admitted against policy, capacity and budget. |
+| **Implemented today** | The spawn gate runs on every work-runtime spawn. Spawn caps and capacity admission live in the opt-in drive runner. |
+| **Active path** | Partial. |
+| **Public exposure** | No. Not reachable by an external developer. |
+
+**Admission** is the step between a node being declared and being ready. It answers: may this node start now?
+
+## Architecture contract
+
+An admission controller checks, before any executor is spawned:
+
+- **Policy.** The node's capability request and grants are allowed. A hard deny ends it here.
+- **Capacity.** Spawn caps are not exceeded, and an executor that can run the node is available. Executor probes are auth-aware: an executor that is not signed in is not available.
+- **Budget.** The run's budget has room. Budgets fail closed.
+
+Admission never bypasses policy or leases, and the controller that drives execution is opt-in.
+
+Why: spawning is where cost and risk start. Checking before spawn, not after, means a run that should not proceed never starts an executor.
+
+## Current implementation
+
+- **The spawn gate** runs on every spawn of a work-item-bound turn. Work-bound executor paths are being converged on the Allternit policy gate; direct interactive runtime behavior may differ from Agency/work-runtime execution.
+- **Execution environment.** Each spawned node gets a resolved environment: a working directory, an allowlist of environment keys (never the whole process environment), filesystem scope and a network policy. The default network policy allows only public destinations, enforced by a shared egress guard that refuses private, loopback, link-local and similar ranges and resolves a name once so DNS rebinding cannot swap the address. The resolved document is recorded in the ledger.
+- **Spawn caps and capacity admission** live in the drive runner, which is an opt-in operator command. Caps are shared by every drive process on the machine.
+
+The admission controller's full contract (capacity model, cap keys, probe result shape, spawn receipt) is not yet defined.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Spawn gate, execution environment, egress guard | **ENABLED** · INTERNAL |
+| Spawn caps and capacity admission | **IMPLEMENTED** (opt-in drive runner) |
+| Admission controller contract | **DESIGN** |
+
+## Developer relevance
+
+If you add an executor, it will be launched non-interactively and must not ask for permission on its own side, because a headless turn would hang. Allternit's gate answers for it. Declare what environment keys and network access it needs; anything else is withheld.
+
+## Related
+
+- [Policy and safety](/architecture/policy)
+- [Leases and fencing](/architecture/work-runtime/leases)
+- [Sandbox](/tools/sandbox)

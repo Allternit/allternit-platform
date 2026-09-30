@@ -30,6 +30,8 @@ import WRAP_UP from "@/runtime/session/prompt/wrap-up.txt"
 import { defer } from "@/shared/util/defer"
 import { ToolRegistry } from "@/runtime/tools/builtins/registry"
 import { MCP } from "@/runtime/tools/mcp"
+import { mcpAppMetadata } from "@/runtime/tools/mcp/apps"
+import { McpUserProxy } from "@/runtime/tools/mcp/user-proxy"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import { LSP } from "@/runtime/integrations/lsp"
 import { ReadTool } from "@/runtime/tools/builtins/read"
@@ -51,6 +53,7 @@ import { Tool } from "@/runtime/tools/builtins/tool"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
 import { SessionStatus } from "@/runtime/session/status"
 import { GoalEngine } from "@/runtime/automation/goal-engine"
+import { KernelTurn } from "@/runtime/kernel/compilers/turn-hook"
 import { ToolValidationRetry } from "@/runtime/tools/validation-retry"
 import { LLM } from "@/runtime/session/llm"
 import { iife } from "@/shared/util/iife"
@@ -155,6 +158,12 @@ export namespace SessionPrompt {
       .optional()
       .describe(
         "Passthrough metadata forwarded by API bridges. The mobile composer sends `metadata.tools` ({ webSearch, research, toolAccess }) here; it is applied to this message's turn only and never persisted on the session.",
+      ),
+    mcpProxy: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe(
+        "The caller's per-user MCP proxy for this turn ({ server, url, sessionId, token }), sent by allternit-api. Held in memory for the turn only: deliberately not part of `metadata` (which is stored on the user message) because the token must never be written to disk.",
       ),
     format: MessageV2.Format.optional(),
     system: z.string().optional(),
@@ -299,9 +308,15 @@ const message = await createUserMessage(input)
       (p) => (p.type === "text" && isRoutineTurnText(p.text)) || p.type === "subtask",
     )
 
-    const result = await loop({ sessionID: input.sessionID, fallbackModels: input.fallbackModels, botPreamble })
-    if (!afterTurnLimit(session, result)) afterTurnHandoff(input.sessionID, result)
-    return result
+    // The per-user connector proxy exists for this turn only.
+    const releaseMcpProxy = McpUserProxy.register(input.sessionID, input.mcpProxy)
+    try {
+      const result = await loop({ sessionID: input.sessionID, fallbackModels: input.fallbackModels, botPreamble })
+      if (!afterTurnLimit(session, result)) afterTurnHandoff(input.sessionID, result)
+      return result
+    } finally {
+      releaseMcpProxy()
+    }
   })
 
   /** The wrap-up instruction a turn gets once it crosses land_at. */
@@ -1019,6 +1034,20 @@ const message = await createUserMessage(input)
       const validationReminder = ToolValidationRetry.reminder(sessionID)
       if (validationReminder) system.push(validationReminder)
       if (wrapUp) system.push(wrapUpReminder(wrapUp.window))
+      // WP9: Context Compiler, shadow mode behind GIZZI_KERNEL_COMPILERS (off by
+      // default). Records a ContextProjectionV1; never changes `system`.
+      if (KernelTurn.enabled())
+        KernelTurn.compileTurnContext({
+          sessionID,
+          directory: session.directory,
+          objective:
+            lastUserMsg?.parts
+              .filter((p) => p.type === "text")
+              .map((p: any) => p.text)
+              .join("\n") ?? "",
+          system,
+          budgetTokens: model.limit?.context ?? 0,
+        })
 
       const activeGoalForDeadline = GoalEngine.getCurrentGoal(sessionID)
       const deadlineMs = activeGoalForDeadline?.state === "in_progress"
@@ -1315,13 +1344,27 @@ const message = await createUserMessage(input)
               args,
             },
           )
-          const result = await ToolDedupe.execute({
-            sessionID: ctx.sessionID,
-            messageID: ctx.messageID,
-            tool: item.id,
-            args,
-            run: () => ToolDispatcher.executeInitialized(item.id, args, ctx, item.execute),
-          })
+          // WP9: Tool Call Compiler, shadow mode behind GIZZI_KERNEL_COMPILERS
+          // (off by default → plain pass-through to the existing call).
+          const result = await KernelTurn.withToolReceipt(
+            {
+              sessionID: ctx.sessionID,
+              callID: ctx.callID,
+              tool: item.id,
+              args,
+              directory: input.session.directory,
+              description: item.description,
+              schema: () => z.toJSONSchema(item.parameters),
+            },
+            () =>
+              ToolDedupe.execute({
+                sessionID: ctx.sessionID,
+                messageID: ctx.messageID,
+                tool: item.id,
+                args,
+                run: () => ToolDispatcher.executeInitialized(item.id, args, ctx, item.execute),
+              }),
+          )
           const output = {
             ...result,
             attachments: result.attachments?.map((attachment) => ({
@@ -1346,7 +1389,13 @@ const message = await createUserMessage(input)
       })
     }
 
-    const mcpTools = Object.entries(await MCP.tools())
+    // The user's connectors, through allternit-api's per-user proxy (registered for this turn only).
+    const proxyClient = await McpUserProxy.client(input.session.id)
+    const proxyEntry = McpUserProxy.current(input.session.id)
+    const mcpCatalog = await MCP.toolCatalog(
+      proxyClient && proxyEntry ? { [proxyEntry.server]: proxyClient } : {},
+    )
+    const mcpTools = Object.entries(mcpCatalog.tools)
     const config = await Config.get()
     const dynamicSelection =
       Flag.GIZZI_DYNAMIC_TOOL_SELECTION || config.experimental?.dynamic_tool_selection === true
@@ -1478,6 +1527,9 @@ const message = await createUserMessage(input)
         const truncated = await Truncate.output(textParts.join("\n\n"), {}, input.agent)
         const metadata = {
           ...(result.metadata ?? {}),
+          // MCP Apps: the host needs the untouched result (structuredContent, _meta) and the
+          // originating server/tool to render a ui:// resource; the model never sees this.
+          ...mcpAppMetadata(mcpCatalog.descriptors[key], result),
           truncated: truncated.truncated,
           ...(truncated.truncated && { outputPath: truncated.outputPath }),
         }

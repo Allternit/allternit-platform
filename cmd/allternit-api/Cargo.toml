@@ -54,7 +54,7 @@ allternit-computer-cloud = { path = "../../cmd/allternit-computer-cloud" }
 allternitos-cloud-contracts = { workspace = true }
 
 # WebSocket
-tokio-tungstenite = { workspace = true }
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 futures = "0.3"
 
 # SQLite
@@ -105,6 +105,7 @@ usvg = "0.41"
 tiny-skia = "0.11"
 image = "0.24"
 base64 = "0.22"
+mcp-client = { workspace = true }
 
 # PDF Rendering dependencies
 printpdf = "0.6"

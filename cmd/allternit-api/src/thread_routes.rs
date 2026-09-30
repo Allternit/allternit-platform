@@ -960,6 +960,8 @@ fn advance(db: &DbHandle, actor: (&str, &str), t: &ThreadView, session: &str, bo
             .map_err(|e| e.to_string())?;
         }
     }
+    // Vendor threads: the old generation's remote context starts closing.
+    crate::gateway_runner::on_generation_advanced(db, &t.id, next_gen - 1);
     if !t.incognito {
         ledger(
             db,
@@ -1314,6 +1316,7 @@ pub fn bot_project_overview(db: &DbHandle, user_id: &str) -> rusqlite::Result<Ve
                 (SELECT MAX(t.last_activity_at) FROM bot_threads t WHERE t.project_id = p.id AND t.incognito = 0)
          FROM cowork_projects p
          WHERE p.user_id = ?1
+           AND json_extract(p.metadata, '$.workspace.key') IS NULL
            AND (EXISTS (SELECT 1 FROM project_bots b WHERE b.project_id = p.id)
                 OR json_extract(p.metadata, '$.kind') = 'bots')",
     )?;
@@ -1364,6 +1367,9 @@ async fn bot_projects(State(state): State<Arc<AppState>>, Extension(user): Exten
 #[derive(Debug, Deserialize)]
 pub struct EventsQuery {
     pub limit: Option<i64>,
+    /// Ascending, cursor-paged: only events with `sequence` greater than this.
+    /// Absent = the newest-first default.
+    pub after: Option<i64>,
 }
 
 /// The thread's activity (its `thread.*`, `routine.*` and other ledger
@@ -1380,13 +1386,15 @@ async fn thread_events(
     };
     let db = state.db.clone();
     let limit = q.limit.unwrap_or(100).clamp(1, 500);
+    let after = q.after;
     let res = blocking(move || {
         let conn = db.connect()?;
         let mut stmt = conn.prepare(
             "SELECT id, seq, event_type, actor_type, actor_id, payload, session_id, occurred_at
-             FROM bot_events WHERE bot_id = ?1 AND thread_id = ?2 ORDER BY seq DESC LIMIT ?3",
+             FROM bot_events WHERE bot_id = ?1 AND thread_id = ?2 AND (?4 IS NULL OR seq > ?4)
+             ORDER BY CASE WHEN ?4 IS NULL THEN -seq ELSE seq END LIMIT ?3",
         )?;
-        let rows = stmt.query_map(params![t.bot_id, t.id, limit], |r| {
+        let rows = stmt.query_map(params![t.bot_id, t.id, limit, after], |r| {
             Ok(json!({
                 "id": r.get::<_, String>(0)?,
                 "sequence": r.get::<_, i64>(1)?,
@@ -1401,7 +1409,11 @@ async fn thread_events(
     })
     .await;
     match res {
-        Ok(events) => Json(json!({ "events": events })).into_response(),
+        Ok(events) => {
+            // Cursor for `?after=`: the highest sequence in this page.
+            let cursor = events.iter().filter_map(|e| e["sequence"].as_i64()).max();
+            Json(json!({ "events": events, "cursor": cursor })).into_response()
+        }
         Err(r) => r,
     }
 }

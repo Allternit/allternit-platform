@@ -35,5 +35,7 @@ export const accountSchema = z.object({
   // Read from the provider after sign-in (email/username). Never a token.
   identity: z.string().nullable().optional(),
   usage: accountUsageSchema.nullable().optional(),
+  // The account the router tries first for its provider (one per provider).
+  preferred: z.boolean().optional(),
 });
 export type Account = z.infer<typeof accountSchema>;

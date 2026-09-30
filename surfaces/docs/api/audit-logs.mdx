@@ -7,13 +7,11 @@ description: 'Query and append audit logs for tasks across workspaces.'
 
 The Task Audit Logs API records actions taken on tasks. Each log entry identifies the task, the action, the actor type and ID, an optional JSON payload, and a timestamp. Access is scoped to tasks owned by the caller or tasks in workspaces where the caller is a member.
 
+<Note>
+This namespace is served by the Allternit API data-plane node (`http://127.0.0.1:8013` on the same machine, or your paired or provisioned node). The hosted Cloud API at `https://api.allternit.com` does not route it; it relays only agent sessions, canvases, office and beta research/sessions. See [Cloud API](/api/cloud-api).
+</Note>
+
 ## Base URL
-
-```text
-https://api.allternit.com/api
-```
-
-For local development:
 
 ```text
 http://127.0.0.1:8013/api
@@ -28,12 +26,14 @@ All routes require a valid bearer token in the `Authorization` header. See [Auth
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | string | Unique log entry identifier. |
-| `task_id` | string | Task the action relates to. |
+| `taskId` | string | Task the action relates to. |
 | `action` | string | Action name, e.g. `created`, `updated`, `agent_run`. |
-| `actor_type` | string | `user`, `agent`, `system`, etc. |
-| `actor_id` | string | Identifier of the actor. |
+| `actorType` | string | `user`, `agent`, `system`, etc. |
+| `actorId` | string | Identifier of the actor. |
 | `payload` | string \| null | JSON-serialized action payload. |
-| `created_at` | string | ISO 8601 timestamp. |
+| `createdAt` | string | ISO 8601 timestamp. |
+
+Responses use camelCase. The create request accepts `taskId` or `task_id`, and `actor_type` / `actor_id` in snake_case.
 
 ## Endpoints
 
@@ -46,7 +46,7 @@ All routes require a valid bearer token in the `Authorization` header. See [Auth
 ## List audit logs
 
 ```bash
-curl "https://api.allternit.com/api/audit-logs?taskId=task_abc123&page=1&limit=50" \
+curl "http://127.0.0.1:8013/api/audit-logs?taskId=task_abc123&page=1&limit=50" \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -87,7 +87,7 @@ When `taskId` is omitted, the endpoint returns audit logs for all tasks the call
 ## Create an audit log entry
 
 ```bash
-curl -X POST https://api.allternit.com/api/audit-logs \
+curl -X POST http://127.0.0.1:8013/api/audit-logs \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -101,6 +101,8 @@ curl -X POST https://api.allternit.com/api/audit-logs \
 
 ### Response
 
+`201 Created`
+
 ```json
 {
   "id": "log_def456"
@@ -109,11 +111,13 @@ curl -X POST https://api.allternit.com/api/audit-logs \
 
 ## Error codes
 
-| HTTP status | Code | Meaning |
+Errors are returned as `{"error": "<message>"}`.
+
+| HTTP status | Body | Meaning |
 |-------------|------|---------|
-| 401 | `allternit.authentication_failed` | Missing or invalid bearer token. |
-| 403 | `allternit.access_denied` | Caller cannot access the requested task. |
-| 500 | `allternit.internal_error` | Database or runtime internal error. |
+| 401 | (auth layer) | Missing or invalid bearer token. |
+| 403 | `{"error": "Access denied"}` | Caller cannot access the requested task. |
+| 500 | `{"error": "internal error"}` | Database or runtime internal error. |
 
 ## Related pages
 

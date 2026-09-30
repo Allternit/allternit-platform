@@ -3,6 +3,10 @@ title: 'ACI API'
 description: 'Start, stream, and control Allternit Computer Interface (ACI) browser-automation runs through the gateway.'
 ---
 
+<Note>
+**Status:** Implementation IMPLEMENTED × Exposure PUBLIC PREVIEW. Routes verified against `cmd/allternit-api/src/aci_routes.rs`; batch and code routes added (they were undocumented). Batch and code grants are enforced by `aci_batch.rs`, `aci_code.rs` and `aci_safety.rs`.
+</Note>
+
 ## Overview
 
 The ACI API is the gateway surface for the Allternit Computer Interface (ACI). It forwards browser-automation requests to the ACU computer-use gateway (`domains/computer-use/core`) and adapts the upstream SSE event stream into a stable client contract. Use it to start intent-driven browser runs, stream progress, stop active runs, and approve or deny permission prompts.
@@ -35,6 +39,13 @@ All ACI management routes require a valid bearer token via the platform auth mid
 | `GET` | `/api/aci/stream/:id` | SSE stream of run events (replay + live tail). |
 | `POST` | `/api/aci/stop/:id` | Cancel an active run. |
 | `POST` | `/api/aci/approve/:id?deny=true` | Approve or deny a pending permission prompt. |
+| `GET` | `/api/aci/approvals/:id` | Status of a pending approval. |
+| `GET` | `/api/aci/policy/audit` | Policy audit listing. |
+| `GET` | `/api/aci/handoff/:id` | Status of a sensitive-action handoff. |
+| `POST` | `/api/aci/handoff/:id/approve` | Approve a handoff. |
+| `POST` | `/api/aci/handoff/:id/deny` | Deny a handoff. |
+| `POST` | `/api/aci/batch` | Submit an ordered batch of whitelisted browser actions under one hash-bound, single-use grant. Halts at first failure; the batch receipt is written before execution. |
+| `POST` | `/api/aci/code` | Code-mode execution under its own single-use grant. Credential patterns, destructive calls, undeclared network targets and host-path access are refused with a 400. Never the default. |
 
 ## Start a run
 

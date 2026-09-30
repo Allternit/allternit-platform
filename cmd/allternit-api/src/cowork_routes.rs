@@ -1123,7 +1123,7 @@ async fn list_projects(
         let conn = db.connect()?;
         let mut stmt = conn.prepare(
             "SELECT id, user_id, title, description, instructions, metadata, git_remote, default_branch, created_at, updated_at
-             FROM cowork_projects WHERE user_id = ?1 ORDER BY updated_at DESC
+             FROM cowork_projects WHERE user_id = ?1 AND json_extract(metadata, '$.workspace.key') IS NULL ORDER BY updated_at DESC
              LIMIT ?2 OFFSET ?3"
         )?;
         let rows = stmt.query_map(params![user_id, limit, offset], |row| {

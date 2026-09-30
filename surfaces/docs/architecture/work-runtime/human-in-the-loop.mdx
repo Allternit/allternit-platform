@@ -1,0 +1,64 @@
+---
+title: "Human in the loop"
+description: "Where people enter a run: approvals, clarifications, reviews, unsafe resumes and overrides, all receipted"
+---
+
+**Implementation: ENABLED (needs-you queue, manual gates, human close) · Exposure: INTERNAL · PUBLIC PREVIEW (contract).** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | People answer typed attention requests, not chat pings. |
+| **Implemented today** | Needs-you queue, manual gates and human close in the internal work runtime. |
+| **Active path** | Yes, inside the internal work runtime. |
+| **Public exposure** | Not yet. Planned through the Agency API (contract published, endpoint not served). |
+
+People are part of the system, not an afterthought. A run brings in a person at defined points, and every answer is evidence.
+
+## Architecture contract
+
+A person enters a run when:
+
+| Situation | How |
+|-----------|-----|
+| Policy returned ASK | An `approval` attention request. Expiry is a rejection. |
+| The run needs information only a person has | An `informational` attention request |
+| A verifier could not decide, or timed out | The node goes to `NEEDS_HUMAN` |
+| An interrupted effect cannot be safely resumed | `unsafe_resume` |
+| Budget is exhausted | `budget_exhausted`, after spend has been halted |
+| A decision fell below its calibrated threshold | `low_confidence` |
+
+Rules:
+
+- A person's answer is written as a receipt before it takes effect.
+- A person may close a node as the override when evidence is incomplete. That close is receipted with their identity.
+- A person can raise a budget. A model never can.
+- Pause, resume and cancel are human controls that act at the next safe boundary.
+- A hard policy deny is not something a person can approve past.
+
+Why: autonomy is only useful if the points where a person decides are explicit and cheap to answer. Typed requests and receipted answers make those points visible and auditable.
+
+## Current implementation
+
+On main, in the work runtime:
+
+- The needs-you list collects nodes held on a manual wait gate and open attention requests.
+- A manual gate is resolved by a person, with their identity recorded.
+- For agency-origin work, a judge timeout, error or invalid answer moves the node to `NEEDS_HUMAN`, never to done, and a human close is the override when evidence is missing.
+- The drive runner parks any node it cannot or must not advance behind a manual gate instead of retrying.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Needs-you list, manual gates, human close | **ENABLED** · INTERNAL |
+| `NEEDS_HUMAN` on judge failure (agency-origin work) | **IMPLEMENTED** · INTERNAL |
+| Answering through the Agency API | **PUBLIC PREVIEW** (contract; not served). See [Agency API: Attention](/api/agency/attention). |
+
+## Developer relevance
+
+If your integration answers attention requests, keep the `receipt_id` returned with each answer. It is the evidence that you approved or supplied that input.
+
+## Related
+
+- [Attention](/architecture/work-runtime/attention)
+- [Verification](/architecture/verification)

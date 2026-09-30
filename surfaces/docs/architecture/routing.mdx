@@ -1,0 +1,80 @@
+---
+title: "Routing: the router, the model pool and M0–M6"
+description: "How a capability request becomes an execution plan, and why model identity is evidence rather than workflow"
+---
+
+**Implementation: IMPLEMENTED (router, model pool) · RESEARCH (cross-model KV transfer) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | A cognitive router maps capability requests to implementations in a model pool. |
+| **Implemented today** | Router as library code; model pool registry served internally. |
+| **Active path** | No. Nothing calls the router on the normal path yet. |
+| **Public exposure** | No. Not reachable by an external developer. |
+
+A graph node asks for a capability. The **Cognitive Execution Router** decides how to provide it: which execution mode, which component, with which context and fallbacks. The **model pool** keeps components loaded and ready.
+
+## Architecture contract
+
+### Execution modes M0–M6
+
+Cognitive role (S0–S3) and execution mode are separate axes. Any role may use any legal mode.
+
+| Mode | Name | Meaning |
+|------|------|---------|
+| M0 | Deterministic | Code, no model |
+| M1 | Logit readout | Read label probabilities from a model. Uncalibrated. |
+| M2 | Calibrated readout | A logit readout with a valid calibration artifact |
+| M3 | Hidden head | A small trained head on an intermediate hidden state, with early exit |
+| M4 | Dedicated decider | A component built only for decisions |
+| M5 | Generative | Structured or free generation |
+| M6 | Deep solver | A larger solver, an ensemble, a specialist or a human |
+
+### The router
+
+1. Resolve the role.
+2. Enumerate the legal modes.
+3. Apply policy, trust and locality filters. These run before any scoring.
+4. Find eligible components.
+5. Score quality, calibration, residency, cache and transfer cost, latency and cost.
+6. Emit an **ExecutionPlanV1**.
+7. Execute and verify.
+8. Escalate mode, depth or component if the evidence floor is not met.
+
+The execution plan records the role, capability, mode, chosen component and revision, readout and calibration references, context projection, cache and state strategy, floors, budgets and a fallback chain. It is the unit that gets traced.
+
+Graph topology never depends on which component is chosen. When a component fails, the router tries the next eligible one; the graph's failure policy applies only after all eligible components are exhausted.
+
+### The model pool
+
+The pool tracks resident backbones, hot decision heads, warm adapters, prefix and KV state, a decision embedding cache, cold models and remote capabilities. It exposes load, preload, touch and evict, and emits residency events. Pinned entries are never silently evicted. Residency is an accelerator only: it never changes eligibility, policy or evidence, and a pool event never changes [AgentState](/architecture/state).
+
+### State transfer (KV)
+
+Reusing one component's attention state in another is an optional optimization. Native reuse is preferred, semantic rebuild from canonical state is the universal fallback, and a missing cache never aborts a run. Translating state **between different models** is **RESEARCH**.
+
+Why: choosing the component per step, from measured capability, lets the system use the cheapest correct option and swap components without touching the graph. Naming a model in the workflow would make both impossible.
+
+## Current implementation
+
+The Cognitive Execution Router is on main as library code in the work runtime. It turns a graph node into an execution plan: legal modes for the node's role, policy, trust and locality filters before any scoring, a fail-closed budget check, then cheapest-correct-mode-first ordering with a fallback chain. S1 is refused unless the model pool entry carries a gate-passing calibration manifest, and it stays shadow by default. The model pool is a capability and residency registry served internally by the runtime; backend identity is opaque in plans. **Nothing calls the router on the normal path yet**: model calls today still go through the [Gizzi runtime](/core/gizzi-runtime) and its provider configuration. The [decision runtime](/architecture/cognitive-runtime/decision-runtime) has its own small internal router for decision requests, which is not this component.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Capability request, execution plan, model capability profile and pool entry schemas | **IMPLEMENTED** (contract) |
+| Cognitive Execution Router | **IMPLEMENTED** (library on main; nothing calls it on the normal path yet) |
+| Model pool | **IMPLEMENTED** (capability and residency registry served internally by the runtime) |
+| Native cache reuse and semantic rebuild | **DESIGN** |
+| Cross-model KV translation | **RESEARCH** |
+
+## Developer relevance
+
+When you add a model provider, you will describe it with a capability profile (capabilities, measured ranges, context limit, trust classes, residency) instead of wiring it into a workflow. Until the router ships, keep model choice in runtime configuration, never in a graph.
+
+## Related
+
+- [S0–S3](/architecture/cognition-levels)
+- [Why no vendor names in graphs](/architecture/cognitive-runtime/no-vendor-names)
+- [Local models](/byoc/local-models)

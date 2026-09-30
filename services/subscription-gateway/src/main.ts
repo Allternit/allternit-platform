@@ -10,6 +10,7 @@ import type { RedactingLogger } from "@allternit/subscription-fabric-contracts";
 import { loadConfig, stallTimeoutFor, type Config } from "./config.js";
 import { loadAdapterRegistry, type AdapterRegistry } from "./adapters/registry.js";
 import { openDatabase, type Db } from "./store/db.js";
+import { listAccounts, preferredReadyAccount } from "./store/queries.js";
 import { EventLog } from "./events/log.js";
 import { SseHub } from "./events/sse.js";
 import { CallerOutbox } from "./events/outbox.js";
@@ -21,6 +22,7 @@ import {
   type KeychainBackend,
 } from "./security/keychain.js";
 import { ensureCliToken } from "./security/tokens.js";
+import { createAaiHost } from "./aai/registry.js";
 import { closeServer, createServer, listenTcp, listenUds } from "./http/server.js";
 import { createScheduler } from "./queue/scheduler.js";
 import { FabricRouter } from "./router/resolve.js";
@@ -155,6 +157,14 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
   const dispatch: DispatchDeps = { db, registry: adapterRegistry, router, scheduler };
 
   const app = createServer({
+    aai: createAaiHost(config, process.env, deps.fetchImpl, {
+      subscriptionProfile: async (provider) => {
+        const account = preferredReadyAccount(listAccounts(db), provider);
+        if (!account) return null;
+        await pool.deactivate({ provider: account.provider, account_id: account.account_id });
+        return { dir: pool.userDataDirFor(account.profile_ref), account_id: account.account_id };
+      },
+    }),
     db,
     config,
     keychain,

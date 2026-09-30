@@ -12,14 +12,14 @@ The prompt cache is keyed by content hash, so identical prompts are deduplicated
 ## Base URL
 
 ```
-https://api.allternit.com/v1
-```
-
-For local development:
-
-```
 http://127.0.0.1:8013/v1
 ```
+
+This is the Allternit API data-plane node (your own paired or provisioned node).
+
+<Note>
+The hosted Cloud API at `api.allternit.com` serves only `POST /v1/chat/completions` and `GET /v1/models` under `/v1`. The endpoints on this page are served by the Allternit API data-plane node (`http://127.0.0.1:8013/v1` locally); they are not routed on the public Cloud API origin. See [Cloud API](/api/cloud-api).
+</Note>
 
 ## Endpoints
 
@@ -44,7 +44,7 @@ http://127.0.0.1:8013/v1
 ### Example request
 
 ```bash
-curl -X POST https://api.allternit.com/v1/cache/prompts \
+curl -X POST http://127.0.0.1:8013/v1/cache/prompts \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -76,7 +76,7 @@ If a cache entry with identical content already exists, the existing object is r
 ## List cached prompts
 
 ```bash
-curl https://api.allternit.com/v1/cache/prompts \
+curl http://127.0.0.1:8013/v1/cache/prompts \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -102,14 +102,14 @@ curl https://api.allternit.com/v1/cache/prompts \
 ## Retrieve a cached prompt
 
 ```bash
-curl https://api.allternit.com/v1/cache/prompts/cache_abc123 \
+curl http://127.0.0.1:8013/v1/cache/prompts/cache_abc123 \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
 ## Delete a cached prompt
 
 ```bash
-curl -X DELETE https://api.allternit.com/v1/cache/prompts/cache_abc123 \
+curl -X DELETE http://127.0.0.1:8013/v1/cache/prompts/cache_abc123 \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 

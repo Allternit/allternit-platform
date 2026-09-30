@@ -731,3 +731,141 @@ async fn dead_pid_is_stale_and_unbeaten_leases_are_left_alone_by_default() {
     assert!(recs[0].reason.contains("not running"), "{}", recs[0].reason);
     assert!(leases.list(None).await.unwrap().is_empty());
 }
+
+// ---------------------------------------------------------------- WP6
+// origin=agency: verifier-owned completion, forced on.
+
+fn agency() -> JudgePolicy {
+    JudgePolicy {
+        origin: Some(allternit_commrails::judge::policy::PolicyOrigin::Agency),
+        completion_policy: Some("completion.bug_fix".to_string()),
+        ..Default::default()
+    }
+}
+
+fn full_evidence() -> Vec<String> {
+    [
+        "target_tests_pass",
+        "affected_tests_pass",
+        "no_new_regressions",
+        "diff_review_accept",
+        "requirements_satisfied",
+    ]
+    .iter()
+    .map(|c| format!("{c}:receipt:r_{c}"))
+    .collect()
+}
+
+#[tokio::test]
+async fn agency_worker_self_close_is_a_proposal_not_done() {
+    let tmp = test_root();
+    let (ledger, _, gate) = build_gate(tmp.path()).await;
+    let gate = with_stub(gate, "accomplished", "allow");
+    let dag_id = plan_one(&gate, "ag_a", Some(agency())).await;
+    let wih = gate.wih_pickup(&dag_id, "ag_a", "builder-1").await.unwrap();
+    // Same agent id as builder, whether it says so or not: refused (builder == verifier).
+    for closer in [None, Some(agent("builder-1"))] {
+        let err = gate
+            .wih_close_as(&wih, "DONE", &full_evidence(), None, closer.as_ref())
+            .await
+            .unwrap_err();
+        assert_eq!(gate_err(&err).code, "completion_proposed");
+    }
+    let events = ledger.query(LedgerQuery::default()).await.unwrap();
+    assert_eq!(
+        events.iter().filter(|e| e.r#type == "CompletionProposed").count(),
+        2
+    );
+    assert!(!events.iter().any(|e| e.r#type == "WIHClosedSigned"));
+    assert_eq!(status(&ledger, &dag_id, "ag_a").await, "VERIFYING");
+    let eff = gate.judge_policy(&dag_id, Some("ag_a")).await.unwrap();
+    assert_eq!(eff.verify, VerifyMode::Judge);
+    assert_eq!(eff.close_by, CloseBy::Verifier);
+}
+
+#[tokio::test]
+async fn agency_policy_cannot_be_weakened() {
+    let tmp = test_root();
+    let (_, _, gate) = build_gate(tmp.path()).await;
+    let dag_id = plan_one(&gate, "ag_w", Some(agency())).await;
+    gate.wih_pickup(&dag_id, "ag_w", "builder-1").await.unwrap();
+    let weak = JudgePolicy {
+        verify: Some(VerifyMode::Off),
+        close_by: Some(CloseBy::Any),
+        ..Default::default()
+    };
+    let err = gate
+        .set_judge_policy(&dag_id, None, weak.clone(), &agent("builder-1"))
+        .await
+        .unwrap_err();
+    assert_eq!(gate_err(&err).code, "policy_self_weaken");
+    let err = gate
+        .set_judge_policy(&dag_id, None, weak, &user("client"))
+        .await
+        .unwrap_err();
+    assert_eq!(gate_err(&err).code, "policy_origin_locked");
+    let eff = gate.judge_policy(&dag_id, None).await.unwrap();
+    assert_eq!(eff.verify, VerifyMode::Judge);
+}
+
+#[tokio::test]
+async fn agency_judge_pass_with_full_evidence_is_done() {
+    let tmp = test_root();
+    let (ledger, _, gate) = build_gate(tmp.path()).await;
+    let gate = with_stub(gate, "accomplished", "allow");
+    let dag_id = plan_one(&gate, "ag_d", Some(agency())).await;
+    let wih = gate.wih_pickup(&dag_id, "ag_d", "builder-1").await.unwrap();
+    let out = gate
+        .wih_close_as(&wih, "DONE", &full_evidence(), None, Some(&agent("verifier-1")))
+        .await
+        .unwrap();
+    assert_eq!(out.node_status, "DONE");
+    assert_eq!(status(&ledger, &dag_id, "ag_d").await, "DONE");
+}
+
+#[tokio::test]
+async fn agency_judge_pass_with_missing_evidence_needs_human() {
+    let tmp = test_root();
+    let (ledger, _, gate) = build_gate(tmp.path()).await;
+    let gate = with_stub(gate, "accomplished", "allow");
+    let dag_id = plan_one(&gate, "ag_m", Some(agency())).await;
+    let wih = gate.wih_pickup(&dag_id, "ag_m", "builder-1").await.unwrap();
+    let mut ev = full_evidence();
+    ev.retain(|e| !e.starts_with("diff_review_accept") && !e.starts_with("no_new_regressions"));
+    let out = gate
+        .wih_close_as(&wih, "DONE", &ev, None, Some(&agent("verifier-1")))
+        .await
+        .unwrap();
+    assert_eq!(out.node_status, "NEEDS_HUMAN");
+    let reason = out.verdict.unwrap().reason;
+    assert!(reason.contains("diff_review_accept") && reason.contains("no_new_regressions"), "{reason}");
+    assert_eq!(status(&ledger, &dag_id, "ag_m").await, "NEEDS_HUMAN");
+}
+
+#[tokio::test]
+async fn agency_judge_timeout_needs_human_never_done() {
+    let tmp = test_root();
+    let (ledger, _, gate) = build_gate(tmp.path()).await;
+    let gate = with_stub(gate, "hang", "allow");
+    let dag_id = plan_one(&gate, "ag_t", Some(agency())).await;
+    let wih = gate.wih_pickup(&dag_id, "ag_t", "builder-1").await.unwrap();
+    let out = gate
+        .wih_close_as(&wih, "DONE", &full_evidence(), None, Some(&agent("verifier-1")))
+        .await
+        .unwrap();
+    assert_eq!(out.node_status, "NEEDS_HUMAN");
+    assert_eq!(status(&ledger, &dag_id, "ag_t").await, "NEEDS_HUMAN");
+}
+
+#[tokio::test]
+async fn legacy_dag_without_origin_keeps_defaults() {
+    let tmp = test_root();
+    let (ledger, _, gate) = build_gate(tmp.path()).await;
+    let dag_id = plan_one(&gate, "lg_a", None).await;
+    let eff = gate.judge_policy(&dag_id, None).await.unwrap();
+    assert_eq!(eff.verify, VerifyMode::Off);
+    assert_eq!(eff.close_by, CloseBy::Any);
+    let out = close(&gate, &dag_id, "lg_a", "done").await;
+    assert_eq!(out.node_status, "DONE");
+    assert_eq!(status(&ledger, &dag_id, "lg_a").await, "DONE");
+}

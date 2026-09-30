@@ -1,0 +1,52 @@
+---
+title: "Wait gates"
+description: "Holding a node until a time, a person or a dependency, without holding a process open"
+---
+
+**Implementation: ENABLED (manual, timer gates) · DESIGN (dependency and event gates as nodes) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Work waits on typed gates, not on a sleeping model. |
+| **Implemented today** | Manual and timer gates on graph nodes. |
+| **Active path** | Yes, inside the internal work runtime. |
+| **Public exposure** | No. Not reachable by an external developer. |
+
+A **wait gate** holds a node out of the ready set until a condition is met. Nothing runs while it waits, and no process has to stay alive.
+
+## Architecture contract
+
+| Gate | Opens when |
+|------|------------|
+| Manual | A person resolves it |
+| Timer | A time is reached |
+| Dependency | Another node or run reaches a state |
+| Event | A named external event arrives |
+
+- A gated node is not ready and is not leased.
+- A run whose active nodes are all gated reports `waiting`. Nothing is asked of you. If a person is needed, the run raises an [attention request](/architecture/work-runtime/attention) and reports `needs_attention` instead.
+- Wait gates become graph nodes, so they are validated, receipted and replayed like any other step.
+
+Why: agents often have to wait for hours or days. Keeping a model loop or a process alive to do that is expensive and fragile. A durable gate costs nothing while it waits and survives restarts.
+
+## Current implementation
+
+The work runtime on main has manual and timer wait gates attached to graph nodes. A manual gate puts the node in the needs-you list until a person resolves it with their identity recorded. Timer gates are driven by the keyed [wake](/architecture/work-runtime/wake) queue. Dependency and event gates, and gates as first-class graph nodes, are designed but not built.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Manual wait gates | **ENABLED** · INTERNAL |
+| Timer wait gates | **ENABLED** · INTERNAL |
+| Dependency and event gates | **DESIGN** |
+| Wait gates as graph nodes | **DESIGN** |
+
+## Developer relevance
+
+If your step has to wait, declare a gate instead of sleeping or polling inside an executor. The executor can exit and the work resumes when the gate opens.
+
+## Related
+
+- [Wake](/architecture/work-runtime/wake)
+- [Human in the loop](/architecture/work-runtime/human-in-the-loop)

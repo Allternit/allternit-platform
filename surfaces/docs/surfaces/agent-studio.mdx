@@ -51,16 +51,18 @@ open('agent-studio');
 | `computer_use` | Computer Use | Control a desktop environment |
 | `mcp_registry` | MCP Registry | Use registered MCP tools |
 
-## Endpoints / commands
+## Endpoints
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/v1/agents/prototype` | Run a prototype agent with the configured settings |
-| `POST` | `/api/v1/agents` | Save the configured agent (Phase 2) |
+| `POST` | `/api/v1/agents/prototype` | Save (or update, keyed by user and `name`) a draft agent with status `prototype` |
+| `POST` | `/api/v1/agents` | Create a regular agent |
 
-## JSON request / response examples
+`POST /api/v1/agents/prototype` **persists a draft; it never executes the agent**. Drafts are stored as real agent rows with status `prototype` so they do not appear in the main agent list. To run a saved agent, call `POST /api/v1/agents/{agent_id}/runs` with `{ "input": "..." }`; the prototype response includes a copyable `curl` and `sdk` snippet for that call.
 
-### Run a prototype
+Validation: `name` must be at least 2 characters, `model` is required, and `max_tokens` must be at least 1. The body also accepts `messages`, reserved for the Run tab; a prototype save ignores it.
+
+## Save a prototype
 
 ```bash
 curl -X POST https://api.allternit.com/api/v1/agents/prototype \
@@ -73,42 +75,8 @@ curl -X POST https://api.allternit.com/api/v1/agents/prototype \
     "model": "allternit-reasoning",
     "temperature": 0.5,
     "max_tokens": 4096,
-    "tools": ["web_search", "mcp_registry"],
-    "messages": [{"role":"user","content":"Summarize local model quantization."}]
+    "tools": ["web_search", "mcp_registry"]
   }'
-```
-
-Response:
-
-```json
-{
-  "role": "assistant",
-  "content": "Local model quantization reduces...",
-  "tool_calls": [
-    {
-      "id": "call_1a2b...",
-      "type": "web_search",
-      "arguments": { "query": "local model quantization techniques" }
-    }
-  ]
-}
-```
-
-### Offline fallback payload
-
-If the prototype endpoint is unavailable, Agent Studio surfaces the request payload so the UI works offline:
-
-```json
-{
-  "name": "Research Agent",
-  "description": "Performs deep technical research.",
-  "system_prompt": "You are a research assistant. Cite sources.",
-  "model": "allternit-reasoning",
-  "temperature": 0.5,
-  "max_tokens": 4096,
-  "tools": ["web_search", "mcp_registry"],
-  "messages": [{"role":"user","content":"Summarize local model quantization."}]
-}
 ```
 
 ## Error codes

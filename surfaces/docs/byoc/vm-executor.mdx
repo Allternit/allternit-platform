@@ -1,141 +1,37 @@
 ---
-title: 'VM Executor'
-description: 'High-level VM orchestrator over Allternit execution drivers.'
+title: VM Executor
+description: The allternit-vm-executor Rust library over the driver interface
 ---
+
+<Note>
+**Status:** Implementation IMPLEMENTED (library) × Exposure — (no HTTP surface). Earlier versions of this page documented `https://api.allternit.com/api/vm` routes and `curl` examples. No `/api/vm` routes exist in `allternit-api` or the Cloud API; the only VM HTTP surface in `allternit-api` is `/vm-session` (`POST /`, `GET /:session_id`, `POST /:session_id/execute`, `DELETE /:session_id`).
+</Note>
 
 ## Overview
 
-The **Allternit VM Executor** is a thin orchestrator that sits on top of the `allternit-driver-interface` abstraction. It owns a `DriverRegistry`, tracks active VMs, and exposes a high-level lifecycle API that downstream crates can use without binding to a concrete driver implementation.
-
-## Base URL
-
-The crate is consumed as a Rust library. It is surfaced through the platform gateway at:
-
-```text
-https://api.allternit.com/api/vm
-```
+`allternit-vm-executor` (`services/vm-executor`) is a Rust crate that owns a `DriverRegistry`, tracks active VMs, and exposes a lifecycle API on top of `allternit-driver-interface`. Consumers link it as a library.
 
 ## VM statuses
 
-| Status | Description |
-|--------|-------------|
-| `creating` | VM is being spawned |
-| `running` | VM is active |
-| `paused` | VM is paused |
-| `stopped` | VM has been destroyed |
-| `failed` | VM encountered an error |
+`Creating`, `Running`, `Paused`, `Stopped`, `Failed` (`VmStatus`).
 
-## Endpoints
+## API (`VmExecutor`)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/vm` | Create a VM |
-| GET | `/api/vm` | List VMs |
-| GET | `/api/vm/:id` | Inspect a VM |
-| POST | `/api/vm/:id/start` | Start or resume a VM |
-| POST | `/api/vm/:id/pause` | Pause a VM |
-| POST | `/api/vm/:id/resume` | Resume a paused VM |
-| POST | `/api/vm/:id/stop` | Stop and remove a VM |
-| POST | `/api/vm/:id/exec` | Execute a command in a VM |
-| GET | `/api/vm/health` | Executor health |
+| Method | Purpose |
+|---|---|
+| `new(default_driver)`, `with_registry(registry, default_driver)` | Construct |
+| `register_driver(driver)` | Add an `ExecutionDriver` |
+| `create_vm(spec)`, `start_vm(id)`, `stop_vm(id)`, `pause_vm(id)`, `resume_vm(id)` | Lifecycle |
+| `exec(id, cmd)` | Run a command |
+| `inspect_vm(id)`, `list_vms()` | Introspection (`VmInfo`, `VmSummary`) |
+| `health_check()` | `ExecutorHealth` |
 
-## JSON examples
+## Errors
 
-### Create a VM
-
-```bash
-curl -X POST https://api.allternit.com/api/vm \
-  -H 'content-type: application/json' \
-  -d '{
-    "tenant": "default",
-    "env": {
-      "spec_type": "Oci",
-      "image": "alpine:latest",
-      "working_dir": "/workspace"
-    },
-    "resources": {
-      "cpu_millis": 2000,
-      "memory_mib": 1024
-    }
-  }'
-```
-
-Response:
-
-```json
-{
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "tenant": "default",
-  "driver_type": "Process",
-  "status": "running",
-  "image": "alpine:latest"
-}
-```
-
-### Execute a command in a VM
-
-```bash
-curl -X POST https://api.allternit.com/api/vm/550e8400-e29b-41d4-a716-446655440000/exec \
-  -H 'content-type: application/json' \
-  -d '{
-    "command": ["echo", "hello"],
-    "capture_stdout": true,
-    "capture_stderr": true
-  }'
-```
-
-Response:
-
-```json
-{
-  "exit_code": 0,
-  "stdout": "aGVsbG8=",
-  "stderr": null,
-  "duration_ms": 12,
-  "resource_usage": {
-    "cpu_millis_used": 12,
-    "memory_mib_peak": 1024,
-    "disk_mib_used": 0,
-    "network_egress_kib": 0
-  }
-}
-```
-
-### Health check
-
-```bash
-curl https://api.allternit.com/api/vm/health
-```
-
-Response:
-
-```json
-{
-  "healthy": true,
-  "drivers": {
-    "Process": {
-      "healthy": true,
-      "message": "Process driver operational",
-      "active_executions": 0
-    }
-  },
-  "active_vms": 1,
-  "message": "Executor healthy (1 active VMs)"
-}
-```
-
-## Error codes
-
-| Error | Meaning |
-|-------|---------|
-| `NoDriver` | No driver is registered in the executor |
-| `DriverNotFound` | The selected driver type is not registered |
-| `VmNotFound` | The requested VM ID is not tracked |
-| `InvalidInput` | Request parameters are invalid |
-| `OperationFailed` | The underlying driver operation failed |
+`ExecutorError` includes `NoDriver` among its variants; see `services/vm-executor/src/lib.rs` for the full list.
 
 ## Related pages
 
 - [Process Driver](/core/process-driver)
 - [Session Manager](/core/session-manager)
-- [BYOC Deployment](/byoc/deployment)
+- [VM Sessions API](/api/vm-sessions)

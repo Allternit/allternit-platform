@@ -10,7 +10,7 @@ The Me API returns the current authenticated user's profile, proxies weekly usag
 ## Base URL
 
 ```
-https://api.allternit.com/v1/me
+https://api.allternit.com/api/v1/me
 ```
 
 All endpoints require a valid Bearer token in the `Authorization` header. See [Authentication](/api/authentication) for details.
@@ -63,10 +63,15 @@ Response:
 ```json
 {
   "plan": "pro",
+  "label": "Pro",
+  "status": "active",
+  "planTier": "pro",
   "weeklyUsed": 42.5,
   "weeklyLimit": 100,
   "resetsAt": "2026-08-17T00:00:00Z",
-  "credits": 150
+  "credits": 150,
+  "monthToDateUsageUsd": 12.4,
+  "recentTransactions": []
 }
 ```
 

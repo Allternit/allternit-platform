@@ -73,6 +73,8 @@ pub struct Gate {
     visual_config: Option<VisualConfig>,
     /// Installed judge (`with_judge`); None = load `.allternit/judge/config.json`.
     judge: Option<JudgeHandle>,
+    /// WP5 replay sessions (effects: recorded_only), keyed by replaying run id.
+    replay: std::sync::Mutex<HashMap<String, ReplaySession>>,
 }
 
 #[derive(Debug)]
@@ -220,6 +222,7 @@ impl Gate {
             visual_provider: opts.visual_provider,
             visual_config: opts.visual_config,
             judge: None,
+            replay: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -1166,6 +1169,9 @@ impl Gate {
             wih_id: Some(wih_id.to_string()),
             ..Default::default()
         };
+        if self.is_replaying(wih_id) {
+            return Ok(GateResult { allowed: false, reason: Some(replay_deny_reason(wih_id)) });
+        }
         self.ensure_policy_scope(&scope).await?;
         let wih_events = self.events_for_wih(wih_id).await?;
         let wih = project_wih(&wih_events, wih_id).ok_or_else(|| anyhow!("wih not found"))?;
@@ -1202,6 +1208,25 @@ impl Gate {
         })
     }
 
+    /// Pre-tool admission for a side-effecting call (review #10). `post_tool` is
+    /// post-effect by design: it records evidence after the tool already ran, so it
+    /// can only dedupe the receipt, not the effect. A runtime that needs the effect
+    /// itself at most once calls this BEFORE executing, with the exact payload it
+    /// will pass to `post_tool`: `Reserved` = run the tool once, then `post_tool`
+    /// settles the reservation; `AlreadyCommitted(id)` = the effect already happened,
+    /// do not run it; `Err` = another caller holds the key (or the run replays).
+    pub fn reserve_tool_effect(
+        &self,
+        wih_id: &str,
+        tool: &str,
+        payload: &serde_json::Value,
+    ) -> Result<crate::receipts::store::ToolEffectAdmission> {
+        if self.is_replaying(wih_id) {
+            return Err(anyhow!(replay_deny_reason(wih_id)));
+        }
+        self.receipts.reserve_tool_effect(&replay_run_id(wih_id), tool, payload)
+    }
+
     pub async fn post_tool(
         &self,
         wih_id: &str,
@@ -1228,6 +1253,11 @@ impl Gate {
             output_tokens = Some(10); // Minimum output estimate
         }
 
+        // Replay mode: answer from the cassette; never execute, write or append.
+        if let Some(served) = self.replay_tool_effect(wih_id, tool, &receipt_payload)? {
+            return Ok(served);
+        }
+
         let receipt_id = create_receipt_id();
         let total_tokens = match (input_tokens, output_tokens) {
             (Some(i), Some(o)) => Some(i + o),
@@ -1249,7 +1279,13 @@ impl Gate {
             output_tokens,
             total_tokens,
         };
-        let _ = self.receipts.write_receipt(&receipt)?;
+        // Side-effecting tool calls are recorded on the run's signed chain and
+        // deduped by idempotency key; read-only calls keep the legacy path.
+        let run_id = receipt.run_id.clone();
+        let receipt_id = self.receipts.record_tool_effect(&run_id, tool, &receipt_payload, || {
+            self.receipts.write_receipt(&receipt)?;
+            Ok(receipt_id.clone())
+        })?;
 
         let evt = AllternitEvent {
             event_id: create_event_id(),
@@ -1586,7 +1622,7 @@ impl Gate {
         let wih_state = project_wih(&wih_events, wih_id).ok_or_else(|| anyhow!("wih not found"))?;
         let dag_id = wih_state.dag_id.clone();
         let node_id = wih_state.node_id.clone();
-        let judge_policy = self.gate4_precheck(&wih_state, status, closer).await?;
+        let judge_policy = self.gate4_precheck(&wih_state, status, closer, evidence_refs).await?;
         let requested_status = status;
 
         let mut evidence_refs: Vec<String> = evidence_refs.to_vec();
@@ -2408,7 +2444,55 @@ impl Gate {
                     .with_details(details),
             ))
         };
+        // Validate status writers against the authoritative projected state,
+        // then advance a local view in batch order before any event is emitted.
+        let mut statuses: HashMap<String, String> = dag
+            .nodes
+            .iter()
+            .map(|(id, node)| (id.clone(), node.status.clone()))
+            .collect();
         for m in mutations {
+            match m {
+                DagMutation::CreateNode { node_id, .. } => {
+                    statuses.insert(node_id.clone(), "NEW".to_string());
+                }
+                DagMutation::DeleteNode { node_id } => {
+                    statuses.remove(node_id);
+                }
+                DagMutation::ChangeStatus {
+                    node_id, from, to, ..
+                } => {
+                    let current = match statuses.get(node_id) {
+                        Some(status) => status,
+                        None => {
+                            return reject(
+                                "status_unknown_node",
+                                node_id,
+                                format!("status change targets unknown node {node_id}"),
+                                json!({}),
+                            )
+                        }
+                    };
+                    if from != current {
+                        return reject(
+                            "status_source_mismatch",
+                            node_id,
+                            format!("status source {from} does not match current status {current}"),
+                            json!({ "from": from, "current": current, "to": to }),
+                        );
+                    }
+                    if let Err(err) = crate::kernel::lifecycle::check_legacy_change(current, to) {
+                        return reject(
+                            "status_illegal_transition",
+                            node_id,
+                            err.to_string(),
+                            json!({ "from": current, "to": to }),
+                        );
+                    }
+                    statuses.insert(node_id.clone(), to.clone());
+                }
+                _ => {}
+            }
             let (node_id, description, executor) = match m {
                 DagMutation::CreateNode {
                     node_id,
@@ -3212,5 +3296,196 @@ fn gate_actor(actor_id: &str) -> Actor {
     Actor {
         r#type: ActorType::Gate,
         id: actor_id.to_string(),
+    }
+}
+
+// ---------------------------------------------------------------- WP5 replay mode
+
+fn replay_run_id(wih_id: &str) -> String {
+    format!("run_{}", wih_id)
+}
+
+/// A replay begun by this Gate: its session token (also in the shared marker) and replayer.
+struct ReplaySession {
+    token: String,
+    r: crate::replay::Replayer<'static>,
+}
+
+fn marker_token(p: &std::path::Path) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_slice(&std::fs::read(p).ok()?).ok()?;
+    v["session_token"].as_str().map(String::from)
+}
+
+/// Deny reason every pre-execution path (hooked harnesses, ACP gate, Gate 2) gives
+/// while a run replays: the tool must not run; `post_tool` serves the recording.
+pub fn replay_deny_reason(wih_id: &str) -> String {
+    format!("replay: recorded result served by the gate (run {} is replaying, effects: recorded_only)", replay_run_id(wih_id))
+}
+
+impl Gate {
+    /// Put `wih_id`'s run into replay mode (effects: recorded_only) against `cassette`.
+    /// Until [`Gate::end_replay`], side-effecting `post_tool` calls are answered from
+    /// the recording and never execute, write a receipt, or append to any chain.
+    pub fn begin_replay(&self, wih_id: &str, cassette: crate::replay::CassetteV1) -> Result<()> {
+        let run = replay_run_id(wih_id);
+        // Persist the mode so separate hook/ACP-gate processes see it.
+        let dir = self.receipts.receipts_dir().join("_cassettes");
+        crate::replay::save_cassette(&dir, &cassette)?;
+        let state = self.replay_state_path(wih_id)?;
+        std::fs::create_dir_all(state.parent().unwrap())?;
+        let r = crate::replay::Replayer::new_owned(
+            self.receipts.chain_store()?, cassette.clone(), &run, crate::replay::EffectsMode::RecordedOnly)?;
+        // The marker carries this session's token: only the session that began the
+        // replay may end it (review #11). create_new: a second session cannot take
+        // over (or later clear) a run another session is replaying.
+        let token = format!("rpl_{}", uuid::Uuid::new_v4().simple());
+        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(&state)
+            .map_err(|e| anyhow!("run {run} is already replaying (marker {}): {e}", state.display()))?;
+        std::io::Write::write_all(&mut f, &serde_json::to_vec_pretty(&json!({
+            "run_id": run, "wih_id": wih_id, "cassette_id": cassette.cassette_id,
+            "recorded_run_id": cassette.run_id, "effects": "recorded_only",
+            "since": Utc::now().to_rfc3339(), "pid": std::process::id(), "session_token": token
+        }))?)?;
+        self.replay.lock().unwrap_or_else(|p| p.into_inner()).insert(run, ReplaySession { token, r });
+        Ok(())
+    }
+
+    /// This process's replay session token for `wih_id`, if it began the replay.
+    pub fn replay_session_token(&self, wih_id: &str) -> Option<String> {
+        self.replay.lock().unwrap_or_else(|p| p.into_inner()).get(&replay_run_id(wih_id)).map(|s| s.token.clone())
+    }
+
+    /// Clear a replay marker left by a session that can no longer end it (e.g. its
+    /// process died). Requires that session's token; a wrong token changes nothing.
+    pub fn abort_replay(&self, wih_id: &str, session_token: &str) -> Result<()> {
+        let p = self.replay_state_path(wih_id)?;
+        if marker_token(&p).as_deref() != Some(session_token) {
+            return Err(anyhow!("replay session token does not match run {}; marker kept", replay_run_id(wih_id)));
+        }
+        self.replay.lock().unwrap_or_else(|p| p.into_inner()).remove(&replay_run_id(wih_id));
+        std::fs::remove_file(p)?;
+        Ok(())
+    }
+
+    /// `<receipts>/_replay/run_<wih>.json` marks a replaying run for every process.
+    fn replay_state_path(&self, wih_id: &str) -> Result<std::path::PathBuf> {
+        let run = replay_run_id(wih_id);
+        if run.contains(['/', '\\', '\0']) || wih_id.starts_with('.') {
+            return Err(anyhow!("invalid wih id for replay: {wih_id:?}"));
+        }
+        Ok(self.receipts.receipts_dir().join("_replay").join(format!("{run}.json")))
+    }
+
+    /// True while `wih_id`'s run replays, in this process or any other.
+    pub fn is_replaying(&self, wih_id: &str) -> bool {
+        self.replay.lock().unwrap_or_else(|p| p.into_inner()).contains_key(&replay_run_id(wih_id))
+            || self.replay_marker_exists(wih_id)
+    }
+
+    fn replay_marker_exists(&self, wih_id: &str) -> bool {
+        // An invalid id cannot be checked: treat as replaying (fail closed).
+        self.replay_state_path(wih_id).map(|p| p.exists()).unwrap_or(true)
+    }
+
+    /// Cassette-producing helper: record `wih_id`'s run from its receipt chain.
+    pub fn record_cassette(&self, wih_id: &str, graph_id: Option<&str>, graph_version: u64) -> Result<crate::replay::CassetteV1> {
+        crate::replay::record_cassette(&self.receipts.chain_store()?, &replay_run_id(wih_id), graph_id, graph_version)
+    }
+
+    /// Leave replay mode and return the divergence report.
+    /// Only the session that began the replay may end it (review #11): a Gate without
+    /// the in-memory session leaves the shared marker untouched and errors.
+    pub fn end_replay(&self, wih_id: &str) -> Result<crate::replay::DivergenceReportV1> {
+        let run = replay_run_id(wih_id);
+        let p = self.replay_state_path(wih_id)?;
+        let mut map = self.replay.lock().unwrap_or_else(|p| p.into_inner());
+        let tok = map.get(&run).map(|s| s.token.clone())
+            .ok_or_else(|| anyhow!("run {run} is not replaying in this process; marker kept"))?;
+        let r = map.remove(&run).expect("present").r;
+        drop(map);
+        // Remove the marker only if it is still ours.
+        if marker_token(&p).as_deref() == Some(tok.as_str()) {
+            std::fs::remove_file(&p)?;
+        }
+        r.finish()
+    }
+
+    fn replay_tool_effect(&self, wih_id: &str, tool: &str, payload: &serde_json::Value) -> Result<Option<String>> {
+        use crate::replay::{ReplayStep, StepOutcome};
+        let class = payload.get("effect_class").and_then(|v| v.as_str()).unwrap_or("EXECUTE");
+        let mut map = self.replay.lock().unwrap_or_else(|p| p.into_inner());
+        let Some(ReplaySession { r, .. }) = map.get_mut(&replay_run_id(wih_id)) else {
+            // Replaying in another process: fail closed rather than record a live effect.
+            if self.replay_marker_exists(wih_id) {
+                return Err(anyhow!("replay: run {} replays in another process; refused, not executed", replay_run_id(wih_id)));
+            }
+            return Ok(None);
+        };
+        if class == "NONE" || class == "READ" {
+            // recorded_only: reads are not recorded boundaries, and nothing live may be
+            // appended (no receipt, event, closeout or projection) during replay (#17).
+            return Err(anyhow!("replay: {class} call to {tool} is not a recorded boundary; nothing appended (run {} is replaying, effects: recorded_only)", replay_run_id(wih_id)));
+        }
+        // Gate effects carry no node id, so they were recorded at the run node.
+        let node = r.cassette().run_id.clone();
+        let mut st = ReplayStep::tool(&node, tool, payload, class)?;
+        if let Some(k) = payload.get("idempotency_key").and_then(|v| v.as_str()).filter(|k| k.len() >= 8) {
+            st = st.with_key(k);
+        }
+        match r.step(&st) {
+            StepOutcome::Recorded(res) if res.status.as_deref() == Some("COMMITTED") =>
+                Ok(Some(res.external_ref.unwrap_or_default())),
+            StepOutcome::Recorded(res) => Err(anyhow!(
+                "replay: recorded effect {} ended {:?}; not re-executed", res.receipt_id, res.status)),
+            StepOutcome::Refused(d) => Err(anyhow!(
+                "replay: no trustworthy recording for {tool} ({:?} at seq {}); refused, not executed", d.kind, d.seq)),
+        }
+    }
+
+    /// Record a policy decision at `node_id` on the run's receipt chain
+    /// (`PolicyReceiptV1`). In replay mode it is compared with the recording instead.
+    pub fn record_policy_decision(&self, wih_id: &str, node_id: &str, decision: &str) -> Result<()> {
+        let run = replay_run_id(wih_id);
+        let schema = "allternit.kernel.PolicyReceiptV1";
+        {
+            let mut map = self.replay.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some(ReplaySession { r, .. }) = map.get_mut(&run) {
+                let b = crate::replay::Boundary::Policy;
+                let st = crate::replay::ReplayStep {
+                    boundary: b, node_id: node_id.into(),
+                    request_hash: crate::replay::boundary_request_hash(b, node_id, schema)?,
+                    branch: Some(decision.into()), result_hash: None, idempotency_key: None,
+                };
+                r.step(&st);
+                return Ok(());
+            }
+        }
+        // Replaying in another session: recorded_only appends nothing (#17).
+        if self.replay_marker_exists(wih_id) {
+            return Err(anyhow!("replay: run {run} replays in another session; policy decision not appended"));
+        }
+        self.receipts.chain_store()?.append(json!({
+            "envelope": {"abi_version": "1.0.0", "schema_id": schema, "schema_version": "1.0.0",
+                         "run_id": run, "node_id": node_id,
+                         "created_at": Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)},
+            "decision": decision,
+            "extensions": {"x-actor": self.actor_id}
+        }))?;
+        Ok(())
+    }
+}
+
+impl Gate {
+    /// Consume a typed non-tool runtime boundary (or an already gated effect)
+    /// during recorded-only replay. This API has no executor and cannot append
+    /// evidence; callers get the recording or a refusal.
+    pub fn replay_boundary(&self, wih_id: &str, step: &crate::replay::ReplayStep) -> Result<crate::replay::RecordedResult> {
+        let mut map = self.replay.lock().unwrap_or_else(|p| p.into_inner());
+        let run = replay_run_id(wih_id);
+        let r = map.get_mut(&run).ok_or_else(|| anyhow!("run {run} is not replaying"))?;
+        match r.r.step(step) {
+            crate::replay::StepOutcome::Recorded(v) => Ok(v),
+            crate::replay::StepOutcome::Refused(d) => Err(anyhow!("replay boundary refused: {:?} at {}", d.kind, d.seq)),
+        }
     }
 }

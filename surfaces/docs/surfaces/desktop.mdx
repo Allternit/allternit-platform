@@ -1,68 +1,76 @@
 ---
 title: Desktop
-description: The packaged Electron app — the primary distribution surface for Allternit
+description: The packaged Electron app, the primary distribution surface for Allternit
 ---
+
+<Note>
+**Status:** Implementation IMPLEMENTED × Exposure PUBLIC (macOS builds). Windows and Linux targets exist in the electron-builder config but macOS is the shipped target.
+</Note>
 
 ## Overview
 
-`allternit-desktop` is the Electron shell that wraps `allternit-platform` into a native macOS (and eventually Windows/Linux) desktop application. It is the **only packaged app** — all other surfaces either run in the browser or serve as libraries.
+`allternit-desktop` (`@allternit/desktop`, in `surfaces/allternit-desktop`) is the Electron shell that bundles the whole stack so it runs locally out of the box: the workspace web UI, the Rust `allternit-api` server, `gizzi-code`, and supporting services (mux, voice, connector sidecar, office engine, computer-use driver). You can also point it at your own Allternit instance. See [BYOC overview](/byoc/overview).
 
-## What it does
+The workspace UI is a Vite + React app built from the separate `allternit-ai` repository. `scripts/prepare-platform-static.cjs` packages its static export into the app; set `ALLTERNIT_AI_PATH` to build against a specific checkout.
 
-- Launches and manages the `allternit-platform` Next.js server in the background
-- Provides a native window loading `http://localhost:3013`
-- Manages local VM provisioning via Apple Virtualization.framework (macOS)
-- Handles system tray, global shortcuts, and native menus
-- Distributes as a `.dmg` installer via electron-builder
+## Local ports
 
-## Quick Chat (Global Hotkey)
+Defaults from `src/main/config.ts`:
 
-A floating mini-window can be toggled from anywhere on the system:
+| Service | Port |
+|---|---|
+| `allternit-api` (packaged app) | `8013` |
+| `allternit-api` (dev default) | `18013` |
+| Gizzi Code runtime | `4096` |
+| Dev UI (Vite) | `3014` |
+| Extension bridge | `3011` |
+| Connector sidecar, office engine, local engine, voice | see `config.ts` |
+
+## Global hotkeys
 
 | Action | Shortcut |
 |---|---|
-| Toggle Quick Chat window | `Cmd+Shift+A` |
-| Hide mini-window | `Esc` or click outside |
+| Toggle Quick Chat mini-window | `Cmd/Ctrl+Shift+A` |
+| Toggle HUD window | `Cmd/Ctrl+Shift+H` (fallback `Alt+Shift+H`) |
 
-The mini-window loads the platform at `http://localhost:3013/?mini=1` — frameless, always-on-top, centered on screen.
+The Quick Chat window loads the workspace UI with `/?mini=1`.
 
-## Local Development
+## Local development
 
 ```bash
 cd surfaces/allternit-desktop
-
-# First: start the platform server
-cd ../allternit-platform && pnpm dev
-
-# Then: launch Electron (in a separate terminal)
-cd ../allternit-desktop && pnpm dev
+npm run dev      # builds the auth renderer, then `electron .` with NODE_ENV=development
 ```
 
-## Build & Package
+## Build and package
 
 ```bash
-pnpm build:electron      # builds and packages as .app/.dmg
-pnpm build:electron:dmg  # DMG only
+npm run build:electron       # full packaged build (stages platform static, office add-ins, api binary, sidecars)
+npm run build:electron:dmg   # same, DMG target
 ```
 
-## Architecture
+`build:electron` runs `prepare:*` steps first (platform static, computer-use driver, ACU gateway, Lima, Lume, mux, mesh node, office engine, API binary, connector catalog and sidecar) and `verify:packaged-resources`.
+
+## Layout
 
 ```
 allternit-desktop/
-├── src/
-│   ├── main/
-│   │   └── unified-main.ts   # Entry point — window, tray, hotkeys, VM manager
-│   └── preload/
-│       └── index.ts          # Context bridge for renderer → main IPC
-├── native/
-│   └── vm-manager/           # Swift CLI for Apple Virtualization.framework
-└── resources/
-    └── bin/                  # Compiled Swift binaries
+├── src/main/        unified-main.ts (windows, tray, hotkeys), backend-manager.ts, auth-manager.ts, ...
+├── src/preload/     context bridge (index.ts, auth.ts, startup.ts)
+├── src/renderer/    renderer code
+├── native/          dictation-helper (Swift)
+└── resources/       vm/, computer-use/, connector-sidecar/
 ```
 
-## IPC Channels
+## IPC channels (Quick Chat)
 
 | Channel | Direction | Purpose |
 |---|---|---|
-| `mini-window:hide` | Renderer → Main | Hide the Quick Chat window |
-| `mini-window:toggle` | Renderer → Main | Show/hide Quick Chat window |
+| `mini-window:hide` | Renderer to main | Hide the Quick Chat window |
+| `mini-window:toggle` | Renderer to main | Show or hide it |
+
+The main process registers many other channels (for example `miniApps:*`); see `src/main/unified-main.ts`.
+
+## How this relates to the Agency Kernel
+
+Desktop hosts the Allternit API and Gizzi runtime locally. It is not part of the [Agency Kernel](/architecture); the kernel's Agency API is a Cloud API surface. See [Architecture](/architecture).

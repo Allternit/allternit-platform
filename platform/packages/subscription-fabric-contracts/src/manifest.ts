@@ -1,6 +1,8 @@
 // §S2 — adapter manifest; PacingProfile per §A5
 import { z } from "zod";
+import { agentCapabilityManifestSchema } from "./agent";
 import { capabilityIdSchema, providerIdSchema } from "./capability";
+import { connectionProfileSchema } from "./vendor-pack";
 
 export const planDefSchema = z.object({
   plan_id: z.string(),
@@ -35,6 +37,14 @@ export const manifestCapabilitySchema = z.object({
 });
 export type ManifestCapability = z.infer<typeof manifestCapabilitySchema>;
 
+// Optional Agent Gateway section (AAI vNext). Absent on legacy manifests.
+export const adapterAgentSectionSchema = z.object({
+  capabilities: agentCapabilityManifestSchema,
+  // Generalized auth descriptors, one per supported ConnectionProfile authType.
+  authDescriptors: z.array(connectionProfileSchema),
+});
+export type AdapterAgentSection = z.infer<typeof adapterAgentSectionSchema>;
+
 export const adapterManifestSchema = z.object({
   adapter_id: z.string(),
   adapter_version: z.string(),
@@ -47,10 +57,14 @@ export const adapterManifestSchema = z.object({
     // Cookie names (prefixes) the provider sets only once signed in: the
     // gateway watches the login browser for them to finish a login by itself.
     session_cookies: z.array(z.string()).optional(),
+    // Same, for providers that keep the session in localStorage instead
+    // (Kimi: access_token on its app origin).
+    session_storage: z.array(z.object({ origin: z.string(), key: z.string() })).optional(),
   }),
   plans: z.array(planDefSchema),
   capabilities: z.array(manifestCapabilitySchema),
   pacing: pacingProfileSchema,
   selectors_version: z.string(),
+  agent: adapterAgentSectionSchema.optional(),
 });
 export type AdapterManifest = z.infer<typeof adapterManifestSchema>;

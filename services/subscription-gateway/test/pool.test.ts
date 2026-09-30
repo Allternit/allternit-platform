@@ -85,7 +85,8 @@ interface Harness {
 
 function makePool(
   probeImpl: () => Promise<ProbeResult>,
-  extra: Partial<Pick<LaneRuntime, "readAccount" | "readPlan">> = {}
+  extra: Partial<Pick<LaneRuntime, "readAccount" | "readPlan">> = {},
+  opts: { challengeRecheckMs?: number; challengeRecheckForMs?: number } = {}
 ): Harness {
   const supervisor = new WorkerSupervisor({
     db,
@@ -106,6 +107,7 @@ function makePool(
     registry: fakeRegistry(),
     supervisor,
     log,
+    ...opts,
     launch: async () => {
       harness.launchCalls += 1;
       return Object.assign(fakeRuntime(probeImpl), extra);
@@ -200,6 +202,32 @@ describe("WorkerPool.activate", () => {
     expect(
       h.logLines.filter((l) => l.kind === "needs_user" && l.task_id === `account:${LANE.account_id}`)
     ).toHaveLength(1);
+  });
+
+  it("after a verification check the pool looks again by itself; clearing it turns the account ready (probe only)", async () => {
+    let result = probeResult(false, "challenge");
+    const h = makePool(async () => result, {}, { challengeRecheckMs: 20 });
+    const runtime = (await h.pool.activate(LANE)) as FakeRuntime;
+    expect(h.pool.healthFor(LANE)).toBe("challenge_presented");
+    await new Promise((r) => setTimeout(r, 70));
+    expect(runtime.probeCalls).toBeGreaterThan(1); // re-probed without anyone asking
+    expect(h.launchCalls).toBe(1); // same browser, nothing relaunched
+    result = probeResult(true); // the person ticked the check
+    await new Promise((r) => setTimeout(r, 70));
+    expect(getAccount(db, LANE.account_id)?.session_health).toBe("ready");
+    const probes = runtime.probeCalls;
+    await new Promise((r) => setTimeout(r, 70));
+    expect(runtime.probeCalls).toBe(probes); // watch stopped once ready
+  });
+
+  it("the check watch stops when the lane closes (a login window takes the profile)", async () => {
+    const h = makePool(async () => probeResult(false, "challenge"), {}, { challengeRecheckMs: 20 });
+    const runtime = (await h.pool.activate(LANE)) as FakeRuntime;
+    await h.pool.deactivate(LANE);
+    const probes = runtime.probeCalls;
+    await new Promise((r) => setTimeout(r, 70));
+    expect(runtime.probeCalls).toBe(probes);
+    expect(h.launchCalls).toBe(1);
   });
 
   it("a probe that passes after an auth wall flips the lane to ready", async () => {
