@@ -10,13 +10,13 @@ The Inbox API stores per-user notification items. Items are created by agents or
 ## Base URL
 
 ```text
-https://api.allternit.com/api
+https://api.allternit.com/api/v1
 ```
 
 For local development:
 
 ```text
-http://127.0.0.1:8013/api
+http://127.0.0.1:8013/api/v1
 ```
 
 ## Authentication
@@ -49,7 +49,7 @@ All requests require a valid bearer token in the `Authorization` header. See [Au
 ## List inbox items
 
 ```bash
-curl "https://api.allternit.com/api/inbox?status=unread&type=agent_alert&limit=10" \
+curl "https://api.allternit.com/api/v1/inbox?status=unread&type=agent_alert&limit=10" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -86,7 +86,7 @@ curl "https://api.allternit.com/api/inbox?status=unread&type=agent_alert&limit=1
 ## Update inbox item
 
 ```bash
-curl -X PATCH https://api.allternit.com/api/inbox \
+curl -X PATCH https://api.allternit.com/api/v1/inbox \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -113,7 +113,7 @@ curl -X PATCH https://api.allternit.com/api/inbox \
 ## Create inbox item
 
 ```bash
-curl -X POST https://api.allternit.com/api/inbox \
+curl -X POST https://api.allternit.com/api/v1/inbox \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

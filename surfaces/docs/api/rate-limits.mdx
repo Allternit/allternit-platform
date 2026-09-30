@@ -1,35 +1,44 @@
 ---
 title: Rate Limits
-description: Organization and workspace rate-limit policy.
+description: Per-key and per-organization request limits on the LLM gateway.
 ---
 
 # Rate Limits
 
-Allternit enforces rate limits per organization and workspace. When a limit is exceeded, the API returns `429 Too Many Requests` with a `Retry-After` header.
+The LLM gateway (`/v1/*` on the Allternit API, relayed by the Cloud API) enforces two sliding-window limits. When one is exceeded it returns `429` with a `Retry-After` header.
 
-## Endpoints
+| Layer | Scope | Configured by |
+|-------|-------|---------------|
+| Per virtual key | Requests per minute for one `ak-` key | The key's `rate_limit_rpm` (falls back to a built-in default) |
+| Per organization | Requests per minute across all keys of an org | `organizations.gateway_rate_limit_rpm` |
+
+The Cloud API also applies its own rate-limit middleware and sets `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` on the responses it serves.
+
+## Endpoint
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET    | `/v1/rate-limits` | Current limits and usage |
+| `GET` | `/v1/rate-limits` | Requests and budget remaining for the calling virtual key |
 
-## Limits
+```bash
+curl https://api.allternit.com/v1/rate-limits \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
 
-Limits are applied to:
+```json
+{
+  "object": "rate_limits",
+  "requests_remaining": 58,
+  "requests_limit": 60,
+  "tokens_remaining": 1200,
+  "tokens_limit": 5000,
+  "reset_at": "2026-09-30T18:00:00Z"
+}
+```
 
-- Requests per minute
-- Tokens per minute
-- Concurrent sessions
-- Batch jobs
+`tokens_remaining` and `tokens_limit` are the key's budget, counted in cents (`remaining_cents`, `limit_cents`), not tokens. There is no limit on concurrent sessions or batch jobs.
 
-## Headers
+## Related pages
 
-Every response includes:
-
-- `X-RateLimit-Limit`
-- `X-RateLimit-Remaining`
-- `X-RateLimit-Reset`
-
-## Increasing limits
-
-Contact support or request a limit increase through the dashboard.
+- [Authentication](/api/authentication)
+- [Estimates](/api/estimates)

@@ -23,11 +23,13 @@ http://127.0.0.1:8013/v1
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/v1/models` | List available models and policy aliases |
-| `GET` | `/v1/models/:id` | Retrieve a single model or policy alias |
+| `GET` | `/v1/models` | List catalog models |
+| `GET` | `/v1/models/*id` | Retrieve a single catalog model |
 | `GET` | `/v1/pricing` | List per-model pricing |
 
 ## List models
+
+`GET /v1/models` is served by the Fabric model catalog. It requires an active organization (`403 organization_required` otherwise) and lists catalog entries, not policy aliases.
 
 ```bash
 curl https://api.allternit.com/v1/models \
@@ -41,26 +43,17 @@ curl https://api.allternit.com/v1/models \
   "object": "list",
   "data": [
     {
-      "id": "auto",
-      "object": "model",
-      "created": 0,
-      "owned_by": "allternit"
-    },
-    {
-      "id": "allternit-balanced",
-      "object": "model",
-      "created": 0,
-      "owned_by": "allternit"
-    },
-    {
       "id": "provider/model-id",
       "object": "model",
-      "created": 1704067200,
+      "created": 0,
       "owned_by": "provider",
+      "display_name": "Model Display Name",
       "context_window": 128000,
-      "max_output_tokens": 4096,
-      "deprecated": false,
-      "replacement": null
+      "quality_tier": "standard",
+      "pricing": {
+        "input_cents_per_1m": 250,
+        "output_cents_per_1m": 1000
+      }
     }
   ]
 }
@@ -70,18 +63,18 @@ curl https://api.allternit.com/v1/models \
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | string | Model id or policy alias. |
+| `id` | string | `provider/model` id. |
 | `object` | string | `model`. |
-| `created` | integer | Release-date timestamp, or `0` for aliases. |
-| `owned_by` | string | Provider id, or `allternit` for aliases. |
-| `context_window` | integer | Maximum context tokens, when known. |
-| `max_output_tokens` | integer | Maximum output tokens, when known. |
-| `deprecated` | boolean | Whether the model is deprecated. |
-| `replacement` | string | Recommended replacement id, if deprecated. |
+| `created` | integer | Always `0`. |
+| `owned_by` | string | Provider kind. |
+| `display_name` | string | Human-readable name. |
+| `context_window` | integer | Context tokens. |
+| `quality_tier` | string | Catalog quality tier. |
+| `pricing` | object | `input_cents_per_1m` and `output_cents_per_1m`. |
 
 ## Policy aliases
 
-Policy aliases are synthetic models that trigger the gateway's benchmark-weighted router. The router picks a concrete provider/model pair and derives a cross-provider fallback chain.
+Policy aliases are not returned by `/v1/models`. Pass one as the `model` of a chat completion to trigger the gateway's benchmark-weighted router, which picks a concrete provider/model pair and derives a cross-provider fallback chain.
 
 | Alias | Optimization target |
 |-------|---------------------|
@@ -95,20 +88,11 @@ Policy aliases are synthetic models that trigger the gateway's benchmark-weighte
 ## Retrieve a model
 
 ```bash
-curl https://api.allternit.com/v1/models/allternit-balanced \
+curl https://api.allternit.com/v1/models/provider/model-id \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
-```json
-{
-  "id": "allternit-balanced",
-  "object": "model",
-  "created": 0,
-  "owned_by": "allternit"
-}
-```
-
-If the model does not exist or is not in the key's allowlist, the gateway returns a `404` with code `allternit.model_not_found`.
+Returns one model object as above. An unknown id returns `404` with `{ "error": "model_not_found", "message": "..." }`. Aliases are not retrievable here.
 
 ## Pricing
 
@@ -153,7 +137,8 @@ curl https://api.allternit.com/v1/pricing \
 | HTTP status | Code | Meaning |
 |-------------|------|---------|
 | 401 | `allternit.authentication_failed` | Missing or invalid API key. |
-| 404 | `allternit.model_not_found` | Model not found or not allowed. |
+| 404 | `model_not_found` | `GET /v1/models/*id`: model not in the catalog. |
+| 400 | `allternit.model_not_found` | Chat completion named an unknown model. |
 | 429 | `allternit.rate_limited` | Per-key rate limit exceeded. |
 | 429 | `allternit.budget_exceeded` | Monthly key or tenant budget exhausted. |
 | 500 | `allternit.internal_error` | Internal gateway error. |

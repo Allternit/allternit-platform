@@ -40,6 +40,7 @@ Design routes inherit the standard bearer-token auth middleware. See [Authentica
 | `POST` | `/api/v1/design/adapters/detect` | Detect which adapters are available locally. |
 | `POST` | `/api/v1/design/adapters/spawn` | Spawn a local adapter process. |
 | `POST` | `/api/v1/design/plugins/install` | Install a plugin manifest to a target adapter directory. |
+| `POST` | `/api/v1/design/import-url` | Import a design from a URL. Returns `{ "ok": true, "design": {...} }` or `{ "ok": false, "error": "..." }` (always HTTP 200). |
 
 ## Connector catalog pointer
 

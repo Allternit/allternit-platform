@@ -124,7 +124,7 @@ curl -X POST https://api.allternit.com/v1/estimates/cost \
 
 ## Estimation methodology
 
-- Token counts use a heuristic of approximately 4 characters per token plus a per-message overhead.
+- Token counts use the model's BPE tokenizer when one is known, and fall back to a heuristic of about 4 characters per token. A fixed per-message overhead is added.
 - Cost is computed from the gateway pricing cache. If a model is not in the cache, the gateway falls back to conservative default rates.
 - Pricing is expressed in cents and is normalized per 1 million tokens.
 
