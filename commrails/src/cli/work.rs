@@ -447,6 +447,8 @@ async fn create_issue(
             title: title.to_string(),
             parent_node_id: parent,
             execution_mode: "shared".to_string(),
+            description: None,
+            executor: None,
         }];
         let _ = ctx
             .gate
@@ -1075,16 +1077,23 @@ async fn templates_cmd(ctx: &WorkContext, command: TemplateCommand) -> Result<()
                 resolve_root_node_id(&template.dag).unwrap_or_default(),
                 root_node.clone(),
             );
-            let mut counter = 1;
-            for node in template.dag.nodes.values() {
-                if node.node_id == resolve_root_node_id(&template.dag).unwrap_or_default() {
-                    continue;
-                }
-                counter += 1;
-                let new_id = format!("n_{:04}", counter);
-                node_map.insert(node.node_id.clone(), new_id.clone());
+            let root_template_id = resolve_root_node_id(&template.dag).unwrap_or_default();
+            let mut template_nodes: Vec<_> = template
+                .dag
+                .nodes
+                .values()
+                .filter(|n| n.node_id != root_template_id)
+                .collect();
+            template_nodes.sort_by(|a, b| a.node_id.cmp(&b.node_id));
+            // Map every node id first so parents and `{{ <node>.output }}`
+            // placeholders can reference nodes declared later.
+            for (idx, node) in template_nodes.iter().enumerate() {
+                node_map.insert(node.node_id.clone(), format!("n_{:04}", idx + 2));
+            }
+            for node in &template_nodes {
+                let new_id = node_map[&node.node_id].clone();
                 mutations.push(DagMutation::CreateNode {
-                    node_id: new_id,
+                    node_id: new_id.clone(),
                     node_kind: node.node_kind.clone(),
                     title: node.title.clone(),
                     parent_node_id: node
@@ -1093,7 +1102,21 @@ async fn templates_cmd(ctx: &WorkContext, command: TemplateCommand) -> Result<()
                         .and_then(|p| node_map.get(p))
                         .cloned(),
                     execution_mode: node.execution_mode.clone(),
+                    description: node
+                        .description
+                        .as_deref()
+                        .map(|d| crate::work::placeholders::rewrite_node_ids(d, &node_map)),
+                    executor: node.executor.clone(),
                 });
+                for gate in &node.wait_gates {
+                    mutations.push(DagMutation::AddWaitGate {
+                        node_id: new_id.clone(),
+                        gate_id: None,
+                        kind: gate.kind.clone(),
+                        description: Some(gate.description.clone()),
+                        params: gate.params.clone(),
+                    });
+                }
             }
             for edge in template.dag.edges.iter() {
                 if let (Some(from), Some(to)) = (

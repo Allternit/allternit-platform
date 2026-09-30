@@ -57,6 +57,10 @@ pub struct WihState {
     pub closed_at: Option<String>,
     pub execution_mode: Option<String>,
     pub context_pack_path: Option<String>,
+    /// Node description with `{{ <node>.output }}` placeholders resolved at
+    /// pickup (derived view, written only when the node had placeholders).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_prompt_path: Option<String>,
     pub loop_policy: Option<LoopPolicy>,
     pub loop_state: Option<WihLoopState>,
     /// Pending elicitation request ID

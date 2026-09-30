@@ -15,6 +15,10 @@ use allternit_commrails::core::ids::{create_event_id, create_lease_id};
 use allternit_commrails::core::io::{ensure_dir, write_json_atomic};
 use allternit_commrails::dependencies::load_graph;
 use allternit_commrails::gate::gate::{GateOptions, WihPickupOptions};
+use allternit_commrails::gate::GateError;
+use allternit_commrails::templates::{parse_param_args, plan_from_template, TemplateStore};
+use allternit_commrails::wait_gates::{GateOutcome, WaitGateKind};
+use allternit_commrails::work::needs_you::pending_manual_gates;
 use allternit_commrails::leases::leases::LeasesOptions;
 use allternit_commrails::ledger::ledger::LedgerOptions;
 use allternit_commrails::graph::{views, GraphAnalytics, GraphView, InsightsConfig};
@@ -98,6 +102,9 @@ enum Commands {
     /// Spawn-gate hooks injected into third-party harnesses (Gate 2 + hard floor).
     #[command(subcommand)]
     Hook(HookCmd),
+    /// Node-scoped wait-gates on WIH DAG nodes.
+    #[command(subcommand, name = "wait-gate")]
+    WaitGate(WaitGateCmd),
 }
 
 #[derive(Subcommand)]
@@ -135,6 +142,55 @@ enum HookCmd {
         harness: String,
         #[arg(long)]
         wih: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum WaitGateCmd {
+    /// Attach a wait-gate to a node (Gate 0 refine: prompt delta provenance).
+    Add {
+        /// `<dag_id>/<node_id>`
+        #[arg(long)]
+        node: String,
+        kind: WaitGateKind,
+        #[arg(long)]
+        description: Option<String>,
+        /// Timer gates: RFC 3339 timestamp.
+        #[arg(long)]
+        until: Option<String>,
+        /// GitHub gates: owner/repo.
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        run_id: Option<String>,
+        #[arg(long)]
+        pr: Option<u64>,
+    },
+    /// Resolve a node wait-gate. Manual gates require --actor.
+    Resolve {
+        /// `<dag_id>/<node_id>`
+        #[arg(long)]
+        node: String,
+        gate_id: String,
+        #[arg(long, default_value = "ok")]
+        outcome: GateOutcome,
+        /// `user:<id>` or `agent:<id>` (bare id = user).
+        #[arg(long)]
+        actor: Option<String>,
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// List wait-gates on one node (`--node`) or every node of a dag (`--dag`).
+    List {
+        #[arg(long)]
+        node: Option<String>,
+        #[arg(long = "dag")]
+        dag_id: Option<String>,
+    },
+    /// Unresolved manual node gates across all dags ("needs you").
+    Pending {
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -274,7 +330,14 @@ enum TicketCmd {
 #[derive(Subcommand)]
 enum PlanCmd {
     New {
-        text: String,
+        /// Plan prompt (root node). Optional with --template.
+        text: Option<String>,
+        /// Template id (in .allternit/rails/templates, .json or .md) or path.
+        #[arg(long)]
+        template: Option<String>,
+        /// Template param `<name>=<value>` (repeatable).
+        #[arg(long = "param")]
+        params: Vec<String>,
     },
     Refine {
         dag_id: String,
@@ -303,6 +366,13 @@ enum NodeCmd {
         kind: String,
         #[arg(long, default_value = "shared")]
         mode: String,
+        /// Node prompt; may reference predecessor outputs with
+        /// `{{ <node_id>.output }}` / `{{ <node_id>.output_path }}`.
+        #[arg(long)]
+        description: Option<String>,
+        /// `bot:<slug>` | `ao:<harness>` (recorded only).
+        #[arg(long)]
+        executor: Option<String>,
     },
 }
 
@@ -345,6 +415,10 @@ enum WihCmd {
         wih_id: String,
         status: String,
         evidence: Vec<String>,
+        /// File whose text becomes the node output (immutable blob + receipt,
+        /// derived view nodes/<node_id>.out.md). Counts as evidence.
+        #[arg(long)]
+        output: Option<PathBuf>,
     },
 }
 
@@ -580,6 +654,24 @@ enum TransportCmd {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    match run().await {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            // Structured gate denials: human line + JSON on stderr, exit 2.
+            if let Some(gate_err) = GateError::from_anyhow(&err) {
+                eprintln!("error: {gate_err}");
+                eprintln!(
+                    "{}",
+                    serde_json::to_string_pretty(gate_err).unwrap_or_default()
+                );
+                std::process::exit(2);
+            }
+            Err(err)
+        }
+    }
+}
+
+async fn run() -> Result<()> {
     let cli = Cli::parse();
     let root = cli.root.unwrap_or_else(|| std::env::current_dir().unwrap());
 
@@ -608,10 +700,41 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Plan(cmd) => match cmd {
-            PlanCmd::New { text } => {
+            PlanCmd::New {
+                text,
+                template,
+                params,
+            } => {
                 let gate = stores.gate().await?;
-                let (prompt_id, dag_id, node_id) = gate.plan_new(&text, None).await?;
-                println!("prompt_id: {prompt_id}\ndag_id: {dag_id}\nnode_id: {node_id}");
+                match template {
+                    Some(template_ref) => {
+                        let store = TemplateStore::new(&root)?;
+                        let template = store.resolve(&template_ref)?;
+                        let params = parse_param_args(&params)?;
+                        let result =
+                            plan_from_template(&gate, &template, &params, text.as_deref(), None)
+                                .await?;
+                        println!(
+                            "prompt_id: {}\ndag_id: {}\nnode_id: {}\ndelta_id: {}\ntemplate: {}",
+                            result.prompt_id,
+                            result.dag_id,
+                            result.root_node_id,
+                            result.delta_id,
+                            result.template_id
+                        );
+                        for (step, node) in &result.nodes {
+                            println!("step {step} -> {node}");
+                        }
+                    }
+                    None => {
+                        if !params.is_empty() {
+                            bail!("--param requires --template");
+                        }
+                        let text = text.context("plan new needs <text> or --template")?;
+                        let (prompt_id, dag_id, node_id) = gate.plan_new(&text, None).await?;
+                        println!("prompt_id: {prompt_id}\ndag_id: {dag_id}\nnode_id: {node_id}");
+                    }
+                }
             }
             PlanCmd::Refine {
                 dag_id,
@@ -636,6 +759,8 @@ async fn main() -> Result<()> {
                 title,
                 kind,
                 mode,
+                description,
+                executor,
             } => {
                 let gate = stores.gate().await?;
                 let node_id = format!("n_{}", rand::random::<u32>() % 10_000);
@@ -649,6 +774,8 @@ async fn main() -> Result<()> {
                         title,
                         parent_node_id: Some(parent),
                         execution_mode: mode,
+                        description,
+                        executor,
                     }],
                 )
                 .await?;
@@ -675,6 +802,32 @@ async fn main() -> Result<()> {
                 };
                 let active = active_wih_nodes(&events);
                 if ready {
+                    // Lazy timer resolution happens on readiness checks. Only
+                    // build the Gate (SQLite-backed stores) when a dag actually
+                    // has an elapsed, unrecorded timer gate.
+                    let now = Utc::now();
+                    let timer_dags: Vec<&String> = dag_ids
+                        .iter()
+                        .filter(|dag_id| {
+                            project_dag(&events_for_dag(&events, dag_id), dag_id)
+                                .nodes
+                                .values()
+                                .any(|n| n.wait_gates.iter().any(|g| g.timer_elapsed(now)))
+                        })
+                        .collect();
+                    let mut resolved_any = false;
+                    if !timer_dags.is_empty() {
+                        let gate = stores.gate().await?;
+                        for dag_id in timer_dags {
+                            resolved_any |=
+                                !gate.resolve_elapsed_timer_gates(dag_id).await?.is_empty();
+                        }
+                    }
+                    let events = if resolved_any {
+                        ledger.query(LedgerQuery::default()).await?
+                    } else {
+                        events
+                    };
                     for dag_id in dag_ids {
                         let dag_events = events_for_dag(&events, &dag_id);
                         let dag = project_dag(&dag_events, &dag_id);
@@ -701,15 +854,24 @@ async fn main() -> Result<()> {
                 fresh,
             } => {
                 let gate = stores.gate().await?;
-                let wih_id = gate
-                    .wih_pickup_with(
+                let pickup = gate
+                    .wih_pickup_detailed(
                         &dag_id,
                         &node_id,
                         &agent_id,
                         WihPickupOptions { role, fresh },
                     )
                     .await?;
-                println!("wih_id: {wih_id}");
+                println!("wih_id: {}", pickup.wih_id);
+                if let Some(path) = &pickup.context_pack_path {
+                    println!("context_pack_path: {path}");
+                }
+                if let Some(path) = &pickup.resolved_prompt_path {
+                    println!("resolved_prompt_path: {path}");
+                }
+                if let Some(text) = &pickup.resolved_description {
+                    println!("--- resolved prompt ---\n{text}");
+                }
             }
             WihCmd::Context { wih_id } => {
                 let events = ledger.query(LedgerQuery::default()).await?;
@@ -717,8 +879,12 @@ async fn main() -> Result<()> {
                     if let Some(path) = wih.context_pack_path {
                         let contents = std::fs::read_to_string(path)?;
                         println!("{contents}");
-                    } else {
+                    } else if wih.resolved_prompt_path.is_none() {
                         println!("context pack not found");
+                    }
+                    if let Some(path) = wih.resolved_prompt_path {
+                        let contents = std::fs::read_to_string(&path)?;
+                        println!("--- resolved prompt ({path}) ---\n{contents}");
                     }
                 } else {
                     println!("wih not found");
@@ -733,10 +899,23 @@ async fn main() -> Result<()> {
                 wih_id,
                 status,
                 evidence,
+                output,
             } => {
                 let gate = stores.gate().await?;
-                gate.wih_close(&wih_id, &status, &evidence).await?;
+                let output_text = match &output {
+                    Some(path) => Some(
+                        std::fs::read_to_string(path)
+                            .with_context(|| format!("failed to read --output {path:?}"))?,
+                    ),
+                    None => None,
+                };
+                let receipt = gate
+                    .wih_close_with(&wih_id, &status, &evidence, output_text.as_deref())
+                    .await?;
                 println!("closed");
+                if let Some(receipt_id) = receipt {
+                    println!("output_receipt: {receipt_id}");
+                }
             }
         },
         Commands::Lease(cmd) => match cmd {
@@ -1357,6 +1536,102 @@ async fn main() -> Result<()> {
         Commands::Hook(cmd) => {
             run_hook_command(&root, &stores, &ledger, cmd).await?;
         }
+        Commands::WaitGate(cmd) => match cmd {
+            WaitGateCmd::Add {
+                node,
+                kind,
+                description,
+                until,
+                repo,
+                run_id,
+                pr,
+            } => {
+                let (dag_id, node_id) = split_node_ref(&node)?;
+                let mut params = HashMap::new();
+                if let Some(until) = until {
+                    params.insert("until".to_string(), json!(until));
+                }
+                if let Some(repo) = repo {
+                    params.insert("repo".to_string(), json!(repo));
+                }
+                if let Some(run_id) = run_id {
+                    params.insert("run_id".to_string(), json!(run_id));
+                }
+                if let Some(pr) = pr {
+                    params.insert("pr".to_string(), json!(pr));
+                }
+                let gate = stores.gate().await?;
+                let gate_id = gate
+                    .add_node_wait_gate(&dag_id, &node_id, kind, description, params, "cli")
+                    .await?;
+                println!("gate_id: {gate_id}");
+            }
+            WaitGateCmd::Resolve {
+                node,
+                gate_id,
+                outcome,
+                actor,
+                reason,
+            } => {
+                let (dag_id, node_id) = split_node_ref(&node)?;
+                let resolver = actor.as_deref().map(parse_actor).transpose()?;
+                let gate = stores.gate().await?;
+                gate.resolve_node_wait_gate(&dag_id, &node_id, &gate_id, outcome, resolver, reason)
+                    .await?;
+                println!("resolved {gate_id} as {outcome}");
+            }
+            WaitGateCmd::List { node, dag_id } => {
+                let (dag_id, only_node) = match (node, dag_id) {
+                    (Some(node), _) => {
+                        let (d, n) = split_node_ref(&node)?;
+                        (d, Some(n))
+                    }
+                    (None, Some(d)) => (d, None),
+                    (None, None) => bail!("wait-gate list needs --node <dag>/<node> or --dag <dag>"),
+                };
+                let events = ledger.query(LedgerQuery::default()).await?;
+                let dag = project_dag(&events_for_dag(&events, &dag_id), &dag_id);
+                let mut nodes: Vec<_> = dag
+                    .nodes
+                    .values()
+                    .filter(|n| only_node.as_deref().is_none_or(|id| id == n.node_id))
+                    .collect();
+                nodes.sort_by(|a, b| a.node_id.cmp(&b.node_id));
+                let now = Utc::now();
+                for n in nodes {
+                    for g in &n.wait_gates {
+                        let state = match g.outcome {
+                            Some(o) => format!(
+                                "resolved {o} by {}",
+                                g.resolved_by.as_deref().unwrap_or("?")
+                            ),
+                            None if g.is_satisfied(now) => "elapsed (resolves on next readiness check)".to_string(),
+                            None => "open".to_string(),
+                        };
+                        println!("{} {} [{}] {} - {}", n.node_id, g.gate_id, g.kind, g.description, state);
+                    }
+                }
+            }
+            WaitGateCmd::Pending { json: as_json } => {
+                let events = ledger.query(LedgerQuery::default()).await?;
+                let pending = pending_manual_gates(&events);
+                if as_json {
+                    println!("{}", serde_json::to_string_pretty(&pending)?);
+                } else {
+                    for p in pending {
+                        println!(
+                            "{} {} {} [{}] {}{}",
+                            p.dag_id,
+                            p.node_id,
+                            p.gate_id,
+                            p.node_title,
+                            p.description,
+                            if p.deps_done { " (waiting on you)" } else { " (upstream not done)" }
+                        );
+                    }
+                }
+            }
+        },
     }
 
     Ok(())
@@ -2980,6 +3255,31 @@ fn project_wih_from_events(
         .cloned()
         .collect();
     project_wih(&filtered, wih_id)
+}
+
+/// `<dag_id>/<node_id>` -> (dag_id, node_id).
+fn split_node_ref(node: &str) -> Result<(String, String)> {
+    match node.split_once('/') {
+        Some((d, n)) if !d.is_empty() && !n.is_empty() => Ok((d.to_string(), n.to_string())),
+        _ => bail!("--node must be <dag_id>/<node_id>, got {node:?}"),
+    }
+}
+
+/// `user:<id>` | `agent:<id>` | `<id>` (user).
+fn parse_actor(raw: &str) -> Result<Actor> {
+    let (kind, id) = match raw.split_once(':') {
+        Some(("user", id)) => (ActorType::User, id),
+        Some(("agent", id)) => (ActorType::Agent, id),
+        Some((other, _)) => bail!("--actor type must be user or agent, got {other:?}"),
+        None => (ActorType::User, raw),
+    };
+    if id.trim().is_empty() {
+        bail!("--actor needs an id");
+    }
+    Ok(Actor {
+        r#type: kind,
+        id: id.to_string(),
+    })
 }
 
 fn load_mutations(path: Option<PathBuf>, json_inline: Option<String>) -> Result<Vec<DagMutation>> {

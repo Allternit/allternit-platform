@@ -82,6 +82,8 @@ async fn delete_node_removes_it_from_projection_and_emits_event() {
             title: "Child B".to_string(),
             parent_node_id: Some(root_node.clone()),
             execution_mode: "shared".to_string(),
+            description: None,
+            executor: None,
         }],
     )
     .await
@@ -185,6 +187,8 @@ async fn delete_node_drops_edges_touching_the_node() {
                 title: "B".to_string(),
                 parent_node_id: Some(root_node.clone()),
                 execution_mode: "shared".to_string(),
+                description: None,
+                executor: None,
             },
             Mutation::CreateNode {
                 node_id: node_c.clone(),
@@ -192,6 +196,8 @@ async fn delete_node_drops_edges_touching_the_node() {
                 title: "C".to_string(),
                 parent_node_id: Some(root_node.clone()),
                 execution_mode: "shared".to_string(),
+                description: None,
+                executor: None,
             },
         ],
     )

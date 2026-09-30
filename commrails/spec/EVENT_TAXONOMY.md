@@ -20,16 +20,19 @@ All events are appended to the Ledger as JSON objects with:
 
 ### DAG planning and mutation
 - DagCreated
-- DagNodeCreated
-- DagNodeUpdated
+- DagNodeCreated (payload adds optional `description`, `executor` `bot:<slug>`|`ao:<harness>`)
 - DagNodeRemoved (payload: dag_id, node_id, title, parent_node_id)
 - DagNodeReparented (payload: dag_id, node_id, new_parent_id, old_parent_id)
 - DagNodeStatusChanged
+- DagNodeUpdated (payload: dag_id, node_id, patch — dag_id added 2026-09-29; older events have none)
 - DagEdgeAdded (blocked_by)
 - DagRelationAdded (related_to)
+- DagNodeOutputRecorded (payload: dag_id, node_id, wih_id, receipt_id, blob_id, sha256, size_bytes, output_path) — emitted by `wih close --output`; the projection sets `node.output`
+- DagNodeWaitGateAdded (payload: dag_id, node_id, gate_id, kind timer|github_run|github_pr|manual, description, params) — Gate 0 mutation with provenance
+- DagNodeWaitGateResolved (payload: dag_id, node_id, gate_id, kind, outcome ok|failed|skipped, resolved_by `<actor_type>:<id>`, reason) — actor is the resolver (Manual: explicit user/agent; Timer: gate)
 
 ### WIH lifecycle
-- WIHCreated
+- WIHCreated (payload adds `resolved_prompt_path`, `template_refs` [{node_id, field, receipt_id}] when the node description had output placeholders)
 - WIHPickedUp
 - WIHOpenSigned
 - WIHHeartbeat
@@ -39,7 +42,7 @@ All events are appended to the Ledger as JSON objects with:
 
 ### Runs and receipts
 - RunStarted
-- ReceiptWritten
+- ReceiptWritten (node outputs: `tool: "node.output"`, payload.payload = {blob_id, sha256, size_bytes, output_path})
 - RunEnded
 
 ### Leases
