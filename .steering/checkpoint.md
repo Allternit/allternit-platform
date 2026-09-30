@@ -1,4 +1,4 @@
-Goal: Execute WP10 exactly in allternit-wt-wp10; draft PR only, never merge.
-Just did: Completed graph template (N00–N23 + explicit fallbacks, deep escalation, rollback and response acceptance), seven registered packs, 18-code domain bank, 11-step ladder. Targeted cargo wp10: 2/2 pass, including all seven static invariants and pack coverage. DAG node n_4839 closed; next n_3103 picked up.
-Next: Verify external chain append and flagged compiler transport; then disposable TS/Vitest end-to-end test and draft PR.
-Open questions: None. Receipt routes have no auth; new append must enforce peer loopback and reject missing connection identity. No production auto-deploy paths planned. Shared checkout is read-only; only allowed dependency symlinks created. Required final WP10_NOTES report/sentinel is the task's explicit reporting exception outside the worktree.
+Goal: Fix assigned ACP gate findings #6, #7, #16 in allternit-wt-f2-acp-gate; dag:dag_55235. Draft PR only, never merge.
+Just did: Finding #6 reproduced (10 failing cases) and fixed. Missing binary now denies WIH-bound/effectful/unknown calls; retains unbound read-only catastrophic floor; honors .allternit/receipts/_replay/run_<wih>.json with the canonical replay denial. Targeted Bun: 15 pass, 1 optional real-binary test skipped. wih:wih_706 closed DONE.
+Next: Commit/push #6, then n_1243 (#7 all mutation paths), n_9386 (#16 failed hook exits), n_6488 (verification/draft PR/notes).
+Open questions: None. Q24 launch flags and permission answer path unchanged. No auth, deploy paths, builds, shared-checkout writes or merge. Requested FIX_F2_NOTES.md is the explicit report exception outside the worktree.

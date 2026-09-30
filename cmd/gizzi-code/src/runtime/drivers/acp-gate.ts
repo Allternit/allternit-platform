@@ -108,7 +108,8 @@ export function parseHookOutput(stdout: string, exitCode: number | null): AcpGat
 /**
  * Decide one ACP tool call, never prompting. Order: plan-mode read-only
  * (deny write/exec first), then the commrails gate; with no commrails binary,
- * gizzi's in-process catastrophic floor (deny catastrophic, allow the rest).
+ * fail closed for WIH-bound or effectful calls. Only unbound read-only calls
+ * can use gizzi's in-process catastrophic floor as a fallback.
  */
 export async function acpGateDecision(opts: {
   toolCall: AcpToolCall
@@ -127,7 +128,24 @@ export async function acpGateDecision(opts: {
     return { allow: false, reason: "plan mode is read-only" }
   }
   const bin = opts.bin ?? findCommrailsBin()
-  if (!bin) return inProcessFloor(opts.toolCall, opts.cwd)
+  if (!bin) {
+    const floor = inProcessFloor(opts.toolCall, opts.cwd)
+    if (!floor.allow) return floor
+    if (opts.wihId) {
+      // Same default receipt root and marker-presence semantics as CommRails.
+      // A marker is authoritative even if its JSON is empty or unreadable.
+      const validId = !/[\/\\\0]/.test(opts.wihId) && !opts.wihId.startsWith(".")
+      const marker = validId && join(opts.root ?? opts.cwd, ".allternit", "receipts", "_replay", `run_${opts.wihId}.json`)
+      if (marker && existsSync(marker)) {
+        return { allow: false, reason: `replay: recorded result served by the gate (run run_${opts.wihId} is replaying, effects: recorded_only)`, fallback: true }
+      }
+      return { allow: false, reason: `Allternit gate unavailable: cannot enforce WIH ${opts.wihId} policy and lease coverage (fail closed)`, fallback: true }
+    }
+    const payload = acpToolToHookPayload(opts.toolCall, opts.cwd)
+    const readOnly = ["Read", "WebFetch"].includes(payload.tool_name) && (!opts.permission || opts.permission === "read")
+    if (!readOnly) return { allow: false, reason: "Allternit gate unavailable: effectful or unknown tool call cannot be authorized (fail closed)", fallback: true }
+    return floor
+  }
   const args = ["--root", opts.root ?? opts.cwd, "hook", "claude-pretool", "--harness", opts.harness, "--workspace", opts.cwd]
   if (opts.wihId) args.push("--wih", opts.wihId)
   const payload = JSON.stringify(acpToolToHookPayload(opts.toolCall, opts.cwd, opts.sessionId))
