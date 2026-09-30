@@ -290,9 +290,15 @@ pub async fn decide(req: &HookRequest, root: &Path, home: Option<&Path>, wih: Op
                 Some(rel) => rel_paths.push(rel),
                 None => {
                     rel_paths.push(p.to_string_lossy().to_string());
+                    let dest = canonical_lenient(&p);
+                    let via = if dest != shell::normalize(&p) {
+                        format!(" (resolves to {})", dest.display())
+                    } else {
+                        String::new()
+                    };
                     return Decision {
                         verdict: Verdict::Deny(format!(
-                            "write outside WIH {} lease: {} is outside {}",
+                            "write outside WIH {} lease: {}{via} is outside {}",
                             wih.wih_id,
                             p.display(),
                             root.display()
@@ -304,7 +310,14 @@ pub async fn decide(req: &HookRequest, root: &Path, home: Option<&Path>, wih: Op
         }
     }
 
-    match wih.gate.pre_tool(wih.wih_id, &req.tool_name, &rel_paths).await {
+    // The actual command goes to Gate 2 so the judge's hard rules and the
+    // judge request both see it (a judge that says allow cannot approve `sudo`).
+    let command = req.command();
+    match wih
+        .gate
+        .pre_tool_with(wih.wih_id, &req.tool_name, &rel_paths, command.as_deref())
+        .await
+    {
         Ok(res) if !res.allowed => {
             return Decision {
                 verdict: Verdict::Deny(format!(
@@ -354,15 +367,9 @@ pub async fn decide(req: &HookRequest, root: &Path, home: Option<&Path>, wih: Op
     }
 }
 
-/// Same matching rule as `Leases::check_coverage`.
+/// Same matching rule as `Leases::check_coverage` (one implementation).
 fn lease_matches(lease_path: &str, candidate: &str) -> bool {
-    if let Some(prefix) = lease_path.strip_suffix("/**") {
-        return candidate.starts_with(prefix);
-    }
-    if let Some(prefix) = lease_path.strip_suffix('*') {
-        return candidate.starts_with(prefix);
-    }
-    candidate == lease_path || candidate.starts_with(&format!("{lease_path}/"))
+    crate::leases::leases::matches_path(lease_path, candidate)
 }
 
 /// A path and its symlink-resolved form (macOS `/tmp` → `/private/tmp`).
@@ -399,13 +406,17 @@ fn canonical_lenient(path: &Path) -> PathBuf {
     }
 }
 
+/// Workspace-relative form of `path`'s canonical, symlink-resolved
+/// destination, or `None` when that destination leaves the workspace. The
+/// lexical path is never trusted on its own: `src/link/x` with
+/// `src/link -> /outside` resolves to `/outside/x` and is outside, and a link
+/// that stays in the workspace is judged by where it lands, not by its name.
 fn relative_to_root(path: &Path, root_forms: &[PathBuf]) -> Option<String> {
-    for candidate in path_forms(path) {
-        for root in root_forms {
-            if let Ok(rel) = candidate.strip_prefix(root) {
-                let rel = rel.to_string_lossy().to_string();
-                return Some(if rel.is_empty() { ".".to_string() } else { rel });
-            }
+    let dest = canonical_lenient(path);
+    for root in root_forms {
+        if let Ok(rel) = dest.strip_prefix(root) {
+            let rel = rel.to_string_lossy().to_string();
+            return Some(if rel.is_empty() { ".".to_string() } else { rel });
         }
     }
     None
