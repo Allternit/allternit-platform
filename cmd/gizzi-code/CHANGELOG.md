@@ -1,5 +1,44 @@
 # Changelog
 
+## 2.1.9 (2026-09-30)
+
+Gizzi now gates every CLI it drives, blocks risky network and credential
+access by default, and serves its model pool to the rest of Allternit.
+
+### Added
+- Codex, Qwen, Kimi and Gemini run behind Allternit's permission gate.
+  Codex and Qwen are checked through a hook before each tool call; Kimi and
+  Gemini have their ACP permission requests answered by the gate. Plan mode
+  stays read-only, and if the gate can't be reached the built-in safety
+  floor decides instead of prompting.
+- `GET /model-pool` (and `/model-pool/capabilities`) lists the models gizzi
+  can reach, with what each can do and where it runs, so Allternit can route
+  work without hard-coding vendors or model names.
+- Context and tool-call compilers. They are off by default and run in
+  shadow mode only: they record what they would have sent, without changing
+  what the model sees.
+- Tool calls append a receipt to the run's receipt chain, so a run's actions
+  can be checked afterwards.
+
+### Changed
+- Guardrails are on by default. Requests to cloud metadata and link-local
+  addresses are blocked, reading credential files needs to be declared by
+  the policy (including through `<` input redirects), and every permission
+  decision (allow, deny or unresolved) is recorded. A strict fence that also
+  limits the environment passed to tools is available as an opt-in, and is
+  always on for Agency runs.
+- A bash command no mode can approve (for example `rm -rf ~`, `mkfs`, a
+  force push to main) is refused even in bypass mode, and a configured deny
+  rule now wins over bypass.
+
+### Fixed
+- Web fetches and MCP connector calls check where a hostname points before
+  connecting, then connect to that checked address, so a DNS change between
+  the check and the request can't redirect them to a private address.
+- The ACP gate fails closed when a work item or its effects lack the gate,
+  checks every file location and destination a change touches, and denies a
+  hook that errors before reading its output.
+
 ## 2.1.8 (2026-09-29)
 
 `npm install -g @allternit/gizzi-code` works again, and Allternit Cloud
