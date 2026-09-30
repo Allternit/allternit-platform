@@ -1,0 +1,308 @@
+[
+  {
+    "pack_id": "CORE_AGENT",
+    "version": "1.0.0",
+    "primitives": [
+      "obs.parse_task_request",
+      "dec.infer_acceptance_criteria",
+      "state.activate_primitive_packs",
+      "dec.classify_task",
+      "dec.rank_candidates",
+      "ctx.compile_model_context",
+      "plan.propose_plan_branches",
+      "policy.authorize_tool_call",
+      "ver.check_acceptance_evidence",
+      "state.persist_run_receipt",
+      "ctl.compose_final_report",
+      "ctl.request_evidence",
+      "ver.check_artifact_existence"
+    ],
+    "decision_sets": [],
+    "tool_schemas": [],
+    "error_classes": [],
+    "environment_assumptions": [
+      "A workspace, task and acceptance criteria are available"
+    ],
+    "validators": [
+      "completion.bug_fix"
+    ],
+    "syntax_rules": [],
+    "commands": [],
+    "projection_rules": [
+      "Canonical state and receipts are authoritative; projections are disposable"
+    ],
+    "graph_fragments": [
+      "coding.bug_fix.v1"
+    ],
+    "policy_hooks": [
+      "policy.authorize_tool_call"
+    ],
+    "capability_requirements": [],
+    "eval_fixtures": [
+      "disposable_ts_vitest_bug_fix"
+    ]
+  },
+  {
+    "pack_id": "FILESYSTEM",
+    "version": "1.0.0",
+    "primitives": [
+      "obs.list_files",
+      "obs.read_file",
+      "obs.search_text",
+      "ctx.retrieve_candidate_files",
+      "mut.apply_patch_transactionally",
+      "ctl.rollback_mutation"
+    ],
+    "decision_sets": [],
+    "tool_schemas": [
+      "read_file(path)",
+      "apply_patch(unified_diff, expected_base_hash)"
+    ],
+    "error_classes": [],
+    "environment_assumptions": [
+      "Writes stay inside a declared workspace"
+    ],
+    "validators": [
+      "base_hash_matches",
+      "workspace_boundary"
+    ],
+    "syntax_rules": [],
+    "commands": [
+      "read_file(path)",
+      "apply_patch(unified_diff, expected_base_hash)"
+    ],
+    "projection_rules": [
+      "Canonical state and receipts are authoritative; projections are disposable"
+    ],
+    "graph_fragments": [],
+    "policy_hooks": [
+      "policy.authorize_tool_call"
+    ],
+    "capability_requirements": [],
+    "eval_fixtures": [
+      "disposable_ts_vitest_bug_fix"
+    ]
+  },
+  {
+    "pack_id": "POSIX_SHELL",
+    "version": "1.0.0",
+    "primitives": [
+      "tool.run_command",
+      "tool.run_script",
+      "tool.execute"
+    ],
+    "decision_sets": [],
+    "tool_schemas": [
+      "run_command(argv, cwd, timeout_ms)"
+    ],
+    "error_classes": [],
+    "environment_assumptions": [
+      "POSIX process execution with allowlisted environment"
+    ],
+    "validators": [
+      "exit_status",
+      "timeout"
+    ],
+    "syntax_rules": [],
+    "commands": [
+      "run_command(argv, cwd, timeout_ms)"
+    ],
+    "projection_rules": [
+      "Canonical state and receipts are authoritative; projections are disposable"
+    ],
+    "graph_fragments": [],
+    "policy_hooks": [
+      "policy.authorize_tool_call"
+    ],
+    "capability_requirements": [],
+    "eval_fixtures": [
+      "disposable_ts_vitest_bug_fix"
+    ]
+  },
+  {
+    "pack_id": "GIT",
+    "version": "1.0.0",
+    "primitives": [
+      "obs.read_git_state",
+      "obs.read_diff",
+      "obs.vcs.status",
+      "obs.vcs.diff",
+      "mut.vcs.restore"
+    ],
+    "decision_sets": [],
+    "tool_schemas": [
+      "git status --porcelain",
+      "git diff --check",
+      "git diff"
+    ],
+    "error_classes": [],
+    "environment_assumptions": [
+      "Repository initialized; unified diff is canonical"
+    ],
+    "validators": [
+      "diff_review",
+      "rollback"
+    ],
+    "syntax_rules": [],
+    "commands": [
+      "git status --porcelain",
+      "git diff --check",
+      "git diff"
+    ],
+    "projection_rules": [
+      "Canonical state and receipts are authoritative; projections are disposable"
+    ],
+    "graph_fragments": [],
+    "policy_hooks": [
+      "policy.authorize_tool_call"
+    ],
+    "capability_requirements": [],
+    "eval_fixtures": [
+      "disposable_ts_vitest_bug_fix"
+    ]
+  },
+  {
+    "pack_id": "SOFTWARE_ENGINEERING",
+    "version": "1.0.0",
+    "primitives": [
+      "obs.fingerprint_environment",
+      "obs.build_repo_index",
+      "dec.select_repair_strategy",
+      "dec.classify_error",
+      "tool.generate_free_argument",
+      "ver.verify_requirements",
+      "ver.diff_review",
+      "ver.regression_check"
+    ],
+    "decision_sets": [
+      "error_ontology.v0.1"
+    ],
+    "tool_schemas": [],
+    "error_classes": [
+      "SYNTAX_ERROR",
+      "TYPE_ERROR",
+      "IMPORT_ERROR",
+      "DEPENDENCY_ERROR",
+      "BUILD_ERROR",
+      "LINK_ERROR",
+      "TEST_ASSERTION",
+      "TEST_TIMEOUT",
+      "RUNTIME_EXCEPTION",
+      "RESOURCE_EXHAUSTION",
+      "PERMISSION_ERROR",
+      "NETWORK_ERROR",
+      "ENVIRONMENT_ERROR",
+      "VERSION_MISMATCH",
+      "FLAKY_TEST",
+      "REGRESSION",
+      "LOGIC_ERROR",
+      "UNKNOWN"
+    ],
+    "environment_assumptions": [
+      "Repairs are bounded candidates until verification"
+    ],
+    "validators": [
+      "verification.bug_fix.ladder.v1",
+      "error_ontology.v0.1"
+    ],
+    "syntax_rules": [
+      "unified diff",
+      "candidate before promotion"
+    ],
+    "commands": [],
+    "projection_rules": [
+      "Canonical state and receipts are authoritative; projections are disposable"
+    ],
+    "graph_fragments": [],
+    "policy_hooks": [
+      "policy.authorize_tool_call"
+    ],
+    "capability_requirements": [
+      "cap.bug_fix.patch_candidate"
+    ],
+    "eval_fixtures": [
+      "disposable_ts_vitest_bug_fix"
+    ]
+  },
+  {
+    "pack_id": "TYPESCRIPT",
+    "version": "1.0.0",
+    "primitives": [
+      "ver.parse_validate",
+      "ver.typecheck",
+      "ver.typecheck_affected",
+      "tool.run_typecheck"
+    ],
+    "decision_sets": [],
+    "tool_schemas": [
+      "typescript.createSourceFile",
+      "tsc --noEmit"
+    ],
+    "error_classes": [],
+    "environment_assumptions": [
+      "TypeScript source and tsconfig.json are present"
+    ],
+    "validators": [
+      "parse",
+      "typecheck"
+    ],
+    "syntax_rules": [
+      "TypeScript"
+    ],
+    "commands": [
+      "typescript.createSourceFile",
+      "tsc --noEmit"
+    ],
+    "projection_rules": [
+      "Canonical state and receipts are authoritative; projections are disposable"
+    ],
+    "graph_fragments": [],
+    "policy_hooks": [
+      "policy.authorize_tool_call"
+    ],
+    "capability_requirements": [],
+    "eval_fixtures": [
+      "disposable_ts_vitest_bug_fix"
+    ]
+  },
+  {
+    "pack_id": "VITEST",
+    "version": "1.0.0",
+    "primitives": [
+      "ver.run_target_tests",
+      "ver.unit_test",
+      "tool.run_test",
+      "tool.run_test_set"
+    ],
+    "decision_sets": [],
+    "tool_schemas": [
+      "vitest run <target>",
+      "vitest run"
+    ],
+    "error_classes": [],
+    "environment_assumptions": [
+      "package.json declares vitest; test files are isolated"
+    ],
+    "validators": [
+      "target_tests_pass",
+      "affected_tests_pass",
+      "no_new_regressions"
+    ],
+    "syntax_rules": [],
+    "commands": [
+      "vitest run <target>",
+      "vitest run"
+    ],
+    "projection_rules": [
+      "Canonical state and receipts are authoritative; projections are disposable"
+    ],
+    "graph_fragments": [],
+    "policy_hooks": [
+      "policy.authorize_tool_call"
+    ],
+    "capability_requirements": [],
+    "eval_fixtures": [
+      "disposable_ts_vitest_bug_fix"
+    ]
+  }
+]

@@ -1,0 +1,57 @@
+[
+  {
+    "step_id": "parse",
+    "primitive_id": "ver.parse_validate",
+    "deterministic": true
+  },
+  {
+    "step_id": "structure",
+    "primitive_id": "ver.parse_validate",
+    "deterministic": true
+  },
+  {
+    "step_id": "format",
+    "primitive_id": "ver.format_check",
+    "deterministic": true
+  },
+  {
+    "step_id": "lint",
+    "primitive_id": "ver.lint",
+    "deterministic": true
+  },
+  {
+    "step_id": "typecheck",
+    "primitive_id": "ver.typecheck_affected",
+    "deterministic": true
+  },
+  {
+    "step_id": "target_test",
+    "primitive_id": "ver.run_target_tests",
+    "deterministic": true
+  },
+  {
+    "step_id": "affected_tests",
+    "primitive_id": "ver.unit_test",
+    "deterministic": true
+  },
+  {
+    "step_id": "integration_build",
+    "primitive_id": "ver.integration_test",
+    "deterministic": true
+  },
+  {
+    "step_id": "semantic_requirement",
+    "primitive_id": "ver.verify_requirements",
+    "deterministic": false
+  },
+  {
+    "step_id": "diff_review",
+    "primitive_id": "ver.diff_review",
+    "deterministic": false
+  },
+  {
+    "step_id": "regression",
+    "primitive_id": "ver.regression_check",
+    "deterministic": true
+  }
+]
