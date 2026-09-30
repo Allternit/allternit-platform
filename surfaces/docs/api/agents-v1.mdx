@@ -7,7 +7,11 @@ description: 'Remote-model-compatible agent discovery, model, tool, and response
 
 The Agents v1 API exposes a remote-model-compatible surface for discovering agent-backed models, listing deferred tools, activating tools for a session, and retrieving completed responses. It mirrors the shape expected by remote-model clients so that Allternit agents can be consumed through standard SDKs while still preserving Allternit-specific profile metadata.
 
-An "agent-backed model" here is an agent profile presented in a model-compatible shape. Its `modelConfig` is the agent's default model preference, which the router may use; the model is not the agent. See [Agents API vs Agency API](/api/agents#agents-api-vs-agency-api).
+An "agent-backed model" here is an agent profile presented in a model-compatible shape: its `id` is the agent ID. `modelConfig` is the real model configuration the agent runs with, taken from the agent's profile config and falling back to the agent's `provider` and `model` columns.
+
+<Note>
+Existing runtime/provider APIs expose implementation controls intentionally. The Agency API is the abstraction that hides those controls behind capabilities and one durable agent identity. See [Agents API vs Agency API](/api/agents#agents-api-vs-agency-api).
+</Note>
 
 ## Base URL
 
@@ -77,8 +81,8 @@ curl https://api.allternit.com/api/agents/v1/models \
         "version": "1",
         "instructions": "You are a helpful coding assistant.",
         "modelConfig": {
-          "provider": "allternit-local",
-          "model": "<specific-model>",
+          "provider": "ollama",
+          "model": "qwen2.5:0.5b",
           "temperature": 0.2,
           "maxContextTokens": null,
           "maxOutputTokens": null,
@@ -146,11 +150,11 @@ curl -X POST https://api.allternit.com/api/agents/v1/tools/search \
   }'
 ```
 
-Filters the model's available tools by `id`, `label`, or `description`.
+Filters the model's available tools by a case-insensitive substring match on `id`, `label`, or `description`. Returns the same shape as [List tools](#list-tools): `{"object": "list", "data": [...], "model": "agent_01J8X..."}`. An unknown agent returns `404`.
 
 ## Activate tools
 
-Activate one or more tools for a session so they appear in the runtime tool snapshot.
+Activate one or more tools for a session so they appear in the runtime tool snapshot. `tool_ids` must contain at least one ID (otherwise `400`). If the session does not exist yet, a remote session is created for it.
 
 ```bash
 curl -X POST https://api.allternit.com/api/agents/v1/tools/activate \
