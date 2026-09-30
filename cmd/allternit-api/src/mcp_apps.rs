@@ -21,7 +21,10 @@ use axum::{
     routing::post,
     Json, Router,
 };
-use mcp_client::{McpClient, McpError, StreamableHttpConfig, StreamableHttpTransport, TransportError};
+use mcp_client::{
+    McpClient, McpError, ReconnectConfig, SseConfig, SseTransport, StreamableHttpConfig, StreamableHttpTransport,
+    TransportError,
+};
 use rusqlite::params;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
@@ -53,13 +56,13 @@ pub fn mcp_apps_router() -> Router<Arc<AppState>> {
 
 #[derive(Debug)]
 pub struct AppsError {
-    status: StatusCode,
-    code: &'static str,
-    message: String,
+    pub(crate) status: StatusCode,
+    pub(crate) code: &'static str,
+    pub(crate) message: String,
 }
 
 impl AppsError {
-    fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
+    pub(crate) fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
         Self {
             status,
             code,
@@ -90,15 +93,19 @@ impl IntoResponse for AppsError {
 
 /// Map a failure talking to the connector onto a response. Messages are
 /// generic where the underlying text could carry connector-side detail.
-fn upstream_error(err: McpError) -> AppsError {
+fn unauthorized() -> AppsError {
+    AppsError::new(
+        StatusCode::BAD_GATEWAY,
+        "connector_unauthorized",
+        "the connector rejected its credentials; reconnect it and try again",
+    )
+}
+
+pub(crate) fn upstream_error(err: McpError) -> AppsError {
     match err {
-        McpError::Transport(TransportError::Http { status, .. }) if status == 401 || status == 403 => {
-            AppsError::new(
-                StatusCode::BAD_GATEWAY,
-                "connector_unauthorized",
-                "the connector rejected its credentials; reconnect it and try again",
-            )
-        }
+        McpError::Transport(TransportError::Http { status, .. }) if status == 401 || status == 403 => unauthorized(),
+        // The SSE transport reports a 401 as an expired OAuth token.
+        McpError::OAuth(_) => unauthorized(),
         McpError::Transport(TransportError::Http { status, message }) => AppsError::new(
             StatusCode::BAD_GATEWAY,
             "connector_http_error",
@@ -131,6 +138,24 @@ pub struct Connector {
     pub name_id: String,
     pub url: String,
     token: Option<String>,
+    /// OAuth material needed to renew `token`; never leaves this module.
+    oauth: OAuthMaterial,
+    /// Set when the stored token has expired and could not be renewed; every
+    /// call then answers `connector_unauthorized` without contacting the connector.
+    auth_failed: bool,
+}
+
+#[derive(Clone, Default)]
+struct OAuthMaterial {
+    /// `mcp_oauth_sessions.id` the tokens were read from (and are written back to).
+    session_row: Option<String>,
+    refresh_token: Option<String>,
+    /// Unix seconds; `None` when the token response carried no `expires_in`.
+    expires_at: Option<i64>,
+    client_id: Option<String>,
+    client_secret: Option<String>,
+    /// The whole stored token-exchange response, kept so a refresh can merge into it.
+    tokens: Option<Value>,
 }
 
 impl std::fmt::Debug for Connector {
@@ -153,6 +178,8 @@ impl Connector {
             name_id: name_id.into(),
             url: url.into(),
             token: token.map(String::from),
+            oauth: OAuthMaterial::default(),
+            auth_failed: false,
         }
     }
 }
@@ -167,30 +194,174 @@ fn access_token_of(tokens_json: &str) -> Option<String> {
         .map(String::from)
 }
 
-fn read_connector(
-    conn: &rusqlite::Connection,
-    row: (String, String, String, String, i64),
-) -> rusqlite::Result<Option<Connector>> {
-    let (id, name, name_id, url, enabled) = row;
-    if enabled == 0 {
+/// Unix-seconds deadline of a stored token set: `obtained_at + expires_in`,
+/// falling back to the row's `updated_at` (older rows carry no `obtained_at`).
+pub(crate) fn token_expiry(tokens: &Value, updated_at: Option<&str>) -> Option<i64> {
+    let expires_in = tokens.get("expires_in").and_then(|v| v.as_i64().or_else(|| v.as_str()?.parse().ok()))?;
+    let obtained = tokens.get("obtained_at").and_then(|v| v.as_i64()).or_else(|| {
+        chrono::NaiveDateTime::parse_from_str(updated_at?, "%Y-%m-%d %H:%M:%S")
+            .ok()
+            .map(|t| t.and_utc().timestamp())
+    })?;
+    Some(obtained + expires_in)
+}
+
+/// Columns every connector query selects, in the order `ConnectorRow` reads them.
+const CONNECTOR_COLUMNS: &str = "id, name, name_id, url, enabled, oauth_client_id, oauth_client_secret";
+
+struct ConnectorRow {
+    id: String,
+    name: String,
+    name_id: String,
+    url: String,
+    enabled: i64,
+    client_id: Option<String>,
+    client_secret: Option<String>,
+}
+
+impl ConnectorRow {
+    fn read(r: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: r.get(0)?,
+            name: r.get(1)?,
+            name_id: r.get(2)?,
+            url: r.get(3)?,
+            enabled: r.get(4)?,
+            client_id: r.get(5)?,
+            client_secret: r.get(6)?,
+        })
+    }
+}
+
+fn read_connector(conn: &rusqlite::Connection, row: ConnectorRow) -> rusqlite::Result<Option<Connector>> {
+    if row.enabled == 0 {
         return Ok(None);
     }
-    let tokens: Option<String> = conn
+    let session: Option<(String, String, Option<String>)> = conn
         .query_row(
-            "SELECT tokens FROM mcp_oauth_sessions
+            "SELECT id, tokens, updated_at FROM mcp_oauth_sessions
              WHERE mcp_connector_id = ?1 AND is_authenticated = 1 AND tokens IS NOT NULL
              ORDER BY updated_at DESC LIMIT 1",
-            params![id],
-            |r| r.get(0),
+            params![row.id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .ok();
+    let mut oauth = OAuthMaterial {
+        client_id: row.client_id.filter(|c| !c.is_empty()),
+        client_secret: row
+            .client_secret
+            .as_deref()
+            .map(crate::token_crypto::open)
+            .filter(|c| !c.is_empty()),
+        ..OAuthMaterial::default()
+    };
+    let mut token = None;
+    if let Some((session_row, stored, updated_at)) = session {
+        // Sealed rows open; legacy plaintext rows pass through unchanged.
+        let tokens_json = crate::token_crypto::open(&stored);
+        token = access_token_of(&tokens_json);
+        if let Ok(tokens) = serde_json::from_str::<Value>(&tokens_json) {
+            oauth.refresh_token = tokens
+                .get("refresh_token")
+                .and_then(|t| t.as_str())
+                .filter(|t| !t.is_empty())
+                .map(String::from);
+            oauth.expires_at = token_expiry(&tokens, updated_at.as_deref());
+            oauth.tokens = Some(tokens);
+        }
+        oauth.session_row = Some(session_row);
+    }
     Ok(Some(Connector {
-        token: tokens.as_deref().and_then(access_token_of),
-        id,
-        name,
-        name_id,
-        url,
+        token,
+        id: row.id,
+        name: row.name,
+        name_id: row.name_id,
+        url: row.url,
+        oauth,
+        auth_failed: false,
     }))
+}
+
+/// Seconds before the stated expiry at which a token is renewed.
+const REFRESH_SKEW_SECS: i64 = 60;
+
+/// Renew the connector's access token when it has expired (or is about to) and a
+/// refresh token is on file. A failed renewal marks the connector
+/// unauthorized rather than sending a token known to be dead.
+async fn refresh_if_needed(state: &Arc<AppState>, connector: &mut Connector, allow_private: bool) {
+    let Some(expires_at) = connector.oauth.expires_at else { return };
+    if chrono::Utc::now().timestamp() + REFRESH_SKEW_SECS < expires_at {
+        return;
+    }
+    let Some(refresh_token) = connector.oauth.refresh_token.clone() else {
+        // Expired with nothing to renew it: the connector will say 401; do not guess.
+        return;
+    };
+    match request_refresh(connector, &refresh_token, allow_private).await {
+        Ok(fresh) => {
+            let mut merged = connector.oauth.tokens.clone().unwrap_or_else(|| json!({}));
+            if let (Some(base), Some(new)) = (merged.as_object_mut(), fresh.as_object()) {
+                for (k, v) in new {
+                    base.insert(k.clone(), v.clone());
+                }
+                // Servers may rotate the refresh token or keep the old one.
+                base.entry("refresh_token").or_insert(json!(refresh_token));
+            }
+            merged["obtained_at"] = json!(chrono::Utc::now().timestamp());
+            connector.token = access_token_of(&merged.to_string());
+            connector.oauth.refresh_token = merged.get("refresh_token").and_then(|t| t.as_str()).map(String::from);
+            connector.oauth.expires_at = token_expiry(&merged, None);
+            let sealed = crate::token_crypto::seal(&merged.to_string());
+            connector.oauth.tokens = Some(merged);
+            if let Some(row) = connector.oauth.session_row.clone() {
+                let db = state.db.clone();
+                let saved = tokio::task::spawn_blocking(move || {
+                    db.connect()?.execute(
+                        "UPDATE mcp_oauth_sessions SET tokens = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
+                        params![sealed, row],
+                    )
+                })
+                .await;
+                if !matches!(saved, Ok(Ok(_))) {
+                    warn!(connector_id = %connector.id, "mcp connector: refreshed token could not be stored");
+                }
+            }
+            info!(connector_id = %connector.id, "mcp connector: access token refreshed");
+        }
+        Err(reason) => {
+            warn!(connector_id = %connector.id, reason, "mcp connector: token refresh failed");
+            connector.auth_failed = true;
+        }
+    }
+}
+
+/// RFC 6749 §6 refresh-token grant. Returns the new token-endpoint response.
+async fn request_refresh(connector: &Connector, refresh_token: &str, allow_private: bool) -> Result<Value, &'static str> {
+    // Every URL here derives from the user-supplied connector URL and ends up receiving the refresh
+    // token and client secret: each is validated and pinned like a connector call.
+    let probe = guarded_client(&connector.url, allow_private).await.map_err(|_| "connector URL not allowed")?;
+    let token_url = crate::mcp_routes::discover_token_endpoint(&probe, &connector.url)
+        .await
+        .ok_or("token endpoint not found")?;
+    let client = guarded_client(&token_url, allow_private).await.map_err(|_| "token endpoint not allowed")?;
+
+    let mut form = vec![("grant_type", "refresh_token"), ("refresh_token", refresh_token)];
+    if let Some(id) = connector.oauth.client_id.as_deref() {
+        form.push(("client_id", id));
+    }
+    let mut req = client.post(&token_url).form(&form);
+    if let (Some(id), Some(secret)) = (connector.oauth.client_id.as_deref(), connector.oauth.client_secret.as_deref()) {
+        req = req.basic_auth(id, Some(secret));
+    }
+    let res = req.send().await.map_err(|_| "token endpoint unreachable")?;
+    if !res.status().is_success() {
+        return Err("token endpoint refused the refresh token");
+    }
+    let body: Value = res.json().await.map_err(|_| "token endpoint returned invalid JSON")?;
+    if access_token_of(&body.to_string()).is_none() {
+        return Err("token endpoint returned no access token");
+    }
+    Ok(body)
 }
 
 /// The caller's enabled connector `connector_id`, or `None` when it does not
@@ -199,18 +370,18 @@ async fn load_connector(
     state: &Arc<AppState>,
     user_id: &str,
     connector_id: &str,
+    allow_private: bool,
 ) -> Result<Option<Connector>, AppsError> {
     let db = state.db.clone();
     let user_id = user_id.to_string();
     let connector_id = connector_id.to_string();
-    tokio::task::spawn_blocking(move || {
+    let loaded = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
         let row = conn
             .query_row(
-                "SELECT id, name, name_id, url, enabled FROM mcp_connectors
-                 WHERE id = ?1 AND user_id = ?2",
+                &format!("SELECT {CONNECTOR_COLUMNS} FROM mcp_connectors WHERE id = ?1 AND user_id = ?2"),
                 params![connector_id, user_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+                ConnectorRow::read,
             )
             .map(Some)
             .or_else(|e| match e {
@@ -224,22 +395,28 @@ async fn load_connector(
     })
     .await
     .map_err(|e| AppsError::internal(format!("connector lookup failed: {e}")))?
-    .map_err(|e: rusqlite::Error| AppsError::internal(format!("connector lookup failed: {e}")))
+    .map_err(|e: rusqlite::Error| AppsError::internal(format!("connector lookup failed: {e}")))?;
+    match loaded {
+        Some(mut connector) => {
+            refresh_if_needed(state, &mut connector, allow_private).await;
+            Ok(Some(connector))
+        }
+        None => Ok(None),
+    }
 }
 
-async fn load_user_connectors(state: &Arc<AppState>, user_id: &str) -> Vec<Connector> {
+/// Every enabled connector of `user_id` (newest first, ties by id).
+pub(crate) async fn load_user_connectors(state: &Arc<AppState>, user_id: &str, allow_private: bool) -> Vec<Connector> {
     let db = state.db.clone();
     let user_id = user_id.to_string();
     let loaded = tokio::task::spawn_blocking(move || -> rusqlite::Result<Vec<Connector>> {
         let conn = db.connect()?;
-        let mut stmt = conn.prepare(
-            "SELECT id, name, name_id, url, enabled FROM mcp_connectors
-             WHERE user_id = ?1 ORDER BY created_at DESC",
-        )?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {CONNECTOR_COLUMNS} FROM mcp_connectors
+             WHERE user_id = ?1 ORDER BY created_at DESC, id ASC"
+        ))?;
         let rows = stmt
-            .query_map(params![user_id], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
-            })?
+            .query_map(params![user_id], ConnectorRow::read)?
             .collect::<Result<Vec<_>, _>>()?;
         let mut out = Vec::new();
         for row in rows {
@@ -250,7 +427,7 @@ async fn load_user_connectors(state: &Arc<AppState>, user_id: &str) -> Vec<Conne
         Ok(out)
     })
     .await;
-    match loaded {
+    let mut connectors = match loaded {
         Ok(Ok(v)) => v,
         Ok(Err(e)) => {
             warn!(error = %e, "mcp apps: could not load connectors");
@@ -260,7 +437,11 @@ async fn load_user_connectors(state: &Arc<AppState>, user_id: &str) -> Vec<Conne
             warn!(error = %e, "mcp apps: connector load task failed");
             Vec::new()
         }
+    };
+    for connector in connectors.iter_mut() {
+        refresh_if_needed(state, connector, allow_private).await;
     }
+    connectors
 }
 
 // ─── SSRF guard ──────────────────────────────────────────────────────────────
@@ -286,23 +467,30 @@ fn is_forbidden_ip(ip: IpAddr) -> bool {
     }
 }
 
-fn allow_private_hosts() -> bool {
+pub(crate) fn allow_private_hosts() -> bool {
     std::env::var(ALLOW_PRIVATE_ENV)
         .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
         .unwrap_or(false)
 }
 
+/// An address `host` was validated to resolve to; connections must go there.
+pub(crate) type Pin = Option<(String, std::net::SocketAddr)>;
+
 /// A connector URL is user-supplied and this host attaches the user's token to
 /// requests sent to it, so it must be http(s) and must not resolve to a local
 /// or private address (unless explicitly allowed for local development).
-async fn validate_connector_url(raw: &str, allow_private: bool) -> Result<(), AppsError> {
+///
+/// For a DNS name the first validated address is returned as a [`Pin`]: the
+/// caller connects to exactly that address, so a second lookup (DNS rebinding)
+/// cannot redirect the request somewhere that would have failed the check.
+pub(crate) async fn validate_connector_url(raw: &str, allow_private: bool) -> Result<Pin, AppsError> {
     let url = url::Url::parse(raw)
         .map_err(|_| AppsError::bad_request("connector URL is not a valid URL"))?;
     if url.scheme() != "http" && url.scheme() != "https" {
         return Err(AppsError::bad_request("connector URL must be http or https"));
     }
     if allow_private {
-        return Ok(());
+        return Ok(None);
     }
     let forbidden = || {
         AppsError::new(
@@ -316,7 +504,7 @@ async fn validate_connector_url(raw: &str, allow_private: bool) -> Result<(), Ap
         .ok_or_else(|| AppsError::bad_request("connector URL has no host"))?;
     let bare = host.trim_start_matches('[').trim_end_matches(']');
     if let Ok(ip) = bare.parse::<IpAddr>() {
-        return if is_forbidden_ip(ip) { Err(forbidden()) } else { Ok(()) };
+        return if is_forbidden_ip(ip) { Err(forbidden()) } else { Ok(None) };
     }
     let port = url.port_or_known_default().unwrap_or(443);
     let addrs: Vec<_> = tokio::net::lookup_host((bare, port))
@@ -325,26 +513,86 @@ async fn validate_connector_url(raw: &str, allow_private: bool) -> Result<(), Ap
             AppsError::new(StatusCode::BAD_GATEWAY, "connector_unreachable", "could not resolve the connector host")
         })?
         .collect();
+    choose_pin(bare, &addrs).ok_or_else(forbidden).map(Some)
+}
+
+/// The address to pin `host` to, or `None` when it resolved to nothing or to
+/// anything forbidden (one bad record among several is enough to refuse).
+fn choose_pin(host: &str, addrs: &[std::net::SocketAddr]) -> Option<(String, std::net::SocketAddr)> {
     if addrs.is_empty() || addrs.iter().any(|a| is_forbidden_ip(a.ip())) {
-        return Err(forbidden());
+        return None;
     }
-    Ok(())
+    Some((host.to_string(), addrs[0]))
+}
+
+/// An HTTP client for a user-supplied URL (OAuth discovery, token endpoints): validated like a
+/// connector URL and pinned to the address that passed the check.
+pub(crate) async fn guarded_client(raw: &str, allow_private: bool) -> Result<reqwest::Client, AppsError> {
+    let pin = validate_connector_url(raw, allow_private).await?;
+    // No redirects: a redirect would leave the address that passed the check.
+    let mut builder = reqwest::Client::builder()
+        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        .redirect(reqwest::redirect::Policy::none());
+    if let Some((host, addr)) = pin {
+        builder = builder.resolve(&host, addr);
+    }
+    builder
+        .build()
+        .map_err(|e| AppsError::internal(format!("could not build an HTTP client: {e}")))
 }
 
 // ─── MCP session ─────────────────────────────────────────────────────────────
 
-async fn open_session(connector: &Connector, allow_private: bool) -> Result<McpClient, AppsError> {
-    validate_connector_url(&connector.url, allow_private).await?;
+pub(crate) async fn open_session(connector: &Connector, allow_private: bool) -> Result<McpClient, AppsError> {
+    if connector.auth_failed {
+        return Err(unauthorized());
+    }
+    let pin = validate_connector_url(&connector.url, allow_private).await?;
     let mut config = StreamableHttpConfig::new(connector.url.trim_end_matches('/'));
     config.auth_token = connector.token.clone();
     config.timeout_secs = REQUEST_TIMEOUT_SECS;
+    config.pin = pin.clone();
     let transport = StreamableHttpTransport::new(config).map_err(upstream_error)?;
+    let mut client = McpClient::new(transport);
+    match client.initialize().await {
+        Ok(_) => Ok(client),
+        // A server that predates streamable HTTP has no POST endpoint at this URL.
+        Err(McpError::Transport(TransportError::Http { status, .. })) if status == 404 || status == 405 => {
+            debug!(connector_id = %connector.id, status, "mcp connector: streamable HTTP refused, trying legacy SSE");
+            open_legacy_sse_session(connector, pin).await
+        }
+        Err(e) => Err(upstream_error(e)),
+    }
+}
+
+/// The pre-2025 HTTP+SSE transport: GET `<base>/sse` for the stream, POST
+/// `<base>/message` for requests. A connector URL ending in `/sse` is that
+/// stream endpoint; otherwise its path is the base.
+async fn open_legacy_sse_session(connector: &Connector, pin: Pin) -> Result<McpClient, AppsError> {
+    let url = url::Url::parse(&connector.url).map_err(|_| AppsError::bad_request("connector URL is not a valid URL"))?;
+    let path = url.path().trim_end_matches('/');
+    let base_path = path.strip_suffix("/sse").unwrap_or(path);
+    let mut base = url.clone();
+    base.set_path(base_path);
+    base.set_query(None);
+    base.set_fragment(None);
+    let config = SseConfig {
+        url: base.as_str().trim_end_matches('/').to_string(),
+        sse_path: Some("/sse".into()),
+        post_path: Some("/message".into()),
+        auth_token: connector.token.clone(),
+        timeout_secs: REQUEST_TIMEOUT_SECS,
+        // One short-lived session per call: a dropped stream is not worth retrying.
+        reconnect: ReconnectConfig { enabled: false, ..ReconnectConfig::default() },
+        pin,
+    };
+    let transport = SseTransport::new(config).map_err(upstream_error)?;
     let mut client = McpClient::new(transport);
     client.initialize().await.map_err(upstream_error)?;
     Ok(client)
 }
 
-async fn close_session(mut client: McpClient) {
+pub(crate) async fn close_session(mut client: McpClient) {
     let _ = client.shutdown().await;
 }
 
@@ -353,7 +601,7 @@ fn cursor_params(cursor: Option<&str>) -> Option<Value> {
 }
 
 /// Every tool the connector lists, following pagination.
-async fn list_all_tools(client: &McpClient) -> Result<Vec<Value>, AppsError> {
+pub(crate) async fn list_all_tools(client: &McpClient) -> Result<Vec<Value>, AppsError> {
     let mut tools = Vec::new();
     let mut cursor: Option<String> = None;
     for _ in 0..MAX_LIST_PAGES {
@@ -536,7 +784,7 @@ async fn run_bridge(
         ));
     }
     let forward = parse_forward(&body.action, body.params.as_ref())?;
-    let connector = load_connector(state, user_id, &body.connector_id)
+    let connector = load_connector(state, user_id, &body.connector_id, allow_private)
         .await?
         .ok_or_else(AppsError::not_found_connector)?;
     bridge_to_connector(&connector, forward, allow_private).await
@@ -803,7 +1051,7 @@ async fn sandbox_page(Json(req): Json<SandboxRequest>) -> Response {
 /// Same normalisation gizzi-code applies to MCP server names
 /// (`normalizeNameForMCP`), so a gizzi server key and a connector `name_id`
 /// compare equal.
-fn normalize_name(name: &str) -> String {
+pub(crate) fn normalize_name(name: &str) -> String {
     name.chars()
         .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
         .collect()
@@ -973,7 +1221,7 @@ pub async fn app_frame_for_tool_part(
     app_frame_for_tool_part_with(state, user_id, message_id, part, allow_private_hosts()).await
 }
 
-async fn app_frame_for_tool_part_with(
+pub(crate) async fn app_frame_for_tool_part_with(
     state: &Arc<AppState>,
     user_id: &str,
     message_id: &str,
@@ -984,15 +1232,23 @@ async fn app_frame_for_tool_part_with(
     let call_id = part.get("callID").and_then(|c| c.as_str())?;
     let server = normalize_name(call.server);
 
-    let connectors = load_user_connectors(state, user_id).await;
-    let Some(connector) = connectors.iter().find(|c| normalize_name(&c.name_id) == server) else {
-        debug!(server = call.server, "mcp apps: no connector for MCP server");
-        return None;
+    let connectors = load_user_connectors(state, user_id, allow_private).await;
+    // Through the per-user proxy the tool name is `<connector>__<tool>`; resolve it back.
+    let (connector, tool_name) = if server == normalize_name(crate::mcp_user_proxy::PROXY_SERVER_NAME) {
+        let (connector, tool) = crate::mcp_user_proxy::resolve_namespaced(&connectors, call.tool)?;
+        (connector, tool)
+    } else {
+        // A gizzi server configured directly: matched to a connector by name.
+        let Some(connector) = connectors.iter().find(|c| normalize_name(&c.name_id) == server) else {
+            debug!(server = call.server, "mcp apps: no connector for MCP server");
+            return None;
+        };
+        (connector, call.tool)
     };
 
     match tokio::time::timeout(
         EMIT_TIMEOUT,
-        emit_for_connector(connector, &call, message_id, call_id, allow_private),
+        emit_for_connector(connector, &call, tool_name, message_id, call_id, allow_private),
     )
     .await
     {
@@ -1000,14 +1256,14 @@ async fn app_frame_for_tool_part_with(
         Ok(Err(e)) => {
             warn!(
                 connector_id = %connector.id,
-                tool = call.tool,
+                tool = tool_name,
                 error = %e.message,
                 "mcp apps: could not build app frame"
             );
             None
         }
         Err(_) => {
-            warn!(connector_id = %connector.id, tool = call.tool, "mcp apps: app frame timed out");
+            warn!(connector_id = %connector.id, tool = tool_name, "mcp apps: app frame timed out");
             None
         }
     }
@@ -1016,6 +1272,7 @@ async fn app_frame_for_tool_part_with(
 async fn emit_for_connector(
     connector: &Connector,
     call: &McpToolCall<'_>,
+    tool_name: &str,
     message_id: &str,
     call_id: &str,
     allow_private: bool,
@@ -1025,7 +1282,7 @@ async fn emit_for_connector(
         let tools = list_all_tools(&client).await?;
         let Some(tool) = tools
             .iter()
-            .find(|t| t.get("name").and_then(|n| n.as_str()) == Some(call.tool))
+            .find(|t| t.get("name").and_then(|n| n.as_str()) == Some(tool_name))
         else {
             return Ok(None);
         };
@@ -1064,7 +1321,7 @@ async fn emit_for_connector(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -1165,6 +1422,24 @@ mod tests {
         );
         assert!(validate_connector_url("http://93.184.216.34/mcp", false).await.is_ok());
         assert!(validate_connector_url("http://127.0.0.1/mcp", true).await.is_ok());
+    }
+
+    #[test]
+    fn dns_answers_are_pinned_only_when_every_record_is_public() {
+        let addr = |s: &str| -> std::net::SocketAddr { s.parse().unwrap() };
+        let public = addr("93.184.216.34:443");
+        assert_eq!(choose_pin("example.com", &[public]), Some(("example.com".into(), public)));
+        // several public records: the first one is what the connection is pinned to
+        assert_eq!(
+            choose_pin("example.com", &[public, addr("93.184.216.35:443")]),
+            Some(("example.com".into(), public))
+        );
+        // a rebinding-style answer mixing in one private/loopback/link-local record is refused outright
+        for bad in ["127.0.0.1:443", "10.1.2.3:443", "169.254.169.254:443", "[::1]:443", "100.64.0.9:443"] {
+            assert_eq!(choose_pin("rebind.example", &[public, addr(bad)]), None, "{bad}");
+            assert_eq!(choose_pin("rebind.example", &[addr(bad)]), None, "{bad}");
+        }
+        assert_eq!(choose_pin("nothing.example", &[]), None);
     }
 
     #[test]
@@ -1341,13 +1616,13 @@ mod tests {
     use std::sync::Mutex;
     use tower::ServiceExt;
 
-    const APP_HTML: &str = "<html><body><h1>dash</h1></body></html>";
-    const TOKEN: &str = "tok-abc-123";
+    pub(crate) const APP_HTML: &str = "<html><body><h1>dash</h1></body></html>";
+    pub(crate) const TOKEN: &str = "tok-abc-123";
 
     #[derive(Debug, Clone)]
-    struct Seen {
-        method: String,
-        auth: Option<String>,
+    pub(crate) struct Seen {
+        pub(crate) method: String,
+        pub(crate) auth: Option<String>,
         session: Option<String>,
         version: Option<String>,
         accept: Option<String>,
@@ -1355,19 +1630,19 @@ mod tests {
     }
 
     #[derive(Clone, Default)]
-    struct TestServer {
-        log: Arc<Mutex<Vec<Seen>>>,
+    pub(crate) struct TestServer {
+        pub(crate) log: Arc<Mutex<Vec<Seen>>>,
         deleted: Arc<Mutex<bool>>,
     }
 
     impl TestServer {
-        fn methods(&self) -> Vec<String> {
+        pub(crate) fn methods(&self) -> Vec<String> {
             self.log.lock().unwrap().iter().map(|s| s.method.clone()).collect()
         }
-        fn count(&self) -> usize {
+        pub(crate) fn count(&self) -> usize {
             self.log.lock().unwrap().len()
         }
-        fn called_tools(&self) -> Vec<String> {
+        pub(crate) fn called_tools(&self) -> Vec<String> {
             self.log
                 .lock()
                 .unwrap()
@@ -1486,6 +1761,11 @@ mod tests {
     }
 
     async fn spawn_mcp_apps_server() -> (String, TestServer) {
+        spawn_mcp_apps_server_with(Router::new()).await
+    }
+
+    /// The MCP Apps test server plus `extra` routes (e.g. an OAuth token endpoint on the same origin).
+    pub(crate) async fn spawn_mcp_apps_server_with(extra: Router) -> (String, TestServer) {
         let server = TestServer::default();
         let deleted = server.deleted.clone();
         let app = Router::new()
@@ -1499,14 +1779,15 @@ mod tests {
                     }
                 }),
             )
-            .with_state(server.clone());
+            .with_state(server.clone())
+            .merge(extra);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         (format!("http://{addr}/mcp"), server)
     }
 
-    async fn fixture() -> (Arc<AppState>, TestServer, String) {
+    pub(crate) async fn fixture() -> (Arc<AppState>, TestServer, String) {
         let temp = tempfile::tempdir().unwrap().keep();
         let state = crate::beta_session_routes::tests::test_app_state(&temp).await;
         let (url, server) = spawn_mcp_apps_server().await;

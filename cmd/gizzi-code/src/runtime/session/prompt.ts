@@ -31,6 +31,7 @@ import { defer } from "@/shared/util/defer"
 import { ToolRegistry } from "@/runtime/tools/builtins/registry"
 import { MCP } from "@/runtime/tools/mcp"
 import { mcpAppMetadata } from "@/runtime/tools/mcp/apps"
+import { McpUserProxy } from "@/runtime/tools/mcp/user-proxy"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import { LSP } from "@/runtime/integrations/lsp"
 import { ReadTool } from "@/runtime/tools/builtins/read"
@@ -156,6 +157,12 @@ export namespace SessionPrompt {
       .optional()
       .describe(
         "Passthrough metadata forwarded by API bridges. The mobile composer sends `metadata.tools` ({ webSearch, research, toolAccess }) here; it is applied to this message's turn only and never persisted on the session.",
+      ),
+    mcpProxy: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe(
+        "The caller's per-user MCP proxy for this turn ({ server, url, sessionId, token }), sent by allternit-api. Held in memory for the turn only: deliberately not part of `metadata` (which is stored on the user message) because the token must never be written to disk.",
       ),
     format: MessageV2.Format.optional(),
     system: z.string().optional(),
@@ -300,9 +307,15 @@ const message = await createUserMessage(input)
       (p) => (p.type === "text" && isRoutineTurnText(p.text)) || p.type === "subtask",
     )
 
-    const result = await loop({ sessionID: input.sessionID, fallbackModels: input.fallbackModels, botPreamble })
-    if (!afterTurnLimit(session, result)) afterTurnHandoff(input.sessionID, result)
-    return result
+    // The per-user connector proxy exists for this turn only.
+    const releaseMcpProxy = McpUserProxy.register(input.sessionID, input.mcpProxy)
+    try {
+      const result = await loop({ sessionID: input.sessionID, fallbackModels: input.fallbackModels, botPreamble })
+      if (!afterTurnLimit(session, result)) afterTurnHandoff(input.sessionID, result)
+      return result
+    } finally {
+      releaseMcpProxy()
+    }
   })
 
   /** The wrap-up instruction a turn gets once it crosses land_at. */
@@ -1347,7 +1360,12 @@ const message = await createUserMessage(input)
       })
     }
 
-    const mcpCatalog = await MCP.toolCatalog()
+    // The user's connectors, through allternit-api's per-user proxy (registered for this turn only).
+    const proxyClient = await McpUserProxy.client(input.session.id)
+    const proxyEntry = McpUserProxy.current(input.session.id)
+    const mcpCatalog = await MCP.toolCatalog(
+      proxyClient && proxyEntry ? { [proxyEntry.server]: proxyClient } : {},
+    )
     const mcpTools = Object.entries(mcpCatalog.tools)
     const config = await Config.get()
     const dynamicSelection =

@@ -175,6 +175,7 @@ pub mod local_engine_routes;
 pub mod long_running_task_routes;
 pub mod local_studio_routes;
 pub mod mcp_apps;
+pub mod mcp_user_proxy;
 pub mod mcp_dispatcher;
 pub mod mcp_directory_guard;
 pub mod mcp_directory_held;
