@@ -1,6 +1,13 @@
 //! OpenAI Codex CLI driver. NDJSON on stdout from
-//! `codex exec [resume --last] <prompt> --json --dangerously-bypass-approvals-and-sandbox
-//!  --skip-git-repo-check [-c model=<m>]`.
+//! `codex exec [resume --last] <prompt> --json --skip-git-repo-check
+//!  -c sandbox_mode="workspace-write" -c approval_policy="never"
+//!  -c sandbox_workspace_write.network_access=true [-c model=<m>]`.
+//!
+//! No `--dangerously-bypass-approvals-and-sandbox`: codex's OS sandbox
+//! confines writes to the session workspace (spawn-gate class `sandbox`).
+//! Sandbox/approval ride `-c` because `codex exec resume` (0.158) has no
+//! `--sandbox` flag. Network stays on so headless turns that fetch deps do
+//! not regress; writes are what the gate confines.
 
 use std::path::Path;
 
@@ -14,8 +21,15 @@ pub fn argv(prompt: &str, model: Option<&str>, resume: Option<&str>, _cwd: &Path
     }
     args.push(prompt.to_string());
     args.push("--json".to_string());
-    args.push("--dangerously-bypass-approvals-and-sandbox".to_string());
     args.push("--skip-git-repo-check".to_string());
+    for config in [
+        "sandbox_mode=\"workspace-write\"",
+        "approval_policy=\"never\"",
+        "sandbox_workspace_write.network_access=true",
+    ] {
+        args.push("-c".to_string());
+        args.push(config.to_string());
+    }
     if let Some(model) = model {
         args.push("-c".to_string());
         args.push(format!("model={model}"));
@@ -147,8 +161,14 @@ mod tests {
         let args = argv("hi", Some("gpt-5-codex"), None, Path::new("/tmp"));
         let joined = args.join(" ");
         assert!(joined.starts_with("codex exec hi --json"));
-        assert!(joined.contains("--dangerously-bypass-approvals-and-sandbox"));
+        assert!(!joined.contains("--dangerously-bypass-approvals-and-sandbox"));
+        assert!(!joined.contains("danger-full-access"));
+        assert!(joined.contains("-c sandbox_mode=\"workspace-write\""));
+        assert!(joined.contains("-c approval_policy=\"never\""));
         assert!(joined.contains("--skip-git-repo-check"));
+        let resumed_args = argv("hi", None, Some("x"), Path::new("/tmp")).join(" ");
+        assert!(!resumed_args.contains("dangerously"));
+        assert!(resumed_args.contains("sandbox_mode=\"workspace-write\""));
         assert!(joined.contains("-c model=gpt-5-codex"));
         let resumed = argv("hi", None, Some("ignored"), Path::new("/tmp")).join(" ");
         assert!(resumed.starts_with("codex exec resume --last hi"));

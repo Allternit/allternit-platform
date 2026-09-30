@@ -1,6 +1,7 @@
 import { Database, sql } from "@/runtime/session/storage/db"
 import { Session } from "@/runtime/session"
 import { SessionHandoff } from "@/runtime/session/handoff"
+import { Log } from "@/shared/util/log"
 
 /**
  * Spend limits (spec P8.1): a bot's monthly budget and a thread's budget
@@ -12,7 +13,18 @@ import { SessionHandoff } from "@/runtime/session/handoff"
  *   scope "session" — one thread's whole lineage, in total
  */
 export namespace Budget {
+  const log = Log.create({ service: "budget" })
+
   export type Scope = "agent" | "session"
+
+  /** How long a session holds when its budget can't be checked, before retrying. */
+  export const CHECK_RETRY_MS = 15 * 60_000
+
+  export interface Hold {
+    until: number
+    limit: string
+    reason: "budget" | "budget-check-failed"
+  }
 
   export interface Info {
     scope: Scope
@@ -106,5 +118,36 @@ export namespace Budget {
       return { until: now + 24 * 3600_000, limit: `thread budget ($${thread.limitUsd.toFixed(2)})` }
     }
     return
+  }
+
+  /** Does this session, or its thread's root, carry a thread budget? */
+  export async function hasThreadBudget(session: Session.Info): Promise<boolean> {
+    if (limitOf("session", session.id) !== undefined) return true
+    const root = (await SessionHandoff.lineage(session.id))[0]?.id
+    return root !== undefined && root !== session.id && limitOf("session", root) !== undefined
+  }
+
+  /**
+   * The pre-turn spend gate. A budget check that fails must not mean
+   * unlimited spend: a bot session (it spends unattended against a monthly
+   * budget) or a session with a thread budget pauses with reason
+   * "budget-check-failed" and retries after CHECK_RETRY_MS. A plain
+   * interactive session with no budget only logs a warning and continues:
+   * a person is at the keyboard and nothing was capped.
+   */
+  export async function gate(session: Session.Info, now = Date.now()): Promise<Hold | undefined> {
+    try {
+      // Qualified so tests can stub Budget.exceeded.
+      const over = await Budget.exceeded(session, now)
+      return over ? { ...over, reason: "budget" } : undefined
+    } catch (error) {
+      const budgeted = Boolean(session.agentID) || (await hasThreadBudget(session).catch(() => false))
+      if (budgeted) {
+        log.error("budget check failed; pausing budgeted session", { sessionID: session.id, agentID: session.agentID, error })
+        return { until: now + CHECK_RETRY_MS, limit: "budget check failed", reason: "budget-check-failed" }
+      }
+      log.warn("budget check failed; continuing interactive session without a budget", { sessionID: session.id, error })
+      return
+    }
   }
 }

@@ -278,6 +278,8 @@ async fn blocked_by_cycle_is_rejected() {
                 title: "B".to_string(),
                 parent_node_id: Some(root_node.clone()),
                 execution_mode: "shared".to_string(),
+                description: None,
+                executor: None,
             },
             Mutation::CreateNode {
                 node_id: node_c.clone(),
@@ -285,6 +287,8 @@ async fn blocked_by_cycle_is_rejected() {
                 title: "C".to_string(),
                 parent_node_id: Some(root_node.clone()),
                 execution_mode: "shared".to_string(),
+                description: None,
+                executor: None,
             },
         ],
     )

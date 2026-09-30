@@ -47,8 +47,16 @@ Use `--worktree` whenever the repo allows it. The binary refuses when the git ro
 Headless one-shot pattern — chain the sentinel:
 
 ```bash
-ao-spawn <slug> <repo> "claude -p '$(cat docs/X_TASK.md)' --dangerously-skip-permissions; touch docs/X_NOTES.sentinel"
+ao-spawn <slug> <repo> "claude -p '$(cat docs/X_TASK.md)' --permission-mode acceptEdits; touch docs/X_NOTES.sentinel"
 ```
+
+**Spawn gate (audit S1).** Every launch line goes through `ao-spawn-gate` (bash) / `ao_gate.rs` (engine `ao spawn` and `ao recover --apply`), byte-for-byte identical:
+
+- **claude / claude-code → hook.** Launched with `--permission-mode acceptEdits --settings ~/.agent-orchestrator/logs/ao-<slug>.claude-settings.json`; the settings file comes from `allternit-commrails hook claude-settings` and runs the PreToolUse hook (hard floor + Gate 2) on every tool call. `--dangerously-skip-permissions` (and `--permission-mode bypassPermissions`) is rewritten, with a one-line `spawn gate: rewrote ...` notice. No `allternit-commrails` binary (`$ALLTERNIT_COMMRAILS_BIN`, else PATH) → the spawn is refused, never run unhooked.
+- **codex → sandbox.** `--dangerously-bypass-approvals-and-sandbox` becomes `-c 'sandbox_mode="workspace-write"' -c 'approval_policy="never"' -c sandbox_workspace_write.network_access=true`; `danger-full-access` becomes `workspace-write`.
+- **everything else (kimi, agy, gemini, sh, ...) → ungated.** Unchanged, and labeled `gate=ungated` in `~/.agent-orchestrator/logs/spawn-gate.log` (every spawn is logged there with its class). With `ALLTERNIT_COMMRAILS_WIH` set, an ungated harness must pass `allternit-commrails hook spawn-check` or the spawn is refused.
+
+The gate classifies by the first command word (after `VAR=value`/`env`/`exec`), so launch the harness directly — `bash -c 'claude ...'` is logged as ungated `bash`.
 
 Each spawned session exports:
 

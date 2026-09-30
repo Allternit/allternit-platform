@@ -376,11 +376,26 @@ pub struct WihCloseRequest {
     pub status: String,
     #[serde(default)]
     pub evidence: Vec<String>,
+    /// Node output text (stored as a blob + `node.output` receipt; counts as
+    /// evidence). See `spec/STORAGE_LAYOUT.md`.
+    #[serde(default)]
+    pub output: Option<String>,
+    /// Who is closing: `user:<id>` | `agent:<id>` (bare id = user). Matters
+    /// under the judge policy (`close_by: verifier`, `verify: judge`); unset
+    /// counts as the worker. See `spec/JUDGE.md`.
+    #[serde(default)]
+    pub actor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WihCloseResponse {
     pub closed: bool,
+    /// Node status after the close (`DONE`, `EXCEPTION`, `NEEDS_HUMAN`, ...).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_status: Option<String>,
+    /// Judge verdict when the node policy has `verify: judge`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<serde_json::Value>,
 }
 
 // ============================================================================
@@ -1093,14 +1108,22 @@ async fn plan_new(
 ) -> Result<impl IntoResponse, StatusCode> {
     ensure_policy_injected(&state, Some(EventScope::default())).await?;
     match state.gate.plan_new(&request.text, request.dag_id).await {
-        Ok((prompt_id, dag_id, node_id)) => Ok((
+        Ok((prompt_id, dag_id, node_id)) => {
+            // Opt-in `observe_on_plan`: advisory, off the request path.
+            crate::observer::spawn_on_plan(
+                state.root_dir.clone(),
+                state.ledger.clone(),
+                dag_id.clone(),
+            );
+            Ok((
             StatusCode::CREATED,
             Json(PlanNewResponse {
                 prompt_id,
                 dag_id,
                 node_id,
             }),
-        )),
+        ))
+        }
         Err(e) => {
             tracing::error!("plan_new failed: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -1349,6 +1372,9 @@ async fn wih_pickup(
         }
         Err(e) => {
             tracing::error!("wih_pickup failed: {}", e);
+            if crate::gate::GateError::from_anyhow(&e).is_some() {
+                return Err(StatusCode::CONFLICT);
+            }
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
@@ -1408,14 +1434,51 @@ async fn wih_close(
         ..Default::default()
     };
     ensure_policy_injected(&state, Some(scope)).await?;
+    let closer = match request.actor.as_deref().map(crate::cli::judge::parse_actor).transpose() {
+        Ok(c) => c,
+        Err(_) => return Err(StatusCode::BAD_REQUEST),
+    };
+    // Opt-in policy `observe_before_close`: awaited so the advice lands on
+    // `wih:<id>` before the close; advisory, never blocks the close.
+    crate::observer::hook_before_close(
+        state.root_dir.clone(),
+        state.ledger.clone(),
+        wih_id.clone(),
+    )
+    .await;
     match state
         .gate
-        .wih_close(&wih_id, &request.status, &request.evidence)
+        .wih_close_as(
+            &wih_id,
+            &request.status,
+            &request.evidence,
+            request.output.as_deref(),
+            closer.as_ref(),
+        )
         .await
     {
-        Ok(_) => Ok((StatusCode::OK, Json(WihCloseResponse { closed: true }))),
+        Ok(outcome) => {
+            // Repeated identical failure -> observer, off the request path.
+            crate::observer::spawn_after_close(
+                state.root_dir.clone(),
+                state.ledger.clone(),
+                wih_id.clone(),
+            );
+            Ok((
+                StatusCode::OK,
+                Json(WihCloseResponse {
+                    closed: true,
+                    node_status: Some(outcome.node_status),
+                    verdict: outcome.verdict.and_then(|v| serde_json::to_value(v).ok()),
+                }),
+            ))
+        }
         Err(e) => {
             tracing::error!("wih_close failed: {}", e);
+            // Structured Gate 4 refusal (close_by_verifier, wih_already_closed).
+            if crate::gate::GateError::from_anyhow(&e).is_some() {
+                return Err(StatusCode::CONFLICT);
+            }
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }

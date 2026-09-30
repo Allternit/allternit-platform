@@ -1342,6 +1342,19 @@ export namespace Config {
         })
         .optional()
         .describe("Default sandbox preferences for non-interactive execution"),
+      bash: z
+        .object({
+          env_passthrough: z
+            .array(z.string())
+            .optional()
+            .describe(
+              "Extra environment variables the bash tool passes to commands, by exact name or 'PREFIX_*' glob. " +
+                "Commands otherwise get only an allowlisted base environment with credential-looking variables " +
+                "(*_KEY, *_TOKEN, *_SECRET, *PASSWORD, *_PAT) removed; listing one here passes it anyway.",
+            ),
+        })
+        .optional()
+        .describe("Bash tool settings"),
       approval_policy: ApprovalPolicy.optional(),
       small_model: ModelId.describe(
         "Small model to use for tasks like title generation in the format of provider/model",

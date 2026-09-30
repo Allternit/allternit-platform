@@ -1,21 +1,348 @@
+//! `/api/web-proxy` — fetches a public web page server-side so the browser
+//! capsule can iframe it.
+//!
+//! This route is an SSRF surface (the server fetches attacker-chosen URLs), so
+//! it is hardened in three layers:
+//!
+//! 1. **Access** — [`web_proxy_access`] only serves callers whose TCP peer is
+//!    loopback (the Desktop UI on this machine, no forwarding headers) or who
+//!    pass the normal [`crate::auth::auth_middleware`]. Anything else is 401,
+//!    so a LAN host cannot use a Desktop user's machine as an open proxy.
+//! 2. **Destination** — every address the proxy connects to must satisfy
+//!    [`is_public_ip`]. Domain names go through [`PublicOnlyResolver`], which
+//!    rejects the lookup if *any* resolved address is non-public; because the
+//!    socket connects to exactly the addresses that were checked, DNS
+//!    rebinding cannot swap in a private address between check and connect.
+//!    Literal-IP hosts never reach a resolver, so they are checked directly.
+//! 3. **Redirects** — [`redirect_policy`] re-validates scheme and literal-IP
+//!    host on every hop (≤ [`MAX_REDIRECTS`]); domain hops go through the
+//!    resolver again. System HTTP proxies are disabled so resolution can never
+//!    be delegated to a proxy that would skip these checks.
+//!
+//! Behavioral reference: `cmd/gizzi-code/src/runtime/server/routes/web-proxy.ts`.
+
 use axum::{
     body::Body,
-    extract::Query,
+    extract::{Query, Request, State},
     http::{HeaderMap, HeaderValue, StatusCode},
+    middleware::Next,
     response::{IntoResponse, Response},
     routing::get,
     Router,
 };
-use reqwest::redirect::Policy;
+use reqwest::dns::{Addrs, Name, Resolve, Resolving};
+use reqwest::redirect::{Attempt, Policy};
 use serde::Deserialize;
-use std::{net::IpAddr, time::Duration};
+use std::{
+    error::Error as StdError,
+    fmt,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    time::Duration,
+};
 
 use crate::AppState;
 use std::sync::Arc;
 
+/// Maximum redirect hops followed per request (matches the gizzi-code proxy).
+pub const MAX_REDIRECTS: usize = 5;
+
+/// Router for `/web-proxy` (nested under `/api`). Mount it with
+/// [`web_proxy_access`] and the rate limiter applied — see `main.rs`.
 pub fn web_proxy_router() -> Router<Arc<AppState>> {
     Router::new().route("/web-proxy", get(web_proxy))
 }
+
+// ── Access gate ──────────────────────────────────────────────────────────────
+
+/// Serve direct loopback callers (the Desktop UI) without further checks;
+/// everyone else must pass the normal auth middleware (401 otherwise).
+///
+/// A non-loopback caller that claims a localhost `Host`/`Origin`/`Referer` is
+/// rejected outright: `auth_middleware`'s self-hosted fallback trusts those
+/// headers, and a LAN peer spoofing them must not ride that fallback into an
+/// SSRF-capable route.
+pub async fn web_proxy_access(
+    State(state): State<Arc<AppState>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if is_direct_loopback_peer(&request) {
+        return next.run(request).await;
+    }
+    if crate::auth::is_localhost_origin(request.headers()) {
+        return json_error(StatusCode::UNAUTHORIZED, "Authentication required");
+    }
+    crate::auth::auth_middleware(State(state), request, next).await
+}
+
+/// True only when the TCP peer is loopback AND the request was not relayed by
+/// a reverse proxy on this host (which would make every public caller look
+/// like loopback).
+fn is_direct_loopback_peer(request: &Request) -> bool {
+    const FORWARDING_HEADERS: [&str; 5] = [
+        "forwarded",
+        "x-forwarded-for",
+        "x-real-ip",
+        "cf-connecting-ip",
+        "true-client-ip",
+    ];
+    let peer_is_loopback = request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<SocketAddr>>()
+        .is_some_and(|info| info.0.ip().to_canonical().is_loopback());
+    peer_is_loopback
+        && !FORWARDING_HEADERS
+            .iter()
+            .any(|name| request.headers().contains_key(*name))
+}
+
+// ── Destination policy ───────────────────────────────────────────────────────
+
+/// Whether `ip` is a publicly routable unicast address the proxy may connect
+/// to. Everything special-purpose (loopback, private, link-local, CGNAT,
+/// benchmarking, documentation, multicast, reserved, …) is rejected, and IPv6
+/// forms that embed an IPv4 address are judged by the embedded address.
+pub fn is_public_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => is_public_ipv4(v4),
+        IpAddr::V6(v6) => is_public_ipv6(v6),
+    }
+}
+
+fn is_public_ipv4(ip: Ipv4Addr) -> bool {
+    let [a, b, c, _] = ip.octets();
+    let blocked = a == 0 // 0.0.0.0/8 "this network" (incl. unspecified)
+        || a == 10 // 10/8 private
+        || (a == 100 && (64..=127).contains(&b)) // 100.64/10 CGNAT (Fabric mesh)
+        || a == 127 // loopback
+        || (a == 169 && b == 254) // link-local (incl. cloud metadata)
+        || (a == 172 && (16..=31).contains(&b)) // 172.16/12 private
+        || (a == 192 && b == 0 && c == 0) // 192.0.0/24 IETF protocol assignments
+        || (a == 192 && b == 0 && c == 2) // 192.0.2/24 TEST-NET-1
+        || (a == 192 && b == 88 && c == 99) // 192.88.99/24 6to4 relay anycast
+        || (a == 192 && b == 168) // 192.168/16 private
+        || (a == 198 && (b == 18 || b == 19)) // 198.18/15 benchmarking
+        || (a == 198 && b == 51 && c == 100) // TEST-NET-2
+        || (a == 203 && b == 0 && c == 113) // TEST-NET-3
+        || a >= 224; // multicast 224/4, reserved 240/4, broadcast
+    !blocked
+}
+
+fn is_public_ipv6(ip: Ipv6Addr) -> bool {
+    let seg = ip.segments();
+    // IPv4-mapped ::ffff:a.b.c.d
+    if let Some(v4) = ip.to_ipv4_mapped() {
+        return is_public_ipv4(v4);
+    }
+    // IPv4-compatible ::a.b.c.d (deprecated) — also covers :: and ::1, whose
+    // embedded 0.0.0.0 / 0.0.0.1 are blocked by the v4 rules.
+    if seg[..6] == [0; 6] {
+        return is_public_ipv4(Ipv4Addr::new(
+            (seg[6] >> 8) as u8,
+            seg[6] as u8,
+            (seg[7] >> 8) as u8,
+            seg[7] as u8,
+        ));
+    }
+    // NAT64 well-known prefix 64:ff9b::/96 — judge the embedded v4.
+    if seg[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
+        return is_public_ipv4(Ipv4Addr::new(
+            (seg[6] >> 8) as u8,
+            seg[6] as u8,
+            (seg[7] >> 8) as u8,
+            seg[7] as u8,
+        ));
+    }
+    // 6to4 2002::/16 — the v4 lives in bits 16..48.
+    if seg[0] == 0x2002 {
+        return is_public_ipv4(Ipv4Addr::new(
+            (seg[1] >> 8) as u8,
+            seg[1] as u8,
+            (seg[2] >> 8) as u8,
+            seg[2] as u8,
+        ));
+    }
+    // Only global unicast 2000::/3 is eligible. This excludes ULA fc00::/7,
+    // link-local fe80::/10, site-local fec0::/10, multicast ff00::/8, discard
+    // 100::/64, NAT64 local-use 64:ff9b:1::/48 and everything unassigned.
+    if seg[0] & 0xe000 != 0x2000 {
+        return false;
+    }
+    match seg[0] {
+        // 2001::/23 IETF special (Teredo, ORCHID, …) and 2001:db8::/32 docs
+        0x2001 => seg[1] >= 0x0200 && seg[1] != 0x0db8,
+        // 3fff::/20 documentation
+        0x3fff => seg[1] >= 0x1000,
+        _ => true,
+    }
+}
+
+/// Error raised when a destination fails [`is_public_ip`]. Detected in the
+/// reqwest error chain to answer 403 instead of 502.
+#[derive(Debug)]
+pub struct BlockedDestination(String);
+
+impl fmt::Display for BlockedDestination {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "blocked non-public destination: {}", self.0)
+    }
+}
+
+impl StdError for BlockedDestination {}
+
+fn is_blocked_destination(err: &reqwest::Error) -> bool {
+    let mut source: Option<&(dyn StdError + 'static)> = Some(err);
+    while let Some(current) = source {
+        if current.is::<BlockedDestination>() {
+            return true;
+        }
+        source = current.source();
+    }
+    false
+}
+
+/// DNS resolver that refuses any name resolving to a non-public address. The
+/// connector dials exactly the addresses returned here, so the check and the
+/// connection cannot diverge (no rebinding TOCTOU).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct PublicOnlyResolver;
+
+impl PublicOnlyResolver {
+    /// Resolve `host` and fail unless every address is public.
+    pub async fn resolve_public(
+        host: &str,
+    ) -> Result<Vec<SocketAddr>, Box<dyn StdError + Send + Sync>> {
+        let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host, 0)).await?.collect();
+        if addrs.is_empty() {
+            return Err(format!("{host} did not resolve").into());
+        }
+        if let Some(bad) = addrs.iter().find(|addr| !is_public_ip(addr.ip())) {
+            return Err(Box::new(BlockedDestination(format!(
+                "{host} -> {}",
+                bad.ip()
+            ))));
+        }
+        Ok(addrs)
+    }
+}
+
+impl Resolve for PublicOnlyResolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        let host = name.as_str().to_string();
+        Box::pin(async move {
+            let addrs = Self::resolve_public(&host).await?;
+            Ok(Box::new(addrs.into_iter()) as Addrs)
+        })
+    }
+}
+
+/// Scheme + literal-host validation shared by the initial URL and every
+/// redirect hop. Domain hosts are left to the resolver (which sees every hop).
+fn check_url(url: &reqwest::Url) -> Result<(), UrlRejection> {
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(UrlRejection::Scheme);
+    }
+    match url.host() {
+        None => Err(UrlRejection::Destination),
+        Some(url::Host::Ipv4(ip)) if !is_public_ipv4(ip) => Err(UrlRejection::Destination),
+        Some(url::Host::Ipv6(ip)) if !is_public_ipv6(ip) => Err(UrlRejection::Destination),
+        Some(url::Host::Domain(domain)) => {
+            let domain = domain.trim_end_matches('.').to_ascii_lowercase();
+            if domain.is_empty()
+                || domain == "localhost"
+                || domain.ends_with(".localhost")
+                || domain.ends_with(".local")
+            {
+                Err(UrlRejection::Destination)
+            } else {
+                Ok(())
+            }
+        }
+        Some(_) => Ok(()),
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum UrlRejection {
+    Scheme,
+    Destination,
+}
+
+/// Redirect policy: ≤ [`MAX_REDIRECTS`] hops, each re-validated by
+/// [`check_url`] (domain hops are additionally re-resolved through
+/// [`PublicOnlyResolver`] by the connector).
+pub fn redirect_policy() -> Policy {
+    Policy::custom(|attempt: Attempt| {
+        if attempt.previous().len() > MAX_REDIRECTS {
+            return attempt.error("too many redirects");
+        }
+        match check_url(attempt.url()) {
+            Ok(()) => attempt.follow(),
+            Err(UrlRejection::Scheme) => attempt.error("redirect to non-http(s) scheme"),
+            Err(UrlRejection::Destination) => {
+                let target = attempt.url().to_string();
+                attempt.error(BlockedDestination(target))
+            }
+        }
+    })
+}
+
+/// Build the upstream client. Generic over the resolver so tests can pin a
+/// fixture hostname to a local server while delegating everything else to
+/// [`PublicOnlyResolver`].
+pub fn build_proxy_client<R: Resolve + 'static>(
+    resolver: Arc<R>,
+) -> reqwest::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .dns_resolver(resolver)
+        .redirect(redirect_policy())
+        // A system/env HTTP proxy would resolve names itself, bypassing
+        // PublicOnlyResolver.
+        .no_proxy()
+        .timeout(Duration::from_secs(15))
+        .build()
+}
+
+#[derive(Debug)]
+enum FetchError {
+    Scheme,
+    Blocked,
+    Upstream,
+}
+
+/// Validate `url` and GET it with `client` (built by [`build_proxy_client`]).
+async fn fetch_upstream(
+    client: &reqwest::Client,
+    url: reqwest::Url,
+) -> Result<reqwest::Response, FetchError> {
+    match check_url(&url) {
+        Ok(()) => {}
+        Err(UrlRejection::Scheme) => return Err(FetchError::Scheme),
+        Err(UrlRejection::Destination) => return Err(FetchError::Blocked),
+    }
+    client
+        .get(url)
+        .header(
+            reqwest::header::USER_AGENT,
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        )
+        .header(
+            reqwest::header::ACCEPT,
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        )
+        .header(reqwest::header::ACCEPT_LANGUAGE, "en-US,en;q=0.9")
+        .send()
+        .await
+        .map_err(|err| {
+            if is_blocked_destination(&err) {
+                FetchError::Blocked
+            } else {
+                FetchError::Upstream
+            }
+        })
+}
+
+// ── Handler ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 struct WebProxyQuery {
@@ -32,22 +359,7 @@ async fn web_proxy(Query(query): Query<WebProxyQuery>) -> Response {
         Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid URL"),
     };
 
-    if !matches!(parsed.scheme(), "http" | "https") {
-        return json_error(StatusCode::FORBIDDEN, "Only http/https URLs are allowed");
-    }
-
-    if is_private_host(parsed.host_str().unwrap_or_default()) {
-        return json_error(
-            StatusCode::FORBIDDEN,
-            "Requests to private/loopback addresses are blocked",
-        );
-    }
-
-    let client = match reqwest::Client::builder()
-        .redirect(Policy::limited(10))
-        .timeout(Duration::from_secs(15))
-        .build()
-    {
+    let client = match build_proxy_client(Arc::new(PublicOnlyResolver)) {
         Ok(client) => client,
         Err(_) => {
             return json_error(
@@ -57,22 +369,20 @@ async fn web_proxy(Query(query): Query<WebProxyQuery>) -> Response {
         }
     };
 
-    let upstream = match client
-        .get(parsed.clone())
-        .header(
-            reqwest::header::USER_AGENT,
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        )
-        .header(
-            reqwest::header::ACCEPT,
-            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        )
-        .header(reqwest::header::ACCEPT_LANGUAGE, "en-US,en;q=0.9")
-        .send()
-        .await
-    {
+    let upstream = match fetch_upstream(&client, parsed).await {
         Ok(response) => response,
-        Err(_) => return json_error(StatusCode::BAD_GATEWAY, "Failed to fetch upstream URL"),
+        Err(FetchError::Scheme) => {
+            return json_error(StatusCode::FORBIDDEN, "Only http/https URLs are allowed")
+        }
+        Err(FetchError::Blocked) => {
+            return json_error(
+                StatusCode::FORBIDDEN,
+                "Requests to private/loopback addresses are blocked",
+            )
+        }
+        Err(FetchError::Upstream) => {
+            return json_error(StatusCode::BAD_GATEWAY, "Failed to fetch upstream URL")
+        }
     };
 
     let status = upstream.status();
@@ -256,31 +566,411 @@ fn json_error(status: StatusCode, message: &str) -> Response {
         .into_response()
 }
 
-fn is_private_host(hostname: &str) -> bool {
-    let host = hostname.trim().to_ascii_lowercase();
-    if host.is_empty() {
-        return true;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{body::Body, http::Request as HttpRequest, response::Redirect};
+    use tower::ServiceExt;
+
+    fn v4(s: &str) -> IpAddr {
+        IpAddr::V4(s.parse().unwrap())
     }
-    if host == "localhost" || host.ends_with(".local") {
-        return true;
+
+    fn v6(s: &str) -> IpAddr {
+        IpAddr::V6(s.parse().unwrap())
     }
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        return match ip {
-            IpAddr::V4(ipv4) => {
-                ipv4.is_loopback()
-                    || ipv4.is_private()
-                    || ipv4.is_link_local()
-                    || ipv4.is_multicast()
-                    || ipv4.is_unspecified()
-            }
-            IpAddr::V6(ipv6) => {
-                ipv6.is_loopback()
-                    || ipv6.is_multicast()
-                    || ipv6.is_unspecified()
-                    || ipv6.is_unique_local()
-                    || ipv6.is_unicast_link_local()
-            }
-        };
+
+    #[test]
+    fn blocks_every_special_ipv4_range() {
+        for ip in [
+            "0.0.0.0",
+            "0.1.2.3",
+            "10.0.0.1",
+            "10.255.255.255",
+            "100.64.0.1",
+            "100.100.100.100",
+            "100.127.255.255",
+            "127.0.0.1",
+            "127.255.255.254",
+            "169.254.169.254",
+            "172.16.0.1",
+            "172.31.255.255",
+            "192.0.0.1",
+            "192.0.0.170",
+            "192.0.2.1",
+            "192.88.99.1",
+            "192.168.1.1",
+            "198.18.0.1",
+            "198.19.255.255",
+            "198.51.100.7",
+            "203.0.113.9",
+            "224.0.0.1",
+            "239.255.255.250",
+            "240.0.0.1",
+            "255.255.255.255",
+        ] {
+            assert!(!is_public_ip(v4(ip)), "{ip} must be blocked");
+        }
     }
-    false
+
+    #[test]
+    fn allows_public_ipv4_including_range_edges() {
+        for ip in [
+            "1.1.1.1",
+            "8.8.8.8",
+            "93.184.216.34",
+            "100.63.255.255",
+            "100.128.0.0",
+            "172.15.255.255",
+            "172.32.0.0",
+            "192.0.1.1",
+            "198.17.255.255",
+            "198.20.0.0",
+            "223.255.255.254",
+        ] {
+            assert!(is_public_ip(v4(ip)), "{ip} must be allowed");
+        }
+    }
+
+    #[test]
+    fn blocks_special_ipv6_and_embedded_private_ipv4() {
+        for ip in [
+            "::",
+            "::1",
+            "::ffff:127.0.0.1",
+            "::ffff:169.254.169.254",
+            "::ffff:10.0.0.1",
+            "::ffff:100.64.0.1",
+            "::127.0.0.1",
+            "::10.0.0.1",
+            "64:ff9b::127.0.0.1",
+            "64:ff9b::a9fe:a9fe",
+            "64:ff9b:1::1",
+            "2002:7f00:0001::1",
+            "2002:c0a8:0101::1",
+            "2001::1",
+            "2001:db8::1",
+            "3fff::1",
+            "100::1",
+            "fc00::1",
+            "fd12:3456::1",
+            "fe80::1",
+            "fec0::1",
+            "ff02::1",
+        ] {
+            assert!(!is_public_ip(v6(ip)), "{ip} must be blocked");
+        }
+    }
+
+    #[test]
+    fn allows_public_ipv6_and_embedded_public_ipv4() {
+        for ip in [
+            "2606:4700:4700::1111",
+            "2001:4860:4860::8888",
+            "::ffff:8.8.8.8",
+            "64:ff9b::808:808",
+            "2002:0808:0808::1",
+        ] {
+            assert!(is_public_ip(v6(ip)), "{ip} must be allowed");
+        }
+    }
+
+    #[test]
+    fn check_url_rejects_literal_private_hosts_and_bad_schemes() {
+        for url in [
+            "http://127.0.0.1/",
+            "http://2130706433/",
+            "http://0x7f.1/",
+            "http://[::1]/",
+            "http://[::ffff:127.0.0.1]/",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://100.64.0.1/",
+            "http://localhost:8013/",
+            "http://localhost./",
+            "http://api.localhost/",
+            "http://printer.local/",
+        ] {
+            let parsed = reqwest::Url::parse(url).unwrap();
+            assert_eq!(check_url(&parsed), Err(UrlRejection::Destination), "{url}");
+        }
+        for url in [
+            "file:///etc/passwd",
+            "ftp://example.com/",
+            "gopher://example.com/",
+        ] {
+            let parsed = reqwest::Url::parse(url).unwrap();
+            assert_eq!(check_url(&parsed), Err(UrlRejection::Scheme), "{url}");
+        }
+        assert_eq!(
+            check_url(&reqwest::Url::parse("https://example.com/").unwrap()),
+            Ok(())
+        );
+    }
+
+    #[tokio::test]
+    async fn resolver_rejects_hostname_resolving_to_loopback() {
+        let err = PublicOnlyResolver::resolve_public("localhost")
+            .await
+            .expect_err("localhost resolves to loopback and must be rejected");
+        assert!(err.is::<BlockedDestination>(), "unexpected error: {err}");
+    }
+
+    // ── Live client tests against a local fixture server ──────────────────
+
+    /// `fixture.test` is pinned to the local fixture server (standing in for a
+    /// public site); `rebind.test` behaves like a public DNS name that resolves
+    /// to loopback (e.g. `127.0.0.1.nip.io`) and goes through the real
+    /// PublicOnlyResolver check. Everything else is PublicOnlyResolver.
+    struct FixtureResolver {
+        addr: SocketAddr,
+    }
+
+    impl Resolve for FixtureResolver {
+        fn resolve(&self, name: Name) -> Resolving {
+            let host = name.as_str().to_string();
+            let addr = self.addr;
+            Box::pin(async move {
+                let addrs = match host.as_str() {
+                    "fixture.test" => vec![addr],
+                    "rebind.test" => PublicOnlyResolver::resolve_public("localhost").await?,
+                    other => PublicOnlyResolver::resolve_public(other).await?,
+                };
+                Ok(Box::new(addrs.into_iter()) as Addrs)
+            })
+        }
+    }
+
+    async fn spawn_fixture() -> (SocketAddr, reqwest::Client) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let port = addr.port();
+        let app =
+            Router::new()
+                .route("/ok", get(|| async { "ok" }))
+                .route(
+                    "/to-fixture",
+                    get(move || async move {
+                        Redirect::temporary(&format!("http://fixture.test:{port}/ok"))
+                    }),
+                )
+                .route(
+                    "/to-ip",
+                    get(move || async move {
+                        Redirect::temporary(&format!("http://127.0.0.1:{port}/ok"))
+                    }),
+                )
+                .route(
+                    "/to-mapped",
+                    get(move || async move {
+                        Redirect::temporary(&format!("http://[::ffff:127.0.0.1]:{port}/ok"))
+                    }),
+                )
+                .route(
+                    "/to-localhost",
+                    get(move || async move {
+                        Redirect::temporary(&format!("http://localhost:{port}/ok"))
+                    }),
+                )
+                .route(
+                    "/to-rebind",
+                    get(move || async move {
+                        Redirect::temporary(&format!("http://rebind.test:{port}/ok"))
+                    }),
+                )
+                .route(
+                    "/to-metadata",
+                    get(|| async {
+                        Redirect::temporary("http://169.254.169.254/latest/meta-data/")
+                    }),
+                )
+                .route(
+                    "/to-file",
+                    get(|| async { Redirect::temporary("file:///etc/passwd") }),
+                )
+                .route("/loop", get(|| async { Redirect::temporary("/loop") }))
+                .route(
+                    "/hop/:n",
+                    get(
+                        |axum::extract::Path(n): axum::extract::Path<u32>| async move {
+                            if n == 0 {
+                                "ok".into_response()
+                            } else {
+                                Redirect::temporary(&format!("/hop/{}", n - 1)).into_response()
+                            }
+                        },
+                    ),
+                );
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = build_proxy_client(Arc::new(FixtureResolver { addr })).unwrap();
+        (addr, client)
+    }
+
+    fn fixture_url(addr: SocketAddr, path: &str) -> reqwest::Url {
+        reqwest::Url::parse(&format!("http://fixture.test:{}{path}", addr.port())).unwrap()
+    }
+
+    #[tokio::test]
+    async fn fixture_is_reachable_and_public_redirects_are_followed() {
+        let (addr, client) = spawn_fixture().await;
+        let resp = fetch_upstream(&client, fixture_url(addr, "/ok"))
+            .await
+            .unwrap();
+        assert_eq!(resp.text().await.unwrap(), "ok");
+        let resp = fetch_upstream(&client, fixture_url(addr, "/to-fixture"))
+            .await
+            .unwrap();
+        assert_eq!(resp.text().await.unwrap(), "ok");
+    }
+
+    #[tokio::test]
+    async fn redirect_to_loopback_or_metadata_is_blocked() {
+        let (addr, client) = spawn_fixture().await;
+        for path in [
+            "/to-ip",
+            "/to-mapped",
+            "/to-localhost",
+            "/to-rebind",
+            "/to-metadata",
+        ] {
+            let result = fetch_upstream(&client, fixture_url(addr, path)).await;
+            assert!(
+                matches!(result, Err(FetchError::Blocked)),
+                "{path}: {result:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn hostname_resolving_to_loopback_is_blocked_at_connect() {
+        let (addr, client) = spawn_fixture().await;
+        let url = reqwest::Url::parse(&format!("http://rebind.test:{}/ok", addr.port())).unwrap();
+        let result = fetch_upstream(&client, url).await;
+        assert!(matches!(result, Err(FetchError::Blocked)), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn redirect_to_other_scheme_and_redirect_loops_fail() {
+        let (addr, client) = spawn_fixture().await;
+        // reqwest never follows a redirect to a non-http(s) scheme: the 3xx
+        // comes back unfollowed (the handler relays it without Location).
+        let resp = fetch_upstream(&client, fixture_url(addr, "/to-file"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), reqwest::StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(resp.url().path(), "/to-file");
+        let result = fetch_upstream(&client, fixture_url(addr, "/loop")).await;
+        assert!(matches!(result, Err(FetchError::Upstream)), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn follows_at_most_max_redirects() {
+        let (addr, client) = spawn_fixture().await;
+        let path = format!("/hop/{MAX_REDIRECTS}");
+        let resp = fetch_upstream(&client, fixture_url(addr, &path))
+            .await
+            .unwrap();
+        assert_eq!(resp.text().await.unwrap(), "ok");
+        let path = format!("/hop/{}", MAX_REDIRECTS + 1);
+        let result = fetch_upstream(&client, fixture_url(addr, &path)).await;
+        assert!(matches!(result, Err(FetchError::Upstream)), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn production_client_blocks_literal_loopback() {
+        let client = build_proxy_client(Arc::new(PublicOnlyResolver)).unwrap();
+        for url in [
+            "http://127.0.0.1:9/",
+            "http://[::1]:9/",
+            "http://localhost:9/",
+        ] {
+            let result = fetch_upstream(&client, reqwest::Url::parse(url).unwrap()).await;
+            assert!(
+                matches!(result, Err(FetchError::Blocked)),
+                "{url}: {result:?}"
+            );
+        }
+    }
+
+    // ── Access gate ───────────────────────────────────────────────────────
+
+    async fn gated_app() -> (Router, tempfile::TempDir) {
+        let temp = tempfile::tempdir().unwrap();
+        let state = crate::test_helpers::app_state(temp.path()).await;
+        let app = Router::new()
+            .route("/api/web-proxy", get(|| async { StatusCode::NO_CONTENT }))
+            .layer(axum::middleware::from_fn_with_state(
+                state,
+                web_proxy_access,
+            ));
+        (app, temp)
+    }
+
+    fn from_peer(ip: IpAddr, headers: &[(&str, &str)]) -> HttpRequest<Body> {
+        let mut builder = HttpRequest::builder()
+            .method("GET")
+            .uri("/api/web-proxy?url=https%3A%2F%2Fexample.com")
+            .extension(axum::extract::ConnectInfo(SocketAddr::new(ip, 50000)));
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        builder.body(Body::empty()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn loopback_peer_is_served_without_auth() {
+        let (app, _temp) = gated_app().await;
+        for ip in [v4("127.0.0.1"), v6("::1"), v6("::ffff:127.0.0.1")] {
+            let resp = app.clone().oneshot(from_peer(ip, &[])).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::NO_CONTENT, "{ip}");
+        }
+    }
+
+    #[tokio::test]
+    async fn non_loopback_unauthenticated_is_401() {
+        let (app, _temp) = gated_app().await;
+        let lan = v4("192.168.1.20");
+        let cases: [&[(&str, &str)]; 4] = [
+            &[],
+            &[("host", "localhost:8013")],
+            &[("origin", "http://127.0.0.1:8013")],
+            &[("referer", "http://localhost:8013/")],
+        ];
+        for headers in cases {
+            let resp = app.clone().oneshot(from_peer(lan, headers)).await.unwrap();
+            assert_eq!(
+                resp.status(),
+                StatusCode::UNAUTHORIZED,
+                "LAN peer with {headers:?}"
+            );
+        }
+        // No ConnectInfo at all (not served with connect info) is not loopback.
+        let req = HttpRequest::builder()
+            .uri("/api/web-proxy?url=https%3A%2F%2Fexample.com")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            app.clone().oneshot(req).await.unwrap().status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[tokio::test]
+    async fn reverse_proxied_loopback_is_not_trusted() {
+        let (app, _temp) = gated_app().await;
+        for header in [
+            "x-forwarded-for",
+            "forwarded",
+            "x-real-ip",
+            "cf-connecting-ip",
+        ] {
+            let resp = app
+                .clone()
+                .oneshot(from_peer(v4("127.0.0.1"), &[(header, "203.0.113.9")]))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "{header}");
+        }
+    }
 }

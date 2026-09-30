@@ -48,9 +48,21 @@ pub fn would_create_parent_cycle(dag: &DagState, node_id: &str, new_parent_id: &
     }
 }
 
-pub fn ready_nodes(dag: &DagState) -> Vec<String> {    let mut ready = Vec::new();
+/// Nodes whose blocked_by predecessors are all DONE and whose wait-gates are
+/// all satisfied right now. See [`ready_nodes_at`].
+pub fn ready_nodes(dag: &DagState) -> Vec<String> {
+    ready_nodes_at(dag, chrono::Utc::now())
+}
+
+/// Readiness at `now`: status READY/NEW, every blocked_by predecessor DONE,
+/// and no unsatisfied node wait-gate (an elapsed timer counts as satisfied).
+pub fn ready_nodes_at(dag: &DagState, now: chrono::DateTime<chrono::Utc>) -> Vec<String> {
+    let mut ready = Vec::new();
     for (node_id, node) in dag.nodes.iter() {
         if node.status != "READY" && node.status != "NEW" {
+            continue;
+        }
+        if !node.blocking_wait_gates(now).is_empty() {
             continue;
         }
         let blockers: Vec<&DagEdge> = dag

@@ -23,6 +23,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use super::ao_gate;
 use crate::api::client::{ApiClient, ApiClientError};
 use crate::api::schema::{
     EmptyParams, LayoutApplyParams, LayoutNode, LayoutPane, Method, PaneListParams,
@@ -436,7 +437,7 @@ fn alnum(text: &str) -> String {
         .collect()
 }
 
-fn timestamp_now() -> String {
+pub(super) fn timestamp_now() -> String {
     use time::OffsetDateTime;
     let now = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
     format!(
@@ -500,6 +501,24 @@ fn eprintln_engine(err: &CallError) -> i32 {
 // ---------------------------------------------------------------------------
 
 fn spawn(args: &[String]) -> std::io::Result<i32> {
+    // Hidden parity probe: `ao spawn --gate-rewrite <line> <settings-file>`
+    // mirrors `ao-spawn-gate --rewrite` (tests/ao_parity/gate_parity.sh).
+    if args.first().map(String::as_str) == Some("--gate-rewrite") {
+        if args.len() != 3 {
+            eprintln!("usage: ao spawn --gate-rewrite <line> <settings-file>");
+            return Ok(2);
+        }
+        let class = ao_gate::classify(&ao_gate::harness_of(&args[1]));
+        let (line, notice) = ao_gate::rewrite(&args[1], class, &args[2]);
+        if let Some(notice) = notice {
+            eprintln!("{notice}");
+        }
+        use std::io::Write as _;
+        let mut out = std::io::stdout();
+        out.write_all(line.as_bytes())?;
+        out.flush()?;
+        return Ok(0);
+    }
     let mut args = args;
     let mut worktree = false;
     let mut lead_flag: Option<String> = None;
@@ -572,6 +591,7 @@ fn spawn(args: &[String]) -> std::io::Result<i32> {
         Err(err) => return Ok(eprintln_engine(&err)),
     }
 
+    let gated: Option<ao_gate::Gated>;
     if worktree {
         // `ROOT=$(git -C "$DIR" rev-parse --show-toplevel)` — git's stderr and
         // exit code propagate exactly like the script's set -e.
@@ -596,6 +616,11 @@ fn spawn(args: &[String]) -> std::io::Result<i32> {
             .parent()
             .map(|parent| parent.join(format!("{}-ao-{slug}", root_path.file_name().unwrap_or_default().to_string_lossy())))
             .unwrap_or_else(|| PathBuf::from(format!("{root}-ao-{slug}")));
+        // Spawn gate before any side effect (the script gates at the same point).
+        gated = match ao_gate::gate(&session, &wt.display().to_string(), &agent_cmd.join(" "), &logs_dir, &ao_home()) {
+            Ok(gated) => Some(gated),
+            Err(()) => return Ok(1),
+        };
         // stderr discarded to match the golden script's `>/dev/null 2>&1`
         // (the script stopped forwarding git's worktree noise 2026-09-09).
         let status = Command::new("git")
@@ -613,11 +638,23 @@ fn spawn(args: &[String]) -> std::io::Result<i32> {
             return Ok(status.code().unwrap_or(1));
         }
         dir = wt.display().to_string();
+    } else {
+        gated = match ao_gate::gate(&session, &dir, &agent_cmd.join(" "), &logs_dir, &ao_home()) {
+            Ok(gated) => Some(gated),
+            Err(()) => return Ok(1),
+        };
     }
+    let gated = gated.expect("both branches gate");
 
-    // Runner file sidesteps quoting issues (kept for parity with the script's
-    // artifacts, even though the engine execs argv directly).
-    let _ = std::fs::write(&runner, format!("{}\n", agent_cmd.join(" ")));
+    // Runner file sidesteps quoting issues. Ungated harnesses keep the
+    // engine's direct argv exec; gated ones run the rewritten runner line
+    // through /bin/sh exactly like the script world.
+    let _ = std::fs::write(&runner, format!("{}\n", gated.line));
+    let pane_cmd: Vec<String> = if gated.class == ao_gate::GateClass::Ungated {
+        agent_cmd.to_vec()
+    } else {
+        vec!["/bin/sh".to_string(), runner.display().to_string()]
+    };
 
     let created = match call(
         &client,
@@ -652,7 +689,7 @@ fn spawn(args: &[String]) -> std::io::Result<i32> {
                     pane_id: None,
                     label: None,
                     cwd: Some(dir.clone()),
-                    command: Some(agent_cmd.to_vec()),
+                    command: Some(pane_cmd),
                     env,
                 },
             },
@@ -1629,8 +1666,18 @@ fn respawn(
     std::fs::create_dir_all(&logs_dir).map_err(|err| format!("mkdir: {err}"))?;
     let log = logs_dir.join(format!("{session}-{}.log", timestamp_now()));
     let runner = logs_dir.join(format!("{session}.cmd.sh"));
-    std::fs::write(&runner, format!("{}\n", argv.join(" ")))
+    // Respawns go through the same spawn gate as `ao spawn` (a resume argv
+    // is rebuilt without the gate flags; a verbatim runner is re-gated
+    // idempotently).
+    let gated = ao_gate::gate(session, cwd, &argv.join(" "), &logs_dir, &ao_home())
+        .map_err(|()| "spawn gate refused the respawn".to_string())?;
+    std::fs::write(&runner, format!("{}\n", gated.line))
         .map_err(|err| format!("write runner: {err}"))?;
+    let pane_cmd: Vec<String> = if gated.class == ao_gate::GateClass::Ungated {
+        argv.to_vec()
+    } else {
+        vec!["/bin/sh".to_string(), runner.display().to_string()]
+    };
 
     if world == "tmux" {
         if command_path("tmux").is_none() {
@@ -1708,7 +1755,7 @@ fn respawn(
                     pane_id: None,
                     label: None,
                     cwd: Some(cwd.to_string()),
-                    command: Some(argv.to_vec()),
+                    command: Some(pane_cmd),
                     env,
                 },
             },

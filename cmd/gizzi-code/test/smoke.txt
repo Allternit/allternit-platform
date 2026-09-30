@@ -34,6 +34,7 @@ test/patch/patch.test.ts
 test/permission-task.test.ts
 test/permission/arity.test.ts
 test/permission/next.test.ts
+test/permission/catastrophic.test.ts
 test/plugin/claude-plugin.test.ts
 test/plugin/codex.test.ts
 test/plugin/hooks-contract.test.ts
@@ -61,6 +62,8 @@ test/session/instruction.test.ts
 test/session/message-v2.test.ts
 test/session/retry.test.ts
 test/session/scratchpad.test.ts
+test/session/budget.test.ts
+test/session/budget-check.test.ts
 test/shared/agentFileResolver.test.ts
 test/shared/agentHardBans.test.ts
 test/skill/discovery.test.ts
@@ -70,6 +73,7 @@ test/storage/migration-chain.test.ts
 test/secureStorage/windowsDpapi.test.ts
 test/telemetry/privacy.test.ts
 test/tool/apply_patch.test.ts
+test/tool/bash.test.ts
 test/tool/edit.test.ts
 test/tool/external-directory.test.ts
 test/tool/grep.test.ts
