@@ -27,7 +27,7 @@ import * as os from 'node:os';
 import log from 'electron-log';
 import WebSocket from 'ws';
 import { URLS } from './config.js';
-import { dropRuntimeCredentialForGizzi } from './relay-gizzi-credential.js';
+import { dropRuntimeCredentialForGizzi, isGizziProviderListPath } from './relay-gizzi-credential.js';
 import { isDesktopAuthNavigation } from './desktop-auth-url.js';
 import { ClerkTokenBroker } from './clerk-token-broker.js';
 
@@ -1498,7 +1498,10 @@ export class DesktopAuthManager {
       return `${URLS.GIZZI}${requestPath.replace('/api/v1/remote-control/', '/v1/remote-control/')}`;
     }
     if (requestPath.startsWith('/v1/remote-control/')) return `${URLS.GIZZI}${requestPath}`;
-    if (requestPath.startsWith('/api/v1/providers')) return `${URLS.GIZZI}/v1/provider`;
+    // Only the bare list goes to gizzi; sub-routes (auth/status, :id, …)
+    // are allternit-api's and have their own shapes (live: auth/status got
+    // gizzi's registry and crashed the web chat view).
+    if (isGizziProviderListPath(requestPath)) return `${URLS.GIZZI}/v1/provider`;
     if (requestPath.startsWith('/api/v1/agents')) return `${URLS.GIZZI}/v1/agent/list`;
     if (
       requestPath.startsWith('/v1/provider')
