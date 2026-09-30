@@ -18,7 +18,8 @@ OUT="$(mktemp -d)"
 
 cargo test -p allternit-commrails --test conformance 2>&1 | tee "$OUT/kernel.txt" | grep -E "^test result|error(\[|:)" >&2
 if [ -n "$API" ]; then
-  AGENCY_BASE_URL="$API" bun test ./tests/agency-conformance/agency-api.conformance.ts 2>&1 | tee "$OUT/api.txt" | tail -5 >&2
+  # Runs take longer than bun's 5 s default per-test timeout.
+  AGENCY_BASE_URL="$API" bun test --timeout $(( (${AGENCY_RUN_TIMEOUT_S:-120} * 2 + 90) * 1000 )) ./tests/agency-conformance/agency-api.conformance.ts 2>&1 | tee "$OUT/api.txt" | tail -5 >&2
 fi
 
 OUT="$OUT" API="$API" python3 - <<'PY'
