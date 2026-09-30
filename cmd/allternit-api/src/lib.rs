@@ -264,6 +264,7 @@ pub mod web_proxy_routes;
 pub mod webhook_routes;
 pub mod subscription_mcp;
 pub mod subscription_routes;
+pub mod subscription_sync;
 pub mod webhook_subscription_routes;
 pub mod webhook_trigger_routes;
 pub mod workflow_routes;
