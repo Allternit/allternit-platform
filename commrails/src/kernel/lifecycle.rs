@@ -218,8 +218,12 @@ pub fn check_legacy_change(from: &str, to: &str) -> Result<(), LifecycleError> {
         return Ok(());
     }
     if f == NodeState::Closed {
-        // Reopen (new attempt) is the only exit from a closed node.
-        return if t == NodeState::Admitted {
+        // Reopen (new attempt) is the only exit from a closed node. A failed
+        // node may also go straight back to READY: the legacy retry writes
+        // FAIL -> READY, which is a new attempt, not a resurrection. Committed
+        // and cancelled nodes stay closed except via an explicit reopen.
+        let retry_failed = fo == Some(CloseOutcome::Failed) && t == NodeState::Ready;
+        return if t == NodeState::Admitted || retry_failed {
             Ok(())
         } else {
             Err(LifecycleError::IllegalTransition { from: f, to: t })
@@ -290,6 +294,11 @@ mod tests {
         assert!(try_transition(NodeState::Running, NodeState::Committed).is_err());
         assert!(try_transition(NodeState::Declared, NodeState::Running).is_err());
         assert!(try_transition(NodeState::Closed, NodeState::Ready).is_err());
+        // Legacy retry: a failed node may go back to READY; a done one may not.
+        assert!(check_legacy_change("FAIL", "READY").is_ok());
+        assert!(check_legacy_change("FAILED", "READY").is_ok());
+        assert!(check_legacy_change("DONE", "READY").is_err());
+        assert!(check_legacy_change("CANCELLED", "READY").is_err());
         assert!(try_transition(NodeState::OutputReady, NodeState::Committed).is_err());
     }
 
