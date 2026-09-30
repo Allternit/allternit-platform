@@ -1,0 +1,367 @@
+---
+title: 'Receipts'
+description: 'Read a run receipt chain, check it on the server, fetch the verification keys, and verify hashes and signatures yourself.'
+---
+
+<Warning>
+**PREVIEW.** The Agency API is not live yet. This page describes the published v0.3 contract so you can review and build against it; details may change before alpha. Implementation status: DESIGN — NOT YET IMPLEMENTED.
+</Warning>
+
+A **receipt** is append-only, content-addressed evidence of an effect, an input, a policy decision or a verification result. Receipts for a run form a hash chain and each one is signed. For the concepts see [Receipts](/architecture/receipts).
+
+Today receipts exist as hashes only. The chain, the signatures and the keys endpoint are not built. Receipt-backed completion is part of the alpha gate (restart, resume, verify, replay, receipt-backed completion).
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/v1/runs/{run_id}/receipts` | [List receipts](#list-receipts) in chain order |
+| `GET` | `/v1/runs/{run_id}/receipts/verification` | [Verify a receipt chain](#verify-a-receipt-chain) on the server |
+| `GET` | `/v1/receipts/{receipt_id}` | [Get a receipt](#get-a-receipt) |
+| `GET` | `/.well-known/jwks.json` | [Get verification keys](#get-verification-keys) |
+
+## The Receipt object
+
+{{fields:Receipt}}
+
+Receipt IDs start with `rcpt_`.
+
+- `content_hash` is SHA-256 over the canonical JSON (RFC 8785, JCS) of every field except `content_hash` and `signature`.
+- `prev_hash` is the previous receipt's `content_hash` in the same run. It is `null` only at index 0.
+- A correction appends a new receipt with `supersedes` set. Receipts are never edited.
+- `payload` is an open object whose shape depends on `type`. Component identities appear in it only with `view=debug`.
+
+### Receipt types
+
+[ReceiptType](/api/agency/schemas#receipttype)
+
+| `type` | Records |
+|--------|---------|
+| `run` | The run's terminal state. |
+| `tool` | A tool invocation and its result. |
+| `action` | An external or irreversible action. Carries `idempotency_key`. |
+| `mutation` | A change to the workspace. |
+| `verification` | A verifier's result. |
+| `policy` | A policy decision. |
+| `node_output` | An artifact produced by a node. |
+| `input` | Human or caller input. |
+| `attention` | An attention request or its resolution. |
+| `control` | Pause, resume or cancel. |
+| `spawn` | The start of an executor. |
+
+### Signature
+
+`signature` ([ReceiptSignature](/api/agency/schemas#receiptsignature)):
+
+{{fields:ReceiptSignature}}
+
+The signed material is the JCS-canonical form of `{schema_id, schema_version, domain, content_hash}`. Including the schema ID, schema version and the domain tag `allternit.receipt.v1` means a signature cannot be reused for another schema, version or protocol.
+
+### Provenance
+
+`provenance` items ([Provenance](/api/agency/schemas#provenance)):
+
+{{fields:Provenance}}
+
+## List receipts
+
+```http
+GET /v1/runs/{run_id}/receipts
+```
+
+The append-only receipt chain for the run, in chain order.
+
+### Parameters
+
+{{params:listRunReceipts}}
+
+`type` takes a comma-separated list, for example `?type=verification,policy`. A filtered list is not a complete chain; fetch without `type` to verify.
+
+### Responses
+
+{{responses:listRunReceipts}}
+
+[ReceiptPage](/api/agency/schemas#receiptpage):
+
+{{fields:ReceiptPage}}
+
+### Example
+
+```bash
+curl "https://api.allternit.com/v1/runs/run_01JB2K4Y7MQ8/receipts?limit=200" \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "rcpt_01JB2K7Q00",
+      "object": "receipt",
+      "run_id": "run_01JB2K4Y7MQ8",
+      "type": "input",
+      "index": 0,
+      "content_hash": "sha256:1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809",
+      "prev_hash": null,
+      "signature": {
+        "alg": "ed25519",
+        "key_id": "rk-2026-09",
+        "value": "p3mJ1v…",
+        "jwks_url": "https://api.allternit.com/.well-known/jwks.json",
+        "domain": "allternit.receipt.v1"
+      },
+      "supersedes": null,
+      "idempotency_key": "3f1c2a9e-7b1d-4c55-9a0e-1d2b3c4d5e6f",
+      "summary": "Run created from goal",
+      "provenance": [
+        { "source_type": "USER", "source_id": "user_42", "trust_class": "INTERNAL", "content_hash": null, "observed_at": "2026-09-29T17:00:00Z" }
+      ],
+      "payload": {},
+      "created_at": "2026-09-29T17:00:00Z",
+      "schema_id": "allternit.receipt.input",
+      "schema_version": "1.0.0"
+    },
+    {
+      "id": "rcpt_01JB2K7Q01",
+      "object": "receipt",
+      "run_id": "run_01JB2K4Y7MQ8",
+      "type": "tool",
+      "index": 1,
+      "content_hash": "sha256:9f2c7d1e3a5b4c6d8e0f1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f",
+      "prev_hash": "sha256:1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809",
+      "signature": {
+        "alg": "ed25519",
+        "key_id": "rk-2026-09",
+        "value": "Qk9a7c…",
+        "jwks_url": "https://api.allternit.com/.well-known/jwks.json",
+        "domain": "allternit.receipt.v1"
+      },
+      "supersedes": null,
+      "idempotency_key": null,
+      "summary": "Ran test suite",
+      "provenance": [
+        { "source_type": "TOOL", "trust_class": "INTERNAL" }
+      ],
+      "payload": {},
+      "created_at": "2026-09-29T17:00:09Z",
+      "schema_id": "allternit.receipt.tool",
+      "schema_version": "1.0.0"
+    }
+  ],
+  "has_more": false,
+  "next_cursor": null
+}
+```
+
+Hashes, signature values, key IDs and schema IDs in this example are illustrative, and the `payload` bodies are left empty.
+
+## Verify a receipt chain
+
+```http
+GET /v1/runs/{run_id}/receipts/verification
+```
+
+A server-side check of the run's receipt hash chain and signatures. This endpoint is a convenience, not the trust root. Clients can verify independently with `content_hash`, `prev_hash`, `signature` and the published keys.
+
+### Parameters
+
+{{params:verifyRunReceiptChain}}
+
+### Responses
+
+{{responses:verifyRunReceiptChain}}
+
+[ReceiptChainVerification](/api/agency/schemas#receiptchainverification):
+
+{{fields:ReceiptChainVerification}}
+
+### Example
+
+```bash
+curl https://api.allternit.com/v1/runs/run_01JB2K4Y7MQ8/receipts/verification \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+```json
+{
+  "run_id": "run_01JB2K4Y7MQ8",
+  "receipt_count": 27,
+  "head_hash": "sha256:c0ffee0d2e8a9b7c5d3e1f0a2b4c6d8e0f1a3b5c7d9e1f3a5b7c9d1e3f5a7b9c",
+  "hash_chain_valid": true,
+  "signatures_valid": true,
+  "first_invalid_index": null,
+  "checked_at": "2026-09-29T17:10:00Z"
+}
+```
+
+`signatures_valid` is `null` if any receipt is unsigned. When a check fails, `first_invalid_index` is the index of the first receipt that does not verify.
+
+## Get a receipt
+
+```http
+GET /v1/receipts/{receipt_id}
+```
+
+### Parameters
+
+{{params:getReceipt}}
+
+### Responses
+
+{{responses:getReceipt}}
+
+### Example
+
+```bash
+curl https://api.allternit.com/v1/receipts/rcpt_01JB2K9A01 \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+The response is one [Receipt](#the-receipt-object).
+
+## Get verification keys
+
+```http
+GET /.well-known/jwks.json
+```
+
+Returns the JWKS document containing the Ed25519 public keys referenced by `ReceiptSignature.key_id`. This endpoint needs no authentication.
+
+### Responses
+
+{{responses:getJwks}}
+
+[Jwks](/api/agency/schemas#jwks):
+
+{{fields:Jwks}}
+
+### Example
+
+```bash
+curl https://api.allternit.com/.well-known/jwks.json
+```
+
+```json
+{
+  "keys": [
+    {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+      "kid": "rk-2026-09",
+      "use": "sig",
+      "alg": "EdDSA"
+    }
+  ]
+}
+```
+
+## Verify independently
+
+The steps:
+
+1. Fetch every receipt for the run, unfiltered, in chain order.
+2. For each receipt, drop `content_hash` and `signature`, canonicalize the rest with RFC 8785, hash with SHA-256 and compare with `content_hash`.
+3. Check `index` is sequential and `prev_hash` equals the previous `content_hash` (`null` at index 0).
+4. For each signature, canonicalize `{schema_id, schema_version, domain, content_hash}` and verify the Ed25519 signature (`value`, base64url) with the JWKS key whose `kid` matches `key_id`. Check `domain` is `allternit.receipt.v1`.
+
+The examples use third-party open-source libraries for RFC 8785 canonicalization and Ed25519: `rfc8785` and `cryptography` in Python, and `canonicalize` plus the built-in `node:crypto` in Node.js. Fetch receipts with the default view, since the hash covers the receipt as served in that view.
+
+<CodeGroup>
+
+```python Python
+import base64, hashlib
+import requests, rfc8785
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+DOMAIN = "allternit.receipt.v1"
+
+def b64url_decode(s: str) -> bytes:
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+def verify_chain(receipts: list[dict], jwks: dict) -> None:
+    keys = {
+        k["kid"]: Ed25519PublicKey.from_public_bytes(b64url_decode(k["x"]))
+        for k in jwks["keys"]
+        if k["kty"] == "OKP" and k["crv"] == "Ed25519"
+    }
+    prev = None
+    for i, r in enumerate(receipts):
+        body = {k: v for k, v in r.items() if k not in ("content_hash", "signature")}
+        digest = "sha256:" + hashlib.sha256(rfc8785.dumps(body)).hexdigest()
+        if digest != r["content_hash"]:
+            raise ValueError(f"content hash mismatch at index {i}")
+        if r["index"] != i or r["prev_hash"] != prev:
+            raise ValueError(f"chain link broken at index {i}")
+
+        sig = r.get("signature")
+        if sig is None:
+            raise ValueError(f"receipt {i} is unsigned")
+        if sig["domain"] != DOMAIN:
+            raise ValueError(f"unexpected signature domain at index {i}")
+        signed = rfc8785.dumps({
+            "schema_id": r["schema_id"],
+            "schema_version": r["schema_version"],
+            "domain": sig["domain"],
+            "content_hash": r["content_hash"],
+        })
+        # raises cryptography.exceptions.InvalidSignature on failure
+        keys[sig["key_id"]].verify(b64url_decode(sig["value"]), signed)
+        prev = r["content_hash"]
+
+jwks = requests.get("https://api.allternit.com/.well-known/jwks.json").json()
+verify_chain(receipts, jwks)  # `receipts` = every page of GET /v1/runs/{run_id}/receipts
+```
+
+```typescript TypeScript
+import { createHash, createPublicKey, verify } from "node:crypto";
+import canonicalize from "canonicalize";
+
+const DOMAIN = "allternit.receipt.v1";
+
+function verifyChain(receipts: any[], jwks: { keys: any[] }): void {
+  const keys = new Map(
+    jwks.keys
+      .filter((k) => k.kty === "OKP" && k.crv === "Ed25519")
+      .map((k) => [k.kid, createPublicKey({ key: k, format: "jwk" })]),
+  );
+
+  let prev: string | null = null;
+  receipts.forEach((r, i) => {
+    const { content_hash, signature, ...body } = r;
+    const digest = "sha256:" + createHash("sha256").update(canonicalize(body)!).digest("hex");
+    if (digest !== content_hash) throw new Error(`content hash mismatch at index ${i}`);
+    if (r.index !== i || r.prev_hash !== prev) throw new Error(`chain link broken at index ${i}`);
+
+    if (!signature) throw new Error(`receipt ${i} is unsigned`);
+    if (signature.domain !== DOMAIN) throw new Error(`unexpected signature domain at index ${i}`);
+    const key = keys.get(signature.key_id);
+    if (!key) throw new Error(`unknown key ${signature.key_id}`);
+    const signed = canonicalize({
+      schema_id: r.schema_id,
+      schema_version: r.schema_version,
+      domain: signature.domain,
+      content_hash,
+    })!;
+    const ok = verify(null, Buffer.from(signed), key, Buffer.from(signature.value, "base64url"));
+    if (!ok) throw new Error(`bad signature at index ${i}`);
+    prev = content_hash;
+  });
+}
+
+const jwks = await (await fetch("https://api.allternit.com/.well-known/jwks.json")).json();
+verifyChain(receipts, jwks); // `receipts` = every page of GET /v1/runs/{run_id}/receipts
+```
+
+</CodeGroup>
+
+<Note>
+This code follows the v0.3 contract text. Because the chain and signatures are not implemented yet, it has not been run against a live server. Expect details to be confirmed at alpha.
+</Note>
+
+## Related
+
+- The `receipt.appended` [event](/api/agency/events#receiptappended)
+- `Run.effect_receipt_ids` and `Run.output.run_receipt_id` on the [Run](/api/agency/runs#the-run-object)
+- [Replays](/api/agency/replays), which are built from receipts and recordings

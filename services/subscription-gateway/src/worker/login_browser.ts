@@ -100,11 +100,15 @@ export interface ChromeLoginBrowserOptions {
   executable: string;
   spawnFn?: typeof spawn;
   closeTimeoutMs?: number;
+  // Chrome refuses to start as root without --no-sandbox (Sessions machines
+  // run the gateway as root). Defaults to the process's own uid.
+  isRoot?: boolean;
 }
 
 export function createChromeLoginBrowser(opts: ChromeLoginBrowserOptions): LoginBrowser {
   const spawnFn = opts.spawnFn ?? spawn;
   const closeTimeoutMs = opts.closeTimeoutMs ?? 15000;
+  const isRoot = opts.isRoot ?? process.getuid?.() === 0;
   const open = new Map<string, ChildProcess>();
 
   return {
@@ -123,6 +127,7 @@ export function createChromeLoginBrowser(opts: ChromeLoginBrowserOptions): Login
         [
           `--user-data-dir=${userDataDir}`,
           "--password-store=basic",
+          ...(isRoot ? ["--no-sandbox"] : []),
           "--no-first-run",
           "--no-default-browser-check",
           "--hide-crash-restore-bubble",

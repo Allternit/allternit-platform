@@ -120,7 +120,7 @@ describe("phase-2 http surface", () => {
     const connect = await request(deps.app)
       .post("/v1/accounts")
       .set("authorization", `Bearer ${t}`)
-      .send({ provider: "fixture-web", label: "Fixture account" });
+      .send({ provider: "claude", label: "Fixture account" });
     expect(connect.status).toBe(201);
     const disconnect = await request(deps.app)
       .post(`/v1/accounts/${connect.body.account_id}/disconnect`)

@@ -1,0 +1,197 @@
+---
+title: Kernel contracts
+description: The frozen kernel ABI 1.0.0 package: what it contains, how it is versioned, and how to regenerate types and run the conformance tests
+---
+
+**Status: AVAILABLE (contract package).** See [status labels](/architecture#status-labels).
+
+The **kernel ABI** is the set of typed contracts that every part of the [Living Agent Architecture](/architecture) is built against. A contract defines the exact shape of one thing that crosses a boundary: a task, a policy decision, a lease, a receipt. Components agree on contracts, not on each other's internals, which is what lets a model, a tool runtime or an executor be replaced without changing the agent.
+
+Package **1.0.0 is frozen** as of 2026-09-30.
+
+## Architecture contract
+
+### Where it lives
+
+```text
+spec/Contracts/kernel/v1/
+├── MANIFEST.json              package metadata, version axes, contract list, file hashes
+├── README.md
+├── schemas/*.schema.json      the normative contracts (JSON Schema draft 2020-12)
+├── registry/primitives.json   the primitive registry
+├── data/                      built-in completion criteria and the bug-fix completion policy
+├── conformance/               pytest suite, valid and invalid examples, fixtures
+├── generated/ts/              TypeScript types (types only, no runtime dependencies)
+├── generated/rust/            Rust crate `allternit-kernel-abi` (serde derive only)
+└── scripts/regenerate.sh      reproduces both generated outputs
+```
+
+The package contains 21 schema files defining 65 contracts. Each schema has a pinned `$id` under `https://schemas.allternit.com/kernel/1.0.0/`. `MANIFEST.json` holds the SHA-256 of every schema, registry, data and generated file.
+### Contract families
+
+| Schema file | Contracts | Covers |
+|-------------|-----------|--------|
+| `common.schema.json` | `AbiEnvelopeV1`, `ErrorV1` | The shared envelope, provenance and the error shape |
+| `task_ir.schema.json` | `TaskIRV1` | The typed task a goal compiles into |
+| `agent_state.schema.json` | `AgentStateV1` | Per-run semantic state |
+| `graph.schema.json` | `ComputeGraphIRV1` | The compute graph. This is the only workflow type |
+| `primitive.schema.json` | `PrimitiveDescriptorV1`, `PrimitiveMaturityV1`, `PrimitiveRegistryV1` | Primitive operations and their maturity |
+| `decision.schema.json` | `DecisionRequestV1`, `DecisionResultV1`, `DecisionDeploymentUnitV1`, `DecisionBackendProfileV1`, `DecisionReadoutProfileV1`, `DecisionCalibrationManifestV1`, `ArtifactRecordV1` | Bounded decisions and their calibration |
+| `capability.schema.json` | `CapabilityRequestV1`, `ModelCapabilityProfileV1`, `ModelPoolEntryV1`, `ExecutionPlanV1` | Capability requests, model pool entries and the router's plan |
+| `state_transfer.schema.json` | `CognitiveStateDescriptorV1`, `StateTransferRequestV1`, `StateTransferReceiptV1` | Moving cognitive state between components |
+| `context.schema.json` | `ContextChunkV1`, `ContextVisibilityDecisionV1`, `ContextProjectionV1` | Context compilation and visibility |
+| `tool.schema.json` | `ToolInvocationV1`, `ToolReceiptV1`, `RecoveryDecisionV1` | Tool calls, their receipts and recovery |
+| `mutation.schema.json` | `MutationRequestV1`, `MutationReceiptV1` | Workspace changes, recorded as unified diffs |
+| `verification.schema.json` | `VerificationRequestV1`, `VerificationReceiptV1` | Verifier requests and results |
+| `policy.schema.json` | `PolicyCheckV1`, `PolicyDecisionV1`, `AuthorityProfileV1` | Policy checks, decisions and authority profiles |
+| `receipts.schema.json` | `ActionReceiptV1`, `PolicyReceiptV1`, `SpawnReceiptV1`, `RunReceiptV1`, `TraceEventV1` | Receipts and trace events |
+| `work.schema.json` | `WorkNodeLifecycleV1`, `WorkNodeTransitionV1`, `WorkRunRecordV1`, `NodeOutputV1`, `LeaseV1`, `AdmissionRequestV1`, `AdmissionDecisionV1`, `ExecutorProbeV1` | The work runtime: lifecycle, outputs, leases, admission |
+| `campaign.schema.json` | `WakePolicyV1`, `WaitGateV1`, `WakeEventV1`, `CampaignV1` | Campaigns, wait gates and waking |
+| `attention.schema.json` | `AttentionPolicyV1`, `AttentionRequestV1`, `AttentionResolutionV1` | Requests for human attention and their resolution |
+| `environment.schema.json` | `ExecutionEnvironmentV1`, `NetworkAccessPolicyV1` | Process environment and network policy |
+| `completion.schema.json` | `CompletionCriterionV1`, `CompletionPolicyV1`, `CompletionProposalV1`, `CompletionDecisionV1` | Completion criteria, proposals and the system's decision |
+| `replay.schema.json` | `CassetteV1`, `DivergenceReportV1` | Replay recordings and divergence reports |
+| `bundle.schema.json` | `CompositeModelBundleV1`, `AgentBundleManifestV1` | How an agent is packaged |
+
+Deferred to a later minor version: `DeploymentProfileV1`, `DatasetReceiptV1`, `PrimitivePackManifestV1` and `DecisionBankManifestV1`. Version 1.0.0 refers to these by opaque ID only.
+
+#### The primitive registry
+
+`registry/primitives.json` lists 191 primitive operation IDs. Each has a dotted ID (for example `obs.read_file`) and an upper-snake alias (`READ_FILE`). IDs are grouped by namespace: `obs`, `dec`, `mut`, `ver`, `ctl`, `tool`, `route`, `ctx`, `state`, `plan`, `policy` and `mem`.
+
+Each primitive may carry an execution class:
+
+| Class | Meaning |
+|-------|---------|
+| D | Deterministic |
+| S | System-1 (bounded decision) |
+| G | Generative |
+| V | Verifier |
+| P | Policy. Only class P may grant authority |
+| M | Memory / state |
+| R | Routing / resources |
+
+In 1.0.0, 25 primitives carry a confirmed class. The remaining 166 are left unclassified (`null`) until each is confirmed.
+
+#### Rules the contracts encode
+
+Some architecture rules are enforced by the schemas themselves:
+
+- The completion decision is produced by the runtime or a verifier and is decided by the system. A model cannot be the decider.
+- A decision result with a `gate` answer never validates as a policy contract. A gate is a recommendation, not a verdict.
+- Every mutable field has a single owner. Agent state holds semantic truth; the work runtime ledger holds lifecycle, attempts, leases and campaigns. They reference each other by stable IDs and state versions and never mirror the same mutable value.
+- No vendor or model name appears in any schema, registry entry or data file. This is tested.
+### Versioning
+
+#### Four version axes
+
+Versions are tracked on four independent axes.
+
+| Axis | Value today | Meaning |
+|------|-------------|---------|
+| Architecture document | Living Agent Architecture v1.4 | The architecture this package implements |
+| ABI package | **1.0.0** | This whole package (`package_version` in `MANIFEST.json`) |
+| Runtime | unbound | A runtime declares which ABI versions it requires. None is bound by the package |
+| Per contract | `V1` suffix, `schema_version` 1.0.0 | The contract major is in the name; each contract has its own semver |
+
+#### Additive and breaking changes
+
+| Change | Examples | Version bump |
+|--------|----------|--------------|
+| Erratum that does not change any validation result | Fixing a description | Patch (1.0.x) |
+| Additive | A new optional field, a new enum member, a new contract | ABI minor (1.1.0) |
+| Breaking | Removing or renaming a field, tightening a type, changing meaning | ABI major (2.0.0) and a new contract major (`V2`) |
+
+Frozen files are never edited in place.
+
+#### Fail closed on unknown
+
+Additive changes are safe only because receivers fail closed:
+
+- Every object is closed (`additionalProperties: false`). An unknown field is rejected.
+- An unknown enum value is rejected.
+- Optional data that a receiver may not understand travels in `extensions`, a map whose keys must start with `x-`. Every closed object carries it.
+
+A component that receives something it does not understand refuses it. It does not guess.
+
+#### Encodings
+
+- Hashes are `sha256:` followed by 64 lowercase hex characters.
+- Timestamps are RFC 3339 strings.
+
+#### Other invariants
+
+- Receipts are append-only.
+- Every durable write increments a state version or records an explicit no-op.
+### Relationship to the Agency API
+
+The [Agency API](/api/agency/overview) is a public view over these contracts. API objects such as the attention request, artifact, network policy and execution environment are public projections of `AttentionRequestV1`, `NodeOutputV1`, `NetworkAccessPolicyV1` and `ExecutionEnvironmentV1`. The API follows the same evolution rules: unknown request fields are rejected, and clients treat unknown enum values as not understood.
+### Field-level reference
+
+Every definition and field is listed in the generated [Kernel contracts reference](/architecture/kernel-contracts-reference).
+
+## Current implementation
+
+The contracts, the primitive registry, the built-in completion data, generated TypeScript and Rust types and the schema-level conformance tests are on main. A frozen contract is a specification. It does not mean the component that implements it is built; each deep page states what is.
+
+## Availability
+
+| Part | Status | Notes |
+|------|--------|-------|
+| Schemas, registry, data, generated types | **AVAILABLE** | `spec/Contracts/kernel/v1/`. |
+| Schema-level conformance tests | **AVAILABLE** |  |
+| Runtime conformance suite | **DESIGN — NOT YET IMPLEMENTED** | Tests a running kernel, not only the contracts. |
+
+## Developer relevance
+
+### Regenerate types
+
+Generated TypeScript and Rust types are checked in. To reproduce them:
+
+```bash
+cd spec/Contracts/kernel/v1
+./scripts/regenerate.sh
+```
+
+Requirements: `python3`, `npx` (Node.js), `cargo` with `cargo-typify` 0.8.0, and `rustfmt`.
+
+```bash
+cargo install cargo-typify --version 0.8.0 --locked
+```
+
+The script bundles the schemas, writes `generated/ts/kernel-abi.d.ts` and `generated/rust/src/generated.rs`, and refreshes the file hashes in `MANIFEST.json`. On a clean checkout it produces no `git diff`.
+
+<Note>
+The code generators cannot express cross-file references or conditional rules, so types are generated from a non-normative bundle with conditional keywords removed. Conditional rules are enforced by schema validation only. Validate against the schemas in `schemas/`, not against the generated types alone.
+</Note>
+
+### Run the conformance tests
+
+```bash
+cd spec/Contracts/kernel/v1
+uvx --with jsonschema --with referencing --with rfc3339-validator pytest conformance -q
+(cd generated/rust && cargo test)
+```
+
+The Python suite checks that:
+
+- every schema is itself valid and every `$ref` resolves;
+- each contract has a valid example that passes and at least one invalid example that fails;
+- unknown enum values and unknown fields are rejected;
+- `extensions` accepts only `x-` keys;
+- hash and timestamp encodings are enforced;
+- no vendor or model name appears;
+- the bug-fix completion policy does not allow partial completion;
+- the registry has the expected shape, and each mutable field has a single owner;
+- `$id` values are pinned and `MANIFEST.json` hashes match the files.
+
+The Rust suite checks that every valid example round-trips through the generated serde types.
+
+These tests cover the contracts. A conformance suite for a running kernel is not built yet.
+
+
+## Related
+
+- [Kernel contracts reference](/architecture/kernel-contracts-reference)
+- [Agency API: Versioning](/api/agency/versioning)
+- [Agency API: Schemas](/api/agency/schemas)

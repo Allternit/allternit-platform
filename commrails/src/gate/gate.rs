@@ -1592,7 +1592,7 @@ impl Gate {
         let wih_state = project_wih(&wih_events, wih_id).ok_or_else(|| anyhow!("wih not found"))?;
         let dag_id = wih_state.dag_id.clone();
         let node_id = wih_state.node_id.clone();
-        let judge_policy = self.gate4_precheck(&wih_state, status, closer).await?;
+        let judge_policy = self.gate4_precheck(&wih_state, status, closer, evidence_refs).await?;
         let requested_status = status;
 
         let mut evidence_refs: Vec<String> = evidence_refs.to_vec();
