@@ -17,6 +17,10 @@ jobs:
   # DbHandle::new_memory in src/db.rs), so unlike the cloud-api workflow no
   # postgres service container is required.
   test:
+    # A newer commit supersedes an in-flight test run: cancel the older one.
+    concurrency:
+      group: deploy-allternit-api-test-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -50,6 +54,12 @@ jobs:
 
   deploy:
     needs: test
+    # One deploy to Contabo at a time. Never cancel a deploy mid-swap; a newer
+    # run waits, and GitHub keeps only the newest waiting run (older pending
+    # ones are dropped), so an older build can never land after a newer one.
+    concurrency:
+      group: deploy-allternit-api-contabo
+      cancel-in-progress: false
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
