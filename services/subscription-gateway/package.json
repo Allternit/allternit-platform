@@ -8,6 +8,7 @@
     "dev": "tsx watch src/main.ts",
     "build": "tsc -b && node scripts/copy-migrations.mjs",
     "typecheck": "tsc -b",
+    "typecheck:noemit": "tsc -b --force ../../platform/packages/subscription-fabric-contracts ../../platform/packages/subscription-adapter-sdk && tsc --noEmit -p .",
     "test": "vitest run && bash ../../scripts/check-fabric-sources-clean.sh",
     "start": "node dist/main.js"
   },
