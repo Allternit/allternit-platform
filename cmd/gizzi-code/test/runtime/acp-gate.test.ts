@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { acpGateDecision, acpToolToHookPayload, parseHookOutput } from "@/runtime/drivers/acp-gate"
 
@@ -9,6 +9,23 @@ function fixtureRoot() {
   const root = mkdtempSync(join(import.meta.dir, ".acp-gate-test-"))
   fixtures.push(root)
   return root
+}
+function pathCheckingGate() {
+  const root = fixtureRoot()
+  const bin = join(root, "hook.js")
+  const log = join(root, "calls.jsonl")
+  writeFileSync(bin, `#!${process.execPath}
+import { appendFileSync } from "node:fs"
+const input = JSON.parse(await Bun.stdin.text())
+appendFileSync(${JSON.stringify(log)}, JSON.stringify(input) + "\\n")
+// Test seam for the real hook's single-path lease protocol: source leased, destination unleased.
+if (input.tool_input.file_path?.startsWith("/outside/")) {
+  console.log(JSON.stringify({ hookSpecificOutput: { permissionDecision: "deny", permissionDecisionReason: "destination outside WIH lease" } }))
+} else {
+  console.log("{}")
+}
+`, { mode: 0o755 })
+  return { root, bin, calls: () => readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line)) }
 }
 afterEach(() => {
   for (const root of fixtures.splice(0)) rmSync(root, { recursive: true, force: true })
@@ -24,6 +41,37 @@ describe("acp gate mapping", () => {
     const p = acpToolToHookPayload({ kind: "edit", locations: [{ path: "/w/a.ts" }] }, "/w")
     expect(p.tool_name).toBe("Write")
     expect(p.tool_input).toEqual({ file_path: "/w/a.ts" })
+  })
+  test("finding 7: move denies an unleased second location after a leased source", async () => {
+    const gate = pathCheckingGate()
+    const result = await acpGateDecision({ bin: gate.bin, root: gate.root, cwd: "/repo", wihId: "wih1", sessionId: "session1", harness: "kimi", toolCall: { kind: "move", locations: [{ path: "/repo/leased/source" }, { path: "/outside/destination" }] } })
+    expect(result).toEqual({ allow: false, reason: "destination outside WIH lease" })
+    expect(gate.calls().map((call) => call.tool_input.file_path)).toEqual(["/repo/leased/source", "/outside/destination"])
+    expect(gate.calls().every((call) => call.tool_name === "Write" && call.session_id === "session1" && call.cwd === "/repo")).toBe(true)
+  })
+  test.each(["destination", "destination_path", "new_path", "to"])("finding 7: move gates a raw %s outside the lease", async (field) => {
+    const gate = pathCheckingGate()
+    const result = await acpGateDecision({ bin: gate.bin, root: gate.root, cwd: "/repo", wihId: "wih1", harness: "kimi", toolCall: { kind: "move", rawInput: { path: "/repo/leased/source", [field]: "/outside/destination" }, locations: [{ path: "/repo/leased/source" }] } })
+    expect(result.allow).toBe(false)
+    expect(gate.calls().map((call) => call.tool_input.file_path)).toEqual(["/repo/leased/source", "/outside/destination"])
+  })
+  test.each(["edit", "delete"])("finding 7: %s gates all locations, including paths beyond the second", async (kind) => {
+    const gate = pathCheckingGate()
+    const paths = ["/repo/leased/a", "/repo/leased/b", "/outside/c"]
+    const result = await acpGateDecision({ bin: gate.bin, root: gate.root, cwd: "/repo", wihId: "wih1", harness: "kimi", toolCall: { kind, locations: paths.map((path) => ({ path })) } })
+    expect(result.allow).toBe(false)
+    expect(gate.calls().map((call) => call.tool_input.file_path)).toEqual(paths)
+  })
+  test("finding 7: all leased mutation paths allow, duplicates checked once", async () => {
+    const gate = pathCheckingGate()
+    const result = await acpGateDecision({ bin: gate.bin, root: gate.root, cwd: "/repo", harness: "kimi", toolCall: { kind: "move", rawInput: { source: "/repo/leased/a", destination: "/repo/leased/b" }, locations: [{ path: "/repo/leased/a" }, { path: "/repo/leased/b" }] } })
+    expect(result).toEqual({ allow: true })
+    expect(gate.calls().map((call) => call.tool_input.file_path)).toEqual(["/repo/leased/a", "/repo/leased/b"])
+  })
+  test.each(["edit", "delete", "move"])("finding 7: %s with no recoverable write paths denies", async (kind) => {
+    const gate = pathCheckingGate()
+    const result = await acpGateDecision({ bin: gate.bin, cwd: "/repo", harness: "kimi", toolCall: { kind } })
+    expect(result).toMatchObject({ allow: false, reason: expect.stringContaining("write paths") })
   })
   test("hook output: silence allows, deny denies, garbage fails closed", () => {
     expect(parseHookOutput("", 0)).toEqual({ allow: true })

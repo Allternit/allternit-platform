@@ -1,4 +1,4 @@
 Goal: Fix assigned ACP gate findings #6, #7, #16 in allternit-wt-f2-acp-gate; dag:dag_55235. Draft PR only, never merge.
-Just did: Finding #6 reproduced (10 failing cases) and fixed. Missing binary now denies WIH-bound/effectful/unknown calls; retains unbound read-only catastrophic floor; honors .allternit/receipts/_replay/run_<wih>.json with the canonical replay denial. Targeted Bun: 15 pass, 1 optional real-binary test skipped. wih:wih_706 closed DONE.
-Next: Commit/push #6, then n_1243 (#7 all mutation paths), n_9386 (#16 failed hook exits), n_6488 (verification/draft PR/notes).
+Just did: #6 committed/pushed as 0632500d3; wih:wih_706 DONE. #7 reproduced with 11 failing transport regressions, now fixed: all deduplicated edit/delete/move paths (locations plus raw source/destination fields) each pass the existing Write hook; any denial ends admission. Missing mutation paths deny. All path checks share one timeout budget. Targeted Bun: 26 pass, 1 optional real-binary skip; wih:wih_3416 DONE.
+Next: Commit/push #7, then complete n_9386 (#16 failed hook exits; reproduction already showed 6 failures), n_6488 (verification/draft PR/notes).
 Open questions: None. Q24 launch flags and permission answer path unchanged. No auth, deploy paths, builds, shared-checkout writes or merge. Requested FIX_F2_NOTES.md is the explicit report exception outside the worktree.

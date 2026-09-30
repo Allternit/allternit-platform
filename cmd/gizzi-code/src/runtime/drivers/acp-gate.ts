@@ -38,7 +38,7 @@ export function inProcessFloor(toolCall: AcpToolCall, cwd: string): AcpGateVerdi
     : { allow: true, fallback: true }
 }
 
-/** Map an ACP tool call onto the hook payload `{tool_name, tool_input, cwd}`. */
+/** Map the primary ACP target. Admission must use acpToolToHookPayloads below. */
 export function acpToolToHookPayload(toolCall: AcpToolCall, cwd: string, sessionId?: string) {
   const kind = String(toolCall.kind ?? "")
   const raw = (toolCall.rawInput && typeof toolCall.rawInput === "object" ? toolCall.rawInput : {}) as Record<
@@ -75,6 +75,27 @@ export function acpToolToHookPayload(toolCall: AcpToolCall, cwd: string, session
     cwd,
     session_id: sessionId,
   }
+}
+
+/** The hook understands one Write path per request, so gate every ACP target. */
+export function acpToolToHookPayloads(toolCall: AcpToolCall, cwd: string, sessionId?: string) {
+  const primary = acpToolToHookPayload(toolCall, cwd, sessionId)
+  if (primary.tool_name !== "Write") return [primary]
+  const raw = (toolCall.rawInput && typeof toolCall.rawInput === "object" ? toolCall.rawInput : {}) as Record<string, unknown>
+  const paths = new Set<string>()
+  const add = (path: unknown) => {
+    if (typeof path === "string" && path.trim()) paths.add(path)
+  }
+  add((primary.tool_input as { file_path?: string }).file_path)
+  for (const key of ["file_path", "path", "source", "source_path", "destination", "destination_path", "old_path", "new_path", "from", "to"]) {
+    add(raw[key])
+  }
+  if (Array.isArray(toolCall.locations)) {
+    for (const location of toolCall.locations) {
+      add(typeof location === "string" ? location : location?.path)
+    }
+  }
+  return [...paths].map((file_path) => ({ ...primary, tool_input: { file_path } }))
 }
 
 /** `$ALLTERNIT_COMMRAILS_BIN`, then `allternit-commrails` on PATH. */
@@ -148,14 +169,30 @@ export async function acpGateDecision(opts: {
   }
   const args = ["--root", opts.root ?? opts.cwd, "hook", "claude-pretool", "--harness", opts.harness, "--workspace", opts.cwd]
   if (opts.wihId) args.push("--wih", opts.wihId)
-  const payload = JSON.stringify(acpToolToHookPayload(opts.toolCall, opts.cwd, opts.sessionId))
-  return await new Promise<AcpGateVerdict>((resolve) => {
+  const payloads = acpToolToHookPayloads(opts.toolCall, opts.cwd, opts.sessionId)
+  if (!payloads.length) return { allow: false, reason: "cannot recover write paths for ACP mutation (fail closed)" }
+  if (opts.toolCall.kind === "move" && payloads.length < 2) {
+    return { allow: false, reason: "cannot recover both source and destination write paths for ACP move (fail closed)" }
+  }
+  // All targets must pass within the original per-call timeout budget.
+  const deadline = Date.now() + (opts.timeoutMs ?? 30_000)
+  for (const payload of payloads) {
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) return { allow: false, reason: "gate timed out (fail closed)" }
+    const verdict = await runHook(bin, args, JSON.stringify(payload), remaining)
+    if (!verdict.allow) return verdict
+  }
+  return { allow: true }
+}
+
+function runHook(bin: string, args: string[], payload: string, timeoutMs: number): Promise<AcpGateVerdict> {
+  return new Promise<AcpGateVerdict>((resolve) => {
     const child = spawn(bin, args, { stdio: ["pipe", "pipe", "ignore"] })
     let stdout = ""
     const timer = setTimeout(() => {
       child.kill()
       resolve({ allow: false, reason: "gate timed out (fail closed)" })
-    }, opts.timeoutMs ?? 30_000)
+    }, timeoutMs)
     child.stdout.on("data", (d) => (stdout += d.toString()))
     child.on("error", () => {
       clearTimeout(timer)
