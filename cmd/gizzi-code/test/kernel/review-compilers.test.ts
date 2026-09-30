@@ -19,7 +19,7 @@ describe("review #21 policy-fixed arguments", () => {
       expect(() => fixed(value)).toThrow(ToolCompileError)
     }
     const good = fixed("/repo/a")
-    expect(good.invocation.arguments.path).toBe("/repo/a")
+    expect((good.invocation.arguments as { path?: unknown }).path).toBe("/repo/a")
     expect(good.invocation.argument_provenance.path).toBe("POLICY")
     expect(good.invocation.write_set).toEqual(["fs:/repo/a"])
   })
