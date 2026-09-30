@@ -454,7 +454,7 @@ mod tests {
 
     #[tokio::test]
     async fn forwards_identity_and_passthrough_headers_only() {
-        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
         let (url, seen) = spawn_node(Arc::new(tokio::sync::Notify::new())).await;
         let app = router(&url, Some(PEER_TOKEN)).await;
@@ -487,7 +487,7 @@ mod tests {
 
     #[tokio::test]
     async fn fails_closed_without_peer_token() {
-        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
         let (url, seen) = spawn_node(Arc::new(tokio::sync::Notify::new())).await;
         let app = router(&url, None).await;
@@ -507,7 +507,7 @@ mod tests {
 
     #[tokio::test]
     async fn sse_streams_without_buffering() {
-        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
         let release = Arc::new(tokio::sync::Notify::new());
         let (url, _) = spawn_node(release.clone()).await;
