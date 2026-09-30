@@ -29,20 +29,27 @@
 //! ```rust,no_run
 //! use mcp::policy::client::PolicyEnforcingMcpClient;
 //! use mcp::transport::StdioTransport;
+//! use mcp::StdioConfig;
 //! use allternit_sdk_policy::PolicyEngine;
 //! use std::sync::Arc;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Create transport
-//!     let transport = StdioTransport::new(
-//!         "npx",
-//!         &["-y", "@modelcontextprotocol/server-filesystem", "/workspace"],
-//!     )?;
+//!     let transport = StdioTransport::spawn(StdioConfig {
+//!         command: "npx".to_string(),
+//!         args: ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
+//!             .map(String::from)
+//!             .to_vec(),
+//!         env: Default::default(),
+//!         cwd: None,
+//!         timeout_secs: 30,
+//!     })
+//!     .await?;
 //!
 //!     // Create policy-enforcing client
 //!     let policy_engine = Arc::new(PolicyEngine::new());
-//!     let client = PolicyEnforcingMcpClient::new(
+//!     let mut client = PolicyEnforcingMcpClient::new(
 //!         Box::new(transport),
 //!         policy_engine,
 //!         "fs-server".to_string(),

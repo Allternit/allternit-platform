@@ -30,6 +30,7 @@ import WRAP_UP from "@/runtime/session/prompt/wrap-up.txt"
 import { defer } from "@/shared/util/defer"
 import { ToolRegistry } from "@/runtime/tools/builtins/registry"
 import { MCP } from "@/runtime/tools/mcp"
+import { mcpAppMetadata } from "@/runtime/tools/mcp/apps"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import { LSP } from "@/runtime/integrations/lsp"
 import { ReadTool } from "@/runtime/tools/builtins/read"
@@ -1345,7 +1346,8 @@ const message = await createUserMessage(input)
       })
     }
 
-    const mcpTools = Object.entries(await MCP.tools())
+    const mcpCatalog = await MCP.toolCatalog()
+    const mcpTools = Object.entries(mcpCatalog.tools)
     const config = await Config.get()
     const dynamicSelection =
       Flag.GIZZI_DYNAMIC_TOOL_SELECTION || config.experimental?.dynamic_tool_selection === true
@@ -1477,6 +1479,9 @@ const message = await createUserMessage(input)
         const truncated = await Truncate.output(textParts.join("\n\n"), {}, input.agent)
         const metadata = {
           ...(result.metadata ?? {}),
+          // MCP Apps: the host needs the untouched result (structuredContent, _meta) and the
+          // originating server/tool to render a ui:// resource; the model never sees this.
+          ...mcpAppMetadata(mcpCatalog.descriptors[key], result),
           truncated: truncated.truncated,
           ...(truncated.truncated && { outputPath: truncated.outputPath }),
         }

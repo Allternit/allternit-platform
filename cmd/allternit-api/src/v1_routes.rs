@@ -1681,7 +1681,22 @@ async fn agent_chat_bridge(
                             && part.get("sessionID").and_then(|v| v.as_str()) == Some(session_id.as_str())
                         {
                             for frame in tool_frames_for_part(part, &msg_id, &mut tool_frames_sent) {
+                                let settled_ok = frame["type"] == "tool_result";
                                 yield Ok(Event::default().data(frame.to_string()));
+                                // MCP Apps: a completed tool whose connector declares a
+                                // ui:// resource also yields an `mcp_app` frame.
+                                if settled_ok {
+                                    if let Some(app) = crate::mcp_apps::app_frame_for_tool_part(
+                                        &state,
+                                        &user_id_for_record,
+                                        &msg_id,
+                                        part,
+                                    )
+                                    .await
+                                    {
+                                        yield Ok(Event::default().data(app.to_string()));
+                                    }
+                                }
                             }
                         }
                         if part_type == "tool" {

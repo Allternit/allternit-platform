@@ -240,6 +240,7 @@ dependencies = [
  "image",
  "include_dir",
  "jsonwebtoken",
+ "mcp-client",
  "md5",
  "once_cell",
  "openssl",
@@ -7891,6 +7892,7 @@ dependencies = [
  "allternit-sdk-core",
  "allternit-sdk-policy",
  "async-trait",
+ "axum",
  "base64 0.22.1",
  "bytes 1.12.0",
  "chrono",
@@ -7915,6 +7917,7 @@ name = "mcp-client"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
  "base64 0.22.1",
  "bytes 1.12.0",
  "chrono",

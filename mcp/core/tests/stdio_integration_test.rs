@@ -1,74 +1,98 @@
 //! Integration tests for MCP stdio transport
 //!
-//! These tests verify the stdio transport functionality by spawning
-//! actual subprocesses and communicating with them via JSON-RPC.
+//! These tests verify the stdio transport by spawning actual subprocesses and
+//! exchanging JSON-RPC messages with them over stdin/stdout.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
 
 use mcp::transport::{McpTransport, StdioTransport};
 use mcp::types::{JsonRpcMessage, JsonRpcNotification, JsonRpcRequest};
+use mcp::StdioConfig;
 
-/// Test that we can spawn a simple cat process and verify it works
+fn config(command: &str, args: &[&str]) -> StdioConfig {
+    StdioConfig {
+        command: command.to_string(),
+        args: args.iter().map(|a| a.to_string()).collect(),
+        env: HashMap::new(),
+        cwd: None,
+        timeout_secs: 5,
+    }
+}
+
+/// `receive()` only sees messages that arrive after it subscribes, so start
+/// listening before anything is sent.
+fn listen(
+    transport: &Arc<StdioTransport>,
+) -> tokio::task::JoinHandle<mcp::Result<Option<JsonRpcMessage>>> {
+    let transport = transport.clone();
+    tokio::spawn(async move { transport.receive().await })
+}
+
+async fn settle() {
+    tokio::time::sleep(Duration::from_millis(100)).await;
+}
+
+/// Test that we can spawn a simple cat process and echo a message through it
 #[tokio::test]
 async fn test_stdio_spawn_cat() {
     // 'cat' simply echoes back what we send to it
-    let mut transport = StdioTransport::new("cat", &[]).expect("Failed to create transport");
+    let transport = StdioTransport::spawn(config("cat", &[]))
+        .await
+        .expect("Failed to spawn transport");
+    assert!(transport.is_healthy().await);
 
-    // Connect should succeed
-    transport.connect().await.expect("Failed to connect");
-    assert!(transport.is_connected());
+    let listener = listen(&transport);
+    settle().await;
 
-    // Send a notification
     let notification = JsonRpcNotification::new("test/notification", None);
     transport
         .send(JsonRpcMessage::Notification(notification))
         .await
         .expect("Failed to send");
 
-    // Give cat time to echo back
-    // Cat will echo the JSON line we sent
-    let response = transport.receive().await.expect("Failed to receive");
+    let response = tokio::time::timeout(Duration::from_secs(5), listener)
+        .await
+        .expect("timed out waiting for echo")
+        .expect("listener panicked")
+        .expect("Failed to receive");
     assert!(
         response.is_some(),
-        "Should receive echoed response from cat"
+        "Should receive echoed message from cat"
     );
 
-    // Close should succeed
     transport.close().await.expect("Failed to close");
-    assert!(!transport.is_connected());
+    assert!(!transport.is_healthy().await);
 }
 
 /// Test sending and receiving JSON-RPC messages with echo
 #[tokio::test]
 async fn test_stdio_jsonrpc_echo() {
-    let mut transport = StdioTransport::new("cat", &[]).expect("Failed to create transport");
-    transport.connect().await.expect("Failed to connect");
+    let transport = StdioTransport::spawn(config("cat", &[]))
+        .await
+        .expect("Failed to spawn transport");
 
-    // Send a JSON-RPC request
+    let listener = listen(&transport);
+    settle().await;
+
     let request = JsonRpcRequest::new(1, "test/method", Some(serde_json::json!({"key": "value"})));
-    let json_request = serde_json::to_string(&request).expect("Failed to serialize");
-
     transport
         .send(JsonRpcMessage::Request(request))
         .await
         .expect("Failed to send request");
 
-    // Receive the echoed message
-    let response = transport.receive().await.expect("Failed to receive");
-    assert!(response.is_some());
+    let echoed = tokio::time::timeout(Duration::from_secs(5), listener)
+        .await
+        .expect("timed out waiting for echo")
+        .expect("listener panicked")
+        .expect("Failed to receive")
+        .expect("expected an echoed message");
 
-    // Verify the echoed message is valid JSON-RPC
-    match response.unwrap() {
-        JsonRpcMessage::Request(req) => {
-            assert_eq!(req.id, 1);
-            assert_eq!(req.method, "test/method");
-        }
-        JsonRpcMessage::Notification(notif) => {
-            // Cat might split the line differently
-            println!("Received notification: {:?}", notif);
-        }
-        _ => {
-            // Other message types are also fine - we just need to receive something
-        }
-    }
+    // Verify the echoed message is valid JSON-RPC carrying our method
+    let echoed = serde_json::to_value(&echoed).expect("serialize echoed message");
+    assert_eq!(echoed["method"], "test/method");
+    assert_eq!(echoed["params"]["key"], "value");
 
     transport.close().await.expect("Failed to close");
 }
@@ -76,53 +100,46 @@ async fn test_stdio_jsonrpc_echo() {
 /// Test that transport properly handles process exit
 #[tokio::test]
 async fn test_stdio_process_exit() {
-    // Use 'echo' which exits immediately after printing
-    let mut transport =
-        StdioTransport::new("echo", &["hello".to_string()]).expect("Failed to create transport");
-
-    transport.connect().await.expect("Failed to connect");
+    // 'echo' exits immediately after printing
+    let transport = StdioTransport::spawn(config("echo", &["hello"]))
+        .await
+        .expect("Failed to spawn transport");
 
     // Give the process time to exit
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
-    // Try to receive - should return None as process has exited
-    let result = transport.receive().await;
+    assert!(
+        !transport.is_healthy().await,
+        "transport should report unhealthy once the process has exited"
+    );
+    assert!(
+        transport.request("ping", None).await.is_err(),
+        "requests to an exited process must fail"
+    );
 
-    // The process should have exited, connection should be marked as not connected
-    // or we should get an error/None
-    match result {
-        Ok(None) => {
-            // Expected - process exited gracefully
-        }
-        Ok(Some(_)) => {
-            // Also acceptable - might have received the echo output
-        }
-        Err(_) => {
-            // Also acceptable - transport error due to process exit
-        }
-    }
-
-    // Clean up
     let _ = transport.close().await;
 }
 
 /// Test environment variable passing
 #[tokio::test]
 async fn test_stdio_env_vars() {
-    // Use 'env' to print environment variables
-    let mut transport = StdioTransport::new("env", &[])
-        .expect("Failed to create transport")
-        .env("MCP_TEST_VAR", "test_value");
+    let mut cfg = config("sh", &["-c", "echo \"{\\\"jsonrpc\\\":\\\"2.0\\\",\\\"method\\\":\\\"env/report\\\",\\\"params\\\":{\\\"value\\\":\\\"$MCP_TEST_VAR\\\"}}\"; sleep 1"]);
+    cfg.env
+        .insert("MCP_TEST_VAR".to_string(), "test_value".to_string());
 
-    transport.connect().await.expect("Failed to connect");
+    let transport = StdioTransport::spawn(cfg)
+        .await
+        .expect("Failed to spawn transport");
+    let listener = listen(&transport);
 
-    // Give env time to print and exit
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-    // Try to receive - env outputs to stdout
-    while let Ok(Some(msg)) = transport.receive().await {
-        println!("Received: {:?}", msg);
-    }
+    let message = tokio::time::timeout(Duration::from_secs(5), listener)
+        .await
+        .expect("timed out waiting for env report")
+        .expect("listener panicked")
+        .expect("Failed to receive")
+        .expect("expected a message from the child");
+    let message = serde_json::to_value(&message).expect("serialize message");
+    assert_eq!(message["params"]["value"], "test_value");
 
     transport.close().await.ok();
 }
@@ -131,68 +148,70 @@ async fn test_stdio_env_vars() {
 #[tokio::test]
 async fn test_stdio_multiple_connections() {
     for i in 0..3 {
-        let mut transport =
-            StdioTransport::new("cat", &[]).expect(&format!("Failed to create transport {}", i));
-
-        transport
-            .connect()
+        let transport = StdioTransport::spawn(config("cat", &[]))
             .await
-            .expect(&format!("Failed to connect {}", i));
-        assert!(transport.is_connected());
+            .unwrap_or_else(|e| panic!("Failed to spawn transport {i}: {e}"));
+        assert!(transport.is_healthy().await);
 
-        // Send a message
+        let listener = listen(&transport);
+        settle().await;
+
         let notification = JsonRpcNotification::new("test", None);
         transport
             .send(JsonRpcMessage::Notification(notification))
             .await
-            .expect(&format!("Failed to send {}", i));
+            .unwrap_or_else(|e| panic!("Failed to send {i}: {e}"));
 
-        // Receive echo
-        let response = transport.receive().await.expect("Failed to receive");
+        let response = tokio::time::timeout(Duration::from_secs(5), listener)
+            .await
+            .expect("timed out waiting for echo")
+            .expect("listener panicked")
+            .expect("Failed to receive");
         assert!(response.is_some());
 
         transport
             .close()
             .await
-            .expect(&format!("Failed to close {}", i));
-        assert!(!transport.is_connected());
+            .unwrap_or_else(|e| panic!("Failed to close {i}: {e}"));
+        assert!(!transport.is_healthy().await);
     }
 }
 
-/// Test that connection fails for non-existent command
+/// Test that spawning fails for a non-existent command
 #[tokio::test]
 async fn test_stdio_nonexistent_command() {
-    let mut transport = StdioTransport::new("nonexistent_command_xyz_abc", &[])
-        .expect("Failed to create transport");
-
-    let result = transport.connect().await;
+    let result = StdioTransport::spawn(config("nonexistent_command_xyz_abc", &[])).await;
     assert!(
         result.is_err(),
-        "Should fail to connect to non-existent command"
+        "Should fail to spawn a non-existent command"
     );
 }
 
-/// Test sending when not connected fails
+/// Test sending after close fails
 #[tokio::test]
-async fn test_stdio_send_not_connected() {
-    let mut transport = StdioTransport::new("cat", &[]).expect("Failed to create transport");
+async fn test_stdio_send_after_close() {
+    let transport = StdioTransport::spawn(config("cat", &[]))
+        .await
+        .expect("Failed to spawn transport");
+    transport.close().await.expect("Failed to close");
 
-    // Don't connect - just try to send
     let notification = JsonRpcNotification::new("test", None);
     let result = transport
         .send(JsonRpcMessage::Notification(notification))
         .await;
 
-    assert!(result.is_err(), "Should fail to send when not connected");
+    assert!(result.is_err(), "Should fail to send when closed");
 }
 
-/// Test receiving when not connected fails
+/// Test receiving after close fails
 #[tokio::test]
-async fn test_stdio_receive_not_connected() {
-    let mut transport = StdioTransport::new("cat", &[]).expect("Failed to create transport");
+async fn test_stdio_receive_after_close() {
+    let transport = StdioTransport::spawn(config("cat", &[]))
+        .await
+        .expect("Failed to spawn transport");
+    transport.close().await.expect("Failed to close");
 
-    // Don't connect - just try to receive
     let result = transport.receive().await;
 
-    assert!(result.is_err(), "Should fail to receive when not connected");
+    assert!(result.is_err(), "Should fail to receive when closed");
 }
