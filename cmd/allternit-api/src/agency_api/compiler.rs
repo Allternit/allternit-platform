@@ -16,7 +16,7 @@
 //! closed without a declared workspace/write set, which maps to a 422.
 
 use super::catalog;
-use allternit_commrails::judge::policy::{CloseBy, JudgePolicy, PolicyOrigin, VerifyMode};
+use allternit_commrails::judge::policy::{CloseBy, Fence, JudgePolicy, PolicyOrigin, VerifyMode};
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
 
@@ -235,9 +235,9 @@ fn resolve_workspace(obj: &Map<String, Value>, m: &Value) -> Result<Value, Compi
 }
 
 /// Q25: Agency API (hosted, customer) runs always use the strict fence
-/// profile. Same field name and value as the commrails `JudgePolicy.fence`
-/// from review-fix PR #1045 (`fence: strict`), so the payload stays
-/// compatible once that lands; until then the executor enforces it itself.
+/// profile: commrails `JudgePolicy.fence = strict` (#1045), which makes the
+/// gate deny unresolved write effects; the executor adds the disposable
+/// workspace, env allowlist and egress check.
 pub const FENCE: &str = "strict";
 
 /// The TaskIR's WIH policy. Always requires a lease for writes and always
@@ -250,11 +250,9 @@ pub fn enforce_wih_policy(proposed: &Value) -> Value {
     Value::Object(p)
 }
 
-/// The run's `JudgePolicySet` payload: the typed policy plus `fence: strict`.
+/// The run's `JudgePolicySet` payload (carries `fence: strict`).
 pub fn judge_policy_json(p: &JudgePolicy) -> Value {
-    let mut v = serde_json::to_value(p).unwrap_or_else(|_| json!({}));
-    v["fence"] = json!(FENCE);
-    v
+    serde_json::to_value(p).unwrap_or_else(|_| json!({}))
 }
 
 const VENDOR_WORDS: &[&str] = &["openai", "anthropic", "claude", "codex", "gpt", "gemini", "llama", "mistral",
@@ -327,6 +325,8 @@ pub fn compile(req: &Value, run_id: &str, templates: &TemplateRegistry) -> Resul
         max_continuations: None,
         origin: Some(PolicyOrigin::Agency),
         completion_policy: Some(template.completion_policy().to_string()),
+        // Q25: hosted / Agency API runs always use the strict fence (#1045).
+        fence: Some(Fence::Strict),
     };
     let task_ir = json!({
         "schema_id": "allternit.agency.TaskIR",

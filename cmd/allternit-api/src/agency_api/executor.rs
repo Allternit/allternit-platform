@@ -14,8 +14,8 @@
 //!   (`gizzi_completion`), addressed by the plan's backend. allternit-api never
 //!   calls a model provider. `ALLTERNIT_AGENCY_COGNITION=scripted` swaps in a
 //!   deterministic scripted executor (dev/conformance only, no model);
-//! * every effect goes through the gate's effect path
-//!   (`ReceiptStore::record_tool_effect`), so it lands on the signed chain; the
+//! * every effect is reserved through the Gate (`Gate::reserve_tool_effect`)
+//!   and completed on the signed chain (`record_tool_effect`); the
 //!   mutation is preceded by a policy receipt (N13);
 //! * Q11: `admit_effect` is checked before every effect and `charge` after it;
 //!   a zero budget halts spend before the first effect;
@@ -402,6 +402,16 @@ impl Exec<'_> {
         payload["idempotency_key"] = json!(format!("{}:{:04}", self.run_id, self.seq));
         payload["node_id"] = json!(node);
         payload["fence"] = json!(FENCE);
+        // Reserve-then-complete (review #10): the gate claims the idempotency
+        // key on the chain before the effect runs, so a re-drive after a
+        // restart or resume never repeats an effect that already happened.
+        use allternit_commrails::receipts::store::ToolEffectAdmission;
+        let wih = self.run_id.strip_prefix("run_").unwrap_or(&self.run_id).to_string();
+        if let ToolEffectAdmission::AlreadyCommitted(prev) =
+            self.st.rails.gate.reserve_tool_effect(&wih, tool, &payload).map_err(|e| anyhow!("gate refused {tool}: {e}"))?
+        {
+            return Ok(prev);
+        }
         let t0 = Instant::now();
         let ws = &self.ws;
         let res = self.st.rails.receipts.record_tool_effect(&self.run_id, tool, &payload, || f(ws));

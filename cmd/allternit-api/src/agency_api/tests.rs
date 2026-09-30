@@ -379,6 +379,7 @@ fn agency_runs_always_use_the_strict_fence() {
     let c = compiler::compile(&json!({ "goal": "g", "workspace": { "repo": "https://example.com/r.git" } }), "run_f", &reg).unwrap();
     assert_eq!(c.task_ir["wih_policy"]["fence"], "strict");
     assert_eq!(c.task_ir["judge_policy"]["fence"], "strict");
+    assert_eq!(c.judge_policy.fence, Some(allternit_commrails::judge::policy::Fence::Strict));
     assert_eq!(c.resolved["enforcement"]["fence"], "strict");
     // A template cannot switch the fence off either.
     assert_eq!(compiler::enforce_wih_policy(&json!({ "fence": "guardrail" }))["fence"], "strict");
