@@ -111,7 +111,7 @@ fn s_of(v: &Value, ptr: &str) -> Option<String> {
 }
 
 /// A secret field: `key` from a JSON object secret, else the raw string.
-fn pick(secret: &str, key: &str) -> String {
+pub(crate) fn pick(secret: &str, key: &str) -> String {
     serde_json::from_str::<Value>(secret).ok().and_then(|v| v.get(key).and_then(Value::as_str).map(str::to_string)).unwrap_or_else(|| if secret.trim_start().starts_with('{') { String::new() } else { secret.to_string() })
 }
 
@@ -417,7 +417,7 @@ pub struct Account {
     pub secret: String,
 }
 
-fn accounts(db: &DbHandle, provider: &str, only: Option<&str>) -> Vec<Account> {
+pub(crate) fn accounts(db: &DbHandle, provider: &str, only: Option<&str>) -> Vec<Account> {
     let Ok(conn) = db.connect() else { return vec![] };
     let sql = "SELECT id, owner, restricted_bot_id, secret_ref FROM provider_account_bindings WHERE vendor = ?1 AND secret_ref IS NOT NULL AND secret_ref <> '' AND (?2 IS NULL OR id = ?2)";
     let Ok(mut q) = conn.prepare(sql) else { return vec![] };
@@ -535,6 +535,29 @@ async fn whatsapp_challenge(State(state): State<Arc<AppState>>, Path(provider): 
     StatusCode::FORBIDDEN.into_response()
 }
 
+/// Route normalized inbound events into threads, run the resulting turns, and post replies back.
+/// Shared by the webhook and the Discord gateway websocket.
+pub async fn dispatch_events(st: &Arc<AppState>, acct: &Account, tx: Arc<dyn ChannelTransport>, events: Vec<Inbound>) {
+    let rt = crate::thread_routes::GizziRuntime { db: st.db.clone() };
+    for e in events {
+        match route_inbound(&st.db, &rt, acct, tx.provider(), &e).await {
+            Ok(Routed { binding: Some(b), turn: Some((session, bot, text)), .. }) => {
+                match crate::agent_session_routes::send_bot_turn(&st.db, &session, &bot, &text).await {
+                    Ok(reply) => {
+                        let thread = b.external_thread.clone().unwrap_or_default();
+                        if let Err(err) = post_reply(&st.db, tx.as_ref(), &b, &thread, &reply).await {
+                            warn!(provider = %b.provider, "channel reply failed: {err}");
+                        }
+                    }
+                    Err(err) => warn!("channel turn failed: {err}"),
+                }
+            }
+            Ok(_) => {}
+            Err(err) => warn!("channel inbound failed: {err}"),
+        }
+    }
+}
+
 async fn webhook_h(State(state): State<Arc<AppState>>, Path(provider): Path<String>, headers: HeaderMap, body: Bytes) -> Response {
     if provider == "slack" || !PROVIDERS.contains(&provider.as_str()) {
         return StatusCode::NOT_FOUND.into_response();
@@ -573,26 +596,7 @@ async fn webhook_h(State(state): State<Arc<AppState>>, Path(provider): Path<Stri
     };
     let events = tx.normalize(&payload);
     let st = state.clone();
-    tokio::spawn(async move {
-        let rt = crate::thread_routes::GizziRuntime { db: st.db.clone() };
-        for e in events {
-            match route_inbound(&st.db, &rt, &acct, tx.provider(), &e).await {
-                Ok(Routed { binding: Some(b), turn: Some((session, bot, text)), .. }) => {
-                    match crate::agent_session_routes::send_bot_turn(&st.db, &session, &bot, &text).await {
-                        Ok(reply) => {
-                            let thread = b.external_thread.clone().unwrap_or_default();
-                            if let Err(err) = post_reply(&st.db, tx.as_ref(), &b, &thread, &reply).await {
-                                warn!(provider = %b.provider, "channel reply failed: {err}");
-                            }
-                        }
-                        Err(err) => warn!("channel turn failed: {err}"),
-                    }
-                }
-                Ok(_) => {}
-                Err(err) => warn!("channel inbound failed: {err}"),
-            }
-        }
-    });
+    tokio::spawn(async move { dispatch_events(&st, &acct, tx, events).await });
     Json(json!({ "ok": true })).into_response()
 }
 

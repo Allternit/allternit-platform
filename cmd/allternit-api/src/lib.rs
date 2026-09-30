@@ -69,6 +69,7 @@ pub mod gateway_runner;
 pub mod aai_facade;
 pub mod a2a_routes;
 pub mod teams_auth;
+pub mod discord_gateway;
 pub mod channel_gateway;
 pub mod channel_transports;
 pub mod spend_limits;
