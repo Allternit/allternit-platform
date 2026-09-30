@@ -31,7 +31,7 @@ async function launchChrome(profileDir: string): Promise<PageHandle> {
   const { chromium } = await import("playwright");
   let context: BrowserContext;
   try {
-    context = await chromium.launchPersistentContext(profileDir, { channel: "chrome", headless: false, args: ["--hide-crash-restore-bubble"] });
+    context = await chromium.launchPersistentContext(profileDir, { channel: "chrome", headless: false, args: ["--hide-crash-restore-bubble", "--start-maximized"], viewport: null });
   } catch (e) {
     if (isProfileLockError(e)) throw new DriverError("already_running", "That ChatGPT browser profile is already open (another Allternit session or Chrome). Close it, then try again.");
     throw new DriverError("unreachable", `Could not open Chrome: ${(e as Error).message}`);

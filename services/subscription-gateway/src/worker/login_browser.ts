@@ -171,6 +171,7 @@ export function createChromeLoginBrowser(opts: ChromeLoginBrowserOptions): Login
           "--no-first-run",
           "--no-default-browser-check",
           "--hide-crash-restore-bubble",
+          "--start-maximized",
           "--new-window",
           url,
         ],
