@@ -110,11 +110,13 @@ export function findCommrailsBin(env: NodeJS.ProcessEnv = process.env): string |
   return undefined
 }
 
-/** Interpret the hook's stdout: silence = allow, a `deny` decision = deny. */
+/** Only a successful hook can allow; successful silence allows, `deny` denies. */
 export function parseHookOutput(stdout: string, exitCode: number | null): AcpGateVerdict {
-  if (exitCode === 2) return { allow: false, reason: "gate exited 2 (fail closed)" }
+  if (exitCode !== 0) {
+    return { allow: false, reason: exitCode === null ? "gate terminated without a successful exit (fail closed)" : `gate exited ${exitCode} (fail closed)` }
+  }
   const text = stdout.trim()
-  if (!text) return exitCode === 0 ? { allow: true } : { allow: false, reason: `gate exited ${exitCode} (fail closed)` }
+  if (!text) return { allow: true }
   try {
     const out = JSON.parse(text) as { hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string } }
     if (out.hookSpecificOutput?.permissionDecision === "deny") {

@@ -79,6 +79,23 @@ describe("acp gate mapping", () => {
     expect(parseHookOutput("nope", 0).allow).toBe(false)
     expect(parseHookOutput("", 2).allow).toBe(false)
   })
+  test.each([1, 2, 3, 127, null])("finding 16: unsuccessful exit %s denies even with success JSON", (code) => {
+    for (const stdout of ["{}", '{"hookSpecificOutput":{"permissionDecision":"allow"}}', ""]) {
+      expect(parseHookOutput(stdout, code)).toMatchObject({ allow: false, reason: expect.stringContaining("fail closed") })
+    }
+  })
+  test("finding 16: successful JSON still allows and successful explicit denial is preserved", () => {
+    expect(parseHookOutput("{}", 0)).toEqual({ allow: true })
+    expect(parseHookOutput('{"hookSpecificOutput":{"permissionDecision":"allow"}}', 0)).toEqual({ allow: true })
+    expect(parseHookOutput('{"hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":"lease missing"}}', 0)).toEqual({ allow: false, reason: "lease missing" })
+  })
+  test.each(["exit", "signal"])("finding 16: a real child with JSON stdout followed by %s denies", async (failure) => {
+    const root = fixtureRoot()
+    const bin = join(root, "failed-hook.js")
+    writeFileSync(bin, `#!${process.execPath}\nawait Bun.stdin.text()\nprocess.stdout.write("{}")\n${failure === "exit" ? "process.exit(1)" : 'process.kill(process.pid, "SIGTERM")'}\n`, { mode: 0o755 })
+    const result = await acpGateDecision({ bin, cwd: root, harness: "kimi", toolCall: { kind: "read" } })
+    expect(result).toMatchObject({ allow: false, reason: expect.stringContaining("fail closed") })
+  })
   test("no gate binary: catastrophic floor still denies, unbound reads resolve immediately", async () => {
     const deny = await acpGateDecision({ toolCall: { kind: "execute", rawInput: { command: "rm -rf ~/" } }, cwd: "/w", harness: "kimi", bin: "" })
     expect(deny).toMatchObject({ allow: false, fallback: true, reason: expect.stringContaining("hard floor:") })
