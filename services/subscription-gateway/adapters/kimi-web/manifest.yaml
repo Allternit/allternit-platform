@@ -9,16 +9,21 @@ adapter_version: 0.1.0
 provider: kimi
 interface: ui_bridge_web
 origins:
-  - https://www.kimi.com # app surface (chat, composer, threads under /chat/<id>)
-  - https://kimi.com
-  - https://www.kimi.ai # legacy international domain (redirects to www.kimi.com)
+  # Verified 2026-09-30 on a signed-in account: www.kimi.ai serves the app
+  # without redirecting, and the session (localStorage access_token) lives on
+  # that origin. www.kimi.com has separate storage and shows logged out.
+  - https://www.kimi.ai # app surface (chat, composer, threads under /chat/<id>)
   - https://kimi.ai
+  - https://www.kimi.com
+  - https://kimi.com
 auth:
-  login_url: https://www.kimi.com/
+  login_url: https://www.kimi.ai/
   logged_in_probe: logged_in_probe
   # Set once signed in; the login watcher finishes a login when it appears in
   # the login browser. (unverified)
-  session_cookies: [kimi-auth]
+  # Kimi sets no session cookie; the session is localStorage (verified).
+  session_storage:
+    - { origin: "https://www.kimi.ai", key: access_token }
 plans:
   - plan_id: free
     label: Adagio (free)
