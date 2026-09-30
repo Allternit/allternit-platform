@@ -168,3 +168,14 @@ describe("launchWithDebugPort", () => {
     expect(x.calls).toEqual([9333]);
   });
 });
+
+describe("per-binding Bot selection", () => {
+  it("accepts grok-bot:<Bot name> agent ids and rejects other agents", async () => {
+    const { p } = mk();
+    const good = await p.contextOpen({ agentId: `${AGENT_ID}:Allternit Dev Bot` });
+    expect(good.ok).toBe(true);
+    const { p: p2 } = mk();
+    const bad = await p2.contextOpen({ agentId: "someone-else:Bot" });
+    expect(bad).toMatchObject({ ok: false, error: { code: "CONTEXT_NOT_FOUND" } });
+  });
+});

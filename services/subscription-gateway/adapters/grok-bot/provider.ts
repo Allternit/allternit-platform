@@ -174,7 +174,10 @@ export class GrokBotProvider extends BaseAaiProvider {
   // ---------- context ----------
   async contextOpen(input: OpenContextInput): Promise<AaiResult<OpenContextResult>> {
     if (input.adoptContextId) return fail("UNSUPPORTED", "Grok Bot chats cannot be adopted; a new chat is always started.");
-    if (input.agentId !== AGENT_ID) return fail("CONTEXT_NOT_FOUND", `No such agent ${input.agentId}`);
+    // One provider serves every Grok Bot: the binding's externalAgentId is "grok-bot:<Bot name>".
+    const [base, ...rest] = input.agentId.split(":");
+    if (base !== AGENT_ID) return fail("CONTEXT_NOT_FOUND", `No such agent ${input.agentId}`);
+    const botName = rest.join(":") || this.o.botName;
     if ([...this.ctxs.values()].some((c) => !c.closed)) return fail("CONTEXT_BUSY", `${APP_NAME} drives one conversation at a time. Close the open one first.`);
     const cd = this.cooldown(); if (cd) return cd;
     const g = await this.check(); if (!g.ok) return g;
@@ -182,10 +185,10 @@ export class GrokBotProvider extends BaseAaiProvider {
     await this.o.driver.newChat();
     let after = await this.check(); if (!after.ok) return after;
     if (after.value.picker) {
-      if (!this.o.botName) return fail("POLICY_DENIED", `${APP_NAME} asks which Bot to chat with. Choose a Bot in the connection wizard first.`);
+      if (!botName) return fail("POLICY_DENIED", `${APP_NAME} asks which Bot to chat with. Choose a Bot in the connection wizard first.`);
       await this.pace();
-      const esc = this.o.botName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      if (!(await this.o.driver.clickButton(`^${esc}$`))) return fail("CONTEXT_NOT_FOUND", `${APP_NAME} has no Bot named "${this.o.botName}".`);
+      const esc = botName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (!(await this.o.driver.clickButton(`^${esc}$`))) return fail("CONTEXT_NOT_FOUND", `${APP_NAME} has no Bot named "${botName}".`);
       await this.pace();
       after = await this.check(); if (!after.ok) return after;
     }
