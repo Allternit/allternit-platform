@@ -192,24 +192,30 @@ pub fn effective(conn: &Connection, kind: &str, defaults: &Value, leaves: &[&str
     Ok((eff, Value::Object(sources)))
 }
 
-pub fn router() -> Router<Arc<AppState>> {
+/// Kernel UI routes under `prefix`. They live under a `/kernel` segment so
+/// they can never overlap existing app routes (a DELETE /api/v1/templates/:id
+/// already exists elsewhere; the overlap panicked prod at startup).
+fn routes(prefix: &str) -> Router<Arc<AppState>> {
     Router::new()
-        .route("/v1/agent-rules", get(agent_rules::get_rules).put(agent_rules::put_rules))
-        .route("/v1/agent-rules/field", delete(agent_rules::delete_field))
-        .route("/v1/routing-policy", get(routing_policy::get_policy).put(routing_policy::put_policy))
-        .route("/v1/routing-policy/field", delete(routing_policy::delete_field))
-        .route("/v1/routing-policy/backends", get(routing_policy::backends))
-        .route("/v1/decision-types", get(decision_types::list).post(decision_types::create))
-        .route("/v1/decision-types/:id/status", put(decision_types::set_status))
-        .route("/v1/templates", get(templates::list).post(templates::create))
-        .route("/v1/templates/:id", put(templates::update).delete(templates::remove))
-        .route("/v1/templates/:id/run", post(templates::run))
-        .route("/v1/activity", get(activity::list))
-        .merge(crate::agency_api::kernel_alias_router())
+        .route(&format!("{prefix}/agent-rules"), get(agent_rules::get_rules).put(agent_rules::put_rules))
+        .route(&format!("{prefix}/agent-rules/field"), delete(agent_rules::delete_field))
+        .route(&format!("{prefix}/routing-policy"), get(routing_policy::get_policy).put(routing_policy::put_policy))
+        .route(&format!("{prefix}/routing-policy/field"), delete(routing_policy::delete_field))
+        .route(&format!("{prefix}/routing-policy/backends"), get(routing_policy::backends))
+        .route(&format!("{prefix}/decision-types"), get(decision_types::list).post(decision_types::create))
+        .route(&format!("{prefix}/decision-types/:id/status"), put(decision_types::set_status))
+        .route(&format!("{prefix}/templates"), get(templates::list).post(templates::create))
+        .route(&format!("{prefix}/templates/:id"), put(templates::update).delete(templates::remove))
+        .route(&format!("{prefix}/templates/:id/run"), post(templates::run))
+        .route(&format!("{prefix}/activity"), get(activity::list))
 }
 
-/// The same routes under `/api/v1/*` (what the UI's `runtimeApiUrl` reaches
-/// through the paired-runtime relay). Mount this next to [`router`].
+pub fn router() -> Router<Arc<AppState>> {
+    routes("/v1/kernel").merge(crate::agency_api::kernel_alias_router())
+}
+
+/// The same routes under `/api/v1/kernel/*` (what the UI's `runtimeApiUrl`
+/// reaches through the paired-runtime relay). Mount this next to [`router`].
 pub fn api_router() -> Router<Arc<AppState>> {
-    Router::new().nest("/api", router())
+    routes("/api/v1/kernel").merge(Router::new().nest("/api", crate::agency_api::kernel_alias_router()))
 }
