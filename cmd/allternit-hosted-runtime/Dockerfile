@@ -26,6 +26,7 @@ RUN curl -fsSL \
 # contains its own runtime and dependencies.
 COPY package.json pnpm-lock.yaml ./
 COPY cmd/allternit-hosted-runtime/pnpm-workspace.yaml ./pnpm-workspace.yaml
+COPY patches ./patches
 COPY cmd/agent-daemon/package.json ./cmd/agent-daemon/
 
 RUN npm install -g pnpm@10.28.0 \

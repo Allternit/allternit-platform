@@ -1,0 +1,52 @@
+---
+title: "Why no vendor names in graphs"
+description: "Contracts and graphs name capabilities, never models or vendors, and how that is enforced"
+---
+
+**Status: AVAILABLE (design law; registry IDs contain no vendor or model names) · PREVIEW (graph validator rejects model pinning).** See [status labels](/architecture#status-labels).
+
+No contract, graph, primitive ID or capability request in Allternit names a model or a vendor. This is design law 6: **contracts, never model names**.
+
+## Architecture contract
+
+What a graph may name:
+
+- primitive IDs (`obs.list_files`)
+- capability IDs (`cap.decision.rank`, `cap.generate.code_patch`)
+- classes, locality, trust and quality floors
+
+What it may not name: a model, a provider, a vendor, a prompt or a function.
+
+Which component actually served a step is recorded as **execution evidence**: in the execution plan, the receipt and the trace. It is visible in receipts and debug views. It never becomes part of the workflow.
+
+Why:
+
+- **Interchangeability.** The architecture's test is that swapping one model for another must not change the agent loop, state model, tool authority, completion semantics or workflow graph. A graph that names a model fails that test by construction.
+- **Routing.** The [router](/architecture/routing) can only pick the cheapest correct component per step if the graph leaves the choice open.
+- **Evaluation.** Comparing components on the same graph is only fair if the graph is the same.
+- **Durability.** Models are retired and renamed. Capability IDs are stable.
+- **One external identity.** Callers talk to one agent. Which components ran inside it is evidence, not identity.
+
+## Current implementation
+
+- The 191 primitive IDs in the frozen registry contain no vendor or model names.
+- The graph validator on main rejects a node, or a capability request, that pins a model or provider (invariant 7). It is merged as library code and not yet run on every accepted graph.
+- Model choice today lives in runtime configuration, outside graphs.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Vendor-free registry and contracts | **AVAILABLE** (contract) |
+| Validator rejects model pinning | **PREVIEW** |
+| Model identity recorded as execution evidence in plans | **DESIGN — NOT YET IMPLEMENTED** (needs the router) |
+
+## Developer relevance
+
+When you write a graph, a primitive or a template, describe what you need, not who provides it. If you need a particular kind of component, express it as a capability with a quality floor, locality or trust class.
+
+## Related
+
+- [Graphs and the Agent ISA](/architecture/graphs)
+- [Routing](/architecture/routing)
+- [Agents](/architecture/agents)

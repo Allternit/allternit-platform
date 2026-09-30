@@ -1,0 +1,62 @@
+---
+title: "Node lifecycle"
+description: "The typed states a work node moves through, the legal transitions, and why no executor closes its own node"
+---
+
+**Status: AVAILABLE (work runtime node statuses, internal) · PREVIEW (typed WorkNodeLifecycleV1 as the enforced path).** See [status labels](/architecture#status-labels).
+
+A run is a graph of work nodes. Every node moves through one lifecycle, owned by the work runtime.
+
+## Architecture contract
+
+```text
+DECLARE → ADMIT → READY → LEASE → SPAWN → RUN (+ HEARTBEAT) → OUTPUT → VERIFY
+        → { COMMIT | CONTINUE | REPLAN | NEEDS_HUMAN } → CLOSE → VAULT / LEARN
+```
+
+| State | Meaning |
+|-------|---------|
+| Declared | The node exists in the graph |
+| Admitted | [Admission](/architecture/work-runtime/admission) accepted it: policy, capacity and budget allow it |
+| Ready | Its dependencies are met and no [wait gate](/architecture/work-runtime/wait-gates) holds it |
+| Leased | One holder has a [lease](/architecture/work-runtime/leases) on it |
+| Spawned, Running | An executor started and is heartbeating |
+| Output ready | The executor produced outputs |
+| Verifying | Evidence is being checked against criteria |
+| Committed, Continue, Replan, Needs human | The verification outcome |
+| Waiting, Cancelling | Held on a gate, or settling in-flight effects after a cancel |
+| Closed | Terminal, with an outcome: committed, partial, failed or cancelled |
+
+Rules:
+
+- **No executor goes from running to closed-committed directly.** Closing is a system transition backed by completion evidence.
+- **Unknown statuses fail closed.** A status the runtime does not recognize is an error, not a default.
+- **Illegal transitions are rejected**, not repaired.
+- `VAULT` and `LEARN` happen after the terminal state and are not a run status.
+
+How node states roll up into the public `Run.status` is on [The kernel](/architecture/kernel#run-status).
+
+Why: if the component doing the work can also declare it finished, completion means only that something said so. Separating the lifecycle from the executor is what makes [verification](/architecture/verification) meaningful.
+
+## Current implementation
+
+The work runtime stores node statuses as strings in its ledger and has done so for some time. On main there is now a typed lifecycle with the fifteen states above, a legal-transition table, close outcomes, and a two-way mapping to the stored strings, so no data migration is needed. It is merged as library code with tests and is not yet the path every transition goes through. For agency-origin work, the rule that a builder cannot close its own node is enforced today by the verifier. See [Verification](/architecture/verification).
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Stored node statuses and transitions | **AVAILABLE** (internal) |
+| Typed lifecycle, transition table, legacy mapping | **PREVIEW** |
+| Builder cannot close its own node (agency-origin work) | **PREVIEW** |
+| Transition guards and event names in the contract | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+As an executor, the last thing you do is produce outputs and evidence. You never report done. Expect a node to move to verifying after your output, and possibly back to continue or replan.
+
+## Related
+
+- [The kernel](/architecture/kernel)
+- [Verification](/architecture/verification)
+- [The Work Machine](/architecture/work-machine)

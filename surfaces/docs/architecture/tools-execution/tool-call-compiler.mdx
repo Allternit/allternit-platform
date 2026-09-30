@@ -1,0 +1,38 @@
+---
+title: "Tool Call Compiler"
+description: "Turning intent into a validated, authorized tool invocation without free-form generation where it is not needed"
+---
+
+**Status: DESIGN — NOT YET IMPLEMENTED (draft behind an off-by-default flag).** See [status labels](/architecture#status-labels).
+
+The compiler narrows a decision to one concrete, checkable call. Free generation is used only for values that cannot be derived.
+
+## Architecture contract
+
+Stages: state, tool family, operation, candidate arguments, free generation only where needed, schema validation, policy validation, signed intent, execution, typed result. Disclosure is tiered: capability snippets first, the schema on demand, documentation on demand, so a component does not carry every tool description.
+
+Outputs are `ToolInvocationV1` and `ToolReceiptV1`, with an effect class from `NONE` to `PERMISSION_CHANGE`. Failure recovery has a fixed vocabulary: retry, wait, change argument, change tool, escalate, fail. A retry must change evidence, strategy, context or model. Timeouts are classified, then retried within bounds, never re-prompted from scratch by default.
+
+Why: a call whose arguments come from a model's prose cannot be validated or replayed. A compiled call can.
+
+## Current implementation
+
+Not on main. The invocation and receipt schemas are frozen. The compiler (WP9) exists as a draft branch behind a flag that is off by default.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| ToolInvocationV1 and ToolReceiptV1 | **AVAILABLE (contract)** |
+| Compiler | **DESIGN — NOT YET IMPLEMENTED** |
+| Tiered disclosure | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+When you write a tool, give it strict input and output schemas and an effect class. That is what the compiler will validate against.
+
+## Related
+
+- [Contracts: tool](/architecture/contracts/tool)
+- [Build a tool](/build/tool)
+- [Argument provenance](/architecture/tools-execution/argument-provenance)

@@ -1,0 +1,49 @@
+---
+title: "Readouts"
+description: "How a decision's probabilities are read from a component, the readout levels raw to L2, and which level is allowed to act"
+---
+
+**Status: PREVIEW (logit readouts over constrained labels, shadow) · DESIGN — NOT YET IMPLEMENTED (L2 hidden-state heads).** See [status labels](/architecture#status-labels).
+
+A **readout** is how the decision runtime gets a probability for each candidate from a component. The readout level says how far that probability can be trusted.
+
+## Architecture contract
+
+| Level | How | Can act? |
+|-------|-----|----------|
+| `raw` | Label probabilities as read | No. Diagnostic only. |
+| `L0` | Debiasing across candidate orders plus prior correction. Uncalibrated bootstrap; costs extra passes. | Only as bootstrap, never as a calibrated threshold |
+| `L1` | Temperature scaling fitted on labelled examples per question. Calibrated; ranking unchanged. | Yes, with a valid calibration manifest |
+| `L2` | A small closed-form head on an intermediate hidden state, per component and per question, with early exit | Yes, with a valid calibration manifest |
+| `auto` | Serves L2 if available, else L1, else L0, and reports the level actually served | Depends on the level served |
+
+Rules:
+
+- A result always reports the readout level served.
+- A readout is bound to an exact component revision, tokenizer, quantization, runtime, question and candidate set. Change any of these and calibration is invalid.
+- One universal head for every question is rejected.
+
+A primitive matures in order: untrained, L0, labels accumulate, L1, an L2 head, monitored in production, and refit or invalidate on drift.
+
+Why levels: a component's raw probabilities are often confidently wrong. Naming the level makes the difference between "the model said 0.9" and "0.9 is right about 90% of the time on held-out data" explicit.
+
+## Current implementation
+
+The decision server on main reads next-token label probabilities from a local model over a constrained label set and renormalizes them over the valid labels. Sets with more than twenty options are scored hierarchically. When label probabilities are unavailable it falls back to sampled voting and marks the result as sampled. Forward and reversed debiasing exists but is off by default, because it did not help on the default local model. Temperature fitting is implemented. Hidden-state heads are not built.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Constrained label readout, sampled fallback | **PREVIEW** (shadow) |
+| L0 debiasing, L1 temperature fit | **PREVIEW** |
+| L2 hidden-state heads | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+If your backend can expose label probabilities, the decision runtime can read them directly. If it cannot, report your results as uncalibrated; they will not be allowed to act.
+
+## Related
+
+- [Calibration](/architecture/cognitive-runtime/calibration)
+- [Decision runtime](/architecture/cognitive-runtime/decision-runtime)

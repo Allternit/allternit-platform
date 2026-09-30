@@ -1,0 +1,40 @@
+---
+title: "Projections and visibility"
+description: "Chunks, visibility decisions, fingerprints and how a projection is compiled"
+---
+
+**Status: DESIGN — NOT YET IMPLEMENTED (context compiler) · AVAILABLE (contracts).** See [status labels](/architecture#status-labels).
+
+A projection is the exact set of chunks one component sees, with a fingerprint that identifies it. This page covers the records and the reasoning behind hide, short, long and full.
+
+## Architecture contract
+
+- **ContextChunkV1** carries content by reference, its source [provenance](/architecture/contracts/common), trust class, sensitivity and per-model-family token estimates.
+- **ContextVisibilityDecisionV1** sets each chunk to `HIDE`, `SHORT`, `LONG` or `FULL` with a relevance score and a reason code. Hiding is a view, not deletion.
+- **ContextProjectionV1** lists the selected decisions, the pinned instruction fragments, a token estimate and a `context_fingerprint`.
+
+Pipeline: state, projection, retrieval, dedup, ranking, diversity, dependency expansion, provenance and trust checks, compression, token budgeting, serialization for the target component. Compression happens after the next operation is known. Conditional instructions are pinned by predicate so they appear exactly when the condition holds. If the build fails, the fallback is a minimal projection or deterministic retrieval, never a transcript dump.
+
+Why the fingerprint: it lets a step be explained ("this component saw these chunks at this visibility") and lets a replay check that it rebuilt the same input.
+
+## Current implementation
+
+Only the schemas exist on main. The compiler that would produce projections is in draft behind an off-by-default flag and is not merged as an enforced path.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Chunk, decision and projection schemas | **AVAILABLE (contract)** |
+| Compiler pipeline | **DESIGN — NOT YET IMPLEMENTED** |
+| Fingerprint-based explanation of visibility | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+If you build a retrieval source, emit chunks with provenance and a trust class. Do not depend on ordering or on chunks being present; visibility is decided per step.
+
+## Related
+
+- [Contracts: context](/architecture/contracts/context)
+- [Context](/architecture/context)
+- [Untrusted content](/architecture/verification-safety/trust-classes)
