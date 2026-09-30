@@ -878,6 +878,8 @@ async fn main() {
         .merge(allternit_api::memory_notes_routes::memory_notes_router())
         .merge(research_task_router())
         .merge(user_profile_router())
+        .merge(allternit_api::mcp_directory_routes::directory_router())
+        .nest("/api", allternit_api::mcp_directory_routes::directory_router())
         .merge(canvas_router())
         .merge(v1_router())
         .merge(allternit_bus_router())
@@ -1072,6 +1074,8 @@ async fn main() {
         .nest("/health", health_router())
         .nest("/api", web_proxy_router())
         .nest("/beta", enrollment_router())
+        // Client ID Metadata Document for connector OAuth (must be public).
+        .merge(allternit_api::mcp_directory_routes::oauth_client_router())
         .merge(status_router())
         .merge(webhook_router())
         .merge(webhook_trigger_public_router())

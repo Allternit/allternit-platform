@@ -21,6 +21,10 @@ pub fn mcp_router() -> Router<Arc<AppState>> {
             "/connectors",
             get(list_mcp_connectors).post(create_mcp_connector),
         )
+        .route(
+            "/connectors/:id/oauth/start",
+            post(crate::mcp_directory_routes::start_connector_oauth),
+        )
         .route("/test", post(test_mcp_connection))
         .route(
             "/servers",
