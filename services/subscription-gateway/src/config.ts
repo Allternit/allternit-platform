@@ -39,6 +39,10 @@ export interface Config {
   // it holds `max` images. Env: SUBS_GATEWAY_IMAGE_PROJECT (default
   // "Allternit"; empty disables), SUBS_GATEWAY_IMAGE_CHAT_MAX (default 20).
   imageChats: { project: string | null; max: number };
+  // AAI host (/aai/*). disabled = per-adapter kill switch (env SUBS_GATEWAY_AAI_DISABLED, csv of adapterIds);
+  // loopback = the Allternit-bot provider reaching allternit-api (base default `${apiBase}/api/v1`,
+  // SUBS_GATEWAY_AAI_LOOPBACK_BASE / _BOTS csv; bearer via SUBS_GATEWAY_AAI_LOOPBACK_TOKEN).
+  aai: { disabled: string[]; loopbackBaseUrl: string; loopbackBots: string[] };
 }
 
 const ENV_PREFIX = "SUBS_GATEWAY_";
@@ -114,6 +118,10 @@ function positiveInt(raw: string | undefined, fallback: number, name: string): n
   return n;
 }
 
+function csvList(v: string | undefined): string[] {
+  return (v ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const stateDir = expandHome(
     env[`${ENV_PREFIX}STATE_DIR`] ?? "~/.allternit/subscriptions/"
@@ -148,6 +156,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     imageChats: {
       project: (env[`${ENV_PREFIX}IMAGE_PROJECT`] ?? "Allternit").trim() || null,
       max: positiveInt(env[`${ENV_PREFIX}IMAGE_CHAT_MAX`], 20, `${ENV_PREFIX}IMAGE_CHAT_MAX`),
+    },
+    aai: {
+      disabled: csvList(env[`${ENV_PREFIX}AAI_DISABLED`]),
+      loopbackBaseUrl: env[`${ENV_PREFIX}AAI_LOOPBACK_BASE`] ?? `${env[`${ENV_PREFIX}API_BASE`] ?? "http://127.0.0.1:18013"}/api/v1`,
+      loopbackBots: csvList(env[`${ENV_PREFIX}AAI_LOOPBACK_BOTS`]),
     },
   };
 }

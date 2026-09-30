@@ -2,7 +2,7 @@ import type { BotExecutionBinding } from "@allternit/subscription-fabric-contrac
 import {
   fail,
   type AaiProvider, type AaiResult, type AgentCapabilityManifest, type MessageResult,
-} from "./types";
+} from "./types.js";
 
 const DEAD_STATES: Record<string, [Parameters<typeof fail>[0], string]> = {
   UNBOUND: ["LANE_BLOCKED", "binding is not bound"],
