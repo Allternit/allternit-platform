@@ -25,6 +25,8 @@ describe("fixtures", () => {
   it("classifies each fixture", () => {
     const k = (n: string) => classify(fixture(n));
     expect(k("idle")).toMatchObject({ kind: "ok", composer: true, streaming: false, turns: [] });
+    expect(k("picker")).toMatchObject({ kind: "ok", picker: true });
+    expect(k("idle").picker).toBe(false);
     expect(k("streaming")).toMatchObject({ kind: "ok", streaming: true });
     expect(k("streaming").turns.map((t) => t.role)).toEqual(["user", "assistant"]);
     const c = k("complete");

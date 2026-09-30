@@ -11,6 +11,8 @@ export interface PageState {
   retryAfterMs?: number;
   composer: boolean;
   streaming: boolean;
+  /** New-chat Bot picker is showing (a Bot must be chosen before the composer works) */
+  picker: boolean;
   turns: Turn[];
   approvals: ApprovalCard[];
   routineCues: string[];
@@ -50,7 +52,7 @@ function findApprovals(root: El): ApprovalCard[] {
 }
 
 export function classify(html: string): PageState {
-  const base: PageState = { kind: "ok", detail: "", composer: false, streaming: false, turns: [], approvals: [], routineCues: [], missing: [] };
+  const base: PageState = { kind: "ok", detail: "", composer: false, streaming: false, picker: false, turns: [], approvals: [], routineCues: [], missing: [] };
   if (!html || !html.trim()) return { ...base, kind: "unreachable", detail: "empty page" };
   const root = parseHtml(html);
   if (!firstMatch(root, "appRoot")) return { ...base, kind: "unreachable", detail: "renderer root not present (app still booting?)" };
@@ -67,13 +69,14 @@ export function classify(html: string): PageState {
     if (buttons(root).some((b) => nameRe("signIn").test(nameOf(b).trim()))) return { ...s, kind: "logged_out", detail: "Sign in gate visible" };
     return { ...s, kind: "drift", detail: "composer not found by any selector strategy", missing: ["composer"] };
   }
+  s.picker = buttons(root).some((b) => nameRe("closePicker").test(nameOf(b).trim()));
   s.streaming = buttons(root).some((b) => nameRe("stop").test(nameOf(b).trim()));
   for (const t of allMatches(root, "turn")) {
     const role = t.attrs["data-role"] === "user" ? "user" : "assistant";
     const content = SELECTORS.turnContent.css.map((c) => query(t, c)).find(Boolean) ?? null;
     s.turns.push({ role, text: textOf(content ?? t), contentMissing: !content });
   }
-  if (s.turns.some((t) => t.role === "assistant" && t.contentMissing)) return { ...s, kind: "drift", detail: "assistant turn without .sand-message-content", missing: ["turnContent"] };
+  if (s.turns.some((t) => t.role === "assistant" && t.contentMissing)) return { ...s, kind: "drift", detail: "assistant turn without message-content node (.sand-message-prose)", missing: ["turnContent"] };
   s.approvals = findApprovals(root);
   s.routineCues = allMatches(root, "routineCue").map(textOf).filter(Boolean);
   return s;
