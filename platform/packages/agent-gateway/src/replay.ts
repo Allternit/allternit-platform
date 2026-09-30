@@ -92,5 +92,5 @@ export function faultFetch(kind: "vendor_down" | "network" | "rate_limited" | "a
       case "forbidden": return new Response("{}", { status: 403 });
       case "drift": return new Response(JSON.stringify({ unexpected: "shape" }), { status: 200 });
     }
-  }) as typeof fetch;
+  }) as unknown as typeof fetch;
 }

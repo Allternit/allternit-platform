@@ -21,6 +21,7 @@ import {
   type KeychainBackend,
 } from "./security/keychain.js";
 import { ensureCliToken } from "./security/tokens.js";
+import { createAaiHost } from "./aai/registry.js";
 import { closeServer, createServer, listenTcp, listenUds } from "./http/server.js";
 import { createScheduler } from "./queue/scheduler.js";
 import { FabricRouter } from "./router/resolve.js";
@@ -146,6 +147,7 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
   const dispatch: DispatchDeps = { db, registry: adapterRegistry, router, scheduler };
 
   const app = createServer({
+    aai: createAaiHost(config, process.env, deps.fetchImpl),
     db,
     config,
     keychain,

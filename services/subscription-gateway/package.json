@@ -12,6 +12,7 @@
     "start": "node dist/main.js"
   },
   "dependencies": {
+    "@allternit/agent-gateway": "workspace:*",
     "@allternit/subscription-adapter-sdk": "workspace:*",
     "@allternit/subscription-fabric-contracts": "workspace:*",
     "better-sqlite3": "13.0.3",
