@@ -29,6 +29,21 @@ const json = (status: number, body: unknown) =>
 const err = (status: number, type: ErrorBody["error"]["type"], message: string) =>
   json(status, { error: { type, message } } satisfies ErrorBody);
 
+/**
+ * Calibration manifests from ALLTERNIT_S1_MANIFESTS (a JSON array of
+ * DecisionCalibrationManifestV1) — the same source the gizzi ModelPool reads,
+ * so the pool entry and the runtime agree. Unreadable = none (fail closed).
+ */
+export function loadManifests(path = process.env.ALLTERNIT_S1_MANIFESTS?.trim()): any[] {
+  if (!path) return [];
+  try {
+    const parsed = JSON.parse(require("node:fs").readFileSync(path, "utf8"));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 export function createHandler(opts: ServeOptions = {}) {
   const engine = opts.engine ?? new SystemOne();
   const token = opts.token ?? process.env.SYSTEM_ONE_TOKEN;
@@ -38,7 +53,8 @@ export function createHandler(opts: ServeOptions = {}) {
     provider: new LocalLogitReadoutProvider(engine, {
       model_ref: engine.config.runtimeModel, model_revision: "unpinned", tokenizer_id: "unknown", quantization: "unknown", runtime_backend: engine.config.runtimeUrl.includes(":11434") ? "ollama" : "openai-compat",
     }),
-    manifests: [],
+    manifests: loadManifests(),
+    mode: process.env.ALLTERNIT_S1_MODE === "live" ? "live" : "shadow",
   });
 
   return async function handle(req: Request): Promise<Response> {
