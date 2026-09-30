@@ -911,8 +911,6 @@ async fn main() {
         .merge(allternit_api::memory_notes_routes::memory_notes_router())
         .merge(research_task_router())
         .merge(user_profile_router())
-        .merge(allternit_api::mcp_directory_routes::directory_router())
-        .nest("/api", allternit_api::mcp_directory_routes::directory_router())
         .merge(canvas_router())
         .merge(v1_router())
         .merge(allternit_bus_router())
@@ -1080,6 +1078,13 @@ async fn main() {
             "/mcp",
             mcp_router().merge(allternit_api::mcp_server_routes::mcp_server_router()),
         )
+        // The web client calls the connector routes as /api/v1/mcp/*.
+        .nest("/api/v1/mcp", mcp_router())
+        // MCP App directory + installs. Its routes already start with /v1/, so
+        // they mount at the root and under /api, never inside v1_routes (which
+        // is nested at /api/v1 and made them /api/v1/v1/...).
+        .merge(allternit_api::mcp_directory_routes::directory_router())
+        .nest("/api", allternit_api::mcp_directory_routes::directory_router())
         .nest("/metrics", metrics_router())
         .nest("/api", h5i_router())
         .nest("/api", oauth_router())
