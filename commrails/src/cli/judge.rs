@@ -96,6 +96,10 @@ pub enum JudgePolicyCmd {
         /// Fence profile (Q25): `guardrail` (default) or opt-in `strict`.
         #[arg(long)]
         fence: Option<Fence>,
+        /// Q25: a credential store this run declares it needs to read
+        /// (repeatable; `~` allowed). Everything else stays blocked.
+        #[arg(long = "allow-credential-read")]
+        allow_credential_read: Vec<String>,
         /// `user:<id>` or `agent:<id>` (bare id = user).
         #[arg(long)]
         actor: String,
@@ -208,6 +212,7 @@ pub async fn run_judge_command(ctx: &JudgeContext, cmd: JudgeCmd) -> Result<()> 
             origin,
             completion_policy,
             fence,
+            allow_credential_read,
             actor,
         }) => {
             let actor = parse_actor(&actor)?;
@@ -220,6 +225,7 @@ pub async fn run_judge_command(ctx: &JudgeContext, cmd: JudgeCmd) -> Result<()> 
                 origin,
                 completion_policy,
                 fence,
+                allow_credential_read: (!allow_credential_read.is_empty()).then_some(allow_credential_read),
             };
             let eff = ctx
                 .gate

@@ -286,7 +286,7 @@ impl Ws {
                 c.env(k, v);
             }
         }
-        c.env("HOME", self.root.join("home")).env("TMPDIR", self.root.join("tmp")).env("CI", "1").env("NO_COLOR", "1")
+        c.env("HOME", self.root.join("home")).env("TMPDIR", self.root.join("tmp")).env("CI", "1").env("NO_COLOR", "1").env("ALLTERNIT_FENCE", "strict") // commrails hook::FENCE_ENV
             .env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_TERMINAL_PROMPT", "0");
         let out_path = self.root.join("tmp").join(format!("cmd-{}.out", uuid::Uuid::new_v4().simple()));
         let out = std::fs::OpenOptions::new().create_new(true).read(true).write(true).open(&out_path)?;

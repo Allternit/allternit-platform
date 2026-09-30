@@ -2089,20 +2089,8 @@ async fn run_hook_command(root: &Path, stores: &Stores, ledger: &Arc<Ledger>, cm
                     (Some(req), decision)
                 }
             };
-            // Every WIH-bound decision and every denial is recorded. A ledger
-            // failure never flips a deny into an allow.
-            if wih.is_some() || decision.verdict.is_deny() {
-                let req_for_event = req.unwrap_or(hook::HookRequest {
-                    tool_name: "<unparsed>".to_string(),
-                    tool_input: Value::Null,
-                    cwd: None,
-                    session_id: None,
-                });
-                let event = hook::decision_event(&req_for_event, &harness, wih.as_deref(), &decision);
-                if let Err(err) = ledger.append(event).await {
-                    eprintln!("allternit spawn gate: ledger append failed: {err}");
-                }
-            }
+            // Every decision is recorded (Q25 audit): allow, deny or unresolved.
+            hook::record_decision(ledger, req.as_ref(), &harness, wih.as_deref(), &decision).await;
             if let Some(out) = hook::claude_hook_output(&decision.verdict) {
                 println!("{out}");
             }

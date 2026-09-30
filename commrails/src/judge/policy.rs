@@ -68,6 +68,10 @@ pub struct JudgePolicy {
     /// Q25 fence profile; `strict` is opt-in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fence: Option<Fence>,
+    /// Q25: credential stores this run declares it needs to read (paths,
+    /// `~` allowed). Everything else on the blocklist stays blocked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_credential_read: Option<Vec<String>>,
 }
 
 impl JudgePolicy {
@@ -97,6 +101,9 @@ impl JudgePolicy {
         if other.fence.is_some() {
             self.fence = other.fence;
         }
+        if other.allow_credential_read.is_some() {
+            self.allow_credential_read = other.allow_credential_read.clone();
+        }
     }
 
     /// True when applying `self` over `current` lowers friction.
@@ -108,6 +115,8 @@ impl JudgePolicy {
                 .max_continuations
                 .is_some_and(|m| m > current.max_continuations)
             || matches!(self.fence, Some(Fence::Guardrail)) && current.fence == Fence::Strict
+            // Declaring a credential read always lowers friction.
+            || self.allow_credential_read.as_ref().is_some_and(|v| !v.is_empty())
     }
 }
 
@@ -188,6 +197,31 @@ pub fn effective_policy(
         eff.close_by = CloseBy::Verifier;
     }
     eff
+}
+
+/// Declared `allow_credential_read` for `node_id` (node-level over plan-level).
+pub fn effective_credential_allow(events: &[AllternitEvent], dag_id: &str, node_id: Option<&str>) -> Vec<String> {
+    let mut plan: Option<Vec<String>> = None;
+    let mut node: Option<Vec<String>> = None;
+    for evt in events.iter().filter(|e| e.r#type == events::POLICY_SET) {
+        if evt.payload.get("dag_id").and_then(|v| v.as_str()) != Some(dag_id) {
+            continue;
+        }
+        let Some(list) = evt
+            .payload
+            .get("policy")
+            .and_then(|p| serde_json::from_value::<JudgePolicy>(p.clone()).ok())
+            .and_then(|p| p.allow_credential_read)
+        else {
+            continue;
+        };
+        match evt.payload.get("node_id").and_then(|v| v.as_str()) {
+            None => plan = Some(list),
+            Some(n) if Some(n) == node_id => node = Some(list),
+            Some(_) => {}
+        }
+    }
+    node.or(plan).unwrap_or_default()
 }
 
 /// Completion policy id in force for `node_id` (node-level over plan-level).

@@ -85,6 +85,27 @@ On denial: return structured error with gate id + reason.
 Emits (judge step / `judge tool` only):
 - JudgeToolDecision
 
+### Q25 guardrails (always on; strict fence opt-in)
+Guardrails, not walls: harnesses keep real machine access by default. On every
+gated path (the PreToolUse hook with or without a WIH, `pre_tool`, `judge tool`):
+- **Blocklist** (`hook/blocklist.rs`): network to cloud-metadata / link-local
+  targets (`169.254.0.0/16` incl. integer/hex forms, `fe80::/10`,
+  `fd00:ec2::254`, `metadata.google.internal`) → deny. Reads of private keys and
+  credential stores (`~/.ssh/id_*`, private-key `*.pem`/`*.key`, `~/.aws/credentials`,
+  `~/.config/gcloud`, `~/.netrc`, browser cookie / login DBs), including `< file`
+  input redirects, `curl -F f=@file` and tree copies of `~/.ssh` → deny unless the
+  run declares the need: `judge policy set --allow-credential-read <path>`
+  (repeatable; WIH-bound runs) or `ALLTERNIT_ALLOW_CREDENTIAL_READ=a,b` (no WIH).
+  Declaring one store never opens the others. Keychain dumps stay on the hard floor.
+- **Record everything**: every hook decision (allow, deny, `unresolved` = allowed
+  but a program's effect could not be scanned) is a `HarnessToolGated` ledger event.
+- **Strict fence** (opt-in: `judge policy set --fence strict`, or
+  `ALLTERNIT_FENCE=strict`; Agency API hosted runs always): writes must stay in the
+  worktree + temp, unresolved write effects are denied, URL egress to any
+  non-public literal host is denied, and the orchestrator spawns the harness with
+  the env allowlist enforced (`env -i`, as `ALLTERNIT_EXEC_ENV_ENFORCE=1`) and
+  `ALLTERNIT_FENCE=strict` exported so the hook applies it without a WIH lookup.
+
 ## Gate 3 — PostToolUse
 Trigger: tool/action completion
 Checks:

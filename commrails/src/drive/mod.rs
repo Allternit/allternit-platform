@@ -628,7 +628,7 @@ impl Driver {
                 )))
             } else {
                 let argv0 = self.cfg.harnesses[&harness].argv[0].clone();
-                let policy = WihPolicy { wih_id: "(pickup)".into(), requires_lease_for_write: Some(true) };
+                let policy = WihPolicy { wih_id: "(pickup)".into(), requires_lease_for_write: Some(true), fence_strict: false };
                 hook::admit(&argv0, Some(&policy)).err().map(|r| ("harness_refused", r))
             };
             match refusal {

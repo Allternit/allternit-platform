@@ -201,7 +201,12 @@ impl Orchestrator {
         )
         .await;
         let _ = ledger.append(crate::execenv::resolved_event(opts.wih, &node_env)).await;
-        let env_prefix = if std::env::var("ALLTERNIT_EXEC_ENV_ENFORCE").as_deref() == Ok("1") {
+        // Q25 strict fence (opt-in via the WIH's judge policy or
+        // ALLTERNIT_FENCE=strict): the env allowlist is always enforced and
+        // the hook is told to fence writes to the worktree + temp and refuse
+        // local egress.
+        let fence_strict = hook::fence_env_strict() || wih_policy.as_ref().is_some_and(|p| p.fence_strict);
+        let env_prefix = if fence_strict || std::env::var("ALLTERNIT_EXEC_ENV_ENFORCE").as_deref() == Ok("1") {
             let kept = crate::execenv::filter_env(&node_env, std::env::vars());
             let mut p = String::from("env -i");
             for (k, v) in kept {
@@ -217,6 +222,9 @@ impl Orchestrator {
             }
             if opts.task_file.is_some() {
                 names.extend(["ALLTERNIT_COMMRAILS_TASK_FILE", "ALLTERNIT_RAILS_TASK_FILE"]);
+            }
+            if fence_strict {
+                names.push(hook::FENCE_ENV);
             }
             for n in names {
                 p.push_str(&format!(" {n}=\"${n}\""));
@@ -287,6 +295,9 @@ impl Orchestrator {
                 "export ALLTERNIT_COMMRAILS_WIH={}; ",
                 shell_escape(wih_id)
             ));
+        }
+        if fence_strict {
+            inner.push_str(&format!("export {}=strict; ", hook::FENCE_ENV));
         }
         if let Some(task) = opts.task_file {
             let task_escaped = shell_escape(&task.to_string_lossy());

@@ -735,6 +735,9 @@ impl Gate {
         if !base.allowed {
             return Ok(base);
         }
+        if let Some(reason) = self.gate2_blocklist(wih_id, command).await? {
+            return Ok(GateResult { allowed: false, reason: Some(reason) });
+        }
         let wih = self.wih_state(wih_id).await?;
         let policy = self.judge_policy(&wih.dag_id, Some(&wih.node_id)).await?;
         if !policy.tool_judge {
@@ -765,6 +768,24 @@ impl Gate {
         Ok(policy.fence == crate::judge::policy::Fence::Strict)
     }
 
+    /// Credential stores the WIH's run policy declares it needs to read
+    /// (Q25 `allow_credential_read`); empty by default.
+    pub async fn wih_credential_allow(&self, wih_id: &str) -> Result<Vec<String>> {
+        let wih = self.wih_state(wih_id).await?;
+        let events = self.events_for_dag(&wih.dag_id).await?;
+        Ok(crate::judge::policy::effective_credential_allow(&events, &wih.dag_id, Some(&wih.node_id)))
+    }
+
+    /// Gate 2's share of the Q25 blocklist: a command line naming a metadata
+    /// target or an undeclared credential store is denied.
+    async fn gate2_blocklist(&self, wih_id: &str, command: Option<&str>) -> Result<Option<String>> {
+        let Some(command) = command else { return Ok(None) };
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+        let allow = crate::hook::blocklist::allow_list(&self.wih_credential_allow(wih_id).await?, home.as_deref());
+        let strict = self.wih_fence_strict(wih_id).await?;
+        Ok(crate::hook::blocklist::check_command(command, std::path::Path::new("/"), home.as_deref(), &allow, strict))
+    }
+
     /// `judge tool`: allow | ask | deny for one call, regardless of the
     /// `tool_judge` policy flag. Gate 2 denials and the hard floor are final;
     /// a judge failure is `ask`, never `allow`.
@@ -775,7 +796,12 @@ impl Gate {
         command: Option<&str>,
         paths: &[String],
     ) -> Result<ToolCallVerdict> {
-        let base = self.pre_tool_base(wih_id, tool, paths).await?;
+        let mut base = self.pre_tool_base(wih_id, tool, paths).await?;
+        if base.allowed {
+            if let Some(reason) = self.gate2_blocklist(wih_id, command).await? {
+                base = GateResult { allowed: false, reason: Some(reason) };
+            }
+        }
         let wih = self.wih_state(wih_id).await?;
         if !base.allowed {
             let v = ToolCallVerdict {

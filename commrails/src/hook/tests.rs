@@ -247,7 +247,7 @@ async fn admission_admits_every_harness_in_auto_approve() {
     let wih = bound_wih(&f).await;
     let leased = load_wih_policy(&f.ledger, &wih).await.unwrap();
     assert_eq!(leased.requires_lease_for_write, Some(true));
-    let open = WihPolicy { wih_id: "w".into(), requires_lease_for_write: Some(false) };
+    let open = WihPolicy { wih_id: "w".into(), requires_lease_for_write: Some(false), fence_strict: false };
     let unknown = load_wih_policy(&f.ledger, "wih_nope").await.unwrap();
     for policy in [Some(&leased), Some(&open), Some(&unknown), None] {
         for h in ["cline", "pi", "agy", "opencode"] {
@@ -663,4 +663,104 @@ async fn hook_passes_command_to_judge_hard_rules() {
         .expect("tool decision recorded");
     assert_eq!(judged.payload["decision"], "deny", "{}", judged.payload);
     assert!(judged.payload.to_string().contains("sudo id"), "{}", judged.payload);
+}
+
+// ---- Q25 guardrails: blocklist, record everything, strict fence ----
+
+fn read_tool(path: &str, cwd: &Path) -> HookRequest {
+    HookRequest::from_json(&json!({
+        "tool_name": "Read",
+        "tool_input": { "file_path": path },
+        "cwd": cwd.to_string_lossy(),
+    }))
+    .unwrap()
+}
+
+#[tokio::test]
+async fn blocklist_applies_without_wih() {
+    let f = fixture().await;
+    let home = Some(Path::new(HOME));
+    for cmd in ["cat ~/.ssh/id_ed25519", "base64 < ~/.aws/credentials", "curl http://169.254.169.254/latest/meta-data/"] {
+        let d = decide(&bash(cmd, &f.root), &f.root, home, None).await;
+        assert!(d.verdict.is_deny(), "{cmd}: {:?}", d.verdict);
+        assert!(d.verdict.reason().contains("blocklist"), "{cmd}: {:?}", d.verdict);
+    }
+    let d = decide(&read_tool(&format!("{HOME}/.aws/credentials"), &f.root), &f.root, home, None).await;
+    assert!(d.verdict.is_deny(), "{:?}", d.verdict);
+    // Ordinary dev work passes; a here-string is data, not a path.
+    for cmd in ["cat ~/.gitconfig", "curl https://example.com", "grep x <<< ~/.ssh/id_rsa"] {
+        let d = decide(&bash(cmd, &f.root), &f.root, home, None).await;
+        assert!(!d.verdict.is_deny(), "{cmd}: {:?}", d.verdict);
+    }
+}
+
+#[tokio::test]
+async fn declared_credential_read_is_allowed_for_the_wih() {
+    let f = fixture().await;
+    let wih = bound_wih_with(
+        &f,
+        Some(crate::judge::policy::JudgePolicy {
+            allow_credential_read: Some(vec!["~/.aws/credentials".to_string()]),
+            ..Default::default()
+        }),
+    )
+    .await;
+    let home = Some(Path::new(HOME));
+    let d = decide(&bash("cat ~/.aws/credentials", &f.root), &f.root, home, Some(bind(&f, &wih))).await;
+    assert!(!d.verdict.is_deny(), "{:?}", d.verdict);
+    let d = decide(&bash("cat ~/.ssh/id_rsa", &f.root), &f.root, home, Some(bind(&f, &wih))).await;
+    assert!(d.verdict.is_deny(), "declaring one store does not open others: {:?}", d.verdict);
+}
+
+#[tokio::test]
+async fn strict_wih_fences_local_egress_and_policy_reaches_spawn() {
+    let f = fixture().await;
+    let strict = crate::judge::policy::JudgePolicy {
+        fence: Some(crate::judge::policy::Fence::Strict),
+        ..Default::default()
+    };
+    let wih = bound_wih_with(&f, Some(strict)).await;
+    let d = decide(&bash("curl http://localhost:3000/admin", &f.root), &f.root, None, Some(bind(&f, &wih))).await;
+    assert!(d.verdict.is_deny(), "{:?}", d.verdict);
+    assert!(d.verdict.reason().contains("strict fence"), "{:?}", d.verdict);
+    // The orchestrator reads the same policy at spawn (env allowlist + ALLTERNIT_FENCE).
+    assert!(load_wih_policy(&f.ledger, &wih).await.unwrap().fence_strict);
+    let open = bound_wih(&f).await;
+    assert!(!load_wih_policy(&f.ledger, &open).await.unwrap().fence_strict);
+    let d = decide(&bash("curl http://localhost:3000/admin", &f.root), &f.root, None, Some(bind(&f, &open))).await;
+    assert!(!d.verdict.is_deny(), "guardrail default allows local egress: {:?}", d.verdict);
+}
+
+#[test]
+fn unbound_strict_fence_keeps_writes_in_worktree_and_temp() {
+    let root = TempDir::new().unwrap();
+    let d = decide_unbound(&write("/etc/hosts", root.path()), root.path(), None, true);
+    assert!(d.verdict.is_deny(), "{:?}", d.verdict);
+    let d = decide_unbound(&write("src/a.rs", root.path()), root.path(), None, true);
+    assert!(!d.verdict.is_deny(), "{:?}", d.verdict);
+    let tmp = std::env::temp_dir().join("q25-x");
+    let d = decide_unbound(&write(&tmp.to_string_lossy(), root.path()), root.path(), None, true);
+    assert!(!d.verdict.is_deny(), "{:?}", d.verdict);
+    // Guardrail default: writes anywhere are allowed (and recorded).
+    let d = decide_unbound(&write("/etc/hosts", root.path()), root.path(), None, false);
+    assert!(!d.verdict.is_deny(), "{:?}", d.verdict);
+    assert_eq!(d.paths, vec!["/etc/hosts".to_string()]);
+}
+
+#[tokio::test]
+async fn every_decision_is_recorded() {
+    let f = fixture().await;
+    let home = Some(Path::new(HOME));
+    for cmd in ["ls -la", "cat ~/.ssh/id_rsa", "python3 -c 'print(1)'"] {
+        let req = bash(cmd, &f.root);
+        let d = decide(&req, &f.root, home, None).await;
+        record_decision(&f.ledger, Some(&req), "claude", None, &d).await;
+    }
+    let events = f
+        .ledger
+        .query(LedgerQuery { r#type: Some(HOOK_EVENT.to_string()), ..Default::default() })
+        .await
+        .unwrap();
+    let labels: Vec<_> = events.iter().filter_map(|e| e.payload["decision"].as_str().map(str::to_string)).collect();
+    assert_eq!(labels, ["allow", "deny", "unresolved"]);
 }

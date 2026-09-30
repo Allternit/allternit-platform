@@ -16,6 +16,8 @@ pub struct Segment {
     pub words: Vec<String>,
     /// Targets of `>`, `>>`, `&>`, `>|`, `N>` redirections.
     pub redirects: Vec<String>,
+    /// Sources of `<` input redirections (read, never written).
+    pub inputs: Vec<String>,
 }
 
 /// Split `command` into simple commands. Command substitutions (`$(...)`,
@@ -40,7 +42,8 @@ fn parse_into(command: &str, out: &mut Vec<Segment>, depth: usize) {
     let mut word = String::new();
     let mut word_started = false;
     let mut pending_redirect = false; // next word is an output-redirect target
-    let mut pending_input = false; // next word is an input-redirect source (ignored)
+    let mut pending_input = false; // next word is an input-redirect source
+    let mut input_is_data = false; // ... a here-string (data, not a path)
     let mut pending_heredoc = false; // next word is a heredoc delimiter
     let mut heredocs: Vec<(String, bool)> = Vec::new(); // (delim, strip_tabs)
     let mut nested: Vec<String> = Vec::new();
@@ -53,7 +56,11 @@ fn parse_into(command: &str, out: &mut Vec<Segment>, depth: usize) {
                     seg.redirects.push(w);
                     pending_redirect = false;
                 } else if pending_input {
+                    if !input_is_data {
+                        seg.inputs.push(w);
+                    }
                     pending_input = false;
+                    input_is_data = false;
                 } else if pending_heredoc {
                     let strip = w.starts_with('-');
                     let delim = w.trim_start_matches('-').to_string();
@@ -69,11 +76,12 @@ fn parse_into(command: &str, out: &mut Vec<Segment>, depth: usize) {
     macro_rules! end_seg {
         () => {
             end_word!();
-            if !seg.words.is_empty() || !seg.redirects.is_empty() {
+            if !seg.words.is_empty() || !seg.redirects.is_empty() || !seg.inputs.is_empty() {
                 out.push(std::mem::take(&mut seg));
             }
             pending_redirect = false;
             pending_input = false;
+            input_is_data = false;
         };
     }
 
@@ -217,6 +225,7 @@ fn parse_into(command: &str, out: &mut Vec<Segment>, depth: usize) {
                     // here-string `<<<`: next word is data.
                     i += 2;
                     pending_input = true;
+                    input_is_data = true;
                 } else if i < chars.len() && chars[i] == '<' {
                     i += 1;
                     pending_heredoc = true;
