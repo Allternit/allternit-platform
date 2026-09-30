@@ -1,0 +1,31 @@
+---
+title: Computers, ACI, and connected tools
+description: Understand a bot computer, the Sessions computer, MCP tools, and interactive app results.
+---
+
+**ACI** means Allternit Computer Interface. It is the surface for observing and interacting with a computer used by an agent. A computer, a connector, and an MCP App supply different capabilities.
+
+| Resource | Purpose |
+| --- | --- |
+| Bot computer | The computer associated with a bot's work: browser, desktop, and host tools. |
+| Sessions computer | The contained machine that runs the subscription gateway and provider sign-in sessions. |
+| MCP server / connector | Exposes callable tools and their authenticated service access. |
+| MCP App | An interactive view returned by an MCP tool; see its integration status below. |
+
+## A bot's computer
+
+Open the computer from the bot thread into the ACI pane. The view separates the conversation from the live computer, with a computer header and browser navigation where available. Observe work, take control when you need to intervene, and hand control back when ready.
+
+Computer control is separate from the thread's execution state. Use the thread's Stop action to interrupt a model turn; use the computer's controls to manage human interaction with the displayed machine. A running computer alone does not mean a bot is actively working.
+
+Provisioning and available actions depend on the selected computer backend and your access. An attached computer does not automatically grant every tool or service permission.
+
+## Connected tools
+
+MCP tools belong to the session's tool belt. Connect the server, complete its authentication, and check the available tools before assigning work that relies on it. CLI harness sessions can receive the session's tools and instructions through the CLI tool bridge; supported computer operations still require a reachable host.
+
+See [MCP tools](/tools/mcp), [Computer-use MCP](/tools/computer-use-mcp), and the [ACI runtime reference](/api/aci).
+
+## Interactive results
+
+An MCP App can display a tool result as a sandboxed interface rather than plain text. The expanded Allternit host, directory, and extensions have merged to source in a separate integration package. Deployment and installation checks still apply. See [MCP Apps status](/guides/mcp-apps-status) before treating that package as available on your installation.

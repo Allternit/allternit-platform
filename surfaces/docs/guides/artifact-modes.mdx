@@ -1,0 +1,37 @@
+---
+title: Artifact modes
+description: Choose a deliverable format, work in an editor pane, and inspect generated outputs.
+---
+
+Artifact modes tell the agent what deliverable to create and which capabilities it needs. Choose a mode in the workspace, describe the result, and inspect the output in its artifact or editor pane. A completion message alone is not the deliverable.
+
+## Choose the format
+
+| Mode | Expected result |
+| --- | --- |
+| Artifact | The agent chooses a useful format and explains that choice briefly before creating it. |
+| Build | A runnable website or app artifact. |
+| Docs | An editable structured document. |
+| Sheets | An editable spreadsheet with typed data and formulas where needed. |
+| Slides | An editable presentation. |
+| Deep Research | A structured research report with sources and citations. |
+| Image | A generated image checked against the request. |
+| Video | A playable video with the requested duration and format. |
+| Code | Real file changes and runnable code, with appropriate verification. |
+| Agent Swarm | A coordinated run with named roles, ownership, and a synthesized deliverable. |
+
+A missing tool, provider, or editor capability can block a mode. Choose an available runtime/provider or connect the required capability, then retry. The mode contract requires real output and tool evidence instead of simulated success.
+
+## Editor panes and bot threads
+
+Docs, Sheets, and Slides work through artifact sessions with an editor pane. Subsequent turns edit the document already open in that pane. These sessions differ from a one-shot generation that emits a new artifact each time.
+
+Bot threads do not offer these three editor-pane modes. Use the workspace artifact session for the editable Office flow. A bot can still produce file deliverables through tools available to its thread; that is a different path from editing an open pane.
+
+## Inspect and continue
+
+Keep the conversation for instructions and steering, and the artifact pane for the resulting work. Open a supported output to preview or edit it, check the contents, and ask for a specific revision. Available export formats depend on the artifact kind and the tool that created it.
+
+A thread's artifact list and context checkpoint serve different purposes: the list collects outputs; the checkpoint preserves enough working context to continue. Review both when resuming a long task.
+
+See [Artifacts API](/api/artifacts), [Office suite](/surfaces/office-suite), and [Threads](/guides/bot-threads).

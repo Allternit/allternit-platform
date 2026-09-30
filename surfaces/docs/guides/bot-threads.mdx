@@ -1,0 +1,54 @@
+---
+title: Threads and subagents
+description: Durable work records, context generations, progress, and delegated workers.
+---
+
+A bot can have several threads. Each thread tracks an objective, success criteria, checklist, status, dependencies, summary, and the session currently executing it. The rail and project view read the same server records, including work started by the coordinator rather than the current browser window.
+
+## Standing and task threads
+
+| Kind | Purpose |
+| --- | --- |
+| `standing` | A bot's continuing conversation or a routine's home. It stays open rather than resolving as a finished task. |
+| `task` | A specific objective that can resolve as done or failed. |
+
+Open a bot from the Bots rail to return to its conversation, or create a new thread for a separate task. In a group conversation, a bot mention can start a task thread; the inline card opens that work and exposes its running state.
+
+## Status and progress
+
+| Server status | Panel group |
+| --- | --- |
+| `needs_you`, `blocked`, `review` | Waiting on you |
+| `working`, `planning` | Working |
+| `queued` | Queued |
+| `idle`, `paused` | Idle |
+| `done`, `failed` | Resolved |
+
+Checklist progress is reported as completed steps out of total steps. Review means the result needs attention; it is not a claim that the task has been approved. Use Stop on an active turn to interrupt execution, including a turn started by the server. Stopping a turn and resolving a task are separate actions.
+
+## Context generations
+
+A durable thread can span several model sessions, called generations. A handoff checkpoints the current work, opens a fresh session, and seeds it with the checkpoint. The transcript marks the boundary with a divider and summary. Earlier generations remain part of the work history.
+
+Usage reporting can request a handoff when the current context reaches 70 percent of its model window, including after switching to a smaller window. The thread id remains stable; `currentSessionId` can change. Integrations should keep the thread id as their work reference.
+
+## Subagents
+
+Subagents delegate a portion of a thread's work and appear in its subagent tree/feed. Inspect their activity and results alongside the parent thread. A subagent is distinct from a reusable bot and does not automatically become a project team member.
+
+## Runtime API
+
+These authenticated routes belong to the private Allternit API data plane, normally on port 8013. Do not assume they are public Cloud API endpoints; see [API overview](/api/overview).
+
+| Method | Runtime path | Purpose |
+| --- | --- | --- |
+| GET / POST | `/api/v1/threads` | List or create threads. |
+| GET / PATCH | `/api/v1/threads/:id` | Read or update a thread. |
+| GET | `/api/v1/threads/by-session/:session_id` | Find the durable thread for a session. |
+| POST | `/api/v1/threads/:id/resolve` | Resolve a task thread. |
+| POST | `/api/v1/threads/:id/usage` | Report model context usage. |
+| POST | `/api/v1/threads/:id/handoff` | Checkpoint and create a fresh generation. |
+| PUT | `/api/v1/threads/:id/deps` | Set dependencies. |
+| GET | `/api/v1/threads/:id/events` | Read lifecycle events. |
+
+Continue with [project coordination](/guides/project-coordination) or [artifact modes](/guides/artifact-modes).
