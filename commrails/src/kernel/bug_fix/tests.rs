@@ -57,3 +57,10 @@ fn wp10_agency_entry_point_matches_wp11_template_graph_shape() {
     assert!(agency_graph("g", &json!({})).is_err(), "no declared write authority fails closed");
     assert_eq!((TEMPLATE_ID, TEMPLATE_VERSION, TEMPLATE_SOURCE, COMPLETION_POLICY), ("BUG_FIX", 1, "kernel", "completion.bug_fix"));
 }
+
+#[tokio::test]
+async fn s0_reconcile_returns_class_and_tolerates_missing_result() {
+    let off = crate::kernel::s1_outcome::OutcomeReporter { enabled: false, ..crate::kernel::s1_outcome::OutcomeReporter::from_env() };
+    assert_eq!(reconcile_s0_classification(&off, None, "TEST_ASSERTION"), "TEST_ASSERTION");
+    assert_eq!(reconcile_s0_classification(&off, None, "ERR_INTERNAL"), "UNKNOWN");
+}

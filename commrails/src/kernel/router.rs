@@ -610,6 +610,18 @@ pub enum S1Verdict {
     Refused { reason: String },
 }
 
+/// `apply_s1_result` plus recording: when the runtime returned a decision id,
+/// append its `s1-verify:<id>` ref to the node's evidence so the later
+/// CompletionDecision can report ground truth. Idempotent.
+pub fn apply_s1_result_recording(plan: &ExecutionPlan, result: &DecisionResultView, node_evidence: &mut Vec<String>) -> S1Verdict {
+    if let Some(r) = result.verify_evidence_ref() {
+        if !node_evidence.contains(&r) {
+            node_evidence.push(r);
+        }
+    }
+    apply_s1_result(plan, result)
+}
+
 fn ext_str<'e>(x: &'e Option<Map<String, Value>>, k: &str) -> Option<&'e str> {
     x.as_ref()?.get(k)?.as_str()
 }
