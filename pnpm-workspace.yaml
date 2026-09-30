@@ -64,6 +64,9 @@ packages:
   # See surfaces/computer-embed/README.md.
   - '!surfaces/computer-embed'
   - '!surfaces/computer-embed/**'
+  # Desktop build output: prepare-office-engine writes resources/office-engine/package.json,
+  # which surfaces/*/*/* would pick up as a workspace package and add an importer to the lockfile.
+  - '!surfaces/allternit-desktop/resources/**'
   # Vendored Stagehand fork (Allternit Browser Runtime, Phase P0) — Node >=22.18
   # with its own pnpm workspace/lock. MUST stay separate from the root
   # workspace: the sibling @allternit/browser package is Node 18 and the two

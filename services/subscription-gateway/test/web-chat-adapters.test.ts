@@ -31,6 +31,7 @@ import { loadAdapterRegistry } from "../src/adapters/registry.js";
 import { launchBrowser } from "./helpers.js";
 
 const FAST = {
+  authSettleMs: 300,
   completion: { stabilityMs: 150, pollIntervalMs: 25, timeoutMs: 5000 },
   heartbeatIntervalMs: 200,
   stallTimeoutS: 5,
@@ -245,6 +246,16 @@ describe.each(CASES)("$id", (c) => {
     const page = await fixturePage(c.id, "challenge");
     const { events, marks } = await drain(adapter, makeTask("chat.create"), page);
     expect(events).toEqual([expect.objectContaining({ t: "needs_user", reason: "challenge" })]);
+    expect(marks).toEqual([]);
+    await page.close();
+  }, 30000);
+
+  it("chat.create at the usage limit → stops before typing, limit error, nothing sent", async () => {
+    const adapter = c.make({ freshChat: false });
+    const page = await fixturePage(c.id, "limit-banner");
+    const { events, marks } = await drain(adapter, makeTask("chat.create"), page);
+    expect(events.map((e) => (e as { t: string }).t)).not.toContain("submitted");
+    expect(events).toContainEqual(expect.objectContaining({ t: "error", error: expect.objectContaining({ class: "quota_exhausted", fallback_eligible: true }) }));
     expect(marks).toEqual([]);
     await page.close();
   }, 30000);

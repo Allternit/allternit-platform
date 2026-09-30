@@ -95,11 +95,13 @@ interface RunResult {
 
 async function runAdapter(
   fixture: string,
-  overrides: Partial<DeclarativeChatConfig> = {}
+  overrides: Partial<DeclarativeChatConfig> = {},
+  prepare?: (page: Page) => Promise<void>
 ): Promise<RunResult> {
   const config = fixtureWebConfig(overrides);
   const adapter = new DeclarativeChatAdapter(config);
   const page = await fixturePage(browser, fixture);
+  if (prepare) await prepare(page);
   const marks: RunResult["marks"] = [];
   const attempt = makeAttempt();
   const ctx = createExecutionContext({
@@ -327,6 +329,18 @@ describe("DeclarativeChatAdapter end-to-end (§A3.3, P2 verify)", () => {
     await page.close();
   });
 
+  it("a limit that blocks sending stops the task before anything is typed (fallback-eligible)", async () => {
+    const { events, marks, page } = await runAdapter("limit-banner.html", {
+      banners: [{ kind: "limit_banner", pattern: /limit reached/i, blocksSend: true }],
+    });
+    expect(types(events)).not.toContain("submitted");
+    expect(marks).toEqual([]);
+    const err = events.find((e) => (e as { t: string }).t === "error") as Extract<AdapterEvent, { t: "error" }>;
+    expect(err.error).toMatchObject({ class: "quota_exhausted", fallback_eligible: true, retryable: true });
+    expect(await page.evaluate(() => document.body.dataset.fwSubmitted)).toBeUndefined();
+    await page.close();
+  });
+
   it("limit-banner: quota.signal emitted for the limit banners", async () => {
     const { events, page } = await runAdapter("limit-banner.html");
     const signals = events.filter(
@@ -349,8 +363,23 @@ describe("DeclarativeChatAdapter end-to-end (§A3.3, P2 verify)", () => {
     await page.close();
   });
 
+  it("a single-page app that draws its signed-in UI late is waited for, not judged logged out", async () => {
+    const { events, page } = await runAdapter("idle.html", {}, async (p) => {
+      await p.evaluate(() => {
+        const menu = document.querySelector("[data-testid=fw-user-menu], .fw-user-menu");
+        const parent = menu?.parentElement;
+        if (!menu || !parent) throw new Error("fixture has no user menu");
+        menu.remove();
+        setTimeout(() => parent.appendChild(menu), 400);
+      });
+    });
+    expect(types(events)).not.toContain("needs_user");
+    expect(types(events)).toContain("submitted");
+    await page.close();
+  });
+
   it("logged-out: needs_user(auth), never submits", async () => {
-    const { events, marks, page } = await runAdapter("logged-out.html");
+    const { events, marks, page } = await runAdapter("logged-out.html", { authSettleMs: 300 });
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ t: "needs_user", reason: "auth" });
     expect(marks).toHaveLength(0);

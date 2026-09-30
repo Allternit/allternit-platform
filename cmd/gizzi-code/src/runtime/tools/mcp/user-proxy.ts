@@ -15,6 +15,7 @@ import { withTimeout } from "@/shared/util/timeout"
 import {
   MCP_APPS_CLIENT_CAPABILITIES,
   MCP_CONNECTOR_META_KEY,
+  MCP_REQUIRES_CONFIRMATION_META_KEY,
   buildMcpAppFrame,
   mcpAppHtml,
   mcpAppResourceUri,
@@ -108,6 +109,74 @@ export namespace McpUserProxy {
   }
 
   const APP_FRAME_TIMEOUT = 20_000
+
+  // ── Permission gate for model-initiated calls ─────────────────────────────
+  // allternit-api marks each tool that needs the user's confirmation under its install's permission
+  // mode. gizzi asks through its permission system (class `mcp_app`, which every mode still asks) and
+  // only then lets the call carry the approval flag the proxy demands.
+
+  /** Permission class of the ask; listed in PermissionNext.ALWAYS_ASK. */
+  export const APPROVAL_PERMISSION = "mcp_app"
+  export const DECLINED_MESSAGE = "The user declined this tool call"
+  const ARGS_LIMIT = 1000
+
+  /** Does the proxy want the user's approval before running this tool? Unmarked → no. */
+  export function requiresConfirmation(tool: { _meta?: unknown } | undefined): boolean {
+    const meta = tool?._meta as Record<string, unknown> | undefined
+    return meta?.[MCP_REQUIRES_CONFIRMATION_META_KEY] === true
+  }
+
+  /** Arguments as shown to the user; a cut is announced so padding cannot hide what runs. */
+  export function describeArguments(args: unknown): string {
+    let full: string
+    try {
+      full = JSON.stringify(args ?? {}, null, 2) ?? "{}"
+    } catch {
+      return "(arguments could not be shown)"
+    }
+    return full.length > ARGS_LIMIT
+      ? `${full.slice(0, ARGS_LIMIT)}\n… (${full.length - ARGS_LIMIT} more characters not shown)`
+      : full
+  }
+
+  const approved = new Set<string>()
+  /** True once, for a call the user approved; the caller then sends the approval flag. */
+  export function consumeApproval(callID: string | undefined): boolean {
+    return callID !== undefined && approved.delete(callID)
+  }
+  export function clearApproval(callID: string | undefined) {
+    if (callID !== undefined) approved.delete(callID)
+  }
+
+  export interface GateInput {
+    callID: string
+    /** Tool name as the connector knows it (`<tool>`, without the connector prefix). */
+    tool: string
+    title?: string
+    /** Display name of the app/connector the tool belongs to. */
+    app?: string
+    args: unknown
+    ask: (req: { permission: string; patterns: string[]; always: string[]; metadata: Record<string, unknown> }) => Promise<unknown>
+  }
+
+  /** Ask the user to approve this call. Resolves when approved; throws "The user declined this tool call" otherwise. */
+  export async function gate(input: GateInput): Promise<void> {
+    const app = input.app ?? "An app"
+    const label = input.title ?? input.tool
+    const shown = describeArguments(input.args)
+    try {
+      await input.ask({
+        permission: APPROVAL_PERMISSION,
+        patterns: [`${app} wants to run “${label}”\nArguments:\n${shown}`],
+        // Never remembered: each call is approved on its own.
+        always: [],
+        metadata: { app, tool: input.tool, title: label, arguments: shown },
+      })
+    } catch {
+      throw new Error(DECLINED_MESSAGE)
+    }
+    approved.add(input.callID)
+  }
 
   /** `<connector>__<tool>` → `<tool>`; the connector prefix never contains `__`. */
   export function originalToolName(namespaced: string): string {

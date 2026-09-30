@@ -100,8 +100,12 @@ export namespace PermissionNext {
    * prepared; a provider's mid-task question): D16 makes each one a human act.
    * Only a configured deny, plan mode or dontAsk (nobody there to ask) turn
    * the ask into a refusal; nothing turns it into an approval.
+   *
+   * `mcp_app` gates a model-initiated call to an MCP App tool whose install
+   * permission mode (allternit-api) requires the user's confirmation. The mode
+   * is the user's own choice, so no session mode or earlier approval waives it.
    */
-  export const ALWAYS_ASK = new Set(["subscription"])
+  export const ALWAYS_ASK = new Set(["subscription", "mcp_app"])
 
   /**
    * What the person's reply carried beyond the decision. For `subscription`

@@ -21,9 +21,12 @@ export interface DispatchDeps {
 // True when the task left the account pick to the fabric: auto mode with no
 // account pin. A provider-only pin still resolves (within that provider) —
 // otherwise it sat in the (provider, UNROUTED) lane no worker drains.
-// prefer/force pins keep their existing queue behavior.
+// A force/prefer pin that names a provider but no account resolves too, within
+// that provider (live 2026-09-30: such a task sat in (provider, unrouted)
+// forever). A pin with an account keeps its existing queue behavior.
 export function needsResolution(task: Task): boolean {
-  return task.routing.mode === "auto" && task.routing.account_id === undefined;
+  if (task.routing.account_id !== undefined) return false;
+  return task.routing.mode === "auto" || task.routing.provider !== undefined;
 }
 
 // The routing view for a task: a provider-pinned task only sees accounts of

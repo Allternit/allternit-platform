@@ -4,3 +4,4 @@
 821a5254d765fd52330bcf1bcbd8e8188bdb8dce:tools/system-one-local/test/hook.test.ts:stripe-access-token:146
 821a5254d765fd52330bcf1bcbd8e8188bdb8dce:tools/system-one-local/test/hook.test.ts:stripe-access-token:150
 821a5254d765fd52330bcf1bcbd8e8188bdb8dce:tools/system-one-local/test/hook.test.ts:curl-auth-header:146
+a28cb7186ff5d01d0ccbbfde2fdace0bec610d48:cmd/gizzi-code/src/runtime/tools/mcp/apps.ts:generic-api-key:84

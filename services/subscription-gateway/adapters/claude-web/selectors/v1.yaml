@@ -53,6 +53,12 @@ model_picker:
 banner:
   critical: false
   strategies:
+    # Verified 2026-09-30 (live, account at its limit): the limit notice is a
+    # card inside a data-testid=limit-wall-* element, with no alert role.
+    # Wording first: the limit-wall-credits-explainer element alone carries
+    # only the "keep working with usage credits" line, not the limit.
+    - { text: /reached your usage limit|hit your limit for claude/i }
+    - { css: "[data-testid^='limit-wall']" }
     - { testid: usage-limit-banner }
     - { role: alert }
     - { role: status }
