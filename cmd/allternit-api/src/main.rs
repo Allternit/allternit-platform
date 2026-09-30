@@ -1015,6 +1015,9 @@ async fn main() {
 
     // ── Protected routes (require authentication) ─────────────────────────────
     let protected = Router::new()
+        // Agency API alpha (WP11): public /v1 developer surface, behind the
+        // same auth_middleware as everything else on this router.
+        .merge(allternit_api::agency_api::agency_router())
         .nest("/api/v1", v1_routes)
         .nest("/api/v1", bb_router())
         // The tool registry is also served under /api/v1 because the
@@ -1095,6 +1098,8 @@ async fn main() {
     // ── Public routes (no authentication required) ────────────────────────────
     let mut public = Router::new()
         .nest("/health", health_router())
+        // Receipt verification keys (public JWKS; public keys only).
+        .merge(allternit_api::agency_api::jwks_public_router())
         .merge(web_proxy)
         .nest("/beta", enrollment_router())
         .merge(status_router())
