@@ -38,7 +38,7 @@ export function inProcessFloor(toolCall: AcpToolCall, cwd: string): AcpGateVerdi
     : { allow: true, fallback: true }
 }
 
-/** Map an ACP tool call onto the hook payload `{tool_name, tool_input, cwd}`. */
+/** Map the primary ACP target. Admission must use acpToolToHookPayloads below. */
 export function acpToolToHookPayload(toolCall: AcpToolCall, cwd: string, sessionId?: string) {
   const kind = String(toolCall.kind ?? "")
   const raw = (toolCall.rawInput && typeof toolCall.rawInput === "object" ? toolCall.rawInput : {}) as Record<
@@ -77,6 +77,27 @@ export function acpToolToHookPayload(toolCall: AcpToolCall, cwd: string, session
   }
 }
 
+/** The hook understands one Write path per request, so gate every ACP target. */
+export function acpToolToHookPayloads(toolCall: AcpToolCall, cwd: string, sessionId?: string) {
+  const primary = acpToolToHookPayload(toolCall, cwd, sessionId)
+  if (primary.tool_name !== "Write") return [primary]
+  const raw = (toolCall.rawInput && typeof toolCall.rawInput === "object" ? toolCall.rawInput : {}) as Record<string, unknown>
+  const paths = new Set<string>()
+  const add = (path: unknown) => {
+    if (typeof path === "string" && path.trim()) paths.add(path)
+  }
+  add((primary.tool_input as { file_path?: string }).file_path)
+  for (const key of ["file_path", "path", "source", "source_path", "destination", "destination_path", "old_path", "new_path", "from", "to"]) {
+    add(raw[key])
+  }
+  if (Array.isArray(toolCall.locations)) {
+    for (const location of toolCall.locations) {
+      add(typeof location === "string" ? location : location?.path)
+    }
+  }
+  return [...paths].map((file_path) => ({ ...primary, tool_input: { file_path } }))
+}
+
 /** `$ALLTERNIT_COMMRAILS_BIN`, then `allternit-commrails` on PATH. */
 export function findCommrailsBin(env: NodeJS.ProcessEnv = process.env): string | undefined {
   const explicit = env.ALLTERNIT_COMMRAILS_BIN
@@ -89,11 +110,13 @@ export function findCommrailsBin(env: NodeJS.ProcessEnv = process.env): string |
   return undefined
 }
 
-/** Interpret the hook's stdout: silence = allow, a `deny` decision = deny. */
+/** Only a successful hook can allow; successful silence allows, `deny` denies. */
 export function parseHookOutput(stdout: string, exitCode: number | null): AcpGateVerdict {
-  if (exitCode === 2) return { allow: false, reason: "gate exited 2 (fail closed)" }
+  if (exitCode !== 0) {
+    return { allow: false, reason: exitCode === null ? "gate terminated without a successful exit (fail closed)" : `gate exited ${exitCode} (fail closed)` }
+  }
   const text = stdout.trim()
-  if (!text) return exitCode === 0 ? { allow: true } : { allow: false, reason: `gate exited ${exitCode} (fail closed)` }
+  if (!text) return { allow: true }
   try {
     const out = JSON.parse(text) as { hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string } }
     if (out.hookSpecificOutput?.permissionDecision === "deny") {
@@ -108,7 +131,8 @@ export function parseHookOutput(stdout: string, exitCode: number | null): AcpGat
 /**
  * Decide one ACP tool call, never prompting. Order: plan-mode read-only
  * (deny write/exec first), then the commrails gate; with no commrails binary,
- * gizzi's in-process catastrophic floor (deny catastrophic, allow the rest).
+ * fail closed for WIH-bound or effectful calls. Only unbound read-only calls
+ * can use gizzi's in-process catastrophic floor as a fallback.
  */
 export async function acpGateDecision(opts: {
   toolCall: AcpToolCall
@@ -127,17 +151,50 @@ export async function acpGateDecision(opts: {
     return { allow: false, reason: "plan mode is read-only" }
   }
   const bin = opts.bin ?? findCommrailsBin()
-  if (!bin) return inProcessFloor(opts.toolCall, opts.cwd)
+  if (!bin) {
+    const floor = inProcessFloor(opts.toolCall, opts.cwd)
+    if (!floor.allow) return floor
+    if (opts.wihId) {
+      // Same default receipt root and marker-presence semantics as CommRails.
+      // A marker is authoritative even if its JSON is empty or unreadable.
+      const validId = !/[\/\\\0]/.test(opts.wihId) && !opts.wihId.startsWith(".")
+      const marker = validId && join(opts.root ?? opts.cwd, ".allternit", "receipts", "_replay", `run_${opts.wihId}.json`)
+      if (marker && existsSync(marker)) {
+        return { allow: false, reason: `replay: recorded result served by the gate (run run_${opts.wihId} is replaying, effects: recorded_only)`, fallback: true }
+      }
+      return { allow: false, reason: `Allternit gate unavailable: cannot enforce WIH ${opts.wihId} policy and lease coverage (fail closed)`, fallback: true }
+    }
+    const payload = acpToolToHookPayload(opts.toolCall, opts.cwd)
+    const readOnly = ["Read", "WebFetch"].includes(payload.tool_name) && (!opts.permission || opts.permission === "read")
+    if (!readOnly) return { allow: false, reason: "Allternit gate unavailable: effectful or unknown tool call cannot be authorized (fail closed)", fallback: true }
+    return floor
+  }
   const args = ["--root", opts.root ?? opts.cwd, "hook", "claude-pretool", "--harness", opts.harness, "--workspace", opts.cwd]
   if (opts.wihId) args.push("--wih", opts.wihId)
-  const payload = JSON.stringify(acpToolToHookPayload(opts.toolCall, opts.cwd, opts.sessionId))
-  return await new Promise<AcpGateVerdict>((resolve) => {
+  const payloads = acpToolToHookPayloads(opts.toolCall, opts.cwd, opts.sessionId)
+  if (!payloads.length) return { allow: false, reason: "cannot recover write paths for ACP mutation (fail closed)" }
+  if (opts.toolCall.kind === "move" && payloads.length < 2) {
+    return { allow: false, reason: "cannot recover both source and destination write paths for ACP move (fail closed)" }
+  }
+  // All targets must pass within the original per-call timeout budget.
+  const deadline = Date.now() + (opts.timeoutMs ?? 30_000)
+  for (const payload of payloads) {
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) return { allow: false, reason: "gate timed out (fail closed)" }
+    const verdict = await runHook(bin, args, JSON.stringify(payload), remaining)
+    if (!verdict.allow) return verdict
+  }
+  return { allow: true }
+}
+
+function runHook(bin: string, args: string[], payload: string, timeoutMs: number): Promise<AcpGateVerdict> {
+  return new Promise<AcpGateVerdict>((resolve) => {
     const child = spawn(bin, args, { stdio: ["pipe", "pipe", "ignore"] })
     let stdout = ""
     const timer = setTimeout(() => {
       child.kill()
       resolve({ allow: false, reason: "gate timed out (fail closed)" })
-    }, opts.timeoutMs ?? 30_000)
+    }, timeoutMs)
     child.stdout.on("data", (d) => (stdout += d.toString()))
     child.on("error", () => {
       clearTimeout(timer)
