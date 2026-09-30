@@ -339,7 +339,9 @@ pub fn agent_gateway_router() -> Router<Arc<AppState>> {
         .route("/channel-bindings/:id", patch(patch_channel))
         .route("/vendor-packs/:vendor/gaps", post(record_gap).get(list_gaps))
         .route("/vendor-packs/:vendor/parity", get(parity))
-        .route("/vendor-pack-gaps/:id", patch(patch_gap));
+        .route("/vendor-pack-gaps/:id", patch(patch_gap))
+        .route("/bots/:bot_id/vendor-memory", get(vendor_memory_h))
+        .route("/bots/:bot_id/vendor-memory/:record_id/promote", post(promote_memory_h));
     Router::new().nest("/gateway", g)
 }
 
@@ -1028,6 +1030,137 @@ async fn parity(State(state): State<Arc<AppState>>, Extension(user): Extension<A
     .await
 }
 
+// ---------------------------------------------------------------- vendor memory
+// Vendor memory is a separate partition (authority "vendor"): it is read through
+// `agent.memory`, never merged into Allternit memory silently, and only an
+// explicit human promote copies a record into a native note (`memory.promoted`).
+
+type GwErr = (StatusCode, String, String);
+
+fn map_aai_err(e: crate::gateway_runner::AaiError) -> GwErr {
+    let status = match e.code.as_str() {
+        "AUTH_REQUIRED" | "AUTH_REVOKED" => StatusCode::UNAUTHORIZED,
+        "RATE_LIMITED" => StatusCode::TOO_MANY_REQUESTS,
+        "LANE_BLOCKED" | "BOT_DETECTED" | "BOT_DETECTION" | "ACCOUNT_RISK" => StatusCode::FORBIDDEN,
+        "INTERNAL" => StatusCode::INTERNAL_SERVER_ERROR,
+        _ => StatusCode::BAD_GATEWAY,
+    };
+    (status, e.code, e.human_message)
+}
+
+/// The vendor-memory view for a vendor-backed bot. 404 for native or unknown bots.
+pub(crate) async fn read_vendor_memory(db: &DbHandle, tx: &dyn crate::gateway_runner::AaiTransport, owner: &str, bot_id: &str) -> Result<Value, GwErr> {
+    let nf = || (StatusCode::NOT_FOUND, "NOT_FOUND".to_string(), "vendor-backed bot not found".to_string());
+    let bx = {
+        let conn = db.connect().map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL".to_string(), "database error".to_string()))?;
+        load_exec(&conn, owner, bot_id).map_err(|_| nf())?
+    };
+    if s(&bx, "type") != "vendor" {
+        return Err(nf());
+    }
+    let vendor = s(&bx, "vendor");
+    let caps = bx["capabilities"].clone();
+    if caps.pointer("/memory/opaque").and_then(Value::as_bool).unwrap_or(false) || crate::gateway_placement::has_capability(&caps, "memory.opaque") {
+        return Ok(json!({ "vendor": vendor, "authority": "vendor", "observability": "opaque", "promotable": false,
+            "reason": "this vendor keeps memory it does not let Allternit read" }));
+    }
+    let binding = json!({ "type": "vendor", "vendor": vendor, "accountBindingId": bx["accountBindingId"], "externalAgentId": bx["externalAgentId"] });
+    let v = match crate::gateway_runner::vcall(db, tx, owner, "agent.memory", &binding, json!({ "op": "read" })).await {
+        Ok(v) => v,
+        Err(e) if e.code == "UNSUPPORTED" => {
+            return Ok(json!({ "vendor": vendor, "authority": "vendor", "observability": "unavailable", "promotable": false, "reason": e.human_message }));
+        }
+        Err(e) => return Err(map_aai_err(e)),
+    };
+    if v["opaque"].as_bool().unwrap_or(false) {
+        return Ok(json!({ "vendor": vendor, "authority": "vendor", "observability": "opaque", "promotable": false,
+            "reason": "this vendor keeps memory it does not let Allternit read" }));
+    }
+    let list = v["records"].as_array().or_else(|| v.as_array()).cloned().unwrap_or_default();
+    let records: Vec<Value> = list
+        .iter()
+        .filter_map(|r| {
+            let text = r["text"].as_str().or_else(|| r["content"].as_str())?;
+            let rid = r["id"].as_str().or_else(|| r["remoteRef"].as_str())?;
+            let mut o = json!({ "id": rid, "scope": r["scope"].as_str().unwrap_or("bot"), "text": text });
+            if let Some(x) = r["remoteRef"].as_str() {
+                o["remoteRef"] = json!(x);
+            }
+            if let Some(x) = r["updatedAt"].as_str() {
+                o["updatedAt"] = json!(x);
+            }
+            Some(o)
+        })
+        .collect();
+    Ok(json!({ "vendor": vendor, "authority": "vendor", "observability": "readable", "records": records, "promotable": true }))
+}
+
+/// Explicit, human-driven copy of one vendor record into a native note.
+pub(crate) async fn promote_vendor_memory(db: &DbHandle, tx: &dyn crate::gateway_runner::AaiTransport, owner: &str, bot_id: &str, record_id: &str, scope: &str) -> Result<Value, GwErr> {
+    if !["bot", "project", "thread"].contains(&scope) {
+        return Err((StatusCode::BAD_REQUEST, "BAD_REQUEST".into(), "scope must be bot|project|thread".into()));
+    }
+    let view = read_vendor_memory(db, tx, owner, bot_id).await?;
+    if view["observability"] != "readable" {
+        return Err((StatusCode::CONFLICT, "NOT_PROMOTABLE".into(), view["reason"].as_str().unwrap_or("vendor memory is not readable").to_string()));
+    }
+    let rec = view["records"].as_array().and_then(|a| a.iter().find(|r| r["id"] == record_id).cloned())
+        .ok_or((StatusCode::NOT_FOUND, "NOT_FOUND".to_string(), "vendor memory record not found".to_string()))?;
+    let vendor = s(&view, "vendor");
+    let remote_ref = rec["remoteRef"].as_str().unwrap_or(record_id).to_string();
+    let text = s(&rec, "text");
+    let conn = db.connect().map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL".to_string(), "database error".to_string()))?;
+    let ref_tag = format!("remoteRef:{remote_ref}");
+    let tags = json!(["source:vendor", format!("vendor:{vendor}"), ref_tag, format!("bot:{bot_id}"), format!("scope:{scope}")]);
+    // Promoting the same record twice never duplicates it.
+    let dup: Option<String> = conn
+        .query_row(
+            "SELECT id FROM memory_notes WHERE user_id = ?1 AND tags LIKE ?2 AND tags LIKE ?3",
+            params![owner, format!("%\"{ref_tag}\"%"), format!("%\"bot:{bot_id}\"%")],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL".to_string(), e.to_string()))?;
+    if let Some(nid) = dup {
+        return Ok(json!({ "noteId": nid, "promoted": false, "alreadyPromoted": true }));
+    }
+    let nid = format!("mn_{}", uuid::Uuid::new_v4().simple());
+    let title: String = text.chars().take(80).collect();
+    conn.execute(
+        "INSERT INTO memory_notes (id, user_id, note_type, title, content, tags, entity_id) VALUES (?1, ?2, 'general', ?3, ?4, ?5, NULL)",
+        params![nid, owner, title, text, tags.to_string()],
+    )
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL".to_string(), e.to_string()))?;
+    ledger(db, owner, bot_id, None, "memory.promoted", json!({
+        "source": "vendor", "vendor": vendor, "remoteRef": remote_ref, "recordId": record_id, "scope": scope, "noteId": nid, "authority": "allternit", "actor": "human" }));
+    Ok(json!({ "noteId": nid, "promoted": true }))
+}
+
+fn gw_err(e: GwErr) -> Response {
+    (e.0, Json(json!({ "error": e.2, "code": e.1 }))).into_response()
+}
+
+async fn vendor_memory_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(bot_id): Path<String>) -> Response {
+    let tx = crate::gateway_runner::transport(&state);
+    match read_vendor_memory(&state.db, tx.as_ref(), &user.user_id, &bot_id).await {
+        Ok(v) => (StatusCode::OK, Json(v)).into_response(),
+        Err(e) => gw_err(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct PromoteBody {
+    scope: String,
+}
+
+async fn promote_memory_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path((bot_id, record_id)): Path<(String, String)>, Json(b): Json<PromoteBody>) -> Response {
+    let tx = crate::gateway_runner::transport(&state);
+    match promote_vendor_memory(&state.db, tx.as_ref(), &user.user_id, &bot_id, &record_id, &b.scope).await {
+        Ok(v) => (StatusCode::OK, Json(v)).into_response(),
+        Err(e) => gw_err(e),
+    }
+}
+
 fn err_resp(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({ "error": message }))).into_response()
 }
@@ -1409,5 +1542,86 @@ mod tests {
         assert_eq!(v["bindings"].as_array().unwrap().len(), 2);
         let (_, other) = call(&st, "GET", "/execution-bindings", "user-b", None).await;
         assert_eq!(other["bindings"].as_array().unwrap().len(), 0);
+    }
+
+    // ---- vendor memory
+
+    struct Mem(Result<Value, (&'static str, &'static str)>);
+    #[async_trait::async_trait]
+    impl crate::gateway_runner::AaiTransport for Mem {
+        async fn call(&self, _o: &str, op: &str, _b: &Value, _i: Value) -> Result<Value, crate::gateway_runner::AaiError> {
+            assert_eq!(op, "agent.memory");
+            self.0.clone().map_err(|(c, m)| crate::gateway_runner::AaiError::new(c, m))
+        }
+    }
+
+    fn events(st: &Arc<AppState>, ty: &str) -> i64 {
+        st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM bot_events WHERE bot_id='bot-1' AND event_type=?1", params![ty], |r| r.get(0)).unwrap()
+    }
+
+    async fn bound(tag: &str) -> Arc<AppState> {
+        let st = setup(tag).await;
+        let aid = account(&st).await;
+        connect(&st, &aid).await;
+        bind(&st, "bot-1", &aid).await;
+        st
+    }
+
+    #[tokio::test]
+    async fn vendor_memory_readable_opaque_unavailable_and_native_404() {
+        let st = bound("vmem").await;
+        let ok = Mem(Ok(json!({ "records": [{ "id": "r1", "scope": "bot", "text": "likes tea", "remoteRef": "vm-1", "updatedAt": "2026-01-01" }, { "text": "no id" }] })));
+        let v = read_vendor_memory(&st.db, &ok, "user-a", "bot-1").await.unwrap();
+        assert_eq!((v["authority"].as_str(), v["observability"].as_str(), v["promotable"].as_bool()), (Some("vendor"), Some("readable"), Some(true)));
+        assert_eq!(v["records"].as_array().unwrap().len(), 1);
+        assert_eq!(v["records"][0]["remoteRef"], "vm-1");
+        // Opaque via reported flag and via the capability snapshot (no records either way).
+        let v = read_vendor_memory(&st.db, &Mem(Ok(json!({ "opaque": true }))), "user-a", "bot-1").await.unwrap();
+        assert_eq!((v["observability"].as_str(), v["promotable"].as_bool()), (Some("opaque"), Some(false)));
+        assert!(v.get("records").is_none());
+        let (s, _) = call(&st, "PATCH", "/bots/bot-1/execution-binding", "user-a", Some(json!({"capabilities": {"memory": {"opaque": true}}}))).await;
+        assert_eq!(s, StatusCode::OK);
+        let v = read_vendor_memory(&st.db, &Mem(Err(("INTERNAL", "must not be called"))), "user-a", "bot-1").await.unwrap();
+        assert_eq!(v["observability"], "opaque");
+        // Unsupported -> unavailable with a reason.
+        let v = read_vendor_memory(&st.db, &Mem(Err(("UNSUPPORTED", "no memory op"))), "user-a", "bot-2").await.unwrap_err();
+        assert_eq!(v.0, StatusCode::NOT_FOUND, "unbound/native bot");
+        let st2 = bound("vmem2").await;
+        let v = read_vendor_memory(&st2.db, &Mem(Err(("UNSUPPORTED", "no memory op"))), "user-a", "bot-1").await.unwrap();
+        assert_eq!((v["observability"].as_str(), v["reason"].as_str()), (Some("unavailable"), Some("no memory op")));
+    }
+
+    #[tokio::test]
+    async fn promote_creates_one_native_note_with_provenance_and_one_event() {
+        let st = bound("vprom").await;
+        let m = Mem(Ok(json!({ "records": [{ "id": "r1", "scope": "bot", "text": "likes tea", "remoteRef": "vm-1" }] })));
+        let (s0, _, _) = promote_vendor_memory(&st.db, &m, "user-a", "bot-1", "r1", "galaxy").await.unwrap_err();
+        assert_eq!(s0, StatusCode::BAD_REQUEST);
+        assert_eq!(promote_vendor_memory(&st.db, &m, "user-a", "bot-1", "nope", "bot").await.unwrap_err().0, StatusCode::NOT_FOUND);
+        assert_eq!(events(&st, "memory.promoted"), 0, "reading never promotes");
+        let v = promote_vendor_memory(&st.db, &m, "user-a", "bot-1", "r1", "project").await.unwrap();
+        assert_eq!(v["promoted"], true);
+        let again = promote_vendor_memory(&st.db, &m, "user-a", "bot-1", "r1", "project").await.unwrap();
+        assert_eq!(again["alreadyPromoted"], true);
+        let c = st.db.connect().unwrap();
+        let (n, tags, content): (i64, String, String) = c
+            .query_row("SELECT COUNT(*), MAX(tags), MAX(content) FROM memory_notes WHERE user_id='user-a'", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap();
+        assert_eq!((n, content.as_str()), (1, "likes tea"));
+        assert!(tags.contains("source:vendor") && tags.contains("vendor:openai") && tags.contains("remoteRef:vm-1"), "{tags}");
+        assert_eq!(events(&st, "memory.promoted"), 1);
+        // Opaque memory can never be promoted.
+        let o = Mem(Ok(json!({ "opaque": true })));
+        assert_eq!(promote_vendor_memory(&st.db, &o, "user-a", "bot-1", "r1", "bot").await.unwrap_err().0, StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn vendor_memory_is_owner_scoped() {
+        let st = bound("vown").await;
+        let m = Mem(Ok(json!({ "records": [{ "id": "r1", "text": "x" }] })));
+        assert_eq!(read_vendor_memory(&st.db, &m, "user-b", "bot-1").await.unwrap_err().0, StatusCode::NOT_FOUND);
+        assert_eq!(promote_vendor_memory(&st.db, &m, "user-b", "bot-1", "r1", "bot").await.unwrap_err().0, StatusCode::NOT_FOUND);
+        let (s, _) = call(&st, "GET", "/bots/bot-1/vendor-memory", "user-b", None).await;
+        assert!(s == StatusCode::NOT_FOUND, "{s}");
     }
 }
