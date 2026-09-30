@@ -1,0 +1,10 @@
+{
+  "schema_id": "allternit.kernel.CognitiveStateDescriptorV1",
+  "schema_version": "1.0.0",
+  "state_id": "id-0001",
+  "model_ref": "id-0001",
+  "model_revision": "x",
+  "context_fingerprint": "sha256:abababababababababababababababababababababababababababababababab",
+  "state_type": "NATIVE_KV",
+  "unknown_required_field": "x"
+}

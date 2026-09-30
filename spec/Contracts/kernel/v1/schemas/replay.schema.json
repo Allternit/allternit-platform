@@ -1,0 +1,249 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allternit.com/kernel/1.0.0/replay.schema.json",
+  "title": "Allternit Kernel ABI 1.0.0 — replay",
+  "$comment": "FROZEN 2026-09-30 (ABI Package 1.0.0). Authority: Living Architecture v1.4 > 07/09 > 02. Additive changes need a minor bump; breaking changes need 2.0.",
+  "$defs": {
+    "CassetteV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "cassette_id",
+        "run_id",
+        "graph_id",
+        "graph_version",
+        "abi_version",
+        "entries",
+        "run_receipt_hash"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.CassetteV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "cassette_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "graph_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "graph_version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "abi_version": {
+          "$ref": "common.schema.json#/$defs/AbiVersion"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "seq",
+              "node_id",
+              "boundary",
+              "request_hash",
+              "recorded_result_hash",
+              "result_ref"
+            ],
+            "properties": {
+              "seq": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "node_id": {
+                "$ref": "common.schema.json#/$defs/Id"
+              },
+              "boundary": {
+                "enum": [
+                  "DECISION",
+                  "TOOL",
+                  "CAPABILITY",
+                  "POLICY",
+                  "VERIFICATION",
+                  "MUTATION",
+                  "WAKE",
+                  "ATTENTION"
+                ]
+              },
+              "primitive_id": {
+                "anyOf": [
+                  {
+                    "$ref": "common.schema.json#/$defs/PrimitiveId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "request_hash": {
+                "$ref": "common.schema.json#/$defs/ContentHash"
+              },
+              "recorded_result_hash": {
+                "$ref": "common.schema.json#/$defs/ContentHash"
+              },
+              "result_ref": {
+                "$ref": "common.schema.json#/$defs/Id"
+              },
+              "effectful": {
+                "type": "boolean"
+              },
+              "branch_taken": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "receipt_ids": {
+                "type": "array",
+                "items": {
+                  "$ref": "common.schema.json#/$defs/Id"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "run_receipt_hash": {
+          "$ref": "common.schema.json#/$defs/ContentHash"
+        },
+        "created_at": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "CassetteV1",
+      "$comment": "Control-plane replay at decision/tool boundaries; recorded content-addressed results replace external effects. Generative tokens need not reproduce."
+    },
+    "DivergenceReportV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "report_id",
+        "cassette_id",
+        "replay_run_id",
+        "verdict",
+        "divergences"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.DivergenceReportV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "report_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "cassette_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "replay_run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "verdict": {
+          "enum": [
+            "IDENTICAL",
+            "EXPECTED_DIVERGENCE",
+            "UNEXPECTED_DIVERGENCE"
+          ]
+        },
+        "divergences": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "seq",
+              "node_id",
+              "kind",
+              "expected"
+            ],
+            "properties": {
+              "seq": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "node_id": {
+                "$ref": "common.schema.json#/$defs/Id"
+              },
+              "kind": {
+                "enum": [
+                  "BRANCH",
+                  "RESULT_HASH",
+                  "NODE_ORDER",
+                  "MISSING_ENTRY",
+                  "EXTRA_ENTRY",
+                  "POLICY_OUTCOME",
+                  "BACKEND_RESOLUTION"
+                ]
+              },
+              "expected": {
+                "type": "boolean"
+              },
+              "recorded": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "replayed": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "explanation": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "DivergenceReportV1"
+    }
+  }
+}

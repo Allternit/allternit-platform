@@ -1,0 +1,12 @@
+{
+  "schema_id": "allternit.kernel.ModelCapabilityProfileV1",
+  "schema_version": "1.0.0",
+  "model_id": "id-0001",
+  "capabilities": [],
+  "context_limit": 0,
+  "trust_classes": [],
+  "residency": "PINNED",
+  "hidden_state_access": false,
+  "early_exit_support": false,
+  "logits_access": false
+}

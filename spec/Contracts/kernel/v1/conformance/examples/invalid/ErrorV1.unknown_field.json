@@ -1,0 +1,7 @@
+{
+  "family": "INPUT",
+  "code": "ERR_EXAMPLE",
+  "message": "x",
+  "retryable": false,
+  "unknown_required_field": "x"
+}

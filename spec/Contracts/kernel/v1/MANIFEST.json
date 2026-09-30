@@ -1,0 +1,754 @@
+{
+  "package": "allternit-kernel-abi",
+  "package_version": "1.0.0",
+  "status": "FROZEN",
+  "version_axes": {
+    "doc": "Living Architecture v1.4",
+    "abi_package": "1.0.0",
+    "runtime": "unbound (runtime versions declare required_abi_versions)",
+    "per_contract": "V-suffix in the contract name = major; schema_version (semver) per contract below"
+  },
+  "schema_base": "https://schemas.allternit.com/kernel/1.0.0/",
+  "authority": "Living Architecture v1.4 > 07 decisions + 09 disposition > 02 canonical contracts > this ABI (frozen 1.0.0) > conformance/reference packs > code > donors",
+  "evolution_rules": [
+    "breaking change = new major (V2)",
+    "unknown required field/enum fails closed",
+    "unknown optional data preserved in `extensions` (x-* keys)",
+    "receipts append-only",
+    "every durable write increments state_version or records explicit no-op",
+    "additive change (new optional field, new enum member, new contract) = ABI minor bump (1.x.0); receivers fail closed on unknown enum values and unknown fields",
+    "breaking change to any contract = ABI 2.0.0",
+    "frozen files are never edited in place; errata go into a patch release (1.0.x) that does not change validation results"
+  ],
+  "notes": {
+    "wih_projection": "Q3: the WIH DAG is a read-only projection of ComputeGraphIRV1 (node -> WIH task, edge -> dependency). No WIH schema is part of the ABI and nothing parses a WIH DAG back into a graph.",
+    "store_split": "Q2: AgentStateV1 (agent_state.schema.json) = semantic truth; work.schema.json + campaign.schema.json + attention.schema.json = Work Runtime ledger. Cross-refs via common StateVersionRef.",
+    "deferred": [
+      "DeploymentProfileV1 (ABI 1.1; bundle carries opaque deployment_profiles ids)",
+      "DatasetReceiptV1",
+      "DecisionCalibrationManifest deep content (WP8; gate fields are in 1.0.0)",
+      "PrimitivePackManifestV1 (ABI 1.1; referenced by opaque ids active_packs / bundle.primitive_packs)",
+      "DecisionBankManifestV1 (ABI 1.1; referenced by opaque decision_bank_id / bundle.decision_banks)",
+      "API v0.3 content_hash prefix alignment (sha256:<hex>) — API change, tracked outside the ABI package"
+    ]
+  },
+  "registries": {
+    "primitives": "registry/primitives.json",
+    "completion_criteria": "data/completion_criteria.builtin.v1.json",
+    "completion_policies": [
+      "data/completion_policy.bug_fix.v1.json"
+    ]
+  },
+  "contracts": [
+    {
+      "file": "common.schema.json",
+      "def": "AbiEnvelopeV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:common.AbiEnvelopeV1",
+      "source": "02 §3",
+      "envelope": false
+    },
+    {
+      "file": "common.schema.json",
+      "def": "ErrorV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "02 §31",
+      "envelope": false
+    },
+    {
+      "file": "task_ir.schema.json",
+      "def": "TaskIRV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:task_ir.TaskIRV1",
+      "source": "02 §6; 07 Q4/Q8",
+      "envelope": false
+    },
+    {
+      "file": "agent_state.schema.json",
+      "def": "AgentStateV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:agent_state (seed status enum removed)",
+      "source": "02 §5; 07 Q2; 09 B#25",
+      "envelope": false
+    },
+    {
+      "file": "graph.schema.json",
+      "def": "ComputeGraphIRV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:graph.ComputeGraphIRV1",
+      "source": "02 §7; 07 Q3; 09 B#9,B#24,C#9",
+      "envelope": false
+    },
+    {
+      "file": "primitive.schema.json",
+      "def": "PrimitiveDescriptorV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:primitive (Primitive Plugin ABI)",
+      "source": "02 §8; 09 A#22",
+      "envelope": false
+    },
+    {
+      "file": "primitive.schema.json",
+      "def": "PrimitiveMaturityV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "keep+modify:primitive_maturity",
+      "source": "02 §9; 07 Q22",
+      "envelope": false
+    },
+    {
+      "file": "primitive.schema.json",
+      "def": "PrimitiveRegistryV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "09 A#22",
+      "envelope": false
+    },
+    {
+      "file": "decision.schema.json",
+      "def": "DecisionRequestV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:decision.DecisionRequestV1",
+      "source": "02 §9; 09 B#5,C#5",
+      "envelope": true
+    },
+    {
+      "file": "decision.schema.json",
+      "def": "DecisionResultV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:decision.DecisionResultV1",
+      "source": "02 §9; 07 Q22",
+      "envelope": true
+    },
+    {
+      "file": "decision.schema.json",
+      "def": "DecisionDeploymentUnitV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:decision_backend.DecisionDeploymentUnitV1",
+      "source": "02 §9",
+      "envelope": false
+    },
+    {
+      "file": "decision.schema.json",
+      "def": "DecisionBackendProfileV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:decision_backend.DecisionBackendProfileV1",
+      "source": "02 §9",
+      "envelope": false
+    },
+    {
+      "file": "decision.schema.json",
+      "def": "DecisionReadoutProfileV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "keep+modify:decision_readout",
+      "source": "02 §9",
+      "envelope": false
+    },
+    {
+      "file": "decision.schema.json",
+      "def": "DecisionCalibrationManifestV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "replace:calibration",
+      "source": "07 Q22; 09 B#26",
+      "envelope": false
+    },
+    {
+      "file": "decision.schema.json",
+      "def": "ArtifactRecordV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:artifact_record",
+      "source": "02 §9 (artifact store)",
+      "envelope": false
+    },
+    {
+      "file": "capability.schema.json",
+      "def": "CapabilityRequestV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:capability.CapabilityRequestV1",
+      "source": "02 §11",
+      "envelope": false
+    },
+    {
+      "file": "capability.schema.json",
+      "def": "ModelCapabilityProfileV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:capability.ModelCapabilityProfileV1",
+      "source": "02 §11; 07 Q15",
+      "envelope": false
+    },
+    {
+      "file": "capability.schema.json",
+      "def": "ModelPoolEntryV1",
+      "contract_version": "V1 (ModelPool v1.2 component)",
+      "schema_version": "1.0.0",
+      "seed": "keep:model_pool (capability ids now pattern-checked)",
+      "source": "02 §11; 09 C#17",
+      "envelope": false
+    },
+    {
+      "file": "capability.schema.json",
+      "def": "ExecutionPlanV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "keep+modify:execution_plan",
+      "source": "02 §10/§29",
+      "envelope": false
+    },
+    {
+      "file": "state_transfer.schema.json",
+      "def": "CognitiveStateDescriptorV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:state_transfer",
+      "source": "02 §12",
+      "envelope": false
+    },
+    {
+      "file": "state_transfer.schema.json",
+      "def": "StateTransferRequestV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:state_transfer",
+      "source": "02 §12",
+      "envelope": true
+    },
+    {
+      "file": "state_transfer.schema.json",
+      "def": "StateTransferReceiptV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:state_transfer",
+      "source": "02 §12; 09 C#16",
+      "envelope": true
+    },
+    {
+      "file": "context.schema.json",
+      "def": "ContextChunkV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:context.ContextChunkV1",
+      "source": "02 §13",
+      "envelope": false
+    },
+    {
+      "file": "context.schema.json",
+      "def": "ContextVisibilityDecisionV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:context.ContextProjectionV1.items",
+      "source": "02 §13",
+      "envelope": false
+    },
+    {
+      "file": "context.schema.json",
+      "def": "ContextProjectionV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:context.ContextProjectionV1",
+      "source": "02 §13; 09 B#30",
+      "envelope": false
+    },
+    {
+      "file": "tool.schema.json",
+      "def": "ToolInvocationV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:tool.ToolInvocationV1",
+      "source": "02 §14/§17; 09 A#29",
+      "envelope": true
+    },
+    {
+      "file": "tool.schema.json",
+      "def": "ToolReceiptV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:tool.ToolReceiptV1",
+      "source": "02 §14",
+      "envelope": true
+    },
+    {
+      "file": "tool.schema.json",
+      "def": "RecoveryDecisionV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "09 A#29",
+      "envelope": true
+    },
+    {
+      "file": "mutation.schema.json",
+      "def": "MutationRequestV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "replace:mutation.MutationRequestV1",
+      "source": "02 §15; 07 Q5",
+      "envelope": true
+    },
+    {
+      "file": "mutation.schema.json",
+      "def": "MutationReceiptV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:mutation.MutationReceiptV1",
+      "source": "02 §15; 07 Q5",
+      "envelope": true
+    },
+    {
+      "file": "verification.schema.json",
+      "def": "VerificationRequestV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:verification.VerificationRequestV1",
+      "source": "02 §16",
+      "envelope": true
+    },
+    {
+      "file": "verification.schema.json",
+      "def": "VerificationReceiptV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:verification.VerificationReceiptV1",
+      "source": "02 §16",
+      "envelope": true
+    },
+    {
+      "file": "policy.schema.json",
+      "def": "PolicyCheckV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:policy.PolicyCheckV1",
+      "source": "02 §17; 09 B#12",
+      "envelope": true
+    },
+    {
+      "file": "policy.schema.json",
+      "def": "PolicyDecisionV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:policy.PolicyDecisionV1",
+      "source": "02 §17; 09 B#12",
+      "envelope": true
+    },
+    {
+      "file": "policy.schema.json",
+      "def": "AuthorityProfileV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "07 Q12",
+      "envelope": false
+    },
+    {
+      "file": "receipts.schema.json",
+      "def": "ActionReceiptV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "02 §18; 09 B#13",
+      "envelope": true
+    },
+    {
+      "file": "receipts.schema.json",
+      "def": "PolicyReceiptV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "02 §17-18; 09 B#13",
+      "envelope": true
+    },
+    {
+      "file": "receipts.schema.json",
+      "def": "SpawnReceiptV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "02 §22; 09 B#13",
+      "envelope": true
+    },
+    {
+      "file": "receipts.schema.json",
+      "def": "RunReceiptV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "replace:telemetry.RunReceiptV1",
+      "source": "02 §18; 07 Q7/Q14",
+      "envelope": true
+    },
+    {
+      "file": "receipts.schema.json",
+      "def": "TraceEventV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:telemetry.TraceEventV1",
+      "source": "02 §18",
+      "envelope": true
+    },
+    {
+      "file": "work.schema.json",
+      "def": "WorkNodeLifecycleV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "02 §19; 07 Q2/Q7",
+      "envelope": false
+    },
+    {
+      "file": "work.schema.json",
+      "def": "WorkNodeTransitionV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "02 §19",
+      "envelope": false
+    },
+    {
+      "file": "work.schema.json",
+      "def": "WorkRunRecordV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "07 Q2/Q9/Q11; 09 A#28",
+      "envelope": false
+    },
+    {
+      "file": "work.schema.json",
+      "def": "NodeOutputV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "02 §20",
+      "envelope": false
+    },
+    {
+      "file": "work.schema.json",
+      "def": "LeaseV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "02 §21",
+      "envelope": false
+    },
+    {
+      "file": "work.schema.json",
+      "def": "AdmissionRequestV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "02 §22",
+      "envelope": false
+    },
+    {
+      "file": "work.schema.json",
+      "def": "AdmissionDecisionV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "02 §22",
+      "envelope": false
+    },
+    {
+      "file": "work.schema.json",
+      "def": "ExecutorProbeV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "02 §22",
+      "envelope": false
+    },
+    {
+      "file": "campaign.schema.json",
+      "def": "WakePolicyV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "02 §24; API v0.3 WakePolicy",
+      "envelope": false
+    },
+    {
+      "file": "campaign.schema.json",
+      "def": "WaitGateV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "02 §24; 09 B#14",
+      "envelope": false
+    },
+    {
+      "file": "campaign.schema.json",
+      "def": "WakeEventV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "02 §24; 07 Q19",
+      "envelope": false
+    },
+    {
+      "file": "campaign.schema.json",
+      "def": "CampaignV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "02 §23; 07 Q2/Q11/Q15/Q19; API v0.3 Campaign",
+      "envelope": false
+    },
+    {
+      "file": "attention.schema.json",
+      "def": "AttentionPolicyV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "API v0.3 AttentionPolicy; 07 Q15",
+      "envelope": false
+    },
+    {
+      "file": "attention.schema.json",
+      "def": "AttentionRequestV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "02 §25; 07 Q11/Q15; API v0.3 AttentionRequest",
+      "envelope": true
+    },
+    {
+      "file": "attention.schema.json",
+      "def": "AttentionResolutionV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "API v0.3 AttentionResolution",
+      "envelope": false
+    },
+    {
+      "file": "environment.schema.json",
+      "def": "ExecutionEnvironmentV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "02 §26",
+      "envelope": false
+    },
+    {
+      "file": "environment.schema.json",
+      "def": "NetworkAccessPolicyV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "02 §26; 07 Q15; API v0.3 NetworkPolicy",
+      "envelope": false
+    },
+    {
+      "file": "completion.schema.json",
+      "def": "CompletionCriterionV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "07 Q8; API v0.3 CompletionCriterion",
+      "envelope": false
+    },
+    {
+      "file": "completion.schema.json",
+      "def": "CompletionPolicyV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "07 Q4/Q7/Q8; 02 §27",
+      "envelope": false
+    },
+    {
+      "file": "completion.schema.json",
+      "def": "CompletionProposalV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "02 §27; 09 B#11",
+      "envelope": true
+    },
+    {
+      "file": "completion.schema.json",
+      "def": "CompletionDecisionV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "02 §27; 07 Q7/Q18; 09 B#11",
+      "envelope": true
+    },
+    {
+      "file": "replay.schema.json",
+      "def": "CassetteV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "02 §28; 09 B#15",
+      "envelope": false
+    },
+    {
+      "file": "replay.schema.json",
+      "def": "DivergenceReportV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "02 §28; 09 B#15",
+      "envelope": false
+    },
+    {
+      "file": "bundle.schema.json",
+      "def": "CompositeModelBundleV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "modify:bundle",
+      "source": "02 §30; 09 A#18,B#26",
+      "envelope": false
+    },
+    {
+      "file": "bundle.schema.json",
+      "def": "AgentBundleManifestV1",
+      "contract_version": "V1",
+      "schema_version": "1.0.0",
+      "seed": "new",
+      "source": "09 A#28",
+      "envelope": false
+    }
+  ],
+  "frozen_date": "2026-09-30",
+  "approved_by": "Eoj, 2026-09-30 (09-v1.4-disposition.md §E)",
+  "decisions": {
+    "Q1": "191 primitive ids (ledger CL-021..CL-094)",
+    "Q2": "no gen.*/vcs.* namespaces; generation in domain namespace with class G; VCS under obs.vcs.*/mut.vcs.*",
+    "Q3": "closed contracts (additionalProperties:false) + extensions map with x-* keys on every closed $defs object",
+    "Q4": "hashes sha256:<64 hex>; timestamps RFC 3339 strings",
+    "Q5": "AgentStateV1 drops locks (LeaseV1.scope owns locks); budgets = resolved limits only; user_visible_status display-only",
+    "Q6": "Primitive Pack + decision-bank manifests DEFERRED to 1.1; BUG_FIX pack shipped as data",
+    "Q7": "class legend D/S/G/V/P/M/R per §1; unconfirmed per-id classes null"
+  },
+  "ownership": {
+    "_rule": "Q2 store split: every mutable field path has exactly one authoritative owner contract. Other contracts link to it only through *_ref / *_id fields (Id or StateVersionRef), never embedded copies. Receipts are append-only and own nothing mutable. Version stamps (state_version, work_state_version) are per-record write stamps, not owned state.",
+    "semantic_state": {
+      "owner": "AgentStateV1",
+      "fields": [
+        "user_intent",
+        "acceptance",
+        "constraints",
+        "environment",
+        "repository",
+        "active_packs",
+        "plan",
+        "graph_cursor",
+        "hypotheses",
+        "candidate_targets",
+        "selected_targets",
+        "context_index",
+        "relevant_context",
+        "generated_artifacts",
+        "mutations",
+        "command_history",
+        "diagnostics",
+        "verification",
+        "unresolved_failures",
+        "evidence",
+        "permissions",
+        "model_state",
+        "subgoals",
+        "completion",
+        "instruction_predicates",
+        "sensitivity_labels",
+        "retrieval_snapshot_refs",
+        "user_visible_status"
+      ]
+    },
+    "run_budget_resolved_limits": {
+      "owner": "AgentStateV1",
+      "fields": [
+        "budgets"
+      ]
+    },
+    "node_lifecycle": {
+      "owner": "WorkNodeLifecycleV1",
+      "fields": [
+        "state",
+        "close_outcome",
+        "attempt"
+      ]
+    },
+    "lease_and_locks": {
+      "owner": "LeaseV1",
+      "fields": [
+        "holder",
+        "host",
+        "process_or_session",
+        "scope",
+        "heartbeat_at",
+        "expires_after_ms",
+        "reclaim_policy"
+      ]
+    },
+    "node_output": {
+      "owner": "NodeOutputV1",
+      "fields": [
+        "artifact_id",
+        "hash",
+        "verification_status"
+      ]
+    },
+    "campaign": {
+      "owner": "CampaignV1",
+      "fields": [
+        "status",
+        "objective",
+        "budget",
+        "next_wake",
+        "last_wake",
+        "active_run_ids",
+        "scheduling",
+        "wake_policy",
+        "attention_policy"
+      ]
+    }
+  },
+  "files": {
+    "data/completion_criteria.builtin.v1.json": "sha256:0152ed5f96d3da9928ae7a5949d0129bcf2475cf93fdc0583dde4adb882fc094",
+    "data/completion_policy.bug_fix.v1.json": "sha256:1a8bff9329c1ce0b7a418a6537fbaac215f0e9bf3068b70802f547c48b6a83b6",
+    "generated/rust/Cargo.toml": "sha256:d41b2586323d1a4dba718805c2f661584f98232f57861a64cd347fa96f43c75d",
+    "generated/rust/src/generated.rs": "sha256:f882650ea99d9bd39be5fdeb26fe0e2868ee1c2d7bc79dd3366f599df26bf388",
+    "generated/rust/src/lib.rs": "sha256:677c67e8f5185b2d252cbd27a84af0b7514c6bd001eb1633e6658d65fce911fa",
+    "generated/ts/kernel-abi.d.ts": "sha256:46198548d090efdb34c7fbf32e0b173005459618bf42f1c8e1e32d9568218f4c",
+    "registry/primitives.json": "sha256:1a7db9d5f3a9a20fa1a3641c8d84d84acca0c271910cb89cd1705602064c282e",
+    "schemas/agent_state.schema.json": "sha256:65b40fcf955385213ebf7590a7b3ce894691521c50cef53216012dc09a9eb051",
+    "schemas/attention.schema.json": "sha256:41b6479d8179e298473fa43f60729555b0bf94bf437b317418e7a121f34e2cb4",
+    "schemas/bundle.schema.json": "sha256:9a72edbf6ef9cc7026d1bef249fe1530c5ce594bbe4b3cffe33f1972a9159558",
+    "schemas/campaign.schema.json": "sha256:be3a6cfbc94e19c0cc91c8ac0e3506c674a03ea0c2715fc509b4bae048fc569c",
+    "schemas/capability.schema.json": "sha256:b8068b67f78690c39ea776c75479e84d1eeba9142dd937ab93054587becf3e9c",
+    "schemas/common.schema.json": "sha256:eee29da9fe2d2b689845e8f79fafdf3d1c245c9f33589501c44dbdece9d0abaf",
+    "schemas/completion.schema.json": "sha256:2770be6702ec7387a9e1bae6ed867fb6dd8ac67ef7041b80c976d404183df931",
+    "schemas/context.schema.json": "sha256:8d551800fc53d40eec26c2a54ed1e9573d5a1fde749c5ef5afd5dd8e849eaaa8",
+    "schemas/decision.schema.json": "sha256:8e63737d1751746f9500c81a53a470dbec40c3d0bec4c55c7d4bb522372cb1ec",
+    "schemas/environment.schema.json": "sha256:5e5629001f7fff927996fac3f9e8acabc050447f7b0ea62936337bfec29ebe07",
+    "schemas/graph.schema.json": "sha256:888066bf96104a26c86c0d7b1407b3e7b48d589e9ef41ee313131b0e38ed14d1",
+    "schemas/mutation.schema.json": "sha256:f8da4165ab5f9440ebb251e8bc478ca889e0ceb6e41738c40e1182e7ed06e195",
+    "schemas/policy.schema.json": "sha256:135d0c08655e96d53efd7495d571136277be2c3681398e4f3c55f69dfd68a3a0",
+    "schemas/primitive.schema.json": "sha256:9c26b368b235502ad391aaef7f47b7cd850aa84803ef22dd25a6e3abe42e3057",
+    "schemas/receipts.schema.json": "sha256:8a0012398eb61ac88732006d331bde11eb7409a610a02ebdf035bccce6b65e5f",
+    "schemas/replay.schema.json": "sha256:af9a314fc0d32061e7ae2da759440cae3ffe6fbf4f4d75a7eb73ab4a5f5296b5",
+    "schemas/state_transfer.schema.json": "sha256:e91fba1441f2fb727f82c2bcef502440bf18981a177bf46594e619d111d0a7ed",
+    "schemas/task_ir.schema.json": "sha256:8a7eaf7c9e78604e7fba109af0b4169eff3b1f45d84df14ff7f378e912664506",
+    "schemas/tool.schema.json": "sha256:0b0c076e721d86f805d3a16f28f4c7cb5ded57ef51609470a3a3faf0cb68d861",
+    "schemas/verification.schema.json": "sha256:582f335ede1cabd8b0a10d22262abb667f9fe3ef4402a5dc198de92505d1e8b3",
+    "schemas/work.schema.json": "sha256:d1c4809a80909400c34bf113d0af4e70092a831b70dee1ee578246072beada5c"
+  }
+}

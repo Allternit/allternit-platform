@@ -1,0 +1,13 @@
+{
+  "schema_id": "allternit.kernel.CompletionCriterionV1",
+  "schema_version": "1.0.0",
+  "criterion_id": "target_tests_pass",
+  "criterion_version": 1,
+  "verifier_kind": "parse",
+  "verifier_semantics": "x",
+  "evidence_kinds": [
+    "x"
+  ],
+  "built_in": false,
+  "unknown_required_field": "x"
+}

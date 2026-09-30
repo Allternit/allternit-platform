@@ -1,0 +1,350 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allternit.com/kernel/1.0.0/attention.schema.json",
+  "title": "Allternit Kernel ABI 1.0.0 — attention",
+  "$comment": "FROZEN 2026-09-30 (ABI Package 1.0.0). Authority: Living Architecture v1.4 > 07/09 > 02. Additive changes need a minor bump; breaking changes need 2.0.",
+  "$defs": {
+    "AttentionPolicyV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "channels",
+        "max_per_hour",
+        "max_per_day",
+        "dedupe_window_seconds",
+        "defaults_version"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.AttentionPolicyV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "channels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "quiet_hours": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "interrupt_quiet_hours_at": {
+          "enum": [
+            "critical",
+            "never"
+          ]
+        },
+        "max_per_hour": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_per_day": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dedupe_window_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "escalate_after_seconds": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defaults_version": {
+          "type": "string"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "AttentionPolicyV1"
+    },
+    "AttentionRequestV1": {
+      "type": "object",
+      "required": [
+        "envelope",
+        "attention_id",
+        "run_id",
+        "kind",
+        "reason",
+        "urgency",
+        "expected_loss",
+        "topic",
+        "dedupe_key",
+        "response_options",
+        "status",
+        "evidence_refs",
+        "on_expiry"
+      ],
+      "properties": {
+        "envelope": {
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/AbiEnvelopeV1"
+            },
+            {
+              "properties": {
+                "schema_id": {
+                  "const": "allternit.kernel.AttentionRequestV1"
+                }
+              }
+            }
+          ]
+        },
+        "attention_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "campaign_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "enum": [
+            "approval",
+            "informational"
+          ]
+        },
+        "reason": {
+          "enum": [
+            "approval_required",
+            "clarification_needed",
+            "budget_exhausted",
+            "verification_inconclusive",
+            "low_confidence",
+            "unsafe_resume",
+            "review_requested"
+          ]
+        },
+        "urgency": {
+          "enum": [
+            "low",
+            "normal",
+            "high",
+            "critical"
+          ]
+        },
+        "expected_loss": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "topic": {
+          "type": "string"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "requested_channel": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dedupe_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "on_expiry": {
+          "enum": [
+            "reject",
+            "none"
+          ]
+        },
+        "response_options": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "approval",
+              "rejection",
+              "data",
+              "message"
+            ]
+          },
+          "minItems": 1
+        },
+        "policy_decision_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/EvidenceRef"
+          }
+        },
+        "status": {
+          "enum": [
+            "open",
+            "resolved",
+            "expired",
+            "withdrawn"
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "AttentionRequestV1",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "approval"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "on_expiry": {
+                "const": "reject"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "informational"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "on_expiry": {
+                "const": "none"
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "Agents request attention; they never deliver push/email/chat themselves. Expired approval = rejection; expired informational = no semantic outcome (Q15)."
+    },
+    "AttentionResolutionV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "attention_id",
+        "type",
+        "outcome",
+        "resolved_at",
+        "receipt_id"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.AttentionResolutionV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "attention_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "type": {
+          "enum": [
+            "approval",
+            "rejection",
+            "data",
+            "message",
+            "expired",
+            "withdrawn"
+          ]
+        },
+        "outcome": {
+          "enum": [
+            "approved",
+            "rejected",
+            "answered",
+            "none"
+          ]
+        },
+        "resolved_by": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "value": {},
+        "resolved_at": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "receipt_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "AttentionResolutionV1"
+    }
+  }
+}

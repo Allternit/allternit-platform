@@ -1,0 +1,461 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allternit.com/kernel/1.0.0/campaign.schema.json",
+  "title": "Allternit Kernel ABI 1.0.0 — campaign",
+  "$comment": "FROZEN 2026-09-30 (ABI Package 1.0.0). Authority: Living Architecture v1.4 > 07/09 > 02. Additive changes need a minor bump; breaking changes need 2.0.",
+  "$defs": {
+    "WakeTrigger": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "TIMER",
+            "EVENT",
+            "DEPENDENCY",
+            "MANUAL",
+            "ATTENTION_RESOLVED"
+          ]
+        },
+        "interval_seconds": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "at": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "event_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dependency_ref": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false
+    },
+    "WakePolicyV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "triggers",
+        "min_interval_seconds",
+        "max_wakes_per_day",
+        "skip_if_run_active",
+        "defaults_version"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.WakePolicyV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "triggers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WakeTrigger"
+          },
+          "minItems": 1
+        },
+        "min_interval_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_wakes_per_day": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "skip_if_run_active": {
+          "type": "boolean"
+        },
+        "until": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defaults_version": {
+          "type": "string"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "WakePolicyV1"
+    },
+    "WaitGateV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "gate_id",
+        "kind",
+        "wake_key",
+        "status"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.WaitGateV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "gate_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "kind": {
+          "enum": [
+            "TIMER",
+            "EVENT",
+            "DEPENDENCY",
+            "MANUAL",
+            "ATTENTION"
+          ]
+        },
+        "wake_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "not_before": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "on_expiry": {
+          "enum": [
+            "FAIL_NODE",
+            "CONTINUE",
+            "NEEDS_HUMAN"
+          ]
+        },
+        "status": {
+          "enum": [
+            "ARMED",
+            "FIRED",
+            "EXPIRED",
+            "CANCELLED"
+          ]
+        },
+        "attention_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "WaitGateV1",
+      "$comment": "Attached to GraphNodeV1(node_kind=WAIT). A waiting run holds no lease and cannot spend."
+    },
+    "WakeEventV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "wake_id",
+        "wake_key",
+        "source",
+        "fired_at",
+        "targets"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.WakeEventV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "wake_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "wake_key": {
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "TIMER",
+            "EVENT",
+            "DEPENDENCY",
+            "MANUAL",
+            "ATTENTION"
+          ]
+        },
+        "fired_at": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "id"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "WAIT_GATE",
+                  "CAMPAIGN"
+                ]
+              },
+              "id": {
+                "$ref": "common.schema.json#/$defs/Id"
+              }
+            },
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "aggregated_count": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scheduling_enabled": {
+          "type": "boolean"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "WakeEventV1",
+      "$comment": "WakeController contract. Q19: scheduled (TIMER-sourced campaign) wakes are refused while scheduling is disabled_pending_golive."
+    },
+    "CampaignV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "campaign_id",
+        "objective",
+        "graph_template",
+        "agent_state_ref",
+        "budget",
+        "wake_policy",
+        "attention_policy",
+        "completion_criteria",
+        "next_wake",
+        "owner",
+        "status",
+        "scheduling",
+        "defaults_version"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.CampaignV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "campaign_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "objective": {
+          "type": "string",
+          "minLength": 1
+        },
+        "graph_template": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "agent_state_ref": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/StateVersionRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "budget": {
+          "type": "object",
+          "required": [
+            "per_run",
+            "on_exhaustion"
+          ],
+          "properties": {
+            "per_run": {
+              "$ref": "common.schema.json#/$defs/ResourceBudget"
+            },
+            "max_cost_units": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "max_runs": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "on_exhaustion": {
+              "enum": [
+                "REQUEST_ATTENTION",
+                "STOP"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "wake_policy": {
+          "$ref": "#/$defs/WakePolicyV1"
+        },
+        "attention_policy": {
+          "$ref": "attention.schema.json#/$defs/AttentionPolicyV1"
+        },
+        "completion_criteria": {
+          "$ref": "completion.schema.json#/$defs/CompletionPolicyRef"
+        },
+        "next_wake": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_wake": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "owner": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "sleeping",
+            "running",
+            "needs_attention",
+            "paused",
+            "completed",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "active_run_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "scheduling": {
+          "enum": [
+            "disabled_pending_golive",
+            "enabled"
+          ]
+        },
+        "defaults_version": {
+          "type": "string"
+        },
+        "work_state_version": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/StateVersion"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "CampaignV1",
+      "$comment": "Work-ledger owned (Q2). `state` from §53.4 is not a field: semantic state lives in AgentState, referenced by agent_state_ref. completed = criteria met by receipts."
+    }
+  }
+}
