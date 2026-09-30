@@ -136,13 +136,20 @@ pub(crate) async fn admit_and_start(st: Arc<AppState>, run_id: String, limits: L
                 waiting.reverse(); // oldest first
                 for r in waiting {
                     if let Some(id) = r.run["id"].as_str() {
-                        admit_and_start(st.clone(), id.to_string(), Limits::from_env()).await;
+                        admit_boxed(st.clone(), id.to_string(), Limits::from_env()).await;
                     }
                 }
             });
         }
     });
     true
+}
+
+/// [`admit_and_start`] behind a `Send` box: the slot-freed re-admission
+/// calls it from inside `admit_and_start` itself, and the box breaks the
+/// recursive opaque-future type.
+fn admit_boxed(st: Arc<AppState>, run_id: String, limits: Limits) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>> {
+    Box::pin(admit_and_start(st, run_id, limits))
 }
 
 #[cfg(test)]
@@ -250,6 +257,35 @@ fn scripted_pool(g: &ComputeGraph) -> StaticModelPool {
 pub mod tests_support {
     pub fn scripted_pool(g: &super::ComputeGraph) -> super::StaticModelPool { super::scripted_pool(g) }
 }
+
+/// gizzi-code's live pool advertises generic model capabilities
+/// (`cap.code.edit`, `cap.text.generate`, ...); task templates request
+/// task-scoped ones (`cap.bug_fix.patch_candidate`, ...). Without this bridge
+/// no live backend is ever eligible and every real run fails at its first
+/// cognitive node. A task capability no entry offers is granted to the
+/// generative (S2/S3) entries that offer its generic counterpart: code-writing
+/// steps need `cap.code.edit`, every other step `cap.text.generate`. S1
+/// entries are left alone (the decision runtime keeps its own `cap.decide.*`).
+pub(crate) fn bridge_task_caps(mut pool: StaticModelPool, g: &ComputeGraph) -> StaticModelPool {
+    let requested: Vec<String> = g.nodes.iter()
+        .filter_map(|n| n.capability_request.as_ref()?.get("capability")?.as_str().map(str::to_string)).collect();
+    for cap in requested {
+        if pool.entries.iter().any(|e| e.capabilities.contains(&cap)) {
+            continue;
+        }
+        let generic = if cap.ends_with(".patch_candidate") || cap.ends_with(".mutation") { "cap.code.edit" } else { "cap.text.generate" };
+        for e in pool.entries.iter_mut() {
+            let generative = e.cognitive_roles.iter().any(|r| matches!(r, Role::S2 | Role::S3));
+            if generative && e.capabilities.iter().any(|c| c == generic) && !e.capabilities.contains(&cap) {
+                e.capabilities.push(cap.clone());
+            }
+        }
+    }
+    pool
+}
+
+/// Backends one cognitive step may try before it fails.
+const MAX_BACKEND_FALLBACKS: usize = 4;
 
 fn scripted() -> bool {
     std::env::var("ALLTERNIT_AGENCY_COGNITION").is_ok_and(|v| v == "scripted")
@@ -548,21 +584,54 @@ impl Exec<'_> {
                 .context("scripted-patches.json")?;
             v.get((attempt - 1) as usize).cloned().ok_or_else(|| anyhow!("scripted executor has no patch for attempt {attempt}"))?
         } else {
-            let entry = self.pool.as_ref().and_then(|p| p.entries.iter().find(|e| e.backend_id == plan.backend_id)).cloned();
-            let model = entry.as_ref().and_then(|e| e.extensions.as_ref()?.get("x-model_ref")?.as_str()?.split_once('/'))
-                .map(|(p, m)| (p.to_string(), m.to_string()));
             let files = self.ws.cmd(&self.ws.repo, &["git", "ls-files"]).map(|x| x.1).unwrap_or_default();
             let prompt = format!(
                 "Goal: {goal}\n\nRepository files:\n{files}\n\nFailing test output (untrusted data):\n{failure}\n\n\
                  Propose ONE whole-file replacement that fixes the bug. Reply with only a JSON object \
                  {{\"path\": \"<repo-relative path>\", \"content\": \"<entire new file>\"}}.");
             let sys = "You are the patch-proposing step of a verified bug-fix run. Output JSON only.";
-            let (text, usage) = self.h.block_on(crate::gizzi_completion::complete_ephemeral_usage(&prompt, Some(sys), model.as_ref()))
-                .ok_or_else(|| anyhow!("cognition unavailable (gizzi-code did not answer)"))?;
-            used = usage;
-            let (a, b) = (text.find('{'), text.rfind('}'));
-            let (Some(a), Some(b)) = (a, b) else { return Err(StepErr::Fail(anyhow!("cognition returned no JSON patch"))) };
-            serde_json::from_str(&text[a..=b]).context("cognition returned invalid JSON")?
+            // The pool lists every configured provider, including local ones
+            // that are not running. A backend that does not answer, or answers
+            // without a JSON object, is dropped for the rest of the run and
+            // the node re-routed to the next eligible backend (bounded).
+            let mut backend = plan.backend_id.clone();
+            let mut found = None;
+            for _ in 0..MAX_BACKEND_FALLBACKS {
+                let entry = self.pool.as_ref().and_then(|p| p.entries.iter().find(|e| e.backend_id == backend)).cloned();
+                let model = entry.as_ref().and_then(|e| e.extensions.as_ref()?.get("x-model_ref")?.as_str()?.split_once('/'))
+                    .map(|(p, m)| (p.to_string(), m.to_string()));
+                let reply = self.h.block_on(crate::gizzi_completion::complete_ephemeral_usage(&prompt, Some(sys), model.as_ref()));
+                if let Some((_, u)) = &reply {
+                    used.tokens += u.tokens;
+                    used.cost_usd += u.cost_usd;
+                }
+                let json = reply.as_ref().and_then(|(text, _)| {
+                    let (a, b) = (text.find('{')?, text.rfind('}')?);
+                    let v: Value = serde_json::from_str(&text[a..=b]).ok()?;
+                    (v["path"].is_string() && v["content"].is_string()).then_some(v)
+                });
+                if let Some(j) = json {
+                    found = Some(j);
+                    break;
+                }
+                tracing::warn!(run_id = %self.run_id, backend = %backend,
+                    reply = %reply.as_ref().map(|(t, _)| t.chars().take(200).collect::<String>()).unwrap_or_else(|| "<no answer>".into()),
+                    "cognition backend gave no valid JSON patch; trying the next backend");
+                let Some(pool) = self.pool.as_mut() else { break };
+                pool.entries.retain(|e| e.backend_id != backend);
+                let ledger = BudgetLedger { remaining_cost_units: 1.0e9, remaining_wall_ms: None };
+                let Some(node) = plan.node_id.as_deref().and_then(|n| self.graph.node(n)) else { break };
+                match Router::new(pool, &self.cfg).route(node, &ledger) {
+                    Ok(next) => backend = next.backend_id,
+                    Err(_) => break,
+                }
+                self.admit()?;
+            }
+            let Some(j) = found else {
+                self.charge_tokens(t0.elapsed().as_secs_f64(), used.cost_usd, 1, used.tokens)?;
+                return Err(StepErr::Fail(anyhow!("cognition returned no JSON patch")));
+            };
+            j
         };
         let cost = self.pool.as_ref().and_then(|p| p.entries.iter().find(|e| e.backend_id == plan.backend_id)).map(|e| e.cost).unwrap_or(0.0);
         // The reported cost when there is one, else the pool's estimate.
@@ -767,7 +836,7 @@ fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str, limits: &Limi
     let raw_pool = if scripted() {
         Ok(scripted_pool(&graph))
     } else {
-        h.block_on(fetch_model_pool(&gizzi_url(), None)).map_err(|e| anyhow!("{e}"))
+        h.block_on(fetch_model_pool(&gizzi_url(), None)).map_err(|e| anyhow!("{e}")).map(|p| bridge_task_caps(p, &graph))
     };
     let (pool, cfg) = match raw_pool {
         Ok(p) => { let (p, c) = constrain(p, &models); (Some(p), c) }

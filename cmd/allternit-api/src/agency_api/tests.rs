@@ -653,4 +653,86 @@ async fn agency_guard_global_daily_cap_counts_other_orgs_spend() {
     assert_eq!(rec.run["attention"]["title"], "budget cap reached");
     let evs = s.events(&id).await.unwrap();
     assert!(evs.iter().any(|e| e["type"] == "budget.threshold" && e["data"]["dimension"] == "daily_global_tokens"), "{evs:?}");
+    // The server's own caps (env defaults here) are not reached, so approving
+    // lifts the halt and re-queues the run; it stays `waiting` because
+    // execution is off in tests.
+    let att_id = rec.run["attention"]["id"].as_str().unwrap();
+    let (st, _, b) = call(&t.app, post(&format!("/v1/attention/{att_id}/responses"), "u2", None, json!({ "type": "approval" }))).await;
+    assert_eq!(st, StatusCode::OK, "{b}");
+    let v: Value = serde_json::from_str(&b).unwrap();
+    assert_eq!(v["run"]["status"], "waiting", "{v}");
+    assert_eq!(v["run"]["budget_usage"]["spend_halted"], false, "{v}");
+}
+
+/// Real-model local end-to-end: the same seeded-bug fixture as the scripted
+/// e2e, but cognition goes to the live gizzi-code at TERMINAL_SERVER_URL /
+/// 127.0.0.1:4096 with `locality: local_only` (no metered model can be
+/// routed). Opt-in: `AGENCY_REAL_MODEL_E2E=1 cargo test -p allternit-api --lib
+/// agency_real_model_local_e2e -- --ignored --exact --nocapture`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs a live gizzi-code with a local model"]
+async fn agency_real_model_local_e2e() {
+    if std::env::var("AGENCY_REAL_MODEL_E2E").as_deref() != Ok("1") {
+        eprintln!("AGENCY_REAL_MODEL_E2E!=1; skipping");
+        return;
+    }
+    let _ = tracing_subscriber::fmt().with_env_filter("allternit_api::agency_api=debug,allternit_api::gizzi_completion=debug").with_test_writer().try_init();
+    let repo = tempfile::tempdir().unwrap();
+    let runs = tempfile::tempdir().unwrap();
+    let w = |p: &str, c: &str| { let f = repo.path().join(p); std::fs::create_dir_all(f.parent().unwrap()).unwrap(); std::fs::write(f, c).unwrap(); };
+    w("package.json", r#"{"name":"fx","private":true,"scripts":{"test":"node test.js"}}"#);
+    w("math.js", "exports.add = (a, b) => a - b;\n");
+    w("test.js", "const { add } = require('./math');\nif (add(2, 3) !== 5 || add(-2, 3) !== 1) { console.error('FAIL'); process.exit(1); }\n");
+    let git = |args: &[&str]| assert!(std::process::Command::new("git").args(args).current_dir(repo.path())
+        .env("GIT_CONFIG_GLOBAL", "/dev/null").status().unwrap().success());
+    git(&["init", "-q", "-b", "main"]);
+    git(&["add", "."]);
+    git(&["-c", "user.name=f", "-c", "user.email=f@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "seeded bug"]);
+    std::env::remove_var("ALLTERNIT_AGENCY_COGNITION");
+    std::env::set_var("ALLTERNIT_AGENCY_RUNS_DIR", runs.path());
+    std::env::set_var("ALLTERNIT_AGENCY_LOCAL_REPOS", repo.path());
+
+    let t = setup().await;
+    let body = json!({ "goal": "Fix add so the tests pass", "workspace": { "repo": repo.path().display().to_string(), "ref": "main" },
+                       "models": { "locality": "local_only" },
+                       "budget": { "max_seconds": 900, "max_cost_usd": 0.5 } });
+    let (s, _, b) = call(&t.app, post("/v1/agency", "u1", Some("real-model-e2e-0001"), body)).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{b}");
+    let id = serde_json::from_str::<Value>(&b).unwrap()["id"].as_str().unwrap().to_string();
+    let l = limits(&[(guard::ORGS_ENV, "user:u1"), (guard::DAILY_ENV, "tokens=200000,usd=0.5"), (guard::ORG_DAILY_ENV, "tokens=200000,usd=0.5")]);
+    assert!(executor::admit_and_start(t.st.clone(), id.clone(), l).await);
+    let mut run = Value::Null;
+    for _ in 0..1800 {
+        let (_, _, b) = call(&t.app, get_req(&format!("/v1/runs/{id}"), "u1")).await;
+        run = serde_json::from_str(&b).unwrap();
+        if run["terminal"] == true || run["status"] == "needs_attention" { break; }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    let s = AgencyStore::new(t.st.rails.ledger.clone());
+    for e in s.events(&id).await.unwrap() {
+        eprintln!("EVENT {} {}", e["type"], e["data"].to_string().chars().take(300).collect::<String>());
+    }
+    eprintln!("RUN status={} completion={} usage={} reason={}", run["status"], run["completion"], run["budget_usage"], run["status_reason"]);
+    eprintln!("math.js now: {:?}", std::fs::read_to_string(repo.path().join("math.js")).ok());
+    assert_eq!(run["status"], "completed", "{run}");
+    assert_eq!(run["completion"]["status"], "verified");
+}
+
+#[test]
+fn agency_live_pool_bridges_task_caps_to_generic_model_caps() {
+    use allternit_commrails::kernel::router::Role;
+    let g = allternit_commrails::kernel::bug_fix::instantiate("task.bug_fix", &["fs:math.js".to_string()]).unwrap();
+    let mut pool = executor::tests_support::scripted_pool(&g);
+    for e in pool.entries.iter_mut() {
+        e.capabilities = vec!["cap.text.generate".into()];
+    }
+    pool.entries[0].capabilities.push("cap.code.edit".into());
+    let mut s1 = pool.entries[0].clone();
+    s1.cognitive_roles = vec![Role::S1];
+    pool.entries.push(s1);
+    let b = executor::bridge_task_caps(pool, &g);
+    let has = |i: usize, c: &str| b.entries[i].capabilities.iter().any(|x| x == c);
+    assert!(has(0, "cap.bug_fix.patch_candidate") && has(0, "cap.bug_fix.acceptance"));
+    assert!(!has(1, "cap.bug_fix.patch_candidate"), "no code.edit, no patch step");
+    assert!(b.entries.iter().filter(|e| e.cognitive_roles.iter().all(|r| *r == Role::S1)).all(|e| !e.capabilities.iter().any(|c| c.starts_with("cap.bug_fix."))), "S1 entries untouched");
 }
