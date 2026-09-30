@@ -1085,6 +1085,9 @@ async fn main() {
         // is nested at /api/v1 and made them /api/v1/v1/...).
         .merge(allternit_api::mcp_directory_routes::directory_router())
         .nest("/api", allternit_api::mcp_directory_routes::directory_router())
+        // Studio apps: same /v1/ convention as the directory routes.
+        .merge(allternit_api::studio_apps_routes::studio_router())
+        .nest("/api", allternit_api::studio_apps_routes::studio_router())
         .nest("/metrics", metrics_router())
         .nest("/api", h5i_router())
         .nest("/api", oauth_router())

@@ -192,6 +192,7 @@ pub mod mcp_dispatcher;
 pub mod mcp_directory_guard;
 pub mod mcp_directory_held;
 pub mod mcp_directory_routes;
+pub mod studio_apps_routes;
 pub mod mcp_routes;
 pub mod mcp_agents;
 pub mod mcp_server_routes;
