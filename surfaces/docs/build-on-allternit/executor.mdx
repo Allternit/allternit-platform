@@ -1,0 +1,32 @@
+---
+title: "Build an executor"
+description: "Run nodes inside an environment you cannot widen"
+---
+
+**Status: AVAILABLE (internal work runtime).** See [status labels](/architecture#status-labels).
+
+An executor is a process that receives a leased node, works inside its environment and returns outputs and evidence.
+
+## Architecture contract
+
+Take the lease and heartbeat while working. Read only allowed environment keys, write only inside the filesystem scope, and use the shared egress client. Produce outputs and evidence and stop; never mark the node done and never notify a person. The gate sits in front of your tool calls, through a pre-tool hook or by answering your permission requests over the Agent Client Protocol. If you offer neither, you run inside the environment fence only, which is a weaker guarantee.
+
+## Current implementation
+
+Executors are launched by the work runtime today. Registering a new executor type is an internal change.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Executor contract via work runtime | **AVAILABLE (internal)** |
+| Third-party executor registration | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+Support a pre-tool hook or ACP so the gate is not bypassed.
+
+## Related
+
+- [ExecutionEnvironment](/architecture/tools-execution/execution-environment)
+- [Leases](/architecture/work-runtime/leases)

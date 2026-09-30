@@ -1,0 +1,34 @@
+---
+title: "Build a primitive"
+description: "Describe a primitive operation with its authority, evidence and fallback"
+---
+
+**Status: AVAILABLE (contract and registry) · DESIGN — NOT YET IMPLEMENTED (third-party registration).** See [status labels](/architecture#status-labels).
+
+A primitive is one named operation in the instruction set with typed inputs and outputs.
+
+## Architecture contract
+
+A `PrimitiveDescriptorV1` declares an ID from the [registry](/reference/primitive-registry), input and output schemas, a class, an authority (propose, decide, verify or authorize), required evidence, failure modes, a fallback and an eval. No primitive may mint permissions, raise spend or skip a required verifier. Maturity starts low and rises only with evals.
+
+Validate against the schema in `spec/Contracts/kernel/v1/schemas/` before anything else. Receivers fail closed, so a document that does not validate is rejected, not repaired.
+
+## Current implementation
+
+The 191 registered IDs are fixed for ABI 1.0.0. A new ID is an additive change that needs a minor bump.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Descriptor and registry | **AVAILABLE (contract)** |
+| Registering a new primitive | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+Give every primitive a deterministic fallback.
+
+## Related
+
+- [Primitives](/architecture/cognitive-runtime/primitives)
+- [Contracts: primitive](/architecture/contracts/primitive)
