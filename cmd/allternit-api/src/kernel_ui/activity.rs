@@ -18,7 +18,7 @@ pub struct Q {
 
 fn hook_entry(p: &Value, at: &str) -> Value {
     let decision = p["decision"].as_str().unwrap_or("allow");
-    let result = if decision == "deny" { "blocked" } else { "recorded" };
+    let result = match decision { "deny" => "blocked", "ask" => "approval", _ => "recorded" };
     let reason = p["reason"].as_str().filter(|r| !r.is_empty()).map(|r| format!(": {r}")).unwrap_or_default();
     json!({ "at": at, "surface": format!("hook:{}", p["harness"].as_str().unwrap_or("harness")),
         "thread_ref": p["wih_id"].as_str().or(p["harness_session_id"].as_str()),

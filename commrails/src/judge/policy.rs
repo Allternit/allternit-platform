@@ -72,6 +72,43 @@ pub struct JudgePolicy {
     /// `~` allowed). Everything else on the blocklist stays blocked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allow_credential_read: Option<Vec<String>>,
+    /// Agent rules `approvals.outside_scope`: a write outside the declared
+    /// scope/lease becomes an `ask` (attention) instead of a deny.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ask_outside_scope: Option<bool>,
+    /// Agent rules `approvals.private_network`: a command or fetch to a
+    /// private (RFC1918 / ULA) address becomes an `ask`. Metadata and
+    /// link-local stay denied by the blocklist regardless.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ask_private_network: Option<bool>,
+    /// Agent rules `custom`: `when` is matched against tool, command and paths.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_rules: Option<Vec<CustomRule>>,
+}
+
+/// One user-defined rule (`when` = glob with `*`/`?`, or a plain substring).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CustomRule {
+    pub id: String,
+    #[serde(default)]
+    pub text: String,
+    pub when: String,
+    pub action: RuleAction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleAction {
+    Ask,
+    Deny,
+}
+
+/// The hook-side rule set resolved from a run's JudgePolicy.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuleSet {
+    pub ask_outside_scope: bool,
+    pub ask_private_network: bool,
+    pub custom: Vec<CustomRule>,
 }
 
 impl JudgePolicy {
@@ -104,6 +141,15 @@ impl JudgePolicy {
         if other.allow_credential_read.is_some() {
             self.allow_credential_read = other.allow_credential_read.clone();
         }
+        if other.ask_outside_scope.is_some() {
+            self.ask_outside_scope = other.ask_outside_scope;
+        }
+        if other.ask_private_network.is_some() {
+            self.ask_private_network = other.ask_private_network;
+        }
+        if other.custom_rules.is_some() {
+            self.custom_rules = other.custom_rules.clone();
+        }
     }
 
     /// True when applying `self` over `current` lowers friction.
@@ -117,6 +163,8 @@ impl JudgePolicy {
             || matches!(self.fence, Some(Fence::Guardrail)) && current.fence == Fence::Strict
             // Declaring a credential read always lowers friction.
             || self.allow_credential_read.as_ref().is_some_and(|v| !v.is_empty())
+            || self.ask_outside_scope == Some(false)
+            || self.ask_private_network == Some(false)
     }
 }
 
@@ -332,4 +380,28 @@ mod tests {
         assert!(!lower.weakens(&EffectivePolicy::default()));
     }
 
+}
+
+/// Agent-rule set for `node_id` (plan-level overlaid by node-level).
+pub fn effective_rules(events: &[AllternitEvent], dag_id: &str, node_id: Option<&str>) -> RuleSet {
+    let mut merged = JudgePolicy::default();
+    for pass_node in [false, true] {
+        for evt in events.iter().filter(|e| e.r#type == events::POLICY_SET) {
+            if evt.payload.get("dag_id").and_then(|v| v.as_str()) != Some(dag_id) {
+                continue;
+            }
+            let n = evt.payload.get("node_id").and_then(|v| v.as_str());
+            if pass_node != (n.is_some() && n == node_id) || (!pass_node && n.is_some()) {
+                continue;
+            }
+            if let Some(p) = evt.payload.get("policy").and_then(|p| serde_json::from_value::<JudgePolicy>(p.clone()).ok()) {
+                merged.overlay(&p);
+            }
+        }
+    }
+    RuleSet {
+        ask_outside_scope: merged.ask_outside_scope.unwrap_or(false),
+        ask_private_network: merged.ask_private_network.unwrap_or(false),
+        custom: merged.custom_rules.unwrap_or_default(),
+    }
 }

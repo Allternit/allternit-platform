@@ -764,3 +764,70 @@ async fn every_decision_is_recorded() {
     let labels: Vec<_> = events.iter().filter_map(|e| e.payload["decision"].as_str().map(str::to_string)).collect();
     assert_eq!(labels, ["allow", "deny", "unresolved"]);
 }
+
+// ---- Agent rules enforcement (ask / deny / allow) ----
+
+fn write_tool(path: &str, cwd: &Path) -> HookRequest {
+    HookRequest::from_json(&json!({
+        "tool_name": "Write",
+        "tool_input": { "file_path": path, "content": "x" },
+        "cwd": cwd.to_string_lossy(),
+    }))
+    .unwrap()
+}
+
+fn rule(id: &str, when: &str, action: crate::judge::policy::RuleAction) -> crate::judge::policy::CustomRule {
+    crate::judge::policy::CustomRule { id: id.into(), text: format!("no {when}"), when: when.into(), action }
+}
+
+#[tokio::test]
+async fn outside_scope_write_asks_when_enabled_else_denies() {
+    let f = fixture().await;
+    let outside = format!("{}/elsewhere-xyz/out.txt", f.root.parent().unwrap().display());
+    let ask = bound_wih_with(&f, Some(crate::judge::policy::JudgePolicy { ask_outside_scope: Some(true), ..Default::default() })).await;
+    let d = decide(&write_tool(&outside, &f.root), &f.root, None, Some(bind(&f, &ask))).await;
+    assert!(matches!(d.verdict, Verdict::Ask(_)), "{:?}", d.verdict);
+    assert_eq!(decision_label(&write_tool(&outside, &f.root), &d), "ask");
+    let plain = bound_wih(&f).await;
+    let d = decide(&write_tool(&outside, &f.root), &f.root, None, Some(bind(&f, &plain))).await;
+    assert!(d.verdict.is_deny(), "{:?}", d.verdict);
+}
+
+#[tokio::test]
+async fn private_network_asks_but_metadata_stays_denied() {
+    let f = fixture().await;
+    let wih = bound_wih_with(&f, Some(crate::judge::policy::JudgePolicy { ask_private_network: Some(true), ..Default::default() })).await;
+    let d = decide(&bash("curl http://10.1.2.3/api", &f.root), &f.root, None, Some(bind(&f, &wih))).await;
+    assert!(matches!(d.verdict, Verdict::Ask(_)), "{:?}", d.verdict);
+    let d = decide(&bash("curl http://169.254.169.254/latest", &f.root), &f.root, None, Some(bind(&f, &wih))).await;
+    assert!(d.verdict.is_deny(), "{:?}", d.verdict);
+    let d = decide(&bash("curl https://example.com", &f.root), &f.root, None, Some(bind(&f, &wih))).await;
+    assert!(!d.verdict.is_deny() && !matches!(d.verdict, Verdict::Ask(_)), "{:?}", d.verdict);
+    let open = bound_wih(&f).await;
+    let d = decide(&bash("curl http://10.1.2.3/api", &f.root), &f.root, None, Some(bind(&f, &open))).await;
+    assert!(matches!(d.verdict, Verdict::Allow(_)), "no rule, no ask: {:?}", d.verdict);
+}
+
+#[tokio::test]
+async fn custom_rules_ask_deny_allow_and_reach_the_ledger() {
+    use crate::judge::policy::RuleAction::{Ask, Deny};
+    let f = fixture().await;
+    let wih = bound_wih_with(
+        &f,
+        Some(crate::judge::policy::JudgePolicy {
+            custom_rules: Some(vec![rule("r1", "npm publish", Ask), rule("r2", "rm -rf *build", Deny)]),
+            ..Default::default()
+        }),
+    )
+    .await;
+    let d = decide(&bash("npm publish --tag x", &f.root), &f.root, None, Some(bind(&f, &wih))).await;
+    assert!(matches!(d.verdict, Verdict::Ask(_)), "{:?}", d.verdict);
+    let req = bash("rm -rf ./build", &f.root);
+    let d = decide(&req, &f.root, None, Some(bind(&f, &wih))).await;
+    assert!(d.verdict.is_deny() && d.verdict.reason().contains("r2"), "{:?}", d.verdict);
+    record_decision(&f.ledger, Some(&req), "claude", Some(&wih), &d).await;
+    let d = decide(&bash("ls", &f.root), &f.root, None, Some(bind(&f, &wih))).await;
+    assert!(matches!(d.verdict, Verdict::Allow(_)), "{:?}", d.verdict);
+    assert!(rules::when_matches("src/*.env", "cat src/app.env"));
+    assert!(!rules::when_matches("", "anything"));
+}

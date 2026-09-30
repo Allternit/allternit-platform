@@ -125,6 +125,28 @@ pub fn check_egress(text: &str, strict: bool) -> Option<String> {
     None
 }
 
+/// Reason when `text` names a private-network literal host (RFC1918, ULA).
+/// Metadata / link-local targets are not reported here: `check_egress` denies
+/// them unconditionally.
+pub fn check_private_egress(text: &str) -> Option<String> {
+    let tokens = text.split(|c: char| c.is_whitespace() || "'\"`(),;<>|&={}".contains(c));
+    for token in tokens {
+        let Some((host, scheme)) = host_of(token) else { continue };
+        let Some(ip) = parse_host_ip(&host, scheme) else { continue };
+        if is_metadata_ip(ip) {
+            continue;
+        }
+        let private = match ip {
+            IpAddr::V4(v4) => v4.is_private(),
+            IpAddr::V6(v6) => (v6.segments()[0] & 0xfe00) == 0xfc00,
+        };
+        if private {
+            return Some(format!("network to private address {ip}"));
+        }
+    }
+    None
+}
+
 fn file_is_private_key(path: &Path) -> bool {
     use std::io::Read;
     let Ok(mut f) = std::fs::File::open(path) else { return false };

@@ -110,6 +110,7 @@ pub(crate) async fn admit_and_start(st: Arc<AppState>, run_id: String, limits: L
         return false; // kernel-UI template runs are driven by kernel_ui::templates
     }
     let org = super::guard::run_org(&rec.task_ir);
+    let limits = limits.tightened(&rec.task_ir["rules"]);
     if !limits.org_allowed(&org) {
         return false;
     }
@@ -552,6 +553,14 @@ impl Exec<'_> {
             self.h.block_on(self.s.park_for_cap(&self.run_id, scope, dim))?;
             return Err(StepErr::Stop);
         }
+        // Agent rules: per-run spend threshold raises attention before continuing.
+        if let Some(rec) = self.h.block_on(self.s.load_run(&self.run_id))? {
+            if let Some(t) = rec.task_ir["rules"]["spend_over_usd"].as_f64() {
+                if self.h.block_on(self.s.park_for_spend(&self.run_id, t))? {
+                    return Err(StepErr::Stop);
+                }
+            }
+        }
         Ok(())
     }
 
@@ -925,6 +934,7 @@ fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str, limits: &Limi
         return Ok(());
     }
     let ir = rec.task_ir.clone();
+    let limits = &limits.tightened(&ir["rules"]);
     let task_id = ir["wih_policy"]["task_id"].as_str().unwrap_or("task.bug_fix").to_string();
     let write_set: Vec<String> = ir["wih_policy"]["write_set"].as_array().map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default();
     let graph = bug_fix::instantiate(&task_id, &write_set)?;

@@ -35,6 +35,9 @@ pub const DEFAULT_ORG_MAX_CONCURRENT: usize = 1;
 
 pub const CAP_REASON: &str = "budget_cap_reached";
 pub const CAP_TITLE: &str = "budget cap reached";
+/// Agent rules `approvals.spend_over_usd`: attention raised once per run.
+pub const SPEND_REASON: &str = "spend_over_usd";
+pub const SPEND_TITLE: &str = "spend threshold reached";
 
 /// A daily cap. `None` in a dimension means that dimension is uncapped.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -123,6 +126,19 @@ impl Limits {
 
     pub fn from_env() -> Self {
         Self::from_lookup(|k| std::env::var(k).ok())
+    }
+
+    /// Tighten with a run's `task_ir.rules` (Agent rules): the stricter of the
+    /// env ceiling and the rule wins; a rule never raises a limit.
+    pub fn tightened(&self, rules: &Value) -> Limits {
+        let mut l = self.clone();
+        if let Some(u) = rules["daily_usd"].as_f64().filter(|u| *u >= 0.0) {
+            l.org_daily.usd = Some(l.org_daily.usd.map_or(u, |c| c.min(u)));
+        }
+        if let Some(n) = rules["max_concurrent"].as_f64().filter(|n| *n >= 0.0) {
+            l.org_max_concurrent = l.org_max_concurrent.min((n as usize).max(1));
+        }
+        l
     }
 
     pub fn org_allowed(&self, org: &str) -> bool {
