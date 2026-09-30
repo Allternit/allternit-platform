@@ -24,7 +24,7 @@ Why: without a fence, the strength of safety depends on which tool the executor 
 
 Resolution and recording are on the active path. On main, every node the work runtime spawns gets a resolved environment (working directory, environment-key allowlist, filesystem scope, network policy), and the resolved document, with `inherit_process_env: false`, is recorded in the ledger.
 
-Stripping the process environment down to that allowlist is a separate step, and it is flag-controlled. It runs only when `ALLTERNIT_EXEC_ENV_ENFORCE=1` is set; by default the spawned process still inherits the launching environment. So the contract forbids raw inheritance, and the recorded document says so, but raw inheritance is not yet impossible everywhere: it is prevented only on work-runtime spawns with enforcement switched on. Paths outside the work runtime do not resolve an ExecutionEnvironment at all.
+Stripping the process environment down to that allowlist depends on the fence profile. By default (decision Q25, "guardrails, not walls") executors keep real machine access: they are not confined to the worktree, the process env is inherited, and the protection is an always-on blocklist plus a full audit trail. The blocklist denies network calls to cloud-metadata and link-local addresses and reads of private keys and credential stores unless the run declares that need; every allowed, denied or unresolved action is recorded in the ledger. A run can opt into the **strict** fence (`fence: strict` on its policy). Under strict, the env is stripped to the allowlist, writes are limited to the worktree and temp, and egress to private addresses is refused. Agency API runs always use the strict fence. `ALLTERNIT_EXEC_ENV_ENFORCE=1` also forces env stripping for every work-runtime spawn.
 
 Work-bound executor paths are being converged on the Allternit policy gate; direct interactive runtime behavior may differ from Agency/work-runtime execution.
 
@@ -33,7 +33,8 @@ Work-bound executor paths are being converged on the Allternit policy gate; dire
 | Part | Implementation | Exposure |
 |------|----------------|----------|
 | Environment resolved and recorded per work-runtime node | **ENABLED** | **INTERNAL** |
-| Process env stripped to the allowlist | **IMPLEMENTED** (opt-in, off by default) | **INTERNAL** |
+| Process env stripped to the allowlist | **ENABLED** under the strict fence (always for Agency API runs); off by default elsewhere (Q25) | **INTERNAL** |
+| Always-on blocklist (cloud metadata, credential-store reads) + audit of every action | **ENABLED** | **INTERNAL** |
 | Policy gate on work-bound executor paths | **IMPLEMENTED** (converging) | **INTERNAL** |
 | Environment compiler as a separate contract | **DESIGN** | **—** |
 
