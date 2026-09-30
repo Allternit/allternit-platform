@@ -62,6 +62,47 @@ impl AaiError {
 #[async_trait]
 pub trait AaiTransport: Send + Sync {
     async fn call(&self, owner: &str, op: &str, binding: &Value, input: Value) -> Result<Value, AaiError>;
+    /// Like [`call`] with the just-in-time unsealed provider credential, sent
+    /// as a top-level `credential` next to `binding`. Never log it.
+    async fn call_cred(&self, owner: &str, op: &str, binding: &Value, credential: Option<&Value>, input: Value) -> Result<Value, AaiError> {
+        let _ = credential;
+        self.call(owner, op, binding, input).await
+    }
+    /// Append a vendor reply to the session transcript (assistant message
+    /// attributed to the vendor bot). Default: no transcript.
+    async fn append_transcript(&self, _session_id: &str, _text: &str, _metadata: Value) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// The credential for a binding's account, unsealed server-side just now.
+/// `Ok(None)` = the account carries no key (browser session etc.).
+/// An `api_key` account with no usable sealed key fails fast with AUTH_REQUIRED.
+pub(crate) fn credential_for(db: &DbHandle, owner: &str, binding: &Value) -> Result<Option<Value>, AaiError> {
+    let Some(aid) = binding["accountBindingId"].as_str() else { return Ok(None) };
+    let conn = db.connect().map_err(|_| AaiError::new("INTERNAL", "could not read the provider account"))?;
+    let row: Option<(String, Option<String>)> = conn
+        .query_row("SELECT auth_type, secret_ref FROM provider_account_bindings WHERE id = ?1 AND owner = ?2", params![aid, owner], |r| Ok((r.get(0)?, r.get(1)?)))
+        .optional()
+        .map_err(|_| AaiError::new("INTERNAL", "could not read the provider account"))?;
+    let Some((auth_type, secret_ref)) = row else { return Ok(None) };
+    match secret_ref.filter(|x| !x.is_empty()) {
+        Some(sealed) => {
+            let key = crate::token_crypto::open(&sealed);
+            if key.is_empty() {
+                return Err(AaiError::new("AUTH_REQUIRED", "the stored provider key could not be read; add it again"));
+            }
+            Ok(Some(json!({ "apiKey": key })))
+        }
+        None if auth_type == "api_key" => Err(AaiError::new("AUTH_REQUIRED", "this account needs an API key before it can be used")),
+        None => Ok(None),
+    }
+}
+
+/// Every vendor call goes through here so the credential rides along.
+pub(crate) async fn vcall(db: &DbHandle, tx: &dyn AaiTransport, owner: &str, op: &str, binding: &Value, input: Value) -> Result<Value, AaiError> {
+    let cred = credential_for(db, owner, binding)?;
+    tx.call_cred(owner, op, binding, cred.as_ref(), input).await
 }
 
 /// Reaches the subscription gateway the way `subscription_routes` does (the
@@ -71,6 +112,12 @@ pub struct SubsTransport(pub Arc<AppState>);
 #[async_trait]
 impl AaiTransport for SubsTransport {
     async fn call(&self, owner: &str, op: &str, binding: &Value, input: Value) -> Result<Value, AaiError> {
+        self.call_cred(owner, op, binding, None, input).await
+    }
+    async fn append_transcript(&self, session_id: &str, text: &str, metadata: Value) -> Result<(), String> {
+        crate::agent_session_routes::append_vendor_message(&self.0.db, session_id, text, metadata).await
+    }
+    async fn call_cred(&self, owner: &str, op: &str, binding: &Value, credential: Option<&Value>, input: Value) -> Result<Value, AaiError> {
         let user = AuthUser {
             user_id: owner.to_string(),
             email: None,
@@ -83,7 +130,11 @@ impl AaiTransport for SubsTransport {
         };
         let mut headers = axum::http::HeaderMap::new();
         headers.insert(axum::http::header::CONTENT_TYPE, axum::http::HeaderValue::from_static("application/json"));
-        let body = json!({ "op": op, "binding": binding, "input": input }).to_string();
+        let mut body = json!({ "op": op, "binding": binding, "input": input });
+        if let Some(c) = credential {
+            body["credential"] = c.clone();
+        }
+        let body = body.to_string();
         let resp = crate::subscription_routes::forward(&self.0, &user, "aai/call", axum::http::Method::POST, &headers, None, body.into())
             .await;
         let status = resp.status();
@@ -109,6 +160,14 @@ struct Runtime {
     tx: Arc<dyn AaiTransport>,
 }
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+
+/// The installed transport, or the production one for `state`.
+pub(crate) fn transport(state: &Arc<AppState>) -> Arc<dyn AaiTransport> {
+    match RUNTIME.get() {
+        Some(r) => r.tx.clone(),
+        None => Arc::new(SubsTransport(state.clone())),
+    }
+}
 
 /// Wire the process-wide runner (called once from `main`).
 pub fn install(db: DbHandle, tx: Arc<dyn AaiTransport>) {
@@ -351,7 +410,7 @@ pub async fn run_turn<R: ThreadRuntime>(
     let ctx_id = s(&remote_row, "externalContextId");
 
     if !already_sent {
-        let sent = tx.call(&cx.owner, "agent.context.message", &cx.exec, json!({ "contextId": ctx_id, "text": text, "correlationId": corr })).await;
+        let sent = vcall(db, tx, &cx.owner, "agent.context.message", &cx.exec, json!({ "contextId": ctx_id, "text": text, "correlationId": corr })).await;
         match sent {
             Ok(_) => {
                 db.connect()?.execute(
@@ -427,7 +486,7 @@ async fn open_remote(db: &DbHandle, tx: &dyn AaiTransport, cx: &Cx, existing: Op
     if let Some(a) = cx.exec["externalAgentId"].as_str() {
         input["externalAgentId"] = json!(a);
     }
-    match tx.call(&cx.owner, "agent.context.open", &cx.exec, input).await {
+    match vcall(db, tx, &cx.owner, "agent.context.open", &cx.exec, input).await {
         Ok(v) => {
             let ctx = v["contextId"].as_str().unwrap_or_default().to_string();
             let mut snap: Value = cur["capabilitySnapshot"].clone();
@@ -575,7 +634,7 @@ pub async fn close_stale(db: &DbHandle, tx: &dyn AaiTransport, thread_id: &str, 
         let _ = set_remote_state(db, &owner, r, "HANDOFF_PENDING");
         let exec = one(&conn, &format!("SELECT {EXEC_COLS} FROM bot_execution_bindings WHERE id = ?1"), &[&s(r, "executionBindingId")]).ok().flatten();
         let closed = match exec {
-            Some(e) => match tx.call(&owner, "agent.context.close", &e, json!({ "contextId": s(r, "externalContextId") })).await {
+            Some(e) => match vcall(db, tx, &owner, "agent.context.close", &e, json!({ "contextId": s(r, "externalContextId") })).await {
                 Ok(_) => true,
                 Err(err) => err.code == "CONTEXT_NOT_FOUND",
             },
@@ -601,7 +660,7 @@ pub(crate) async fn pull_events(db: &DbHandle, tx: &dyn AaiTransport, cx: &Cx, r
         if let Some(c) = &cursor {
             input["cursor"] = json!(c);
         }
-        let v = tx.call(&cx.owner, "agent.events", &cx.exec, input).await.map_err(|e| fail(db, cx, Some(remote), &e))?;
+        let v = vcall(db, tx, &cx.owner, "agent.events", &cx.exec, input).await.map_err(|e| fail(db, cx, Some(remote), &e))?;
         let events = v["events"].as_array().cloned().unwrap_or_default();
         let mut last_remote: Option<String> = None;
         for ev in &events {
@@ -612,6 +671,20 @@ pub(crate) async fn pull_events(db: &DbHandle, tx: &dyn AaiTransport, cx: &Cx, r
                 new += 1;
                 if ev["type"] == "agent.message.completed" {
                     reply = ev["payload"]["text"].as_str().or_else(|| ev["payload"]["content"].as_str()).map(str::to_string);
+                    if let (Some(text), false) = (reply.as_deref(), cx.session_id.is_empty()) {
+                        let pick = |k: &str, fallback: Value| ev.get(k).filter(|v| !v.is_null()).cloned().unwrap_or(fallback);
+                        let meta = json!({
+                            "source": "vendor",
+                            "vendor": pick("vendor", cx.exec["vendor"].clone()),
+                            "adapter": pick("adapter", cx.exec["adapterId"].clone()),
+                            "lane": pick("lane", remote["lane"].clone()),
+                            "guarantee": pick("guarantee", json!("best_effort")),
+                            "remote_event_id": ev["remote_event_id"],
+                        });
+                        if let Err(e) = tx.append_transcript(&cx.session_id, text, meta).await {
+                            warn!(error = %e, "vendor reply not appended to the session transcript");
+                        }
+                    }
                 }
             }
         }
@@ -794,7 +867,9 @@ pub async fn respond_approval(
         let exec = one(&conn, &format!("SELECT {EXEC_COLS} FROM bot_execution_bindings WHERE bot_id = ?1 AND owner = ?2"), &[&bot_id, &owner])?
             .ok_or_else(|| RunErr::new(409, "NO_BINDING", "the bot has no execution binding"))?;
         let cx = Cx { owner: owner.into(), thread_id: thread_id.clone(), bot_id: bot_id.clone(), generation: gen, session_id: String::new(), exec: exec.clone() };
-        tx.call(
+        vcall(
+            db,
+            tx,
             owner,
             "agent.approvals",
             &exec,
@@ -957,6 +1032,8 @@ mod tests {
         events: Mutex<Vec<Value>>,
         fail: Mutex<HashMap<String, AaiError>>,
         opened: Mutex<i64>,
+        creds: Mutex<Vec<Option<Value>>>,
+        transcript: Mutex<Vec<(String, String, Value)>>,
     }
 
     impl Fake {
@@ -975,6 +1052,14 @@ mod tests {
 
     #[async_trait]
     impl AaiTransport for Fake {
+        async fn call_cred(&self, owner: &str, op: &str, binding: &Value, credential: Option<&Value>, input: Value) -> Result<Value, AaiError> {
+            self.creds.lock().unwrap().push(credential.cloned());
+            self.call(owner, op, binding, input).await
+        }
+        async fn append_transcript(&self, session_id: &str, text: &str, metadata: Value) -> Result<(), String> {
+            self.transcript.lock().unwrap().push((session_id.into(), text.into(), metadata));
+            Ok(())
+        }
         async fn call(&self, _owner: &str, op: &str, _binding: &Value, input: Value) -> Result<Value, AaiError> {
             self.calls.lock().unwrap().push((op.into(), input.clone()));
             if let Some(e) = self.fail.lock().unwrap().get(op) {
@@ -1314,5 +1399,70 @@ mod tests {
         let b: Vec<i64> = p2["events"].as_array().unwrap().iter().map(|e| e["sequence"].as_i64().unwrap()).collect();
         assert!(b.iter().all(|s| *s > cur) && b.windows(2).all(|w| w[0] < w[1]));
         assert_eq!(a.len() + b.len(), seqs.len());
+    }
+
+    fn link_account(st: &Arc<AppState>, auth_type: &str, secret: Option<&str>) {
+        std::env::set_var("ALLTERNIT_ENCRYPTION_KEY", "unit-test-encryption-key");
+        let c = st.db.connect().unwrap();
+        let sealed = secret.map(crate::token_crypto::seal);
+        c.execute(
+            "INSERT INTO provider_account_bindings (id, owner, vendor, auth_type, secret_ref, state, created_at, updated_at) VALUES ('acct-1','user-a','acme',?1,?2,'CONNECTED','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')",
+            params![auth_type, sealed],
+        )
+        .unwrap();
+        c.execute("UPDATE bot_execution_bindings SET account_binding_id = 'acct-1'", []).unwrap();
+    }
+
+    #[tokio::test]
+    async fn vendor_reply_lands_in_the_transcript_once_with_attribution() {
+        let st = setup("transcript").await;
+        let f = Fake::default();
+        f.push(done("e1", "hello from vendor"));
+        turn(&st, &f, "s-th-vendor", "hi", key("k1")).await.unwrap();
+        turn(&st, &f, "s-th-vendor", "again", key("k2")).await.unwrap();
+        sync_thread(&st.db, &f, "user-a", "th-vendor").await.unwrap();
+        let t = f.transcript.lock().unwrap();
+        assert_eq!(t.len(), 1, "a re-pulled event is never appended twice");
+        assert_eq!(t[0].0, "s-th-vendor");
+        assert_eq!(t[0].1, "hello from vendor");
+        for (k, v) in [("source", "vendor"), ("vendor", "acme"), ("adapter", "acme-adapter"), ("lane", "api"), ("guarantee", "exact"), ("remote_event_id", "e1")] {
+            assert_eq!(t[0].2[k], v, "{k}");
+        }
+    }
+
+    #[tokio::test]
+    async fn credential_is_attached_only_for_accounts_with_a_secret_and_never_stored_elsewhere() {
+        let st = setup("cred").await;
+        link_account(&st, "api_key", Some("sk-SECRET-123"));
+        let f = Fake::default();
+        f.push(done("e1", "ok"));
+        turn(&st, &f, "s-th-vendor", "hi", key("k1")).await.unwrap();
+        let creds = f.creds.lock().unwrap().clone();
+        assert!(!creds.is_empty() && creds.iter().all(|c| c.as_ref().map(|v| v["apiKey"] == "sk-SECRET-123").unwrap_or(false)));
+        let c = st.db.connect().unwrap();
+        let events: String = c.query_row("SELECT COALESCE(group_concat(payload), '') FROM bot_events", [], |r| r.get(0)).unwrap();
+        assert!(!events.contains("sk-SECRET-123"), "the key never reaches bot_events");
+        let sealed: String = c.query_row("SELECT secret_ref FROM provider_account_bindings WHERE id='acct-1'", [], |r| r.get(0)).unwrap();
+        assert!(!sealed.contains("sk-SECRET-123"));
+
+        // No secret_ref on a browser-session account: no credential at all.
+        let st2 = setup("cred2").await;
+        link_account(&st2, "browser_session", None);
+        let f2 = Fake::default();
+        f2.push(done("e1", "ok"));
+        turn(&st2, &f2, "s-th-vendor", "hi", key("k1")).await.unwrap();
+        assert!(f2.creds.lock().unwrap().iter().all(|c| c.is_none()));
+    }
+
+    #[tokio::test]
+    async fn api_key_account_without_a_key_fails_fast_to_needs_auth() {
+        let st = setup("nokey").await;
+        link_account(&st, "api_key", None);
+        let f = Fake::default();
+        let e = turn(&st, &f, "s-th-vendor", "hi", key("k1")).await.unwrap_err();
+        assert_eq!(e.code, "AUTH_REQUIRED");
+        assert!(f.calls.lock().unwrap().is_empty(), "nothing is sent to the vendor");
+        assert_eq!(exec_state(&st), "NEEDS_AUTH");
+        assert_eq!(thread_status(&st), "needs_you");
     }
 }
