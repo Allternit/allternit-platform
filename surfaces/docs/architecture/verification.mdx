@@ -20,7 +20,7 @@ flowchart TD
     E --> V["Verifier(s)<br/>not the builder"]
     V --> D["CompletionDecision"]
     D --> S["The SYSTEM transitions<br/>node / run → DONE"]
-    V -. "fail or inconclusive" .-> A["stay open, retry<br/>or attention request"]
+    V -. fail or inconclusive .-> A["stay open, retry<br/>or attention request"]
 ```
 
 **Workers propose completion. They do not grant it.**

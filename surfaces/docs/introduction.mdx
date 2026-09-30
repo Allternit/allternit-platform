@@ -1,29 +1,52 @@
 ---
 title: Welcome to Allternit
-description: High-level platform value proposition
+description: "What Allternit is: agency implemented as a system, with models as interchangeable components"
 ---
 
 ## What is Allternit?
 
-Allternit (Allternit) is an enterprise-grade agentic operating system designed to orchestrate intelligent agents across multiple interfaces. Built on the principle of **"One Brain, Multiple Faces, One Nervous System,"** Allternit provides a unified platform for developing, deploying, and managing AI agents at scale.
+Allternit implements agency as a system. Models do not own the agent. Allternit owns state, work, tools, policy, verification, memory, routing and execution. Models are interchangeable cognitive components used only where cognition is required.
+
+You give Allternit a goal. It compiles the goal into typed work, runs it durably, checks every action against policy, verifies the result, and records receipts you can audit and replay.
 
 <Note>
 The only public API is the Cloud API at `https://api.allternit.com`. Allternit API (`:8013`) is the private data-plane runtime. See [API Overview](/api/overview).
 </Note>
 
+## Start here
+
+Four pages give the whole mental model, in order:
+
+<Steps>
+  <Step title="Architecture">
+    [The canonical diagram](/architecture) and who owns what.
+  </Step>
+  <Step title="The Two Machines">
+    [How work lives, and how the system thinks](/architecture/two-machines).
+  </Step>
+  <Step title="Agency API">
+    [Send a goal, get one durable, verified run](/api/agency/overview) (Preview).
+  </Step>
+  <Step title="Contracts, not models">
+    [Graphs request capabilities, never a named model](/architecture/contracts-not-models).
+  </Step>
+</Steps>
+
 ## Core Components
 
 <CardGroup cols={3}>
-  <Card title="One Brain (Gizzi)" icon="cpu">
-    The core runtime engine that plans, reasons, and executes agent logic.
+  <Card title="The runtime (Gizzi)" icon="cpu" href="/core/gizzi-runtime">
+    Executes agent work: sessions, tools, sandboxing, and calls to whichever model the system routes to.
   </Card>
-  <Card title="Multiple Faces (Surfaces)" icon="monitor">
-    Desktop, Web, CLI, and Browser Extension interfaces for different use cases.
+  <Card title="Surfaces" icon="monitor" href="/surfaces/desktop">
+    Desktop, Web, CLI, and Browser Extension interfaces. They hold no agent logic of their own.
   </Card>
-  <Card title="One Nervous System (SDK)" icon="code">
-    A unified interface connecting all surfaces to the brain.
+  <Card title="SDK" icon="code" href="/sdk/typescript">
+    A unified interface connecting all surfaces to the runtime.
   </Card>
 </CardGroup>
+
+An agent in Allternit is a profile: identity, instructions, capabilities, policies and a default model preference the router may use. The model is not the agent's brain. The earlier product line, "One Brain, Multiple Faces, One Nervous System", described one runtime behind many surfaces; the systems architecture is the [Agency Kernel](/architecture).
 
 ## Key Features
 

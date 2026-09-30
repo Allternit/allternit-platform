@@ -5,7 +5,24 @@ description: 'Create, configure, run, and manage agents on the Allternit platfor
 
 ## Overview
 
-The Agents API is the central surface for creating, configuring, running, and managing agents on the Allternit platform. Agents are persistent, user-owned entities that combine a brain (provider + model), a system prompt, a tool policy, a harness configuration, and a set of enabled surfaces. Once created, an agent can be run on demand, instantiated from a template, published to the marketplace, or wired as a subagent under an orchestrator.
+The Agents API is the central surface for creating, configuring, running, and managing agents on the Allternit platform. Agents are persistent, user-owned identities. Each one has a profile (name, instructions, system prompt), capabilities, policies (tool policy, harness configuration, enabled surfaces) and a default model preference that the router may use. The model is not the agent's brain: it is one interchangeable component the system calls where cognition is needed. Once created, an agent can be run on demand, instantiated from a template, published to the marketplace, or wired as a subagent under an orchestrator.
+
+<Note>
+The `brain`, `model` and `provider` fields below keep their names for compatibility. They set the agent's default model preference, not its identity.
+</Note>
+
+## Agents API vs Agency API
+
+**An Agent is configuration and identity. Agency is execution of work.**
+
+| API | What it is for |
+|-----|----------------|
+| [Agents API](/api/agents) | Configure persistent agent identities and profiles: instructions, capabilities, policies, a default model preference. |
+| [Agency API](/api/agency/overview) | Submit durable autonomous work: a goal becomes one verified Run. **PREVIEW.** |
+| [Runs](/api/agency/runs) | Observe and control execution: stream, steer, pause, cancel, audit. **PREVIEW.** |
+| [Decisions](/api/agency/decisions) | Make a bounded, typed decision with no side effects. **PREVIEW.** |
+
+## Routes
 
 All agent routes are mounted under `/api` and require a valid bearer token via the platform auth middleware.
 
@@ -30,8 +47,8 @@ All requests must include a valid bearer token in the `Authorization` header. Se
 | `type` | string | Agent type, e.g. `worker`, `orchestrator`. |
 | `parent_agent_id` | string \| null | For subagents, the orchestrator they belong to. |
 | `mode` | string | `primary`, `subagent`, `orchestrator`, or `council`. |
-| `model` | string | Model identifier. |
-| `provider` | string | Provider identifier. |
+| `model` | string | Default model preference. The router may use it; it is not the agent's identity. |
+| `provider` | string | Provider for the default model preference. |
 | `capabilities` | object \| null | Capability flags. |
 | `system_prompt` | string \| null | System prompt text. |
 | `tools` | array \| object \| null | Declared tools. |
@@ -108,8 +125,8 @@ curl -H "Authorization: Bearer $TOKEN" \
       "type": "worker",
       "parent_agent_id": null,
       "mode": "primary",
-      "model": "qwen2.5:0.5b",
-      "provider": "ollama",
+      "model": "<specific-model>",
+      "provider": "<provider>",
       "capabilities": { "execute_code": true, "file_search": true },
       "system_prompt": "You are a senior code reviewer.",
       "tools": null,
@@ -190,8 +207,8 @@ curl -X POST https://api.allternit.com/api/agents \
     "name": "Code Reviewer",
     "description": "Reviews pull requests for security and style issues.",
     "type": "worker",
-    "model": "qwen2.5:0.5b",
-    "provider": "ollama",
+    "model": "<specific-model>",
+    "provider": "<provider>",
     "harness_config": { "mode": "local" },
     "enabled_modes": ["chat", "code"],
     "trust_tier": "standard",
@@ -235,8 +252,8 @@ curl -H "Authorization: Bearer $TOKEN" \
     "description": "Reviews pull requests for security and style issues.",
     "type": "worker",
     "mode": "primary",
-    "model": "qwen2.5:0.5b",
-    "provider": "ollama",
+    "model": "<specific-model>",
+    "provider": "<provider>",
     "status": "idle",
     "is_primary": false,
     "created_at": "2026-08-01T10:00:00Z",
@@ -312,8 +329,8 @@ Returns a compact view of all subagents under the parent agent.
       "type": "worker",
       "mode": "subagent",
       "parent_agent_id": "agent_018f3a7c...",
-      "model": "qwen2.5:0.5b",
-      "provider": "ollama",
+      "model": "<specific-model>",
+      "provider": "<provider>",
       "status": "idle",
       "created_at": "2026-08-10T09:15:00Z"
     }
@@ -339,8 +356,8 @@ curl -X POST https://api.allternit.com/api/agents/agent_018f3a7c.../subagents \
     "name": "Security Scanner",
     "description": "Scans code for known vulnerability patterns.",
     "type": "worker",
-    "model": "qwen2.5:0.5b",
-    "provider": "ollama",
+    "model": "<specific-model>",
+    "provider": "<provider>",
     "harness_config": { "mode": "local" },
     "enabled_modes": ["code"],
     "trust_tier": "standard"
@@ -367,7 +384,7 @@ curl -X POST https://api.allternit.com/api/agents/agent_018f3a7c.../subagents \
 POST /api/agents/companion/ensure
 ```
 
-Idempotently ensures the user has a primary "Allternit Companion" agent. If one already exists, the existing agent is returned; otherwise a new orchestrator is created using a runnable local brain fallback.
+Idempotently ensures the user has a primary "Allternit Companion" agent. If one already exists, the existing agent is returned; otherwise a new orchestrator is created with a runnable local model as its default preference.
 
 #### Example response (created)
 
@@ -376,8 +393,8 @@ Idempotently ensures the user has a primary "Allternit Companion" agent. If one 
   "agent": {
     "id": "agent_7d4e...",
     "name": "Allternit Companion",
-    "model": "qwen2.5:0.5b",
-    "provider": "ollama",
+    "model": "<specific-model>",
+    "provider": "<provider>",
     "mode": "orchestrator",
     "is_primary": true
   },
@@ -392,8 +409,8 @@ Idempotently ensures the user has a primary "Allternit Companion" agent. If one 
   "agent": {
     "id": "agent_7d4e...",
     "name": "Allternit Companion",
-    "model": "qwen2.5:0.5b",
-    "provider": "ollama",
+    "model": "<specific-model>",
+    "provider": "<provider>",
     "mode": "orchestrator",
     "is_primary": true
   },
@@ -437,14 +454,14 @@ Returns all agent templates, built-ins first.
 POST /api/agents/from-template
 ```
 
-Creates a live orchestrator and its subagents from a template. The brain can be overridden; otherwise the user's default model is used, falling back to a local Ollama brain.
+Creates a live orchestrator and its subagents from a template. The default model preference can be overridden with `brain`; otherwise the user's default model is used, falling back to a local model.
 
 #### Request body
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `template_id` | string | Yes | Template ID. |
-| `brain` | object | No | `{ "provider": "...", "model": "..." }`. |
+| `brain` | object | No | Default model preference, `{ "provider": "...", "model": "..." }`. The field name is historical. |
 | `name_override` | string | No | Override the orchestrator name. |
 
 #### Example request
@@ -455,7 +472,7 @@ curl -X POST https://api.allternit.com/api/agents/from-template \
   -H "Content-Type: application/json" \
   -d '{
     "template_id": "tmpl_a1b2...",
-    "brain": { "provider": "ollama", "model": "qwen2.5:0.5b" },
+    "brain": { "provider": "<provider>", "model": "<specific-model>" },
     "name_override": "My Review Crew"
   }'
 ```
@@ -484,7 +501,7 @@ curl -X POST https://api.allternit.com/api/agents/from-template \
 POST /api/agents/:id/runs
 ```
 
-Sends `input` through the Gizzi runtime using the agent's configured brain and system prompt. The call records a run, persists the outcome, and emits CommRails ledger events.
+Sends `input` through the Gizzi runtime using the agent's profile, system prompt and default model preference. The call records a run, persists the outcome, and emits CommRails ledger events.
 
 #### Request body
 
@@ -512,12 +529,12 @@ curl -X POST https://api.allternit.com/api/agents/agent_018f3a7c.../runs \
   "session_id": "sess_9c1d...",
   "status": "completed",
   "output": "The function uses parameterized queries, so it is safe from SQL injection.",
-  "model": "qwen2.5:0.5b",
-  "provider": "ollama"
+  "model": "<specific-model>",
+  "provider": "<provider>"
 }
 ```
 
-#### Example response (brain error)
+#### Example response (model error)
 
 ```json
 {
@@ -526,8 +543,8 @@ curl -X POST https://api.allternit.com/api/agents/agent_018f3a7c.../runs \
   "session_id": "sess_9c1d...",
   "status": "error",
   "error": "model not found",
-  "model": "qwen2.5:0.5b",
-  "provider": "ollama"
+  "model": "<specific-model>",
+  "provider": "<provider>"
 }
 ```
 
@@ -748,7 +765,7 @@ curl -X POST https://api.allternit.com/api/agents/suites \
 POST /api/agents/test
 ```
 
-Runs a single real round-trip against the agent's brain using the last user message in `messages`, or a default connectivity probe.
+Runs a single real round-trip against the agent's default model using the last user message in `messages`, or a default connectivity probe.
 
 #### Request body
 
@@ -998,8 +1015,8 @@ Returns the caller's agents as model objects.
         "version": "1",
         "instructions": "You are a senior code reviewer.",
         "modelConfig": {
-          "provider": "ollama",
-          "model": "qwen2.5:0.5b",
+          "provider": "<provider>",
+          "model": "<specific-model>",
           "temperature": 0.7,
           "maxContextTokens": null,
           "maxOutputTokens": null,

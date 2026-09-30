@@ -7,6 +7,8 @@ description: 'Remote-model-compatible agent discovery, model, tool, and response
 
 The Agents v1 API exposes a remote-model-compatible surface for discovering agent-backed models, listing deferred tools, activating tools for a session, and retrieving completed responses. It mirrors the shape expected by remote-model clients so that Allternit agents can be consumed through standard SDKs while still preserving Allternit-specific profile metadata.
 
+An "agent-backed model" here is an agent profile presented in a model-compatible shape. Its `modelConfig` is the agent's default model preference, which the router may use; the model is not the agent. See [Agents API vs Agency API](/api/agents#agents-api-vs-agency-api).
+
 ## Base URL
 
 ```text
@@ -76,7 +78,7 @@ curl https://api.allternit.com/api/agents/v1/models \
         "instructions": "You are a helpful coding assistant.",
         "modelConfig": {
           "provider": "allternit-local",
-          "model": "qwen-coder",
+          "model": "<specific-model>",
           "temperature": 0.2,
           "maxContextTokens": null,
           "maxOutputTokens": null,
