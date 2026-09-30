@@ -5,7 +5,7 @@ description: 'Create, interact with, resize, stream, and close persistent termin
 
 ## Overview
 
-The Terminal API provides persistent PTY-based terminals backed by `allternit-mux`. Each terminal session is a real shell process owned by the mux daemon, survives API restarts, and supports scrollback replay plus live streaming. This replaces older tmux-backed implementations by removing the tmux dependency and providing persistent session ownership.
+The Terminal API provides persistent PTY-based terminals backed by `allternit-mux`. Each terminal session is a real shell process owned by the mux daemon, survives API restarts, and supports scrollback replay plus live streaming. 
 
 ## Base URL
 
@@ -21,7 +21,7 @@ The API connects to `allternit-mux` over a Unix domain socket. By default the so
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/terminal` | Create a terminal session. |
+| POST | `/terminal/create` | Create a terminal session. |
 | POST | `/terminal/:session_id/input` | Send input to a session. |
 | POST | `/terminal/:session_id/close` | Close a session. |
 | POST | `/terminal/:session_id/resize` | Resize a session. |
@@ -30,7 +30,7 @@ The API connects to `allternit-mux` over a Unix domain socket. By default the so
 ## Create terminal
 
 ```bash
-POST /terminal
+POST /terminal/create
 ```
 
 Request body:
@@ -60,7 +60,7 @@ Response:
   "success": true,
   "message": "Terminal session created",
   "data": {
-    "session_id": "term_2f8a9c4e5d3b"
+    "session_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479"
   }
 }
 ```
@@ -68,7 +68,7 @@ Response:
 ## Send input
 
 ```bash
-POST /terminal/term_2f8a9c4e5d3b/input
+POST /terminal/f47ac10b-58cc-4372-a567-0e02b2c3d479/input
 ```
 
 Request body:
@@ -92,7 +92,7 @@ Response:
 ## Resize terminal
 
 ```bash
-POST /terminal/term_2f8a9c4e5d3b/resize
+POST /terminal/f47ac10b-58cc-4372-a567-0e02b2c3d479/resize
 ```
 
 Request body:
@@ -117,7 +117,7 @@ Response:
 ## Close terminal
 
 ```bash
-POST /terminal/term_2f8a9c4e5d3b/close
+POST /terminal/f47ac10b-58cc-4372-a567-0e02b2c3d479/close
 ```
 
 Response:
@@ -133,7 +133,7 @@ Response:
 ## Stream output
 
 ```bash
-GET /terminal/term_2f8a9c4e5d3b/stream
+GET /terminal/f47ac10b-58cc-4372-a567-0e02b2c3d479/stream
 ```
 
 The response is a `text/event-stream`. The server first replays the full persistent scrollback, then subscribes to live `pane.output` events from the mux daemon. Ping events are emitted every 15 seconds when no output is available.
