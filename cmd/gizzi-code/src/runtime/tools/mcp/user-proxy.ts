@@ -6,6 +6,7 @@
 // `metadata`: metadata is stored on the user message, and a token must never reach disk. It is held in
 // memory, keyed by session, for the length of the turn, and dropped afterwards.
 
+import { createGuardedFetch } from "@/shared/utils/hooks/ssrfGuard"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import z from "zod/v4"
@@ -92,6 +93,8 @@ export namespace McpUserProxy {
   export async function connect(entry: Entry): Promise<Client | undefined> {
     const transport = new StreamableHTTPClientTransport(new URL(entry.url), {
       requestInit: { headers: { Authorization: `Bearer ${entry.token}`, [SESSION_HEADER]: entry.sessionId } },
+      // allternit-api is usually on localhost; metadata/link-local/private stay refused.
+      fetch: createGuardedFetch({ allowLoopback: true }) as unknown as typeof fetch,
     })
     const c = new Client({ name: "gizzi", version: Installation.VERSION }, { capabilities: MCP_APPS_CLIENT_CAPABILITIES })
     try {

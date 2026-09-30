@@ -1,3 +1,8 @@
+import { createGuardedFetch } from "@/shared/utils/hooks/ssrfGuard"
+
+// URLs here are chosen by the model or by page content, so loopback is refused
+// too (only user-configured MCP servers get localhost).
+const guardedWebFetch = createGuardedFetch({ allowLoopback: false })
 import z from "zod/v4"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import TurndownService from "turndown"
@@ -62,12 +67,12 @@ export const WebFetchTool = Tool.define("webfetch", {
       "Accept-Language": "en-US,en;q=0.9",
     }
 
-    const initial = await fetch(params.url, { signal, headers })
+    const initial = await guardedWebFetch(params.url, { signal, headers })
 
     // Retry with honest UA if blocked by Cloudflare bot detection (TLS fingerprint mismatch)
     const response =
       initial.status === 403 && initial.headers.get("cf-mitigated") === "challenge"
-        ? await fetch(params.url, { signal, headers: { ...headers, "User-Agent": "gizzi" } })
+        ? await guardedWebFetch(params.url, { signal, headers: { ...headers, "User-Agent": "gizzi" } })
         : initial
 
     clearTimeout()

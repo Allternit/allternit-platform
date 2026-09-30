@@ -7,7 +7,7 @@
 //! address we validated (no DNS rebinding between check and connect), redirects
 //! are never followed, 5 s total timeout, response body is size-capped.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -20,63 +20,10 @@ const CHALLENGE_MAX_BYTES: usize = 4 * 1024;
 
 // ─── Address / host classification ──────────────────────────────────────────
 
-fn is_public_v4(ip: Ipv4Addr) -> bool {
-    let [a, b, c, _] = ip.octets();
-    !(ip.is_unspecified()
-        || ip.is_loopback()
-        || ip.is_private()
-        || ip.is_link_local()
-        || ip.is_broadcast()
-        || ip.is_multicast()
-        || a == 0
-        || a >= 240 // reserved + broadcast
-        || (a == 100 && (64..=127).contains(&b)) // CGNAT 100.64/10
-        || (a == 192 && b == 0 && c == 0) // IETF protocol assignments
-        || (a == 192 && b == 0 && c == 2) // TEST-NET-1
-        || (a == 198 && (b == 18 || b == 19)) // benchmarking
-        || (a == 198 && b == 51 && c == 100) // TEST-NET-2
-        || (a == 203 && b == 0 && c == 113)) // TEST-NET-3
-}
-
-fn embedded_v4(ip: Ipv6Addr) -> Option<Ipv4Addr> {
-    let s = ip.segments();
-    // ::ffff:a.b.c.d (mapped) and ::a.b.c.d (compatible)
-    if s[..5] == [0, 0, 0, 0, 0] && (s[5] == 0xffff || s[5] == 0) {
-        return Some(Ipv4Addr::new((s[6] >> 8) as u8, s[6] as u8, (s[7] >> 8) as u8, s[7] as u8));
-    }
-    // 64:ff9b::/96 NAT64
-    if s[0] == 0x0064 && s[1] == 0xff9b && s[2..6] == [0, 0, 0, 0] {
-        return Some(Ipv4Addr::new((s[6] >> 8) as u8, s[6] as u8, (s[7] >> 8) as u8, s[7] as u8));
-    }
-    // 2002::/16 6to4
-    if s[0] == 0x2002 {
-        return Some(Ipv4Addr::new((s[1] >> 8) as u8, s[1] as u8, (s[2] >> 8) as u8, s[2] as u8));
-    }
-    None
-}
-
-fn is_public_v6(ip: Ipv6Addr) -> bool {
-    if let Some(v4) = embedded_v4(ip) {
-        return is_public_v4(v4);
-    }
-    let s = ip.segments();
-    !(ip.is_unspecified()
-        || ip.is_loopback()
-        || ip.is_multicast()
-        || (s[0] & 0xfe00) == 0xfc00 // unique local fc00::/7
-        || (s[0] & 0xffc0) == 0xfe80 // link local fe80::/10
-        || (s[0] & 0xffc0) == 0xfec0 // deprecated site local
-        || (s[0] == 0x2001 && s[1] == 0x0db8) // documentation
-        || (s[0] == 0x2001 && s[1] == 0) // Teredo
-        || s[0] == 0x0100 && s[1..4] == [0, 0, 0]) // discard-only 100::/64
-}
-
-/// True when `ip` is a globally routable unicast address.
+/// True when `ip` is a globally routable unicast address. Delegates to the
+/// shared egress policy so every server-side fetch agrees on the ranges.
 pub fn is_public_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => is_public_v4(v4),
-        IpAddr::V6(v6) => is_public_v6(v6),
-    }
+    allternit_commrails::egress::is_public_ip(ip)
 }
 
 /// Name-level screen for a registrable-looking DNS name. The resolved

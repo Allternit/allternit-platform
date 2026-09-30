@@ -67,10 +67,31 @@ pub trait HttpSend: Send + Sync {
 
 pub struct ReqwestSend;
 
+/// Client for one outbound transport call. Several of these URLs are
+/// tenant-supplied (Discord webhookUrl) or come from inbound activities (Teams
+/// serviceUrl), so every call goes through the shared egress guard: no literal
+/// loopback/private/link-local host, names resolved once by
+/// `PublicOnlyResolver`, and no redirects.
+fn guarded_client(url: &str) -> Result<reqwest::Client, String> {
+    let parsed = reqwest::Url::parse(url).map_err(|_| "blocked: not a valid URL".to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("blocked: only http(s) destinations are allowed".into());
+    }
+    let host = parsed.host_str().ok_or_else(|| "blocked: URL has no host".to_string())?;
+    if allternit_commrails::egress::host_is_forbidden_literal(host) {
+        return Err("blocked non-public destination".into());
+    }
+    reqwest::Client::builder()
+        .dns_resolver(Arc::new(allternit_commrails::egress::PublicOnlyResolver))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| e.to_string())
+}
+
 #[async_trait]
 impl HttpSend for ReqwestSend {
     async fn post_json(&self, req: HttpReq) -> Result<HttpResp, String> {
-        let mut r = reqwest::Client::new().post(&req.url).timeout(std::time::Duration::from_secs(15)).json(&req.body);
+        let mut r = guarded_client(&req.url)?.post(&req.url).timeout(std::time::Duration::from_secs(15)).json(&req.body);
         for (k, v) in &req.headers {
             r = r.header(k, v);
         }
@@ -80,12 +101,12 @@ impl HttpSend for ReqwestSend {
         Ok(HttpResp { status, body })
     }
     async fn get_json(&self, url: &str) -> Result<HttpResp, String> {
-        let resp = reqwest::Client::new().get(url).timeout(std::time::Duration::from_secs(15)).send().await.map_err(|e| e.to_string())?;
+        let resp = guarded_client(url)?.get(url).timeout(std::time::Duration::from_secs(15)).send().await.map_err(|e| e.to_string())?;
         let status = resp.status().as_u16();
         Ok(HttpResp { status, body: resp.json::<Value>().await.unwrap_or(Value::Null) })
     }
     async fn post_form(&self, url: &str, form: Vec<(String, String)>) -> Result<HttpResp, String> {
-        let resp = reqwest::Client::new().post(url).timeout(std::time::Duration::from_secs(15)).form(&form).send().await.map_err(|e| e.to_string())?;
+        let resp = guarded_client(url)?.post(url).timeout(std::time::Duration::from_secs(15)).form(&form).send().await.map_err(|e| e.to_string())?;
         let status = resp.status().as_u16();
         Ok(HttpResp { status, body: resp.json::<Value>().await.unwrap_or(Value::Null) })
     }
@@ -1022,5 +1043,16 @@ mod tests {
         // Other lanes pass through untouched.
         let other = json!({ "preferredLane": "api" });
         assert_eq!(lane.call("user-a", "agent.events", &other, json!({})).await.unwrap_err().code, "PASSTHROUGH");
+    }
+
+    #[tokio::test]
+    async fn reqwest_send_refuses_metadata_and_private_destinations() {
+        let send = ReqwestSend;
+        for url in ["http://169.254.169.254/latest", "http://10.1.2.3/hook", "http://127.0.0.1:8013/x", "http://localhost/x"] {
+            let post = send.post_json(HttpReq { url: url.into(), headers: vec![], body: json!({}) }).await;
+            assert!(post.unwrap_err().contains("blocked"), "{url}");
+            assert!(send.get_json(url).await.unwrap_err().contains("blocked"), "{url}");
+            assert!(send.post_form(url, vec![]).await.unwrap_err().contains("blocked"), "{url}");
+        }
     }
 }

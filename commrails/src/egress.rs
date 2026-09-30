@@ -1,8 +1,25 @@
 //! Shared egress guard: the one place that decides whether Allternit code may
-//! open a connection to a destination. Used today by the web proxy and the
-//! design connector import. Connectors, MCP fetch, Decision Runtime clients
-//! and spawned-harness egress are meant to route through it too, but are not
-//! wired yet (spawned harnesses are only recorded in ExecutionEnvironmentV1).
+//! open a connection to a destination. Callers wired to it today:
+//!
+//! - `allternit-api` web proxy (`web_proxy_routes.rs`) and design connector
+//!   import (`design_connector_routes.rs`): `PublicOnlyResolver`.
+//! - `allternit-api` outbound webhook deliveries (`webhook_subscription_routes.rs`):
+//!   `PublicOnlyResolver` plus `host_is_forbidden_literal`; only operator-listed
+//!   `ALLTERNIT_WEBHOOK_INTERNAL_ENDPOINTS` (`host:port`) bypass it.
+//! - `allternit-api` channel transports (`channel_transports.rs`, Discord
+//!   webhook URL, Teams service URL and other platform calls): same pair.
+//! - `allternit-api` MCP connector URLs, OAuth discovery and token endpoints
+//!   (`mcp_apps.rs`, used by `mcp_routes.rs`): `is_public_ip`; the local-dev
+//!   allowance still refuses link-local / cloud metadata.
+//! - `allternit-api` MCP directory domain checks (`mcp_directory_guard.rs`):
+//!   `is_public_ip`.
+//!
+//! Not routed through it on purpose: calls to fixed, operator-configured
+//! internal services (gizzi-code on localhost, the node on 127.0.0.1:8013, the
+//! decision runtime on 127.0.0.1:7717, the open-connector sidecar) and the
+//! fixed GitHub / platform API hosts. Spawned harnesses are only recorded in
+//! ExecutionEnvironmentV1. gizzi-code (TS) has its own equivalent in
+//! `ssrfGuard.ts`.
 //!
 //! Policy: only publicly routable unicast addresses are allowed. Loopback,
 //! private, link-local (cloud metadata 169.254.169.254), CGNAT (the Fabric
