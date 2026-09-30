@@ -94,6 +94,24 @@ pub struct MutationProvenance {
     pub agent_decision_id: Option<String>,
 }
 
+/// Who submitted a plan's raw intent when it is not the local operator —
+/// e.g. a scoped remote identity on the CommRails bridge. See
+/// [`Gate::plan_new_with_origin`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptOrigin {
+    /// Recorded as the `PromptCreated` event actor.
+    pub actor: Actor,
+    /// `PromptCreated.payload.source` (e.g. `"bridge"`).
+    pub source: String,
+    /// Caller-side decision reference (e.g. the remote agent's decision log
+    /// id). Opaque to the gate; recorded verbatim.
+    #[serde(default)]
+    pub decision_ref: Option<String>,
+    /// Transport request id, joining the plan with its request audit event.
+    #[serde(default)]
+    pub request_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct DagSlice {
     nodes: Vec<DagNode>,
@@ -210,6 +228,22 @@ impl Gate {
         raw_text: &str,
         project_id: Option<String>,
     ) -> Result<(String, String, String)> {
+        self.plan_new_with_origin(raw_text, project_id, None).await
+    }
+
+    /// Gate 0 plan creation with an explicit prompt origin. With `origin`,
+    /// `PromptCreated` is attributed to the submitting actor (e.g. the bridge
+    /// identity `bot:chief`) and its payload records `source`, `submitted_by`,
+    /// `decision_ref` and `request_id`; the initial `PromptDeltaAppended` is
+    /// authored by that actor. DAG mutations stay gate-emitted with
+    /// prompt/delta provenance, so the plan's provenance chain ends at a
+    /// prompt the remote actor owns (Gate 0: "prompt delta or agent decision").
+    pub async fn plan_new_with_origin(
+        &self,
+        raw_text: &str,
+        project_id: Option<String>,
+        origin: Option<&PromptOrigin>,
+    ) -> Result<(String, String, String)> {
         self.ensure_policy_scope(&EventScope::default()).await?;
         let prompt_id = format!("p_{}", rand::random::<u32>() % 1_000_000);
         let dag_id = format!("dag_{}", rand::random::<u32>() % 1_000_000);
@@ -219,7 +253,9 @@ impl Gate {
         let prompt_event = AllternitEvent {
             event_id: create_event_id(),
             ts: Utc::now().to_rfc3339(),
-            actor: gate_actor(&self.actor_id),
+            actor: origin
+                .map(|o| o.actor.clone())
+                .unwrap_or_else(|| gate_actor(&self.actor_id)),
             scope: project_id
                 .clone()
                 .map(|pid| crate::core::types::EventScope {
@@ -227,11 +263,21 @@ impl Gate {
                     ..Default::default()
                 }),
             r#type: "PromptCreated".to_string(),
-            payload: json!({
-                "prompt_id": prompt_id,
-                "source": "cli",
-                "raw_text": raw_text
-            }),
+            payload: match origin {
+                None => json!({
+                    "prompt_id": prompt_id,
+                    "source": "cli",
+                    "raw_text": raw_text
+                }),
+                Some(o) => json!({
+                    "prompt_id": prompt_id,
+                    "source": o.source,
+                    "raw_text": raw_text,
+                    "submitted_by": o.actor.id,
+                    "decision_ref": o.decision_ref,
+                    "request_id": o.request_id
+                }),
+            },
             provenance: None,
         };
         self.emit(prompt_event).await?;
@@ -281,7 +327,7 @@ impl Gate {
             payload: json!({
                 "prompt_id": prompt_id,
                 "delta_id": delta_id,
-                "author": "user",
+                "author": origin.map(|o| o.actor.id.as_str()).unwrap_or("user"),
                 "category": "initial",
                 "delta_text": raw_text,
                 "valid_at": Utc::now().to_rfc3339(),

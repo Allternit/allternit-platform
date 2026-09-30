@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::io::{ensure_dir, read_json, write_json_atomic};
 use crate::dependencies::{DependencyEdge, DependencyGraph, DependencyKind};
-use crate::gate::gate::DagMutation;
+use crate::gate::gate::{DagMutation, PromptOrigin};
 use crate::gate::Gate;
 use crate::rails_id::{HierarchicalId, TicketId};
 use crate::tickets::{Ticket, TicketKind, TicketPriority, TicketStatus, TicketStore};
@@ -382,6 +382,20 @@ pub async fn plan_from_template(
     raw_text: Option<&str>,
     project_id: Option<String>,
 ) -> Result<TemplatePlanResult> {
+    plan_from_template_with_origin(gate, template, params, raw_text, project_id, None).await
+}
+
+/// [`plan_from_template`] with an explicit prompt origin (see
+/// [`Gate::plan_new_with_origin`]): the plan prompt is attributed to
+/// `origin.actor`, and the instantiation delta is authored by it.
+pub async fn plan_from_template_with_origin(
+    gate: &Gate,
+    template: &Template,
+    params: &HashMap<String, String>,
+    raw_text: Option<&str>,
+    project_id: Option<String>,
+    origin: Option<&PromptOrigin>,
+) -> Result<TemplatePlanResult> {
     // Validate (params, steps, edges, placeholders) before creating anything.
     template.expand_dag("__root__", params)?;
     let effective = template.resolve_params(params)?;
@@ -400,7 +414,8 @@ pub async fn plan_from_template(
             t
         }
     };
-    let (prompt_id, dag_id, root_node_id) = gate.plan_new(&text, project_id).await?;
+    let (prompt_id, dag_id, root_node_id) =
+        gate.plan_new_with_origin(&text, project_id, origin).await?;
     let expansion = template.expand_dag(&root_node_id, params)?;
     let delta = format!(
         "instantiate template {} ({}){}",
@@ -413,7 +428,12 @@ pub async fn plan_from_template(
         }
     );
     let delta_id = gate
-        .plan_refine(&dag_id, &delta, "template", expansion.mutations)
+        .plan_refine(
+            &dag_id,
+            &delta,
+            origin.map(|o| o.actor.id.as_str()).unwrap_or("template"),
+            expansion.mutations,
+        )
         .await?;
     Ok(TemplatePlanResult {
         template_id: template.id.clone(),

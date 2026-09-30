@@ -74,5 +74,15 @@ optional Dolt storage backend.
 See [cli/README.md](./cli/README.md) for a product overview and
 [cli/RAILS_CLI.md](./cli/RAILS_CLI.md) for the full command reference.
 
+## Remote bridge (default off)
+
+`allternit-commrails bridge serve` is a scoped listener that lets a remote agent
+(e.g. Chief on the shared box, over the mesh) create/read plans and send/read
+mail with a bearer identity from `allternit-commrails identity add`. Pickup,
+close, leases, wait-gate resolution and gate decisions are never available to
+it. Loopback only unless `--allow-remote`. Spec, threat model and enablement
+steps: [spec/BRIDGE.md](./spec/BRIDGE.md); box client:
+[`tools/commrails-bridge-client/`](../tools/commrails-bridge-client/).
+
 See [docs/architecture/README.md](./docs/architecture/README.md) for a full feature/architecture breakdown before you run the test suites.
 Hidden runtime stores (`.allternit/`) are documented in [docs/architecture/README.md](./docs/architecture/README.md#layer-c---ledger-bus-transports) and tracked during `allternit commrails init` and `commrails init`.
