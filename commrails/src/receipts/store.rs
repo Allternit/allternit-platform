@@ -256,6 +256,71 @@ impl ReceiptStore {
         super::chain::ChainStore::open(&self.receipts_dir)
     }
 
+    /// Record a tool call as an effect receipt on the run's chain and write the
+    /// legacy record through `exec` at most once per idempotency key.
+    ///
+    /// Policy: payload `effect_class` (default `EXECUTE`, i.e. side-effecting).
+    /// `NONE`/`READ` calls skip the chain and just run `exec` (unchanged behaviour).
+    /// Payload `idempotency_key` (>= 8 chars) dedupes; otherwise a unique key is used.
+    /// Returns the legacy receipt id (the recorded one on replay).
+    pub fn record_tool_effect<F>(
+        &self,
+        run_id: &str,
+        tool: &str,
+        payload: &serde_json::Value,
+        exec: F,
+    ) -> Result<String>
+    where
+        F: FnOnce() -> Result<String>,
+    {
+        use super::chain::{EffectContext, EffectOutcome, EffectRequest};
+        let class = payload
+            .get("effect_class")
+            .and_then(|v| v.as_str())
+            .unwrap_or("EXECUTE")
+            .to_string();
+        if class == "NONE" || class == "READ" {
+            return exec();
+        }
+        let cs = self.chain_store()?;
+        let key = match payload.get("idempotency_key").and_then(|v| v.as_str()) {
+            Some(k) if k.len() >= 8 => k.to_string(),
+            _ => format!("auto:{}", create_blob_id()),
+        };
+        let cx = EffectContext {
+            run_id: run_id.to_string(),
+            session_id: run_id.to_string(),
+            task_id: run_id.to_string(),
+            node_id: None,
+            trace_id: run_id.to_string(),
+            state_version: 0,
+            producer_id: "gate".to_string(),
+            policy_decision_id: payload
+                .get("policy_decision_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("none")
+                .to_string(),
+        };
+        let req = EffectRequest {
+            action_id: format!("act_{}", create_blob_id()),
+            tool_id: tool.to_string(),
+            args_hash: super::jcs::hash_value(payload)?,
+            idempotency_key: key,
+            effect_class: class,
+            target: None,
+        };
+        match cs.run_effect_once(&cx, &req, || {
+            let id = exec()?;
+            Ok((super::jcs::sha256_tagged(id.as_bytes()), Some(id)))
+        })? {
+            EffectOutcome::Replayed(prev) => Ok(prev["external_ref"].as_str().unwrap_or("").to_string()),
+            EffectOutcome::Executed(rec) => rec["external_ref"]
+                .as_str()
+                .map(|s| s.to_string())
+                .ok_or_else(|| anyhow::anyhow!("tool effect failed; FAILED receipt recorded on chain")),
+        }
+    }
+
     /// Get receipt summary/aggregation
     pub fn get_summary(&self, query: &ReceiptQuery) -> Result<ReceiptSummary> {
         let receipts = self.query_receipts(query)?;
@@ -293,6 +358,30 @@ impl ReceiptStore {
 mod wp3_tests {
     use super::*;
     use crate::core::types::ReceiptRecord;
+
+    fn mk() -> (tempfile::TempDir, ReceiptStore) {
+        let d = tempfile::tempdir().unwrap();
+        let st = ReceiptStore::new(ReceiptStoreOptions {
+            root_dir: Some(d.path().to_path_buf()), receipts_dir: None, blobs_dir: None }).unwrap();
+        (d, st)
+    }
+
+    #[test]
+    fn tool_effect_chained_and_deduped() {
+        let (_d, st) = mk();
+        let n = std::cell::Cell::new(0);
+        let p = serde_json::json!({"idempotency_key": "key-12345678", "x": 1});
+        let a = st.record_tool_effect("run_w1", "shell", &p, || { n.set(n.get() + 1); Ok("rcpt_a".into()) }).unwrap();
+        let b = st.record_tool_effect("run_w1", "shell", &p, || { n.set(n.get() + 1); Ok("rcpt_b".into()) }).unwrap();
+        assert_eq!((a.as_str(), b.as_str(), n.get()), ("rcpt_a", "rcpt_a", 1));
+        let cs = st.chain_store().unwrap();
+        let rep = cs.verify_chain("run_w1").unwrap();
+        assert!(rep.ok && rep.length == 2, "{rep:?}"); // INTENDED + COMMITTED
+        // read-only: unchanged behaviour, no chain
+        let ro = serde_json::json!({"effect_class": "READ"});
+        st.record_tool_effect("run_w2", "cat", &ro, || Ok("rcpt_c".into())).unwrap();
+        assert_eq!(cs.verify_chain("run_w2").unwrap().length, 0);
+    }
 
     #[test]
     fn legacy_reported_as_legacy_and_chained_as_signed() {

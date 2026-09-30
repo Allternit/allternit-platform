@@ -93,6 +93,10 @@ impl ReceiptSigner {
         if let Some(p) = path.parent() {
             std::fs::create_dir_all(p)?;
         }
+        tracing::warn!(
+            "receipt signing key not found at {}; generating a new one. Set {} (and ALLTERNIT_ENV=production to forbid generation) in prod",
+            path.display(), SIGNING_KEY_ENV
+        );
         let s = Self::generate();
         write_secret(path, &hex::encode(s.key.to_bytes()))?;
         Ok(s)

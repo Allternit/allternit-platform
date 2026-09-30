@@ -1249,7 +1249,13 @@ impl Gate {
             output_tokens,
             total_tokens,
         };
-        let _ = self.receipts.write_receipt(&receipt)?;
+        // Side-effecting tool calls are recorded on the run's signed chain and
+        // deduped by idempotency key; read-only calls keep the legacy path.
+        let run_id = receipt.run_id.clone();
+        let receipt_id = self.receipts.record_tool_effect(&run_id, tool, &receipt_payload, || {
+            self.receipts.write_receipt(&receipt)?;
+            Ok(receipt_id.clone())
+        })?;
 
         let evt = AllternitEvent {
             event_id: create_event_id(),
