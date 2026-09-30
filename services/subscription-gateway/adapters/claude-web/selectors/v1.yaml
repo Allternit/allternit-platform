@@ -59,6 +59,9 @@ banner:
 challenge:
   critical: false
   strategies:
+    # Top-frame heading of Cloudflare's interstitial: the Turnstile iframe is in
+    # a closed shadow root and its label is cross-origin, so only this matches.
+    - { text: /performing security verification|verifying you are human|checking your browser|checking if the site connection is secure/i }
     - { css: "iframe[src*='challenges.cloudflare.com']" }
     - { css: "#challenge-form" }
     - { text: /verify you are human/i }

@@ -1,0 +1,124 @@
+{
+ "formatVersion": 1,
+ "bundleId": "com.anthropic.claudefordesktop",
+ "capturedAt": 0,
+ "root": {
+  "role": "AXApplication",
+  "title": "Claude",
+  "path": [],
+  "children": [
+   {
+    "role": "AXWindow",
+    "title": "Claude",
+    "path": [
+     0
+    ],
+    "children": [
+     {
+      "role": "AXWebArea",
+      "title": "Claude",
+      "path": [
+       0,
+       0
+      ],
+      "children": [
+       {
+        "role": "AXGroup",
+        "description": "Sidebar",
+        "path": [
+         0,
+         0,
+         0
+        ],
+        "children": [
+         {
+          "role": "AXButton",
+          "title": "New chat",
+          "actions": [
+           "AXPress"
+          ],
+          "path": [
+           0,
+           0,
+           0,
+           0
+          ]
+         },
+         {
+          "role": "AXRadioButton",
+          "title": "Chat",
+          "value": "1",
+          "actions": [
+           "AXPress"
+          ],
+          "path": [
+           0,
+           0,
+           0,
+           1
+          ]
+         },
+         {
+          "role": "AXRadioButton",
+          "title": "Cowork",
+          "value": "0",
+          "actions": [
+           "AXPress"
+          ],
+          "path": [
+           0,
+           0,
+           0,
+           2
+          ]
+         }
+        ]
+       },
+       {
+        "role": "AXGroup",
+        "subrole": "AXApplicationAlert",
+        "path": [
+         0,
+         0,
+         1
+        ],
+        "children": [
+         {
+          "role": "AXStaticText",
+          "value": "You have reached your usage limit. Your limit resets in 2 hours",
+          "path": [
+           0,
+           0,
+           1,
+           0
+          ]
+         }
+        ]
+       },
+       {
+        "role": "AXGroup",
+        "description": "Conversation",
+        "path": [
+         0,
+         0,
+         2
+        ]
+       },
+       {
+        "role": "AXTextArea",
+        "description": "Write your prompt to Claude",
+        "value": "",
+        "actions": [],
+        "path": [
+         0,
+         0,
+         3
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

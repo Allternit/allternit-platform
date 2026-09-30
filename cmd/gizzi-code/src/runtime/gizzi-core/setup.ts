@@ -376,22 +376,8 @@ export async function setup(
     permissionMode === 'bypassPermissions' ||
     allowDangerouslySkipPermissions
   ) {
-    // Check if running as root/sudo on Unix-like systems
-    // Allow root if in a sandbox (e.g., TPU devspaces that require root)
-    if (
-      process.platform !== 'win32' &&
-      typeof process.getuid === 'function' &&
-      process.getuid() === 0 &&
-      process.env.IS_SANDBOX !== '1' &&
-      !isEnvTruthy(process.env.GIZZI_BUBBLEWRAP)
-    ) {
-      // biome-ignore lint/suspicious/noConsole:: intentional console output
-      console.error(
-        `--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons`,
-      )
-      process.exit(1)
-    }
-
+    // Root is allowed: Allternit launches CLIs auto-approve and its own gate
+    // (catastrophic floor + policy) is the gate, so bypass is not refused here.
     if (
       process.env.USER_TYPE === 'ant' &&
       // Skip for Desktop's local agent mode — same trust model as CCR/BYOC

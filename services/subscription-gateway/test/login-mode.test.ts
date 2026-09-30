@@ -12,6 +12,7 @@ import { issueToken } from "../src/security/tokens.js";
 import { upsertAccount } from "../src/store/queries.js";
 import {
   createChromeLoginBrowser,
+  readChromeStorageMarkers,
   createFirefoxLoginBrowser,
   firefoxProfileFor,
   importFirefoxSessionIfNewer,
@@ -149,16 +150,22 @@ describe("createFirefoxLoginBrowser", () => {
       };
       return child;
     }) as unknown as typeof import("node:child_process").spawn;
-    const lb = createChromeLoginBrowser({ executable: "/usr/bin/google-chrome-stable", spawnFn });
+    const lb = createChromeLoginBrowser({ executable: "/usr/bin/google-chrome-stable", spawnFn, isRoot: false });
     const userDataDir = join(dir, "profiles", "acct-1");
     expect(lb.profileFor(userDataDir)).toBe(userDataDir);
     await lb.open("acct-1", userDataDir, "https://claude.ai/");
     expect(spawned[0].args).toContain(`--user-data-dir=${userDataDir}`);
     expect(spawned[0].args).toContain("--password-store=basic");
     expect(spawned[0].args.at(-1)).toBe("https://claude.ai/");
-    expect(spawned[0].args.join(" ")).not.toMatch(/remote-debugging|enable-automation|headless/);
+    expect(spawned[0].args.join(" ")).not.toMatch(/remote-debugging|enable-automation|headless|no-sandbox/);
     await lb.close("acct-1");
     expect(lb.isOpen("acct-1")).toBe(false);
+
+    // As root (Sessions machines), Chrome only starts with --no-sandbox.
+    const asRoot = createChromeLoginBrowser({ executable: "/usr/bin/google-chrome-stable", spawnFn, isRoot: true });
+    await asRoot.open("acct-2", join(dir, "profiles", "acct-2"), "https://kimi.com/");
+    expect(spawned[1].args).toContain("--no-sandbox");
+    await asRoot.close("acct-2");
   });
 });
 
@@ -237,3 +244,23 @@ describe("POST /v1/accounts/:id/login + connect", () => {
     expect(res.status).toBe(403);
   });
 });
+
+describe("readChromeStorageMarkers (localStorage sign-in detection)", () => {
+  it("fingerprints the newest record of a key; a new token changes it, other origins don't count", () => {
+    const udd = join(dir, "profiles", "acct-ls");
+    const ldb = join(udd, "Default", "Local Storage", "leveldb");
+    mkdirSync(ldb, { recursive: true });
+    const rec = (origin: string, key: string, value: string) =>
+      Buffer.concat([Buffer.from(`_${origin}`), Buffer.from([0, 1]), Buffer.from(key), Buffer.from([1]), Buffer.from(value)]);
+    const want = [{ origin: "https://www.kimi.ai", key: "access_token" }];
+    writeFileSync(join(ldb, "000003.log"), rec("https://www.kimi.com", "access_token", "other-origin"));
+    expect(readChromeStorageMarkers(udd, want).size).toBe(0);
+    writeFileSync(join(ldb, "000003.log"), Buffer.concat([rec("https://www.kimi.com", "x", "y"), rec("https://www.kimi.ai", "access_token", "tok-1")]));
+    const first = readChromeStorageMarkers(udd, want).get("https://www.kimi.ai access_token");
+    expect(first).toMatch(/^[0-9a-f]{64}$/);
+    writeFileSync(join(ldb, "000003.log"), Buffer.concat([rec("https://www.kimi.ai", "access_token", "tok-1"), rec("https://www.kimi.ai", "access_token", "tok-2")]));
+    expect(readChromeStorageMarkers(udd, want).get("https://www.kimi.ai access_token")).not.toBe(first);
+    expect(readChromeStorageMarkers(join(dir, "missing"), want).size).toBe(0);
+  });
+});
+

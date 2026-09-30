@@ -145,3 +145,32 @@ runner is expected to beat every ~60s and sweep with `--stale-after 5m`.
 - Wiring gizzi's `smart` permission mode to `judge tool` (S2 "Where" in gizzi).
 - Automatic continuation: `EXCEPTION` waits for `judge continue` (orchestrator)
   or `judge resolve` (person), as in Raven's adjudication step.
+
+## Origin-marked work (`origin: agency | kernel`)
+
+WP6 / decision Q18. A `JudgePolicySet` may carry `origin` (`agency` or `kernel`)
+and, optionally, `completion_policy` (for example `completion.bug_fix`).
+
+- **Forced on.** With an origin, the effective policy is `verify: judge` and
+  `close_by: verifier` whatever the DAG author or a worker sets. The origin is
+  sticky; there is no way to unset it. Attempts to weaken it are refused:
+  `policy_self_weaken` for an agent, `policy_origin_locked` for a user. An agent
+  also cannot swap the node's `completion_policy`. Plans without an origin keep
+  the defaults (`verify: off`, `close_by: any`).
+- **Builders propose.** When the WIH's own agent (or the gate, or an unspecified
+  closer) closes DONE/PASS, nothing closes. A `CompletionProposed` event is
+  written, the node moves to `VERIFYING`, and the close is refused
+  (`completion_proposed`). Closing as failed is unchanged.
+- **The system performs DONE.** Only a different agent acting as verifier (with
+  the judge in the loop) or a human closes the node. The builder and the
+  verifier must not be the same agent id. A judge timeout, error, or invalid
+  answer gives `NEEDS_HUMAN`, never `DONE`.
+- **Evidence.** If the node has a `completion_policy`, a judge PASS also needs an
+  evidence ref for every blocking criterion, written as `<criterion_id>:<ref>`
+  (for example `target_tests_pass:receipt:rcp_1`). Missing criteria give
+  `NEEDS_HUMAN` with a reason that lists them. A human close is the override.
+  Policies are the frozen data files in `spec/Contracts/kernel/v1/data/`, loaded
+  from `src/judge/completion.rs`; a new template adds its file to that list.
+  `completion.bug_fix` requires `target_tests_pass`, `affected_tests_pass`,
+  `no_new_regressions`, `diff_review_accept`, `requirements_satisfied`, with
+  `allow_partial=false`.

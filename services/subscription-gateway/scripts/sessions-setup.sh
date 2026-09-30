@@ -49,6 +49,62 @@ if ! command -v google-chrome >/dev/null && ! command -v google-chrome-stable >/
 fi
 echo "chrome: $(google-chrome --version 2>/dev/null || google-chrome-stable --version)"
 
+# 3b. Streamed desktop (XFCE, runs as root). Chrome refuses to start as root
+#     without --no-sandbox, so the panel's Web Browser button and the app menu
+#     did nothing. Route every desktop Chrome launch through a wrapper, make it
+#     the default browser, put Chrome in the dock, and pin Thunar as the file
+#     manager. Skipped on machines without an XFCE desktop.
+CHROME_BIN="$(command -v google-chrome-stable || command -v google-chrome)"
+if [ "$(id -u)" = 0 ] && command -v xfce4-panel >/dev/null; then
+  echo "== desktop: chrome-root wrapper + launchers"
+  printf '#!/bin/sh\nexec %s --no-sandbox --password-store=basic "$@"\n' "$CHROME_BIN" > /usr/local/bin/chrome-root
+  chmod 755 /usr/local/bin/chrome-root
+  update-alternatives --install /usr/bin/x-www-browser x-www-browser /usr/local/bin/chrome-root 300 >/dev/null
+  update-alternatives --set x-www-browser /usr/local/bin/chrome-root >/dev/null
+  mkdir -p "$HOME/.local/share/xfce4/helpers" "$HOME/.local/share/applications" "$HOME/.config/xfce4"
+  cat > "$HOME/.local/share/xfce4/helpers/chrome-root.desktop" <<'HELPER'
+[Desktop Entry]
+NoDisplay=true
+Version=1.0
+Type=X-XFCE-Helper
+X-XFCE-Category=WebBrowser
+X-XFCE-Commands=/usr/local/bin/chrome-root
+X-XFCE-CommandsWithParameter=/usr/local/bin/chrome-root "%s"
+Icon=google-chrome
+Name=Google Chrome
+HELPER
+  printf 'WebBrowser=chrome-root\nFileManager=thunar\n' > "$HOME/.config/xfce4/helpers.rc"
+  # App-menu entry: same .desktop id, so it shadows the system one.
+  if [ -f /usr/share/applications/google-chrome.desktop ]; then
+    sed "s#^Exec=[^ ]*google-chrome[^ ]*#Exec=/usr/local/bin/chrome-root#" \
+      /usr/share/applications/google-chrome.desktop > "$HOME/.local/share/applications/google-chrome.desktop"
+  fi
+  # Dock: the stock Web Browser launcher becomes a Chrome launcher.
+  for f in "$HOME"/.config/xfce4/panel/launcher-*/*.desktop; do
+    [ -f "$f" ] || continue
+    if grep -qE '^Exec=(exo-open --launch WebBrowser|/usr/local/bin/chrome-root)' "$f"; then
+      cat > "$f" <<'LAUNCHER'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Google Chrome
+Comment=Browse the web
+Exec=/usr/local/bin/chrome-root %U
+Icon=google-chrome
+Terminal=false
+StartupNotify=true
+Categories=Network;WebBrowser;
+LAUNCHER
+    fi
+  done
+  # Reload a running panel so the dock picks it up (no-op when none runs).
+  PANEL_PID="$(pgrep -x xfce4-panel | head -1 || true)"
+  if [ -n "$PANEL_PID" ]; then
+    (eval "$(tr '\0' '\n' < "/proc/$PANEL_PID/environ" | grep -E '^(DISPLAY|DBUS_SESSION_BUS_ADDRESS)=' | sed 's/^/export /')"
+     timeout 10 xfce4-panel -r >/dev/null 2>&1 || true)
+  fi
+fi
+
 # 4. Firefox — the login browser (plain, never automated)
 if [ ! -x "$FIREFOX_DIR/firefox" ] && [ -f "$SUBSFAB/firefox.tar.xz" ]; then
   echo "== installing firefox from bundle"
@@ -102,6 +158,15 @@ for _ in $(seq 1 20); do
   sleep 0.5
 done
 pkill -9 -f "src/main.ts" 2>/dev/null || true
+# Login/adapter Chromes outlive a killed gateway (reparented to init) and keep
+# their profile locked, so the new gateway can't launch that account. SIGTERM
+# first so Chrome flushes the session it holds, then force.
+pkill -TERM -f -- "--user-data-dir=$STATE_DIR/profiles/" 2>/dev/null || true
+for _ in $(seq 1 20); do
+  pgrep -f -- "--user-data-dir=$STATE_DIR/profiles/" >/dev/null || break
+  sleep 0.5
+done
+pkill -9 -f -- "--user-data-dir=$STATE_DIR/profiles/" 2>/dev/null || true
 cd "$REPO/services/subscription-gateway"
 # Logins run in a plain (non-automated) Google Chrome on the account's own
 # profile: Google sign-in and Cloudflare accept it, where Firefox got

@@ -1,0 +1,177 @@
+---
+title: Policy and safety
+description: The policy floor, hard policy before probabilistic judgment, authority profiles, the fail-closed judge, and execution environment and network policy
+---
+
+**Status: AVAILABLE (permission floor) · PREVIEW (fail-closed judge, opt-in).** See [status labels](/architecture#status-labels).
+
+Policy in Allternit is owned by the system. A model can propose an action; it cannot grant itself permission to take it. This page describes the **policy floor**: the rules that hold for every run regardless of which executor or model is doing the work.
+
+## Architecture contract
+
+### Policy decisions
+
+Every proposed action is checked before it runs. The check names the principal, the task, the action, the resources it touches, the sensitivity of the data involved, the class of external effect, and any spend.
+
+The decision is one of four values:
+
+| Decision | Meaning |
+|----------|---------|
+| `ALLOW` | The action may proceed under the listed grants. |
+| `ALLOW_WITH_LIMITS` | The action may proceed within stated limits. |
+| `ASK` | A human must approve. The run raises an [attention request](/architecture/kernel#attention-and-approvals). |
+| `DENY` | The action is not permitted. This is final. |
+
+Decisions carry reason codes and are recorded as receipts. Grants are explicit, scoped and expiring. Permissions are scoped to the task and end with it.
+### The policy floor
+
+<Steps>
+  <Step title="No executor bypasses policy">
+    No unattended executor bypasses Allternit policy, even when its own command-line tool is running in a yolo, auto-approve or bypass mode. The policy gate is applied across every executor.
+  </Step>
+  <Step title="Hard policy runs before probabilistic judgment">
+    Deterministic policy is evaluated first. A probabilistic component may only raise friction (turn an allow into an ask). It can never weaken a hard deny.
+  </Step>
+  <Step title="The judge fails closed">
+    A judge failure, a timeout, missing calibration or low confidence all resolve to ASK or a human, never to ALLOW.
+  </Step>
+  <Step title="Completion is owned by the verifier">
+    The system closes a run from verification evidence. See [Verification](/architecture/verification#verifier-owned-completion).
+  </Step>
+  <Step title="Network tools pass the network policy">
+    Every network-capable tool call is checked against the run's network access policy.
+  </Step>
+  <Step title="Child processes get a compiled environment">
+    Processes started for a run receive an explicit execution environment. Inheriting the parent's raw environment is forbidden.
+  </Step>
+  <Step title="Effects need an idempotency key and a receipt before retry">
+    A harmful or externally visible action is retried only when it has an idempotency key and an action receipt, so a retry cannot duplicate it.
+  </Step>
+  <Step title="Untrusted content is fenced">
+    Untrusted content carries trust metadata and is kept apart from control instructions when context is built.
+  </Step>
+</Steps>
+### Hard policy before probabilistic judgment
+
+The architecture separates three kinds of decision:
+
+| Kind | How it is decided | Can a probability change it? |
+|------|-------------------|------------------------------|
+| **Hard** | Deterministic rules | No |
+| **Soft** | A probability compared with a threshold | It is the input |
+| **Cognitive** | Reasoning inside a bounded step | Not a permission at all |
+
+The order is fixed. Hard rules run first. If a hard rule denies, evaluation stops: no score, no confidence and no human approval changes the outcome. In the Agency API this appears as `403 ERR_POLICY_DENIED`, and a hard deny never becomes an approval request.
+
+Only when hard policy does not deny do soft decisions apply, and they can only move the result toward more caution.
+
+A related rule covers the decision surface: a `gate` result from a decision step is a recommendation about a transition. It is never an authorization.
+### Authority profiles
+
+Authority is explicit. A run carries a named **authority profile** that compiles into capabilities and policy. A profile is a typed, versioned definition, not a magic string. Runs record the profile as `id@version`.
+
+Three profiles exist:
+
+| Profile | Intent |
+|---------|--------|
+| `read-only` | Read the workspace. No writes, no effects. |
+| `code-safe` | Work on code within the workspace under sandboxing, asking before effects outside it. |
+| `code-write` | Write to the workspace paths declared writable. |
+
+<Note>
+The intent column is a summary. The exact semantics of each profile are its typed definition: granted and denied capabilities, a filesystem scope (read, write, execute, and deny outside the workspace), a network policy, and an approval requirement per effect type (`never_allowed`, `always_ask`, `ask_unless_granted`, `allowed`). The Agency API will serve these definitions from [`GET /v1/authority-profiles`](/api/agency/catalog#list-authority-profiles).
+</Note>
+
+Rules that hold for every profile:
+
+- Grants are explicit, scoped and expire with the run. A grant never outlives its run.
+- Extra grants can only add scope within the caller's own entitlement. Nothing can weaken a hard policy deny.
+- The interaction mode (`autonomous`, `approval_gated`, `recommend_only`) changes how much discretionary review happens. `autonomous` still stops at every policy ASK.
+- **There is no bypass profile.** Names such as `yolo`, `bypass` or `auto-approve` are rejected, and no executor's native bypass mode is honored. See [Policy and safety](/architecture/policy).
+### No bypass profiles
+
+There are three [authority profiles](/architecture/policy#authority-profiles): `read-only`, `code-safe` and `code-write`. There is no profile that turns policy off.
+
+- No public profile is equivalent to yolo, bypass or auto-approve.
+- Requests naming such a profile, with or without a version suffix, are rejected with `ERR_AUTHORITY_PROFILE_FORBIDDEN`.
+- An executor's own bypass mode is not honored.
+- The `autonomous` interaction mode removes discretionary review only. It still stops at every policy ASK.
+- Fields that try to disable the fail-closed judge or verifier-owned completion are rejected as unknown fields.
+### The fail-closed judge
+
+Some policy questions cannot be settled by a deterministic rule alone, so a judge component assesses risk. The judge can be wrong or unavailable, and the design assumes it will be.
+
+| Judge condition | Result |
+|-----------------|--------|
+| Judge returns a confident, calibrated low-risk result | Action may proceed if hard policy allows it |
+| Judge times out | ASK |
+| Judge errors | ASK |
+| Calibration for this decision is missing | ASK |
+| Confidence is below the threshold | ASK |
+| Hard policy denied | DENY, regardless of the judge |
+
+The same direction applies to expiry. An approval request that nobody answers resolves as a rejection.
+
+Human escalation is targeted, not blanket. It is driven by confidence, consequence, irreversibility, cost, novelty and verification failure.
+### Execution environment
+
+Processes started on behalf of a run get a compiled environment, not the parent's.
+
+| Setting | Meaning |
+|---------|---------|
+| Allowed environment keys | The only environment variables the process receives. |
+| Secret references | Named references to secrets. Values are resolved at the boundary, not passed in the request. |
+| Working directory and temp scope | Where the process runs and where it may write scratch data. |
+| Filesystem scope | What the process may read, write and execute. Access outside the workspace is denied. |
+
+Through the Agency API, callers can set `allowed_env_keys` and `secret_refs`. Raw environment inheritance is never available.
+### Network policy
+
+| Setting | Values | Default |
+|---------|--------|---------|
+| Default stance | `deny`, `allowlist` | `deny` |
+| Allowed domains | List of domains, used with `allowlist` | empty |
+| Private addresses | `deny` | `deny` (the only value) |
+| Maximum redirects | 0 to 10 | 3 |
+| Redirect scope | `same_domain`, `allowlist` | `allowlist` |
+| DNS rebinding | `pin_resolution` | `pin_resolution` (the only value) |
+
+Three defenses are always on and cannot be turned off by a request:
+
+- **Private-address blocking.** Requests to private or internal addresses are denied.
+- **Redirect-hop checking.** Every hop of a redirect chain is checked against the policy, up to the redirect limit.
+- **DNS-rebinding defense.** The resolved address is pinned, so a name cannot be re-pointed at an internal address between the check and the connection.
+
+Numeric limits such as the redirect maximum are versioned platform defaults, reported with a `defaults_version`. They are not fixed constants of the architecture.
+### Trust classes
+
+Data carries one of five trust classes: `PUBLIC`, `INTERNAL`, `RESTRICTED`, `SECRET`, `UNTRUSTED`.
+
+- Context supplied by a caller enters as `UNTRUSTED` unless policy grants it a trust class. Untrusted text is never concatenated into control instructions.
+- Which compute may see which data is an eligibility rule applied before any cost or quality preference. A request can cap the highest trust class allowed to leave for remote compute.
+
+## Current implementation
+
+The permission floor is on main and on by default: hard policy runs first, and no executor's native bypass mode is honored. The fail-closed judge runs today for internal flows when opted in; it is designed to be always on, and not client-disableable, for Agency API runs. The typed policy contracts are frozen in [kernel ABI 1.0.0](/architecture/kernel-contracts). Signed policy receipts are part of the receipt chain, which is not built yet.
+
+## Availability
+
+| Part | Status | Notes |
+|------|--------|-------|
+| Permission floor (hard policy first, no bypass) | **AVAILABLE** | On by default. |
+| Fail-closed judge | **PREVIEW** | Opt-in for internal flows. |
+| Policy, authority and environment contracts | **AVAILABLE** | Kernel ABI 1.0.0. |
+| Authority profiles served over the API | **PREVIEW** | `GET /v1/authority-profiles` in the v0.3 contract. |
+| Signed policy receipts | **DESIGN — NOT YET IMPLEMENTED** | Part of the receipt chain. |
+
+## Developer relevance
+
+Pick the narrowest authority profile that can do the job, and expect `ASK` decisions to arrive as attention requests you must answer. A `403 ERR_POLICY_DENIED` is final: change the request, not the retry count. If you build a tool, declare its network and filesystem needs up front, because the process only receives the compiled environment.
+
+## Related
+
+- [Kernel](/architecture/kernel)
+- [Receipts](/architecture/receipts)
+- [Permission profiles (CLI)](/cli/permission-profiles)
+- [Permission policies](/security/permission-policies)
+- [Agency API: Errors](/api/agency/errors)

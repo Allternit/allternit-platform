@@ -1,0 +1,29 @@
+---
+title: 'OpenAPI download'
+description: 'Download the Agency API v0.3 OpenAPI 3.1 contract.'
+---
+
+<Warning>
+**PREVIEW.** The Agency API is not live yet. This page describes the published v0.3 contract so you can review and build against it; details may change before alpha. Implementation status: DESIGN — NOT YET IMPLEMENTED.
+</Warning>
+
+The full Agency API contract is published as one OpenAPI 3.1 file. It is the source the [schema tables](/api/agency/schemas) and the [error code tables](/api/agency/errors#reference) are generated from.
+
+<Card title="Download openapi-v0.3.yaml" icon="download" href="/api/agency/openapi-v0.3.yaml">
+  Allternit Agency API v0.3 (preview contract)
+</Card>
+
+## What you can do with it
+
+- Generate a typed client with your usual OpenAPI tooling.
+- Validate request bodies before sending them. Request objects are closed, so a validator catches unknown fields the API would reject.
+- Review the contract and send feedback before alpha.
+
+## What it does not promise
+
+The planned server in the file is `https://api.allternit.com`, the same origin as the existing Cloud API. `/v1/agency` is a new surface of that API, and it is not served yet. The contract opens for alpha only after one end-to-end run can survive restart, resume, verify, replay and receipt-backed completion.
+
+## Related
+
+- [Agency API overview](/api/agency/overview)
+- [Versioning](/api/agency/versioning)

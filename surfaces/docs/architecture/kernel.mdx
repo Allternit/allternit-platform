@@ -1,0 +1,130 @@
+---
+title: The kernel
+description: What the agent kernel owns, the durable run, its lifecycle and statuses, attention, budgets and resolved defaults
+---
+
+**Status: AVAILABLE (work runtime, internal) · PREVIEW (Agency API surface).** See [status labels](/architecture#status-labels).
+
+The **kernel** is the system that runs agent work: it compiles a goal into typed contracts, carries the resulting **Run** durably across time, checks every action against policy, closes work only from verification evidence, and writes receipts. The [Agency API](/api/agency/overview) is the public HTTP surface over the kernel; it is not the kernel itself. See [Kernel and Agency API](/architecture#kernel-and-agency-api).
+
+A **Run** is one durable execution of a goal. It is the unit the work runtime carries across time, and it is the object the Agency API returns.
+
+## Architecture contract
+
+### What makes a run durable
+
+- The run is persisted before the create call returns. It does not depend on the process that accepted it.
+- Run state survives model eviction, cache loss, executor death and process restart.
+- Resume works from durable state and receipts, never from a transcript.
+- A node that was interrupted in the middle of an effect is not blindly re-run. It resumes only if the effect carries an idempotency key and a receipt. Otherwise the run raises an attention request with reason `unsafe_resume`.
+- Every material transition is observable as a typed event or a receipt.
+### The work-node lifecycle
+
+A run is a graph of work nodes. Each node moves through one lifecycle:
+
+```text
+DECLARE → ADMIT → READY → LEASE → SPAWN → RUN → HEARTBEAT → OUTPUT → VERIFY
+        → { COMMIT | CONTINUE | REPLAN | NEEDS_HUMAN } → CLOSE → VAULT / LEARN
+```
+
+No executor moves a node from running to done on its own. Closing a node is a system transition backed by completion evidence. `VAULT` and `LEARN` happen after the terminal state and are not shown as a run status.
+### Run status
+
+`Run.status` is the aggregate of the node lifecycle and the run receipt's completion status. There are ten statuses.
+
+| Status | Terminal | When it applies |
+|--------|----------|-----------------|
+| `accepted` | no | The run is persisted. Its nodes are declared, admitted or ready. The run also stays `accepted` until its resolved defaults are recorded on `Run.resolved`; it cannot execute before that. |
+| `running` | no | At least one node is leased, spawned, running, heartbeating, producing output, verifying, continuing or replanning. |
+| `waiting` | no | Active nodes are on a timer, dependency or event wait gate, or a lease reclaim is pending, and no node is running. Nothing is asked of you. |
+| `needs_attention` | no | A node needs a human: there is an open attention request. This includes `budget_exhausted`, which is raised only after billable and effectful execution has been hard-stopped. |
+| `paused` | no | An operator paused the run. Nodes stopped at the next safe boundary, in-flight effects finished and were receipted, and leases were released. |
+| `cancelling` | no | The cancel request is receipted. No new node is admitted or leased. Effects already dispatched are settling: each completes, times out, or is rolled back where the node declares a rollback. |
+| `completed` | yes | The completion predicate evaluated true. |
+| `partial` | yes | The run closed with the completion predicate false, and the completion contract has `allow_partial: true`. This is the only way a run ends `partial`. |
+| `failed` | yes | The run closed after an unrecoverable failure or a budget stop. A run that stops with unmet criteria and `allow_partial: false` is `failed`. |
+| `cancelled` | yes | The run closed after a cancel, once every in-flight effect settled. |
+
+`partial` is never a synonym for failed or unfinished. It means the caller allowed a partial result in advance and the run reports exactly which criteria passed.
+
+When nodes are in different states, the run reports the highest-precedence one:
+
+```text
+cancelling > paused > needs_attention > running > waiting > accepted
+```
+
+#### Control operations
+
+Pause, resume and cancel are asynchronous and idempotent.
+
+| Operation | Effect |
+|-----------|--------|
+| Pause | Status goes to `paused` at the next safe boundary. Pausing a paused run is a no-op. |
+| Resume | Continues from durable state and receipts. |
+| Cancel | Status goes `cancelling`, then `cancelled`. Open attention requests are withdrawn. Repeating a cancel returns the current run. Cancelling a run that is already `completed`, `partial` or `failed` is a conflict (`ERR_RUN_TERMINAL`). |
+
+Effects in flight at cancel time are never silently abandoned. Each outcome is receipted and listed in `Run.cancellation.effects_in_flight` until it settles.
+### Attention and approvals
+
+Agents request attention. They never notify people directly. An attention controller owns delivery, quiet hours, deduplication, quotas and escalation.
+
+A run raises an attention request and moves to `needs_attention` when:
+
+| Reason | Trigger |
+|--------|---------|
+| `approval_required` | Policy returned ASK for a proposed action. |
+| `clarification_needed` | The run needs information only a person has. |
+| `budget_exhausted` | A budget limit was reached and spend has been halted. |
+| `verification_inconclusive` | A required verification could not reach pass or fail. |
+| `low_confidence` | A decision fell below its calibrated threshold. |
+| `unsafe_resume` | An interrupted effect cannot be safely resumed. |
+| `review_requested` | A review step asked for a person. |
+
+Each request has a `kind`:
+
+- **`approval`** is a policy ASK. If it expires, it resolves as a rejection. This is fail closed.
+- **`informational`** asks for input without gating an action. If it expires, it becomes `expired` with no rejection implied.
+
+The first valid answer wins. An answer is written as a receipt before it takes effect. A hard policy deny never becomes an attention request, and an approval can never override one.
+### Budgets
+
+A budget sets at least one of a time limit (`max_seconds`) or a cost limit (`max_cost_usd`), and may also cap executed work nodes (`max_steps`) and attention requests (`max_attention_requests`).
+
+On exhaustion the order of operations is fixed:
+
+1. The platform **hard-stops all further billable and effectful execution**. `budget_usage.spend_halted` becomes `true`.
+2. Only then does the run ask. With `on_exhaustion: request_attention` (the default) the run moves to `needs_attention` with reason `budget_exhausted`. With `on_exhaustion: stop` the run ends `failed`.
+
+No spend happens while the run waits. Only a human answer can raise the budget. A model can never raise its own budget.
+### Resolved defaults
+
+A caller may supply only a goal. Whatever is omitted (workspace, authority, budget, completion) is resolved from the agent's and profile's versioned defaults. The resolved values are recorded on the run **before execution** and returned to the caller, along with which defaults filled them.
+
+There are no hidden permissive defaults. If a safe value cannot be resolved, the request fails and no run executes.
+
+## Current implementation
+
+The work runtime underneath the run model is in [CommRails](/core/commrails) on main today: first-class node outputs, manual and timer wait gates, leases with heartbeat and reclaim, campaigns, and the attention gate. Agents request attention through that gate; they do not notify people directly. The run statuses, budgets and resolved defaults above are specified in the [kernel contracts](/architecture/kernel-contracts) and the Agency API v0.3 contract. Scheduled autonomous waking of campaigns through the Agency API stays off until an explicit go-live.
+
+## Availability
+
+| Part | Status | Notes |
+|------|--------|-------|
+| Work runtime: node outputs, wait gates, leases and reclaim | **AVAILABLE** | Internal work runtime (CommRails). |
+| Campaigns in the work runtime | **AVAILABLE** | Internal. Waking through the Agency API is not enabled. |
+| Attention gate | **AVAILABLE** | Internal. |
+| Run status model, budgets, resolved defaults | **PREVIEW** | Specified in ABI 1.0.0 and API v0.3; exposed only once the Agency API ships. |
+| Agency API run endpoints | **PREVIEW** | Contract only; endpoint DESIGN — NOT YET IMPLEMENTED. |
+| Runtime conformance suite | **DESIGN — NOT YET IMPLEMENTED** | Only schema-level contract tests exist. |
+
+## Developer relevance
+
+If you integrate through the Agency API, the run status table and control operations are what your client state machine handles; treat `partial` as a distinct terminal outcome, and treat `needs_attention` as the signal to answer an [attention request](/api/agency/attention). If you build a component that runs inside the kernel (a tool, a verifier, an executor), you never move a node to done yourself: you produce outputs and evidence, and the system closes the node.
+
+## Related
+
+- [Agency API: Runs](/api/agency/runs)
+- [Agency API: Attention](/api/agency/attention)
+- [Verification](/architecture/verification)
+- [Policy](/architecture/policy)
+- [Receipts](/architecture/receipts)

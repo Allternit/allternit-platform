@@ -567,6 +567,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "clap",
+ "ed25519-dalek 2.2.0",
  "hex",
  "libc",
  "prost",

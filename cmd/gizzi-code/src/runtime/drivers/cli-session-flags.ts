@@ -5,8 +5,14 @@ import type { AgentTask } from "@/runtime/runtime-driver"
  * (appended to Claude's own system prompt) and gizzi's session tools as an
  * MCP server (see CliBridge).
  */
-export function claudeSessionFlags(ctx: { systemPrompt?: string; mcp?: AgentTask["mcp"] }): string[] {
+export function claudeSessionFlags(ctx: {
+  systemPrompt?: string
+  mcp?: AgentTask["mcp"]
+  vendorSessionId?: string
+}): string[] {
   const flags: string[] = []
+  // Continue the vendor's own conversation from the previous turn.
+  if (ctx.vendorSessionId) flags.push("--resume", ctx.vendorSessionId)
   if (ctx.systemPrompt?.trim()) flags.push("--append-system-prompt", ctx.systemPrompt)
   if (ctx.mcp) {
     flags.push(
@@ -44,4 +50,49 @@ export function acpMcpServers(mcp: AgentTask["mcp"], agentCapabilities: unknown)
 export function withInstructions(prompt: string, systemPrompt?: string): string {
   if (!systemPrompt?.trim()) return prompt
   return `<session_instructions>\n${systemPrompt.trim()}\n</session_instructions>\n\n${prompt}`
+}
+
+/** Claude stream-json events carry the vendor session id as `session_id` (system init and result). */
+export function claudeSessionIdFromEvent(evt: unknown): string | undefined {
+  const e = evt as { type?: string; session_id?: unknown } | null
+  if (!e || (e.type !== "system" && e.type !== "result")) return undefined
+  return typeof e.session_id === "string" && e.session_id ? e.session_id : undefined
+}
+
+/**
+ * Vendor session id from one stream-json event of `cli`. Claude and Qwen share
+ * the `session_id` shape; OpenCode stamps `sessionID` on every event.
+ */
+export function vendorSessionIdFromEvent(cli: string, evt: unknown): string | undefined {
+  if (cli === "claude-cli" || cli === "qwen-cli") return claudeSessionIdFromEvent(evt)
+  if (cli === "opencode") {
+    const id = (evt as { sessionID?: unknown } | null)?.sessionID
+    return typeof id === "string" && id ? id : undefined
+  }
+  return undefined
+}
+
+/** Qwen Code resumes with `--resume <id>` (same as Claude). */
+export function qwenResumeFlags(vendorSessionId?: string): string[] {
+  return vendorSessionId ? ["--resume", vendorSessionId] : []
+}
+
+/** OpenCode resumes with `run --session <id>`. */
+export function opencodeResumeFlags(vendorSessionId?: string): string[] {
+  return vendorSessionId ? ["--session", vendorSessionId] : []
+}
+
+/** Codex app-server: resume the prior thread (`thread/resume`) instead of `thread/start`. */
+export function codexThreadRequest(
+  vendorSessionId: string | undefined,
+  startParams: Record<string, unknown>,
+): { method: "thread/start" | "thread/resume"; params: Record<string, unknown> } {
+  return vendorSessionId
+    ? { method: "thread/resume", params: { ...startParams, threadId: vendorSessionId } }
+    : { method: "thread/start", params: startParams }
+}
+
+/** ACP `session/load` is only available when the agent advertises `loadSession`. */
+export function acpCanLoadSession(agentCapabilities: unknown): boolean {
+  return (agentCapabilities as { loadSession?: boolean } | undefined)?.loadSession === true
 }

@@ -1,9 +1,13 @@
 <!doctype html>
-<!-- fixture: logged-out — no user info, login entry only -->
+<!-- fixture: logged-out — live shape (2026-09-30): the sidebar still renders
+     div.user-info, with a not-logged-in icon and no avatar or menu trigger -->
 <html lang="en">
   <head><meta charset="utf-8"><title>kimi-web fixture — logged out</title></head>
   <body data-state="logged-out">
-    <aside class="sidebar"><button type="button" class="login-button">Log In</button></aside>
+    <aside class="sidebar">
+      <button type="button" class="next-sidebar-history-list__login">Log In</button>
+      <div class="sidebar-footer"><div class="user-info"><span class="not-login-icon"></span><span class="user-name">Log in</span></div></div>
+    </aside>
     <main>
       <h1>Kimi</h1>
       <p>Log in to continue.</p>

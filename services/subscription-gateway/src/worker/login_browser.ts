@@ -9,11 +9,13 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -23,11 +25,48 @@ export function firefoxProfileFor(userDataDir: string): string {
   return `${userDataDir}-firefox`;
 }
 
+export interface SessionStorageKey {
+  origin: string;
+  key: string;
+}
+
+// Chrome keeps localStorage in a LevelDB under Default/Local Storage/leveldb;
+// each write is appended to the .log as `_<origin>\0\x01<key>` + value. The
+// newest record's bytes are hashed, so a new sign-in (a new token) shows up
+// as a changed fingerprint. The value is never kept, logged or decoded.
+export function readChromeStorageMarkers(userDataDir: string, entries: SessionStorageKey[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const dir = join(userDataDir, "Default", "Local Storage", "leveldb");
+  let files: string[];
+  try {
+    files = readdirSync(dir).filter((f) => f.endsWith(".log") || f.endsWith(".ldb"));
+  } catch {
+    return out;
+  }
+  // Oldest first, so the newest record wins (.log holds the latest writes).
+  const ordered = files
+    .map((f) => ({ f, t: statSync(join(dir, f)).mtimeMs }))
+    .sort((a, b) => a.t - b.t || (a.f.endsWith(".log") ? 1 : -1))
+    .map((x) => readFileSync(join(dir, x.f)));
+  for (const { origin, key } of entries) {
+    const needle = Buffer.concat([Buffer.from(`_${origin.replace(/\/$/, "")}`), Buffer.from([0, 1]), Buffer.from(key)]);
+    let latest: Buffer | null = null;
+    for (const buf of ordered) {
+      const at = buf.lastIndexOf(needle);
+      if (at >= 0) latest = buf.subarray(at + needle.length, at + needle.length + 256);
+    }
+    if (latest) out.set(`${origin} ${key}`, createHash("sha256").update(latest).digest("hex"));
+  }
+  return out;
+}
+
 export interface LoginBrowser {
   /** The profile the login browser signs in on, for an account's Chrome user-data dir. */
   profileFor(userDataDir: string): string;
   /** That profile's cookies (for sign-in detection). */
   readCookies(profile: string): ImportableCookie[];
+  /** Fingerprints of localStorage session keys (sign-in detection); absent when unsupported. */
+  readStorage?(profile: string, entries: SessionStorageKey[]): Map<string, string>;
   open(accountId: string, userDataDir: string, url: string): Promise<void>;
   isOpen(accountId: string): boolean;
   // Graceful close so Firefox flushes cookies.sqlite; no-op when not open.
@@ -100,16 +139,21 @@ export interface ChromeLoginBrowserOptions {
   executable: string;
   spawnFn?: typeof spawn;
   closeTimeoutMs?: number;
+  // Chrome refuses to start as root without --no-sandbox (Sessions machines
+  // run the gateway as root). Defaults to the process's own uid.
+  isRoot?: boolean;
 }
 
 export function createChromeLoginBrowser(opts: ChromeLoginBrowserOptions): LoginBrowser {
   const spawnFn = opts.spawnFn ?? spawn;
   const closeTimeoutMs = opts.closeTimeoutMs ?? 15000;
+  const isRoot = opts.isRoot ?? process.getuid?.() === 0;
   const open = new Map<string, ChildProcess>();
 
   return {
     profileFor: (userDataDir) => userDataDir,
     readCookies: (profile) => readChromeCookies(profile),
+    readStorage: (profile, entries) => readChromeStorageMarkers(profile, entries),
     async open(accountId, userDataDir, url) {
       if (open.has(accountId)) return;
       mkdirSync(userDataDir, { recursive: true, mode: 0o700 });
@@ -123,6 +167,7 @@ export function createChromeLoginBrowser(opts: ChromeLoginBrowserOptions): Login
         [
           `--user-data-dir=${userDataDir}`,
           "--password-store=basic",
+          ...(isRoot ? ["--no-sandbox"] : []),
           "--no-first-run",
           "--no-default-browser-check",
           "--hide-crash-restore-bubble",
