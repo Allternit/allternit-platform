@@ -89,6 +89,11 @@ impl AgencyStore {
         self.append(ty, Some(run_id), payload).await
     }
 
+    /// Ledger events of one type (cheaper than `raw_events` on a large ledger).
+    pub async fn events_of_type(&self, ty: &str) -> anyhow::Result<Vec<AllternitEvent>> {
+        self.of_type(ty).await
+    }
+
     pub async fn raw_events(&self) -> anyhow::Result<Vec<AllternitEvent>> {
         self.ledger.query(LedgerQuery::default()).await
     }

@@ -617,7 +617,7 @@ impl Exec<'_> {
     /// N21: verifier-owned completion. `close_by` must resolve to `verifier`
     /// for this DAG, and every blocking criterion needs receipt evidence.
     fn verify_and_close(&mut self, evidence: &[String], path: &str, diff: &str) -> Step<()> {
-        let events = self.h.block_on(self.s.raw_events())?;
+        let events = self.h.block_on(self.s.events_of_type(allternit_commrails::judge::events::POLICY_SET))?;
         let eff = effective_policy(&events, &self.dag_id, Some("N21"));
         if eff.close_by != CloseBy::Verifier {
             return Err(StepErr::Fail(anyhow!("completion is not verifier-owned for this run (fail closed)")));
@@ -642,7 +642,8 @@ impl Exec<'_> {
             c
         }).collect();
         self.emit("verification.completed", json!({ "result": if pass { "pass" } else { "fail" }, "receipt_id": vid, "missing": missing }))?;
-        let mut patch = json!({ "completion": { "status": if pass { "verified" } else { "unverified" }, "criteria": criteria, "verification_receipt_id": vid } });
+        let mut patch = json!({ "completion": { "status": if pass { "verified" } else { "unverified" },
+            "required": rec.run["completion"]["required"], "criteria": criteria, "verification_receipt_id": vid } });
         if !pass {
             self.run_receipt("failed", &vid)?;
             self.h.block_on(finish(self.s, &self.run_id, "failed", &format!("verifier: missing evidence for {}", missing.join(", ")), Some(patch)))?;

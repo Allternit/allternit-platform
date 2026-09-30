@@ -266,7 +266,11 @@ async fn create_run(
         "version": 0, "budget": compiled.budget,
         "budget_usage": { "seconds": 0.0, "cost_usd": 0.0, "steps": 0, "spend_halted": false },
         "attention": null, "open_attention_count": 0,
-        "completion": { "status": "pending", "criteria": compiled.resolved["completion"]["require"].as_array().cloned().unwrap_or_default()
+        "completion": { "status": "pending",
+            // Criterion ids only: the same for every backend (CL-001).
+            "required": compiled.resolved["completion"]["require"].as_array().cloned().unwrap_or_default()
+                .iter().map(|c| c["id"].clone()).collect::<Vec<_>>(),
+            "criteria": compiled.resolved["completion"]["require"].as_array().cloned().unwrap_or_default()
             .iter().map(|c| json!({ "criterion": c["id"], "result": "pending", "receipt_ids": [] })).collect::<Vec<_>>() },
         "output": null, "cancellation": null, "error": null,
         "links": { "self": format!("/v1/runs/{run_id}"), "events": format!("/v1/runs/{run_id}/events"),
@@ -318,6 +322,7 @@ async fn get_run(
     Extension(rid): Extension<RequestId>,
     Path(run_id): Path<String>,
 ) -> ApiResult {
+    executor::resume_inflight_once(&st);
     let rec = owned(store(&st).load_run(&run_id).await.map_err(|e| ApiError::internal(e, &rid))?, &user, &rid)?;
     let mut r = Json(public_run(&rec)).into_response();
     if let Ok(v) = HeaderValue::from_str(&format!("W/\"{}\"", rec.run["version"])) {
