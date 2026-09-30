@@ -16,6 +16,8 @@ export interface Scenario {
   activity?: string;
   showTasks?: boolean;
   loggedOut?: boolean;
+  /** chatgpt.com/dots on a plan without dots: an upsell dialog and no app shell (seen live 2026-09-30). */
+  planRequired?: boolean;
   challenge?: boolean;
   drift?: "composer";
 }
@@ -29,6 +31,7 @@ const SECTIONS = [["in_progress", "In progress"], ["scheduled", "Scheduled"], ["
 
 export function renderPage(s: Scenario = {}): string {
   const profile = `<nav><button data-testid="profile-button" aria-label="Open profile menu">Me</button><a href="/dots">Dots</a></nav>`;
+  if (s.planRequired) return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>ChatGPT</title></head><body><div role="dialog"><h2>Dots require a Pro plan</h2><p>Upgrade to Pro 100 to be eligible as access rolls out</p><button>Upgrade to Pro</button></div></body></html>`;
   if (s.loggedOut) return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>ChatGPT</title></head><body><header><a href="/auth/login" data-testid="login-button">Log in</a></header><main><h1>Get started</h1><p>Log in to continue.</p></main></body></html>`;
   if (s.challenge) return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>ChatGPT</title></head><body><main><h1>Verify you are human</h1><iframe src="https://challenges.cloudflare.com/turnstile/v0/b/abc123" title="verification"></iframe><p>Complete the verification to continue.</p></main></body></html>`;
   const banner = s.banner ? `<div data-testid="limit-banner" role="alert"><p>${esc(s.banner)}</p></div>` : "";
@@ -69,5 +72,6 @@ export const SCENARIOS: Record<string, Scenario> = {
   paused: { banner: "Nova has been paused for safety monitoring." },
   challenge: { challenge: true },
   "logged-out": { loggedOut: true },
+  "plan-required": { planRequired: true },
   drift: { drift: "composer", turns: [{ role: "user", text: "hi" }] },
 };

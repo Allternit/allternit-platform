@@ -127,6 +127,8 @@ export class ChatGPTDotsProvider extends BaseAaiProvider {
     switch (st.kind) {
       case "ok": this.everLoggedIn = true; return ok(st);
       case "unreachable": return fail("VENDOR_UNAVAILABLE", `ChatGPT is not ready (${st.detail}).`);
+      case "plan_required":
+        return fail("LANE_BLOCKED", "This ChatGPT account doesn't include dots (ChatGPT says: \"" + st.detail + "\"). Dots need a plan that has them; Allternit will not change your plan.", { details: { banner: st.detail } });
       case "logged_out":
         return fail(this.everLoggedIn ? "AUTH_REVOKED" : "AUTH_REQUIRED", "ChatGPT is signed out. Sign in in the ChatGPT browser window yourself, then reconnect.");
       case "rate_limited": {

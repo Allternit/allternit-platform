@@ -41,6 +41,7 @@ describe("fixtures", () => {
     expect(k("paused").kind).toBe("paused");
     expect(k("challenge").kind).toBe("blocked");
     expect(k("logged-out").kind).toBe("logged_out");
+    expect(k("plan-required")).toMatchObject({ kind: "plan_required", detail: "Dots require a Pro plan" });
     expect(k("drift")).toMatchObject({ kind: "drift", missing: ["composer", "dotRow"] });
     expect(classify("").kind).toBe("unreachable");
   });

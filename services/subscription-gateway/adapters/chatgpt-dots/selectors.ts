@@ -66,6 +66,7 @@ export const PATTERNS = {
   handOff: /^hand off/i,
   rateLimit: /you'?ve reached (your )?(usage )?limit|usage limit|limit reached|too many requests|rate limit/i,
   challenge: /verify (that )?you('| a)re (a )?human|unusual activity|suspicious activity|captcha|account (has been )?(suspended|restricted)/i,
+  planRequired: /dots require an? [a-z0-9 ]*plan/i,
   paused: /(dot|it) (has been |was |is )?paused|paused (by|for) (safety|monitoring)/i,
 } as const;
 
