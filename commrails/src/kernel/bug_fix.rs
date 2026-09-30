@@ -74,3 +74,7 @@ pub fn step_passes(result: &str, deterministic_required: bool, receipt: &Value) 
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod fixture;
+#[cfg(test)]
+mod e2e_tests;
