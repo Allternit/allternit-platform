@@ -120,7 +120,7 @@ use allternit_api::udemy_routes::udemy_router;
 use allternit_api::v1_routes::{agent_chat_router, v1_router};
 use allternit_api::viz_routes::viz_router;
 use allternit_api::vm_session_routes::{new_vm_session_store, vm_session_router};
-use allternit_api::web_proxy_routes::web_proxy_router;
+use allternit_api::web_proxy_routes::{web_proxy_access, web_proxy_router};
 use allternit_api::webhook_routes::webhook_router;
 use allternit_api::webhook_subscription_routes::webhook_subscription_router;
 use allternit_api::webhook_trigger_routes::{
@@ -1076,10 +1076,26 @@ async fn main() {
             auth_middleware,
         ));
 
+    // ── Web proxy (SSRF surface) ──────────────────────────────────────────────
+    // Direct loopback callers (the Desktop UI) are served as-is; everyone else
+    // must pass auth_middleware (401 otherwise), so a LAN host cannot use this
+    // machine as an open proxy. Rate limiter runs after the gate so
+    // authenticated remote callers are counted against their org.
+    let web_proxy = Router::new()
+        .nest("/api", web_proxy_router())
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            web_proxy_access,
+        ));
+
     // ── Public routes (no authentication required) ────────────────────────────
     let mut public = Router::new()
         .nest("/health", health_router())
-        .nest("/api", web_proxy_router())
+        .merge(web_proxy)
         .nest("/beta", enrollment_router())
         .merge(status_router())
         .merge(webhook_router())

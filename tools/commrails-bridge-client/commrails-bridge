@@ -1,0 +1,379 @@
+#!/usr/bin/env python3
+"""commrails-bridge: box-side client for the CommRails bridge (spec/BRIDGE.md).
+
+Python 3.8+ stdlib only. Talks to `allternit-commrails bridge serve` on Eoj's
+Mac with a scoped bearer identity (e.g. bot:chief). It can create and read
+plans and send/read coordination mail. It cannot pick up, close, lease, or
+resolve anything: the bridge answers those with 403 whatever this token claims.
+
+Config (flags override env):
+  --url    / COMMRAILS_BRIDGE_URL         default http://127.0.0.1:7433
+  --token-file / COMMRAILS_BRIDGE_TOKEN_FILE  default ~/.config/commrails-bridge/token
+             COMMRAILS_BRIDGE_TOKEN        (token in env; file is preferred)
+
+Plain http is only allowed to loopback and Tailscale mesh addresses
+(100.64.0.0/10, fd7a:115c:a1e0::/48, *.ts.net), where WireGuard carries the
+traffic. Anything else must be https.
+
+Commands:
+  whoami
+  plan-new TEXT [--decision-ref REF]
+  templates
+  plan-from-template TEMPLATE_ID [--param k=v ...] [--text T] [--decision-ref REF]
+  plan-show DAG_ID [--json]
+  mail-send THREAD_ID (--body TEXT | --body-file F | stdin) [--subject S] [--to a,b] [--importance low|normal|high]
+  mail-read [--thread THREAD_ID] [--limit N] [--json]
+  mirror DAG_ID [RUNS_DIR]     (RUNS_DIR default /workspace/runs)
+"""
+
+import argparse
+import datetime
+import hashlib
+import ipaddress
+import json
+import os
+import re
+import shutil
+import stat
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+DEFAULT_URL = "http://127.0.0.1:7433"
+DEFAULT_TOKEN_FILE = os.path.expanduser("~/.config/commrails-bridge/token")
+DEFAULT_RUNS_DIR = "/workspace/runs"
+ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
+
+
+class BridgeError(Exception):
+    def __init__(self, status, body):
+        self.status = status
+        self.body = body
+        msg = body.get("message") if isinstance(body, dict) else str(body)
+        super().__init__("HTTP %s: %s" % (status, msg))
+
+
+def die(msg, code=1):
+    sys.stderr.write("commrails-bridge: %s\n" % msg)
+    sys.exit(code)
+
+
+def safe_id(value, what):
+    if not ID_RE.match(value or "") or ".." in value:
+        die("refusing unsafe %s %r" % (what, value))
+    return value
+
+
+def check_transport(url):
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme == "https":
+        return
+    if parsed.scheme != "http":
+        die("bridge URL must be http(s): %r" % url)
+    host = (parsed.hostname or "").lower()
+    if host == "localhost" or host.endswith(".ts.net"):
+        return
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        die("plain http to %r refused: use a mesh IP, *.ts.net, or https" % host)
+    mesh = [ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48")]
+    if ip.is_loopback or any(ip in net for net in mesh if net.version == ip.version):
+        return
+    die("plain http to %s refused (not loopback or Tailscale mesh); use https" % ip)
+
+
+def load_token(args):
+    path = args.token_file or os.environ.get("COMMRAILS_BRIDGE_TOKEN_FILE") or DEFAULT_TOKEN_FILE
+    if os.path.exists(path):
+        st = os.stat(path)
+        if st.st_mode & 0o077:
+            die("token file %s is group/world accessible; chmod 600 it" % path)
+        with open(path, "r", encoding="utf-8") as fh:
+            token = fh.read().strip()
+        if token:
+            return token
+    token = os.environ.get("COMMRAILS_BRIDGE_TOKEN", "").strip()
+    if token:
+        return token
+    die("no token: write it to %s (mode 0600) or set COMMRAILS_BRIDGE_TOKEN" % path)
+
+
+class Client(object):
+    def __init__(self, url, token, timeout=30):
+        self.url = url.rstrip("/")
+        self.token = token
+        self.timeout = timeout
+
+    def request(self, method, path, body=None, raw=False):
+        data = None
+        headers = {"Authorization": "Bearer " + self.token, "Accept": "application/json"}
+        if body is not None:
+            data = json.dumps(body).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        req = urllib.request.Request(self.url + path, data=data, method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                payload = resp.read()
+                if raw:
+                    return payload, dict(resp.headers)
+                return json.loads(payload.decode("utf-8")) if payload else {}
+        except urllib.error.HTTPError as err:
+            text = err.read().decode("utf-8", "replace")
+            try:
+                parsed = json.loads(text)
+            except ValueError:
+                parsed = {"message": text}
+            raise BridgeError(err.code, parsed)
+
+
+def parse_params(pairs):
+    out = {}
+    for pair in pairs or []:
+        if "=" not in pair:
+            die("--param expects name=value, got %r" % pair)
+        k, v = pair.split("=", 1)
+        out[k.strip()] = v
+    return out
+
+
+def print_json(obj):
+    sys.stdout.write(json.dumps(obj, indent=2, sort_keys=True) + "\n")
+
+
+def cmd_whoami(c, args):
+    print_json(c.request("GET", "/v1/whoami"))
+
+
+def cmd_plan_new(c, args):
+    body = {"text": args.text}
+    if args.decision_ref:
+        body["decision_ref"] = args.decision_ref
+    print_json(c.request("POST", "/v1/plan", body))
+
+
+def cmd_templates(c, args):
+    print_json(c.request("GET", "/v1/templates"))
+
+
+def cmd_plan_from_template(c, args):
+    body = {"params": parse_params(args.param)}
+    if args.text:
+        body["text"] = args.text
+    if args.decision_ref:
+        body["decision_ref"] = args.decision_ref
+    tid = urllib.parse.quote(safe_id(args.template_id, "template id"), safe="")
+    print_json(c.request("POST", "/v1/templates/%s/instantiate" % tid, body))
+
+
+def render_plan(resp):
+    dag = resp.get("dag", {})
+    nodes = dag.get("nodes", {})
+    lines = ["dag %s (%d nodes)" % (resp.get("dag_id"), len(nodes))]
+    for node_id in sorted(nodes):
+        n = nodes[node_id]
+        extra = " [output]" if n.get("output") else ""
+        lines.append("  %-10s %-8s %s%s" % (node_id, n.get("status", "?"), n.get("title", ""), extra))
+    for e in dag.get("edges", []):
+        lines.append("  edge %s -> %s (%s)" % (e.get("from_node_id"), e.get("to_node_id"), e.get("edge_type", "blocked_by")))
+    return "\n".join(lines)
+
+
+def cmd_plan_show(c, args):
+    dag_id = safe_id(args.dag_id, "dag id")
+    resp = c.request("GET", "/v1/plan/%s" % dag_id)
+    if args.json:
+        print_json(resp)
+    else:
+        sys.stdout.write(render_plan(resp) + "\n")
+
+
+def cmd_mail_send(c, args):
+    if args.body is not None:
+        body_text = args.body
+    elif args.body_file:
+        with open(args.body_file, "r", encoding="utf-8") as fh:
+            body_text = fh.read()
+    else:
+        body_text = sys.stdin.read()
+    body = {"thread_id": args.thread_id, "body": body_text}
+    if args.subject:
+        body["subject"] = args.subject
+    if args.to:
+        body["to"] = [t for t in args.to.split(",") if t]
+    if args.importance:
+        body["importance"] = args.importance
+    print_json(c.request("POST", "/v1/mail/send", body))
+
+
+def cmd_mail_read(c, args):
+    q = {}
+    if args.thread:
+        q["thread_id"] = args.thread
+    if args.limit:
+        q["limit"] = str(args.limit)
+    path = "/v1/mail/inbox" + ("?" + urllib.parse.urlencode(q) if q else "")
+    resp = c.request("GET", path)
+    if args.json:
+        print_json(resp)
+        return
+    for m in resp.get("messages", []):
+        sys.stdout.write("--- %s %s [%s] %s\n" % (m.get("ts"), m.get("from_agent") or m.get("actor"), m.get("thread_id"), m.get("subject") or ""))
+        sys.stdout.write((m.get("body") or m.get("body_ref") or "") + "\n")
+
+
+MIRROR_README = """# MIRROR — NOT TRUTH
+
+This directory is a read-only snapshot of CommRails DAG `{dag_id}`.
+
+- Authoritative state is the CommRails ledger on Eoj's Mac (workspace root
+  served by `allternit-commrails bridge serve`). This copy can be stale the
+  moment it is written.
+- Snapshot taken {taken_at} from {url} as `{actor}`.
+- Edits here are never synced back. Change the plan through the bridge
+  (`commrails-bridge plan-new`, `plan-from-template`, `mail-send`), then
+  re-run `commrails-bridge mirror {dag_id}` to refresh.
+- Files: `plan.json` (projected DAG), `nodes/<node_id>.out.md` (recorded node
+  outputs, sha256-checked against the ledger's receipt).
+"""
+
+
+def _make_writable(path):
+    for dirpath, dirnames, filenames in os.walk(path):
+        os.chmod(dirpath, 0o755)
+        for name in filenames:
+            p = os.path.join(dirpath, name)
+            os.chmod(p, stat.S_IMODE(os.lstat(p).st_mode) | stat.S_IWUSR)
+
+
+def _make_readonly(path):
+    for dirpath, dirnames, filenames in os.walk(path, topdown=False):
+        for name in filenames:
+            os.chmod(os.path.join(dirpath, name), 0o444)
+        os.chmod(dirpath, 0o555)
+
+
+def cmd_mirror(c, args):
+    dag_id = safe_id(args.dag_id, "dag id")
+    runs_dir = os.path.abspath(args.runs_dir or DEFAULT_RUNS_DIR)
+    os.makedirs(runs_dir, exist_ok=True)
+    who = c.request("GET", "/v1/whoami")
+    plan = c.request("GET", "/v1/plan/%s" % dag_id)
+    nodes = plan.get("dag", {}).get("nodes", {})
+
+    tmp = os.path.join(runs_dir, ".%s.mirror-%d" % (dag_id, os.getpid()))
+    if os.path.exists(tmp):
+        _make_writable(tmp)
+        shutil.rmtree(tmp)
+    os.makedirs(os.path.join(tmp, "nodes"))
+    taken_at = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    snapshot = {
+        "mirror": True,
+        "authoritative": False,
+        "dag_id": dag_id,
+        "taken_at": taken_at,
+        "source": c.url,
+        "actor": who.get("actor"),
+        "dag": plan.get("dag"),
+    }
+    with open(os.path.join(tmp, "plan.json"), "w", encoding="utf-8") as fh:
+        json.dump(snapshot, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+    written = []
+    for node_id in sorted(nodes):
+        out = nodes[node_id].get("output")
+        if not out:
+            continue
+        safe_id(node_id, "node id")
+        data, headers = c.request("GET", "/v1/plan/%s/nodes/%s/output" % (dag_id, node_id), raw=True)
+        digest = hashlib.sha256(data).hexdigest()
+        # Receipts record "sha256:<hex>".
+        expected = (out.get("sha256") or "").split(":", 1)[-1]
+        if expected and digest != expected:
+            die("sha256 mismatch for %s/%s: got %s, ledger says %s" % (dag_id, node_id, digest, expected))
+        with open(os.path.join(tmp, "nodes", node_id + ".out.md"), "wb") as fh:
+            fh.write(data)
+        written.append(node_id)
+    with open(os.path.join(tmp, "README.md"), "w", encoding="utf-8") as fh:
+        fh.write(MIRROR_README.format(dag_id=dag_id, taken_at=taken_at, url=c.url, actor=who.get("actor")))
+    _make_readonly(tmp)
+
+    final = os.path.join(runs_dir, dag_id)
+    if os.path.exists(final):
+        _make_writable(final)
+        shutil.rmtree(final)
+    os.chmod(tmp, 0o755)
+    os.rename(tmp, final)
+    os.chmod(final, 0o555)
+    print_json({"mirror": final, "nodes": len(nodes), "outputs": written, "taken_at": taken_at})
+
+
+def build_parser():
+    p = argparse.ArgumentParser(prog="commrails-bridge", description=__doc__.split("\n")[0])
+    p.add_argument("--url", default=None)
+    p.add_argument("--token-file", default=None)
+    sub = p.add_subparsers(dest="cmd")
+    sub.required = True
+
+    sub.add_parser("whoami").set_defaults(fn=cmd_whoami)
+
+    s = sub.add_parser("plan-new")
+    s.add_argument("text")
+    s.add_argument("--decision-ref")
+    s.set_defaults(fn=cmd_plan_new)
+
+    sub.add_parser("templates").set_defaults(fn=cmd_templates)
+
+    s = sub.add_parser("plan-from-template")
+    s.add_argument("template_id")
+    s.add_argument("--param", action="append")
+    s.add_argument("--text")
+    s.add_argument("--decision-ref")
+    s.set_defaults(fn=cmd_plan_from_template)
+
+    s = sub.add_parser("plan-show")
+    s.add_argument("dag_id")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_plan_show)
+
+    s = sub.add_parser("mail-send")
+    s.add_argument("thread_id")
+    s.add_argument("--body")
+    s.add_argument("--body-file")
+    s.add_argument("--subject")
+    s.add_argument("--to")
+    s.add_argument("--importance", choices=["low", "normal", "high"])
+    s.set_defaults(fn=cmd_mail_send)
+
+    s = sub.add_parser("mail-read")
+    s.add_argument("--thread")
+    s.add_argument("--limit", type=int)
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_mail_read)
+
+    s = sub.add_parser("mirror")
+    s.add_argument("dag_id")
+    s.add_argument("runs_dir", nargs="?", default=None)
+    s.set_defaults(fn=cmd_mirror)
+    return p
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    url = args.url or os.environ.get("COMMRAILS_BRIDGE_URL") or DEFAULT_URL
+    check_transport(url)
+    client = Client(url, load_token(args))
+    try:
+        args.fn(client, args)
+    except BridgeError as err:
+        sys.stderr.write("commrails-bridge: %s\n" % err)
+        if isinstance(err.body, dict):
+            sys.stderr.write(json.dumps(err.body, sort_keys=True) + "\n")
+        sys.exit(3 if err.status in (401, 403) else 2)
+    except urllib.error.URLError as err:
+        die("cannot reach bridge at %s: %s" % (url, err.reason))
+
+
+if __name__ == "__main__":
+    main()

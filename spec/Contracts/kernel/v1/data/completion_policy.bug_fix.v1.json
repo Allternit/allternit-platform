@@ -1,0 +1,43 @@
+{
+ "schema_id": "allternit.kernel.CompletionPolicyV1",
+ "schema_version": "1.0.0",
+ "policy_id": "completion.bug_fix",
+ "policy_version": 1,
+ "task_type": "BUG_FIX",
+ "require": [
+  {
+   "criterion_id": "target_tests_pass",
+   "criterion_version": 1,
+   "blocking": true
+  },
+  {
+   "criterion_id": "affected_tests_pass",
+   "criterion_version": 1,
+   "blocking": true
+  },
+  {
+   "criterion_id": "no_new_regressions",
+   "criterion_version": 1,
+   "blocking": true
+  },
+  {
+   "criterion_id": "diff_review_accept",
+   "criterion_version": 1,
+   "blocking": true
+  },
+  {
+   "criterion_id": "requirements_satisfied",
+   "criterion_version": 1,
+   "blocking": true
+  }
+ ],
+ "allow_partial": false,
+ "l2882_predicate": [
+  "acceptance_criteria_satisfied",
+  "required_verifications_pass",
+  "no_unresolved_blocking_failures",
+  "required_artifacts_exist",
+  "policy_obligations_satisfied",
+  "completion_evidence_durable"
+ ]
+}

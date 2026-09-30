@@ -432,6 +432,7 @@ async fn create_response(
     let turn_response = response.clone();
     let turn_id = response.id.clone();
     let cli_model = request.model.as_ref().map(|_| final_model);
+    let wih_id = request.wih_id().map(str::to_string);
     let join = tokio::spawn(async move {
         let ctx = TurnContext::from(&turn_state);
         let final_response = crate::turn::run_turn(
@@ -442,6 +443,7 @@ async fn create_response(
             cli_model,
             timeout,
             driver,
+            wih_id,
             control,
             events_tx,
         )

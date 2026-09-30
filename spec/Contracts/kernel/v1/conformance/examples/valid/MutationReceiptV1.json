@@ -1,0 +1,37 @@
+{
+  "envelope": {
+    "abi_version": "1.0.0",
+    "schema_id": "allternit.kernel.MutationReceiptV1",
+    "schema_version": "1.0.0",
+    "run_id": "id-0001",
+    "session_id": "id-0001",
+    "task_id": "id-0001",
+    "state_version": 0,
+    "created_at": "2026-09-30T00:00:00Z",
+    "producer": {
+      "component_id": "id-0001",
+      "component_version": "x",
+      "kind": "RUNTIME"
+    },
+    "trace_id": "id-0001",
+    "provenance": [
+      {
+        "source_type": "USER",
+        "source_id": "x",
+        "trust_class": "PUBLIC"
+      }
+    ]
+  },
+  "mutation_id": "id-0001",
+  "target": "x",
+  "status": "APPLIED",
+  "canonical_change": {
+    "format": "unified_diff",
+    "diff_ref": "id-0001",
+    "diff_hash": "sha256:abababababababababababababababababababababababababababababababab",
+    "base_hashes": {}
+  },
+  "structural_parse": "PASS",
+  "state_version_before": 0,
+  "state_version_after": 0
+}

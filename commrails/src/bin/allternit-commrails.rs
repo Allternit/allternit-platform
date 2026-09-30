@@ -10,11 +10,27 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use allternit_commrails::bus::{Bus, BusMessage, BusOptions, NewBusMessage};
+use allternit_commrails::cli::judge::{
+    run_judge_command, run_leases_command, JudgeCmd, JudgeContext, LeasesCmd,
+};
+use allternit_commrails::cli::lessons::{run_lessons_command, LessonsCmd};
+use allternit_commrails::cli::observe::{run_observe_command, ObserveArgs};
+use allternit_commrails::cli::campaign::{
+    run_attention_command, run_campaign_command, run_wake_command, AttentionCmd,
+    AutomationCliContext, CampaignCmd, WakeCmd,
+};
 use allternit_commrails::cli::work::{run_work_command, WorkCmd, WorkContext};
+use allternit_commrails::observer;
 use allternit_commrails::core::ids::{create_event_id, create_lease_id};
 use allternit_commrails::core::io::{ensure_dir, write_json_atomic};
 use allternit_commrails::dependencies::load_graph;
+use allternit_commrails::drive::hooks::NoHooks;
+use allternit_commrails::drive::{DriveOptions, Driver};
 use allternit_commrails::gate::gate::{GateOptions, WihPickupOptions};
+use allternit_commrails::gate::GateError;
+use allternit_commrails::templates::{parse_param_args, plan_from_template, TemplateStore};
+use allternit_commrails::wait_gates::{GateOutcome, WaitGateKind};
+use allternit_commrails::work::needs_you::pending_manual_gates;
 use allternit_commrails::leases::leases::LeasesOptions;
 use allternit_commrails::ledger::ledger::LedgerOptions;
 use allternit_commrails::graph::{views, GraphAnalytics, GraphView, InsightsConfig};
@@ -95,6 +111,288 @@ enum Commands {
     Orchestrator(OrchestratorCmd),
     #[command(subcommand)]
     Steer(SteerCmd),
+    /// Spawn-gate hooks injected into third-party harnesses (Gate 2 + hard floor).
+    #[command(subcommand)]
+    Hook(HookCmd),
+    /// Node-scoped wait-gates on WIH DAG nodes.
+    #[command(subcommand, name = "wait-gate")]
+    WaitGate(WaitGateCmd),
+    /// Fail-closed judge: node verdicts, tool decisions, policy.
+    #[command(subcommand)]
+    Judge(JudgeCmd),
+    /// Lease-holder heartbeats and stale-lease reclaim.
+    #[command(subcommand)]
+    Leases(LeasesCmd),
+    /// Read-only observer: consult an advisor on a DAG/WIH and post the
+    /// answer as an informational mail message (no leases, no writes).
+    Observe(ObserveArgs),
+    /// Vault memory candidates and lesson triage (Brain drafts only).
+    #[command(subcommand)]
+    Lessons(LessonsCmd),
+    /// Campaigns: objective, owner, budget, executor, one pending check.
+    #[command(subcommand)]
+    Campaign(CampaignCmd),
+    /// Keyed wake queue (campaign checks, node timer gates).
+    #[command(subcommand)]
+    Wake(WakeCmd),
+    /// Attention gate for agent->human notifications.
+    #[command(subcommand)]
+    Attention(AttentionCmd),
+    /// Scoped bearer identities for the remote bridge (spec/BRIDGE.md).
+    #[command(subcommand)]
+    Identity(IdentityCmd),
+    /// Scoped remote listener (default off; spec/BRIDGE.md).
+    #[command(subcommand)]
+    Bridge(BridgeCmd),
+    /// Opt-in foreground runner: pick up each READY node that has an
+    /// `executor` and spawn it through the gates (spec/DRIVE.md). Exits when
+    /// nothing is READY or running, on Ctrl-C, or after one pass (--once).
+    Drive {
+        dag_id: String,
+        /// Per-DAG concurrent sessions (default and ceiling: config max_concurrent, 4).
+        #[arg(long)]
+        max_concurrent: Option<usize>,
+        /// Per-DAG spawns per rolling hour (default and ceiling: config, 20).
+        #[arg(long)]
+        max_spawns_per_hour: Option<usize>,
+        /// One scheduling pass, then exit (running sessions are adopted by the next run).
+        #[arg(long)]
+        once: bool,
+        /// Print what would be picked up / spawned; no ledger writes, no spawns.
+        #[arg(long)]
+        dry_run: bool,
+        /// Directory harnesses run in (default: --root).
+        #[arg(long)]
+        workdir: Option<PathBuf>,
+        /// Per-attempt timeout (default: config timeout_seconds, 3600).
+        #[arg(long)]
+        timeout_seconds: Option<u64>,
+    },
+}
+
+#[derive(Subcommand)]
+enum HookCmd {
+    /// Claude Code PreToolUse hook: reads the hook JSON on stdin, prints a
+    /// deny decision (or nothing, to allow). Always exits 0; every internal
+    /// error is a deny, so a broken gate never fails open.
+    ClaudePretool {
+        /// WIH the spawned session is bound to. Without it only the hard floor applies.
+        #[arg(long, env = "ALLTERNIT_COMMRAILS_WIH")]
+        wih: Option<String>,
+        /// Harness label recorded on ledger events.
+        #[arg(long, default_value = "claude-code")]
+        harness: String,
+        /// Directory the harness works in (lease paths are relative to it).
+        /// Defaults to --root.
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+    },
+    /// Print the session-scoped Claude Code settings (for `claude --settings`).
+    ClaudeSettings {
+        #[arg(long, env = "ALLTERNIT_COMMRAILS_WIH")]
+        wih: Option<String>,
+        /// Directory the harness works in. Defaults to --root.
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+        /// Write to this file instead of stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Spawn admission: exit 0 when `harness` may run (bound to `wih` if
+    /// given), exit 3 with the reason on stderr when it must be refused.
+    SpawnCheck {
+        #[arg(long)]
+        harness: String,
+        #[arg(long)]
+        wih: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum IdentityCmd {
+    /// Mint a scoped identity; prints its bearer token ONCE.
+    Add {
+        /// `bot:<slug>` or `agent:<slug>`.
+        #[arg(long)]
+        actor: String,
+        /// Comma-separated: plan:create, plan:read, mail:send, mail:read,
+        /// template:instantiate. Execution/lease/approval scopes are refused.
+        #[arg(long, value_delimiter = ',', required = true)]
+        scopes: Vec<String>,
+        #[arg(long)]
+        note: Option<String>,
+        /// Identities file (default $ALLTERNIT_COMMRAILS_BRIDGE_IDENTITIES or
+        /// ~/.allternit/commrails-bridge/identities.json).
+        #[arg(long)]
+        identities: Option<PathBuf>,
+    },
+    /// List identities (hashes are never printed).
+    List {
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        identities: Option<PathBuf>,
+    },
+    /// Revoke by identity id and/or every active identity of an actor.
+    /// Effective on the bridge's next request; no restart needed.
+    Revoke {
+        #[arg(long)]
+        actor: Option<String>,
+        #[arg(long)]
+        id: Option<String>,
+        #[arg(long)]
+        identities: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum BridgeCmd {
+    /// Serve the scoped bridge endpoints. Loopback unless --allow-remote.
+    Serve {
+        /// IP:port. Non-loopback needs --allow-remote and >=1 identity;
+        /// 0.0.0.0 / :: are always refused.
+        #[arg(long, default_value = allternit_commrails::bridge::DEFAULT_BRIDGE_BIND)]
+        bind: String,
+        /// Workspace root whose ledger the bridge reads and writes.
+        #[arg(long)]
+        root: PathBuf,
+        #[arg(long)]
+        allow_remote: bool,
+        #[arg(long)]
+        identities: Option<PathBuf>,
+        #[arg(long, default_value_t = allternit_commrails::bridge::DEFAULT_RATE_LIMIT_PER_MIN)]
+        rate_limit_per_min: u32,
+    },
+}
+
+fn run_identity_command(cmd: IdentityCmd) -> Result<()> {
+    use allternit_commrails::bridge::{default_identities_path, parse_grant_scopes, IdentityStore};
+    let store_for = |p: Option<PathBuf>| IdentityStore::new(p.unwrap_or_else(default_identities_path));
+    match cmd {
+        IdentityCmd::Add {
+            actor,
+            scopes,
+            note,
+            identities,
+        } => {
+            let store = store_for(identities);
+            let scopes = parse_grant_scopes(&scopes)?;
+            let issued = store.add(&actor, &scopes, note)?;
+            eprintln!(
+                "identity {} for {} (scopes: {}) written to {}",
+                issued.record.id,
+                issued.record.actor,
+                issued.record.scopes.join(","),
+                store.path().display()
+            );
+            eprintln!("token (shown once; store it 0600 on the remote host):");
+            println!("{}", issued.token);
+        }
+        IdentityCmd::List { json, identities } => {
+            let store = store_for(identities);
+            let records = store.list()?;
+            if json {
+                let out: Vec<Value> = records
+                    .iter()
+                    .map(|r| {
+                        json!({
+                            "id": r.id,
+                            "actor": r.actor,
+                            "scopes": r.scopes,
+                            "effective_scopes": r.effective_scopes().iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                            "created_at": r.created_at,
+                            "revoked_at": r.revoked_at,
+                            "note": r.note,
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else if records.is_empty() {
+                println!("no identities in {}", store.path().display());
+            } else {
+                for r in records {
+                    println!(
+                        "{}\t{}\t{}\t{}",
+                        r.id,
+                        r.actor,
+                        r.effective_scopes()
+                            .iter()
+                            .map(|s| s.as_str())
+                            .collect::<Vec<_>>()
+                            .join(","),
+                        r.revoked_at
+                            .as_deref()
+                            .map(|t| format!("revoked {t}"))
+                            .unwrap_or_else(|| "active".to_string())
+                    );
+                }
+            }
+        }
+        IdentityCmd::Revoke {
+            actor,
+            id,
+            identities,
+        } => {
+            let store = store_for(identities);
+            let revoked = store.revoke(id.as_deref(), actor.as_deref())?;
+            if revoked.is_empty() {
+                bail!("no active identity matched");
+            }
+            for r in revoked {
+                println!("revoked {} ({})", r.id, r.actor);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[derive(Subcommand)]
+enum WaitGateCmd {
+    /// Attach a wait-gate to a node (Gate 0 refine: prompt delta provenance).
+    Add {
+        /// `<dag_id>/<node_id>`
+        #[arg(long)]
+        node: String,
+        kind: WaitGateKind,
+        #[arg(long)]
+        description: Option<String>,
+        /// Timer gates: RFC 3339 timestamp.
+        #[arg(long)]
+        until: Option<String>,
+        /// GitHub gates: owner/repo.
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        run_id: Option<String>,
+        #[arg(long)]
+        pr: Option<u64>,
+    },
+    /// Resolve a node wait-gate. Manual gates require --actor.
+    Resolve {
+        /// `<dag_id>/<node_id>`
+        #[arg(long)]
+        node: String,
+        gate_id: String,
+        #[arg(long, default_value = "ok")]
+        outcome: GateOutcome,
+        /// `user:<id>` or `agent:<id>` (bare id = user).
+        #[arg(long)]
+        actor: Option<String>,
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// List wait-gates on one node (`--node`) or every node of a dag (`--dag`).
+    List {
+        #[arg(long)]
+        node: Option<String>,
+        #[arg(long = "dag")]
+        dag_id: Option<String>,
+    },
+    /// Unresolved manual node gates across all dags ("needs you").
+    Pending {
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -164,6 +462,10 @@ enum OrchestratorCmd {
         task_file: Option<PathBuf>,
         #[arg(long)]
         notes_sentinel: Option<PathBuf>,
+        /// Bind the session to a WIH: hooked harnesses (claude) enforce Gate 2
+        /// against it; unhooked harnesses are refused if its policy needs leased writes.
+        #[arg(long, env = "ALLTERNIT_COMMRAILS_WIH")]
+        wih: Option<String>,
     },
     /// Send data to a running executor session.
     Send {
@@ -229,7 +531,14 @@ enum TicketCmd {
 #[derive(Subcommand)]
 enum PlanCmd {
     New {
-        text: String,
+        /// Plan prompt (root node). Optional with --template.
+        text: Option<String>,
+        /// Template id (in .allternit/rails/templates, .json or .md) or path.
+        #[arg(long)]
+        template: Option<String>,
+        /// Template param `<name>=<value>` (repeatable).
+        #[arg(long = "param")]
+        params: Vec<String>,
     },
     Refine {
         dag_id: String,
@@ -258,6 +567,13 @@ enum NodeCmd {
         kind: String,
         #[arg(long, default_value = "shared")]
         mode: String,
+        /// Node prompt; may reference predecessor outputs with
+        /// `{{ <node_id>.output }}` / `{{ <node_id>.output_path }}`.
+        #[arg(long)]
+        description: Option<String>,
+        /// `bot:<slug>` | `ao:<harness>` (what `drive` spawns or mails).
+        #[arg(long)]
+        executor: Option<String>,
     },
 }
 
@@ -300,6 +616,15 @@ enum WihCmd {
         wih_id: String,
         status: String,
         evidence: Vec<String>,
+        /// File whose text becomes the node output (immutable blob + receipt,
+        /// derived view nodes/<node_id>.out.md). Counts as evidence.
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Who is closing: `user:<id>` or `agent:<id>` (bare id = user).
+        /// Matters under the judge policy (`close_by: verifier`,
+        /// `verify: judge`); unset counts as the worker.
+        #[arg(long)]
+        actor: Option<String>,
     },
 }
 
@@ -309,7 +634,17 @@ enum LeaseCmd {
         wih_id: String,
         agent_id: String,
         paths: Vec<String>,
+        /// Lease TTL in seconds. (Was a positional after the variadic paths,
+        /// which clap rejects at runtime — every `lease request` panicked.)
+        #[arg(long)]
         ttl: Option<i64>,
+    },
+    /// Grant a requested lease (makes it count for Gate 2 coverage).
+    Grant {
+        lease_id: String,
+        /// Seconds until the grant expires.
+        #[arg(long, default_value_t = 3600)]
+        ttl: i64,
     },
     Release {
         lease_id: String,
@@ -525,6 +860,24 @@ enum TransportCmd {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    match run().await {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            // Structured gate denials: human line + JSON on stderr, exit 2.
+            if let Some(gate_err) = GateError::from_anyhow(&err) {
+                eprintln!("error: {gate_err}");
+                eprintln!(
+                    "{}",
+                    serde_json::to_string_pretty(gate_err).unwrap_or_default()
+                );
+                std::process::exit(2);
+            }
+            Err(err)
+        }
+    }
+}
+
+async fn run() -> Result<()> {
     let cli = Cli::parse();
     let root = cli.root.unwrap_or_else(|| std::env::current_dir().unwrap());
 
@@ -553,10 +906,43 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Plan(cmd) => match cmd {
-            PlanCmd::New { text } => {
+            PlanCmd::New {
+                text,
+                template,
+                params,
+            } => {
                 let gate = stores.gate().await?;
-                let (prompt_id, dag_id, node_id) = gate.plan_new(&text, None).await?;
-                println!("prompt_id: {prompt_id}\ndag_id: {dag_id}\nnode_id: {node_id}");
+                match template {
+                    Some(template_ref) => {
+                        let store = TemplateStore::new(&root)?;
+                        let template = store.resolve(&template_ref)?;
+                        let params = parse_param_args(&params)?;
+                        let result =
+                            plan_from_template(&gate, &template, &params, text.as_deref(), None)
+                                .await?;
+                        println!(
+                            "prompt_id: {}\ndag_id: {}\nnode_id: {}\ndelta_id: {}\ntemplate: {}",
+                            result.prompt_id,
+                            result.dag_id,
+                            result.root_node_id,
+                            result.delta_id,
+                            result.template_id
+                        );
+                        for (step, node) in &result.nodes {
+                            println!("step {step} -> {node}");
+                        }
+                        observe_plan_hook(&root, &ledger, &result.dag_id).await;
+                    }
+                    None => {
+                        if !params.is_empty() {
+                            bail!("--param requires --template");
+                        }
+                        let text = text.context("plan new needs <text> or --template")?;
+                        let (prompt_id, dag_id, node_id) = gate.plan_new(&text, None).await?;
+                        println!("prompt_id: {prompt_id}\ndag_id: {dag_id}\nnode_id: {node_id}");
+                        observe_plan_hook(&root, &ledger, &dag_id).await;
+                    }
+                }
             }
             PlanCmd::Refine {
                 dag_id,
@@ -581,6 +967,8 @@ async fn main() -> Result<()> {
                 title,
                 kind,
                 mode,
+                description,
+                executor,
             } => {
                 let gate = stores.gate().await?;
                 let node_id = format!("n_{}", rand::random::<u32>() % 10_000);
@@ -594,6 +982,8 @@ async fn main() -> Result<()> {
                         title,
                         parent_node_id: Some(parent),
                         execution_mode: mode,
+                        description,
+                        executor,
                     }],
                 )
                 .await?;
@@ -620,6 +1010,32 @@ async fn main() -> Result<()> {
                 };
                 let active = active_wih_nodes(&events);
                 if ready {
+                    // Lazy timer resolution happens on readiness checks. Only
+                    // build the Gate (SQLite-backed stores) when a dag actually
+                    // has an elapsed, unrecorded timer gate.
+                    let now = Utc::now();
+                    let timer_dags: Vec<&String> = dag_ids
+                        .iter()
+                        .filter(|dag_id| {
+                            project_dag(&events_for_dag(&events, dag_id), dag_id)
+                                .nodes
+                                .values()
+                                .any(|n| n.wait_gates.iter().any(|g| g.timer_elapsed(now)))
+                        })
+                        .collect();
+                    let mut resolved_any = false;
+                    if !timer_dags.is_empty() {
+                        let gate = stores.gate().await?;
+                        for dag_id in timer_dags {
+                            resolved_any |=
+                                !gate.resolve_elapsed_timer_gates(dag_id).await?.is_empty();
+                        }
+                    }
+                    let events = if resolved_any {
+                        ledger.query(LedgerQuery::default()).await?
+                    } else {
+                        events
+                    };
                     for dag_id in dag_ids {
                         let dag_events = events_for_dag(&events, &dag_id);
                         let dag = project_dag(&dag_events, &dag_id);
@@ -646,15 +1062,24 @@ async fn main() -> Result<()> {
                 fresh,
             } => {
                 let gate = stores.gate().await?;
-                let wih_id = gate
-                    .wih_pickup_with(
+                let pickup = gate
+                    .wih_pickup_detailed(
                         &dag_id,
                         &node_id,
                         &agent_id,
                         WihPickupOptions { role, fresh },
                     )
                     .await?;
-                println!("wih_id: {wih_id}");
+                println!("wih_id: {}", pickup.wih_id);
+                if let Some(path) = &pickup.context_pack_path {
+                    println!("context_pack_path: {path}");
+                }
+                if let Some(path) = &pickup.resolved_prompt_path {
+                    println!("resolved_prompt_path: {path}");
+                }
+                if let Some(text) = &pickup.resolved_description {
+                    println!("--- resolved prompt ---\n{text}");
+                }
             }
             WihCmd::Context { wih_id } => {
                 let events = ledger.query(LedgerQuery::default()).await?;
@@ -662,8 +1087,12 @@ async fn main() -> Result<()> {
                     if let Some(path) = wih.context_pack_path {
                         let contents = std::fs::read_to_string(path)?;
                         println!("{contents}");
-                    } else {
+                    } else if wih.resolved_prompt_path.is_none() {
                         println!("context pack not found");
+                    }
+                    if let Some(path) = wih.resolved_prompt_path {
+                        let contents = std::fs::read_to_string(&path)?;
+                        println!("--- resolved prompt ({path}) ---\n{contents}");
                     }
                 } else {
                     println!("wih not found");
@@ -678,10 +1107,48 @@ async fn main() -> Result<()> {
                 wih_id,
                 status,
                 evidence,
+                output,
+                actor,
             } => {
                 let gate = stores.gate().await?;
-                gate.wih_close(&wih_id, &status, &evidence).await?;
+                // Opt-in policy `observe_before_close`: advisory, never blocks.
+                if let Some(out) = observer::run_hook_advisory(&root, "pre-close", |r, cfg| {
+                    let ledger = ledger.clone();
+                    let wih_id = wih_id.clone();
+                    async move { observer::before_wih_close(&r, ledger, &cfg, &wih_id).await }
+                })
+                .await
+                {
+                    println!("observer: {} {}", out.thread_id, out.message_id);
+                }
+                let output_text = match &output {
+                    Some(path) => Some(
+                        std::fs::read_to_string(path)
+                            .with_context(|| format!("failed to read --output {path:?}"))?,
+                    ),
+                    None => None,
+                };
+                let closer = actor.as_deref().map(parse_actor).transpose()?;
+                let closed = gate
+                    .wih_close_as(&wih_id, &status, &evidence, output_text.as_deref(), closer.as_ref())
+                    .await?;
                 println!("closed");
+                if let Some(receipt_id) = &closed.output_receipt_id {
+                    println!("output_receipt: {receipt_id}");
+                }
+                if let Some(v) = &closed.verdict {
+                    println!("node_status: {}", closed.node_status);
+                    println!("verdict: {}", serde_json::to_string(v)?);
+                }
+                if let Some(out) = observer::run_hook_advisory(&root, "repeat-failure", |r, cfg| {
+                    let ledger = ledger.clone();
+                    let wih_id = wih_id.clone();
+                    async move { observer::after_wih_close(&r, ledger, &cfg, &wih_id).await }
+                })
+                .await
+                {
+                    println!("observer: {} {}", out.thread_id, out.message_id);
+                }
             }
         },
         Commands::Lease(cmd) => match cmd {
@@ -694,6 +1161,15 @@ async fn main() -> Result<()> {
                 let gate = stores.gate().await?;
                 let lease_id = gate.lease_request(&wih_id, &agent_id, paths, ttl).await?;
                 println!("lease_id: {lease_id}");
+            }
+            LeaseCmd::Grant { lease_id, ttl } => {
+                let lease_store = stores.leases().await?;
+                if lease_store.get(&lease_id).await?.is_none() {
+                    bail!("no lease {lease_id}");
+                }
+                let until = (Utc::now() + ChronoDuration::seconds(ttl)).to_rfc3339();
+                lease_store.grant(&lease_id, &until).await?;
+                println!("granted_until: {until}");
             }
             LeaseCmd::Release { lease_id } => {
                 let lease_store = stores.leases().await?;
@@ -1228,6 +1704,22 @@ async fn main() -> Result<()> {
             let index = stores.index().await?;
             init_system(&root, &ledger, &lease_store, &receipts, &index).await?;
         }
+        Commands::Judge(cmd) => {
+            let ctx = JudgeContext {
+                root: root.clone(),
+                ledger: ledger.clone(),
+                gate: stores.gate().await?,
+            };
+            run_judge_command(&ctx, cmd).await?
+        }
+        Commands::Leases(cmd) => {
+            let ctx = JudgeContext {
+                root: root.clone(),
+                ledger: ledger.clone(),
+                gate: stores.gate().await?,
+            };
+            run_leases_command(&ctx, cmd).await?
+        }
         Commands::Work(cmd) => {
             let work_ctx = WorkContext {
                 root: root.clone(),
@@ -1290,9 +1782,311 @@ async fn main() -> Result<()> {
         Commands::Steer(cmd) => {
             run_steer_command(&root, cmd).await?;
         }
+        Commands::Hook(cmd) => {
+            run_hook_command(&root, &stores, &ledger, cmd).await?;
+        }
+        Commands::Observe(args) => {
+            run_observe_command(&root, ledger.clone(), args).await?;
+        }
+        Commands::Lessons(cmd) => {
+            run_lessons_command(&root, ledger.clone(), cmd).await?;
+        }
+        Commands::Identity(cmd) => run_identity_command(cmd)?,
+        Commands::Bridge(cmd) => match cmd {
+            BridgeCmd::Serve {
+                bind,
+                root: bridge_root,
+                allow_remote,
+                identities,
+                rate_limit_per_min,
+            } => {
+                let bind: std::net::SocketAddr = bind
+                    .parse()
+                    .with_context(|| format!("--bind {bind:?} must be an IP:port literal"))?;
+                allternit_commrails::bridge::serve(allternit_commrails::bridge::BridgeConfig {
+                    bind,
+                    root: bridge_root,
+                    identities_path: identities
+                        .unwrap_or_else(allternit_commrails::bridge::default_identities_path),
+                    allow_remote,
+                    rate_limit_per_min,
+                })
+                .await?;
+            }
+        },
+        Commands::WaitGate(cmd) => match cmd {
+            WaitGateCmd::Add {
+                node,
+                kind,
+                description,
+                until,
+                repo,
+                run_id,
+                pr,
+            } => {
+                let (dag_id, node_id) = split_node_ref(&node)?;
+                let mut params = HashMap::new();
+                if let Some(until) = until {
+                    params.insert("until".to_string(), json!(until));
+                }
+                if let Some(repo) = repo {
+                    params.insert("repo".to_string(), json!(repo));
+                }
+                if let Some(run_id) = run_id {
+                    params.insert("run_id".to_string(), json!(run_id));
+                }
+                if let Some(pr) = pr {
+                    params.insert("pr".to_string(), json!(pr));
+                }
+                let gate = stores.gate().await?;
+                let gate_id = gate
+                    .add_node_wait_gate(&dag_id, &node_id, kind, description, params, "cli")
+                    .await?;
+                println!("gate_id: {gate_id}");
+            }
+            WaitGateCmd::Resolve {
+                node,
+                gate_id,
+                outcome,
+                actor,
+                reason,
+            } => {
+                let (dag_id, node_id) = split_node_ref(&node)?;
+                let resolver = actor.as_deref().map(parse_actor).transpose()?;
+                let gate = stores.gate().await?;
+                gate.resolve_node_wait_gate(&dag_id, &node_id, &gate_id, outcome, resolver, reason)
+                    .await?;
+                println!("resolved {gate_id} as {outcome}");
+            }
+            WaitGateCmd::List { node, dag_id } => {
+                let (dag_id, only_node) = match (node, dag_id) {
+                    (Some(node), _) => {
+                        let (d, n) = split_node_ref(&node)?;
+                        (d, Some(n))
+                    }
+                    (None, Some(d)) => (d, None),
+                    (None, None) => bail!("wait-gate list needs --node <dag>/<node> or --dag <dag>"),
+                };
+                let events = ledger.query(LedgerQuery::default()).await?;
+                let dag = project_dag(&events_for_dag(&events, &dag_id), &dag_id);
+                let mut nodes: Vec<_> = dag
+                    .nodes
+                    .values()
+                    .filter(|n| only_node.as_deref().is_none_or(|id| id == n.node_id))
+                    .collect();
+                nodes.sort_by(|a, b| a.node_id.cmp(&b.node_id));
+                let now = Utc::now();
+                for n in nodes {
+                    for g in &n.wait_gates {
+                        let state = match g.outcome {
+                            Some(o) => format!(
+                                "resolved {o} by {}",
+                                g.resolved_by.as_deref().unwrap_or("?")
+                            ),
+                            None if g.is_satisfied(now) => "elapsed (resolves on next readiness check)".to_string(),
+                            None => "open".to_string(),
+                        };
+                        println!("{} {} [{}] {} - {}", n.node_id, g.gate_id, g.kind, g.description, state);
+                    }
+                }
+            }
+            WaitGateCmd::Pending { json: as_json } => {
+                let events = ledger.query(LedgerQuery::default()).await?;
+                let pending = pending_manual_gates(&events);
+                if as_json {
+                    println!("{}", serde_json::to_string_pretty(&pending)?);
+                } else {
+                    for p in pending {
+                        println!(
+                            "{} {} {} [{}] {}{}",
+                            p.dag_id,
+                            p.node_id,
+                            p.gate_id,
+                            p.node_title,
+                            p.description,
+                            if p.deps_done { " (waiting on you)" } else { " (upstream not done)" }
+                        );
+                    }
+                }
+            }
+        },
+        Commands::Campaign(cmd) => {
+            let ctx = AutomationCliContext { root: root.clone(), ledger: ledger.clone() };
+            run_campaign_command(&ctx, cmd).await?;
+        }
+        Commands::Wake(cmd) => {
+            let ctx = AutomationCliContext { root: root.clone(), ledger: ledger.clone() };
+            // Node-timer wakes resolve through the Gate; only a sweep needs it.
+            let gate = if matches!(cmd, WakeCmd::RunDue { .. }) {
+                Some(stores.gate().await?)
+            } else {
+                None
+            };
+            run_wake_command(&ctx, cmd, gate).await?;
+        }
+        Commands::Attention(cmd) => {
+            let ctx = AutomationCliContext { root: root.clone(), ledger: ledger.clone() };
+            run_attention_command(&ctx, cmd).await?;
+        }
+        Commands::Drive {
+            dag_id,
+            max_concurrent,
+            max_spawns_per_hour,
+            once,
+            dry_run,
+            workdir,
+            timeout_seconds,
+        } => {
+            let gate = if dry_run { None } else { Some(stores.gate().await?) };
+            let mut driver = Driver::new(
+                root.clone(),
+                ledger.clone(),
+                gate,
+                DriveOptions {
+                    dag_id,
+                    max_concurrent,
+                    max_spawns_per_hour,
+                    once,
+                    dry_run,
+                    workdir,
+                    timeout_seconds,
+                },
+                Arc::new(NoHooks),
+            )?;
+            let report = driver
+                .run(async {
+                    let _ = tokio::signal::ctrl_c().await;
+                })
+                .await?;
+            if let Some(exit) = report.exit {
+                println!("drive: exit {exit:?}");
+            }
+        }
     }
 
     Ok(())
+}
+
+async fn run_hook_command(root: &Path, stores: &Stores, ledger: &Arc<Ledger>, cmd: HookCmd) -> Result<()> {
+    use allternit_commrails::hook;
+    match cmd {
+        HookCmd::ClaudePretool { wih, harness, workspace } => {
+            let lease_root = workspace.unwrap_or_else(|| root.to_path_buf());
+            // A panic would exit 101, which Claude Code treats as a
+            // non-blocking hook error (tool runs). Exit 2 blocks instead.
+            std::panic::set_hook(Box::new(|info| {
+                eprintln!("Allternit spawn gate: internal error (fail closed): {info}");
+                std::process::exit(2);
+            }));
+            let mut raw = String::new();
+            let read = tokio::io::stdin().read_to_string(&mut raw).await;
+            let home = std::env::var_os("HOME").map(PathBuf::from);
+            let parsed = read
+                .map_err(anyhow::Error::from)
+                .and_then(|_| serde_json::from_str::<Value>(&raw).map_err(anyhow::Error::from))
+                .and_then(|v| hook::HookRequest::from_json(&v));
+            let (req, decision) = match parsed {
+                Err(err) => (
+                    None,
+                    hook::Decision {
+                        verdict: hook::Verdict::Deny(format!("unreadable hook input (fail closed): {err}")),
+                        paths: Vec::new(),
+                    },
+                ),
+                Ok(req) => {
+                    let decision = match wih.as_deref() {
+                        None => hook::decide(&req, &lease_root, home.as_deref(), None).await,
+                        Some(wih_id) => match (stores.gate().await, stores.leases().await) {
+                            (Ok(gate), Ok(leases)) => {
+                                hook::decide(
+                                    &req,
+                                    &lease_root,
+                                    home.as_deref(),
+                                    Some(hook::WihBinding {
+                                        wih_id,
+                                        gate: &gate,
+                                        leases: &leases,
+                                    }),
+                                )
+                                .await
+                            }
+                            (Err(err), _) | (_, Err(err)) => hook::Decision {
+                                verdict: hook::Verdict::Deny(format!(
+                                    "Gate 2 unavailable for WIH {wih_id} (fail closed): {err}"
+                                )),
+                                paths: Vec::new(),
+                            },
+                        },
+                    };
+                    (Some(req), decision)
+                }
+            };
+            // Every WIH-bound decision and every denial is recorded. A ledger
+            // failure never flips a deny into an allow.
+            if wih.is_some() || decision.verdict.is_deny() {
+                let req_for_event = req.unwrap_or(hook::HookRequest {
+                    tool_name: "<unparsed>".to_string(),
+                    tool_input: Value::Null,
+                    cwd: None,
+                    session_id: None,
+                });
+                let event = hook::decision_event(&req_for_event, &harness, wih.as_deref(), &decision);
+                if let Err(err) = ledger.append(event).await {
+                    eprintln!("allternit spawn gate: ledger append failed: {err}");
+                }
+            }
+            if let Some(out) = hook::claude_hook_output(&decision.verdict) {
+                println!("{out}");
+            }
+        }
+        HookCmd::ClaudeSettings { wih, out, workspace } => {
+            let bin = std::env::current_exe().context("locating allternit-commrails")?;
+            let settings = hook::claude_settings(hook::HookTarget {
+                commrails_bin: &bin,
+                root,
+                workspace: workspace.as_deref(),
+                wih_id: wih.as_deref(),
+            });
+            let text = serde_json::to_string_pretty(&settings)?;
+            match out {
+                Some(path) => {
+                    fs::write(&path, &text).with_context(|| format!("writing {}", path.display()))?;
+                    println!("{}", path.display());
+                }
+                None => println!("{text}"),
+            }
+        }
+        HookCmd::SpawnCheck { harness, wih } => {
+            let policy = match wih.as_deref() {
+                Some(wih_id) => Some(hook::load_wih_policy(ledger, wih_id).await?),
+                None => None,
+            };
+            match hook::admit(&harness, policy.as_ref()) {
+                Ok(gate) => println!("admitted: {harness} ({})", gate.as_str()),
+                Err(reason) => {
+                    if let Some(wih_id) = wih.as_deref() {
+                        let _ = ledger.append(hook::spawn_refused_event(&harness, wih_id, &reason)).await;
+                    }
+                    eprintln!("{reason}");
+                    std::process::exit(3);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Opt-in `observe_on_plan` hook after `plan new` (advisory).
+async fn observe_plan_hook(root: &Path, ledger: &Arc<Ledger>, dag_id: &str) {
+    if let Some(out) = observer::run_hook_advisory(root, "plan", |r, cfg| {
+        let ledger = ledger.clone();
+        let dag_id = dag_id.to_string();
+        async move { observer::on_plan_created(&r, ledger, &cfg, &dag_id).await }
+    })
+    .await
+    {
+        println!("observer: {} {}", out.thread_id, out.message_id);
+    }
 }
 
 async fn run_steer_command(root: &Path, cmd: SteerCmd) -> Result<()> {
@@ -1427,6 +2221,7 @@ async fn run_orchestrator_command(root: &Path, cmd: OrchestratorCmd) -> Result<(
             mode,
             task_file,
             notes_sentinel,
+            wih,
         } => {
             let result = orch
                 .spawn(SpawnOptions {
@@ -1438,6 +2233,8 @@ async fn run_orchestrator_command(root: &Path, cmd: OrchestratorCmd) -> Result<(
                     mode: &mode,
                     task_file: task_file.as_deref(),
                     notes_sentinel: notes_sentinel.as_deref(),
+                    wih: wih.as_deref(),
+                    capture: None,
                 })
                 .await?;
             println!(
@@ -2804,6 +3601,31 @@ fn project_wih_from_events(
     project_wih(&filtered, wih_id)
 }
 
+/// `<dag_id>/<node_id>` -> (dag_id, node_id).
+fn split_node_ref(node: &str) -> Result<(String, String)> {
+    match node.split_once('/') {
+        Some((d, n)) if !d.is_empty() && !n.is_empty() => Ok((d.to_string(), n.to_string())),
+        _ => bail!("--node must be <dag_id>/<node_id>, got {node:?}"),
+    }
+}
+
+/// `user:<id>` | `agent:<id>` | `<id>` (user).
+fn parse_actor(raw: &str) -> Result<Actor> {
+    let (kind, id) = match raw.split_once(':') {
+        Some(("user", id)) => (ActorType::User, id),
+        Some(("agent", id)) => (ActorType::Agent, id),
+        Some((other, _)) => bail!("--actor type must be user or agent, got {other:?}"),
+        None => (ActorType::User, raw),
+    };
+    if id.trim().is_empty() {
+        bail!("--actor needs an id");
+    }
+    Ok(Actor {
+        r#type: kind,
+        id: id.to_string(),
+    })
+}
+
 fn load_mutations(path: Option<PathBuf>, json_inline: Option<String>) -> Result<Vec<DagMutation>> {
     if path.is_some() && json_inline.is_some() {
         anyhow::bail!("use either --mutations or --mutations-json, not both");
@@ -2818,4 +3640,18 @@ fn load_mutations(path: Option<PathBuf>, json_inline: Option<String>) -> Result<
         return Ok(mutations);
     }
     Ok(Vec::new())
+}
+
+#[cfg(test)]
+mod cli_shape_tests {
+    use super::Cli;
+    use clap::CommandFactory;
+
+    /// clap validates argument shapes lazily, per subcommand, and panics at
+    /// run time (e.g. `lease request` had a positional after variadic paths).
+    /// Check every subcommand up front.
+    #[test]
+    fn clap_definition_is_valid() {
+        Cli::command().debug_assert();
+    }
 }

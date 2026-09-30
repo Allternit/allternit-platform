@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allternit.com/kernel/1.0.0/task_ir.schema.json",
+  "title": "Allternit Kernel ABI 1.0.0 — task_ir",
+  "$comment": "FROZEN 2026-09-30 (ABI Package 1.0.0). Authority: Living Architecture v1.4 > 07/09 > 02. Additive changes need a minor bump; breaking changes need 2.0.",
+  "$defs": {
+    "TaskIRV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "task_id",
+        "task_type",
+        "objective",
+        "acceptance_criteria",
+        "constraints",
+        "allowed_scope",
+        "forbidden_scope",
+        "risk_class",
+        "interaction_mode",
+        "privacy_class",
+        "completion_policy"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.TaskIRV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "task_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "task_type": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "objective": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requested_outputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "required": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "acceptance_criteria": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "criterion_id",
+              "text",
+              "origin"
+            ],
+            "properties": {
+              "criterion_id": {
+                "$ref": "common.schema.json#/$defs/Id"
+              },
+              "text": {
+                "type": "string"
+              },
+              "origin": {
+                "enum": [
+                  "EXPLICIT",
+                  "INFERRED"
+                ]
+              },
+              "required": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "constraints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "constraint_id",
+              "text",
+              "hardness"
+            ],
+            "properties": {
+              "constraint_id": {
+                "$ref": "common.schema.json#/$defs/Id"
+              },
+              "text": {
+                "type": "string"
+              },
+              "hardness": {
+                "enum": [
+                  "HARD",
+                  "SOFT"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "ambiguities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "ambiguity_id",
+              "text",
+              "resolution"
+            ],
+            "properties": {
+              "ambiguity_id": {
+                "$ref": "common.schema.json#/$defs/Id"
+              },
+              "text": {
+                "type": "string"
+              },
+              "resolution": {
+                "enum": [
+                  "UNRESOLVED",
+                  "DEFAULTED",
+                  "CLARIFIED",
+                  "ESCALATED"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "allowed_scope": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ResourceRef"
+          }
+        },
+        "forbidden_scope": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ResourceRef"
+          }
+        },
+        "risk_class": {
+          "enum": [
+            "LOW",
+            "MEDIUM",
+            "HIGH",
+            "CRITICAL",
+            "UNKNOWN"
+          ]
+        },
+        "interaction_mode": {
+          "enum": [
+            "AUTONOMOUS",
+            "APPROVAL_GATED",
+            "RECOMMEND_ONLY"
+          ]
+        },
+        "freshness_requirement": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "latency_budget_ms": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cost_budget": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/ResourceBudget"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "privacy_class": {
+          "$ref": "common.schema.json#/$defs/TrustClass"
+        },
+        "completion_policy": {
+          "$ref": "completion.schema.json#/$defs/CompletionPolicyRef"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "TaskIRV1"
+    }
+  }
+}

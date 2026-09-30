@@ -57,6 +57,9 @@ export const adapterManifestSchema = z.object({
     // Cookie names (prefixes) the provider sets only once signed in: the
     // gateway watches the login browser for them to finish a login by itself.
     session_cookies: z.array(z.string()).optional(),
+    // Same, for providers that keep the session in localStorage instead
+    // (Kimi: access_token on its app origin).
+    session_storage: z.array(z.object({ origin: z.string(), key: z.string() })).optional(),
   }),
   plans: z.array(planDefSchema),
   capabilities: z.array(manifestCapabilitySchema),

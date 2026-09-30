@@ -1,0 +1,23 @@
+{
+  "schema_id": "allternit.kernel.WorkRunRecordV1",
+  "schema_version": "1.0.0",
+  "run_id": "id-0001",
+  "status": "accepted",
+  "work_state_version": 0,
+  "agent_state_ref": {
+    "store": "AGENT_STATE",
+    "run_id": "id-0001",
+    "state_version": 0
+  },
+  "resolved": {
+    "agent": "coder@v1",
+    "logical_model_id": "coder-v1-standard",
+    "authority_profile": "read-only",
+    "budget": {},
+    "completion_policy": {
+      "policy_id": "id-0001",
+      "policy_version": 1
+    },
+    "defaults_version": "x"
+  }
+}

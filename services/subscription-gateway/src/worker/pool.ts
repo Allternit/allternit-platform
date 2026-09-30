@@ -355,6 +355,29 @@ export interface PlaywrightLauncherDeps {
   // Base dir for relative profile_refs (e.g. config.stateDir →
   // <stateDir>/profiles/<account_id>). Absolute profile_refs pass through.
   profilesDir: string;
+  // How long a probe waits for the page to settle before judging it (default
+  // 8 s). Single-page apps (Kimi) draw the signed-in UI after
+  // domcontentloaded; judging at once reads a signed-in page as logged out.
+  probeSettleMs?: number;
+}
+
+// Wait until the page shows something decisive: the signed-in marker, a
+// verification check, or the pack's optional logged_out_probe. Signed-in
+// pages return as soon as they render; the rest wait out the budget.
+export async function settleForProbe(
+  resolve: (key: string) => Promise<unknown | null>,
+  keys: { loggedIn: string },
+  budgetMs: number,
+  pollMs = 250
+): Promise<void> {
+  const end = Date.now() + budgetMs;
+  for (;;) {
+    for (const key of [keys.loggedIn, "challenge", "logged_out_probe"]) {
+      if ((await resolve(key).catch(() => null)) !== null) return;
+    }
+    if (Date.now() >= end) return;
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
 }
 
 export function createPlaywrightLauncher(deps: PlaywrightLauncherDeps): Launcher {
@@ -414,6 +437,12 @@ export function createPlaywrightLauncher(deps: PlaywrightLauncherDeps): Launcher
           : {}),
         ...(adapter.readPlan ? { readPlan: () => adapter.readPlan!(new AbortController().signal) } : {}),
         async probe(): Promise<ProbeResult> {
+          const resolver = makeResolver(lease);
+          await settleForProbe(
+            (key) => resolver.tryResolveLocator(key),
+            { loggedIn: manifest.auth.logged_in_probe },
+            deps.probeSettleMs ?? 8000
+          );
           const result = await adapter.probe(new AbortController().signal);
           // §A5/Critical #5 — surface a challenge interstitial as a failing
           // critical check so the pool maps it to challenge_presented. Packs

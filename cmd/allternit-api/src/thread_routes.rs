@@ -1316,6 +1316,7 @@ pub fn bot_project_overview(db: &DbHandle, user_id: &str) -> rusqlite::Result<Ve
                 (SELECT MAX(t.last_activity_at) FROM bot_threads t WHERE t.project_id = p.id AND t.incognito = 0)
          FROM cowork_projects p
          WHERE p.user_id = ?1
+           AND json_extract(p.metadata, '$.workspace.key') IS NULL
            AND (EXISTS (SELECT 1 FROM project_bots b WHERE b.project_id = p.id)
                 OR json_extract(p.metadata, '$.kind') = 'bots')",
     )?;

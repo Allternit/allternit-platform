@@ -16,6 +16,10 @@ import { Shell } from "@/runtime/integrations/shell/shell"
 import { ProcessRegistry } from "@/runtime/process-registry"
 
 import { BashArity } from "@/runtime/tools/guard/permission/arity"
+import { Catastrophic } from "@/runtime/tools/guard/permission/catastrophic"
+import { PermissionNext } from "@/runtime/tools/guard/permission/next"
+import { ShellEnv } from "@/runtime/integrations/shell/env"
+import { Config } from "@/runtime/context/config/config"
 import { Truncate } from "@/runtime/tools/builtins/truncation"
 import { Plugin } from "@/runtime/integrations/plugin"
 import { SessionSandbox } from "@/runtime/context/sandbox/session-sandbox"
@@ -90,6 +94,12 @@ export const BashTool = Tool.define("bash", async () => {
       if (!tree) {
         throw new Error("Failed to parse command")
       }
+      // Hard floor over the whole command line (per-command patterns are also
+      // checked in evaluatePolicy). Catches what spans tree-sitter `command`
+      // nodes — a fork bomb's function body — and treats a tree-sitter parse
+      // error on a command naming a guarded program as a denial.
+      const floor = Catastrophic.check(params.command, { parseError: tree.rootNode.hasError })
+      if (floor) throw new PermissionNext.FloorError(floor.reason, params.command)
       const directories = new Set<string>()
       if (!Instance.containsPath(cwd)) directories.add(cwd)
       const patterns = new Set<string>()
@@ -173,6 +183,11 @@ export const BashTool = Tool.define("bash", async () => {
         { cwd, sessionID: ctx.sessionID, callID: ctx.callID },
         { env: {} },
       )
+      // Commands never inherit gizzi's credentials wholesale: an allowlisted
+      // base env, minus anything credential-shaped, plus the user's
+      // bash.env_passthrough opt-ins and plugin-provided shell.env values.
+      const passthrough = (await Config.get().catch(() => undefined))?.bash?.env_passthrough ?? []
+      const childEnv = ShellEnv.child(process.env, shellEnv.env, passthrough)
 
       // ── VM Session execution ───────────────────────────────────────────────
       // When GIZZI_VM_SESSIONS is enabled (or the session has an active VM),
@@ -307,7 +322,7 @@ export const BashTool = Tool.define("bash", async () => {
         log.info("sandbox active", { driver, sessionID: ctx.sessionID })
         proc = spawn(wrapped.bin, wrapped.args, {
           cwd,
-          env: { ...process.env, ...shellEnv.env },
+          env: childEnv,
           stdio: ["ignore", "pipe", "pipe"],
           // Don't use detached with bwrap/sandbox-exec — --die-with-parent handles cleanup
           detached: false,
@@ -317,7 +332,7 @@ export const BashTool = Tool.define("bash", async () => {
         proc = spawn(params.command, {
           shell,
           cwd,
-          env: { ...process.env, ...shellEnv.env },
+          env: childEnv,
           stdio: ["ignore", "pipe", "pipe"],
           detached: process.platform !== "win32",
         })

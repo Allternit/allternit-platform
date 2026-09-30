@@ -213,6 +213,19 @@ This file contains notices for open-source software incorporated into this produ
 
 ---
 
+## Jev Showcase (cobusgreyling/Jev)
+**License:** MIT
+
+**Copyright:** Copyright (c) 2026 Jev Showcase contributors
+
+**Source:** https://github.com/cobusgreyling/Jev
+
+**Used in:** `tools/system-one-local/skills/` (`jev`, `jev-fanout`, `jev-guardrail`, `jev-route`)
+
+**Agent-skill markdown adapted (rewritten to point at the local System One server first, with Allternit FORBIDDEN blocks added). No code copied. MIT license text reproduced in `tools/system-one-local/skills/NOTICE.md`. The System One request/response contract itself follows TypeSafe's public API docs (docs.typesafe.ai); no TypeSafe code is included.**
+
+---
+
 ## Scratch / Original (Allternit)
 The following were written from scratch for this product:
 - `domains/cowork/connectors/slack/`

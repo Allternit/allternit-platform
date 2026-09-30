@@ -128,11 +128,34 @@ export class AaiHost {
         const agents = await r.provider.list();
         const agentId = agents.ok ? agents.value[0]?.agentId : undefined;
         const m = await r.provider.capabilities(agentId ?? "");
-        if (m.ok) manifest = m.value; else error = m.error.humanMessage;
+        if (m.ok) manifest = m.value;
+        // No agent to ask about: say why (vendor not running / signed out) rather than "No such agent ".
+        else if (!agentId) error = `no agent available${agents.ok ? " (the vendor lists none; is it running and signed in?)" : `: ${agents.error.humanMessage}`}`;
+        else error = m.error.humanMessage;
       } catch (e) { error = (e as Error).message; }
       out.push({ adapterId, disabled: this.disabled.has(adapterId), ...(r.pacing ? { pacing: r.pacing } : {}), manifest, ...(error ? { error } : {}) });
     }
     return out;
+  }
+
+  /**
+   * Conformance against the adapter's shipped offline fixtures (`adapters/<id>/fixtures/offline.ts`): a
+   * throwaway provider backed by local fakes, so no vendor is needed and the live registration is untouched.
+   * `undefined` when the adapter is not registered here; `null` when it ships no offline fixtures.
+   */
+  async offlineConformance(adapterId: string, adaptersDir: string): Promise<ConformanceReport | null | undefined> {
+    if (!this.regs.has(adapterId)) return undefined;
+    const file = ["offline.ts", "offline.js"].map((n) => join(adaptersDir, adapterId, "fixtures", n)).find((f) => existsSync(f));
+    if (!file) return null;
+    const mod = (await import(pathToFileURL(file).href)) as { createOfflineAaiRegistration: () => Promise<{ registration: AaiRegistration; close?: () => Promise<void> }> };
+    const { registration, close } = await mod.createOfflineAaiRegistration();
+    try {
+      const agents = registration.fixtures ? undefined : await registration.provider.list();
+      const fixtures = registration.fixtures ?? { agentId: agents?.ok ? agents.value[0]?.agentId ?? "" : "" };
+      return await runConformance(registration.provider, fixtures);
+    } finally {
+      await close?.();
+    }
   }
 
   async conformance(adapterId: string): Promise<ConformanceReport | undefined> {

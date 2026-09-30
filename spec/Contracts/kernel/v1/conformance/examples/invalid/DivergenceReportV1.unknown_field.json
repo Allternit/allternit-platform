@@ -1,0 +1,10 @@
+{
+  "schema_id": "allternit.kernel.DivergenceReportV1",
+  "schema_version": "1.0.0",
+  "report_id": "id-0001",
+  "cassette_id": "id-0001",
+  "replay_run_id": "id-0001",
+  "verdict": "IDENTICAL",
+  "divergences": [],
+  "unknown_required_field": "x"
+}

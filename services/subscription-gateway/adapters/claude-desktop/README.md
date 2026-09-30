@@ -55,7 +55,7 @@ Non-English locales read as drift by design. "Always allow" is deliberately neve
 - Errors: app not running or no debug port -> `VENDOR_UNAVAILABLE`; signed out -> `AUTH_REQUIRED`/`AUTH_REVOKED`; usage/rate limit -> `RATE_LIMITED`
   (+cooldown, `retryAfterMs`); verification banner -> `LANE_BLOCKED` (latched); drift -> `ADAPTER_DRIFT` (latched, `clearHalt()` releases);
   own pacing limits -> `RATE_LIMITED`; approval answered in-app -> `cancelled`.
-- Registration: `aai.ts` exports `createAaiRegistration(env)` (port from `SUBS_GATEWAY_CLAUDE_DESKTOP_CDP_PORT`, default 9222); the CDP driver connects lazily.
+- Registration: `aai.ts` exports `createAaiRegistration(env)` (port from `SUBS_GATEWAY_CLAUDE_DESKTOP_CDP_PORT`, default 9232); the CDP driver connects lazily.
 
 ## Files
 `manifest.ts` · `selectors.ts` · `driver.ts` (seam) · `cdp-driver.ts` (loopback-only, consent-gated `launchWithDebugPort`) · `observe.ts` (HTML -> page state) ·

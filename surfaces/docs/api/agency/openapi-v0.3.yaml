@@ -1,0 +1,4158 @@
+# Allternit Agency API v0.3 (preview contract; not yet available)
+openapi: 3.1.0
+info:
+  title: Allternit Agency API
+  version: 0.3.0
+  summary: Goal in, one durable verified Run out.
+  description: 'Public product surface for the Allternit agent kernel. PREVIEW: not yet available.
+
+
+    Simple outside, explicit inside. Only `goal` is required; the server resolves workspace, authority, budget and
+    completion from the agent''s and profile''s versioned defaults and returns them on `Run.resolved` before execution.
+    There are no hidden permissive defaults: unresolvable defaults return `ERR_DEFAULTS_UNRESOLVABLE`.
+
+    Kernel internals (task IR, compute graph IR, cognitive roles, execution modes, decision heads, cache state,
+    concrete model or backend identities) never appear in required fields or default responses. They appear only
+    in `view=debug` responses (scope `debug:read`), in receipts, and in the advanced disclosure tiers marked `x-disclosure-tier:
+    C` (Graph) or `D` (Runtime). No vendor or model names appear anywhere in this schema.
+
+
+    Versioning. Major version in the URL (`/v1`). Dated minor versions are selected with the `Allternit-Version:
+    YYYY-MM-DD` request header (default: the version pinned to the API key). Responses echo `Allternit-Version`
+    and, when a feature is scheduled for removal, `Deprecation` (RFC 9745), `Sunset` (RFC 8594) and a `Link` with
+    `rel="deprecation"`. Unknown request fields are rejected (`ERR_INPUT_UNSUPPORTED`); clients must ignore unknown
+    response fields and must treat unknown enum values as not understood (fail closed).
+
+
+    Extension pattern. Closed objects accept extension properties whose names match `^x-[a-z0-9-]+$`. Caller-owned
+    annotations go in `metadata`. Only receipt payloads, artifact metadata and debug views are open objects.
+
+
+    Alpha gate. This surface is not exposed until an end-to-end run can survive restart, resume, verify, replay
+    and receipt-backed completion.
+
+
+    Runs created here always have judge fail-closed and verifier-owned completion on. Campaign autonomous waking
+    is `disabled_pending_golive`. There are no Thread endpoints (`thread_id` is a correlation ID). Graph input stays
+    opaque until the public Graph contract is frozen.
+
+    '
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Allternit-Proprietary
+servers:
+- url: https://api.allternit.com
+  description: Planned production endpoint (not live; see Alpha gate).
+security:
+- apiKey: []
+- oauth2: []
+tags:
+- name: Runs
+- name: Events
+- name: Attention
+- name: Artifacts
+- name: Receipts
+- name: Campaigns
+- name: Replays
+- name: Decisions
+- name: Catalog
+- name: Graph
+  description: Disclosure tier C (advanced).
+- name: Keys
+  description: Receipt verification material.
+paths:
+  /v1/agency:
+    post:
+      tags:
+      - Runs
+      operationId: createAgencyRun
+      summary: Start one durable Run from a goal
+      description: "Compiles the request into explicit internal contracts and returns the\nRun immediately. Never\
+        \ executes an implicit free-form loop. The run is\npersisted before 202 is returned, so it survives process\
+        \ restart.\n\n        Only `goal` is required. The server resolves workspace, authority, budget and\n  \
+        \      completion from the agent's/profile's versioned defaults, records them on `Run.resolved`\n      \
+        \  BEFORE any execution, and the run stays `accepted` until that resolution is recorded.\n        There\
+        \ are no hidden permissive defaults: if a default cannot be safely resolved the call\n        fails with\
+        \ a typed `ERR_DEFAULTS_UNRESOLVABLE` (422) and no run executes. Code agents\n        normally resolve all\
+        \ four. Runs created here always have judge fail-closed and\n        verifier-owned completion enabled;\
+        \ clients cannot disable either.\n        `Idempotency-Key` is required; the Run links durable effect receipt\
+        \ ids.\n"
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/AllternitVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgencyRequest'
+            examples:
+              minimal:
+                summary: Only goal
+                value:
+                  goal: Fix the failing checkout tests and verify the repair
+              explicit:
+                summary: Everything explicit
+                value:
+                  agent: allternit-code
+                  goal: Fix the failing checkout tests and verify the repair
+                  workspace:
+                    repo: repo://acme/store
+                  authority:
+                    profile: code-safe
+                  budget:
+                    max_seconds: 900
+                    max_cost_usd: 2.0
+                  completion:
+                    require:
+                    - tests_pass
+                    - no_new_regressions
+                  stream: true
+      responses:
+        '202':
+          description: Run accepted and durably recorded.
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+            Allternit-Version:
+              $ref: '#/components/headers/AllternitVersion'
+            Allternit-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/runs:
+    get:
+      tags:
+      - Runs
+      operationId: listRuns
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      - name: status
+        in: query
+        schema:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunStatus'
+        style: form
+        explode: false
+      - name: campaign_id
+        in: query
+        schema:
+          type: string
+      - $ref: '#/components/parameters/AllternitVersion'
+      responses:
+        '200':
+          description: Page of runs, newest first.
+          headers:
+            Allternit-Version:
+              $ref: '#/components/headers/AllternitVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunPage'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/runs/{run_id}:
+    get:
+      tags:
+      - Runs
+      operationId: getRun
+      parameters:
+      - $ref: '#/components/parameters/RunId'
+      - $ref: '#/components/parameters/View'
+      - $ref: '#/components/parameters/AllternitVersion'
+      responses:
+        '200':
+          description: Current run state (default view hides kernel internals).
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Allternit-Version:
+              $ref: '#/components/headers/AllternitVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/runs/{run_id}/events:
+    get:
+      tags:
+      - Events
+      operationId: streamRunEvents
+      summary: Typed run event stream (SSE) or event page (JSON)
+      description: '`Accept: text/event-stream` opens a Server-Sent Events stream. Each SSE message is
+
+        `id: <event.id>` / `event: <event.type>` / `data: <RunEvent JSON>`. The server sends a
+
+        comment heartbeat (`: ping`) at least every 15 s and a `retry:` hint on connect.
+
+        **Resume:** reconnect with `Last-Event-ID` (or `?cursor=`) set to the last `id`
+
+        received; delivery restarts strictly after that event, in `seq` order, with no gaps.
+
+        Events are durable for the life of the run plus the retention window, so a client
+
+        that was offline across a server restart replays what it missed.
+
+        The stream closes after the terminal `run.status_changed` event.
+
+        `Accept: application/json` returns the same events as a cursor page (polling).
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/RunId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      - name: Last-Event-ID
+        in: header
+        description: SSE resume point; takes precedence over `cursor`.
+        schema:
+          type: string
+      - name: types
+        in: query
+        description: Only deliver these event types.
+        schema:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunEventType'
+        style: form
+        explode: false
+      - $ref: '#/components/parameters/View'
+      - $ref: '#/components/parameters/AllternitVersion'
+      responses:
+        '200':
+          description: Event stream or page.
+          headers:
+            Allternit-Version:
+              $ref: '#/components/headers/AllternitVersion'
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE framing; every `data:` line is one `RunEvent` JSON object.
+              x-event-data-schema:
+                $ref: '#/components/schemas/RunEvent'
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunEventPage'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/Gone'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/runs/{run_id}/input:
+    post:
+      tags:
+      - Runs
+      - Attention
+      operationId: submitRunInput
+      summary: Answer an attention request, steer, or add data
+      description: '`approval`/`rejection` must carry `attention_id`. An approval only resolves a
+
+        policy ASK; it can never override a hard policy DENY (403 `ERR_POLICY_DENIED`).
+
+        Input is recorded as a receipt before it takes effect.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/RunId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/AllternitVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunInput'
+      responses:
+        '202':
+          description: Input accepted and receipted.
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InputAccepted'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/runs/{run_id}/pause:
+    post:
+      tags:
+      - Runs
+      operationId: pauseRun
+      description: 'Async and idempotent. Nodes stop at the next safe boundary; in-flight effects
+
+        finish and are receipted; leases are released. Status goes to `paused`.
+
+        Pausing a paused run is a no-op (202, same Run).
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/RunId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControlRequest'
+      responses:
+        '202':
+          description: Pause requested.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/runs/{run_id}/resume:
+    post:
+      tags:
+      - Runs
+      operationId: resumeRun
+      description: 'Async and idempotent. Resumes from durable state and receipts, never from a
+
+        transcript. A node interrupted mid-effect is not blindly re-run: it resumes only if
+
+        its effect is idempotent-keyed and receipted, otherwise it raises an AttentionRequest.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/RunId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControlRequest'
+      responses:
+        '202':
+          description: Resume requested.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/runs/{run_id}/cancel:
+    post:
+      tags:
+      - Runs
+      operationId: cancelRun
+      description: "Async and idempotent. Status goes `cancelling` then `cancelled`.\n* No new node is admitted\
+        \ or leased after the request is receipted.\n* Effects already dispatched are **not** silently abandoned:\
+        \ each one completes,\n  times out, or is rolled back where the node declares a rollback, and its outcome\
+        \ is\n  receipted. `Run.cancellation.effects_in_flight` lists them until settled.\n* Open AttentionRequests\
+        \ are withdrawn.\n* Repeating cancel on a `cancelling`/`cancelled` run returns 202 with the current Run.\n\
+        * Cancelling a run already `completed`, `partial` or `failed` returns 409\n  `ERR_RUN_TERMINAL`.\n"
+      parameters:
+      - $ref: '#/components/parameters/RunId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelRequest'
+      responses:
+        '202':
+          description: Cancellation requested or already in progress.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/runs/{run_id}/attention:
+    get:
+      tags:
+      - Attention
+      operationId: listRunAttention
+      parameters:
+      - $ref: '#/components/parameters/RunId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/AttentionStatusFilter'
+      responses:
+        '200':
+          description: Attention requests raised by this run.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttentionPage'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/runs/{run_id}/artifacts:
+    get:
+      tags:
+      - Artifacts
+      operationId: listRunArtifacts
+      parameters:
+      - $ref: '#/components/parameters/RunId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Artifacts produced by the run.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtifactPage'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/runs/{run_id}/artifacts/{artifact_id}:
+    get:
+      tags:
+      - Artifacts
+      operationId: getRunArtifact
+      parameters:
+      - $ref: '#/components/parameters/RunId'
+      - name: artifact_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Artifact metadata with a content link.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Artifact'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/runs/{run_id}/receipts:
+    get:
+      tags:
+      - Receipts
+      operationId: listRunReceipts
+      description: Append-only receipt chain for the run, in chain order.
+      parameters:
+      - $ref: '#/components/parameters/RunId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      - name: type
+        in: query
+        schema:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReceiptType'
+        style: form
+        explode: false
+      - $ref: '#/components/parameters/View'
+      responses:
+        '200':
+          description: Receipt page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceiptPage'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/runs/{run_id}/receipts/verification:
+    get:
+      tags:
+      - Receipts
+      operationId: verifyRunReceiptChain
+      summary: Server-side check of the run's receipt hash chain and signatures
+      description: 'Clients can verify independently with `Receipt.content_hash`, `prev_hash`,
+
+        `signature` and the keys at `ReceiptSignature.jwks_url`. This endpoint is a
+
+        convenience, not the trust root.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: Chain verification result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceiptChainVerification'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/receipts/{receipt_id}:
+    get:
+      tags:
+      - Receipts
+      operationId: getReceipt
+      parameters:
+      - name: receipt_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/View'
+      responses:
+        '200':
+          description: One receipt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Receipt'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/runs/{run_id}/graph:
+    get:
+      tags:
+      - Graph
+      operationId: getRunGraph
+      x-disclosure-tier: C
+      summary: Inspect the compiled graph (advanced)
+      description: Requires scope `graph:read`. Not part of the Goal API.
+      parameters:
+      - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: Compiled graph view.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphView'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/attention:
+    get:
+      tags:
+      - Attention
+      operationId: listAttention
+      summary: Needs-you queue across runs and campaigns
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/AttentionStatusFilter'
+      responses:
+        '200':
+          description: Attention requests visible to the caller, most urgent first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttentionPage'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/attention/{attention_id}:
+    get:
+      tags:
+      - Attention
+      operationId: getAttention
+      parameters:
+      - $ref: '#/components/parameters/AttentionId'
+      responses:
+        '200':
+          description: One attention request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttentionRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/attention/{attention_id}/responses:
+    post:
+      tags:
+      - Attention
+      operationId: respondToAttention
+      description: 'Equivalent to `POST /v1/runs/{run_id}/input` with this `attention_id`. First valid
+
+        response wins; later ones get 409 `ERR_ATTENTION_RESOLVED`. Expired requests
+
+        resolve as `expired` and are treated as rejection (fail closed).
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/AttentionId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttentionResponse'
+      responses:
+        '202':
+          description: Response accepted and receipted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttentionRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/campaigns:
+    post:
+      tags:
+      - Campaigns
+      operationId: createCampaign
+      description: A persistent objective that wakes and drives runs over time. Campaigns are not cron.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/AllternitVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CampaignCreate'
+      responses:
+        '202':
+          description: Campaign accepted.
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Campaign'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+    get:
+      tags:
+      - Campaigns
+      operationId: listCampaigns
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      - name: status
+        in: query
+        schema:
+          type: array
+          items:
+            $ref: '#/components/schemas/CampaignStatus'
+        style: form
+        explode: false
+      responses:
+        '200':
+          description: Page of campaigns.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignPage'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/campaigns/{campaign_id}:
+    get:
+      tags:
+      - Campaigns
+      operationId: getCampaign
+      parameters:
+      - $ref: '#/components/parameters/CampaignId'
+      responses:
+        '200':
+          description: Campaign state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Campaign'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/campaigns/{campaign_id}/runs:
+    get:
+      tags:
+      - Campaigns
+      - Runs
+      operationId: listCampaignRuns
+      parameters:
+      - $ref: '#/components/parameters/CampaignId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Runs created by this campaign.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunPage'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/campaigns/{campaign_id}/pause:
+    post:
+      tags:
+      - Campaigns
+      operationId: pauseCampaign
+      description: Async, idempotent. Stops future wakes; runs already in flight are unaffected unless `cascade`
+        is true.
+      parameters:
+      - $ref: '#/components/parameters/CampaignId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CampaignControlRequest'
+      responses:
+        '202':
+          description: Pause requested.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Campaign'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/campaigns/{campaign_id}/resume:
+    post:
+      tags:
+      - Campaigns
+      operationId: resumeCampaign
+      parameters:
+      - $ref: '#/components/parameters/CampaignId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Resume requested; `next_wake` is recomputed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Campaign'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/campaigns/{campaign_id}/cancel:
+    post:
+      tags:
+      - Campaigns
+      operationId: cancelCampaign
+      description: Async, idempotent, terminal. With `cascade` (default true) every non-terminal child run is cancelled
+        with Run cancel semantics.
+      parameters:
+      - $ref: '#/components/parameters/CampaignId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CampaignControlRequest'
+      responses:
+        '202':
+          description: Cancellation requested.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Campaign'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/replays:
+    post:
+      tags:
+      - Replays
+      operationId: createReplay
+      description: 'Re-runs a finished run at the decision/tool boundary from its trace, receipts and
+
+        cassette. `effects` is always `recorded_only`: every external effect is
+
+        served from the recorded, content-addressed result. A call with no recording fails
+
+        that node with `ERR_REPLAY_UNRECORDED`; it is never executed live.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplayRequest'
+      responses:
+        '202':
+          description: Replay accepted.
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Replay'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/replays/{replay_id}:
+    get:
+      tags:
+      - Replays
+      operationId: getReplay
+      parameters:
+      - $ref: '#/components/parameters/ReplayId'
+      responses:
+        '200':
+          description: Replay status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Replay'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/replays/{replay_id}/results:
+    get:
+      tags:
+      - Replays
+      operationId: getReplayResults
+      parameters:
+      - $ref: '#/components/parameters/ReplayId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Divergence report (available when status is `completed`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplayResults'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/decisions:
+    post:
+      tags:
+      - Decisions
+      operationId: createDecision
+      summary: Optional low-level decision surface (no side effects)
+      description: 'Bounded decision over caller-supplied candidates. Pure: no effects, so
+
+        `Idempotency-Key` is optional. `gate` results are transition recommendations only
+
+        and never authorization. Backend identity is shown only with `view=debug`.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKeyOptional'
+      - $ref: '#/components/parameters/View'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecisionRequest'
+      responses:
+        '200':
+          description: Typed decision.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionResult'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/capabilities:
+    get:
+      tags:
+      - Catalog
+      operationId: listCapabilities
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Capability registry (stable semantic IDs, backend-independent).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapabilityPage'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/agents:
+    get:
+      tags:
+      - Catalog
+      operationId: listAgents
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Logical composite agents.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentPage'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/models:
+    get:
+      tags:
+      - Catalog
+      operationId: listModelClasses
+      x-disclosure-tier: B
+      summary: Logical model classes by trust class and locality (no vendor or model names)
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Model classes a request may allow or exclude.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelClassPage'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/authority-profiles:
+    get:
+      tags:
+      - Catalog
+      operationId: listAuthorityProfiles
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Named authority profiles and the grants each expands to.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthorityProfilePage'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /v1/completion-criteria:
+    get:
+      tags:
+      - Catalog
+      operationId: listCompletionCriteria
+      summary: Versioned, extensible completion-criteria registry
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Criteria with verifier semantics text and verifier kind.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompletionCriterionPage'
+        4XX:
+          $ref: '#/components/responses/ClientError'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+  /.well-known/jwks.json:
+    get:
+      tags:
+      - Keys
+      operationId: getJwks
+      summary: Receipt verification keys (JWKS)
+      security: []
+      responses:
+        '200':
+          description: JWKS containing Ed25519 public keys referenced by `ReceiptSignature.key_id`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Jwks'
+        5XX:
+          $ref: '#/components/responses/ServerError'
+components:
+  securitySchemes:
+    apiKey:
+      type: http
+      scheme: bearer
+      bearerFormat: allternit-api-key
+      description: '`Authorization: Bearer <api key>`. Keys are scoped to one workspace/org.'
+    oauth2:
+      type: oauth2
+      description: Placeholder for machine-to-machine clients (planned).
+      flows:
+        clientCredentials:
+          tokenUrl: https://auth.allternit.com/oauth2/token
+          scopes:
+            runs:write: Create and control runs, answer attention
+            runs:read: Read runs, events, artifacts
+            receipts:read: Read receipts and chain verification
+            campaigns:write: Create and control campaigns
+            campaigns:read: Read campaigns
+            replays:write: Create replays
+            decisions:write: Call the decision surface
+            catalog:read: Read agents, capabilities, model classes, profiles
+            graph:read: Tier C graph inspection
+            debug:read: view=debug on any resource
+  parameters:
+    RunId:
+      name: run_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^run_[A-Za-z0-9]+$
+    CampaignId:
+      name: campaign_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^cmp_[A-Za-z0-9]+$
+    ReplayId:
+      name: replay_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^rpl_[A-Za-z0-9]+$
+    AttentionId:
+      name: attention_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^att_[A-Za-z0-9]+$
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor from a previous page's `next_cursor`.
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    View:
+      name: view
+      in: query
+      description: '`debug` adds kernel internals (requires scope `debug:read`).'
+      schema:
+        type: string
+        enum:
+        - default
+        - debug
+        default: default
+    AttentionStatusFilter:
+      name: status
+      in: query
+      schema:
+        type: array
+        items:
+          $ref: '#/components/schemas/AttentionStatus'
+      style: form
+      explode: false
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: 'Required on every effectful POST. SDKs generate it. Scope: caller principal + method + canonical
+        resource/path
+
+        (path parameters normalized). Same key and body within the 24 h API replay window returns the original response
+        with `Idempotency-Replayed: true`;
+
+        same key with a different body returns 409 `ERR_IDEMPOTENCY_KEY_REUSED`; a key still in progress returns
+        409 `ERR_IDEMPOTENCY_IN_PROGRESS`.
+
+        Responses link durable effect receipt ids (`Run.effect_receipt_ids`); the key is written into the resulting
+        receipt and derived keys go to every external effect,
+
+        so a retried effect is never duplicated. Effect receipts stay durable beyond the replay window.'
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 255
+    IdempotencyKeyOptional:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 255
+    AllternitVersion:
+      name: Allternit-Version
+      in: header
+      required: false
+      description: Dated API version (`YYYY-MM-DD`). Defaults to the key's pinned version.
+      schema:
+        type: string
+        format: date
+  headers:
+    AllternitVersion:
+      description: Dated version that served the request.
+      schema:
+        type: string
+        format: date
+    RequestId:
+      schema:
+        type: string
+    Location:
+      schema:
+        type: string
+        format: uri-reference
+    ETag:
+      description: Weak ETag of the run's durable state version.
+      schema:
+        type: string
+    IdempotencyReplayed:
+      description: '`true` when this response is a stored replay of an earlier request with the same key.'
+      schema:
+        type: boolean
+    Deprecation:
+      description: RFC 9745 deprecation date of the resource or behavior, if deprecated.
+      schema:
+        type: string
+    Sunset:
+      description: RFC 8594 removal date, if scheduled.
+      schema:
+        type: string
+    RetryAfter:
+      schema:
+        type: integer
+        minimum: 0
+  responses:
+    ClientError:
+      description: Client error (standard envelope).
+      headers:
+        Allternit-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    Forbidden:
+      description: Policy or scope denies the action. Hard denies are never overridable.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    NotFound:
+      description: Resource does not exist or is not visible to the caller.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    Conflict:
+      description: State conflict, terminal state, attention already resolved, or idempotency conflict.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    Gone:
+      description: Event cursor is older than the retention window.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    Unprocessable:
+      description: 'Schema-valid but not compilable: ambiguous goal, unknown or forbidden profile, unknown criterion,
+        or defaults that cannot be safely resolved (`ERR_DEFAULTS_UNRESOLVABLE`, never a permissive run).'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    TooManyRequests:
+      description: Rate limit or admission cap reached.
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    ServerError:
+      description: Server or kernel failure (standard envelope).
+      headers:
+        Allternit-Request-Id:
+          $ref: '#/components/headers/RequestId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+  schemas:
+    Extensions:
+      description: 'Extension pattern. Any closed object may carry properties named `x-<vendor-neutral-name>`.
+
+        Servers preserve unknown `x-` properties; they never change kernel semantics.
+
+        '
+      type: object
+      patternProperties:
+        ^x-[a-z0-9-]+$: {}
+    Metadata:
+      description: Caller-owned annotations. Max 50 keys; values ≤ 500 chars.
+      type: object
+      maxProperties: 50
+      additionalProperties:
+        type: string
+        maxLength: 500
+    Timestamp:
+      type: string
+      format: date-time
+    TrustClass:
+      type: string
+      enum:
+      - PUBLIC
+      - INTERNAL
+      - RESTRICTED
+      - SECRET
+      - UNTRUSTED
+    PageBase:
+      type: object
+      required:
+      - object
+      - data
+      - has_more
+      - next_cursor
+      properties:
+        object:
+          const: list
+        has_more:
+          type: boolean
+        next_cursor:
+          type:
+          - string
+          - 'null'
+    ErrorEnvelope:
+      type: object
+      required:
+      - error
+      additionalProperties: false
+      properties:
+        error:
+          $ref: '#/components/schemas/Error'
+    Error:
+      type: object
+      required:
+      - family
+      - code
+      - message
+      - retryable
+      - request_id
+      properties:
+        family:
+          description: Runtime error family (§24.2) plus API-surface families.
+          type: string
+          enum:
+          - INPUT
+          - STATE
+          - CONTEXT
+          - ROUTING
+          - DECISION
+          - TOOL
+          - POLICY
+          - MUTATION
+          - VERIFY
+          - TRANSFER
+          - BUDGET
+          - SYSTEM
+          - AUTH
+          - NOT_FOUND
+          - IDEMPOTENCY
+          - RATE_LIMIT
+          - VERSION
+        code:
+          description: '`ERR_*` code. Kernel codes pass through unchanged (e.g. ERR_INPUT_AMBIGUOUS,
+
+            ERR_STATE_CONFLICT, ERR_POLICY_DENIED, ERR_APPROVAL_REQUIRED, ERR_COST_BUDGET,
+
+            ERR_WORKER_LOST). API codes: ERR_AUTH_INVALID, ERR_AUTH_SCOPE, ERR_NOT_FOUND,
+
+            ERR_RUN_TERMINAL, ERR_ATTENTION_RESOLVED, ERR_IDEMPOTENCY_KEY_REUSED,
+
+            ERR_IDEMPOTENCY_IN_PROGRESS, ERR_RATE_LIMIT, ERR_VERSION_UNSUPPORTED,
+
+            ERR_CURSOR_EXPIRED, ERR_REPLAY_UNRECORDED, ERR_AUTHORITY_PROFILE_FORBIDDEN, ERR_DEFAULTS_UNRESOLVABLE
+            (request cannot be safely defaulted; no run executes).
+
+            New codes may be added; treat unknown codes by `family` and `retryable`.
+
+            '
+          type: string
+          pattern: ^ERR_[A-Z0-9_]+$
+        message:
+          type: string
+        retryable:
+          type: boolean
+        request_id:
+          type: string
+        run_id:
+          type:
+          - string
+          - 'null'
+        param:
+          type:
+          - string
+          - 'null'
+          description: Offending request field, if any.
+        policy_reason_codes:
+          type: array
+          items:
+            type: string
+        receipt_id:
+          type:
+          - string
+          - 'null'
+          description: Receipt recording the denial or failure, if any.
+        docs_url:
+          type:
+          - string
+          - 'null'
+          format: uri
+    AgencyRequest:
+      description: 'Only `goal` is required. `workspace`, `authority`, `budget` and `completion` are optional;
+
+        when omitted the server resolves each from the agent''s/profile''s versioned defaults and returns the
+
+        resolved values on `Run.resolved` before execution. Supplying a field overrides the default
+
+        (never widening beyond caller entitlement or hard policy). There are no hidden permissive
+
+        defaults. `capabilities` and `models` are Level B, `graph` is Level C, `runtime` is Level D.
+
+        Unknown fields are rejected, including any attempt to disable judge fail-closed or
+
+        verifier-owned completion. `thread_id` is a correlation ID only.'
+      type: object
+      required:
+      - goal
+      additionalProperties: false
+      patternProperties:
+        ^x-[a-z0-9-]+$: {}
+      properties:
+        agent:
+          type: string
+          default: allternit-code
+          description: Logical agent ID, optionally `@version` (e.g. `allternit-code@v1`).
+          pattern: ^[a-z0-9-]+(@v[0-9]+)?$
+        goal:
+          type: string
+          minLength: 1
+          maxLength: 20000
+        workspace:
+          $ref: '#/components/schemas/Workspace'
+        context:
+          type: array
+          description: Supplied context. Enters as UNTRUSTED unless a trust_class is granted by policy.
+          items:
+            $ref: '#/components/schemas/ContextItem'
+        authority:
+          $ref: '#/components/schemas/Authority'
+        budget:
+          $ref: '#/components/schemas/Budget'
+        completion:
+          $ref: '#/components/schemas/CompletionCriteria'
+        capabilities:
+          $ref: '#/components/schemas/CapabilityLimits'
+        models:
+          $ref: '#/components/schemas/ModelConstraints'
+        graph:
+          $ref: '#/components/schemas/GraphSpec'
+          description: Opaque until the public Graph contract is frozen.
+        runtime:
+          $ref: '#/components/schemas/RuntimeHints'
+        stream:
+          type: boolean
+          default: true
+          description: When true, `Run.links.events` is ready to open immediately.
+        thread_id:
+          type:
+          - string
+          - 'null'
+          description: Correlation ID only. There are no Thread endpoints in v1; messages arrive as `run.message`
+            events.
+        metadata:
+          $ref: '#/components/schemas/Metadata'
+    Workspace:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        repo:
+          type: string
+          format: uri
+          description: Shorthand for one read/write repo resource, e.g. `repo://acme/store`.
+        ref:
+          type: string
+          description: Branch, tag or commit for `repo`.
+        resources:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResourceRef'
+    ResourceRef:
+      type: object
+      required:
+      - uri
+      - access
+      additionalProperties: false
+      properties:
+        uri:
+          type: string
+          format: uri
+        kind:
+          type: string
+          enum:
+          - repo
+          - directory
+          - file
+          - dataset
+          - url
+          - connector
+          - secret_store
+        access:
+          type: string
+          enum:
+          - read
+          - write
+        trust_class:
+          $ref: '#/components/schemas/TrustClass'
+    ContextItem:
+      type: object
+      required:
+      - kind
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum:
+          - text
+          - file
+          - url
+          - artifact
+        text:
+          type: string
+        uri:
+          type: string
+          format: uri
+        artifact_id:
+          type: string
+        label:
+          type: string
+    Authority:
+      description: 'Explicit authority (optional on the request; resolved from the agent''s default profile when
+        omitted and returned in `Run.resolved.authority`).
+
+        A named `profile` (`read-only`, `code-safe`, `code-write`, optionally pinned `name@version`) compiles into
+        capabilities and policy, not magic strings
+
+        (GET /v1/authority-profiles). `grants` may only add scoped grants within the caller''s entitlement; nothing
+        can weaken a hard policy deny.
+
+        There is no bypass/yolo/auto-approve profile: such names are rejected with `ERR_AUTHORITY_PROFILE_FORBIDDEN`
+        and no executor''s native bypass mode is honored.'
+      type: object
+      required:
+      - profile
+      additionalProperties: false
+      properties:
+        profile:
+          type: string
+          pattern: ^[a-z0-9-]+(@[0-9]+)?$
+          not:
+            pattern: ^(yolo|bypass|auto-approve|autoapprove|dangerously-skip-permissions|full-access|no-sandbox|unrestricted|god-mode)(@|$)
+          examples:
+          - read-only
+          - code-safe
+          - code-write
+        interaction_mode:
+          type: string
+          enum:
+          - autonomous
+          - approval_gated
+          - recommend_only
+          default: approval_gated
+          description: '`autonomous` still stops at every policy ASK; it only removes discretionary review.'
+        grants:
+          type: array
+          items:
+            $ref: '#/components/schemas/Grant'
+        network:
+          $ref: '#/components/schemas/NetworkPolicy'
+        environment:
+          $ref: '#/components/schemas/ExecutionEnvironment'
+        expires_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+          description: Defaults to run end. Grants never outlive the run.
+    Grant:
+      type: object
+      required:
+      - scope
+      - actions
+      additionalProperties: false
+      properties:
+        scope:
+          type: string
+          description: Capability ID (`cap.*`), tool family, or resource URI.
+        actions:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum:
+            - read
+            - write
+            - execute
+            - network
+            - spend
+            - external_send
+        resources:
+          type: array
+          items:
+            type: string
+        effect_class:
+          type: string
+          enum:
+          - none
+          - reversible
+          - external
+          - irreversible
+        requires_approval:
+          type: boolean
+          default: false
+        expires_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+    NetworkPolicy:
+      description: Public view of NetworkAccessPolicyV1. Private-address, redirect-hop and DNS-rebind defenses are
+        always on.
+      type: object
+      additionalProperties: false
+      properties:
+        default:
+          type: string
+          enum:
+          - deny
+          - allowlist
+          default: deny
+        domains:
+          type: array
+          items:
+            type: string
+        private_ip:
+          type: string
+          enum:
+          - deny
+          default: deny
+        max_redirects:
+          type: integer
+          minimum: 0
+          maximum: 10
+          default: 3
+        redirect_scope:
+          type: string
+          enum:
+          - same_domain
+          - allowlist
+          default: allowlist
+        dns_rebind:
+          type: string
+          enum:
+          - pin_resolution
+          default: pin_resolution
+        defaults_version:
+          type: string
+          readOnly: true
+          description: Version of the platform defaults applied to unset fields. Defaults are versioned, not architecture
+            constants.
+    ExecutionEnvironment:
+      description: Public view of ExecutionEnvironmentV1. Raw environment inheritance is never allowed.
+      type: object
+      additionalProperties: false
+      properties:
+        allowed_env_keys:
+          type: array
+          items:
+            type: string
+        secret_refs:
+          type: array
+          items:
+            type: string
+            description: Reference to a stored secret; values are never accepted inline.
+    Budget:
+      type: object
+      additionalProperties: false
+      anyOf:
+      - required:
+        - max_seconds
+      - required:
+        - max_cost_usd
+      properties:
+        max_seconds:
+          type: integer
+          minimum: 1
+        max_cost_usd:
+          type: number
+          minimum: 0
+        max_steps:
+          type: integer
+          minimum: 1
+          description: Cap on executed work nodes.
+        max_attention_requests:
+          type: integer
+          minimum: 0
+        on_exhaustion:
+          type: string
+          enum:
+          - request_attention
+          - stop
+          default: request_attention
+          description: '`request_attention` (default): hard-stop, then `needs_attention/budget_exhausted`. `stop`:
+            hard-stop then `failed`. A model can never raise its own budget.'
+      description: On exhaustion the platform first hard-stops ALL further billable/effectful execution, then moves
+        the run to `needs_attention` with attention reason `budget_exhausted`. No spend occurs while waiting; only
+        a human answer can raise the budget.
+    BudgetUsage:
+      type: object
+      required:
+      - seconds
+      - cost_usd
+      - steps
+      properties:
+        seconds:
+          type: number
+        cost_usd:
+          type: number
+        steps:
+          type: integer
+        spend_halted:
+          type: boolean
+          description: True once budget exhaustion has hard-stopped billable/effectful execution.
+      description: ''
+    CompletionCriteria:
+      description: "Verifier-owned completion. The run reaches `completed` only when the\nsystem evaluates: every\
+        \ required criterion has a PASS verification receipt, no\nblocking failure is unresolved, required artifacts\
+        \ exist, and policy obligations are\nmet. A model saying \"done\" is a proposal with no authority. INCONCLUSIVE\
+        \ is never PASS.\n Items in `require` are string ids or `{id, version?}` referring to the versioned registry\
+        \ (GET /v1/completion-criteria); omitted version means latest at resolution time and the resolved version\
+        \ is recorded in `Run.resolved.completion`. `allow_partial` is the only way a run may end `partial`."
+      type: object
+      required:
+      - require
+      additionalProperties: false
+      properties:
+        require:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/CriterionRef'
+        criteria:
+          type: array
+          description: Custom criteria, referenced from `require` by `id`.
+          items:
+            $ref: '#/components/schemas/Criterion'
+        allow_partial:
+          type: boolean
+          default: false
+          description: If true, a run that stops with some criteria unmet ends `partial`. `partial` is only ever
+            produced when this is true, and is never a synonym for failed or unfinished.
+    CriterionRef:
+      description: 'Registry criterion by id (string, latest) or pinned `{id, version}`. Built-ins keep their names:
+        tests_pass, no_new_regressions, build_passes, typecheck_passes, lint_clean, artifact_exists, requirement_verified,
+        human_review.'
+      oneOf:
+      - type: string
+        pattern: ^[a-z0-9_.-]+$
+      - type: object
+        required:
+        - id
+        additionalProperties: false
+        properties:
+          id:
+            type: string
+            pattern: ^[a-z0-9_.-]+$
+          version:
+            type: integer
+            minimum: 1
+    Criterion:
+      type: object
+      required:
+      - id
+      - description
+      - verifier
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          pattern: ^[a-z0-9_.-]+$
+        description:
+          type: string
+        verifier:
+          type: string
+          enum:
+          - parse
+          - format
+          - lint
+          - typecheck
+          - unit_test
+          - integration_test
+          - build
+          - semantic_rule
+          - requirement
+          - security
+          - regression
+          - diff_review
+          - human
+        command:
+          type: string
+          description: Optional check command run in the sandbox under the run's authority.
+        blocking:
+          type: boolean
+          default: true
+      description: Custom criterion registered inline for this run/campaign; built-in and registry criteria are
+        referenced from `require`.
+    CapabilityLimits:
+      x-disclosure-tier: B
+      type: object
+      additionalProperties: false
+      properties:
+        allow:
+          type: array
+          items:
+            type: string
+            pattern: ^cap\.
+        deny:
+          type: array
+          items:
+            type: string
+            pattern: ^cap\.
+        tools_allow:
+          type: array
+          items:
+            type: string
+        tools_deny:
+          type: array
+          items:
+            type: string
+    ModelConstraints:
+      x-disclosure-tier: B
+      description: Constrain by logical class, locality and trust. Model or vendor names are rejected.
+      type: object
+      additionalProperties: false
+      properties:
+        allow_classes:
+          type: array
+          items:
+            type: string
+            pattern: ^mc\.[a-z0-9_.-]+$
+        deny_classes:
+          type: array
+          items:
+            type: string
+            pattern: ^mc\.[a-z0-9_.-]+$
+        locality:
+          type: string
+          enum:
+          - local_only
+          - local_preferred
+          - any
+          default: any
+        max_data_trust_class_to_remote:
+          $ref: '#/components/schemas/TrustClass'
+    GraphSpec:
+      x-disclosure-tier: C
+      type: object
+      additionalProperties: false
+      properties:
+        template_id:
+          type: string
+        template_params:
+          type: object
+          additionalProperties: true
+        ir:
+          type: object
+          additionalProperties: true
+          description: Full graph IR. Statically validated; vendor or model names are rejected.
+      description: Advanced input is treated as opaque until the public Graph contract is frozen.
+    RuntimeHints:
+      x-disclosure-tier: D
+      description: Research/infra hints. Never change semantics, eligibility, policy or evidence.
+      type: object
+      additionalProperties: false
+      properties:
+        deployment_profile:
+          type: string
+          enum:
+          - micro
+          - tiny
+          - compact
+          - medium
+          - workstation
+          - large
+          - fabric
+        readout_level_min:
+          type: string
+          enum:
+          - L0
+          - L1
+          - L2
+        record_cassette:
+          type: boolean
+          default: true
+    RunStatus:
+      description: 'Aggregate of WorkNodeLifecycleV1 and RunReceiptV1.completion_status.
+
+        | Run.status | Lifecycle source | RunReceipt |
+
+        |---|---|---|
+
+        | accepted | DECLARE, ADMIT, READY; and until `Run.resolved` is recorded | — |
+
+        | running | LEASE, SPAWN, RUN, HEARTBEAT, OUTPUT, VERIFY, CONTINUE, REPLAN | — |
+
+        | waiting | any active node on a timer/dependency/event wait gate, or lease reclaim pending, and none running
+        | — |
+
+        | needs_attention | any node NEEDS_HUMAN (open AttentionRequest), incl. `budget_exhausted` after billable/effectful
+        execution is hard-stopped | WAITING_APPROVAL |
+
+        | paused | operator pause; leases released at a safe boundary | — |
+
+        | cancelling | cancel receipted; in-flight effects settling (kept) | — |
+
+        | completed | COMMIT → CLOSE with the completion predicate true | COMPLETE |
+
+        | partial | CLOSE, predicate false, ONLY when the completion contract has `allow_partial: true`; never a
+        synonym for failed/unfinished | PARTIAL |
+
+        | failed | CLOSE after unrecoverable failure or budget stop | FAILED |
+
+        | cancelled | CLOSE after cancel | CANCELLED |
+
+        Precedence when nodes differ: cancelling > paused > needs_attention > running > waiting > accepted.
+
+        VAULT/LEARN happen after the terminal state and are not surfaced as status.
+
+        '
+      type: string
+      enum:
+      - accepted
+      - running
+      - waiting
+      - needs_attention
+      - paused
+      - cancelling
+      - completed
+      - partial
+      - failed
+      - cancelled
+    Run:
+      type: object
+      required:
+      - id
+      - object
+      - status
+      - agent
+      - thread_id
+      - created_at
+      - updated_at
+      - version
+      - budget
+      - budget_usage
+      - attention
+      - completion
+      - links
+      - resolved
+      properties:
+        id:
+          type: string
+          pattern: ^run_
+        object:
+          const: run
+        status:
+          $ref: '#/components/schemas/RunStatus'
+        status_reason:
+          type:
+          - string
+          - 'null'
+          description: Short human-readable reason for the current status.
+        terminal:
+          type: boolean
+        agent:
+          type: string
+          description: Logical agent ID and version, e.g. allternit-code@v1.
+        thread_id:
+          type: string
+          description: Correlation ID only; there are no Thread endpoints.
+        campaign_id:
+          type:
+          - string
+          - 'null'
+        goal:
+          type: string
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+        finished_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        version:
+          type: integer
+          minimum: 0
+          description: Monotonic durable state version (ETag source).
+        budget:
+          $ref: '#/components/schemas/Budget'
+        budget_usage:
+          $ref: '#/components/schemas/BudgetUsage'
+        attention:
+          description: The oldest open AttentionRequest, or null.
+          oneOf:
+          - $ref: '#/components/schemas/AttentionRequest'
+          - type: 'null'
+        open_attention_count:
+          type: integer
+          minimum: 0
+        completion:
+          $ref: '#/components/schemas/CompletionState'
+        output:
+          oneOf:
+          - $ref: '#/components/schemas/RunOutput'
+          - type: 'null'
+        cancellation:
+          oneOf:
+          - $ref: '#/components/schemas/CancellationState'
+          - type: 'null'
+        error:
+          oneOf:
+          - $ref: '#/components/schemas/Error'
+          - type: 'null'
+        links:
+          $ref: '#/components/schemas/RunLinks'
+        metadata:
+          $ref: '#/components/schemas/Metadata'
+        debug:
+          description: Present only with `view=debug`.
+          oneOf:
+          - $ref: '#/components/schemas/RunDebugView'
+          - type: 'null'
+        resolved:
+          $ref: '#/components/schemas/ResolvedDefaults'
+        effect_receipt_ids:
+          type: array
+          items:
+            type: string
+            pattern: ^rcpt_
+          description: Durable effect receipt ids linked to this run/creating request. Receipts outlive the 24 h
+            API replay window.
+      description: Durable execution instance. `resolved` is required and is populated before execution; status
+        stays `accepted` until resolution is recorded.
+    RunLinks:
+      type: object
+      required:
+      - self
+      - events
+      - artifacts
+      - receipts
+      properties:
+        self:
+          type: string
+          format: uri-reference
+        events:
+          type: string
+          format: uri-reference
+        artifacts:
+          type: string
+          format: uri-reference
+        receipts:
+          type: string
+          format: uri-reference
+        attention:
+          type: string
+          format: uri-reference
+    RunOutput:
+      type: object
+      required:
+      - summary
+      - artifact_ids
+      properties:
+        summary:
+          type: string
+        artifact_ids:
+          type: array
+          items:
+            type: string
+        run_receipt_id:
+          type:
+          - string
+          - 'null'
+          description: The run receipt that proves the terminal state.
+    CompletionState:
+      type: object
+      required:
+      - status
+      - criteria
+      properties:
+        status:
+          type: string
+          enum:
+          - pending
+          - satisfied
+          - unsatisfied
+        criteria:
+          type: array
+          items:
+            type: object
+            required:
+            - criterion
+            - result
+            properties:
+              criterion:
+                type: string
+              result:
+                $ref: '#/components/schemas/VerificationResult'
+              receipt_ids:
+                type: array
+                items:
+                  type: string
+    VerificationResult:
+      type: string
+      enum:
+      - pending
+      - pass
+      - fail
+      - inconclusive
+      - error
+    CancellationState:
+      type: object
+      required:
+      - requested_at
+      - effects_in_flight
+      properties:
+        requested_at:
+          $ref: '#/components/schemas/Timestamp'
+        reason:
+          type:
+          - string
+          - 'null'
+        receipt_id:
+          type: string
+        effects_in_flight:
+          type: array
+          items:
+            type: object
+            required:
+            - description
+            - state
+            properties:
+              description:
+                type: string
+              effect_class:
+                type: string
+                enum:
+                - reversible
+                - external
+                - irreversible
+              state:
+                type: string
+                enum:
+                - settling
+                - completed
+                - rolled_back
+                - rollback_failed
+                - timed_out
+              receipt_id:
+                type:
+                - string
+                - 'null'
+    RunDebugView:
+      description: Opt-in kernel internals (`view=debug`, scope `debug:read`). Open object; fields may change without
+        a major version.
+      type: object
+      additionalProperties: true
+      properties:
+        task_ref:
+          type: string
+        graph_id:
+          type: string
+        graph_version:
+          type: integer
+        components_used:
+          type: array
+          description: Execution evidence only (role, mode, capability, opaque component ID).
+          items:
+            type: object
+            additionalProperties: true
+        trace_ref:
+          type: string
+    ControlRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          maxLength: 1000
+    CancelRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          maxLength: 1000
+        rollback_reversible_effects:
+          type: boolean
+          default: true
+    RunInput:
+      type: object
+      required:
+      - type
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          enum:
+          - message
+          - approval
+          - rejection
+          - steer
+          - data
+        attention_id:
+          type: string
+          pattern: ^att_
+        value:
+          description: Free text for message/steer; typed payload for data.
+        comment:
+          type: string
+      allOf:
+      - if:
+          properties:
+            type:
+              enum:
+              - approval
+              - rejection
+        then:
+          required:
+          - attention_id
+    InputAccepted:
+      type: object
+      required:
+      - run_id
+      - receipt_id
+      - status
+      properties:
+        run_id:
+          type: string
+        receipt_id:
+          type: string
+        attention_id:
+          type:
+          - string
+          - 'null'
+        status:
+          $ref: '#/components/schemas/RunStatus'
+    RunPage:
+      allOf:
+      - $ref: '#/components/schemas/PageBase'
+      - properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/Run'
+    RunEventType:
+      type: string
+      enum:
+      - run.status_changed
+      - run.progress
+      - run.message
+      - attention.requested
+      - attention.resolved
+      - input.accepted
+      - artifact.created
+      - receipt.appended
+      - verification.completed
+      - budget.threshold
+      - debug.trace
+    RunEventBase:
+      type: object
+      required:
+      - id
+      - seq
+      - run_id
+      - type
+      - created_at
+      properties:
+        id:
+          type: string
+          description: Event cursor; use as SSE `Last-Event-ID`.
+        seq:
+          type: integer
+          minimum: 1
+          description: Gap-free per-run sequence.
+        run_id:
+          type: string
+        type:
+          $ref: '#/components/schemas/RunEventType'
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        run_version:
+          type: integer
+    RunEvent:
+      description: Discriminated on `type`. Unknown types must be ignored by clients.
+      oneOf:
+      - $ref: '#/components/schemas/RunStatusChangedEvent'
+      - $ref: '#/components/schemas/RunProgressEvent'
+      - $ref: '#/components/schemas/RunMessageEvent'
+      - $ref: '#/components/schemas/AttentionRequestedEvent'
+      - $ref: '#/components/schemas/AttentionResolvedEvent'
+      - $ref: '#/components/schemas/InputAcceptedEvent'
+      - $ref: '#/components/schemas/ArtifactCreatedEvent'
+      - $ref: '#/components/schemas/ReceiptAppendedEvent'
+      - $ref: '#/components/schemas/VerificationCompletedEvent'
+      - $ref: '#/components/schemas/BudgetThresholdEvent'
+      - $ref: '#/components/schemas/DebugTraceEvent'
+      discriminator:
+        propertyName: type
+        mapping:
+          run.status_changed: '#/components/schemas/RunStatusChangedEvent'
+          run.progress: '#/components/schemas/RunProgressEvent'
+          run.message: '#/components/schemas/RunMessageEvent'
+          attention.requested: '#/components/schemas/AttentionRequestedEvent'
+          attention.resolved: '#/components/schemas/AttentionResolvedEvent'
+          input.accepted: '#/components/schemas/InputAcceptedEvent'
+          artifact.created: '#/components/schemas/ArtifactCreatedEvent'
+          receipt.appended: '#/components/schemas/ReceiptAppendedEvent'
+          verification.completed: '#/components/schemas/VerificationCompletedEvent'
+          budget.threshold: '#/components/schemas/BudgetThresholdEvent'
+          debug.trace: '#/components/schemas/DebugTraceEvent'
+    RunStatusChangedEvent:
+      allOf:
+      - $ref: '#/components/schemas/RunEventBase'
+      - type: object
+        required:
+        - type
+        - data
+        properties:
+          type:
+            const: run.status_changed
+          data:
+            type: object
+            required:
+            - from
+            - to
+            - terminal
+            properties:
+              from:
+                $ref: '#/components/schemas/RunStatus'
+              to:
+                $ref: '#/components/schemas/RunStatus'
+              terminal:
+                type: boolean
+              reason:
+                type:
+                - string
+                - 'null'
+              run_receipt_id:
+                type:
+                - string
+                - 'null'
+    RunProgressEvent:
+      allOf:
+      - $ref: '#/components/schemas/RunEventBase'
+      - type: object
+        required:
+        - type
+        - data
+        properties:
+          type:
+            const: run.progress
+          data:
+            type: object
+            required:
+            - step
+            properties:
+              step:
+                type: string
+                description: Plain-language step, e.g. "Running affected tests".
+              completed_steps:
+                type: integer
+              estimated_steps:
+                type:
+                - integer
+                - 'null'
+    RunMessageEvent:
+      allOf:
+      - $ref: '#/components/schemas/RunEventBase'
+      - type: object
+        required:
+        - type
+        - data
+        properties:
+          type:
+            const: run.message
+          data:
+            type: object
+            required:
+            - role
+            - text
+            properties:
+              role:
+                type: string
+                enum:
+                - agent
+                - user
+                - system
+              text:
+                type: string
+              delta:
+                type: boolean
+                default: false
+                description: If true, append to the previous message.
+    AttentionRequestedEvent:
+      allOf:
+      - $ref: '#/components/schemas/RunEventBase'
+      - type: object
+        required:
+        - type
+        - data
+        properties:
+          type:
+            const: attention.requested
+          data:
+            $ref: '#/components/schemas/AttentionRequest'
+    AttentionResolvedEvent:
+      allOf:
+      - $ref: '#/components/schemas/RunEventBase'
+      - type: object
+        required:
+        - type
+        - data
+        properties:
+          type:
+            const: attention.resolved
+          data:
+            $ref: '#/components/schemas/AttentionRequest'
+    InputAcceptedEvent:
+      allOf:
+      - $ref: '#/components/schemas/RunEventBase'
+      - type: object
+        required:
+        - type
+        - data
+        properties:
+          type:
+            const: input.accepted
+          data:
+            $ref: '#/components/schemas/InputAccepted'
+    ArtifactCreatedEvent:
+      allOf:
+      - $ref: '#/components/schemas/RunEventBase'
+      - type: object
+        required:
+        - type
+        - data
+        properties:
+          type:
+            const: artifact.created
+          data:
+            $ref: '#/components/schemas/Artifact'
+    ReceiptAppendedEvent:
+      allOf:
+      - $ref: '#/components/schemas/RunEventBase'
+      - type: object
+        required:
+        - type
+        - data
+        properties:
+          type:
+            const: receipt.appended
+          data:
+            type: object
+            required:
+            - receipt_id
+            - receipt_type
+            - content_hash
+            properties:
+              receipt_id:
+                type: string
+              receipt_type:
+                $ref: '#/components/schemas/ReceiptType'
+              content_hash:
+                type: string
+              summary:
+                type: string
+    VerificationCompletedEvent:
+      allOf:
+      - $ref: '#/components/schemas/RunEventBase'
+      - type: object
+        required:
+        - type
+        - data
+        properties:
+          type:
+            const: verification.completed
+          data:
+            type: object
+            required:
+            - criterion
+            - result
+            - receipt_id
+            properties:
+              criterion:
+                type:
+                - string
+                - 'null'
+              verifier:
+                type: string
+              result:
+                $ref: '#/components/schemas/VerificationResult'
+              receipt_id:
+                type: string
+    BudgetThresholdEvent:
+      allOf:
+      - $ref: '#/components/schemas/RunEventBase'
+      - type: object
+        required:
+        - type
+        - data
+        properties:
+          type:
+            const: budget.threshold
+          data:
+            type: object
+            required:
+            - dimension
+            - fraction_used
+            properties:
+              dimension:
+                type: string
+                enum:
+                - seconds
+                - cost_usd
+                - steps
+              fraction_used:
+                type: number
+                enum:
+                - 0.5
+                - 0.8
+                - 1.0
+    DebugTraceEvent:
+      description: Only delivered with `view=debug`.
+      allOf:
+      - $ref: '#/components/schemas/RunEventBase'
+      - type: object
+        required:
+        - type
+        - data
+        properties:
+          type:
+            const: debug.trace
+          data:
+            type: object
+            additionalProperties: true
+    RunEventPage:
+      allOf:
+      - $ref: '#/components/schemas/PageBase'
+      - properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/RunEvent'
+    AttentionStatus:
+      type: string
+      enum:
+      - open
+      - resolved
+      - expired
+      - withdrawn
+    AttentionRequest:
+      description: 'Public view of AttentionRequestV1. Agents request attention; the
+
+        AttentionController owns delivery, quiet hours, dedupe and quotas. Only policy ASK
+
+        outcomes become approval requests; hard DENY outcomes never do.
+
+        '
+      type: object
+      required:
+      - id
+      - object
+      - run_id
+      - reason
+      - urgency
+      - topic
+      - status
+      - response_options
+      - created_at
+      - kind
+      properties:
+        id:
+          type: string
+          pattern: ^att_
+        object:
+          const: attention_request
+        run_id:
+          type: string
+        campaign_id:
+          type:
+          - string
+          - 'null'
+        reason:
+          type: string
+          enum:
+          - approval_required
+          - clarification_needed
+          - budget_exhausted
+          - verification_inconclusive
+          - low_confidence
+          - unsafe_resume
+          - review_requested
+        urgency:
+          type: string
+          enum:
+          - low
+          - normal
+          - high
+          - critical
+        topic:
+          type: string
+        summary:
+          type: string
+        expected_loss:
+          type:
+          - string
+          - 'null'
+          description: Plain-language cost of not answering.
+        proposed_action:
+          oneOf:
+          - $ref: '#/components/schemas/ProposedAction'
+          - type: 'null'
+        response_options:
+          type: array
+          items:
+            type: string
+            enum:
+            - approval
+            - rejection
+            - data
+            - message
+        requested_channel:
+          type:
+          - string
+          - 'null'
+        expires_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        on_expiry:
+          type: string
+          enum:
+          - reject
+          - none
+          description: 'Derived from `kind`: approval => reject, informational => none.'
+        evidence_refs:
+          type: array
+          items:
+            type: string
+        status:
+          $ref: '#/components/schemas/AttentionStatus'
+        resolution:
+          oneOf:
+          - $ref: '#/components/schemas/AttentionResolution'
+          - type: 'null'
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        kind:
+          type: string
+          enum:
+          - approval
+          - informational
+          description: '`approval`: policy ASK; expiry = rejection/deny (fail closed). `informational`: expiry sets
+            status `expired` with no semantic rejection.'
+        defaults_version:
+          type: string
+          description: Version of attention limit defaults applied.
+    ProposedAction:
+      type: object
+      required:
+      - description
+      - effect_class
+      properties:
+        description:
+          type: string
+        effect_class:
+          type: string
+          enum:
+          - reversible
+          - external
+          - irreversible
+        resources:
+          type: array
+          items:
+            type: string
+        estimated_cost_usd:
+          type:
+          - number
+          - 'null'
+    AttentionResolution:
+      type: object
+      required:
+      - type
+      - resolved_at
+      - receipt_id
+      properties:
+        type:
+          type: string
+          enum:
+          - approval
+          - rejection
+          - data
+          - message
+          - expired
+          - withdrawn
+        resolved_by:
+          type:
+          - string
+          - 'null'
+        resolved_at:
+          $ref: '#/components/schemas/Timestamp'
+        receipt_id:
+          type: string
+        outcome:
+          type: string
+          enum:
+          - approved
+          - rejected
+          - answered
+          - none
+          description: Expired approval => `rejected` (deny). Expired informational => `none`.
+    AttentionResponse:
+      type: object
+      required:
+      - type
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          enum:
+          - approval
+          - rejection
+          - data
+          - message
+        value: {}
+        comment:
+          type: string
+    AttentionPage:
+      allOf:
+      - $ref: '#/components/schemas/PageBase'
+      - properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/AttentionRequest'
+    Artifact:
+      description: Public view of NodeOutputV1. Immutable, content-addressed.
+      type: object
+      required:
+      - id
+      - object
+      - run_id
+      - name
+      - mime_type
+      - hash
+      - verification_status
+      - receipt_id
+      - created_at
+      properties:
+        id:
+          type: string
+        object:
+          const: artifact
+        run_id:
+          type: string
+        name:
+          type: string
+        kind:
+          type: string
+          enum:
+          - patch
+          - file
+          - report
+          - dataset
+          - log
+          - other
+        mime_type:
+          type: string
+        size_bytes:
+          type: integer
+        hash:
+          type: string
+          pattern: ^sha256:[0-9a-f]{64}$
+        trust_class:
+          $ref: '#/components/schemas/TrustClass'
+        verification_status:
+          type: string
+          enum:
+          - unverified
+          - pass
+          - fail
+          - inconclusive
+          - error
+        receipt_id:
+          type: string
+        content_url:
+          type:
+          - string
+          - 'null'
+          format: uri
+          description: Short-lived download URL.
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        metadata:
+          type: object
+          additionalProperties: true
+    ArtifactPage:
+      allOf:
+      - $ref: '#/components/schemas/PageBase'
+      - properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/Artifact'
+    ReceiptType:
+      type: string
+      enum:
+      - run
+      - tool
+      - action
+      - mutation
+      - verification
+      - policy
+      - node_output
+      - input
+      - attention
+      - control
+      - spawn
+    Receipt:
+      description: "Append-only, content-addressed, hash-chained per run.\n`content_hash` = sha256 over the canonical\
+        \ JSON (RFC 8785) of every field except\n`content_hash` and `signature`. `prev_hash` links to the previous\
+        \ receipt in the run\nchain (null only at index 0). Corrections append a new receipt with `supersedes`.\n\
+        \ Signing: per-run previous-hash chain; RFC 8785 JCS canonicalization, SHA-256, Ed25519. The signed\nmaterial\
+        \ is the JCS-canonical object {`schema_id`, `schema_version`, `domain`, `content_hash`}, so signatures bind\
+        \ schema id, schema version and the\ndomain-separation tag `allternit.receipt.v1`. Verification keys: `/.well-known/jwks.json`."
+      type: object
+      required:
+      - id
+      - object
+      - run_id
+      - type
+      - index
+      - content_hash
+      - prev_hash
+      - created_at
+      - provenance
+      - payload
+      - schema_id
+      - schema_version
+      properties:
+        id:
+          type: string
+          pattern: ^rcpt_
+        object:
+          const: receipt
+        run_id:
+          type: string
+        type:
+          $ref: '#/components/schemas/ReceiptType'
+        index:
+          type: integer
+          minimum: 0
+        content_hash:
+          type: string
+          pattern: ^sha256:[0-9a-f]{64}$
+        prev_hash:
+          oneOf:
+          - type: string
+            pattern: ^sha256:[0-9a-f]{64}$
+          - type: 'null'
+        signature:
+          oneOf:
+          - $ref: '#/components/schemas/ReceiptSignature'
+          - type: 'null'
+        supersedes:
+          type:
+          - string
+          - 'null'
+        idempotency_key:
+          type:
+          - string
+          - 'null'
+          description: Required on action receipts for external or irreversible effects.
+        summary:
+          type: string
+        provenance:
+          type: array
+          items:
+            $ref: '#/components/schemas/Provenance'
+        payload:
+          type: object
+          additionalProperties: true
+          description: Type-specific body (e.g. tool exit class, verification result, policy decision). Open by
+            design; component identities appear only with `view=debug`.
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        schema_id:
+          type: string
+          examples:
+          - allternit.receipt
+          description: Included in the signed payload.
+        schema_version:
+          type: string
+          examples:
+          - '1'
+          description: Included in the signed payload.
+    ReceiptSignature:
+      type: object
+      required:
+      - alg
+      - key_id
+      - value
+      - domain
+      properties:
+        alg:
+          type: string
+          enum:
+          - ed25519
+        key_id:
+          type: string
+        value:
+          type: string
+          description: base64url Ed25519 signature over JCS({schema_id, schema_version, domain, content_hash}).
+        jwks_url:
+          type: string
+          format: uri
+          description: Always `https://api.allternit.com/.well-known/jwks.json`.
+        domain:
+          const: allternit.receipt.v1
+          description: Domain-separation tag included in the signed payload.
+    Provenance:
+      description: AbiEnvelope provenance.
+      type: object
+      required:
+      - source_type
+      - trust_class
+      properties:
+        source_type:
+          type: string
+          enum:
+          - USER
+          - FILE
+          - TOOL
+          - MODEL
+          - POLICY
+          - SYSTEM
+          - CACHE
+          - RETRIEVAL
+        source_id:
+          type: string
+        trust_class:
+          $ref: '#/components/schemas/TrustClass'
+        content_hash:
+          type:
+          - string
+          - 'null'
+        observed_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+    ReceiptChainVerification:
+      type: object
+      required:
+      - run_id
+      - receipt_count
+      - head_hash
+      - hash_chain_valid
+      - signatures_valid
+      - checked_at
+      properties:
+        run_id:
+          type: string
+        receipt_count:
+          type: integer
+        head_hash:
+          type: string
+        hash_chain_valid:
+          type: boolean
+        signatures_valid:
+          type:
+          - boolean
+          - 'null'
+          description: Null if any receipt is unsigned.
+        first_invalid_index:
+          type:
+          - integer
+          - 'null'
+        checked_at:
+          $ref: '#/components/schemas/Timestamp'
+    ReceiptPage:
+      allOf:
+      - $ref: '#/components/schemas/PageBase'
+      - properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/Receipt'
+    GraphView:
+      x-disclosure-tier: C
+      type: object
+      required:
+      - graph_id
+      - version
+      - nodes
+      - edges
+      properties:
+        graph_id:
+          type: string
+        version:
+          type: integer
+        template_id:
+          type:
+          - string
+          - 'null'
+        nodes:
+          type: array
+          items:
+            type: object
+            required:
+            - node_id
+            - primitive_id
+            - lifecycle
+            properties:
+              node_id:
+                type: string
+              primitive_id:
+                type: string
+              lifecycle:
+                type: string
+                enum:
+                - DECLARE
+                - ADMIT
+                - READY
+                - LEASE
+                - SPAWN
+                - RUN
+                - HEARTBEAT
+                - OUTPUT
+                - VERIFY
+                - COMMIT
+                - CONTINUE
+                - REPLAN
+                - NEEDS_HUMAN
+                - CLOSE
+                - VAULT
+                - LEARN
+              wait_gate:
+                type:
+                - string
+                - 'null'
+              output_ids:
+                type: array
+                items:
+                  type: string
+        edges:
+          type: array
+          items:
+            type: object
+            required:
+            - from
+            - to
+            properties:
+              from:
+                type: string
+              to:
+                type: string
+              when:
+                type:
+                - string
+                - 'null'
+    CampaignStatus:
+      type: string
+      enum:
+      - active
+      - sleeping
+      - running
+      - needs_attention
+      - paused
+      - completed
+      - failed
+      - cancelled
+      description: "active = created, first wake pending; sleeping = waiting for next_wake; running = at\nleast\
+        \ one child run non-terminal; needs_attention = a child run or the campaign itself\nhas an open AttentionRequest;\
+        \ paused; completed = campaign completion criteria met by\nreceipts; failed; cancelled.\n Independent of\
+        \ `scheduling`."
+    CampaignCreate:
+      type: object
+      required:
+      - objective
+      additionalProperties: false
+      patternProperties:
+        ^x-[a-z0-9-]+$: {}
+      properties:
+        agent:
+          type: string
+          default: allternit-code
+        objective:
+          type: string
+        workspace:
+          $ref: '#/components/schemas/Workspace'
+        authority:
+          $ref: '#/components/schemas/Authority'
+        budget:
+          $ref: '#/components/schemas/CampaignBudget'
+        completion_criteria:
+          $ref: '#/components/schemas/CompletionCriteria'
+        graph_template:
+          type: string
+          x-disclosure-tier: C
+        wake_policy:
+          $ref: '#/components/schemas/WakePolicy'
+        attention_policy:
+          $ref: '#/components/schemas/AttentionPolicy'
+        metadata:
+          $ref: '#/components/schemas/Metadata'
+      description: 'Only `objective` is required. workspace, authority, budget, completion_criteria and wake_policy
+        resolve from the agent/profile defaults and are returned explicitly on Campaign.resolved before any run
+        is created. No hidden permissive defaults: if a safe value cannot be resolved the request fails with ERR_DEFAULTS_UNRESOLVABLE.'
+    CampaignBudget:
+      description: Whole-campaign caps plus a per-run budget applied to every child run.
+      type: object
+      required:
+      - per_run
+      additionalProperties: false
+      anyOf:
+      - required:
+        - max_cost_usd
+      - required:
+        - max_runs
+      properties:
+        max_cost_usd:
+          type: number
+          minimum: 0
+        max_runs:
+          type: integer
+          minimum: 1
+        per_run:
+          $ref: '#/components/schemas/Budget'
+        on_exhaustion:
+          type: string
+          enum:
+          - request_attention
+          - stop
+          default: request_attention
+    WakePolicy:
+      description: "When the campaign may consider waking. Triggers only make a wake *eligible*; the\ncampaign then\
+        \ decides whether another check is useful (not cron).\n Wake triggers are accepted, but autonomous scheduled\
+        \ waking is disabled until go-live: the Campaign reports `scheduling: disabled_pending_golive`. Limits are\
+        \ versioned defaults (`defaults_version`)."
+      type: object
+      required:
+      - triggers
+      additionalProperties: false
+      properties:
+        triggers:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/WakeTrigger'
+        min_interval_seconds:
+          type: integer
+          minimum: 60
+          default: 900
+        max_wakes_per_day:
+          type: integer
+          minimum: 1
+          default: 24
+        skip_if_run_active:
+          type: boolean
+          default: true
+        until:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        defaults_version:
+          type: string
+          readOnly: true
+    WakeTrigger:
+      oneOf:
+      - type: object
+        required:
+        - type
+        - interval_seconds
+        additionalProperties: false
+        properties:
+          type:
+            const: interval
+          interval_seconds:
+            type: integer
+            minimum: 60
+          jitter_seconds:
+            type: integer
+            minimum: 0
+            default: 0
+      - type: object
+        required:
+        - type
+        - cron
+        - timezone
+        additionalProperties: false
+        properties:
+          type:
+            const: schedule
+          cron:
+            type: string
+          timezone:
+            type: string
+      - type: object
+        required:
+        - type
+        - source
+        additionalProperties: false
+        properties:
+          type:
+            const: event
+          source:
+            type: string
+            description: Resource URI or connector event, e.g. `repo://acme/store#push`.
+          filter:
+            type: object
+            additionalProperties:
+              type: string
+      - type: object
+        required:
+        - type
+        additionalProperties: false
+        properties:
+          type:
+            const: run_finished
+      - type: object
+        required:
+        - type
+        additionalProperties: false
+        properties:
+          type:
+            const: manual
+      discriminator:
+        propertyName: type
+    AttentionPolicy:
+      type: object
+      additionalProperties: false
+      properties:
+        channels:
+          type: array
+          items:
+            type: string
+            pattern: ^(in_app|email|push|webhook|connector:[a-z0-9_-]+)$
+          default:
+          - in_app
+        quiet_hours:
+          type:
+          - object
+          - 'null'
+          required:
+          - start
+          - end
+          - timezone
+          properties:
+            start:
+              type: string
+              pattern: ^[0-2][0-9]:[0-5][0-9]$
+            end:
+              type: string
+              pattern: ^[0-2][0-9]:[0-5][0-9]$
+            timezone:
+              type: string
+        interrupt_quiet_hours_at:
+          type: string
+          enum:
+          - critical
+          - never
+          default: critical
+        max_per_hour:
+          type: integer
+          minimum: 0
+          default: 4
+        max_per_day:
+          type: integer
+          minimum: 0
+          default: 20
+        dedupe_window_seconds:
+          type: integer
+          minimum: 0
+          default: 3600
+        escalate_after_seconds:
+          type:
+          - integer
+          - 'null'
+          minimum: 60
+        defaults_version:
+          type: string
+          readOnly: true
+          description: Versioned defaults for caps/dedupe/quiet-hours; not architecture constants.
+    Campaign:
+      type: object
+      required:
+      - agent
+      - attention_policy
+      - budget
+      - budget_usage
+      - completion_criteria
+      - created_at
+      - defaults_version
+      - id
+      - next_wake
+      - object
+      - objective
+      - owner
+      - resolved
+      - scheduling
+      - status
+      - wake_policy
+      properties:
+        id:
+          type: string
+          pattern: ^cmp_
+        object:
+          const: campaign
+        agent:
+          type: string
+        objective:
+          type: string
+        status:
+          $ref: '#/components/schemas/CampaignStatus'
+        owner:
+          type: string
+        budget:
+          $ref: '#/components/schemas/CampaignBudget'
+        budget_usage:
+          allOf:
+          - $ref: '#/components/schemas/BudgetUsage'
+          - type: object
+            properties:
+              runs:
+                type: integer
+        wake_policy:
+          $ref: '#/components/schemas/WakePolicy'
+        attention_policy:
+          $ref: '#/components/schemas/AttentionPolicy'
+        completion_criteria:
+          $ref: '#/components/schemas/CompletionCriteria'
+        completion:
+          $ref: '#/components/schemas/CompletionState'
+        next_wake:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        last_wake:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        active_run_ids:
+          type: array
+          items:
+            type: string
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+        metadata:
+          $ref: '#/components/schemas/Metadata'
+        scheduling:
+          type: string
+          enum:
+          - disabled_pending_golive
+          - enabled
+          description: '`disabled_pending_golive` until Agency API alpha/conformance and an explicit go-live decision.
+            While disabled, no wake fires and `next_wake` is null; manual runs still work.'
+        defaults_version:
+          type: string
+          description: Version of campaign limit defaults.
+        resolved:
+          $ref: '#/components/schemas/ResolvedDefaults'
+          description: Explicit workspace/authority/budget/completion the campaign's runs will use, recorded before
+            the first run. Each run also carries its own Run.resolved.
+      description: Campaigns can be created but autonomous scheduled waking is disabled until go-live; see `scheduling`.
+    CampaignControlRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+        cascade:
+          type: boolean
+          default: true
+    CampaignPage:
+      allOf:
+      - $ref: '#/components/schemas/PageBase'
+      - properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/Campaign'
+    ReplayRequest:
+      type: object
+      required:
+      - source_run_id
+      additionalProperties: false
+      properties:
+        source_run_id:
+          type: string
+        effects:
+          const: recorded_only
+          default: recorded_only
+          description: The only allowed value. Replays never perform external effects.
+        overrides:
+          type: object
+          additionalProperties: false
+          description: What to vary. Anything not overridden is taken from the source run's recording.
+          properties:
+            authority_profile:
+              type: string
+            completion:
+              $ref: '#/components/schemas/CompletionCriteria'
+            models:
+              $ref: '#/components/schemas/ModelConstraints'
+            runtime:
+              $ref: '#/components/schemas/RuntimeHints'
+    ReplayStatus:
+      type: string
+      enum:
+      - queued
+      - running
+      - completed
+      - failed
+      - cancelled
+    Replay:
+      type: object
+      required:
+      - id
+      - object
+      - source_run_id
+      - status
+      - effects
+      - created_at
+      properties:
+        id:
+          type: string
+          pattern: ^rpl_
+        object:
+          const: replay
+        source_run_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/ReplayStatus'
+        effects:
+          const: recorded_only
+        verdict:
+          type:
+          - string
+          - 'null'
+          enum:
+          - equivalent
+          - diverged_expected
+          - diverged_unexpected
+          - null
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        finished_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        results_url:
+          type: string
+          format: uri-reference
+        error:
+          oneOf:
+          - $ref: '#/components/schemas/Error'
+          - type: 'null'
+    ReplayResults:
+      type: object
+      required:
+      - replay_id
+      - verdict
+      - decisions_total
+      - decisions_matched
+      - divergences
+      - has_more
+      - next_cursor
+      properties:
+        replay_id:
+          type: string
+        verdict:
+          type: string
+          enum:
+          - equivalent
+          - diverged_expected
+          - diverged_unexpected
+        decisions_total:
+          type: integer
+        decisions_matched:
+          type: integer
+        completion_matched:
+          type: boolean
+        divergences:
+          type: array
+          items:
+            type: object
+            required:
+            - step_ref
+            - kind
+            properties:
+              step_ref:
+                type: string
+              kind:
+                type: string
+                enum:
+                - expected
+                - unexpected
+              description:
+                type: string
+              source_receipt_id:
+                type:
+                - string
+                - 'null'
+              replay_receipt_id:
+                type:
+                - string
+                - 'null'
+        has_more:
+          type: boolean
+        next_cursor:
+          type:
+          - string
+          - 'null'
+    DecisionRequest:
+      type: object
+      required:
+      - operation
+      - question
+      - state
+      additionalProperties: false
+      properties:
+        operation:
+          type: string
+          enum:
+          - belief
+          - choice
+          - score
+          - rank
+          - subset
+          - estimate
+          - gate
+          - verify
+          - pair_score
+        question:
+          type: string
+        state:
+          description: Caller-supplied state (object or text).
+        candidates:
+          type: array
+          description: Required for choice/rank/subset/gate/pair_score. The backend never invents options.
+          items:
+            type: object
+            required:
+            - id
+            properties:
+              id:
+                type: string
+              label:
+                type: string
+              value: {}
+        scale:
+          type: array
+          items:
+            type: string
+          description: Ordered labels for score.
+        range:
+          type: object
+          properties:
+            min:
+              type: number
+            max:
+              type: number
+          description: Bounds for estimate.
+        require_level:
+          type: string
+          enum:
+          - L0
+          - L1
+          - L2
+          - auto
+          default: auto
+          description: Minimum calibration level. Raw uncalibrated readouts are never served for action.
+        max_latency_ms:
+          type: integer
+          minimum: 1
+      allOf:
+      - if:
+          properties:
+            operation:
+              enum:
+              - choice
+              - rank
+              - subset
+              - gate
+              - pair_score
+        then:
+          required:
+          - candidates
+    DecisionResult:
+      type: object
+      required:
+      - operation
+      - answer
+      - confidence
+      - calibration
+      - evidence_refs
+      properties:
+        operation:
+          type: string
+        answer:
+          description: Typed answer (candidate id, id list, number, or boolean).
+        probabilities:
+          type:
+          - object
+          - 'null'
+          additionalProperties:
+            type: number
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        calibration:
+          type: object
+          required:
+          - level_served
+          properties:
+            level_served:
+              type: string
+              enum:
+              - L0
+              - L1
+              - L2
+            calibrated:
+              type: boolean
+            calibration_id:
+              type:
+              - string
+              - 'null'
+        threshold_action:
+          type:
+          - string
+          - 'null'
+          enum:
+          - auto
+          - review
+          - escalate
+          - reject
+          - null
+        evidence_refs:
+          type: array
+          items:
+            type: string
+        debug:
+          description: Present only with `view=debug` (backend class, component identity, latency).
+          type:
+          - object
+          - 'null'
+          additionalProperties: true
+    Capability:
+      type: object
+      required:
+      - id
+      - object
+      - description
+      - status
+      properties:
+        id:
+          type: string
+          pattern: ^cap\.
+        object:
+          const: capability
+        description:
+          type: string
+        status:
+          type: string
+          enum:
+          - available
+          - degraded
+          - unavailable
+        trust_classes:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrustClass'
+        localities:
+          type: array
+          items:
+            type: string
+            enum:
+            - local
+            - fabric
+            - remote
+    CapabilityPage:
+      allOf:
+      - $ref: '#/components/schemas/PageBase'
+      - properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/Capability'
+    Agent:
+      type: object
+      required:
+      - id
+      - object
+      - versions
+      - default_version
+      properties:
+        id:
+          type: string
+          examples:
+          - allternit-code
+        object:
+          const: agent
+        description:
+          type: string
+        versions:
+          type: array
+          items:
+            type: string
+        default_version:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+        completion_criteria:
+          type: array
+          items:
+            $ref: '#/components/schemas/CriterionRef'
+          description: Built-in criteria this agent can verify.
+        authority_profiles:
+          type: array
+          items:
+            type: string
+        templates:
+          type: array
+          items:
+            type: string
+    AgentPage:
+      allOf:
+      - $ref: '#/components/schemas/PageBase'
+      - properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/Agent'
+    ModelClass:
+      description: Logical class only. Concrete models are interchangeable components and are never listed here.
+        Logical capability/locality/trust classes only; never vendor identities in default responses. The first-party
+        workspace UI may show model choice separately.
+      type: object
+      required:
+      - id
+      - object
+      - trust_classes
+      - locality
+      properties:
+        id:
+          type: string
+          pattern: ^mc\.[a-z0-9_.-]+$
+          examples:
+          - mc.local.small
+          - mc.remote.deep
+        object:
+          const: model_class
+        description:
+          type: string
+        trust_classes:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrustClass'
+          description: Highest data trust class this class may receive.
+        locality:
+          type: string
+          enum:
+          - local
+          - fabric
+          - remote
+        capabilities:
+          type: array
+          items:
+            type: string
+        latency_class:
+          type: string
+          enum:
+          - interactive
+          - normal
+          - background
+    ModelClassPage:
+      allOf:
+      - $ref: '#/components/schemas/PageBase'
+      - properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/ModelClass'
+    AuthorityProfile:
+      type: object
+      required:
+      - id
+      - object
+      - version
+      - description
+      - capabilities
+      - filesystem_scope
+      - network
+      - approval_requirements
+      - grants
+      properties:
+        id:
+          type: string
+          enum:
+          - read-only
+          - code-safe
+          - code-write
+        object:
+          const: authority_profile
+        description:
+          type: string
+        grants:
+          type: array
+          items:
+            $ref: '#/components/schemas/Grant'
+        network:
+          $ref: '#/components/schemas/NetworkPolicy'
+        version:
+          type: integer
+          minimum: 1
+          description: Profile version; runs record `id@version` in `Run.resolved.authority`.
+        capabilities:
+          type: array
+          items:
+            type: string
+            pattern: ^cap\.
+          description: Capabilities the profile grants (`cap.*`).
+        denied_capabilities:
+          type: array
+          items:
+            type: string
+            pattern: ^cap\.
+        filesystem_scope:
+          $ref: '#/components/schemas/FilesystemScope'
+        approval_requirements:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApprovalRequirement'
+        defaults_version:
+          type: string
+          description: Version of platform limit defaults referenced.
+      description: Exact typed semantics of a profile. Compiles into capabilities/policy. Only `read-only`, `code-safe`
+        and `code-write` exist; no bypass equivalent is ever public.
+    AuthorityProfilePage:
+      allOf:
+      - $ref: '#/components/schemas/PageBase'
+      - properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/AuthorityProfile'
+    FilesystemScope:
+      type: object
+      required:
+      - read
+      - write
+      - execute
+      additionalProperties: false
+      properties:
+        read:
+          type: string
+          enum:
+          - none
+          - workspace
+          - workspace_and_declared_resources
+        write:
+          type: string
+          enum:
+          - none
+          - scratch_only
+          - workspace_paths_declared_writable
+        execute:
+          type: string
+          enum:
+          - none
+          - sandboxed_workspace
+        outside_workspace:
+          type: string
+          enum:
+          - deny
+          default: deny
+    ApprovalRequirement:
+      type: object
+      required:
+      - effect
+      - mode
+      additionalProperties: false
+      properties:
+        effect:
+          type: string
+          enum:
+          - write
+          - execute
+          - network
+          - spend
+          - external
+          - irreversible
+        mode:
+          type: string
+          enum:
+          - never_allowed
+          - always_ask
+          - ask_unless_granted
+          - allowed
+    ResolvedAuthority:
+      type: object
+      required:
+      - profile
+      - grants_summary
+      additionalProperties: false
+      properties:
+        profile:
+          type: object
+          required:
+          - id
+          - version
+          properties:
+            id:
+              type: string
+            version:
+              type: integer
+        grants_summary:
+          type: object
+          required:
+          - capabilities
+          - filesystem_scope
+          - network
+          - approval_requirements
+          description: Summary of the compiled grants.
+          properties:
+            capabilities:
+              type: array
+              items:
+                type: string
+            filesystem_scope:
+              $ref: '#/components/schemas/FilesystemScope'
+            network:
+              $ref: '#/components/schemas/NetworkPolicy'
+            approval_requirements:
+              type: array
+              items:
+                $ref: '#/components/schemas/ApprovalRequirement'
+            grant_count:
+              type: integer
+        interaction_mode:
+          type: string
+          enum:
+          - autonomous
+          - approval_gated
+          - recommend_only
+        expires_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+    ResolvedCompletion:
+      type: object
+      required:
+      - contract_id
+      - contract_version
+      - require
+      - allow_partial
+      additionalProperties: false
+      properties:
+        contract_id:
+          type: string
+        contract_version:
+          type: integer
+        require:
+          type: array
+          items:
+            type: object
+            required:
+            - id
+            - version
+            properties:
+              id:
+                type: string
+              version:
+                type: integer
+        allow_partial:
+          type: boolean
+    ResolvedDefaults:
+      description: 'Everything the server resolved before execution: explicit, safe, versioned and auditable. Populated
+        before the run leaves `accepted`; the run cannot execute without it. Never contains a permissive fallback.'
+      type: object
+      required:
+      - workspace
+      - authority
+      - budget
+      - completion
+      - defaults_source
+      - enforcement
+      - resolved_at
+      additionalProperties: false
+      properties:
+        workspace:
+          $ref: '#/components/schemas/Workspace'
+        authority:
+          $ref: '#/components/schemas/ResolvedAuthority'
+        budget:
+          $ref: '#/components/schemas/Budget'
+        completion:
+          $ref: '#/components/schemas/ResolvedCompletion'
+        defaults_source:
+          type: string
+          examples:
+          - agent:allternit-code@v1/profile:code-safe@1
+          description: Which agent/profile defaults (with versions) filled omitted fields; `request` if all four
+            were supplied.
+        defaults_version:
+          type: string
+          description: Version of platform limit defaults.
+        enforcement:
+          type: object
+          required:
+          - judge_fail_closed
+          - verifier_owned_completion
+          additionalProperties: false
+          description: Always true for runs created via this API; not client-disableable.
+          properties:
+            judge_fail_closed:
+              const: true
+            verifier_owned_completion:
+              const: true
+        resolved_at:
+          $ref: '#/components/schemas/Timestamp'
+    CompletionCriterion:
+      type: object
+      required:
+      - id
+      - object
+      - version
+      - description
+      - verifier_semantics
+      - verifier_kind
+      properties:
+        id:
+          type: string
+          pattern: ^[a-z0-9_.-]+$
+        object:
+          const: completion_criterion
+        version:
+          type: integer
+          minimum: 1
+        description:
+          type: string
+        verifier_semantics:
+          type: string
+          description: Precise text of what PASS means, including that INCONCLUSIVE is never PASS.
+        verifier_kind:
+          type: string
+          enum:
+          - parse
+          - format
+          - lint
+          - typecheck
+          - unit_test
+          - integration_test
+          - build
+          - semantic_rule
+          - requirement
+          - security
+          - regression
+          - diff_review
+          - human
+        built_in:
+          type: boolean
+        deprecated:
+          type: boolean
+        blocking_default:
+          type: boolean
+    CompletionCriterionPage:
+      allOf:
+      - $ref: '#/components/schemas/PageBase'
+      - properties:
+          data:
+            type: array
+            items:
+              $ref: '#/components/schemas/CompletionCriterion'
+    Jwks:
+      type: object
+      required:
+      - keys
+      properties:
+        keys:
+          type: array
+          items:
+            type: object
+            required:
+            - kty
+            - crv
+            - x
+            - kid
+            properties:
+              kty:
+                const: OKP
+              crv:
+                const: Ed25519
+              x:
+                type: string
+              kid:
+                type: string
+              use:
+                const: sig
+              alg:
+                const: EdDSA

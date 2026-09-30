@@ -376,11 +376,26 @@ pub struct WihCloseRequest {
     pub status: String,
     #[serde(default)]
     pub evidence: Vec<String>,
+    /// Node output text (stored as a blob + `node.output` receipt; counts as
+    /// evidence). See `spec/STORAGE_LAYOUT.md`.
+    #[serde(default)]
+    pub output: Option<String>,
+    /// Who is closing: `user:<id>` | `agent:<id>` (bare id = user). Matters
+    /// under the judge policy (`close_by: verifier`, `verify: judge`); unset
+    /// counts as the worker. See `spec/JUDGE.md`.
+    #[serde(default)]
+    pub actor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WihCloseResponse {
     pub closed: bool,
+    /// Node status after the close (`DONE`, `EXCEPTION`, `NEEDS_HUMAN`, ...).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_status: Option<String>,
+    /// Judge verdict when the node policy has `verify: judge`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<serde_json::Value>,
 }
 
 // ============================================================================
@@ -1093,14 +1108,22 @@ async fn plan_new(
 ) -> Result<impl IntoResponse, StatusCode> {
     ensure_policy_injected(&state, Some(EventScope::default())).await?;
     match state.gate.plan_new(&request.text, request.dag_id).await {
-        Ok((prompt_id, dag_id, node_id)) => Ok((
+        Ok((prompt_id, dag_id, node_id)) => {
+            // Opt-in `observe_on_plan`: advisory, off the request path.
+            crate::observer::spawn_on_plan(
+                state.root_dir.clone(),
+                state.ledger.clone(),
+                dag_id.clone(),
+            );
+            Ok((
             StatusCode::CREATED,
             Json(PlanNewResponse {
                 prompt_id,
                 dag_id,
                 node_id,
             }),
-        )),
+        ))
+        }
         Err(e) => {
             tracing::error!("plan_new failed: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -1349,6 +1372,9 @@ async fn wih_pickup(
         }
         Err(e) => {
             tracing::error!("wih_pickup failed: {}", e);
+            if crate::gate::GateError::from_anyhow(&e).is_some() {
+                return Err(StatusCode::CONFLICT);
+            }
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
@@ -1408,14 +1434,51 @@ async fn wih_close(
         ..Default::default()
     };
     ensure_policy_injected(&state, Some(scope)).await?;
+    let closer = match request.actor.as_deref().map(crate::cli::judge::parse_actor).transpose() {
+        Ok(c) => c,
+        Err(_) => return Err(StatusCode::BAD_REQUEST),
+    };
+    // Opt-in policy `observe_before_close`: awaited so the advice lands on
+    // `wih:<id>` before the close; advisory, never blocks the close.
+    crate::observer::hook_before_close(
+        state.root_dir.clone(),
+        state.ledger.clone(),
+        wih_id.clone(),
+    )
+    .await;
     match state
         .gate
-        .wih_close(&wih_id, &request.status, &request.evidence)
+        .wih_close_as(
+            &wih_id,
+            &request.status,
+            &request.evidence,
+            request.output.as_deref(),
+            closer.as_ref(),
+        )
         .await
     {
-        Ok(_) => Ok((StatusCode::OK, Json(WihCloseResponse { closed: true }))),
+        Ok(outcome) => {
+            // Repeated identical failure -> observer, off the request path.
+            crate::observer::spawn_after_close(
+                state.root_dir.clone(),
+                state.ledger.clone(),
+                wih_id.clone(),
+            );
+            Ok((
+                StatusCode::OK,
+                Json(WihCloseResponse {
+                    closed: true,
+                    node_status: Some(outcome.node_status),
+                    verdict: outcome.verdict.and_then(|v| serde_json::to_value(v).ok()),
+                }),
+            ))
+        }
         Err(e) => {
             tracing::error!("wih_close failed: {}", e);
+            // Structured Gate 4 refusal (close_by_verifier, wih_already_closed).
+            if crate::gate::GateError::from_anyhow(&e).is_some() {
+                return Err(StatusCode::CONFLICT);
+            }
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
@@ -2518,6 +2581,9 @@ pub struct ReceiptVerificationResult {
     pub is_valid: bool,
     pub hash_matches: bool,
     pub signature_valid: Option<bool>,
+    /// "chained-signed", "legacy (unsigned, unchained)" or "missing".
+    #[serde(default)]
+    pub integrity: String,
     pub errors: Vec<String>,
 }
 
@@ -2752,6 +2818,31 @@ async fn receipts_query(
     }).into_response()
 }
 
+async fn receipts_jwks(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<impl IntoResponse, StatusCode> {
+    match state.receipts.chain_store().and_then(|c| c.jwks()) {
+        Ok(j) => Ok((StatusCode::OK, Json(j))),
+        Err(e) => {
+            tracing::error!("receipts_jwks failed: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+async fn receipts_chain_verify(
+    State(state): State<Arc<ServiceState>>,
+    axum::extract::Path(run_id): axum::extract::Path<String>,
+) -> Result<impl IntoResponse, StatusCode> {
+    match state.receipts.chain_store().and_then(|c| c.verify_chain(&run_id)) {
+        Ok(r) => Ok((StatusCode::OK, Json(r))),
+        Err(e) => {
+            tracing::error!("receipts_chain_verify failed: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
 async fn receipts_verify(
     State(state): State<Arc<ServiceState>>,
     Json(req): Json<ReceiptVerifyRequest>,
@@ -2765,6 +2856,7 @@ async fn receipts_verify(
             is_valid: sr.is_valid,
             hash_matches: sr.hash_matches,
             signature_valid: sr.signature_valid,
+            integrity: sr.integrity,
             errors: sr.errors,
         }).collect(),
         Err(e) => {
@@ -2893,6 +2985,9 @@ pub fn create_router(state: Arc<ServiceState>) -> Router {
         .route("/v1/receipts/query", get(receipts_query))
         .route("/v1/receipts/verify", post(receipts_verify))
         .route("/v1/receipts/summary", post(receipts_summary))
+        .route("/v1/receipts/jwks", get(receipts_jwks))
+        .route("/.well-known/jwks.json", get(receipts_jwks))
+        .route("/v1/receipts/chain/:run_id/verify", get(receipts_chain_verify))
         // INIT
         .route("/v1/init", post(init_system))
         .with_state(state)
@@ -3005,4 +3100,71 @@ async fn init_stores(root: &PathBuf) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+
+#[cfg(test)]
+mod wp3_http_tests {
+    use super::*;
+    use serde_json::{json, Value};
+
+    async fn serve() -> (tempfile::TempDir, Arc<ServiceState>, String) {
+        let d = tempfile::tempdir().unwrap();
+        let state = Arc::new(ServiceState::new(d.path().to_path_buf()).await.unwrap());
+        let app = create_router(state.clone());
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+        (d, state, base)
+    }
+
+    fn append(state: &ServiceState, run: &str, n: u32) -> String {
+        let cs = state.receipts.chain_store().unwrap();
+        let mut last = String::new();
+        for i in 0..n {
+            let r = cs.append(json!({"envelope": {"schema_id":"allternit.kernel.PolicyReceiptV1",
+                "schema_version":"1.0.0","run_id":run}, "n": i})).unwrap();
+            last = r["chain"]["receipt_id"].as_str().unwrap().to_string();
+        }
+        last
+    }
+
+    #[tokio::test]
+    async fn jwks_routes_publish_no_private_material() {
+        let (_d, _s, base) = serve().await;
+        for path in ["/v1/receipts/jwks", "/.well-known/jwks.json"] {
+            let text = reqwest::get(format!("{base}{path}")).await.unwrap().text().await.unwrap();
+            let v: Value = serde_json::from_str(&text).unwrap();
+            let k = &v["keys"][0];
+            assert_eq!((k["kty"].as_str(), k["crv"].as_str()), (Some("OKP"), Some("Ed25519")));
+            assert!(k.get("d").is_none() && !text.contains("\"d\""), "private material leaked: {text}");
+        }
+    }
+
+    #[tokio::test]
+    async fn chain_verify_route_valid_and_tampered() {
+        let (d, s, base) = serve().await;
+        append(&s, "runh", 3);
+        let ok: Value = reqwest::get(format!("{base}/v1/receipts/chain/runh/verify")).await.unwrap().json().await.unwrap();
+        assert_eq!(ok["ok"], true, "{ok}");
+        let p = d.path().join(".allternit/receipts/_chains/runh/0000000001.json");
+        let mut v: Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+        v["n"] = json!(999);
+        std::fs::write(&p, serde_json::to_vec(&v).unwrap()).unwrap();
+        let bad: Value = reqwest::get(format!("{base}/v1/receipts/chain/runh/verify")).await.unwrap().json().await.unwrap();
+        assert_eq!(bad["ok"], false, "{bad}");
+        assert_eq!(bad["first_break"]["index"], 1);
+    }
+
+    #[tokio::test]
+    async fn verify_route_chained_receipt() {
+        let (_d, s, base) = serve().await;
+        let id = append(&s, "runv", 1);
+        let r: Value = reqwest::Client::new().post(format!("{base}/v1/receipts/verify"))
+            .json(&json!({"receipt_ids": [id, "rcpt_missing"]})).send().await.unwrap().json().await.unwrap();
+        assert_eq!(r["results"][0]["integrity"], "chained-signed", "{r}");
+        assert_eq!(r["results"][0]["signature_valid"], true);
+        assert_eq!(r["results"][0]["is_valid"], true);
+        assert_eq!(r["results"][1]["integrity"], "missing");
+    }
 }

@@ -1,0 +1,522 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json",
+  "title": "Allternit Kernel ABI 1.0.0 — common",
+  "$comment": "FROZEN 2026-09-30 (ABI Package 1.0.0). Authority: Living Architecture v1.4 > 07/09 > 02. Additive changes need a minor bump; breaking changes need 2.0.",
+  "$defs": {
+    "Id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@-]{0,199}$"
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "$comment": "RFC 3339 UTC. Unix-number timestamps from the v1.2/v1.4 seeds are not accepted."
+    },
+    "ContentHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "StateVersion": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615,
+      "$comment": "uint64. Every durable write increments it or records an explicit no-op."
+    },
+    "SemVer": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?$"
+    },
+    "AbiVersion": {
+      "type": "string",
+      "pattern": "^1\\.\\d+\\.\\d+$"
+    },
+    "PrimitiveId": {
+      "type": "string",
+      "pattern": "^(obs|dec|ctx|plan|tool|mut|ver|ctl|route|state|policy|bg|mem)(\\.[a-z0-9_]+)+$",
+      "$comment": "Canonical dotted primitive id. Never contains a vendor or model name (L1009); registry/primitives.json lists the 191 canonical ids (09 §E Q1)."
+    },
+    "CapabilityId": {
+      "type": "string",
+      "pattern": "^cap(\\.[a-z0-9_]+)+$"
+    },
+    "LogicalModelId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*-v\\d+-[a-z0-9-]+$",
+      "$comment": "<agent-name>-v<N>-<profile> (09 #28). Logical id only; concrete model identity is execution evidence, never workflow semantics."
+    },
+    "TrustClass": {
+      "enum": [
+        "PUBLIC",
+        "INTERNAL",
+        "RESTRICTED",
+        "SECRET",
+        "UNTRUSTED"
+      ]
+    },
+    "SensitivityClass": {
+      "enum": [
+        "PUBLIC",
+        "INTERNAL",
+        "RESTRICTED",
+        "SECRET"
+      ]
+    },
+    "ExtensionMap": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^x-[a-z0-9_.-]+$"
+      },
+      "additionalProperties": true,
+      "$comment": "Unknown optional data is preserved here (02 §3). Top-level contracts are otherwise closed so unknown required fields fail closed."
+    },
+    "ComponentIdentity": {
+      "type": "object",
+      "required": [
+        "component_id",
+        "component_version",
+        "kind"
+      ],
+      "properties": {
+        "component_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "component_version": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "RUNTIME",
+            "PRIMITIVE",
+            "DECISION_BACKEND",
+            "MODEL_COMPONENT",
+            "TOOL",
+            "VERIFIER",
+            "POLICY_ENGINE",
+            "HUMAN",
+            "ADAPTER"
+          ]
+        },
+        "logical_class": {
+          "type": "string",
+          "$comment": "Capability/locality/trust class; never a vendor identity by default (Q15)."
+        },
+        "extensions": {
+          "$ref": "#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Provenance": {
+      "type": "object",
+      "required": [
+        "source_type",
+        "source_id",
+        "trust_class"
+      ],
+      "properties": {
+        "source_type": {
+          "enum": [
+            "USER",
+            "FILE",
+            "TOOL",
+            "MODEL",
+            "POLICY",
+            "SYSTEM",
+            "CACHE",
+            "RETRIEVAL"
+          ]
+        },
+        "source_id": {
+          "type": "string"
+        },
+        "trust_class": {
+          "$ref": "common.schema.json#/$defs/TrustClass"
+        },
+        "content_hash": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/ContentHash"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "observed_at": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false
+    },
+    "StateVersionRef": {
+      "type": "object",
+      "required": [
+        "store",
+        "run_id",
+        "state_version"
+      ],
+      "properties": {
+        "store": {
+          "enum": [
+            "AGENT_STATE",
+            "WORK_LEDGER"
+          ]
+        },
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "state_version": {
+          "$ref": "common.schema.json#/$defs/StateVersion"
+        },
+        "extensions": {
+          "$ref": "#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "$comment": "Q2: the two stores cross-reference by stable id + state version; mutable truth is never mirrored."
+    },
+    "AbiEnvelopeV1": {
+      "type": "object",
+      "required": [
+        "abi_version",
+        "schema_id",
+        "schema_version",
+        "run_id",
+        "session_id",
+        "task_id",
+        "state_version",
+        "created_at",
+        "producer",
+        "trace_id",
+        "provenance"
+      ],
+      "properties": {
+        "abi_version": {
+          "$ref": "common.schema.json#/$defs/AbiVersion"
+        },
+        "schema_id": {
+          "type": "string",
+          "pattern": "^allternit\\.kernel\\.[A-Za-z]+V\\d+$"
+        },
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/SemVer"
+        },
+        "run_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "session_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "task_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "graph_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "node_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state_version": {
+          "$ref": "common.schema.json#/$defs/StateVersion"
+        },
+        "work_state_version": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/StateVersion"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "producer": {
+          "$ref": "common.schema.json#/$defs/ComponentIdentity"
+        },
+        "trace_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "parent_trace_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provenance": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Provenance"
+          },
+          "minItems": 1
+        },
+        "extensions": {
+          "$ref": "#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "AbiEnvelopeV1",
+      "$comment": "state_version = AgentState version read; work_state_version = Work ledger version (Q2). Model output without provenance never becomes durable state."
+    },
+    "EvidenceRef": {
+      "type": "object",
+      "required": [
+        "kind",
+        "ref"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "STATE",
+            "FILE",
+            "SYMBOL",
+            "TOOL_RECEIPT",
+            "ACTION_RECEIPT",
+            "MUTATION_RECEIPT",
+            "VERIFICATION_RECEIPT",
+            "POLICY_RECEIPT",
+            "SPAWN_RECEIPT",
+            "NODE_OUTPUT",
+            "TRACE",
+            "HUMAN",
+            "ATTENTION_RESOLUTION",
+            "DECISION_RESULT"
+          ]
+        },
+        "ref": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "content_hash": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/ContentHash"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "claim": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ArtifactRef": {
+      "type": "object",
+      "required": [
+        "artifact_id",
+        "content_hash"
+      ],
+      "properties": {
+        "artifact_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "content_hash": {
+          "$ref": "common.schema.json#/$defs/ContentHash"
+        },
+        "mime_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "uri": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ResourceRef": {
+      "type": "string",
+      "minLength": 1,
+      "$comment": "Typed resource path, e.g. state:hypotheses, fs:src/app.py, net:example.org."
+    },
+    "ResourceBudget": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "max_cost_units": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_tokens": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_wall_ms": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_tool_calls": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_attempts": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_spawns": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ErrorV1": {
+      "type": "object",
+      "required": [
+        "family",
+        "code",
+        "message",
+        "retryable"
+      ],
+      "properties": {
+        "family": {
+          "enum": [
+            "INPUT",
+            "STATE",
+            "CONTEXT",
+            "ROUTING",
+            "DECISION",
+            "TOOL",
+            "POLICY",
+            "MUTATION",
+            "VERIFY",
+            "TRANSFER",
+            "BUDGET",
+            "SYSTEM"
+          ]
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^ERR_[A-Z0-9_]+$"
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "receipt_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "details": {
+          "type": "object"
+        },
+        "extensions": {
+          "$ref": "#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "ErrorV1",
+      "$comment": "Runtime error taxonomy (§24.2). API-only families (AUTH, NOT_FOUND, IDEMPOTENCY, RATE_LIMIT, VERSION) live in the Agency API ErrorEnvelope, not the kernel ABI."
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "schema_id": "allternit.kernel.CompositeModelBundleV1",
+  "schema_version": "1.0.0",
+  "logical_model_id": "coder-v1-standard",
+  "bundle_version": "1.0.0",
+  "required_abi_versions": [
+    "1.0.0"
+  ],
+  "primitive_packs": [],
+  "compute_graphs": [],
+  "decision_banks": [],
+  "model_components": [],
+  "router_policy": "id-0001",
+  "context_policy": "id-0001",
+  "verification_policy": "id-0001",
+  "deployment_profiles": [],
+  "signatures": [],
+  "unknown_required_field": "x"
+}

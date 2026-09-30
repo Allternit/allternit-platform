@@ -9,7 +9,9 @@ Paths: SG = `services/subscription-gateway/test`, AG = `platform/packages/agent-
 FC = `platform/packages/subscription-fabric-contracts/test`, GR = `cmd/allternit-api/src/gateway_runner.rs`,
 GP = `cmd/allternit-api/src/gateway_placement.rs`, GA = `cmd/allternit-api/src/gateway_acceptance.rs` (end-to-end walks), CG = `cmd/allternit-api/src/channel_gateway.rs`.
 
-Rust run 2026-09-30 on `gateway/accept-rust` (cargo test -p allternit-api --lib, per filter): gateway 352 · a2a 2 · aai_facade 2 · channel 24 · teams 6 · discord 5 · mcp_server 4 · coordinator 14 · thread_routes 13 · slack 4, all pass; bins build. Every GR/GP/GA/CG line below marked `Rust: run 2026-09-30` is now run and passing.
+**Final sweep 2026-09-30** on `gateway/integration` + QUICKSTART fixes + `origin/main` merged (the tree that goes to `main`): Rust full `cargo test -p allternit-api --lib` 1571 pass, 0 fail (5 ignored); per filter gateway 354 · a2a 2 · aai_facade 2 · channel 24 · teams 6 · discord 5 · mcp_server 4 · coordinator 18 · thread_routes 13 · slack 4; bins build. TS: subscription-gateway 43/43 files, 483 tests; `typecheck:noemit` 0; contracts 59 · agent-gateway 27 · aai-sdk 9; Python allternit-aai 5. Web (allternit-ai, main merged): full vitest 629/629 files, 4645 tests; tsc clean apart from the 20 known office-view errors. QUICKSTART replayed end to end (see its header).
+
+Earlier: Rust run 2026-09-30 on `gateway/accept-rust` (cargo test -p allternit-api --lib, per filter): gateway 352 · a2a 2 · aai_facade 2 · channel 24 · teams 6 · discord 5 · mcp_server 4 · coordinator 14 · thread_routes 13 · slack 4, all pass; bins build. Every GR/GP/GA/CG line below marked `Rust: run 2026-09-30` is now run and passing.
 New this pass: `SG/aai-conformance-route.test.ts` (ACR) + `adapters/<id>/fixtures/offline.ts` for 5 adapters.
 
 ## Gateway conformance (TS)

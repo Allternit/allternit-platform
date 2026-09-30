@@ -1,0 +1,478 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allternit.com/kernel/1.0.0/agent_state.schema.json",
+  "title": "Allternit Kernel ABI 1.0.0 — agent_state",
+  "$comment": "FROZEN 2026-09-30 (ABI Package 1.0.0). Authority: Living Architecture v1.4 > 07/09 > 02. Additive changes need a minor bump; breaking changes need 2.0.",
+  "$defs": {
+    "AgentStateV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "identity",
+        "user_intent",
+        "acceptance",
+        "constraints",
+        "environment",
+        "active_packs",
+        "plan",
+        "graph_cursor",
+        "evidence",
+        "permissions",
+        "budgets",
+        "completion",
+        "instruction_predicates",
+        "sensitivity_labels",
+        "retrieval_snapshot_refs"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.AgentStateV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "identity": {
+          "type": "object",
+          "required": [
+            "run_id",
+            "session_id",
+            "task_id",
+            "state_version"
+          ],
+          "properties": {
+            "run_id": {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            "session_id": {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            "task_id": {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            "state_version": {
+              "$ref": "common.schema.json#/$defs/StateVersion"
+            }
+          },
+          "additionalProperties": false
+        },
+        "work_ref": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/StateVersionRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "user_intent": {
+          "type": "object",
+          "required": [
+            "objective"
+          ],
+          "properties": {
+            "objective": {
+              "type": "string"
+            },
+            "task_ir_ref": {
+              "anyOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/Id"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "acceptance": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "constraints": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "environment": {
+          "type": "object",
+          "required": [
+            "workspace_root"
+          ],
+          "properties": {
+            "workspace_root": {
+              "type": "string"
+            },
+            "repo_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "languages": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "fingerprint": {
+              "anyOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/ContentHash"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "repository": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "active_packs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "pack_id",
+              "pack_version"
+            ],
+            "properties": {
+              "pack_id": {
+                "$ref": "common.schema.json#/$defs/Id"
+              },
+              "pack_version": {
+                "$ref": "common.schema.json#/$defs/SemVer"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "plan": {
+          "type": "object"
+        },
+        "graph_cursor": {
+          "type": "object",
+          "required": [
+            "graph_id",
+            "graph_version"
+          ],
+          "properties": {
+            "graph_id": {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            "graph_version": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "frontier": {
+              "type": "array",
+              "items": {
+                "$ref": "common.schema.json#/$defs/Id"
+              }
+            },
+            "completed_nodes": {
+              "type": "array",
+              "items": {
+                "$ref": "common.schema.json#/$defs/Id"
+              }
+            },
+            "failed_nodes": {
+              "type": "array",
+              "items": {
+                "$ref": "common.schema.json#/$defs/Id"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "hypotheses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "hypothesis_id",
+              "statement",
+              "status"
+            ],
+            "properties": {
+              "hypothesis_id": {
+                "$ref": "common.schema.json#/$defs/Id"
+              },
+              "statement": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "OPEN",
+                  "SUPPORTED",
+                  "REFUTED",
+                  "ABANDONED"
+                ]
+              },
+              "evidence_refs": {
+                "type": "array",
+                "items": {
+                  "$ref": "common.schema.json#/$defs/EvidenceRef"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "candidate_targets": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "selected_targets": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ResourceRef"
+          }
+        },
+        "context_index": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "relevant_context": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "generated_artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ArtifactRef"
+          }
+        },
+        "mutations": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "command_history": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "verification": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "unresolved_failures": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/EvidenceRef"
+          }
+        },
+        "permissions": {
+          "type": "object",
+          "required": [
+            "grant_ids"
+          ],
+          "properties": {
+            "grant_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "common.schema.json#/$defs/Id"
+              }
+            },
+            "authority_profile": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "read-only",
+                    "code-safe",
+                    "code-write"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "budgets": {
+          "$ref": "common.schema.json#/$defs/ResourceBudget"
+        },
+        "model_state": {
+          "type": "object"
+        },
+        "subgoals": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "completion": {
+          "type": "object",
+          "required": [
+            "coverage"
+          ],
+          "properties": {
+            "coverage": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "criterion_id",
+                  "satisfied"
+                ],
+                "properties": {
+                  "criterion_id": {
+                    "$ref": "common.schema.json#/$defs/Id"
+                  },
+                  "satisfied": {
+                    "type": "boolean"
+                  },
+                  "evidence_refs": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "common.schema.json#/$defs/EvidenceRef"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "latest_decision_ref": {
+              "anyOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/Id"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "instruction_predicates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "predicate_id",
+              "instruction_ref",
+              "condition"
+            ],
+            "properties": {
+              "predicate_id": {
+                "$ref": "common.schema.json#/$defs/Id"
+              },
+              "instruction_ref": {
+                "$ref": "common.schema.json#/$defs/Id"
+              },
+              "condition": {
+                "type": "string"
+              },
+              "pinned": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "sensitivity_labels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "resource",
+              "class"
+            ],
+            "properties": {
+              "resource": {
+                "$ref": "common.schema.json#/$defs/ResourceRef"
+              },
+              "class": {
+                "$ref": "common.schema.json#/$defs/SensitivityClass"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "retrieval_snapshot_refs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "snapshot_id",
+              "fingerprint"
+            ],
+            "properties": {
+              "snapshot_id": {
+                "$ref": "common.schema.json#/$defs/Id"
+              },
+              "fingerprint": {
+                "$ref": "common.schema.json#/$defs/ContentHash"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "user_visible_status": {
+          "anyOf": [
+            {
+              "type": "string",
+              "$comment": "Display projection only; never authoritative lifecycle."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "AgentStateV1",
+      "$comment": "Q2: no lifecycle, attempt, lease, campaign or wake fields. Those live in the Work Runtime ledger (work.schema.json) and are reached via work_ref. `locks` from 02 §5 is dropped: lock ownership = LeaseV1.scope (Work ledger). budgets = resolved limits; spend accounting is Work-ledger truth."
+    }
+  }
+}

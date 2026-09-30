@@ -85,7 +85,8 @@ pub fn exec_next(from: &str) -> &'static [&'static str] {
 pub fn remote_next(from: &str) -> &'static [&'static str] {
     match from {
         "UNBOUND" => &["OPENING"],
-        "OPENING" => &["ACTIVE", "CLOSED"],
+        // OPENING -> UNBOUND: the open failed before any vendor context existed; the next turn retries it.
+        "OPENING" => &["ACTIVE", "UNBOUND", "CLOSED"],
         "ACTIVE" => &["HANDOFF_PENDING", "CLOSED"],
         "HANDOFF_PENDING" => &["ACTIVE", "CLOSED"],
         _ => &[],
@@ -1060,7 +1061,7 @@ fn map_aai_err(e: crate::gateway_runner::AaiError) -> GwErr {
         "CONTEXT_NOT_FOUND" => StatusCode::NOT_FOUND,
         "CONTEXT_BUSY" | "APPROVAL_REQUIRED" | "SYNC_CONFLICT" => StatusCode::CONFLICT,
         "UNSUPPORTED" => StatusCode::NOT_IMPLEMENTED,
-        "VENDOR_UNAVAILABLE" | "ADAPTER_DRIFT" => StatusCode::SERVICE_UNAVAILABLE,
+        "VENDOR_UNAVAILABLE" | "ADAPTER_DRIFT" | "GATEWAY_OFFLINE" => StatusCode::SERVICE_UNAVAILABLE,
         "INTERNAL" => StatusCode::INTERNAL_SERVER_ERROR,
         _ => StatusCode::BAD_GATEWAY,
     };

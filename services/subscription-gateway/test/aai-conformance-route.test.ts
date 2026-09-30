@@ -48,3 +48,25 @@ describe("AAI conformance route (offline fixtures)", () => {
     }, 60_000);
   }
 });
+
+// A real boot registers the live providers (no fixtures). `?offline=1` runs the shipped fixtures instead,
+// so QUICKSTART step 2 works with no vendor running, and the live registration is never replaced.
+describe("AAI conformance route ?offline=1 on a live-shaped host", () => {
+  let live: ReturnType<typeof createServer>;
+  beforeAll(async () => {
+    const { OpenClawProvider } = await import("../adapters/openclaw/index.js");
+    const host = new AaiHost();
+    host.register({ provider: new OpenClawProvider({ baseUrl: "http://127.0.0.1:9", replyTimeoutMs: 500 }) });
+    live = createServer({ ...deps, aai: host });
+  });
+  it("offline passes although the vendor is unreachable; the live run does not", async () => {
+    const off = await request(live).post("/aai/conformance/openclaw?offline=1").set("Authorization", `Bearer ${tok}`).expect(200);
+    expect(off.body.ok).toBe(true);
+    const on = await request(live).post("/aai/conformance/openclaw").set("Authorization", `Bearer ${tok}`).expect(200);
+    expect(on.body.ok).toBe(false);
+  }, 60_000);
+  it("unknown adapter is 404 in both modes", async () => {
+    await request(live).post("/aai/conformance/nope?offline=1").set("Authorization", `Bearer ${tok}`).expect(404);
+    await request(live).post("/aai/conformance/nope").set("Authorization", `Bearer ${tok}`).expect(404);
+  });
+});

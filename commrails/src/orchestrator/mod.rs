@@ -15,6 +15,8 @@ use tokio::process::Command;
 use tokio::time::{sleep, Instant};
 
 use crate::core::io::ensure_dir;
+use crate::hook::{self, HarnessGate, HookTarget};
+use crate::ledger::{Ledger, LedgerOptions};
 use crate::peer::{PeerEnvelope, PeerRegistry, PeerStatus, send_envelope};
 
 /// Options for spawning an executor session.
@@ -28,6 +30,22 @@ pub struct SpawnOptions<'a> {
     pub mode: &'a str,
     pub task_file: Option<&'a Path>,
     pub notes_sentinel: Option<&'a Path>,
+    /// WIH the spawned session is bound to. Hooked harnesses enforce Gate 2
+    /// against it; unhooked ones are refused when its policy needs leased writes.
+    pub wih: Option<&'a str>,
+    /// Headless capture (used by `drive`): the harness's stdout/stderr go to
+    /// these files, stdin is `/dev/null`, and its exit code is written to
+    /// `exit_code` (atomically, via a `.tmp` rename) when it finishes. The
+    /// exit-code file doubles as the completion sentinel for [`Orchestrator::poll`].
+    pub capture: Option<&'a CaptureFiles>,
+}
+
+/// Files a captured (headless) spawn writes. See [`SpawnOptions::capture`].
+#[derive(Debug, Clone)]
+pub struct CaptureFiles {
+    pub stdout: PathBuf,
+    pub stderr: PathBuf,
+    pub exit_code: PathBuf,
 }
 
 /// Result of a successful spawn.
@@ -101,6 +119,39 @@ impl Orchestrator {
             );
         }
 
+        // Spawn gate (audit S1): admission before any side effect.
+        let harness = opts.cmd.first().map(String::as_str).unwrap_or("");
+        let ledger = Ledger::new(LedgerOptions {
+            root_dir: Some(self.root_dir.clone()),
+            ledger_dir: Some(PathBuf::from(".allternit/ledger")),
+        });
+        let wih_policy = match opts.wih {
+            Some(wih_id) => Some(hook::load_wih_policy(&ledger, wih_id).await?),
+            None => None,
+        };
+        let gate = match hook::admit(harness, wih_policy.as_ref()) {
+            Ok(gate) => gate,
+            Err(reason) => {
+                if let Some(wih_id) = opts.wih {
+                    let _ = ledger
+                        .append(hook::spawn_refused_event(harness, wih_id, &reason))
+                        .await;
+                }
+                bail!(reason);
+            }
+        };
+        // A hooked harness without a reachable hook binary would run unhooked;
+        // refuse instead of falling back to bypass.
+        let commrails_bin = if gate == HarnessGate::Hook {
+            Some(hook::find_commrails_bin().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "cannot install the spawn-gate hook for {harness}: allternit-commrails binary not found (set ALLTERNIT_COMMRAILS_BIN)"
+                )
+            })?)
+        } else {
+            None
+        };
+
         let (workdir, wt_created) = if opts.worktree {
             let (wt, created) = create_worktree(opts.repo, &slug).await?;
             (wt, created)
@@ -108,13 +159,98 @@ impl Orchestrator {
             (opts.repo.to_path_buf(), false)
         };
 
+        let settings_path = match &commrails_bin {
+            Some(bin) => {
+                let path = logdir.join(format!("{}.claude-settings.json", session));
+                let settings = hook::claude_settings(HookTarget {
+                    commrails_bin: bin,
+                    root: &self.root_dir,
+                    workspace: Some(&workdir),
+                    wih_id: opts.wih,
+                });
+                if let Err(err) = tokio::fs::write(&path, serde_json::to_string_pretty(&settings)?).await {
+                    if wt_created {
+                        let _ = remove_worktree(&workdir).await;
+                    }
+                    bail!("writing spawn-gate settings {}: {}", path.display(), err);
+                }
+                Some(path)
+            }
+            None => None,
+        };
+        let cmd = hook::gate_argv(opts.cmd, settings_path.as_deref());
+
+        // ExecutionEnvironmentV1: resolve per node, write beside the log, and
+        // record in the ledger. `ALLTERNIT_EXEC_ENV_ENFORCE=1` additionally
+        // strips the node's process env to the allowlist (`env -i`).
+        let node_env = crate::execenv::resolve(&crate::execenv::EnvRequest {
+            node_id: &session,
+            workdir: &workdir,
+            worktree: opts.worktree,
+            extra_env_keys: &std::env::var("ALLTERNIT_EXEC_ENV_ALLOW")
+                .map(|v| v.split(',').map(|k| k.trim().to_string()).filter(|k| !k.is_empty()).collect::<Vec<_>>())
+                .unwrap_or_default(),
+            mounts: &[],
+            secret_refs: &[],
+            network_policy_id: None,
+        });
+        let _ = tokio::fs::write(
+            logdir.join(format!("{}.exec-env.json", session)),
+            serde_json::to_string_pretty(&node_env).unwrap_or_default(),
+        )
+        .await;
+        let _ = ledger.append(crate::execenv::resolved_event(opts.wih, &node_env)).await;
+        let env_prefix = if std::env::var("ALLTERNIT_EXEC_ENV_ENFORCE").as_deref() == Ok("1") {
+            let kept = crate::execenv::filter_env(&node_env, std::env::vars());
+            let mut p = String::from("env -i");
+            for (k, v) in kept {
+                p.push_str(&format!(" {}={}", k, shell_escape(&v)));
+            }
+            // The per-session exports above live in the tmux shell; carry them across.
+            let mut names = vec![
+                "ALLTERNIT_AO_PANE_ID", "ALLTERNIT_COMMRAILS_PEER_NAME", "ALLTERNIT_COMMRAILS_INBOX",
+                "ALLTERNIT_COMMRAILS_ROOT", "ALLTERNIT_RAILS_PEER_NAME", "ALLTERNIT_RAILS_INBOX", "ALLTERNIT_RAILS_ROOT",
+            ];
+            if opts.wih.is_some() {
+                names.push("ALLTERNIT_COMMRAILS_WIH");
+            }
+            if opts.task_file.is_some() {
+                names.extend(["ALLTERNIT_COMMRAILS_TASK_FILE", "ALLTERNIT_RAILS_TASK_FILE"]);
+            }
+            for n in names {
+                p.push_str(&format!(" {n}=\"${n}\""));
+            }
+            p.push(' ');
+            p
+        } else {
+            String::new()
+        };
+        // Claude refuses bypassPermissions as root unless told it is in a
+        // sandbox; Allternit's execution environment is that sandbox.
+        let env_prefix = if gate == HarnessGate::Hook {
+            if env_prefix.is_empty() { "env IS_SANDBOX=1 ".to_string() } else { format!("{env_prefix}IS_SANDBOX=1 ") }
+        } else {
+            env_prefix
+        };
+
         // Write the runner file to sidestep shell quoting issues.
-        let runner_text = opts
-            .cmd
+        let mut runner_text = cmd
             .iter()
             .map(|s| shell_escape(s))
             .collect::<Vec<_>>()
             .join(" ");
+        if let Some(cap) = opts.capture {
+            let tmp = cap.exit_code.with_extension("tmp");
+            runner_text = format!(
+                "{} < /dev/null > {} 2> {}\nprintf '%s\\n' \"$?\" > {} && mv {} {}",
+                runner_text,
+                shell_escape(&cap.stdout.to_string_lossy()),
+                shell_escape(&cap.stderr.to_string_lossy()),
+                shell_escape(&tmp.to_string_lossy()),
+                shell_escape(&tmp.to_string_lossy()),
+                shell_escape(&cap.exit_code.to_string_lossy()),
+            );
+        }
         tokio::fs::write(&runner, format!("{}\n", runner_text)).await?;
 
         // Register the peer before starting tmux so the env vars point at a
@@ -137,6 +273,12 @@ impl Orchestrator {
             shell_escape(&peer.inbox_socket.to_string_lossy()),
             shell_escape(&workdir.to_string_lossy())
         );
+        if let Some(wih_id) = opts.wih {
+            inner.push_str(&format!(
+                "export ALLTERNIT_COMMRAILS_WIH={}; ",
+                shell_escape(wih_id)
+            ));
+        }
         if let Some(task) = opts.task_file {
             let task_escaped = shell_escape(&task.to_string_lossy());
             inner.push_str(&format!(
@@ -145,7 +287,8 @@ impl Orchestrator {
             ));
         }
         inner.push_str(&format!(
-            "script -q {} /bin/sh {}",
+            "{}script -q {} /bin/sh {}",
+            env_prefix,
             shell_escape(&log.to_string_lossy()),
             shell_escape(&runner.to_string_lossy())
         ));
@@ -185,7 +328,11 @@ impl Orchestrator {
             .await;
 
         sleep(Duration::from_millis(500)).await;
-        if !tmux_has_session(&session).await? {
+        // A captured run that already wrote its exit code finished fast (the
+        // session can be gone before remain-on-exit applied); that is a
+        // completed run, not a failed spawn.
+        let finished_fast = opts.capture.is_some_and(|c| c.exit_code.exists());
+        if !finished_fast && !tmux_has_session(&session).await? {
             self.registry.unregister(&peer.peer_id).ok();
             if wt_created {
                 let _ = remove_worktree(&workdir).await;
@@ -232,27 +379,40 @@ impl Orchestrator {
         timeout_seconds: u64,
         interval_seconds: u64,
     ) -> Result<WatchOutcome> {
-        let session = format!("ao-{}", sanitize_slug(slug));
         let deadline = Instant::now() + Duration::from_secs(timeout_seconds);
         let interval = Duration::from_secs(interval_seconds.max(1));
 
         loop {
-            if sentinel.exists() {
-                return Ok(WatchOutcome::Done);
-            }
-            match tmux_pane_dead(&session).await {
-                Ok(true) => return Ok(WatchOutcome::Dead),
-                Ok(false) => {}
-                Err(_) => {
-                    // Session gone is equivalent to dead.
-                    return Ok(WatchOutcome::Dead);
-                }
+            if let Some(outcome) = self.poll(slug, sentinel).await {
+                return Ok(outcome);
             }
             if Instant::now() >= deadline {
                 return Ok(WatchOutcome::Timeout);
             }
             sleep(interval).await;
         }
+    }
+
+    /// One non-blocking watch step: `Some(Done)` when the sentinel exists,
+    /// `Some(Dead)` when the pane is dead or the session gone, `None` while
+    /// it is still running. Timeouts are the caller's clock.
+    pub async fn poll(&self, slug: &str, sentinel: &Path) -> Option<WatchOutcome> {
+        if sentinel.exists() {
+            return Some(WatchOutcome::Done);
+        }
+        let session = format!("ao-{}", sanitize_slug(slug));
+        match tmux_pane_dead(&session).await {
+            Ok(false) => None,
+            // Pane dead, or session gone: re-check the sentinel once, since a
+            // run can write it and exit between the two checks.
+            Ok(true) | Err(_) if sentinel.exists() => Some(WatchOutcome::Done),
+            Ok(true) | Err(_) => Some(WatchOutcome::Dead),
+        }
+    }
+
+    /// True while the session exists and its pane is still running.
+    pub async fn is_alive(&self, slug: &str) -> bool {
+        session_alive(slug).await
     }
 
     /// Return a human-readable status summary.
@@ -335,8 +495,10 @@ impl Orchestrator {
 
         let mut executors = Vec::new();
         executors.push(probe_executor("kimi", "kimi", &["--yolo"], &[]).await);
-        executors.push(probe_executor("codex", "codex", &["--dangerously-bypass-approvals-and-sandbox"], &["exec"]).await);
-        executors.push(probe_executor("claude", "claude", &["--dangerously-skip-permissions"], &["-p", "--dangerously-skip-permissions"]).await);
+        // Probe the flags the spawn gate actually launches with (see hook::gate_argv):
+        // all auto-approve; claude also gets a --settings PreToolUse hook.
+        executors.push(probe_executor("codex", "codex", &["--config"], &["exec"]).await);
+        executors.push(probe_executor("claude", "claude", &["--permission-mode", "--settings"], &["-p", "--permission-mode", "--settings"]).await);
         executors.push(probe_executor("agy", "agy", &["--dangerously-skip-permissions"], &[]).await);
 
         // Loopback UDS round-trip (Unix only).
@@ -376,8 +538,14 @@ impl Orchestrator {
         println!("orchestrator doctor: executors");
         for e in &report.executors {
             println!(
-                "  {} ({}): installed={} interactive={} headless={} version={:?}",
-                e.vendor, e.binary, e.installed, e.interactive_flags_ok, e.headless_flags_ok, e.version
+                "  {} ({}): installed={} interactive={} headless={} gate={} version={:?}",
+                e.vendor,
+                e.binary,
+                e.installed,
+                e.interactive_flags_ok,
+                e.headless_flags_ok,
+                hook::harness_gate(&e.binary).as_str(),
+                e.version
             );
         }
         #[cfg(unix)]
@@ -397,6 +565,16 @@ impl Orchestrator {
     }
 }
 
+/// True while `ao-<slug>` exists and its pane is still running (read-only).
+pub async fn session_alive(slug: &str) -> bool {
+    matches!(tmux_pane_dead(&session_name(slug)).await, Ok(false))
+}
+
+/// Session-name form of a slug (`ao-<sanitized>`).
+pub fn session_name(slug: &str) -> String {
+    format!("ao-{}", sanitize_slug(slug))
+}
+
 fn sanitize_slug(slug: &str) -> String {
     slug.trim()
         .chars()
@@ -411,15 +589,22 @@ fn sanitize_slug(slug: &str) -> String {
 }
 
 fn shell_escape(s: &str) -> String {
-    // Single-quote wrapping is sufficient for the values we inject.
-    format!("'{}'", s.replace('\\', "\\\\").replace('\'', "'\"'\"'"))
+    // POSIX single quotes: everything inside is literal, including
+    // backslashes (doubling them corrupted any argv with a `\`, e.g. an
+    // ao-spawn gated line that quotes a path with `'\''`). Only `'` needs
+    // closing, escaping and reopening.
+    format!("'{}'", s.replace('\'', "'\"'\"'"))
 }
 
 async fn tmux_has_session(session: &str) -> Result<bool> {
+    // Probe only: tmux's "can't find session" on stderr is the expected
+    // answer for a fresh slug, not an error to show the caller.
     let status = Command::new("tmux")
         .arg("has-session")
         .arg("-t")
         .arg(format!("={}:", session))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()
         .await?;
     Ok(status.success())
@@ -636,5 +821,17 @@ mod tests {
         assert_eq!(sanitize_slug("My Session"), "my-session");
         assert_eq!(sanitize_slug("foo_bar-1"), "foo_bar-1");
         assert_eq!(sanitize_slug("--trim--"), "trim");
+    }
+
+    #[test]
+    fn shell_escape_round_trips_through_sh() {
+        for word in ["plain", "it's", r"back\slash", r"sh -c 'a'\''b'", "$(nope) `x` \"q\""] {
+            let out = std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg(format!("printf %s {}", shell_escape(word)))
+                .output()
+                .expect("sh");
+            assert_eq!(String::from_utf8_lossy(&out.stdout), word);
+        }
     }
 }

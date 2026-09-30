@@ -82,8 +82,21 @@ impl PeerSocket {
         // macOS UDS paths are limited to ~104 bytes.  Fall back to a short
         // tmp path if the workspace-root path is too long.
         let bind_path = short_socket_path(&socket_path);
+        if bind_path != socket_path {
+            ensure_private_fallback_dir(bind_path.parent().expect("fallback path has a parent"))?;
+            if bind_path.exists() {
+                std::fs::remove_file(&bind_path)
+                    .with_context(|| format!("removing stale socket {}", bind_path.display()))?;
+            }
+        }
         let listener = UnixListener::bind(&bind_path)
             .with_context(|| format!("binding UDS {}", bind_path.display()))?;
+        // Only the owning user may connect (bind leaves the mode to umask).
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&bind_path, std::fs::Permissions::from_mode(0o600))
+                .with_context(|| format!("chmod 600 {}", bind_path.display()))?;
+        }
 
         Ok(Self {
             listener,
@@ -171,8 +184,50 @@ fn ensure_socket_dir(socket_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Per-user fallback directory for over-long socket paths:
+/// `/tmp/allternit-peers-<uid>` (a shared `/tmp/allternit-peers` would let any
+/// local user pre-create it and read or hijack peer traffic).
+#[cfg(unix)]
+fn fallback_dir() -> PathBuf {
+    // SAFETY: getuid has no preconditions and cannot fail.
+    let uid = unsafe { libc::getuid() };
+    PathBuf::from("/tmp").join(format!("allternit-peers-{uid}"))
+}
+
+/// Create the fallback dir 0700, or verify an existing one is a real
+/// directory owned by us, and tighten it to 0700.
+#[cfg(unix)]
+fn ensure_private_fallback_dir(dir: &Path) -> Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+    match std::fs::symlink_metadata(dir) {
+        Ok(meta) => {
+            // SAFETY: getuid has no preconditions and cannot fail.
+            let uid = unsafe { libc::getuid() };
+            if !meta.file_type().is_dir() || meta.uid() != uid {
+                bail!(
+                    "peer socket fallback dir {} is not a directory owned by uid {}; refusing to use it",
+                    dir.display(),
+                    uid
+                );
+            }
+            if meta.mode() & 0o777 != 0o700 {
+                std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+                    .with_context(|| format!("chmod 700 {}", dir.display()))?;
+            }
+        }
+        Err(_) => {
+            std::fs::DirBuilder::new()
+                .mode(0o700)
+                .create(dir)
+                .with_context(|| format!("creating {}", dir.display()))?;
+        }
+    }
+    Ok(())
+}
+
 /// macOS limits UDS paths to about 104 bytes.  If `socket_path` is too long,
-/// mirror it under `/tmp/allternit-peers/` using the basename.
+/// mirror it under the per-user [`fallback_dir`] using the basename.  Pure:
+/// the directory is created (0700) only by `PeerSocket::bind`.
 #[cfg(unix)]
 fn short_socket_path(socket_path: &Path) -> PathBuf {
     const MAX_LEN: usize = 100;
@@ -184,10 +239,7 @@ fn short_socket_path(socket_path: &Path) -> PathBuf {
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "peer.sock".to_string());
-    let tmp = PathBuf::from("/tmp").join("allternit-peers").join(basename);
-    // Best-effort ensure the fallback directory exists.
-    let _ = std::fs::create_dir_all(tmp.parent().unwrap());
-    tmp
+    fallback_dir().join(basename)
 }
 
 /// Non-Unix platforms have no UDS in tokio. Delivery reports as failed so
@@ -229,6 +281,37 @@ mod tests {
         assert_eq!(received.message_id, sent.message_id);
         assert_eq!(received.from, "alice");
         assert_eq!(received.body, "hello there");
+    }
+
+    #[tokio::test]
+    async fn bound_socket_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new().unwrap();
+        let sock = tmp.path().join("peer.sock");
+        let _listener = PeerSocket::bind(&sock).await.unwrap();
+        let mode = std::fs::metadata(&sock).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "socket mode {mode:o}");
+    }
+
+    #[tokio::test]
+    async fn long_path_falls_back_to_private_per_user_dir() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new().unwrap();
+        let long = tmp.path().join("x".repeat(120)).join(format!("spawngate-{}.sock", std::process::id()));
+        let listener = PeerSocket::bind(&long).await.unwrap();
+        let bound = listener.socket_path().to_path_buf();
+        assert_eq!(bound.parent().unwrap(), fallback_dir());
+        let dir_mode = std::fs::metadata(fallback_dir()).unwrap().permissions().mode() & 0o777;
+        assert_eq!(dir_mode, 0o700, "dir mode {dir_mode:o}");
+        let sock_mode = std::fs::metadata(&bound).unwrap().permissions().mode() & 0o777;
+        assert_eq!(sock_mode, 0o600);
+        // Senders compute the same path and can still deliver.
+        let receipt = send_envelope(&long, &PeerEnvelope::new("a", "b", "x"), Duration::from_millis(500))
+            .await
+            .unwrap();
+        assert!(receipt.delivered, "{:?}", receipt.error);
+        drop(listener);
+        let _ = std::fs::remove_file(&bound);
     }
 
     #[tokio::test]

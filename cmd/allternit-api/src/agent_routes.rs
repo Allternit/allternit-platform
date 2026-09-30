@@ -527,7 +527,7 @@ async fn list_agents(
     let rows = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
         let mut sql = AGENT_SELECT.to_string();
-        sql.push_str(" WHERE user_id = ?1");
+        sql.push_str(" WHERE user_id = ?1 AND type != 'project-worker'");
         let mut params_vec: Vec<String> = vec![user_id];
 
         if let Some(ws) = &q.workspace_id {

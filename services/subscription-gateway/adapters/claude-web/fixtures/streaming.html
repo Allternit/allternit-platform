@@ -1,0 +1,20 @@
+<!doctype html>
+<!-- fixture: streaming — assistant turn in flight, stop button present -->
+<html lang="en">
+  <head><meta charset="utf-8"><title>claude-web fixture — streaming</title></head>
+  <body data-state="streaming">
+    <nav>
+      <button data-testid="user-menu-button" aria-label="User menu">E</button>
+    </nav>
+    <main>
+      <div id="thread">
+        <div data-testid="user-message">Summarize the migration plan.</div>
+        <div data-is-streaming="true">
+          <div class="font-claude-response"><p>The migration happens in three stages…</p></div>
+        </div>
+      </div>
+      <div class="ProseMirror" data-testid="chat-input" role="textbox" aria-label="Reply to Claude" contenteditable="true"></div>
+      <button aria-label="Stop response" type="button">Stop</button>
+    </main>
+  </body>
+</html>

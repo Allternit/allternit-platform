@@ -1,0 +1,58 @@
+---
+title: 'Versioning'
+description: 'URL major versions, dated minor versions, deprecation headers, and the fail-closed rules for unknown fields and values.'
+---
+
+<Warning>
+**PREVIEW.** The Agency API is not live yet. This page describes the published v0.3 contract so you can review and build against it; details may change before alpha. Implementation status: DESIGN — NOT YET IMPLEMENTED.
+</Warning>
+
+The contract document itself is versioned **v0.3** while it is a preview. The API it describes uses the scheme below.
+
+## Major version in the URL
+
+The major version is part of the path: `https://api.allternit.com/v1/...`. A breaking change ships as a new major path. `/v1` does not change incompatibly.
+
+## Dated minor versions
+
+Compatible behavior changes are released as dated versions and selected with a request header:
+
+```http
+Allternit-Version: 2026-10-15
+```
+
+- If you omit the header, the version pinned to your API key applies.
+- Every response echoes the `Allternit-Version` that served it.
+- An unsupported value returns `ERR_VERSION_UNSUPPORTED`.
+
+Pin a version in production and move forward deliberately.
+
+## Deprecation
+
+When a behavior is scheduled for removal, responses that use it carry:
+
+| Header | Standard | Meaning |
+|--------|----------|---------|
+| `Deprecation` | RFC 9745 | The behavior is deprecated. |
+| `Sunset` | RFC 8594 | When it stops working. |
+| `Link` with `rel="deprecation"` | RFC 8288 | Where to read about the change. |
+
+## Unknown fields and values
+
+These rules are what make additive change safe. They mirror the [kernel contract](/architecture/kernel-contracts) evolution rules.
+
+| Direction | Unknown field | Unknown enum value |
+|-----------|---------------|--------------------|
+| Request (you → API) | Rejected with `ERR_INPUT_UNSUPPORTED` | Rejected |
+| Response (API → you) | Ignore it | Treat as not understood. Never assume success. |
+
+## Extensions and metadata
+
+- Closed objects accept extension properties named `x-<name>` (pattern `^x-[a-z0-9-]+$`). Extensions never change kernel semantics.
+- Your own annotations go in `metadata`, a string map of at most 50 keys with values up to 500 characters.
+
+## Related
+
+- [Errors](/api/agency/errors)
+- [Schemas](/api/agency/schemas)
+- [Kernel contracts](/architecture/kernel-contracts)

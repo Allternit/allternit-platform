@@ -95,7 +95,8 @@ export type RemoteThreadState = z.infer<typeof remoteThreadStateSchema>;
 
 export const REMOTE_THREAD_TRANSITIONS: Record<RemoteThreadState, readonly RemoteThreadState[]> = {
   UNBOUND: ["OPENING"],
-  OPENING: ["ACTIVE", "CLOSED"],
+  // OPENING -> UNBOUND: the open failed before any vendor context existed; the next turn retries it.
+  OPENING: ["ACTIVE", "UNBOUND", "CLOSED"],
   ACTIVE: ["HANDOFF_PENDING", "CLOSED"],
   HANDOFF_PENDING: ["ACTIVE", "CLOSED"],
   CLOSED: [],

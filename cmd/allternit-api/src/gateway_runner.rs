@@ -105,6 +105,22 @@ pub(crate) async fn vcall(db: &DbHandle, tx: &dyn AaiTransport, owner: &str, op:
     tx.call_cred(owner, op, binding, cred.as_ref(), input).await
 }
 
+/// A non-2xx from `subscription_routes::forward`: its own "no Sessions computer" answers
+/// (`sessions_computer_*`) mean no gateway is connected (`GATEWAY_OFFLINE`, 503) and carry the
+/// fix in `detail`; anything else is the gateway's failure, reported with its message.
+pub(crate) fn forward_error(status: axum::http::StatusCode, v: &Value) -> AaiError {
+    let code = v["error"].as_str().unwrap_or_default();
+    let detail = v["detail"].as_str().map(|d| format!(" ({d})")).unwrap_or_default();
+    let mut e = if code.starts_with("sessions_computer_") {
+        AaiError::new("GATEWAY_OFFLINE", format!("no subscription gateway is connected: {code}{detail}"))
+    } else {
+        let why = if code.is_empty() { String::new() } else { format!(": {code}{detail}") };
+        AaiError::new("GATEWAY_UNAVAILABLE", format!("the subscription gateway answered {status}{why}"))
+    };
+    e.retryable = true;
+    e
+}
+
 /// Reaches the subscription gateway the way `subscription_routes` does (the
 /// Sessions computer's guest port + sealed token).
 pub struct SubsTransport(pub Arc<AppState>);
@@ -141,9 +157,7 @@ impl AaiTransport for SubsTransport {
         let bytes = axum::body::to_bytes(resp.into_body(), 10 * 1024 * 1024).await.unwrap_or_default();
         let v: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
         if !status.is_success() {
-            let mut e = AaiError::new("GATEWAY_UNAVAILABLE", format!("the subscription gateway answered {status}"));
-            e.retryable = true;
-            return Err(e);
+            return Err(forward_error(status, &v));
         }
         if v["ok"].as_bool() == Some(true) {
             Ok(v["value"].clone())
@@ -502,8 +516,10 @@ async fn open_remote(db: &DbHandle, tx: &dyn AaiTransport, cx: &Cx, existing: Op
             Ok(one(&conn, &format!("SELECT {REMOTE_COLS} FROM remote_thread_bindings WHERE id = ?1"), &[&rid])?.unwrap_or(Value::Null))
         }
         Err(e) => {
+            // No vendor context was opened, so there is nothing to close: back to UNBOUND and the next
+            // turn opens again (a gateway outage must not force a handoff to a new generation).
             let opening = one(&conn, &format!("SELECT {REMOTE_COLS} FROM remote_thread_bindings WHERE id = ?1"), &[&rid])?.unwrap_or(Value::Null);
-            let _ = set_remote_state(db, &cx.owner, &opening, "CLOSED");
+            let _ = set_remote_state(db, &cx.owner, &opening, "UNBOUND");
             Err(fail(db, cx, None, &e))
         }
     }
@@ -544,6 +560,7 @@ fn fail(db: &DbHandle, cx: &Cx, remote: Option<&Value>, e: &AaiError) -> RunErr 
             (503, Some(format!("the vendor adapter drifted; consequential automation is stopped: {}", e.human_message)))
         }
         "RATE_LIMITED" => (429, None),
+        "GATEWAY_OFFLINE" => (503, None),
         _ => (502, None),
     };
     if let Ok(conn) = db.connect() {
@@ -1163,6 +1180,17 @@ mod tests {
         st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM bot_events WHERE thread_id='th-vendor' AND event_type=?1", params![ty], |r| r.get(0)).unwrap()
     }
 
+    #[test]
+    fn forward_errors_name_the_missing_sessions_computer() {
+        let e = forward_error(StatusCode::CONFLICT, &json!({ "error": "sessions_computer_not_bound", "detail": "bind a Sessions computer: PUT /api/v1/subscriptions/binding" }));
+        assert_eq!(e.code, "GATEWAY_OFFLINE");
+        assert!(e.human_message.contains("PUT /api/v1/subscriptions/binding"), "{}", e.human_message);
+        let e = forward_error(StatusCode::SERVICE_UNAVAILABLE, &json!({ "error": "sessions_computer_not_running" }));
+        assert_eq!(e.code, "GATEWAY_OFFLINE");
+        let e = forward_error(StatusCode::BAD_GATEWAY, &Value::Null);
+        assert_eq!((e.code.as_str(), e.human_message.as_str()), ("GATEWAY_UNAVAILABLE", "the subscription gateway answered 502 Bad Gateway"));
+    }
+
     #[tokio::test]
     async fn native_path_is_untouched() {
         let st = setup("native").await;
@@ -1205,6 +1233,22 @@ mod tests {
         c.execute("UPDATE remote_thread_bindings SET sync_cursor = NULL", []).unwrap();
         assert_eq!(sync_thread(&st.db, &f, "user-a", "th-vendor").await.unwrap(), 0);
         assert_eq!(count_events(&st, "agent.message.completed"), 1);
+    }
+
+    #[tokio::test]
+    async fn a_failed_open_is_retried_on_the_next_turn_not_closed() {
+        let st = setup("reopen").await;
+        let f = Fake::default();
+        f.fail_op("agent.context.open", "GATEWAY_OFFLINE", None);
+        let e = turn(&st, &f, "s-th-vendor", "hi", key("k1")).await.unwrap_err();
+        assert_eq!((e.status, e.code.as_str()), (503, "GATEWAY_OFFLINE"));
+        assert_eq!(remote_states(&st), vec![(1, "UNBOUND".into())]);
+        f.fail.lock().unwrap().clear();
+        f.push(done("e1", "back"));
+        let r = turn(&st, &f, "s-th-vendor", "hi", key("k1")).await.unwrap().unwrap();
+        assert_eq!(r.reply.as_deref(), Some("back"));
+        assert_eq!(remote_states(&st), vec![(1, "ACTIVE".into())], "same generation, same row");
+        assert_eq!(f.count("agent.context.open"), 2);
     }
 
     #[tokio::test]

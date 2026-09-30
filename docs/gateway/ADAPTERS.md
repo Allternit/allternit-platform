@@ -19,7 +19,7 @@ An adapter lives in `services/subscription-gateway/adapters/<id>/`. The files be
 | `driver.ts`, `cdp-driver.ts`, `replay-driver.ts`, `browser-driver.ts` | UI-bridge only. `driver.ts` is the seam, the others are the live and offline implementations. |
 | `selectors.ts`, `observe.ts`, `minidom.ts` | UI-bridge only. Selector pack with `SELECTORS_VERSION`, page-to-state observer, dependency-free DOM engine so live and fixture pages share one code path. |
 | `look-profile.json` | Data for the web look pack. See [LOOK_PACKS.md](LOOK_PACKS.md). |
-| `fixtures/offline.ts` | Exports `createOfflineAaiRegistration()`: a registration wired to fixtures or a fake server, used by `POST /aai/conformance/<id>` in tests. |
+| `fixtures/offline.ts` | Exports `createOfflineAaiRegistration()`: a registration wired to fixtures or a fake server, used by `POST /aai/conformance/<id>` in tests and by `POST /aai/conformance/<id>?offline=1` on a running gateway. |
 | `README.md` | Status, recon findings, consent steps. Say what is verified live and what is inferred. |
 
 Shared helpers: `adapters/_shared/ax/` (macOS Accessibility transport) and `services/subscription-gateway/native/ax-bridge` (Swift helper).
@@ -45,7 +45,7 @@ Rules the harness and the host enforce:
 ```ts
 // adapters/grok-bot/aai.ts (shape)
 export function createAaiRegistration(env: NodeJS.ProcessEnv) {
-  const port = Number(env.SUBS_GATEWAY_GROK_BOT_CDP_PORT ?? 9222);
+  const port = Number(env.SUBS_GATEWAY_GROK_BOT_CDP_PORT ?? GROK_BOT_CDP_PORT) // 9231;
   return {
     provider: grokBot.create({ cdpPort: port }),
     pacing: { minGapMs: PACING.min_task_gap_s * 1000, maxPerHour: PACING.max_tasks_per_hour },
@@ -58,7 +58,7 @@ export function createAaiRegistration(env: NodeJS.ProcessEnv) {
 - **Kill switch:** a disabled adapter answers `LANE_BLOCKED` for everything except `list, get, capabilities, identity, health, events, contextCancel, contextClose`. Set at boot with `SUBS_GATEWAY_AAI_DISABLED` (comma-separated adapter ids) or `disabled: true` in the registration.
 - **Pacing:** `contextOpen` and `contextMessage` respect `minGapMs` and a sliding one-hour `maxPerHour`. Exceeding either returns retryable `LANE_BLOCKED` with `retryAfterMs`. Wrapping before the router means idempotent replays do not spend pacing budget.
 
-Host routes (`src/http/routes_aai.ts`): `POST /aai/call` (scope `tasks:submit`), `GET /aai/providers` (`tasks:read`), `POST /aai/conformance/:adapterId` (`tasks:submit`).
+Host routes (`src/http/routes_aai.ts`): `POST /aai/call` (scope `tasks:submit`), `GET /aai/providers` (`tasks:read`), `POST /aai/conformance/:adapterId` (`tasks:submit`; `?offline=1` runs the adapter's `fixtures/offline.ts` on a throwaway provider instead of the live one, 404 `no_offline_fixtures` if it ships none).
 
 ## Fixtures, offline mode and conformance
 

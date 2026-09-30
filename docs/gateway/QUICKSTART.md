@@ -2,7 +2,7 @@
 
 **What this is:** the shortest path to see the gateway work: start the services, connect Grok Bot, bind a bot, send a turn, watch events, answer an approval.
 **Who it's for:** a developer who has not seen the gateway before.
-**Last verified against:** platform commit `c3af0730ca`, allternit-ai commit `d879af36`. Commands were read from the code, not replayed end to end. Where output is shown it is the shape from the handlers and tests, not captured output.
+**Last replayed:** 2026-09-30 on a fresh worktree of `gateway/integration` (platform `801ef5508` + the QUICKSTART fixes, allternit-ai `7b794ebb`). Steps 1, 2, 4 (API start), 5, 6, 7 and 9 (both SDKs) were run and their output checked. Not run: step 3 live (needs Grok Bot relaunched with your consent), the Sessions-computer bind in step 4 (needs a separate computer), and clicking through step 8 (the tab and dev command were checked). Without a Sessions computer, discovery and turns answer `503 GATEWAY_OFFLINE`, shown below.
 
 Read [README.md](README.md) first for what the gateway is, and [GLOSSARY.md](GLOSSARY.md) for terms.
 
@@ -21,34 +21,40 @@ curl -> subscription-gateway       web / curl -> allternit-api -> Sessions compu
 
 ```bash
 cd services/subscription-gateway
-pnpm install
-pnpm build
+pnpm install --frozen-lockfile   # plain `pnpm install` rewrites pnpm-lock.yaml (bumps jest's @babel/core 7 -> 8)
+pnpm build                       # typecheck + copy migrations; the gateway itself runs from src via tsx
 export SUBS_GATEWAY_STATE_DIR=~/.allternit/subscriptions/   # default
 export SUBS_GATEWAY_KEYCHAIN=file                           # "file" or "keychain" (default keychain)
 export SUBS_GATEWAY_TCP=1                                   # also listen on TCP (default: unix socket only)
 export SUBS_GATEWAY_TCP_PORT=7788                           # default 7788, host default 127.0.0.1
 export SUBS_GATEWAY_API_BASE=http://127.0.0.1:18013         # where allternit-api runs (loopback provider)
-pnpm start                                                  # or `pnpm dev` (tsx watch)
+pnpm start                                                  # tsx src/main.ts, as on a Sessions computer; `pnpm dev` = tsx watch
 ```
 
 The log says `subscription-gateway: listening on http://127.0.0.1:7788 (token required)`. Vendor adapters load at boot from `adapters/*/aai.ts`.
 
-The bearer token is issued at first boot under account `cli-token`. Read it from the keychain, or with `SUBS_GATEWAY_KEYCHAIN=file` from `$SUBS_GATEWAY_STATE_DIR/keychain.json`. You can also pin one with `SUBS_GATEWAY_TOKEN`.
+The bearer token is issued at first boot under account `cli-token`. Read it from the keychain, or with `SUBS_GATEWAY_KEYCHAIN=file` from `$SUBS_GATEWAY_STATE_DIR/keychain.json`:
 
 ```bash
-export TOKEN=...   # the gateway caller token
+export TOKEN=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.allternit/subscriptions/keychain.json')))['cli-token'])")
+```
+
+You can also pin one with `SUBS_GATEWAY_TOKEN`.
+
+```bash
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:7788/aai/providers | jq '.providers[] | {adapterId, disabled, error}'
 ```
 
-Expected shape: `{"providers":[{"adapterId":"allternit-loopback",...},{"adapterId":"grok-bot",...},{"adapterId":"claude-desktop",...},{"adapterId":"claude-managed-agents",...},{"adapterId":"chatgpt-dots",...},{"adapterId":"openclaw",...}]}`, each with `disabled`, an optional `pacing`, and its capability `manifest` (or an `error`).
+Expected shape: `{"providers":[{"adapterId":"allternit-loopback",...},{"adapterId":"grok-bot",...},{"adapterId":"claude-desktop",...},{"adapterId":"claude-managed-agents",...},{"adapterId":"chatgpt-dots",...},{"adapterId":"openclaw",...}]}`, each with `disabled`, an optional `pacing`, and its capability `manifest` (or an `error`). An adapter whose vendor is not running says why, for example `openclaw` → `no agent available: OpenClaw isn't reachable at http://127.0.0.1:18789 ...`, `chatgpt-dots` → `... needs your OK before it opens the ChatGPT browser window`.
 
 ## 2. Check an adapter offline (no vendor needed)
 
 ```bash
-curl -s -X POST -H "Authorization: Bearer $TOKEN" http://127.0.0.1:7788/aai/conformance/openclaw | jq '{adapterId, lane, guarantee, ok, summary}'
+curl -s -X POST -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:7788/aai/conformance/openclaw?offline=1" | jq '{adapterId, lane, guarantee, ok, summary}'
+# {"adapterId":"openclaw","lane":"local","guarantee":"exact","ok":true,"summary":{"pass":8,"fail":0,"skippedUnsupported":5}}
 ```
 
-Shape: `{"adapterId":"openclaw","lane":"local","guarantee":"exact","ok":...,"summary":{"pass":n,"fail":n,"skippedUnsupported":n}}`. Without fixtures registered the route falls back to a bare `agentId`; the per-adapter fixtures in `adapters/<id>/fixtures/offline.ts` are what the test suite uses ([ADAPTERS.md](ADAPTERS.md#fixtures-offline-mode-and-conformance)).
+`?offline=1` runs the adapter's shipped fixtures (`adapters/<id>/fixtures/offline.ts`, local fakes) on a throwaway provider; the live registration is untouched. Replayed result: openclaw, grok-bot, claude-desktop (8 pass each), chatgpt-dots (9), claude-managed-agents (10), all `ok:true`. `allternit-loopback` has no offline fixtures here (404 `no_offline_fixtures`; it is covered in `platform/packages/agent-gateway`). Without `?offline=1` the route runs against the live vendor, so it fails when the vendor is not running ([ADAPTERS.md](ADAPTERS.md#fixtures-offline-mode-and-conformance)).
 
 ## 3. Path A: talk to Grok Bot through AAI
 
@@ -56,8 +62,10 @@ Consent step, done by you: quit Grok Bot, then relaunch it with a debugging port
 
 ```bash
 osascript -e 'quit app "Grok Bot"'
-open -a "Grok Bot" --args --remote-debugging-port=9222     # 9222 is the default; override with SUBS_GATEWAY_GROK_BOT_CDP_PORT
+open -a "Grok Bot" --args --remote-debugging-port=9231     # 9231 is the default; override with SUBS_GATEWAY_GROK_BOT_CDP_PORT
 ```
+
+Not 9222: Allternit Desktop and Chrome already use it, so Grok Bot could not bind it (claude-desktop's default is 9232). The adapter only attaches to a page that is Grok Bot's own renderer, never to another app on the port.
 
 Every AAI call is `POST /aai/call` with `{op, binding, input}`. AAI errors also answer HTTP 200 (`{ok:false,error}`); only a bad body or missing adapter is non-200.
 
@@ -66,7 +74,7 @@ BINDING='{"id":"b1","botId":"bot-1","type":"vendor","mode":"linked","vendor":"gr
 call() { curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' http://127.0.0.1:7788/aai/call -d "$1"; }
 
 call "{\"op\":\"agent.list\",\"binding\":$BINDING,\"input\":{}}"
-# {"ok":true,"value":[{"agentId":"grok-bot","displayName":"Grok Bot","vendor":"grok","state":"..."}, ...]}
+# {"ok":true,"value":[{"agentId":"grok-bot","displayName":"Grok Bot","vendor":"grok","state":"linked"}, ...]}
 
 call "{\"op\":\"agent.context.open\",\"binding\":$BINDING,\"input\":{\"agentId\":\"grok-bot\",\"title\":\"hello\"}}"
 # {"ok":true,"value":{"contextId":"...","isolation":"shared","guarantee":"best_effort","resumed":false}}
@@ -86,10 +94,14 @@ Notes:
 ## 4. Path B: start allternit-api
 
 ```bash
-export ALLTERNIT_API_PORT=18013                  # dev default 18013; production pins 8013
+export ALLTERNIT_DATA_DIR=$(mktemp -d)          # REQUIRED on a machine with Allternit Desktop: the default is
+                                                 # ~/Library/Application Support/allternit, the desktop's own database
+export ALLTERNIT_API_PORT=18013                  # dev default 18013; production pins 8013 (Allternit Desktop uses it)
 export ALLTERNIT_ENCRYPTION_KEY=$(openssl rand -hex 32)   # needed to store user API keys; without a key, POST .../secret is 503
 cargo run -p allternit-api                       # uses the shared CARGO_TARGET_DIR, see OPERATIONS.md
 ```
+
+Log in locally without a real account: also export `ALLTERNIT_DESKTOP_ACCESS_TOKEN=<any secret>` before `cargo run`, then send `x-allternit-desktop-access-token: <that secret>` and `x-allternit-user-id: <any id>` instead of a bearer token (the `api` helper below: replace the Authorization header with those two). The SDKs take extra headers (`new AllternitAgents({ baseUrl, headers })`; Python: `aai._http.headers.update({...})`).
 
 On startup the refinery migrations apply V198, V199, V200 and V201 ([OPERATIONS.md](OPERATIONS.md#migrations)). Every request below needs `Authorization: Bearer <your user token>`, the same token the web app sends. Resources are owner-scoped: another user's id returns 404.
 
@@ -101,7 +113,13 @@ api() { curl -s -H "Authorization: Bearer $UT" -H 'content-type: application/jso
 api -X PUT $API/subscriptions/binding -d '{"computer_id":"<id>","guest_port":7788,"token":"<gateway token>"}'
 ```
 
-(`PutBindingRequest` in `subscription_routes.rs` takes `computer_id`, optional `guest_port`, `token`. `GATEWAY_OFFLINE` 503 means no gateway is connected.)
+(`PutBindingRequest` in `subscription_routes.rs` takes `computer_id`, optional `guest_port`, `token`.) Until a computer is bound, every call that needs the gateway answers:
+
+```
+503 {"code":"GATEWAY_OFFLINE","error":"no subscription gateway is connected: sessions_computer_not_bound (bind a Sessions computer: PUT /api/v1/subscriptions/binding)"}
+```
+
+A turn that fails this way leaves the thread's remote context `UNBOUND`, and the next turn opens it again (no handoff needed).
 
 ## 5. Connect the vendor account and bind a bot
 
@@ -109,21 +127,21 @@ Request bodies use camelCase field names (`authType`, `accountBindingId`), respo
 
 ```bash
 # account: a browser/desktop session, no secret stored
-api -X POST $API/gateway/provider-accounts -d '{"vendor":"grok","authType":"desktop_session","displayName":"My Grok Bot"}'
-# 201 {"account":{"id":"acc-1","vendor":"grok","authType":"desktop_session","state":"DISCONNECTED","hasSecretRef":false,...}}
+ACC=$(api -X POST $API/gateway/provider-accounts -d '{"vendor":"grok","authType":"desktop_session","displayName":"My Grok Bot"}' | jq -r .account.id)
+# 201 {"account":{"id":"acct_…","vendor":"grok","authType":"desktop_session","state":"DISCONNECTED","hasSecretRef":false,...}}
 
 # walk the state machine one legal hop at a time (409 lists the allowed next states)
 for s in CONSENT_REQUIRED AUTHENTICATING VERIFYING CONNECTED; do
-  api -X PATCH $API/gateway/provider-accounts/acc-1 -d "{\"state\":\"$s\"}" >/dev/null
+  api -X PATCH $API/gateway/provider-accounts/$ACC -d "{\"state\":\"$s\"}" >/dev/null
 done
 
 # discover agents through the gateway
-api $API/gateway/provider-accounts/acc-1/agents
-# {"agents":[{"externalAgentId":"grok-bot","name":"Grok Bot"}]}
+api $API/gateway/provider-accounts/$ACC/agents
+# {"agents":[{"externalAgentId":"grok-bot","name":"Grok Bot"}]}     (503 GATEWAY_OFFLINE with no Sessions computer)
 
 # bind an existing Allternit bot to it
 api -X PUT $API/gateway/bots/BOT_ID/execution-binding \
-  -d '{"type":"vendor","mode":"linked","vendor":"grok","adapterId":"grok-bot","accountBindingId":"acc-1","preferredLane":"ui_bridge","externalAgentId":"grok-bot"}'
+  -d '{"type":"vendor","mode":"linked","vendor":"grok","adapterId":"grok-bot","accountBindingId":"'"$ACC"'","preferredLane":"ui_bridge","externalAgentId":"grok-bot"}'
 # 201 {"binding":{"id":"...","botId":"BOT_ID","state":"UNBOUND"|"BOUND",...}}
 api -X PATCH $API/gateway/bots/BOT_ID/execution-binding -d '{"state":"READY"}'   # legal moves only; BOUND -> READY
 ```
@@ -183,7 +201,7 @@ for (const s of ["CONSENT_REQUIRED", "AUTHENTICATING", "VERIFYING", "CONNECTED"]
 const { agents } = await aai.accounts.discoverAgents(account.id);
 await aai.request("PUT", `/gateway/bots/${botId}/execution-binding`, { type: "vendor", mode: "linked", vendor: "grok", adapterId: "grok-bot", accountBindingId: account.id, externalAgentId: agents[0].externalAgentId });
 await aai.bots.setBindingState(botId, "READY");
-try { await aai.threads.sendTurn(sessionId, "say ok"); }
+try { await aai.threads.sendTurn(sessionId, "say ok"); }   // metadata: sendTurn(id, text, { consequential: true, allternitApprovalId })
 catch (e) { if (e instanceof ApprovalRequiredError) console.log("needs a person:", e.approvalId); else throw e; }
 for await (const ev of aai.threads.streamEvents(threadId, { after: 0 })) console.log(ev.sequence, ev.type);
 await aai.approvals.respond(approvalId, "approve", { humanIntent: true });   // refuses without humanIntent
@@ -201,7 +219,7 @@ for s in ["CONSENT_REQUIRED", "AUTHENTICATING", "VERIFYING", "CONNECTED"]:
 agents = aai.discover_agents(acct["id"])["agents"]
 aai.request("PUT", f"/gateway/bots/{bot_id}/execution-binding", {"type": "vendor", "mode": "linked", "vendor": "grok", "adapterId": "grok-bot", "accountBindingId": acct["id"], "externalAgentId": agents[0]["externalAgentId"]})
 try:
-    aai.send_turn(session_id, "say ok")
+    aai.send_turn(session_id, "say ok")  # metadata dict, camelCase keys: send_turn(id, text, {"consequential": True})
 except ApprovalRequiredError as e:
     print("needs a person:", e.approval_id)
 for ev in aai.stream_events(thread_id, after=0):

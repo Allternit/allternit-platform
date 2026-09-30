@@ -1,0 +1,17 @@
+{
+  "schema_id": "allternit.kernel.PrimitiveRegistryV1",
+  "schema_version": "1.0.0",
+  "registry_version": "1.0.0",
+  "count": 0,
+  "primitives": [
+    {
+      "id": "obs.observe_environment",
+      "alias": "OBSERVE_ENVIRONMENT",
+      "family": "x",
+      "ledger_rows": [
+        "CL-021"
+      ]
+    }
+  ],
+  "unknown_required_field": "x"
+}

@@ -1,0 +1,23 @@
+{
+  "schema_id": "allternit.kernel.CompletionPolicyV1",
+  "schema_version": "1.0.0",
+  "policy_id": "id-0001",
+  "policy_version": 1,
+  "task_type": "OBSERVE_ENVIRONMENT",
+  "require": [
+    {
+      "criterion_id": "x",
+      "criterion_version": 1,
+      "blocking": false
+    }
+  ],
+  "allow_partial": false,
+  "l2882_predicate": [
+    "acceptance_criteria_satisfied",
+    "required_verifications_pass",
+    "no_unresolved_blocking_failures",
+    "required_artifacts_exist",
+    "policy_obligations_satisfied",
+    "completion_evidence_durable"
+  ]
+}

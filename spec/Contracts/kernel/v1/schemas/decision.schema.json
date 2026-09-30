@@ -1,0 +1,1131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allternit.com/kernel/1.0.0/decision.schema.json",
+  "title": "Allternit Kernel ABI 1.0.0 — decision",
+  "$comment": "FROZEN 2026-09-30 (ABI Package 1.0.0). Authority: Living Architecture v1.4 > 07/09 > 02. Additive changes need a minor bump; breaking changes need 2.0.",
+  "$defs": {
+    "Candidate": {
+      "type": "object",
+      "required": [
+        "candidate_id"
+      ],
+      "properties": {
+        "candidate_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "payload": {},
+        "is_unknown": {
+          "type": "boolean"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DecisionRequestV1": {
+      "type": "object",
+      "required": [
+        "envelope",
+        "operation",
+        "state_projection_ref",
+        "instructions",
+        "decision_bank_id"
+      ],
+      "properties": {
+        "envelope": {
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/AbiEnvelopeV1"
+            },
+            {
+              "properties": {
+                "schema_id": {
+                  "const": "allternit.kernel.DecisionRequestV1"
+                }
+              }
+            }
+          ]
+        },
+        "operation": {
+          "enum": [
+            "BELIEF",
+            "CHOICE",
+            "SCORE",
+            "RANK",
+            "SUBSET",
+            "ESTIMATE",
+            "GATE",
+            "VERIFY",
+            "PAIR_SCORE"
+          ]
+        },
+        "state_projection_ref": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "instructions": {
+          "type": "string"
+        },
+        "question_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "decision_bank_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Candidate"
+          }
+        },
+        "scale": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "constraints": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "calibration_domain": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threshold_profile_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_latency_ms": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "latency_class": {
+          "anyOf": [
+            {
+              "enum": [
+                "REALTIME",
+                "INTERACTIVE",
+                "BACKGROUND",
+                "BATCH"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "DecisionRequestV1",
+      "$comment": "9 ops extended in place (09 §C#5): receivers MUST fail closed on unknown operation values. Candidates are caller-supplied; providers never invent options."
+    },
+    "DecisionResultV1": {
+      "type": "object",
+      "required": [
+        "envelope",
+        "operation",
+        "answer",
+        "confidence",
+        "confidence_semantics",
+        "calibration_level_served",
+        "threshold_action",
+        "evidence_refs",
+        "latency_ms"
+      ],
+      "properties": {
+        "envelope": {
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/AbiEnvelopeV1"
+            },
+            {
+              "properties": {
+                "schema_id": {
+                  "const": "allternit.kernel.DecisionResultV1"
+                }
+              }
+            }
+          ]
+        },
+        "operation": {
+          "enum": [
+            "BELIEF",
+            "CHOICE",
+            "SCORE",
+            "RANK",
+            "SUBSET",
+            "ESTIMATE",
+            "GATE",
+            "VERIFY",
+            "PAIR_SCORE"
+          ]
+        },
+        "answer": {},
+        "probabilities": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "confidence_semantics": {
+          "enum": [
+            "CALIBRATED",
+            "RELATIVE_SET",
+            "UNCALIBRATED"
+          ]
+        },
+        "calibration_level_served": {
+          "enum": [
+            "RAW",
+            "L0",
+            "L1",
+            "L2",
+            "NONE"
+          ]
+        },
+        "calibration_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "calibration_fingerprint": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/ContentHash"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "feasible": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "constraint_violations": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/EvidenceRef"
+          }
+        },
+        "backend_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model_impl": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/ComponentIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threshold_action": {
+          "enum": [
+            "AUTO",
+            "REVIEW",
+            "ESCALATE",
+            "REJECT"
+          ]
+        },
+        "latency_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "abstained": {
+          "type": "boolean"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "DecisionResultV1",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "confidence_semantics": {
+                "not": {
+                  "const": "CALIBRATED"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "threshold_action": {
+                "not": {
+                  "const": "AUTO"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "calibration_level_served": {
+                "enum": [
+                  "RAW",
+                  "NONE"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "threshold_action": {
+                "not": {
+                  "const": "AUTO"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "GATE"
+              }
+            }
+          },
+          "then": {
+            "$comment": "GATE is a transition recommendation only; never authorization. Its answer may not be a policy verdict.",
+            "properties": {
+              "answer": {
+                "not": {
+                  "enum": [
+                    "ALLOW",
+                    "ALLOW_WITH_LIMITS",
+                    "ASK",
+                    "DENY"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "No threshold may act without valid calibration; an uncalibrated margin is never a probability."
+    },
+    "DecisionDeploymentUnitV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "model_ref",
+        "model_revision",
+        "tokenizer_id",
+        "quantization",
+        "runtime_backend",
+        "readout_point",
+        "schema_hash",
+        "candidate_set_hash",
+        "calibration_artifact_id",
+        "threshold_profile"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.DecisionDeploymentUnitV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "model_ref": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "model_revision": {
+          "type": "string"
+        },
+        "tokenizer_id": {
+          "type": "string"
+        },
+        "quantization": {
+          "type": "string"
+        },
+        "runtime_backend": {
+          "type": "string"
+        },
+        "readout_point": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "schema_hash": {
+          "$ref": "common.schema.json#/$defs/ContentHash"
+        },
+        "candidate_set_hash": {
+          "$ref": "common.schema.json#/$defs/ContentHash"
+        },
+        "calibration_artifact_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threshold_profile": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "DecisionDeploymentUnitV1"
+    },
+    "DecisionBackendProfileV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "backend_id",
+        "kind",
+        "decision_modes",
+        "probability_semantics",
+        "trust_location"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.DecisionBackendProfileV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "backend_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "kind": {
+          "enum": [
+            "rules",
+            "schema_encoder",
+            "contrastive_ranker",
+            "decoder_readout",
+            "specialist",
+            "remote_api"
+          ]
+        },
+        "decision_modes": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "BELIEF",
+              "CHOICE",
+              "SCORE",
+              "RANK",
+              "SUBSET",
+              "ESTIMATE",
+              "GATE",
+              "VERIFY",
+              "PAIR_SCORE"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "probability_semantics": {
+          "enum": [
+            "CALIBRATED",
+            "RELATIVE_SET",
+            "UNCALIBRATED"
+          ]
+        },
+        "state_cacheability": {
+          "type": "boolean"
+        },
+        "candidate_cacheability": {
+          "type": "boolean"
+        },
+        "candidate_count_curve": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "max_candidates": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_state_tokens": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "domain_heads": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "fine_tune_support": {
+          "type": "boolean"
+        },
+        "calibration_profile": {
+          "anyOf": [
+            {
+              "type": "object",
+              "required": [],
+              "properties": {
+                "ece": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "brier": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "bins": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "trust_location": {
+          "enum": [
+            "LOCAL",
+            "PRIVATE_REMOTE",
+            "PUBLIC_REMOTE"
+          ]
+        },
+        "deployment_unit_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "latency_class": {
+          "anyOf": [
+            {
+              "enum": [
+                "REALTIME",
+                "INTERACTIVE",
+                "BACKGROUND",
+                "BATCH"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "DecisionBackendProfileV1",
+      "$comment": "Seed kind 'mock' removed from the public enum; test doubles register as kind=rules with a test trust_location."
+    },
+    "DecisionReadoutProfileV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "profile_id",
+        "backend_id",
+        "readout_kind",
+        "calibration_level",
+        "question_id",
+        "schema_hash"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.DecisionReadoutProfileV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "profile_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "backend_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "readout_kind": {
+          "enum": [
+            "RAW_LOGIT",
+            "DEBIASED_LOGIT",
+            "CALIBRATED_LOGIT",
+            "HIDDEN_STATE_HEAD",
+            "CONTRASTIVE",
+            "SCHEMA_ENCODER"
+          ]
+        },
+        "source_layer": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "early_exit_supported": {
+          "type": "boolean"
+        },
+        "question_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "schema_hash": {
+          "$ref": "common.schema.json#/$defs/ContentHash"
+        },
+        "candidate_set_hash": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/ContentHash"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "calibration_level": {
+          "enum": [
+            "RAW",
+            "L0",
+            "L1",
+            "L2",
+            "AUTO"
+          ]
+        },
+        "calibration_artifact_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "head_artifact_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "confidence_semantics": {
+          "enum": [
+            "CALIBRATED",
+            "RELATIVE_SET",
+            "UNCALIBRATED"
+          ]
+        },
+        "max_options": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "DecisionReadoutProfileV1",
+      "$comment": "RAW is diagnostic only (reject for action). AUTO serves L2>L1>L0 and MUST report the served level in DecisionResultV1.calibration_level_served."
+    },
+    "DecisionCalibrationManifestV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "manifest_id",
+        "primitive_id",
+        "scope",
+        "scope_fingerprint",
+        "metrics",
+        "held_out",
+        "gate"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.DecisionCalibrationManifestV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "manifest_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "primitive_id": {
+          "$ref": "common.schema.json#/$defs/PrimitiveId"
+        },
+        "scope": {
+          "type": "object",
+          "required": [
+            "backend_id",
+            "model_ref",
+            "model_revision",
+            "tokenizer_id",
+            "quantization",
+            "runtime_backend",
+            "question_id",
+            "candidate_schema_hash",
+            "candidate_set_hash",
+            "threshold_profile"
+          ],
+          "properties": {
+            "backend_id": {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            "model_ref": {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            "model_revision": {
+              "type": "string"
+            },
+            "tokenizer_id": {
+              "type": "string"
+            },
+            "quantization": {
+              "type": "string"
+            },
+            "runtime_backend": {
+              "type": "string"
+            },
+            "question_id": {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            "candidate_schema_hash": {
+              "$ref": "common.schema.json#/$defs/ContentHash"
+            },
+            "candidate_set_hash": {
+              "$ref": "common.schema.json#/$defs/ContentHash"
+            },
+            "threshold_profile": {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            "readout_point": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "scope_fingerprint": {
+          "$ref": "common.schema.json#/$defs/ContentHash"
+        },
+        "metrics": {
+          "type": "object",
+          "required": [
+            "ece",
+            "brier",
+            "nll",
+            "accuracy",
+            "f1",
+            "coverage_at_risk",
+            "flip_sensitivity",
+            "order_sensitivity"
+          ],
+          "properties": {
+            "ece": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "brier": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "nll": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "accuracy": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "f1": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "coverage_at_risk": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "flip_sensitivity": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "order_sensitivity": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "held_out": {
+          "type": "object",
+          "required": [
+            "n",
+            "ci_level",
+            "ci_method",
+            "ece_upper_bound",
+            "auto_act_n",
+            "auto_act_error_rate",
+            "auto_act_error_upper_bound"
+          ],
+          "properties": {
+            "n": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "ci_level": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "ci_method": {
+              "type": "string"
+            },
+            "ece_upper_bound": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "auto_act_n": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "auto_act_error_rate": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "auto_act_error_upper_bound": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "dataset_ref": {
+              "anyOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/Id"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "coverage_region": {
+          "type": "object",
+          "$comment": "Inputs outside it abstain/escalate."
+        },
+        "gate": {
+          "type": "object",
+          "required": [
+            "ece_max",
+            "auto_act_error_max",
+            "reversible_only",
+            "passed"
+          ],
+          "properties": {
+            "ece_max": {
+              "const": 0.05
+            },
+            "auto_act_error_max": {
+              "const": 0.05
+            },
+            "reversible_only": {
+              "const": true
+            },
+            "passed": {
+              "type": "boolean"
+            },
+            "agreement_with_other_model_used": {
+              "const": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "DecisionCalibrationManifestV1",
+      "$comment": "Q22 gate fields. Invalidated by any scope change. Deeper manifest content (bins, head params) is DEFERRED to WP8; bundles reference manifests by id."
+    },
+    "ArtifactRecordV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "artifact_id",
+        "kind",
+        "content_hash",
+        "scope_fingerprint",
+        "created_at"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.ArtifactRecordV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "artifact_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "kind": {
+          "enum": [
+            "decision_readout_profile",
+            "decision_head",
+            "calibration_manifest",
+            "adapter",
+            "routing_profile"
+          ]
+        },
+        "content_hash": {
+          "$ref": "common.schema.json#/$defs/ContentHash"
+        },
+        "scope_fingerprint": {
+          "$ref": "common.schema.json#/$defs/ContentHash"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "payload_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "ArtifactRecordV1",
+      "$comment": "Immutable, content-addressed; scope mismatch = hard reject then fallback."
+    }
+  }
+}

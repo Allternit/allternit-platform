@@ -29,8 +29,8 @@ Index: [README.md](README.md). Setup for a dev machine: [QUICKSTART.md](QUICKSTA
 
 | Variable | Adapter | Effect |
 |---|---|---|
-| `SUBS_GATEWAY_GROK_BOT_CDP_PORT` | grok-bot | CDP port, default 9222 |
-| `SUBS_GATEWAY_CLAUDE_DESKTOP_CDP_PORT` | claude-desktop | CDP port |
+| `SUBS_GATEWAY_GROK_BOT_CDP_PORT` | grok-bot | CDP port, default 9231 (not 9222: Allternit Desktop and Chrome use it) |
+| `SUBS_GATEWAY_CLAUDE_DESKTOP_CDP_PORT` | claude-desktop | CDP port, default 9232 |
 | `SUBS_GATEWAY_CLAUDE_DESKTOP_TRANSPORT` | claude-desktop | `ax` to use macOS Accessibility instead of CDP (default CDP) |
 | `SUBS_GATEWAY_CLAUDE_AX_CONSENT` | claude-desktop | `1` allows the AX bridge to attach. Without it every call is `LANE_BLOCKED`. |
 | `SUBS_GATEWAY_AX_BRIDGE_BIN` | claude-desktop, chatgpt-dots | Path to the built `native/ax-bridge` helper |
