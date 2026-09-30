@@ -1096,7 +1096,7 @@ async fn main() {
     let mut public = Router::new()
         .nest("/health", health_router())
         .merge(web_proxy)
-        .nest("/beta", enrollment_router())
+        .merge(enrollment_router())
         .merge(status_router())
         .merge(webhook_router())
         .merge(webhook_trigger_public_router())
