@@ -6,6 +6,7 @@
 //! one-way projection).
 
 pub mod graph;
+pub mod isa;
 pub mod lifecycle;
 pub mod projection;
 pub mod registry;

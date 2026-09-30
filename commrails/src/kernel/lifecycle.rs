@@ -239,6 +239,11 @@ pub fn check_legacy_change(from: &str, to: &str) -> Result<(), LifecycleError> {
         }
         return Err(LifecycleError::IllegalTransition { from: f, to: t });
     }
+    // Legacy "NEW" is never a legal regression target for a live node (the
+    // typed path Replan -> Admitted needs an explicit REPLAN decision).
+    if t == NodeState::Admitted && f != NodeState::Declared {
+        return Err(LifecycleError::IllegalTransition { from: f, to: t });
+    }
     if f.can_reach(t) {
         Ok(())
     } else {

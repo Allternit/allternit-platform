@@ -20,7 +20,7 @@ pub struct Primitive {
     pub extra_aliases: Vec<String>,
     pub family: String,
     #[serde(default)]
-    pub class: Option<String>,
+    pub class: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
