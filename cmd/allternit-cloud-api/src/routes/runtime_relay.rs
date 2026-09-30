@@ -1334,6 +1334,9 @@ fn filtered_headers(headers: HashMap<String, String>) -> HashMap<String, String>
                     // own device token, so this is what tells the runtime a
                     // person approved or sent, not an agent.
                     | "x-allternit-human-proof"
+                    // Subscriptions: the one-use human action minted for a
+                    // task send, checked by the runtime (D16).
+                    | "x-allternit-human-action"
             )
         })
         .collect()

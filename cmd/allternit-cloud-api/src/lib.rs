@@ -516,6 +516,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
                 // D16: the person's Clerk session on human-act calls, relayed
                 // to their runtime (see runtime_relay::filtered_headers).
                 header::HeaderName::from_static("x-allternit-human-proof"),
+                // Subscriptions: the one-use human action a task send carries.
+                header::HeaderName::from_static("x-allternit-human-action"),
             ])
             .allow_credentials(true)
             .max_age(std::time::Duration::from_secs(3600))
@@ -535,6 +537,10 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(public_runtime_routes)
         .merge(auth_routes)
         .merge(protected_routes)
+        // Everything else under /api/v1 that lives on the user's runtime
+        // (subscriptions, agent gateway, computers, …) is relayed to their
+        // default data-plane node, so the web works like the Desktop app.
+        .fallback(routes::data_plane_fallback::fallback)
         .layer(DefaultBodyLimit::max(max_body_size))
         .layer(cors)
         .layer(axum::middleware::from_fn_with_state(
