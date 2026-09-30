@@ -5,6 +5,14 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## September 30 documentation update
+
+- **Bots and threads**: Documented durable standing/task threads, server status, context generations, subagents, and removal of the standalone Bot Hub. See [Bots](/surfaces/bots) and [Threads](/guides/bot-threads).
+- **Project launches**: Added Al's planning, dependency execution, follow-up routing, project work directories, and [bot/team template setup](/guides/bot-templates). See [Project coordination](/guides/project-coordination).
+- **Subscriptions**: Added the Sessions-computer sign-in flow, several logins per provider, preferred login selection, disclosure, and human-initiated sends. See [Subscriptions](/guides/subscriptions).
+- **Artifact modes and computers**: Explained editor-pane sessions, bot-thread mode limits, deliverable requirements, and ACI observation/control. See [Artifact modes](/guides/artifact-modes) and [Computers](/guides/computers-and-apps).
+- **MCP Apps**: Recorded the [pending integration package](/guides/mcp-apps-status) separately from existing MCP tools. This docs update does not announce that package as released.
+
 ## 2026.09
 
 - **APIs**: Documented the production split. [Cloud API](/api/cloud-api) at `https://api.allternit.com` is the only public API. [Allternit API](/api/allternit-api) (`:8013`, SQLite) is the private data plane. Agent sessions, Office, and beta research are Cloud API routes that relay to a paired or provisioned node (HTTP 428 if none is healthy).
