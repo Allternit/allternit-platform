@@ -70,6 +70,7 @@ pub mod gateway_runner;
 mod gateway_acceptance;
 pub mod aai_facade;
 pub mod a2a_routes;
+pub mod agency_api;
 pub mod teams_auth;
 pub mod discord_gateway;
 pub mod channel_gateway;

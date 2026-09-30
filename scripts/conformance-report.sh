@@ -18,7 +18,8 @@ OUT="$(mktemp -d)"
 
 cargo test -p allternit-commrails --test conformance 2>&1 | tee "$OUT/kernel.txt" | grep -E "^test result|error(\[|:)" >&2
 if [ -n "$API" ]; then
-  AGENCY_BASE_URL="$API" bun test ./tests/agency-conformance/agency-api.conformance.ts 2>&1 | tee "$OUT/api.txt" | tail -5 >&2
+  # Runs take longer than bun's 5 s default per-test timeout.
+  AGENCY_BASE_URL="$API" bun test --reporter=junit --reporter-outfile="$OUT/api.xml" --timeout $(( (${AGENCY_RUN_TIMEOUT_S:-120} * 2 + 90) * 1000 )) ./tests/agency-conformance/agency-api.conformance.ts 2>&1 | tee "$OUT/api.txt" | tail -5 >&2
 fi
 
 OUT="$OUT" API="$API" python3 - <<'PY'
@@ -34,7 +35,17 @@ def grab(path, rx):
 k = {n: s for n, s in re.findall(r"^test (\S+) \.\.\. (\w+)", open(f"{out}/kernel.txt").read(), re.M)}
 a = {}
 if api_ran:
-    for s, n in re.findall(r"^\((pass|fail|skip)\) (?:.*> )?(\S+)", open(f"{out}/api.txt").read(), re.M):
+    # bun prints only failures when stdout is not a TTY, so read the JUnit
+    # report (every test case) and fall back to the text lines.
+    rows = []
+    if os.path.exists(f"{out}/api.xml"):
+        import xml.etree.ElementTree as ET
+        for tc in ET.parse(f"{out}/api.xml").iter("testcase"):
+            st = "fail" if tc.find("failure") is not None or tc.find("error") is not None else "skip" if tc.find("skipped") is not None else "pass"
+            rows.append((st, tc.get("name", "").split(" > ")[-1]))
+    if not rows:
+        rows = re.findall(r"^\((pass|fail|skip)\) (?:.*> )?(\S+)", open(f"{out}/api.txt").read(), re.M)
+    for s, n in rows:
         a[n] = s
 G = lambda d, *p: [n for n in d if n.startswith(p)]
 # ledger row -> (description, kernel groups, api groups)

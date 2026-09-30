@@ -136,7 +136,7 @@ Every installed app has a permission mode. It decides when Allternit asks the us
 The decision comes from your tool annotations, so accurate annotations matter. See [annotations](/plugins/develop/mcp-server#annotations). A tool with no `readOnlyHint` is treated as a change.
 
 <Note>
-The host enforces the install's permission mode on tool calls your View makes, using the annotations from your server's own `tools/list`. A tool it cannot find is treated as destructive. Tool calls the model makes during a chat turn do not go through this check yet (**Planned**). Expect users to change the mode.
+The host enforces the install's permission mode on tool calls your View makes, using the annotations from your server's own `tools/list`. A tool it cannot find is treated as destructive. The same mode applies to tool calls the model makes during a chat turn: Allternit asks the user before each call your annotations mark as needing confirmation, and a declined call fails with "The user declined this tool call". Expect users to change the mode.
 </Note>
 
 Separately, the [`x-allternit/*` extensions](/plugins/reference/window-allternit) that write data or start work show a confirmation prompt drawn by the host over the View. The View cannot skip or answer it.

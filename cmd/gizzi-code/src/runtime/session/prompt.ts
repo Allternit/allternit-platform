@@ -1476,13 +1476,33 @@ const message = await createUserMessage(input)
           always: ["*"],
         })
 
-        const result = await ToolDedupe.execute<CallToolResult & { metadata?: Record<string, unknown> }>({
-          sessionID: ctx.sessionID,
-          messageID: ctx.messageID,
-          tool: key,
-          args,
-          run: () => ToolDispatcher.executeInitialized(key, args, ctx, (nextArgs) => execute(nextArgs, opts)),
-        })
+        // Model-initiated call to a tool the proxy marked as needing the user's approval under the
+        // app's install permission mode: ask first (never remembered), then let the call carry the
+        // approval flag. Declined → tool error.
+        const descriptor = mcpCatalog.descriptors[key]
+        if (descriptor?.requiresConfirmation) {
+          await McpUserProxy.gate({
+            callID: opts.toolCallId,
+            tool: descriptor.originalName ? McpUserProxy.originalToolName(descriptor.originalName) : key,
+            title: descriptor.title,
+            app: descriptor.appName,
+            args,
+            ask: ctx.ask,
+          })
+        }
+
+        let result: CallToolResult & { metadata?: Record<string, unknown> }
+        try {
+          result = await ToolDedupe.execute<CallToolResult & { metadata?: Record<string, unknown> }>({
+            sessionID: ctx.sessionID,
+            messageID: ctx.messageID,
+            tool: key,
+            args,
+            run: () => ToolDispatcher.executeInitialized(key, args, ctx, (nextArgs) => execute(nextArgs, opts)),
+          })
+        } finally {
+          McpUserProxy.clearApproval(opts.toolCallId)
+        }
 
         await Plugin.trigger(
           "tool.execute.after",

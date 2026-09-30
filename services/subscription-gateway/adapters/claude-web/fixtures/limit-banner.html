@@ -1,5 +1,7 @@
 <!doctype html>
-<!-- fixture: limit-banner — idle UI plus a usage-limit notice (quota signal) -->
+<!-- fixture: limit-banner — live shape (2026-09-30): the account is at its
+     usage limit; the notice is a card in a data-testid=limit-wall-* element
+     (no alert role), plus a toast. Quota signal. -->
 <html lang="en">
   <head><meta charset="utf-8"><title>claude-web fixture — limit banner</title></head>
   <body data-state="limit-banner">
@@ -7,10 +9,14 @@
       <button data-testid="user-menu-button" aria-label="User menu">E</button>
     </nav>
     <main>
-      <div role="alert">You're out of free messages until 2:00 PM.</div>
+      <div data-testid="limit-wall-credits-explainer">
+        <p>You've reached your usage limit.</p>
+        <p>Your limit resets at 9:30 PM. Turn on notifications and Claude will notify you then.</p>
+      </div>
       <div id="thread"></div>
       <div class="ProseMirror" data-testid="chat-input" role="textbox" aria-label="Write your prompt to Claude" contenteditable="true"></div>
       <button aria-label="Send message" type="button">Send</button>
     </main>
+    <div class="toast">You've hit your limit for Claude messages. Limits will reset at 9:30 PM.</div>
   </body>
 </html>

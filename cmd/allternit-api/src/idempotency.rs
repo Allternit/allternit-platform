@@ -107,6 +107,11 @@ async fn idempotency_middleware_inner(
     request: Request,
     next: Next,
 ) -> Result<Response, Response> {
+    // The Agency API create endpoint owns its idempotency (durable, ledger-
+    // backed, 409 ERR_IDEMPOTENCY_KEY_REUSED, `Idempotency-Replayed`; v0.3 Q10).
+    if request.uri().path() == "/v1/agency" {
+        return Ok(next.run(request).await);
+    }
     // Only mutable methods benefit from idempotency guarantees.
     if !matches!(
         request.method(),

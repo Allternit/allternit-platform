@@ -212,6 +212,25 @@ describe("http wiring — POST /v1/tasks resolves at pick time", () => {
     expect(scheduler.size("prov-a", "unrouted")).toBe(0);
   });
 
+  it("a force or prefer pin with a provider but no account resolves within that provider", async () => {
+    const tok = issueToken(deps.db, "caller-1", "test", ["tasks:submit"]).token;
+    for (const mode of ["force", "prefer"] as const) {
+      const res = await request(deps.app)
+        .post("/v1/tasks")
+        .set("authorization", `Bearer ${tok}`)
+        .send({
+          initiated_by: HUMAN,
+          capability: "chat.create",
+          prompt: "hello",
+          routing: { mode, provider: "prov-a", allow_fallback: false, allow_metered: false, allow_thread_migration: false },
+        });
+      expect(res.status).toBe(201);
+      expect(res.body.routing).toMatchObject({ provider: "prov-a", account_id: "acct-1" });
+    }
+    expect(scheduler.size("prov-a", "acct-1")).toBe(2);
+    expect(scheduler.size("prov-a", "unrouted")).toBe(0);
+  });
+
   it("a provider pin never routes to another provider's account", async () => {
     const t = issueToken(deps.db, "caller-1", "test", ["tasks:submit"]).token;
     const res = await request(deps.app)
