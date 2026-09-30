@@ -442,7 +442,11 @@ export function createPlaywrightLauncher(deps: PlaywrightLauncherDeps): Launcher
       headless: false,
       // After a crash or kill -9 Chrome otherwise floats a "Restore pages?"
       // bubble over the provider page on every relaunch.
-      args: ["--hide-crash-restore-bubble"],
+      args: ["--hide-crash-restore-bubble", "--start-maximized"],
+      // The page follows the window. Playwright's default 1280x720 viewport plus
+      // Chrome's toolbars made the window taller than a 720p Sessions display,
+      // so its bottom (composer, buttons) sat off-screen in the viewer.
+      viewport: null,
     });
     try {
       if (deps.sessionImport) {
