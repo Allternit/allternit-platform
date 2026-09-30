@@ -43,10 +43,11 @@ pub enum HarnessGate {
     /// Every tool call passes through the Allternit PreToolUse hook
     /// (hard floor + Gate 2 when a WIH is bound).
     Hook,
-    /// No hook; writes are confined by the harness's own OS sandbox to the
-    /// workspace (codex `workspace-write`). Not lease-precise.
+    /// No hook; runs auto-approve inside Allternit's execution environment
+    /// (worktree, env allowlist, egress guard). Not lease-precise.
     Sandbox,
-    /// Runs with the vendor's auto-approve flag and nothing in front of it.
+    /// Runs with the vendor's auto-approve flag; only Allternit's execution
+    /// environment (worktree, env allowlist, egress guard) sits in front of it.
     Ungated,
 }
 
@@ -105,24 +106,15 @@ pub async fn load_wih_policy(ledger: &Ledger, wih_id: &str) -> Result<WihPolicy>
     })
 }
 
-/// Spawn admission. `Ok` means the spawn may proceed.
-///
-/// A harness that cannot enforce lease coverage (anything but [`HarnessGate::Hook`])
-/// is refused on a WIH whose policy requires a lease for writes — without a
-/// hook, that harness could write anywhere the OS lets it, so the WIH's policy
-/// would be a fiction. Unbound runs (no WIH) are admitted: the hard floor still
-/// applies to hooked harnesses and nothing changes for the others.
-pub fn admit(harness: &str, wih: Option<&WihPolicy>) -> std::result::Result<HarnessGate, String> {
-    let gate = harness_gate(harness);
-    let Some(wih) = wih else { return Ok(gate) };
-    if gate == HarnessGate::Hook || !wih.writes_need_lease() {
-        return Ok(gate);
-    }
-    Err(format!(
-        "refusing to spawn {harness}: it is {} (no PreToolUse hook), and WIH {} requires lease coverage for writes that it could not enforce. Use a hooked harness (claude-code) for this WIH, or run without a WIH binding.",
-        gate.as_str(),
-        wih.wih_id
-    ))
+/// Spawn admission. Every harness is admitted and launched in its own
+/// auto-approve mode (Eoj, 2026-09-30): Allternit's gate is the gate. A CLI
+/// held out of auto-approve asks for permission on its own side, and a
+/// headless turn then hangs waiting for an answer nobody streams back.
+/// The returned [`HarnessGate`] records what enforcement sits in front of it:
+/// the PreToolUse hook (S0 floor + Gate 2) for hooked harnesses, and the
+/// execution environment (worktree, env allowlist, egress guard) for the rest.
+pub fn admit(harness: &str, _wih: Option<&WihPolicy>) -> std::result::Result<HarnessGate, String> {
+    Ok(harness_gate(harness))
 }
 
 /// A PreToolUse request, normalized across harnesses (Claude Code and codex
@@ -466,9 +458,8 @@ pub fn spawn_refused_event(harness: &str, wih_id: &str, reason: &str) -> Alltern
 }
 
 /// Tools a headless Claude Code run needs without a prompt. The session runs
-/// in `acceptEdits`; these allow rules replace `--dangerously-skip-permissions`
-/// so nothing blocks on a prompt, while the PreToolUse hook still sees (and
-/// can deny) every call.
+/// in `bypassPermissions` so nothing blocks on a CLI-side prompt; the
+/// PreToolUse hook still sees (and can deny) every call.
 pub const CLAUDE_ALLOWED_TOOLS: &[&str] = &[
     "Bash",
     "Edit",
@@ -527,7 +518,7 @@ pub fn claude_hook_command(target: HookTarget<'_>) -> String {
 pub fn claude_settings(target: HookTarget<'_>) -> Value {
     json!({
         "permissions": {
-            "defaultMode": "acceptEdits",
+            "defaultMode": "bypassPermissions",
             "allow": CLAUDE_ALLOWED_TOOLS,
         },
         "hooks": {
@@ -594,8 +585,10 @@ pub fn gate_argv(cmd: &[String], settings_path: Option<&Path>) -> Vec<String> {
                     _ => out.push(w.clone()),
                 }
             }
+            // Auto-approve on the CLI's side; the PreToolUse hook in
+            // --settings still runs in bypass mode and its deny wins.
             out.push("--permission-mode".to_string());
-            out.push("acceptEdits".to_string());
+            out.push("bypassPermissions".to_string());
             if let Some(settings) = settings_path {
                 out.push("--settings".to_string());
                 out.push(settings.to_string_lossy().to_string());
@@ -603,8 +596,8 @@ pub fn gate_argv(cmd: &[String], settings_path: Option<&Path>) -> Vec<String> {
             out
         }
         HarnessGate::Sandbox => {
-            // Any caller-chosen sandbox (e.g. danger-full-access) is replaced:
-            // the Sandbox classification is only true under workspace-write.
+            // Caller-chosen sandbox/approval flags are replaced by one
+            // consistent auto-approve setting.
             let mut out = Vec::with_capacity(cmd.len() + 4);
             let mut skip_next = false;
             for (i, w) in cmd.iter().enumerate() {
@@ -626,13 +619,13 @@ pub fn gate_argv(cmd: &[String], settings_path: Option<&Path>) -> Vec<String> {
                 }
                 out.push(w.clone());
             }
-            // Same flags as the uhp-gateway codex driver and ao-spawn-gate:
+            // Auto-approve with no codex-side sandbox (the yolo equivalent).
             // `-c` rides every codex subcommand (`codex exec resume` has no
-            // `--sandbox`), and network stays on so dependency fetches work.
+            // `--sandbox` or bypass flag). Confinement comes from Allternit's
+            // execution environment, not from codex.
             for config in [
-                "sandbox_mode=\"workspace-write\"",
+                "sandbox_mode=\"danger-full-access\"",
                 "approval_policy=\"never\"",
-                "sandbox_workspace_write.network_access=true",
             ] {
                 out.push("-c".to_string());
                 out.push(config.to_string());

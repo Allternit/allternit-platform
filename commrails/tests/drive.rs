@@ -2,7 +2,7 @@
 //!
 //! Stub harnesses are shell scripts. One is named `claude` so the spawn gate
 //! classifies it as hooked (it receives, and ignores, the gate's
-//! `--permission-mode acceptEdits --settings <file>` args); one is named
+//! `--permission-mode bypassPermissions --settings <file>` args); one is named
 //! `kimi` so it is ungated. Sessions run in real tmux, like production.
 
 use std::collections::HashMap;
@@ -384,41 +384,21 @@ async fn global_caps_are_shared_across_two_drive_processes() {
 }
 
 #[tokio::test]
-async fn ungated_harness_is_refused_once_into_needs_you() {
+async fn ungated_harness_is_admitted_and_spawned() {
+    // Eoj, 2026-09-30: ungated CLIs run in their own auto-approve mode;
+    // Allternit's gate is the gate, so drive never refuses them.
     let tmp = test_root();
     let root = tmp.path().to_path_buf();
     worker(&root, "0");
-    stub(&root, "kimi", "echo should-never-run >> \"$LOG\"");
+    stub(&root, "kimi", "echo ran >> \"$LOG\"");
     write_config(&root, json!({}));
     let (ledger, gate) = build_gate(&root).await;
     let (dag_id, _) = plan(&gate, vec![node("ug_a", "", Some("ao:kimi"), None)]).await;
 
     let report = drive(&root, &ledger, &gate, &dag_id, |_| {}).await;
-    assert_eq!(report.exit, Some(DriveExit::Idle));
-    assert!(report.spawned.is_empty());
-    assert_eq!(report.needs_you, vec![("ug_a".to_string(), "harness_refused".to_string())]);
-    let d = dag(&ledger, &dag_id).await;
-    assert!(d.nodes["ug_a"].current_wih_id.is_none(), "refused before pickup");
-    let events = ledger.query(LedgerQuery::default()).await.unwrap();
-    let pending = pending_manual_gates(&events);
-    assert_eq!(pending.len(), 1);
-    assert!(pending[0].description.contains("ungated"), "{}", pending[0].description);
-    assert!(!root.join("stub.log").exists());
-
-    // Re-running does not loop: the gate keeps the node out of READY.
-    let again = drive(&root, &ledger, &gate, &dag_id, |_| {}).await;
-    assert!(again.needs_you.is_empty());
-    assert!(again.waiting.iter().any(|l| l.contains("needs you")));
-    assert_eq!(events_of(&ledger, NEEDS_YOU).await.len(), 1);
-
-    // Resolving acknowledges the refusal; drive leaves the node for manual pickup.
-    let gate_id = pending[0].gate_id.clone();
-    gate.resolve_node_wait_gate(&dag_id, "ug_a", &gate_id, GateOutcome::Ok, Some(Actor { r#type: ActorType::User, id: "eoj".into() }), None)
-        .await
-        .unwrap();
-    let third = drive(&root, &ledger, &gate, &dag_id, |_| {}).await;
-    assert!(third.needs_you.is_empty() && third.spawned.is_empty());
-    assert!(third.waiting.iter().any(|l| l.contains("refusal acknowledged")), "{:?}", third.waiting);
+    assert!(report.needs_you.is_empty(), "{:?}", report.needs_you);
+    assert!(report.spawned.iter().any(|(n, _)| n == "ug_a"), "{:?}", report.spawned);
+    assert!(events_of(&ledger, NEEDS_YOU).await.is_empty());
 }
 
 #[tokio::test]
@@ -589,8 +569,8 @@ async fn dry_run_has_no_side_effects() {
     assert!(!root.join("stub.log").exists());
     let plan = report.plan.join("\n");
     assert!(plan.contains("dr_a: would wih pickup + sign-open, spawn ao:claude"), "{plan}");
-    assert!(plan.contains("--permission-mode acceptEdits --settings"), "{plan}");
-    assert!(plan.contains("dr_b: would add a needs-you gate (harness_refused)"), "{plan}");
+    assert!(plan.contains("--permission-mode bypassPermissions --settings"), "{plan}");
+    assert!(plan.contains("dr_b: would wih pickup + sign-open, spawn ao:kimi"), "{plan}");
     assert!(plan.contains("dr_c: would mail bot:scout"), "{plan}");
     assert!(!plan.contains("dr_d"), "blocked node is not planned: {plan}");
 }
