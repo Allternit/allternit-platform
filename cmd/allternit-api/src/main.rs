@@ -1132,6 +1132,9 @@ async fn main() {
         // Per-user MCP proxy for gizzi's chat turns: authenticated by its own
         // short-lived HMAC token in the handler, not by Clerk.
         .merge(allternit_api::mcp_user_proxy::mcp_user_proxy_router())
+        // MCP connector OAuth redirect target: no Clerk JWT on the browser
+        // redirect; the single-use OAuth `state` identifies the session.
+        .merge(allternit_api::mcp_routes::mcp_oauth_public_router())
         // Internal-only: the ACU (computer-use) Python gateway has no Clerk
         // session, so these are gated by internal_auth::require_internal_token
         // per-handler instead of the Clerk auth_middleware layer above.

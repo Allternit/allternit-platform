@@ -14,9 +14,15 @@ use tracing::{info, warn};
 use crate::auth::{get_user, AuthUser};
 use crate::AppState;
 
+/// The OAuth redirect target. The browser arrives from the auth server's
+/// consent screen with no Clerk JWT, so this is mounted outside the protected
+/// router; the single-use `state` identifies the pending session.
+pub fn mcp_oauth_public_router() -> Router<Arc<AppState>> {
+    Router::new().route("/mcp/oauth/callback", get(mcp_oauth_callback))
+}
+
 pub fn mcp_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/oauth/callback", get(mcp_oauth_callback))
         .route(
             "/connectors",
             get(list_mcp_connectors).post(create_mcp_connector),
@@ -231,15 +237,9 @@ fn redirect_uri_for_session(metadata_json: Option<&str>) -> String {
     recorded.unwrap_or_else(default_redirect_uri)
 }
 
+/// Same URI the connector OAuth start and our CIMD document register.
 fn default_redirect_uri() -> String {
-    let base = std::env::var("ALLTERNIT_API_PUBLIC_URL")
-        .ok()
-        .filter(|u| !u.is_empty())
-        .unwrap_or_else(|| {
-            let port = crate::APP_CONFIG.get().map(|c| c.api_port()).unwrap_or(8013);
-            format!("http://127.0.0.1:{port}")
-        });
-    format!("{}/api/mcp/oauth/callback", base.trim_end_matches('/'))
+    crate::mcp_directory_routes::oauth_redirect_uri(&crate::mcp_directory_routes::public_base())
 }
 
 /// Stamp a token-endpoint response with the moment it was obtained (so its
@@ -745,7 +745,7 @@ mod tests {
             "https://app.test/cb2"
         );
         for none in [None, Some("not json"), Some("{}"), Some(r#"{"redirect_uri":""}"#)] {
-            assert!(redirect_uri_for_session(none).ends_with("/api/mcp/oauth/callback"), "{none:?}");
+            assert!(redirect_uri_for_session(none).ends_with("/mcp/oauth/callback"), "{none:?}");
         }
     }
 

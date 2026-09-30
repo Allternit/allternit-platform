@@ -17,8 +17,8 @@
 //!    and records the order.
 //!
 //! Hard rule: only `sk_test_` / `pk_test_` keys, read from the environment.
-//! A live key configured for this feature is a startup error
-//! ([`CommerceConfig::from_env`]); nothing here ever falls back to
+//! A live key configured for this feature is refused: commerce stays disabled
+//! and its routes answer 503 ([`CommerceConfig::from_env`]); nothing here ever falls back to
 //! `STRIPE_SECRET_KEY`.
 
 use async_trait::async_trait;

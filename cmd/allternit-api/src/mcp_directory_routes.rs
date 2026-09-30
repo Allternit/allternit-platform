@@ -878,7 +878,7 @@ async fn delete_install_handler(
 
 // ─── Connector OAuth start (PKCE) + CIMD ────────────────────────────────────
 
-fn public_base() -> String {
+pub(crate) fn public_base() -> String {
     std::env::var("ALLTERNIT_PUBLIC_BASE_URL")
         .ok()
         .filter(|s| !s.is_empty())

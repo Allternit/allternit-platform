@@ -15,8 +15,7 @@ Read by `allternit-api` (found by grepping `env::var` in the files these feature
 | `ALLTERNIT_MCP_PROXY_URL` | `mcp_user_proxy.rs` | URL gizzi uses to reach the proxy. Default `http://127.0.0.1:<api_port>/mcp/user-proxy` (port 8013 if config is unset). Set it when gizzi is not on the API host. |
 | `ALLTERNIT_DIRECTORY_REVIEW_ORG_ID` | `mcp_directory_routes.rs` | Clerk org id whose admins may review submissions. **Unset = nobody can review** (review, credentials, held-approve and `scope=all` return 403). |
 | `ALLTERNIT_MCP_ALLOW_PRIVATE_CONNECTORS` | `mcp_apps.rs` | Dev flag. `1`, `true` or `yes` lets connector URLs resolve to loopback/private addresses. Do not set in production: it turns off the SSRF check for the bridge, the proxy and OAuth calls. |
-| `ALLTERNIT_PUBLIC_BASE_URL` | `mcp_directory_routes.rs` | Public API origin used for the CIMD document and `oauth/start` redirect. Default `http://127.0.0.1:8013`. |
-| `ALLTERNIT_API_PUBLIC_URL` | `mcp_routes.rs` | Origin for the fallback OAuth `redirect_uri` in the callback token exchange. Default `http://127.0.0.1:<api_port>`. |
+| `ALLTERNIT_PUBLIC_BASE_URL` | `mcp_directory_routes.rs` | Public API origin for the CIMD document and the OAuth `redirect_uri` (`<base>/mcp/oauth/callback`, a public route: no Clerk token on the browser redirect). Default `http://127.0.0.1:8013`. |
 | `MCP_PUBLIC_URL` | `mcp_agents.rs` | Public URL of the Agents MCP server; the expected `aud`. Default `https://mcp.allternit.com/mcp`. |
 | `MCP_OAUTH_ISSUER` | `mcp_agents.rs` | Authorization server advertised in protected-resource metadata. Default: the Clerk proxy issuer `https://allternit.com/__clerk`. |
 | `CLERK_JWKS_URL`, `CLERK_ISSUER` | `auth.rs` | JWT verification. Defaults `https://clerk.allternit.com/.well-known/jwks.json` and `https://clerk.allternit.com`. |
