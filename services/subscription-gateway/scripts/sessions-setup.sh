@@ -158,6 +158,15 @@ for _ in $(seq 1 20); do
   sleep 0.5
 done
 pkill -9 -f "src/main.ts" 2>/dev/null || true
+# Login/adapter Chromes outlive a killed gateway (reparented to init) and keep
+# their profile locked, so the new gateway can't launch that account. SIGTERM
+# first so Chrome flushes the session it holds, then force.
+pkill -TERM -f -- "--user-data-dir=$STATE_DIR/profiles/" 2>/dev/null || true
+for _ in $(seq 1 20); do
+  pgrep -f -- "--user-data-dir=$STATE_DIR/profiles/" >/dev/null || break
+  sleep 0.5
+done
+pkill -9 -f -- "--user-data-dir=$STATE_DIR/profiles/" 2>/dev/null || true
 cd "$REPO/services/subscription-gateway"
 # Logins run in a plain (non-automated) Google Chrome on the account's own
 # profile: Google sign-in and Cloudflare accept it, where Firefox got
