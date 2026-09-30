@@ -5,7 +5,7 @@ description: "The half of the agent that makes work durable: graph lifecycle, no
 
 **Status: AVAILABLE (internal work runtime) · PREVIEW (typed lifecycle, drive runner, Agency API surface).** See [status labels](/architecture#status-labels).
 
-The **Work Machine** carries a run across time, processes and restarts. It is the other half of the agent next to the [Cognitive Machine](/architecture/cognitive-machine). A model never drives it; the work runtime does.
+The agent is [two machines](/architecture/two-machines). The Work Machine decides how work persists and progresses; the [Cognitive Machine](/architecture/cognitive-machine) decides how cognition is performed. This page covers the first: **"How does work live?"** The Work Machine carries a run across time, processes and restarts. A model never drives it; the work runtime does.
 
 ## Architecture contract
 

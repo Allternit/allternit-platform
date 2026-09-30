@@ -3,9 +3,24 @@ title: "Cognition levels S0–S3"
 description: "The four kinds of inference a graph node can use, what each may and may not do, and how the cheapest correct one is chosen"
 ---
 
-**Status: AVAILABLE (S0) · PREVIEW (S1, shadow only) · AVAILABLE (S2 generation) with PREVIEW candidate enforcement · DESIGN — NOT YET IMPLEMENTED (policy-routed S3).** See [status labels](/architecture#status-labels).
+**Status: AVAILABLE (S0) · PREVIEW (S1, shadow only) · AVAILABLE (S2 generation) with PREVIEW candidate enforcement · PREVIEW (policy-routed S3; router not yet called).** See [status labels](/architecture#status-labels).
 
 Each graph node is assigned one cognition level. The levels are roles within one agent, not separate agents, and they are independent of which [execution mode](/architecture/routing) provides them.
+
+## Use the lowest sufficient cognitive level
+
+```mermaid
+flowchart BT
+    S0["S0 · exact computation<br/>parser · compiler · policy<br/>tests · graph rules"]
+    S1["S1 · constrained decision<br/>choose · rank · score<br/>gate recommendation"]
+    S2["S2 · bounded generation<br/>patch · hypothesis<br/>explanation"]
+    S3["S3 · deep escalation<br/>larger solver · ensemble<br/>human request"]
+    S0 -->|"not computable"| S1
+    S1 -->|"answers not known in advance"| S2
+    S2 -->|"not good enough or too risky"| S3
+```
+
+Start at the bottom. Climb a rung only when the level below cannot answer. Each rung up costs more, is harder to check, and needs more verification before its output counts.
 
 ## Architecture contract
 
@@ -38,7 +53,7 @@ Why levels: most agent steps do not need generation. Classifying each step lets 
 - **S0**: deterministic policy and tool execution run today through the gate and the permission floor.
 - **S1**: the decision runtime is on main and runs in shadow mode by default. It records its answers and abstains. S1 does not act on anything until a primitive passes its [calibration gate](/architecture/cognitive-runtime/calibration), and no primitive has yet.
 - **S2**: generation runs today through the agent runtime. The rule that generated output is a candidate is enforced by the verifier for agency-origin work, and by the graph validator where the validator is used.
-- **S3**: a human route goes through the attention gate today. Policy-selected escalation to a stronger component needs the router, which is not built.
+- **S3**: a human route goes through the attention gate today. The router that selects escalation to a stronger component is on main as library code, but nothing calls it in production yet.
 
 ## Availability
 
@@ -49,7 +64,7 @@ Why levels: most agent steps do not need generation. Classifying each step lets 
 | S2 generation | **AVAILABLE** |
 | S2 candidate-until-verified enforcement | **PREVIEW** (agency-origin work) |
 | S3 human route via attention | **AVAILABLE** (internal) |
-| S3 policy-routed escalation | **DESIGN — NOT YET IMPLEMENTED** |
+| S3 policy-routed escalation | **PREVIEW** (router is library code; not called in production) |
 
 ## Developer relevance
 

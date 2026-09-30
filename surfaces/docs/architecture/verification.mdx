@@ -13,6 +13,18 @@ A run is done when the system can prove it is done, not when a model says so. Th
 
 A model saying "done" is a proposal. It carries no authority. The builder or a decision step may propose completion; verifiers and humans supply evidence; the system performs the close.
 
+```mermaid
+flowchart TD
+    W["Worker or model"] --> P["CompletionProposal"]
+    P --> E["Required evidence<br/>target tests · affected tests<br/>diff review · requirement check"]
+    E --> V["Verifier(s)<br/>not the builder"]
+    V --> D["CompletionDecision"]
+    D --> S["The SYSTEM transitions<br/>node / run → DONE"]
+    V -. "fail or inconclusive" .-> A["stay open, retry<br/>or attention request"]
+```
+
+**Workers propose completion. They do not grant it.**
+
 A run is complete only when all of the following hold:
 
 ```text

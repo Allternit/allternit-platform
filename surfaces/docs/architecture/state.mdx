@@ -7,6 +7,24 @@ description: "The typed records that hold a run's truth, and why a transcript is
 
 Two records hold what an agent knows and what it was asked to do: **TaskIR**, the compiled form of the request, and **AgentState**, the canonical semantic truth of the run.
 
+## Where each kind of state lives
+
+```mermaid
+flowchart TD
+    K["Intent Graph Kernel<br/>long-lived intent, knowledge<br/>and projections"] -->|"informs"| T["TaskIR + AgentState<br/>run-level semantic state"]
+    T --> G["ComputeGraphIR<br/>executable work plan"]
+    G --> L["Work runtime ledger<br/>operational lifecycle,<br/>leases and attempts"]
+```
+
+| Store | Is the store for | Is not the store for |
+|-------|------------------|----------------------|
+| [Intent Graph Kernel](/core/intent-graph-kernel) | Long-lived intent, knowledge and memory across runs, and the projections built from them | The state of any one run, or where a node is in its lifecycle |
+| [TaskIR and AgentState](/architecture/state) | What one run was asked to do, and its canonical semantic truth (facts, hypotheses, artifacts, verification, completion) | Long-lived knowledge, or lease and attempt bookkeeping |
+| [ComputeGraphIR](/architecture/graphs) | The executable plan for one run: nodes, edges, capabilities, levels | Whether a node is running right now |
+| Work runtime ledger | Operational lifecycle: node status, leases, heartbeats, attempts, outputs, receipts | Semantic truth about the task or long-lived knowledge |
+
+Information flows down. The Intent Graph Kernel informs a run; it does not drive it.
+
 ## Architecture contract
 
 ### TaskIR
