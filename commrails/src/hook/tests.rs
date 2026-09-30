@@ -466,6 +466,10 @@ async fn interpreter_and_custom_executables_are_unresolved_under_wih() {
         "awk 'BEGIN{print 1 > \"/outside/x\"}'",
         "find . -name x -exec sh -c 'echo > /outside/x' +",
         "sort -o /outside/x input.txt",
+        "sed -n 'w /outside/x' src/a.rs",
+        "sed 's/a/b/w /outside/x' src/a.rs",
+        "sed 's|a|b|e' src/a.rs",
+        "sed -f script.sed src/a.rs",
         "if true; then python3 -c 'x'; fi",
     ] {
         let d = decide(&bash(cmd, &f.root), &f.root, home, Some(bind(&f, &wih))).await;
@@ -480,6 +484,9 @@ async fn interpreter_and_custom_executables_are_unresolved_under_wih() {
         "git status",
         "git -C src log --oneline",
         "rg foo src",
+        "sed -n '1,5p' src/a.rs",
+        "sed 's/world/there/g' src/a.rs",
+        "sort src/a.rs | uniq -c",
         "grep -rn foo . | wc -l",
         "pwd && echo hi",
         "if [ -f src/x ]; then cat src/x; fi",

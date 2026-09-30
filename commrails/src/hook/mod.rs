@@ -280,7 +280,7 @@ pub async fn decide(req: &HookRequest, root: &Path, home: Option<&Path>, wih: Op
             Target::Unresolved(raw) => {
                 return Decision {
                     verdict: Verdict::Deny(format!(
-                        "cannot resolve write target `{raw}`, so WIH {} lease coverage cannot be checked",
+                        "unresolved write target `{raw}`, so WIH {} lease coverage cannot be checked; use the file-edit tools or a command the gate can scan",
                         wih.wih_id
                     )),
                     paths: rel_paths,

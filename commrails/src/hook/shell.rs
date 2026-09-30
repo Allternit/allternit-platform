@@ -482,12 +482,20 @@ fn collect_write_targets(command: &str, cwd: &Path, home: Option<&Path>, out: &m
             }
             out.push(resolve(r, &cwd, home));
         }
-        let words = effective_words(&seg.words);
+        let words = strip_keywords(effective_words(&seg.words));
         let Some(first) = words.first() else { continue };
         if let Some(inner) = inner_script(words) {
             if depth < 4 {
                 collect_write_targets(&inner, &cwd, home, out, depth + 1);
+            } else {
+                out.push(unknown_effect(first, "nested too deep to scan"));
             }
+            continue;
+        }
+        // A path-invoked program outside the system bin dirs is custom code:
+        // `./rm` or `bin/ls` can do anything, whatever its name says.
+        if first.contains('/') && !SYSTEM_BIN_DIRS.iter().any(|d| first.starts_with(d)) {
+            out.push(unknown_effect(first, "custom executable"));
             continue;
         }
         let name = basename(first);
@@ -553,7 +561,7 @@ fn collect_write_targets(command: &str, cwd: &Path, home: Option<&Path>, out: &m
                     }
                 }
             }
-            "sed" | "perl" | "gsed" => {
+            "sed" | "gsed" => {
                 let in_place = args.iter().any(|a| {
                     a == "-i" || a.starts_with("-i") || a == "--in-place" || a.starts_with("--in-place=") || (a.starts_with('-') && !a.starts_with("--") && a.contains('i'))
                 });
@@ -563,6 +571,30 @@ fn collect_write_targets(command: &str, cwd: &Path, home: Option<&Path>, out: &m
                     for op in operands.iter().skip(skip) {
                         out.push(resolve(op, &cwd, home));
                     }
+                }
+                // `w file` / `s///w file` write and `e` executes: not scannable.
+                if sed_script_writes_or_executes(args) {
+                    out.push(unknown_effect(name, "sed script writes (w) or executes (e)"));
+                }
+            }
+            "find" => {
+                if args.iter().any(|a| {
+                    matches!(
+                        a.as_str(),
+                        "-delete" | "-exec" | "-execdir" | "-ok" | "-okdir" | "-fprint" | "-fprint0" | "-fprintf" | "-fls"
+                    )
+                }) {
+                    out.push(unknown_effect(name, "find runs a command, deletes, or writes a file"));
+                }
+            }
+            "sort" => {
+                if let Some(o) = flag_value(args, &["-o", "--output"]) {
+                    out.push(resolve(&o, &cwd, home));
+                }
+            }
+            "uniq" => {
+                if operands.len() >= 2 {
+                    out.push(resolve(operands[1], &cwd, home));
                 }
             }
             "curl" => {
@@ -628,9 +660,119 @@ fn collect_write_targets(command: &str, cwd: &Path, home: Option<&Path>, out: &m
                     out.push(resolve(&dir, &cwd, home));
                 }
             }
-            _ => {}
+            n if READ_ONLY_COMMANDS.contains(&n) => {}
+            // Interpreters with inline code or a script, build tools, and
+            // any executable the gate has no scanner for: the write effect
+            // is unknown, never "no writes".
+            _ => out.push(unknown_effect(name, "no write-target scanner for this executable")),
         }
     }
+}
+
+/// Programs the gate knows write nothing except through the redirects
+/// already captured above. Everything else is an unresolved effect.
+const READ_ONLY_COMMANDS: &[&str] = &[
+    "ls", "cat", "head", "tail", "less", "more", "grep", "egrep", "fgrep", "rg", "ag", "ack", "fd", "tree",
+    "echo", "printf", "pwd", "wc", "cut", "tr", "diff", "cmp", "comm", "stat", "file", "which", "whereis",
+    "type", "whoami", "id", "groups", "date", "cal", "true", "false", "test", "[", "[[", "]]", "basename",
+    "dirname", "realpath", "readlink", "du", "df", "jq", "uname", "hostname", "ps", "pgrep", "printenv",
+    "column", "nl", "od", "hexdump", "strings", "md5", "md5sum", "sha1sum", "sha256sum", "shasum", "cksum",
+    "sleep", "seq", "expr", "lsof", "uptime", "sw_vers", "arch", "nproc", "getconf", "locale", "tty", "man",
+    "export", "unset", "set", "alias", "unalias", "local", "declare", "readonly", "shift", "read", "wait",
+    "exit", "return", "break", "continue", ":", "fi", "done", "esac", "for", "}", "in",
+];
+
+/// Absolute prefixes of system binaries; a program invoked by any other
+/// path is treated as custom code.
+const SYSTEM_BIN_DIRS: &[&str] = &[
+    "/bin/", "/usr/bin/", "/sbin/", "/usr/sbin/", "/usr/local/bin/", "/opt/homebrew/bin/",
+];
+
+/// Shell control keywords that prefix a real command (`if cmd`, `then cmd`).
+fn strip_keywords(mut words: &[String]) -> &[String] {
+    while let Some(first) = words.first() {
+        if matches!(first.as_str(), "if" | "then" | "else" | "elif" | "do" | "while" | "until" | "time") {
+            words = effective_words(&words[1..]);
+        } else {
+            break;
+        }
+    }
+    words
+}
+
+/// A command whose write effect the gate cannot determine. Under a WIH this
+/// fails closed like any other unresolved target.
+fn unknown_effect(program: &str, why: &str) -> Target {
+    Target::Unresolved(format!("{program} ({why}; write effect unresolved)"))
+}
+
+/// Whether a non-trivial sed script has a `w`/`W` write or an `e` execute
+/// command or `s///w` / `s///e` flag.
+fn sed_script_writes_or_executes(args: &[String]) -> bool {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r"(^|[;{}\n]|[0-9$/,!]\s*)\s*[wWe](\s|$)").unwrap());
+    let mut scripts: Vec<&str> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        let a = args[i].as_str();
+        if a == "-e" || a == "--expression" {
+            if let Some(v) = args.get(i + 1) {
+                scripts.push(v);
+            }
+            i += 2;
+            continue;
+        }
+        if a == "-f" || a == "--file" {
+            return true;
+        }
+        i += 1;
+    }
+    if scripts.is_empty() {
+        if let Some(first) = non_flag_args(args).first() {
+            scripts.push(first);
+        }
+    }
+    scripts.iter().any(|s| re.is_match(s) || sed_substitute_flags(s).iter().any(|f| f.contains(['w', 'e'])))
+}
+
+/// Flag strings of every `s<d>re<d>repl<d>flags` command in a sed script,
+/// for any delimiter `<d>` (backslash escapes respected).
+fn sed_substitute_flags(script: &str) -> Vec<String> {
+    let chars: Vec<char> = script.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let at_cmd = i == 0 || matches!(chars[i - 1], ';' | '\n' | '{' | '}' | ' ' | '/' | '!' | ',') || chars[i - 1].is_ascii_digit() || chars[i - 1] == '$';
+        if chars[i] == 's' && at_cmd {
+            if let Some(&d) = chars.get(i + 1) {
+                if !d.is_alphanumeric() && !d.is_whitespace() && d != '\\' {
+                    let mut j = i + 2;
+                    let mut seen = 0;
+                    while j < chars.len() && seen < 2 {
+                        if chars[j] == '\\' {
+                            j += 2;
+                            continue;
+                        }
+                        if chars[j] == d {
+                            seen += 1;
+                        }
+                        j += 1;
+                    }
+                    if seen == 2 {
+                        let start = j;
+                        while j < chars.len() && chars[j].is_ascii_alphanumeric() {
+                            j += 1;
+                        }
+                        out.push(chars[start..j.min(chars.len())].iter().collect());
+                        i = j;
+                        continue;
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    out
 }
 
 fn git_subcommand(args: &[String]) -> Option<String> {
