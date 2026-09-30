@@ -8,6 +8,7 @@ Inputs (the single sources of truth):
 Outputs (never edit these by hand; rerun this script instead):
   - surfaces/docs/api/agency/schemas.mdx                       (whole page)
   - surfaces/docs/architecture/kernel-contracts-reference.mdx  (whole page)
+  - surfaces/docs/architecture/contracts/*.mdx, reference/{primitive-registry,status-enums,error-codes}.mdx (phase 2b)
   - surfaces/docs/api/agency/errors.mdx                        (only the block between
     the GENERATED markers)
 
@@ -254,6 +255,163 @@ def gen_kernel_reference() -> str:
     return "\n".join(head + body).rstrip() + "\n"
 
 
+# ---------------------------------------------------------------- Per-contract pages (phase 2b)
+# file stem -> (title, status line, what it is, related links)
+CONTRACT_PAGES = {
+    "common": ("Common types and envelope", "AVAILABLE (contract)", "The shared envelope every contract carries, plus identifiers, trust and sensitivity classes, budgets and the error shape.", "[Kernel contracts](/architecture/kernel-contracts), [Trust classes](/architecture/verification-safety/trust-classes), [Error codes](/reference/error-codes)"),
+    "task_ir": ("TaskIR", "AVAILABLE (contract)", "The typed task a goal compiles into. Contract only; the compiler that produces it is not on main.", "[State](/architecture/state)"),
+    "agent_state": ("AgentState", "AVAILABLE (contract)", "Canonical semantic state for one run. Contract only; the state store that enforces it is not on main.", "[State](/architecture/state)"),
+    "graph": ("ComputeGraph", "AVAILABLE (contract, graph validator as a library)", "The compute graph, the only workflow type, and its nodes and edges.", "[Graphs](/architecture/graphs)"),
+    "primitive": ("Primitives", "AVAILABLE (contract and 191-ID registry)", "Primitive descriptors, maturity and the registry.", "[Primitives](/architecture/cognitive-runtime/primitives), [Primitive registry](/reference/primitive-registry)"),
+    "decision": ("Decision", "AVAILABLE (contract, decision runtime with S1 shadow only)", "Decision requests and results, backend, readout and calibration profiles.", "[Decision runtime](/architecture/cognitive-runtime/decision-runtime), [Calibration](/architecture/cognitive-runtime/calibration)"),
+    "capability": ("Capability and routing", "DESIGN — NOT YET IMPLEMENTED (router and ModelPool); contract only", "Capability requests, model capability profiles, pool entries and the execution plan.", "[Routing](/architecture/routing)"),
+    "context": ("Context", "DESIGN — NOT YET IMPLEMENTED (context compiler); contract only", "Context chunks, visibility decisions and projections.", "[Projections](/architecture/context-memory/projections)"),
+    "tool": ("Tool invocation", "DESIGN — NOT YET IMPLEMENTED (Tool Call Compiler); contract only", "The typed tool invocation, its argument provenance and its receipt.", "[Tool Call Compiler](/architecture/tools-execution/tool-call-compiler)"),
+    "mutation": ("Mutation", "AVAILABLE (contract; effect receipts on main, internal)", "Mutation requests and mutation receipts.", "[Mutation receipts](/architecture/tools-execution/mutation-receipts)"),
+    "policy": ("Policy", "AVAILABLE (contract; hard policy gate internal)", "Policy checks and decisions, grants, and authority profiles.", "[Policy](/architecture/policy), [Approvals](/architecture/verification-safety/approvals)"),
+    "environment": ("ExecutionEnvironment", "AVAILABLE (internal; recorded per node)", "The resolved environment a node runs in and the network access policy.", "[ExecutionEnvironment](/architecture/tools-execution/execution-environment), [Network and SSRF](/architecture/tools-execution/network-ssrf)"),
+    "receipts": ("Receipts and trace", "AVAILABLE (signed receipt chain, internal) · contract for trace events", "Receipt chains, action, policy, spawn and run receipts, and trace events.", "[Receipts](/architecture/receipts), [Trace events](/architecture/observability/trace-events)"),
+    "replay": ("Replay", "DESIGN — NOT YET IMPLEMENTED (cassettes and replay); contract only", "Cassettes and divergence reports.", "[Cassettes](/architecture/observability/cassettes), [Divergence](/architecture/observability/divergence)"),
+    "state_transfer": ("State transfer", "RESEARCH (cross-model transfer) · contract only", "Cognitive state descriptors and transfer requests and receipts.", "[Routing](/architecture/routing)"),
+    "verification": ("Verification", "AVAILABLE (contract; verifier-owned completion for agency-origin work)", "Verification requests and receipts.", "[Verification](/architecture/verification), [Evidence](/architecture/verification-safety/evidence)"),
+    "completion": ("Completion", "AVAILABLE (verifier-owned completion for agency-origin work)", "Completion policies, criteria, proposals and decisions.", "[Verification](/architecture/verification)"),
+    "work": ("Work runtime", "AVAILABLE (internal); typed lifecycle PREVIEW", "Node lifecycle, run records, node outputs, leases, admission and executor probes.", "[Work Machine](/architecture/work-machine), [Lifecycle](/architecture/work-runtime/lifecycle)"),
+    "attention": ("Attention", "AVAILABLE (internal attention gate)", "Attention requests, resolutions and policy.", "[Attention](/architecture/work-runtime/attention)"),
+    "campaign": ("Campaign and wake", "AVAILABLE (internal)", "Campaigns, wake triggers and policies, and wait gates.", "[Campaigns](/architecture/work-runtime/campaigns), [Wake](/architecture/work-runtime/wake)"),
+    "bundle": ("Bundles", "DESIGN — NOT YET IMPLEMENTED (bundle loader); contract only", "Composite model bundle and agent bundle manifest.", "[Kernel contracts](/architecture/kernel-contracts)"),
+}
+
+
+def gen_contract_page(stem: str, all_defs: dict) -> str:
+    f = ABI_DIR / "schemas" / f"{stem}.schema.json"
+    d = json.loads(f.read_text())
+    title, status, what, related = CONTRACT_PAGES[stem]
+    owner = {}
+    for st, dd in all_defs.items():
+        for n in dd:
+            owner.setdefault(n, st)
+
+    def link(ref: str) -> str:
+        file_part, _, frag = ref.partition("#")
+        n = frag.rsplit("/", 1)[-1] if frag else file_part
+        st = owner.get(n)
+        if st is None or st == stem:
+            return f"[{n}](#{anchor(n)})"
+        return f"[{n}](/architecture/contracts/{st.replace('_', '-')}#{anchor(n)})"
+
+    defs = d.get("$defs", {})
+    lines = [
+        "---",
+        f"title: '{title} contracts'",
+        f"description: 'Every definition and field in {stem}.schema.json, kernel ABI 1.0.0, generated from the schema.'",
+        "---",
+        "",
+        GEN_NOTE,
+        f"**Status: {status}.** See [status labels](/architecture#status-labels).",
+        "",
+        what,
+        "",
+        "## Architecture contract",
+        "",
+        f"Source: `spec/Contracts/kernel/v1/schemas/{f.name}` (`$id` `{d.get('$id', '')}`). The schema is normative; the tables below are generated from it and match it field for field. Receivers fail closed on unknown enum values and unknown required fields. See [Kernel contracts](/architecture/kernel-contracts).",
+        "",
+        "Definitions: " + " · ".join(f"[{n}](#{anchor(n)})" for n in defs),
+        "",
+        "## Current implementation",
+        "",
+        "A frozen contract is a specification. Whether a component implements it is stated in the status line above and in the linked architecture pages, not implied by the contract existing.",
+        "",
+        "## Availability",
+        "",
+        f"The contract is **AVAILABLE** as part of ABI package 1.0.0. Component status: {status}.",
+        "",
+        "## Developer relevance",
+        "",
+        f"Validate anything you produce or consume against this schema before it crosses a boundary. Related pages: {related}. All contracts: [Kernel contracts reference](/architecture/kernel-contracts-reference).",
+        "",
+        "## Definitions",
+        "",
+    ]
+    for name, s in defs.items():
+        lines += render_schema(name, s, link, "###")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def gen_registry_page() -> str:
+    reg = json.loads((ABI_DIR / "registry" / "primitives.json").read_text())
+    prims = reg["primitives"]
+    fam: dict = {}
+    for p in prims:
+        fam.setdefault(p["id"].split(".")[0], []).append(p)
+    lines = [
+        "---", "title: 'Primitive registry'",
+        f"description: 'The {len(prims)} canonical primitive IDs of kernel ABI 1.0.0, generated from the registry.'",
+        "---", "", GEN_NOTE,
+        f"**Status: AVAILABLE** (registry). The registry holds {len(prims)} dotted primitive IDs, each with an UPPER_SNAKE alias, from `spec/Contracts/kernel/v1/registry/primitives.json`. A registered ID names a contract; it does not mean an implementation exists. Maturity is tracked per primitive. See [Primitives](/architecture/cognitive-runtime/primitives).",
+        "", "## Families", "", "| Prefix | Count |", "|--------|-------|",
+    ]
+    lines += [f"| `{k}` | {len(v)} |" for k, v in sorted(fam.items())]
+    for k, v in sorted(fam.items()):
+        lines += ["", f"## {k}", "", "| ID | Alias | ISA family |", "|----|-------|------------|"]
+        lines += [f"| `{p['id']}` | `{p['alias']}` | `{p.get('family') or ''}` |" for p in v]
+    return "\n".join(lines) + "\n"
+
+
+def collect_enums() -> list:
+    rows = []
+    for f in sorted((ABI_DIR / "schemas").glob("*.schema.json")):
+        d = json.loads(f.read_text())
+        for name, s in d.get("$defs", {}).items():
+            if isinstance(s, dict) and "enum" in s:
+                rows.append((name, f.name, s["enum"]))
+            for pn, ps in (s.get("properties") or {}).items() if isinstance(s, dict) else []:
+                if isinstance(ps, dict) and "enum" in ps:
+                    rows.append((f"{name}.{pn}", f.name, ps["enum"]))
+    return rows
+
+
+def gen_enums_page() -> str:
+    rows = collect_enums()
+    lines = [
+        "---", "title: 'Status enums'",
+        "description: 'Every enumerated value in kernel ABI 1.0.0, generated from the schemas.'",
+        "---", "", GEN_NOTE,
+        f"**Status: AVAILABLE** (contract package). {len(rows)} enumerations, generated from the schemas. Receivers must treat an unknown value as not understood and fail closed. See [Kernel contracts](/architecture/kernel-contracts).",
+        "", "| Enumeration | Schema file | Values |", "|-------------|-------------|--------|",
+    ]
+    lines += [f"| `{n}` | `{fn}` | {', '.join('`' + str(v) + '`' for v in vals if v is not None)} |" for n, fn, vals in rows]
+    return "\n".join(lines) + "\n"
+
+
+def gen_error_codes_page(api: dict) -> str:
+    fams = json.loads((ABI_DIR / "schemas" / "common.schema.json").read_text())["$defs"]["ErrorV1"]["properties"]["family"]["enum"]
+    codes = sorted(set(re.findall(r"ERR_[A-Z0-9_]+", yaml.safe_dump(api))) - {"ERR_"})
+    lines = [
+        "---", "title: 'Error codes'",
+        "description: 'Kernel error families and every ERR_ code named in the Agency API contract, generated.'",
+        "---", "", GEN_NOTE,
+        "**Status: AVAILABLE** (contract) · **PREVIEW** (Agency API surface). Every error carries a family and a stable `ERR_*` code. Kernel codes pass through the API unchanged. See [Agency API errors](/api/agency/errors) for status mapping and handling.",
+        "", "## Families", "", "| Family |", "|--------|",
+    ]
+    lines += [f"| `{f}` |" for f in fams]
+    lines += ["", "## Codes named in the Agency API contract", "", "| Code |", "|------|"]
+    lines += [f"| `{c}` |" for c in codes]
+    return "\n".join(lines) + "\n"
+
+
+def contract_targets(api: dict) -> dict:
+    all_defs = {}
+    for f in sorted((ABI_DIR / "schemas").glob("*.schema.json")):
+        all_defs[f.name.replace(".schema.json", "")] = json.loads(f.read_text()).get("$defs", {})
+    out = {}
+    for stem in all_defs:
+        out[DOCS / "architecture" / "contracts" / f"{stem.replace('_', '-')}.mdx"] = gen_contract_page(stem, all_defs)
+    out[DOCS / "reference" / "primitive-registry.mdx"] = gen_registry_page()
+    out[DOCS / "reference" / "status-enums.mdx"] = gen_enums_page()
+    out[DOCS / "reference" / "error-codes.mdx"] = gen_error_codes_page(api)
+    return out
+
+
 def splice(path: Path, block: str) -> str:
     text = path.read_text()
     begin, end = "{/* BEGIN GENERATED */}", "{/* END GENERATED */}"
@@ -274,6 +432,7 @@ def main() -> int:
             DOCS / "api" / "agency" / "errors.mdx", gen_error_block(api)
         ),
     }
+    targets.update(contract_targets(api))
     stale = []
     for path, content in targets.items():
         if path.exists() and path.read_text() == content:
