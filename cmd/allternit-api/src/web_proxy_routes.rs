@@ -98,7 +98,8 @@ fn is_direct_loopback_peer(request: &Request) -> bool {
 // ── Destination policy ───────────────────────────────────────────────────────
 
 pub use allternit_commrails::egress::{
-    is_blocked_destination, is_public_ip, BlockedDestination, PublicOnlyResolver,
+    is_blocked_destination, is_public_ip, is_public_ipv4, is_public_ipv6, BlockedDestination,
+    PublicOnlyResolver,
 };
 
 /// Scheme + literal-host validation shared by the initial URL and every

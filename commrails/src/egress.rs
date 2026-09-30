@@ -48,7 +48,7 @@ pub fn is_public_ip(ip: IpAddr) -> bool {
     }
 }
 
-fn is_public_ipv4(ip: Ipv4Addr) -> bool {
+pub fn is_public_ipv4(ip: Ipv4Addr) -> bool {
     let [a, b, c, _] = ip.octets();
     let blocked = a == 0 // 0.0.0.0/8 "this network" (incl. unspecified)
         || a == 10 // 10/8 private
@@ -67,7 +67,7 @@ fn is_public_ipv4(ip: Ipv4Addr) -> bool {
     !blocked
 }
 
-fn is_public_ipv6(ip: Ipv6Addr) -> bool {
+pub fn is_public_ipv6(ip: Ipv6Addr) -> bool {
     let seg = ip.segments();
     // IPv4-mapped ::ffff:a.b.c.d
     if let Some(v4) = ip.to_ipv4_mapped() {
@@ -119,7 +119,7 @@ fn is_public_ipv6(ip: Ipv6Addr) -> bool {
 /// Error raised when a destination fails [`is_public_ip`]. Detected in the
 /// reqwest error chain to answer 403 instead of 502.
 #[derive(Debug)]
-pub struct BlockedDestination(String);
+pub struct BlockedDestination(pub String);
 
 impl fmt::Display for BlockedDestination {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
