@@ -108,14 +108,27 @@ pub async fn load_wih_policy(ledger: &Ledger, wih_id: &str) -> Result<WihPolicy>
 /// Spawn admission. `Ok` means the spawn may proceed.
 ///
 /// A harness that cannot enforce lease coverage (anything but [`HarnessGate::Hook`])
-/// is refused on a WIH whose policy requires a lease for writes — without a
+/// is refused on a WIH whose policy requires a lease for writes (ungated
+/// harnesses are refused on every WIH-bound turn, lease policy or not) — without a
 /// hook, that harness could write anywhere the OS lets it, so the WIH's policy
 /// would be a fiction. Unbound runs (no WIH) are admitted: the hard floor still
 /// applies to hooked harnesses and nothing changes for the others.
 pub fn admit(harness: &str, wih: Option<&WihPolicy>) -> std::result::Result<HarnessGate, String> {
     let gate = harness_gate(harness);
     let Some(wih) = wih else { return Ok(gate) };
-    if gate == HarnessGate::Hook || !wih.writes_need_lease() {
+    if gate == HarnessGate::Hook {
+        return Ok(gate);
+    }
+    // S0 floor: an ungated harness has nothing in front of it, so the
+    // catastrophic floor cannot run. On any WIH-bound turn it is refused,
+    // whether or not the WIH policy requires leases for writes.
+    if gate == HarnessGate::Ungated {
+        return Err(format!(
+            "refusing to spawn {harness}: it is ungated (auto-approve, no PreToolUse hook), so the S0 catastrophic floor cannot be applied to WIH {}. Use a hooked harness (claude-code) for WIH-bound turns, or run without a WIH binding.",
+            wih.wih_id
+        ));
+    }
+    if !wih.writes_need_lease() {
         return Ok(gate);
     }
     Err(format!(

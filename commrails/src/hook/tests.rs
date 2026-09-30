@@ -258,7 +258,15 @@ async fn admission_refuses_ungated_harness_on_leased_wih() {
         wih_id: "w".into(),
         requires_lease_for_write: Some(false),
     };
-    assert!(admit("kimi", Some(&open)).is_ok());
+    // S0 floor: ungated harnesses are refused on every WIH-bound turn, even
+    // when the policy explicitly does not require leases.
+    for h in ["kimi", "qwen", "gemini", "agy", "/usr/bin/qwen"] {
+        let e = admit(h, Some(&open)).expect_err(h);
+        assert!(e.contains("S0"), "{e}");
+    }
+    // Sandboxed (codex) and hooked (claude) harnesses are still admitted.
+    assert_eq!(admit("codex", Some(&open)), Ok(HarnessGate::Sandbox));
+    assert_eq!(admit("claude", Some(&open)), Ok(HarnessGate::Hook));
     // Unknown WIH → fail closed.
     let unknown = load_wih_policy(&f.ledger, "wih_nope").await.unwrap();
     assert!(admit("gemini", Some(&unknown)).is_err());

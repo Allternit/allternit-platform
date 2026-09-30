@@ -13,6 +13,7 @@ pub mod doctor;
 pub mod dolt;
 pub mod drive;
 pub mod echoes;
+pub mod egress;
 pub mod fence;
 pub mod gate;
 pub mod graph;
