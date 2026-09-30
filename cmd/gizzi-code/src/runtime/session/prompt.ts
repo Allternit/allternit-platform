@@ -51,6 +51,7 @@ import { Tool } from "@/runtime/tools/builtins/tool"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
 import { SessionStatus } from "@/runtime/session/status"
 import { GoalEngine } from "@/runtime/automation/goal-engine"
+import { KernelTurn } from "@/runtime/kernel/compilers/turn-hook"
 import { ToolValidationRetry } from "@/runtime/tools/validation-retry"
 import { LLM } from "@/runtime/session/llm"
 import { iife } from "@/shared/util/iife"
@@ -1019,6 +1020,20 @@ const message = await createUserMessage(input)
       const validationReminder = ToolValidationRetry.reminder(sessionID)
       if (validationReminder) system.push(validationReminder)
       if (wrapUp) system.push(wrapUpReminder(wrapUp.window))
+      // WP9: Context Compiler, shadow mode behind GIZZI_KERNEL_COMPILERS (off by
+      // default). Records a ContextProjectionV1; never changes `system`.
+      if (KernelTurn.enabled())
+        KernelTurn.compileTurnContext({
+          sessionID,
+          directory: session.directory,
+          objective:
+            lastUserMsg?.parts
+              .filter((p) => p.type === "text")
+              .map((p: any) => p.text)
+              .join("\n") ?? "",
+          system,
+          budgetTokens: model.limit?.context ?? 0,
+        })
 
       const activeGoalForDeadline = GoalEngine.getCurrentGoal(sessionID)
       const deadlineMs = activeGoalForDeadline?.state === "in_progress"
@@ -1315,13 +1330,27 @@ const message = await createUserMessage(input)
               args,
             },
           )
-          const result = await ToolDedupe.execute({
-            sessionID: ctx.sessionID,
-            messageID: ctx.messageID,
-            tool: item.id,
-            args,
-            run: () => ToolDispatcher.executeInitialized(item.id, args, ctx, item.execute),
-          })
+          // WP9: Tool Call Compiler, shadow mode behind GIZZI_KERNEL_COMPILERS
+          // (off by default → plain pass-through to the existing call).
+          const result = await KernelTurn.withToolReceipt(
+            {
+              sessionID: ctx.sessionID,
+              callID: ctx.callID,
+              tool: item.id,
+              args,
+              directory: input.session.directory,
+              description: item.description,
+              schema: () => z.toJSONSchema(item.parameters),
+            },
+            () =>
+              ToolDedupe.execute({
+                sessionID: ctx.sessionID,
+                messageID: ctx.messageID,
+                tool: item.id,
+                args,
+                run: () => ToolDispatcher.executeInitialized(item.id, args, ctx, item.execute),
+              }),
+          )
           const output = {
             ...result,
             attachments: result.attachments?.map((attachment) => ({

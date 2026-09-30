@@ -14,6 +14,7 @@ import z from "zod/v4"
 import { HookDispatcher } from "@/runtime/hooks/dispatcher"
 import { Catastrophic } from "@/runtime/tools/guard/permission/catastrophic"
 
+import { KernelTurn } from "@/runtime/kernel/compilers/turn-hook"
 export namespace PermissionNext {
   const log = Log.create({ service: "permission" })
 
@@ -198,8 +199,16 @@ export namespace PermissionNext {
           mode: modeOverride ?? (await getMode(request.sessionID)),
         })
         log.info("evaluated", { permission: request.permission, pattern, action: rule })
+        const callID = request.tool?.callID
         if (rule.action === "deny") {
           const floor = Catastrophic.applies(request.permission) ? Catastrophic.check(pattern) : undefined
+          // WP9: hand the gate's real decision to the Tool Call Compiler (no-op unless GIZZI_KERNEL_COMPILERS).
+          KernelTurn.noteGateDecision(callID, {
+            permission: request.permission,
+            pattern,
+            action: "deny",
+            source: floor ? "catastrophic_floor" : (rule.source ?? "default"),
+          })
           if (floor) throw new FloorError(floor.reason, pattern)
           throw new DeniedError(ruleset.filter((r) => Wildcard.match(request.permission, r.permission)))
         }
@@ -211,6 +220,9 @@ export namespace PermissionNext {
             sessionId: request.sessionID,
             payload: { tool: request.permission, patterns: request.patterns, requestID: id },
           })
+          const decided = (action: "allow" | "deny") =>
+            KernelTurn.noteGateDecision(callID, { permission: request.permission, pattern, action, source: "user_reply" })
+          KernelTurn.noteGateDecision(callID, { permission: request.permission, pattern, action: "ask", source: rule.source ?? "default" })
           return new Promise<ReplyData | undefined>((resolve, reject) => {
             const info: Request = {
               id,
@@ -219,13 +231,22 @@ export namespace PermissionNext {
             s.pending[id] = {
               info,
               ruleset,
-              resolve,
-              reject,
+              resolve: (v: any) => {
+                decided("allow")
+                resolve(v)
+              },
+              reject: (e: any) => {
+                decided("deny")
+                reject(e)
+              },
             }
             Bus.publish(Event.Asked, info)
           })
         }
-        if (rule.action === "allow") continue
+        if (rule.action === "allow") {
+          KernelTurn.noteGateDecision(callID, { permission: request.permission, pattern, action: "allow", source: rule.source ?? "default" })
+          continue
+        }
       }
     },
   )
