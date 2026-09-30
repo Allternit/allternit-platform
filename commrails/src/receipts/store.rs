@@ -38,6 +38,9 @@ pub struct ReceiptVerificationResult {
     pub is_valid: bool,
     pub hash_matches: bool,
     pub signature_valid: Option<bool>,
+    /// "chained-signed", "legacy (unsigned, unchained)" or "missing".
+    #[serde(default)]
+    pub integrity: String,
     pub errors: Vec<String>,
 }
 
@@ -124,6 +127,9 @@ impl ReceiptStore {
 
     /// Read a receipt by ID
     pub fn read_receipt(&self, receipt_id: &str) -> Result<Option<ReceiptRecord>> {
+        if receipt_id.starts_with('_') || receipt_id.contains(['/', '\\']) {
+            return Ok(None); // reserved dirs (_chains/_effects/_keys) and path traversal
+        }
         let receipt_path = self.receipt_path(receipt_id);
         if !receipt_path.exists() {
             return Ok(None);
@@ -182,6 +188,13 @@ impl ReceiptStore {
         let hash_matches;
         let signature_valid = None;
 
+        // Chained + signed receipts (WP3) take precedence over the legacy path.
+        if let Ok(cs) = self.chain_store() {
+            if let Some(v) = cs.find_by_id(receipt_id)? {
+                return Ok(super::chain::verify_chained(&cs, receipt_id, &v));
+            }
+        }
+
         // Read receipt
         let receipt = match self.read_receipt(receipt_id)? {
             Some(r) => r,
@@ -191,6 +204,7 @@ impl ReceiptStore {
                     is_valid: false,
                     hash_matches: false,
                     signature_valid: None,
+                    integrity: "missing".to_string(),
                     errors: vec!["Receipt not found".to_string()],
                 });
             }
@@ -225,8 +239,21 @@ impl ReceiptStore {
             is_valid,
             hash_matches,
             signature_valid,
+            // Legacy hash-only records are never reported as signed/valid-chained.
+            integrity: "legacy (unsigned, unchained)".to_string(),
             errors,
         })
+    }
+
+    /// Public keys as JWKS JSON (for `/.well-known/jwks.json`-style publication).
+    pub fn jwks_json(&self) -> Result<String> {
+        Ok(serde_json::to_string_pretty(&self.chain_store()?.jwks()?)?)
+    }
+
+    /// Chain/signing store rooted at this receipts dir (key from
+    /// `ALLTERNIT_RECEIPT_SIGNING_KEY` or generated in dev on first use).
+    pub fn chain_store(&self) -> Result<super::chain::ChainStore> {
+        super::chain::ChainStore::open(&self.receipts_dir)
     }
 
     /// Get receipt summary/aggregation
@@ -259,5 +286,46 @@ impl ReceiptStore {
             results.push(self.verify_receipt(receipt_id)?);
         }
         Ok(results)
+    }
+}
+
+#[cfg(test)]
+mod wp3_tests {
+    use super::*;
+    use crate::core::types::ReceiptRecord;
+
+    #[test]
+    fn legacy_reported_as_legacy_and_chained_as_signed() {
+        let d = tempfile::tempdir().unwrap();
+        let st = ReceiptStore::new(ReceiptStoreOptions {
+            root_dir: Some(d.path().to_path_buf()), receipts_dir: None, blobs_dir: None }).unwrap();
+        let legacy = ReceiptRecord { receipt_id: "rcpt_old".into(), run_id: "r1".into(), step: None,
+            tool: "t".into(), tool_version: None, inputs_ref: Some("x".into()), outputs_ref: None, exit: None,
+            input_tokens: None, output_tokens: None, total_tokens: None };
+        st.write_receipt(&legacy).unwrap();
+        let r = st.verify_receipt("rcpt_old").unwrap();
+        assert_eq!(r.integrity, "legacy (unsigned, unchained)");
+        assert_eq!(r.signature_valid, None);
+
+        let cs = ChainStoreAlias::new(d.path().join(".allternit/receipts"));
+        let rec = cs.0.append(serde_json::json!({"envelope": {"schema_id":"allternit.kernel.PolicyReceiptV1","schema_version":"1.0.0","run_id":"r1"}})).unwrap();
+        let id = rec["chain"]["receipt_id"].as_str().unwrap();
+        let v = ChainStoreAlias::verify(&st, id);
+        assert_eq!(v.integrity, "chained-signed");
+        assert_eq!(v.signature_valid, Some(true));
+        assert!(v.is_valid);
+        assert!(st.read_receipt("_chains").unwrap().is_none());
+    }
+
+    struct ChainStoreAlias(super::super::chain::ChainStore);
+    impl ChainStoreAlias {
+        fn new(base: PathBuf) -> Self {
+            Self(super::super::chain::ChainStore::new(&base, super::super::sign::ReceiptSigner::from_seed([7u8; 32])).unwrap())
+        }
+        fn verify(st: &ReceiptStore, id: &str) -> ReceiptVerificationResult {
+            // Same signer as the store's env/default key is not guaranteed; verify via the
+            // store's own JWKS which includes every published public key in _keys.
+            st.verify_receipt(id).unwrap()
+        }
     }
 }
