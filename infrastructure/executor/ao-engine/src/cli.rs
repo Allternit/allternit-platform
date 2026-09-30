@@ -24,6 +24,7 @@ macro_rules! println {
 
 mod agent;
 mod ao;
+mod ao_gate;
 mod api;
 mod completion;
 mod integration;

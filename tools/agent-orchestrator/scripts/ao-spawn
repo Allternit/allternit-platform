@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # ao-spawn — thin shim over allternit-rails orchestrator spawn.
 # Legacy semantics: [--worktree] <slug> <repo-dir> <agent-cmd...>
+# Spawn gate (audit S1): the launch line goes through ao-spawn-gate first —
+# claude runs --permission-mode acceptEdits --settings <hook settings> instead
+# of --dangerously-skip-permissions, codex runs sandboxed, everything else is
+# labeled ungated in ~/.agent-orchestrator/logs/spawn-gate.log.
 # Dispatch registry (A1): upserts ~/.agent-orchestrator/state.json after spawn.
 set -euo pipefail
 
@@ -9,29 +13,44 @@ command -v allternit-rails >/dev/null 2>&1 || {
   exit 1
 }
 
+AO_SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKTREE=0
 if [ "${1:-}" = "--worktree" ]; then WORKTREE=1; shift; fi
-SLUG=${1:-}
-DIR=${2:-}
-SESSION="ao-${SLUG:-unknown}"
+[ $# -ge 3 ] || { echo "usage: ao-spawn [--worktree] <slug> <repo-dir> <agent-cmd...>" >&2; exit 2; }
+SLUG=$1
+DIR=$2
+shift 2
+SESSION="ao-$SLUG"
 LOGDIR="$HOME/.agent-orchestrator/logs"
 mkdir -p "$LOGDIR"
 LOG="$LOGDIR/$SESSION-$(date +%Y%m%d-%H%M%S).log"
 RUNNER="$LOGDIR/$SESSION.cmd.sh"
-AO_SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# The gate needs the directory the agent will run in: for --worktree that is
+# <root>-ao-<slug>, the same path the orchestrator creates.
+WORKDIR=$DIR
+if [ "$WORKTREE" = 1 ] && ROOT=$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null); then
+  WORKDIR="$(dirname "$ROOT")/$(basename "$ROOT")-ao-$SLUG"
+fi
+# shellcheck source=ao-spawn-gate
+. "$AO_SCRIPTS/ao-spawn-gate"
+ao_gate "$SESSION" "$WORKDIR" "$*" || exit 1
+
+SPAWN=(allternit-rails orchestrator spawn)
+[ "$WORKTREE" = 1 ] && SPAWN+=(--worktree)
 set +e
-if [ "$WORKTREE" = 1 ]; then
-  allternit-rails orchestrator spawn --worktree "$@"
+if [ "$AO_GATE_CLASS" = ungated ]; then
+  "${SPAWN[@]}" "$SLUG" "$DIR" "$@"
 else
-  allternit-rails orchestrator spawn "$@"
+  # Run the gated line exactly as written (the gate already admitted it and
+  # baked any WIH into the hook settings, so the orchestrator must not
+  # re-classify the /bin/sh wrapper against the WIH).
+  env -u ALLTERNIT_COMMRAILS_WIH "${SPAWN[@]}" "$SLUG" "$DIR" /bin/sh -c "$AO_GATED_LINE"
 fi
 rc=$?
 set -e
 
-if [ -n "$SLUG" ]; then
-  life=running
-  [ $rc -eq 0 ] || life=dead
-  "$AO_SCRIPTS/ao-registry-sync" upsert "$SESSION" "${DIR:-}" "$LOG" "$RUNNER" "$WORKTREE" "$SLUG" "$life" 2>/dev/null || true
-fi
+life=running
+[ $rc -eq 0 ] || life=dead
+"$AO_SCRIPTS/ao-registry-sync" upsert "$SESSION" "$DIR" "$LOG" "$RUNNER" "$WORKTREE" "$SLUG" "$life" 2>/dev/null || true
 exit $rc

@@ -626,10 +626,17 @@ pub fn gate_argv(cmd: &[String], settings_path: Option<&Path>) -> Vec<String> {
                 }
                 out.push(w.clone());
             }
-            out.push("--sandbox".to_string());
-            out.push("workspace-write".to_string());
-            out.push("-c".to_string());
-            out.push("approval_policy=\"never\"".to_string());
+            // Same flags as the uhp-gateway codex driver and ao-spawn-gate:
+            // `-c` rides every codex subcommand (`codex exec resume` has no
+            // `--sandbox`), and network stays on so dependency fetches work.
+            for config in [
+                "sandbox_mode=\"workspace-write\"",
+                "approval_policy=\"never\"",
+                "sandbox_workspace_write.network_access=true",
+            ] {
+                out.push("-c".to_string());
+                out.push(config.to_string());
+            }
             out
         }
         HarnessGate::Ungated => cmd.to_vec(),

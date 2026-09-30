@@ -300,7 +300,8 @@ fn gate_argv_rewrites_bypass_flags() {
     let joined = gate_argv(&argv, None).join(" ");
     assert!(!joined.contains("dangerously"));
     assert!(!joined.contains("danger-full-access"));
-    assert!(joined.contains("--sandbox workspace-write"));
+    assert!(joined.contains("-c sandbox_mode=\"workspace-write\""));
+    assert!(joined.contains("sandbox_workspace_write.network_access=true"));
     assert!(joined.contains("approval_policy=\"never\""));
 
     let kimi: Vec<String> = vec!["kimi".into(), "--yolo".into()];
