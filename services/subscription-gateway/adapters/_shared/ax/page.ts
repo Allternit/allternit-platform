@@ -1,7 +1,7 @@
 // Helpers for adapter drivers built on an AxDriver: attach + error mapping, button lookup/press, composer write,
 // and observer-event normalization (AX notifications -> transport-neutral hints).
 import type { AxDriver } from "./bridge.js";
-import { AxError, labelOf, textUnder, walk, type AxEvent, type AxNode, type AxSnapshot } from "./types.js";
+import { AX_NOT_TRUSTED_MESSAGE, AxError, labelOf, textUnder, walk, type AxEvent, type AxNode, type AxSnapshot } from "./types.js";
 
 export const BUTTON_ROLES = new Set(["AXButton", "AXRadioButton", "AXTab", "AXCheckBox", "AXMenuItem", "AXLink", "AXPopUpButton"]);
 
@@ -58,3 +58,11 @@ export class AxHintBuffer {
   changedSince(ts: number) { return this.items.some((h) => h.at > ts && h.kind !== "focus_moved"); }
 }
 export { labelOf };
+
+/** Map a bridge/replay AxError to the adapters' DriverError vocabulary. */
+export function axFault(e: unknown): { fault: "not_trusted" | "not_running" | "unreachable"; message: string } | undefined {
+  if (!(e instanceof AxError)) return undefined;
+  if (e.fault === "not_trusted") return { fault: "not_trusted", message: AX_NOT_TRUSTED_MESSAGE };
+  if (e.fault === "not_running") return { fault: "not_running", message: e.message };
+  return { fault: "unreachable", message: e.message };
+}
