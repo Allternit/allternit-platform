@@ -11,6 +11,12 @@ The kernel is intentionally separate from the low-level fabric: the fabric store
 
 The canonical implementation is the `allternit-memory-kernel` Rust crate in `services/memory/data/memory-kernel`.
 
+**Status:** Implementation IMPLEMENTED (library crate) × Exposure — . The crate is a workspace member and builds with the workspace, but on main no live service or API consumes it; the only consumers are archived crates. The platform's user-facing memory is the [Memory API](/api/memory).
+
+## How this relates to the Agency Kernel
+
+The Memory Kernel is a separate, earlier memory model and is not the Agency Kernel's run-state store. See [Architecture](/architecture).
+
 ## Three layers
 
 ```
@@ -218,7 +224,7 @@ Operations return `MemoryError`:
 
 ## Status and relationship to other memory systems
 
-The Memory Kernel is experimental and not yet wired into the main workspace build. It complements, rather than replaces, the production memory stack:
+The Memory Kernel is experimental: it builds as a workspace member but has no live consumer on main. It complements, rather than replaces, the production memory stack:
 
 - **[Memory Fabric](/core/memory-fabric)** provides the low-level provider trait, ledger, and routing for all memory operations.
 - **Memory Agent** (`services/memory/agent`) is the TypeScript long-term memory service with vector search and LLM-driven consolidation.
