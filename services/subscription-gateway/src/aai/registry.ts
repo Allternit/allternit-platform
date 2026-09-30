@@ -65,6 +65,19 @@ export function guardProvider(provider: AaiProvider, host: AaiHostState, pacing?
   });
 }
 
+/**
+ * allternit-api reads each event flat (`type`, `payload`, and the snake_case `remote_event_id`,
+ * `remote_context_id`, `correlation_id`, `causation_id`), while the provider returns `{ cursor, event }` with
+ * a camelCase GatewayEvent. Emit the flat event with both spellings so neither reader loses fields.
+ */
+export function wireEvent(c: { cursor: string; event: Record<string, any> }): Record<string, unknown> {
+  const e = c.event ?? {};
+  const out: Record<string, unknown> = { ...e, cursor: c.cursor };
+  const alias: Array<[string, string]> = [["remoteEventId", "remote_event_id"], ["remoteContextId", "remote_context_id"], ["correlationId", "correlation_id"], ["causationId", "causation_id"]];
+  for (const [camel, snake] of alias) if (e[camel] !== undefined && out[snake] === undefined) out[snake] = e[camel];
+  return out;
+}
+
 export class AaiHost {
   readonly router = new AaiRouter();
   /** Resolves with the vendor adapter ids registered at boot. */
@@ -138,6 +151,8 @@ export class AaiHost {
     if (!parsed.success) return fail("UNSUPPORTED", `unknown AAI op ${op}`, { retryable: false });
     const p = this.router.bind(binding);
     const i = input as any;
+    // allternit-api names the target agent `externalAgentId` (its binding field); the AAI input is `agentId`.
+    if (i.agentId === undefined && typeof i.externalAgentId === "string") i.agentId = i.externalAgentId;
     const dispatch: Record<AAIOperation, () => Promise<AaiResult<unknown>>> = {
       "agent.list": () => p.list(),
       "agent.get": () => p.get(i.agentId),
@@ -150,7 +165,7 @@ export class AaiHost {
       "agent.context.close": () => p.contextClose(i),
       "agent.events": async () => {
         const r = await p.events(i);
-        return r.ok ? { ok: true, value: { events: r.value.events, cursor: r.value.nextCursor } } : r;
+        return r.ok ? { ok: true, value: { events: r.value.events.map(wireEvent), cursor: r.value.nextCursor } } : r;
       },
       "agent.tasks": () => p.tasks(i),
       "agent.memory": () => p.memory(i),

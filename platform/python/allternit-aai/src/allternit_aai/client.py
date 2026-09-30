@@ -9,8 +9,15 @@ import httpx
 from .errors import HumanIntentRequiredError, to_http_error
 
 
+def _camel_key(k: str) -> str:
+    head, *rest = k.split("_")
+    return head + "".join(p[:1].upper() + p[1:] for p in rest)
+
+
 def _snake(d: Dict[str, Any]) -> Dict[str, Any]:
-    return {k: v for k, v in d.items() if v is not None}
+    """Request body for allternit-api (serde rename_all = "camelCase"): camelCase keys, None dropped.
+    (Name kept for the call sites; the wire format is camelCase.)"""
+    return {_camel_key(k): v for k, v in d.items() if v is not None}
 
 
 class AllternitAgents:
@@ -55,7 +62,7 @@ class AllternitAgents:
         return self.request("PATCH", f"/gateway/provider-accounts/{self._q(account_id)}", _snake({"state": state, "reason": reason}))
 
     def set_secret(self, account_id: str, api_key: str) -> Any:
-        return self.request("POST", f"/gateway/provider-accounts/{self._q(account_id)}/secret", {"api_key": api_key})
+        return self.request("POST", f"/gateway/provider-accounts/{self._q(account_id)}/secret", {"apiKey": api_key})
 
     def clear_secret(self, account_id: str) -> Any:
         return self.request("DELETE", f"/gateway/provider-accounts/{self._q(account_id)}/secret")

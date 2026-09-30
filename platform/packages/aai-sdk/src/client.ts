@@ -150,15 +150,15 @@ export class AllternitAgents {
   }
 
   readonly accounts = {
-    create: (i: CreateAccountInput) => this.request<{ account: ProviderAccountBinding }>("POST", "/gateway/provider-accounts", snake(i)),
+    create: (i: CreateAccountInput) => this.request<{ account: ProviderAccountBinding }>("POST", "/gateway/provider-accounts", wire(i)),
     list: (q?: { vendor?: string; state?: string }) => this.request<{ accounts: ProviderAccountBinding[] }>("GET", "/gateway/provider-accounts", undefined, q),
     get: (id: string) => this.request<{ account: ProviderAccountBinding }>("GET", `/gateway/provider-accounts/${enc(id)}`),
     /** Move the connection state machine (PATCH state, with optional audit reason). */
     setConnectionState: (id: string, state: ConnectionState, reason?: string) =>
       this.request<{ account: ProviderAccountBinding }>("PATCH", `/gateway/provider-accounts/${enc(id)}`, { state, reason }),
     update: (id: string, patch: { displayName?: string; workspace?: string; externalAccountId?: string; expiresAt?: string; verifiedAt?: string; reason?: string }) =>
-      this.request<{ account: ProviderAccountBinding }>("PATCH", `/gateway/provider-accounts/${enc(id)}`, snake(patch)),
-    setSecret: (id: string, apiKey: string) => this.request("POST", `/gateway/provider-accounts/${enc(id)}/secret`, { api_key: apiKey }),
+      this.request<{ account: ProviderAccountBinding }>("PATCH", `/gateway/provider-accounts/${enc(id)}`, wire(patch)),
+    setSecret: (id: string, apiKey: string) => this.request("POST", `/gateway/provider-accounts/${enc(id)}/secret`, { apiKey }),
     clearSecret: (id: string) => this.request("DELETE", `/gateway/provider-accounts/${enc(id)}/secret`),
     discoverAgents: (id: string) =>
       this.request<{ agents: { externalAgentId: string; name: string; description?: string; avatarUrl?: string }[] }>("GET", `/gateway/provider-accounts/${enc(id)}/agents`),
@@ -166,7 +166,7 @@ export class AllternitAgents {
   };
 
   readonly bots = {
-    bindExecution: (botId: string, i: PutExecutionInput) => this.request<{ binding: BotExecutionBinding }>("PUT", `/gateway/bots/${enc(botId)}/execution-binding`, snake(i)),
+    bindExecution: (botId: string, i: PutExecutionInput) => this.request<{ binding: BotExecutionBinding }>("PUT", `/gateway/bots/${enc(botId)}/execution-binding`, wire(i)),
     getBinding: (botId: string) => this.request<{ binding: BotExecutionBinding }>("GET", `/gateway/bots/${enc(botId)}/execution-binding`),
     setBindingState: (botId: string, state: string, reason?: string) =>
       this.request<{ binding: BotExecutionBinding }>("PATCH", `/gateway/bots/${enc(botId)}/execution-binding`, { state, reason }),
@@ -199,21 +199,22 @@ export class AllternitAgents {
   };
 
   readonly vendorPacks = {
-    recordGap: (vendor: string, g: GapInput) => this.request<{ gap: PackGap }>("POST", `/gateway/vendor-packs/${enc(vendor)}/gaps`, snake(g)),
+    recordGap: (vendor: string, g: GapInput) => this.request<{ gap: PackGap }>("POST", `/gateway/vendor-packs/${enc(vendor)}/gaps`, wire(g)),
     gaps: (vendor: string, q?: { status?: string }) => this.request<{ gaps: PackGap[] }>("GET", `/gateway/vendor-packs/${enc(vendor)}/gaps`, undefined, q),
     updateGap: (id: string, patch: { status?: string; severity?: string }) => this.request<{ gap: PackGap }>("PATCH", `/gateway/vendor-pack-gaps/${enc(id)}`, patch),
     parity: (vendor: string) => this.request<{ vendor: string; parity: PackParity; openGaps: number; blockingGaps: number }>("GET", `/gateway/vendor-packs/${enc(vendor)}/parity`),
   };
 
   readonly channels = {
-    bind: (threadId: string, i: ChannelBindingInput) => this.request<{ binding: ChannelConversationBinding }>("POST", `/gateway/threads/${enc(threadId)}/channel-bindings`, snake(i)),
+    bind: (threadId: string, i: ChannelBindingInput) => this.request<{ binding: ChannelConversationBinding }>("POST", `/gateway/threads/${enc(threadId)}/channel-bindings`, wire(i)),
     list: (threadId: string) => this.request<{ bindings: ChannelConversationBinding[] }>("GET", `/gateway/threads/${enc(threadId)}/channel-bindings`),
-    update: (id: string, patch: Record<string, unknown>) => this.request<{ binding: ChannelConversationBinding }>("PATCH", `/gateway/channel-bindings/${enc(id)}`, snake(patch)),
+    update: (id: string, patch: Record<string, unknown>) => this.request<{ binding: ChannelConversationBinding }>("PATCH", `/gateway/channel-bindings/${enc(id)}`, wire(patch)),
   };
 }
 
-function snake(o: Record<string, any>): Record<string, any> {
+/** allternit-api deserializes request bodies with serde rename_all = "camelCase": send camelCase keys, drop undefined. */
+function wire(o: Record<string, any>): Record<string, any> {
   const out: Record<string, any> = {};
-  for (const [k, v] of Object.entries(o)) if (v !== undefined) out[k.replace(/[A-Z]/g, (c) => "_" + c.toLowerCase())] = v;
+  for (const [k, v] of Object.entries(o)) if (v !== undefined) out[k.replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase())] = v;
   return out;
 }

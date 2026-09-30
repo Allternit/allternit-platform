@@ -105,7 +105,7 @@ api -X PUT $API/subscriptions/binding -d '{"computer_id":"<id>","guest_port":778
 
 ## 5. Connect the vendor account and bind a bot
 
-Request bodies use camelCase field names (`authType`, `accountBindingId`), responses too. (`AAI_REST.md` tables list some names in snake_case; the handlers take camelCase.)
+Request bodies use camelCase field names (`authType`, `accountBindingId`), responses too.
 
 ```bash
 # account: a browser/desktop session, no secret stored
@@ -171,8 +171,6 @@ cd allternit-ai && pnpm install && pnpm dev     # http://localhost:3013
 Open a Bot, then its config tab **Agent Gateway** (`BotConfigTab.tsx`, tab id `gateway`). You get the vendor library, connection cards and the wizard. Vendor-bound threads show the provenance bar and, for Grok Bot and Claude, their look pack. See allternit-ai `docs/gateway-ui.md`.
 
 ## 9. The same flow with the SDKs
-
-Known defect at this commit: the SDK helpers that send a body (`accounts.create`, `accounts.update`, `bots.bindExecution`, `vendorPacks.recordGap`, `channels.bind`, and the Python twins) convert field names to snake_case, while the Rust handlers deserialize camelCase only (`#[serde(rename_all = "camelCase")]` in `agent_gateway_routes.rs`). Those calls will be rejected until the SDKs or the handlers are fixed. Calls with no body fields (`sendTurn`, `events`, `sync`, `approvals`) are not affected. `setSecret` sends `api_key` where the handler wants `apiKey`. The examples below go through `request()` for the affected calls, which sends your body as given.
 
 TypeScript (`@allternit/aai-sdk`):
 

@@ -21,7 +21,7 @@ def test_create_account_body_and_auth():
     calls, c = make([(201, {"account": {"id": "a1"}})])
     assert c.create_account("grok", "api_key", display_name="G")["account"]["id"] == "a1"
     assert str(calls[0].url) == "http://x/api/v1/gateway/provider-accounts"
-    assert json.loads(calls[0].content) == {"vendor": "grok", "auth_type": "api_key", "display_name": "G"}
+    assert json.loads(calls[0].content) == {"vendor": "grok", "authType": "api_key", "displayName": "G"}
     assert calls[0].headers["authorization"] == "Bearer t"
 
 
