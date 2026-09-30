@@ -14,8 +14,10 @@ use allternit_commrails::core::types::{Actor, ActorType, AllternitEvent, EventSc
 use allternit_commrails::ledger::Ledger;
 use chrono::Utc;
 use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 pub const EV_RUN_STATE: &str = "agency.run.state";
 pub const EV_RUN_EVENT: &str = "agency.event";
@@ -51,9 +53,72 @@ pub enum EffectDenied {
     NotRunnable(String),
 }
 
+/// In-memory index over the agency events of one ledger. Built from the
+/// ledger once (first use), then kept current by every append. The ledger
+/// stays the source of truth: a restart rebuilds the index from it.
+#[derive(Default)]
+struct Inner {
+    loaded: bool,
+    tick: u64,
+    /// run_id -> (latest snapshot, tick of that snapshot)
+    runs: HashMap<String, (RunRecord, u64)>,
+    /// (owner, idempotency_key) -> run_id of the first snapshot carrying it
+    idem: HashMap<(String, String), String>,
+    /// run_id -> public events in append order
+    events: HashMap<String, Vec<Value>>,
+    /// (type, id, owner) -> (object, tick)
+    objects: HashMap<(String, String, String), (Value, u64)>,
+}
+
+impl Inner {
+    fn apply(&mut self, ty: &str, evt: &AllternitEvent) {
+        let p = &evt.payload;
+        self.tick += 1;
+        match ty {
+            EV_RUN_STATE => {
+                let id = p["run_id"].as_str().unwrap_or_default().to_string();
+                let rec = AgencyStore::record_from(evt);
+                if let Some(k) = &rec.idempotency_key {
+                    self.idem.entry((rec.owner.clone(), k.clone())).or_insert_with(|| id.clone());
+                }
+                self.runs.insert(id, (rec, self.tick));
+            }
+            EV_RUN_EVENT => {
+                let id = p["run_id"].as_str().unwrap_or_default().to_string();
+                self.events.entry(id).or_default().push(p["event"].clone());
+            }
+            EV_CAMPAIGN_STATE | EV_REPLAY_STATE => {
+                let key = (ty.to_string(), p["id"].as_str().unwrap_or_default().to_string(), p["owner"].as_str().unwrap_or_default().to_string());
+                self.objects.insert(key, (p["object"].clone(), self.tick));
+            }
+            _ => {}
+        }
+    }
+}
+
+struct Shared {
+    /// Held so the registry key (its pointer) can never be reused.
+    _ledger: Arc<Ledger>,
+    inner: RwLock<Inner>,
+    scans: AtomicUsize,
+}
+
+/// One index per ledger: `store(st)` builds an `AgencyStore` per request, so
+/// the index must outlive the handle.
+static INDEXES: std::sync::Mutex<Option<HashMap<usize, Arc<Shared>>>> = std::sync::Mutex::new(None);
+
+fn shared_for(ledger: &Arc<Ledger>) -> Arc<Shared> {
+    let mut g = INDEXES.lock().unwrap_or_else(|e| e.into_inner());
+    g.get_or_insert_with(HashMap::new)
+        .entry(Arc::as_ptr(ledger) as usize)
+        .or_insert_with(|| Arc::new(Shared { _ledger: ledger.clone(), inner: RwLock::new(Inner::default()), scans: AtomicUsize::new(0) }))
+        .clone()
+}
+
 #[derive(Clone)]
 pub struct AgencyStore {
     ledger: Arc<Ledger>,
+    shared: Arc<Shared>,
 }
 
 fn scope(run_id: &str) -> EventScope {
@@ -62,21 +127,58 @@ fn scope(run_id: &str) -> EventScope {
 
 impl AgencyStore {
     pub fn new(ledger: Arc<Ledger>) -> Self {
-        Self { ledger }
+        let shared = shared_for(&ledger);
+        Self { ledger, shared }
+    }
+
+    /// Number of full-ledger scans done to build the index (test hook: stays
+    /// at 1 no matter how many gets/lists follow).
+    pub fn ledger_scans(&self) -> usize {
+        self.shared.scans.load(Ordering::SeqCst)
+    }
+
+    /// Read access to the index, building it from the ledger on first use.
+    async fn index(&self) -> anyhow::Result<tokio::sync::RwLockReadGuard<'_, Inner>> {
+        loop {
+            let g = self.shared.inner.read().await;
+            if g.loaded {
+                return Ok(g);
+            }
+            drop(g);
+            let mut w = self.shared.inner.write().await;
+            if !w.loaded {
+                self.load_into(&mut w).await?;
+            }
+        }
+    }
+
+    async fn load_into(&self, w: &mut Inner) -> anyhow::Result<()> {
+        self.shared.scans.fetch_add(1, Ordering::SeqCst);
+        for e in self.ledger.query(LedgerQuery::default()).await? {
+            let ty = e.r#type.clone();
+            w.apply(&ty, &e);
+        }
+        w.loaded = true;
+        Ok(())
     }
 
     async fn append(&self, ty: &str, run_id: Option<&str>, payload: Value) -> anyhow::Result<()> {
-        self.ledger
-            .append(AllternitEvent {
-                event_id: String::new(),
-                ts: String::new(),
-                actor: Actor { r#type: ActorType::Gate, id: "agency-api".into() },
-                scope: run_id.map(scope),
-                r#type: ty.into(),
-                payload,
-                provenance: None,
-            })
-            .await?;
+        // Write lock across append + index update keeps the two in step.
+        let mut w = self.shared.inner.write().await;
+        if !w.loaded {
+            self.load_into(&mut w).await?;
+        }
+        let evt = AllternitEvent {
+            event_id: String::new(),
+            ts: String::new(),
+            actor: Actor { r#type: ActorType::Gate, id: "agency-api".into() },
+            scope: run_id.map(scope),
+            r#type: ty.into(),
+            payload,
+            provenance: None,
+        };
+        self.ledger.append(evt.clone()).await?;
+        w.apply(ty, &evt);
         Ok(())
     }
 
@@ -110,38 +212,28 @@ impl AgencyStore {
     }
 
     pub async fn load_run(&self, run_id: &str) -> anyhow::Result<Option<RunRecord>> {
-        Ok(self.of_type(EV_RUN_STATE).await?.iter().rev().find(|e| e.payload["run_id"] == run_id).map(Self::record_from))
+        Ok(self.index().await?.runs.get(run_id).map(|(r, _)| r.clone()))
     }
 
     /// Latest snapshot per run for `owner`, newest first.
     pub async fn list_runs(&self, owner: &str) -> anyhow::Result<Vec<RunRecord>> {
-        let mut seen = std::collections::HashSet::new();
-        let mut out = Vec::new();
-        for e in self.of_type(EV_RUN_STATE).await?.iter().rev() {
-            let id = e.payload["run_id"].as_str().unwrap_or_default().to_string();
-            if e.payload["owner"] == owner && seen.insert(id) {
-                out.push(Self::record_from(e));
-            }
-        }
-        Ok(out)
+        let g = self.index().await?;
+        let mut v: Vec<&(RunRecord, u64)> = g.runs.values().filter(|(r, _)| r.owner == owner).collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1));
+        Ok(v.into_iter().map(|(r, _)| r.clone()).collect())
     }
 
     /// Latest snapshot of every run (any owner) whose status is in `statuses`.
     pub async fn runs_with_status(&self, statuses: &[&str]) -> anyhow::Result<Vec<RunRecord>> {
-        let mut seen = std::collections::HashSet::new();
-        Ok(self.of_type(EV_RUN_STATE).await?.iter().rev()
-            .filter(|e| seen.insert(e.payload["run_id"].as_str().unwrap_or_default().to_string()))
-            .map(Self::record_from)
-            .filter(|r| statuses.iter().any(|s| r.run["status"] == *s))
-            .collect())
+        let g = self.index().await?;
+        let mut v: Vec<&(RunRecord, u64)> = g.runs.values().filter(|(r, _)| statuses.iter().any(|s| r.run["status"] == *s)).collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1));
+        Ok(v.into_iter().map(|(r, _)| r.clone()).collect())
     }
 
     pub async fn find_by_idempotency(&self, owner: &str, key: &str) -> anyhow::Result<Option<RunRecord>> {
-        let Some(e) = self.of_type(EV_RUN_STATE).await?.into_iter().find(|e| e.payload["owner"] == owner && e.payload["idempotency_key"] == key) else {
-            return Ok(None);
-        };
-        let id = e.payload["run_id"].as_str().unwrap_or_default().to_string();
-        self.load_run(&id).await
+        let g = self.index().await?;
+        Ok(g.idem.get(&(owner.to_string(), key.to_string())).and_then(|id| g.runs.get(id)).map(|(r, _)| r.clone()))
     }
 
     /// Persist a snapshot (bumps `version`, `updated_at`).
@@ -165,19 +257,12 @@ impl AgencyStore {
 
     /// Public run events (ordered by seq).
     pub async fn events(&self, run_id: &str) -> anyhow::Result<Vec<Value>> {
-        Ok(self
-            .ledger
-            .query(LedgerQuery { r#type: Some(EV_RUN_EVENT.into()), scope: Some(scope(run_id)), ..Default::default() })
-            .await?
-            .into_iter()
-            .filter(|e| e.payload["run_id"] == run_id)
-            .map(|e| e.payload["event"].clone())
-            .collect())
+        Ok(self.index().await?.events.get(run_id).cloned().unwrap_or_default())
     }
 
     /// Append one public event; `extra` is merged at top level (`data`, …).
     pub async fn emit(&self, run_id: &str, run_version: i64, ty: &str, extra: Value) -> anyhow::Result<Value> {
-        let seq = self.events(run_id).await?.len() as i64 + 1;
+        let seq = self.index().await?.events.get(run_id).map_or(0, Vec::len) as i64 + 1;
         let mut ev = json!({ "id": format!("evt_{seq:010}"), "seq": seq, "run_id": run_id, "type": ty,
                              "created_at": now(), "run_version": run_version });
         if let (Some(o), Some(x)) = (ev.as_object_mut(), extra.as_object()) {
@@ -273,18 +358,13 @@ impl AgencyStore {
     }
 
     pub async fn load_object(&self, ty: &str, id: &str, owner: &str) -> anyhow::Result<Option<Value>> {
-        Ok(self.of_type(ty).await?.iter().rev().find(|e| e.payload["id"] == id && e.payload["owner"] == owner).map(|e| e.payload["object"].clone()))
+        Ok(self.index().await?.objects.get(&(ty.to_string(), id.to_string(), owner.to_string())).map(|(o, _)| o.clone()))
     }
 
     pub async fn list_objects(&self, ty: &str, owner: &str) -> anyhow::Result<Vec<Value>> {
-        let mut seen = std::collections::HashSet::new();
-        Ok(self
-            .of_type(ty)
-            .await?
-            .iter()
-            .rev()
-            .filter(|e| e.payload["owner"] == owner && seen.insert(e.payload["id"].as_str().unwrap_or_default().to_string()))
-            .map(|e| e.payload["object"].clone())
-            .collect())
+        let g = self.index().await?;
+        let mut v: Vec<(&(String, String, String), &(Value, u64))> = g.objects.iter().filter(|(k, _)| k.0 == ty && k.2 == owner).collect();
+        v.sort_by(|a, b| b.1 .1.cmp(&a.1 .1));
+        Ok(v.into_iter().map(|(_, (o, _))| o.clone()).collect())
     }
 }

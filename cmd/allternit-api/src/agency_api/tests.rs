@@ -467,5 +467,69 @@ async fn agency_executor_drives_bug_fix_to_verified_completion() {
     let (_, _, b) = call(&t.app, get_req(&format!("/v1/runs/{id}/events"), "u1")).await;
     assert_eq!(b.matches("\"step\":\"N15\"").count(), 4, "N15 progress + receipt events"); 
     assert_no_vendor(&b);
+    // Cleanup runs right after the terminal snapshot; the store is fast now, so wait for it.
+    for _ in 0..100 {
+        if !runs.path().join(&id).exists() { break; }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
     assert!(!runs.path().join(&id).exists(), "disposable workspace removed after the run");
+}
+
+#[tokio::test]
+async fn agency_store_index_does_not_rescan_ledger() {
+    use allternit_commrails::ledger::{Ledger, LedgerOptions};
+    let dir = tempfile::tempdir().unwrap();
+    let open = || Arc::new(Ledger::new(LedgerOptions { root_dir: Some(dir.path().to_path_buf()), ledger_dir: Some(std::path::PathBuf::from("ledger")) }));
+    let s = AgencyStore::new(open());
+    for i in 0..150 {
+        let id = format!("run_{i}");
+        let rec = store::RunRecord {
+            owner: "u1".into(),
+            idempotency_key: Some(format!("k{i}")),
+            run: json!({ "id": id, "status": "running", "version": 0 }),
+            task_ir: json!({}),
+            attention: vec![],
+        };
+        s.save(rec).await.unwrap();
+        s.emit(&id, 1, "run.started", json!({})).await.unwrap();
+    }
+    assert_eq!(s.ledger_scans(), 1, "writes index incrementally, one initial build");
+    // Restart: new ledger handle -> new index, rebuilt from disk with one scan.
+    let s = AgencyStore::new(open());
+    for i in 0..300 {
+        let id = format!("run_{}", i % 150);
+        assert!(s.load_run(&id).await.unwrap().is_some());
+        assert_eq!(s.events(&id).await.unwrap().len(), 1);
+        assert_eq!(s.list_runs("u1").await.unwrap().len(), 150);
+        assert!(s.find_by_idempotency("u1", &format!("k{}", i % 150)).await.unwrap().is_some());
+    }
+    s.emit("run_3", 1, "run.x", json!({})).await.unwrap();
+    assert_eq!(s.events("run_3").await.unwrap().len(), 2);
+    assert_eq!(s.list_runs("u1").await.unwrap().len(), 150);
+    assert_eq!(s.ledger_scans(), 1, "get/list/emit never rescan the ledger");
+}
+
+/// Timing on a synthetic ~17 MB ledger: `cargo test -p allternit-api --lib agency_store_bench -- --ignored --nocapture`.
+#[tokio::test]
+#[ignore]
+async fn agency_store_bench_large_ledger() {
+    use allternit_commrails::ledger::{Ledger, LedgerOptions};
+    let dir = tempfile::tempdir().unwrap();
+    let open = || Arc::new(Ledger::new(LedgerOptions { root_dir: Some(dir.path().to_path_buf()), ledger_dir: Some(std::path::PathBuf::from("ledger")) }));
+    let s = AgencyStore::new(open());
+    let pad = "x".repeat(5000);
+    for i in 0..3400 {
+        let rec = store::RunRecord { owner: "u1".into(), idempotency_key: None, run: json!({ "id": format!("run_{i}"), "status": "running", "version": 0, "pad": pad }), task_ir: json!({}), attention: vec![] };
+        s.save(rec).await.unwrap();
+    }
+    let s = AgencyStore::new(open());
+    let t0 = std::time::Instant::now();
+    s.load_run("run_1").await.unwrap();
+    let first = t0.elapsed();
+    let t1 = std::time::Instant::now();
+    for _ in 0..20 {
+        s.load_run("run_7").await.unwrap();
+        s.list_runs("u1").await.unwrap();
+    }
+    println!("BENCH first call {first:?}; 20x(get+list) {:?}", t1.elapsed());
 }
