@@ -9,6 +9,28 @@ mod embedded {
     embed_migrations!("migrations");
 }
 
+/// `bot_execution_bindings.external_agent_name` / `external_agent_avatar` (the vendor
+/// agent's own name and avatar). Shipped first as a V205 migration that collided with
+/// V205__kernel_ui: on the VPS both ran but history recorded only kernel_ui, so a
+/// renumbered V206 `ADD COLUMN` would fail there. Add each column only when missing.
+fn ensure_exec_binding_agent_identity(conn: &Connection) -> SqlResult<()> {
+    let has_table: bool = conn
+        .query_row("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'bot_execution_bindings'", [], |r| r.get::<_, i64>(0))
+        .map(|n| n > 0)?;
+    if !has_table {
+        return Ok(());
+    }
+    for col in ["external_agent_name", "external_agent_avatar"] {
+        let exists: bool = conn
+            .query_row("SELECT COUNT(*) FROM pragma_table_info('bot_execution_bindings') WHERE name = ?1", [col], |r| r.get::<_, i64>(0))
+            .map(|n| n > 0)?;
+        if !exists {
+            conn.execute_batch(&format!("ALTER TABLE bot_execution_bindings ADD COLUMN {col} TEXT"))?;
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub struct DbHandle {
     path: PathBuf,
@@ -32,6 +54,7 @@ impl DbHandle {
                 Some(format!("Migration failed: {}", e)),
             )
         })?;
+        ensure_exec_binding_agent_identity(&conn)?;
         info!("SQLite DB ready at {}", path.display());
         Ok(Self { path })
     }
@@ -583,4 +606,25 @@ pub struct TemplatedParam {
     pub value: String,
     pub templated: bool,
     pub suggested_default: Option<String>,
+}
+
+#[cfg(test)]
+mod agent_identity_column_tests {
+    use super::*;
+
+    #[test]
+    fn identity_columns_are_added_once_and_a_db_that_already_has_them_is_left_alone() {
+        let db = DbHandle::new_memory().expect("fresh db migrates");
+        let conn = db.connect().unwrap();
+        let cols = |c: &Connection| -> i64 {
+            c.query_row("SELECT COUNT(*) FROM pragma_table_info('bot_execution_bindings') WHERE name LIKE 'external_agent_%'", [], |r| r.get(0)).unwrap()
+        };
+        // external_agent_id + name + avatar
+        assert_eq!(cols(&conn), 3);
+        // Re-running (a VPS that already has them) is a no-op, not a duplicate-column error.
+        ensure_exec_binding_agent_identity(&conn).unwrap();
+        drop(conn);
+        let again = DbHandle::new(db.path().to_path_buf()).expect("reopen");
+        assert_eq!(cols(&again.connect().unwrap()), 3);
+    }
 }
