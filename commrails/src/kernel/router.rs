@@ -586,6 +586,18 @@ pub struct DecisionResultView {
     pub extensions: Option<Map<String, Value>>,
 }
 
+impl DecisionResultView {
+    /// `x-decision_id` the runtime assigned (shadow ledger join key).
+    pub fn decision_id(&self) -> Option<String> {
+        super::s1_outcome::decision_id(&self.extensions)
+    }
+    /// Evidence ref to record on the node/receipt for a completion (GATE/VERIFY) decision,
+    /// so the verifier's CompletionDecision can later report ground truth.
+    pub fn verify_evidence_ref(&self) -> Option<String> {
+        super::s1_outcome::verify_evidence_ref(&self.extensions)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum S1Verdict {
     /// Live, calibrated, AUTO and above floor: the S1 answer is authoritative.

@@ -541,6 +541,14 @@ impl Gate {
             }),
         ))
         .await?;
+        // Ground truth for any S1 completion decision recorded on this node's
+        // evidence (s1-verify:<id>). Fire-and-forget: never affects the run.
+        crate::kernel::s1_outcome::report_completion(
+            &crate::kernel::s1_outcome::OutcomeReporter::from_env(),
+            evidence_refs,
+            judged.outcome,
+            &format!("verifier:{}", judged.backend),
+        );
         Ok(Gate4Decision {
             final_status: node_status.clone(),
             node_status,
