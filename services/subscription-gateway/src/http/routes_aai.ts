@@ -9,11 +9,26 @@ import { parseCredential, runWithCallScope } from "../aai/call-scope.js";
 import { defaultAdaptersDir } from "../adapters/registry.js";
 
 /**
+ * Which adapter serves a vendor when a binding names none. Accounts and wizard bindings carry the vendor
+ * library id (`xai`, `anthropic`, `openai`, ...), never an adapter id, so without this every such call
+ * answered UNSUPPORTED "no provider registered for adapter xai". Anthropic has two adapters: a user's own
+ * API key means Claude Managed Agents, otherwise the Claude desktop app.
+ */
+export function adapterForVendor(vendor: string, hasCredential: boolean): string {
+  switch (vendor) {
+    case "xai": case "grok": return "grok-bot";
+    case "openai": case "chatgpt": return "chatgpt-dots";
+    case "anthropic": case "claude": return hasCredential ? "claude-managed-agents" : "claude-desktop";
+    default: return vendor; // openclaw, and bindings that already name their adapter as the vendor
+  }
+}
+
+/**
  * allternit-api sends its binding rows as stored: SQL NULL columns arrive as JSON null (the schema has only
  * optional), and discovery (`agent.list` before a bot exists) sends a transient `{ type, vendor,
- * accountBindingId }` with no id/botId/mode/state and no adapterId (the vendor id is the adapter id).
+ * accountBindingId }` with no id/botId/mode/state and no adapterId (resolved from the vendor above).
  */
-export function normalizeWireBinding(raw: unknown): unknown {
+export function normalizeWireBinding(raw: unknown, hasCredential = false): unknown {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
   const b: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) if (v !== null) b[k] = v;
@@ -21,7 +36,7 @@ export function normalizeWireBinding(raw: unknown): unknown {
   b.botId ??= "";
   b.mode ??= "hosted";
   b.state ??= "READY";
-  if (b.adapterId === undefined && typeof b.vendor === "string") b.adapterId = b.vendor;
+  if (b.adapterId === undefined && typeof b.vendor === "string") b.adapterId = adapterForVendor(b.vendor, hasCredential);
   return b;
 }
 
@@ -32,7 +47,7 @@ export function aaiRouter(deps: GatewayDeps): Router {
   router.post("/aai/call", requireScope("tasks:submit"), async (req: Request, res: Response) => {
     if (!host) { res.status(503).json({ error: "aai_host_unavailable" }); return; }
     const body = (req.body ?? {}) as Record<string, unknown>;
-    const binding = botExecutionBindingSchema.safeParse(normalizeWireBinding(body.binding));
+    const binding = botExecutionBindingSchema.safeParse(normalizeWireBinding(body.binding, body.credential != null));
     if (typeof body.op !== "string" || !binding.success ||
         (body.input !== undefined && (typeof body.input !== "object" || body.input === null || Array.isArray(body.input)))) {
       res.status(400).json({ error: "invalid_body", detail: "expected { op: string, binding: BotExecutionBinding, input: object }" });

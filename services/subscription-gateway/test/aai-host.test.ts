@@ -155,3 +155,32 @@ describe("wire shapes sent by allternit-api (gateway_runner.rs / agent_gateway_r
     expect(first.remote_event_id).toBe(first.remoteEventId);
   });
 });
+
+// Wizard bindings and discovery carry the vendor library id, never an adapter id. Before
+// adapterForVendor every one of them answered UNSUPPORTED "no provider registered for adapter xai".
+describe("vendor library ids resolve to their adapter", () => {
+  const route = (adapterIds: string[]) => {
+    host = new AaiHost();
+    for (const id of adapterIds) host.register({ provider: new MemoryProvider("mem-agent", 2, {}, id) });
+    app = createServer({ ...deps, aai: host });
+  };
+  const wire = { type: "vendor", accountBindingId: "acct-1", adapterId: null, id: null, botId: null, mode: null, state: null };
+  it.each([
+    ["xai", "grok-bot"], ["grok", "grok-bot"], ["openai", "chatgpt-dots"], ["anthropic", "claude-desktop"], ["openclaw", "openclaw"],
+  ])("%s → %s (discovery-shaped binding with SQL nulls)", async (vendor, adapter) => {
+    route([adapter]);
+    const r = await call("agent.list", {}, { ...wire, vendor }).expect(200);
+    expect(r.body.ok).toBe(true);
+  });
+  it("anthropic with the user's API key goes to Claude Managed Agents", async () => {
+    route(["claude-managed-agents"]);
+    const r = await request(app).post("/aai/call").set("Authorization", `Bearer ${tok}`)
+      .send({ op: "agent.list", binding: { ...wire, vendor: "anthropic" }, input: {}, credential: { apiKey: "sk-test" } }).expect(200);
+    expect(r.body.ok).toBe(true);
+  });
+  it("an explicit adapterId always wins", async () => {
+    route(["claude-managed-agents"]);
+    const r = await call("agent.list", {}, { ...wire, vendor: "anthropic", adapterId: "claude-managed-agents" }).expect(200);
+    expect(r.body.ok).toBe(true);
+  });
+});
