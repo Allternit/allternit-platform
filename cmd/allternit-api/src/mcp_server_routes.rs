@@ -592,7 +592,7 @@ mod tests {
         assert_eq!(l["approvals"].as_array().unwrap().len(), 1);
         // The tool call also flows through the JSON-RPC dispatcher.
         let req: JsonRpcRequest = serde_json::from_value(json!({ "id": 1, "method": "tools/call", "params": { "name": "thread_events", "arguments": { "thread_id": "th-vendor" } } })).unwrap();
-        let out = handle_rpc_inner_value(&st, "user-a", None, req).await;
+        let out = handle_rpc_inner_value(&st, "user-a", None, req, false).await;
         assert_eq!(out["result"]["isError"], false);
     }
 

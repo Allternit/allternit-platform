@@ -2,7 +2,7 @@
 
 Config, deploy and migration steps for the MCP Apps backend. Design is in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-> **Nothing here has been applied to production.** Migrations V198 and V199 are written and tested on temporary SQLite
+> **Nothing here has been applied to production.** Migrations V202 and V203 are written and tested on temporary SQLite
 > files only. Production migrations are run manually. `seal_legacy_mcp_secrets()` has not been run against any database.
 
 ## Environment variables
@@ -50,10 +50,10 @@ Set in the Clerk dashboard (not checkable from this repo):
 Both are embedded refinery migrations in `cmd/allternit-api/migrations/`, and run when an API process next opens a DB.
 Production migrations are run manually, so **run these on purpose, not by starting a new build against production.**
 
-- **V198 `mcp_app_directory`** (directory): `developer_domain_tokens`, `directory_submissions`,
+- **V202 `mcp_app_directory`** (directory): `developer_domain_tokens`, `directory_submissions`,
   `directory_reviewer_credentials`, `mcp_app_installs`. All `CREATE ... IF NOT EXISTS`.
-- **V199 `commerce_orders`** (commerce): `commerce_connected_accounts`, `commerce_checkout_sessions`, `commerce_orders`,
-  `commerce_disputes`, `commerce_webhook_events`. Renumbered from V198 after the directory took V198.
+- **V203 `commerce_orders`** (commerce): `commerce_connected_accounts`, `commerce_checkout_sessions`, `commerce_orders`,
+  `commerce_disputes`, `commerce_webhook_events`. Renumbered at merge to follow main's V198–V201.
 
 Check the migration history of the target DB for a clash before applying.
 

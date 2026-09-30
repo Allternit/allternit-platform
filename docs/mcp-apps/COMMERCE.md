@@ -1,8 +1,8 @@
 # MCP App commerce
 
 Lets an MCP App sell something through a payment sheet the Allternit host renders. **Stripe test mode only.** It is
-not enabled in production and the migration (V199) has not been applied there. Code: `commerce.rs`,
-`commerce_routes.rs`, `migrations/V199__commerce_orders.sql`. Env vars are in [OPERATIONS.md](OPERATIONS.md).
+not enabled in production and the migration (V203) has not been applied there. Code: `commerce.rs`,
+`commerce_routes.rs`, `migrations/V203__commerce_orders.sql`. Env vars are in [OPERATIONS.md](OPERATIONS.md).
 
 ## Test-mode rule
 
@@ -37,7 +37,7 @@ The platform fee is `total × BPS / 10,000 + fixed`, capped at the total; both s
 window fail. Each Stripe event id is processed once (`commerce_webhook_events`). `account.updated` updates the account.
 Disputes are logged in `commerce_disputes`; nothing acts on them automatically.
 
-## Tables (V199)
+## Tables (V203)
 
 `commerce_connected_accounts`, `commerce_checkout_sessions`, `commerce_orders`, `commerce_disputes`, `commerce_webhook_events`.
 

@@ -1,7 +1,7 @@
 # MCP App directory: review policy and pipeline
 
 Backend for listing MCP Apps: submissions, review, held updates and installs. Code: `mcp_directory_routes.rs`,
-`mcp_directory_held.rs`, `mcp_directory_guard.rs`, `migrations/V198__mcp_app_directory.sql`. **Migration V198 is not applied
+`mcp_directory_held.rs`, `mcp_directory_guard.rs`, `migrations/V202__mcp_app_directory.sql`. **Migration V202 is not applied
 in production**; see [OPERATIONS.md](OPERATIONS.md).
 
 ## Pipeline
