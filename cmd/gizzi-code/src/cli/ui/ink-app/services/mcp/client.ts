@@ -252,6 +252,7 @@ import { mkdir, readFile, unlink, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { getGizziConfigHomeDir } from '../../utils/envUtils.js'
 /* eslint-enable @typescript-eslint/no-require-imports */
+import { MCP_APPS_CLIENT_CAPABILITIES, isVisibleToModel } from '../../../../../runtime/tools/mcp/apps.js'
 import { jsonParse, jsonStringify } from '../../utils/slowOperations.js'
 
 const MCP_AUTH_CACHE_TTL_MS = 15 * 60 * 1000 // 15 min
@@ -997,6 +998,8 @@ export const connectToServer = memoize(
             // breaks Java MCP SDK servers (Spring AI) whose Elicitation class
             // has zero fields and fails on unknown properties.
             elicitation: {},
+            // MCP Apps (SEP-1865): this host renders `ui://` resources.
+            ...MCP_APPS_CLIENT_CAPABILITIES,
           },
         },
       )
@@ -1755,7 +1758,11 @@ export const fetchToolsForClient = memoizeWithLRU(
       )) as ListToolsResult
 
       // Sanitize tool data from MCP server
-      const toolsToProcess = recursivelySanitizeUnicode(result.tools)
+      // MCP Apps: tools scoped to the rendered app (`_meta.ui.visibility` without
+      // "model") are reachable only through the app bridge, never by the model.
+      const toolsToProcess = recursivelySanitizeUnicode(result.tools).filter(
+        isVisibleToModel,
+      )
 
       // Check if we should skip the mcp__ prefix for SDK MCP servers
       const skipPrefix =
@@ -3288,7 +3295,7 @@ export async function setupSdkMcpClients(
           websiteUrl: PRODUCT_URL,
         },
         {
-          capabilities: {},
+          capabilities: { ...MCP_APPS_CLIENT_CAPABILITIES },
         },
       )
 

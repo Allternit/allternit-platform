@@ -66,6 +66,10 @@ pub struct SseConfig {
     pub timeout_secs: u64,
     /// Reconnection configuration
     pub reconnect: ReconnectConfig,
+    /// Connect `host` to exactly this address instead of resolving it again
+    /// (closes the DNS-rebinding gap after a caller validated the address).
+    #[serde(skip)]
+    pub pin: Option<(String, std::net::SocketAddr)>,
 }
 
 /// Reconnection configuration
@@ -103,8 +107,13 @@ impl SseTransport {
     pub fn new(config: SseConfig) -> Result<Arc<Self>> {
         info!("Creating SSE transport for: {}", config.url);
 
-        let client = Client::builder()
-            .timeout(Duration::from_secs(config.timeout_secs))
+        let mut builder = Client::builder().timeout(Duration::from_secs(config.timeout_secs));
+        if let Some((host, addr)) = &config.pin {
+            builder = builder.resolve(host, *addr);
+        }
+        // No redirects: the host SSRF-checks and pins the connector address.
+        let client = builder
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| TransportError::Http {
                 status: 0,
@@ -143,6 +152,7 @@ impl SseTransport {
             auth_token: Some(token),
             timeout_secs: 60,
             reconnect: ReconnectConfig::default(),
+            pin: None,
         })
     }
 
@@ -376,6 +386,10 @@ impl SseTransport {
         let response_str = String::from_utf8_lossy(&response_body);
         trace!("Response: {response_str}");
 
+        // Notifications are acknowledged with an empty 202/204 body.
+        if response_body.iter().all(|b| b.is_ascii_whitespace()) {
+            return Ok(Value::Null);
+        }
         let json_response: JsonRpcResponse = serde_json::from_slice(&response_body)?;
 
         if let Some(error) = json_response.error {
@@ -458,6 +472,7 @@ mod tests {
                 max_attempts: 10,
                 jitter: 0.0,
             },
+            pin: None,
         };
 
         let transport = SseTransport::new(config).unwrap();
@@ -484,6 +499,7 @@ mod tests {
                 max_attempts: 3,
                 jitter: 0.0,
             },
+            pin: None,
         };
 
         let transport = SseTransport::new(config).unwrap();

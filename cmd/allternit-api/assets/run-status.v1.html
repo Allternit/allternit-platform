@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Run status</title>
+<style>
+  :root {
+    --neutral-fill: #f4f4f5;
+    --bg: var(--color-background-primary, #ffffff);
+    --fg: var(--color-text-primary, #111111);
+    --muted: var(--color-text-secondary, #5f6368);
+    --line: var(--color-border-primary, #e4e4e7);
+    font-family: var(--font-sans, system-ui, -apple-system, "Segoe UI", sans-serif);
+  }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); }
+  body { padding: 16px; font-size: 14px; line-height: 1.4; }
+  .card { background: var(--neutral-fill); border-radius: 12px; padding: 14px 16px; }
+  .head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .title { font-weight: 600; font-size: 15px; overflow-wrap: anywhere; }
+  .pill { border: 1px solid var(--line); background: var(--bg); border-radius: 999px; padding: 2px 10px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 12px 0 0; }
+  dt { color: var(--muted); }
+  dd { margin: 0; overflow-wrap: anywhere; }
+  .err { margin-top: 12px; padding: 8px 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; white-space: pre-wrap; }
+  .empty { color: var(--muted); }
+</style>
+</head>
+<body>
+<div id="root" class="card"><span class="empty">Waiting for run data…</span></div>
+<script>
+(function () {
+  var root = document.getElementById("root");
+  var nextId = 1;
+  var pending = {};
+
+  function send(msg) { window.parent.postMessage(msg, "*"); }
+  function request(method, params) {
+    var id = nextId++;
+    return new Promise(function (resolve, reject) {
+      pending[id] = { resolve: resolve, reject: reject };
+      send({ jsonrpc: "2.0", id: id, method: method, params: params });
+    });
+  }
+  function notify(method, params) { send({ jsonrpc: "2.0", method: method, params: params || {} }); }
+
+  function applyHostContext(ctx) {
+    if (!ctx) return;
+    var vars = ctx.styles && ctx.styles.variables;
+    if (vars) {
+      Object.keys(vars).forEach(function (k) {
+        if (vars[k]) document.documentElement.style.setProperty(k, vars[k]);
+      });
+    }
+    if (ctx.theme) document.documentElement.style.colorScheme = ctx.theme;
+  }
+
+  function row(dl, label, value) {
+    if (value === null || value === undefined || value === "") return;
+    var dt = document.createElement("dt"); dt.textContent = label;
+    var dd = document.createElement("dd"); dd.textContent = String(value);
+    dl.appendChild(dt); dl.appendChild(dd);
+  }
+
+  function fmtDuration(ms) {
+    if (typeof ms !== "number") return null;
+    if (ms < 1000) return ms + " ms";
+    var s = ms / 1000;
+    return s < 60 ? s.toFixed(1) + " s" : Math.floor(s / 60) + " min " + Math.round(s % 60) + " s";
+  }
+
+  function render(data) {
+    root.textContent = "";
+    if (!data || !data.run_id) {
+      var e = document.createElement("span"); e.className = "empty";
+      e.textContent = "No run data.";
+      root.appendChild(e);
+      return;
+    }
+    var head = document.createElement("div"); head.className = "head";
+    var title = document.createElement("div"); title.className = "title";
+    title.textContent = data.agent_name || data.agent_id || "Run";
+    var pill = document.createElement("span"); pill.className = "pill";
+    pill.textContent = data.status || "unknown";
+    head.appendChild(title); head.appendChild(pill);
+    root.appendChild(head);
+
+    var dl = document.createElement("dl");
+    row(dl, "Run", data.run_id);
+    row(dl, "Started", data.started_at);
+    row(dl, "Finished", data.completed_at);
+    row(dl, "Duration", fmtDuration(data.duration_ms));
+    root.appendChild(dl);
+
+    if (data.error) {
+      var err = document.createElement("div"); err.className = "err";
+      err.textContent = data.error;
+      root.appendChild(err);
+    }
+    notify("ui/notifications/size-changed", {
+      width: Math.ceil(document.documentElement.scrollWidth),
+      height: Math.ceil(document.documentElement.scrollHeight)
+    });
+  }
+
+  window.addEventListener("message", function (event) {
+    if (event.source !== window.parent) return;
+    var msg = event.data;
+    if (!msg || msg.jsonrpc !== "2.0") return;
+    if (msg.id !== undefined && !msg.method) {
+      var p = pending[msg.id];
+      if (p) { delete pending[msg.id]; msg.error ? p.reject(msg.error) : p.resolve(msg.result); }
+      return;
+    }
+    if (msg.method === "ui/notifications/tool-result") {
+      var params = msg.params || {};
+      render(params.structuredContent);
+    } else if (msg.method === "ui/notifications/host-context-changed") {
+      applyHostContext(msg.params);
+    } else if (msg.method === "ui/resource-teardown" && msg.id !== undefined) {
+      send({ jsonrpc: "2.0", id: msg.id, result: {} });
+    }
+  });
+
+  request("ui/initialize", {
+    appInfo: { name: "allternit-run-status", version: "1.0.0" },
+    appCapabilities: {},
+    protocolVersion: "2026-01-26"
+  }).then(function (result) {
+    applyHostContext(result && result.hostContext);
+    notify("ui/notifications/initialized");
+  }).catch(function () {});
+})();
+</script>
+</body>
+</html>
