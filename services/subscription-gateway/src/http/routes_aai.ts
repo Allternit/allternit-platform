@@ -5,6 +5,7 @@
 import { Router, type Request, type Response } from "express";
 import { botExecutionBindingSchema } from "@allternit/subscription-fabric-contracts";
 import { requireScope, type GatewayDeps } from "./server.js";
+import { parseCredential, runWithCallScope } from "../aai/call-scope.js";
 
 export function aaiRouter(deps: GatewayDeps): Router {
   const router = Router();
@@ -19,7 +20,10 @@ export function aaiRouter(deps: GatewayDeps): Router {
       res.status(400).json({ error: "invalid_body", detail: "expected { op: string, binding: BotExecutionBinding, input: object }" });
       return;
     }
-    const result = await host.call(body.op, binding.data, (body.input as Record<string, unknown> | undefined) ?? {});
+    // `credential` (user-owned vendor key, short-lived) is scoped to this call only and never persisted or logged.
+    const credential = parseCredential(body.credential);
+    const result = await runWithCallScope({ binding: binding.data, credential }, () =>
+      host.call(body.op as string, binding.data, (body.input as Record<string, unknown> | undefined) ?? {}));
     res.status(200).json(result);
   });
 
