@@ -138,10 +138,11 @@ use tokio::sync::RwLock;
 
 #[tokio::main]
 async fn main() {
-    // P5 commerce is Stripe test-mode only: a live key configured for it is fatal.
+    // P5 commerce is Stripe test-mode only. A live key configured for it
+    // disables commerce (every commerce route answers 503 via service()); it
+    // must not take the rest of the API down with it.
     if let Err(e) = allternit_api::commerce_routes::check_startup_config() {
-        eprintln!("FATAL: {e}");
-        std::process::exit(1);
+        eprintln!("commerce disabled: {e}");
     }
     // Structured logging + local spans (`#[tracing::instrument]` on the LLM
     // gateway, DLP, MCP-server, Slack-webhook, and eval-run handlers), plus —
