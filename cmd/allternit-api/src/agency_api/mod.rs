@@ -362,7 +362,8 @@ async fn run_events(
         loop {
             let evs = s.events(&run_id).await.unwrap_or_default();
             let mut done = false;
-            for ev in evs.into_iter().filter(|e| e["seq"].as_i64().unwrap_or(0) > after) {
+            let from = after;
+            for ev in evs.into_iter().filter(|e| e["seq"].as_i64().unwrap_or(0) > from) {
                 after = ev["seq"].as_i64().unwrap_or(after);
                 done |= is_terminal_event(&ev);
                 if keep(&ev) {

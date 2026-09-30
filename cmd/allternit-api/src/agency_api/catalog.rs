@@ -84,11 +84,11 @@ pub fn criterion(id: &str) -> Option<Value> {
 /// Completion contracts (mirrors `spec/Contracts/kernel/v1/data/completion_policy.bug_fix.v1.json`).
 pub fn completion_contract(id: &str) -> Option<Value> {
     (id == "completion.bug_fix").then(|| {
-        json!({
-            "id": "completion.bug_fix", "version": 1, "task_type": "BUG_FIX", "allow_partial": false,
-            "require": ["target_tests_pass", "affected_tests_pass", "no_new_regressions", "diff_review_accept", "requirements_satisfied"]
-                .iter().map(|c| json!({ "id": c, "version": 1 })).collect::<Vec<_>>()
-        })
+        let require: Vec<Value> = ["target_tests_pass", "affected_tests_pass", "no_new_regressions", "diff_review_accept", "requirements_satisfied"]
+            .iter()
+            .map(|c| json!({ "id": c, "version": 1 }))
+            .collect();
+        json!({ "id": "completion.bug_fix", "version": 1, "task_type": "BUG_FIX", "allow_partial": false, "require": require })
     })
 }
 
