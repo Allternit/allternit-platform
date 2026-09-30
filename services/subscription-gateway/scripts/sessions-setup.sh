@@ -173,6 +173,14 @@ cd "$REPO/services/subscription-gateway"
 # challenged. Firefox is only the fallback when Chrome is missing.
 LOGIN_BROWSER="$(command -v google-chrome-stable || command -v google-chrome || echo "$FIREFOX_DIR/firefox")"
 echo "login browser: $LOGIN_BROWSER"
+# Per-box opt-ins (e.g. SUBS_GATEWAY_DOTS_CONSENT=1) live in an on-box env
+# file, never in the repo: consent belongs to this computer's owner, and a
+# redeploy from origin/main must not drop it.
+GATEWAY_ENV="$STATE_DIR/gateway.env"
+if [ -f "$GATEWAY_ENV" ]; then
+  set -a; . "$GATEWAY_ENV"; set +a
+  echo "gateway env: $(grep -oE '^[A-Z_]+' "$GATEWAY_ENV" | tr '\n' ' ')"
+fi
 DISPLAY="$DISPLAY_NUM" \
 SUBS_GATEWAY_STATE_DIR="$STATE_DIR" \
 SUBS_GATEWAY_KEYCHAIN=file \
