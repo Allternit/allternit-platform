@@ -199,6 +199,25 @@ describe("Bot discovery (New-chat picker)", () => {
     expect(c.ok).toBe(true);
     expect(driver.chosenBot).toBe("Ops Bot");
   });
+  it("list() carries each Bot's own mascot (PNG only), and discovery never fails on it", async () => {
+    const { avatarFor } = await import("../adapters/grok-bot/provider.js");
+    const PNG = (c: string) => `data:image/png;base64,${c}`;
+    const marks = [{ name: "Ops Bot Extra", text: "Ops Bot ExtraOther", png: PNG("ZXh0") }, { name: "Ops Bot", text: "Ops BotRan the nightly check", png: PNG("b3Bz") }, { name: "Research Bot", text: "Research BotDraft", png: "data:image/svg+xml,<svg/>" }];
+    // Older app builds without a readable name: prefix match that skips longer Bot names.
+    const legacy = marks.map(({ text, png }) => ({ text, png }));
+    expect(avatarFor("Ops Bot", legacy, ["Ops Bot", "Ops Bot Extra"])).toBe(PNG("b3Bz"));
+    expect(avatarFor("Ops Bot", marks, ["Ops Bot", "Ops Bot Extra"])).toBe(PNG("b3Bz"));
+    expect(avatarFor("Ops Bot Extra", marks, ["Ops Bot", "Ops Bot Extra"])).toBe(PNG("ZXh0"));
+    expect(avatarFor("Research Bot", marks)).toBeUndefined();
+    const { driver, p } = mk("normal", { bots });
+    (driver as unknown as { avatars: () => Promise<typeof marks> }).avatars = async () => marks;
+    const r = await p.list();
+    expect(r.ok && r.value.find((a) => a.agentId === "grok-bot:Ops Bot")?.avatarUrl).toBe(PNG("b3Bz"));
+    expect(r.ok && r.value.find((a) => a.agentId === "grok-bot:Research Bot")?.avatarUrl).toBeUndefined();
+    (driver as unknown as { avatars: () => Promise<never> }).avatars = async () => { throw new Error("page gone"); };
+    const r2 = await p.list();
+    expect(r2.ok && r2.value.map((a) => a.agentId)).toEqual(["grok-bot", "grok-bot:Research Bot", "grok-bot:Ops Bot"]);
+  });
   it("list() degrades to the generic agent when not attached or a chat is open", async () => {
     const down = mk("down", { bots });
     const r = await down.p.list();

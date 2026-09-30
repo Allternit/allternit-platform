@@ -77,7 +77,13 @@ export class GrokBotProvider extends BaseAaiProvider {
         finally { await this.o.driver.clickButton(NAMES.closePicker); }
       }
     } catch { return ok([generic]); }
-    return ok([generic, ...names.map((n): AgentSummary => ({ agentId: `${AGENT_ID}:${n}`, displayName: n, vendor: "grok", state: generic.state }))]);
+    // Each Bot's own mascot, when the driver can read it (never fails discovery).
+    let marks: { name?: string; text: string; png: string }[] = [];
+    try { marks = (await this.o.driver.avatars?.()) ?? []; } catch { marks = []; }
+    return ok([generic, ...names.map((n): AgentSummary => {
+      const avatarUrl = avatarFor(n, marks, names);
+      return { agentId: `${AGENT_ID}:${n}`, displayName: n, vendor: "grok", state: generic.state, ...(avatarUrl ? { avatarUrl } : {}) };
+    })]);
   }
   async get(agentId: string): Promise<AaiResult<AgentDetail>> {
     if (agentId !== AGENT_ID) return fail("UNKNOWN", `No such agent ${agentId}`);
@@ -321,4 +327,16 @@ export class GrokBotProvider extends BaseAaiProvider {
     if (!g.ok) return ok({ status: "down", lane: "ui_bridge", detail: `${g.error.code}: ${g.error.humanMessage}` });
     return ok({ status: this.cooldownUntil > this.o.now() ? "degraded" : "healthy", lane: "ui_bridge", detail: this.cooldownUntil > this.o.now() ? "rate limit cooldown" : undefined });
   }
+}
+
+/**
+ * The mascot for this Bot: its sidebar row by exact name; failing that, the row whose text starts with the name but
+ * not with a longer known Bot name (so "Ops Bot" never takes "Ops Bot Extra"'s mascot). PNG only.
+ */
+export function avatarFor(name: string, marks: { name?: string; text: string; png: string }[], names: string[] = [name]): string | undefined {
+  const png = marks.filter((m) => /^data:image\/png;base64,/.test(m.png));
+  const exact = png.find((m) => m.name === name);
+  if (exact) return exact.png;
+  const longer = names.filter((n) => n !== name && n.startsWith(name));
+  return png.find((m) => !m.name && m.text.startsWith(name) && !longer.some((l) => m.text.startsWith(l)))?.png;
 }

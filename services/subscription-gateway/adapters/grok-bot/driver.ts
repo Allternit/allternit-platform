@@ -21,5 +21,10 @@ export interface GrokDriver {
   typeText(text: string): Promise<boolean>;
   /** Click the button whose accessible name matches the regex source. Returns false when not present. */
   clickButton(nameSource: string, opts?: ClickOptions): Promise<boolean>;
+  /**
+   * Each sidebar Bot's mascot as the app draws it, rasterized to a PNG data URI in the page
+   * (`name` is the row's first text, the Bot's name; `text` its whole visible text). Optional: read-only.
+   */
+  avatars?(): Promise<{ name?: string; text: string; png: string }[]>;
   dispose(): Promise<void>;
 }
