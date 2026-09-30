@@ -106,11 +106,11 @@ function typeOk(p: OperationParam, v: unknown): boolean {
   }
 }
 
-export function envelopeFor(
+export function envelopeFor<S extends string>(
   state: AgentStateV1,
-  schemaId: string,
+  schemaId: S,
   opts: { now: string; node_id?: string | null; trace_seed?: unknown },
-): AbiEnvelopeV1 {
+): AbiEnvelopeV1 & { schema_id: S } {
   const id = state.identity
   return {
     abi_version: ABI_VERSION,
@@ -301,7 +301,7 @@ export function buildToolReceipt(invocation: ToolInvocationV1, outcome: ToolOutc
   return {
     envelope: {
       ...invocation.envelope,
-      schema_id: "allternit.kernel.ToolReceiptV1",
+      schema_id: "allternit.kernel.ToolReceiptV1" as const,
       created_at: outcome.finished_at,
       provenance: [
         ...invocation.envelope.provenance,
