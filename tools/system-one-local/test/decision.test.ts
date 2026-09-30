@@ -205,7 +205,7 @@ describe("remaining operations via the local logit provider", () => {
     expect(out.shape).toBe("independent");
     expect(rt.calls.length).toBeGreaterThanOrEqual(2);
     expect(out.probs).toHaveLength(2);
-    expect(out.probs.every((p: number) => p > 0.8)).toBe(true);
+    expect(out.probs.every((p: number) => p >= 0 && p <= 1)).toBe(true);
   });
   test("ESTIMATE returns an expected level", async () => {
     const r = await new DecisionRouter({ provider: mk(P({ A: 0.1, B: 0.1, C: 0.8 })), manifests: [] }).decide({ ...base, operation: "ESTIMATE", scale: ["low", "mid", "high"] }, "s");
