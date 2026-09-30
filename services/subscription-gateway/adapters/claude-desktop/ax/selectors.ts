@@ -14,13 +14,13 @@ export const CLAUDE_AX_PACK: AxSelectorPack = {
   packVersion: PACK_VERSION,
   bundleId: CLAUDE_BUNDLE_ID,
   keys: {
-    composer: key(true, s("AXTextArea", { label: "write your prompt|reply to claude|message claude" }), s("AXTextField", { label: "write your prompt|reply to claude|message claude" })),
+    composer: key(true, s("AXTextArea", { label: "^prompt$" }), s("AXTextArea", { label: "write your prompt|reply to claude|message claude" }), s("AXTextField", { label: "write your prompt|reply to claude|message claude" })),
     userTurn: key(false, s("AXGroup", { label: "^(your message|you said|user message)" })),
     assistantTurn: key(false, s("AXGroup", { label: "^(claude response|claude said|assistant message)" })),
     alert: key(false, s("AXGroup", { subrole: "AXApplicationAlert" }), s("AXGroup", { label: "^(alert|notice|banner)" })),
     approval: key(false, s("AXGroup", { label: "permission request|approval request" }), s("AXSheet", { label: "permission|approval" })),
     toolCue: key(false, s("AXGroup", { label: "^tool use" })),
     artifactCue: key(false, s("AXGroup", { label: "^artifact" })),
-    coworkTab: key(false, s("AXRadioButton", { label: "^cowork$" }), s("AXTab", { label: "^cowork$" })),
+    coworkTab: key(false, s("AXRadioButton", { label: "^(chat and )?cowork$" }), s("AXTab", { label: "^cowork$" })),
   },
 };
