@@ -179,3 +179,34 @@ describe("per-binding Bot selection", () => {
     expect(bad).toMatchObject({ ok: false, error: { code: "CONTEXT_NOT_FOUND" } });
   });
 });
+
+describe("Bot discovery (New-chat picker)", () => {
+  const bots = ["Research Bot", "Ops Bot"];
+  it("pickerBots excludes the picker's own controls", async () => {
+    const { pickerBots } = await import("../adapters/grok-bot/observe.js");
+    expect(pickerBots(renderPage({ picker: true, bots }))).toEqual(bots);
+    expect(pickerBots(renderPage({ picker: true }))).toEqual(["Example Bot"]);
+    expect(pickerBots(renderPage({}))).toEqual([]);
+  });
+  it("list() returns the generic agent plus grok-bot:<name> per Bot, then closes the picker", async () => {
+    const { driver, p } = mk("normal", { bots });
+    const r = await p.list();
+    expect(r.ok && r.value.map((a) => a.agentId)).toEqual(["grok-bot", "grok-bot:Research Bot", "grok-bot:Ops Bot"]);
+    expect(driver.pickerOpen).toBe(false);
+    expect(driver.sends).toBe(0);
+    // discovered agent ids open directly
+    const c = await p.contextOpen({ agentId: "grok-bot:Ops Bot" });
+    expect(c.ok).toBe(true);
+    expect(driver.chosenBot).toBe("Ops Bot");
+  });
+  it("list() degrades to the generic agent when not attached or a chat is open", async () => {
+    const down = mk("down", { bots });
+    const r = await down.p.list();
+    expect(r.ok && r.value.map((a) => a.agentId)).toEqual(["grok-bot"]);
+    const { p } = mk("normal", { bots });
+    const c = await p.contextOpen({ agentId: "grok-bot:Ops Bot" });
+    expect(c.ok).toBe(true);
+    const r2 = await p.list();
+    expect(r2.ok && r2.value).toHaveLength(1);
+  });
+});

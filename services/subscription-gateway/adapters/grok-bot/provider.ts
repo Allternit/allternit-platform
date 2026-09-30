@@ -10,7 +10,7 @@ import {
 } from "@allternit/agent-gateway";
 import { ADAPTER_ID, AGENT_ID, APP_NAME, CAPABILITIES, PACING } from "./manifest.js";
 import { DriverError, type GrokDriver } from "./driver.js";
-import { classify, type PageState } from "./observe.js";
+import { classify, pickerBots, type PageState } from "./observe.js";
 import { NAMES, SELECTORS_VERSION } from "./selectors.js";
 
 export interface GrokBotProviderOptions {
@@ -61,7 +61,24 @@ export class GrokBotProvider extends BaseAaiProvider {
 
   // ---------- identity ----------
   private summary(): AgentSummary { return { agentId: AGENT_ID, displayName: APP_NAME, vendor: "grok", state: this.halted ? "blocked" : "linked" }; }
-  async list(): Promise<AaiResult<AgentSummary[]>> { return ok([this.summary()]); }
+  /**
+   * The generic "grok-bot" agent, plus one `grok-bot:<name>` agent per Bot in the New-chat picker when the app is
+   * attached. Discovery opens the picker and closes it again; it is skipped (generic agent only) while a conversation
+   * is open, when Grok Bot is not attached, or when the picker cannot be read. It never selects a Bot or types anything.
+   */
+  async list(): Promise<AaiResult<AgentSummary[]>> {
+    const generic = this.summary();
+    if (this.halted || [...this.ctxs.values()].some((c) => !c.closed)) return ok([generic]);
+    let names: string[] = [];
+    try {
+      await this.o.driver.connect();
+      if (await this.o.driver.newChat()) {
+        try { names = pickerBots(await this.o.driver.html()); }
+        finally { await this.o.driver.clickButton(NAMES.closePicker); }
+      }
+    } catch { return ok([generic]); }
+    return ok([generic, ...names.map((n): AgentSummary => ({ agentId: `${AGENT_ID}:${n}`, displayName: n, vendor: "grok", state: generic.state }))]);
+  }
   async get(agentId: string): Promise<AaiResult<AgentDetail>> {
     if (agentId !== AGENT_ID) return fail("UNKNOWN", `No such agent ${agentId}`);
     return ok({ ...this.summary(), remoteIds: {}, capabilities: CAPABILITIES });

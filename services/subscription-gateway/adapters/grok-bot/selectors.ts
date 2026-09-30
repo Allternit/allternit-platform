@@ -26,6 +26,8 @@ export const NAMES = {
   newChat: "^new chat$",
   // New chat opens a Bot picker (live 0.61.0): composer is unusable until a Bot row is chosen.
   closePicker: "^close new chat$",
+  // Non-Bot controls inside the picker (live 0.61.0): never reported as Bots.
+  pickerControls: "^(close new chat|create new bot|create group chat)$",
   signIn: "^sign in$",
   approve: "^(allow once|allow|approve)$",
   deny: "^(deny|skip)$",

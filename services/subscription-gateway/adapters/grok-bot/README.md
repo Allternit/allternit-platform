@@ -63,3 +63,7 @@ Ran with consent: quit, relaunch with `--remote-debugging-port=9333`, adapter at
 
 ## Registration (src/aai/registry.ts, owned elsewhere)
 `import { grokBot } from "../../adapters/grok-bot/index.js"; registry.register({ adapterId: grokBot.adapterId, manifest: grokBot.manifest, create: grokBot.create });`
+
+## Bot discovery
+
+`agent.list` returns the generic `grok-bot` agent and, when Grok Bot is attached and no conversation is open, one `grok-bot:<name>` agent per Bot in the New-chat picker. It clicks `New chat`, reads the picker's button names (excluding `Close new chat`, `Create new Bot`, `Create group chat`), then clicks `Close new chat`. It never selects a Bot or types. The picker container is found structurally (smallest ancestor holding both `Close new chat` and `Create new Bot`) because the live container class is not verified; the offline fixture is the only evidence for that structure. If Grok Bot is not attached, a chat is open, or the page cannot be read, only the generic agent is listed.

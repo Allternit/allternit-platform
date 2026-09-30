@@ -11,6 +11,8 @@ export interface Scenario {
   loggedOut?: boolean;
   drift?: "composer" | "turn-content";
   picker?: boolean;
+  /** Bot rows shown in the picker (default one placeholder row). */
+  bots?: string[];
 }
 export const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
@@ -33,7 +35,7 @@ export function renderPage(s: Scenario = {}): string {
         ? `<div class="composer-x9" contenteditable="true">${esc(s.composerText ?? "")}</div>`
         : `<div class="tiptap ProseMirror sand-prompt-field" contenteditable="true" role="textbox" aria-label="Message"><p>${esc(s.composerText ?? "")}</p></div>`) +
       `</div></div><div class="sand-prompt-actions-row"><button type="button" class="sand-prompt-attach" aria-label="Attach file"></button>${action}</div></form>`;
-  const picker = s.picker ? `<div class="sand-new-chat-picker"><button type="button" aria-label="Close new chat"></button><button type="button" aria-label="Create new Bot"></button><button type="button">Example Bot</button></div>` : "";
+  const picker = s.picker ? `<div class="sand-new-chat-picker"><button type="button" aria-label="Close new chat"></button><button type="button" aria-label="Create new Bot"></button>${(s.bots ?? ["Example Bot"]).map((b) => `<button type="button">${b}</button>`).join("")}</div>` : "";
   const turns = (s.turns ?? []).map((t) => turn(t, s.drift)).join("");
   return `<!doctype html><html lang="en"><head><meta charset="UTF-8"><title>Grok Bot</title></head><body>` +
     `<div id="root"><div class="sand-app"><nav aria-label="Sidebar"><button type="button" aria-label="New chat">New chat</button><section><h3>Routines</h3></section></nav>` +
