@@ -88,12 +88,13 @@ The library card shows this as a chip (`ParityChip` in `GatewayLibrary.tsx`: Ful
 
 ## Acceptance checklist
 
-The web test `look-packs/look-pack-acceptance.test.tsx` covers the first seven. Run the last two by hand for each new pack.
+The web test `look-packs/look-pack-acceptance.test.tsx` covers the automated items. Run the last two by hand for each new pack.
 
 - [ ] Vendor, agent and connection are identifiable without opening Details.
 - [ ] With the provenance layer removed, the pack surface alone still names the vendor.
 - [ ] Transcript and composer are the pack's components, not Allternit's.
 - [ ] The pack's status vocabulary and terminology come from its profile.
+- [ ] A `VendorMark` is present inside the pack surface (header, avatar and composer; required since ai #282).
 - [ ] Allternit status, progress and provenance stay visible and unchanged around the pack.
 - [ ] Vendor artifacts are registered into the artifacts library exactly once.
 - [ ] An unsupported vendor object records a PackGap and is never silent plain text.
