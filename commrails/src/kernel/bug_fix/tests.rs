@@ -41,3 +41,19 @@ fn wp10_error_bank_and_fail_closed_ladder() {
     assert!(!step_passes("PASS", true, &json!({"deterministic":false,"evidence_refs":["r"]})));
     assert!(!step_passes("PASS", false, &json!({"evidence_refs":[]})));
 }
+
+#[test]
+fn wp10_agency_entry_point_matches_wp11_template_graph_shape() {
+    let t = agency_graph("fix add()", &json!({"workspace": "/tmp/ws"})).unwrap();
+    assert_eq!(t.nodes.len(), graph().unwrap().nodes.len());
+    let n14 = t.nodes.iter().find(|n| n["id"] == "N14").unwrap();
+    assert_eq!((n14["role"].as_str(), n14["writes"].as_bool()), (Some("mut.apply_patch_transactionally"), Some(true)));
+    assert_eq!(n14["write_set"], json!(["fs:/tmp/ws"]));
+    assert!(t.edges.iter().all(|e| e["from"].is_string() && e["to"].is_string()));
+    assert_eq!(t.wih_policy["requires_lease_for_write"], true);
+    assert_eq!(t.wih_policy["task_id"], agency_graph("fix add()", &json!({"workspace": "/x"})).unwrap().wih_policy["task_id"]);
+    let explicit = agency_graph("g", &json!({"writable_resources": ["fs:src/a.ts"], "task_id": "task.x"})).unwrap();
+    assert_eq!(explicit.wih_policy["write_set"], json!(["fs:src/a.ts"]));
+    assert!(agency_graph("g", &json!({})).is_err(), "no declared write authority fails closed");
+    assert_eq!((TEMPLATE_ID, TEMPLATE_VERSION, TEMPLATE_SOURCE, COMPLETION_POLICY), ("BUG_FIX", 1, "kernel", "completion.bug_fix"));
+}

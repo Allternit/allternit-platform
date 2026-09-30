@@ -30,6 +30,48 @@ pub fn instantiate(task_id: &str, writable_resources: &[String]) -> Result<Compu
     Ok(g)
 }
 
+pub const TEMPLATE_VERSION: u32 = 1;
+/// `source` the Agency API reports for this template (the WP11 stub says `stub`).
+pub const TEMPLATE_SOURCE: &str = "kernel";
+pub const COMPLETION_POLICY: &str = "completion.bug_fix";
+
+/// Shape of the Agency API's `TemplateGraph` (WP11 `compiler::RunTemplate`).
+#[derive(Debug, Clone)]
+pub struct AgencyTemplateGraph {
+    pub nodes: Vec<Value>,
+    pub edges: Vec<Value>,
+    pub wih_policy: Value,
+}
+
+/// Public entry point for the Agency API (WP11 `RunTemplate::instantiate`).
+/// `params.writable_resources` (fs: refs) wins; otherwise `params.workspace`
+/// becomes `fs:<workspace>`. Fails closed when neither is declared: write
+/// authority is never inferred from the goal text.
+/// Each node is the full GraphNode plus the stub's `id`/`role`/`writes` keys
+/// (`role` = primitive id) so the WP11 graph view keeps working unchanged.
+pub fn agency_graph(goal: &str, params: &Value) -> Result<AgencyTemplateGraph> {
+    let writable: Vec<String> = match params["writable_resources"].as_array() {
+        Some(a) => a.iter().filter_map(Value::as_str).map(String::from).collect(),
+        None => params["workspace"].as_str().filter(|w| !w.is_empty()).map(|w| vec![format!("fs:{w}")]).unwrap_or_default(),
+    };
+    let task_id = match params["task_id"].as_str() {
+        Some(t) => t.to_owned(),
+        None => format!("task.bug_fix.{}", &crate::receipts::jcs::sha256_tagged(goal.as_bytes())[7..23]),
+    };
+    let g = instantiate(&task_id, &writable)?;
+    let nodes = g.nodes.iter().map(|n| {
+        let mut v = serde_json::to_value(n)?;
+        v["id"] = n.node_id.clone().into();
+        v["role"] = n.primitive_id.clone().into();
+        v["writes"] = (!n.write_set.is_empty()).into();
+        Ok(v)
+    }).collect::<Result<Vec<_>>>()?;
+    let edges = g.edges.iter().map(serde_json::to_value).collect::<serde_json::Result<Vec<_>>>()?;
+    Ok(AgencyTemplateGraph { nodes, edges, wih_policy: serde_json::json!({
+        "requires_lease_for_write": true, "write_set": writable, "graph_id": GRAPH_ID, "task_id": task_id,
+    }) })
+}
+
 pub fn graph() -> Result<ComputeGraph> {
     Ok(serde_json::from_str(include_str!("templates/bug_fix.v1.json"))?)
 }
