@@ -1070,14 +1070,46 @@ pub(crate) fn normalize_name(name: &str) -> String {
         .collect()
 }
 
-/// The `text/html` UI content of a `resources/read` result, plus the resource
-/// `_meta.ui` (content-level first, then result-level).
+/// ChatGPT Apps SDK's original View MIME type; accepted as an MCP App View.
+const SKYBRIDGE_MIME: &str = "text/html+skybridge";
+/// Internal marker on the returned `ui_meta`: the View was written for
+/// ChatGPT's `window.openai`, so the host injects its compat shim.
+const OPENAI_COMPAT_FIELD: &str = "openaiCompat";
+
+/// True when a `_meta` object carries any `openai/*` key or the explicit opt-in.
+fn has_openai_meta(meta: Option<&Value>) -> bool {
+    meta.and_then(|m| m.as_object())
+        .map(|m| m.keys().any(|k| k.starts_with("openai/") || k == "allternit/openaiCompat"))
+        .unwrap_or(false)
+}
+
+/// `_meta.ui`-shaped metadata from ChatGPT's resource keys (`openai/widgetCSP`,
+/// `openai/widgetDomain`, `openai/widgetPrefersBorder`); used only when the
+/// resource has no `_meta.ui`.
+fn ui_meta_from_openai(meta: &Value) -> Value {
+    let mut out = Map::new();
+    if let Some(csp) = meta.get("openai/widgetCSP").filter(|c| c.is_object()) {
+        out.insert("csp".into(), csp.clone());
+    }
+    if let Some(d) = meta.get("openai/widgetDomain").filter(|d| d.is_string()) {
+        out.insert("domain".into(), d.clone());
+    }
+    if let Some(b) = meta.get("openai/widgetPrefersBorder").filter(|b| b.is_boolean()) {
+        out.insert("prefersBorder".into(), b.clone());
+    }
+    Value::Object(out)
+}
+
+/// The HTML UI content of a `resources/read` result, plus the resource
+/// `_meta.ui` (content-level first, then result-level). A View written for
+/// ChatGPT (skybridge MIME or `openai/*` metadata) is accepted too and marked
+/// with [`OPENAI_COMPAT_FIELD`].
 fn html_of_resource(result: &Value) -> Option<(String, Value)> {
     let contents = result.get("contents")?.as_array()?;
     let item = contents.iter().find(|c| {
         matches!(
             c.get("mimeType").and_then(|m| m.as_str()),
-            Some(APP_MIME) | Some("text/html")
+            Some(APP_MIME) | Some("text/html") | Some(SKYBRIDGE_MIME)
         )
     })?;
     let html = match item.get("text").and_then(|t| t.as_str()) {
@@ -1089,12 +1121,26 @@ fn html_of_resource(result: &Value) -> Option<(String, Value)> {
             String::from_utf8(bytes).ok()?
         }
     };
-    let ui_meta = [item.get("_meta"), result.get("_meta")]
+    let metas = [item.get("_meta"), result.get("_meta")];
+    let mut ui_meta = metas
         .into_iter()
         .flatten()
         .find_map(|meta| meta.get("ui").or_else(|| meta.get(EXTENSION_ID)))
         .cloned()
         .unwrap_or(Value::Null);
+    let openai_meta = metas.into_iter().flatten().find(|m| has_openai_meta(Some(m)));
+    let compat = item.get("mimeType").and_then(|m| m.as_str()) == Some(SKYBRIDGE_MIME) || openai_meta.is_some();
+    if ui_meta.is_null() {
+        if let Some(meta) = openai_meta {
+            ui_meta = ui_meta_from_openai(meta);
+        }
+    }
+    if compat {
+        if !ui_meta.is_object() {
+            ui_meta = json!({});
+        }
+        ui_meta[OPENAI_COMPAT_FIELD] = json!(true);
+    }
     Some((html, ui_meta))
 }
 
@@ -1187,6 +1233,10 @@ fn build_app_frame(
     }
     if let Some(csp) = camel_csp(ui_meta) {
         obj.insert("csp".into(), csp);
+    }
+    // A View written for ChatGPT's `window.openai`: the host injects its shim.
+    if ui_meta.get(OPENAI_COMPAT_FIELD) == Some(&json!(true)) || has_openai_meta(tool.get("_meta")) {
+        obj.insert(OPENAI_COMPAT_FIELD.into(), json!(true));
     }
     if let Some(p) = permissions {
         obj.insert("permissions".into(), p);
@@ -1597,6 +1647,19 @@ pub(crate) mod tests {
         let ext_key = json!({ "_meta": { EXTENSION_ID: { "domain": "c" } }, "contents": [{ "mimeType": APP_MIME, "text": "h" }] });
         assert_eq!(html_of_resource(&ext_key).unwrap().1["domain"], "c");
         assert!(html_of_resource(&json!({ "contents": [{ "mimeType": "text/plain", "text": "h" }] })).is_none());
+        // ChatGPT-style Views: skybridge MIME and openai/* metadata are accepted and marked.
+        let sky = json!({ "contents": [{ "mimeType": "text/html+skybridge", "text": "h",
+            "_meta": { "openai/widgetCSP": { "connect_domains": ["https://a.test"] }, "openai/widgetPrefersBorder": false } }] });
+        let (_, meta) = html_of_resource(&sky).unwrap();
+        assert_eq!(meta["openaiCompat"], true);
+        assert_eq!(camel_csp(&meta).unwrap()["connectDomains"][0], "https://a.test");
+        assert_eq!(meta["prefersBorder"], false);
+        // A standard View is not marked, and _meta.ui wins over openai/* keys.
+        assert!(html_of_resource(&content_level).unwrap().1.get("openaiCompat").is_none());
+        let both = json!({ "contents": [{ "mimeType": APP_MIME, "text": "h",
+            "_meta": { "ui": { "domain": "std" }, "openai/widgetDomain": "legacy" } }] });
+        let (_, meta) = html_of_resource(&both).unwrap();
+        assert_eq!((meta["domain"].as_str(), meta["openaiCompat"].as_bool()), (Some("std"), Some(true)));
     }
 
     #[test]
@@ -1732,9 +1795,10 @@ pub(crate) mod tests {
                 {
                     "name": "model_only", "description": "Model-only",
                     "inputSchema": { "type": "object" },
+                    "annotations": { "readOnlyHint": true },
                     "_meta": { "ui": { "visibility": ["model"] } }
                 },
-                { "name": "plain", "inputSchema": { "type": "object" } }
+                { "name": "plain", "inputSchema": { "type": "object" }, "annotations": { "destructiveHint": true } }
             ]})),
             "tools/call" => {
                 let name = req["params"]["name"].as_str().unwrap_or("");

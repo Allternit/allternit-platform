@@ -22,7 +22,7 @@ The UI layer is the open [MCP Apps](https://github.com/modelcontextprotocol/ext-
 Allternit adds a small set of optional extensions under the `x-allternit/*` prefix (saving an artifact, dispatching an agent, and so on). They are feature-detected: a View that uses them keeps working in other hosts, with those features turned off. See [window.allternit extensions](/plugins/reference/window-allternit).
 
 <Note>
-Views that use only the standard bridge run in Allternit without changes. Views that call host-specific globals need a small port. See [Porting from other hosts](/plugins/guides/porting).
+Views that use only the standard bridge run in Allternit without changes. Views written for another host's globals run through a compatibility shim or a small port. See [Porting from other hosts](/plugins/guides/porting).
 </Note>
 
 ## How the pieces fit
@@ -71,7 +71,7 @@ This documentation describes what exists in the Allternit code. Some pieces are 
 | `x-allternit/*` extensions | Available, except `requestCheckout` (see below) |
 | Plugin package import and export | Available |
 | Directory submission, domain verification, review, held updates | Built; the developer portal URL is Planned |
-| Enforcement of per-app permission modes on tool calls | Built for calls from your View; Planned for model-initiated calls |
+| Enforcement of per-app permission modes on tool calls | Built, for calls from your View and calls the model makes |
 | Selling in your MCP App | Preview. Not yet available for live payments |
 | Vendor packs | Preview |
 
