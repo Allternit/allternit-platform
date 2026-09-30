@@ -13,3 +13,8 @@ export function dropRuntimeCredentialForGizzi(localUrl: string, headers: Headers
   headers.delete('Authorization');
   headers.delete('X-Allternit-Desktop-Access-Token');
 }
+
+/** The bare provider list is gizzi's; sub-routes are allternit-api's. */
+export function isGizziProviderListPath(requestPath: string): boolean {
+  return /^\/api\/v1\/providers\/?(\?|$)/.test(requestPath);
+}
