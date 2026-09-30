@@ -12,7 +12,7 @@ Tasks may optionally be tied to a session or a deployment so that background wor
 ## Base URL
 
 ```
-https://api.allternit.com/v1/beta/work
+https://api.allternit.com/api/v1/beta/work
 ```
 
 All requests require a Bearer token. See [Authentication](/api/authentication).
@@ -76,7 +76,7 @@ If a worker crashes without heartbeating, its lease expires after 60 seconds and
 ## List tasks
 
 ```bash
-curl -G https://api.allternit.com/v1/beta/work \
+curl -G https://api.allternit.com/api/v1/beta/work \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -d "status=running"
 ```
@@ -114,7 +114,7 @@ curl -G https://api.allternit.com/v1/beta/work \
 ## Create a task
 
 ```bash
-curl -X POST https://api.allternit.com/v1/beta/work \
+curl -X POST https://api.allternit.com/api/v1/beta/work \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -163,7 +163,7 @@ Referencing a session or deployment that does not exist returns `400 Bad Request
 ## Lease a task
 
 ```bash
-curl -G https://api.allternit.com/v1/beta/work/queue \
+curl -G https://api.allternit.com/api/v1/beta/work/queue \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -d "worker_id=worker-1"
 ```
@@ -201,7 +201,7 @@ Leasing selects the oldest `queued` task, or a previously leased/running task wh
 ## Heartbeat a task
 
 ```bash
-curl -X POST https://api.allternit.com/v1/beta/work/task_5e6f7a8b/heartbeat \
+curl -X POST https://api.allternit.com/api/v1/beta/work/task_5e6f7a8b/heartbeat \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{ "worker_id": "worker-1" }'
@@ -232,7 +232,7 @@ Heartbeats return `404 Not Found` if the task is not leased by the supplied work
 ## Acknowledge a task
 
 ```bash
-curl -X POST https://api.allternit.com/v1/beta/work/task_5e6f7a8b/ack \
+curl -X POST https://api.allternit.com/api/v1/beta/work/task_5e6f7a8b/ack \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -266,7 +266,7 @@ curl -X POST https://api.allternit.com/v1/beta/work/task_5e6f7a8b/ack \
 ## Stop a task
 
 ```bash
-curl -X POST https://api.allternit.com/v1/beta/work/task_5e6f7a8b/stop \
+curl -X POST https://api.allternit.com/api/v1/beta/work/task_5e6f7a8b/stop \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
