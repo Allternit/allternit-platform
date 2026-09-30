@@ -385,6 +385,7 @@ interface AccountRow {
   enabled: number;
   identity?: string | null;
   usage?: string | null;
+  preferred?: number;
 }
 
 function accountFromRow(row: AccountRow): Account {
@@ -399,6 +400,7 @@ function accountFromRow(row: AccountRow): Account {
     enabled: row.enabled === 1,
     identity: row.identity ?? null,
     usage: row.usage ? (JSON.parse(row.usage) as Account["usage"]) : null,
+    preferred: row.preferred === 1,
   };
 }
 
@@ -406,8 +408,8 @@ export function upsertAccount(db: Db, account: Account): void {
   db.prepare(
     `INSERT INTO accounts (
       account_id, provider, label, plan, plan_observed_at, profile_ref,
-      session_health, enabled, identity, usage
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      session_health, enabled, identity, usage, preferred
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (account_id) DO UPDATE SET
       provider = excluded.provider,
       label = excluded.label,
@@ -417,7 +419,8 @@ export function upsertAccount(db: Db, account: Account): void {
       session_health = excluded.session_health,
       enabled = excluded.enabled,
       identity = excluded.identity,
-      usage = excluded.usage`
+      usage = excluded.usage,
+      preferred = excluded.preferred`
   ).run(
     account.account_id,
     account.provider,
@@ -428,8 +431,39 @@ export function upsertAccount(db: Db, account: Account): void {
     account.session_health,
     account.enabled ? 1 : 0,
     account.identity ?? null,
-    account.usage ? JSON.stringify(account.usage) : null
+    account.usage ? JSON.stringify(account.usage) : null,
+    account.preferred ? 1 : 0
   );
+}
+
+// The account a vendor adapter should use for a provider: the preferred one
+// when it's signed in and enabled, else any signed-in enabled one.
+export function preferredReadyAccount(accounts: Account[], provider: string): Account | null {
+  const ready = accounts.filter((a) => a.provider === provider && a.enabled && a.session_health === "ready");
+  return ready.find((a) => a.preferred) ?? ready[0] ?? null;
+}
+
+// Makes one account its provider's preferred one (clears the others).
+export function setPreferredAccount(db: Db, accountId: string): void {
+  db.transaction(() => {
+    const row = db.prepare("SELECT provider FROM accounts WHERE account_id = ?").get(accountId) as
+      | { provider: string }
+      | undefined;
+    if (!row) return;
+    db.prepare("UPDATE accounts SET preferred = 0 WHERE provider = ?").run(row.provider);
+    db.prepare("UPDATE accounts SET preferred = 1 WHERE account_id = ?").run(accountId);
+  })();
+}
+
+// Keeps exactly one preferred account per provider when any exist: after a
+// create or delete, a provider with none gets its oldest-labelled account.
+export function ensurePreferredAccount(db: Db, provider: string): void {
+  const has = db.prepare("SELECT 1 FROM accounts WHERE provider = ? AND preferred = 1").get(provider);
+  if (has) return;
+  const first = db.prepare("SELECT account_id FROM accounts WHERE provider = ? ORDER BY rowid LIMIT 1").get(provider) as
+    | { account_id: string }
+    | undefined;
+  if (first) db.prepare("UPDATE accounts SET preferred = 1 WHERE account_id = ?").run(first.account_id);
 }
 
 export function deleteAccount(db: Db, accountId: string): void {

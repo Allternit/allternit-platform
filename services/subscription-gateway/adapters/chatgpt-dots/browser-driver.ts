@@ -16,6 +16,8 @@ export type OpenPage = () => Promise<PageHandle>;
 export interface BrowserDotsDriverOptions {
   /** Absolute Chrome user-data dir of the account's profile (never read by us; only handed to Chrome). */
   profileDir?: string;
+  /** Else asked at connect time: the ChatGPT subscription account's profile (freed from the chat worker). */
+  resolveProfileDir?: () => Promise<string | undefined>;
   /** Explicit user consent to open the browser window. Without it connect() throws consent_required. */
   userConsented?: boolean;
   /** Test/wiring seam: supply an already-open page instead of launching Chrome. */
@@ -46,8 +48,9 @@ export class BrowserDotsDriver implements DotsDriver {
     if (this.handle) return;
     if (this.opts.openPage) { this.handle = await this.opts.openPage(); return; }
     if (!this.opts.userConsented) throw new DriverError("consent_required", "Allternit needs your OK before it opens the ChatGPT browser window for your dots.");
-    if (!this.opts.profileDir) throw new DriverError("not_running", "No ChatGPT browser profile is configured for dots.");
-    this.handle = await launchChrome(this.opts.profileDir);
+    const profileDir = this.opts.profileDir ?? (await this.opts.resolveProfileDir?.());
+    if (!profileDir) throw new DriverError("not_running", "Sign in to ChatGPT in Settings → Subscriptions first; dots use that account.");
+    this.handle = await launchChrome(profileDir);
     await this.handle.page.goto(nav(DOTS_LIST_URL), { waitUntil: "domcontentloaded" });
   }
   private get page(): Page { if (!this.handle) throw new DriverError("not_running", "ChatGPT browser session is not open"); return this.handle.page; }
