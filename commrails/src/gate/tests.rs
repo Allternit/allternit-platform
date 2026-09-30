@@ -309,4 +309,22 @@ mod wp5_replay_gate_tests {
         assert!(rep.divergences.iter().any(|d| d.node_id == "chain" && d.seq == idx as u64), "chain break at the tampered receipt: {rep:?}");
         assert_eq!(receipts.query_receipts(&Default::default()).unwrap().len(), legacy);
     }
+
+    #[tokio::test]
+    async fn wp10_replay_boundary_serves_recorded_and_refuses_unrecorded() {
+        let d = tempfile::tempdir().unwrap();
+        let (gate, receipts) = gate_at(d.path()).await;
+        drive(&gate, "rb").await;
+        let c = record_cassette(&receipts.chain_store().unwrap(), "run_rb", None, 0).unwrap();
+        let steps = crate::replay::ReplayStep::from_cassette(&c);
+        assert!(gate.replay_boundary("rb_r", &steps[0]).is_err(), "not replaying");
+        gate.begin_replay("rb_r", c.clone()).unwrap();
+        gate.replay_boundary("rb_r", &steps[0]).unwrap();
+        let mut bogus = steps[0].clone();
+        bogus.node_id = "unrecorded".into();
+        bogus.request_hash = crate::replay::boundary_request_hash(Boundary::Policy, "unrecorded", "x").unwrap();
+        assert!(gate.replay_boundary("rb_r", &bogus).unwrap_err().to_string().contains("refused"));
+        assert_eq!(receipts.chain_store().unwrap().read_run("run_rb_r").unwrap().len(), 0, "no evidence appended");
+        gate.end_replay("rb_r").unwrap();
+    }
 }
