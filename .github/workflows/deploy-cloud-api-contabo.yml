@@ -25,6 +25,10 @@ on:
 
 jobs:
   test:
+    # A newer commit supersedes an in-flight test run: cancel the older one.
+    concurrency:
+      group: deploy-cloud-api-test-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -71,6 +75,12 @@ jobs:
 
   deploy:
     needs: test
+    # One deploy to Contabo at a time. Never cancel a deploy mid-swap; a newer
+    # run waits, and GitHub keeps only the newest waiting run (older pending
+    # ones are dropped), so an older build can never land after a newer one.
+    concurrency:
+      group: deploy-cloud-api-contabo
+      cancel-in-progress: false
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:

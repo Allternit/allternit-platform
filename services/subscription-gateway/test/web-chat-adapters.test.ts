@@ -31,6 +31,7 @@ import { loadAdapterRegistry } from "../src/adapters/registry.js";
 import { launchBrowser } from "./helpers.js";
 
 const FAST = {
+  authSettleMs: 300,
   completion: { stabilityMs: 150, pollIntervalMs: 25, timeoutMs: 5000 },
   heartbeatIntervalMs: 200,
   stallTimeoutS: 5,

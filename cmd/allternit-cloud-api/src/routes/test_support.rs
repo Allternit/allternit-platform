@@ -126,7 +126,10 @@ impl DataPlaneGateway for MockGateway {
 /// and relay-socket quotas (user_runtime_quotas / user_relay_usage /
 /// runtime_relay_sockets), all minimal column subsets of migrations_pg/001.
 pub async fn test_pool() -> sqlx::PgPool {
-    let url = "postgres://allternit:allternit_pg_2026@localhost:5432/allternit_test";
+    // CI's Postgres service; TEST_DATABASE_URL points a local run elsewhere.
+    let url_owned = std::env::var("TEST_DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://allternit:allternit_pg_2026@localhost:5432/allternit_test".to_string());
+    let url = url_owned.as_str();
     let schema = format!("test_{}", uuid::Uuid::new_v4().simple());
     let schema_for_hook = schema.clone();
     let pool = sqlx::postgres::PgPoolOptions::new()

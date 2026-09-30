@@ -34,6 +34,7 @@ const FIXTURES_DIR = fileURLToPath(
 );
 
 const FAST: ChatGPTWebConfigOverrides = {
+  authSettleMs: 300,
   completion: { stabilityMs: 150, pollIntervalMs: 25, timeoutMs: 5000 },
   heartbeatIntervalMs: 200,
   stallTimeoutS: 5,
