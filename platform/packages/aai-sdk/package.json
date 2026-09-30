@@ -1,0 +1,25 @@
+{
+  "name": "@allternit/aai-sdk",
+  "version": "0.1.0",
+  "description": "TypeScript client for the Allternit Agent Interface (AAI) REST surface",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@allternit/subscription-fabric-contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0"
+  }
+}
