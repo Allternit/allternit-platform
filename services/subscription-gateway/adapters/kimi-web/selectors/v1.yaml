@@ -52,6 +52,13 @@ logged_in_probe:
     - { testid: sidebar-user-menu-trigger }
     - { css: ".user-info img.user-avatar" }
     - { css: ".user-info a.membership-plan" }
+logged_out_probe:
+  critical: false
+  # Verified 2026-09-30: only a logged-out sidebar has these (lets the probe
+  # answer without waiting out its settle budget).
+  strategies:
+    - { css: ".not-login-icon" }
+    - { css: "button.next-sidebar-history-list__login" }
 model_picker:
   critical: false
   strategies:

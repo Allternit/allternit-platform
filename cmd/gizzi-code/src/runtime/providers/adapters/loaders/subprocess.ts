@@ -17,6 +17,7 @@ import { Token } from "@/shared/util/token"
 import { CliBridge } from "@/runtime/integrations/cli-bridge"
 import { extractSystemText } from "@/runtime/providers/adapters/loaders/system-text"
 import { Server } from "@/runtime/server/server"
+import { VendorSession } from "@/runtime/session/vendor-session"
 import { Instance } from "@/runtime/context/project/instance"
 
 const log = Log.create({ service: "subprocess-lm" })
@@ -66,6 +67,7 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
 
     const { runtime, driver } = await RuntimeDriverFactory.resolveCli(this.providerID)
     const sessionID = resolveTaskSessionID(options?.headers)
+    const vendorSessionId = sessionID ? await VendorSession.get(sessionID, this.providerID) : undefined
     const task = await driver.assign({
       taskId: generateTaskId(),
       prompt: message,
@@ -78,6 +80,7 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
       // driver's ACP permission requests gate through the session's
       // PermissionNext policy instead of auto-approving.
       sessionID,
+      vendorSessionId,
       // The CLI runs its own tools, so it starts in the session's folder
       // (its project's folder), not wherever gizzi was launched.
       cwd: currentWorkdir(),
@@ -145,6 +148,13 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
                 type: "raw",
                 raw: { __gizzi: "observed_context", used: event.used, size: event.size },
               } as unknown as LanguageModelV2StreamPart)
+              continue
+            }
+
+            if (event.type === "vendor_session") {
+              if (sessionID && event.id !== vendorSessionId) {
+                await VendorSession.set(sessionID, this.providerID, event.id)
+              }
               continue
             }
 

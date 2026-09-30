@@ -54,7 +54,7 @@ allternit-computer-cloud = { path = "../../cmd/allternit-computer-cloud" }
 allternitos-cloud-contracts = { workspace = true }
 
 # WebSocket
-tokio-tungstenite = { workspace = true }
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 futures = "0.3"
 
 # SQLite

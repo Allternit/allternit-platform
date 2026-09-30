@@ -1,0 +1,45 @@
+{
+  "vendorId": "chatgpt-dots",
+  "avatarTreatment": "dot_character_round",
+  "accentTokens": {
+    "accent": "#0d0d0d",
+    "accentForeground": "#ffffff",
+    "surface": "#ffffff",
+    "surfaceMuted": "#f4f4f4",
+    "border": "#e5e5e5",
+    "orb": "#10a37f"
+  },
+  "typographyHints": {
+    "sans": "Inter, SF Pro, system-ui, sans-serif",
+    "mono": "SF Mono, ui-monospace, monospace",
+    "note": "hints only: palette and type are from public ChatGPT styling, not a live capture"
+  },
+  "iconAssets": { "app": "assets/chatgpt.png" },
+  "threadHeader": "dot_name_with_handle",
+  "activityView": "activity_view_follow_redirect_stop",
+  "statusVocabulary": {
+    "idle": "Ready",
+    "streaming": "Working",
+    "working": "Working",
+    "thinking": "Thinking",
+    "paused": "Paused",
+    "needs_approval": "Ask first",
+    "ask_first": "Ask first",
+    "hand_off": "Hand off",
+    "needs_you": "Needs you",
+    "task_in_progress": "In progress",
+    "task_scheduled": "Scheduled",
+    "task_completed": "Completed",
+    "tasks": "Tasks",
+    "rate_limited": "Usage limit reached",
+    "signed_out": "Log in"
+  },
+  "approvalCard": "ask_first_approve_deny__hand_off_open",
+  "computerView": "none",
+  "taskCard": "task_row_by_section",
+  "composer": "rounded_prompt_with_send_stop",
+  "contentRenderers": ["markdown", "code", "image"],
+  "viaBadge": "via Allternit",
+  "verifiedBadge": "ChatGPT dot",
+  "laneBadge": "UI bridge"
+}

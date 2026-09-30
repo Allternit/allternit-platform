@@ -1,0 +1,41 @@
+{
+  "vendorId": "claude-desktop",
+  "avatarTreatment": "vendor_icon_rounded_square",
+  "accentTokens": {
+    "accent": "#d97757",
+    "accentForeground": "#ffffff",
+    "surface": "#faf9f5",
+    "surfaceMuted": "#f0eee6",
+    "border": "#e5e2d8",
+    "orb": "#d97757"
+  },
+  "typographyHints": {
+    "sans": "Anthropic Sans, system-ui, sans-serif",
+    "serif": "Anthropic Serif, Georgia, serif",
+    "mono": "SF Mono, ui-monospace, monospace"
+  },
+  "iconAssets": { "app": "assets/claude.png" },
+  "threadHeader": "title_with_mode_chip",
+  "activityView": "inline_thinking_indicator",
+  "statusVocabulary": {
+    "idle": "Ready",
+    "streaming": "Claude is responding",
+    "thinking": "Thinking",
+    "working": "Working",
+    "running": "Running",
+    "paused": "Paused",
+    "needs_approval": "Allow Claude to…",
+    "cowork": "Cowork",
+    "new_task": "New task",
+    "rate_limited": "Usage limit reached",
+    "reconnecting": "Reconnecting",
+    "signed_out": "Log in"
+  },
+  "approvalCard": "allow_once_deny",
+  "taskCard": "cowork_task_row",
+  "composer": "rounded_prompt_with_send_stop",
+  "contentRenderers": ["markdown", "code", "image", "artifact"],
+  "viaBadge": "via Allternit",
+  "verifiedBadge": "Claude",
+  "laneBadge": "UI bridge"
+}

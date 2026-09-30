@@ -1,0 +1,39 @@
+{
+  "vendorId": "claude-managed-agents",
+  "avatarTreatment": "vendor_icon_rounded_square",
+  "accentTokens": {
+    "accent": "#cc785c",
+    "accentForeground": "#ffffff",
+    "surface": "#ffffff",
+    "surfaceMuted": "#f5f4ef",
+    "border": "#e3e0d6",
+    "orb": "#d97757"
+  },
+  "typographyHints": {
+    "sans": "Styrene B, ui-sans-serif, system-ui, sans-serif",
+    "serif": "Tiempos Text, ui-serif, Georgia, serif",
+    "mono": "ui-monospace, SF Mono, Menlo, monospace",
+    "messageBody": "serif"
+  },
+  "iconAssets": { "app": "TODO:claude-app-icon" },
+  "threadHeader": "agent_name_with_status",
+  "activityView": "inline_thinking_and_tool_blocks",
+  "statusVocabulary": {
+    "idle": "Ready",
+    "running": "Working",
+    "thinking": "Thinking",
+    "rescheduling": "Reconnecting",
+    "requires_action": "Waiting for your approval",
+    "needs_approval": "Waiting for your approval",
+    "terminated": "Session ended",
+    "rate_limited": "Rate limit reached",
+    "signed_out": "Connect your Anthropic API key"
+  },
+  "approvalCard": "tool_call_allow_deny",
+  "taskCard": "none",
+  "composer": "rounded_prompt_with_send_stop",
+  "contentRenderers": ["markdown", "code", "tool_use_block", "tool_result_block", "mcp_tool_block", "file_artifact"],
+  "viaBadge": "via Allternit",
+  "verifiedBadge": "Claude",
+  "laneBadge": "Official API"
+}
