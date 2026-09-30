@@ -265,6 +265,15 @@ async fn main() {
     let db = DbHandle::new(db_path.clone()).expect("Failed to initialize SQLite database");
     info!("Database ready at {}", db_path.display());
 
+    // MCP connector tokens/secrets stored before sealing existed: seal them
+    // once a key is configured (idempotent; no-op without a key).
+    match db.connect().map(|c| allternit_api::mcp_routes::seal_legacy_mcp_secrets(&c)) {
+        Ok(Ok(0)) => {}
+        Ok(Ok(n)) => info!("Sealed {n} legacy MCP connector secret(s)"),
+        Ok(Err(e)) => warn!("Sealing legacy MCP connector secrets failed: {e}"),
+        Err(e) => warn!("Sealing legacy MCP connector secrets: no DB connection: {e}"),
+    }
+
     // Facts the old extractor copied from raw chat turns are not memories.
     match allternit_api::memory_kernel_service::prune_turn_derived_facts(&db) {
         Ok(0) => {}
