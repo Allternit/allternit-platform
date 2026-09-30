@@ -1,9 +1,8 @@
 // Mirror field-level sync engine (spec: agent-gateway.md "Mirror rules").
 //  - Writes only for fields the adapter can write back; otherwise local editing is disabled (planMirrorWrites refuses).
-//  - A field the adapter cannot observe is never claimed synced (state "unsupported" = unobservable).
+//  - A field the adapter cannot observe is never claimed synced (status "unobservable").
 //  - Drift is computed on NORMALIZED snapshots (agent.snapshot fields), never raw DOM.
-// Contract mapping (MirrorFieldState.state): synced=in_sync, stale=remote_ahead (remote moved, local is behind),
-// local_ahead (only local moved), conflict (both moved / direction unknown), unobservable=unsupported.
+// States follow the spec: synced | partial | stale (direction remote_ahead|local_ahead) | conflict | unobservable.
 import type { AaiProvider, AaiResult, MirrorFieldState } from "./types.js";
 import { ok } from "./types.js";
 
@@ -54,19 +53,24 @@ export function computeMirrorState(
     const norm = spec.normalize ?? normalizeValue;
     const localHas = has(local.values, spec.field);
     const lRef = localHas ? ref(canon(norm(local.values[spec.field]))) : undefined;
-    const withRefs = (state: MirrorFieldState["state"], r?: string): MirrorFieldState => ({
-      field: spec.field, state, ...(lRef ? { localValueRef: lRef } : {}), ...(r ? { remoteValueRef: r } : {}), checkedAt,
+    const obs = spec.observability;
+    const withRefs = (status: MirrorFieldState["status"], r?: string, direction?: MirrorFieldState["direction"]): MirrorFieldState => ({
+      field: spec.field, authority: "vendor", observability: obs,
+      // In sync on a partially observable field is only `partial`, never `synced`.
+      status: status === "synced" && obs === "partial" ? "partial" : status,
+      ...(direction ? { direction } : {}),
+      ...(lRef ? { localVersion: lRef } : {}), ...(r ? { remoteVersion: r } : {}), checkedAt,
     });
     // Unobservable: no vendor read access, or the snapshot did not carry the field. Never claimed synced.
-    if (spec.observability === "none" || !has(remoteSnapshot, spec.field)) return withRefs("unsupported");
+    if (spec.observability === "none" || !has(remoteSnapshot, spec.field)) return withRefs("unobservable");
     const rc = canon(norm(remoteSnapshot[spec.field])), rRef = ref(rc);
     const lc = localHas ? canon(norm(local.values[spec.field])) : undefined;
-    if (lc === rc) return withRefs("in_sync", rRef);
-    if (lc === undefined) return withRefs("remote_ahead", rRef); // nothing local yet: local is behind
+    if (lc === rc) return withRefs("synced", rRef);
+    if (lc === undefined) return withRefs("stale", rRef, "remote_ahead"); // nothing local yet: local is behind
     if (!has(local.base, spec.field)) return withRefs("conflict", rRef); // differ and no common base: direction unknown
     const bc = canon(norm(local.base![spec.field]));
-    if (lc === bc) return withRefs("remote_ahead", rRef); // only remote moved
-    if (rc === bc) return withRefs("local_ahead", rRef); // only local moved
+    if (lc === bc) return withRefs("stale", rRef, "remote_ahead"); // only remote moved
+    if (rc === bc) return withRefs("stale", rRef, "local_ahead"); // only local moved
     return withRefs("conflict", rRef); // both moved
   });
 }
@@ -92,7 +96,7 @@ export interface MirrorReport {
   fields: MirrorFieldState[];
   /** Fields whose normalized remote value changed since the previous sync() (undefined on the first run). */
   remoteDrift: string[];
-  /** true when every declared field is in_sync */
+  /** true when every declared field is `synced` (partial fields can never make this true) */
   fullySynced: boolean;
   /** Fields that cannot be claimed synced (unobservable). Shown honestly as partial sync. */
   unobservable: string[];
@@ -116,11 +120,11 @@ export class MirrorSync {
     const remoteDrift = this.last ? Object.keys({ ...this.last, ...cur }).filter((k) => this.last![k] !== cur[k]) : [];
     this.last = cur;
     // Record the agreed value as the new base only for fields that are provably in sync.
-    for (const f of fields) if (f.state === "in_sync") this.base[f.field] = remote[f.field];
+    for (const f of fields) if (f.status === "synced" || f.status === "partial") this.base[f.field] = remote[f.field];
     return ok({
       fields, remoteDrift,
-      fullySynced: fields.length > 0 && fields.every((f) => f.state === "in_sync"),
-      unobservable: fields.filter((f) => f.state === "unsupported").map((f) => f.field),
+      fullySynced: fields.length > 0 && fields.every((f) => f.status === "synced"),
+      unobservable: fields.filter((f) => f.status === "unobservable").map((f) => f.field),
     });
   }
 
