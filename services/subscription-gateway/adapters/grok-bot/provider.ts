@@ -17,6 +17,8 @@ export interface GrokBotProviderOptions {
   driver: GrokDriver;
   /** false disables human-like gaps (tests/replay only). Default true. */
   pacing?: boolean;
+  /** Bot to open new chats with (exact display name). Grok Bot's New chat shows a Bot picker; required for live use. */
+  botName?: string;
   pollMs?: number;
   replyTimeoutMs?: number;
   now?: () => number;
@@ -49,7 +51,7 @@ export class GrokBotProvider extends BaseAaiProvider {
   constructor(opts: GrokBotProviderOptions) {
     super();
     this.o = {
-      pacing: true, pollMs: 300, replyTimeoutMs: 120_000,
+      pacing: true, botName: "", pollMs: 300, replyTimeoutMs: 120_000,
       now: Date.now, sleep: (ms) => new Promise((r) => setTimeout(r, ms)), random: Math.random, ...opts,
     };
   }
@@ -172,13 +174,24 @@ export class GrokBotProvider extends BaseAaiProvider {
   // ---------- context ----------
   async contextOpen(input: OpenContextInput): Promise<AaiResult<OpenContextResult>> {
     if (input.adoptContextId) return fail("UNSUPPORTED", "Grok Bot chats cannot be adopted; a new chat is always started.");
-    if (input.agentId !== AGENT_ID) return fail("CONTEXT_NOT_FOUND", `No such agent ${input.agentId}`);
+    // One provider serves every Grok Bot: the binding's externalAgentId is "grok-bot:<Bot name>".
+    const [base, ...rest] = input.agentId.split(":");
+    if (base !== AGENT_ID) return fail("CONTEXT_NOT_FOUND", `No such agent ${input.agentId}`);
+    const botName = rest.join(":") || this.o.botName;
     if ([...this.ctxs.values()].some((c) => !c.closed)) return fail("CONTEXT_BUSY", `${APP_NAME} drives one conversation at a time. Close the open one first.`);
     const cd = this.cooldown(); if (cd) return cd;
     const g = await this.check(); if (!g.ok) return g;
     await this.pace();
     await this.o.driver.newChat();
-    const after = await this.check(); if (!after.ok) return after;
+    let after = await this.check(); if (!after.ok) return after;
+    if (after.value.picker) {
+      if (!botName) return fail("POLICY_DENIED", `${APP_NAME} asks which Bot to chat with. Choose a Bot in the connection wizard first.`);
+      await this.pace();
+      const esc = botName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (!(await this.o.driver.clickButton(`^${esc}$`))) return fail("CONTEXT_NOT_FOUND", `${APP_NAME} has no Bot named "${botName}".`);
+      await this.pace();
+      after = await this.check(); if (!after.ok) return after;
+    }
     const id = `gb-ctx-${++this.n}`;
     const c: Ctx = { id, threadId: input.threadId ?? id, closed: false, events: [], seq: 0, baseline: after.value.turns.length, seen: new Map(), cues: new Set(), msgN: 0, activity: false, done: new Map(), lock: Promise.resolve() };
     this.ctxs.set(id, c);

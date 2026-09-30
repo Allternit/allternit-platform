@@ -1,0 +1,1318 @@
+//! Agent Gateway thread runner, event bridge and dual-authority approvals
+//! (WP5; migration V199). Spec: `Research/specs/agent-gateway.md` ("Object
+//! model", "RemoteThreadBinding", "Events", "Approvals have two authorities",
+//! "Terms, safety and failure handling").
+//!
+//! * A bot whose execution binding is `type=vendor` runs its turns remotely
+//!   through the AAI (`POST {gateway}/aai/call`). No binding, or `type=allternit`,
+//!   is today's native path, unchanged. A vendor bot that is not READY never
+//!   falls back to a native brain.
+//! * One `remote_thread_bindings` row per thread generation. A handoff moves the
+//!   old one ACTIVE -> HANDOFF_PENDING -> CLOSED; the next turn opens a new one
+//!   (possibly on a different execution binding).
+//! * Vendor events land on the bot ledger (`bot_events`, tagged with the
+//!   thread), deduped by `remote_event_id`; the envelope rides in the payload.
+//! * Approvals have two authorities that never resolve each other.
+
+use async_trait::async_trait;
+use axum::extract::{Extension, Path, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
+use axum::{Json, Router};
+use rusqlite::{params, OptionalExtension};
+use serde::Deserialize;
+use serde_json::{json, Value};
+use std::sync::{Arc, OnceLock};
+use tracing::warn;
+
+use crate::agent_gateway_routes::{exec_next, id, now, one, remote_next, rows, s, set_exec_state, EXEC_COLS, REMOTE_COLS};
+use crate::auth::AuthUser;
+use crate::bot_event_routes::{append_event, ActorBody, AppendEventBody};
+use crate::db::DbHandle;
+use crate::thread_routes::ThreadRuntime;
+use crate::AppState;
+
+// ---------------------------------------------------------------- AAI transport
+
+/// `{ok:false,error}` from the gateway (or a transport failure).
+#[derive(Debug, Clone)]
+pub struct AaiError {
+    pub code: String,
+    pub retryable: bool,
+    pub retry_after_ms: Option<u64>,
+    pub human_message: String,
+}
+
+impl AaiError {
+    pub fn new(code: &str, msg: impl Into<String>) -> Self {
+        AaiError { code: code.into(), retryable: false, retry_after_ms: None, human_message: msg.into() }
+    }
+    fn from_wire(v: &Value) -> Self {
+        AaiError {
+            code: v["code"].as_str().unwrap_or("UNKNOWN").to_string(),
+            retryable: v["retryable"].as_bool().unwrap_or(false),
+            retry_after_ms: v["retryAfterMs"].as_u64(),
+            human_message: v["humanMessage"].as_str().unwrap_or("the vendor gateway reported an error").to_string(),
+        }
+    }
+}
+
+/// One AAI call. Production = [`SubsTransport`]; tests inject a fake.
+#[async_trait]
+pub trait AaiTransport: Send + Sync {
+    async fn call(&self, owner: &str, op: &str, binding: &Value, input: Value) -> Result<Value, AaiError>;
+}
+
+/// Reaches the subscription gateway the way `subscription_routes` does (the
+/// Sessions computer's guest port + sealed token).
+pub struct SubsTransport(pub Arc<AppState>);
+
+#[async_trait]
+impl AaiTransport for SubsTransport {
+    async fn call(&self, owner: &str, op: &str, binding: &Value, input: Value) -> Result<Value, AaiError> {
+        let user = AuthUser {
+            user_id: owner.to_string(),
+            email: None,
+            name: None,
+            avatar_url: None,
+            tenant_id: None,
+            organization_id: None,
+            organization_role: None,
+            organization_slug: None,
+        };
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(axum::http::header::CONTENT_TYPE, axum::http::HeaderValue::from_static("application/json"));
+        let body = json!({ "op": op, "binding": binding, "input": input }).to_string();
+        let resp = crate::subscription_routes::forward(&self.0, &user, "aai/call", axum::http::Method::POST, &headers, None, body.into())
+            .await;
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 10 * 1024 * 1024).await.unwrap_or_default();
+        let v: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        if !status.is_success() {
+            let mut e = AaiError::new("GATEWAY_UNAVAILABLE", format!("the subscription gateway answered {status}"));
+            e.retryable = true;
+            return Err(e);
+        }
+        if v["ok"].as_bool() == Some(true) {
+            Ok(v["value"].clone())
+        } else if v["ok"].as_bool() == Some(false) {
+            Err(AaiError::from_wire(&v["error"]))
+        } else {
+            Err(AaiError::new("BAD_GATEWAY_REPLY", "the subscription gateway sent an unreadable reply"))
+        }
+    }
+}
+
+struct Runtime {
+    db: DbHandle,
+    tx: Arc<dyn AaiTransport>,
+}
+static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+
+/// Wire the process-wide runner (called once from `main`).
+pub fn install(db: DbHandle, tx: Arc<dyn AaiTransport>) {
+    let _ = RUNTIME.set(Runtime { db, tx });
+}
+
+// ---------------------------------------------------------------- errors
+
+#[derive(Debug)]
+pub struct RunErr {
+    pub status: u16,
+    pub code: String,
+    pub message: String,
+    pub retry_after_ms: Option<u64>,
+    pub approval_id: Option<String>,
+}
+
+impl RunErr {
+    fn new(status: u16, code: &str, message: impl Into<String>) -> Self {
+        RunErr { status, code: code.into(), message: message.into(), retry_after_ms: None, approval_id: None }
+    }
+    fn db(e: rusqlite::Error) -> Self {
+        warn!(error = %e, "gateway runner DB error");
+        Self::new(500, "DB_ERROR", "database error")
+    }
+}
+
+impl IntoResponse for RunErr {
+    fn into_response(self) -> Response {
+        let st = StatusCode::from_u16(self.status).unwrap_or(StatusCode::BAD_GATEWAY);
+        (
+            st,
+            Json(json!({ "error": self.message, "code": self.code, "retryAfterMs": self.retry_after_ms, "approvalId": self.approval_id })),
+        )
+            .into_response()
+    }
+}
+
+impl From<rusqlite::Error> for RunErr {
+    fn from(e: rusqlite::Error) -> Self {
+        RunErr::db(e)
+    }
+}
+
+// ---------------------------------------------------------------- ledger + thread helpers
+
+/// Append to the bot ledger tagged with the thread. `Ok(true)` = newly written,
+/// `Ok(false)` = the idempotency key already existed (duplicate).
+fn led(db: &DbHandle, bot_id: &str, thread_id: &str, session: Option<&str>, event_type: &str, actor: (&str, &str), payload: Value, key: Option<String>) -> bool {
+    let key = key.unwrap_or_else(|| format!("gwr:{event_type}:{}", uuid::Uuid::new_v4()));
+    let body = AppendEventBody {
+        event_type: event_type.to_string(),
+        actor: ActorBody { r#type: actor.0.into(), id: actor.1.into() },
+        payload,
+        occurred_at: None,
+        session_id: session.map(str::to_string),
+        goal_id: None,
+        wih_id: None,
+        task_id: None,
+        run_id: None,
+        idempotency_key: Some(key.clone()),
+    };
+    match append_event(db, bot_id, &body, &now()) {
+        Ok((_, created)) => {
+            if created {
+                if let Ok(conn) = db.connect() {
+                    let _ = conn.execute(
+                        "UPDATE bot_events SET thread_id = ?1 WHERE bot_id = ?2 AND idempotency_key = ?3",
+                        params![thread_id, bot_id, key],
+                    );
+                }
+            }
+            created
+        }
+        Err(e) => {
+            warn!(thread = %thread_id, error = %e, "gateway runner ledger failed");
+            false
+        }
+    }
+}
+
+fn set_thread_status(db: &DbHandle, bot_id: &str, thread_id: &str, status: &str, line: &str) {
+    if let Ok(conn) = db.connect() {
+        let _ = conn.execute(
+            "UPDATE bot_threads SET status = ?2, status_line = ?3, last_activity_at = ?4, updated_at = ?4 WHERE id = ?1",
+            params![thread_id, status, line, now()],
+        );
+    }
+    let ev = if status == "needs_you" { "thread.needs_user" } else { "thread.status_changed" };
+    led(db, bot_id, thread_id, None, ev, ("system", "gateway"), json!({ "status": status, "statusLine": line }), None);
+}
+
+pub(crate) struct Cx {
+    owner: String,
+    thread_id: String,
+    bot_id: String,
+    generation: i64,
+    session_id: String,
+    exec: Value,
+}
+
+/// The vendor context for a session's thread, or `None` = native path.
+fn resolve(db: &DbHandle, session_id: &str) -> Result<Option<Cx>, RunErr> {
+    let conn = db.connect()?;
+    let row: Option<(String, String, String)> = conn
+        .query_row(
+            "SELECT t.id, t.user_id, t.bot_id FROM bot_thread_sessions s JOIN bot_threads t ON t.id = s.thread_id WHERE s.session_id = ?1",
+            params![session_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    let Some((thread_id, owner, bot_id)) = row else { return Ok(None) };
+    let exec = one(&conn, &format!("SELECT {EXEC_COLS} FROM bot_execution_bindings WHERE bot_id = ?1 AND owner = ?2"), &[&bot_id, &owner])?;
+    let Some(exec) = exec.filter(|e| s(e, "type") == "vendor") else { return Ok(None) };
+    let (generation, sid): (i64, String) = conn.query_row(
+        "SELECT generation, session_id FROM bot_thread_sessions WHERE thread_id = ?1 ORDER BY generation DESC LIMIT 1",
+        params![thread_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    Ok(Some(Cx { owner, thread_id, bot_id, generation, session_id: sid, exec }))
+}
+
+fn remote_for(db: &DbHandle, thread_id: &str, generation: i64) -> rusqlite::Result<Option<Value>> {
+    let conn = db.connect()?;
+    one(&conn, &format!("SELECT {REMOTE_COLS} FROM remote_thread_bindings WHERE thread_id = ?1 AND generation = ?2"), &[&thread_id, &generation])
+}
+
+fn set_remote_state(db: &DbHandle, owner: &str, remote: &Value, to: &str) -> rusqlite::Result<()> {
+    let from = s(remote, "state");
+    if from == to || !remote_next(&from).contains(&to) {
+        return Ok(());
+    }
+    let conn = db.connect()?;
+    let t = now();
+    conn.execute(
+        "UPDATE remote_thread_bindings SET state = ?1, updated_at = ?2, closed_at = CASE WHEN ?1 = 'CLOSED' THEN ?2 ELSE closed_at END WHERE id = ?3",
+        params![to, t, s(remote, "id")],
+    )?;
+    let kind = match to {
+        "ACTIVE" if from == "OPENING" => Some("gateway.remote_thread.opened"),
+        "HANDOFF_PENDING" => Some("gateway.remote_thread.handoff_pending"),
+        "CLOSED" => Some("gateway.remote_thread.closed"),
+        _ => None,
+    };
+    if let Some(k) = kind {
+        led(
+            db,
+            &s(remote, "botId"),
+            &s(remote, "threadId"),
+            None,
+            k,
+            (if k.ends_with("opened") { "system" } else { "system" }, "gateway"),
+            json!({ "bindingId": s(remote, "id"), "threadId": s(remote, "threadId"), "generation": remote["generation"], "lane": remote["lane"], "from": from, "to": to, "owner": owner }),
+            None,
+        );
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------- turn
+
+#[derive(Default, Clone)]
+pub struct TurnOpts {
+    /// Idempotency key: a retry with the same id never re-sends.
+    pub correlation_id: Option<String>,
+    /// The action is consequential: Allternit approval first.
+    pub consequential: bool,
+    pub allternit_approval_id: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct TurnReport {
+    pub reply: Option<String>,
+    pub events: usize,
+    pub correlation_id: String,
+    pub remote_binding_id: String,
+}
+
+fn blocked(db: &DbHandle, cx: &Cx, status: u16, code: &str, msg: &str) -> RunErr {
+    set_thread_status(db, &cx.bot_id, &cx.thread_id, "needs_you", msg);
+    led(db, &cx.bot_id, &cx.thread_id, None, "gateway.turn.blocked", ("system", "gateway"), json!({ "code": code, "message": msg }), None);
+    RunErr::new(status, code, msg)
+}
+
+/// Run one user turn for `session_id`. `Ok(None)` = not a vendor thread (native
+/// path, caller proceeds as before).
+pub async fn run_turn<R: ThreadRuntime>(
+    db: &DbHandle,
+    tx: &dyn AaiTransport,
+    rt: &R,
+    session_id: &str,
+    text: &str,
+    opts: TurnOpts,
+) -> Result<Option<TurnReport>, RunErr> {
+    let Some(mut cx) = resolve(db, session_id)? else { return Ok(None) };
+    let corr = opts.correlation_id.clone().unwrap_or_else(|| id("corr"));
+    reconcile_stale(db, tx, &cx).await;
+
+    let mut remote = remote_for(db, &cx.thread_id, cx.generation)?;
+    let already_sent = match &remote {
+        Some(r) => db
+            .connect()?
+            .query_row("SELECT COUNT(*) FROM gateway_sends WHERE remote_binding_id = ?1 AND correlation_id = ?2", params![s(r, "id"), corr], |x| x.get::<_, i64>(0))?
+            > 0,
+        None => false,
+    };
+
+    if !already_sent {
+        let state = s(&cx.exec, "state");
+        let ready = state == "READY" || (state == "DEGRADED" && !opts.consequential);
+        if !ready {
+            let why = if state == "DEGRADED" {
+                "the vendor lane is degraded; consequential work is stopped until it is checked".to_string()
+            } else {
+                format!("the vendor binding is {state}, not READY; this bot will not fall back to a native brain")
+            };
+            return Err(blocked(db, &cx, 409, "BINDING_NOT_READY", &why));
+        }
+        if let Some(until) = cx.exec["health"]["rateLimitedUntil"].as_str().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()) {
+            let left = (until.with_timezone(&chrono::Utc) - chrono::Utc::now()).num_milliseconds();
+            if left > 0 {
+                let mut e = RunErr::new(429, "RATE_LIMITED", "the vendor rate-limited this lane; retry later");
+                e.retry_after_ms = Some(left as u64);
+                return Err(e);
+            }
+        }
+        if opts.consequential {
+            gate_allternit(db, &cx, &opts, &corr, text)?;
+        }
+    }
+
+    // One remote binding per generation.
+    let remote_row = match remote.take() {
+        Some(r) if s(&r, "state") == "ACTIVE" => r,
+        Some(r) if matches!(s(&r, "state").as_str(), "UNBOUND" | "OPENING") => open_remote(db, tx, &cx, Some(r)).await?,
+        Some(_) => return Err(RunErr::new(409, "REMOTE_CLOSED", "this generation's vendor context is closed; hand off to a new generation")),
+        None => open_remote(db, tx, &cx, None).await?,
+    };
+    let rid = s(&remote_row, "id");
+    let ctx_id = s(&remote_row, "externalContextId");
+
+    if !already_sent {
+        let sent = tx.call(&cx.owner, "agent.context.message", &cx.exec, json!({ "contextId": ctx_id, "text": text, "correlationId": corr })).await;
+        match sent {
+            Ok(_) => {
+                db.connect()?.execute(
+                    "INSERT OR IGNORE INTO gateway_sends (remote_binding_id, correlation_id, sent_at) VALUES (?1, ?2, ?3)",
+                    params![rid, corr, now()],
+                )?;
+                if opts.consequential {
+                    if let Some(a) = &opts.allternit_approval_id {
+                        db.connect()?.execute("UPDATE gateway_approvals SET consumed = 1 WHERE id = ?1", params![a])?;
+                    }
+                }
+            }
+            Err(e) if e.code == "CONTEXT_NOT_FOUND" => {
+                return Err(context_lost(db, rt, &mut cx, &remote_row).await);
+            }
+            Err(e) => return Err(fail(db, &cx, Some(&remote_row), &e)),
+        }
+    }
+
+    let (events, reply) = pull_events(db, tx, &cx, &remote_row).await?;
+    Ok(Some(TurnReport { reply, events, correlation_id: corr, remote_binding_id: rid }))
+}
+
+/// Allternit-authority gate: consequential work needs an approved, unconsumed
+/// Allternit approval on this thread before anything is sent.
+fn gate_allternit(db: &DbHandle, cx: &Cx, opts: &TurnOpts, corr: &str, text: &str) -> Result<(), RunErr> {
+    let conn = db.connect()?;
+    if let Some(a) = &opts.allternit_approval_id {
+        let ok: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM gateway_approvals WHERE id = ?1 AND owner = ?2 AND thread_id = ?3 AND authority = 'allternit' AND state = 'approved' AND consumed = 0",
+            params![a, cx.owner, cx.thread_id],
+            |r| r.get(0),
+        )?;
+        if ok > 0 {
+            return Ok(());
+        }
+    }
+    // A retry of the same turn reuses its pending approval instead of stacking new ones.
+    let pending: Option<String> = conn
+        .query_row(
+            "SELECT id FROM gateway_approvals WHERE owner = ?1 AND thread_id = ?2 AND authority = 'allternit' AND state = 'pending' AND correlation_id = ?3",
+            params![cx.owner, cx.thread_id, corr],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let aid = match pending {
+        Some(a) => a,
+        None => create_approval(db, cx, "allternit", "send consequential work to the vendor", None, json!({ "text": text }), Some(corr))?,
+    };
+    let mut e = RunErr::new(428, "APPROVAL_REQUIRED", "this action is consequential and needs your approval before it is sent to the vendor");
+    e.approval_id = Some(aid);
+    Err(e)
+}
+
+async fn open_remote(db: &DbHandle, tx: &dyn AaiTransport, cx: &Cx, existing: Option<Value>) -> Result<Value, RunErr> {
+    let conn = db.connect()?;
+    let rid = match &existing {
+        Some(r) => s(r, "id"),
+        None => {
+            let rid = id("rtb");
+            let snap = cx.exec["capabilities"].to_string();
+            conn.execute(
+                "INSERT INTO remote_thread_bindings (id, owner, thread_id, generation, bot_id, execution_binding_id, capability_snapshot, lane, state, created_at, updated_at)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'UNBOUND',?9,?9)",
+                params![rid, cx.owner, cx.thread_id, cx.generation, cx.bot_id, s(&cx.exec, "id"), snap, cx.exec["preferredLane"].as_str(), now()],
+            )?;
+            rid
+        }
+    };
+    let cur = one(&conn, &format!("SELECT {REMOTE_COLS} FROM remote_thread_bindings WHERE id = ?1"), &[&rid])?.unwrap_or(Value::Null);
+    set_remote_state(db, &cx.owner, &cur, "OPENING")?;
+    let mut input = json!({ "threadId": cx.thread_id, "generation": cx.generation, "correlationId": id("corr") });
+    if let Some(a) = cx.exec["externalAgentId"].as_str() {
+        input["externalAgentId"] = json!(a);
+    }
+    match tx.call(&cx.owner, "agent.context.open", &cx.exec, input).await {
+        Ok(v) => {
+            let ctx = v["contextId"].as_str().unwrap_or_default().to_string();
+            let mut snap: Value = cur["capabilitySnapshot"].clone();
+            if let (Some(g), Some(o)) = (v.get("guarantee"), snap.as_object_mut()) {
+                o.insert("guarantee".into(), g.clone());
+            }
+            conn.execute(
+                "UPDATE remote_thread_bindings SET external_context_id = ?1, capability_snapshot = ?2 WHERE id = ?3",
+                params![ctx, snap.to_string(), rid],
+            )?;
+            let opening = one(&conn, &format!("SELECT {REMOTE_COLS} FROM remote_thread_bindings WHERE id = ?1"), &[&rid])?.unwrap_or(Value::Null);
+            set_remote_state(db, &cx.owner, &opening, "ACTIVE")?;
+            Ok(one(&conn, &format!("SELECT {REMOTE_COLS} FROM remote_thread_bindings WHERE id = ?1"), &[&rid])?.unwrap_or(Value::Null))
+        }
+        Err(e) => {
+            let opening = one(&conn, &format!("SELECT {REMOTE_COLS} FROM remote_thread_bindings WHERE id = ?1"), &[&rid])?.unwrap_or(Value::Null);
+            let _ = set_remote_state(db, &cx.owner, &opening, "CLOSED");
+            Err(fail(db, cx, None, &e))
+        }
+    }
+}
+
+/// Remote context lost. Resume only if the snapshot declares it; otherwise a
+/// new generation starts from the checkpoint.
+async fn context_lost<R: ThreadRuntime>(db: &DbHandle, rt: &R, cx: &mut Cx, remote: &Value) -> RunErr {
+    let _ = set_remote_state(db, &cx.owner, remote, "CLOSED");
+    let resume = remote["capabilitySnapshot"]["resume"].as_bool().unwrap_or(false)
+        || cx.exec["capabilities"]["resume"].as_bool().unwrap_or(false);
+    led(db, &cx.bot_id, &cx.thread_id, None, "gateway.remote_thread.lost", ("system", "gateway"), json!({ "generation": cx.generation, "resumeDeclared": resume }), None);
+    if resume {
+        return RunErr::new(409, "CONTEXT_LOST_RESUMABLE", "the vendor context was lost; retry to resume it");
+    }
+    let body = serde_json::from_value(json!({ "summary": "", "reason": "manual" })).expect("handoff body");
+    match crate::thread_routes::do_handoff(db, rt, &cx.owner, &cx.thread_id, body).await {
+        Ok(_) => RunErr::new(409, "CONTEXT_LOST", "the vendor context was lost; a new generation was started from the checkpoint, resend to continue"),
+        Err(e) => blocked(db, cx, 502, "CONTEXT_LOST", &format!("the vendor context was lost and the handoff failed: {e}")),
+    }
+}
+
+/// Failure table effects (spec "Terms, safety and failure handling").
+fn fail(db: &DbHandle, cx: &Cx, remote: Option<&Value>, e: &AaiError) -> RunErr {
+    let from = s(&cx.exec, "state");
+    let mut to_state: Option<&str> = None;
+    let (status, thread_msg): (u16, Option<String>) = match e.code.as_str() {
+        "AUTH_REQUIRED" | "AUTH_REVOKED" => {
+            to_state = Some("NEEDS_AUTH");
+            (409, Some(format!("the vendor account needs you to sign in again: {}", e.human_message)))
+        }
+        "LANE_BLOCKED" | "BOT_DETECTED" | "BOT_DETECTION" | "ACCOUNT_RISK" => {
+            to_state = Some("DISABLED");
+            (403, Some(format!("the vendor lane is blocked and has been switched off: {}", e.human_message)))
+        }
+        "ADAPTER_DRIFT" => {
+            to_state = Some("DEGRADED");
+            (503, Some(format!("the vendor adapter drifted; consequential automation is stopped: {}", e.human_message)))
+        }
+        "RATE_LIMITED" => (429, None),
+        _ => (502, None),
+    };
+    if let Ok(conn) = db.connect() {
+        if let Some(to) = to_state {
+            if from != to && exec_next(&from).contains(&to) {
+                let _ = set_exec_state(db, &conn, &cx.owner, &cx.exec, to, &e.code);
+            }
+        }
+        if e.code == "RATE_LIMITED" {
+            let ms = e.retry_after_ms.unwrap_or(30_000) as i64;
+            let until = (chrono::Utc::now() + chrono::Duration::milliseconds(ms)).to_rfc3339();
+            let mut h = cx.exec["health"].clone();
+            if !h.is_object() {
+                h = json!({});
+            }
+            h["rateLimitedUntil"] = json!(until);
+            let _ = conn.execute("UPDATE bot_execution_bindings SET health_json = ?1, updated_at = ?2 WHERE id = ?3", params![h.to_string(), now(), s(&cx.exec, "id")]);
+        }
+    }
+    if let Some(m) = &thread_msg {
+        set_thread_status(db, &cx.bot_id, &cx.thread_id, "needs_you", m);
+    }
+    let ev = if e.code == "ADAPTER_DRIFT" { "gateway.adapter.drift" } else { "gateway.turn.failed" };
+    led(
+        db,
+        &cx.bot_id,
+        &cx.thread_id,
+        None,
+        ev,
+        ("system", "gateway"),
+        json!({ "code": e.code, "retryable": e.retryable, "message": e.human_message, "executionState": to_state, "remoteBindingId": remote.map(|r| s(r, "id")) }),
+        None,
+    );
+    let mut r = RunErr::new(status, &e.code, e.human_message.clone());
+    r.retry_after_ms = if e.code == "RATE_LIMITED" { e.retry_after_ms } else { None };
+    r
+}
+
+// ---------------------------------------------------------------- handoff / rebind
+
+/// Sync half of a handoff, called when a thread advances a generation: the old
+/// generation's remote binding goes ACTIVE -> HANDOFF_PENDING. Closing happens
+/// via [`reconcile_stale`] (spawned here when a runtime is installed, and again
+/// on the next turn).
+pub fn on_generation_advanced(db: &DbHandle, thread_id: &str, old_generation: i64) {
+    let Ok(conn) = db.connect() else { return };
+    let olds = rows(
+        &conn,
+        &format!("SELECT {REMOTE_COLS} FROM remote_thread_bindings WHERE thread_id = ?1 AND generation <= ?2 AND state = 'ACTIVE'"),
+        &[&thread_id, &old_generation],
+    )
+    .unwrap_or_default();
+    for r in &olds {
+        let _ = set_remote_state(db, &s(r, "owner"), r, "HANDOFF_PENDING");
+    }
+    if olds.is_empty() {
+        return;
+    }
+    if let (Some(rt), Ok(_)) = (RUNTIME.get(), tokio::runtime::Handle::try_current()) {
+        let (db, thread_id) = (rt.db.clone(), thread_id.to_string());
+        tokio::spawn(async move {
+            if let Some(rt) = RUNTIME.get() {
+                close_stale(&db, rt.tx.as_ref(), &thread_id, i64::MAX).await;
+            }
+        });
+    }
+}
+
+async fn reconcile_stale(db: &DbHandle, tx: &dyn AaiTransport, cx: &Cx) {
+    close_stale(db, tx, &cx.thread_id, cx.generation).await;
+}
+
+/// Close every remote binding older than `below_generation` that is still open.
+pub async fn close_stale(db: &DbHandle, tx: &dyn AaiTransport, thread_id: &str, below_generation: i64) {
+    let Ok(conn) = db.connect() else { return };
+    let stale = rows(
+        &conn,
+        &format!("SELECT {REMOTE_COLS} FROM remote_thread_bindings WHERE thread_id = ?1 AND generation < ?2 AND state IN ('ACTIVE','HANDOFF_PENDING') ORDER BY generation"),
+        &[&thread_id, &below_generation],
+    )
+    .unwrap_or_default();
+    // i64::MAX (post-handoff spawn) must not close the live generation.
+    let live: i64 = conn
+        .query_row("SELECT COALESCE(MAX(generation), 0) FROM bot_thread_sessions WHERE thread_id = ?1", params![thread_id], |r| r.get(0))
+        .unwrap_or(0);
+    for r in stale.iter().filter(|r| r["generation"].as_i64().unwrap_or(0) < live) {
+        let owner = s(r, "owner");
+        let _ = set_remote_state(db, &owner, r, "HANDOFF_PENDING");
+        let exec = one(&conn, &format!("SELECT {EXEC_COLS} FROM bot_execution_bindings WHERE id = ?1"), &[&s(r, "executionBindingId")]).ok().flatten();
+        let closed = match exec {
+            Some(e) => match tx.call(&owner, "agent.context.close", &e, json!({ "contextId": s(r, "externalContextId") })).await {
+                Ok(_) => true,
+                Err(err) => err.code == "CONTEXT_NOT_FOUND",
+            },
+            None => true, // binding removed: nothing left to close remotely
+        };
+        if closed {
+            let cur = one(&conn, &format!("SELECT {REMOTE_COLS} FROM remote_thread_bindings WHERE id = ?1"), &[&s(r, "id")]).ok().flatten().unwrap_or(Value::Null);
+            let _ = set_remote_state(db, &owner, &cur, "CLOSED");
+        }
+    }
+}
+
+// ---------------------------------------------------------------- event bridge
+
+/// Pull `agent.events` from the binding's cursor and bridge them. Returns
+/// (new events, latest completed assistant message text).
+pub(crate) async fn pull_events(db: &DbHandle, tx: &dyn AaiTransport, cx: &Cx, remote: &Value) -> Result<(usize, Option<String>), RunErr> {
+    let rid = s(remote, "id");
+    let mut cursor = remote["syncCursor"].as_str().map(str::to_string);
+    let (mut new, mut reply) = (0usize, None);
+    for _ in 0..10 {
+        let mut input = json!({ "contextId": s(remote, "externalContextId"), "limit": 200 });
+        if let Some(c) = &cursor {
+            input["cursor"] = json!(c);
+        }
+        let v = tx.call(&cx.owner, "agent.events", &cx.exec, input).await.map_err(|e| fail(db, cx, Some(remote), &e))?;
+        let events = v["events"].as_array().cloned().unwrap_or_default();
+        let mut last_remote: Option<String> = None;
+        for ev in &events {
+            if let Some(r) = ev["remote_event_id"].as_str() {
+                last_remote = Some(r.to_string());
+            }
+            if bridge_event(db, cx, remote, ev)? {
+                new += 1;
+                if ev["type"] == "agent.message.completed" {
+                    reply = ev["payload"]["text"].as_str().or_else(|| ev["payload"]["content"].as_str()).map(str::to_string);
+                }
+            }
+        }
+        let next = v["cursor"].as_str().map(str::to_string);
+        db.connect()?.execute(
+            "UPDATE remote_thread_bindings SET sync_cursor = COALESCE(?1, sync_cursor), last_remote_event_id = COALESCE(?2, last_remote_event_id), updated_at = ?3 WHERE id = ?4",
+            params![next, last_remote, now(), rid],
+        )?;
+        let done = events.is_empty() || next == cursor || next.is_none();
+        cursor = next;
+        if done {
+            break;
+        }
+    }
+    Ok((new, reply))
+}
+
+/// Returns true when the event was new.
+fn bridge_event(db: &DbHandle, cx: &Cx, remote: &Value, ev: &Value) -> Result<bool, RunErr> {
+    let ty = ev["type"].as_str().unwrap_or("agent.unknown");
+    let remote_event = ev["remote_event_id"].as_str();
+    let pick = |k: &str, fallback: Value| ev.get(k).filter(|v| !v.is_null()).cloned().unwrap_or(fallback);
+    let envelope = json!({
+        "botId": cx.bot_id,
+        "threadId": cx.thread_id,
+        "generationId": cx.generation,
+        "source": pick("source", json!("vendor")),
+        "vendor": pick("vendor", cx.exec["vendor"].clone()),
+        "adapter": pick("adapter", cx.exec["adapterId"].clone()),
+        "lane": pick("lane", remote["lane"].clone()),
+        "guarantee": pick("guarantee", json!("best_effort")),
+        "remoteEventId": remote_event,
+        "remoteContextId": pick("remote_context_id", remote["externalContextId"].clone()),
+        "causationId": ev.get("causation_id"),
+        "correlationId": ev.get("correlation_id"),
+    });
+    let key = remote_event.map(|r| format!("aai:{}:{}", s(remote, "id"), r));
+    let vendor = s(&cx.exec, "vendor");
+    let created = led(
+        db,
+        &cx.bot_id,
+        &cx.thread_id,
+        Some(&cx.session_id),
+        ty,
+        ("vendor", if vendor.is_empty() { "vendor" } else { &vendor }),
+        json!({ "data": ev["payload"], "envelope": envelope }),
+        key,
+    );
+    if !created {
+        return Ok(false);
+    }
+    match ty {
+        "agent.approval.requested" => {
+            let rref = ev["payload"]["approvalId"].as_str().or(remote_event).unwrap_or_default();
+            let action = ev["payload"]["action"].as_str().or_else(|| ev["payload"]["summary"].as_str()).unwrap_or("vendor approval");
+            create_approval(db, cx, "vendor", action, Some(rref), ev["payload"].clone(), ev["correlation_id"].as_str())?;
+        }
+        "agent.approval.resolved" => {
+            if let Some(rref) = ev["payload"]["approvalId"].as_str() {
+                let st = if ev["payload"]["decision"].as_str() == Some("deny") { "denied" } else { "approved" };
+                db.connect()?.execute(
+                    "UPDATE gateway_approvals SET state = ?1, resolved_at = ?2 WHERE thread_id = ?3 AND remote_ref = ?4 AND state = 'pending'",
+                    params![st, now(), cx.thread_id, rref],
+                )?;
+                dismiss_card(db, rref_row_id(db, &cx.thread_id, rref));
+            }
+        }
+        _ => {}
+    }
+    Ok(true)
+}
+
+fn rref_row_id(db: &DbHandle, thread_id: &str, rref: &str) -> Option<String> {
+    db.connect().ok()?.query_row("SELECT id FROM gateway_approvals WHERE thread_id = ?1 AND remote_ref = ?2", params![thread_id, rref], |r| r.get(0)).ok()
+}
+
+/// Pull events for a thread's live remote binding on demand (background sync).
+pub async fn sync_thread(db: &DbHandle, tx: &dyn AaiTransport, owner: &str, thread_id: &str) -> Result<usize, RunErr> {
+    let conn = db.connect()?;
+    let sid: Option<String> = conn
+        .query_row(
+            "SELECT s.session_id FROM bot_thread_sessions s JOIN bot_threads t ON t.id = s.thread_id WHERE t.id = ?1 AND t.user_id = ?2 ORDER BY s.generation DESC LIMIT 1",
+            params![thread_id, owner],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let sid = sid.ok_or_else(|| RunErr::new(404, "NOT_FOUND", "thread not found"))?;
+    let Some(cx) = resolve(db, &sid)? else { return Ok(0) };
+    let Some(remote) = remote_for(db, &cx.thread_id, cx.generation)?.filter(|r| s(r, "state") == "ACTIVE") else { return Ok(0) };
+    Ok(pull_events(db, tx, &cx, &remote).await?.0)
+}
+
+// ---------------------------------------------------------------- approvals
+
+fn create_approval(db: &DbHandle, cx: &Cx, authority: &str, action: &str, remote_ref: Option<&str>, detail: Value, corr: Option<&str>) -> Result<String, RunErr> {
+    let conn = db.connect()?;
+    if let Some(r) = remote_ref {
+        if let Some(existing) = rref_row_id(db, &cx.thread_id, r) {
+            return Ok(existing);
+        }
+    }
+    let aid = id("gap");
+    let ctx_id = remote_for(db, &cx.thread_id, cx.generation)?.map(|r| s(&r, "externalContextId"));
+    conn.execute(
+        "INSERT INTO gateway_approvals (id, owner, thread_id, bot_id, generation, authority, action, detail_json, remote_ref, remote_context_id, correlation_id, state, created_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'pending',?12)",
+        params![aid, cx.owner, cx.thread_id, cx.bot_id, cx.generation, authority, action, detail.to_string(), remote_ref, ctx_id, corr, now()],
+    )?;
+    // The approval card the app already renders; the authority rides along so
+    // the card can show the vendor badge.
+    let card = json!({ "type": "gateway_approval", "approvalId": aid, "authority": authority, "threadId": cx.thread_id, "action": action, "vendor": s(&cx.exec, "vendor") });
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO cowork_approvals (id, user_id, content, source, dismissed) VALUES (?1, ?2, ?3, ?4, 0)",
+        params![aid, cx.owner, card.to_string(), format!("gateway:{authority}")],
+    );
+    led(
+        db,
+        &cx.bot_id,
+        &cx.thread_id,
+        Some(&cx.session_id),
+        "approval.requested",
+        ("system", "gateway"),
+        json!({ "approvalId": aid, "authority": authority, "action": action, "remoteRef": remote_ref }),
+        None,
+    );
+    set_thread_status(db, &cx.bot_id, &cx.thread_id, "needs_you", &format!("Approval needed ({authority}): {action}"));
+    Ok(aid)
+}
+
+fn dismiss_card(db: &DbHandle, aid: Option<String>) {
+    if let (Some(a), Ok(conn)) = (aid, db.connect()) {
+        let _ = conn.execute("UPDATE cowork_approvals SET dismissed = 1 WHERE id = ?1", params![a]);
+    }
+}
+
+pub fn list_approvals(db: &DbHandle, owner: &str, thread_id: &str, state: Option<&str>) -> rusqlite::Result<Vec<Value>> {
+    let conn = db.connect()?;
+    let cols = "id, thread_id AS threadId, bot_id AS botId, generation, authority, action, detail_json, remote_ref AS remoteRef, state, actor_type AS actorType, actor_id AS actorId, created_at AS createdAt, resolved_at AS resolvedAt";
+    let st = state.unwrap_or("%");
+    rows(
+        &conn,
+        &format!("SELECT {cols} FROM gateway_approvals WHERE owner = ?1 AND thread_id = ?2 AND state LIKE ?3 ORDER BY created_at, id"),
+        &[&owner, &thread_id, &st],
+    )
+}
+
+/// Resolve an approval. Human actors only, for both authorities. A vendor
+/// approval forwards to the vendor; an Allternit approval never touches one.
+pub async fn respond_approval(
+    db: &DbHandle,
+    tx: &dyn AaiTransport,
+    owner: &str,
+    approval_id: &str,
+    decision: &str,
+    actor: (&str, &str),
+) -> Result<Value, RunErr> {
+    if actor.0 != "user" {
+        return Err(RunErr::new(403, "HUMAN_REQUIRED", "approvals can only be answered by a person, never a bot"));
+    }
+    if decision != "approve" && decision != "deny" {
+        return Err(RunErr::new(400, "BAD_DECISION", "decision must be approve or deny"));
+    }
+    let conn = db.connect()?;
+    let ap = one(
+        &conn,
+        "SELECT id, thread_id, bot_id, generation, authority, remote_ref, state FROM gateway_approvals WHERE id = ?1 AND owner = ?2",
+        &[&approval_id, &owner],
+    )?
+    .ok_or_else(|| RunErr::new(404, "NOT_FOUND", "approval not found"))?;
+    if s(&ap, "state") != "pending" {
+        return Err(RunErr::new(409, "ALREADY_RESOLVED", "this approval is already resolved"));
+    }
+    let thread_id = s(&ap, "threadId");
+    let bot_id = s(&ap, "botId");
+    if s(&ap, "authority") == "vendor" {
+        let gen = ap["generation"].as_i64().unwrap_or(1);
+        let remote = remote_for(db, &thread_id, gen)?
+            .filter(|r| s(r, "state") == "ACTIVE")
+            .ok_or_else(|| RunErr::new(409, "REMOTE_CLOSED", "the vendor context for this approval is no longer open"))?;
+        let exec = one(&conn, &format!("SELECT {EXEC_COLS} FROM bot_execution_bindings WHERE bot_id = ?1 AND owner = ?2"), &[&bot_id, &owner])?
+            .ok_or_else(|| RunErr::new(409, "NO_BINDING", "the bot has no execution binding"))?;
+        let cx = Cx { owner: owner.into(), thread_id: thread_id.clone(), bot_id: bot_id.clone(), generation: gen, session_id: String::new(), exec: exec.clone() };
+        tx.call(
+            owner,
+            "agent.approvals",
+            &exec,
+            json!({ "op": "respond", "contextId": s(&remote, "externalContextId"), "approvalId": s(&ap, "remoteRef"), "decision": decision, "actor": { "type": "user", "id": actor.1 } }),
+        )
+        .await
+        .map_err(|e| fail(db, &cx, Some(&remote), &e))?;
+    }
+    let st = if decision == "approve" { "approved" } else { "denied" };
+    conn.execute(
+        "UPDATE gateway_approvals SET state = ?1, actor_type = ?2, actor_id = ?3, resolved_at = ?4 WHERE id = ?5",
+        params![st, actor.0, actor.1, now(), approval_id],
+    )?;
+    dismiss_card(db, Some(approval_id.to_string()));
+    led(db, &bot_id, &thread_id, None, "approval.resolved", ("user", actor.1), json!({ "approvalId": approval_id, "authority": s(&ap, "authority"), "state": st }), None);
+    let pending: i64 = conn.query_row("SELECT COUNT(*) FROM gateway_approvals WHERE thread_id = ?1 AND state = 'pending'", params![thread_id], |r| r.get(0))?;
+    if pending == 0 {
+        let cur: String = conn.query_row("SELECT status FROM bot_threads WHERE id = ?1", params![thread_id], |r| r.get(0)).unwrap_or_default();
+        if cur == "needs_you" {
+            set_thread_status(db, &bot_id, &thread_id, "working", "");
+        }
+    }
+    Ok(json!({ "approvalId": approval_id, "state": st }))
+}
+
+// ---------------------------------------------------------------- process-wide entry points
+
+/// `send_bot_turn` hook: `None` = native path. `Some` = the vendor turn's reply
+/// (or the reason it did not run).
+pub async fn intercept_turn(session_id: &str, text: &str, opts: TurnOpts) -> Option<Result<String, String>> {
+    let rt = RUNTIME.get()?;
+    let runtime = crate::thread_routes::GizziRuntime { db: rt.db.clone() };
+    match run_turn(&rt.db, rt.tx.as_ref(), &runtime, session_id, text, opts).await {
+        Ok(None) => None,
+        Ok(Some(r)) => Some(r.reply.ok_or_else(|| "the vendor accepted the turn and has not replied yet".to_string())),
+        Err(e) => Some(Err(e.message)),
+    }
+}
+
+/// `POST /agent-sessions/:id/messages` hook: the transcript-shaped reply, or the error response.
+pub async fn intercept_message(session_id: &str, text: &str, metadata: Option<&Value>) -> Option<Response> {
+    let rt = RUNTIME.get()?;
+    let m = metadata.cloned().unwrap_or(Value::Null);
+    let opts = TurnOpts {
+        correlation_id: m["correlationId"].as_str().map(str::to_string),
+        consequential: m["consequential"].as_bool().unwrap_or(false),
+        allternit_approval_id: m["allternitApprovalId"].as_str().map(str::to_string),
+    };
+    let runtime = crate::thread_routes::GizziRuntime { db: rt.db.clone() };
+    match run_turn(&rt.db, rt.tx.as_ref(), &runtime, session_id, text, opts).await {
+        Ok(None) => None,
+        Ok(Some(r)) => Some(
+            Json(json!({
+                "id": format!("gw-{}", r.correlation_id),
+                "role": "assistant",
+                "content": r.reply.clone().unwrap_or_default(),
+                "timestamp": now(),
+                "metadata": { "gateway": true, "events": r.events, "remoteBindingId": r.remote_binding_id, "pending": r.reply.is_none() },
+            }))
+            .into_response(),
+        ),
+        Err(e) => Some(e.into_response()),
+    }
+}
+
+// ---------------------------------------------------------------- routes
+
+pub fn gateway_runner_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/threads/:id/approvals", get(list_approvals_h))
+        .route("/threads/:id/gateway/sync", post(sync_h))
+        .route("/gateway/approvals/:id/respond", post(respond_h))
+}
+
+#[derive(Deserialize)]
+struct ListQ {
+    state: Option<String>,
+}
+
+async fn list_approvals_h(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(thread_id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<ListQ>,
+) -> Response {
+    let db = state.db.clone();
+    let res = tokio::task::spawn_blocking(move || {
+        let conn = db.connect()?;
+        let owned: i64 = conn.query_row("SELECT COUNT(*) FROM bot_threads WHERE id = ?1 AND user_id = ?2", params![thread_id, user.user_id], |r| r.get(0))?;
+        if owned == 0 {
+            return Ok(None);
+        }
+        list_approvals(&db, &user.user_id, &thread_id, q.state.as_deref()).map(Some)
+    })
+    .await;
+    match res {
+        Ok(Ok(Some(v))) => Json(json!({ "approvals": v })).into_response(),
+        Ok(Ok(None)) => (StatusCode::NOT_FOUND, Json(json!({ "error": "thread not found" }))).into_response(),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "database error" }))).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct RespondBody {
+    decision: String,
+    actor: Option<ActorIn>,
+}
+#[derive(Deserialize)]
+struct ActorIn {
+    #[serde(rename = "type")]
+    kind: String,
+    id: Option<String>,
+}
+
+async fn respond_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(aid): Path<String>, Json(b): Json<RespondBody>) -> Response {
+    let kind = b.actor.as_ref().map(|a| a.kind.clone()).unwrap_or_else(|| "user".into());
+    let actor_id = b.actor.as_ref().and_then(|a| a.id.clone()).unwrap_or_else(|| user.user_id.clone());
+    // The authenticated caller is the actor of record; a claimed id cannot override it.
+    let actor_id = if kind == "user" { user.user_id.clone() } else { actor_id };
+    let Some(rt) = RUNTIME.get() else {
+        // No transport installed: only the human gate can be checked.
+        if kind != "user" {
+            return RunErr::new(403, "HUMAN_REQUIRED", "approvals can only be answered by a person, never a bot").into_response();
+        }
+        return RunErr::new(503, "GATEWAY_OFFLINE", "the agent gateway is not connected").into_response();
+    };
+    match respond_approval(&state.db, rt.tx.as_ref(), &user.user_id, &aid, &b.decision, (&kind, &actor_id)).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => e.into_response(),
+    }
+}
+
+async fn sync_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(thread_id): Path<String>) -> Response {
+    let Some(rt) = RUNTIME.get() else {
+        return RunErr::new(503, "GATEWAY_OFFLINE", "the agent gateway is not connected").into_response();
+    };
+    match sync_thread(&state.db, rt.tx.as_ref(), &user.user_id, &thread_id).await {
+        Ok(n) => Json(json!({ "events": n })).into_response(),
+        Err(e) => e.into_response(),
+    }
+}
+
+// ---------------------------------------------------------------- tests
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use http_body_util::BodyExt;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use tower::ServiceExt;
+
+    /// Fake AAI gateway: records calls, serves a scripted event log by index
+    /// cursor, and fails any op it is told to.
+    #[derive(Default)]
+    struct Fake {
+        calls: Mutex<Vec<(String, Value)>>,
+        events: Mutex<Vec<Value>>,
+        fail: Mutex<HashMap<String, AaiError>>,
+        opened: Mutex<i64>,
+    }
+
+    impl Fake {
+        fn count(&self, op: &str) -> usize {
+            self.calls.lock().unwrap().iter().filter(|(o, _)| o == op).count()
+        }
+        fn push(&self, ev: Value) {
+            self.events.lock().unwrap().push(ev);
+        }
+        fn fail_op(&self, op: &str, code: &str, retry_after_ms: Option<u64>) {
+            let mut e = AaiError::new(code, format!("{code} from vendor"));
+            e.retry_after_ms = retry_after_ms;
+            self.fail.lock().unwrap().insert(op.into(), e);
+        }
+    }
+
+    #[async_trait]
+    impl AaiTransport for Fake {
+        async fn call(&self, _owner: &str, op: &str, _binding: &Value, input: Value) -> Result<Value, AaiError> {
+            self.calls.lock().unwrap().push((op.into(), input.clone()));
+            if let Some(e) = self.fail.lock().unwrap().get(op) {
+                return Err(e.clone());
+            }
+            Ok(match op {
+                "agent.context.open" => {
+                    let mut n = self.opened.lock().unwrap();
+                    *n += 1;
+                    json!({ "contextId": format!("ctx-{n}"), "guarantee": "best_effort" })
+                }
+                "agent.events" => {
+                    let all = self.events.lock().unwrap();
+                    let from: usize = input["cursor"].as_str().and_then(|c| c.parse().ok()).unwrap_or(0);
+                    json!({ "events": all[from.min(all.len())..].to_vec(), "cursor": all.len().to_string() })
+                }
+                _ => json!({}),
+            })
+        }
+    }
+
+    struct Rt;
+    impl ThreadRuntime for Rt {
+        async fn create_session(&self, _b: &str, _n: &str, _t: &str, _c: bool, _th: &str) -> Result<String, String> {
+            Ok("sess-new".into())
+        }
+        async fn seed(&self, _s: &str, _t: &str) -> Result<(), String> {
+            Ok(())
+        }
+        async fn handoff(&self, s: &str, _r: &str, _c: &str, baton: Option<Value>) -> Result<(String, Value), String> {
+            Ok((format!("{s}-next"), baton.unwrap_or_else(|| json!({ "summary": "checkpoint" }))))
+        }
+        async fn successors(&self, _s: &str) -> Vec<(String, String, Value)> {
+            Vec::new()
+        }
+    }
+
+    fn user(id: &str) -> AuthUser {
+        AuthUser { user_id: id.into(), email: None, name: None, avatar_url: None, tenant_id: None, organization_id: None, organization_role: None, organization_slug: None }
+    }
+
+    /// bot-native (no binding), bot-vendor (READY vendor binding); th-native, th-vendor.
+    async fn setup(tag: &str) -> Arc<AppState> {
+        let dir = std::env::temp_dir().join(format!("allternit-gwr-{tag}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let state = crate::test_helpers::app_state(&dir).await;
+        let c = state.db.connect().unwrap();
+        for b in ["bot-native", "bot-vendor"] {
+            c.execute("INSERT INTO agents (id, user_id, name, model, provider, is_bot, config) VALUES (?1, 'user-a', 'b', 'm', 'p', 1, '{}')", params![b]).unwrap();
+        }
+        for (t, b) in [("th-native", "bot-native"), ("th-vendor", "bot-vendor")] {
+            c.execute(
+                "INSERT INTO bot_threads (id, user_id, bot_id, title, status, last_activity_at, created_at, updated_at) VALUES (?1,'user-a',?2,'T','working','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')",
+                params![t, b],
+            )
+            .unwrap();
+            c.execute("INSERT INTO bot_thread_sessions (thread_id, generation, session_id, started_at) VALUES (?1, 1, ?2, '2026-01-01T00:00:00Z')", params![t, format!("s-{t}")]).unwrap();
+        }
+        c.execute(
+            "INSERT INTO bot_execution_bindings (id, owner, bot_id, type, vendor, adapter_id, preferred_lane, external_agent_id, capabilities_json, state)
+             VALUES ('eb-1','user-a','bot-vendor','vendor','acme','acme-adapter','api','agent-9','{\"resume\":false}','READY')",
+            [],
+        )
+        .unwrap();
+        state
+    }
+
+    fn exec_state(st: &Arc<AppState>) -> String {
+        st.db.connect().unwrap().query_row("SELECT state FROM bot_execution_bindings WHERE id='eb-1'", [], |r| r.get(0)).unwrap()
+    }
+    fn thread_status(st: &Arc<AppState>) -> String {
+        st.db.connect().unwrap().query_row("SELECT status FROM bot_threads WHERE id='th-vendor'", [], |r| r.get(0)).unwrap()
+    }
+    fn remote_states(st: &Arc<AppState>) -> Vec<(i64, String)> {
+        let c = st.db.connect().unwrap();
+        let mut q = c.prepare("SELECT generation, state FROM remote_thread_bindings WHERE thread_id='th-vendor' ORDER BY generation").unwrap();
+        q.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(|r| r.unwrap()).collect()
+    }
+    async fn turn(st: &Arc<AppState>, f: &Fake, session: &str, text: &str, o: TurnOpts) -> Result<Option<TurnReport>, RunErr> {
+        run_turn(&st.db, f, &Rt, session, text, o).await
+    }
+    fn key(k: &str) -> TurnOpts {
+        TurnOpts { correlation_id: Some(k.into()), ..Default::default() }
+    }
+    fn done(id: &str, text: &str) -> Value {
+        json!({ "type": "agent.message.completed", "remote_event_id": id, "guarantee": "exact", "payload": { "text": text } })
+    }
+    fn count_events(st: &Arc<AppState>, ty: &str) -> i64 {
+        st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM bot_events WHERE thread_id='th-vendor' AND event_type=?1", params![ty], |r| r.get(0)).unwrap()
+    }
+
+    #[tokio::test]
+    async fn native_path_is_untouched() {
+        let st = setup("native").await;
+        let f = Fake::default();
+        assert!(turn(&st, &f, "s-th-native", "hi", TurnOpts::default()).await.unwrap().is_none());
+        st.db.connect().unwrap().execute("INSERT INTO bot_execution_bindings (id, owner, bot_id, type, state) VALUES ('eb-n','user-a','bot-native','allternit','READY')", []).unwrap();
+        assert!(turn(&st, &f, "s-th-native", "hi", TurnOpts::default()).await.unwrap().is_none());
+        assert!(turn(&st, &f, "unknown-session", "hi", TurnOpts::default()).await.unwrap().is_none());
+        assert!(f.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn vendor_turn_opens_once_sends_once_and_bridges_events() {
+        let st = setup("turn").await;
+        let f = Fake::default();
+        f.push(done("e1", "hello from vendor"));
+        let r = turn(&st, &f, "s-th-vendor", "hi", key("k1")).await.unwrap().unwrap();
+        assert_eq!(r.reply.as_deref(), Some("hello from vendor"));
+        assert_eq!(remote_states(&st), vec![(1, "ACTIVE".into())]);
+        // A retry with the same correlation id does not double-send or re-open.
+        turn(&st, &f, "s-th-vendor", "hi", key("k1")).await.unwrap();
+        assert_eq!(f.count("agent.context.open"), 1);
+        assert_eq!(f.count("agent.context.message"), 1);
+        // A new correlation id sends again on the same context.
+        turn(&st, &f, "s-th-vendor", "again", key("k2")).await.unwrap();
+        assert_eq!(f.count("agent.context.open"), 1);
+        assert_eq!(f.count("agent.context.message"), 2);
+        // Bridge: one ledger row, envelope in payload, cursor advanced, frozen snapshot.
+        assert_eq!(count_events(&st, "agent.message.completed"), 1);
+        let c = st.db.connect().unwrap();
+        let payload: String = c.query_row("SELECT payload FROM bot_events WHERE event_type='agent.message.completed'", [], |r| r.get(0)).unwrap();
+        let p: Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(p["envelope"]["vendor"], "acme");
+        assert_eq!(p["envelope"]["guarantee"], "exact");
+        assert_eq!(p["envelope"]["remoteEventId"], "e1");
+        let (cursor, last, lane): (String, String, String) =
+            c.query_row("SELECT sync_cursor, last_remote_event_id, lane FROM remote_thread_bindings", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
+        assert_eq!((cursor.as_str(), last.as_str(), lane.as_str()), ("1", "e1", "api"));
+        // Replaying the same events (cursor lost) dedupes by remote_event_id.
+        c.execute("UPDATE remote_thread_bindings SET sync_cursor = NULL", []).unwrap();
+        assert_eq!(sync_thread(&st.db, &f, "user-a", "th-vendor").await.unwrap(), 0);
+        assert_eq!(count_events(&st, "agent.message.completed"), 1);
+    }
+
+    #[tokio::test]
+    async fn handoff_closes_old_binding_and_opens_a_new_one() {
+        let st = setup("handoff").await;
+        let f = Fake::default();
+        turn(&st, &f, "s-th-vendor", "hi", key("k1")).await.unwrap();
+        let body = serde_json::from_value(json!({ "summary": "checkpoint", "reason": "manual" })).unwrap();
+        crate::thread_routes::do_handoff(&st.db, &Rt, "user-a", "th-vendor", body).await.unwrap();
+        // Sync half ran inside the handoff.
+        assert_ne!(remote_states(&st)[0].1, "ACTIVE");
+        turn(&st, &f, "s-th-vendor", "next gen", key("k2")).await.unwrap();
+        assert_eq!(remote_states(&st), vec![(1, "CLOSED".into()), (2, "ACTIVE".into())]);
+        assert_eq!(f.count("agent.context.close"), 1);
+        assert_eq!(f.count("agent.context.open"), 2);
+        let ctx: Vec<String> = {
+            let c = st.db.connect().unwrap();
+            let mut q = c.prepare("SELECT external_context_id FROM remote_thread_bindings ORDER BY generation").unwrap();
+            q.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect()
+        };
+        assert_eq!(ctx, vec!["ctx-1", "ctx-2"]);
+    }
+
+    #[tokio::test]
+    async fn lost_context_starts_a_new_generation_unless_resume_is_declared() {
+        let st = setup("lost").await;
+        let f = Fake::default();
+        turn(&st, &f, "s-th-vendor", "hi", key("k1")).await.unwrap();
+        f.fail_op("agent.context.message", "CONTEXT_NOT_FOUND", None);
+        let e = turn(&st, &f, "s-th-vendor", "hi2", key("k2")).await.unwrap_err();
+        assert_eq!(e.code, "CONTEXT_LOST");
+        let c = st.db.connect().unwrap();
+        let gens: i64 = c.query_row("SELECT MAX(generation) FROM bot_thread_sessions WHERE thread_id='th-vendor'", [], |r| r.get(0)).unwrap();
+        assert_eq!(gens, 2);
+        assert_eq!(remote_states(&st)[0].1, "CLOSED");
+    }
+
+    #[tokio::test]
+    async fn vendor_approval_needs_you_and_only_a_human_answers_it() {
+        let st = setup("vapproval").await;
+        let f = Fake::default();
+        f.push(json!({ "type": "agent.approval.requested", "remote_event_id": "e1", "payload": { "approvalId": "va-1", "action": "delete the report" } }));
+        turn(&st, &f, "s-th-vendor", "go", key("k1")).await.unwrap();
+        assert_eq!(thread_status(&st), "needs_you");
+        let pending = list_approvals(&st.db, "user-a", "th-vendor", Some("pending")).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0]["authority"], "vendor");
+        assert_eq!(pending[0]["remoteRef"], "va-1");
+        let aid = pending[0]["id"].as_str().unwrap().to_string();
+        // Replayed request does not duplicate.
+        f.push(json!({ "type": "agent.approval.requested", "remote_event_id": "e1b", "payload": { "approvalId": "va-1", "action": "delete the report" } }));
+        sync_thread(&st.db, &f, "user-a", "th-vendor").await.unwrap();
+        assert_eq!(list_approvals(&st.db, "user-a", "th-vendor", None).unwrap().len(), 1);
+        // A bot cannot answer; nothing is forwarded.
+        let e = respond_approval(&st.db, &f, "user-a", &aid, "approve", ("bot", "bot-vendor")).await.unwrap_err();
+        assert_eq!((e.status, e.code.as_str()), (403, "HUMAN_REQUIRED"));
+        assert_eq!(f.count("agent.approvals"), 0);
+        // The route enforces the same rule.
+        let app = gateway_runner_router().with_state(st.clone());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/gateway/approvals/{aid}/respond"))
+                    .header("content-type", "application/json")
+                    .extension(user("user-a"))
+                    .body(Body::from(json!({ "decision": "approve", "actor": { "type": "bot", "id": "x" } }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        // A human can; it forwards to the vendor and clears needs_you.
+        respond_approval(&st.db, &f, "user-a", &aid, "approve", ("user", "user-a")).await.unwrap();
+        let calls = f.calls.lock().unwrap().clone();
+        let fwd = calls.iter().find(|(o, _)| o == "agent.approvals").unwrap();
+        assert_eq!(fwd.1["op"], "respond");
+        assert_eq!(fwd.1["approvalId"], "va-1");
+        assert_eq!(fwd.1["actor"]["type"], "user");
+        assert_eq!(thread_status(&st), "working");
+        // Other users cannot see or answer it.
+        assert!(respond_approval(&st.db, &f, "user-b", &aid, "approve", ("user", "user-b")).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn allternit_approval_gates_consequential_sends_and_never_resolves_a_vendor_one() {
+        let st = setup("gate").await;
+        let f = Fake::default();
+        // A live vendor context (plain turn), with a vendor approval already pending on it.
+        f.push(json!({ "type": "agent.approval.requested", "remote_event_id": "e0", "payload": { "approvalId": "va-1", "action": "confirm" } }));
+        turn(&st, &f, "s-th-vendor", "hello", key("k0")).await.unwrap();
+        let sent_before = f.count("agent.context.message");
+        let o = TurnOpts { correlation_id: Some("k1".into()), consequential: true, allternit_approval_id: None };
+        let e = turn(&st, &f, "s-th-vendor", "wire the money", o).await.unwrap_err();
+        assert_eq!((e.status, e.code.as_str()), (428, "APPROVAL_REQUIRED"));
+        assert_eq!(f.count("agent.context.message"), sent_before, "nothing reaches the vendor before approval");
+        assert_eq!(thread_status(&st), "needs_you");
+        let aid = e.approval_id.unwrap();
+        // Unapproved id still blocked.
+        let o2 = TurnOpts { correlation_id: Some("k1".into()), consequential: true, allternit_approval_id: Some(aid.clone()) };
+        assert_eq!(turn(&st, &f, "s-th-vendor", "wire the money", o2.clone()).await.unwrap_err().code, "APPROVAL_REQUIRED");
+        respond_approval(&st.db, &f, "user-a", &aid, "approve", ("user", "user-a")).await.unwrap();
+        assert_eq!(f.count("agent.approvals"), 0, "an Allternit approval is never forwarded");
+        let all = list_approvals(&st.db, "user-a", "th-vendor", Some("pending")).unwrap();
+        assert_eq!(all.len(), 1, "exactly the vendor approval is still pending");
+        assert!(all.iter().all(|a| a["authority"] == "vendor"));
+        // Now the send goes through, once; the approval is single-use.
+        turn(&st, &f, "s-th-vendor", "wire the money", o2.clone()).await.unwrap();
+        assert_eq!(f.count("agent.context.message"), sent_before + 1);
+        let o3 = TurnOpts { correlation_id: Some("k9".into()), ..o2 };
+        assert_eq!(turn(&st, &f, "s-th-vendor", "again", o3).await.unwrap_err().code, "APPROVAL_REQUIRED");
+    }
+
+    #[tokio::test]
+    async fn vendor_not_ready_never_falls_back_native() {
+        let st = setup("notready").await;
+        let f = Fake::default();
+        st.db.connect().unwrap().execute("UPDATE bot_execution_bindings SET state='NEEDS_AUTH'", []).unwrap();
+        let e = turn(&st, &f, "s-th-vendor", "hi", key("k")).await.unwrap_err();
+        assert_eq!(e.code, "BINDING_NOT_READY");
+        assert_eq!(thread_status(&st), "needs_you");
+        assert!(f.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn each_failure_code_has_its_state_effect() {
+        for (code, want_exec, want_thread) in [
+            ("AUTH_REQUIRED", "NEEDS_AUTH", "needs_you"),
+            ("AUTH_REVOKED", "NEEDS_AUTH", "needs_you"),
+            ("LANE_BLOCKED", "DISABLED", "needs_you"),
+            ("BOT_DETECTED", "DISABLED", "needs_you"),
+            ("ADAPTER_DRIFT", "DEGRADED", "needs_you"),
+        ] {
+            let st = setup(code).await;
+            let f = Fake::default();
+            f.fail_op("agent.context.message", code, None);
+            let e = turn(&st, &f, "s-th-vendor", "hi", key("k")).await.unwrap_err();
+            assert_eq!(e.code, code);
+            assert_eq!(exec_state(&st), want_exec, "{code}");
+            assert_eq!(thread_status(&st), want_thread, "{code}");
+            // No retry storm on a blocked lane: the next turn is refused locally.
+            if want_exec == "DISABLED" {
+                f.fail.lock().unwrap().clear();
+                let before = f.calls.lock().unwrap().len();
+                assert_eq!(turn(&st, &f, "s-th-vendor", "hi", key("k2")).await.unwrap_err().code, "BINDING_NOT_READY");
+                assert_eq!(f.calls.lock().unwrap().len(), before);
+            }
+        }
+        // DEGRADED stops consequential automation but not plain chat.
+        let st = setup("drift2").await;
+        let f = Fake::default();
+        f.fail_op("agent.context.message", "ADAPTER_DRIFT", None);
+        turn(&st, &f, "s-th-vendor", "hi", key("k")).await.unwrap_err();
+        f.fail.lock().unwrap().clear();
+        let o = TurnOpts { correlation_id: Some("k2".into()), consequential: true, allternit_approval_id: None };
+        assert_eq!(turn(&st, &f, "s-th-vendor", "pay", o).await.unwrap_err().code, "BINDING_NOT_READY");
+        assert!(turn(&st, &f, "s-th-vendor", "hello", key("k3")).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn rate_limit_is_respected_without_changing_state_or_mixing_contexts() {
+        let st = setup("rate").await;
+        let f = Fake::default();
+        f.fail_op("agent.context.message", "RATE_LIMITED", Some(60_000));
+        let e = turn(&st, &f, "s-th-vendor", "hi", key("k")).await.unwrap_err();
+        assert_eq!((e.status, e.retry_after_ms), (429, Some(60_000)));
+        assert_eq!(exec_state(&st), "READY");
+        f.fail.lock().unwrap().clear();
+        let before = f.count("agent.context.message");
+        let e2 = turn(&st, &f, "s-th-vendor", "hi", key("k2")).await.unwrap_err();
+        assert_eq!(e2.code, "RATE_LIMITED");
+        assert!(e2.retry_after_ms.unwrap() > 0);
+        assert_eq!(f.count("agent.context.message"), before, "nothing sent while limited");
+        assert_eq!(f.count("agent.context.open"), 1, "still one context");
+    }
+
+    #[tokio::test]
+    async fn events_after_cursor_pages_ascending_and_default_stays_newest_first() {
+        let st = setup("after").await;
+        let f = Fake::default();
+        for i in 0..5 {
+            f.push(done(&format!("e{i}"), &format!("m{i}")));
+        }
+        turn(&st, &f, "s-th-vendor", "hi", key("k")).await.unwrap();
+        let get = |uri: String| {
+            let st = st.clone();
+            async move {
+                let app = crate::thread_routes::thread_router().with_state(st);
+                let resp = app.oneshot(Request::builder().uri(uri).extension(user("user-a")).body(Body::empty()).unwrap()).await.unwrap();
+                let b = resp.into_body().collect().await.unwrap().to_bytes();
+                serde_json::from_slice::<Value>(&b).unwrap()
+            }
+        };
+        let newest = get("/threads/th-vendor/events".into()).await;
+        let seqs: Vec<i64> = newest["events"].as_array().unwrap().iter().map(|e| e["sequence"].as_i64().unwrap()).collect();
+        assert!(seqs.windows(2).all(|w| w[0] > w[1]), "default is newest-first: {seqs:?}");
+        let p1 = get("/threads/th-vendor/events?after=0&limit=2".into()).await;
+        let a: Vec<i64> = p1["events"].as_array().unwrap().iter().map(|e| e["sequence"].as_i64().unwrap()).collect();
+        assert_eq!(a.len(), 2);
+        assert!(a[0] < a[1]);
+        let cur = p1["cursor"].as_i64().unwrap();
+        assert_eq!(cur, a[1]);
+        let p2 = get(format!("/threads/th-vendor/events?after={cur}&limit=500")).await;
+        let b: Vec<i64> = p2["events"].as_array().unwrap().iter().map(|e| e["sequence"].as_i64().unwrap()).collect();
+        assert!(b.iter().all(|s| *s > cur) && b.windows(2).all(|w| w[0] < w[1]));
+        assert_eq!(a.len() + b.len(), seqs.len());
+    }
+}
