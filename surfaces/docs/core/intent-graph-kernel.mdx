@@ -7,15 +7,21 @@ description: Persistent, queryable graph of intent nodes and edges that underpin
 
 The **Allternit Intent Graph Kernel (IGK)** is a durable, queryable graph database for intent, work, and memory. It stores typed **nodes** (intents, tasks, goals, decisions, plans, artifacts, and memories) and typed **edges** that describe how those nodes relate to one another. Every mutation is recorded as a provenance event, so the graph remains auditable and reproducible over time.
 
-IGK serves as the substrate for higher-level projections in the Allternit platform:
+IGK is designed as the substrate for higher-level projections:
 
 - **UI projections** — render boards, canvases, and agent workspaces from live graph state.
 - **Context projections** — assemble token-bounded context windows for agent reasoning.
 - **Memory projections** — surface now / next / later views of active and pending work.
 
-The kernel is implemented as the Rust crate `intent-graph-kernel` and exposes an HTTP service on port `3120` by default.
+The kernel is implemented as the Rust crate `intent-graph-kernel` (`domains/kernel/allternit-intent-graph-kernel/`) and exposes a standalone HTTP service on port `3120` by default.
 
-## How IGK relates to run state
+**Status:** Implementation IMPLEMENTED × Exposure — . The crate and its service exist and are tested, but on main nothing in the platform API, the cloud API or the UI calls it yet, and it is not part of the hosted deployment. The projections listed above are its design purpose, not live product features.
+
+## How this relates to the Agency Kernel
+
+IGK is not part of the Agency Kernel's run path. The kernel keeps its own run-level state; IGK is the long-lived layer that could inform runs. See [Architecture](/architecture) for the kernel itself.
+
+### How IGK relates to run state
 
 IGK sits above the run. It holds what persists across runs; the kernel's run-level records hold what one run knows and does.
 
