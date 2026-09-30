@@ -535,7 +535,7 @@ fn fail(db: &DbHandle, cx: &Cx, remote: Option<&Value>, e: &AaiError) -> RunErr 
             to_state = Some("NEEDS_AUTH");
             (409, Some(format!("the vendor account needs you to sign in again: {}", e.human_message)))
         }
-        "LANE_BLOCKED" | "BOT_DETECTED" | "BOT_DETECTION" | "ACCOUNT_RISK" => {
+        "LANE_BLOCKED" => {
             to_state = Some("DISABLED");
             (403, Some(format!("the vendor lane is blocked and has been switched off: {}", e.human_message)))
         }
@@ -710,7 +710,7 @@ fn bridge_event(db: &DbHandle, cx: &Cx, remote: &Value, ev: &Value) -> Result<bo
     let envelope = json!({
         "botId": cx.bot_id,
         "threadId": cx.thread_id,
-        "generationId": cx.generation,
+        "generationId": cx.generation.to_string(),
         "source": pick("source", json!("vendor")),
         "vendor": pick("vendor", cx.exec["vendor"].clone()),
         "adapter": pick("adapter", cx.exec["adapterId"].clone()),
@@ -735,7 +735,7 @@ fn bridge_event(db: &DbHandle, cx: &Cx, remote: &Value, ev: &Value) -> Result<bo
         ty,
         ("vendor", if vendor.is_empty() { "vendor" } else { &vendor }),
         json!({ "data": ev["payload"], "envelope": envelope }),
-        key,
+        key.clone(),
     );
     if !created {
         return Ok(false);
@@ -744,7 +744,15 @@ fn bridge_event(db: &DbHandle, cx: &Cx, remote: &Value, ev: &Value) -> Result<bo
         "agent.approval.requested" => {
             let rref = ev["payload"]["approvalId"].as_str().or(remote_event).unwrap_or_default();
             let action = ev["payload"]["action"].as_str().or_else(|| ev["payload"]["summary"].as_str()).unwrap_or("vendor approval");
-            create_approval(db, cx, "vendor", action, Some(rref), ev["payload"].clone(), ev["correlation_id"].as_str())?;
+            let gid = create_approval(db, cx, "vendor", action, Some(rref), ev["payload"].clone(), ev["correlation_id"].as_str())?;
+            // The raw vendor event carries the vendor's approval id; stamp the gateway row id
+            // too, since that is what `/gateway/approvals/:id/respond` takes.
+            if let Some(k) = &key {
+                db.connect()?.execute(
+                    "UPDATE bot_events SET payload = json_set(payload, '$.data.gatewayApprovalId', ?1) WHERE bot_id = ?2 AND idempotency_key = ?3",
+                    params![gid, cx.bot_id, k],
+                )?;
+            }
         }
         "agent.approval.resolved" => {
             if let Some(rref) = ev["payload"]["approvalId"].as_str() {
@@ -877,7 +885,7 @@ pub async fn respond_approval(
             owner,
             "agent.approvals",
             &exec,
-            json!({ "op": "respond", "contextId": s(&remote, "externalContextId"), "approvalId": s(&ap, "remoteRef"), "decision": decision, "actor": { "type": "user", "id": actor.1 } }),
+            json!({ "op": "respond", "contextId": s(&remote, "externalContextId"), "approvalId": s(&ap, "remoteRef"), "decision": decision, "actor": { "type": "human", "id": actor.1 } }),
         )
         .await
         .map_err(|e| fail(db, &cx, Some(&remote), &e))?;
@@ -1246,6 +1254,14 @@ mod tests {
         assert_eq!(pending[0]["authority"], "vendor");
         assert_eq!(pending[0]["remoteRef"], "va-1");
         let aid = pending[0]["id"].as_str().unwrap().to_string();
+        // R5/R4: the raw vendor event carries the gateway row id the respond route takes,
+        // and its envelope's generationId is a string (gatewayEventSchema).
+        let raw: String = st.db.connect().unwrap()
+            .query_row("SELECT payload FROM bot_events WHERE event_type = 'agent.approval.requested'", [], |r| r.get(0)).unwrap();
+        let raw: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(raw["data"]["gatewayApprovalId"], aid.as_str());
+        assert_eq!(raw["data"]["approvalId"], "va-1");
+        assert_eq!(raw["envelope"]["generationId"], "1");
         // Replayed request does not duplicate.
         f.push(json!({ "type": "agent.approval.requested", "remote_event_id": "e1b", "payload": { "approvalId": "va-1", "action": "delete the report" } }));
         sync_thread(&st.db, &f, "user-a", "th-vendor").await.unwrap();
@@ -1275,7 +1291,8 @@ mod tests {
         let fwd = calls.iter().find(|(o, _)| o == "agent.approvals").unwrap();
         assert_eq!(fwd.1["op"], "respond");
         assert_eq!(fwd.1["approvalId"], "va-1");
-        assert_eq!(fwd.1["actor"]["type"], "user");
+        // R2: ApprovalsInput actor is "human" | "system"; the router refuses anything else.
+        assert_eq!(fwd.1["actor"]["type"], "human");
         assert_eq!(thread_status(&st), "working");
         // Other users cannot see or answer it.
         assert!(respond_approval(&st.db, &f, "user-b", &aid, "approve", ("user", "user-b")).await.is_err());
@@ -1327,7 +1344,6 @@ mod tests {
             ("AUTH_REQUIRED", "NEEDS_AUTH", "needs_you"),
             ("AUTH_REVOKED", "NEEDS_AUTH", "needs_you"),
             ("LANE_BLOCKED", "DISABLED", "needs_you"),
-            ("BOT_DETECTED", "DISABLED", "needs_you"),
             ("ADAPTER_DRIFT", "DEGRADED", "needs_you"),
         ] {
             let st = setup(code).await;

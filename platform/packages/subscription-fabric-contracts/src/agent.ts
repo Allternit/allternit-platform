@@ -197,6 +197,10 @@ export const threadOriginSchema = z.object({
 export type ThreadOrigin = z.infer<typeof threadOriginSchema>;
 
 export const memoryRecordSchema = z.object({
+  // Record id and body for a readable vendor memory (allternit-api's vendor-memory view needs
+  // both to list and promote a record; `remoteRef` is used as the id when `id` is absent).
+  id: z.string().optional(),
+  text: z.string().optional(),
   scope: z.string(),
   source: z.enum(["native", "vendor"]),
   vendor: z.string().optional(),

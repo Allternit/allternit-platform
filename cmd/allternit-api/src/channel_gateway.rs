@@ -298,9 +298,12 @@ pub fn record_inbound(db: &DbHandle, b: &BindingRow, ev: &Inbound) -> Result<Rec
     if inserted == 0 {
         return Ok(Recorded::Duplicate);
     }
-    if ev.kind == InboundKind::Delivery {
+    // Delivery contract (`channel.message.delivery`): `messageId` is the platform id of
+    // our outbound post, `state` the outbound log state it moved to (confirmed|failed),
+    // `delivery` the raw platform status (sent|delivered|read|failed).
+    let delivery_state = (ev.kind == InboundKind::Delivery).then(|| if ev.text.as_deref() == Some("failed") { "failed" } else { "confirmed" });
+    if let Some(to) = delivery_state {
         let status = ev.text.clone().unwrap_or_default();
-        let to = if status == "failed" { "failed" } else { "confirmed" };
         let _ = conn.execute(
             "UPDATE channel_message_log SET state = ?1, updated_at = ?2, detail_json = json_set(detail_json, '$.delivery', ?3)
              WHERE binding_id = ?4 AND direction = 'outbound' AND remote_id = ?5",
@@ -322,10 +325,17 @@ pub fn record_inbound(db: &DbHandle, b: &BindingRow, ev: &Inbound) -> Result<Rec
             None,
             ev.kind.event_type(),
             ("user", ev.user.as_deref().unwrap_or("unknown")),
-            json!({
-                "provider": b.provider, "bindingId": b.id, "conversation": b.conversation, "remoteId": ev.remote_id,
-                "messageId": ev.message_id, "correlationId": corr, "text": ev.text, "reaction": ev.reaction, "added": ev.added,
-            }),
+            {
+                let mut p = json!({
+                    "provider": b.provider, "bindingId": b.id, "conversation": b.conversation, "remoteId": ev.remote_id,
+                    "messageId": ev.message_id, "correlationId": corr, "text": ev.text, "reaction": ev.reaction, "added": ev.added,
+                });
+                if let Some(to) = delivery_state {
+                    p["state"] = json!(to);
+                    p["delivery"] = json!(ev.text);
+                }
+                p
+            },
             Some(format!("chan:{}:in:{}", b.id, ev.remote_id)),
         );
     }
@@ -399,6 +409,28 @@ fn send_policy(db: &DbHandle, bot_id: &str, provider: &str) -> Option<String> {
     ask.then(|| "ask".to_string())
 }
 
+/// Every outbound attempt that does not post is still on the record: one
+/// `channel_message_log` row in `state` and one `channel.message.sent` event whose
+/// `delivery` tells the transcript it did not go out (never a silent drop).
+#[allow(clippy::too_many_arguments)]
+fn log_unposted(conn: &rusqlite::Connection, db: &DbHandle, owner: &str, b: &BindingRow, bot_id: &str, thread_id: &str, corr: &str, text: &str, state: &str, delivery: &str, reason: &str) {
+    let _ = conn.execute(
+        "INSERT OR REPLACE INTO channel_message_log (id, owner, binding_id, thread_id, direction, kind, remote_id, correlation_id, state, detail_json, created_at, updated_at)
+         VALUES (?1,?2,?3,?4,'outbound','message',NULL,?5,?6,?7,?8,?8)",
+        params![id("cml"), owner, b.id, thread_id, corr, state, json!({ "text": text, "reason": reason }).to_string(), now()],
+    );
+    led(
+        db,
+        bot_id,
+        thread_id,
+        None,
+        "channel.message.sent",
+        ("bot", bot_id),
+        json!({ "provider": b.provider, "bindingId": b.id, "correlationId": corr, "text": text, "state": state, "delivery": delivery, "reason": reason }),
+        Some(format!("chan:{}:{state}:{corr}", b.id)),
+    );
+}
+
 pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_id: &str, req: &SendReq) -> Result<SendOutcome, String> {
     let (bot_id, generation, session_id): (String, i64, String) = {
         let conn = db.connect().map_err(|e| e.to_string())?;
@@ -430,7 +462,8 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
         .optional()
         .map_err(|e| e.to_string())?;
     if let Some((state, remote_id)) = prior {
-        if state != "awaiting_approval" {
+        // Held or refused sends are re-evaluated (policy may have changed, approval may have landed).
+        if state != "awaiting_approval" && state != "denied" {
             return Ok(SendOutcome::Replay { state, remote_id });
         }
     }
@@ -438,7 +471,9 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
     // Policy, then Allternit approval for consequential posts.
     let policy = send_policy(db, &bot_id, &b.provider);
     if policy.as_deref() == Some("deny") {
-        return Ok(SendOutcome::Denied(format!("this bot may not post to {} (channel policy)", b.provider)));
+        let why = format!("this bot may not post to {} (channel policy)", b.provider);
+        log_unposted(&conn, db, owner, &b, &bot_id, thread_id, &corr, text, "denied", "failed", &why);
+        return Ok(SendOutcome::Denied(why));
     }
     let needs_approval = policy.as_deref() == Some("ask") || req.consequential.unwrap_or(false);
     let mut consume: Option<String> = None;
@@ -470,6 +505,7 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
                     create_approval(db, &cx, "allternit", &format!("post to {}", b.provider), None, json!({ "text": text, "channel": b.channel }), Some(&corr)).map_err(|e| e.message)?
                 }
             };
+            log_unposted(&conn, db, owner, &b, &bot_id, thread_id, &corr, text, "awaiting_approval", "pending", &format!("waiting for approval {aid}"));
             return Ok(SendOutcome::ApprovalRequired { approval_id: aid });
         }
         consume = req.allternit_approval_id.clone();
@@ -504,13 +540,23 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
                 None,
                 "channel.message.sent",
                 ("bot", &bot_id),
-                json!({ "provider": b.provider, "bindingId": b.id, "remoteId": r.remote_id, "correlationId": corr, "text": text, "relayed": r.relayed, "postingIdentityId": identity.id }),
+                json!({ "provider": b.provider, "bindingId": b.id, "remoteId": r.remote_id, "correlationId": corr, "text": text, "state": "confirmed", "delivery": "sent", "relayed": r.relayed, "postingIdentityId": identity.id }),
                 Some(format!("chan:{}:out:{corr}", b.id)),
             );
             Ok(SendOutcome::Sent { remote_id: r.remote_id, relayed: r.relayed, correlation_id: corr })
         }
         Err(PostError::Rejected(why)) => {
             set("failed", None);
+            led(
+                db,
+                &bot_id,
+                thread_id,
+                None,
+                "channel.message.sent",
+                ("bot", &bot_id),
+                json!({ "provider": b.provider, "bindingId": b.id, "correlationId": corr, "text": text, "state": "failed", "delivery": "failed", "reason": why }),
+                Some(format!("chan:{}:failed:{corr}", b.id)),
+            );
             Ok(SendOutcome::Rejected(why))
         }
         Err(PostError::Uncertain(why)) => {
@@ -776,16 +822,22 @@ pub async fn post_reply(db: &DbHandle, tx: &dyn ChannelTransport, b: &BindingRow
             let _ = conn.execute("UPDATE channel_message_log SET state='confirmed', remote_id=?1, updated_at=?2 WHERE binding_id=?3 AND direction='outbound' AND correlation_id=?4", params![r.remote_id, now(), b.id, corr]);
             advance(&conn, &b.id, "last_outbound_cursor", &r.remote_id);
             if let Some(bot) = bot_of_thread(db, &b.thread_id) {
-                led(db, &bot, &b.thread_id, None, "channel.message.sent", ("bot", &bot), json!({ "provider": b.provider, "bindingId": b.id, "remoteId": r.remote_id, "correlationId": corr, "relayed": r.relayed }), Some(format!("chan:{}:out:{corr}", b.id)));
+                led(db, &bot, &b.thread_id, None, "channel.message.sent", ("bot", &bot), json!({ "provider": b.provider, "bindingId": b.id, "remoteId": r.remote_id, "correlationId": corr, "text": reply, "state": "confirmed", "delivery": "sent", "relayed": r.relayed }), Some(format!("chan:{}:out:{corr}", b.id)));
             }
             Ok(())
         }
         Err(PostError::Uncertain(why)) => {
             let _ = conn.execute("UPDATE channel_message_log SET state='unconfirmed', updated_at=?1 WHERE binding_id=?2 AND direction='outbound' AND correlation_id=?3", params![now(), b.id, corr]);
+            if let Some(bot) = bot_of_thread(db, &b.thread_id) {
+                led(db, &bot, &b.thread_id, None, "channel.message.pending", ("bot", &bot), json!({ "provider": b.provider, "bindingId": b.id, "correlationId": corr, "text": reply, "state": "unconfirmed", "reason": why }), Some(format!("chan:{}:pending:{corr}", b.id)));
+            }
             Err(format!("reply delivery unconfirmed: {why}"))
         }
         Err(PostError::Rejected(why)) => {
             let _ = conn.execute("UPDATE channel_message_log SET state='failed', updated_at=?1 WHERE binding_id=?2 AND direction='outbound' AND correlation_id=?3", params![now(), b.id, corr]);
+            if let Some(bot) = bot_of_thread(db, &b.thread_id) {
+                led(db, &bot, &b.thread_id, None, "channel.message.sent", ("bot", &bot), json!({ "provider": b.provider, "bindingId": b.id, "correlationId": corr, "text": reply, "state": "failed", "delivery": "failed", "reason": why }), Some(format!("chan:{}:failed:{corr}", b.id)));
+            }
             Err(why)
         }
     }
@@ -952,6 +1004,79 @@ mod tests {
         set_policy(&st, json!({}));
         let c = SendReq { text: "wire it".into(), consequential: Some(true), ..Default::default() };
         assert!(matches!(send(&st.db, &f, "user-a", "th-1", &c).await.unwrap(), SendOutcome::ApprovalRequired { .. }));
+    }
+
+    /// Handoff step 1b: every outbound outcome — sent, denied, approval-pending, rejected,
+    /// unconfirmed, and the Slack reply path — leaves one log row and one ledger event.
+    #[tokio::test]
+    async fn every_outbound_outcome_writes_a_log_row_and_a_ledger_event() {
+        let st = setup("outlog").await;
+        let f = Fake::default();
+        let b = bound(&st, &f);
+        let row = |corr: &str| -> (String, i64) {
+            st.db.connect().unwrap()
+                .query_row("SELECT state, COUNT(*) FROM channel_message_log WHERE direction='outbound' AND correlation_id=?1", params![corr], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+        };
+        let ev_for = |corr: &str| -> Vec<(String, Value)> {
+            let c = st.db.connect().unwrap();
+            let mut q = c.prepare("SELECT event_type, payload FROM bot_events WHERE thread_id='th-1' AND json_extract(payload,'$.correlationId')=?1 ORDER BY seq").unwrap();
+            q.query_map(params![corr], |r| Ok((r.get::<_, String>(0)?, serde_json::from_str(&r.get::<_, String>(1)?).unwrap()))).unwrap().map(Result::unwrap).collect()
+        };
+        let req = |c: &str| SendReq { text: format!("t-{c}"), correlation_id: Some(c.into()), ..Default::default() };
+
+        // sent
+        assert!(matches!(send(&st.db, &f, "user-a", "th-1", &req("ok")).await.unwrap(), SendOutcome::Sent { .. }));
+        assert_eq!(row("ok"), ("confirmed".into(), 1));
+        let e = ev_for("ok");
+        assert_eq!((e.len(), e[0].0.as_str(), e[0].1["delivery"].as_str()), (1, "channel.message.sent", Some("sent")));
+
+        // denied: nothing posted, still on the record; a later retry is re-evaluated, not replayed
+        set_policy(&st, json!({ "deny": ["channel.send"], "ask": [] }));
+        assert!(matches!(send(&st.db, &f, "user-a", "th-1", &req("den")).await.unwrap(), SendOutcome::Denied(_)));
+        assert_eq!(row("den"), ("denied".into(), 1));
+        let e = ev_for("den");
+        assert_eq!((e[0].0.as_str(), e[0].1["state"].as_str(), e[0].1["delivery"].as_str()), ("channel.message.sent", Some("denied"), Some("failed")));
+        set_policy(&st, json!({}));
+        assert!(matches!(send(&st.db, &f, "user-a", "th-1", &req("den")).await.unwrap(), SendOutcome::Sent { .. }));
+        assert_eq!(row("den"), ("confirmed".into(), 1));
+
+        // approval-pending, asked twice: one row, one event
+        set_policy(&st, json!({ "deny": [], "ask": ["channel.send"] }));
+        assert!(matches!(send(&st.db, &f, "user-a", "th-1", &req("ask")).await.unwrap(), SendOutcome::ApprovalRequired { .. }));
+        assert!(matches!(send(&st.db, &f, "user-a", "th-1", &req("ask")).await.unwrap(), SendOutcome::ApprovalRequired { .. }));
+        assert_eq!(row("ask"), ("awaiting_approval".into(), 1));
+        let e = ev_for("ask");
+        assert_eq!((e.len(), e[0].1["state"].as_str(), e[0].1["delivery"].as_str()), (1, Some("awaiting_approval"), Some("pending")));
+        set_policy(&st, json!({}));
+
+        // rejected by the platform
+        *f.mode.lock().unwrap() = "reject";
+        assert!(matches!(send(&st.db, &f, "user-a", "th-1", &req("rej")).await.unwrap(), SendOutcome::Rejected(_)));
+        assert_eq!(row("rej"), ("failed".into(), 1));
+        assert_eq!(ev_for("rej")[0].1["delivery"], "failed");
+
+        // unconfirmed
+        *f.mode.lock().unwrap() = "uncertain";
+        assert!(matches!(send(&st.db, &f, "user-a", "th-1", &req("unc")).await.unwrap(), SendOutcome::Unconfirmed { .. }));
+        assert_eq!(row("unc"), ("unconfirmed".into(), 1));
+        assert_eq!(ev_for("unc")[0].0, "channel.message.pending");
+
+        // Slack reply path: success and failure both land on the ledger with the text
+        let replies = |st_: &str| -> i64 {
+            st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM channel_message_log WHERE direction='outbound' AND correlation_id LIKE 'reply%' AND state=?1", params![st_], |r| r.get(0)).unwrap()
+        };
+        *f.mode.lock().unwrap() = "ok";
+        post_reply(&st.db, &f, &b, "1700000000.000100", "answer").await.unwrap();
+        *f.mode.lock().unwrap() = "reject";
+        assert!(post_reply(&st.db, &f, &b, "1700000000.000100", "answer 2").await.is_err());
+        *f.mode.lock().unwrap() = "uncertain";
+        assert!(post_reply(&st.db, &f, &b, "1700000000.000100", "answer 3").await.is_err());
+        assert_eq!((replies("confirmed"), replies("failed"), replies("unconfirmed")), (1, 1, 1));
+        let texts: i64 = st.db.connect().unwrap().query_row(
+            "SELECT COUNT(*) FROM bot_events WHERE thread_id='th-1' AND json_extract(payload,'$.correlationId') LIKE 'reply%' AND json_extract(payload,'$.text') LIKE 'answer%'",
+            [], |r| r.get(0)).unwrap();
+        assert_eq!(texts, 3);
     }
 
     #[tokio::test]

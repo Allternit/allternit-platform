@@ -957,6 +957,10 @@ mod tests {
         assert_eq!(state, "confirmed");
         let ev_n: i64 = st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM bot_events WHERE thread_id=?1 AND event_type IN ('channel.message.received','channel.reaction.updated','channel.message.delivery')", params![b.thread_id], |r| r.get(0)).unwrap();
         assert_eq!(ev_n, 3);
+        // R10: the delivery event names the outbound post and the state it moved to.
+        let p: String = st.db.connect().unwrap().query_row("SELECT payload FROM bot_events WHERE thread_id=?1 AND event_type='channel.message.delivery'", params![b.thread_id], |r| r.get(0)).unwrap();
+        let p: Value = serde_json::from_str(&p).unwrap();
+        assert_eq!((p["messageId"].as_str(), p["state"].as_str(), p["delivery"].as_str()), (Some("wamid.OUT"), Some("confirmed"), Some("delivered")));
     }
 
     #[tokio::test]
