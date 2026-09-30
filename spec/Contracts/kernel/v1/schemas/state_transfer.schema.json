@@ -1,0 +1,249 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allternit.com/kernel/1.0.0/state_transfer.schema.json",
+  "title": "Allternit Kernel ABI 1.0.0 — state_transfer",
+  "$comment": "FROZEN 2026-09-30 (ABI Package 1.0.0). Authority: Living Architecture v1.4 > 07/09 > 02. Additive changes need a minor bump; breaking changes need 2.0.",
+  "$defs": {
+    "TransferMode": {
+      "enum": [
+        "IDENTITY",
+        "PREFIX_REUSE",
+        "TRANSLATED_KV",
+        "SEMANTIC_REBUILD"
+      ]
+    },
+    "CognitiveStateDescriptorV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "state_id",
+        "model_ref",
+        "model_revision",
+        "context_fingerprint",
+        "state_type"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.CognitiveStateDescriptorV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "state_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "model_ref": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "model_revision": {
+          "type": "string"
+        },
+        "context_fingerprint": {
+          "$ref": "common.schema.json#/$defs/ContentHash"
+        },
+        "state_type": {
+          "enum": [
+            "NATIVE_KV",
+            "TRANSLATED_KV",
+            "PREFIX_CACHE",
+            "LATENT",
+            "NONE"
+          ]
+        },
+        "token_span": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "position_encoding": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "storage_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "quality_profile": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "CognitiveStateDescriptorV1"
+    },
+    "StateTransferRequestV1": {
+      "type": "object",
+      "required": [
+        "envelope",
+        "source_state_id",
+        "target_model_ref",
+        "required_context_fingerprint"
+      ],
+      "properties": {
+        "envelope": {
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/AbiEnvelopeV1"
+            },
+            {
+              "properties": {
+                "schema_id": {
+                  "const": "allternit.kernel.StateTransferRequestV1"
+                }
+              }
+            }
+          ]
+        },
+        "source_state_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "target_model_ref": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "required_context_fingerprint": {
+          "$ref": "common.schema.json#/$defs/ContentHash"
+        },
+        "max_quality_loss": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_latency_ms": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "StateTransferRequestV1"
+    },
+    "StateTransferReceiptV1": {
+      "type": "object",
+      "required": [
+        "envelope",
+        "mode",
+        "latency_ms",
+        "fallback_used"
+      ],
+      "properties": {
+        "envelope": {
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/AbiEnvelopeV1"
+            },
+            {
+              "properties": {
+                "schema_id": {
+                  "const": "allternit.kernel.StateTransferReceiptV1"
+                }
+              }
+            }
+          ]
+        },
+        "mode": {
+          "$ref": "#/$defs/TransferMode"
+        },
+        "target_state_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "latency_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "fidelity_estimate": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "validation_ref": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fallback_used": {
+          "type": "boolean"
+        },
+        "fallback_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "StateTransferReceiptV1",
+      "$comment": "09 §C#16 mode enum. KV is optional/post-alpha: nothing on the alpha path depends on this contract. Missing KV never aborts a run."
+    }
+  }
+}

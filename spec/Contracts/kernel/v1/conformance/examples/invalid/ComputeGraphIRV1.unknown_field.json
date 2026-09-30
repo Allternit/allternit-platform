@@ -1,0 +1,34 @@
+{
+  "schema_id": "allternit.kernel.ComputeGraphIRV1",
+  "schema_version": "1.0.0",
+  "graph_id": "id-0001",
+  "task_type": "OBSERVE_ENVIRONMENT",
+  "graph_version": 0,
+  "nodes": [
+    {
+      "node_id": "id-0001",
+      "primitive_id": "obs.observe_environment",
+      "node_kind": "COMPUTE",
+      "inputs": [],
+      "outputs": [],
+      "read_set": [],
+      "write_set": [],
+      "lock_scope": [],
+      "on_failure": {
+        "strategy": "RETRY"
+      }
+    }
+  ],
+  "edges": [],
+  "entry_nodes": [
+    "id-0001"
+  ],
+  "completion_nodes": [
+    "id-0001"
+  ],
+  "global_budget": {},
+  "failure_policy": {
+    "on_unhandled": "FAIL"
+  },
+  "unknown_required_field": "x"
+}

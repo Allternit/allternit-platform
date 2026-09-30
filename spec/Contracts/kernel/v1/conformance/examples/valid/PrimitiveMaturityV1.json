@@ -1,0 +1,10 @@
+{
+  "schema_id": "allternit.kernel.PrimitiveMaturityV1",
+  "schema_version": "1.0.0",
+  "primitive_id": "obs.observe_environment",
+  "stage": "UNTRAINED",
+  "observations": 0,
+  "labels": 0,
+  "active_profile_id": "id-0001",
+  "authority_stage": "SHADOW"
+}

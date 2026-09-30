@@ -1,0 +1,499 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allternit.com/kernel/1.0.0/completion.schema.json",
+  "title": "Allternit Kernel ABI 1.0.0 — completion",
+  "$comment": "FROZEN 2026-09-30 (ABI Package 1.0.0). Authority: Living Architecture v1.4 > 07/09 > 02. Additive changes need a minor bump; breaking changes need 2.0.",
+  "$defs": {
+    "CompletionPolicyRef": {
+      "type": "object",
+      "required": [
+        "policy_id",
+        "policy_version"
+      ],
+      "properties": {
+        "policy_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "policy_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false
+    },
+    "CompletionCriterionV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "criterion_id",
+        "criterion_version",
+        "verifier_kind",
+        "verifier_semantics",
+        "evidence_kinds",
+        "built_in"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.CompletionCriterionV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "criterion_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "criterion_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "verifier_kind": {
+          "enum": [
+            "parse",
+            "format",
+            "lint",
+            "typecheck",
+            "unit_test",
+            "integration_test",
+            "build",
+            "semantic_rule",
+            "requirement",
+            "security",
+            "regression",
+            "diff_review",
+            "human"
+          ]
+        },
+        "verifier_semantics": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence_kinds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "built_in": {
+          "type": "boolean"
+        },
+        "deprecated": {
+          "type": "boolean"
+        },
+        "blocking_default": {
+          "type": "boolean"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "CompletionCriterionV1",
+      "$comment": "Versioned, extensible registry entry, not a closed enum (Q8)."
+    },
+    "CompletionPolicyV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "policy_id",
+        "policy_version",
+        "task_type",
+        "require",
+        "allow_partial",
+        "l2882_predicate"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.CompletionPolicyV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "policy_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "policy_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "task_type": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "require": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "criterion_id",
+              "criterion_version",
+              "blocking"
+            ],
+            "properties": {
+              "criterion_id": {
+                "type": "string"
+              },
+              "criterion_version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "blocking": {
+                "type": "boolean"
+              },
+              "params": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "allow_partial": {
+          "type": "boolean"
+        },
+        "l2882_predicate": {
+          "const": [
+            "acceptance_criteria_satisfied",
+            "required_verifications_pass",
+            "no_unresolved_blocking_failures",
+            "required_artifacts_exist",
+            "policy_obligations_satisfied",
+            "completion_evidence_durable"
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "CompletionPolicyV1",
+      "$comment": "Per-template minimum evidence as data. Only BUG_FIX is defined in 1.0.0 (Q4)."
+    },
+    "CompletionProposalV1": {
+      "type": "object",
+      "required": [
+        "envelope",
+        "proposal_id",
+        "proposer_node_id",
+        "claimed_criteria",
+        "evidence_refs"
+      ],
+      "properties": {
+        "envelope": {
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/AbiEnvelopeV1"
+            },
+            {
+              "properties": {
+                "schema_id": {
+                  "const": "allternit.kernel.CompletionProposalV1"
+                }
+              }
+            }
+          ]
+        },
+        "proposal_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "proposer_node_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "proposer_role": {
+          "anyOf": [
+            {
+              "enum": [
+                "S0",
+                "S1",
+                "S2",
+                "S3"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "claimed_criteria": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "criterion_id",
+              "claim"
+            ],
+            "properties": {
+              "criterion_id": {
+                "type": "string"
+              },
+              "claim": {
+                "enum": [
+                  "SATISFIED",
+                  "UNSATISFIED",
+                  "UNKNOWN"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/EvidenceRef"
+          }
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rationale": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "CompletionProposalV1",
+      "$comment": "A proposal carries no authority; a model 'done' never completes a run."
+    },
+    "CompletionDecisionV1": {
+      "type": "object",
+      "required": [
+        "envelope",
+        "decision_id",
+        "proposal_id",
+        "policy",
+        "outcome",
+        "predicate_results",
+        "criteria_results",
+        "decided_by"
+      ],
+      "properties": {
+        "envelope": {
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/AbiEnvelopeV1"
+            },
+            {
+              "properties": {
+                "schema_id": {
+                  "const": "allternit.kernel.CompletionDecisionV1"
+                }
+              }
+            },
+            {
+              "properties": {
+                "producer": {
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "RUNTIME",
+                        "VERIFIER"
+                      ]
+                    }
+                  }
+                }
+              },
+              "$comment": "Completion ownership: only the system runtime or a verifier produces a CompletionDecision; S1/S2 decision backends and model components may only propose (CompletionProposalV1)."
+            }
+          ]
+        },
+        "decision_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "proposal_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "policy": {
+          "$ref": "#/$defs/CompletionPolicyRef"
+        },
+        "outcome": {
+          "enum": [
+            "COMPLETE",
+            "PARTIAL",
+            "CONTINUE",
+            "ESCALATE",
+            "FAIL"
+          ]
+        },
+        "predicate_results": {
+          "type": "object",
+          "required": [
+            "acceptance_criteria_satisfied",
+            "required_verifications_pass",
+            "no_unresolved_blocking_failures",
+            "required_artifacts_exist",
+            "policy_obligations_satisfied",
+            "completion_evidence_durable"
+          ],
+          "properties": {
+            "acceptance_criteria_satisfied": {
+              "type": "boolean"
+            },
+            "required_verifications_pass": {
+              "type": "boolean"
+            },
+            "no_unresolved_blocking_failures": {
+              "type": "boolean"
+            },
+            "required_artifacts_exist": {
+              "type": "boolean"
+            },
+            "policy_obligations_satisfied": {
+              "type": "boolean"
+            },
+            "completion_evidence_durable": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "criteria_results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "criterion_id",
+              "result",
+              "receipt_refs"
+            ],
+            "properties": {
+              "criterion_id": {
+                "type": "string"
+              },
+              "result": {
+                "enum": [
+                  "PASS",
+                  "FAIL",
+                  "INCONCLUSIVE",
+                  "ERROR"
+                ]
+              },
+              "receipt_refs": {
+                "type": "array",
+                "items": {
+                  "$ref": "common.schema.json#/$defs/Id"
+                },
+                "minItems": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "decided_by": {
+          "const": "SYSTEM"
+        },
+        "verifier_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "attention_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "CompletionDecisionV1",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "COMPLETE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "predicate_results": {
+                "properties": {
+                  "acceptance_criteria_satisfied": {
+                    "const": true
+                  },
+                  "required_verifications_pass": {
+                    "const": true
+                  },
+                  "no_unresolved_blocking_failures": {
+                    "const": true
+                  },
+                  "required_artifacts_exist": {
+                    "const": true
+                  },
+                  "policy_obligations_satisfied": {
+                    "const": true
+                  },
+                  "completion_evidence_durable": {
+                    "const": true
+                  }
+                }
+              },
+              "criteria_results": {
+                "items": {
+                  "properties": {
+                    "result": {
+                      "const": "PASS"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "Verifier-owned: decided_by is always SYSTEM, evaluating L2882 over durable receipts. INCONCLUSIVE never counts as PASS. PARTIAL only if policy.allow_partial."
+    }
+  }
+}

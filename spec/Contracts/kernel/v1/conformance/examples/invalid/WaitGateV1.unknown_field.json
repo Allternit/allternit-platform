@@ -1,0 +1,9 @@
+{
+  "schema_id": "allternit.kernel.WaitGateV1",
+  "schema_version": "1.0.0",
+  "gate_id": "id-0001",
+  "kind": "TIMER",
+  "wake_key": "x",
+  "status": "ARMED",
+  "unknown_required_field": "x"
+}

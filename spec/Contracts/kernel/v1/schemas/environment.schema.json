@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allternit.com/kernel/1.0.0/environment.schema.json",
+  "title": "Allternit Kernel ABI 1.0.0 — environment",
+  "$comment": "FROZEN 2026-09-30 (ABI Package 1.0.0). Authority: Living Architecture v1.4 > 07/09 > 02. Additive changes need a minor bump; breaking changes need 2.0.",
+  "$defs": {
+    "ExecutionEnvironmentV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "environment_id",
+        "allowed_env_keys",
+        "secret_refs",
+        "cwd",
+        "tmp_scope",
+        "filesystem_scope",
+        "inherit_process_env"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.ExecutionEnvironmentV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "environment_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "allowed_env_keys": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z_][A-Z0-9_]*$"
+          },
+          "uniqueItems": true
+        },
+        "secret_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          }
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "tmp_scope": {
+          "type": "string"
+        },
+        "filesystem_scope": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ResourceRef"
+          }
+        },
+        "inherit_process_env": {
+          "const": false
+        },
+        "network_policy_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "compiled_by": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/ComponentIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "ExecutionEnvironmentV1"
+    },
+    "NetworkAccessPolicyV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "policy_id",
+        "network_default",
+        "domains",
+        "private_ip_policy",
+        "redirect_policy",
+        "dns_rebind_policy",
+        "defaults_version"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.NetworkAccessPolicyV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "policy_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "network_default": {
+          "enum": [
+            "DENY",
+            "ALLOWLIST"
+          ]
+        },
+        "domains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "private_ip_policy": {
+          "const": "DENY"
+        },
+        "redirect_policy": {
+          "type": "object",
+          "required": [
+            "max_redirects",
+            "scope"
+          ],
+          "properties": {
+            "max_redirects": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "scope": {
+              "enum": [
+                "SAME_DOMAIN",
+                "ALLOWLIST"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "dns_rebind_policy": {
+          "const": "PIN_RESOLUTION"
+        },
+        "defaults_version": {
+          "type": "string"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "NetworkAccessPolicyV1",
+      "$comment": "No ALLOW_ALL default exists in 1.0.0."
+    }
+  }
+}

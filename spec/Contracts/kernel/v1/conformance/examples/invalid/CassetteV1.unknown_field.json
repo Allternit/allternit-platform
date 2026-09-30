@@ -1,0 +1,21 @@
+{
+  "schema_id": "allternit.kernel.CassetteV1",
+  "schema_version": "1.0.0",
+  "cassette_id": "id-0001",
+  "run_id": "id-0001",
+  "graph_id": "id-0001",
+  "graph_version": 0,
+  "abi_version": "1.0.0",
+  "entries": [
+    {
+      "seq": 0,
+      "node_id": "id-0001",
+      "boundary": "DECISION",
+      "request_hash": "sha256:abababababababababababababababababababababababababababababababab",
+      "recorded_result_hash": "sha256:abababababababababababababababababababababababababababababababab",
+      "result_ref": "id-0001"
+    }
+  ],
+  "run_receipt_hash": "sha256:abababababababababababababababababababababababababababababababab",
+  "unknown_required_field": "x"
+}

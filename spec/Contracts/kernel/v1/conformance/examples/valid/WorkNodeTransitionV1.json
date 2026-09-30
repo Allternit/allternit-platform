@@ -1,0 +1,12 @@
+{
+  "schema_id": "allternit.kernel.WorkNodeTransitionV1",
+  "schema_version": "1.0.0",
+  "run_id": "id-0001",
+  "node_id": "id-0001",
+  "from": "DECLARED",
+  "to": "DECLARED",
+  "guard": "ADMISSION_OK",
+  "work_state_version_before": 0,
+  "work_state_version_after": 0,
+  "actor": "SYSTEM"
+}

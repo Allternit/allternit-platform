@@ -1,0 +1,10 @@
+{
+  "schema_id": "allternit.kernel.ArtifactRecordV1",
+  "schema_version": "1.0.0",
+  "artifact_id": "id-0001",
+  "kind": "decision_readout_profile",
+  "content_hash": "sha256:abababababababababababababababababababababababababababababababab",
+  "scope_fingerprint": "sha256:abababababababababababababababababababababababababababababababab",
+  "created_at": "2026-09-30T00:00:00Z",
+  "unknown_required_field": "x"
+}

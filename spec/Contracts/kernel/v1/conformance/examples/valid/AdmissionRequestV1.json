@@ -1,0 +1,9 @@
+{
+  "schema_id": "allternit.kernel.AdmissionRequestV1",
+  "schema_version": "1.0.0",
+  "request_id": "id-0001",
+  "run_id": "id-0001",
+  "node_id": "id-0001",
+  "executor_class": "x",
+  "requested_scope": []
+}

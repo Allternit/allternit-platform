@@ -1,0 +1,428 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allternit.com/kernel/1.0.0/policy.schema.json",
+  "title": "Allternit Kernel ABI 1.0.0 — policy",
+  "$comment": "FROZEN 2026-09-30 (ABI Package 1.0.0). Authority: Living Architecture v1.4 > 07/09 > 02. Additive changes need a minor bump; breaking changes need 2.0.",
+  "$defs": {
+    "CapabilityGrant": {
+      "type": "object",
+      "required": [
+        "grant_id",
+        "capability",
+        "resources",
+        "expires_at"
+      ],
+      "properties": {
+        "grant_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "capability": {
+          "type": "string"
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ResourceRef"
+          }
+        },
+        "limits": {
+          "type": "object"
+        },
+        "expires_at": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PolicyCheckV1": {
+      "type": "object",
+      "required": [
+        "envelope",
+        "check_id",
+        "principal",
+        "task_id",
+        "proposed_action",
+        "resources",
+        "data_classes",
+        "external_effects",
+        "irreversible_class",
+        "human_approval_state"
+      ],
+      "properties": {
+        "envelope": {
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/AbiEnvelopeV1"
+            },
+            {
+              "properties": {
+                "schema_id": {
+                  "const": "allternit.kernel.PolicyCheckV1"
+                }
+              }
+            }
+          ]
+        },
+        "check_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "principal": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "task_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "proposed_action": {
+          "type": "object",
+          "required": [
+            "action_class",
+            "primitive_id"
+          ],
+          "properties": {
+            "action_class": {
+              "enum": [
+                "READ",
+                "WRITE",
+                "EXECUTE",
+                "NETWORK",
+                "FINANCIAL",
+                "PUBLISH",
+                "PERMISSION_CHANGE",
+                "SPAWN"
+              ]
+            },
+            "primitive_id": {
+              "$ref": "common.schema.json#/$defs/PrimitiveId"
+            },
+            "tool_id": {
+              "anyOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/Id"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ResourceRef"
+          }
+        },
+        "data_classes": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/SensitivityClass"
+          }
+        },
+        "external_effects": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "NONE",
+              "READ",
+              "WORKSPACE_WRITE",
+              "EXECUTE",
+              "NETWORK",
+              "EXTERNAL_WRITE",
+              "FINANCIAL",
+              "PUBLISH",
+              "PERMISSION_CHANGE"
+            ]
+          }
+        },
+        "spend": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/ResourceBudget"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "irreversible_class": {
+          "enum": [
+            "REVERSIBLE",
+            "COMPENSATABLE",
+            "IRREVERSIBLE"
+          ]
+        },
+        "human_approval_state": {
+          "enum": [
+            "NOT_REQUIRED",
+            "REQUIRED_PENDING",
+            "APPROVED",
+            "REJECTED",
+            "EXPIRED"
+          ]
+        },
+        "cognitive_risk": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "PolicyCheckV1",
+      "$comment": "EXPIRED approval = rejection (Q15). cognitive_risk (S1/S2) may only raise friction."
+    },
+    "PolicyDecisionV1": {
+      "type": "object",
+      "required": [
+        "envelope",
+        "decision",
+        "check_id",
+        "grants",
+        "limits",
+        "reason_codes",
+        "hard_policy",
+        "precedence",
+        "receipt_id"
+      ],
+      "properties": {
+        "envelope": {
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/AbiEnvelopeV1"
+            },
+            {
+              "properties": {
+                "schema_id": {
+                  "const": "allternit.kernel.PolicyDecisionV1"
+                }
+              }
+            }
+          ]
+        },
+        "check_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "decision": {
+          "enum": [
+            "ALLOW",
+            "ALLOW_WITH_LIMITS",
+            "ASK",
+            "DENY"
+          ]
+        },
+        "grants": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CapabilityGrant"
+          }
+        },
+        "limits": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "reason_codes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "receipt_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "hard_policy": {
+          "type": "boolean"
+        },
+        "precedence": {
+          "enum": [
+            "HARD_DENY",
+            "HARD_ALLOW",
+            "SOFT",
+            "COGNITIVE",
+            "FAIL_CLOSED"
+          ]
+        },
+        "attention_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "PolicyDecisionV1",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "precedence": {
+                "const": "FAIL_CLOSED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "decision": {
+                "enum": [
+                  "ASK",
+                  "DENY"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "precedence": {
+                "const": "HARD_DENY"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "decision": {
+                "const": "DENY"
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "Hard deterministic policy runs before probabilistic risk; judge failure/timeout/missing calibration fail closed to ASK. Only ASK becomes an approval AttentionRequest; hard DENY never does."
+    },
+    "AuthorityProfileV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "profile_id",
+        "profile_version",
+        "capabilities",
+        "denied_capabilities",
+        "filesystem_scope",
+        "network_policy_id",
+        "approval_requirements"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.kernel.AuthorityProfileV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "profile_id": {
+          "enum": [
+            "read-only",
+            "code-safe",
+            "code-write"
+          ]
+        },
+        "profile_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "denied_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "filesystem_scope": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ResourceRef"
+          }
+        },
+        "network_policy_id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "approval_requirements": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "action_class",
+              "requires"
+            ],
+            "properties": {
+              "action_class": {
+                "type": "string"
+              },
+              "requires": {
+                "enum": [
+                  "ASK",
+                  "DENY"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "defaults_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "AuthorityProfileV1",
+      "$comment": "Q12: exact typed semantics that compile into grants/policy. No bypass/auto-approve profile exists or may be added."
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "schema_id": "allternit.kernel.WakePolicyV1",
+  "schema_version": "1.0.0",
+  "triggers": [
+    {
+      "kind": "TIMER"
+    }
+  ],
+  "min_interval_seconds": 0,
+  "max_wakes_per_day": 0,
+  "skip_if_run_active": false,
+  "defaults_version": "x"
+}
