@@ -121,6 +121,16 @@ impl AgencyStore {
         Ok(out)
     }
 
+    /// Latest snapshot of every run (any owner) whose status is in `statuses`.
+    pub async fn runs_with_status(&self, statuses: &[&str]) -> anyhow::Result<Vec<RunRecord>> {
+        let mut seen = std::collections::HashSet::new();
+        Ok(self.of_type(EV_RUN_STATE).await?.iter().rev()
+            .filter(|e| seen.insert(e.payload["run_id"].as_str().unwrap_or_default().to_string()))
+            .map(Self::record_from)
+            .filter(|r| statuses.iter().any(|s| r.run["status"] == *s))
+            .collect())
+    }
+
     pub async fn find_by_idempotency(&self, owner: &str, key: &str) -> anyhow::Result<Option<RunRecord>> {
         let Some(e) = self.of_type(EV_RUN_STATE).await?.into_iter().find(|e| e.payload["owner"] == owner && e.payload["idempotency_key"] == key) else {
             return Ok(None);

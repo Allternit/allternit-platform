@@ -213,7 +213,7 @@ async fn agency_forces_verifier_owned_completion_and_leased_writes() {
     let t = setup().await;
     let run = create(&t, "idem-key-0040").await;
     let id = run["id"].as_str().unwrap();
-    assert_eq!(run["resolved"]["enforcement"], json!({ "judge_fail_closed": true, "verifier_owned_completion": true }));
+    assert_eq!(run["resolved"]["enforcement"], json!({ "judge_fail_closed": true, "verifier_owned_completion": true, "fence": "strict" }));
     let s = AgencyStore::new(t.st.rails.ledger.clone());
     let rec = s.load_run(id).await.unwrap().unwrap();
     let dag = rec.task_ir["dag_id"].as_str().unwrap();
@@ -350,4 +350,121 @@ async fn agency_graph_view_reads_primitive_ids() {
         assert!(n["primitive_id"].is_string(), "{n}");
     }
     assert_no_vendor(&b);
+}
+
+// ── WP11b: executor bridge, models, strict fence ─────────────────────────────
+
+#[test]
+fn agency_models_field_accepts_classes_and_rejects_vendor_names() {
+    let reg = compiler::TemplateRegistry::default();
+    let base = json!({ "goal": "fix it", "workspace": { "repo": "https://example.com/r.git" } });
+    let mut ok = base.clone();
+    ok["models"] = json!({ "allow_classes": ["mc.local"], "locality": "any" });
+    let c = compiler::compile(&ok, "run_m", &reg).expect("models accepted");
+    assert_eq!(c.task_ir["models"]["allow_classes"], json!(["mc.local"]));
+    for bad in [json!({ "allow_classes": ["gpt-4o"] }), json!({ "allow_classes": ["mc.claude"] }), json!({ "vendor": "x" })] {
+        let mut b = base.clone();
+        b["models"] = bad.clone();
+        let e = compiler::compile(&b, "run_m", &reg).unwrap_err();
+        assert_eq!(e.status, 400, "{bad}");
+    }
+    let mut unknown = base.clone();
+    unknown["models"] = json!({ "allow_classes": ["mc.quantum"] });
+    assert_eq!(compiler::compile(&unknown, "run_m", &reg).unwrap_err().status, 422);
+}
+
+#[test]
+fn agency_runs_always_use_the_strict_fence() {
+    let reg = compiler::TemplateRegistry::default();
+    let c = compiler::compile(&json!({ "goal": "g", "workspace": { "repo": "https://example.com/r.git" } }), "run_f", &reg).unwrap();
+    assert_eq!(c.task_ir["wih_policy"]["fence"], "strict");
+    assert_eq!(c.task_ir["judge_policy"]["fence"], "strict");
+    assert_eq!(c.resolved["enforcement"]["fence"], "strict");
+    // A template cannot switch the fence off either.
+    assert_eq!(compiler::enforce_wih_policy(&json!({ "fence": "guardrail" }))["fence"], "strict");
+}
+
+#[test]
+fn agency_models_constraints_filter_the_pool_by_class_and_locality() {
+    use allternit_commrails::kernel::router::Residency;
+    let g = allternit_commrails::kernel::bug_fix::instantiate("t", &["fs:repo".into()]).unwrap();
+    let full = executor::tests_support::scripted_pool(&g);
+    let n = full.entries.len();
+    let (local, _) = executor::constrain(full.clone(), &json!({ "allow_classes": ["mc.local"] }));
+    assert!(!local.entries.is_empty() && local.entries.iter().all(|e| e.residency != Residency::Remote));
+    let (remote, _) = executor::constrain(full.clone(), &json!({ "allow_classes": ["mc.remote"] }));
+    assert!(!remote.entries.is_empty() && remote.entries.iter().all(|e| e.residency == Residency::Remote));
+    let (lo, cfg) = executor::constrain(full.clone(), &json!({ "locality": "local_only" }));
+    assert!(!cfg.policy.allow_remote && lo.entries.len() < n);
+    assert_eq!(executor::constrain(full, &Value::Null).0.entries.len(), n);
+}
+
+#[tokio::test]
+async fn agency_executor_off_by_default_parks_runs_with_a_reason() {
+    let t = setup().await;
+    let run = create(&t, "wp11b-parked-0001").await;
+    assert_eq!(run["status"], "waiting");
+    if !executor::enabled() {
+        assert_eq!(run["status_reason"], executor::PARKED_REASON);
+    }
+}
+
+/// Offline e2e of the bridge: BUG_FIX on a disposable node repo, scripted
+/// cognition (attempt 1 imperfect, attempt 2 correct), strict fence.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn agency_executor_drives_bug_fix_to_verified_completion() {
+    if std::process::Command::new("npm").arg("--version").output().is_err() {
+        eprintln!("npm not available; skipping");
+        return;
+    }
+    let repo = tempfile::tempdir().unwrap();
+    let runs = tempfile::tempdir().unwrap();
+    let w = |p: &str, c: &str| { let f = repo.path().join(p); std::fs::create_dir_all(f.parent().unwrap()).unwrap(); std::fs::write(f, c).unwrap(); };
+    w("package.json", r#"{"name":"fx","private":true,"scripts":{"test":"node test.js"}}"#);
+    w("math.js", "exports.add = (a, b) => a - b;\n");
+    w("test.js", "const { add } = require('./math');\nif (add(2, 3) !== 5 || add(-2, 3) !== 1) { console.error('FAIL'); process.exit(1); }\n");
+    w(".allternit/scripted-patches.json", &json!([
+        { "path": "math.js", "content": "exports.add = (a, b) => a + b + 1;\n" },
+        { "path": "math.js", "content": "exports.add = (a, b) => a + b;\n" }
+    ]).to_string());
+    let git = |args: &[&str]| assert!(std::process::Command::new("git").args(args).current_dir(repo.path())
+        .env("GIT_CONFIG_GLOBAL", "/dev/null").status().unwrap().success());
+    git(&["init", "-q", "-b", "main"]);
+    git(&["add", "."]);
+    git(&["-c", "user.name=f", "-c", "user.email=f@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "seeded bug"]);
+    std::env::set_var("ALLTERNIT_AGENCY_COGNITION", "scripted");
+    std::env::set_var("ALLTERNIT_AGENCY_RUNS_DIR", runs.path());
+    std::env::set_var("ALLTERNIT_AGENCY_LOCAL_REPOS", repo.path());
+
+    let t = setup().await;
+    let body = json!({ "goal": "Fix add", "workspace": { "repo": repo.path().display().to_string(), "ref": "main" },
+                       "budget": { "max_seconds": 120, "max_cost_usd": 1 } });
+    let (s, _, b) = call(&t.app, post("/v1/agency", "u1", Some("wp11b-e2e-000001"), body)).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{b}");
+    let id = serde_json::from_str::<Value>(&b).unwrap()["id"].as_str().unwrap().to_string();
+    executor::start(t.st.clone(), id.clone());
+    let mut run = Value::Null;
+    for _ in 0..600 {
+        let (_, _, b) = call(&t.app, get_req(&format!("/v1/runs/{id}"), "u1")).await;
+        run = serde_json::from_str(&b).unwrap();
+        if run["terminal"] == true { break; }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(run["status"], "completed", "{run}");
+    assert_eq!(run["completion"]["status"], "verified");
+    let (_, _, b) = call(&t.app, get_req(&format!("/v1/runs/{id}/receipts"), "u1")).await;
+    let receipts: Value = serde_json::from_str(&b).unwrap();
+    let types: Vec<String> = receipts["data"].as_array().unwrap().iter().filter_map(|r| r["type"].as_str().map(String::from)).collect();
+    assert!(types.contains(&"verification".into()) && types.contains(&"run_completion".into()), "{types:?}");
+    let (_, _, b) = call(&t.app, get_req(&format!("/v1/runs/{id}/receipts/verification"), "u1")).await;
+    assert_eq!(serde_json::from_str::<Value>(&b).unwrap()["hash_chain_valid"], true, "{b}");
+    let (_, _, b) = call(&t.app, get_req(&format!("/v1/runs/{id}/artifacts"), "u1")).await;
+    let arts: Value = serde_json::from_str(&b).unwrap();
+    assert_eq!(arts["data"][0]["kind"], "patch", "{b}");
+    assert!(arts["data"][0]["content"].as_str().unwrap().contains("a + b;"));
+    // Two repair attempts: the imperfect one failed N15, the second passed.
+    let (_, _, b) = call(&t.app, get_req(&format!("/v1/runs/{id}/events"), "u1")).await;
+    assert_eq!(b.matches("\"step\":\"N15\"").count(), 4, "N15 progress + receipt events"); 
+    assert_no_vendor(&b);
+    assert!(!runs.path().join(&id).exists(), "disposable workspace removed after the run");
 }

@@ -234,18 +234,65 @@ fn resolve_workspace(obj: &Map<String, Value>, m: &Value) -> Result<Value, Compi
     }
 }
 
-/// The TaskIR's WIH policy. Always requires a lease for writes; this is the
-/// only place the compiler emits a WIH policy.
+/// Q25: Agency API (hosted, customer) runs always use the strict fence
+/// profile. Same field name and value as the commrails `JudgePolicy.fence`
+/// from review-fix PR #1045 (`fence: strict`), so the payload stays
+/// compatible once that lands; until then the executor enforces it itself.
+pub const FENCE: &str = "strict";
+
+/// The TaskIR's WIH policy. Always requires a lease for writes and always
+/// runs under the strict fence; this is the only place the compiler emits a
+/// WIH policy.
 pub fn enforce_wih_policy(proposed: &Value) -> Value {
     let mut p = proposed.as_object().cloned().unwrap_or_default();
     p.insert("requires_lease_for_write".into(), Value::Bool(true));
+    p.insert("fence".into(), Value::String(FENCE.into()));
     Value::Object(p)
+}
+
+/// The run's `JudgePolicySet` payload: the typed policy plus `fence: strict`.
+pub fn judge_policy_json(p: &JudgePolicy) -> Value {
+    let mut v = serde_json::to_value(p).unwrap_or_else(|_| json!({}));
+    v["fence"] = json!(FENCE);
+    v
+}
+
+const VENDOR_WORDS: &[&str] = &["openai", "anthropic", "claude", "codex", "gpt", "gemini", "llama", "mistral",
+    "deepseek", "qwen", "sonnet", "opus", "haiku", "kimi", "grok"];
+
+/// `models` (ModelConstraints, Level B): logical model classes and locality
+/// only, passed to the router as a preference. Never a model or vendor name.
+fn resolve_models(obj: &Map<String, Value>) -> Result<Value, CompileError> {
+    let Some(m) = obj.get("models") else { return Ok(Value::Null) };
+    let m = m.as_object().ok_or_else(|| CompileError::unsupported("models", "models must be an object"))?;
+    for (k, v) in m {
+        match k.as_str() {
+            "allow_classes" | "deny_classes" => {
+                let arr = v.as_array().ok_or_else(|| CompileError::unsupported(k, "must be an array of model classes"))?;
+                for c in arr {
+                    let c = c.as_str().unwrap_or_default();
+                    let shape = c.len() > 3 && c.starts_with("mc.")
+                        && c[3..].chars().all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '_' | '.' | '-'));
+                    if !shape || VENDOR_WORDS.iter().any(|w| c.contains(w)) {
+                        return Err(CompileError::new(400, "INPUT", "ERR_INPUT_INVALID", "model classes are logical `mc.*` ids; model or vendor names are rejected", Some(k)));
+                    }
+                    if !(c == "mc.local" || c == "mc.remote" || c.starts_with("mc.local.") || c.starts_with("mc.remote.")) {
+                        return Err(CompileError::unresolvable(k, format!("unknown model class `{c}`")));
+                    }
+                }
+            }
+            "locality" if matches!(v.as_str(), Some("local_only" | "local_preferred" | "any")) => {}
+            "max_data_trust_class_to_remote" if v.is_string() => {}
+            _ => return Err(CompileError::unsupported(k, format!("unsupported models field `{k}`"))),
+        }
+    }
+    Ok(Value::Object(m.clone()))
 }
 
 /// Compile a raw request body. `run_id` names the DAG (`agency-<run_id>`).
 pub fn compile(req: &Value, run_id: &str, templates: &TemplateRegistry) -> Result<Compiled, CompileError> {
     let obj = validate_shape(req)?;
-    for lvl in ["capabilities", "models", "graph", "runtime"] {
+    for lvl in ["capabilities", "graph", "runtime"] {
         if obj.contains_key(lvl) {
             return Err(CompileError::unsupported(lvl, format!("`{lvl}` (advanced tier) is not available in the alpha")));
         }
@@ -256,6 +303,7 @@ pub fn compile(req: &Value, run_id: &str, templates: &TemplateRegistry) -> Resul
     let authority = resolve_authority(obj, &manifest)?;
     let budget = resolve_budget(obj, &manifest)?;
     let completion = resolve_completion(obj, &manifest)?;
+    let models = resolve_models(obj)?;
 
     let omitted: Vec<&str> = ["workspace", "authority", "budget", "completion"].into_iter().filter(|k| !obj.contains_key(*k)).collect();
     let defaults_source = if omitted.is_empty() {
@@ -294,7 +342,8 @@ pub fn compile(req: &Value, run_id: &str, templates: &TemplateRegistry) -> Resul
         "nodes": graph.nodes,
         "edges": graph.edges,
         "wih_policy": enforce_wih_policy(&graph.wih_policy),
-        "judge_policy": serde_json::to_value(&judge_policy).unwrap_or(Value::Null),
+        "judge_policy": judge_policy_json(&judge_policy),
+        "models": models,
     });
     Ok(Compiled {
         agent,
@@ -306,7 +355,8 @@ pub fn compile(req: &Value, run_id: &str, templates: &TemplateRegistry) -> Resul
             "completion": completion,
             "defaults_source": defaults_source,
             "defaults_version": catalog::DEFAULTS_VERSION,
-            "enforcement": { "judge_fail_closed": true, "verifier_owned_completion": true },
+            "enforcement": { "judge_fail_closed": true, "verifier_owned_completion": true, "fence": FENCE },
+            "models": models,
         }),
         budget,
         task_ir,

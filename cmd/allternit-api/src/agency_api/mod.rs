@@ -6,12 +6,15 @@
 //! module adds no auth path. Default responses carry no model or vendor
 //! identity (L5, CL-009/261).
 //!
-//! Runs execute nothing yet: after the compiler records `Run.resolved` and the
-//! TaskIR, the run parks in `waiting` for the kernel executor hand-off. The
-//! BUG_FIX template is WP10's kernel graph behind `compiler::RunTemplate`.
+//! After the compiler records `Run.resolved` and the TaskIR, the run moves to
+//! `waiting` and is handed to the kernel executor bridge (`executor`), which
+//! is OFF unless `ALLTERNIT_AGENCY_EXECUTE=1`; while off, runs stay parked in
+//! `waiting` with a reason saying so. The BUG_FIX template is WP10's kernel
+//! graph behind `compiler::RunTemplate`.
 
 pub mod catalog;
 pub mod compiler;
+pub mod executor;
 pub mod store;
 
 #[cfg(test)]
@@ -236,6 +239,7 @@ async fn create_run(
     };
     let req: Value = serde_json::from_slice(&body)
         .map_err(|e| ApiError::new(400, "INPUT", "ERR_INPUT_INVALID", format!("invalid JSON: {e}"), &rid))?;
+    executor::resume_inflight_once(&st);
     let s = store(&st);
     let _g = s.lock().await;
     if let Some(prev) = s.find_by_idempotency(&user.user_id, &key).await.map_err(|e| ApiError::internal(e, &rid))? {
@@ -282,7 +286,7 @@ async fn create_run(
     s.append_raw(
         allternit_commrails::judge::events::POLICY_SET,
         &run_id,
-        json!({ "dag_id": compiled.task_ir["dag_id"], "policy": compiled.judge_policy }),
+        json!({ "dag_id": compiled.task_ir["dag_id"], "policy": compiler::judge_policy_json(&compiled.judge_policy) }),
     )
     .await
     .map_err(|e| ApiError::internal(e, &rid))?;
@@ -291,9 +295,11 @@ async fn create_run(
         .map_err(|e| ApiError::internal(e, &rid))?;
     // Resolution recorded → leave `accepted`; wait for the executor hand-off.
     let rec = s
-        .transition(rec, "waiting", Some("queued for execution"))
+        .transition(rec, "waiting", Some(executor::queued_reason()))
         .await
         .map_err(|e| ApiError::internal(e, &rid))?;
+    drop(_g);
+    executor::spawn(st.clone(), run_id.clone());
     let mut r = (StatusCode::ACCEPTED, Json(public_run(&rec))).into_response();
     if let Ok(v) = HeaderValue::from_str(&format!("/v1/runs/{run_id}")) {
         r.headers_mut().insert("location", v);
@@ -427,11 +433,15 @@ async fn control(
         "pause" => ("paused", "paused by caller"),
         "resume" if status != "paused" => return Err(ApiError::new(409, "STATE", "ERR_STATE_CONFLICT", "run is not paused", &rid)),
         "resume" if rec.run["budget_usage"]["spend_halted"] == true => ("needs_attention", "budget_exhausted"),
-        "resume" => ("waiting", "resumed; queued for execution"),
-        // No effects are in flight in the alpha, so cancel settles immediately.
+        "resume" => ("waiting", executor::queued_reason()),
+        // The executor checks admission before every effect, so cancel settles
+        // now and the drive stops at its next step.
         _ => ("cancelled", "cancelled by caller"),
     };
     let rec = s.transition(rec, to, Some(reason)).await.map_err(|e| ApiError::internal(e, &rid))?;
+    if to == "waiting" {
+        executor::spawn(st.clone(), run_id.clone());
+    }
     Ok(Json(public_run(&rec)).into_response())
 }
 
@@ -497,6 +507,7 @@ async fn respond_attention(
     s.emit(&run_id, v, "attention.resolved", json!({ "data": { "attention_id": id, "resolution": resolution } }))
         .await.map_err(|e| ApiError::internal(e, &rid))?;
     let mut to = None;
+    let mut requeue = false;
     if att["reason"] == "budget_exhausted" {
         if kind == "rejection" {
             to = Some(("failed", "budget exhausted; caller declined to raise it"));
@@ -514,6 +525,7 @@ async fn respond_attention(
             if !still_over {
                 rec.run["budget_usage"]["spend_halted"] = json!(false);
                 to = Some(("waiting", "budget raised; queued for execution"));
+                requeue = true;
             }
         }
     }
@@ -522,6 +534,11 @@ async fn respond_attention(
         None => s.save(rec).await,
     }
     .map_err(|e| ApiError::internal(e, &rid))?;
+    if requeue {
+        if let Some(run_id) = rec.run["id"].as_str() {
+            executor::spawn(st.clone(), run_id.to_string());
+        }
+    }
     Ok(Json(json!({ "object": "attention_response", "attention_id": id, "resolution": resolution, "run": public_run(&rec) })).into_response())
 }
 
@@ -546,7 +563,10 @@ async fn run_graph(
 
 async fn artifacts_of(st: &AppState, run_id: &str) -> Vec<Value> {
     store(st).events(run_id).await.unwrap_or_default().into_iter()
-        .filter(|e| e["type"] == "artifact.created").map(|e| e["data"]["artifact"].clone()).collect()
+        .filter(|e| e["type"] == "artifact.created")
+        // v0.3: `data` is the Artifact; older snapshots nested it under `data.artifact`.
+        .map(|e| if e["data"]["object"] == "artifact" { e["data"].clone() } else { e["data"]["artifact"].clone() })
+        .collect()
 }
 
 async fn run_artifacts(
