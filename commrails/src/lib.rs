@@ -19,6 +19,7 @@ pub mod graph;
 pub mod hook;
 pub mod index;
 pub mod judge;
+pub mod kernel;
 pub mod killswitch;
 pub mod leases;
 pub mod ledger;
