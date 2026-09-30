@@ -74,6 +74,13 @@ Python: every schema passes `check_schema`; every `$ref` resolves; each contract
 valid example that passes and ≥1 invalid example that fails; unknown enum values and
 unknown fields are rejected (09 §C #5); `extensions` accepts only `x-*` keys; encodings;
 vendor-name scan; BUG_FIX `allow_partial=false`; registry shape; AgentState split.
+Freeze gates (Eoj, 2026-09-30): Q2 single owner per mutable field (MANIFEST `ownership`
+map, checked over a representative run of AgentState + Work Runtime + receipts);
+ComputeGraphIRV1 is the only workflow type (no WIH type); CompletionDecisionV1 producer is
+RUNTIME or VERIFIER and `decided_by` is SYSTEM; a DecisionResult GATE answer is never a
+policy verdict and no DecisionResult validates as a policy contract; pinned `$id`s;
+MANIFEST `files` holds the sha256 of every schema/registry/data/generated file, and
+`scripts/regenerate.sh` on a clean checkout produces zero `git diff`.
 Rust: every valid example round-trips through the generated serde types.
 
 Codegen note: json-schema-to-typescript and typify cannot express cross-file refs or
