@@ -178,6 +178,9 @@ pub struct PlanStep {
     /// Optional spend cap for this thread, in USD (P8.1).
     #[serde(default, rename = "budgetUsd")]
     pub budget_usd: Option<f64>,
+    /// Capabilities the step needs from its bot (gateway placement filter).
+    #[serde(default)]
+    pub requires: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -259,6 +262,7 @@ pub struct ValidStep {
     pub depends_on: Vec<String>,
     pub todo: Vec<String>,
     pub budget_usd: Option<f64>,
+    pub requires: Vec<String>,
 }
 
 /// Deterministic checks on a proposed plan. Returns the steps to create, or
@@ -293,6 +297,7 @@ pub fn validate_plan(steps: &[PlanStep], team: &[TeamBot]) -> Result<Vec<ValidSt
             depends_on: s.depends_on.clone(),
             todo: s.todo.iter().take(6).cloned().collect(),
             budget_usd: s.budget_usd.filter(|v| v.is_finite() && *v > 0.0),
+            requires: s.requires.iter().map(|r| r.trim().to_string()).filter(|r| !r.is_empty()).take(8).collect(),
         });
     }
     // Cycle check (Kahn).
@@ -339,6 +344,7 @@ pub fn fallback_step(team: &[TeamBot], message: &str) -> Option<ValidStep> {
         depends_on: vec![],
         todo: vec![],
         budget_usd: None,
+        requires: vec![],
     })
 }
 
@@ -524,7 +530,7 @@ pub async fn coordinate<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user_id: &
         return Ok(Outcome { reply: msg, start: vec![] });
     }
 
-    let (steps, reply_text, planned) = match &proposal {
+    let (mut steps, reply_text, planned) = match &proposal {
         Some(Proposal::Plan { reply, steps }) => match validate_plan(steps, &team) {
             Ok(v) => (v, truncate(reply, REPLY_CAP), true),
             Err(why) => {
@@ -534,6 +540,10 @@ pub async fn coordinate<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user_id: &
         },
         _ => (fallback_step(&team, message).into_iter().collect(), String::new(), false),
     };
+
+    // Capability-aware placement (gateway): may move a step to a bot that can
+    // host it, or serialize it behind the step holding a busy remote context.
+    let placement = crate::gateway_placement::place_plan(&mut steps, &crate::gateway_placement::load_facts(db, user_id, &team));
 
     let graph = rt
         .mirror_plan(
@@ -591,7 +601,7 @@ pub async fn coordinate<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user_id: &
     } else {
         format!("Split this into {} threads.", ids.len())
     };
-    let msg = add_message(db, project_id, user_id, "coordinator", &text, json!({"kind": "fanout", "threads": ids, "planned": planned, "dagId": graph.as_ref().map(|g| g.0.clone())}))
+    let msg = add_message(db, project_id, user_id, "coordinator", &text, json!({"kind": "fanout", "threads": ids, "planned": planned, "placement": placement.iter().map(|n| n.to_json()).collect::<Vec<_>>(), "dagId": graph.as_ref().map(|g| g.0.clone())}))
         .map_err(|e| e.to_string())?;
     Ok(Outcome { reply: msg, start })
 }
@@ -1078,7 +1088,7 @@ mod tests {
     }
 
     fn step(key: &str, bot: &str, deps: &[&str]) -> PlanStep {
-        PlanStep { key: key.into(), title: format!("Step {key}"), objective: String::new(), bot: bot.into(), depends_on: deps.iter().map(|s| s.to_string()).collect(), todo: vec![], budget_usd: None }
+        PlanStep { key: key.into(), title: format!("Step {key}"), objective: String::new(), bot: bot.into(), depends_on: deps.iter().map(|s| s.to_string()).collect(), todo: vec![], budget_usd: None, requires: vec![] }
     }
 
     #[test]
