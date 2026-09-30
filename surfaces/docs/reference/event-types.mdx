@@ -1,0 +1,38 @@
+---
+title: "Event types"
+description: "The Agency API run events and the kernel trace event record"
+---
+
+**Status: PREVIEW (Agency API events) · AVAILABLE (TraceEventV1 contract).** See [status labels](/architecture#status-labels).
+
+Two event vocabularies exist. They are related but not the same.
+
+## Architecture contract
+
+### Agency API run events (preview)
+
+`run.status_changed`, `run.progress`, `run.message`, `input.accepted`, `attention.requested`, `attention.resolved`, `artifact.created`, `receipt.appended`, `verification.completed`, `budget.threshold` and `debug.trace`. Clients must ignore types they do not recognize. Payload shapes are in [Events](/api/agency/events) and [Schemas](/api/agency/schemas).
+
+### Kernel trace events
+
+`TraceEventV1.event_type` is a free string in ABI 1.0.0; its vocabulary is not frozen. `status` is one of `STARTED`, `SUCCEEDED`, `FAILED`, `SKIPPED`. Field list: [Receipts and trace contracts](/architecture/contracts/receipts).
+
+## Current implementation
+
+Work-runtime runs have no public event stream today. The API event types are a published preview contract.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Agency API event types | **PREVIEW** |
+| TraceEventV1 | **AVAILABLE (contract)** |
+
+## Developer relevance
+
+Ignore unknown event types and unknown enum values.
+
+## Related
+
+- [Trace events](/architecture/observability/trace-events)
+- [Events API](/api/agency/events)

@@ -55,9 +55,7 @@
               "architecture/policy",
               "architecture/verification",
               "architecture/receipts",
-              "architecture/replay",
-              "architecture/kernel-contracts",
-              "architecture/kernel-contracts-reference"
+              "architecture/replay"
             ]
           },
           {
@@ -84,6 +82,112 @@
               "architecture/cognitive-runtime/calibration",
               "architecture/cognitive-runtime/abstain-escalate",
               "architecture/cognitive-runtime/no-vendor-names"
+            ]
+          },
+          {
+            "group": "Context & Memory",
+            "pages": [
+              "architecture/context-memory/overview",
+              "architecture/context-memory/projections",
+              "architecture/context-memory/memory"
+            ]
+          },
+          {
+            "group": "Tools & Execution",
+            "pages": [
+              "architecture/tools-execution/overview",
+              "architecture/tools-execution/tool-call-compiler",
+              "architecture/tools-execution/argument-provenance",
+              "architecture/tools-execution/execution-environment",
+              "architecture/tools-execution/network-ssrf",
+              "architecture/tools-execution/mutation-receipts",
+              "architecture/tools-execution/primitive-packs"
+            ]
+          },
+          {
+            "group": "Verification & Safety",
+            "pages": [
+              "architecture/verification-safety/evidence",
+              "architecture/verification-safety/budgets",
+              "architecture/verification-safety/approvals",
+              "architecture/verification-safety/trust-classes",
+              "architecture/verification-safety/threat-model"
+            ]
+          },
+          {
+            "group": "Observability & Evaluation",
+            "pages": [
+              "architecture/observability/trace-events",
+              "architecture/observability/cassettes",
+              "architecture/observability/divergence",
+              "architecture/observability/calibration-metrics",
+              "architecture/observability/system-lift",
+              "architecture/observability/conformance",
+              "architecture/observability/alpha-gate"
+            ]
+          },
+          {
+            "group": "Kernel Contracts",
+            "pages": [
+              "architecture/kernel-contracts",
+              "architecture/kernel-contracts-reference",
+              "architecture/contracts/agent-state",
+              "architecture/contracts/attention",
+              "architecture/contracts/bundle",
+              "architecture/contracts/campaign",
+              "architecture/contracts/capability",
+              "architecture/contracts/common",
+              "architecture/contracts/completion",
+              "architecture/contracts/context",
+              "architecture/contracts/decision",
+              "architecture/contracts/environment",
+              "architecture/contracts/graph",
+              "architecture/contracts/mutation",
+              "architecture/contracts/policy",
+              "architecture/contracts/primitive",
+              "architecture/contracts/receipts",
+              "architecture/contracts/replay",
+              "architecture/contracts/state-transfer",
+              "architecture/contracts/task-ir",
+              "architecture/contracts/tool",
+              "architecture/contracts/verification",
+              "architecture/contracts/work"
+            ]
+          },
+          {
+            "group": "Build on Allternit",
+            "pages": [
+              "build/overview",
+              "build/profile",
+              "build/primitive",
+              "build/decision-backend",
+              "build/model-provider",
+              "build/tool",
+              "build/pack",
+              "build/template",
+              "build/verifier",
+              "build/policy",
+              "build/executor",
+              "build/conformance-checklist"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/overview",
+              "operations/rollout",
+              "operations/recovery"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/primitive-registry",
+              "reference/event-types",
+              "reference/error-codes",
+              "reference/status-enums",
+              "reference/glossary",
+              "reference/changelog"
             ]
           },
           {
