@@ -41,6 +41,7 @@ pub mod prompt;
 pub mod query;
 pub mod rails_id;
 pub mod receipts;
+pub mod replay;
 pub mod service;
 pub mod setup;
 pub mod steer;

@@ -1,0 +1,38 @@
+---
+title: "Rollout and flags"
+description: "What is enabled by default and what must be switched on"
+---
+
+**Status: AVAILABLE (internal) · PREVIEW (opt-in features).** See [status labels](/architecture#status-labels).
+
+New kernel behavior ships dark or opt-in, so it can be checked before it becomes the default.
+
+## Architecture contract
+
+| Behavior | Default |
+|----------|---------|
+| Per-node execution environment and egress guard | On |
+| Gate in front of every executor | On |
+| Verifier-owned completion | Applies to agency-origin work; other work keeps its existing close |
+| Typed lifecycle as the enforced path | Not enforced for every transition |
+| Drive runner | Off; operator command |
+| Decision runtime | S1 shadow only |
+| Context and Tool Call compilers | Off; draft behind a flag, not on main |
+
+## Current implementation
+
+The table is the state of main. Flags for unmerged work are not documented as features.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Listed behaviors | **See table** |
+
+## Developer relevance
+
+Do not enable a flag for a feature marked design. It is not there.
+
+## Related
+
+- [Operations](/operations/overview)

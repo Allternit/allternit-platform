@@ -1,0 +1,35 @@
+---
+title: "Primitive packs"
+description: "Bundling primitives, tool schemas, validators and policy hooks for a domain"
+---
+
+**Status: DESIGN — NOT YET IMPLEMENTED (pack schema) · AVAILABLE (registry and descriptors).** See [status labels](/architecture#status-labels).
+
+A pack is how a domain such as code repair ships everything the kernel needs to run it, so the kernel stays generic.
+
+## Architecture contract
+
+A pack is described as: decision sets, tool schemas, error classes, environment assumptions, validators, syntax rules, commands, context projection rules, graph fragments, policy hooks, capability requirements and eval fixtures. Primitives inside a pack are registered by ID, declare an authority (propose, decide, verify or authorize; only policy primitives may grant authority) and a maturity level.
+
+Why: domain knowledge belongs in versioned, evaluated data, not in the kernel or in a prompt.
+
+## Current implementation
+
+The primitive registry and descriptor contracts are on main. A pack schema is not defined yet, so packs are not loadable units today.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Primitive registry (191 IDs) and descriptors | **AVAILABLE (contract)** |
+| Pack schema and loader | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+Design a pack as data: schemas, fixtures and evals first. Expect it to be checked by the conformance suite once that exists.
+
+## Related
+
+- [Primitive registry](/reference/primitive-registry)
+- [Build a pack](/build-on-allternit/pack)
+- [Primitives](/architecture/cognitive-runtime/primitives)

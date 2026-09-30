@@ -34,6 +34,7 @@ import { FileRoutes } from "@/runtime/server/routes/file"
 import { ConfigRoutes } from "@/runtime/server/routes/config"
 import { ExperimentalRoutes } from "@/runtime/server/routes/experimental"
 import { ProviderRoutes } from "@/runtime/server/routes/provider"
+import { ModelPoolRoutes } from "@/runtime/server/routes/model-pool"
 import { SidecarRoutes } from "@/runtime/server/routes/sidecar"
 import { Pty } from "@/runtime/integrations/pty"
 import { lazy } from "@/shared/util/lazy"
@@ -395,6 +396,7 @@ export namespace Server {
         .route("/pane-render", PaneRenderRoutes())
         .route("/cli-bridge", CliBridgeRoutes())
         .route("/provider", ProviderRoutes())
+        .route("/model-pool", ModelPoolRoutes())
         .route("/sidecar", SidecarRoutes())
         .route("/", FileRoutes())
         .route("/mcp", McpRoutes())
@@ -490,6 +492,7 @@ export namespace Server {
             .route("/agent", AgentRoutes())
             .route("/command", CommandRoutes())
             .route("/provider", ProviderRoutes())
+            .route("/model-pool", ModelPoolRoutes())
             .route("/sidecar", SidecarRoutes())
             .route("/config", ConfigRoutes())
             .route("/mcp", McpRoutes())

@@ -92,6 +92,9 @@ enum Commands {
     Gate(GateCmd),
     #[command(subcommand)]
     Vault(VaultCmd),
+    /// Replay / cassette (effects: recorded_only)
+    #[command(subcommand)]
+    Replay(ReplayCmd),
     #[command(subcommand)]
     Runner(RunnerCmd),
     #[command(subcommand)]
@@ -783,6 +786,31 @@ enum VaultCmd {
     Status {
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ReplayCmd {
+    /// Build a CassetteV1 from a run's receipt chain and store it
+    Record {
+        run_id: String,
+        #[arg(long)]
+        graph_id: Option<String>,
+        #[arg(long, default_value_t = 0)]
+        graph_version: u64,
+        /// Also write the cassette JSON here
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Replay a cassette with effects: recorded_only and print a DivergenceReportV1.
+    /// Without --steps it replays the recording's own boundaries (integrity check).
+    Check {
+        cassette: PathBuf,
+        /// JSON array of replay steps ({boundary, node_id, request_hash, ...})
+        #[arg(long)]
+        steps: Option<PathBuf>,
+        #[arg(long)]
+        replay_run_id: Option<String>,
     },
 }
 
@@ -1503,6 +1531,34 @@ async fn run() -> Result<()> {
                 }
             }
         },
+        Commands::Replay(cmd) => {
+            let receipts = stores.receipts().await?;
+            let cs = receipts.chain_store()?;
+            match cmd {
+                ReplayCmd::Record { run_id, graph_id, graph_version, out } => {
+                    let c = allternit_commrails::replay::record_cassette(&cs, &run_id, graph_id.as_deref(), graph_version)?;
+                    let p = allternit_commrails::replay::save_cassette(&receipts.receipts_dir().join("_cassettes"), &c)?;
+                    if let Some(o) = out {
+                        std::fs::write(&o, serde_json::to_vec_pretty(&c)?)?;
+                    }
+                    eprintln!("cassette {} ({} entries) -> {}", c.cassette_id, c.entries.len(), p.display());
+                    println!("{}", serde_json::to_string_pretty(&c)?);
+                }
+                ReplayCmd::Check { cassette, steps, replay_run_id } => {
+                    let c = allternit_commrails::replay::load_cassette(&cassette)?;
+                    let steps = match steps {
+                        Some(p) => Some(serde_json::from_slice(&std::fs::read(p)?)?),
+                        None => None,
+                    };
+                    let rid = replay_run_id.unwrap_or_else(|| format!("replay_{}", uuid::Uuid::new_v4().simple()));
+                    let rep = allternit_commrails::replay::replay_report(&cs, c, steps, &rid)?;
+                    println!("{}", serde_json::to_string_pretty(&rep)?);
+                    if rep.verdict == allternit_commrails::replay::Verdict::UnexpectedDivergence {
+                        anyhow::bail!("replay diverged: {} divergence(s)", rep.divergences.len());
+                    }
+                }
+            }
+        }
         Commands::Runner(cmd) => {
             let gate = stores.gate().await?;
             let lease_store = stores.leases().await?;

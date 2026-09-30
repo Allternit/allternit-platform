@@ -198,3 +198,115 @@ mod wp3_effect_tests {
         assert_eq!(receipts.verify_receipt(&a).unwrap().integrity, "legacy (unsigned, unchained)");
     }
 }
+
+#[cfg(test)]
+mod wp5_replay_gate_tests {
+    use super::super::*;
+    use crate::ledger::ledger::{Ledger, LedgerOptions};
+    use crate::leases::leases::{Leases, LeasesOptions};
+    use crate::receipts::store::{ReceiptStore, ReceiptStoreOptions};
+    use crate::replay::{record_cassette, save_cassette, Boundary, DivergenceKind, Verdict};
+    use serde_json::{json, Value};
+    use std::sync::Arc;
+
+    async fn gate_at(root: &std::path::Path) -> (Gate, Arc<ReceiptStore>) {
+        let ledger = Arc::new(Ledger::new(LedgerOptions { root_dir: Some(root.to_path_buf()), ledger_dir: None }));
+        let leases = Arc::new(Leases::new(LeasesOptions {
+            root_dir: Some(root.to_path_buf()), leases_dir: None, ..Default::default() }).await.unwrap());
+        let receipts = Arc::new(ReceiptStore::new(ReceiptStoreOptions {
+            root_dir: Some(root.to_path_buf()), receipts_dir: None, blobs_dir: None }).unwrap());
+        let gate = Gate::new(GateOptions {
+            ledger, leases, receipts: receipts.clone(), index: None, vault: None, oauth_vault: None,
+            root_dir: Some(root.to_path_buf()), actor_id: Some("t".into()),
+            strict_provenance: Some(false), visual_provider: None, visual_config: None,
+        });
+        (gate, receipts)
+    }
+
+    fn calls() -> Vec<Value> {
+        vec![
+            json!({"cmd": "write a.txt", "idempotency_key": "e2e-key-write-a"}),
+            json!({"cmd": "write b.txt", "effect_class": "WORKSPACE_WRITE"}),
+            json!({"cmd": "write a.txt", "idempotency_key": "e2e-key-write-a"}), // reused key
+            json!({"cmd": "deploy", "idempotency_key": "e2e-key-deploy-1", "effect_class": "EXTERNAL"}),
+        ]
+    }
+
+    /// The agent's run: one policy decision, then side-effecting tool calls.
+    async fn drive(gate: &Gate, wih: &str) -> Vec<anyhow::Result<String>> {
+        gate.record_policy_decision(wih, "plan", "ALLOW").unwrap();
+        let mut out = vec![];
+        for p in calls() {
+            out.push(gate.post_tool(wih, "shell", p).await);
+        }
+        out
+    }
+
+    fn keep_dir() -> (Option<tempfile::TempDir>, std::path::PathBuf) {
+        match std::env::var("WP5_E2E_KEEP") {
+            Ok(p) => { std::fs::create_dir_all(&p).unwrap(); (None, p.into()) }
+            Err(_) => { let d = tempfile::tempdir().unwrap(); let p = d.path().to_path_buf(); (Some(d), p) }
+        }
+    }
+
+    #[tokio::test]
+    async fn replay_gate_run_end_to_end_zero_divergence_then_tamper() {
+        let (_guard, root) = keep_dir();
+        let (gate, receipts) = gate_at(&root).await;
+        let live = drive(&gate, "e2e").await;
+        let live: Vec<String> = live.into_iter().map(|r| r.unwrap()).collect();
+        assert_eq!(live[0], live[2], "reused key deduped live");
+        let cs = receipts.chain_store().unwrap();
+        let c = record_cassette(&cs, "run_e2e", Some("graph_e2e"), 1).unwrap();
+        // policy + 3 distinct effects (the reused key produced no second receipt)
+        let kinds: Vec<_> = c.entries.iter().map(|e| e.boundary).collect();
+        assert_eq!(kinds, vec![Boundary::Policy, Boundary::Tool, Boundary::Tool, Boundary::Tool]);
+        save_cassette(&receipts.receipts_dir().join("_cassettes"), &c).unwrap();
+
+        let legacy = receipts.query_receipts(&Default::default()).unwrap().len();
+        let chain_len = cs.read_run("run_e2e").unwrap().len();
+
+        // Replay through the gate: same agent behaviour, recorded_only.
+        gate.begin_replay("e2e_r1", c.clone()).unwrap();
+        assert!(gate.is_replaying("e2e_r1"));
+        let replayed: Vec<String> = drive(&gate, "e2e_r1").await.into_iter().map(|r| r.unwrap()).collect();
+        assert_eq!(replayed, live, "recorded results served");
+        let rep = gate.end_replay("e2e_r1").unwrap();
+        assert_eq!(rep.verdict, Verdict::Identical, "{rep:?}");
+        assert!(!gate.is_replaying("e2e_r1"));
+        assert_eq!(receipts.query_receipts(&Default::default()).unwrap().len(), legacy, "no live effect ran");
+        assert_eq!(cs.read_run("run_e2e").unwrap().len(), chain_len, "nothing appended to the recorded chain");
+        assert!(cs.read_run("run_e2e_r1").unwrap().is_empty(), "replay run has no chain of its own");
+
+        // An unrecorded effect in replay mode is refused, not executed.
+        gate.begin_replay("e2e_r2", c.clone()).unwrap();
+        gate.record_policy_decision("e2e_r2", "plan", "DENY").unwrap();
+        let err = gate.post_tool("e2e_r2", "shell", json!({"cmd": "rm -rf /"})).await.unwrap_err();
+        assert!(err.to_string().contains("refused"), "{err}");
+        let rep = gate.end_replay("e2e_r2").unwrap();
+        let k: Vec<_> = rep.divergences.iter().map(|d| d.kind).collect();
+        assert!(k.contains(&DivergenceKind::PolicyOutcome) && k.contains(&DivergenceKind::ExtraEntry), "{k:?}");
+        assert_eq!(receipts.query_receipts(&Default::default()).unwrap().len(), legacy);
+
+        if std::env::var("WP5_E2E_KEEP").is_ok() {
+            return; // leave the untampered run for the CLI end-to-end check
+        }
+        // Tamper the second tool call's recorded receipt: divergence at that step.
+        let target = &c.entries[2];
+        let all = cs.read_run("run_e2e").unwrap();
+        let idx = all.iter().position(|r| r["chain"]["receipt_id"] == json!(target.result_ref)).unwrap();
+        let p = receipts.receipts_dir().join(format!("_chains/run_e2e/{idx:010}.json"));
+        let mut v: Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+        v["external_ref"] = json!("forged-ref");
+        std::fs::write(&p, serde_json::to_vec(&v).unwrap()).unwrap();
+        gate.begin_replay("e2e_r3", c.clone()).unwrap();
+        let out = drive(&gate, "e2e_r3").await;
+        assert!(out[0].is_ok() && out[1].is_err() && out[3].is_ok(), "tampered step refused: {out:?}");
+        let rep = gate.end_replay("e2e_r3").unwrap();
+        assert_eq!(rep.verdict, Verdict::UnexpectedDivergence);
+        let d = rep.divergences.iter().find(|d| d.node_id != "chain").unwrap();
+        assert_eq!((d.kind, d.seq), (DivergenceKind::ResultHash, target.seq), "{rep:?}");
+        assert!(rep.divergences.iter().any(|d| d.node_id == "chain" && d.seq == idx as u64), "chain break at the tampered receipt: {rep:?}");
+        assert_eq!(receipts.query_receipts(&Default::default()).unwrap().len(), legacy);
+    }
+}

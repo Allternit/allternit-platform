@@ -244,7 +244,8 @@ pub struct Decision {
     pub paths: Vec<String>,
 }
 
-/// Evaluate one PreToolUse request. Order: hard floor (always) → write-target
+/// Evaluate one PreToolUse request. Order: hard floor (always) → replay deny
+/// (bound run replaying: nothing executes) → write-target
 /// resolution → Gate 2 `pre_tool` → WIH-own lease coverage. Every error path
 /// is a deny.
 pub async fn decide(req: &HookRequest, root: &Path, home: Option<&Path>, wih: Option<WihBinding<'_>>) -> Decision {
@@ -262,6 +263,15 @@ pub async fn decide(req: &HookRequest, root: &Path, home: Option<&Path>, wih: Op
             paths: Vec::new(),
         };
     };
+
+    // Replay (effects: recorded_only): no hooked or ACP harness runs a real tool;
+    // the gate's post-call step serves the recorded result.
+    if wih.gate.is_replaying(wih.wih_id) {
+        return Decision {
+            verdict: Verdict::Deny(crate::gate::gate::replay_deny_reason(wih.wih_id)),
+            paths: Vec::new(),
+        };
+    }
 
     let root_forms = path_forms(root);
     let mut rel_paths = Vec::new();

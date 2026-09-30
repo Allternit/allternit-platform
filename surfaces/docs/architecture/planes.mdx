@@ -1,0 +1,57 @@
+---
+title: "The eight planes"
+description: "One owner for every responsibility: what each plane owns, how the planes map to the two machines, and what exists today"
+---
+
+**Status: AVAILABLE (ownership model, recorded in the repository) · per-plane status below.** See [status labels](/architecture#status-labels).
+
+Every responsibility in the system has exactly one owner. The architecture groups owners into eight **planes**. New kernel code belongs to exactly one plane.
+
+## Architecture contract
+
+| # | Plane | Owns | Machine |
+|---|-------|------|---------|
+| 1 | Experience / API | The single external agent identity, API and SDK surface, event streams, threads, artifacts. The [Agency API](/api/agency/overview) lives here. | Neither; the surface over both |
+| 2 | Agent | [TaskIR and AgentState](/architecture/state), the [Agent ISA](/architecture/graphs), capability semantics | Shared |
+| 3 | Work Orchestration | The compute graph, node lifecycle, node outputs, leases, heartbeat and reclaim, admission, campaigns, wait and wake, idempotency, replay hooks | [Work Machine](/architecture/work-machine) |
+| 4 | Cognition | [S0–S3](/architecture/cognition-levels), the decision runtime, the judge runtime, verification cognition | [Cognitive Machine](/architecture/cognitive-machine) |
+| 5 | Context + State | The [context compiler](/architecture/context), chunk store, memory, cognitive state | Cognitive Machine |
+| 6 | Execution / Model | The [router and model pool](/architecture/routing), tool runtimes, fabric placement | Cognitive Machine |
+| 7 | Governance + Observability | [Policy](/architecture/policy), [receipts](/architecture/receipts), [replay](/architecture/replay), evaluations, provenance, budgets | Under both |
+| 8 | Product Operations | [Attention](/architecture/work-runtime/attention), human approvals, channels, remote control, quiet hours and caps, pause, resume and kill, the needs-you queue, audit views | Work Machine |
+
+Two ownership decisions are fixed:
+
+- **The work runtime ledger owns lifecycle.** No other store is the truth for where a node is.
+- **ComputeGraphIR is authoritative.** The work-item view that existing tools use is a one-way, disposable projection of it.
+
+Product Operations is not a second agent runtime. It presents and routes; it does not decide or execute.
+
+Why planes: when two components both think they own a responsibility (for example, two places that can close a task), the system has no single truth. Assigning one owner per responsibility is what lets each part be replaced without breaking the rest.
+
+## Current implementation
+
+The ownership map is recorded in the repository structure guide and is used to place new kernel code. The table below lists what exists in each plane on main.
+
+## Availability
+
+| Plane | What exists on main | Status |
+|-------|---------------------|--------|
+| 1 Experience / API | Cloud API, SDK, surfaces. Agency API contract published, endpoint not served. | **AVAILABLE** (existing API) · **PREVIEW** (Agency API) |
+| 2 Agent | Primitive registry, Agent ISA enum, state schemas | **AVAILABLE** (contracts) · **PREVIEW** (runtime use) |
+| 3 Work Orchestration | Work runtime: outputs, leases, wait gates, campaigns, wake. Typed lifecycle and graph validator as library. | **AVAILABLE** (internal) · **PREVIEW** (typed lifecycle) |
+| 4 Cognition | Decision runtime in shadow mode, fail-closed judge | **PREVIEW** |
+| 5 Context + State | Context packs, memory services. No context compiler. | **DESIGN — NOT YET IMPLEMENTED** (compiler) |
+| 6 Execution / Model | Tool runtimes, execution environment, egress guard. No router or model pool. | **AVAILABLE** (tools, internal) · **DESIGN — NOT YET IMPLEMENTED** (router) |
+| 7 Governance + Observability | Permission floor, signed receipt chain. No replay. | **AVAILABLE** (internal) · **DESIGN — NOT YET IMPLEMENTED** (replay) |
+| 8 Product Operations | Attention gate, needs-you queue, surfaces | **AVAILABLE** |
+
+## Developer relevance
+
+When you contribute, find the plane first. A change that makes one plane decide something another plane owns (a tool that closes its own node, a surface that runs agent logic) will not be accepted.
+
+## Related
+
+- [Living Agent Architecture](/architecture)
+- [The Cognitive Machine](/architecture/cognitive-machine)
+- [The Work Machine](/architecture/work-machine)

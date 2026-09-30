@@ -1,0 +1,40 @@
+---
+title: "Argument provenance"
+description: "Where each argument of a tool call came from, and what that allows"
+---
+
+**Status: DESIGN — NOT YET IMPLEMENTED (recording); AVAILABLE (contract).** See [status labels](/architecture#status-labels).
+
+Every argument in a compiled call is tagged with its origin. The origin decides how much the value is trusted and whether a model may change it.
+
+## Architecture contract
+
+| Origin | Meaning | Rule |
+|--------|---------|------|
+| `STATE` | Read from canonical state | Trusted as state is |
+| `RETRIEVAL` | Came from retrieved content | Carries the source trust class |
+| `POLICY` | Set by policy | A model cannot override it |
+| `GENERATED` | Produced by a model | Must pass schema and semantic checks |
+| `USER` | Given by a person | Kept verbatim |
+
+The map is part of `ToolInvocationV1` (`argument_provenance`). Together with the read set and write set it lets a reviewer answer "why did the agent pass this value?" without reading a transcript.
+
+## Current implementation
+
+The tag set is in the frozen contract. Recording it on every call depends on the Tool Call Compiler, which is not on main.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Provenance tags in the contract | **AVAILABLE (contract)** |
+| Recorded on every call | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+Never let a generated value fill a security-relevant argument such as a path outside scope, a host or a recipient. Those should be `POLICY` or `USER`.
+
+## Related
+
+- [Tool Call Compiler](/architecture/tools-execution/tool-call-compiler)
+- [Trust classes](/architecture/verification-safety/trust-classes)

@@ -3,3 +3,29 @@ packages:
 
 onlyBuiltDependencies:
   - ws
+
+# Keep in sync with the root pnpm-workspace.yaml: `pnpm install --frozen-lockfile`
+# fails (ERR_PNPM_LOCKFILE_CONFIG_MISMATCH) unless overrides and
+# patchedDependencies match what the shared lockfile was resolved with.
+overrides:
+  # gizzi-code runs react@19 (its ink-app is the one place the real React 19
+  # types are load-bearing); the rest of the workspace stays on 18 types.
+  '@allternit/gizzi-code>@types/react': ^19.2.18
+  '@allternit/gizzi-code>@types/react-dom': ^19.2.7
+  '@types/react': ^18.3.28
+  '@types/react-dom': ^18.3.1
+  '@types/express-serve-static-core': ^4.19.8
+  '@reduxjs/toolkit': ^2.2.7
+  react-redux: ^9.1.2
+  redux: ^5.0.1
+  # wxt 0.20 uses Rollup hook filters, which require Vite >= 6.3. Vite 5
+  # silently ignores them, so wxt's download plugin then runs on every module
+  # and `wxt prepare` fails with "Failed to parse URL from <entrypoint>".
+  'wxt>vite': ^8.0.0
+  # better-sqlite3 12.x does not compile on Node 26; 13.x ships compatible
+  # prebuilt binaries.
+  better-sqlite3: 13.0.3
+
+patchedDependencies:
+  follow-redirects@1.15.11: patches/follow-redirects@1.15.11.patch
+  webpack@5.106.2: patches/webpack@5.106.2.patch

@@ -41,6 +41,12 @@ services/open-notebook/
 services/open-connector/
 services/computer-use-operator/
 services/gateway/
+# ...except the two Rust workspace members under it: cargo loads every member's
+# manifest, so excluding them fails `cargo build -p allternit-mux` (red since 2026-09-26).
+!services/gateway/routing/
+!services/gateway/routing/**
+!services/gateway/stdio/
+!services/gateway/stdio/**
 
 **/models/
 **/weights/

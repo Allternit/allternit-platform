@@ -225,8 +225,17 @@ mod tests {
             assert_eq!(id["d"]["intents"], DEFAULT_INTENTS);
             send(&mut ws, json!({ "op": 0, "s": 1, "t": "READY", "d": { "session_id": "sess-1", "resume_gateway_url": server_url } })).await;
             send(&mut ws, json!({ "op": 0, "s": 2, "t": "MESSAGE_CREATE", "d": { "id": "m1", "channel_id": "c1", "content": "hi", "author": { "id": "u1" } } })).await;
-            let hb = recv(&mut ws).await;
-            assert_eq!(hb["op"], 1);
+            // The heartbeat interval is 40 ms, so on a slow runner a heartbeat can go out before the
+            // client has processed seq 2 (CI flake 2026-09-30). Skip those; the one that follows must carry 2.
+            let hb = loop {
+                let hb = recv(&mut ws).await;
+                assert_eq!(hb["op"], 1);
+                if hb["d"] == 2 {
+                    break hb;
+                }
+                assert!(hb["d"].is_null() || hb["d"] == 1, "heartbeat seq never goes backwards: {hb}");
+                send(&mut ws, json!({ "op": 11 })).await;
+            };
             assert_eq!(hb["d"], 2);
             send(&mut ws, json!({ "op": 11 })).await;
             send(&mut ws, json!({ "op": 7 })).await;

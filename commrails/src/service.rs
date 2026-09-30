@@ -2830,6 +2830,64 @@ async fn receipts_jwks(
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReplayRequest {
+    /// Record a fresh cassette from this run's receipt chain...
+    #[serde(default)]
+    run_id: Option<String>,
+    /// ...or replay a supplied cassette.
+    #[serde(default)]
+    cassette: Option<crate::replay::CassetteV1>,
+    #[serde(default)]
+    graph_id: Option<String>,
+    #[serde(default)]
+    graph_version: Option<u64>,
+    /// Boundaries the replaying run crossed; omitted = the recording's own (integrity check).
+    #[serde(default)]
+    steps: Option<Vec<crate::replay::ReplayStep>>,
+    #[serde(default)]
+    replay_run_id: Option<String>,
+    /// Only "recorded_only" is accepted.
+    #[serde(default)]
+    effects: Option<String>,
+}
+
+async fn replays_create(
+    State(state): State<Arc<ServiceState>>,
+    Json(req): Json<ReplayRequest>,
+) -> axum::response::Response {
+    let bad = |m: &str| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": m}))).into_response();
+    if req.effects.as_deref().unwrap_or("recorded_only") != "recorded_only" {
+        return bad("effects must be \"recorded_only\"; replay never runs live effects");
+    }
+    let cs = match state.receipts.chain_store() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("replays_create chain store: {}", e);
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    let (cassette, saved) = match (req.cassette, req.run_id.as_deref()) {
+        (Some(c), None) => (c, None),
+        (None, Some(run)) => match crate::replay::record_cassette(&cs, run, req.graph_id.as_deref(), req.graph_version.unwrap_or(0)) {
+            Ok(c) => {
+                let p = crate::replay::save_cassette(&state.receipts.receipts_dir().join("_cassettes"), &c).ok();
+                (c, p.map(|p| p.display().to_string()))
+            }
+            Err(e) => return (StatusCode::UNPROCESSABLE_ENTITY, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+        },
+        _ => return bad("give exactly one of run_id or cassette"),
+    };
+    let rid = req.replay_run_id.unwrap_or_else(|| format!("replay_{}", uuid::Uuid::new_v4().simple()));
+    match crate::replay::replay_report(&cs, cassette.clone(), req.steps, &rid) {
+        Ok(report) => (StatusCode::OK, Json(serde_json::json!({
+            "effects": "recorded_only", "cassette": cassette, "cassette_path": saved, "report": report
+        }))).into_response(),
+        Err(e) => (StatusCode::UNPROCESSABLE_ENTITY, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+    }
+}
+
 async fn receipts_chain_verify(
     State(state): State<Arc<ServiceState>>,
     axum::extract::Path(run_id): axum::extract::Path<String>,
@@ -2988,6 +3046,8 @@ pub fn create_router(state: Arc<ServiceState>) -> Router {
         .route("/v1/receipts/jwks", get(receipts_jwks))
         .route("/.well-known/jwks.json", get(receipts_jwks))
         .route("/v1/receipts/chain/:run_id/verify", get(receipts_chain_verify))
+        // REPLAY (WP5): effects: recorded_only enforced
+        .route("/v1/replays", post(replays_create))
         // INIT
         .route("/v1/init", post(init_system))
         .with_state(state)
@@ -3166,5 +3226,52 @@ mod wp3_http_tests {
         assert_eq!(r["results"][0]["signature_valid"], true);
         assert_eq!(r["results"][0]["is_valid"], true);
         assert_eq!(r["results"][1]["integrity"], "missing");
+    }
+}
+
+#[cfg(test)]
+mod wp5_replay_http_tests {
+    use super::*;
+    use crate::receipts::chain::{EffectContext, EffectRequest};
+    use crate::receipts::jcs::sha256_tagged;
+    use serde_json::{json, Value};
+
+    #[tokio::test]
+    async fn replay_http_records_replays_and_enforces_recorded_only() {
+        let d = tempfile::tempdir().unwrap();
+        let state = Arc::new(ServiceState::new(d.path().to_path_buf()).await.unwrap());
+        let app = create_router(state.clone());
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+
+        let cs = state.receipts.chain_store().unwrap();
+        let cx = EffectContext { run_id: "runH".into(), session_id: "s".into(), task_id: "t".into(), node_id: Some("n1".into()),
+            trace_id: "tr".into(), state_version: 0, producer_id: "test".into(), policy_decision_id: "p".into() };
+        let rq = EffectRequest { action_id: "a1".into(), tool_id: "tool.fs_write".into(), args_hash: sha256_tagged(b"a"),
+            idempotency_key: "http-key-001".into(), effect_class: "WORKSPACE_WRITE".into(), target: None };
+        cs.run_effect_once(&cx, &rq, || Ok((sha256_tagged(b"r"), Some("ext".into())))).unwrap();
+
+        let c = reqwest::Client::new();
+        let post = |b: Value| c.post(format!("{base}/v1/replays")).json(&b).send();
+        let r = post(json!({"run_id": "runH", "effects": "live"})).await.unwrap();
+        assert_eq!(r.status(), 400, "live effects must be refused");
+
+        let v: Value = post(json!({"run_id": "runH"})).await.unwrap().json().await.unwrap();
+        assert_eq!(v["effects"], "recorded_only");
+        assert_eq!(v["report"]["verdict"], "IDENTICAL", "{v}");
+        assert_eq!(v["cassette"]["schema_id"], "allternit.kernel.CassetteV1");
+        assert!(std::path::Path::new(v["cassette_path"].as_str().unwrap()).exists());
+
+        // Replay the stored cassette with an unrecorded call: divergence, not a live call.
+        let steps = json!([{"boundary": "TOOL", "node_id": "n1", "request_hash": sha256_tagged(b"never")}]);
+        let v2: Value = post(json!({"cassette": v["cassette"], "steps": steps})).await.unwrap().json().await.unwrap();
+        assert_eq!(v2["report"]["verdict"], "UNEXPECTED_DIVERGENCE");
+        let kinds: Vec<&str> = v2["report"]["divergences"].as_array().unwrap().iter().filter_map(|d| d["kind"].as_str()).collect();
+        assert_eq!(kinds, vec!["EXTRA_ENTRY", "MISSING_ENTRY"]);
+        assert_eq!(cs.read_run("runH").unwrap().len(), 2, "replay wrote nothing to the chain");
+
+        assert_eq!(post(json!({})).await.unwrap().status(), 400);
+        assert_eq!(post(json!({"run_id": "no-such-run"})).await.unwrap().status(), 422);
     }
 }

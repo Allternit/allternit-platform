@@ -1,0 +1,44 @@
+---
+title: "Threat model"
+description: "What the kernel defends against, what it assumes, and what it does not claim"
+---
+
+**Status: AVAILABLE (defenses listed as on main) · DESIGN — NOT YET IMPLEMENTED (defenses listed as design).** See [status labels](/architecture#status-labels).
+
+Safety is a floor that holds even when a component misbehaves. This page lists the threats and which defense answers each.
+
+## Architecture contract
+
+| Threat | Defense | State |
+|--------|---------|-------|
+| Executor bypasses policy through its own auto-approve mode | Allternit's gate in front of every executor, hook or ACP client, plus environment fence | On main (internal) |
+| SSRF through a tool | Default-deny policy, shared egress guard with private-address, redirect and rebinding checks | On main (internal) |
+| Secret leakage through inherited environment | Environment allowlist, no raw inheritance, secret references | On main (internal) |
+| Model declares itself done | Verifier-owned completion | On main for agency-origin work |
+| Prompt injection from retrieved or predecessor content | Trust classes, nonce fencing | Partly on main; compiler enforcement is design |
+| Repeated external effect on retry | Idempotency key plus durable action receipt | On main for effect receipts (internal) |
+| Unreviewed autonomous decision | S1 decision runtime is shadow-only | On main |
+| Tampering with history | Signed, append-only receipt chain | On main (internal) |
+
+Assumptions: the host, the signing keys and the policy configuration are trusted. One executor is fenced by its environment only, which is a weaker guarantee than the gated ones. The kernel does not claim to stop a compromised host.
+
+## Current implementation
+
+The rows marked on main are implemented and internal. They are not reachable through api.allternit.com and are not a certification. Replay-based regression checks and the conformance suite that would test these defenses continuously are not on main.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Gate, egress guard, environment fence | **AVAILABLE (internal)** |
+| Continuous conformance testing of defenses | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+Assume any input can be hostile and any single defense can fail. Do not build a feature that relies on a model choosing to behave.
+
+## Related
+
+- [Policy](/architecture/policy)
+- [Security model](/security/security-model)
+- [Network and SSRF](/architecture/tools-execution/network-ssrf)
