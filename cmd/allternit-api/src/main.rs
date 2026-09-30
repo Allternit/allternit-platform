@@ -911,10 +911,6 @@ async fn main() {
         .merge(allternit_api::memory_notes_routes::memory_notes_router())
         .merge(research_task_router())
         .merge(user_profile_router())
-        .merge(allternit_api::mcp_directory_routes::directory_router())
-        .nest("/api", allternit_api::mcp_directory_routes::directory_router())
-        .merge(allternit_api::studio_apps_routes::studio_router())
-        .nest("/api", allternit_api::studio_apps_routes::studio_router())
         .merge(canvas_router())
         .merge(v1_router())
         .merge(allternit_bus_router())
@@ -1048,6 +1044,9 @@ async fn main() {
 
     // ── Protected routes (require authentication) ─────────────────────────────
     let protected = Router::new()
+        // Agency API alpha (WP11): public /v1 developer surface, behind the
+        // same auth_middleware as everything else on this router.
+        .merge(allternit_api::agency_api::agency_router())
         .nest("/api/v1", v1_routes)
         .nest("/api/v1", bb_router())
         // The tool registry is also served under /api/v1 because the
@@ -1079,6 +1078,16 @@ async fn main() {
             "/mcp",
             mcp_router().merge(allternit_api::mcp_server_routes::mcp_server_router()),
         )
+        // The web client calls the connector routes as /api/v1/mcp/*.
+        .nest("/api/v1/mcp", mcp_router())
+        // MCP App directory + installs. Its routes already start with /v1/, so
+        // they mount at the root and under /api, never inside v1_routes (which
+        // is nested at /api/v1 and made them /api/v1/v1/...).
+        .merge(allternit_api::mcp_directory_routes::directory_router())
+        .nest("/api", allternit_api::mcp_directory_routes::directory_router())
+        // Studio apps: same /v1/ convention as the directory routes.
+        .merge(allternit_api::studio_apps_routes::studio_router())
+        .nest("/api", allternit_api::studio_apps_routes::studio_router())
         .nest("/metrics", metrics_router())
         .nest("/api", h5i_router())
         .nest("/api", oauth_router())
@@ -1134,6 +1143,8 @@ async fn main() {
     // ── Public routes (no authentication required) ────────────────────────────
     let mut public = Router::new()
         .nest("/health", health_router())
+        // Receipt verification keys (public JWKS; public keys only).
+        .merge(allternit_api::agency_api::jwks_public_router())
         .merge(web_proxy)
         .merge(enrollment_router()) // router already declares /beta/enroll
         // Client ID Metadata Document for connector OAuth (must be public).

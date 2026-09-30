@@ -18,7 +18,9 @@ The UI layer of an Allternit Plugin is the open MCP Apps standard. An app built 
 
 ## If your View uses `window.openai`
 
-`window.openai` is specific to ChatGPT. It does not exist in Allternit. Replace each use with the standard method below, and feature-detect `window.openai` only if you still target ChatGPT's older APIs.
+`window.openai` is specific to ChatGPT. Allternit provides a compatibility shim for it: when your View is served as `text/html+skybridge`, or your tool or resource `_meta` carries any `openai/*` key (or `allternit/openaiCompat: true`), Allternit injects `window.openai` and maps it onto the standard bridge, so the View runs unchanged. Views that use the standard bridge or the `App` class get no shim and need none.
+
+The table shows what each member maps to. Moving to the standard method is still the better long-term choice, because it runs in every MCP Apps host.
 
 | `window.openai` | Standard / Allternit replacement |
 |-----------------|----------------------------------|
@@ -34,11 +36,11 @@ The UI layer of an Allternit Plugin is the open MCP Apps standard. An app built 
 | `theme` | `hostContext.theme` and `hostContext.styles.variables`. |
 | `displayMode`, `maxHeight` | `hostContext.displayMode` and `hostContext.containerDimensions`. |
 | `locale`, `userAgent` | `hostContext.locale` and `hostContext.userAgent`. |
-| `widgetState`, `setWidgetState()` | No equivalent. The View has no storage. Keep durable state on your server behind an app-only tool, and use `ui/update-model-context` for what the model should know. |
-| `requestModal()` | No equivalent. Use fullscreen display mode. |
-| `uploadFile()`, `getFileDownloadUrl()` | Not supported. |
-| `requestCheckout()` | `x-allternit/requestCheckout`. A [preview](/plugins/guides/selling). |
-| Safe-area insets | Not sent by the host. Use normal page padding. |
+| `widgetState`, `setWidgetState()` | Through the shim: the host keeps the state per message and restores it on the next render (256 KB limit), and sends it to the model with `ui/update-model-context`. Without the shim there is no View storage; keep durable state on your server. |
+| `requestModal()` | Not defined by the shim, so feature-detect it. Use fullscreen display mode. |
+| `uploadFile()`, `selectFiles()`, `getFileDownloadUrl()` | Not defined by the shim. |
+| `requestCheckout()` | Not defined by the shim. Use `x-allternit/requestCheckout`, a [preview](/plugins/guides/selling). |
+| `safeArea` | Filled from `hostContext.safeAreaInsets` when the host sends it, otherwise zeros. |
 
 To save a result or start an agent task, which the standard does not cover, use the optional [`window.allternit` extensions](/plugins/reference/window-allternit).
 
@@ -63,8 +65,8 @@ const host = {
 
 ## Server-side changes
 
-- **MIME type.** Allternit renders `text/html;profile=mcp-app` (and plain `text/html`). If your server uses ChatGPT's older Apps SDK type `text/html+skybridge`, serve the standard type to Allternit.
-- **Tool metadata.** Allternit reads `_meta.ui.resourceUri`, the flat `_meta["ui/resourceUri"]`, and the older `_meta["openai/outputTemplate"]` to find a View. Other `openai/*` keys are not read.
+- **MIME type.** Allternit renders `text/html;profile=mcp-app`, plain `text/html`, and ChatGPT's older Apps SDK type `text/html+skybridge` (which also turns on the `window.openai` shim).
+- **Tool metadata.** Allternit reads `_meta.ui.resourceUri`, the flat `_meta["ui/resourceUri"]`, and the older `_meta["openai/outputTemplate"]` to find a View. When a resource has no `_meta.ui`, `openai/widgetCSP`, `openai/widgetDomain` and `openai/widgetPrefersBorder` are read in its place. Other `openai/*` keys are not read.
 - **Auth.** Allternit sends `resource` and PKCE but no `scope` parameter. See [Authentication](/plugins/develop/authentication).
 
 ## Where Allternit differs

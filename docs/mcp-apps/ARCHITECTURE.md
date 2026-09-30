@@ -59,6 +59,21 @@ one MCP server entry: this proxy.
   `_meta.ui.visibility` omits `"model"` are dropped. `_meta["allternit/connector"] = {id, name}` is added to each tool.
   Each connector has a 25 s timeout; a slow or failing connector is skipped.
 - **Reads.** `resources/read` serves only `ui://` resources a listed tool declared.
+- **Permission gate (model-initiated calls).** An install's permission mode (`mcp_app_installs`: `always_ask`,
+  `ask_before_changes` (default), `ask_before_important_changes`) applies to the model's calls as well as a View's, with the
+  web host's rules (`requiresConfirmation` / `isImportantTool` in `install-permission.ts`), using the annotations from the
+  connector's own `tools/list`. No install, an unknown mode string or missing annotations fall to the stricter side
+  (default mode; not read-only = a change). `tools/list` sets `_meta["allternit/requiresConfirmation"]` (true/false) on every
+  tool, overwriting whatever the connector sent. `tools/call` on a marked tool answers `confirmation_required` unless
+  `params._meta["allternit/approved"] === true`; the flag is not forwarded to the connector. gizzi (`McpUserProxy.gate`)
+  asks the user through its ordinary permission system, permission class `mcp_app` (in `PermissionNext.ALWAYS_ASK`: asked in
+  every mode including yolo/bypass, never remembered by "always"), showing app name, tool title and arguments (cut at 1000
+  characters with an "N more characters not shown" marker), and adds the flag to that one call only after approval; a
+  refusal is the tool error "The user declined this tool call". Why the flag is enough: the request is already authorised by
+  the proxy token, which is HMAC-bound to {user, session} and lives only in the gizzi process's memory for the turn — not in
+  the model's context, env or stored messages — and the flag travels in JSON-RPC `_meta`, which the model does not write (it
+  supplies `arguments` only; an approval placed in `arguments` is ignored). The mode is read per request, so changing an
+  install takes effect on the next call.
 - gizzi hides app-only tools from the model as well (`MCP.toolCatalog()`), and the proxy entry is listed but never written to shared MCP state.
 
 ## `mcp_app` frames
@@ -108,5 +123,5 @@ opens sealed values and passes legacy unprefixed plaintext through. Expired acce
 ## Not done
 
 - Nothing syncs `mcp_connectors` into a gizzi `Config.mcp`; the proxy is the only path.
-- No live end-to-end run of the proxy against a real gizzi process; both sides are tested against fakes.
+- No live end-to-end run of the proxy against a real gizzi process; both sides are tested against fakes. That includes the model-call gate: the approval card is raised through gizzi's existing permission events, but no live Allternit chat UI run has shown it.
 - The Agents MCP App has not been rendered in a real third-party host.

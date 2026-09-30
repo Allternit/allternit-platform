@@ -47,6 +47,10 @@ export interface DeclarativeChatConfig {
   sampleThreadId?: string;
   completion?: CompletionOptions; // injectable clock/sleep for tests
   heartbeatIntervalMs?: number; // D11 default 15000
+  // Before judging sign-in on a fresh page: how long to wait for the app to
+  // draw a decisive marker (signed in, a check, or logged out). Single-page
+  // apps (Kimi) render the signed-in UI after domcontentloaded. Default 8000.
+  authSettleMs?: number;
   stallTimeoutS?: number; // §A8 default 90 for chat
   submitFallbackEnter?: boolean; // pack hint for submit()
   // How long to wait after Send for the provider to show it took the prompt
@@ -140,6 +144,22 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
       this.manifest.capabilities[0]?.pool_id ??
       "unknown";
 
+    // Let a single-page app draw before judging: stop as soon as the page is
+    // signed in, shows a check, or shows its logged-out marker.
+    const settleUntil = now() + (cfg.authSettleMs ?? 8000);
+    for (;;) {
+      const decisive = [this.manifest.auth.logged_in_probe, "challenge", "logged_out_probe"];
+      let found = false;
+      for (const key of decisive) {
+        if (await resolver.tryResolveLocator(key).catch(() => null)) {
+          found = true;
+          break;
+        }
+      }
+      if (found || now() >= settleUntil) break;
+      await sleep(250);
+    }
+
     // §A5/Critical #5 — a challenge interstitial halts immediately, never retried.
     if (await resolver.tryResolveLocator("challenge")) {
       yield {
@@ -160,12 +180,15 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
 
     const classifier = createBannerClassifier(cfg.banners);
     const seenQuotaKinds = new Set<string>();
+    // Set when a notice that blocks sending is on screen (see BannerPattern).
+    let sendBlockedBy: string | null = null;
     const scanBanners = async (): Promise<AdapterEvent[]> => {
       const out: AdapterEvent[] = [];
       const bannerLoc = await resolver.tryResolveLocator("banner");
       if (!bannerLoc) return out;
       for (const el of await bannerLoc.all()) {
         const hit = classifier.classify(await el.innerText());
+        if (hit?.blocksSend && sendBlockedBy === null) sendBlockedBy = hit.raw_excerpt;
         if (hit && !seenQuotaKinds.has(hit.kind)) {
           seenQuotaKinds.add(hit.kind);
           out.push({
@@ -182,7 +205,13 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
       }
       return out;
     };
+    // A limit notice already on screen: the provider won't take the message.
+    // Stop before typing anything, so routing can fall back to another login.
     yield* await scanBanners();
+    if (sendBlockedBy !== null) {
+      yield { t: "error", error: limitReachedError(sendBlockedBy) };
+      return;
+    }
 
     // Replies already on the page (chat.continue): live text streams only
     // once a new one appears, never the previous turn.
@@ -487,6 +516,20 @@ export async function confirmSend(
 async function countKey(resolver: SdkSelectorResolver, key: string): Promise<number> {
   const loc = await resolver.tryResolveLocator(key);
   return loc ? loc.count() : 0;
+}
+
+// The account is at its usage limit (seen before sending): nothing was sent.
+export function limitReachedError(excerpt: string): TaskError {
+  return {
+    class: "quota_exhausted",
+    scope: "pool",
+    retryable: true,
+    fallback_eligible: true,
+    cooldown_s: null,
+    user_action: null,
+    detail: `usage limit reached before sending: ${excerpt}`.slice(0, 300),
+    evidence_ref: null,
+  };
 }
 
 export function composerDriftError(detail: string): TaskError {

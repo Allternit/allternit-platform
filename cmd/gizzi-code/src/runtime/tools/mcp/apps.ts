@@ -78,6 +78,10 @@ export function mcpAppMetadata(
 
 /** `_meta` key the per-user proxy adds to each tool: `{ id, name }` of the owning connector. */
 export const MCP_CONNECTOR_META_KEY = "allternit/connector"
+/** `_meta` on a proxied tool: the user must approve each call (set by allternit-api from the install's permission mode). */
+export const MCP_REQUIRES_CONFIRMATION_META_KEY = "allternit/requiresConfirmation"
+/** `_meta` on a proxied `tools/call`: the user approved this call. Sent only after gizzi's permission ask. */
+export const MCP_APPROVED_META = "allternit/approved"
 
 const ALLOW_DIRECTIVES: Array<[string, string]> = [
   ["camera", "camera"],
@@ -91,11 +95,20 @@ export function mcpAllowAttribute(permissions: unknown): string {
   return ALLOW_DIRECTIVES.filter(([key]) => isRecord(permissions[key])).map(([, d]) => d).join("; ")
 }
 
+/** ChatGPT Apps SDK's original View MIME type; accepted as an MCP App View. */
+const SKYBRIDGE_MIME_TYPE = "text/html+skybridge"
+
+function hasOpenAiMeta(meta: unknown): boolean {
+  return isRecord(meta) && Object.keys(meta).some((k) => k.startsWith("openai/") || k === "allternit/openaiCompat")
+}
+
 /** The HTML of a `resources/read` result and its `_meta.ui` (content-level first, then result-level). */
 export function mcpAppHtml(result: unknown): { html: string; ui: Record<string, unknown> } | undefined {
   if (!isRecord(result) || !Array.isArray(result.contents)) return undefined
   const item = result.contents.find(
-    (c) => isRecord(c) && (c.mimeType === MCP_APP_RESOURCE_MIME_TYPE || c.mimeType === "text/html"),
+    (c) =>
+      isRecord(c) &&
+      (c.mimeType === MCP_APP_RESOURCE_MIME_TYPE || c.mimeType === "text/html" || c.mimeType === SKYBRIDGE_MIME_TYPE),
   ) as Record<string, unknown> | undefined
   if (!item) return undefined
   let html: string | undefined
@@ -105,7 +118,20 @@ export function mcpAppHtml(result: unknown): { html: string; ui: Record<string, 
   const ui = [item._meta, result._meta]
     .map((m) => (isRecord(m) ? (m.ui ?? m[MCP_APPS_EXTENSION_ID]) : undefined))
     .find(isRecord)
-  return { html, ui: (ui as Record<string, unknown>) ?? {} }
+  // A View written for ChatGPT (skybridge MIME or openai/* metadata): accepted, and marked so
+  // the host injects its window.openai shim. openai/* resource keys stand in when there is no _meta.ui.
+  const openaiMeta = [item._meta, result._meta].find(hasOpenAiMeta) as Record<string, unknown> | undefined
+  const compat = item.mimeType === SKYBRIDGE_MIME_TYPE || openaiMeta !== undefined
+  let out: Record<string, unknown> = (ui as Record<string, unknown>) ?? {}
+  if (!ui && openaiMeta) {
+    out = {}
+    if (isRecord(openaiMeta["openai/widgetCSP"])) out.csp = openaiMeta["openai/widgetCSP"]
+    if (typeof openaiMeta["openai/widgetDomain"] === "string") out.domain = openaiMeta["openai/widgetDomain"]
+    if (typeof openaiMeta["openai/widgetPrefersBorder"] === "boolean")
+      out.prefersBorder = openaiMeta["openai/widgetPrefersBorder"]
+  }
+  if (compat) out = { ...out, openaiCompat: true }
+  return { html, ui: out }
 }
 
 function camelCsp(ui: Record<string, unknown>): Record<string, unknown> | undefined {
@@ -169,5 +195,6 @@ export function buildMcpAppFrame(args: {
   if (csp) frame.csp = csp
   if (permissions) frame.permissions = permissions
   if (str(ui.domain)) frame.domain = ui.domain
+  if (ui.openaiCompat === true || hasOpenAiMeta(tool._meta)) frame.openaiCompat = true
   return frame
 }

@@ -27,7 +27,14 @@ import { withBundledMcpServers } from "@/runtime/tools/mcp/bundled"
 import { createHash } from "crypto"
 import { buildMcpToolName } from "@/runtime/services/mcp/mcpStringUtils"
 import { RuntimeTelemetry } from "@/runtime/telemetry"
-import { MCP_APPS_CLIENT_CAPABILITIES, isVisibleToModel, mcpAppResourceUri } from "@/runtime/tools/mcp/apps"
+import {
+  MCP_APPROVED_META,
+  MCP_APPS_CLIENT_CAPABILITIES,
+  MCP_CONNECTOR_META_KEY,
+  isVisibleToModel,
+  mcpAppResourceUri,
+} from "@/runtime/tools/mcp/apps"
+import { McpUserProxy } from "@/runtime/tools/mcp/user-proxy"
 
 export namespace MCP {
   const log = Log.create({ service: "mcp" })
@@ -128,11 +135,15 @@ export namespace MCP {
     return dynamicTool({
       description: mcpTool.description ?? "",
       inputSchema: jsonSchema(schema),
-      execute: async (args: unknown) => {
+      execute: async (args: unknown, options?: { toolCallId?: string }) => {
+        // Proxy tools marked "requires confirmation" run only with the user's approval, recorded by
+        // the permission ask that precedes this call; the proxy checks the flag.
+        const approved = McpUserProxy.requiresConfirmation(mcpTool) && McpUserProxy.consumeApproval(options?.toolCallId)
         return client.callTool(
           {
             name: mcpTool.name,
             arguments: (args || {}) as Record<string, unknown>,
+            ...(approved ? { _meta: { [MCP_APPROVED_META]: true } } : {}),
           },
           CallToolResultSchema,
           {
@@ -607,6 +618,11 @@ export namespace MCP {
     collision: boolean
     /** MCP Apps: the tool's `_meta.ui.resourceUri`, when it renders a ui:// resource. */
     uiResourceUri?: string
+    /** The per-user proxy marked this tool: each model call needs the user's approval. */
+    requiresConfirmation?: boolean
+    /** Display name of the connector/app the tool belongs to (proxy tools). */
+    appName?: string
+    title?: string
   }
 
   /**
@@ -672,6 +688,9 @@ export namespace MCP {
           ...incoming,
           collision: Boolean(existing),
           uiResourceUri: mcpAppResourceUri(mcpTool),
+          requiresConfirmation: McpUserProxy.requiresConfirmation(mcpTool),
+          appName: ((mcpTool._meta as Record<string, any> | undefined)?.[MCP_CONNECTOR_META_KEY] as { name?: string } | undefined)?.name,
+          title: mcpTool.title ?? (mcpTool.annotations as { title?: string } | undefined)?.title,
         }
       }
     }

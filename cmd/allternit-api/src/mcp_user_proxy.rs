@@ -8,6 +8,20 @@
 //! of the user's enabled connectors' tools, namespaced `<connector>__<tool>`;
 //! `tools/call` is routed to the owning connector with its stored credentials.
 //!
+//! Permission gate: an installed MCP App has a permission mode (`mcp_app_installs`,
+//! `always_ask` | `ask_before_changes` | `ask_before_important_changes`; default
+//! `ask_before_changes`), the same rules the web host applies to View-initiated
+//! calls. `tools/list` marks each tool that needs the user's confirmation under its
+//! connector's mode with `_meta["allternit/requiresConfirmation"] = true`, and
+//! `tools/call` refuses such a tool (`confirmation_required`) unless the request
+//! carries `params._meta["allternit/approved"] = true`. gizzi sets that flag only
+//! after the user approved that call through its permission flow. The flag is
+//! sufficient proof because the proxy token that authorises the request is
+//! HMAC-bound to {user, session}, is held only in the gizzi process's memory for
+//! the turn (never in the model's context, env or stored messages), and the flag
+//! lives in JSON-RPC `_meta` — a channel the model does not write; it only
+//! supplies `arguments`. The flag is never forwarded to the connector.
+//!
 //! The proxy token is an HMAC-signed `{uid, sid, exp}` — never the user's Clerk
 //! token — and is honoured only together with a matching `X-Allternit-Session`
 //! header. Connector credentials, the proxy token and tool arguments are never
@@ -41,6 +55,10 @@ pub const PROXY_SERVER_NAME: &str = "allternit-connectors";
 /// Header gizzi sends with the session the token was minted for.
 /// `_meta` key carrying `{id, name}` of the connector a proxied tool belongs to.
 pub const CONNECTOR_META_KEY: &str = "allternit/connector";
+/// `_meta` key on a listed tool: the user must approve each call under the install's mode.
+pub const REQUIRES_CONFIRMATION_META_KEY: &str = "allternit/requiresConfirmation";
+/// `_meta` key on a `tools/call` request: the user approved this call.
+pub const APPROVED_META_KEY: &str = "allternit/approved";
 pub const SESSION_HEADER: &str = "x-allternit-session";
 /// Upper bound on a proxy token's life (the task's ≤ 15 minutes).
 pub const TOKEN_TTL_SECS: i64 = 15 * 60;
@@ -312,7 +330,8 @@ async fn handle_rpc(state: &Arc<AppState>, claims: &ProxyClaims, body: &Value, a
         "ping" => (rpc_result(&id, json!({})), None, "ok"),
         "tools/list" => {
             let connectors = load_user_connectors(state, &claims.user_id, allow_private).await;
-            (rpc_result(&id, list_tools(&connectors, allow_private).await), None, "ok")
+            let modes = load_install_modes(state, &claims.user_id).await;
+            (rpc_result(&id, list_tools(&connectors, &modes, allow_private).await), None, "ok")
         }
         "tools/call" => {
             let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
@@ -321,8 +340,10 @@ async fn handle_rpc(state: &Arc<AppState>, claims: &ProxyClaims, body: &Value, a
                 Some(v @ Value::Object(_)) => v.clone(),
                 Some(_) => return Some(rpc_error(&id, -32602, "arguments must be an object", None)),
             };
+            let approved = params["_meta"][APPROVED_META_KEY] == json!(true);
             let connectors = load_user_connectors(state, &claims.user_id, allow_private).await;
-            let result = call_tool(&connectors, &name, arguments, allow_private).await;
+            let modes = load_install_modes(state, &claims.user_id).await;
+            let result = call_tool(&connectors, &modes, &name, arguments, approved, allow_private).await;
             let outcome = if result.is_ok() { "ok" } else { "error" };
             let payload = match result {
                 Ok(v) => rpc_result(&id, v),
@@ -370,6 +391,71 @@ fn initialize_result(params: &Value) -> Value {
     })
 }
 
+// ─── permission modes ────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PermissionMode {
+    AlwaysAsk,
+    AskBeforeChanges,
+    AskBeforeImportantChanges,
+}
+
+impl PermissionMode {
+    /// Unknown strings fall back to the default, never to a looser mode.
+    fn parse(s: &str) -> Self {
+        match s {
+            "always_ask" => Self::AlwaysAsk,
+            "ask_before_important_changes" => Self::AskBeforeImportantChanges,
+            _ => Self::AskBeforeChanges,
+        }
+    }
+}
+
+/// Destructive, or reaches the open world without being read-only.
+/// Mirrors the web host's `isImportantTool`.
+fn is_important_tool(tool: &Value) -> bool {
+    let a = &tool["annotations"];
+    a["destructiveHint"] == json!(true) || (a["readOnlyHint"] != json!(true) && a["openWorldHint"] == json!(true))
+}
+
+/// Mirrors the web host's `requiresConfirmation`. Missing annotations mean "not
+/// read-only", i.e. a change.
+fn requires_confirmation(mode: PermissionMode, tool: &Value) -> bool {
+    let read_only = tool["annotations"]["readOnlyHint"] == json!(true);
+    match mode {
+        PermissionMode::AlwaysAsk => true,
+        PermissionMode::AskBeforeChanges => !read_only,
+        PermissionMode::AskBeforeImportantChanges => !read_only && is_important_tool(tool),
+    }
+}
+
+/// Permission mode per connector id for `user_id`'s installs. When a connector has
+/// several installs the newest wins (the order the web host reads them in). A
+/// connector with no install, or an unreadable table, gets the default mode.
+async fn load_install_modes(state: &Arc<AppState>, user_id: &str) -> std::collections::HashMap<String, PermissionMode> {
+    let db = state.db.clone();
+    let uid = user_id.to_string();
+    let loaded = tokio::task::spawn_blocking(move || {
+        let conn = db.connect().map_err(|e| e.to_string())?;
+        crate::mcp_directory_routes::list_installs(&conn, &uid).map_err(|_| "list_installs failed".to_string())
+    })
+    .await;
+    let mut modes = std::collections::HashMap::new();
+    match loaded {
+        Ok(Ok(installs)) => {
+            for i in installs {
+                modes.entry(i.connector_id).or_insert_with(|| PermissionMode::parse(&i.permission_mode));
+            }
+        }
+        _ => warn!("mcp user proxy: could not load app installs; default permission mode applies"),
+    }
+    modes
+}
+
+fn mode_for(modes: &std::collections::HashMap<String, PermissionMode>, connector: &Connector) -> PermissionMode {
+    modes.get(&connector.id).copied().unwrap_or(PermissionMode::AskBeforeChanges)
+}
+
 // ─── tools ───────────────────────────────────────────────────────────────────
 
 async fn with_session<T, F, Fut>(connector: &Connector, allow_private: bool, f: F) -> Result<T, AppsError>
@@ -385,7 +471,11 @@ where
 
 /// Union of the connectors' model-visible tools, namespaced. A connector that
 /// cannot be reached or whose credentials are dead contributes nothing.
-async fn list_tools(connectors: &[Connector], allow_private: bool) -> Value {
+async fn list_tools(
+    connectors: &[Connector],
+    modes: &std::collections::HashMap<String, PermissionMode>,
+    allow_private: bool,
+) -> Value {
     let prefixes = connector_prefixes(connectors);
     let listed = futures::future::join_all(connectors.iter().map(|connector| async move {
         let work = with_session(connector, allow_private, |client| async move {
@@ -409,6 +499,8 @@ async fn list_tools(connectors: &[Connector], allow_private: bool) -> Value {
                         tool["_meta"] = json!({});
                     }
                     tool["_meta"][CONNECTOR_META_KEY] = json!({ "id": connector.id, "name": connector.name });
+                    // Always written, so a connector cannot pre-set it to hide a required prompt.
+                    tool["_meta"][REQUIRES_CONFIRMATION_META_KEY] = json!(requires_confirmation(mode_for(modes, connector), &tool));
                     tools.push(tool);
                 }
             }
@@ -421,14 +513,17 @@ async fn list_tools(connectors: &[Connector], allow_private: bool) -> Value {
 
 async fn call_tool(
     connectors: &[Connector],
+    modes: &std::collections::HashMap<String, PermissionMode>,
     namespaced_name: &str,
     arguments: Value,
+    approved: bool,
     allow_private: bool,
 ) -> Result<Value, AppsError> {
     let (connector, tool_name) = resolve_namespaced(connectors, namespaced_name).ok_or_else(|| {
         AppsError::new(StatusCode::NOT_FOUND, "tool_not_found", format!("unknown tool '{namespaced_name}'"))
     })?;
     let tool_name = tool_name.to_string();
+    let mode = mode_for(modes, connector);
     with_session(connector, allow_private, |client| async move {
         let result = async {
             // Visibility is only knowable from the connector's own list: app-only
@@ -445,6 +540,13 @@ async fn call_tool(
                     StatusCode::FORBIDDEN,
                     "tool_not_visible_to_model",
                     format!("tool '{tool_name}' is not callable by the model"),
+                ));
+            }
+            if !approved && requires_confirmation(mode, tool) {
+                return Err(AppsError::new(
+                    StatusCode::FORBIDDEN,
+                    "confirmation_required",
+                    format!("tool '{tool_name}' needs the user's approval for this call"),
                 ));
             }
             client
@@ -645,6 +747,134 @@ mod e2e {
         assert_eq!(show["inputSchema"]["properties"]["range"]["type"], "string");
     }
 
+    fn install(state: &Arc<AppState>, user: &str, connector: &str, mode: &str) {
+        let conn = state.db.connect().unwrap();
+        crate::mcp_directory_routes::put_install(&conn, user, &format!("app-{connector}"), connector, Some(mode)).unwrap();
+    }
+
+    fn confirm_flags(list: &Value) -> std::collections::BTreeMap<String, bool> {
+        list["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| (t["name"].as_str().unwrap().to_string(), t["_meta"][REQUIRES_CONFIRMATION_META_KEY] == json!(true)))
+            .collect()
+    }
+
+    fn approved(name: &str, args: Value) -> Value {
+        json!({ "name": name, "arguments": args, "_meta": { APPROVED_META_KEY: true } })
+    }
+
+    #[test]
+    fn confirmation_rules_mirror_the_web_host() {
+        use PermissionMode::*;
+        let t = |a: Value| json!({ "name": "t", "annotations": a });
+        let read_only = t(json!({ "readOnlyHint": true }));
+        let read_only_open = t(json!({ "readOnlyHint": true, "openWorldHint": true }));
+        let destructive = t(json!({ "destructiveHint": true }));
+        let open_world = t(json!({ "openWorldHint": true }));
+        let plain_change = t(json!({ "readOnlyHint": false }));
+        let none = json!({ "name": "t" });
+        // (tool, always_ask, ask_before_changes, ask_before_important_changes)
+        for (tool, always, changes, important) in [
+            (&read_only, true, false, false),
+            (&read_only_open, true, false, false),
+            (&destructive, true, true, true),
+            (&open_world, true, true, true),
+            (&plain_change, true, true, false),
+            // no annotations at all: a change, but not known to be important
+            (&none, true, true, false),
+        ] {
+            assert_eq!(requires_confirmation(AlwaysAsk, tool), always, "always_ask {tool}");
+            assert_eq!(requires_confirmation(AskBeforeChanges, tool), changes, "ask_before_changes {tool}");
+            assert_eq!(requires_confirmation(AskBeforeImportantChanges, tool), important, "important {tool}");
+        }
+        assert_eq!(PermissionMode::parse("garbage"), AskBeforeChanges);
+        assert_eq!(PermissionMode::parse("always_ask"), AlwaysAsk);
+    }
+
+    #[tokio::test]
+    async fn tools_list_marks_confirmation_per_install_mode() {
+        let (state, _server, _) = fixture().await;
+        // Fixture tools: show_dashboard (no annotations), model_only (read-only), plain (destructive).
+        let flags = |m| async move { confirm_flags(&m) };
+        // No install: default mode (ask_before_changes).
+        let list = rpc(&state, "user-1", "tools/list", json!({})).await;
+        let f = flags(list).await;
+        assert_eq!(f["dash-server__show_dashboard"], true);
+        assert_eq!(f["dash-server__model_only"], false);
+        assert_eq!(f["dash-server__plain"], true);
+
+        install(&state, "user-1", "conn-1", "always_ask");
+        let f = flags(rpc(&state, "user-1", "tools/list", json!({})).await).await;
+        assert!(f.values().all(|v| *v), "always_ask marks every tool: {f:?}");
+
+        install(&state, "user-1", "conn-1", "ask_before_important_changes");
+        let f = flags(rpc(&state, "user-1", "tools/list", json!({})).await).await;
+        assert_eq!(f["dash-server__show_dashboard"], false);
+        assert_eq!(f["dash-server__model_only"], false);
+        assert_eq!(f["dash-server__plain"], true);
+    }
+
+    #[tokio::test]
+    async fn marked_tools_are_refused_without_approval_and_run_with_it() {
+        let (state, server, _) = fixture().await;
+        let name = "dash-server__show_dashboard";
+        let refused = rpc(&state, "user-1", "tools/call", json!({ "name": name, "arguments": {} })).await;
+        assert_eq!(refused["error"]["data"]["code"], "confirmation_required");
+        assert!(refused.get("result").is_none());
+        // Only a literal `true` counts.
+        for bogus in [json!("true"), json!(1), json!({})] {
+            let r = rpc(&state, "user-1", "tools/call", json!({ "name": name, "_meta": { APPROVED_META_KEY: bogus } })).await;
+            assert_eq!(r["error"]["data"]["code"], "confirmation_required");
+        }
+        // An approval smuggled into `arguments` (all the model controls) is not proof.
+        let r = rpc(&state, "user-1", "tools/call", json!({ "name": name, "arguments": { APPROVED_META_KEY: true } })).await;
+        assert_eq!(r["error"]["data"]["code"], "confirmation_required");
+
+        let ok = rpc(&state, "user-1", "tools/call", approved(name, json!({ "range": "7d" }))).await;
+        assert_eq!(ok["result"]["structuredContent"]["tool"], "show_dashboard");
+        // Only the approved call reached the connector.
+        assert_eq!(server.called_tools(), ["show_dashboard"]);
+
+        // A read-only tool never needed approval under the default mode.
+        let ro = rpc(&state, "user-1", "tools/call", json!({ "name": "dash-server__model_only" })).await;
+        assert!(ro.get("result").is_some(), "{ro}");
+
+        // always_ask gates even the read-only tool; important-changes lets the plain change through.
+        install(&state, "user-1", "conn-1", "always_ask");
+        let gated = rpc(&state, "user-1", "tools/call", json!({ "name": "dash-server__model_only" })).await;
+        assert_eq!(gated["error"]["data"]["code"], "confirmation_required");
+        install(&state, "user-1", "conn-1", "ask_before_important_changes");
+        let free = rpc(&state, "user-1", "tools/call", json!({ "name": name })).await;
+        assert!(free.get("result").is_some(), "{free}");
+        let destructive = rpc(&state, "user-1", "tools/call", json!({ "name": "dash-server__plain" })).await;
+        assert_eq!(destructive["error"]["data"]["code"], "confirmation_required");
+    }
+
+    #[tokio::test]
+    async fn install_modes_do_not_cross_users() {
+        let (state, _server, url) = fixture().await;
+        {
+            let conn = state.db.connect().unwrap();
+            conn.execute(
+                "INSERT INTO mcp_connectors (id, user_id, name, name_id, url, enabled) VALUES ('conn-2', 'user-2', 'Theirs', 'dash-server', ?1, 1)",
+                params![url],
+            )
+            .unwrap();
+        }
+        // user-1 loosening their own install changes nothing for user-2.
+        install(&state, "user-1", "conn-1", "ask_before_important_changes");
+        let list = rpc(&state, "user-2", "tools/list", json!({})).await;
+        // (user-2's connector has no stored credential, so it may list nothing; if it lists, it is default-gated.)
+        for (_, flagged) in confirm_flags(&list).iter().filter(|(n, _)| !n.ends_with("model_only")) {
+            assert!(*flagged);
+        }
+        // user-2 cannot ride user-1's approval or mode to reach user-1's connector.
+        let crossed = rpc(&state, "user-2", "tools/call", approved("dash-server__show_dashboard", json!({}))).await;
+        assert_ne!(crossed["result"]["structuredContent"]["tool"], "show_dashboard");
+    }
+
     #[tokio::test]
     async fn end_to_end_call_through_the_proxy_yields_an_mcp_app_frame() {
         let (state, server, _) = fixture().await;
@@ -652,7 +882,7 @@ mod e2e {
             &state,
             "user-1",
             "tools/call",
-            json!({ "name": "dash-server__show_dashboard", "arguments": { "range": "7d" } }),
+            approved("dash-server__show_dashboard", json!({ "range": "7d" })),
         )
         .await;
         assert_eq!(called["result"]["structuredContent"]["rows"], json!([1, 2, 3]));
@@ -1011,7 +1241,7 @@ mod e2e {
         }
         let list = rpc(&state, "user-1", "tools/list", json!({})).await;
         assert_eq!(tool_names(&list), ["legacy__echo"], "{list}");
-        let called = rpc(&state, "user-1", "tools/call", json!({ "name": "legacy__echo" })).await;
+        let called = rpc(&state, "user-1", "tools/call", approved("legacy__echo", json!({}))).await;
         assert_eq!(called["result"]["content"][0]["text"], "legacy echo", "{called}");
         // the fallback carried the connector's own token
         let seen = log.lock().unwrap().clone();
