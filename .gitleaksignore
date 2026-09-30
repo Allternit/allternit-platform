@@ -1,2 +1,6 @@
 2e3787182756769d09f03dd7fb075341add11cce:vendor/harnessrouter-ce/gateway/tests/test_media_attack.py:generic-api-key:612
 01bae1819691261a978918ef8f26865062c792e7:cmd/gizzi-code/src/constants/allternit-auth.ts:generic-api-key:12
+5cf6f2eb60caf7ab1a281f1b58f624836dc4fe79:commrails/src/receipts/store.rs:generic-api-key:373
+821a5254d765fd52330bcf1bcbd8e8188bdb8dce:tools/system-one-local/test/hook.test.ts:stripe-access-token:146
+821a5254d765fd52330bcf1bcbd8e8188bdb8dce:tools/system-one-local/test/hook.test.ts:stripe-access-token:150
+821a5254d765fd52330bcf1bcbd8e8188bdb8dce:tools/system-one-local/test/hook.test.ts:curl-auth-header:146
