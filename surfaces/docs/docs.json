@@ -434,6 +434,7 @@
             "group": "Apps SDK",
             "pages": [
               "plugins/sdk/overview",
+              "plugins/sdk/quickstart",
               "plugins/sdk/server",
               "plugins/sdk/bridge",
               "plugins/sdk/ui",
@@ -469,8 +470,7 @@
           {
             "group": "Reference",
             "pages": [
-              "plugins/reference/window-allternit",
-              "plugins/sdk/raw-mcp-quickstart"
+              "plugins/reference/window-allternit"
             ]
           }
         ]

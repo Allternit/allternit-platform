@@ -1,154 +1,298 @@
 ---
 title: 'Quickstart'
-description: 'Build a weather Mini app with the Allternit Apps SDK: a server, a View and a look pack, connected to Allternit in minutes'
+description: 'Build a weather MCP App with the open MCP SDK and ext-apps and connect it to Allternit'
 ---
 
-This quickstart builds a weather app with the [Apps SDK](/plugins/sdk/overview). One file defines three layers:
+This quickstart builds a weather MCP App directly with the open MCP packages. The [Apps SDK](/plugins/sdk/overview) (preview) will shorten this to one file. The server it builds has three parts:
 
-- **Server**: `get_temperature`, a data tool with no UI, and `show_weather`, a render tool.
-- **View**: a detail card from the view kit, shown in chat when `show_weather` runs.
-- **Look pack**: the design tokens the card reads.
+- `get_temperature`: a data tool with no UI.
+- `show_weather`: a render tool whose result is displayed in a View.
+- `ui://weather/card.html`: the View, served as an MCP resource.
 
-The SDK sits on the open MCP Apps standard. The app it builds is an ordinary MCP server, so it works in any host that supports MCP Apps. Prefer to write every line yourself? See [the same app without the SDK](/plugins/sdk/raw-mcp-quickstart).
+The server runs over streamable HTTP and is written in TypeScript with [`@modelcontextprotocol/sdk`](https://www.npmjs.com/package/@modelcontextprotocol/sdk) and [`@modelcontextprotocol/ext-apps`](https://www.npmjs.com/package/@modelcontextprotocol/ext-apps).
 
 <Note>
 This server has no authentication so the example stays short. A server that reads or changes user data must require OAuth. See [Authentication](/plugins/develop/authentication).
 </Note>
 
-## 1. Create the app
+## 1. Create the project
 
 ```bash
-npx create-allternit-app weather
-cd weather
-npm install
+mkdir weather-app && cd weather-app
+npm init -y
+npm pkg set type=module
+npm install @modelcontextprotocol/sdk @modelcontextprotocol/ext-apps zod
+npm install --save-dev tsx typescript
 ```
 
-The scaffold is five files. `server.ts` is the whole app.
+`"type": "module"` is required because the sample uses ES module imports.
 
-## 2. Read the server
+## 2. Write the server
+
+Save this as `server.ts`:
 
 ```ts server.ts
-import { appTool, defineApp, view, z } from "@allternit/apps-server";
+import { createServer } from "node:http";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import {
+  registerAppResource,
+  registerAppTool,
+  RESOURCE_MIME_TYPE,
+} from "@modelcontextprotocol/ext-apps/server";
+import { z } from "zod";
+
+const VIEW_URI = "ui://weather/card.html";
 
 const TEMPS: Record<string, number> = { london: 14, tokyo: 22, austin: 31 };
 
-const card = view({
-  uri: "ui://weather/card.html",
-  name: "Weather card",
-  kit: { tag: "allternit-detail", fields: { title: "city", labels: { temperatureC: "Temperature (°C)" } } },
-});
+// The View: one HTML document, no build step. It speaks the MCP Apps bridge
+// (JSON-RPC over postMessage) directly, so it has no dependencies.
+const VIEW_HTML = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { margin: 0; padding: 16px; font-family: system-ui, sans-serif;
+         background: var(--color-background-primary, #fff);
+         color: var(--color-text-primary, #1f1e1d); }
+  .card { border: 1px solid var(--color-border-secondary, #ddd); border-radius: 12px; padding: 16px; }
+  .temp { font-size: 40px; font-weight: 600; }
+  .muted { color: var(--color-text-secondary, #666); }
+</style>
+</head>
+<body>
+<div class="card">
+  <div id="city" class="muted">Waiting for data…</div>
+  <div id="temp" class="temp"></div>
+</div>
+<script>
+  let nextId = 1;
+  const pending = new Map();
 
-export default defineApp({
-  name: "Weather",
-  version: "0.1.0",
-  description: "Look up the current temperature for a city.",
-  tools: [
-    appTool({
-      name: "get_temperature",
+  function send(msg) { window.parent.postMessage({ jsonrpc: "2.0", ...msg }, "*"); }
+  function request(method, params) {
+    const id = nextId++;
+    return new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject });
+      send({ id, method, params });
+    });
+  }
+  function notify(method, params) { send({ method, params }); }
+
+  function applyTheme(ctx) {
+    const vars = (ctx && ctx.styles && ctx.styles.variables) || {};
+    for (const [k, v] of Object.entries(vars)) if (v) document.documentElement.style.setProperty(k, v);
+  }
+
+  function render(result) {
+    const data = result && result.structuredContent;
+    if (!data) return;
+    document.getElementById("city").textContent = data.city;
+    document.getElementById("temp").textContent = data.temperatureC + " °C";
+  }
+
+  function reportSize() {
+    notify("ui/notifications/size-changed", { height: document.documentElement.scrollHeight });
+  }
+
+  window.addEventListener("message", (event) => {
+    if (event.source !== window.parent) return;
+    const msg = event.data;
+    if (!msg || msg.jsonrpc !== "2.0") return;
+    if (msg.id !== undefined && (msg.result !== undefined || msg.error)) {
+      const p = pending.get(msg.id);
+      if (!p) return;
+      pending.delete(msg.id);
+      msg.error ? p.reject(new Error(msg.error.message)) : p.resolve(msg.result);
+    } else if (msg.method === "ui/notifications/tool-result") {
+      render(msg.params); reportSize();
+    } else if (msg.method === "ui/notifications/host-context-changed") {
+      applyTheme(msg.params);
+    } else if (msg.method === "ui/resource-teardown" && msg.id !== undefined) {
+      send({ id: msg.id, result: {} });
+    }
+  });
+
+  request("ui/initialize", {
+    protocolVersion: "2026-01-26",
+    appInfo: { name: "weather-card", version: "1.0.0" },
+    appCapabilities: {},
+  }).then((result) => {
+    applyTheme(result.hostContext);
+    notify("ui/notifications/initialized", {});
+    reportSize();
+  });
+</script>
+</body>
+</html>`;
+
+function buildServer(): McpServer {
+  const server = new McpServer(
+    { name: "weather-demo", version: "1.0.0" },
+    {
+      instructions:
+        "Look up the current temperature for a city. Use get_temperature to read data; " +
+        "use show_weather only when the user wants a weather card displayed.",
+    },
+  );
+
+  // Data tool: no UI, safe to call repeatedly.
+  server.registerTool(
+    "get_temperature",
+    {
       title: "Get temperature",
       description: "Get the current temperature in Celsius for london, tokyo or austin.",
-      input: { city: z.string().describe("City name, e.g. london") },
+      inputSchema: { city: z.string().describe("City name, e.g. london") },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-      handler: async ({ city }) => {
-        const t = TEMPS[city.toLowerCase()];
-        if (t === undefined) return { isError: true, content: [{ type: "text", text: `Unknown city: ${city}` }] };
-        return { content: [{ type: "text", text: `${city}: ${t} °C` }] };
-      },
-    }),
-    appTool({
-      name: "show_weather",
+    },
+    async ({ city }) => {
+      const t = TEMPS[city.toLowerCase()];
+      if (t === undefined) {
+        return { isError: true, content: [{ type: "text", text: `Unknown city: ${city}` }] };
+      }
+      return { content: [{ type: "text", text: `${city}: ${t} °C` }] };
+    },
+  );
+
+  // Render tool: its result is delivered to the View.
+  registerAppTool(
+    server,
+    "show_weather",
+    {
       title: "Show weather card",
       description: "Display a weather card for a city. Call only when the user wants to see it.",
-      input: { city: z.string() },
+      inputSchema: { city: z.string() },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-      view: card,
-      handler: async ({ city }) => {
-        const t = TEMPS[city.toLowerCase()];
-        if (t === undefined) return { isError: true, content: [{ type: "text", text: `Unknown city: ${city}` }] };
-        return {
-          content: [{ type: "text", text: `Showing weather for ${city}: ${t} °C` }],
-          structuredContent: { city, temperatureC: t },
-        };
-      },
-    }),
-  ],
-  views: [card],
-  lookPack: {
-    id: "weather",
-    name: "Weather",
-    tokens: {
-      color: {
-        $type: "color",
-        surface: { $value: "#ffffff" },
-        text: { $value: "#1f1e1d" },
-        brand: { $value: "#1f1e1d" },
-        "on-brand": { $value: "#ffffff" },
-      },
-      radius: { card: { $value: "12px" } },
+      _meta: { ui: { resourceUri: VIEW_URI } },
     },
-  },
+    async ({ city }) => {
+      const t = TEMPS[city.toLowerCase()];
+      if (t === undefined) {
+        return { isError: true, content: [{ type: "text", text: `Unknown city: ${city}` }] };
+      }
+      return {
+        content: [{ type: "text", text: `Showing weather for ${city}: ${t} °C` }],
+        structuredContent: { city, temperatureC: t },
+      };
+    },
+  );
+
+  // The ui:// resource that holds the View.
+  registerAppResource(
+    server,
+    "Weather card",
+    VIEW_URI,
+    { mimeType: RESOURCE_MIME_TYPE },
+    async () => ({
+      contents: [
+        {
+          uri: VIEW_URI,
+          mimeType: RESOURCE_MIME_TYPE,
+          text: VIEW_HTML,
+          // No network access needed, so declare no domains.
+          _meta: { ui: { csp: { connectDomains: [], resourceDomains: [] }, prefersBorder: true } },
+        },
+      ],
+    }),
+  );
+
+  return server;
+}
+
+// Streamable HTTP, stateless: a fresh server + transport per request.
+const http = createServer(async (req, res) => {
+  if (req.url !== "/mcp") {
+    res.writeHead(404).end();
+    return;
+  }
+  const server = buildServer();
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  res.on("close", () => {
+    void transport.close();
+    void server.close();
+  });
+  await server.connect(transport);
+  await transport.handleRequest(req, res);
 });
+
+const port = Number(process.env.PORT ?? 3000);
+http.listen(port, () => console.log(`MCP server listening on http://localhost:${port}/mcp`));
 ```
 
 Things to notice:
 
-- `appTool` will not build a tool unless you state `readOnlyHint` and `destructiveHint`. Permission prompts and directory review depend on them.
-- `view: card` ties `show_weather` to the View. The SDK sets `_meta.ui.resourceUri` (and the older flat key) for you.
-- The render tool returns `content` (text the model reads) and `structuredContent` (data the View reads).
-- The View has no network access. `view()` declares an empty CSP unless you add domains.
+- `registerAppTool` copies `_meta.ui.resourceUri` to the older flat key `_meta["ui/resourceUri"]`, so hosts that only read the older key still find the View.
+- The render tool returns both `content` (text the model reads) and `structuredContent` (data the View reads).
+- The View uses only the standard bridge: `ui/initialize`, `ui/notifications/initialized`, `ui/notifications/tool-result`, and `ui/notifications/size-changed`. It has no dependencies.
+- The resource declares an empty `csp`, so the View gets no network access. See [Build: MCP App UI](/plugins/develop/mcp-app-ui#content-security-policy).
 
 ## 3. Run it
 
 ```bash
-npx allternit dev
+npx tsx server.ts
+# MCP server listening on http://localhost:3000/mcp
 ```
 
-`allternit dev` starts the server on port 3000 and prints the MCP URL, the manifest URL and the command to add it as a connector.
+Check it with any MCP client. This script uses the SDK client to list the tools, call the render tool, and read the View:
 
-## 4. Test it
+```ts client.ts
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+
+const client = new Client({ name: "check", version: "1.0.0" });
+await client.connect(new StreamableHTTPClientTransport(new URL("http://localhost:3000/mcp")));
+
+const { tools } = await client.listTools();
+console.log(tools.map((t) => [t.name, t._meta]));
+
+console.log(await client.callTool({ name: "show_weather", arguments: { city: "Tokyo" } }));
+
+const view = await client.readResource({ uri: "ui://weather/card.html" });
+console.log(view.contents[0].mimeType); // text/html;profile=mcp-app
+
+await client.close();
+```
 
 ```bash
-npx allternit test
+npx tsx client.ts
 ```
 
-`allternit test` runs the same rules directory review runs (annotations, descriptions, CSP), then starts the server and checks what a real MCP client sees: the tools, the `ui://` resource and its MIME type. It exits non-zero on errors.
+You should see `show_weather` listed with `_meta.ui.resourceUri` set, a result whose `structuredContent` is `{ city: "Tokyo", temperatureC: 22 }`, and the MIME type `text/html;profile=mcp-app`.
 
-## 5. Make the server reachable and connect it
+## 4. Make the server reachable
 
-Allternit connects to your server from its own infrastructure, so the URL must be public and use `https`. Connector URLs that resolve to loopback, private, or link-local addresses are refused. During development, expose your local port through a tunnel.
+Allternit connects to your server from its own infrastructure, so the URL must be public and use `https`. Connector URLs that resolve to loopback, private, or link-local addresses are refused. During development, expose your local port through a tunnel and use the tunnel's `https` URL, for example `https://<your-tunnel-host>/mcp`.
 
-Then add the server as a connector. This request uses the [connector API](/tools/mcp#create-a-connector):
+<Tip>
+If you run your own Allternit API for development, set `ALLTERNIT_MCP_ALLOW_PRIVATE_CONNECTORS=1` on it to allow connectors that resolve to a local address.
+</Tip>
+
+## 5. Connect it in Allternit
+
+Add the server as a connector. This request uses the [connector API](/tools/mcp#create-a-connector):
 
 ```bash
 curl -X POST https://api.allternit.com/mcp/connectors \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <token>" \
   -d '{
-    "name": "Weather",
-    "name_id": "weather",
+    "name": "Weather demo",
+    "name_id": "weather-demo",
     "url": "https://<your-tunnel-host>/mcp",
     "type": "http"
   }'
 ```
 
-<Tip>
-If you run your own Allternit API for development, set `ALLTERNIT_MCP_ALLOW_PRIVATE_CONNECTORS=1` on it to allow connectors that resolve to a local address.
-</Tip>
-
 ## 6. See it render
 
-Start a chat and ask: "Show me the weather in Tokyo." The model calls `show_weather`, and the card appears in the conversation, styled by your look pack. If it does not, see [Troubleshooting](/plugins/guides/troubleshooting).
+Start a chat and ask: "Show me the weather in Tokyo." The model calls `show_weather`. When the call completes, Allternit reads `ui://weather/card.html`, loads it into the sandbox, and shows the card in the conversation. Change the theme between light and dark and the card follows, because the View applies the `styles.variables` the host sends.
 
-## 7. Package it
-
-```bash
-npx allternit package --url https://<your-host>/mcp
-```
-
-This writes `weather.zip` in the layout [Package your plugin](/plugins/publish/package) describes.
+If the card does not appear, see [Troubleshooting](/plugins/guides/troubleshooting).
 
 ## Next steps
 
-- Learn each package: [Overview](/plugins/sdk/overview), [Server](/plugins/sdk/server), [Bridge](/plugins/sdk/bridge), [View kit](/plugins/sdk/ui), [Look packs](/plugins/sdk/look-packs), [CLI](/plugins/sdk/cli).
 - Add OAuth: [Authentication](/plugins/develop/authentication).
-- Submit it: [Submit and review](/plugins/publish/submit-and-review).
+- Learn what the host sends and accepts: [Build: MCP server](/plugins/develop/mcp-server) and [Build: MCP App UI](/plugins/develop/mcp-app-ui).
+- Package and submit it: [Package your plugin](/plugins/publish/package).
