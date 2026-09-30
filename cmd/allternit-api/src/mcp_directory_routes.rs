@@ -119,8 +119,23 @@ impl IntoResponse for DirError {
 
 type Res<T> = Result<Json<T>, DirError>;
 
+/// Org whose admins review directory submissions (Allternit staff). Any user
+/// can create a Clerk org and be its admin, so an org role alone is not
+/// enough; unset means nobody can review (fail closed).
+const REVIEW_ORG_ENV: &str = "ALLTERNIT_DIRECTORY_REVIEW_ORG_ID";
+
+#[cfg(not(test))]
+fn review_org() -> Option<String> {
+    std::env::var(REVIEW_ORG_ENV).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+}
+
+#[cfg(test)]
+fn review_org() -> Option<String> {
+    Some(tests::TEST_REVIEW_ORG.to_string())
+}
+
 fn require_admin(user: &AuthUser) -> Result<(), DirError> {
-    if is_admin_role(user.organization_role.as_deref()) {
+    if is_admin(user) {
         Ok(())
     } else {
         Err(DirError::Forbidden)
@@ -128,7 +143,9 @@ fn require_admin(user: &AuthUser) -> Result<(), DirError> {
 }
 
 fn is_admin(user: &AuthUser) -> bool {
-    is_admin_role(user.organization_role.as_deref())
+    let Some(org) = review_org() else { return false };
+    user.organization_id.as_deref() == Some(org.as_str())
+        && is_admin_role(user.organization_role.as_deref().map(|r| r.strip_prefix("org:").unwrap_or(r)))
 }
 
 async fn blocking<T: Send + 'static>(
@@ -1081,6 +1098,7 @@ mod tests {
     use super::*;
     use crate::mcp_directory_guard::Fetched;
     use std::collections::HashMap;
+    pub(super) const TEST_REVIEW_ORG: &str = "org_allternit_review";
     use std::net::IpAddr;
 
     fn db() -> Connection {
@@ -1093,7 +1111,7 @@ mod tests {
             name: None,
             avatar_url: None,
             tenant_id: None,
-            organization_id: None,
+            organization_id: Some(TEST_REVIEW_ORG.into()),
             organization_role: role.map(str::to_string),
             organization_slug: None,
         }
@@ -1394,6 +1412,11 @@ mod tests {
         assert!(require_admin(&user("u", Some("owner"))).is_ok());
         assert!(matches!(require_admin(&user("u", Some("member"))), Err(DirError::Forbidden)));
         assert!(matches!(require_admin(&user("u", None)), Err(DirError::Forbidden)));
+        // An admin of some other org (e.g. one the developer created) is not a reviewer.
+        let mut outsider = user("u", Some("admin"));
+        outsider.organization_id = Some("org_someone_else".into());
+        assert!(matches!(require_admin(&outsider), Err(DirError::Forbidden)));
+        assert!(require_admin(&user("u", Some("org:admin"))).is_ok());
     }
 
     // ── installs ────────────────────────────────────────────────────────
