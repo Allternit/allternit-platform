@@ -48,6 +48,7 @@ http://127.0.0.1:8013/v1
 | `n` | integer `1`–`10` | Number of candidates for best-of. |
 | `best_of` | boolean | Return only the best candidate. |
 | `user` | string | End-user identifier. |
+| `tags` | object (string to string) | Free-form tags carried on the request. |
 
 Unknown fields are tolerated on the request body so client SDKs can send extra metadata without causing validation errors.
 
@@ -70,6 +71,8 @@ Content may be a plain string or an array of parts:
 - `video_url`
 - `input_video`
 - `file_id`
+
+Messages may also carry `cache_control` or `cache` hints for prompt caching.
 
 The gateway preserves images and videos as runtime `file` parts so vision-capable models receive the actual media.
 
@@ -208,6 +211,7 @@ All gateway errors return the same JSON shape:
 | `allternit.upstream_error` | 502 | Runtime or provider error. |
 | `allternit.internal_error` | 500 | Internal gateway error. |
 | `allternit.content_policy_violation` | 400 | Safety classifier block. |
+| `allternit.not_configured` | 501 | No provider is configured for the requested surface (for example realtime audio). |
 
 ## Related pages
 

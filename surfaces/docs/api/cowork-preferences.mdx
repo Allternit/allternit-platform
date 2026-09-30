@@ -7,10 +7,14 @@ description: 'Manage trusted folders and global instructions for Cowork sessions
 
 The Cowork Preferences API stores per-user settings that govern what Cowork agents can access on the local filesystem. Each user can define a list of trusted folders and global instructions that are applied to every Cowork session. These preferences are stored in SQLite and mirror the storage pattern used by the Agent Preferences API.
 
+<Note>
+This namespace is served by the Allternit API data-plane node (`http://127.0.0.1:8013` on the same machine, or your paired or provisioned node). The hosted Cloud API at `https://api.allternit.com` does not route it; it relays only agent sessions, canvases, office and beta research/sessions. See [Cloud API](/api/cloud-api).
+</Note>
+
 ## Base URL
 
 ```
-https://api.allternit.com/api
+http://127.0.0.1:8013/api
 ```
 
 ## Authentication
@@ -43,7 +47,7 @@ If no preferences have been saved, the endpoint returns empty defaults.
 ### Example request
 
 ```bash
-curl https://api.allternit.com/api/cowork-preferences \
+curl http://127.0.0.1:8013/api/cowork-preferences \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -84,7 +88,7 @@ Updates the caller's preferences. Omitted fields keep their current values. The 
 ### Example request
 
 ```bash
-curl -X PUT https://api.allternit.com/api/cowork-preferences \
+curl -X PUT http://127.0.0.1:8013/api/cowork-preferences \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

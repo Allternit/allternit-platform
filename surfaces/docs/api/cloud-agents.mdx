@@ -36,6 +36,23 @@ Budget includes `estimated_cost_usd` with `charged: false`. Allternit does not b
 
 **Cloud Console → Agents** is the developer session runner. It is not the Hub or Desktop chat composer (that is Chat and Bot Agents).
 
+## Routes
+
+Registered in `cmd/allternit-api/src/cloud_agents_routes.rs` under `/api/v1`:
+
+| Method | Path |
+|--------|------|
+| `GET`, `POST` | `/sessions` |
+| `GET` | `/sessions/:id` |
+| `POST` | `/sessions/:id/archive` |
+| `GET`, `POST` | `/sessions/:id/events` |
+| `GET` | `/sessions/:id/events/stream` |
+| `GET` | `/sessions/:id/turns` |
+| `GET` | `/sessions/:id/threads` |
+| `GET` | `/sessions/:id/outputs` |
+
+The create body also accepts `stream`, `vault_ids`, `budget`, `metadata`, `brain_id`, `memory_store_ids`, `parent_thread_id`, `permission` and a packaged bot id. Status: Implementation IMPLEMENTED, Exposure INTERNAL (data-plane node; not routed on the hosted Cloud API).
+
 ## Bot Agents
 
 ```ts

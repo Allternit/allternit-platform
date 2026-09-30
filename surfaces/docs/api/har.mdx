@@ -31,6 +31,10 @@ All requests must include a valid bearer token in the `Authorization` header. Se
 |--------|------|-------------|
 | `POST` | `/api/har-derived-api/ingest` | Ingest a HAR archive and extract API endpoints. |
 | `POST` | `/api/har-derived-api/client` | Generate a replayable client for selected endpoint IDs. |
+| `GET` | `/api/har-derived-api/contracts` | List saved contracts. |
+| `GET` | `/api/har-derived-api/contracts/:contract_id` | Get one saved contract. |
+| `DELETE` | `/api/har-derived-api/contracts/:contract_id` | Delete a saved contract (`404` `Contract not found` if absent). |
+| `POST` | `/api/har-derived-api/contracts/:contract_id/replay/:endpoint_id` | Replay one endpoint of a contract. |
 
 ## Ingest a HAR archive
 
@@ -174,6 +178,19 @@ curl -X POST https://api.allternit.com/api/har-derived-api/client \
   ]
 }
 ```
+
+## Contracts and replay
+
+Contract routes are scoped to the authenticated user. `GET /contracts` returns `{ "contracts": [...] }`.
+
+Replay accepts an optional JSON body and returns `{ "status", "body", "error" }` (`body` and `error` are omitted when empty):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `path_params` | object | Values for `{name}` path placeholders. |
+| `query_params` | object | Query parameter overrides. |
+| `headers` | array | `{ "name", "value" }` headers to send. |
+| `body` | any JSON | Request body override. |
 
 ## Filtering and parameter inference
 

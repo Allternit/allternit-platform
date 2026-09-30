@@ -5,12 +5,12 @@ description: 'Text-to-speech, speech-to-text, and voice session management for t
 
 ## Overview
 
-The Voice API provides text-to-speech (TTS), speech-to-text (STT), voice session management, and service introspection. The Rust voice service (`services/voice`) exposes a lightweight, simulated HTTP API on port `8001` that mirrors the contract of the full Python voice wrapper, so callers can integrate against a stable contract while inference runs in the Python service or a downstream model host.
+The Voice API provides text-to-speech (TTS), speech-to-text (STT), voice session management, and service introspection. The Rust voice service (`services/voice`) listens on port `8001` (override with the `PORT` environment variable). Speech-to-text runs on a local whisper.cpp CLI and ggml model. Text-to-speech does not synthesize audio in this build: `POST /v1/tts` returns a `/v1/audio/<id>.wav` URL, but no `/v1/audio/*` route is registered. `POST /v1/stt/stream` returns a `websocket_url` (`/v1/stt/ws/<id>`) for which no route is registered. There is no Python voice wrapper in the repository. Implementation IMPLEMENTED for STT and sessions, DESIGN - NOT YET IMPLEMENTED for TTS audio and streaming; Exposure INTERNAL.
 
 ## Base URL
 
 ```
-http://localhost:8001/v1
+http://localhost:8001
 ```
 
 The voice service binds to `0.0.0.0:8001` by default. When deployed behind the Allternit gateway, it may be exposed under a platform path; consult your deployment's routing table.
@@ -83,7 +83,10 @@ GET /v1/health
   "status": "healthy",
   "version": "0.1.0",
   "timestamp": 1754541600000,
-  "features": ["tts", "stt", "streaming"]
+  "features": ["tts", "stt", "streaming"],
+  "engine": "whisper.cpp",
+  "cli_ok": true,
+  "model_ok": true
 }
 ```
 

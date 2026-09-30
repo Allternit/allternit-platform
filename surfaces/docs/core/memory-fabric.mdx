@@ -7,20 +7,20 @@ description: 'Unified memory and data fabric for the Allternit platform.'
 
 The **Allternit Memory Fabric** is the unified memory and persistence layer for the Allternit platform. It provides a common Rust interface for storing, retrieving, and querying memory across backends, with an append-only, cryptographically chained ledger for auditability.
 
-## Base URL
+<Note>
+**Status:** Implementation IMPLEMENTED (library) × Exposure —. Earlier versions of this page said the memory service "exposes HTTP endpoints" at `http://127.0.0.1:3008`. `services/memory/src` registers no routes; `3008` is only the default `port` in the service config struct, and its `main.rs` does not start an HTTP listener. No binary in `cmd/` (including `allternit-api`) depends on `allternit-memory-fabric` today; it is consumed by other workspace crates under `services/memory/`.
+</Note>
 
-The fabric is consumed as a library crate. The top-level memory service exposes HTTP endpoints at:
+## Usage
 
-```text
-http://127.0.0.1:3008
-```
+The fabric is a library crate (`allternit-memory-fabric`). There is no public HTTP API for it. For user-facing memory endpoints see [Memory](/api/memory) and [Memory stores](/api/memory-stores).
 
 ## Components
 
 | Component | Crate | Purpose |
 |-----------|-------|---------|
 | `allternit-memory-fabric` | `services/memory/data/memory-fabric` | Core traits, plane, router, and ledger |
-| `allternit-memory` | `services/memory` | HTTP-enabled service and in-memory provider |
+| `allternit-memory` | `services/memory` | Service wrapper (axum dependency, no routes registered) and in-memory provider |
 | Memory Agent | `services/memory/agent` | TypeScript long-term semantic memory implementation |
 | Observation | `services/memory/observation` | Records GUI/system observations into the ledger |
 
@@ -104,6 +104,7 @@ pub struct MemoryQuery {
 | `Qdrant` | Reserved for vector backend |
 | `Sqlite` | Reserved for SQLite backend |
 | `AdvancedFabric` | Reserved for advanced tiered memory |
+| `Custom(String)` | Named custom backend |
 
 ## Routing rules
 
@@ -160,3 +161,7 @@ All fabric operations return `MemoryError`:
 - [Gizzi Runtime](/core/gizzi-runtime)
 - [Session Manager](/core/session-manager)
 - [API Memory](/api/memory)
+
+## How this relates to the Agency Kernel
+
+The fabric is a storage layer beneath the [memory kernel](/core/memory-kernel). It is not part of the [Agency Kernel](/architecture) public contracts.

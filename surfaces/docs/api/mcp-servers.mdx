@@ -54,6 +54,18 @@ The `tools/list` response includes:
 - Office-engine Markdown conversion tools.
 - Tools from attached MCP servers registered in the dispatcher.
 
+## Attached servers
+
+The same `/mcp` mount also serves the routes that manage which external MCP servers are attached (their tools then appear in `tools/list`):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` / `POST` | `/mcp/servers` | List or attach an MCP server. |
+| `GET` / `DELETE` | `/mcp/servers/:id` | Get or detach an attached server. |
+| `GET` / `POST` | `/mcp/connectors` | List or create MCP connectors. |
+| `POST` | `/mcp/test` | Test a connection to an MCP server. |
+| `GET` | `/mcp/oauth/callback` | OAuth callback for MCP servers that require it. |
+
 ## Initialize
 
 ### Example request

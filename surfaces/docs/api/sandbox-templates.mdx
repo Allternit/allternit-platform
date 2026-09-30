@@ -10,7 +10,7 @@ The Sandbox Templates API lets organization admins define reusable cloud sandbox
 ## Base URL
 
 ```
-https://api.allternit.com/v1/admin
+https://api.allternit.com/api/v1/admin
 ```
 
 All endpoints require a valid Bearer token in the `Authorization` header and organization owner or admin access. See [Authentication](/api/authentication) for details.
@@ -19,7 +19,7 @@ All endpoints require a valid Bearer token in the `Authorization` header and org
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/admin/sandbox-templates` | List sandbox templates. |
+| GET | `/api/v1/admin/sandbox-templates` | List sandbox templates. |
 | POST | `/admin/sandbox-templates` | Create a sandbox template. |
 | GET | `/admin/sandbox-templates/:id` | Get a sandbox template. |
 | PUT | `/admin/sandbox-templates/:id` | Update a sandbox template. |

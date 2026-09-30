@@ -7,10 +7,14 @@ description: 'Organization-scoped analytics for cost, token usage, request volum
 
 The Analytics API aggregates LLM usage and product activity events into organization-scoped reports. It is gated to organization owners and admins and supports hourly, daily, weekly, and monthly granularity.
 
+<Note>
+This namespace is served by the Allternit API data-plane node (`http://127.0.0.1:8013` on the same machine, or your paired or provisioned node). The hosted Cloud API at `https://api.allternit.com` does not route it; it relays only agent sessions, canvases, office and beta research/sessions. See [Cloud API](/api/cloud-api).
+</Note>
+
 ## Base URL
 
 ```
-https://api.allternit.com/api
+http://127.0.0.1:8013/api
 ```
 
 All endpoints require a valid Bearer token in the `Authorization` header. See [Authentication](/api/authentication) for details.

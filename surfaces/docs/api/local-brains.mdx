@@ -7,6 +7,11 @@ description: 'Search local memory, query the local brain, and manage sidecar mod
 
 The Local Brains API exposes the Allternit local brain surface. It lets clients perform keyword search across memory documents, events, and conversations; probe Ollama and embedding service health; pull local models; and manage models through the Gizzi sidecar. When no embedding service is available, search falls back to keyword search against the local SQLite memory tables.
 
+<Note>
+"Local brain" is the product name for this local-model surface, and the route names keep it. Existing runtime/provider APIs expose implementation controls intentionally. The Agency API is the abstraction that hides those controls behind capabilities and one durable agent identity.
+</Note>
+
+
 ## Base URL
 
 ```

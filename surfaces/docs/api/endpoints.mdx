@@ -1,77 +1,33 @@
 ---
 title: API Endpoints
-description: REST API reference
+description: Where the real endpoint references live.
 ---
 
 ## Base URL
 
-```
-https://api.allternit.com/v1
-```
-
-## Agents
-
-### List Agents
-
-```bash
-GET /agents
+```text
+https://api.allternit.com
 ```
 
-Response:
-```json
-{
-  "agents": [
-    {
-      "id": "agent_abc123",
-      "name": "Code Analyzer",
-      "status": "active",
-      "created_at": "2024-01-15T10:30:00Z"
-    }
-  ]
-}
-```
+This page used to list `/v1/agents`, `/v1/agents/{id}/run`, `/v1/sessions/{id}`, and `/v1/sessions/{id}/messages`. Those routes do not exist. The public API is the Cloud API; it serves `/v1/*` for the LLM gateway and `/api/v1/*` for control-plane and relayed namespaces.
 
-### Create Agent
+## Real references
 
-```bash
-POST /agents
-{
-  "name": "My Agent",
-  "runtime": "gizzi-pro",
-  "skills": ["code", "web"]
-}
-```
+| Area | Page |
+|------|------|
+| Chat, embeddings, files, images, models, pricing, rate limits | [Models](/api/models), [Embeddings](/api/embeddings), [Files](/api/files), [Images](/api/images), [Pricing](/api/pricing), [Rate limits](/api/rate-limits) |
+| Agent sessions (relayed to your node) | [Agent Sessions](/api/agent-sessions) |
+| Beta research sessions and events | [Event Stream](/api/event-stream) |
+| Pairing, relay, hosted compute | [Cloud API](/api/cloud-api) |
+| Overview and topology | [API Overview](/api/overview) |
 
-### Run Agent
-
-```bash
-POST /agents/{id}/run
-{
-  "input": "Analyze this codebase",
-  "context": { "repo": "my-repo" }
-}
-```
-
-## Sessions
-
-### Get Session
-
-```bash
-GET /sessions/{id}
-```
-
-### List Messages
-
-```bash
-GET /sessions/{id}/messages
-```
-
-## Status Codes
+## Status codes
 
 | Code | Meaning |
 |------|---------|
 | 200 | Success |
-| 400 | Bad Request |
+| 400 | Bad request |
 | 401 | Unauthorized |
-| 429 | Rate Limited |
-| 500 | Server Error |
+| 428 | No healthy node paired to the account |
+| 429 | Rate limited, see `Retry-After` |
+| 500 | Server error |

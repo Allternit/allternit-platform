@@ -7,13 +7,11 @@ description: Server-sent events for live workspace board updates on the Allterni
 
 The Board Streams API exposes a lightweight SSE channel for observing board item changes within a workspace. Clients connect to a workspace-specific endpoint and receive periodic `board_update` events containing the latest items.
 
+<Note>
+This namespace is served by the Allternit API data-plane node (`http://127.0.0.1:8013` on the same machine, or your paired or provisioned node). The hosted Cloud API at `https://api.allternit.com` does not route it; it relays only agent sessions, canvases, office and beta research/sessions. See [Cloud API](/api/cloud-api).
+</Note>
+
 ## Base URL
-
-```text
-https://api.allternit.com/api
-```
-
-For local development:
 
 ```text
 http://127.0.0.1:8013/api
@@ -33,7 +31,7 @@ All requests require a valid bearer token in the `Authorization` header. See [Au
 ## Stream status
 
 ```bash
-curl https://api.allternit.com/api/board-stream \
+curl http://127.0.0.1:8013/api/board-stream \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -49,18 +47,17 @@ curl https://api.allternit.com/api/board-stream \
 ## Subscribe to workspace updates
 
 ```bash
-curl -N https://api.allternit.com/api/board-stream/ws_01hqx8x7x7x7x7x7x7x7x7x \
+curl -N http://127.0.0.1:8013/api/board-stream/ws_01hqx8x7x7x7x7x7x7x7x7x \
   -H "Authorization: Bearer $TOKEN"
 ```
 
 ### SSE event format
 
 ```text
-event: message
 data: {"type":"board_update","workspace_id":"ws_01hqx8x7x7x7x7x7x7x7x7x","items":[{"id":"bi_01hqx8x7x7x7x7x7x7x7x7x","workspace_id":"ws_01hqx8x7x7x7x7x7x7x7x7x","title":"Integrate ACI adapter","status":"in_progress","priority":"3","updated_at":"2026-08-13T18:05:00Z"}],"timestamp":"2026-08-13T18:05:00Z"}
 ```
 
-The stream emits a `board_update` event every five seconds for the requested workspace and keeps the connection alive with empty SSE heartbeats every fifteen seconds.
+Events are unnamed SSE `data:` frames (no `event:` line). The stream emits a `board_update` frame every five seconds for the requested workspace, and keeps the connection alive with SSE keep-alives every fifteen seconds. If the database connection fails on a tick, the frame is `{"ping":true}` instead.
 
 ## Error codes
 
