@@ -147,7 +147,7 @@ export class AllternitAgents {
       if (o.maxIdlePolls !== undefined && ++idle >= o.maxIdlePolls) return;
       await sleep(Math.min(maxBackoff, pollMs * 2 ** Math.min(idle, 6)));
     }
-  },
+  }
 
   readonly accounts = {
     create: (i: CreateAccountInput) => this.request<{ account: ProviderAccountBinding }>("POST", "/gateway/provider-accounts", snake(i)),
