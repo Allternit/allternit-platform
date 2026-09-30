@@ -250,6 +250,16 @@ describe.each(CASES)("$id", (c) => {
     await page.close();
   }, 30000);
 
+  it("chat.create at the usage limit → stops before typing, limit error, nothing sent", async () => {
+    const adapter = c.make({ freshChat: false });
+    const page = await fixturePage(c.id, "limit-banner");
+    const { events, marks } = await drain(adapter, makeTask("chat.create"), page);
+    expect(events.map((e) => (e as { t: string }).t)).not.toContain("submitted");
+    expect(events).toContainEqual(expect.objectContaining({ t: "error", error: expect.objectContaining({ class: "quota_exhausted", fallback_eligible: true }) }));
+    expect(marks).toEqual([]);
+    await page.close();
+  }, 30000);
+
   it("chat.create logged out → needs_user auth, nothing sent", async () => {
     const adapter = c.make({ freshChat: false });
     const page = await fixturePage(c.id, "logged-out");

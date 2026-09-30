@@ -87,7 +87,7 @@ export function chatGPTWebConfig(
     selectorsYaml: selectorsYaml(),
     threadUrlPattern: THREAD_URL_PATTERN,
     banners: [
-      { kind: "limit_banner", pattern: /you'?ve reached (your )?(usage )?limit/i },
+      { kind: "limit_banner", pattern: /you'?ve reached (your )?(usage )?limit/i, blocksSend: true },
       { kind: "limit_banner", pattern: /approaching (your )?(usage )?limit/i },
       { kind: "slow_mode", pattern: /slower (responses|mode)|slow mode/i },
       { kind: "reset_notice", pattern: /(quota|limit|usage) resets? (at|in)/i },
