@@ -1049,6 +1049,7 @@ async fn main() {
         .nest("/api", playground_router())
         .nest("/api", checkpoints_router())
         .nest("/api", design_connector_router())
+        .nest("/api", allternit_api::mcp_apps::mcp_apps_router())
         .nest("/api", office_engine_router())
         .nest("/api", provider_router())
         // Idempotency replay for POST/PUT/PATCH on the protected surface.

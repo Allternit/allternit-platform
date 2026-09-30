@@ -41,7 +41,12 @@ async fn mcp_oauth_callback(
     Query(params): Query<CallbackQuery>,
     state: axum::extract::State<Arc<AppState>>,
 ) -> Result<Html<String>, (StatusCode, Html<String>)> {
-    info!("MCP OAuth callback received: {:?}", params);
+    // Never log the query itself: it carries the authorization code and state.
+    info!(
+        has_code = params.code.is_some(),
+        has_error = params.error.is_some(),
+        "MCP OAuth callback received"
+    );
 
     // Handle OAuth error from provider
     if let Some(ref error) = params.error {

@@ -27,6 +27,7 @@ import { withBundledMcpServers } from "@/runtime/tools/mcp/bundled"
 import { createHash } from "crypto"
 import { buildMcpToolName } from "@/runtime/services/mcp/mcpStringUtils"
 import { RuntimeTelemetry } from "@/runtime/telemetry"
+import { MCP_APPS_CLIENT_CAPABILITIES, isVisibleToModel, mcpAppResourceUri } from "@/runtime/tools/mcp/apps"
 
 export namespace MCP {
   const log = Log.create({ service: "mcp" })
@@ -373,10 +374,10 @@ export namespace MCP {
       const connectTimeout = mcp.timeout ?? DEFAULT_TIMEOUT
       for (const { name, transport } of transports) {
         try {
-          const client = new Client({
-            name: "gizzi",
-            version: Installation.VERSION,
-          })
+          const client = new Client(
+            { name: "gizzi", version: Installation.VERSION },
+            { capabilities: MCP_APPS_CLIENT_CAPABILITIES },
+          )
           await withTimeout(client.connect(transport), connectTimeout)
           registerNotificationHandlers(client, key)
           mcpClient = client
@@ -460,10 +461,10 @@ export namespace MCP {
 
       const connectTimeout = mcp.timeout ?? DEFAULT_TIMEOUT
       try {
-        const client = new Client({
-          name: "gizzi",
-          version: Installation.VERSION,
-        })
+        const client = new Client(
+          { name: "gizzi", version: Installation.VERSION },
+          { capabilities: MCP_APPS_CLIENT_CAPABILITIES },
+        )
         await withTimeout(client.connect(transport), connectTimeout)
         registerNotificationHandlers(client, key)
         mcpClient = client
@@ -604,6 +605,8 @@ export namespace MCP {
     originalName: string
     normalizedBase: string
     collision: boolean
+    /** MCP Apps: the tool's `_meta.ui.resourceUri`, when it renders a ui:// resource. */
+    uiResourceUri?: string
   }
 
   export async function toolCatalog() {
@@ -642,6 +645,9 @@ export namespace MCP {
       const entry = isMcpConfigured(mcpConfig) ? mcpConfig : undefined
       const timeout = entry?.timeout ?? defaultTimeout
       for (const mcpTool of toolsResult.tools) {
+        // MCP Apps: tools scoped to the rendered app (`_meta.ui.visibility` without "model")
+        // are reachable only through the app bridge and are never offered to the model.
+        if (!isVisibleToModel(mcpTool)) continue
         const identity = `${clientName}\0${mcpTool.name}`
         const normalizedBase = qualifiedToolName(clientName, mcpTool.name)
         const incoming = { serverName: clientName, originalName: mcpTool.name, normalizedBase }
@@ -654,7 +660,12 @@ export namespace MCP {
           while (descriptors[qualifiedName]) qualifiedName = withToolSuffix(normalizedBase, String(counter++))
         }
         result[qualifiedName] = await convertMcpTool(mcpTool, client, timeout)
-        descriptors[qualifiedName] = { qualifiedName, ...incoming, collision: Boolean(existing) }
+        descriptors[qualifiedName] = {
+          qualifiedName,
+          ...incoming,
+          collision: Boolean(existing),
+          uiResourceUri: mcpAppResourceUri(mcpTool),
+        }
       }
     }
     if (collisions.length) {
@@ -842,10 +853,10 @@ export namespace MCP {
 
     // Try to connect - this will trigger the OAuth flow
     try {
-      const client = new Client({
-        name: "gizzi",
-        version: Installation.VERSION,
-      })
+      const client = new Client(
+        { name: "gizzi", version: Installation.VERSION },
+        { capabilities: MCP_APPS_CLIENT_CAPABILITIES },
+      )
       await client.connect(transport)
       // If we get here, we're already authenticated
       return { authorizationUrl: "" }

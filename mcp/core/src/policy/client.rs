@@ -9,16 +9,24 @@
 //! ```rust,no_run
 //! use mcp::policy::client::PolicyEnforcingMcpClient;
 //! use mcp::transport::StdioTransport;
+//! use mcp::StdioConfig;
 //! use allternit_sdk_policy::PolicyEngine;
 //! use std::sync::Arc;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let transport = StdioTransport::new("mcp-server", &[])?;
+//!     let transport = StdioTransport::spawn(StdioConfig {
+//!         command: "mcp-server".to_string(),
+//!         args: vec![],
+//!         env: Default::default(),
+//!         cwd: None,
+//!         timeout_secs: 30,
+//!     })
+//!     .await?;
 //!     let policy_engine = Arc::new(PolicyEngine::new());
 //!     
 //!     let client = PolicyEnforcingMcpClient::new(
-//!         transport,
+//!         Box::new(transport),
 //!         policy_engine,
 //!         "server-1".to_string(),
 //!         "filesystem".to_string(),
@@ -119,19 +127,30 @@ impl PolicyEnforcingMcpClient {
     /// ```rust,no_run
     /// use mcp::policy::client::PolicyEnforcingMcpClient;
     /// use mcp::transport::StdioTransport;
+    /// use mcp::StdioConfig;
     /// use allternit_sdk_policy::PolicyEngine;
     /// use std::sync::Arc;
     ///
-    /// let transport = StdioTransport::new("mcp-server", &[]).unwrap();
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let transport = StdioTransport::spawn(StdioConfig {
+    ///     command: "mcp-server".to_string(),
+    ///     args: vec![],
+    ///     env: Default::default(),
+    ///     cwd: None,
+    ///     timeout_secs: 30,
+    /// })
+    /// .await?;
     /// let policy_engine = Arc::new(PolicyEngine::new());
     ///
     /// let client = PolicyEnforcingMcpClient::new(
-    ///     transport,
+    ///     Box::new(transport),
     ///     policy_engine,
     ///     "server-1".to_string(),
     ///     "filesystem".to_string(),
     ///     "user-123".to_string(),
     /// );
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn new(
         transport: Box<dyn McpTransport>,
@@ -440,11 +459,20 @@ impl PolicyEnforcingMcpClient {
 /// ```rust,no_run
 /// use mcp::policy::client::PolicyEnforcingClientBuilder;
 /// use mcp::transport::StdioTransport;
+/// use mcp::StdioConfig;
 /// use allternit_sdk_policy::PolicyEngine;
 /// use std::sync::Arc;
 ///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let policy_engine = Arc::new(PolicyEngine::new());
-/// let transport = StdioTransport::new("mcp-server", &[]).unwrap();
+/// let transport = StdioTransport::spawn(StdioConfig {
+///     command: "mcp-server".to_string(),
+///     args: vec![],
+///     env: Default::default(),
+///     cwd: None,
+///     timeout_secs: 30,
+/// })
+/// .await?;
 ///
 /// let client = PolicyEnforcingClientBuilder::new()
 ///     .transport(Box::new(transport))
@@ -453,6 +481,8 @@ impl PolicyEnforcingMcpClient {
 ///     .server_name("filesystem")
 ///     .identity_id("user-123")
 ///     .build();
+/// # Ok(())
+/// # }
 /// ```
 pub struct PolicyEnforcingClientBuilder {
     transport: Option<Box<dyn McpTransport>>,
@@ -530,6 +560,7 @@ impl PolicyEnforcingClientBuilder {
 mod tests {
     use super::*;
     use crate::transport::StdioTransport;
+    use crate::StdioConfig;
 
     #[test]
     fn test_policy_error_display() {
@@ -544,10 +575,18 @@ mod tests {
         assert!(err.to_string().contains("abc123"));
     }
 
-    #[test]
-    fn test_builder() {
+    #[tokio::test]
+    async fn test_builder() {
         let policy_engine = Arc::new(PolicyEngine::new());
-        let transport = StdioTransport::new("echo", &[]).unwrap();
+        let transport = StdioTransport::spawn(StdioConfig {
+            command: "cat".to_string(),
+            args: vec![],
+            env: std::collections::HashMap::new(),
+            cwd: None,
+            timeout_secs: 5,
+        })
+        .await
+        .unwrap();
 
         let client = PolicyEnforcingClientBuilder::new()
             .transport(Box::new(transport))
@@ -562,10 +601,18 @@ mod tests {
         assert_eq!(client.identity_id, "user-123");
     }
 
-    #[test]
-    fn test_get_tool_safety_tier() {
+    #[tokio::test]
+    async fn test_get_tool_safety_tier() {
         let policy_engine = Arc::new(PolicyEngine::new());
-        let transport = StdioTransport::new("echo", &[]).unwrap();
+        let transport = StdioTransport::spawn(StdioConfig {
+            command: "cat".to_string(),
+            args: vec![],
+            env: std::collections::HashMap::new(),
+            cwd: None,
+            timeout_secs: 5,
+        })
+        .await
+        .unwrap();
 
         let client = PolicyEnforcingMcpClient::new(
             Box::new(transport),

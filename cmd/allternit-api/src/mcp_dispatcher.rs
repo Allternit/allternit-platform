@@ -14,6 +14,17 @@ use tokio::sync::RwLock;
 const MCP_PROTOCOL_VERSION: &str = "2025-03-26";
 const CLIENT_NAME: &str = "allternit-api";
 
+/// Client capabilities sent on `initialize`: this host renders MCP Apps
+/// (SEP-1865), so servers may attach `_meta.ui` to tools and serve `ui://`
+/// resources.
+fn client_capabilities() -> Value {
+    json!({
+        "extensions": {
+            "io.modelcontextprotocol/ui": { "mimeTypes": ["text/html;profile=mcp-app"] }
+        }
+    })
+}
+
 /// Descriptor for a tool advertised by an attached MCP server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpToolDescriptor {
@@ -148,7 +159,7 @@ impl McpDispatcher {
             "initialize",
             json!({
                 "protocolVersion": MCP_PROTOCOL_VERSION,
-                "capabilities": {},
+                "capabilities": client_capabilities(),
                 "clientInfo": { "name": CLIENT_NAME, "version": env!("CARGO_PKG_VERSION") }
             }),
         )
@@ -252,6 +263,12 @@ mod tests {
             let method = req.get("method").and_then(|v| v.as_str()).unwrap_or("");
             let id = req.get("id").cloned().unwrap_or(Value::Null);
             match method {
+                "initialize" if req["params"]["capabilities"]["extensions"]["io.modelcontextprotocol/ui"]["mimeTypes"][0]
+                    != "text/html;profile=mcp-app" => Json(json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32602, "message": "host did not advertise io.modelcontextprotocol/ui" }
+                })),
                 "initialize" => Json(json!({
                     "jsonrpc": "2.0",
                     "id": id,
