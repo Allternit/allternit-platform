@@ -1,6 +1,8 @@
 // §S2 — adapter manifest; PacingProfile per §A5
 import { z } from "zod";
+import { agentCapabilityManifestSchema } from "./agent";
 import { capabilityIdSchema, providerIdSchema } from "./capability";
+import { connectionProfileSchema } from "./vendor-pack";
 
 export const planDefSchema = z.object({
   plan_id: z.string(),
@@ -35,6 +37,14 @@ export const manifestCapabilitySchema = z.object({
 });
 export type ManifestCapability = z.infer<typeof manifestCapabilitySchema>;
 
+// Optional Agent Gateway section (AAI vNext). Absent on legacy manifests.
+export const adapterAgentSectionSchema = z.object({
+  capabilities: agentCapabilityManifestSchema,
+  // Generalized auth descriptors, one per supported ConnectionProfile authType.
+  authDescriptors: z.array(connectionProfileSchema),
+});
+export type AdapterAgentSection = z.infer<typeof adapterAgentSectionSchema>;
+
 export const adapterManifestSchema = z.object({
   adapter_id: z.string(),
   adapter_version: z.string(),
@@ -52,5 +62,6 @@ export const adapterManifestSchema = z.object({
   capabilities: z.array(manifestCapabilitySchema),
   pacing: pacingProfileSchema,
   selectors_version: z.string(),
+  agent: adapterAgentSectionSchema.optional(),
 });
 export type AdapterManifest = z.infer<typeof adapterManifestSchema>;
