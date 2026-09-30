@@ -1,0 +1,35 @@
+<!doctype html>
+<!-- fixture: idle — logged in, new chat, composer ready (claude-web v1 shape, unverified) -->
+<html lang="en">
+  <head><meta charset="utf-8"><title>claude-web fixture — idle</title></head>
+  <body data-state="idle">
+    <nav>
+      <button data-testid="user-menu-button" aria-label="User menu">E</button>
+    </nav>
+    <main>
+      <div id="thread"></div>
+      <button data-testid="model-selector-dropdown" aria-label="Model">Sonnet 5.5</button>
+      <div
+        class="ProseMirror"
+        data-testid="chat-input"
+        role="textbox"
+        aria-label="Write your prompt to Claude"
+        contenteditable="true"
+      ></div>
+      <button aria-label="Send message" type="button">Send</button>
+    </main>
+    <script>
+      document.querySelector("button[aria-label='Send message']").addEventListener("click", () => {
+        const input = document.querySelector("[data-testid='chat-input']");
+        const prompt = input.textContent;
+        document.body.dataset.submitted = "true";
+        // Like claude.ai: Send clears the composer and shows the user turn.
+        input.textContent = "";
+        const turn = document.createElement("div");
+        turn.dataset.testid = "user-message";
+        turn.textContent = prompt;
+        document.getElementById("thread").appendChild(turn);
+      });
+    </script>
+  </body>
+</html>

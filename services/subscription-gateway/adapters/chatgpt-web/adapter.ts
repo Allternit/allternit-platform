@@ -2,7 +2,6 @@
 // image.generate, D5 temp-chat default, chat.continue divergence check
 // (Critical #7), fingerprint reconcile (Critical #2), SingletonLock →
 // profile_locked (fix #6). Selectors are v1-unverified (see selectors/v1.yaml).
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { load as yamlLoad } from "js-yaml";
 import type { Page } from "playwright";
@@ -15,7 +14,6 @@ import {
   type ReconcileResult,
   type Task,
   type TaskAttempt,
-  type TaskError,
 } from "@allternit/subscription-fabric-contracts";
 import {
   DeclarativeChatAdapter,
@@ -40,6 +38,22 @@ import {
   type SdkPageLease,
   type SdkSelectorResolver,
 } from "@allternit/subscription-adapter-sdk";
+import {
+  isProfileLockError,
+  profileLockedError,
+  resolveDivergence,
+  userTurnFingerprint,
+  type DivergencePolicy,
+} from "../_shared/web-chat.js";
+
+export {
+  isProfileLockError,
+  profileLockedError,
+  resolveDivergence,
+  userTurnFingerprint,
+  type DivergenceAction,
+  type DivergencePolicy,
+} from "../_shared/web-chat.js";
 
 // ChatGPT first routes a new chat to a provisional /c/local-… id before the
 // server id arrives; that one is not reopenable, so it never matches.
@@ -89,47 +103,6 @@ export function chatGPTWebConfig(
     // Merge, don't replace: a clock/timing override must not drop the
     // live-UI completion flag.
     completion: { ignoreSend: true, ...overrides.completion },
-  };
-}
-
-// §A2/Critical #2 — fingerprint of a provider-side user turn; mirrors the
-// gateway worker's promptFingerprint for a task whose only inputs are images
-// (attachments don't show up in the turn's text, so neither side hashes them).
-export function userTurnFingerprint(text: string): string {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  return createHash("sha256").update(normalized + "\n").digest("hex");
-}
-
-export type DivergencePolicy = "adopt" | "fork" | "fail";
-export type DivergenceAction = "proceed" | "fork" | "fail";
-
-// Critical #7 — on a last-turn-fingerprint mismatch, the mapping's
-// on_divergence policy decides: adopt continues, fork/fail stop the submit.
-export function resolveDivergence(
-  expected: string | null,
-  observed: string,
-  policy: DivergencePolicy
-): DivergenceAction {
-  if (expected === null || expected === observed) return "proceed";
-  return policy === "adopt" ? "proceed" : policy;
-}
-
-// fix #6 — a profile held by another process is profile_locked, not a crash.
-export function isProfileLockError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  return /SingletonLock|user data directory is already in use|profile (is )?locked/i.test(msg);
-}
-
-export function profileLockedError(detail: string): TaskError {
-  return {
-    class: "profile_locked",
-    scope: "account",
-    retryable: true, // after the lock is released
-    fallback_eligible: true,
-    cooldown_s: null,
-    user_action: "Close the provider window holding the profile, then retry",
-    detail,
-    evidence_ref: null,
   };
 }
 

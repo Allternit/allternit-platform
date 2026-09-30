@@ -1,0 +1,16 @@
+<!doctype html>
+<!-- fixture: limit-banner — idle UI plus a usage-limit notice (quota signal) -->
+<html lang="en">
+  <head><meta charset="utf-8"><title>claude-web fixture — limit banner</title></head>
+  <body data-state="limit-banner">
+    <nav>
+      <button data-testid="user-menu-button" aria-label="User menu">E</button>
+    </nav>
+    <main>
+      <div role="alert">You're out of free messages until 2:00 PM.</div>
+      <div id="thread"></div>
+      <div class="ProseMirror" data-testid="chat-input" role="textbox" aria-label="Write your prompt to Claude" contenteditable="true"></div>
+      <button aria-label="Send message" type="button">Send</button>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,67 @@
+# kimi-web selectors v1 — §A3.2 named keys, ordered fallbacks
+# (role+name first, CSS last; Kimi's markup uses class names, few test ids).
+# *** v1-unverified: written from public knowledge of the www.kimi.com UI, NOT
+# *** validated against a logged-in session. The fixtures are shaped to these
+# *** selectors, so the suite proves internal consistency, not live fidelity.
+# Known shape: composer is a contenteditable .chat-input-editor; turns are
+# .segment.segment-user / .segment.segment-assistant with the reply markdown
+# in .markdown-container; Send/Stop share .send-button-container; threads
+# live under /chat/<id>.
+
+composer:
+  critical: true
+  strategies:
+    - { css: ".chat-input-editor[contenteditable=true]" }
+    - { role: textbox, name: /ask anything|ask kimi|message/i }
+    - { css: "div[contenteditable=true][role=textbox]" }
+send_button:
+  critical: true
+  strategies:
+    - { role: button, name: /^send$|send message/i }
+    - { css: ".send-button-container:not(.stop) .send-button" }
+    - { css: ".send-button" }
+stop_button:
+  critical: false
+  strategies:
+    - { role: button, name: /^stop$|stop (generating|output|response)/i }
+    - { css: ".send-button-container.stop" }
+    - { css: ".stop-button" }
+response:
+  critical: true # extraction target; idle pages legitimately lack it
+  strategies:
+    - { css: ".segment-assistant .markdown-container" }
+    - { css: ".chat-content-item-assistant .markdown" }
+    - { css: ".segment-assistant .segment-content" }
+user_turn:
+  critical: false
+  strategies:
+    - { css: ".segment-user .segment-content" }
+    - { css: ".chat-content-item-user" }
+streaming:
+  critical: false
+  strategies:
+    - { css: ".segment-assistant.streaming" }
+    - { css: ".segment-assistant[data-streaming='true']" }
+logged_in_probe:
+  critical: true
+  strategies:
+    - { role: button, name: /account|profile|user center/i }
+    - { css: ".user-info .avatar" }
+    - { css: ".sidebar-footer .user-info" }
+model_picker:
+  critical: false
+  strategies:
+    - { role: button, name: /model|^k\d/i }
+    - { css: ".current-model" }
+banner:
+  critical: false
+  strategies:
+    - { role: alert }
+    - { css: ".limit-tip" }
+    - { css: ".quota-tip" }
+challenge:
+  critical: false
+  strategies:
+    - { css: "iframe[src*='challenges.cloudflare.com']" }
+    - { css: "iframe[src*='captcha']" }
+    - { text: /verify you are human|security check/i }
