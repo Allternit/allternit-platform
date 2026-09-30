@@ -2815,6 +2815,31 @@ async fn receipts_query(
     }).into_response()
 }
 
+async fn receipts_jwks(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<impl IntoResponse, StatusCode> {
+    match state.receipts.chain_store().and_then(|c| c.jwks()) {
+        Ok(j) => Ok((StatusCode::OK, Json(j))),
+        Err(e) => {
+            tracing::error!("receipts_jwks failed: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+async fn receipts_chain_verify(
+    State(state): State<Arc<ServiceState>>,
+    axum::extract::Path(run_id): axum::extract::Path<String>,
+) -> Result<impl IntoResponse, StatusCode> {
+    match state.receipts.chain_store().and_then(|c| c.verify_chain(&run_id)) {
+        Ok(r) => Ok((StatusCode::OK, Json(r))),
+        Err(e) => {
+            tracing::error!("receipts_chain_verify failed: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
 async fn receipts_verify(
     State(state): State<Arc<ServiceState>>,
     Json(req): Json<ReceiptVerifyRequest>,
@@ -2956,6 +2981,9 @@ pub fn create_router(state: Arc<ServiceState>) -> Router {
         .route("/v1/receipts/query", get(receipts_query))
         .route("/v1/receipts/verify", post(receipts_verify))
         .route("/v1/receipts/summary", post(receipts_summary))
+        .route("/v1/receipts/jwks", get(receipts_jwks))
+        .route("/.well-known/jwks.json", get(receipts_jwks))
+        .route("/v1/receipts/chain/:run_id/verify", get(receipts_chain_verify))
         // INIT
         .route("/v1/init", post(init_system))
         .with_state(state)

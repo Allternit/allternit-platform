@@ -222,7 +222,7 @@ impl ChainStore {
     pub fn verify_chain_with(&self, run_id: &str, jwks: &Jwks) -> Result<ChainReport> {
         let entries = self.list(run_id)?;
         let mut prev: Option<String> = None;
-        let mut brk = |i: u64, rid: Option<String>, r: &str| ChainReport {
+        let brk = |i: u64, rid: Option<String>, r: &str| ChainReport {
             run_id: run_id.into(), length: entries.len() as u64, ok: false,
             first_break: Some(ChainBreak { index: i, receipt_id: rid, reason: r.into() }),
         };
