@@ -150,6 +150,63 @@ describe("SubscriptionFabricLanguageModel", () => {
     expect(parts.at(-1)).toMatchObject({ type: "finish", finishReason: "stop" })
   })
 
+  test("thought stream: what the Sessions computer does before the reply, closed when the reply starts", async () => {
+    fakeForwarder((c) => {
+      if (c.method === "POST" && c.path === "/v1/tasks") return json({ task_id: "t7", status: "queued" }, 201)
+      if (c.path === "/v1/tasks/t7/events")
+        return sse([
+          { event: "task.status", data: { status: "queued" } },
+          { event: "task.status", data: { status: "running" } },
+          { event: "submitted", data: { t: "submitted", provider_thread_id: null } },
+          { event: "progress", data: { t: "progress", label: "Searching the web" } },
+          { event: "progress", data: { t: "progress", label: "Searching the web" } },
+          { event: "progress.heartbeat", data: { t: "progress.heartbeat", elapsed_s: 15 } },
+          { event: "progress.heartbeat", data: { t: "progress.heartbeat", elapsed_s: 30.2 } },
+          { event: "progress.heartbeat", data: { t: "progress.heartbeat", elapsed_s: 45 } },
+          { event: "reply", data: { event: { type: "reply.text.delta", delta: "Hi" } } },
+          { event: "progress", data: { t: "progress", label: "streaming (+2 chars)" } },
+          { event: "progress", data: { t: "progress", label: "Late step" } },
+          { event: "task.status", data: { status: "completed" } },
+        ])
+      if (c.path === "/v1/tasks/t7") return json({ task_id: "t7", status: "completed", result: { text: "Hi", artifact_ids: [] } })
+      return json({}, 404)
+    })
+    const model = new SubscriptionFabricLanguageModel("subs-chatgpt", "chatgpt", "fast")
+    const parts = await run(model, { prompt: [userTurn("hi")], headers: headers() })
+
+    const types = parts.map((p) => p.type)
+    const thoughts = parts.filter((p) => p.type === "reasoning-delta").map((p) => p.delta)
+    expect(thoughts).toEqual([
+      "Sending your message to ChatGPT on your Sessions computer\n",
+      "Waiting for your ChatGPT account to be free\n",
+      "Opening ChatGPT\n",
+      "ChatGPT has your message and is working on it\n",
+      "Searching the web\n",
+      "Still working (30 s)\n",
+    ])
+    expect(types.filter((t) => t === "reasoning-start")).toHaveLength(1)
+    // The thought stream ends before the reply text starts, and never reopens.
+    expect(types.indexOf("reasoning-end")).toBeLessThan(types.indexOf("text-start"))
+    expect(types.lastIndexOf("reasoning-delta")).toBeLessThan(types.indexOf("text-start"))
+    expect(parts.filter((p) => p.type === "text-delta").map((p) => p.delta)).toEqual(["Hi"])
+  })
+
+  test("thought stream: a failed turn still closes it", async () => {
+    fakeForwarder((c) => {
+      if (c.method === "POST" && c.path === "/v1/tasks") return json({ task_id: "t8", status: "queued" }, 201)
+      if (c.path === "/v1/tasks/t8/events") return sse([{ event: "task.status", data: { status: "failed" } }])
+      if (c.path === "/v1/tasks/t8")
+        return json({ task_id: "t8", status: "failed", result: null, error: { detail: "no DOM change for 90s" } })
+      return json({}, 404)
+    })
+    const model = new SubscriptionFabricLanguageModel("subs-chatgpt", "chatgpt", "fast")
+    const parts = await run(model, { prompt: [userTurn("hi")], headers: headers() })
+    const types = parts.map((p) => p.type)
+    expect(types).toContain("reasoning-start")
+    expect(types.indexOf("reasoning-end")).toBeLessThan(types.indexOf("finish"))
+    expect(parts.find((p) => p.type === "error")?.error.message).toContain("no DOM change for 90s")
+  })
+
   test("later turn: chat.continue; an unmapped thread falls back to chat.create with the same key + action", async () => {
     const posts: any[] = []
     fakeForwarder((c) => {

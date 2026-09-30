@@ -52,6 +52,12 @@ export function cancelFabricTask(taskID: string): Promise<unknown> {
 export interface FollowHandlers {
   onText?: (delta: string) => void
   onProgress?: (label: string) => void
+  /** A non-terminal status change (queued, running, streaming, …). */
+  onStatus?: (status: string) => void
+  /** The provider accepted the prompt (the Send landed). */
+  onSubmitted?: () => void
+  /** Seconds since the provider started on the reply, every ~15 s. */
+  onHeartbeat?: (elapsedS: number) => void
 }
 
 /**
@@ -89,8 +95,21 @@ export async function followFabricTask(
           if (typeof label === "string" && label.trim()) handlers.onProgress?.(label.trim())
           continue
         }
+        if (msg.event === "submitted") {
+          handlers.onSubmitted?.()
+          continue
+        }
+        if (msg.event === "progress.heartbeat") {
+          const elapsed = payload?.elapsed_s
+          if (typeof elapsed === "number" && Number.isFinite(elapsed)) handlers.onHeartbeat?.(elapsed)
+          continue
+        }
         if (msg.event === "task.status" && TERMINAL_STATUSES.has(payload?.status)) {
           return await fabricJson<FabricTask>("GET", `/v1/tasks/${taskID}`)
+        }
+        if (msg.event === "task.status" && typeof payload?.status === "string") {
+          handlers.onStatus?.(payload.status)
+          continue
         }
       }
       if (signal?.aborted) throw new DOMException("aborted", "AbortError")

@@ -15,6 +15,9 @@
  *   start or answer a task on its own.
  * - Streaming: gateway `reply.text.delta` events → text deltas as they
  *   arrive; `done.text` is authoritative for anything not yet streamed.
+ * - Thought stream: until the reply starts, what the Sessions computer is
+ *   doing (sending, queued, sent, the provider's step labels, still
+ *   working) goes out as a reasoning part — see thoughts.ts.
  * - Abort → `POST /v1/tasks/:id/cancel`. A dropped event stream reconnects
  *   (the gateway replays missed events) until the task is terminal.
  */
@@ -25,7 +28,8 @@ import { Token } from "@/shared/util/token"
 import { resolveTaskSessionID } from "@/runtime/session/stream-context"
 import { FabricError, HUMAN_ACTION_HEADER, providerDisplayName } from "./client"
 import { askProviderQuestion, confirmSend } from "./human-gate"
-import { cancelFabricTask, followFabricTask, submitFabricTask, type FabricTask, type FabricTaskBody } from "./tasks"
+import { cancelFabricTask, followFabricTask, submitFabricTask, type FabricTask, type FabricTaskBody, type FollowHandlers } from "./tasks"
+import { createThoughtStream } from "./thoughts"
 
 const log = Log.create({ service: "fabric-lm" })
 
@@ -94,8 +98,10 @@ export class SubscriptionFabricLanguageModel implements LanguageModelV2 {
         }
         abortSignal?.addEventListener("abort", onAbort, { once: true })
 
+        const thoughts = createThoughtStream((part) => controller.enqueue(part), providerDisplayName(fabricProvider))
         const text = (delta: string) => {
           if (!delta) return
+          thoughts.end()
           if (!textOpen) {
             textOpen = true
             controller.enqueue({ type: "text-start", id: "text-1" })
@@ -105,6 +111,7 @@ export class SubscriptionFabricLanguageModel implements LanguageModelV2 {
           controller.enqueue({ type: "text-delta", id: "text-1", delta })
         }
         const finish = (reason: "stop" | "error" | "other") => {
+          thoughts.end()
           if (textOpen) controller.enqueue({ type: "text-end", id: "text-1" })
           const inputTokens = Token.estimate(prompt)
           const outputTokens = Token.estimate(emitted)
@@ -127,6 +134,14 @@ export class SubscriptionFabricLanguageModel implements LanguageModelV2 {
           const action =
             humanAction ??
             (await confirmSend({ sessionID, provider: fabricProvider, modelClass, prompt, signal: abortSignal }))
+          thoughts.sending()
+          const handlers: FollowHandlers = {
+            onText: (delta) => text(delta),
+            onStatus: (status) => thoughts.status(status),
+            onSubmitted: () => thoughts.submitted(),
+            onProgress: (label) => thoughts.progress(label),
+            onHeartbeat: (elapsedS) => thoughts.heartbeat(elapsedS),
+          }
           const task = await submit({
             sessionID,
             prompt,
@@ -140,7 +155,7 @@ export class SubscriptionFabricLanguageModel implements LanguageModelV2 {
           taskID = task.task_id
           if (abortSignal?.aborted) onAbort()
 
-          let outcome = await followFabricTask(task.task_id, abortSignal, { onText: (delta) => text(delta) })
+          let outcome = await followFabricTask(task.task_id, abortSignal, handlers)
           // A provider question pauses the task: a person answers it on the
           // card, the answer goes to the provider as the next turn.
           for (let round = 1; outcome.status === "needs_user" && round <= MAX_QUESTION_ROUNDS; round++) {
@@ -173,7 +188,7 @@ export class SubscriptionFabricLanguageModel implements LanguageModelV2 {
             if (abortSignal?.aborted) onAbort()
             if (streamed && !streamed.endsWith("\n")) text("\n\n")
             streamed = ""
-            outcome = await followFabricTask(next.task_id, abortSignal, { onText: (delta) => text(delta) })
+            outcome = await followFabricTask(next.task_id, abortSignal, handlers)
           }
           if (outcome.status === "completed" || outcome.status === "partial") {
             const full = outcome.result?.text ?? ""
