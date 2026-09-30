@@ -29,7 +29,7 @@ pub struct DagNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worktree: Option<WorktreeConfig>,
     /// Who should execute this node: `bot:<slug>` or `ao:<harness>`.
-    /// Recorded and displayed only; no runner acts on it yet.
+    /// Acted on only by the opt-in `drive` command (spec/DRIVE.md).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor: Option<String>,
     /// Latest recorded node output (`DagNodeOutputRecorded`).

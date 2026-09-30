@@ -3001,7 +3001,7 @@ pub enum DagMutation {
         /// `{{ <node_id>.output_path }}` placeholders (resolved at pickup).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         description: Option<String>,
-        /// `bot:<slug>` | `ao:<harness>`; recorded, not acted on yet.
+        /// `bot:<slug>` | `ao:<harness>`; acted on only by `drive`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         executor: Option<String>,
     },

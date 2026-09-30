@@ -11,6 +11,7 @@ pub mod dependencies;
 pub mod doctor;
 #[cfg(feature = "dolt")]
 pub mod dolt;
+pub mod drive;
 pub mod echoes;
 pub mod fence;
 pub mod gate;
@@ -68,7 +69,7 @@ pub use crate::mail::{
     MailIndexOptions, MailMessage, MailOptions, MailSearchHit, OverdueMessage, TypedMessage,
     DEFAULT_MAIL_THREAD,
 };
-pub use crate::orchestrator::{ExecutorProbe, Orchestrator, SpawnOptions, WatchOutcome};
+pub use crate::orchestrator::{CaptureFiles, ExecutorProbe, Orchestrator, SpawnOptions, WatchOutcome};
 pub use crate::peer::{
     DeliveryReceipt, Peer, PeerEnvelope, PeerRegistry, PeerStatus, send_envelope,
 };

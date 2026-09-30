@@ -24,6 +24,8 @@ use allternit_commrails::observer;
 use allternit_commrails::core::ids::{create_event_id, create_lease_id};
 use allternit_commrails::core::io::{ensure_dir, write_json_atomic};
 use allternit_commrails::dependencies::load_graph;
+use allternit_commrails::drive::hooks::NoHooks;
+use allternit_commrails::drive::{DriveOptions, Driver};
 use allternit_commrails::gate::gate::{GateOptions, WihPickupOptions};
 use allternit_commrails::gate::GateError;
 use allternit_commrails::templates::{parse_param_args, plan_from_template, TemplateStore};
@@ -142,6 +144,30 @@ enum Commands {
     /// Scoped remote listener (default off; spec/BRIDGE.md).
     #[command(subcommand)]
     Bridge(BridgeCmd),
+    /// Opt-in foreground runner: pick up each READY node that has an
+    /// `executor` and spawn it through the gates (spec/DRIVE.md). Exits when
+    /// nothing is READY or running, on Ctrl-C, or after one pass (--once).
+    Drive {
+        dag_id: String,
+        /// Per-DAG concurrent sessions (default and ceiling: config max_concurrent, 4).
+        #[arg(long)]
+        max_concurrent: Option<usize>,
+        /// Per-DAG spawns per rolling hour (default and ceiling: config, 20).
+        #[arg(long)]
+        max_spawns_per_hour: Option<usize>,
+        /// One scheduling pass, then exit (running sessions are adopted by the next run).
+        #[arg(long)]
+        once: bool,
+        /// Print what would be picked up / spawned; no ledger writes, no spawns.
+        #[arg(long)]
+        dry_run: bool,
+        /// Directory harnesses run in (default: --root).
+        #[arg(long)]
+        workdir: Option<PathBuf>,
+        /// Per-attempt timeout (default: config timeout_seconds, 3600).
+        #[arg(long)]
+        timeout_seconds: Option<u64>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -545,7 +571,7 @@ enum NodeCmd {
         /// `{{ <node_id>.output }}` / `{{ <node_id>.output_path }}`.
         #[arg(long)]
         description: Option<String>,
-        /// `bot:<slug>` | `ao:<harness>` (recorded only).
+        /// `bot:<slug>` | `ao:<harness>` (what `drive` spawns or mails).
         #[arg(long)]
         executor: Option<String>,
     },
@@ -1902,6 +1928,40 @@ async fn run() -> Result<()> {
             let ctx = AutomationCliContext { root: root.clone(), ledger: ledger.clone() };
             run_attention_command(&ctx, cmd).await?;
         }
+        Commands::Drive {
+            dag_id,
+            max_concurrent,
+            max_spawns_per_hour,
+            once,
+            dry_run,
+            workdir,
+            timeout_seconds,
+        } => {
+            let gate = if dry_run { None } else { Some(stores.gate().await?) };
+            let mut driver = Driver::new(
+                root.clone(),
+                ledger.clone(),
+                gate,
+                DriveOptions {
+                    dag_id,
+                    max_concurrent,
+                    max_spawns_per_hour,
+                    once,
+                    dry_run,
+                    workdir,
+                    timeout_seconds,
+                },
+                Arc::new(NoHooks),
+            )?;
+            let report = driver
+                .run(async {
+                    let _ = tokio::signal::ctrl_c().await;
+                })
+                .await?;
+            if let Some(exit) = report.exit {
+                println!("drive: exit {exit:?}");
+            }
+        }
     }
 
     Ok(())
@@ -2174,6 +2234,7 @@ async fn run_orchestrator_command(root: &Path, cmd: OrchestratorCmd) -> Result<(
                     task_file: task_file.as_deref(),
                     notes_sentinel: notes_sentinel.as_deref(),
                     wih: wih.as_deref(),
+                    capture: None,
                 })
                 .await?;
             println!(

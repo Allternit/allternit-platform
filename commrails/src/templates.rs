@@ -59,13 +59,22 @@ pub struct TemplateStep {
     pub priority: TicketPriority,
     #[serde(default)]
     pub blocked_by: Vec<String>,
-    /// `bot:<slug>` | `ao:<harness>` (WIH DAG only; recorded, not acted on).
+    /// `bot:<slug>` | `ao:<harness>` (WIH DAG only; `drive` spawns `ao:` and mails `bot:`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor: Option<String>,
     /// Wait-gate attached to the node (WIH DAG only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait_gate: Option<TemplateWaitGate>,
+    /// `safe`: the step is idempotent, so `drive` may restart it after an
+    /// interrupted attempt (becomes the node label `retry:safe`). Anything
+    /// else is rejected; omit it for steps with non-idempotent effects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry: Option<String>,
 }
+
+/// Node label that marks a node safe for `drive` to restart after an
+/// interrupted attempt.
+pub const RETRY_SAFE_LABEL: &str = "retry:safe";
 
 /// A wait-gate declared on a template step.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -251,6 +260,11 @@ impl Template {
                 validate_executor(executor)
                     .map_err(|e| anyhow::anyhow!("step {}: {}", step.id, e))?;
             }
+            if let Some(retry) = &step.retry {
+                if retry != "safe" {
+                    bail!("step {}: retry must be \"safe\" (or omitted), got {:?}", step.id, retry);
+                }
+            }
             let preds = transitive_blockers(&self.steps, &step.id);
             for r in placeholders::node_refs(&step.description) {
                 if !seen.contains(r.node_id.as_str()) {
@@ -295,6 +309,12 @@ impl Template {
                 description: (!description.trim().is_empty()).then_some(description),
                 executor: step.executor.clone(),
             });
+            if step.retry.is_some() {
+                mutations.push(DagMutation::AddLabel {
+                    node_id: nodes[&step.id].clone(),
+                    label: RETRY_SAFE_LABEL.to_string(),
+                });
+            }
         }
         for step in &self.steps {
             for blocker in &step.blocked_by {
@@ -814,6 +834,7 @@ steps:
                         blocked_by: vec![],
                         executor: None,
                         wait_gate: None,
+                        retry: None,
                     },
                     TemplateStep {
                         id: "ui".to_string(),
@@ -824,6 +845,7 @@ steps:
                         blocked_by: vec!["setup".to_string()],
                         executor: None,
                         wait_gate: None,
+                        retry: None,
                     },
                 ],
             )
