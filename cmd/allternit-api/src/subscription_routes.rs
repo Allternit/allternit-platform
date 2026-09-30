@@ -707,7 +707,7 @@ pub(crate) async fn forward(
     body: Bytes,
 ) -> Response {
     let path = path.trim_start_matches('/').to_string();
-    if !path.starts_with("v1/") || path.split('/').any(|seg| seg == ".." || seg == ".") {
+    if !(path.starts_with("v1/") || path == "aai/call") || path.split('/').any(|seg| seg == ".." || seg == ".") {
         return error_response(StatusCode::NOT_FOUND, "not a gateway route");
     }
     if body.len() > GATEWAY_BODY_LIMIT {
