@@ -162,9 +162,7 @@ pub fn agency_router() -> Router<Arc<AppState>> {
         .route("/v1/runs/:run_id/receipts", get(run_receipts))
         .route("/v1/runs/:run_id/receipts/verification", get(run_receipts_verify))
         .route("/v1/receipts/:receipt_id", get(get_receipt))
-        .route("/v1/runs/:run_id/graph", get(|Extension(rid): Extension<RequestId>| async move {
-            ApiError::not_implemented("the Tier C graph view", &rid)
-        }))
+        .route("/v1/runs/:run_id/graph", get(run_graph))
         .route("/v1/attention", get(list_attention))
         .route("/v1/attention/:attention_id", get(get_attention))
         .route("/v1/attention/:attention_id/responses", post(respond_attention))
@@ -518,6 +516,22 @@ async fn respond_attention(
     Ok(Json(json!({ "object": "attention_response", "attention_id": id, "resolution": resolution, "run": public_run(&rec) })).into_response())
 }
 
+/// Tier C graph view of the compiled TaskIR (structure only, no backend identity).
+async fn run_graph(
+    State(st): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Extension(rid): Extension<RequestId>,
+    Path(run_id): Path<String>,
+) -> ApiResult {
+    let rec = owned(store(&st).load_run(&run_id).await.map_err(|e| ApiError::internal(e, &rid))?, &user, &rid)?;
+    let ir = &rec.task_ir;
+    let nodes: Vec<Value> = ir["nodes"].as_array().cloned().unwrap_or_default().iter().map(|n| json!({
+        "node_id": n["id"], "primitive_id": n["role"], "role": n["role"], "kind": "task", "lifecycle": "DECLARE"
+    })).collect();
+    Ok(Json(json!({ "object": "graph", "graph_id": ir["dag_id"], "version": 1, "template_id": ir["template"]["id"],
+                    "template_source": ir["template"]["source"], "nodes": nodes, "edges": ir["edges"] })).into_response())
+}
+
 // ── artifacts & receipts ────────────────────────────────────────────────────
 
 async fn artifacts_of(st: &AppState, run_id: &str) -> Vec<Value> {
@@ -566,8 +580,16 @@ async fn run_receipts_verify(
     owned(store(&st).load_run(&run_id).await.map_err(|e| ApiError::internal(e, &rid))?, &user, &rid)?;
     let cs = st.rails.receipts.chain_store().map_err(|e| ApiError::internal(e, &rid))?;
     let r = cs.verify_chain(&run_id).map_err(|e| ApiError::internal(e, &rid))?;
-    Ok(Json(json!({ "object": "receipt_chain_verification", "run_id": run_id, "valid": r.ok, "length": r.length,
-                    "first_break": r.first_break, "verified_at": now(), "jwks_url": "/.well-known/jwks.json" })).into_response())
+    let receipts = cs.read_run(&run_id).unwrap_or_default();
+    let head = receipts.last().and_then(|x| x["chain"]["content_hash"].as_str()).unwrap_or_default().to_string();
+    // A chain break on a signature is reported as signatures_valid=false;
+    // an empty chain has nothing signed (null).
+    let sig_break = r.first_break.as_ref().is_some_and(|b| b.reason.to_lowercase().contains("sig"));
+    let signatures_valid = if receipts.is_empty() { Value::Null } else { json!(!sig_break) };
+    Ok(Json(json!({ "object": "receipt_chain_verification", "run_id": run_id, "receipt_count": r.length,
+                    "head_hash": head, "hash_chain_valid": r.ok || sig_break, "signatures_valid": signatures_valid,
+                    "first_invalid_index": r.first_break.as_ref().map(|b| b.index), "checked_at": now(),
+                    "jwks_url": "/.well-known/jwks.json" })).into_response())
 }
 
 async fn get_receipt(
@@ -700,10 +722,28 @@ async fn create_replay(
         .filter(|c| !c.entries.is_empty())
         .ok_or_else(|| ApiError::new(422, "STATE", "ERR_REPLAY_UNRECORDED", "source run has no recorded receipts to replay", &rid))?;
     let id = new_id("rpl");
+    let total = cassette.entries.len();
     let report = allternit_commrails::replay::replay_report(&cs, cassette, None, &id).map_err(|e| ApiError::internal(e, &rid))?;
+    use allternit_commrails::replay::Verdict;
+    let verdict = match report.verdict {
+        Verdict::Identical => "equivalent",
+        Verdict::ExpectedDivergence => "diverged_expected",
+        Verdict::UnexpectedDivergence => "diverged_unexpected",
+    };
     let report = serde_json::to_value(report).unwrap_or(Value::Null);
+    let divergences: Vec<Value> = report["divergences"].as_array().cloned().unwrap_or_default().into_iter().map(|d| {
+        let expected = d["expected"].as_bool().unwrap_or(false);
+        json!({ "step_ref": format!("{}#{}", d["node_id"].as_str().unwrap_or_default(), d["seq"]),
+                "kind": if expected { "expected" } else { "unexpected" }, "type": d["kind"],
+                "source_receipt_id": d["source_receipt_id"], "replay_receipt_id": d["replay_receipt_id"] })
+    }).collect();
+    let results = json!({ "object": "replay_results", "replay_id": id, "verdict": verdict, "decisions_total": total,
+                          "decisions_matched": total.saturating_sub(divergences.len()), "divergences": divergences,
+                          "has_more": false, "next_cursor": null });
+    let ts = now();
     let replay = json!({ "id": id, "object": "replay", "source_run_id": src, "effects": "recorded_only",
-                         "status": "completed", "created_at": now(), "results": report });
+                         "status": "completed", "verdict": verdict, "created_at": ts, "finished_at": ts,
+                         "results_url": format!("/v1/replays/{id}/results"), "error": null, "results": results });
     store(&st).save_object(EV_REPLAY_STATE, &id, &user.user_id, &replay).await.map_err(|e| ApiError::internal(e, &rid))?;
     Ok((StatusCode::ACCEPTED, Json(without_results(&replay))).into_response())
 }
@@ -735,5 +775,5 @@ async fn get_replay_results(
 ) -> ApiResult {
     let r = store(&st).load_object(EV_REPLAY_STATE, &id, &user.user_id).await.map_err(|e| ApiError::internal(e, &rid))?
         .ok_or_else(|| ApiError::not_found("replay", &rid))?;
-    Ok(Json(json!({ "object": "replay_results", "replay_id": id, "report": r["results"] })).into_response())
+    Ok(Json(r["results"].clone()).into_response())
 }
