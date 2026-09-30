@@ -57,7 +57,7 @@ The kernel package ships minimum completion evidence for one task type so far, b
 
 ## Current implementation
 
-The completion contracts (`CompletionCriterionV1`, `CompletionPolicyV1`, `CompletionProposalV1`, `CompletionDecisionV1`), the built-in criteria data and the bug-fix completion policy are in the kernel ABI package on main. The fail-closed judge and verifier-owned close run today for internal flows only when opted in; they are not on by default. For Agency API runs they are designed to be always on and not client-disableable.
+The completion contracts (`CompletionCriterionV1`, `CompletionPolicyV1`, `CompletionProposalV1`, `CompletionDecisionV1`), the built-in criteria data and the bug-fix completion policy are in the kernel ABI package on main. The fail-closed judge and verifier-owned close run today for internal flows only when opted in; they are not on by default. For agency-origin work the kernel already forces them on and they are not client-disableable; the Agency API that creates such runs is in Preview.
 
 ## Availability
 
@@ -65,7 +65,7 @@ The completion contracts (`CompletionCriterionV1`, `CompletionPolicyV1`, `Comple
 |------|--------|-------|
 | Completion contracts and criteria registry data | **AVAILABLE** | Kernel ABI 1.0.0 package. |
 | Verifier-owned close | **PREVIEW** | Opt-in for internal flows; not enabled by default. |
-| Always-on verifier-owned completion for Agency API runs | **DESIGN — NOT YET IMPLEMENTED** | Ships with the Agency API. |
+| Always-on verifier-owned completion for Agency API runs | **PREVIEW** | Enforced in the kernel for agency-origin work: verification is forced on, a builder's close becomes a proposal, and the verifier must differ from the builder. The Agency API that creates these runs is in Preview. |
 | Evidence sets beyond bug fixes | **DESIGN — NOT YET IMPLEMENTED** | Defined as each task type is built. |
 
 ## Developer relevance
