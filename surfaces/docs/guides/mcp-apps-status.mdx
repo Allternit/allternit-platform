@@ -1,24 +1,24 @@
 ---
 title: MCP Apps integration status
-description: Distinguish existing MCP tools from the pending interactive app host and developer documentation.
+description: Distinguish existing MCP tools from the merged interactive app host and pending developer documentation.
 ---
 
 MCP tools are already documented in the [MCP guide](/tools/mcp). The expanded **MCP Apps** program adds interactive tool-result views, a sandboxed host, connector proxying, a directory review flow, and Allternit-specific app extensions. The package name is **Allternit Plugin**; the user-facing interactive view is an **MCP App**.
 
 ## September 30 status
 
-The three integration PRs were verified open on September 30, 2026. At the source revision audited for this documentation update, the expanded program is not yet merged to main:
+The backend and workspace integrations merged on September 30, 2026. Their public developer-docs PR remains open. Source availability and installation readiness are separate:
 
-| Repository / PR | Contents |
+| Repository / PR | Status and contents |
 | --- | --- |
-| [allternit-platform #1015](https://github.com/Gizziio/allternit-platform/pull/1015) | Backend host support, per-user connector proxy, directory backend, Agents MCP server, commerce, and operations docs. |
-| [allternit-ai #298](https://github.com/Gizziio/allternit-ai/pull/298) | Workspace app host, directory UI, vendor packs, and extension wiring. |
-| [allternit-platform #1016](https://github.com/Gizziio/allternit-platform/pull/1016) | Public Plugins & MCP Apps developer documentation, intended to follow the backend and workspace integrations. |
+| [allternit-platform #1015](https://github.com/Gizziio/allternit-platform/pull/1015) | Merged — backend host support, per-user connector proxy, directory backend, Agents MCP server, commerce, and operations docs. |
+| [allternit-ai #298](https://github.com/Gizziio/allternit-ai/pull/298) | Merged — workspace app host, directory UI, vendor packs, and extension wiring. |
+| [allternit-platform #1016](https://github.com/Gizziio/allternit-platform/pull/1016) | Open — public Plugins & MCP Apps developer documentation, intended to follow the backend and workspace integrations. |
 
-These packages require merge, deployment or Desktop packaging, configuration, and a live end-to-end app check. The presence of a running sandbox does not establish that the full product flow is available.
+Using the merged host requires deployment or Desktop packaging, configuration, and a live end-to-end app check. The separate developer-docs package still requires merge and publication. The presence of a running sandbox does not establish that the full product flow is available.
 
 ## Developer documentation prepared with the program
 
 The pending documentation includes building an MCP App, submitting it to the directory, using `window.allternit`, and selling through an app. It accompanies the integration so its examples and permission behavior match the host that runs them.
 
-Until that documentation and host are released, use the existing [MCP tools](/tools/mcp) and [plugin adapters](/tools/plugin-adapters) references for current integrations. Directory acceptance and commerce availability should be checked against the released host rather than inferred from this roadmap.
+Until the expanded developer documentation is published, use the existing [MCP tools](/tools/mcp) and [plugin adapters](/tools/plugin-adapters) references for current integrations. Directory acceptance and commerce availability should be checked against the released host rather than inferred from this roadmap.
