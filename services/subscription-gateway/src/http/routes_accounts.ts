@@ -256,6 +256,13 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
       res.status(400).json({ error: "invalid_account", detail: parsed.error.issues });
       return;
     }
+    // Only providers an adapter is loaded for: an unknown one would sit as a
+    // dead auth_required row nothing can ever sign in to.
+    const adapters = deps.adapterRegistry?.adapters;
+    if (adapters && !adapters.some((a) => a.manifest.provider === parsed.data.provider)) {
+      res.status(400).json({ error: "unknown_provider", provider: parsed.data.provider });
+      return;
+    }
     const caller = callerOf(req);
     const accountId = parsed.data.account_id ?? randomUUID();
     const account: Account = {
