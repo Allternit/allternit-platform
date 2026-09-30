@@ -15,6 +15,10 @@ use allternit_commrails::cli::judge::{
 };
 use allternit_commrails::cli::lessons::{run_lessons_command, LessonsCmd};
 use allternit_commrails::cli::observe::{run_observe_command, ObserveArgs};
+use allternit_commrails::cli::campaign::{
+    run_attention_command, run_campaign_command, run_wake_command, AttentionCmd,
+    AutomationCliContext, CampaignCmd, WakeCmd,
+};
 use allternit_commrails::cli::work::{run_work_command, WorkCmd, WorkContext};
 use allternit_commrails::observer;
 use allternit_commrails::core::ids::{create_event_id, create_lease_id};
@@ -123,6 +127,15 @@ enum Commands {
     /// Vault memory candidates and lesson triage (Brain drafts only).
     #[command(subcommand)]
     Lessons(LessonsCmd),
+    /// Campaigns: objective, owner, budget, executor, one pending check.
+    #[command(subcommand)]
+    Campaign(CampaignCmd),
+    /// Keyed wake queue (campaign checks, node timer gates).
+    #[command(subcommand)]
+    Wake(WakeCmd),
+    /// Attention gate for agent->human notifications.
+    #[command(subcommand)]
+    Attention(AttentionCmd),
 }
 
 #[derive(Subcommand)]
@@ -1704,6 +1717,24 @@ async fn run() -> Result<()> {
                 }
             }
         },
+        Commands::Campaign(cmd) => {
+            let ctx = AutomationCliContext { root: root.clone(), ledger: ledger.clone() };
+            run_campaign_command(&ctx, cmd).await?;
+        }
+        Commands::Wake(cmd) => {
+            let ctx = AutomationCliContext { root: root.clone(), ledger: ledger.clone() };
+            // Node-timer wakes resolve through the Gate; only a sweep needs it.
+            let gate = if matches!(cmd, WakeCmd::RunDue { .. }) {
+                Some(stores.gate().await?)
+            } else {
+                None
+            };
+            run_wake_command(&ctx, cmd, gate).await?;
+        }
+        Commands::Attention(cmd) => {
+            let ctx = AutomationCliContext { root: root.clone(), ledger: ledger.clone() };
+            run_attention_command(&ctx, cmd).await?;
+        }
     }
 
     Ok(())

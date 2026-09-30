@@ -86,3 +86,23 @@ All events are appended to the Ledger as JSON objects with:
 - No observer-specific events: the read-only observer writes only mail
   (`ThreadCreated` if new, `MessageSent` with `from_agent: "observer"`, subject
   `observer <trigger> dag:<id> [wih:<id>] [sig:<failure signature>]`)
+
+### Campaigns (spec/CAMPAIGNS.md)
+- CampaignDeclared (payload: campaign_id, definition {id, objective, owner, status active|paused, executor, command?, budget? {unit, limit, mode shared|additive, per_wake?}, dag_id?, rearm?})
+- CampaignNoteAdded (payload: campaign_id, text, by)
+- CampaignSpendRecorded (payload: campaign_id, entry {amount, start?, end?, resource?, note?}); the projection recomputes `budget.spent` per mode
+- CampaignStatusChanged (payload: campaign_id, from, to, reason; `budget_exhausted` when spend pauses it)
+- CampaignBudgetChanged (payload: campaign_id, limit, previous_limit), from `campaign resume --limit`
+
+### Wakes (keyed queue; a new WakeScheduled for a key replaces the pending one)
+- WakeScheduled (payload: wake_id, key `campaign:<id>`|`node:<dag>/<node>`, due_at, target {kind campaign|node_timer, …}, message, source, replaces). The Gate appends one after every timer `DagNodeWaitGateAdded`.
+- WakeCancelled (payload: wake_id, key, reason); removes the key only if it names the pending wake
+- WakeFired (payload: wake_id, key, fired_at): a sweep's claim, written before dispatch (at-most-once)
+- WakeCompleted (payload: wake_id, key, outcome ran|failed|needs_you|resolved_timers|skipped|skipped_<status>, detail)
+
+### Attention gate (agent→human notifications)
+- AttentionItemSubmitted (payload: item_id, key, channel needs_you|mail, title, body, content_hash, source, submitted_at)
+- AttentionItemDeferred (payload: item_id, release_at, reason quiet_hours|hourly_cap): queued, never dropped
+- AttentionItemCoalesced (payload: item_id, into): same key + content hash already queued or delivered inside the dedupe window
+- AttentionItemDelivered (payload: item_id, channel, delivered_at): open in needs-you; `mail` also emits MessageSent on `mail:attention`
+- AttentionItemAcked (payload: item_id, acked_at, acked_by)
