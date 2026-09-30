@@ -6,8 +6,11 @@
 //! with a reason otherwise). Commands run with no shell, a cleared environment
 //! (PATH/LANG only), a per-run scratch dir, and a 60s timeout. Templates with
 //! model steps (s1_decision, s2_generate) park per `ALLTERNIT_AGENCY_EXECUTE`;
-//! the kernel executor has no template-graph path yet, so they never start.
-//! attention / wait / parallel steps are storable but not yet executable.
+//! when it is on they compile to a kernel graph and run on the agency
+//! executor (`agency_api::template_exec`: routing policy, strict fence,
+//! verifier-owned all_pass completion; the template must end in a verifier).
+//! attention / wait / parallel run only inside model templates; an S0-only
+//! template containing them is refused.
 
 use super::*;
 use crate::agency_api::{executor, store::{new_id, AgencyStore, RunRecord}};
@@ -161,14 +164,25 @@ pub async fn run(State(st): State<Arc<AppState>>, Extension(u): Extension<AuthUs
                    "receipts": format!("/v1/runs/{run_id}/receipts"), "attention": format!("/v1/runs/{run_id}/attention") },
         "metadata": { "template_id": tpl["id"], "inputs": b.get("inputs").cloned().unwrap_or(Value::Null) }, "resolved": {}, "effect_receipt_ids": [],
     });
-    let task_ir = json!({ "task_type": "TEMPLATE", "org_id": org, "template_id": tpl["id"] });
+    let task_ir = json!({ "task_type": "TEMPLATE", "org_id": org, "template_id": tpl["id"], "template": tpl, "routing_scopes": [tpl["scope"]] });
     let s = AgencyStore::new(st.rails.ledger.clone());
     let rec = {
         let _g = s.lock().await;
         let rec = s.save(RunRecord { owner: u.user_id.clone(), idempotency_key: None, run, task_ir, attention: vec![] }).await.map_err(KErr::internal)?;
         s.emit(&run_id, 1, "run.status_changed", json!({ "data": { "from": null, "to": "accepted", "terminal": false, "reason": "created" } })).await.map_err(KErr::internal)?;
+        let has_s0 = steps.iter().any(|x| x["kind"] == "s0_command");
         let park: Option<String> = if uses_model {
-            Some(if executor::enabled() { "template model steps are not yet executable: the kernel executor has no template graph".to_string() } else { executor::PARKED_REASON.to_string() })
+            if !executor::enabled() {
+                Some(executor::PARKED_REASON.to_string())
+            } else if !crate::agency_api::guard::Limits::from_env().org_allowed(&org) {
+                Some(executor::ORG_REASON.to_string())
+            } else if has_s0 && !s0_exec_on() {
+                Some(format!("local S0 execution is off on this server ({S0_EXEC_ENV} is not set)"))
+            } else if steps.last().and_then(|x| x["kind"].as_str()) != Some("verifier") {
+                Some("a model-step template must end with a verifier step (completion is verifier-owned)".to_string())
+            } else {
+                None
+            }
         } else if !s0_exec_on() {
             Some(format!("local S0 execution is off on this server ({S0_EXEC_ENV} is not set)"))
         } else {
@@ -176,9 +190,13 @@ pub async fn run(State(st): State<Arc<AppState>>, Extension(u): Extension<AuthUs
         };
         match park {
             Some(reason) => s.transition(rec, "waiting", Some(&reason)).await.map_err(KErr::internal)?,
+            None if uses_model => s.transition(rec, "waiting", Some("queued for execution")).await.map_err(KErr::internal)?,
             None => s.transition(rec, "running", Some("running S0 steps locally")).await.map_err(KErr::internal)?,
         }
     };
+    if uses_model && rec.run["status"] == "waiting" && rec.run["status_reason"] == "queued for execution" {
+        executor::spawn_template(st.clone(), run_id.clone()); // model steps: the agency executor
+    }
     if rec.run["status"] == "running" {
         let (s2, rid, h) = (AgencyStore::new(st.rails.ledger.clone()), run_id.clone(), tokio::runtime::Handle::current());
         tokio::task::spawn_blocking(move || drive_s0(&h, &s2, &rid, &steps));

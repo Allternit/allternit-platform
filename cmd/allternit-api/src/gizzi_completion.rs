@@ -40,8 +40,22 @@ pub async fn complete_ephemeral(
 /// assistant messages of the temporary session).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Usage {
+    /// Total tokens (input + output + reasoning).
     pub tokens: u64,
+    /// Input tokens, as gizzi reported them.
+    pub tokens_in: u64,
+    /// Output tokens (output + reasoning), as gizzi reported them.
+    pub tokens_out: u64,
     pub cost_usd: f64,
+}
+
+/// Usage from an assistant `message.updated` info payload (the split is kept,
+/// not just the total).
+pub fn usage_from_info(info: &serde_json::Value) -> Usage {
+    let t = &info["tokens"];
+    let n = |v: &serde_json::Value| v.as_u64().unwrap_or(0);
+    let (i, o) = (n(&t["input"]), n(&t["output"]) + n(&t["reasoning"]));
+    Usage { tokens: i + o, tokens_in: i, tokens_out: o, cost_usd: info["cost"].as_f64().unwrap_or(0.0) }
 }
 
 /// [`complete_ephemeral`] that also returns the reported token/cost usage
@@ -134,7 +148,7 @@ async fn collect(
 ) -> Option<(String, Usage)> {
     let mut usage: std::collections::HashMap<String, Usage> = std::collections::HashMap::new();
     let total = |u: &std::collections::HashMap<String, Usage>| {
-        u.values().fold(Usage::default(), |a, b| Usage { tokens: a.tokens + b.tokens, cost_usd: a.cost_usd + b.cost_usd })
+        u.values().fold(Usage::default(), |a, b| Usage { tokens: a.tokens + b.tokens, tokens_in: a.tokens_in + b.tokens_in, tokens_out: a.tokens_out + b.tokens_out, cost_usd: a.cost_usd + b.cost_usd })
     };
 
     // Subscribe to events before sending the message.
@@ -223,12 +237,7 @@ async fn collect(
                         "message.updated" => {
                             let info = &props["info"];
                             if info["role"] == "assistant" {
-                                let t = &info["tokens"];
-                                let n = |v: &serde_json::Value| v.as_u64().unwrap_or(0);
-                                usage.insert(info["id"].as_str().unwrap_or_default().to_string(), Usage {
-                                    tokens: n(&t["input"]) + n(&t["output"]) + n(&t["reasoning"]),
-                                    cost_usd: info["cost"].as_f64().unwrap_or(0.0),
-                                });
+                                usage.insert(info["id"].as_str().unwrap_or_default().to_string(), usage_from_info(info));
                             }
                         }
                         "message.part.delta" => {

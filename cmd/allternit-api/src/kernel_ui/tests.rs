@@ -309,3 +309,47 @@ async fn api_v1_paths_and_kernel_run_aliases_resolve() {
     // /api/v1/runs stays Cowork's: not served by this router
     assert_eq!(hit("GET", "/api/v1/runs".into(), None).await.0, 404);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn model_template_compiles_and_runs_on_the_executor_with_scripted_cognition() {
+    use crate::agency_api::template_exec;
+    let t = setup().await;
+    let u = user("u2", None);
+    std::env::set_var("ALLTERNIT_AGENCY_COGNITION", "scripted");
+    let steps = json!([{ "kind": "s1_decision", "label": "pick" }, { "kind": "s2_generate", "label": "draft" }, { "kind": "parallel", "label": "grp" }, { "kind": "verifier", "label": "v" }]);
+    let (_, m, _) = call(&t, "POST", "/v1/templates", &u, Some(tpl("mgen", steps))).await;
+    // compiled graph: one node per step, an S2 fallback for the s1 step, verifier completes
+    let g = template_exec::compile(&m).unwrap();
+    assert_eq!((g.nodes.len(), g.edges.len(), g.completion_nodes.clone()), (5, 3, vec!["T04".to_string()]));
+    assert!(template_exec::compile(&json!({ "id": "x", "steps": [{ "kind": "s2_generate", "label": "g" }] })).is_err(), "must end in a verifier");
+
+    let store = AgencyStore::new(t.st.rails.ledger.clone());
+    let drive = |rid: String| {
+        let (h, st, s) = (tokio::runtime::Handle::current(), t.st.clone(), AgencyStore::new(t.st.rails.ledger.clone()));
+        async move { tokio::task::spawn_blocking(move || template_exec::drive(&h, &st, &s, &rid, "default")).await.unwrap().unwrap() }
+    };
+    let (_, r, _) = call(&t, "POST", &format!("/v1/templates/{}/run", m["id"].as_str().unwrap()), &u, Some(json!({ "inputs": { "topic": "x" } }))).await;
+    let rid = r["run_id"].as_str().unwrap().to_string();
+    assert_eq!(store.load_run(&rid).await.unwrap().unwrap().run["status"], "waiting");
+    drive(rid.clone()).await;
+    let run = store.load_run(&rid).await.unwrap().unwrap().run;
+    assert_eq!((run["status"].as_str(), run["completion"]["status"].as_str()), (Some("completed"), Some("verified")), "{run}");
+    let evs = store.events(&rid).await.unwrap();
+    let prog: Vec<&Value> = evs.iter().filter(|e| e["type"] == "run.progress").collect();
+    assert_eq!(prog.len(), 4);
+    assert_eq!(prog[0]["data"]["cognitive_role"], "S2", "uncalibrated S1 falls back to the S2 node");
+    assert_eq!(prog[3]["data"]["kind"], "verifier");
+    for k in ["started_at", "duration_ms", "tokens_in", "tokens_out", "tok_per_s", "wait_ms"] {
+        assert!(prog[1]["data"].get(k).is_some(), "missing {k}");
+    }
+    assert_eq!(store.events_of_type(crate::agency_api::executor::EV_ROUTING).await.unwrap().len(), 1, "routing trace recorded");
+
+    // an attention step opens a real attention request and parks the run
+    let (_, a, _) = call(&t, "POST", "/v1/templates", &u, Some(tpl("mask", json!([{ "kind": "s2_generate", "label": "g" }, { "kind": "attention", "label": "ok?" }, { "kind": "verifier", "label": "v" }])))).await;
+    let (_, r, _) = call(&t, "POST", &format!("/v1/templates/{}/run", a["id"].as_str().unwrap()), &u, None).await;
+    let rid = r["run_id"].as_str().unwrap().to_string();
+    drive(rid.clone()).await;
+    let run = store.load_run(&rid).await.unwrap().unwrap();
+    assert_eq!((run.run["status"].as_str(), run.attention.len(), run.attention[0]["resume_from"].as_u64()), (Some("needs_attention"), 1, Some(1)));
+    std::env::remove_var("ALLTERNIT_AGENCY_COGNITION");
+}
