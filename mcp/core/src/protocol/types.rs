@@ -7,6 +7,7 @@ use serde_json::Value;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
     pub jsonrpc: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<u64>,
     pub method: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -64,8 +65,14 @@ pub struct JsonRpcNotification {
     pub params: Option<Value>,
 }
 
-/// MCP protocol version
-pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
+/// MCP protocol version (streamable HTTP transport requires 2025-03-26 or later)
+pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
+
+/// MCP Apps extension id (SEP-1865), advertised under `capabilities.extensions`
+pub const MCP_APPS_EXTENSION_ID: &str = "io.modelcontextprotocol/ui";
+
+/// MIME type of an MCP App UI resource
+pub const MCP_APP_MIME_TYPE: &str = "text/html;profile=mcp-app";
 
 /// MCP client capabilities
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -77,10 +84,27 @@ pub struct ClientCapabilities {
     pub roots: Option<RootsCapability>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sampling: Option<Value>,
+    /// Protocol extensions, keyed by extension id (e.g. MCP Apps)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<Value>,
+}
+
+impl ClientCapabilities {
+    /// Capabilities that declare this client an MCP Apps host:
+    /// `extensions["io.modelcontextprotocol/ui"] = {"mimeTypes":["text/html;profile=mcp-app"]}`.
+    pub fn with_mcp_apps() -> Self {
+        Self {
+            extensions: Some(serde_json::json!({
+                MCP_APPS_EXTENSION_ID: { "mimeTypes": [MCP_APP_MIME_TYPE] }
+            })),
+            ..Self::default()
+        }
+    }
 }
 
 /// Roots capability
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct RootsCapability {
     pub list_changed: bool,
 }
@@ -103,14 +127,14 @@ pub struct ServerCapabilities {
 
 /// Prompts capability
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct PromptsCapability {
     pub list_changed: bool,
 }
 
 /// Resources capability
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ResourcesCapability {
     pub subscribe: bool,
     pub list_changed: bool,
@@ -118,7 +142,7 @@ pub struct ResourcesCapability {
 
 /// Tools capability
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ToolsCapability {
     pub list_changed: bool,
 }
@@ -156,6 +180,9 @@ pub struct Tool {
     pub description: Option<String>,
     #[serde(rename = "inputSchema")]
     pub input_schema: Value,
+    /// Tool metadata (`_meta`), e.g. `_meta.ui.resourceUri` for MCP Apps
+    #[serde(rename = "_meta", default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
 }
 
 /// Tool call result
@@ -165,6 +192,14 @@ pub struct ToolResult {
     pub content: Option<Vec<ToolContent>>,
     #[serde(rename = "isError", skip_serializing_if = "Option::is_none")]
     pub is_error: Option<bool>,
+    #[serde(
+        rename = "structuredContent",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub structured_content: Option<Value>,
+    #[serde(rename = "_meta", default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
 }
 
 /// Tool content item

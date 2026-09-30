@@ -1461,6 +1461,17 @@ async fn agent_chat_bridge(
             gizzi_payload["metadata"]["subscription"] = json!({ "action_id": action_id });
         }
 
+        // The user's MCP connectors reach gizzi only through the per-user proxy:
+        // one turn-scoped server entry with a short-lived token bound to this
+        // user and session. Connector credentials never leave allternit-api.
+        // Top-level, not `metadata`: gizzi stores metadata on the user message,
+        // and this token must stay in memory.
+        if let Some(proxy) =
+            crate::mcp_user_proxy::proxy_registration(&state, &user_id_for_record, &session_id).await
+        {
+            gizzi_payload["mcpProxy"] = proxy;
+        }
+
         let mut message_req = client
             .post(format!("{}/session/{}/message", gizzi, session_id))
             .json(&gizzi_payload);
@@ -1681,7 +1692,22 @@ async fn agent_chat_bridge(
                             && part.get("sessionID").and_then(|v| v.as_str()) == Some(session_id.as_str())
                         {
                             for frame in tool_frames_for_part(part, &msg_id, &mut tool_frames_sent) {
+                                let settled_ok = frame["type"] == "tool_result";
                                 yield Ok(Event::default().data(frame.to_string()));
+                                // MCP Apps: a completed tool whose connector declares a
+                                // ui:// resource also yields an `mcp_app` frame.
+                                if settled_ok {
+                                    if let Some(app) = crate::mcp_apps::app_frame_for_tool_part(
+                                        &state,
+                                        &user_id_for_record,
+                                        &msg_id,
+                                        part,
+                                    )
+                                    .await
+                                    {
+                                        yield Ok(Event::default().data(app.to_string()));
+                                    }
+                                }
                             }
                         }
                         if part_type == "tool" {

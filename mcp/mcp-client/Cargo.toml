@@ -31,3 +31,4 @@ bytes = "1.5"
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = { workspace = true }
+axum = { workspace = true }
