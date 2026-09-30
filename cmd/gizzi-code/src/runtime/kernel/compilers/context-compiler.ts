@@ -535,6 +535,10 @@ export function compileContext(input: CompileContextInput): CompiledContext {
   for (const w of hidden) decisions.push(decision(w, 0, null))
 
   const chunks: ContextChunkV1[] = [...visible, ...hidden].map((w) => {
+    // Chunk identity names the serialized representation. Source provenance
+    // retains the original hash so a SHORT summary keeps its source lineage.
+    const text = contents[w.chunk_id] ?? w.c.text
+    const contentHash = sha256Tagged(text)
     const prov: Provenance = {
       source_type: w.c.source,
       source_id: w.c.source_id,
@@ -547,8 +551,8 @@ export function compileContext(input: CompileContextInput): CompiledContext {
       schema_version: CONTEXT_SCHEMA_VERSION,
       chunk_id: w.chunk_id,
       kind: w.c.kind,
-      content_ref: `cas:${w.hash}`,
-      content_hash: w.hash,
+      content_ref: `cas:${contentHash}`,
+      content_hash: contentHash,
       source_ref: prov,
       trust_class: w.trust,
       sensitivity: w.sensitivity,
@@ -557,12 +561,12 @@ export function compileContext(input: CompileContextInput): CompiledContext {
       pinned_conditions: w.c.pinned ? [w.chunk_id] : [],
       freshness: null,
       dependency_distance: w.c.dependency_distance ?? null,
-      token_estimates: { [TOKENIZER_FAMILY]: estimateTokens(w.c.text) },
+      token_estimates: { [TOKENIZER_FAMILY]: estimateTokens(text) },
       extensions: {
         "x-item": {
           authority: w.c.source,
           relevance: Math.min(1, w.c.priority ?? 0.5),
-          token_cost: estimateTokens(w.c.text),
+          token_cost: estimateTokens(text),
           trust_level: w.trust,
           duplicate_group: w.hash,
           state_version: stateVersion,
@@ -574,6 +578,15 @@ export function compileContext(input: CompileContextInput): CompiledContext {
     }
   })
 
+  const rendered = visible
+    .map((w) => {
+      const body = contents[w.chunk_id]
+      const head = `[${w.chunk_id} ${w.c.kind} ${w.c.source}:${w.c.source_id}]`
+      return w.trust === "UNTRUSTED" ? `${head}\n<untrusted-content>\n${body}\n</untrusted-content>` : `${head}\n${body}`
+    })
+    .join("\n\n")
+
+
   const compiled = decisions.reduce((s, d) => s + (d.estimated_tokens ?? 0), 0)
   const fingerprint = hashValue({
     capability: node.capability,
@@ -581,6 +594,7 @@ export function compileContext(input: CompileContextInput): CompiledContext {
     node_id: node.node_id,
     selected: decisions.map((d) => [d.chunk_id, d.visibility, d.assembly_order]),
     hashes: chunks.map((c) => c.content_hash),
+    rendered_hash: sha256Tagged(rendered),
     snapshot: snapshot?.fingerprint ?? null,
   })
   const projection: ContextProjectionV1 = {
@@ -599,13 +613,6 @@ export function compileContext(input: CompileContextInput): CompiledContext {
     extensions: { "x-node_id": node.node_id, "x-state_version": stateVersion, ...(overflow ? { "x-overflow": true } : {}) },
   }
 
-  const rendered = visible
-    .map((w) => {
-      const body = contents[w.chunk_id]
-      const head = `[${w.chunk_id} ${w.c.kind} ${w.c.source}:${w.c.source_id}]`
-      return w.trust === "UNTRUSTED" ? `${head}\n<untrusted-content>\n${body}\n</untrusted-content>` : `${head}\n${body}`
-    })
-    .join("\n\n")
 
   return { projection, chunks, contents, snapshot, rendered, overflow }
 }

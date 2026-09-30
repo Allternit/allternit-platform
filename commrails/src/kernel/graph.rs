@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::registry::PrimitiveRegistry;
+use super::router::{resolve_modes, resolve_role, Role};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RetryPolicy {
@@ -171,6 +172,10 @@ pub fn validate(g: &ComputeGraph, reg: &PrimitiveRegistry) -> Vec<Violation> {
         }
     }
     for n in &g.nodes {
+        match resolve_role(n).and_then(|role| resolve_modes(n, role)) {
+            Ok(_) => {}
+            Err(err) => v.push(st(Some(&n.node_id), err.to_string())),
+        }
         if reg.resolve(&n.primitive_id).is_err() {
             v.push(st(Some(&n.node_id), format!("unknown primitive '{}'", n.primitive_id)));
         }
@@ -275,7 +280,7 @@ fn invariants(g: &ComputeGraph, reg: &PrimitiveRegistry, v: &mut Vec<Violation>)
             }
         }
         // I3
-        if n.cognitive_role.as_deref() == Some("S2") {
+        if resolve_role(n) == Ok(Role::S2) {
             if is_mut || !n.write_set.is_empty() {
                 v.push(inv(Invariant::I3S2Candidate, n, "S2 node writes state; output must be a candidate"));
             }
@@ -342,6 +347,7 @@ mod tests {
         let mut patch = node("patch", "mut.apply_patch", "COMPUTE");
         patch["write_set"] = json!(["fs:src/app.py"]);
         patch["capability_request"] = json!({"capability": "code.edit"});
+        patch["cognitive_role"] = json!("S0"); // deterministic authorized mutation, not an S2 candidate
         let mut verify = node("verify", "ver.unit_test", "VERIFY");
         verify["evidence_required"] = json!(["test_report"]);
         let mut fin = node("fin", "ctl.finish", "CONTROL");
@@ -358,6 +364,44 @@ mod tests {
 
     fn has(vs: &[Violation], i: Invariant) -> bool {
         vs.iter().any(|x| matches!(x, Violation::Invariant { invariant, .. } if *invariant == i))
+    }
+
+    #[test]
+    fn inferred_s2_mutation_is_rejected_like_explicit_s2() {
+        // The original good fixture's capability-bearing COMPUTE mutation
+        // defaulted to S2 in the router while bypassing I3 in validation.
+        let mut g = good();
+        g["nodes"][1].as_object_mut().unwrap().remove("cognitive_role");
+        assert!(has(&check(g.clone()), Invariant::I3S2Candidate));
+        let mut explicit = g;
+        explicit["nodes"][1]["cognitive_role"] = json!("S2");
+        assert!(has(&check(explicit), Invariant::I3S2Candidate));
+    }
+
+    #[test]
+    fn inferred_s2_requires_downstream_verification_and_unknown_role_is_rejected() {
+        let mut g = good();
+        g["nodes"][0]["capability_request"] = json!({"capability": "code.propose"});
+        assert_eq!(check(g.clone()), vec![]); // inferred S2 read-only candidate reaches VERIFY
+        g["edges"] = json!([{"from":"obs","to":"fin"},{"from":"patch","to":"verify"},{"from":"verify","to":"fin"}]);
+        assert!(has(&check(g), Invariant::I3S2Candidate));
+        let mut g = good();
+        g["nodes"][0]["cognitive_role"] = json!("S9");
+        assert!(check(g).iter().any(|x| matches!(x, Violation::Structure { detail, .. } if detail.contains("unknown cognitive_role"))));
+    }
+
+    #[test]
+    fn graph_rejects_unknown_and_role_incompatible_mode_restrictions() {
+        for modes in [json!(["M5.GENERATIV"]), json!(["M0.DETERMINISTIC", "M5.GENERATIV"]), json!(["M5.GENERATIVE"])] {
+            let mut g = good();
+            g["nodes"][0]["allowed_modes"] = modes;
+            assert!(check(g).iter().any(|x| matches!(x, Violation::Structure { detail, .. } if detail.contains("mode"))));
+        }
+        let mut g = good();
+        g["nodes"][0]["allowed_modes"] = json!(["M0.DETERMINISTIC"]);
+        assert_eq!(check(g.clone()), vec![]);
+        g["nodes"][0]["allowed_modes"] = json!([]);
+        assert_eq!(check(g), vec![]);
     }
 
     #[test]
