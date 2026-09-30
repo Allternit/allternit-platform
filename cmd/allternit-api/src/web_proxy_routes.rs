@@ -30,13 +30,12 @@ use axum::{
     routing::get,
     Router,
 };
-use reqwest::dns::{Name, Resolve, Resolving};
+use reqwest::dns::Resolve;
 use reqwest::redirect::{Attempt, Policy};
 use serde::Deserialize;
 use std::{
     error::Error as StdError,
-    fmt,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::SocketAddr,
     time::Duration,
 };
 
@@ -436,6 +435,8 @@ fn json_error(status: StatusCode, message: &str) -> Response {
 mod tests {
     use super::*;
     use axum::{body::Body, http::Request as HttpRequest, response::Redirect};
+    use reqwest::dns::{Addrs, Name, Resolving};
+    use std::net::IpAddr;
     use tower::ServiceExt;
 
     fn v4(s: &str) -> IpAddr {

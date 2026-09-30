@@ -180,6 +180,52 @@ impl Orchestrator {
         };
         let cmd = hook::gate_argv(opts.cmd, settings_path.as_deref());
 
+        // ExecutionEnvironmentV1: resolve per node, write beside the log, and
+        // record in the ledger. `ALLTERNIT_EXEC_ENV_ENFORCE=1` additionally
+        // strips the node's process env to the allowlist (`env -i`).
+        let node_env = crate::execenv::resolve(&crate::execenv::EnvRequest {
+            node_id: &session,
+            workdir: &workdir,
+            worktree: opts.worktree,
+            extra_env_keys: &std::env::var("ALLTERNIT_EXEC_ENV_ALLOW")
+                .map(|v| v.split(',').map(|k| k.trim().to_string()).filter(|k| !k.is_empty()).collect::<Vec<_>>())
+                .unwrap_or_default(),
+            mounts: &[],
+            secret_refs: &[],
+            network_policy_id: None,
+        });
+        let _ = tokio::fs::write(
+            logdir.join(format!("{}.exec-env.json", session)),
+            serde_json::to_string_pretty(&node_env).unwrap_or_default(),
+        )
+        .await;
+        let _ = ledger.append(crate::execenv::resolved_event(opts.wih, &node_env)).await;
+        let env_prefix = if std::env::var("ALLTERNIT_EXEC_ENV_ENFORCE").as_deref() == Ok("1") {
+            let kept = crate::execenv::filter_env(&node_env, std::env::vars());
+            let mut p = String::from("env -i");
+            for (k, v) in kept {
+                p.push_str(&format!(" {}={}", k, shell_escape(&v)));
+            }
+            // The per-session exports above live in the tmux shell; carry them across.
+            let mut names = vec![
+                "ALLTERNIT_AO_PANE_ID", "ALLTERNIT_COMMRAILS_PEER_NAME", "ALLTERNIT_COMMRAILS_INBOX",
+                "ALLTERNIT_COMMRAILS_ROOT", "ALLTERNIT_RAILS_PEER_NAME", "ALLTERNIT_RAILS_INBOX", "ALLTERNIT_RAILS_ROOT",
+            ];
+            if opts.wih.is_some() {
+                names.push("ALLTERNIT_COMMRAILS_WIH");
+            }
+            if opts.task_file.is_some() {
+                names.extend(["ALLTERNIT_COMMRAILS_TASK_FILE", "ALLTERNIT_RAILS_TASK_FILE"]);
+            }
+            for n in names {
+                p.push_str(&format!(" {n}=\"${n}\""));
+            }
+            p.push(' ');
+            p
+        } else {
+            String::new()
+        };
+
         // Write the runner file to sidestep shell quoting issues.
         let mut runner_text = cmd
             .iter()
@@ -234,7 +280,8 @@ impl Orchestrator {
             ));
         }
         inner.push_str(&format!(
-            "script -q {} /bin/sh {}",
+            "{}script -q {} /bin/sh {}",
+            env_prefix,
             shell_escape(&log.to_string_lossy()),
             shell_escape(&runner.to_string_lossy())
         ));
