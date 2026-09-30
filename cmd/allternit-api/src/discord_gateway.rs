@@ -223,7 +223,9 @@ mod tests {
         let server_url = url.clone();
         let server = tokio::spawn(async move {
             // Connection 1: IDENTIFY with intents, then READY, a message, heartbeat carrying seq, then op 7.
-            let mut ws = accept(&l, 40).await;
+            // 500 ms, not 40: the client reconnects when a heartbeat goes unacknowledged, and on a
+            // slow CI runner the fake server could not ack within 40 ms (reset mid-test, 2026-09-30).
+            let mut ws = accept(&l, 500).await;
             let id = recv(&mut ws).await;
             assert_eq!(id["op"], 2);
             assert_eq!(id["d"]["token"], "bot-tok");
