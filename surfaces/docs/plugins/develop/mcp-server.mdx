@@ -1,0 +1,192 @@
+---
+title: 'Build: MCP server'
+description: 'Tools, schemas, annotations, server instructions, streamable HTTP, and what Allternit sends to your server'
+---
+
+Your MCP server is the only required part of a plugin. This page covers what Allternit expects from it and what it sends.
+
+## Transport
+
+Serve MCP over [streamable HTTP](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#streamable-http) on a single `https` endpoint, for example `https://example.com/mcp`.
+
+The Allternit client:
+
+- POSTs JSON-RPC requests and accepts either a JSON body or an SSE stream in reply.
+- Sends `MCP-Protocol-Version: 2025-06-18` and echoes any `Mcp-Session-Id` your server issues.
+- Treats a `202` reply to a notification as success.
+- Sends a `DELETE` with the session id when it closes a session.
+- Treats a `404` on a request that carries a session id as an expired session and initializes again.
+
+Stateless servers (no session id) work. The chat runtime tries streamable HTTP first and falls back to the older SSE transport, but new servers should use streamable HTTP.
+
+Requests that reach your server are made by Allternit's servers, not by the user's browser. Your server does not need to allow cross-origin requests from Allternit's web origin.
+
+## What Allternit sends at initialize
+
+The client advertises MCP Apps support in its capabilities:
+
+```json
+{
+  "capabilities": {
+    "extensions": {
+      "io.modelcontextprotocol/ui": {
+        "mimeTypes": ["text/html;profile=mcp-app"]
+      }
+    }
+  }
+}
+```
+
+Use this to decide whether to register UI-bearing tools. With `@modelcontextprotocol/ext-apps/server`, `getUiCapability(clientCapabilities)` reads it. A server that always registers its tools works too: a host without UI support ignores `_meta.ui` and shows the text result.
+
+## Tools
+
+Register each tool with a name, a description, an input schema, and annotations.
+
+```ts
+server.registerTool(
+  "list_invoices",
+  {
+    title: "List invoices",
+    description: "List the user's invoices, newest first. Optionally filter by status.",
+    inputSchema: {
+      status: z.enum(["draft", "open", "paid"]).optional(),
+      limit: z.number().int().min(1).max(100).default(25),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  async ({ status, limit }) => { /* ... */ },
+);
+```
+
+| Field | Guidance |
+|-------|----------|
+| `name` | 1 to 64 characters from letters, digits, `_`, `.`, `-`. Unique within your server. |
+| `title` | A short human label. Shown in permission prompts and listings. |
+| `description` | Says what the tool does and when to use it. Aim for more than a phrase and under 1000 characters. Describe your own tool only. Do not tell the model to prefer your tool over others. |
+| `inputSchema` | A JSON Schema with `"type": "object"`. Describe each property. |
+| `outputSchema` | Optional. Describe `structuredContent` if you return it. |
+| `annotations` | Declare what the tool does. See below. |
+
+The [submission scan](/plugins/publish/submit-and-review#automated-scan) checks all of these.
+
+### Annotations
+
+Annotations are hints that tell the host how careful to be. Declare all of them on every tool. They must be booleans.
+
+| Annotation | Meaning |
+|------------|---------|
+| `readOnlyHint: true` | The tool does not change anything. |
+| `destructiveHint: true` | The tool may delete or overwrite data. Meaningful when `readOnlyHint` is false. |
+| `openWorldHint: true` | The tool reaches outside your own system (posts to third parties, sends email). |
+| `idempotentHint: true` | Calling it twice with the same arguments has the same effect as calling it once. |
+
+Allternit uses them to decide when to ask the user. A tool is treated as *important* when it is destructive, or when it is not read-only and reaches the open world. See [permission prompts](/plugins/develop/authentication#permission-prompts).
+
+Declare them truthfully. A tool named like a write (`create_`, `delete_`, `send_`) with `readOnlyHint: true`, or a tool marked both read-only and destructive, is flagged by the scan.
+
+### Results
+
+Return `content` for the model. Return `structuredContent` when a View or another program needs typed data. Set `isError: true` for failures the model should see and recover from.
+
+```ts
+return {
+  content: [{ type: "text", text: "3 open invoices" }],
+  structuredContent: { invoices: [/* ... */] },
+};
+```
+
+When a tool has a View, the host passes the tool result to the View. In the chat path, results larger than 256 KB are not kept for the View; the View receives the model-visible text instead. Keep results small and let the View fetch more through a follow-up tool call.
+
+### Tool visibility
+
+`_meta.ui.visibility` controls who can call a tool. It is an array containing `"model"`, `"app"`, or both. Omitting it means both.
+
+| Value | Effect |
+|-------|--------|
+| `["model", "app"]` (default) | The model can call the tool and so can the View. |
+| `["model"]` | The model can call it. A call from the View is refused with HTTP 403. |
+| `["app"]` | Only the View can call it. It is hidden from the model's tool list. |
+
+Use `["app"]` for tools that exist only to serve the View, such as pagination or a refresh action.
+
+## Server instructions
+
+Return `instructions` in your `initialize` result. Keep them to guidance about using your tools: which tool finds things, which one shows a UI, what nothing here does.
+
+```ts
+new McpServer(
+  { name: "invoices", version: "1.0.0" },
+  {
+    instructions:
+      "Read-only access to the user's invoices. Use list_invoices to find one and get_invoice " +
+      "for its detail. Use show_invoice only when the user wants it displayed.",
+  },
+);
+```
+
+Do not use instructions to steer the model toward your app over other apps.
+
+## Resources
+
+A View is an MCP resource with a `ui://` URI.
+
+- Serve it from `resources/read` with the MIME type `text/html;profile=mcp-app`.
+- List it in `resources/list` so the scan can find it. The scan reports an error when a tool points at a `ui://` URI that `resources/list` does not expose.
+- Put `csp` and `permissions` under `_meta.ui` on the resource content (or on the read result). The host reads the content-level value first, then the result-level value. See [Build: MCP App UI](/plugins/develop/mcp-app-ui).
+- Keep the HTML under 2 MiB.
+
+## Requests the host makes for a View
+
+While a View is displayed, it can ask the host to forward requests to your server. The host forwards exactly five methods, always with the connecting user's own credentials:
+
+| Method | Notes |
+|--------|-------|
+| `tools/list` | Follows `nextCursor` pagination, up to 20 pages. |
+| `tools/call` | The host lists your tools first. It refuses a tool that is not listed (404) or whose `_meta.ui.visibility` lacks `"app"` (403). |
+| `resources/list` | Paginated. |
+| `resources/read` | |
+| `resources/templates/list` | |
+
+Any other method, including `prompts/list`, `prompts/get`, and `sampling/createMessage`, is refused. The host rebuilds each request from validated fields. It does not pass through anything else the View sent. Requests time out after 30 seconds.
+
+## Worked example: Allternit's Agents server
+
+Allternit exposes its own agents as an MCP server, built the same way as a third-party plugin. It is read-only. The default public URL in the code is `https://mcp.allternit.com/mcp`.
+
+It has five data tools and one render tool:
+
+| Tool | What it returns |
+|------|-----------------|
+| `list_agents` | The caller's agents, most recently updated first. |
+| `get_agent` | One agent by id. |
+| `list_runs` | Runs, filterable by `agent_id` or `status`. |
+| `get_run` | Status and timestamps for one run. |
+| `get_run_result` | The output of a finished run. |
+| `render_run_status` | The same summary as `get_run`, with a `ui://` View. |
+
+Every tool carries `readOnlyHint: true`. Only `render_run_status` has `_meta.ui`:
+
+```json
+{
+  "name": "render_run_status",
+  "title": "Show run status",
+  "description": "Display a run's status card. Call only when the user wants to see it; use get_run to read status as data.",
+  "annotations": { "readOnlyHint": true },
+  "_meta": {
+    "ui": {
+      "resourceUri": "ui://allternit/run-status.v1.html",
+      "visibility": ["model", "app"]
+    },
+    "ui/resourceUri": "ui://allternit/run-status.v1.html"
+  }
+}
+```
+
+The separate data tool (`get_run`) and render tool (`render_run_status`) follow a pattern worth copying: the model reads data with the data tool and only calls the render tool when the user wants to see it. The tool description says so.
+
+The View declares `csp: { connectDomains: [], resourceDomains: [] }`, so it can make no network requests. Its server instructions read:
+
+> Read-only access to the caller's Allternit agents and their runs. Use list_agents to find an agent, list_runs to find its runs (filter by agent_id or status), get_run for status and timestamps, and get_run_result for the output of a finished run. Use render_run_status only when the user wants to see a run's status displayed. Nothing here starts, changes, or deletes anything.
+
+Access requires an OAuth token with the scope `agents:read`. See [Authentication](/plugins/develop/authentication).

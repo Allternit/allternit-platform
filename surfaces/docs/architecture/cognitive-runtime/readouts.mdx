@@ -3,7 +3,14 @@ title: "Readouts"
 description: "How a decision's probabilities are read from a component, the readout levels raw to L2, and which level is allowed to act"
 ---
 
-**Status: PREVIEW (logit readouts over constrained labels, shadow) · DESIGN — NOT YET IMPLEMENTED (L2 hidden-state heads).** See [status labels](/architecture#status-labels).
+**Implementation: SHADOW (logit readouts) · DESIGN (hidden-state heads) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Decision heads read constrained labels, and later hidden states, instead of free text. |
+| **Implemented today** | Logit readouts over constrained labels run in shadow. |
+| **Active path** | No. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 A **readout** is how the decision runtime gets a probability for each candidate from a component. The readout level says how far that probability can be trusted.
 
@@ -35,9 +42,9 @@ The decision server on main reads next-token label probabilities from a local mo
 
 | Part | Status |
 |------|--------|
-| Constrained label readout, sampled fallback | **PREVIEW** (shadow) |
-| L0 debiasing, L1 temperature fit | **PREVIEW** |
-| L2 hidden-state heads | **DESIGN — NOT YET IMPLEMENTED** |
+| Constrained label readout, sampled fallback | **SHADOW** · INTERNAL |
+| L0 debiasing, L1 temperature fit | **IMPLEMENTED** · INTERNAL |
+| L2 hidden-state heads | **DESIGN** |
 
 ## Developer relevance
 

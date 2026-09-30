@@ -3,7 +3,14 @@ title: "Argument provenance"
 description: "Where each argument of a tool call came from, and what that allows"
 ---
 
-**Status: DESIGN — NOT YET IMPLEMENTED (recording); AVAILABLE (contract).** See [status labels](/architecture#status-labels).
+**Implementation: IMPLEMENTED (contract) · DESIGN (recording) · Exposure: PUBLIC (docs).** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Every tool argument records where it came from. |
+| **Implemented today** | Contract only. Nothing records provenance yet. |
+| **Active path** | No. |
+| **Public exposure** | Documentation only. No endpoint serves it. |
 
 Every argument in a compiled call is tagged with its origin. The origin decides how much the value is trusted and whether a model may change it.
 
@@ -21,14 +28,14 @@ The map is part of `ToolInvocationV1` (`argument_provenance`). Together with the
 
 ## Current implementation
 
-The tag set is in the frozen contract. Recording it on every call depends on the Tool Call Compiler, which is not on main.
+The tag set is in the frozen contract. Recording it on every call depends on the Tool Call Compiler, which is on main behind an off-by-default flag and runs in shadow.
 
 ## Availability
 
 | Part | Status |
 |------|--------|
-| Provenance tags in the contract | **AVAILABLE (contract)** |
-| Recorded on every call | **DESIGN — NOT YET IMPLEMENTED** |
+| Provenance tags in the contract | **IMPLEMENTED (contract)** |
+| Recorded on every call | **DESIGN** |
 
 ## Developer relevance
 

@@ -3,7 +3,14 @@ title: "Memory boundaries"
 description: "What may enter memory, what may be recalled into a run, and how sensitivity is applied"
 ---
 
-**Status: AVAILABLE (memory services, see linked pages) · DESIGN — NOT YET IMPLEMENTED (kernel-level retrieval snapshots).** See [status labels](/architecture#status-labels).
+**Implementation: ENABLED (memory services) · DESIGN (kernel retrieval snapshots) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Retrieval is snapshotted per step so a run can be replayed. |
+| **Implemented today** | Memory services exist in the platform (see linked pages). Kernel-level retrieval snapshots do not. |
+| **Active path** | Partial. Memory services yes; snapshots no. |
+| **Public exposure** | Through the existing platform memory APIs only. |
 
 Memory is a store of things worth keeping. It is not state and it is not context. It feeds context through retrieval, under policy.
 
@@ -22,9 +29,9 @@ The memory services described in [Memory Kernel](/core/memory-kernel) and [Memor
 
 | Part | Status |
 |------|--------|
-| Sensitivity and trust classes on chunks | **AVAILABLE (contract)** |
+| Sensitivity and trust classes on chunks | **IMPLEMENTED (contract)** |
 | Memory services | **See Memory Kernel and Memory Fabric pages** |
-| Shared retrieval snapshots | **DESIGN — NOT YET IMPLEMENTED** |
+| Shared retrieval snapshots | **DESIGN** |
 
 ## Developer relevance
 

@@ -1,0 +1,54 @@
+---
+title: "The Two Machines"
+description: "One external agent, two internal machines: the Cognitive Machine decides how to think, the Work Machine decides how work lives"
+---
+
+**Implementation: ENABLED (Work Machine) · SHADOW / IMPLEMENTED (Cognitive Machine) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | A Work Machine carries work across time; a Cognitive Machine decides how each step is thought. |
+| **Implemented today** | The internal work runtime runs today. Decision runtime and compilers are shadow; router and pool are library code. |
+| **Active path** | Partial. Work Machine yes; Cognitive Machine no. |
+| **Public exposure** | No. Not reachable by an external developer. |
+
+Callers see one agent. Inside, that agent is two machines with a hard boundary between them.
+
+```mermaid
+flowchart TD
+    A["ONE EXTERNAL AGENT"] --> C["COGNITIVE MACHINE<br/>How should we think?"]
+    A --> W["WORK MACHINE<br/>How does work live?"]
+    C --> C1["S0–S3 levels<br/>decision runtime<br/>context compiler<br/>router · model pool"]
+    W --> W1["lifecycle · leases<br/>admission · wait gates<br/>campaigns · wake<br/>attention"]
+    C1 --> P["POLICY + VERIFICATION<br/>shared floor under both"]
+    W1 --> P
+```
+
+**The Cognitive Machine decides how cognition is performed. The Work Machine decides how work persists and progresses.**
+
+## The boundary
+
+| Question | Owned by | Never owned by |
+|----------|----------|----------------|
+| Does this task exist, and what are its nodes? | Work Machine (the compute graph and the work runtime ledger) | A model |
+| May this node start now? Who holds it? | Work Machine (admission, leases) | A model |
+| Is the run waiting, resumed, cancelled? | Work Machine (lifecycle, wait gates, wake) | A model |
+| Should we compute, choose, generate or escalate? | Cognitive Machine (S0–S3, router) | The Work Machine |
+| What exact input does a component see? | Cognitive Machine (context compiler) | A transcript |
+| Is an action allowed? | Policy, under both machines | Either machine alone, or a model |
+| Is the work done? | Verification and the system | A worker or a model |
+
+The two machines talk through typed contracts. The Work Machine hands a node to the Cognitive Machine as a capability request. The Cognitive Machine returns a typed result with evidence. Neither reaches into the other's state.
+
+Why the split: a run has to survive a model being evicted, a process dying and a machine restarting. That only works if lifecycle, leases and waiting live in durable records the system owns. Cognition, on the other hand, should be swappable per step. Keeping the two apart is what makes both properties hold at once.
+
+## Details
+
+- [The Cognitive Machine](/architecture/cognitive-machine): cognition levels, the decision runtime, context, routing.
+- [The Work Machine](/architecture/work-machine): lifecycle, leases, admission, wait gates, campaigns, wake and attention.
+
+## Related
+
+- [Living Agent Architecture](/architecture)
+- [Contracts, not models](/architecture/contracts-not-models)
+- [Why this is different from an agent loop](/architecture/agent-loop)

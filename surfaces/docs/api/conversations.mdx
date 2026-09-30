@@ -7,13 +7,11 @@ description: Persist, fork, and retrieve chat conversations and messages on the 
 
 The Conversations API provides local SQLite-backed persistence for chat threads. It mirrors the legacy Next.js `/api/v1/conversations` layer and supports branching via fork and reply endpoints. All conversation objects are scoped to the authenticated user.
 
+<Note>
+This namespace is served by the Allternit API data-plane node (`http://127.0.0.1:8013` on the same machine, or your paired or provisioned node). The hosted Cloud API at `https://api.allternit.com` does not route it; it relays only agent sessions, canvases, office and beta research/sessions. See [Cloud API](/api/cloud-api).
+</Note>
+
 ## Base URL
-
-```text
-https://api.allternit.com/api
-```
-
-For local development:
 
 ```text
 http://127.0.0.1:8013/api
@@ -63,7 +61,7 @@ All requests require a valid bearer token in the `Authorization` header. See [Au
 ## List conversations
 
 ```bash
-curl https://api.allternit.com/api/conversations \
+curl http://127.0.0.1:8013/api/conversations \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -97,7 +95,7 @@ curl https://api.allternit.com/api/conversations \
 ## Create conversation
 
 ```bash
-curl -X POST https://api.allternit.com/api/conversations \
+curl -X POST http://127.0.0.1:8013/api/conversations \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -129,7 +127,7 @@ curl -X POST https://api.allternit.com/api/conversations \
 ## Get conversation
 
 ```bash
-curl https://api.allternit.com/api/conversations/conv_01hqx8x7x7x7x7x7x7x7x7x \
+curl http://127.0.0.1:8013/api/conversations/conv_01hqx8x7x7x7x7x7x7x7x7x \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -151,7 +149,7 @@ curl https://api.allternit.com/api/conversations/conv_01hqx8x7x7x7x7x7x7x7x7x \
 ## List messages
 
 ```bash
-curl https://api.allternit.com/api/conversations/conv_01hqx8x7x7x7x7x7x7x7x7x/messages \
+curl http://127.0.0.1:8013/api/conversations/conv_01hqx8x7x7x7x7x7x7x7x7x/messages \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -180,7 +178,7 @@ curl https://api.allternit.com/api/conversations/conv_01hqx8x7x7x7x7x7x7x7x7x/me
 ## Create message
 
 ```bash
-curl -X POST https://api.allternit.com/api/conversations/conv_01hqx8x7x7x7x7x7x7x7x7x/messages \
+curl -X POST http://127.0.0.1:8013/api/conversations/conv_01hqx8x7x7x7x7x7x7x7x7x/messages \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -215,7 +213,7 @@ curl -X POST https://api.allternit.com/api/conversations/conv_01hqx8x7x7x7x7x7x7
 ## List replies
 
 ```bash
-curl https://api.allternit.com/api/conversations/conv_01hqx8x7x7x7x7x7x7x7x7x/replies \
+curl http://127.0.0.1:8013/api/conversations/conv_01hqx8x7x7x7x7x7x7x7x7x/replies \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -243,7 +241,7 @@ curl https://api.allternit.com/api/conversations/conv_01hqx8x7x7x7x7x7x7x7x7x/re
 ## Fork conversation
 
 ```bash
-curl -X POST https://api.allternit.com/api/conversations/conv_01hqx8x7x7x7x7x7x7x7x7x/fork \
+curl -X POST http://127.0.0.1:8013/api/conversations/conv_01hqx8x7x7x7x7x7x7x7x7x/fork \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

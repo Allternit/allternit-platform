@@ -114,6 +114,8 @@ Creates a new Gizzi session. The gateway stamps the default model, resolves the 
 | `origin_surface` | string | No | Original surface (`chat`, `cowork`, `code`, `browser`, `design`). |
 | `ephemeral` | boolean | No | If `true`, the session is hidden from lists and deleted on abort. |
 | `metadata` | object | No | Bag carried by clients. `metadata.surface`, `metadata.projectId`, and `metadata.project_id` are read by the gateway. |
+| `project_id` | string | No | Project the session belongs to (top-level form used by the web client). |
+| `model` | object | No | Optional model reference stamped on the session. |
 
 #### Example request
 
@@ -284,6 +286,8 @@ Sends a message to the session. Only `role: "user"` messages are forwarded to th
 | `role` | string | No | Defaults to `user`. |
 | `thinking` | string | No | Explicit reasoning text. |
 | `metadata` | object | No | May include `model` with `providerID`/`modelID` to override the brain. |
+| `noReply` | boolean | No | Record the message without starting a model turn. |
+| `source` | string | No | Where the text was typed (for example `aci`); stored on the text part's metadata. |
 
 #### Example request
 
@@ -402,6 +406,29 @@ curl -H "Authorization: Bearer $TOKEN" \
 event: message
 data: {"type":"message_added","session_id":"sess_9c1d...","id":"msg_2c3d...","role":"assistant","content":"I found a potential issue..."}
 ```
+
+## Additional routes
+
+These routes are registered by the same router on the Allternit API node. See the code in `cmd/allternit-api/src/agent_session_routes.rs` for request shapes.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/v1/agent-sessions/:id/status` | Session status. |
+| `POST` | `/api/v1/agent-sessions/:id/resume` | Resume a session. |
+| `POST` | `/api/v1/agent-sessions/:id/handoff` | Hand a session off. |
+| `GET` | `/api/v1/agent-sessions/:id/lineage` | Session lineage. |
+| `POST` | `/api/v1/agent-sessions/:id/fetch-origin` | Fetch the native origin of an imported session. |
+| `GET` | `/api/v1/agent-sessions/:id/origin` | Read the native origin. |
+| `POST` | `/api/v1/agent-sessions/:id/export-native` | Export to a native harness session. |
+| `GET` | `/api/v1/questions` | List pending runtime questions. |
+| `POST` | `/api/v1/questions/:id/reply` | Answer a question. |
+| `POST` | `/api/v1/questions/:id/reject` | Reject a question. |
+| `POST` | `/api/v1/permissions/:id/reply` | Answer a permission request. |
+| `GET` | `/api/v1/native-sessions/harnesses` | List native harnesses. |
+| `GET` | `/api/v1/native-sessions` | List native sessions. |
+| `POST` | `/api/v1/native-sessions/pickup` | Pick up a native session. |
+| `POST` | `/api/v1/native-sessions/spawn` | Spawn a native session. |
+| `GET` | `/api/v1/native-sessions/:harness/:id` | Show a native session. |
 
 ## Error codes
 

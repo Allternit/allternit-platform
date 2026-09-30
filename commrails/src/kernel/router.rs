@@ -324,6 +324,8 @@ pub struct BudgetLedger {
 pub enum RouteError {
     #[error("node {0}: unknown cognitive_role {1}")]
     BadRole(String, String),
+    #[error("node {0}: unknown allowed mode {1}")]
+    BadMode(String, String),
     #[error("node {0}: no legal mode for role (allowed_modes ∩ legal = ∅)")]
     NoLegalMode(String),
     #[error("node {0}: capability node without a capability id")]
@@ -360,7 +362,8 @@ fn node_budget(node: &GraphNode) -> NodeBudget {
     }
 }
 
-fn resolve_role(node: &GraphNode) -> Result<Role, RouteError> {
+/// Shared effective-role resolver for routing and static graph invariants.
+pub(crate) fn resolve_role(node: &GraphNode) -> Result<Role, RouteError> {
     match node.cognitive_role.as_deref() {
         Some(r) => Role::parse(r).ok_or_else(|| RouteError::BadRole(node.node_id.clone(), r.to_string())),
         // POLICY / VERIFY / WAIT / CONTROL and plain compute without a
@@ -368,6 +371,20 @@ fn resolve_role(node: &GraphNode) -> Result<Role, RouteError> {
         None if node.capability_request.is_some() && node.node_kind == "COMPUTE" => Ok(Role::S2),
         None => Ok(Role::S0),
     }
+}
+
+/// A missing/empty restriction permits every legal mode; any unknown entry
+/// in a nonempty restriction is an error, even alongside a valid entry.
+pub(crate) fn resolve_modes(node: &GraphNode, role: Role) -> Result<Vec<Mode>, RouteError> {
+    let allowed: Vec<Mode> = node.allowed_modes.iter()
+        .map(|m| Mode::parse(m).ok_or_else(|| RouteError::BadMode(node.node_id.clone(), m.clone())))
+        .collect::<Result<_, _>>()?;
+    let modes: Vec<Mode> = Mode::legal_for(role).iter().copied()
+        .filter(|m| node.allowed_modes.is_empty() || allowed.contains(m)).collect();
+    if modes.is_empty() {
+        return Err(RouteError::NoLegalMode(node.node_id.clone()));
+    }
+    Ok(modes)
 }
 
 impl<'a, P: ModelPool> Router<'a, P> {
@@ -391,15 +408,7 @@ impl<'a, P: ModelPool> Router<'a, P> {
 
         // 1. role, 2. legal modes ∩ node.allowed_modes.
         let role = resolve_role(node)?;
-        let allowed: Vec<Mode> = node.allowed_modes.iter().filter_map(|m| Mode::parse(m)).collect();
-        let modes: Vec<Mode> = Mode::legal_for(role)
-            .iter()
-            .copied()
-            .filter(|m| allowed.is_empty() || allowed.contains(m))
-            .collect();
-        if modes.is_empty() {
-            return Err(RouteError::NoLegalMode(nid));
-        }
+        let modes = resolve_modes(node, role)?;
 
         let req = node.capability_request.as_ref();
         let capability = req

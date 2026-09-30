@@ -7,18 +7,22 @@ description: 'Messaging, secrets, identity channels, and connector resolution fo
 
 The AllternitBus API provides the runtime surface agents use to send and receive messages, store encrypted secrets, resolve connector credentials, and manage identity channels such as email, phone, and wallet addresses. All authenticated routes are mounted under `/api/v1` and require a valid bearer token via the platform auth middleware. The public inbound webhook is mounted at `/webhooks/photon` and is called server-to-server by Photon.codes.
 
+<Note>
+This namespace is served by the Allternit API data-plane node (`http://127.0.0.1:8013` on the same machine, or your paired or provisioned node). The hosted Cloud API at `https://api.allternit.com` does not route it; it relays only agent sessions, canvases, office and beta research/sessions. See [Cloud API](/api/cloud-api).
+</Note>
+
 ## Base URL
 
 Authenticated surface:
 
 ```
-https://api.allternit.com/api/v1
+http://127.0.0.1:8013/api/v1
 ```
 
 Public webhook surface:
 
 ```
-https://api.allternit.com/webhooks/photon
+http://127.0.0.1:8013/webhooks/photon
 ```
 
 For local development:
@@ -68,7 +72,7 @@ Delivers a message to the agent's inbox. The route path is kept for backward com
 #### Example request
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/photon/agents/agent_018f3a7c.../inbox \
+curl -X POST http://127.0.0.1:8013/api/v1/photon/agents/agent_018f3a7c.../inbox \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -106,7 +110,7 @@ Returns messages for the agent, newest first.
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-  "https://api.allternit.com/api/v1/photon/agents/agent_018f3a7c.../inbox?limit=10"
+  "http://127.0.0.1:8013/api/v1/photon/agents/agent_018f3a7c.../inbox?limit=10"
 ```
 
 #### Example response
@@ -150,7 +154,7 @@ Public webhook called by Photon.codes when an inbound SMS or message arrives. Th
 #### Example request
 
 ```bash
-curl -X POST https://api.allternit.com/webhooks/photon \
+curl -X POST http://127.0.0.1:8013/webhooks/photon \
   -H "Content-Type: application/json" \
   -d '{
     "from": "+15551234567",
@@ -191,7 +195,7 @@ Stores an encrypted secret value for the agent. Values are sealed at rest via `t
 #### Example request
 
 ```bash
-curl -X PUT https://api.allternit.com/api/v1/agents/agent_018f3a7c.../secrets/PHOTON_API_KEY \
+curl -X PUT http://127.0.0.1:8013/api/v1/agents/agent_018f3a7c.../secrets/PHOTON_API_KEY \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -233,7 +237,7 @@ Each reference:
 #### Example request
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/agents/agent_018f3a7c.../secrets/resolve \
+curl -X POST http://127.0.0.1:8013/api/v1/agents/agent_018f3a7c.../secrets/resolve \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -289,7 +293,7 @@ Each binding:
 #### Example request
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/agents/agent_018f3a7c.../connectors/resolve \
+curl -X POST http://127.0.0.1:8013/api/v1/agents/agent_018f3a7c.../connectors/resolve \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -336,7 +340,7 @@ Returns the agent's bound identity channels: email, phone, and wallet. Channels 
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-  https://api.allternit.com/api/v1/agents/agent_018f3a7c.../identity
+  http://127.0.0.1:8013/api/v1/agents/agent_018f3a7c.../identity
 ```
 
 #### Example response
@@ -375,7 +379,7 @@ Provisioning is idempotent: re-provisioning an agent returns its existing channe
 #### Example request
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/agents/agent_018f3a7c.../identity/email \
+curl -X POST http://127.0.0.1:8013/api/v1/agents/agent_018f3a7c.../identity/email \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -443,7 +447,7 @@ Assigns a phone number to the agent from the comma-separated pool in `ALLTERNIT_
 #### Example request
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/agents/agent_018f3a7c.../identity/phone \
+curl -X POST http://127.0.0.1:8013/api/v1/agents/agent_018f3a7c.../identity/phone \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -476,7 +480,7 @@ Requests a cross-surface bridge for a session. The route path is kept for backwa
 #### Example request
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/photon/sessions/sess_9c1d.../bridge \
+curl -X POST http://127.0.0.1:8013/api/v1/photon/sessions/sess_9c1d.../bridge \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

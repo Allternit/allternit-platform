@@ -3,7 +3,14 @@ title: "Abstain and escalate"
 description: "What happens when a decision is not confident enough, and why falling back is always safer than guessing"
 ---
 
-**Status: PREVIEW (uncalibrated results abstain in the decision runtime; judge failures go to a human) · DESIGN — NOT YET IMPLEMENTED (router-driven escalation).** See [status labels](/architecture#status-labels).
+**Implementation: SHADOW (abstain) · DESIGN (router-driven escalation) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Uncertain results abstain and escalate to a stronger level or a human. |
+| **Implemented today** | Uncalibrated decision results abstain in the shadow decision runtime; judge failures go to a human. |
+| **Active path** | Partial. Judge failures reach a human; router-driven escalation does not exist. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 Every cognitive step has an honest way to say "not me": **abstain** (do not answer) or **escalate** (hand to something stronger or to a person).
 
@@ -32,16 +39,16 @@ Why: a system that must always answer will guess. Making abstention a normal, ty
 
 - The decision runtime on main marks every result without a passing calibration manifest as uncalibrated and abstains. Since no manifests exist yet, every S1 result abstains today.
 - For agency-origin work, a judge timeout, error or invalid answer moves the node to `NEEDS_HUMAN`, never to done.
-- Escalation to a stronger mode or component needs the [router](/architecture/routing), which is not built.
+- Escalation to a stronger mode or component needs the [router](/architecture/routing), which is on main as library code but not yet called on the normal path.
 
 ## Availability
 
 | Part | Status |
 |------|--------|
-| Abstain when uncalibrated | **PREVIEW** |
-| Judge failure goes to a human (agency-origin work) | **PREVIEW** |
-| Threshold policy and decision motifs | **PREVIEW** |
-| Router-driven escalation | **DESIGN — NOT YET IMPLEMENTED** |
+| Abstain when uncalibrated | **IMPLEMENTED** · INTERNAL |
+| Judge failure goes to a human (agency-origin work) | **IMPLEMENTED** · INTERNAL |
+| Threshold policy and decision motifs | **IMPLEMENTED** · INTERNAL |
+| Router-driven escalation | **DESIGN** |
 
 ## Developer relevance
 

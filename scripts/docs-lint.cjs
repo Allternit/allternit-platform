@@ -131,13 +131,21 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       // Native session pickup names the other CLIs; that page is the catalog.
       if (mdxPath.endsWith('cli/native-sessions.mdx')) continue;
       if (mdxPath.endsWith('cli/session.mdx')) continue;
+      // Subscription setup and its workflow index must name the supported providers.
+      if (mdxPath.endsWith('surfaces/subscriptions.mdx')) continue;
+      if (mdxPath.endsWith('guides/subscriptions.mdx')) continue;
+      if (mdxPath.endsWith('guides/platform-workflows.mdx')) continue;
+      // Porting an MCP App from another host has to name that host and its globals.
+      if (mdxPath.endsWith('plugins/guides/porting.mdx')) continue;
+      // Provider env vars (OPENAI_API_KEY etc.) are configuration, not endorsement.
+      if (mdxPath.endsWith('tools/open-notebook.mdx')) continue;
       fail(
         `competitor mention in ${path.relative(ROOT, mdxPath)}:${i + 1}: ${line.trim()}`
       );
     }
   }
 }
-pass('no competitor mentions in public docs (except migration guide)');
+pass('no competitor mentions outside provider integration references');
 
 // 6. Run Mintlify build validator.
 try {

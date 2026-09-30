@@ -3,9 +3,16 @@ title: "The Work Machine"
 description: "The half of the agent that makes work durable: graph lifecycle, node outputs, leases, admission, wait gates, campaigns, wake and attention"
 ---
 
-**Status: AVAILABLE (internal work runtime) · PREVIEW (typed lifecycle, drive runner, Agency API surface).** See [status labels](/architecture#status-labels).
+**Implementation: ENABLED (work runtime) · IMPLEMENTED (typed lifecycle, drive runner) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
 
-The **Work Machine** carries a run across time, processes and restarts. It is the other half of the agent next to the [Cognitive Machine](/architecture/cognitive-machine). A model never drives it; the work runtime does.
+| | |
+|---|---|
+| **Architecture** | Work lives as durable graphs with leases, gates, campaigns and wake. |
+| **Implemented today** | The internal work runtime. Typed lifecycle as library code; the drive runner is opt-in. |
+| **Active path** | Yes, inside the internal work runtime. |
+| **Public exposure** | Not yet. Planned through the Agency API (contract published, endpoint not served). |
+
+The agent is [two machines](/architecture/two-machines). The Work Machine decides how work persists and progresses; the [Cognitive Machine](/architecture/cognitive-machine) decides how cognition is performed. This page covers the first: **"How does work live?"** The Work Machine carries a run across time, processes and restarts. A model never drives it; the work runtime does.
 
 ## Architecture contract
 
@@ -31,20 +38,20 @@ The work runtime is [CommRails](/core/commrails). On main today:
 - Node outputs, manual and timer wait gates, leases with heartbeat and reclaim, campaigns, a keyed wake queue and the attention gate.
 - A typed node lifecycle with a legal-transition table and a mapping from the stored node statuses. It is merged as a library and is not yet the enforced path for every transition.
 - Every spawned node gets a resolved execution environment: a working directory, an allowlist of environment keys, filesystem scope and a network policy. The resolved document is recorded in the ledger.
-- Every CLI harness is launched in its own auto-approve mode, with Allternit's gate in front of it. The gate sits in a pre-tool hook or answers the harness's permission requests over the Agent Client Protocol. One harness has neither, so it runs inside its execution environment fence only.
+- Work-bound executor paths are being converged on the Allternit policy gate; direct interactive runtime behavior may differ from Agency/work-runtime execution.
 - The drive runner, which walks a graph and spawns executors under spawn caps, is an opt-in operator command, not a daemon.
 
 ## Availability
 
 | Part | Status |
 |------|--------|
-| Node outputs, wait gates, leases, heartbeat and reclaim | **AVAILABLE** (internal) |
-| Campaigns and wake queue | **AVAILABLE** (internal) |
-| Attention gate | **AVAILABLE** (internal) |
-| Per-node execution environment and shared egress guard | **AVAILABLE** (internal) |
-| Typed lifecycle as the enforced path | **PREVIEW** |
-| Drive runner and spawn caps | **PREVIEW** (opt-in) |
-| Agency API run surface | **PREVIEW** |
+| Node outputs, wait gates, leases, heartbeat and reclaim | **ENABLED** · INTERNAL |
+| Campaigns and wake queue | **ENABLED** · INTERNAL |
+| Attention gate | **ENABLED** · INTERNAL |
+| Per-node execution environment and shared egress guard | **ENABLED** · INTERNAL |
+| Typed lifecycle as the enforced path | **IMPLEMENTED** · INTERNAL |
+| Drive runner and spawn caps | **IMPLEMENTED** (opt-in) |
+| Agency API run surface | **PUBLIC PREVIEW** (contract; not served) |
 
 ## Developer relevance
 

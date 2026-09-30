@@ -140,10 +140,11 @@ const result = await tool.execute({ url: 'https://allternit.com/docs' });
 ### CLI
 
 ```bash
-# Gizzi Code exposes plugin adapters through the plugin command group
-gizzi plugin install --manifest ./manifests/web-fetch.json
+# Real subcommands (cmd/gizzi-code/src/cli/commands/plugin.ts):
+# install <package>, remove <package>, list, search <query>, enable <name>, disable <name>, migrate
+gizzi plugin install <npm-package>
 gizzi plugin list
-gizzi plugin activate qwen-mm-web-fetch
+gizzi plugin enable <name>
 ```
 
 ## Request / response examples

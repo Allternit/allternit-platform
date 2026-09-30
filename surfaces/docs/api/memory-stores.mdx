@@ -7,14 +7,14 @@ description: 'Create and manage named memory stores for long-term agent context.
 
 A memory store is a named, user-scoped container that agents can read from and write to for long-term memory. Each store carries a `redaction_policy` that is applied to content before it is persisted or surfaced to a model.
 
-This scaffold owns the store record itself: create, list, get, and delete. Reading and writing individual memory entries through a store is handled by the agent runtime and memory APIs.
+A memory store is a named container of key/value entries. The API covers the store record (create, list, get, delete) and its entries (list, get, upsert, delete, and text search).
 
 Memory stores are scoped to the authenticated user. The `organization_id` is captured at creation time for billing and audit grouping.
 
 ## Base URL
 
 ```
-https://api.allternit.com/v1/beta/memory-stores
+https://api.allternit.com/api/v1/beta/memory-stores
 ```
 
 All requests require a Bearer token. See [Authentication](/api/authentication).
@@ -57,11 +57,16 @@ All requests require a Bearer token. See [Authentication](/api/authentication).
 | POST | `/api/v1/beta/memory-stores` | Create a memory store. |
 | GET | `/api/v1/beta/memory-stores/:id` | Get a memory store. |
 | DELETE | `/api/v1/beta/memory-stores/:id` | Delete a memory store. |
+| GET | `/api/v1/beta/memory-stores/:id/entries` | List entries in a store. |
+| GET | `/api/v1/beta/memory-stores/:id/entries/:key` | Get one entry. |
+| PUT | `/api/v1/beta/memory-stores/:id/entries/:key` | Create or replace an entry. Body: `{ "value": string, "namespace"?: string }`. |
+| DELETE | `/api/v1/beta/memory-stores/:id/entries/:key` | Delete an entry. |
+| GET | `/api/v1/beta/memory-stores/:id/search` | Search entries. Query: `q`, `limit`. |
 
 ## List memory stores
 
 ```bash
-curl https://api.allternit.com/v1/beta/memory-stores \
+curl https://api.allternit.com/api/v1/beta/memory-stores \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -86,7 +91,7 @@ curl https://api.allternit.com/v1/beta/memory-stores \
 ## Create a memory store
 
 ```bash
-curl -X POST https://api.allternit.com/v1/beta/memory-stores \
+curl -X POST https://api.allternit.com/api/v1/beta/memory-stores \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -132,7 +137,7 @@ Duplicate names for the same user return `400 Bad Request`.
 ## Get a memory store
 
 ```bash
-curl https://api.allternit.com/v1/beta/memory-stores/ms_9a8b7c6d \
+curl https://api.allternit.com/api/v1/beta/memory-stores/ms_9a8b7c6d \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 
@@ -147,7 +152,7 @@ curl https://api.allternit.com/v1/beta/memory-stores/ms_9a8b7c6d \
 ## Delete a memory store
 
 ```bash
-curl -X DELETE https://api.allternit.com/v1/beta/memory-stores/ms_9a8b7c6d \
+curl -X DELETE https://api.allternit.com/api/v1/beta/memory-stores/ms_9a8b7c6d \
   -H "Authorization: Bearer $ALLTERNIT_API_KEY"
 ```
 

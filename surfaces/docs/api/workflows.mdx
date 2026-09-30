@@ -5,7 +5,7 @@ description: Define, update, and execute node-based workflows on the Allternit p
 
 ## Overview
 
-The Workflows API stores node-based workflow definitions as JSON graphs of nodes and edges, then schedules executions against them. Each workflow is user-scoped; executions are tracked independently with statuses such as `pending`, `running`, `completed`, `failed`, and `cancelled`.
+The Workflows API stores node-based workflow definitions as JSON graphs of nodes and edges, then records executions against them. Each workflow is user-scoped. `POST /workflows/:id/execute` inserts an execution row with status `pending` and returns; this route does not run the graph or move the row to `running` or `completed`. `cancel` sets a non-terminal execution to `cancelled`.
 
 ## Base URL
 

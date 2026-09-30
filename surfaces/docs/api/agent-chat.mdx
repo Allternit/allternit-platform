@@ -7,13 +7,11 @@ description: Stream messages to Gizzi Runtime sessions from the Allternit platfo
 
 The Agent Chat API forwards user messages to a live Gizzi Runtime session and streams the runtime's event bus back to the caller. The `chatId` is the platform agent session id created through the agent-sessions flow; the platform simply proxies the payload, preserving provider, model, harness, and system prompt overrides.
 
+<Note>
+This namespace is served by the Allternit API data-plane node (`http://127.0.0.1:8013` on the same machine, or your paired or provisioned node). The hosted Cloud API at `https://api.allternit.com` does not route it; it relays only agent sessions, canvases, office and beta research/sessions. See [Cloud API](/api/cloud-api).
+</Note>
+
 ## Base URL
-
-```text
-https://api.allternit.com/api
-```
-
-For local development:
 
 ```text
 http://127.0.0.1:8013/api
@@ -28,17 +26,17 @@ All requests require a valid bearer token in the `Authorization` header. See [Au
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/agent-chat` | Send a message to a Gizzi Runtime session and stream the response. |
-| `POST` | `/chat/action` | Acknowledge a chat-level action such as stop or regenerate. |
+| `POST` | `/chat/action` | Acknowledge a chat-level action. The handler logs the body and returns `{"status":"ok"}`; it does not stop or regenerate anything. |
 
 ## Send a chat message
 
 ```bash
-curl -N -X POST https://api.allternit.com/api/agent-chat \
+curl -N -X POST http://127.0.0.1:8013/api/agent-chat \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "chatId": "sess_01hqx8x7x7x7x7x7x7x7x7x",
-    "message": "Refactor the auth module to useCommRails.",
+    "message": "Refactor the auth module to use CommRails.",
     "runtimeModelId": "qwen2.5:0.5b",
     "agentProvider": "ollama",
     "agentModel": "qwen2.5:0.5b",
@@ -59,7 +57,8 @@ curl -N -X POST https://api.allternit.com/api/agent-chat \
 | `agentModel` | string | no | Model identifier override. |
 | `agentName` | string | no | Agent name override. |
 | `harness` | object | no | Harness configuration for the turn. |
-| `systemPrompt` | string | no | System prompt override passed through `context`. |
+| `runtimeEnv` | object | no | Map of string environment variables for the runtime. |
+| `systemPrompt` | string | no | System prompt override, read from the flattened request context. |
 
 ### Response
 
@@ -73,7 +72,7 @@ data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Here is
 ## Chat action
 
 ```bash
-curl -X POST https://api.allternit.com/api/chat/action \
+curl -X POST http://127.0.0.1:8013/api/chat/action \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"action": "stop", "chatId": "sess_01hqx8x7x7x7x7x7x7x7x7x"}'

@@ -1424,6 +1424,22 @@ async fn wih_sign_open(
     }
 }
 
+/// Map the caller-supplied `actor` claim on a WIH close to the closer the
+/// gate may act on. Human (`user:` / bare id) claims are refused (403): human
+/// completion goes through the local interactive CLI. An `agent:` claim is
+/// downgraded to "unspecified" (= the worker), so a worker cannot pose as an
+/// independent verifier agent either. Malformed claims are 400.
+fn closer_from_claim(
+    claim: Option<&str>,
+) -> Result<Option<crate::core::types::Actor>, StatusCode> {
+    let Some(raw) = claim else { return Ok(None) };
+    let actor = crate::cli::judge::parse_actor(raw).map_err(|_| StatusCode::BAD_REQUEST)?;
+    match actor.r#type {
+        crate::core::types::ActorType::User => Err(StatusCode::FORBIDDEN),
+        _ => Ok(None),
+    }
+}
+
 async fn wih_close(
     State(state): State<Arc<ServiceState>>,
     Path(wih_id): Path<String>,
@@ -1434,9 +1450,12 @@ async fn wih_close(
         ..Default::default()
     };
     ensure_policy_injected(&state, Some(scope)).await?;
-    let closer = match request.actor.as_deref().map(crate::cli::judge::parse_actor).transpose() {
+    // The service has no authenticated-user channel, so `request.actor` is
+    // only a claim by the caller (a worker). It can never confer human or
+    // verifier authority: see `closer_from_claim`.
+    let closer = match closer_from_claim(request.actor.as_deref()) {
         Ok(c) => c,
-        Err(_) => return Err(StatusCode::BAD_REQUEST),
+        Err(code) => return Err(code),
     };
     // Opt-in policy `observe_before_close`: awaited so the advice lands on
     // `wih:<id>` before the close; advisory, never blocks the close.
@@ -3350,5 +3369,23 @@ mod wp10_chain_append_tests {
                 axum::http::HeaderMap::new(), Json(tool_receipt("run.test"))).await.unwrap_err();
             assert_eq!(err, StatusCode::FORBIDDEN);
         }
+    }
+}
+
+#[cfg(test)]
+mod closer_claim_tests {
+    use super::*;
+
+    #[test]
+    fn worker_claiming_a_human_is_refused() {
+        assert_eq!(closer_from_claim(Some("user:eoj")).err(), Some(StatusCode::FORBIDDEN));
+        assert_eq!(closer_from_claim(Some("eoj")).err(), Some(StatusCode::FORBIDDEN));
+    }
+
+    #[test]
+    fn agent_claim_is_downgraded_to_worker_and_none_stays_none() {
+        assert!(matches!(closer_from_claim(Some("agent:other")), Ok(None)));
+        assert!(matches!(closer_from_claim(None), Ok(None)));
+        assert_eq!(closer_from_claim(Some("bogus:x")).err(), Some(StatusCode::BAD_REQUEST));
     }
 }

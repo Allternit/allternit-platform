@@ -3,7 +3,14 @@ title: "Wait gates"
 description: "Holding a node until a time, a person or a dependency, without holding a process open"
 ---
 
-**Status: AVAILABLE (manual and timer gates, internal) · DESIGN — NOT YET IMPLEMENTED (dependency and event gates as graph nodes).** See [status labels](/architecture#status-labels).
+**Implementation: ENABLED (manual, timer gates) · DESIGN (dependency and event gates as nodes) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Work waits on typed gates, not on a sleeping model. |
+| **Implemented today** | Manual and timer gates on graph nodes. |
+| **Active path** | Yes, inside the internal work runtime. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 A **wait gate** holds a node out of the ready set until a condition is met. Nothing runs while it waits, and no process has to stay alive.
 
@@ -30,10 +37,10 @@ The work runtime on main has manual and timer wait gates attached to graph nodes
 
 | Part | Status |
 |------|--------|
-| Manual wait gates | **AVAILABLE** (internal) |
-| Timer wait gates | **AVAILABLE** (internal) |
-| Dependency and event gates | **DESIGN — NOT YET IMPLEMENTED** |
-| Wait gates as graph nodes | **DESIGN — NOT YET IMPLEMENTED** |
+| Manual wait gates | **ENABLED** · INTERNAL |
+| Timer wait gates | **ENABLED** · INTERNAL |
+| Dependency and event gates | **DESIGN** |
+| Wait gates as graph nodes | **DESIGN** |
 
 ## Developer relevance
 

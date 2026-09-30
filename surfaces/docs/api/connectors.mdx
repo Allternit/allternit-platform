@@ -12,20 +12,16 @@ The API also exposes a unified MCP surface at `/api/v1/connectors/mcp` so any MC
 ## Base URL
 
 ```
-https://api.allternit.com/api/v1/connectors
-```
-
-For local development:
-
-```
 http://127.0.0.1:8013/api/v1/connectors
 ```
 
-OAuth callbacks are public redirect targets:
+These routes are served by the Allternit API data-plane node. The hosted Cloud API does not relay the connectors namespace.
+
+OAuth callbacks are redirect targets on the same node:
 
 ```
-https://api.allternit.com/api/v1/connectors/oauth/callback
-https://api.allternit.com/oauth/callback
+http://127.0.0.1:8013/api/v1/connectors/oauth/callback
+http://127.0.0.1:8013/oauth/callback
 ```
 
 ## Authentication
@@ -49,7 +45,7 @@ See [Authentication](/api/authentication).
 | `executable` | boolean | Whether the connector has executable actions. |
 | `tier` | integer | Connector tier. |
 | `mcp_backed` | boolean | Whether the connector is exposed through the MCP surface. |
-| `backend` | string | `rust_native` for curated connectors, `open_connector` for sidecar-backed connectors. |
+| `backend` | string | `rust_native` for curated connectors, `open_connector` for sidecar-backed connectors, `allternit_native` for the Allternit Mail connector. |
 | `connection` | object | `{ "status": "connected" \| "disconnected" \| "pending", "account": string }`. |
 
 ## Endpoints
@@ -58,6 +54,7 @@ See [Authentication](/api/authentication).
 |--------|------|-------------|
 | `GET` | `/api/v1/connectors` | List all connectors in the catalog with live status. |
 | `GET` | `/api/v1/connectors/:id` | Get one connector with live status. |
+| `GET` | `/api/v1/connectors/setup-status` | Whether connector setup (sidecar and configuration) is complete. |
 | `POST` | `/api/v1/connectors/:id/connect` | Start or complete a connection. |
 | `POST` | `/api/v1/connectors/:id/refresh` | Refresh an existing connection. |
 | `POST` | `/api/v1/connectors/:id/poll` | Poll a device-flow authorization. |
@@ -124,7 +121,7 @@ Starts a connection flow. The request body and response shape depend on the conn
 ### Local CLI example (GitHub)
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/connectors/github/connect \
+curl -X POST http://127.0.0.1:8013/api/v1/connectors/github/connect \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -141,7 +138,7 @@ curl -X POST https://api.allternit.com/api/v1/connectors/github/connect \
 ### OAuth2 example
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/connectors/some-oauth/connect \
+curl -X POST http://127.0.0.1:8013/api/v1/connectors/some-oauth/connect \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -152,7 +149,7 @@ curl -X POST https://api.allternit.com/api/v1/connectors/some-oauth/connect \
   "owned": true,
   "connector": "some-oauth",
   "authorize_url": "https://provider.example.com/oauth/authorize?client_id=...",
-  "redirect_uri": "https://api.allternit.com/api/v1/connectors/oauth/callback",
+  "redirect_uri": "http://127.0.0.1:8013/api/v1/connectors/oauth/callback",
   "state": "...",
   "instructions": "Open authorize_url, approve Allternit..."
 }
@@ -161,7 +158,7 @@ curl -X POST https://api.allternit.com/api/v1/connectors/some-oauth/connect \
 ### API key example
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/connectors/some-api/connect \
+curl -X POST http://127.0.0.1:8013/api/v1/connectors/some-api/connect \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"api_key": "sk_xxxxxxxx"}'
@@ -196,7 +193,7 @@ Executes a tool or action against a connected connector.
 ### Example request
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/connectors/github/execute \
+curl -X POST http://127.0.0.1:8013/api/v1/connectors/github/execute \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -245,7 +242,7 @@ Proxies a single JSON-RPC request to the open-connector sidecar's `/mcp` endpoin
 ### Example request
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/connectors/mcp \
+curl -X POST http://127.0.0.1:8013/api/v1/connectors/mcp \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

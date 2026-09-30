@@ -7,13 +7,11 @@ description: Create, version, and section long-lived content artifacts on the Al
 
 The Artifacts API stores user-owned content artifacts in a local SQLite database. Each artifact belongs to a workspace, carries a status (for example `draft` or `final`), supports tags, and is composed of ordered sections. Every update creates a revision snapshot so changes remain auditable.
 
+<Note>
+This namespace is served by the Allternit API data-plane node (`http://127.0.0.1:8013` on the same machine, or your paired or provisioned node). The hosted Cloud API at `https://api.allternit.com` does not route it; it relays only agent sessions, canvases, office and beta research/sessions. See [Cloud API](/api/cloud-api).
+</Note>
+
 ## Base URL
-
-```text
-https://api.allternit.com/api
-```
-
-For local development:
 
 ```text
 http://127.0.0.1:8013/api
@@ -69,11 +67,12 @@ All requests require a valid bearer token in the `Authorization` header. See [Au
 | `POST` | `/artifacts/:id/sections` | Add a section. |
 | `PATCH` | `/artifacts/:id/sections/:section_id` | Update a section. |
 | `DELETE` | `/artifacts/:id/sections/:section_id` | Delete a section. |
+| `PATCH` | `/artifacts/:id/sharing` | Update sharing. Body: `visibility` (string, required) and optional `access`. |
 
 ## List artifacts
 
 ```bash
-curl "https://api.allternit.com/api/artifacts?workspaceId=ws_01hqx8x7x7x7x7x7x7x7x7x&status=draft&type=document" \
+curl "http://127.0.0.1:8013/api/artifacts?workspaceId=ws_01hqx8x7x7x7x7x7x7x7x7x&status=draft&type=document" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -112,7 +111,7 @@ curl "https://api.allternit.com/api/artifacts?workspaceId=ws_01hqx8x7x7x7x7x7x7x
 ## Create artifact
 
 ```bash
-curl -X POST https://api.allternit.com/api/artifacts \
+curl -X POST http://127.0.0.1:8013/api/artifacts \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -188,7 +187,7 @@ curl -X POST https://api.allternit.com/api/artifacts \
 ## Update artifact
 
 ```bash
-curl -X PATCH https://api.allternit.com/api/artifacts/art_02hqx8x7x7x7x7x7x7x7x7x \
+curl -X PATCH http://127.0.0.1:8013/api/artifacts/art_02hqx8x7x7x7x7x7x7x7x7x \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -213,7 +212,7 @@ curl -X PATCH https://api.allternit.com/api/artifacts/art_02hqx8x7x7x7x7x7x7x7x7
 ## Search artifacts
 
 ```bash
-curl "https://api.allternit.com/api/artifacts/search?q=BYOC&workspaceId=ws_01hqx8x7x7x7x7x7x7x7x7x" \
+curl "http://127.0.0.1:8013/api/artifacts/search?q=BYOC&workspaceId=ws_01hqx8x7x7x7x7x7x7x7x7x" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -234,7 +233,7 @@ curl "https://api.allternit.com/api/artifacts/search?q=BYOC&workspaceId=ws_01hqx
 ## Artifact stats
 
 ```bash
-curl https://api.allternit.com/api/artifacts/stats \
+curl http://127.0.0.1:8013/api/artifacts/stats \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -257,7 +256,7 @@ curl https://api.allternit.com/api/artifacts/stats \
 ## Add a section
 
 ```bash
-curl -X POST https://api.allternit.com/api/artifacts/art_02hqx8x7x7x7x7x7x7x7x7x/sections \
+curl -X POST http://127.0.0.1:8013/api/artifacts/art_02hqx8x7x7x7x7x7x7x7x7x/sections \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

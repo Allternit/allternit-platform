@@ -63,6 +63,8 @@ For persistent configuration, run:
 gizzi auth login
 ```
 
+`gizzi auth status` shows which credentials are active.
+
 ## Start the interactive TUI
 
 Launch the terminal user interface and start an agent session:
@@ -86,15 +88,19 @@ You can also run a single prompt and exit:
 gizzi exec "Explain the latest changes in this git diff"
 ```
 
-## Start the web platform (optional)
+## Open a web or desktop interface (optional)
 
-If you installed the full BYOC runtime, start the local platform:
+Start the Gizzi server and open its web interface:
 
 ```bash
-gizzi platform start
+gizzi web
 ```
 
-Then open [http://localhost:3001](http://localhost:3001).
+Or open the current folder in Allternit Desktop (the command downloads and installs Desktop if it is missing):
+
+```bash
+gizzi allternit .
+```
 
 ## Next steps
 

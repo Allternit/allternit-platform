@@ -5,7 +5,7 @@ description: 'Create, manage, and receive signed webhook event deliveries for se
 
 ## Overview
 
-The Webhook Subscriptions API lets an organization register HTTPS endpoints that receive signed JSON payloads when subscribed events occur. Subscriptions are scoped to an organization, and every delivery includes an `X-Allternit-Signature` header computed with HMAC-SHA256 over the payload.
+The Webhook Subscriptions API lets an organization register HTTP or HTTPS endpoints that receive signed JSON payloads when subscribed events occur. Subscriptions are scoped to an organization, and every delivery includes an `X-Allternit-Signature` header computed with HMAC-SHA256 over the payload.
 
 For details on verifying delivery signatures and example consumers, see the general [Webhooks](/api/webhooks) page.
 
@@ -31,7 +31,7 @@ All subscription routes require a valid bearer token and an active organization.
 |-------|------|-------------|
 | `id` | string | Subscription UUID. |
 | `org_id` | string | Owning organization. |
-| `url` | string | HTTPS endpoint that receives events. |
+| `url` | string | HTTP or HTTPS endpoint that receives events. |
 | `events` | string[] | Subscribed event types; `*` matches all events. |
 | `active` | boolean | Whether the subscription is delivering events. |
 | `created_at` | string | ISO 8601 timestamp. |
@@ -46,14 +46,28 @@ All subscription routes require a valid bearer token and an active organization.
 | `GET` | `/api/v1/beta/webhooks/:id` | Get a subscription. |
 | `PATCH` | `/api/v1/beta/webhooks/:id` | Update a subscription. |
 | `DELETE` | `/api/v1/beta/webhooks/:id` | Delete a subscription. |
+| `GET` | `/api/v1/beta/webhooks/:id/deliveries` | List delivery attempts. |
 
 ## Events
 
 | Event | Description |
 |-------|-------------|
+| `agent.created` | An agent was created. |
+| `agent.updated` | An agent was updated. |
+| `agent.archived` | An agent was archived. |
+| `session.created` | A session was created. |
 | `session.event_created` | A new event was appended to a managed session. |
+| `session.archived` | A session was archived. |
+| `session.over_budget` | A session exceeded its budget. |
+| `deployment.run_created` | A deployment run was created. |
 | `deployment.run_updated` | A deployment run reached a terminal status. |
-| `*` | Wildcard — subscribe to all events. |
+| `billing.credit_purchase` | A credit purchase completed. |
+| `key.created` | An API key was created. |
+| `key.revoked` | An API key was revoked. |
+| `*` | Wildcard: subscribe to all events |
+
+
+Delivery makes up to 3 attempts per event. Connect errors, timeouts and 5xx responses are retried with a backoff of 5 s, then 20 s (base overridable with `ALLTERNIT_WEBHOOK_RETRY_BASE_SECS`); a 4xx response is not retried. Each attempt is recorded and visible through the deliveries endpoint. Only `session.event_created` and `deployment.run_updated` are documented with a payload here; check the deliveries list for the exact body of the others.
 
 ## Create a subscription
 
@@ -65,7 +79,7 @@ POST /api/v1/beta/webhooks
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `url` | string | Yes | HTTPS endpoint URL. |
+| `url` | string | Yes | HTTP or HTTPS endpoint URL. |
 | `events` | string[] | Yes | Non-empty list of event types. |
 | `secret` | string | Yes | Secret used to sign deliveries. |
 
@@ -137,7 +151,7 @@ Partial update. At least one field must be provided.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `url` | string | HTTPS endpoint URL. |
+| `url` | string | HTTP or HTTPS endpoint URL. |
 | `events` | string[] | Non-empty list of event types. |
 | `secret` | string | New signing secret. |
 | `active` | boolean | Enable or disable delivery. |
@@ -161,6 +175,14 @@ DELETE /api/v1/beta/webhooks/:id
 ```
 
 Returns `204 No Content` on success.
+
+## List deliveries
+
+```bash
+GET /api/v1/beta/webhooks/:id/deliveries?status=failed&page=1&limit=50
+```
+
+Optional `status` filter: `pending`, `delivered`, or `failed` (anything else returns `400`). `page` defaults to 1; `limit` defaults to 50 and is clamped to 1-100. The response holds `deliveries`, `total`, `page`, and `limit`. A subscription outside your organization returns `404`.
 
 ## Delivery payload
 

@@ -1298,6 +1298,13 @@ mod e2e {
         assert!(tokens.starts_with("enc:v1:") && secret.starts_with("enc:v1:"));
         assert_eq!(crate::token_crypto::open(&secret), "plain-secret");
         assert_eq!(crate::mcp_routes::seal_legacy_mcp_secrets(&conn).unwrap(), 0, "second run finds nothing");
+        // values marked `plain:` while no key was configured are sealed too
+        conn.execute("UPDATE mcp_connectors SET oauth_client_secret = 'plain:later-secret' WHERE id = 'conn-1'", []).unwrap();
+        assert_eq!(crate::mcp_routes::seal_legacy_mcp_secrets(&conn).unwrap(), 1);
+        let secret: String =
+            conn.query_row("SELECT oauth_client_secret FROM mcp_connectors WHERE id = 'conn-1'", [], |r| r.get(0)).unwrap();
+        assert!(secret.starts_with("enc:v1:"));
+        assert_eq!(crate::token_crypto::open(&secret), "later-secret");
         // and the connector still works
         assert!(tool_names(&rpc(&state, "user-1", "tools/list", json!({})).await).contains(&"dash-server__plain".to_string()));
     }

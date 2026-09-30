@@ -1,118 +1,53 @@
 ---
 title: Gizzi Runtime
-description: The core agent execution engine
+description: "gizzi-code, the TypeScript agent runtime that executes sessions, tools and model calls for Allternit."
 ---
 
 ## Overview
 
-Gizzi is the core runtime engine that executes agent code. It provides a secure sandboxed environment for running agent logic while managing state, memory, and communication with external services.
+Gizzi is Allternit's agent runtime. It ships as `gizzi-code` (source: `cmd/gizzi-code`), a TypeScript program that runs either as an interactive terminal app or as a local HTTP server with `gizzi-code serve`. The server holds sessions, runs tools, calls models through its provider layer, and manages MCP servers, skills, memory, sandboxes and PTYs.
 
-## Execution Model
+**Status:** Implementation IMPLEMENTED × Exposure PUBLIC (shipped in the gizzi CLI and bundled with Allternit Desktop as a sidecar).
 
-Gizzi uses a message-passing execution model where agents communicate through channels. Each agent runs in its own isolated context with access to:
+## How the platform uses it
 
-- **Memory store** - State persistence across executions
-- **Skill registry** - Capability discovery and invocation
-- **Message bus** - Inter-agent communication
-- **Model gateway** - LLM interactions
+The platform API (`allternit-api`) does not call model providers directly. It calls the Gizzi runtime over HTTP. The runtime URL comes from the API's terminal-server setting and defaults to `http://127.0.0.1:4096`. For example:
 
-```typescript
-import { Agent } from '@allternit/core';
+- `POST /api/agents/:id/runs` sends the agent's input through a Gizzi session using the agent's system prompt, `model` and `provider`. See [Agents API](/api/agents).
+- The [Page Agents API](/api/page-agents) proxies page-agent runs to the same local runtime (`ALLTERNIT_PAGE_AGENT_URL`, default `http://127.0.0.1:4096`).
+- The [Providers API](/api/providers) relays provider sign-in, connect flows and quota windows from the runtime, which stores provider credentials.
 
-const agent = new Agent({
-  id: 'my-agent',
-  runtime: 'gizzi-pro',
-  skills: ['code', 'web', 'file'],
-});
+## Runtime HTTP surface
 
-await agent.initialize();
-const result = await agent.run('Analyze this codebase');
-```
+`gizzi-code serve` mounts route groups including:
 
-## Runtime Versions
+| Prefix | Purpose |
+|--------|---------|
+| `/session` | Create sessions, send prompts, stream and read messages. |
+| `/provider`, `/model-pool` | Provider auth, model discovery, model pool. |
+| `/mcp` | MCP server management. |
+| `/skill` | Skill discovery. |
+| `/memory`, `/brain` | Runtime memory and local model surfaces. |
+| `/sandbox` | Per-session sandbox state. |
+| `/pty` | Terminal sessions. |
+| `/permission`, `/question` | Approval and question prompts raised during a run. |
+| `/automations`, `/cron` | Scheduled and triggered runs. |
+| `/peers` | Peer sessions (see [CommRails](/core/commrails)). |
+| `/pane-browser`, `/pane-artifact`, `/pane-render` | Desktop pane integrations. |
 
-<CardGroup cols={3}>
-  <Card title="Gizzi Pro" icon="cpu">
-    Full-featured runtime with all capabilities. Best for production agents.
-  </Card>
-  <Card title="Gizzi Fast" icon="zap">
-    Optimized for speed. Reduced sandboxing, faster execution.
-  </Card>
-  <Card title="Gizzi Local" icon="home">
-    Runs entirely locally. No external API calls. Privacy-focused.
-  </Card>
-</CardGroup>
+The route list lives in `cmd/gizzi-code/src/runtime/server/server.ts`. The runtime publishes an OpenAPI description of these routes; treat that, not this table, as the full reference.
 
-## Agent Lifecycle
+## Models and providers
 
-```
-┌─────────┐    ┌───────────┐    ┌─────────┐    ┌────────┐
-│  init   │───►│ connecting│───►│  ready  │◄──►│  busy  │
-└─────────┘    └───────────┘    └────┬────┘    └───┬────┘
-                                     │             │
-                                ┌────┴────┐   ┌────┴────┐
-                                │  error  │◄──┤suspended│
-                                └────┬────┘   └─────────┘
-                                     │
-                                ┌────┴────┐
-                                │ disposed│
-                                └─────────┘
-```
+Gizzi resolves the model and provider it is given (for example `ollama` / `qwen2.5:0.5b` for the local Companion fallback). Local models run through Ollama; see [Local Brains](/api/local-brains). Subscription and API-key providers are connected through the runtime; see [Providers](/api/providers).
 
-## Sandboxing
+## How this relates to the Agency Kernel
 
-Gizzi provides multiple sandboxing levels:
+Gizzi is the runtime that executes sessions today. The Agency Kernel is the separate, capability-based execution layer behind the Agency API; where a kernel step needs a model or a harness, it may call into this runtime. See [Architecture](/architecture).
 
-| Level | Description | Use Case |
-|-------|-------------|----------|
-| `none` | No restrictions | Trusted environments only |
-| `soft` | File system restrictions | Development |
-| `strict` | Full sandbox with network isolation | Production |
-| `container` | Docker container isolation | Maximum security |
+## Related pages
 
-```typescript
-const agent = new Agent({
-  id: 'secure-agent',
-  sandbox: 'strict',
-  allowedPaths: ['/workspace'],
-  network: false,
-});
-```
-
-## Memory Management
-
-Agents can persist memory across executions:
-
-```typescript
-// Store in agent memory
-await agent.memory.set('user_preference', 'dark_mode');
-
-// Retrieve later
-const preference = await agent.memory.get('user_preference');
-
-// Clear memory
-await agent.memory.clear();
-```
-
-Memory types:
-- **Session** - Lost when agent stops
-- **Persistent** - Stored in database
-- **Shared** - Accessible across agents
-
-## Model Integration
-
-Gizzi supports multiple LLM providers:
-
-```typescript
-const agent = new Agent({
-  model: {
-    provider: 'allternit',
-    model: 'gizzi-pro',
-    temperature: 0.7,
-  },
-});
-```
-
-Supported providers:
-- Allternit gateway (all models via aliases)
-- Local (Ollama, MLX, Bonsai WebGPU)
+- [Agents API](/api/agents)
+- [Page Agents API](/api/page-agents)
+- [Providers API](/api/providers)
+- [CommRails](/core/commrails)

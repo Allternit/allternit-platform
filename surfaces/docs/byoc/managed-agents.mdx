@@ -1,66 +1,33 @@
 ---
 title: 'Managed Agents'
-description: 'Deploy and operate managed agents on your own infrastructure'
+description: 'Run Allternit agents on a runtime you control'
 ---
 
-# Managed agents on BYOC
+<Note>
+**Status:** Implementation IMPLEMENTED (pairing and relay) × Exposure PUBLIC PREVIEW. Earlier versions of this page described `allternit-runtime register`, `POST /v1/deployments` with `runtime_type: "byoc"`, a `deployment_id` on agents, `GET /v1/deployments/{id}/runs`, and mTLS daemon auth. None of these exist on main.
+</Note>
 
-A managed agent is an agent definition that is authored in the Allternit platform but executed on a runtime you control. This gives you custody of execution while keeping the authoring experience central.
+## What actually happens
 
-## When to use managed agents
-
-- You need execution to stay inside your network or region.
-- You want to use custom models or inference endpoints.
-- You want to reuse existing compute rather than pay per-request platform markup.
-
-## Architecture
+Agents are records on the Allternit API ([Agents API](/api/agents)). When you pair a node ([BYOC Overview](/byoc/overview)), the Cloud API relays agent-session, office and beta calls to that node over an outbound WebSocket, so the agent runs on your data plane against its SQLite state and the local Gizzi runtime (`:4096`).
 
 ```
-Allternit Platform  <--->  Agent Daemon  <--->  Local Runtime
-   (definitions)         (your VPC)         (gizzi / Docker / VM)
+Browser / SDK  --HTTPS-->  Cloud API  --WSS relay-->  agent-daemon --> allternit-api :8013 --> gizzi-code :4096
 ```
 
-1. Author the agent in the dashboard or via the [Agents API](/api/agents).
-2. Link a runtime with the agent-daemon and a BYOC deployment.
-3. The platform dispatches runs to your daemon; the daemon executes them locally.
+There is no per-agent binding to a deployment. Routing is per paired runtime: relayed routes go to your paired, online node, and return HTTP 428 if none is available.
 
-## Deployment steps
+## Steps
 
-### 1. Provision a runtime
-
-Install the agent daemon on a host that can reach your models and tools:
-
-```bash
-curl -fsSL https://gizzi.sh/install | sh
-allternit-runtime register --name prod-us-east-1
-```
-
-### 2. Create a BYOC deployment
-
-```bash
-curl -X POST https://api.allternit.com/v1/deployments \
-  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
-  -d '{
-    "name": "prod-us-east-1",
-    "runtime_type": "byoc",
-    "region": "us-east-1"
-  }'
-```
-
-### 3. Bind agents to the deployment
-
-Set `deployment_id` when creating or updating an agent. All runs for that agent are routed to the linked runtime.
-
-### 4. Monitor runs
-
-Use the dashboard or `GET /v1/deployments/{id}/runs` to view run history, logs, and health for your managed agents.
+1. [Install](/byoc/installation) `allternit-api` and `agent-daemon`.
+2. Approve the pairing at `https://platform.allternit.com/pair`.
+3. Create and run agents through the normal API; they execute on your node.
 
 ## Security
 
-- The daemon authenticates with mTLS and refreshes short-lived credentials automatically.
-- Secrets are stored in [Vault](/security/vault) and injected at runtime.
-- Audit logs flow back to the platform for compliance reporting.
+- The daemon authenticates with a device token obtained from `POST /api/v1/runtime-pairings/exchange`, after signing a challenge with its device identity.
+- Revoke a device with `/api/v1/runtime-devices/:id`.
 
-## Scaling
+## How this relates to the Agency Kernel
 
-Run multiple daemons behind a load balancer and register them against the same deployment. The platform distributes work across healthy daemons using the [work queue](/api/work-queue).
+BYOC is where the Allternit API data plane and Gizzi runtime run on hardware you control. The [Agency Kernel](/architecture) contracts are served through the Cloud API. Nothing on this page changes them.

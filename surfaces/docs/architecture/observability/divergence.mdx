@@ -3,7 +3,14 @@ title: "Divergence"
 description: "Comparing a replay to its cassette and classifying the differences"
 ---
 
-**Status: DESIGN — NOT YET IMPLEMENTED.** See [status labels](/architecture#status-labels).
+**Implementation: IMPLEMENTED · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | A replay reports every point where it diverges from the recorded run. |
+| **Implemented today** | Divergence reports from recorded-only replay, internal. |
+| **Active path** | Internal. On demand. |
+| **Public exposure** | No. Not exposed through `api.allternit.com`. |
 
 A divergence report says whether a replay matched its recording and whether any difference was expected.
 
@@ -13,14 +20,14 @@ A divergence report says whether a replay matched its recording and whether any 
 
 ## Current implementation
 
-Not on main. The schema is frozen; no runtime produces reports.
+On main, internal only. Recorded-only replay produces a divergence report against the frozen schema. It is not reachable through `https://api.allternit.com` yet.
 
 ## Availability
 
 | Part | Status |
 |------|--------|
-| Report schema | **AVAILABLE (contract)** |
-| Divergence checking | **DESIGN — NOT YET IMPLEMENTED** |
+| Report schema | **IMPLEMENTED (contract)** |
+| Divergence checking | **IMPLEMENTED** · INTERNAL |
 
 ## Developer relevance
 

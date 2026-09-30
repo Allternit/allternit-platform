@@ -1,164 +1,61 @@
 ---
 title: Installation
-description: Install the Allternit runtime on your infrastructure
+description: Install the Allternit API data plane and agent-daemon on a machine you control
 ---
 
 <Note>
-Production pairing uses the [Cloud API](/api/cloud-api) at `https://api.allternit.com`. The data-plane binary is [Allternit API](/api/allternit-api) (`allternit-api` on loopback `:8013`), not a public `allternit-runtime` on port 8080. Fleet and provisioned instances pull `https://api.allternit.com/releases/allternit-api/latest/linux-x86_64.tar.gz`. See [BYOC Overview](/byoc/overview).
+**Status:** Implementation IMPLEMENTED × Exposure PUBLIC PREVIEW. Earlier versions of this page described an `allternit-runtime` binary, `install.allternit.com` and `dl.allternit.com` downloads, and port 8080. None of these exist in the code on main.
 </Note>
 
-## Quick Install
+The data plane is `allternit-api` (`cmd/allternit-api`). Pairing is done by `agent-daemon` (`cmd/agent-daemon`, `@allternit/agent-daemon`). See [BYOC Overview](/byoc/overview).
 
-The fastest way to install the Allternit runtime:
+## Get the binary
 
-```bash
-curl -fsSL https://install.allternit.com | bash
-```
-
-## Manual Installation
-
-### 1. Download the Binary
+Provisioned and fleet instances pull the release tarball:
 
 ```bash
-# Linux AMD64
-wget https://dl.allternit.com/stable/latest/allternit-runtime-linux-amd64 -O allternit-runtime
-
-# Linux ARM64
-wget https://dl.allternit.com/stable/latest/allternit-runtime-linux-arm64 -O allternit-runtime
-
-# macOS AMD64
-wget https://dl.allternit.com/stable/latest/allternit-runtime-darwin-amd64 -O allternit-runtime
-
-# macOS ARM64 (Apple Silicon)
-wget https://dl.allternit.com/stable/latest/allternit-runtime-darwin-arm64 -O allternit-runtime
+curl -fsSL https://api.allternit.com/releases/allternit-api/latest/linux-x86_64.tar.gz -o allternit-api.tar.gz
 ```
 
-### 2. Make Executable
+Only `linux-x86_64` is referenced by the provisioning code. Desktop bundles its own `allternit-api` build. To build from source: `cargo build --release -p allternit-api`.
+
+## Run allternit-api
 
 ```bash
-chmod +x allternit-runtime
-sudo mv allternit-runtime /usr/local/bin/
+ALLTERNIT_API_PORT=8013 \
+ALLTERNIT_DATA_DIR=/var/lib/allternit \
+./allternit-api
 ```
 
-### 3. Verify Installation
+- `ALLTERNIT_API_PORT` sets the listen port. If unset it defaults to the dev port `18013`; production owners pin `8013`.
+- The listener binds `0.0.0.0:<port>`, not loopback. Firewall the port or put it behind a private interface. Do not publish it.
+- Health: `GET /health`, `GET /health/live`, `GET /health/ready`.
+
+## Pair with the Cloud API
 
 ```bash
-allternit-runtime --version
+cd cmd/agent-daemon && npm install && npm run build
+ALLTERNIT_RUNTIME_NAME="my-vps" \
+ALLTERNIT_GATEWAY_URL=http://127.0.0.1:8013 \
+npm start
 ```
 
-## Docker (Optional)
+| Variable | Default | Purpose |
+|---|---|---|
+| `ALLTERNIT_CLOUD_API_URL` | `https://api.allternit.com` | Control plane |
+| `ALLTERNIT_RUNTIME_NAME` | `<hostname> VPS` | Display name |
+| `ALLTERNIT_GATEWAY_URL` | `http://127.0.0.1:8013` | Local data plane |
+| `ALLTERNIT_RUNTIME_IDENTITY_PATH` | daemon default | Where the device identity is stored |
+| `ALLTERNIT_PAIRING_MODE=hosted_auto` | unset | Auto-pair; also needs `ALLTERNIT_HOSTED_INSTANCE_ID` and `ALLTERNIT_HOSTED_BOOTSTRAP_TOKEN` |
 
-If you prefer Docker:
+The daemon prints a verification URL and a user code. Approve it at `https://platform.allternit.com/pair`. It then exchanges the pairing (`POST /api/v1/runtime-pairings/exchange`) and connects to `wss://api.allternit.com/api/v1/runtime-relay/connect/:runtimeId`.
 
-```bash
-docker run -d \
-  --name allternit-runtime \
-  -p 8080:8080 \
-  -v /path/to/data:/data \
-  -e ALLTERNIT_API_KEY=your_key \
-  allternit/runtime:latest
-```
+Alternatively the [Deploy Wizard](/byoc/deploy-wizard) provisions and bootstraps a VPS for you.
 
-## Systemd Service (Linux)
+## Process supervision
 
-Create a systemd service for automatic startup:
+Run both processes under your service manager (systemd, launchd). Neither ships a unit file; write your own with the environment above.
 
-```bash
-sudo tee /etc/systemd/system/allternit-runtime.service > /dev/null <<EOF
-[Unit]
-Description=Allternit Runtime Agent
-After=network.target
+## How this relates to the Agency Kernel
 
-[Service]
-Type=simple
-User=allternit
-Group=allternit
-ExecStart=/usr/local/bin/allternit-runtime --config /etc/allternit/runtime.yaml
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable allternit-runtime
-sudo systemctl start allternit-runtime
-```
-
-## macOS LaunchDaemon
-
-For macOS, create a LaunchDaemon:
-
-```bash
-sudo tee /Library/LaunchDaemons/com.allternit.runtime.plist > /dev/null <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.allternit.runtime</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/local/bin/allternit-runtime</string>
-        <string>--config</string>
-        <string>/etc/allternit/runtime.yaml</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-</dict>
-</plist>
-EOF
-
-sudo launchctl load /Library/LaunchDaemons/com.allternit.runtime.plist
-```
-
-## Verification
-
-Check that the runtime is running:
-
-```bash
-# Check service status
-sudo systemctl status allternit-runtime
-
-# Or test the health endpoint
-curl http://localhost:8080/health
-```
-
-Expected response:
-```json
-{
-  "status": "healthy",
-  "version": "1.0.0",
-  "uptime": 3600
-}
-```
-
-## Troubleshooting
-
-<AccordionGroup>
-  <Accordion title="Port already in use">
-    Change the port in `runtime.yaml`:
-    ```yaml
-    server:
-      port: 8081
-    ```
-  </Accordion>
-  
-  <Accordion title="Permission denied">
-    Ensure the binary is executable:
-    ```bash
-    chmod +x /usr/local/bin/allternit-runtime
-    ```
-  </Accordion>
-  
-  <Accordion title="Cannot bind to port < 1024">
-    Use a higher port or run with sudo (not recommended for production).
-  </Accordion>
-</AccordionGroup>
-
-## Next Steps
-
-Now that the runtime is installed, [configure it](/byoc/configuration) for your environment.
+BYOC is where the Allternit API data plane and Gizzi runtime run on hardware you control. The [Agency Kernel](/architecture) contracts are served through the Cloud API. Nothing on this page changes them.
