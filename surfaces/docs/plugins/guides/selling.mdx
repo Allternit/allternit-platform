@@ -1,0 +1,121 @@
+---
+title: 'Selling in your MCP App'
+description: 'Preview: checkout sessions, requestCheckout, complete_checkout, server-computed totals, and refunds'
+---
+
+<Warning>
+**Preview. Not yet available for live payments.** Commerce for MCP Apps runs against Stripe test mode only. With a live Stripe key configured, commerce stays off and its endpoints answer 503. You can build and test the flow with test cards; you cannot take real payments. Behavior, fields, and fees may change before general availability, and nothing on this page is a commitment to a launch date or to any pricing.
+</Warning>
+
+## How it works
+
+Your app never collects card details and never tells Allternit what to charge. It describes a purchase, and Allternit prices, charges, and reports back.
+
+1. **Onboard.** You connect a Stripe Connect Express account through Allternit. Charges for your app go to that account.
+2. **Create a session.** Your MCP server builds a *checkout session*: line items, totals, currency, your connected account as the merchant, and legal links.
+3. **Request checkout.** Your View sends the session to the host with `x-allternit/requestCheckout`.
+4. **Validate.** The Allternit API validates the session and **recomputes every total**. It stores its own copy. If any amount you supplied disagrees with the recomputation, the request fails with `422`. Allternit does not correct it.
+5. **Pay.** The host shows a payment sheet outside your View, built from the server's copy: line items, totals, merchant, your legal links, and an explicit Pay button. The View cannot draw or alter it.
+6. **Charge.** When the user pays, only the payment method is sent. The server charges the total it stored.
+7. **Fulfil.** Allternit calls your server's `complete_checkout` tool, once, and records the order.
+
+## The checkout session
+
+Amounts are integers in the currency's minor unit (cents for USD).
+
+```json
+{
+  "id": "cs_2026_0001",
+  "currency": "usd",
+  "line_items": [
+    { "id": "sku-pro", "name": "Pro plan, 1 month", "quantity": 1, "unit_amount_minor": 2000 },
+    { "name": "Extra seat", "quantity": 3, "unit_amount_minor": 500, "total_minor": 1500 }
+  ],
+  "totals": { "subtotal_minor": 3500, "tax_minor": 280, "total_minor": 3780 },
+  "merchant": { "account_id": "acct_1ExampleConnected", "name": "Example, Inc." },
+  "links": {
+    "terms_url": "https://example.com/terms",
+    "refund_url": "https://example.com/refunds",
+    "support_url": "https://example.com/support",
+    "privacy_url": "https://example.com/privacy"
+  }
+}
+```
+
+| Field | Rule |
+|-------|------|
+| `id` | 1 to 200 characters from `A-Z a-z 0-9 - _ : .`. |
+| `currency` | A three-letter ISO code. Lowercased by the server. |
+| `line_items` | 1 to 100 items. |
+| `line_items[].name` | Required, not blank. |
+| `line_items[].quantity` | Integer from 1 to 10,000. |
+| `line_items[].unit_amount_minor` | Integer, zero or more. |
+| `line_items[].total_minor` | Optional. If present it must equal `quantity × unit_amount_minor`. |
+| `totals.subtotal_minor` | Must equal the sum of the line totals. |
+| `totals.tax_minor` | Zero or more. It is your stated tax. Allternit checks the arithmetic but does not calculate tax. |
+| `totals.total_minor` | Must equal `subtotal_minor + tax_minor`. |
+| `merchant.account_id` | Must start with `acct_`, and be the connected, charges-enabled account for your app. |
+| `merchant.name` | Required. |
+| `links.terms_url`, `refund_url`, `support_url` | Required, `https` URLs. |
+| `links.privacy_url` | Optional, `https` URL. |
+
+Only one-time charges are supported. There are no subscriptions, partial refunds, or tax calculation.
+
+## `requestCheckout`
+
+Send the session from your View:
+
+```js
+const result = await window.allternit.requestCheckout({ session });
+```
+
+The host handler for this request returns one of:
+
+```json
+{ "status": "completed", "order": { "id": "ord_…", "status": "fulfilled", "currency": "usd", "total_minor": 1200, "app_result": { } } }
+{ "status": "cancelled" }
+{ "status": "failed", "message": "…" }
+```
+
+<Note>
+The host shows the payment sheet itself, outside your View, using the server's validated copy of your session. You get `{ "error": "unavailable" }` instead when commerce is not enabled for that Allternit deployment or the host has no payment sheet. Feature-detect and handle it.
+</Note>
+
+## `complete_checkout`
+
+Your server must expose a tool named `complete_checkout`. After a successful payment, Allternit calls it with:
+
+```json
+{ "checkout_session_id": "cs_2026_0001", "payment_intent_id": "pi_…" }
+```
+
+Grant access, ship, or record the order. Return a normal tool result.
+
+- Allternit calls it once per session. Concurrent pay requests are collapsed so you are told once.
+- If your tool returns an error, the order is marked `fulfillment_failed`. It can be retried, so make the tool **idempotent** on `checkout_session_id`.
+- Verify the `payment_intent_id` with Stripe before granting anything you cannot take back.
+
+The host calls this tool, not the View. Say in its description that it is called by the host after payment and should not be called by the model.
+
+## Server-computed totals
+
+The View is untrusted. That is why the model works this way:
+
+- The amount charged is the total Allternit stored after recomputing, never a number the View sent.
+- The payment sheet shows the server's copy, not the View's.
+- The session's merchant must be your own connected account. A session naming another account is rejected.
+- Payment idempotency keys are derived from the session id, so a repeated request cannot double-charge.
+
+Build the session on your **server**, not in the View, so the View cannot change prices between your server and the host.
+
+## Refunds
+
+Refunds are full refunds only. They reverse the transfer to your account and refund the platform fee. Today they are started by Allternit operators, not by developers through an API. Your `refund_url` must describe your refund policy honestly, because it is shown to the buyer at checkout.
+
+## Legal
+
+The legal terms for selling through Allternit are not published yet. Do not launch paid features on the strength of this preview.
+
+## Fees
+
+Fees for selling through Allternit have not been decided and are not listed here.
