@@ -7,6 +7,7 @@ use serde_json::Value;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
     pub jsonrpc: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<u64>,
     pub method: String,
     #[serde(skip_serializing_if = "Option::is_none")]

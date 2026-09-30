@@ -1461,6 +1461,17 @@ async fn agent_chat_bridge(
             gizzi_payload["metadata"]["subscription"] = json!({ "action_id": action_id });
         }
 
+        // The user's MCP connectors reach gizzi only through the per-user proxy:
+        // one turn-scoped server entry with a short-lived token bound to this
+        // user and session. Connector credentials never leave allternit-api.
+        // Top-level, not `metadata`: gizzi stores metadata on the user message,
+        // and this token must stay in memory.
+        if let Some(proxy) =
+            crate::mcp_user_proxy::proxy_registration(&state, &user_id_for_record, &session_id).await
+        {
+            gizzi_payload["mcpProxy"] = proxy;
+        }
+
         let mut message_req = client
             .post(format!("{}/session/{}/message", gizzi, session_id))
             .json(&gizzi_payload);

@@ -609,7 +609,12 @@ export namespace MCP {
     uiResourceUri?: string
   }
 
-  export async function toolCatalog() {
+  /**
+   * `extraClients`: turn-scoped clients that are not part of the instance's MCP state — the
+   * per-user connector proxy. They are listed like any other server but never recorded in
+   * `s.clients`/`s.status`, so one user's turn cannot leak into another's on a shared project.
+   */
+  export async function toolCatalog(extraClients: Record<string, MCPClient> = {}) {
     const result: Record<string, Tool> = {}
     const descriptors: Record<string, ToolDescriptor> = {}
     const collisions: Array<{ qualifiedName: string; existing: ToolDescriptor; incoming: Omit<ToolDescriptor, "qualifiedName" | "collision"> }> = []
@@ -619,14 +624,16 @@ export namespace MCP {
     const clientsSnapshot = await clients()
     const defaultTimeout = cfg.experimental?.mcp_timeout
 
-    const connectedClients = Object.entries(clientsSnapshot).filter(
-      ([clientName]) => s.status[clientName]?.status === "connected",
-    )
+    const connectedClients = [
+      ...Object.entries(clientsSnapshot).filter(([clientName]) => s.status[clientName]?.status === "connected"),
+      ...Object.entries(extraClients),
+    ]
 
     const toolsResults = await Promise.all(
       connectedClients.map(async ([clientName, client]) => {
         const toolsResult = await client.listTools().catch((e) => {
           log.error("failed to get tools", { clientName, error: e.message })
+          if (clientName in extraClients) return undefined
           const failedStatus = {
             status: "failed" as const,
             error: e instanceof Error ? e.message : String(e),

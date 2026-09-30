@@ -50,6 +50,9 @@ pub struct StreamableHttpConfig {
     pub headers: HashMap<String, String>,
     /// Per-request timeout in seconds
     pub timeout_secs: u64,
+    /// Connect `host` to exactly this address instead of resolving it again
+    /// (closes the DNS-rebinding gap after a caller validated the address).
+    pub pin: Option<(String, std::net::SocketAddr)>,
 }
 
 impl std::fmt::Debug for StreamableHttpConfig {
@@ -71,6 +74,7 @@ impl StreamableHttpConfig {
             auth_token: None,
             headers: HashMap::new(),
             timeout_secs: 60,
+            pin: None,
         }
     }
 }
@@ -99,8 +103,11 @@ impl std::fmt::Debug for StreamableHttpTransport {
 impl StreamableHttpTransport {
     /// Create a new transport. No network I/O happens until the first request.
     pub fn new(config: StreamableHttpConfig) -> Result<Arc<Self>> {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(config.timeout_secs))
+        let mut builder = Client::builder().timeout(Duration::from_secs(config.timeout_secs));
+        if let Some((host, addr)) = &config.pin {
+            builder = builder.resolve(host, *addr);
+        }
+        let client = builder
             .build()
             .map_err(|e| TransportError::Http {
                 status: 0,
@@ -714,5 +721,26 @@ mod tests {
             }
             other => panic!("unexpected: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn pinned_address_is_used_instead_of_resolving_the_host_again() {
+        let (url, seen) = spawn(false).await;
+        let port: u16 = url.trim_end_matches("/mcp").rsplit(':').next().unwrap().parse().unwrap();
+        // `.invalid` never resolves: the request can only succeed by going to the pinned address.
+        let pinned_url = format!("http://pinned.invalid:{port}/mcp");
+
+        let mut unpinned = StreamableHttpConfig::new(pinned_url.clone());
+        unpinned.timeout_secs = 5;
+        let transport = StreamableHttpTransport::new(unpinned).unwrap();
+        assert!(transport.request("initialize", Some(json!({}))).await.is_err());
+        assert!(seen.lock().unwrap().requests.is_empty());
+
+        let mut config = StreamableHttpConfig::new(pinned_url);
+        config.timeout_secs = 5;
+        config.pin = Some(("pinned.invalid".into(), std::net::SocketAddr::from(([127, 0, 0, 1], port))));
+        let transport = StreamableHttpTransport::new(config).unwrap();
+        transport.request("initialize", Some(json!({ "protocolVersion": "2025-06-18" }))).await.unwrap();
+        assert_eq!(seen.lock().unwrap().requests.len(), 1);
     }
 }

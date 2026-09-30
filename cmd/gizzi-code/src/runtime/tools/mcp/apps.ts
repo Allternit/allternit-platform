@@ -71,3 +71,103 @@ export function mcpAppMetadata(
     },
   }
 }
+
+// ── `mcp_app` stream frame (gizzi's own agent-chat route) ────────────────────
+// Mirrors allternit-api's `mcp_apps.rs::build_app_frame`; the field names are what the web client's
+// `buildMcpAppPart` requires.
+
+/** `_meta` key the per-user proxy adds to each tool: `{ id, name }` of the owning connector. */
+export const MCP_CONNECTOR_META_KEY = "allternit/connector"
+
+const ALLOW_DIRECTIVES: Array<[string, string]> = [
+  ["camera", "camera"],
+  ["microphone", "microphone"],
+  ["geolocation", "geolocation"],
+  ["clipboardWrite", "clipboard-write"],
+]
+
+export function mcpAllowAttribute(permissions: unknown): string {
+  if (!isRecord(permissions)) return ""
+  return ALLOW_DIRECTIVES.filter(([key]) => isRecord(permissions[key])).map(([, d]) => d).join("; ")
+}
+
+/** The HTML of a `resources/read` result and its `_meta.ui` (content-level first, then result-level). */
+export function mcpAppHtml(result: unknown): { html: string; ui: Record<string, unknown> } | undefined {
+  if (!isRecord(result) || !Array.isArray(result.contents)) return undefined
+  const item = result.contents.find(
+    (c) => isRecord(c) && (c.mimeType === MCP_APP_RESOURCE_MIME_TYPE || c.mimeType === "text/html"),
+  ) as Record<string, unknown> | undefined
+  if (!item) return undefined
+  let html: string | undefined
+  if (typeof item.text === "string") html = item.text
+  else if (typeof item.blob === "string") html = Buffer.from(item.blob, "base64").toString("utf8")
+  if (html === undefined) return undefined
+  const ui = [item._meta, result._meta]
+    .map((m) => (isRecord(m) ? (m.ui ?? m[MCP_APPS_EXTENSION_ID]) : undefined))
+    .find(isRecord)
+  return { html, ui: (ui as Record<string, unknown>) ?? {} }
+}
+
+function camelCsp(ui: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (!isRecord(ui.csp)) return undefined
+  const out: Record<string, unknown> = {}
+  for (const [camel, snake] of [
+    ["connectDomains", "connect_domains"],
+    ["resourceDomains", "resource_domains"],
+    ["frameDomains", "frame_domains"],
+    ["baseUriDomains", "base_uri_domains"],
+  ]) {
+    const v = ui.csp[camel] ?? ui.csp[snake]
+    if (Array.isArray(v)) out[camel] = v
+  }
+  return out
+}
+
+/** Largest app document emitted (same cap as allternit-api). */
+const MAX_APP_HTML_BYTES = 2 * 1024 * 1024
+
+export function buildMcpAppFrame(args: {
+  messageId: string
+  callId: string
+  connector: { id: string; name: string }
+  tool: Record<string, unknown>
+  resourceUri: string
+  html: string
+  ui: Record<string, unknown>
+  toolInput: unknown
+  toolResult: unknown
+}): Record<string, unknown> | undefined {
+  if (args.html.length > MAX_APP_HTML_BYTES) return undefined
+  const { tool, ui, connector } = args
+  const str = (v: unknown) => (typeof v === "string" && v !== "" ? v : undefined)
+  const permissions = isRecord(ui.permissions) ? ui.permissions : undefined
+  const frame: Record<string, unknown> = {
+    type: "mcp_app",
+    messageId: args.messageId,
+    toolCallId: args.callId,
+    toolName: str(tool.name) ?? "",
+    connectorId: connector.id,
+    connectorName: connector.name,
+    title: str(tool.title) ?? str(tool.description) ?? connector.name,
+    resourceUri: args.resourceUri,
+    html: args.html,
+    allow: mcpAllowAttribute(permissions),
+    prefersBorder: typeof ui.prefersBorder === "boolean" ? ui.prefersBorder : true,
+    tool: {
+      name: tool.name,
+      title: tool.title,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      annotations: tool.annotations,
+      _meta: tool._meta,
+    },
+    toolInput: args.toolInput,
+    toolResult: args.toolResult,
+  }
+  if (str(tool.description)) frame.description = tool.description
+  const csp = camelCsp(ui)
+  if (csp) frame.csp = csp
+  if (permissions) frame.permissions = permissions
+  if (str(ui.domain)) frame.domain = ui.domain
+  return frame
+}
