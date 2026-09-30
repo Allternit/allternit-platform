@@ -88,6 +88,8 @@ pub struct WihPolicy {
     /// `policy.requires_lease_for_write`. `None` when the WIH or its policy
     /// could not be found — treated as `true` (fail closed).
     pub requires_lease_for_write: Option<bool>,
+    /// Q25: the run's judge policy opts into the strict fence.
+    pub fence_strict: bool,
 }
 
 impl WihPolicy {
@@ -104,15 +106,31 @@ pub async fn load_wih_policy(ledger: &Ledger, wih_id: &str) -> Result<WihPolicy>
             ..Default::default()
         })
         .await?;
-    let requires = events
+    let created = events
         .iter()
-        .find(|e| e.payload.get("wih_id").and_then(Value::as_str) == Some(wih_id))
+        .find(|e| e.payload.get("wih_id").and_then(Value::as_str) == Some(wih_id));
+    let requires = created
         .and_then(|e| e.payload.get("policy"))
         .and_then(|p| p.get("requires_lease_for_write"))
         .and_then(Value::as_bool);
+    let fence_strict = match created.and_then(|e| e.payload.get("dag_id")).and_then(Value::as_str) {
+        Some(dag_id) => {
+            let node_id = created.and_then(|e| e.payload.get("node_id")).and_then(Value::as_str);
+            let policy_events = ledger
+                .query(LedgerQuery {
+                    r#type: Some(crate::judge::events::POLICY_SET.to_string()),
+                    ..Default::default()
+                })
+                .await?;
+            crate::judge::policy::effective_policy(&policy_events, dag_id, node_id).fence
+                == crate::judge::policy::Fence::Strict
+        }
+        None => false,
+    };
     Ok(WihPolicy {
         wih_id: wih_id.to_string(),
         requires_lease_for_write: requires,
+        fence_strict,
     })
 }
 

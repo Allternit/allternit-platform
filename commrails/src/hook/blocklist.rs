@@ -204,6 +204,14 @@ pub fn check_command(command: &str, cwd: &Path, home: Option<&Path>, allow: &[Pa
 
 fn check_command_reads(command: &str, cwd: &Path, home: Option<&Path>, allow: &[PathBuf], depth: usize) -> Option<String> {
     for seg in parse(command) {
+        // `cmd < file` reads the file whatever the program is.
+        for src in &seg.inputs {
+            if let Target::Path(p) = resolve(src, cwd, home) {
+                if let Some(r) = check_read(&p, false, allow) {
+                    return Some(r);
+                }
+            }
+        }
         let words = effective_words(&seg.words);
         let Some(first) = words.first() else { continue };
         if let Some(inner) = inner_script(words) {

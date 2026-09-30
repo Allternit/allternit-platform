@@ -47,6 +47,8 @@ ones field by field.
 | `close_by` | `any` | `verifier`: the worker cannot close its own node DONE/PASS |
 | `tool_judge` | `false` | `true`: Gate 2 `pre_tool` runs the hard floor + judge after its own checks |
 | `max_continuations` | `2` | re-open attempts after `not_accomplished` before `NEEDS_HUMAN` |
+| `fence` | `guardrail` | `strict` (Q25, opt-in): worktree + temp writes only, no local egress, env allowlist enforced at spawn (`spec/GATE_RULES.md`) |
+| `allow_credential_read` | none | credential stores this run may read past the Q25 blocklist (`--allow-credential-read`, repeatable) |
 
 An agent that holds an open WIH in the dag cannot weaken the policy
 (`policy_self_weaken`); the hard floor also denies a worker's command that runs
