@@ -47,6 +47,10 @@ export interface DeclarativeChatConfig {
   sampleThreadId?: string;
   completion?: CompletionOptions; // injectable clock/sleep for tests
   heartbeatIntervalMs?: number; // D11 default 15000
+  // Before judging sign-in on a fresh page: how long to wait for the app to
+  // draw a decisive marker (signed in, a check, or logged out). Single-page
+  // apps (Kimi) render the signed-in UI after domcontentloaded. Default 8000.
+  authSettleMs?: number;
   stallTimeoutS?: number; // §A8 default 90 for chat
   submitFallbackEnter?: boolean; // pack hint for submit()
   // How long to wait after Send for the provider to show it took the prompt
@@ -139,6 +143,22 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
       this.manifest.capabilities.find((c) => c.id === task.capability)?.pool_id ??
       this.manifest.capabilities[0]?.pool_id ??
       "unknown";
+
+    // Let a single-page app draw before judging: stop as soon as the page is
+    // signed in, shows a check, or shows its logged-out marker.
+    const settleUntil = now() + (cfg.authSettleMs ?? 8000);
+    for (;;) {
+      const decisive = [this.manifest.auth.logged_in_probe, "challenge", "logged_out_probe"];
+      let found = false;
+      for (const key of decisive) {
+        if (await resolver.tryResolveLocator(key).catch(() => null)) {
+          found = true;
+          break;
+        }
+      }
+      if (found || now() >= settleUntil) break;
+      await sleep(250);
+    }
 
     // §A5/Critical #5 — a challenge interstitial halts immediately, never retried.
     if (await resolver.tryResolveLocator("challenge")) {
