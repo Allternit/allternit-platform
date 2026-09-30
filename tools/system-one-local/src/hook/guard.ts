@@ -13,7 +13,7 @@
 //   off    do nothing.
 import { join } from "node:path";
 import { appendJsonl, BASE_DIR, sha256 } from "../log.ts";
-import type { SystemOneResponse } from "../types.ts";
+import type { SystemOneRequest, SystemOneResponse } from "../types.ts";
 import { evaluateHardRules, type HardRuleResult, type ToolCall, type Verdict } from "./hardrules.ts";
 import { buildPack, shouldEscalate, thresholdsFromEnv, type Thresholds } from "./pack.ts";
 
@@ -141,24 +141,59 @@ export async function runGuard(input: any, deps: GuardDeps = {}): Promise<{ outp
   return { output, record };
 }
 
+/**
+ * Talks to the canonical /v1/decision route (ABI DecisionRequestV1/DecisionResultV1): one BELIEF
+ * (noul) or SCORE request per pack question, then folds the results back into the legacy
+ * SystemOneResponse shape the escalation logic reads. /v1/systemone remains served for SDK
+ * clients but the hook no longer uses it, so there is a single decision path.
+ */
 async function callServer(
-  body: unknown, deps: GuardDeps,
+  body: SystemOneRequest, deps: GuardDeps,
 ): Promise<{ status: GuardRecord["server"]; body?: SystemOneResponse }> {
-  const url = `${(deps.serverUrl ?? process.env.SYSTEM_ONE_URL ?? "http://127.0.0.1:7717").replace(/\/$/, "")}/v1/systemone`;
+  const url = `${(deps.serverUrl ?? process.env.SYSTEM_ONE_URL ?? "http://127.0.0.1:7717").replace(/\/$/, "")}/v1/decision`;
   const f = deps.fetchImpl ?? fetch;
+  const state = typeof body.state === "string" ? body.state : JSON.stringify(body.state);
+  const signal = AbortSignal.timeout(deps.timeoutMs ?? Number(process.env.SYSTEM_ONE_HOOK_TIMEOUT_MS ?? 4000));
+  const str = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(v));
+  const now = (deps.now ?? (() => new Date()))().toISOString();
+  const envelope = {
+    abi_version: "1.0.0", schema_id: "allternit.kernel.DecisionRequestV1", schema_version: "1.0.0",
+    run_id: "hook", session_id: "hook", task_id: "pretooluse", state_version: 0, created_at: now, producer: "system-one-hook", trace_id: "hook", provenance: [],
+  };
   try {
-    const res = await f(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(deps.timeoutMs ?? Number(process.env.SYSTEM_ONE_HOOK_TIMEOUT_MS ?? 4000)),
-    });
-    if (!res.ok) return { status: "error" };
-    const data = (await res.json()) as SystemOneResponse;
-    if (!data?.answers) return { status: "error" };
-    return { status: "ok", body: data };
+    const entries = Object.entries(body.questions);
+    const results = await Promise.all(entries.map(async ([qid, q]) => {
+      const request = {
+        envelope, operation: q.type === "score" ? "SCORE" : "BELIEF", state_projection_ref: "state.hook", decision_bank_id: "bank.pretooluse_guard",
+        question_id: qid, instructions: str(q.instructions), latency_class: "REALTIME",
+        ...(q.type === "score" ? { scale: q.criteria.map(str) } : {}),
+        ...(q.type === "noul" && q.criteria ? { extensions: { "x-criteria": q.criteria } } : {}),
+      };
+      const res = await f(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ request, state }), signal });
+      if (!res.ok) throw Object.assign(new Error(`status ${res.status}`), { name: "HttpError" });
+      return [qid, q, (await res.json()) as any] as const;
+    }));
+    const answers: SystemOneResponse["answers"] = {};
+    const methods: Record<string, "logprobs" | "sampled" | "remote"> = {};
+    const usage = { input_tokens: 0, output_tokens: 0 };
+    for (const [qid, q, r] of results) {
+      const p: Record<string, number> | null = r?.probabilities ?? null;
+      if (!p) return { status: "error" };
+      if (q.type === "score") {
+        const probabilities = p;
+        const score = Object.entries(p).reduce((a, [k, v]) => a + Number(k) * v, 0);
+        answers[qid] = { type: "score", score, legend: {}, probabilities, confidence: r.confidence ?? 0 };
+      } else {
+        answers[qid] = { type: "noul", noul: p.true ?? 0 };
+      }
+      methods[qid] = r.extensions?.["x-readout_method"] ?? "sampled";
+      usage.input_tokens += r.extensions?.["x-usage"]?.input_tokens ?? 0;
+      usage.output_tokens += r.extensions?.["x-usage"]?.output_tokens ?? 0;
+    }
+    return { status: "ok", body: { model: "decision", answers, usage, x_allternit: { backend: "decision", methods, latency_ms: 0 } } };
   } catch (e) {
     const name = (e as Error)?.name;
+    if (name === "HttpError") return { status: "error" };
     return { status: name === "TimeoutError" || name === "AbortError" ? "timeout" : "down" };
   }
 }

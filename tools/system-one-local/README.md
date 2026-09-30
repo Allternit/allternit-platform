@@ -180,4 +180,22 @@ This package is the ONE canonical decision server. It speaks the frozen Kernel A
 - `src/decision/threshold.ts` (CL-158 Threshold Policy) and `src/decision/motifs.ts` (CL-156 DecisionMotif library): thresholds are policy, never model output.
 - Metrics: accuracy, macro F1, Brier, NLL, ECE, coverage-at-risk, flip and order sensitivity (`metrics.ts`).
 
-Python side: `domains/computer-use/core/core/{decision_head,laya_head,semif_head}.py` are in-process `DecisionHead` backends for the computer-use planning loop, not servers. They stay as thin adapters (backend profiles of kind `decoder_readout` / `schema_encoder`) to be consumed through a `DecisionReadoutProvider`; no second server is kept.
+### Why TS is canonical (evaluated 2026-09-30 against `decision-reflex-router/open_systemone`)
+
+| | TS `system-one-local` | Python `open_systemone` |
+|---|---|---|
+| Confidence | calibratable: manifests, temperature fit, ECE, bounds, Q22 gate | entropy-derived, no calibration artifact |
+| Eval | Brier/NLL/ECE/F1/coverage-at-risk, flip/order sensitivity | agreement against recorded decisions plus a 5-bin reliability table (agreement is not a go-live metric under Q22) |
+| Readouts | logprobs over constrained labels, forward/reversed debias, sampled fallback, 9 ABI operations | letter-logit against llama-server, choice/noul/score only |
+| Contract | ABI `DecisionRequestV1`/`DecisionResultV1` plus SDK-compat alias | SDK-compat shape only |
+| Tests | 159 | small core suite |
+
+Its only calibration logic is the 5-bin reliability table, already covered by `metrics.ts` (ECE with bins), so nothing needed porting. Its telemetry harvest (gizzi sqlite), store, vocab builder and Kimi heads are data-collection tooling, not a server; they stay in that repo. Its `server.py` is superseded by this package. That directory is not a git repository, so no branch or PR could be made there; the proposed change is to mark `open_systemone/server.py` deprecated and point clients at `POST /v1/decision` here.
+
+### One path for the hook
+
+`hooks/pretooluse-guard` now calls `POST /v1/decision` (one BELIEF/SCORE request per pack question). `POST /v1/systemone` remains only as the documented SDK-compat alias over the same engine (tested), used by clients built on the vendor SDK; nothing in this repo depends on it.
+
+Operations served by `LocalLogitReadoutProvider`: BELIEF/GATE/VERIFY (yes/no), CHOICE, SCORE, ESTIMATE (expected level), RANK (order by P(best)), SUBSET (independent P(include), calibrated per option), PAIR_SCORE (exactly 2 candidates, both orders averaged).
+
+Python side (in this repo): `domains/computer-use/core/core/{decision_head,laya_head,semif_head}.py` are in-process `DecisionHead` backends for the computer-use planning loop, not servers. They stay as thin adapters (backend profiles of kind `decoder_readout` / `schema_encoder`) to be consumed through a `DecisionReadoutProvider`; no second server is kept.

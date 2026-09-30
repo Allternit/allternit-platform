@@ -80,7 +80,7 @@ export class DecisionRouter {
       threshold_action: action,
       latency_ms: raw.latency_ms,
       abstained,
-      extensions: { "x-mode": this.mode, "x-readout_kind": raw.kind, "x-readout_method": raw.method, "x-refused_uncalibrated": !served, "x-reasons": reasons },
+      extensions: { ...(raw.usage ? { "x-usage": raw.usage } : {}), "x-mode": this.mode, "x-readout_kind": raw.kind, "x-readout_method": raw.method, "x-refused_uncalibrated": !served, "x-reasons": reasons },
     };
   }
 

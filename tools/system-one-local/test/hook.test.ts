@@ -158,8 +158,22 @@ describe("pack: only command text / tool name / paths, redacted", () => {
   });
 });
 
-const okServer = (answers: Record<string, any>) => async () =>
-  new Response(JSON.stringify({ model: "m", answers, usage: { input_tokens: 500, output_tokens: 5 }, x_allternit: { backend: "local", methods: {}, latency_ms: 1 } }));
+// Fake canonical /v1/decision server: derives one DecisionResult per request from a per-question answer table.
+const okServer = (answers: Record<string, any>) => async (_url: string, init?: RequestInit) => {
+  const { request } = JSON.parse(String(init?.body));
+  const a = answers[request.question_id];
+  let probabilities: Record<string, number>;
+  if (request.operation === "BELIEF") probabilities = { true: a.noul, false: 1 - a.noul };
+  else {
+    const n = request.scale.length, lo = Math.min(Math.floor(a.score), n - 1), hi = Math.min(lo + 1, n - 1), w = a.score - lo;
+    probabilities = Object.fromEntries(request.scale.map((_: string, i: number) => [String(i), i === lo ? 1 - w : i === hi ? w : 0]));
+    if (lo === hi) probabilities[String(lo)] = 1;
+  }
+  return new Response(JSON.stringify({
+    operation: request.operation, answer: null, probabilities, confidence: 1,
+    extensions: { "x-readout_method": "logprobs", "x-usage": { input_tokens: 100, output_tokens: 1 } },
+  }));
+};
 const calm = {
   destructive: { type: "noul", noul: 0.1 }, exfiltration: { type: "noul", noul: 0.05 }, production: { type: "noul", noul: 0.1 },
   money_or_publish: { type: "noul", noul: 0.02 }, blast_radius: { type: "score", score: 0.8 },
@@ -239,5 +253,24 @@ describe("guard", () => {
     expect(s.redaction_flags.calls_with_email).toBe(1);
     expect(s.server).toEqual({ skipped: 1, ok: 2, down: 1 });
     expect(s.mean_tokens.actual).toBe(505);
+  });
+});
+
+describe("single decision path", () => {
+  test("the hook calls /v1/decision (ABI), never /v1/systemone", async () => {
+    const urls: string[] = [];
+    const inner = okServer(calm);
+    await runGuard(input("find . -name '*.log' -delete"), { mode: "log", logDir: null, fetchImpl: async (u, i) => { urls.push(u); return inner(u, i); } });
+    expect(urls.length).toBeGreaterThan(0);
+    expect(urls.every((u) => u.endsWith("/v1/decision"))).toBe(true);
+  });
+  test("/v1/systemone stays served as the documented SDK-compat alias over the same engine", async () => {
+    const { createHandler } = await import("../src/server.ts");
+    const { SystemOne } = await import("../src/engine.ts");
+    const runtime = { name: "fake", model: "m", async complete() { return { text: "A", top: [{ token: "A", logprob: Math.log(0.9) }, { token: "B", logprob: Math.log(0.1) }], usage: { input: 1, output: 1 } }; } };
+    const engine = new SystemOne({ runtimeUrl: "x", runtimeModel: "m", concurrency: 1, samples: 2, debias: false, logEnabled: false }, { runtime });
+    const res = await createHandler({ engine })(new Request("http://x/v1/systemone", { method: "POST", body: JSON.stringify({ model: "local", state: "s", questions: { q: { type: "noul", instructions: "i" } } }) }));
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as any).answers.q.type).toBe("noul");
   });
 });
