@@ -5,8 +5,7 @@
 import type { CalibrationScope, DecisionCalibrationManifestV1, DecisionRequestV1, DecisionResultV1, ThresholdAction } from "./contract.ts";
 import { evaluateQ22Gate, type GateOptions } from "./gate.ts";
 import { candidateSchemaHash, candidateSetHash, checkBinding } from "./manifest.ts";
-import { applyTemperature } from "./metrics.ts";
-import type { DecisionReadoutProvider } from "./readout.ts";
+import { calibrateProbs, shapeAnswer, type DecisionReadoutProvider } from "./readout.ts";
 import { actionFor, DEFAULT_PROFILE, validateProfile, type ThresholdProfile } from "./threshold.ts";
 
 export type RouterMode = "shadow" | "live";
@@ -55,9 +54,9 @@ export class DecisionRouter {
     let action: ThresholdAction = "REVIEW"; // uncalibrated: never trust the numbers, never AUTO
     let abstained = true;
     if (served) {
-      probs = applyTemperature(raw.probs, served.extensions?.["x-temperature"] ?? 1);
+      probs = calibrateProbs(raw.probs, served.extensions?.["x-temperature"] ?? 1, raw.shape);
       semantics = "CALIBRATED"; level = "L1"; abstained = false;
-      const conf = Math.max(...probs);
+      const conf = shapeAnswer(req.operation, raw.options, probs, req.scale).confidence;
       action = actionFor(profile, conf);
       if (action === "AUTO") {
         if (this.mode !== "live") { action = "REVIEW"; reasons.push("shadow mode: AUTO downgraded to REVIEW"); }
@@ -65,13 +64,13 @@ export class DecisionRouter {
         else if (conf < (served.extensions?.["x-auto_min_confidence"] ?? 1)) { action = "REVIEW"; reasons.push("confidence below the calibrated auto-act region"); }
       }
     }
-    const best = probs.indexOf(Math.max(...probs));
+    const shaped = shapeAnswer(req.operation, raw.options, probs, req.scale);
     return {
       envelope: { ...req.envelope, schema_id: "allternit.kernel.DecisionResultV1" },
       operation: req.operation,
-      answer: raw.options[best],
+      answer: shaped.answer,
       probabilities: Object.fromEntries(raw.options.map((o, i) => [o, probs[i]])),
-      confidence: Math.max(...probs),
+      confidence: shaped.confidence,
       confidence_semantics: semantics,
       calibration_level_served: level,
       calibration_id: served?.manifest_id ?? null,

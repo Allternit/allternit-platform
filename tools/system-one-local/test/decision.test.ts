@@ -178,3 +178,55 @@ describe("HTTP /v1/decision", () => {
     expect(body.envelope.schema_id).toBe("allternit.kernel.DecisionResultV1");
   });
 });
+
+describe("remaining operations via the local logit provider", () => {
+  const { LocalLogitReadoutProvider } = require("../src/decision/index.ts");
+  const { SystemOne } = require("../src/engine.ts");
+  const P = (dist: Record<string, number>) => ({
+    name: "fake", model: "m",
+    calls: [] as string[],
+    async complete(r: any) {
+      this.calls.push(r.messages.map((m: any) => m.content).join("\n"));
+      return { text: "", top: Object.entries(dist).map(([token, p]) => ({ token, logprob: Math.log(p) })), usage: { input: 1, output: 1 } };
+    },
+  });
+  const mk = (rt: any) => new LocalLogitReadoutProvider(new SystemOne({ runtimeUrl: "x", runtimeModel: "m", concurrency: 1, samples: 2, debias: false, logEnabled: false }, { runtime: rt }), deployment);
+  const base = { envelope: env, state_projection_ref: "s", instructions: "i", decision_bank_id: "b", question_id: "q" };
+
+  test("RANK orders candidates by probability", async () => {
+    const r = await new DecisionRouter({ provider: mk(P({ A: 0.2, B: 0.7, C: 0.1 })), manifests: [] }).decide({ ...base, operation: "RANK", candidates: [{ candidate_id: "x" }, { candidate_id: "y" }, { candidate_id: "z" }] }, "s");
+    expect(r.answer).toEqual(["y", "x", "z"]);
+    expect(r.abstained).toBe(true);
+  });
+  test("SUBSET asks one yes/no per candidate and keeps P>=0.5", async () => {
+    const rt = P({ Yes: 0.9, No: 0.1 });
+    const prov = mk(rt);
+    const out = await prov.readout({ ...base, operation: "SUBSET", candidates: [{ candidate_id: "x" }, { candidate_id: "y" }] }, "s");
+    expect(out.shape).toBe("independent");
+    expect(rt.calls.length).toBeGreaterThanOrEqual(2);
+    expect(out.probs).toHaveLength(2);
+    expect(out.probs.every((p: number) => p > 0.8)).toBe(true);
+  });
+  test("ESTIMATE returns an expected level", async () => {
+    const r = await new DecisionRouter({ provider: mk(P({ A: 0.1, B: 0.1, C: 0.8 })), manifests: [] }).decide({ ...base, operation: "ESTIMATE", scale: ["low", "mid", "high"] }, "s");
+    expect((r.answer as any).level).toBeDefined();
+    const fx = await new DecisionRouter({ provider: new FixtureReadoutProvider("b", [0.1, 0.1, 0.8], deployment as any), manifests: [] }).decide({ ...base, operation: "ESTIMATE", scale: ["low", "mid", "high"] }, "s");
+    expect((fx.answer as any).level).toBe("high");
+  });
+  test("PAIR_SCORE runs both orders and is DEBIASED", async () => {
+    const rt = P({ A: 0.8, B: 0.2 }); // always prefers first-listed: position bias cancels to 50/50
+    const out = await mk(rt).readout({ ...base, operation: "PAIR_SCORE", candidates: [{ candidate_id: "x" }, { candidate_id: "y" }] }, "s");
+    expect(rt.calls).toHaveLength(2);
+    expect(out.kind).toBe("DEBIASED_LOGIT");
+    expect(out.probs[0]).toBeCloseTo(0.5, 1);
+  });
+  test("PAIR_SCORE rejects != 2 candidates", async () => {
+    await expect(mk(P({ A: 1 })).readout({ ...base, operation: "PAIR_SCORE", candidates: [{ candidate_id: "x" }] }, "s")).rejects.toThrow();
+  });
+  test("independent readouts calibrate per option, not by softmax", () => {
+    const { calibrateProbs } = require("../src/decision/index.ts");
+    const c = calibrateProbs([0.9, 0.1], 2, "independent");
+    expect(c[0]).toBeLessThan(0.9); expect(c[0]).toBeGreaterThan(0.5);
+    expect(c[0] + c[1]).toBeCloseTo(1, 5); // symmetric here, but not forced to sum by softmax
+  });
+});

@@ -11,6 +11,8 @@ export interface Readout {
   options: string[];
   probs: number[];
   kind: ReadoutKind;
+  /** "categorical": probs sum to 1 (CHOICE/RANK/SCORE/ESTIMATE/PAIR_SCORE). "independent": one P(yes) per option (SUBSET). */
+  shape?: "categorical" | "independent";
   /** How the distribution was obtained (logprobs are real logits; sampled is a vote estimate). */
   method: "logprobs" | "sampled" | "remote" | "fixture";
   latency_ms: number;
@@ -26,14 +28,37 @@ export interface DecisionReadoutProvider {
 
 /** Wrap a raw readout with a manifest-provided temperature (kind becomes CALIBRATED_LOGIT). */
 export function calibrateReadout(r: Readout, temperature: number): Readout {
-  return { ...r, probs: applyTemperature(r.probs, temperature), kind: "CALIBRATED_LOGIT" };
+  return { ...r, probs: calibrateProbs(r.probs, temperature, r.shape), kind: "CALIBRATED_LOGIT" };
+}
+
+/** Temperature scaling: softmax for categorical readouts, per-option sigmoid(logit/T) for independent ones. */
+export function calibrateProbs(probs: number[], T: number, shape: Readout["shape"] = "categorical"): number[] {
+  if (shape !== "independent") return applyTemperature(probs, T);
+  return probs.map((p) => {
+    const c = Math.min(Math.max(p, 1e-12), 1 - 1e-12);
+    return 1 / (1 + Math.exp(-Math.log(c / (1 - c)) / T));
+  });
+}
+
+/** Turn a probability vector into the operation's answer and a confidence (P that the answer is right). */
+export function shapeAnswer(op: DecisionRequestV1["operation"], options: string[], probs: number[], scale?: string[]): { answer: unknown; confidence: number } {
+  const order = probs.map((p, i) => i).sort((a, b) => probs[b] - probs[a]);
+  switch (op) {
+    case "RANK": return { answer: order.map((i) => options[i]), confidence: probs[order[0]] };
+    case "SUBSET": return { answer: options.filter((_, i) => probs[i] >= 0.5), confidence: probs.length ? Math.min(...probs.map((p) => Math.max(p, 1 - p))) : 1 };
+    case "ESTIMATE": {
+      const mean = probs.reduce((a, p, i) => a + i * p, 0);
+      return { answer: { value: mean, level: scale?.[Math.round(mean)] ?? String(Math.round(mean)) }, confidence: probs[order[0]] };
+    }
+    default: return { answer: options[order[0]], confidence: probs[order[0]] };
+  }
 }
 
 /** Options a request exposes: BELIEF/GATE/VERIFY are yes/no, SCORE uses `scale`, else candidates. */
 export function optionsOf(req: DecisionRequestV1): string[] {
   switch (req.operation) {
     case "BELIEF": case "GATE": case "VERIFY": return ["true", "false"];
-    case "SCORE": return (req.scale ?? []).map((_, i) => String(i));
+    case "SCORE": case "ESTIMATE": return (req.scale ?? []).map((_, i) => String(i));
     default: return (req.candidates ?? []).map((c) => c.candidate_id);
   }
 }
