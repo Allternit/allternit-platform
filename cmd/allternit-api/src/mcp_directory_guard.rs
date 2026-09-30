@@ -179,6 +179,18 @@ pub trait Transport: Send + Sync {
         accept: &str,
         max_bytes: usize,
     ) -> impl std::future::Future<Output = Result<Fetched, String>> + Send;
+    /// POST a JSON `body` to `url`, connecting to `addr`. Same contract as
+    /// `get`: no redirects, body capped at `max_bytes`. Transports that only
+    /// ever read (most test fakes) keep the refusing default.
+    fn post_json(
+        &self,
+        _url: &Url,
+        _addr: IpAddr,
+        _body: &str,
+        _max_bytes: usize,
+    ) -> impl std::future::Future<Output = Result<Fetched, String>> + Send {
+        async { Err("POST is not supported by this transport.".to_string()) }
+    }
 }
 
 /// Production transport: system DNS + reqwest pinned to the validated address.
@@ -193,34 +205,47 @@ impl Transport for ReqwestTransport {
     }
 
     async fn get(&self, url: &Url, addr: IpAddr, accept: &str, max_bytes: usize) -> Result<Fetched, String> {
-        let host = url.host_str().ok_or("URL has no host.")?.to_string();
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(FETCH_TIMEOUT)
-            .resolve(&host, SocketAddr::new(addr, 443))
-            .build()
-            .map_err(|e| format!("HTTP client error: {e}"))?;
-        let mut res = client
-            .get(url.clone())
-            .header("accept", accept)
-            .send()
-            .await
-            .map_err(|e| format!("Fetch failed: {e}"))?;
-        let status = res.status().as_u16();
-        let content_type = res
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_string);
-        let mut buf: Vec<u8> = Vec::new();
-        while let Some(chunk) = res.chunk().await.map_err(|e| format!("Fetch failed: {e}"))? {
-            if buf.len() + chunk.len() > max_bytes {
-                return Err(format!("Response larger than {max_bytes} bytes."));
-            }
-            buf.extend_from_slice(&chunk);
-        }
-        Ok(Fetched { status, content_type, body: String::from_utf8_lossy(&buf).into_owned() })
+        let client = pinned_client(url, addr)?;
+        read_capped(client.get(url.clone()).header("accept", accept), max_bytes).await
     }
+
+    async fn post_json(&self, url: &Url, addr: IpAddr, body: &str, max_bytes: usize) -> Result<Fetched, String> {
+        let client = pinned_client(url, addr)?;
+        let req = client
+            .post(url.clone())
+            .header("accept", "application/json")
+            .header("content-type", "application/json")
+            .body(body.to_string());
+        read_capped(req, max_bytes).await
+    }
+}
+
+fn pinned_client(url: &Url, addr: IpAddr) -> Result<reqwest::Client, String> {
+    let host = url.host_str().ok_or("URL has no host.")?.to_string();
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(FETCH_TIMEOUT)
+        .resolve(&host, SocketAddr::new(addr, 443))
+        .build()
+        .map_err(|e| format!("HTTP client error: {e}"))
+}
+
+async fn read_capped(req: reqwest::RequestBuilder, max_bytes: usize) -> Result<Fetched, String> {
+    let mut res = req.send().await.map_err(|e| format!("Fetch failed: {e}"))?;
+    let status = res.status().as_u16();
+    let content_type = res
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = res.chunk().await.map_err(|e| format!("Fetch failed: {e}"))? {
+        if buf.len() + chunk.len() > max_bytes {
+            return Err(format!("Response larger than {max_bytes} bytes."));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(Fetched { status, content_type, body: String::from_utf8_lossy(&buf).into_owned() })
 }
 
 /// SSRF-guarded GET. Every failure is a human-readable reason string.
@@ -257,6 +282,33 @@ async fn guarded_get_within<T: Transport>(
         Ok(res)
     };
     match tokio::time::timeout(timeout, work).await {
+        Ok(r) => r,
+        Err(_) => Err("Timed out after 5 seconds.".into()),
+    }
+}
+
+/// SSRF-guarded JSON POST: same resolution checks, no redirects, capped reply.
+pub async fn guarded_post_json<T: Transport>(
+    transport: &T,
+    target: &GuardedTarget,
+    body: &str,
+    max_bytes: usize,
+) -> Result<Fetched, String> {
+    let work = async {
+        let addrs = transport.resolve(&target.host).await?;
+        if addrs.is_empty() {
+            return Err("Host did not resolve.".to_string());
+        }
+        if let Some(bad) = addrs.iter().find(|a| !is_public_ip(**a)) {
+            return Err(format!("Host resolves to a non-public address ({bad})."));
+        }
+        let res = transport.post_json(&target.url, addrs[0], body, max_bytes).await?;
+        if (300..400).contains(&res.status) {
+            return Err(format!("Redirects are not followed (HTTP {}).", res.status));
+        }
+        Ok(res)
+    };
+    match tokio::time::timeout(FETCH_TIMEOUT, work).await {
         Ok(r) => r,
         Err(_) => Err("Timed out after 5 seconds.".into()),
     }
