@@ -1,6 +1,7 @@
 // Settings › Subscriptions hub: providers, per-state user actions, one-step
 // add + login, the login watcher that finishes a sign-in by itself, cancel,
 // and remove. Fakes only — no browser, no provider.
+import { firefoxProfileFor } from "../src/worker/login_browser.js";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import request from "supertest";
@@ -68,6 +69,8 @@ describe("subscriptions hub", () => {
     } as unknown as WorkerPool;
     let open = false;
     const loginBrowser: LoginBrowser = {
+      profileFor: firefoxProfileFor,
+      readCookies: () => [],
       open: async () => {
         calls.push("open");
         open = true;
