@@ -38,12 +38,33 @@ pub enum RegistryError {
     Load(String),
 }
 
+/// Minimal independently versioned packs; leaf IDs still come from the frozen registry.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PrimitivePack {
+    pub pack_id: String,
+    pub version: String,
+    pub primitives: Vec<String>,
+    pub decision_sets: Vec<String>,
+    pub tool_schemas: Vec<String>,
+    pub error_classes: Vec<String>,
+    pub environment_assumptions: Vec<String>,
+    pub validators: Vec<String>,
+    pub syntax_rules: Vec<String>,
+    pub commands: Vec<String>,
+    pub projection_rules: Vec<String>,
+    pub graph_fragments: Vec<String>,
+    pub policy_hooks: Vec<String>,
+    pub capability_requirements: Vec<String>,
+    pub eval_fixtures: Vec<String>,
+}
+
 #[derive(Debug)]
 pub struct PrimitiveRegistry {
     pub version: String,
     primitives: Vec<Primitive>,
     by_id: HashMap<String, usize>,
     by_alias: HashMap<String, usize>,
+    packs: Vec<PrimitivePack>,
 }
 
 impl PrimitiveRegistry {
@@ -69,7 +90,16 @@ impl PrimitiveRegistry {
                 }
             }
         }
-        Ok(Self { version: f.registry_version, primitives: f.primitives, by_id, by_alias })
+        let packs: Vec<PrimitivePack> = serde_json::from_str(include_str!("templates/packs.v1.json"))
+            .map_err(|e| RegistryError::Load(e.to_string()))?;
+        for pack in &packs {
+            for id in &pack.primitives {
+                if !by_id.contains_key(id) {
+                    return Err(RegistryError::Load(format!("pack {} references unknown primitive {id}", pack.pack_id)));
+                }
+            }
+        }
+        Ok(Self { version: f.registry_version, primitives: f.primitives, by_id, by_alias, packs })
     }
 
     /// The embedded ABI 1.0.0 registry (parsed once).
@@ -79,6 +109,24 @@ impl PrimitiveRegistry {
             PrimitiveRegistry::from_json(REGISTRY_JSON)
                 .expect("embedded primitives.json must be valid")
         })
+    }
+
+    pub fn packs(&self) -> impl Iterator<Item = &PrimitivePack> { self.packs.iter() }
+
+    pub fn pack(&self, id: &str) -> Option<&PrimitivePack> {
+        self.packs.iter().find(|p| p.pack_id == id)
+    }
+
+    /// Environment fingerprinting chooses the smallest applicable set.
+    pub fn active_packs(&self, languages: &[&str], posix: bool, git: bool, vitest: bool) -> Vec<&PrimitivePack> {
+        self.packs.iter().filter(|p| match p.pack_id.as_str() {
+            "CORE_AGENT" | "FILESYSTEM" | "SOFTWARE_ENGINEERING" => true,
+            "POSIX_SHELL" => posix,
+            "GIT" => git,
+            "TYPESCRIPT" => languages.contains(&"typescript"),
+            "VITEST" => vitest,
+            _ => false,
+        }).collect()
     }
 
     pub fn len(&self) -> usize {

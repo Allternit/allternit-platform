@@ -5,6 +5,7 @@
 //! owns lifecycle) and Q3 (ComputeGraphIR is authoritative; the WIH DAG is a
 //! one-way projection).
 
+pub mod bug_fix;
 pub mod graph;
 pub mod isa;
 pub mod lifecycle;
