@@ -11,9 +11,10 @@ export class AxClaudeDesktopDriver implements ClaudeDesktopDriver {
   private st = { attached: false };
   /** Why the last html() read as drift (selector evidence for humans/logs). */
   lastDrift: { missing: string[]; packVersion: string; reason: string } | undefined;
-  constructor(private ax: AxDriver, private pack = CLAUDE_AX_PACK) {}
+  constructor(private ax: AxDriver, private consented = true, private pack = CLAUDE_AX_PACK) {}
 
   private async guard<T>(f: () => Promise<T>): Promise<T> {
+    if (!this.consented) throw new DriverError("consent_required", "Driving Claude through Accessibility needs your explicit OK first. Enable it for this account, then try again.");
     try { return await f(); } catch (e) {
       const m = axFault(e); if (m) throw new DriverError(m.fault, m.message);
       throw e;
@@ -21,6 +22,7 @@ export class AxClaudeDesktopDriver implements ClaudeDesktopDriver {
   }
   async connect() { await this.guard(() => ensureAttached(this.ax, CLAUDE_BUNDLE_ID, this.st)); }
   async isAppRunning() {
+    if (!this.consented) return false;
     try { await ensureAttached(this.ax, CLAUDE_BUNDLE_ID, this.st); return true; }
     catch (e) { return !(e instanceof AxError && e.fault === "not_running"); }
   }

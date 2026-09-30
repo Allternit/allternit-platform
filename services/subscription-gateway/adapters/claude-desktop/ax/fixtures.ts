@@ -31,7 +31,7 @@ export function claudeAxSnapshot(s: Scenario): AxSnapshot {
   return { formatVersion: 1, bundleId: CLAUDE_BUNDLE_ID, capturedAt: 0, root: claudeAxTree(s) };
 }
 
-export type AxScriptMode = "normal" | "down" | "untrusted" | "rate_limited" | "logged_out" | "drift";
+export type AxScriptMode = "normal" | "down" | "untrusted" | "rate_limited" | "blocked" | "logged_out" | "drift";
 export interface AxScriptOptions { mode?: AxScriptMode; reply?: (u: string) => string; frames?: number; approval?: string }
 /** A scripted Claude "app" behind an AxReplayDriver: typing, Send, Stop, New chat, Cowork, approval buttons all mutate state. */
 export function scriptedClaudeAx(o: AxScriptOptions = {}) {
@@ -48,6 +48,7 @@ export function scriptedClaudeAx(o: AxScriptOptions = {}) {
     }
     const s: Scenario = { turns, streaming, composerText: st.composer, cowork: st.cowork, approval: st.approval, drift: o.mode === "drift" ? "composer" : undefined };
     if (o.mode === "rate_limited") s.banner = "You have reached your usage limit. Your limit resets in 2 hours";
+    if (o.mode === "blocked") s.banner = "Unusual activity detected. Verify you are human to continue";
     if (o.mode === "logged_out") s.loggedOut = true;
     return s;
   };

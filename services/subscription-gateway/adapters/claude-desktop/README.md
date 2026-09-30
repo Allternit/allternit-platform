@@ -68,3 +68,8 @@ Tests: `test/claude-desktop-adapter.test.ts` (conformance passes every declared 
 2. Quit Claude yourself, relaunch through `launchWithDebugPort({ userConsented: true, authToken, userDataDir, port })`.
 3. Confirm the CDP target is `https://claude.ai/...` and every selector above; record the real markup, fix `selectors.ts`, regenerate fixtures, bump the version.
 4. Confirm the Cowork tab/New task names, the permission-card markup, the usage-limit banner and the logged-out gate; then update this table.
+
+## Alternative transport: macOS Accessibility (no debug port)
+
+`createClaudeDesktopProvider({ transport: "ax", axBinPath, axConsented: true })` (or `SUBS_GATEWAY_CLAUDE_DESKTOP_TRANSPORT=ax`)
+drives the app through its accessibility tree instead of CDP. Selector pack `claude-ax-v1` is unverified. See `../_shared/ax/README.md`.

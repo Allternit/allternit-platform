@@ -13,16 +13,26 @@ export async function ensureAttached(ax: AxDriver, bundleId: string, state: { at
   state.attached = true;
 }
 
+/** Static text plus button labels under a node (what a person reads on a card, buttons included). */
+export function fullText(n: AxNode): string {
+  const parts: string[] = [];
+  for (const { node } of walk(n)) {
+    if (node.role === "AXStaticText" || node.role === "AXHeading") { const t = node.value ?? node.title ?? node.description; if (t) parts.push(t); }
+    else if (BUTTON_ROLES.has(node.role)) { const t = buttonLabel(node); if (t) parts.push(t); }
+  }
+  return parts.join(" ");
+}
 export const buttonLabel = (n: AxNode) => (n.title || n.description || (typeof n.value === "string" && !/^\d+$/.test(n.value) ? n.value : "") || "").trim();
 
 /** Buttons (or tab/radio) in the tree whose accessible name matches `nameSource` (case-insensitive). */
 export function findButtons(root: AxNode, nameSource: string, withinText?: string): AxNode[] {
   const re = new RegExp(nameSource, "i");
-  const within = withinText ? new RegExp(withinText, "i") : undefined;
+  // Whitespace-insensitive: DOM textOf() concatenates block text without spaces, AX joins with spaces.
+  const within = withinText ? new RegExp(withinText.replace(/\s+/g, ""), "i") : undefined;
   const out: AxNode[] = [];
   for (const { node, ancestors } of walk(root)) {
     if (!BUTTON_ROLES.has(node.role) || !re.test(buttonLabel(node))) continue;
-    if (within && !ancestors.some((a) => a.role !== "AXWindow" && a.role !== "AXApplication" && a.role !== "AXWebArea" && within.test(textUnder(a)))) continue;
+    if (within && !ancestors.some((a) => a.role !== "AXWindow" && a.role !== "AXApplication" && a.role !== "AXWebArea" && within.test(fullText(a).replace(/\s+/g, "")))) continue;
     out.push(node);
   }
   return out;

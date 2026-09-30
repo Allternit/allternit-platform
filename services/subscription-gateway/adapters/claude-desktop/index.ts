@@ -23,13 +23,15 @@ export interface CreateOptions extends Partial<ClaudeDesktopProviderOptions> {
   /** ax transport: a ready AxDriver (tests/replay), else `axBinPath` is spawned. */
   ax?: AxDriver;
   axBinPath?: string;
+  /** Explicit per-app OK to drive Claude through Accessibility (default false: calls answer LANE_BLOCKED). */
+  axConsented?: boolean;
 }
 /** Factory: live CDP driver on cdpPort (default 9222) unless a driver is supplied (tests/replay). */
 export function createClaudeDesktopProvider(opts: CreateOptions = {}): ClaudeDesktopProvider {
-  const { cdpPort, driver, transport, ax, axBinPath, ...rest } = opts;
+  const { cdpPort, driver, transport, ax, axBinPath, axConsented, ...rest } = opts;
   if (!driver && transport === "ax") {
     if (!ax && !axBinPath) throw new Error("claude-desktop transport \"ax\" needs `ax` or `axBinPath`");
-    return new ClaudeDesktopProvider({ ...rest, driver: new AxClaudeDesktopDriver(ax ?? new AxBridgeDriver({ binPath: axBinPath! })) });
+    return new ClaudeDesktopProvider({ ...rest, driver: new AxClaudeDesktopDriver(ax ?? new AxBridgeDriver({ binPath: axBinPath! }), axConsented === true) });
   }
   return new ClaudeDesktopProvider({ ...rest, driver: driver ?? new CdpClaudeDesktopDriver({ port: cdpPort ?? 9222 }) });
 }
