@@ -1,0 +1,48 @@
+---
+title: Connected subscriptions
+description: Connect subscription accounts, select a login, and use available capabilities through the Sessions computer.
+---
+
+Connected subscriptions let the workspace use supported capabilities from your own ChatGPT, Claude, or Kimi account through Subscription Fabric. This is separate from a provider API key, an Allternit Cloud model, or a CLI harness login. The subscription account's plan, observed capabilities, quotas, and session health determine availability.
+
+For bot login assignment, gateway sign-in, and the account status reference, see the [Subscriptions surface guide](/surfaces/subscriptions).
+
+## Connect an account
+
+1. Open Settings → Subscriptions, or the subscription connection flow in the model picker.
+2. Ensure your Sessions computer is connected and running.
+3. Choose a supported provider and open its sign-in window. Sign in yourself in the live computer view.
+4. Wait for sign-in detection, or use the sign-in check offered by an older gateway.
+5. Read and acknowledge the provider-terms disclosure before selecting the subscription model.
+6. Select an available subscription model and send your request.
+
+The gateway runs on a single-tenant Sessions computer: hosted, BYOC, or locally contained. It does not run uncontained in your everyday Desktop session. The workspace reaches it through the private runtime's subscription proxy; gateway credentials stay server-side.
+
+## Several logins
+
+You can connect several logins for a subscription provider, label them, choose a preferred login, and switch from Settings or the model picker. The preferred login is tried first. This does not create extra entitlement or remove provider usage limits.
+
+## What is available
+
+The picker exposes the live provider catalog rather than a fixed list of every capability a vendor offers. Chat and streaming replies use the selected lane. Longer tasks can report progress and need-user states, and return files or artifacts when the adapter supports them.
+
+A provider's native features are not automatically implemented in its Allternit adapter. Check the connected catalog and task result before relying on research, media, office, website, or agent-task capabilities. ChatGPT dots have an adapter on main, but their selectors and approval controls still require a consented live validation; they are not a verified general-purpose automation lane.
+
+## Human initiation and limits
+
+Subscription sends require a human-initiated request and the applicable disclosure acknowledgement. Bots and schedules can prepare work; do not assume that a connected consumer subscription can execute unattended bot turns. Provider-side questions and approvals can require your intervention.
+
+The disclosure explains provider-terms risk. Acknowledgement is not provider authorization. Availability and quotas remain controlled by the provider.
+
+## Troubleshooting
+
+| State | Next action |
+| --- | --- |
+| Authentication required | Reopen sign-in on the Sessions computer. |
+| Verification challenge | Complete the provider's check yourself. |
+| Profile locked | Close the conflicting use of that profile before reconnecting. |
+| Usage limit | Wait for the provider's reset or select another entitled lane. |
+| UI drift / degraded / provider down | Inspect the status and update or repair the adapter before retrying. |
+| Missing Sessions computer | Bind or restore the computer and gateway connection. |
+
+For observation and control, see [Computers and ACI](/guides/computers-and-apps). For deliverables, see [Artifact modes](/guides/artifact-modes).

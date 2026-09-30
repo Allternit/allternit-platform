@@ -138,6 +138,12 @@ use tokio::sync::RwLock;
 
 #[tokio::main]
 async fn main() {
+    // P5 commerce is Stripe test-mode only. A live key configured for it
+    // disables commerce (every commerce route answers 503 via service()); it
+    // must not take the rest of the API down with it.
+    if let Err(e) = allternit_api::commerce_routes::check_startup_config() {
+        eprintln!("commerce disabled: {e}");
+    }
     // Structured logging + local spans (`#[tracing::instrument]` on the LLM
     // gateway, DLP, MCP-server, Slack-webhook, and eval-run handlers), plus —
     // only when OTEL_EXPORTER_OTLP_ENDPOINT is set — distributed trace export:
@@ -258,6 +264,15 @@ async fn main() {
     let db_path = data_dir.join("allternit.db");
     let db = DbHandle::new(db_path.clone()).expect("Failed to initialize SQLite database");
     info!("Database ready at {}", db_path.display());
+
+    // MCP connector tokens/secrets stored before sealing existed: seal them
+    // once a key is configured (idempotent; no-op without a key).
+    match db.connect().map(|c| allternit_api::mcp_routes::seal_legacy_mcp_secrets(&c)) {
+        Ok(Ok(0)) => {}
+        Ok(Ok(n)) => info!("Sealed {n} legacy MCP connector secret(s)"),
+        Ok(Err(e)) => warn!("Sealing legacy MCP connector secrets failed: {e}"),
+        Err(e) => warn!("Sealing legacy MCP connector secrets: no DB connection: {e}"),
+    }
 
     // Facts the old extractor copied from raw chat turns are not memories.
     match allternit_api::memory_kernel_service::prune_turn_derived_facts(&db) {
@@ -803,6 +818,19 @@ async fn main() {
         bot_desktop_queue::spawn_provision_queue_worker(Arc::clone(&state), period);
     }
 
+    // Agent Gateway accounts that sign in through Settings → Subscriptions
+    // follow that login's health (bots move to Needs auth when it lapses).
+    {
+        let state = Arc::clone(&state);
+        let mut shutdown_rx = shutdown_tx.subscribe();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = shutdown_rx.recv() => {}
+                _ = allternit_api::subscription_sync::run_sync_loop(state) => {}
+            }
+        });
+    }
+
     // OfficeCLI idle reaper: evicts stale docs, closes idle resident sessions,
     // kills idle watch processes and MCP sessions.
     {
@@ -883,6 +911,8 @@ async fn main() {
         .merge(allternit_api::memory_notes_routes::memory_notes_router())
         .merge(research_task_router())
         .merge(user_profile_router())
+        .merge(allternit_api::mcp_directory_routes::directory_router())
+        .nest("/api", allternit_api::mcp_directory_routes::directory_router())
         .merge(canvas_router())
         .merge(v1_router())
         .merge(allternit_bus_router())
@@ -974,6 +1004,7 @@ async fn main() {
         .merge(allternit_api::admin_spend_limit_routes::router())
         .merge(allternit_api::admin_rate_limit_routes::router())
         .merge(allternit_api::marketplace_routes::router())
+        .merge(allternit_api::commerce_routes::router())
         .merge(admin_mcp_tunnel_router())
         .merge(outcome_rubric_router())
         .merge(federation_router())
@@ -1058,6 +1089,7 @@ async fn main() {
         .nest("/api", playground_router())
         .nest("/api", checkpoints_router())
         .nest("/api", design_connector_router())
+        .nest("/api", allternit_api::mcp_apps::mcp_apps_router())
         .nest("/api", office_engine_router())
         .nest("/api", provider_router())
         // Idempotency replay for POST/PUT/PATCH on the protected surface.
@@ -1074,6 +1106,11 @@ async fn main() {
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
+        ))
+        // Outermost: adds the RFC 9728 `WWW-Authenticate` challenge to 401s
+        // from `/mcp/server` so OAuth clients can discover Clerk.
+        .layer(axum::middleware::from_fn(
+            allternit_api::mcp_agents::mcp_challenge_layer,
         ));
 
     // ── Web proxy (SSRF surface) ──────────────────────────────────────────────
@@ -1096,9 +1133,16 @@ async fn main() {
     let mut public = Router::new()
         .nest("/health", health_router())
         .merge(web_proxy)
-        .nest("/beta", enrollment_router())
+        .merge(enrollment_router()) // router already declares /beta/enroll
+        // Client ID Metadata Document for connector OAuth (must be public).
+        .merge(allternit_api::mcp_directory_routes::oauth_client_router())
         .merge(status_router())
+        // OAuth protected-resource metadata (RFC 9728) for /mcp/server.
+        .merge(allternit_api::mcp_agents::well_known_router())
         .merge(webhook_router())
+        // Stripe signs MCP App commerce webhooks (verified per handler with
+        // ALLTERNIT_COMMERCE_STRIPE_WEBHOOK_SECRET; no unsigned fallback).
+        .merge(allternit_api::commerce_routes::webhook_router())
         .merge(webhook_trigger_public_router())
         .merge(allternit_api::benchmark_routes::benchmark_router())
         // Slack signs every request itself (`verify_slack_signature`), so
@@ -1117,6 +1161,12 @@ async fn main() {
         // public: the curated-3 loopback callback (moved out of the protected
         // router) and the open-connector sidecar's `/oauth/callback` proxy.
         .merge(allternit_api::connector_routes::connector_public_router())
+        // Per-user MCP proxy for gizzi's chat turns: authenticated by its own
+        // short-lived HMAC token in the handler, not by Clerk.
+        .merge(allternit_api::mcp_user_proxy::mcp_user_proxy_router())
+        // MCP connector OAuth redirect target: no Clerk JWT on the browser
+        // redirect; the single-use OAuth `state` identifies the session.
+        .merge(allternit_api::mcp_routes::mcp_oauth_public_router())
         // Internal-only: the ACU (computer-use) Python gateway has no Clerk
         // session, so these are gated by internal_auth::require_internal_token
         // per-handler instead of the Clerk auth_middleware layer above.

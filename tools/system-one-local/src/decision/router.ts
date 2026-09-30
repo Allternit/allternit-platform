@@ -89,7 +89,7 @@ export class DecisionRouter {
     for (const m of this.cfg.manifests) {
       if (this.cfg.primitiveId && m.primitive_id !== this.cfg.primitiveId) continue;
       sawAny = true;
-      const b = checkBinding(m, { ...scope, readout_point: m.scope.readout_point ?? scope.readout_point ?? null });
+      const b = checkBinding(m, scope);
       if (!b.ok) { reasons.push(`manifest ${m.manifest_id}: ${b.reason}`); continue; }
       const g = evaluateQ22Gate(m, this.cfg.gate);
       if (!g.passed || m.gate.passed !== true) { reasons.push(`manifest ${m.manifest_id}: gate failed (${g.failures.join("; ") || "manifest.gate.passed=false"})`); continue; }

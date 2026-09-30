@@ -1,0 +1,107 @@
+---
+title: Subscriptions
+description: Use the ChatGPT, Claude and Kimi plans you already pay for as models in Allternit, and connect them to bots. Sign-in happens on your Sessions computer.
+---
+
+## Overview
+
+**Subscriptions** let you use AI plans you already pay for (ChatGPT, Claude and Kimi) from inside Allternit. You pick one in the model picker like any other model, and bots can use the same logins.
+
+Each subscription runs in its own browser on your **Sessions computer**: a cloud computer you choose for this job, never the computer you work on. Allternit drives that browser for you, and you stay in the loop: nothing is sent unless you start it or approve it.
+
+You manage all of it in one place: **Settings → Subscriptions**.
+
+<CardGroup cols={2}>
+  <Card title="Your plan, as a model" icon="message-square">
+    Chat with ChatGPT, Claude or Kimi through your own account. Usage counts against your plan, the same as using their sites.
+  </Card>
+  <Card title="Sign in on the provider's site" icon="lock">
+    You sign in on the provider's own page, on your Sessions computer. Allternit never sees or stores your password.
+  </Card>
+  <Card title="Several logins per subscription" icon="users">
+    Keep more than one login for a subscription (for example Work and Personal) and switch which one is used first.
+  </Card>
+  <Card title="One login for chats and bots" icon="bot">
+    Bots that need a subscription use the same login. If it signs out, those bots show Needs attention until you sign in again.
+  </Card>
+</CardGroup>
+
+## What's offered
+
+| Subscription or connection | How it signs in | Used for | Status |
+|---|---|---|---|
+| ChatGPT | Your ChatGPT login, on the Sessions computer | Chat, bots (OpenAI dots) | Available |
+| Claude | Your Claude login, on the Sessions computer | Chat | Preview |
+| Kimi | Your Kimi login, on the Sessions computer | Chat | Preview |
+| OpenAI dots | Uses your ChatGPT subscription login. Needs a ChatGPT plan that includes dots. | Bots | Preview |
+| Grok Bot | Browser sign-in | Bots | Preview |
+| Claude desktop app, ChatGPT desktop app | The app already signed in on your computer | Bots | Preview |
+| Claude Managed Agents | Your own API key | Bots | Available |
+| OpenClaw | A runtime on your own machine, no cloud credential | Bots | Preview |
+
+Preview connections work through the provider's own interface. They are best effort: when a provider changes its site or app, a connection can stop working until Allternit updates it.
+
+## Set up
+
+<Steps>
+  <Step title="Choose your Sessions computer">
+    In **Settings → Subscriptions**, under **Runs on**, pick the cloud computer that will hold your subscription browsers. It can't be the computer you're working on or a bot's computer.
+  </Step>
+  <Step title="Add a subscription">
+    Choose **Add account** and pick ChatGPT, Claude or Kimi. Read the provider notice, then choose **Continue to** the provider.
+  </Step>
+  <Step title="Sign in">
+    A sign-in window opens on your Sessions computer, and you see it in Allternit. Sign in the way you normally do. Use **Full screen** or **Actual size** on the screen if something is hard to reach.
+  </Step>
+  <Step title="Done">
+    Allternit notices the sign-in by itself and marks the subscription **Ready**. You don't need to tell it you've finished.
+  </Step>
+</Steps>
+
+You can also start from the model picker in the composer: **Connect account → Web subscriptions**. It opens the same sign-in.
+
+### Security checks
+
+Some providers show a "Verify you are human" check. Allternit never solves these for you. When one appears, the subscription shows **Finish the check in the login window**. Complete it on the Sessions computer and Allternit picks up from there on its own.
+
+## Several logins for one subscription
+
+A subscription can have more than one login, for example a work and a personal ChatGPT account.
+
+- **Add another:** in Settings, choose **Add account** again. In the model picker, choose **Add another *provider* login**. The new login gets its own name, such as "ChatGPT 2".
+- **Choose which one is used first:** the login marked **Used first** handles your chats. Choose **Use this one** on another login to switch, in Settings or in the model picker.
+- **Rename:** choose **Rename** to give a login a clear name, such as Work or Personal.
+- **When one is busy:** if the login used first hits its usage limit or signs out, Allternit uses your other signed-in login for that subscription.
+
+## Bots
+
+When you connect a bot to a vendor that runs on one of your subscriptions (for example OpenAI dots, which run on ChatGPT), the bot's connection setup asks you to pick one of that subscription's signed-in logins, or to sign in another. Nothing opens on your own computer.
+
+Allternit checks your subscription logins about once a minute. If a login needs signing in again, every bot using it shows **Needs attention**. Sign in again from Settings → Subscriptions and the bots can continue. Their threads are kept.
+
+## What the statuses mean
+
+| Status | What it means | What to do |
+|---|---|---|
+| Ready | Signed in and working | Nothing |
+| Log in | The provider signed this login out | Choose **Log in** and sign in again |
+| Finish the check in the login window | The provider is showing a verification check | Complete it on the Sessions computer |
+| Busy in another window | The login's browser is in use | Wait a moment |
+| The provider changed its page | The provider's site changed and Allternit is being updated | Nothing; check again later |
+| The provider is down | The provider's site isn't answering | Check again later |
+| Restricted | The provider restricted the account | Check the account on the provider's site |
+
+**Usage left** shows what the provider's own page shows, when it shows it. Some providers only show it sometimes. If the reading is older than a few hours, Allternit says when it was seen.
+
+## Boundaries
+
+- Allternit never sees or stores your password. You sign in on the provider's own site.
+- Allternit never solves verification checks for you.
+- Nothing is sent through a subscription unless you start it or approve it.
+- Usage counts against your plan's limits. Allternit can't raise them.
+- Your account is with the provider, and the provider's own terms apply to how you use it.
+- Allternit can't promise a provider will stay available, keep its limits, or keep its site unchanged. When a provider changes, a subscription can stop working until Allternit updates it.
+
+## Workflow reference
+
+See [Connected subscriptions](/guides/subscriptions) for capability availability, human initiation, Sessions-computer placement, and troubleshooting.

@@ -89,7 +89,10 @@ pub use protocol::{
 };
 pub use transport::sse::{ReconnectConfig, SseConfig};
 pub use transport::stdio::StdioConfig;
-pub use transport::{McpTransport, SseTransport, StdioTransport, TransportConfig, TransportType};
+pub use transport::{
+    McpTransport, SseTransport, StdioTransport, StreamableHttpConfig, StreamableHttpTransport,
+    TransportConfig, TransportType,
+};
 pub use types_allternit::{CallToolRequest, ToolContent, ToolResult};
 
 // Re-export registry types
@@ -136,7 +139,7 @@ impl McpClient {
 
         let params = InitializeParams {
             protocol_version: protocol::MCP_PROTOCOL_VERSION.to_string(),
-            capabilities: ClientCapabilities::default(),
+            capabilities: ClientCapabilities::with_mcp_apps(),
             client_info: protocol::Implementation {
                 name: "allternit-mcp-client".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
@@ -217,6 +220,15 @@ impl McpClient {
             .await?;
         let content: ResourceContent = serde_json::from_value(result)?;
         Ok(content)
+    }
+
+    /// Send a raw JSON-RPC request and return the untouched `result`.
+    ///
+    /// Use for methods whose results carry fields the typed helpers drop
+    /// (`_meta`, `structuredContent`, resource `contents`).
+    pub async fn request(&self, method: &str, params: Option<Value>) -> Result<Value> {
+        self.ensure_initialized()?;
+        self.transport.request(method, params).await
     }
 
     /// Check if the client is initialized

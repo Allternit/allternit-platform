@@ -39,6 +39,19 @@
             ]
           },
           {
+            "group": "Workspace workflows",
+            "pages": [
+              "guides/platform-workflows",
+              "guides/bot-threads",
+              "guides/project-coordination",
+              "guides/bot-templates",
+              "guides/subscriptions",
+              "guides/artifact-modes",
+              "guides/computers-and-apps",
+              "guides/mcp-apps-status"
+            ]
+          },
+          {
             "group": "Architecture",
             "pages": [
               "architecture",
@@ -342,6 +355,7 @@
               "surfaces/agent-studio",
               "surfaces/agent-hub",
               "surfaces/bots",
+              "surfaces/subscriptions",
               "surfaces/canvas",
               "surfaces/operator-browser",
               "surfaces/swarm-dashboard",

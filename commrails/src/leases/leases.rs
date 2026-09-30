@@ -483,12 +483,34 @@ impl Leases {
     }
 }
 
-fn matches_path(lease_path: &str, candidate: &str) -> bool {
-    if let Some(prefix) = lease_path.strip_suffix("/**") {
-        return candidate.starts_with(prefix);
+/// Whether `lease_path` covers `candidate`. `dir/**` covers `dir` itself and
+/// anything under `dir/`, on a directory boundary: it never covers a sibling
+/// such as `dir-private` or `dir2`.
+pub(crate) fn matches_path(lease_path: &str, candidate: &str) -> bool {
+    if let Some(dir) = lease_path.strip_suffix("/**") {
+        return candidate == dir || candidate.starts_with(&format!("{dir}/"));
     }
     if let Some(prefix) = lease_path.strip_suffix('*') {
         return candidate.starts_with(prefix);
     }
     candidate == lease_path || candidate.starts_with(&format!("{}/", lease_path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::matches_path;
+
+    #[test]
+    fn recursive_lease_matches_on_a_directory_boundary() {
+        assert!(matches_path("src/**", "src"));
+        assert!(matches_path("src/**", "src/a.rs"));
+        assert!(matches_path("src/**", "src/deep/b.rs"));
+        assert!(!matches_path("src/**", "src-private/secret.ts"));
+        assert!(!matches_path("src/**", "src2/x"));
+        assert!(!matches_path("src/**", "srcx"));
+        assert!(matches_path("a/b/**", "a/b/c"));
+        assert!(!matches_path("a/b/**", "a/bc/d"));
+        assert!(matches_path("docs", "docs/x.md"));
+        assert!(!matches_path("docs", "docs2/x.md"));
+    }
 }

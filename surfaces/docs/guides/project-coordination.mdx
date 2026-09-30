@@ -1,0 +1,46 @@
+---
+title: Projects and launch coordination
+description: Launch a team, assign dependent threads, and steer project work through Al.
+---
+
+Projects group a team's bots, threads, and shared objective. **Al** is the project coordinator: it plans and routes work, reports completion or blockers, and collects results. Assigned bots execute the work.
+
+## Start a project
+
+1. Choose New project in the rail to create a project and open its home. Name it there.
+2. Add the bots that will work on the project, or start from a [team template](/guides/bot-templates).
+3. Give Al a concrete brief: the desired result, inputs, constraints, and what needs your review.
+4. Open the resulting thread cards to inspect work, steer a bot, or stop an active turn.
+5. Review the results and resolve completed task threads.
+
+For example: “Research these three competitors, draft a comparison brief, then prepare launch copy from the reviewed brief.” The research can run independently; the dependent drafting work follows its prerequisites.
+
+## Planning and execution
+
+The coordinator validates a proposed plan against the available team, rejects dependency cycles, and limits model-generated plans to six steps. Independent threads start in parallel. Dependent threads remain queued until their prerequisites reach review or done. A completed kickoff turn moves to review and posts a short report to project chat.
+
+Review is a work status. If your process requires explicit approval before the next task starts, include an approval gate in the template or task instructions; dependency readiness alone does not prove human approval.
+
+If planning is unavailable or returns an invalid plan, the coordinator falls back to one thread for the best-matching bot. A project with no available team can return a no-team response. Follow-up routing is restricted to open threads in that project.
+
+## Steer and inspect
+
+Project messages carry receipts for fan-out, routing, completion, blockers, and synthesis. Follow-up messages can go to an existing thread rather than starting a fresh plan. The thread list shows server status and checklist progress, so reopening Project home exposes work that started elsewhere.
+
+For Code and Cowork project workspaces, the registered project settings include context and directory. The project folder is supplied as the session work directory; choosing a project should give the agent the project context it will actually use.
+
+## Runtime API
+
+These are authenticated private data-plane routes, not a promise of public Cloud API availability.
+
+| Method | Runtime path | Purpose |
+| --- | --- | --- |
+| GET / POST | `/api/v1/projects/:project_id/messages` | Read project chat or send a coordinator request. |
+| POST | `/api/v1/projects/:project_id/start` | Start existing project threads. |
+| GET / PUT | `/api/v1/projects/:project_id/bots` | Read or set project team membership. |
+| GET / PUT | `/api/v1/project-workspaces/:project_key` | Read or register a project workspace. |
+| POST | `/api/v1/project-workspaces/:project_key/threads` | Create a workspace thread. |
+
+The start request takes `threads`, each with `threadId` and `text`. It returns `accepted` and `skipped` thread ids after accepting background execution; an accepted request is not a finished deliverable.
+
+See [threads](/guides/bot-threads), [templates](/guides/bot-templates), and [CommRails](/core/commrails).

@@ -1158,6 +1158,17 @@ async fn run() -> Result<()> {
                     None => None,
                 };
                 let closer = actor.as_deref().map(parse_actor).transpose()?;
+                // A worker (WIH env) or non-interactive caller cannot close as a
+                // person; same rule as `judge resolve` (review finding #8).
+                if let Some(c) = &closer {
+                    use std::io::IsTerminal;
+                    allternit_commrails::cli::judge::check_human_channel(
+                        c,
+                        std::env::var("ALLTERNIT_COMMRAILS_WIH").ok().as_deref(),
+                        std::io::stdin().is_terminal(),
+                        true,
+                    )?;
+                }
                 let closed = gate
                     .wih_close_as(&wih_id, &status, &evidence, output_text.as_deref(), closer.as_ref())
                     .await?;

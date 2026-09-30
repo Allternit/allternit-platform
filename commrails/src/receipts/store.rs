@@ -53,6 +53,17 @@ pub struct ReceiptSummary {
     pub date_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
 }
 
+/// Pre-tool admission result of [`ReceiptStore::reserve_tool_effect`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum ToolEffectAdmission {
+    /// The key is now claimed (INTENDED receipt id); run the tool once, then `post_tool`.
+    Reserved(String),
+    /// The effect already COMMITTED; this is its recorded result. Do not execute.
+    AlreadyCommitted(String),
+    /// Read-only, or no caller idempotency key: nothing to reserve.
+    Unreserved,
+}
+
 impl ReceiptStore {
     pub fn new(opts: ReceiptStoreOptions) -> Result<Self> {
         let root_dir = opts
@@ -261,37 +272,14 @@ impl ReceiptStore {
         super::chain::ChainStore::open(&self.receipts_dir)
     }
 
-    /// Record a tool call as an effect receipt on the run's chain and write the
-    /// legacy record through `exec` at most once per idempotency key.
-    ///
-    /// Policy: payload `effect_class` (default `EXECUTE`, i.e. side-effecting).
-    /// `NONE`/`READ` calls skip the chain and just run `exec` (unchanged behaviour).
-    /// Payload `idempotency_key` (>= 8 chars) dedupes; otherwise a unique key is used.
-    /// Returns the legacy receipt id (the recorded one on replay).
-    pub fn record_tool_effect<F>(
-        &self,
+    fn tool_effect_request(
         run_id: &str,
         tool: &str,
         payload: &serde_json::Value,
-        exec: F,
-    ) -> Result<String>
-    where
-        F: FnOnce() -> Result<String>,
-    {
-        use super::chain::{EffectContext, EffectOutcome, EffectRequest};
-        let class = payload
-            .get("effect_class")
-            .and_then(|v| v.as_str())
-            .unwrap_or("EXECUTE")
-            .to_string();
-        if class == "NONE" || class == "READ" {
-            return exec();
-        }
-        let cs = self.chain_store()?;
-        let key = match payload.get("idempotency_key").and_then(|v| v.as_str()) {
-            Some(k) if k.len() >= 8 => k.to_string(),
-            _ => format!("auto:{}", create_blob_id()),
-        };
+        key: String,
+    ) -> Result<(super::chain::EffectContext, super::chain::EffectRequest)> {
+        use super::chain::{EffectContext, EffectRequest};
+        let class = payload.get("effect_class").and_then(|v| v.as_str()).unwrap_or("EXECUTE").to_string();
         let cx = EffectContext {
             run_id: run_id.to_string(),
             session_id: run_id.to_string(),
@@ -314,7 +302,56 @@ impl ReceiptStore {
             effect_class: class,
             target: None,
         };
-        match cs.run_effect_once(&cx, &req, || {
+        Ok((cx, req))
+    }
+
+    fn caller_key(payload: &serde_json::Value) -> Option<String> {
+        payload.get("idempotency_key").and_then(|v| v.as_str()).filter(|k| k.len() >= 8).map(String::from)
+    }
+
+    fn is_read_only(payload: &serde_json::Value) -> bool {
+        matches!(payload.get("effect_class").and_then(|v| v.as_str()), Some("NONE") | Some("READ"))
+    }
+
+    /// Pre-tool admission for a side-effecting call (review #10). Claims the call's
+    /// idempotency key on the run's chain BEFORE the tool runs; `post_tool` with the
+    /// same payload settles the reservation. `AlreadyCommitted` means the effect
+    /// already happened: do not execute. A concurrent duplicate is refused.
+    /// Read-only calls and calls without a caller key have nothing to reserve.
+    pub fn reserve_tool_effect(&self, run_id: &str, tool: &str, payload: &serde_json::Value) -> Result<ToolEffectAdmission> {
+        use super::chain::EffectReservation;
+        let Some(key) = Self::caller_key(payload).filter(|_| !Self::is_read_only(payload)) else {
+            return Ok(ToolEffectAdmission::Unreserved);
+        };
+        let (cx, req) = Self::tool_effect_request(run_id, tool, payload, key)?;
+        Ok(match self.chain_store()?.reserve_effect(&cx, &req)? {
+            EffectReservation::Reserved(r) => ToolEffectAdmission::Reserved(r["chain"]["receipt_id"].as_str().unwrap_or("").to_string()),
+            EffectReservation::Committed(r) => ToolEffectAdmission::AlreadyCommitted(r["external_ref"].as_str().unwrap_or("").to_string()),
+        })
+    }
+
+    /// Record a side-effecting tool call on the run's signed chain, deduped by
+    /// idempotency key (bound to run + tool + canonical args). `exec` is the
+    /// post-effect receipt writer; the effect itself is only at-most-once when the
+    /// runtime reserved it first with [`ReceiptStore::reserve_tool_effect`].
+    pub fn record_tool_effect<F>(
+        &self,
+        run_id: &str,
+        tool: &str,
+        payload: &serde_json::Value,
+        exec: F,
+    ) -> Result<String>
+    where
+        F: FnOnce() -> Result<String>,
+    {
+        use super::chain::EffectOutcome;
+        if Self::is_read_only(payload) {
+            return exec();
+        }
+        let cs = self.chain_store()?;
+        let key = Self::caller_key(payload).unwrap_or_else(|| format!("auto:{}", create_blob_id()));
+        let (cx, req) = Self::tool_effect_request(run_id, tool, payload, key)?;
+        match cs.complete_effect(&cx, &req, || {
             let id = exec()?;
             Ok((super::jcs::sha256_tagged(id.as_bytes()), Some(id)))
         })? {

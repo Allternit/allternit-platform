@@ -315,7 +315,8 @@ describe("feature flag wiring (GIZZI_KERNEL_COMPILERS)", () => {
     const err = new Error("boom")
     await expect(KernelTurn.withToolReceipt({ sessionID: "ses_1", tool: "webfetch", args: { url: "https://x" } }, async () => { throw err })).rejects.toBe(err)
     const rec = KernelTurn.record("ses_1")!
-    expect(rec.errors).toEqual([])
+    // No commrails service in this test: WP10 chain-append failures are logged, not compiler errors.
+    expect(rec.errors.filter((e) => !e.startsWith("chain_append:"))).toEqual([])
     expect(rec.projection!.projection_id).toBe(compiled.projection.projection_id)
     expect(rec.receipts.map((r) => r.exit_class)).toEqual(["SUCCESS", "FAILURE"])
     for (const r of rec.receipts) expect(valid("tool.schema.json", "ToolReceiptV1", r)).toBe(true)
@@ -353,7 +354,7 @@ describe("feature flag wiring (GIZZI_KERNEL_COMPILERS)", () => {
     ).rejects.toThrow("rejected")
     await KernelTurn.withToolReceipt({ sessionID: "s", callID: "c3", tool: "glob", args: { pattern: "x" }, schema }, async () => ({ output: "" }))
     const rec = KernelTurn.record("s")!
-    expect(rec.errors).toEqual([])
+    expect(rec.errors.filter((e) => !e.startsWith("chain_append:"))).toEqual([])
     const [r1, r2, r3] = rec.receipts
     expect(r1.policy_receipt_id).toMatch(/^pd\.gate\.[0-9a-f]{24}$/)
     expect(r1.extensions!["x-gate_decisions"]).toEqual([{ permission: "glob", pattern: "src/**", action: "allow", source: "project" }])

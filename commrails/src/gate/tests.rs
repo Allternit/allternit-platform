@@ -301,12 +301,83 @@ mod wp5_replay_gate_tests {
         std::fs::write(&p, serde_json::to_vec(&v).unwrap()).unwrap();
         gate.begin_replay("e2e_r3", c.clone()).unwrap();
         let out = drive(&gate, "e2e_r3").await;
-        assert!(out[0].is_ok() && out[1].is_err() && out[3].is_ok(), "tampered step refused: {out:?}");
+        // The chain no longer verifies: every effect is refused, not only the tampered one (#12).
+        assert!(out.iter().all(|o| o.is_err()), "unverified chain served nothing: {out:?}");
         let rep = gate.end_replay("e2e_r3").unwrap();
         assert_eq!(rep.verdict, Verdict::UnexpectedDivergence);
-        let d = rep.divergences.iter().find(|d| d.node_id != "chain").unwrap();
-        assert_eq!((d.kind, d.seq), (DivergenceKind::ResultHash, target.seq), "{rep:?}");
+        assert!(rep.divergences.iter().any(|d| d.kind == DivergenceKind::ResultHash && d.seq == target.seq), "{rep:?}");
         assert!(rep.divergences.iter().any(|d| d.node_id == "chain" && d.seq == idx as u64), "chain break at the tampered receipt: {rep:?}");
         assert_eq!(receipts.query_receipts(&Default::default()).unwrap().len(), legacy);
+    }
+
+    #[tokio::test]
+    async fn wp10_replay_boundary_serves_recorded_and_refuses_unrecorded() {
+        let d = tempfile::tempdir().unwrap();
+        let (gate, receipts) = gate_at(d.path()).await;
+        drive(&gate, "rb").await;
+        let c = record_cassette(&receipts.chain_store().unwrap(), "run_rb", None, 0).unwrap();
+        let steps = crate::replay::ReplayStep::from_cassette(&c);
+        assert!(gate.replay_boundary("rb_r", &steps[0]).is_err(), "not replaying");
+        gate.begin_replay("rb_r", c.clone()).unwrap();
+        gate.replay_boundary("rb_r", &steps[0]).unwrap();
+        let mut bogus = steps[0].clone();
+        bogus.node_id = "unrecorded".into();
+        bogus.request_hash = crate::replay::boundary_request_hash(Boundary::Policy, "unrecorded", "x").unwrap();
+        assert!(gate.replay_boundary("rb_r", &bogus).unwrap_err().to_string().contains("refused"));
+        assert_eq!(receipts.chain_store().unwrap().read_run("run_rb_r").unwrap().len(), 0, "no evidence appended");
+        gate.end_replay("rb_r").unwrap();
+    }
+
+    #[tokio::test]
+    async fn review10_gate_reserve_before_effect_runs_it_once() {
+        use crate::receipts::store::ToolEffectAdmission;
+        let d = tempfile::tempdir().unwrap();
+        let (gate, _r) = gate_at(d.path()).await;
+        let p = json!({"cmd": "charge card", "idempotency_key": "gate-pay-0001", "effect_class": "FINANCIAL"});
+        let mut effects = 0;
+        // Runtime A and runtime B both reach pre-tool admission before either executes.
+        let a = gate.reserve_tool_effect("rv", "shell", &p).unwrap();
+        assert!(matches!(a, ToolEffectAdmission::Reserved(_)));
+        assert!(gate.reserve_tool_effect("rv", "shell", &p).is_err(), "duplicate admitted before first effect");
+        effects += 1; // only A executes
+        let id = gate.post_tool("rv", "shell", p.clone()).await.unwrap();
+        // A later retry is answered from the record; the tool does not run.
+        assert_eq!(gate.reserve_tool_effect("rv", "shell", &p).unwrap(), ToolEffectAdmission::AlreadyCommitted(id.clone()));
+        assert_eq!(gate.post_tool("rv", "shell", p.clone()).await.unwrap(), id);
+        assert_eq!(effects, 1);
+        // Same key, different operation: conflict, not a replayed result (#15).
+        let other = json!({"cmd": "publish", "idempotency_key": "gate-pay-0001", "effect_class": "FINANCIAL"});
+        assert!(gate.reserve_tool_effect("rv", "shell", &other).unwrap_err().to_string().contains("conflict"));
+    }
+
+    #[tokio::test]
+    async fn review11_17_wrong_gate_cannot_end_replay_or_append() {
+        let d = tempfile::tempdir().unwrap();
+        let (a, receipts) = gate_at(d.path()).await;
+        let (b, _) = gate_at(d.path()).await; // shares A's receipts root, no in-memory session
+        drive(&a, "rec").await;
+        let c = record_cassette(&receipts.chain_store().unwrap(), "run_rec", None, 0).unwrap();
+        a.begin_replay("w", c.clone()).unwrap();
+        // #11: B cannot end A's replay, and the shared marker survives.
+        assert!(b.end_replay("w").is_err());
+        assert!(b.is_replaying("w"), "live protection marker deleted by the wrong gate");
+        assert!(b.begin_replay("w", c.clone()).is_err(), "second session took over the run");
+        assert!(b.abort_replay("w", "rpl_wrong").is_err());
+        assert!(b.is_replaying("w"));
+        // #17: nothing live is appended during recorded-only replay.
+        let cs = receipts.chain_store().unwrap();
+        let (chain_len, legacy) = (cs.read_run("run_w").unwrap().len(), receipts.query_receipts(&Default::default()).unwrap().len());
+        assert!(a.post_tool("w", "shell", json!({"cmd": "cat x", "effect_class": "READ"})).await.is_err());
+        assert!(b.post_tool("w", "shell", json!({"cmd": "cat x", "effect_class": "READ"})).await.is_err());
+        assert!(b.record_policy_decision("w", "plan", "ALLOW").is_err());
+        assert_eq!(cs.read_run("run_w").unwrap().len(), chain_len, "policy/read state appended during replay");
+        assert_eq!(receipts.query_receipts(&Default::default()).unwrap().len(), legacy, "read receipt written during replay");
+        // The owning session ends it; the token-bound abort path also works.
+        a.end_replay("w").unwrap();
+        assert!(!b.is_replaying("w"));
+        a.begin_replay("w2", c).unwrap();
+        let tok = a.replay_session_token("w2").unwrap();
+        b.abort_replay("w2", &tok).unwrap();
+        assert!(!b.is_replaying("w2"));
     }
 }

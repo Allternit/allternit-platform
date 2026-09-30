@@ -1,0 +1,30 @@
+---
+title: Bot and team templates
+description: Launch reusable workers and coordinated projects from recipes you can inspect and save.
+---
+
+A **bot template** describes one worker's instructions, tools, skills, routines, and first task. A **team template** adds roles and a plan of dependent tasks. Templates are recipes; instantiated bots and threads are the running work.
+
+## Use a template
+
+Browse templates from the Bots launch surface. Open a recipe to inspect its roles, required setup, planned outputs, and approval points. For a team, enter the project brief and review which existing bots it will reuse and which it will add, then start the project.
+
+The team flow matches each role to an existing bot where possible and creates missing bots. It creates the project, lays out task threads and their dependencies, and starts the root threads through Al. Downstream work follows the [coordinator's dependency rules](/guides/project-coordination).
+
+A bot template creates one bot and can start its first task. If that task cannot start, inspect the bot's home and connected runtime before retrying.
+
+## Routines
+
+Template routines are installed paused unless you explicitly enable them during setup. Review the schedule and required tools in bot home before enabling recurring work. A recipe's written approval points must also be reviewed before using it for consequential actions.
+
+## Save and reuse
+
+Save as template stores a reusable bot or team recipe. Saved templates can be private or organization-visible and can record which template they were forked from. The recipe excludes credentials, memory, and live threads; reconnect the required tools and accounts for each new use. The API additionally strips secret-looking fields before storage.
+
+| Method | Private runtime path | Purpose |
+| --- | --- | --- |
+| GET | `/api/v1/templates` | List accessible saved recipes. |
+| POST | `/api/v1/templates` | Save a bot or team recipe. |
+| DELETE | `/api/v1/templates/:id` | Delete a saved recipe. |
+
+The create body contains `kind` (`bot` or `team`), `visibility` (`private` or `org`), optional `forkedFrom`, and the `template` object. These routes are part of the Allternit API data plane.

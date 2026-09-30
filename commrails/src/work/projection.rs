@@ -89,9 +89,21 @@ pub fn project_dag(events: &[AllternitEvent], dag_id: &str) -> DagState {
                 }
             }
             "DagNodeStatusChanged" => {
+                if let Some(e_dag) = get_str(&evt.payload, "dag_id") {
+                    if e_dag != dag_id {
+                        continue;
+                    }
+                }
                 if let Some(node_id) = get_str(&evt.payload, "node_id") {
                     if let Some(node) = dag.nodes.get_mut(&node_id) {
                         if let Some(to) = get_str(&evt.payload, "to") {
+                            // Historical events may omit or misstate `from`.
+                            // Validate from actual accumulated state, never trust it.
+                            if crate::kernel::lifecycle::check_legacy_change(&node.status, &to)
+                                .is_err()
+                            {
+                                continue;
+                            }
                             node.status = to;
                             node.updated_at = Some(evt.ts.clone());
                         }

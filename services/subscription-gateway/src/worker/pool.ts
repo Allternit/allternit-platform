@@ -72,6 +72,10 @@ export interface WorkerPoolDeps {
   log?: EventLog; // challenge transitions surface one account-scoped ledger event
   logger?: (line: string) => void;
   sessionImport?: PlaywrightLauncherDeps["sessionImport"];
+  // After a verification check appears: how often the pool looks again, and
+  // for how long (defaults 15 s, 10 min).
+  challengeRecheckMs?: number;
+  challengeRecheckForMs?: number;
 }
 
 interface LaneEntry {
@@ -115,6 +119,9 @@ export class WorkerPool {
   private readonly launch: Launcher;
   private readonly lanes = new Map<string, LaneEntry>();
   private readonly activations = new Map<string, Promise<LaneRuntime>>();
+  // Lanes showing a verification check: a non-spending re-probe notices when
+  // the person has cleared it, so the account turns ready by itself.
+  private readonly challengeWatches = new Map<string, ReturnType<typeof setInterval>>();
 
   constructor(private readonly deps: WorkerPoolDeps) {
     this.launch =
@@ -131,6 +138,7 @@ export class WorkerPool {
   // activate relaunches (importing any new login-browser session).
   async deactivate(lane: LaneKey): Promise<void> {
     const id = workerKeyId(lane);
+    this.stopChallengeWatch(id);
     await this.activations.get(id)?.catch(() => {});
     const entry = this.lanes.get(id);
     this.lanes.delete(id);
@@ -257,11 +265,13 @@ export class WorkerPool {
     this.persistHealth(lane, health);
     this.deps.logger?.(`subscription-gateway: probe ${id} → ${health}`);
     if (health === "ready") await this.observeAccount(lane, runtime);
-    // Critical #5 — a challenge is stop + surface, never auto-retried. One
+    // Critical #5 — a challenge is stop + surface, never auto-retried (the
+    // watch below only re-probes, to notice the person cleared it). One
     // account-scoped ledger event per transition into challenge_presented
     // (SSE fan-out via the hub; the notifier pattern needs no extra call).
     const previous = this.lanes.get(id)?.health;
     this.lanes.set(id, { runtime, health });
+    if (health === "challenge_presented") this.watchChallenge(lane);
     if (health === "challenge_presented" && previous !== "challenge_presented") {
       this.deps.log?.append({
         task_id: `account:${lane.account_id}`,
@@ -299,7 +309,40 @@ export class WorkerPool {
     upsertAccount(this.deps.db, { ...fresh, session_health: health });
   }
 
+  // Looks again (probe only: nothing is clicked, solved or resent) until the
+  // check is gone, the lane closes (e.g. a login window took the profile), or
+  // the time runs out. One watch per lane.
+  private watchChallenge(lane: LaneKey): void {
+    const id = workerKeyId(lane);
+    if (this.challengeWatches.has(id)) return;
+    const until = Date.now() + (this.deps.challengeRecheckForMs ?? 10 * 60_000);
+    let busy = false;
+    const timer = setInterval(() => {
+      if (busy) return;
+      if (Date.now() > until || !this.runtimeFor(lane)) {
+        this.stopChallengeWatch(id);
+        return;
+      }
+      busy = true;
+      void this.activate(lane)
+        .catch(() => {})
+        .finally(() => {
+          busy = false;
+          if (this.healthFor(lane) !== "challenge_presented") this.stopChallengeWatch(id);
+        });
+    }, this.deps.challengeRecheckMs ?? 15_000);
+    timer.unref?.();
+    this.challengeWatches.set(id, timer);
+  }
+
+  private stopChallengeWatch(id: string): void {
+    const timer = this.challengeWatches.get(id);
+    if (timer) clearInterval(timer);
+    this.challengeWatches.delete(id);
+  }
+
   async shutdown(): Promise<void> {
+    for (const id of [...this.challengeWatches.keys()]) this.stopChallengeWatch(id);
     const entries = [...this.lanes.values()];
     this.lanes.clear();
     await Promise.allSettled(entries.map((e) => e.runtime.close()));
