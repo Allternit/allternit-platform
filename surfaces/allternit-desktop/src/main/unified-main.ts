@@ -27,7 +27,9 @@ import { backendManager } from './backend-manager.js';
 import { applyDesktopHumanProof, applyDesktopHumanProofTo, DESKTOP_PROOF_MARKER, HUMAN_PROOF_HEADER, takeDesktopProofParam } from './human-proof.js';
 import { officeEngineManager } from './office-engine-manager.js';
 import { fabricWorkerManager, type FabricWorkerState } from './fabric-worker-manager.js';
-import { readSecret, writeSecret, FABRIC_WORKER_TOKEN_KEY } from './secure-store.js';
+import { readSecret, writeSecret, deleteSecret, FABRIC_WORKER_TOKEN_KEY } from './secure-store.js';
+import { createSiwcManager, SIWC_FLAG, type SiwcManager } from './siwc.js';
+import { startSiwcBroker, type SiwcBroker } from './siwc-broker.js';
 import { localEngineManager } from './local-engine-manager.js';
 import {
   editorForFile,
@@ -420,7 +422,10 @@ async function startGizziRuntime(): Promise<string> {
     existingPassword,
     apiToken: session?.accessToken,
     runtimeId: session?.runtimeId,
-    extraEnv: authManager.getConnectorSidecarEnvironment(),
+    extraEnv: {
+      ...authManager.getConnectorSidecarEnvironment(),
+      ...(await siwcLaunchEnvironment()),
+    },
   });
 }
 
@@ -4299,6 +4304,66 @@ handleGuarded('miniApps:removeRelease', (_event, id: string, registryUrl?: strin
 });
 ipcMain.handle('miniApps:listReleaseInstalls', () => listReleaseInstalls());
 ipcMain.handle('miniApps:getReleaseInstall', (_event, id: string) => getReleaseInstallState(id));
+
+// ─── Sign in with ChatGPT (feature.siwc, default OFF; Desktop main only) ────
+// OpenAI's documented ChatGPT-plan flow. Credentials stay in the secure store;
+// the renderer only ever sees status. gizzi-code gets access tokens one
+// request at a time from a loopback broker (see siwc-broker.ts).
+
+let siwcManager: SiwcManager | null = null;
+let siwcBroker: SiwcBroker | null = null;
+function siwc(): SiwcManager {
+  if (siwcManager) return siwcManager;
+  const manager = createSiwcManager({
+    flagEnabled: () => featureFlagManager.get<boolean>(SIWC_FLAG) === true,
+    readSecret,
+    writeSecret,
+    deleteSecret,
+    openExternal: (url) => {
+      openExternalAllowlisted(url);
+    },
+    logger: (message) => log.info(message),
+  });
+  manager.onStatusChange((status) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send('siwc:status-changed', status);
+    }
+  });
+  featureFlagManager.onChange((key) => {
+    if (key !== SIWC_FLAG) return;
+    if (featureFlagManager.get<boolean>(SIWC_FLAG) !== true) manager.cancelSignIn();
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send('siwc:status-changed', manager.status());
+    }
+  });
+  siwcManager = manager;
+  return manager;
+}
+
+/** Broker env for gizzi-code. The broker answers only while the flag is on. */
+async function siwcLaunchEnvironment(): Promise<Record<string, string>> {
+  try {
+    if (!siwcBroker) siwcBroker = await startSiwcBroker(siwc());
+    return siwcBroker.env();
+  } catch (error) {
+    log.warn('[SIWC] Token broker failed to start:', error);
+    return {};
+  }
+}
+
+ipcMain.handle('siwc:status', () => siwc().status());
+handleGuarded('siwc:signIn', async (_event, opts?: { enablePlanUsage?: boolean }) => {
+  try {
+    return { ok: true as const, status: await siwc().signIn({ enablePlanUsage: opts?.enablePlanUsage === true }) };
+  } catch (error) {
+    return { ok: false as const, error: error instanceof Error ? error.message : String(error), status: siwc().status() };
+  }
+});
+handleGuarded('siwc:cancel', () => {
+  siwc().cancelSignIn();
+  return siwc().status();
+});
+handleGuarded('siwc:signOut', () => siwc().signOut());
 
 // ─── OAuth broker (main-process token vault; tokens never cross IPC) ────────
 
