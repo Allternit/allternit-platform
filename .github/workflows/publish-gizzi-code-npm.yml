@@ -14,6 +14,13 @@ on:
 permissions:
   contents: write
 
+# Two runs for one tag race each other's npm publishes (E409 "previously
+# staged version" on 2.1.9). Queue them instead; the second run's
+# already-published guards then skip.
+concurrency:
+  group: publish-gizzi-code-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   quality:
     # Same quality gate as release-gizzi-code.yml: typecheck + CI smoke suite
@@ -289,6 +296,9 @@ jobs:
       - name: Run test suite
         # Blocking gate: do not publish a version whose tests fail.
         working-directory: cmd/gizzi-code
+        env:
+          # No usable bwrap on the runner; see the CI smoke test step.
+          GIZZI_SANDBOX_DISABLE: "1"
         run: bun run test
 
       - name: Build
