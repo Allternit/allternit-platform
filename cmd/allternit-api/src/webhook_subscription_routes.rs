@@ -200,6 +200,7 @@ fn validate_subscription_body(url: &str, events: &[String], secret: &str) -> Res
     if url.is_empty() || !url.starts_with("http://") && !url.starts_with("https://") {
         return Err(ApiError::BadRequest("url must be an http/https URL".into()));
     }
+    check_webhook_target(url, &internal_webhook_endpoints()).map_err(ApiError::BadRequest)?;
     validate_event_list(events)?;
     if secret.is_empty() {
         return Err(ApiError::BadRequest("secret is required".into()));
@@ -333,6 +334,7 @@ async fn update_subscription(
         if url.is_empty() || (!url.starts_with("http://") && !url.starts_with("https://")) {
             return Err(ApiError::BadRequest("url must be an http/https URL".into()));
         }
+        check_webhook_target(url, &internal_webhook_endpoints()).map_err(ApiError::BadRequest)?;
     }
     if let Some(ref events) = body.events {
         validate_event_list(events)?;
@@ -709,6 +711,68 @@ async fn deliver_event(state: Arc<AppState>, org_id: &str, event: &str, payload:
     }
 }
 
+/// Env var listing internal endpoints (`host:port`, comma separated) that
+/// webhook deliveries may reach even though they are not public. Operator
+/// configured only; a subscription URL can never add to it.
+const INTERNAL_WEBHOOK_ENDPOINTS_ENV: &str = "ALLTERNIT_WEBHOOK_INTERNAL_ENDPOINTS";
+
+#[cfg(test)]
+static TEST_INTERNAL_ENDPOINTS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn internal_webhook_endpoints() -> Vec<String> {
+    let mut out: Vec<String> = std::env::var(INTERNAL_WEBHOOK_ENDPOINTS_ENV)
+        .map(|v| {
+            v.split(',')
+                .map(|e| e.trim().to_ascii_lowercase())
+                .filter(|e| !e.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    #[cfg(test)]
+    out.extend(TEST_INTERNAL_ENDPOINTS.lock().unwrap().iter().cloned());
+    out
+}
+
+fn is_allowed_internal(url: &reqwest::Url, allow: &[String]) -> bool {
+    let Some(host) = url.host_str() else { return false };
+    let Some(port) = url.port_or_known_default() else { return false };
+    let key = format!("{}:{}", host.trim_start_matches('[').trim_end_matches(']').to_ascii_lowercase(), port);
+    allow.iter().any(|a| a == &key)
+}
+
+/// Destination policy for a webhook URL: http(s) only, and no literal
+/// loopback / private / link-local (cloud metadata) host unless it is an
+/// explicitly configured internal endpoint. Domain names are vetted at
+/// connect time by [`allternit_commrails::egress::PublicOnlyResolver`].
+fn check_webhook_target(raw: &str, allow: &[String]) -> Result<(), String> {
+    let url = reqwest::Url::parse(raw).map_err(|_| "url is not a valid URL".to_string())?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("url must be an http/https URL".into());
+    }
+    let host = url.host_str().ok_or_else(|| "url has no host".to_string())?;
+    if is_allowed_internal(&url, allow) {
+        return Ok(());
+    }
+    if allternit_commrails::egress::host_is_forbidden_literal(host) {
+        return Err("url points to a local or private address".into());
+    }
+    Ok(())
+}
+
+/// Client for one delivery. Redirects are off (a hop would leave the vetted
+/// destination). Public destinations dial only addresses `PublicOnlyResolver`
+/// approved; a configured internal endpoint uses the default resolver.
+fn webhook_client(url: &str, allow: &[String]) -> Result<reqwest::Client, String> {
+    let parsed = reqwest::Url::parse(url).map_err(|_| "url is not a valid URL".to_string())?;
+    let mut b = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none());
+    if !is_allowed_internal(&parsed, allow) {
+        b = b.dns_resolver(Arc::new(allternit_commrails::egress::PublicOnlyResolver));
+    }
+    b.build().map_err(|e| e.to_string())
+}
+
 /// Perform up to `policy.max_attempts` HTTP attempts for one delivery row,
 /// sleeping exponential-backoff + jitter between transient failures. The
 /// existing `webhook_deliveries` row is updated in place: `attempts` counts
@@ -745,10 +809,24 @@ async fn attempt_delivery(
     };
     let signature = sign_payload(&secret, &body_bytes);
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
+    let allow = internal_webhook_endpoints();
+    let client = match check_webhook_target(&url, &allow).and_then(|_| webhook_client(&url, &allow)) {
+        Ok(c) => c,
+        Err(e) => {
+            warn!("webhook delivery refused for {delivery_id}: {e}");
+            record_delivery_result(
+                state,
+                delivery_id,
+                1,
+                "failed",
+                None,
+                None,
+                Some(format!("blocked destination: {e}")),
+            )
+            .await;
+            return;
+        }
+    };
 
     for attempt in 1..=policy.max_attempts {
         let result = client
@@ -1023,6 +1101,7 @@ mod tests {
             .with_state(received);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
+        TEST_INTERNAL_ENDPOINTS.lock().unwrap().push(format!("127.0.0.1:{port}"));
         tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
@@ -1308,6 +1387,7 @@ mod tests {
             .with_state((received, fails, status));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
+        TEST_INTERNAL_ENDPOINTS.lock().unwrap().push(format!("127.0.0.1:{port}"));
         tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
@@ -1460,6 +1540,7 @@ mod tests {
         let dead_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let dead_port = dead_listener.local_addr().unwrap().port();
         drop(dead_listener);
+        TEST_INTERNAL_ENDPOINTS.lock().unwrap().push(format!("127.0.0.1:{dead_port}"));
         let url = format!("http://127.0.0.1:{dead_port}/webhook");
         let sub_id = insert_subscription(&state, org, &url, &[events::AGENT_CREATED], secret);
         let delivery_id = insert_pending_delivery(
@@ -2302,6 +2383,7 @@ mod tests {
         let dead_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let dead_port = dead_listener.local_addr().unwrap().port();
         drop(dead_listener);
+        TEST_INTERNAL_ENDPOINTS.lock().unwrap().push(format!("127.0.0.1:{dead_port}"));
         let url = format!("http://127.0.0.1:{dead_port}/webhook");
         insert_subscription(&state, org, &url, &[events::AGENT_CREATED], "s");
 
@@ -2378,5 +2460,47 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
         let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn webhook_target_refuses_metadata_and_private_literals() {
+        for u in [
+            "http://169.254.169.254/latest/meta-data",
+            "http://10.0.0.5/hook",
+            "http://192.168.1.1/hook",
+            "http://127.0.0.1:8013/hook",
+            "http://[::1]/hook",
+            "http://localhost/hook",
+        ] {
+            assert!(check_webhook_target(u, &[]).is_err(), "{u} must be refused");
+        }
+        assert!(check_webhook_target("https://hooks.example.com/x", &[]).is_ok());
+        assert!(check_webhook_target("ftp://example.com/x", &[]).is_err());
+    }
+
+    #[test]
+    fn webhook_target_allows_only_configured_internal_endpoint() {
+        let allow = vec!["127.0.0.1:7717".to_string()];
+        assert!(check_webhook_target("http://127.0.0.1:7717/hook", &allow).is_ok());
+        assert!(check_webhook_target("http://127.0.0.1:7718/hook", &allow).is_err());
+        assert!(check_webhook_target("http://169.254.169.254:7717/hook", &allow).is_err());
+    }
+
+    #[tokio::test]
+    async fn webhook_create_rejects_metadata_url() {
+        assert!(validate_subscription_body(
+            "http://169.254.169.254/latest",
+            &[events::AGENT_CREATED.to_string()],
+            "s"
+        )
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn webhook_client_refuses_private_name_resolution_but_dials_allowlisted() {
+        let client = webhook_client("http://localhost:1/x", &[]).unwrap();
+        let err = client.post("http://localhost:1/x").send().await.unwrap_err();
+        assert!(err.to_string().len() > 0);
+        assert!(webhook_client("http://localhost:1/x", &["localhost:1".to_string()]).is_ok());
     }
 }

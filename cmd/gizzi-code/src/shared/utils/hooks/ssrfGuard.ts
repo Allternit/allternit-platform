@@ -1,5 +1,6 @@
 import type { AddressFamily, LookupAddress as AxiosLookupAddress } from 'axios'
 import { lookup as dnsLookup } from 'dns'
+import { promises as dnsPromises } from 'dns'
 import { isIP } from 'net'
 
 /**
@@ -291,4 +292,111 @@ function ssrfError(hostname: string, address: string): NodeJS.ErrnoException {
     hostname,
     address,
   })
+}
+
+// ─── Shared fetch-level egress policy (MCP remote, web fetch, web proxy) ─────
+
+export type EgressOptions = {
+  /**
+   * Allow loopback (127.0.0.0/8, ::1, localhost). Only for destinations the
+   * user configured themselves (local MCP servers, local hook servers) —
+   * never for URLs an agent or a web page chose. Cloud metadata, link-local,
+   * CGNAT and private ranges are refused whatever this is set to.
+   */
+  allowLoopback?: boolean
+}
+
+const MAX_EGRESS_REDIRECTS = 5
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
+
+export function isLoopbackAddress(address: string): boolean {
+  const v = isIP(address)
+  if (v === 4) return address.startsWith('127.')
+  if (v === 6) {
+    const lower = address.toLowerCase()
+    if (lower === '::1') return true
+    const mapped = extractMappedIPv4(lower)
+    return mapped !== null && mapped.startsWith('127.')
+  }
+  return false
+}
+
+function isAllowedAddress(address: string, opts: EgressOptions): boolean {
+  if (isLoopbackAddress(address)) return opts.allowLoopback === true
+  // :: and 0.0.0.0 are caught by isBlockedAddress
+  return !isBlockedAddress(address)
+}
+
+/**
+ * True when `hostname` may be dialed: every literal/resolved address must be
+ * allowed. Fails closed on resolution errors.
+ */
+export async function isEgressHostAllowed(
+  hostname: string,
+  opts: EgressOptions = {},
+): Promise<boolean> {
+  const host = hostname.replace(/^\[|\]$/g, '')
+  if (isIP(host) !== 0) return isAllowedAddress(host, opts)
+  const lower = host.replace(/\.$/, '').toLowerCase()
+  if (
+    (lower === 'localhost' || lower.endsWith('.localhost')) &&
+    opts.allowLoopback !== true
+  ) {
+    return false
+  }
+  try {
+    const records = await dnsPromises.lookup(host, { all: true })
+    if (records.length === 0) return false
+    return records.every(r => isAllowedAddress(r.address, opts))
+  } catch {
+    return false
+  }
+}
+
+export class EgressBlockedError extends Error {
+  code = 'ERR_EGRESS_BLOCKED'
+  constructor(public hostname: string) {
+    super(`egress blocked: ${hostname} is a private, link-local or metadata address`)
+  }
+}
+
+/** Throws EgressBlockedError unless `url` is http(s) to an allowed host. */
+export async function assertEgressAllowed(
+  url: string | URL,
+  opts: EgressOptions = {},
+): Promise<URL> {
+  const u = typeof url === 'string' ? new URL(url) : url
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    throw new EgressBlockedError(u.protocol)
+  }
+  if (!(await isEgressHostAllowed(u.hostname, opts))) {
+    throw new EgressBlockedError(u.hostname)
+  }
+  return u
+}
+
+/**
+ * fetch() that vets the destination before every hop. Redirects are followed
+ * manually so a public host cannot bounce the request to a metadata or
+ * private address. Drop-in for the MCP SDK transports' `fetch` option.
+ */
+export function createGuardedFetch(opts: EgressOptions = {}) {
+  return async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    let current: string | URL =
+      input instanceof Request ? input.url : input
+    let reqInit: RequestInit | undefined = init
+    for (let hop = 0; hop <= MAX_EGRESS_REDIRECTS; hop++) {
+      const u = await assertEgressAllowed(current, opts)
+      const res = await fetch(input instanceof Request && hop === 0 ? input : u, {
+        ...reqInit,
+        redirect: 'manual',
+      })
+      if (!REDIRECT_STATUSES.has(res.status)) return res
+      const location = res.headers.get('location')
+      if (!location) return res
+      current = new URL(location, u)
+      if (res.status === 303) reqInit = { ...reqInit, method: 'GET', body: undefined }
+    }
+    throw new Error('egress: too many redirects')
+  }
 }

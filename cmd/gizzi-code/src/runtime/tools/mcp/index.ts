@@ -2,6 +2,14 @@ import { dynamicTool, type Tool, jsonSchema, type JSONSchema7 } from "ai"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js"
+import { createGuardedFetch } from "@/shared/utils/hooks/ssrfGuard"
+
+/**
+ * Remote MCP servers are user-configured, so localhost is allowed for local
+ * dev; cloud metadata, link-local and private ranges are refused, including
+ * after redirects.
+ */
+const mcpGuardedFetch = createGuardedFetch({ allowLoopback: true }) as unknown as typeof fetch
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
 import {
@@ -370,6 +378,7 @@ export namespace MCP {
           transport: new StreamableHTTPClientTransport(new URL(mcp.url), {
             authProvider,
             requestInit: mcp.headers ? { headers: mcp.headers } : undefined,
+            fetch: mcpGuardedFetch,
           }),
         },
         {
@@ -377,6 +386,7 @@ export namespace MCP {
           transport: new SSEClientTransport(new URL(mcp.url), {
             authProvider,
             requestInit: mcp.headers ? { headers: mcp.headers } : undefined,
+            fetch: mcpGuardedFetch,
           }),
         },
       ]
@@ -875,6 +885,7 @@ export namespace MCP {
     // Create transport with auth provider
     const transport = new StreamableHTTPClientTransport(new URL(mcpConfig.url), {
       authProvider,
+      fetch: mcpGuardedFetch,
     })
 
     // Try to connect - this will trigger the OAuth flow

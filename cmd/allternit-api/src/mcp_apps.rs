@@ -483,23 +483,22 @@ pub(crate) async fn load_user_connectors(state: &Arc<AppState>, user_id: &str, a
 
 // ─── SSRF guard ──────────────────────────────────────────────────────────────
 
+/// Shared egress policy (commrails): only publicly routable unicast addresses.
 fn is_forbidden_ip(ip: IpAddr) -> bool {
+    !allternit_commrails::egress::is_public_ip(ip)
+}
+
+/// Addresses refused even when local development is allowed
+/// (`ALLOW_PRIVATE_ENV`): link-local (cloud metadata 169.254.169.254,
+/// fe80::/10), Alibaba metadata 100.100.100.200 and AWS IPv6 metadata.
+fn is_always_forbidden_ip(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_unspecified()
-                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 0x40)
-        }
+        IpAddr::V4(v4) => v4.is_link_local() || v4.octets() == [100, 100, 100, 200],
         IpAddr::V6(v6) => {
             if let Some(mapped) = v6.to_ipv4_mapped() {
-                return is_forbidden_ip(IpAddr::V4(mapped));
+                return is_always_forbidden_ip(IpAddr::V4(mapped));
             }
-            v6.is_loopback()
-                || v6.is_unique_local()
-                || v6.is_unicast_link_local()
-                || v6.is_unspecified()
+            (v6.segments()[0] & 0xffc0) == 0xfe80 || v6.segments()[..3] == [0xfd00, 0x0ec2, 0]
         }
     }
 }
@@ -526,9 +525,7 @@ pub(crate) async fn validate_connector_url(raw: &str, allow_private: bool) -> Re
     if url.scheme() != "http" && url.scheme() != "https" {
         return Err(AppsError::bad_request("connector URL must be http or https"));
     }
-    if allow_private {
-        return Ok(None);
-    }
+    let forbidden_ip = |ip: IpAddr| if allow_private { is_always_forbidden_ip(ip) } else { is_forbidden_ip(ip) };
     let forbidden = || {
         AppsError::new(
             StatusCode::FORBIDDEN,
@@ -541,7 +538,7 @@ pub(crate) async fn validate_connector_url(raw: &str, allow_private: bool) -> Re
         .ok_or_else(|| AppsError::bad_request("connector URL has no host"))?;
     let bare = host.trim_start_matches('[').trim_end_matches(']');
     if let Ok(ip) = bare.parse::<IpAddr>() {
-        return if is_forbidden_ip(ip) { Err(forbidden()) } else { Ok(None) };
+        return if forbidden_ip(ip) { Err(forbidden()) } else { Ok(None) };
     }
     let port = url.port_or_known_default().unwrap_or(443);
     let addrs: Vec<_> = tokio::net::lookup_host((bare, port))
@@ -550,13 +547,21 @@ pub(crate) async fn validate_connector_url(raw: &str, allow_private: bool) -> Re
             AppsError::new(StatusCode::BAD_GATEWAY, "connector_unreachable", "could not resolve the connector host")
         })?
         .collect();
-    choose_pin(bare, &addrs).ok_or_else(forbidden).map(Some)
+    choose_pin_with(bare, &addrs, forbidden_ip).ok_or_else(forbidden).map(Some)
 }
 
 /// The address to pin `host` to, or `None` when it resolved to nothing or to
 /// anything forbidden (one bad record among several is enough to refuse).
 fn choose_pin(host: &str, addrs: &[std::net::SocketAddr]) -> Option<(String, std::net::SocketAddr)> {
-    if addrs.is_empty() || addrs.iter().any(|a| is_forbidden_ip(a.ip())) {
+    choose_pin_with(host, addrs, is_forbidden_ip)
+}
+
+fn choose_pin_with(
+    host: &str,
+    addrs: &[std::net::SocketAddr],
+    forbidden: impl Fn(IpAddr) -> bool,
+) -> Option<(String, std::net::SocketAddr)> {
+    if addrs.is_empty() || addrs.iter().any(|a| forbidden(a.ip())) {
         return None;
     }
     Some((host.to_string(), addrs[0]))
@@ -1509,6 +1514,16 @@ pub(crate) mod tests {
         );
         assert!(validate_connector_url("http://93.184.216.34/mcp", false).await.is_ok());
         assert!(validate_connector_url("http://127.0.0.1/mcp", true).await.is_ok());
+        // Local dev allowance never reaches cloud metadata / link-local.
+        let md = validate_connector_url("http://169.254.169.254/latest", true).await.unwrap_err();
+        assert_eq!(md.status, StatusCode::FORBIDDEN);
+        assert_eq!(
+            validate_connector_url("http://[fe80::1]/mcp", true).await.unwrap_err().status,
+            StatusCode::FORBIDDEN
+        );
+        // Shared policy also refuses ranges the old check missed (benchmarking, TEST-NET).
+        assert!(validate_connector_url("http://198.18.0.1/mcp", false).await.is_err());
+        assert!(validate_connector_url("http://10.0.0.5/mcp", false).await.is_err());
     }
 
     #[test]
