@@ -122,3 +122,13 @@ describe("GET /aai/providers + POST /aai/conformance", () => {
     await request(app).post("/aai/conformance/nope").set("Authorization", `Bearer ${tok}`).expect(404);
   });
 });
+
+describe("vendor adapter registration", () => {
+  it("loads adapters/<id>/aai.ts at boot (grok-bot) without touching the app", async () => {
+    const { AaiHost, registerVendorAdapters } = await import("../src/aai/registry.js");
+    const { defaultAdaptersDir } = await import("../src/adapters/registry.js");
+    const host = new AaiHost();
+    const ids = await registerVendorAdapters(host, defaultAdaptersDir(), {});
+    expect(ids).toContain("grok-bot");
+  });
+});

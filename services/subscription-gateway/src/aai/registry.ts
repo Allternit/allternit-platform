@@ -2,6 +2,9 @@
 // chatgpt-dots, muse, openclaw) plug in through `registerAaiProvider` — see registerVendorAdapters().
 // Kill switch + pacing live in `guardProvider`, which wraps each provider BEFORE the router sees it,
 // so router idempotency replays never consume pacing budget.
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   AaiRouter,
   LoopbackProvider,
@@ -64,6 +67,8 @@ export function guardProvider(provider: AaiProvider, host: AaiHostState, pacing?
 
 export class AaiHost {
   readonly router = new AaiRouter();
+  /** Resolves with the vendor adapter ids registered at boot. */
+  vendorsReady: Promise<string[]> = Promise.resolve([]);
   private regs = new Map<string, AaiRegistration & { guarded: AaiProvider }>();
   private disabled = new Set<string>();
   private lastCall = new Map<string, number>();
@@ -169,8 +174,26 @@ export { botExecutionBindingSchema };
  * Registration point for vendor adapters. Next waves add here (each a `host.register({ provider, pacing, fixtures })`):
  * grok-bot, claude, chatgpt-dots, muse, openclaw.
  */
-export function registerVendorAdapters(_host: AaiHost, _config: Config, _env: NodeJS.ProcessEnv): void {
-  // intentionally empty
+/**
+ * Vendor adapters register themselves: any `adapters/<id>/aai.js` (or `aai.ts`) that exports
+ * `createAaiRegistration(env)` is loaded at boot (same runtime-import convention as the
+ * subscription worker's `adapter.ts`, so `src/` never imports adapter code statically).
+ * Until it finishes, calls for that adapter return UNSUPPORTED.
+ */
+export async function registerVendorAdapters(host: AaiHost, adaptersDir: string, env: NodeJS.ProcessEnv): Promise<string[]> {
+  const loaded: string[] = [];
+  if (!existsSync(adaptersDir)) return loaded;
+  for (const id of readdirSync(adaptersDir).sort()) {
+    const file = ["aai.js", "aai.ts"].map((n) => join(adaptersDir, id, n)).find((f) => existsSync(f));
+    if (!file) continue;
+    const mod = (await import(pathToFileURL(file).href)) as { createAaiRegistration?: (env: NodeJS.ProcessEnv) => AaiRegistration };
+    if (typeof mod.createAaiRegistration !== "function") {
+      throw new Error(`adapter ${id}: aai module has no createAaiRegistration()`);
+    }
+    host.register(mod.createAaiRegistration(env));
+    loaded.push(id);
+  }
+  return loaded;
 }
 
 export function createAaiHost(config: Config, env: NodeJS.ProcessEnv = process.env, fetchImpl?: typeof fetch): AaiHost {
@@ -184,6 +207,9 @@ export function createAaiHost(config: Config, env: NodeJS.ProcessEnv = process.e
       auth: token ? { token } : undefined,
     }),
   });
-  registerVendorAdapters(host, config, env);
+  host.vendorsReady = registerVendorAdapters(host, config.adaptersDir, env).catch((e) => {
+    console.error("[aai] vendor adapter registration failed:", e);
+    return [];
+  });
   return host;
 }
