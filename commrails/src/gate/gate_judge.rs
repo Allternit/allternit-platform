@@ -749,6 +749,14 @@ impl Gate {
         self.pre_tool_with(wih_id, tool, paths_touched, None).await
     }
 
+    /// Whether the WIH (node or plan policy) runs under the opt-in strict
+    /// fence (Q25). Default off.
+    pub async fn wih_fence_strict(&self, wih_id: &str) -> Result<bool> {
+        let wih = self.wih_state(wih_id).await?;
+        let policy = self.judge_policy(&wih.dag_id, Some(&wih.node_id)).await?;
+        Ok(policy.fence == crate::judge::policy::Fence::Strict)
+    }
+
     /// `judge tool`: allow | ask | deny for one call, regardless of the
     /// `tool_judge` policy flag. Gate 2 denials and the hard floor are final;
     /// a judge failure is `ask`, never `allow`.

@@ -448,55 +448,130 @@ fn bind<'a>(f: &'a Fixture, wih: &'a str) -> WihBinding<'a> {
     }
 }
 
-/// #2: inline interpreter code and custom executables have an unknown write
-/// effect; under a WIH it fails closed instead of reading as "no writes".
+/// An open-signed WIH holding `src/**`, with an optional node policy.
+async fn bound_wih_with(f: &Fixture, policy: Option<crate::judge::policy::JudgePolicy>) -> String {
+    let (_, dag_id, node_id) = f.gate.plan_new("spawn gate test", None).await.unwrap();
+    if let Some(p) = policy {
+        f.gate
+            .set_judge_policy(
+                &dag_id,
+                Some(&node_id),
+                p,
+                &Actor {
+                    r#type: ActorType::User,
+                    id: "eoj".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+    }
+    let wih_id = f.gate.wih_pickup(&dag_id, &node_id, "agent-1").await.unwrap();
+    f.gate.wih_sign_open(&wih_id, "sig").await.unwrap();
+    let lease_id = f
+        .gate
+        .lease_request(&wih_id, "agent-1", vec!["src/**".to_string()], Some(3600))
+        .await
+        .unwrap();
+    let until = (Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
+    f.leases.grant(&lease_id, &until).await.unwrap();
+    wih_id
+}
+
+/// Unscannable programs used in the #2 tests. None of them name a path
+/// literal outside the lease.
+const UNSCANNABLE: &[&str] = &[
+    "cargo test",
+    "npm test",
+    "python -c 'print(1)'",
+    r#"python3 -c 'open(p,"w").write("x")'"#,
+    "bash ./script.sh",
+    "make -j4",
+    "sed -n 'w out.txt' src/a.rs",
+    "if true; then python3 -c 'x'; fi",
+];
+
+/// #2 under Q25 (guardrails, not walls): inline interpreter code and
+/// unscannable programs are allowed and recorded as `unresolved_effect`,
+/// denied when a statically visible path literal lands outside the lease or
+/// workspace.
 #[tokio::test]
-async fn interpreter_and_custom_executables_are_unresolved_under_wih() {
+async fn unresolved_effects_are_allowed_and_recorded_under_wih() {
     let f = fixture().await;
     let wih = bound_wih(&f).await;
     let home = Some(Path::new(HOME));
+    for cmd in UNSCANNABLE {
+        let req = bash(cmd, &f.root);
+        let d = decide(&req, &f.root, home, Some(bind(&f, &wih))).await;
+        assert!(!d.verdict.is_deny(), "{cmd}: {:?}", d.verdict);
+        assert!(d.verdict.reason().contains("unresolved_effect recorded"), "{cmd}: {:?}", d.verdict);
+        let evt = decision_event(&req, "claude-code", Some(&wih), &d);
+        let rec = evt.payload["unresolved_effect"].as_array().expect("recorded");
+        assert!(!rec.is_empty(), "{cmd}: {}", evt.payload);
+        assert_eq!(evt.payload["command"], *cmd);
+        assert_eq!(evt.scope.as_ref().unwrap().wih_id.as_deref(), Some(wih.as_str()));
+    }
+    // A path literal outside the workspace or the lease is denied.
     for cmd in [
         r#"python3 -c 'open("/outside/x","w").write("x")'"#,
         r#"node -e 'require("fs").writeFileSync("/outside/x","x")'"#,
         r#"perl -e 'open(F,">/outside/x")'"#,
-        r#"ruby -e 'File.write("/outside/x","x")'"#,
-        "bash ./script.sh",
+        r#"ruby -e 'File.write("../x","x")'"#,
         "./custom-tool --out /outside/x",
-        "some-unknown-binary",
         "awk 'BEGIN{print 1 > \"/outside/x\"}'",
-        "find . -name x -exec sh -c 'echo > /outside/x' +",
-        "sort -o /outside/x input.txt",
+        "find . -name x -exec sh -c 'echo hi > /outside/x' +",
         "sed -n 'w /outside/x' src/a.rs",
-        "sed 's/a/b/w /outside/x' src/a.rs",
-        "sed 's|a|b|e' src/a.rs",
-        "sed -f script.sed src/a.rs",
-        "if true; then python3 -c 'x'; fi",
+        "sort -o /outside/x input.txt",
     ] {
         let d = decide(&bash(cmd, &f.root), &f.root, home, Some(bind(&f, &wih))).await;
         assert!(d.verdict.is_deny(), "{cmd}: {:?}", d.verdict);
     }
-    let d = decide(&bash("python3 -c 'print(1)'", &f.root), &f.root, home, Some(bind(&f, &wih))).await;
-    assert!(d.verdict.reason().contains("unresolved"), "{:?}", d.verdict);
-    // Ordinary read-only commands stay allowed.
+    let docs = f.root.join("docs/x.md");
+    let cmd = format!("python3 -c 'open(\"{}\",\"w\")'", docs.display());
+    let d = decide(&bash(&cmd, &f.root), &f.root, home, Some(bind(&f, &wih))).await;
+    assert!(d.verdict.is_deny(), "in workspace, outside lease: {:?}", d.verdict);
+    let inside = f.root.join("src/x.rs");
+    let cmd = format!("python3 -c 'open(\"{}\",\"w\")'", inside.display());
+    let d = decide(&bash(&cmd, &f.root), &f.root, home, Some(bind(&f, &wih))).await;
+    assert!(!d.verdict.is_deny(), "inside lease: {:?}", d.verdict);
+    // Ordinary read-only commands record nothing.
     for cmd in [
         "ls -la",
         "cat src/lib.rs | head -5",
         "git status",
-        "git -C src log --oneline",
         "rg foo src",
         "sed -n '1,5p' src/a.rs",
         "sed 's/world/there/g' src/a.rs",
-        "sort src/a.rs | uniq -c",
-        "grep -rn foo . | wc -l",
-        "pwd && echo hi",
         "if [ -f src/x ]; then cat src/x; fi",
         "for f in a b; do echo $f; done",
     ] {
-        let d = decide(&bash(cmd, &f.root), &f.root, home, Some(bind(&f, &wih))).await;
+        let req = bash(cmd, &f.root);
+        let d = decide(&req, &f.root, home, Some(bind(&f, &wih))).await;
         assert!(!d.verdict.is_deny(), "{cmd}: {:?}", d.verdict);
+        assert!(req.unresolved_effects().is_empty(), "{cmd}");
     }
     // No WIH bound: only the hard floor applies (Q24 auto-approve unchanged).
     let d = decide(&bash("python3 -c 'print(1)'", &f.root), &f.root, home, None).await;
+    assert!(!d.verdict.is_deny(), "{:?}", d.verdict);
+}
+
+/// #2 with the opt-in strict fence: every unresolved effect is denied.
+#[tokio::test]
+async fn strict_fence_denies_unresolved_effects() {
+    let f = fixture().await;
+    let wih = bound_wih_with(
+        &f,
+        Some(crate::judge::policy::JudgePolicy {
+            fence: Some(crate::judge::policy::Fence::Strict),
+            ..Default::default()
+        }),
+    )
+    .await;
+    for cmd in UNSCANNABLE {
+        let d = decide(&bash(cmd, &f.root), &f.root, None, Some(bind(&f, &wih))).await;
+        assert!(d.verdict.is_deny(), "{cmd}: {:?}", d.verdict);
+        assert!(d.verdict.reason().contains("strict fence"), "{cmd}: {:?}", d.verdict);
+    }
+    let d = decide(&bash("git status && ls", &f.root), &f.root, None, Some(bind(&f, &wih))).await;
     assert!(!d.verdict.is_deny(), "{:?}", d.verdict);
 }
 

@@ -409,6 +409,12 @@ pub fn inner_script(words: &[String]) -> Option<String> {
 pub enum Target {
     Path(PathBuf),
     Unresolved(String),
+    /// A program whose write effect the gate cannot scan (inline interpreter
+    /// code, a script, a build tool, a custom executable). `literals` are the
+    /// absolute / `../` / `~/` path literals found statically in its argv and
+    /// inline code. Q25: allowed and recorded by default, denied when a
+    /// literal lands outside the workspace or lease, or under a strict fence.
+    UnknownEffect { what: String, literals: Vec<Target> },
 }
 
 /// Resolve a shell word used as a path.
@@ -488,14 +494,14 @@ fn collect_write_targets(command: &str, cwd: &Path, home: Option<&Path>, out: &m
             if depth < 4 {
                 collect_write_targets(&inner, &cwd, home, out, depth + 1);
             } else {
-                out.push(unknown_effect(first, "nested too deep to scan"));
+                out.push(unknown_effect(first, "nested too deep to scan", &words[1..], &cwd, home));
             }
             continue;
         }
         // A path-invoked program outside the system bin dirs is custom code:
         // `./rm` or `bin/ls` can do anything, whatever its name says.
         if first.contains('/') && !SYSTEM_BIN_DIRS.iter().any(|d| first.starts_with(d)) {
-            out.push(unknown_effect(first, "custom executable"));
+            out.push(unknown_effect(first, "custom executable", &words[1..], &cwd, home));
             continue;
         }
         let name = basename(first);
@@ -511,6 +517,8 @@ fn collect_write_targets(command: &str, cwd: &Path, home: Option<&Path>, out: &m
                         Target::Unresolved(raw) => {
                             out.push(Target::Unresolved(format!("cd {raw}")));
                         }
+                        // `resolve` never yields an effect; kept exhaustive.
+                        Target::UnknownEffect { what, .. } => out.push(Target::Unresolved(format!("cd {what}"))),
                     },
                     None => {
                         if let Some(h) = home {
@@ -574,7 +582,7 @@ fn collect_write_targets(command: &str, cwd: &Path, home: Option<&Path>, out: &m
                 }
                 // `w file` / `s///w file` write and `e` executes: not scannable.
                 if sed_script_writes_or_executes(args) {
-                    out.push(unknown_effect(name, "sed script writes (w) or executes (e)"));
+                    out.push(unknown_effect(name, "sed script writes (w) or executes (e)", args, &cwd, home));
                 }
             }
             "find" => {
@@ -584,7 +592,7 @@ fn collect_write_targets(command: &str, cwd: &Path, home: Option<&Path>, out: &m
                         "-delete" | "-exec" | "-execdir" | "-ok" | "-okdir" | "-fprint" | "-fprint0" | "-fprintf" | "-fls"
                     )
                 }) {
-                    out.push(unknown_effect(name, "find runs a command, deletes, or writes a file"));
+                    out.push(unknown_effect(name, "find runs a command, deletes, or writes a file", args, &cwd, home));
                 }
             }
             "sort" => {
@@ -664,7 +672,7 @@ fn collect_write_targets(command: &str, cwd: &Path, home: Option<&Path>, out: &m
             // Interpreters with inline code or a script, build tools, and
             // any executable the gate has no scanner for: the write effect
             // is unknown, never "no writes".
-            _ => out.push(unknown_effect(name, "no write-target scanner for this executable")),
+            _ => out.push(unknown_effect(name, "no write-target scanner for this executable", args, &cwd, home)),
         }
     }
 }
@@ -700,10 +708,31 @@ fn strip_keywords(mut words: &[String]) -> &[String] {
     words
 }
 
-/// A command whose write effect the gate cannot determine. Under a WIH this
-/// fails closed like any other unresolved target.
-fn unknown_effect(program: &str, why: &str) -> Target {
-    Target::Unresolved(format!("{program} ({why}; write effect unresolved)"))
+/// A command whose write effect the gate cannot determine, with the path
+/// literals statically visible in its arguments and inline code.
+fn unknown_effect(program: &str, why: &str, args: &[String], cwd: &Path, home: Option<&Path>) -> Target {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r#"(?:^|[\s"'`=(,:\[{<>])((?:/|\.\./|~/)[^\s"'`(),;\]}<>]+)"#).unwrap()
+    });
+    let mut literals = Vec::new();
+    for arg in args {
+        for cap in re.captures_iter(arg) {
+            let lit = &cap[1];
+            // `//host` is a URL tail, not a path; devices are benign.
+            if lit.starts_with("//") || is_benign_device(lit) {
+                continue;
+            }
+            let t = resolve(lit, cwd, home);
+            if !literals.contains(&t) {
+                literals.push(t);
+            }
+        }
+    }
+    Target::UnknownEffect {
+        what: format!("{program} ({why}; write effect unresolved)"),
+        literals,
+    }
 }
 
 /// Whether a non-trivial sed script has a `w`/`W` write or an `e` execute

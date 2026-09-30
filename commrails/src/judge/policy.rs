@@ -65,6 +65,9 @@ pub struct JudgePolicy {
     /// criteria need evidence before DONE.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completion_policy: Option<String>,
+    /// Q25 fence profile; `strict` is opt-in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fence: Option<Fence>,
 }
 
 impl JudgePolicy {
@@ -91,6 +94,9 @@ impl JudgePolicy {
         if other.completion_policy.is_some() {
             self.completion_policy = other.completion_policy.clone();
         }
+        if other.fence.is_some() {
+            self.fence = other.fence;
+        }
     }
 
     /// True when applying `self` over `current` lowers friction.
@@ -101,7 +107,18 @@ impl JudgePolicy {
             || self
                 .max_continuations
                 .is_some_and(|m| m > current.max_continuations)
+            || matches!(self.fence, Some(Fence::Guardrail)) && current.fence == Fence::Strict
     }
+}
+
+/// Q25 fence profile for CLI harnesses. `guardrail` (default): unscannable
+/// effects are allowed and recorded. `strict` (opt-in): they are denied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum Fence {
+    #[default]
+    Guardrail,
+    Strict,
 }
 
 pub const DEFAULT_MAX_CONTINUATIONS: u32 = 2;
@@ -113,6 +130,7 @@ pub struct EffectivePolicy {
     pub tool_judge: bool,
     pub max_continuations: u32,
     pub origin: Option<PolicyOrigin>,
+    pub fence: Fence,
 }
 
 impl Default for EffectivePolicy {
@@ -123,6 +141,7 @@ impl Default for EffectivePolicy {
             tool_judge: false,
             max_continuations: DEFAULT_MAX_CONTINUATIONS,
             origin: None,
+            fence: Fence::Guardrail,
         }
     }
 }
@@ -161,6 +180,7 @@ pub fn effective_policy(
         tool_judge: plan.tool_judge.unwrap_or(d.tool_judge),
         max_continuations: plan.max_continuations.unwrap_or(d.max_continuations),
         origin: plan.origin,
+        fence: plan.fence.unwrap_or(d.fence),
     };
     // Origin-marked work is forced on, whatever the author or worker set.
     if eff.origin.is_some() {
@@ -263,4 +283,19 @@ mod tests {
         let m = effective_policy(&evs, "d", Some("m"));
         assert_eq!(m.verify, VerifyMode::Judge);
     }
+
+    #[test]
+    fn lowering_a_strict_fence_is_a_weakening() {
+        let strict = EffectivePolicy {
+            fence: Fence::Strict,
+            ..Default::default()
+        };
+        let lower = JudgePolicy {
+            fence: Some(Fence::Guardrail),
+            ..Default::default()
+        };
+        assert!(lower.weakens(&strict));
+        assert!(!lower.weakens(&EffectivePolicy::default()));
+    }
+
 }

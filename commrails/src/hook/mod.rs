@@ -178,6 +178,18 @@ impl HookRequest {
         }
     }
 
+    /// Descriptions of the programs in this call whose write effect the gate
+    /// cannot scan (Q25: recorded as `unresolved_effect`).
+    pub fn unresolved_effects(&self) -> Vec<String> {
+        self.write_targets(None)
+            .into_iter()
+            .filter_map(|t| match t {
+                Target::UnknownEffect { what, .. } => Some(what),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Paths this tool call writes, resolved against its cwd.
     pub fn write_targets(&self, home: Option<&Path>) -> Vec<Target> {
         let cwd = self.cwd.clone().unwrap_or_else(|| PathBuf::from("/"));
@@ -275,6 +287,8 @@ pub async fn decide(req: &HookRequest, root: &Path, home: Option<&Path>, wih: Op
 
     let root_forms = path_forms(root);
     let mut rel_paths = Vec::new();
+    let mut unresolved_effects = Vec::new();
+    let mut strict: Option<bool> = None;
     for target in req.write_targets(home) {
         match target {
             Target::Unresolved(raw) => {
@@ -285,6 +299,55 @@ pub async fn decide(req: &HookRequest, root: &Path, home: Option<&Path>, wih: Op
                     )),
                     paths: rel_paths,
                 };
+            }
+            // Q25 guardrails, not walls: an unscannable program is allowed and
+            // recorded, unless a path literal it names lands outside the
+            // workspace/lease or the WIH runs under the opt-in strict fence.
+            Target::UnknownEffect { what, literals } => {
+                let is_strict = match strict {
+                    Some(s) => s,
+                    None => match wih.gate.wih_fence_strict(wih.wih_id).await {
+                        Ok(s) => *strict.insert(s),
+                        Err(err) => {
+                            return Decision {
+                                verdict: Verdict::Deny(format!(
+                                    "fence policy lookup failed for WIH {} (fail closed): {err}",
+                                    wih.wih_id
+                                )),
+                                paths: rel_paths,
+                            }
+                        }
+                    },
+                };
+                if is_strict {
+                    return Decision {
+                        verdict: Verdict::Deny(format!(
+                            "unresolved write effect `{what}` under WIH {}'s strict fence; use the file-edit tools or a command the gate can scan",
+                            wih.wih_id
+                        )),
+                        paths: rel_paths,
+                    };
+                }
+                for lit in literals {
+                    let Target::Path(p) = lit else { continue };
+                    match relative_to_root(&p, &root_forms) {
+                        // Checked below by Gate 2 and the own-lease check.
+                        Some(rel) => rel_paths.push(rel),
+                        None => {
+                            rel_paths.push(p.to_string_lossy().to_string());
+                            return Decision {
+                                verdict: Verdict::Deny(format!(
+                                    "write outside WIH {} lease: `{what}` names path {} outside {}",
+                                    wih.wih_id,
+                                    canonical_lenient(&p).display(),
+                                    root.display()
+                                )),
+                                paths: rel_paths,
+                            };
+                        }
+                    }
+                }
+                unresolved_effects.push(what);
             }
             Target::Path(p) => match relative_to_root(&p, &root_forms) {
                 Some(rel) => rel_paths.push(rel),
@@ -361,8 +424,13 @@ pub async fn decide(req: &HookRequest, root: &Path, home: Option<&Path>, wih: Op
         }
     }
 
+    let recorded = if unresolved_effects.is_empty() {
+        String::new()
+    } else {
+        format!("; unresolved_effect recorded: {}", unresolved_effects.join("; "))
+    };
     Decision {
-        verdict: Verdict::Allow(format!("Gate 2 allowed {} for WIH {}", req.tool_name, wih.wih_id)),
+        verdict: Verdict::Allow(format!("Gate 2 allowed {} for WIH {}{recorded}", req.tool_name, wih.wih_id)),
         paths: rel_paths,
     }
 }
@@ -498,6 +566,8 @@ pub fn decision_event(req: &HookRequest, harness: &str, wih_id: Option<&str>, de
             "reason": decision.verdict.reason(),
             "paths": decision.paths,
             "command": req.command(),
+            // Q25 audit trail: unscannable programs that ran under a WIH.
+            "unresolved_effect": req.unresolved_effects(),
         }),
         provenance: None,
     }
