@@ -18,22 +18,24 @@ An execution environment is compiled once per node and recorded. It replaces amb
 
 `ExecutionEnvironmentV1` holds `allowed_env_keys`, `secret_refs`, `cwd`, `tmp_scope`, `filesystem_scope`, `inherit_process_env` and a `network_policy_id`. Raw process-environment inheritance is forbidden. Secrets are referenced, not embedded.
 
-Why: without a fence, the strength of safety depends on which tool the executor happens to be. With one, the same limits apply to every executor.
+Why: without a fence, the strength of safety depends on which tool the executor happens to be. With one, the same limits can apply to every executor once enforcement is on for its path.
 
 ## Current implementation
 
-On main, every spawned node gets a resolved environment (working directory, environment-key allowlist, filesystem scope, network policy) and the resolved document is recorded in the ledger.
+Resolution and recording are on the active path. On main, every node the work runtime spawns gets a resolved environment (working directory, environment-key allowlist, filesystem scope, network policy), and the resolved document, with `inherit_process_env: false`, is recorded in the ledger.
 
-Every CLI executor is launched in its own auto-approve mode, with Allternit's gate in front of it. Where the CLI supports a pre-tool hook, the gate is that hook. Where it speaks the Agent Client Protocol, Allternit answers its permission requests. One CLI has neither, so it runs inside the execution environment fence only. Allternit never refuses an executor and never holds one out of auto-approve, because it would then wait on its own prompt and a headless turn would hang. The gate is Allternit's.
+Stripping the process environment down to that allowlist is a separate step, and it is flag-controlled. It runs only when `ALLTERNIT_EXEC_ENV_ENFORCE=1` is set; by default the spawned process still inherits the launching environment. So the contract forbids raw inheritance, and the recorded document says so, but raw inheritance is not yet impossible everywhere: it is prevented only on work-runtime spawns with enforcement switched on. Paths outside the work runtime do not resolve an ExecutionEnvironment at all.
+
+Work-bound executor paths are being converged on the Allternit policy gate; direct interactive runtime behavior may differ from Agency/work-runtime execution.
 
 ## Availability
 
-| Part | Status |
-|------|--------|
-| Environment recorded per node | **AVAILABLE (internal)** |
-| Gate in front of every executor via hook or ACP client | **AVAILABLE (internal)** |
-| One executor fenced by environment only | **AVAILABLE (internal), weaker guarantee** |
-| Environment compiler as a separate contract | **DESIGN — NOT YET IMPLEMENTED** |
+| Part | Implementation | Exposure |
+|------|----------------|----------|
+| Environment resolved and recorded per work-runtime node | **ENABLED** | **INTERNAL** |
+| Process env stripped to the allowlist | **IMPLEMENTED** (opt-in, off by default) | **INTERNAL** |
+| Policy gate on work-bound executor paths | **IMPLEMENTED** (converging) | **INTERNAL** |
+| Environment compiler as a separate contract | **DESIGN** | **—** |
 
 ## Developer relevance
 

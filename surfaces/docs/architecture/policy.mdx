@@ -26,7 +26,7 @@ flowchart TD
 
 **A model may recommend ASK. It cannot turn DENY into ALLOW.**
 
-Command-line agent harnesses fit the same picture. Each CLI harness runs in its own auto-approve mode, and Allternit's gate sits in front of it: the harness never asks its own questions, and every tool call it makes still passes the floor above. Allternit's gate is the gate.
+Executors fit the same picture in the target design: an executor does not ask its own permission questions, and every tool call it makes passes the floor above. Work-bound executor paths are being converged on the Allternit policy gate; direct interactive runtime behavior may differ from Agency/work-runtime execution. This page does not claim that every model or tool invocation everywhere runs through the kernel.
 
 ## Architecture contract
 
@@ -48,7 +48,7 @@ Decisions carry reason codes and are recorded as receipts. Grants are explicit, 
 
 <Steps>
   <Step title="No executor bypasses policy">
-    No unattended executor bypasses Allternit policy, even when its own command-line tool is running in a yolo, auto-approve or bypass mode. The policy gate is applied across every executor.
+    In the target design, no unattended executor bypasses Allternit policy, whatever mode its own tooling runs in. Work-bound executor paths are being converged on the Allternit policy gate; direct interactive runtime behavior may differ from Agency/work-runtime execution.
   </Step>
   <Step title="Hard policy runs before probabilistic judgment">
     Deterministic policy is evaluated first. A probabilistic component may only raise friction (turn an allow into an ask). It can never weaken a hard deny.
@@ -173,17 +173,17 @@ Data carries one of five trust classes: `PUBLIC`, `INTERNAL`, `RESTRICTED`, `SEC
 
 ## Current implementation
 
-The permission floor is on main and on by default: hard policy runs first, and no executor's native bypass mode is honored. The fail-closed judge runs today for internal flows when opted in; it is designed to be always on, and not client-disableable, for Agency API runs. The typed policy contracts are frozen in [kernel ABI 1.0.0](/architecture/kernel-contracts). The signed receipt chain is on main (internal) and covers effect receipts from the gate's tool path; policy receipts are not yet on the signed chain.
+The permission floor is on main and on by default: hard policy runs first on the paths it covers. Work-bound executor paths are being converged on the Allternit policy gate; direct interactive runtime behavior may differ from Agency/work-runtime execution. The fail-closed judge runs today for internal flows when opted in; it is designed to be always on, and not client-disableable, for Agency API runs. The typed policy contracts are frozen in [kernel ABI 1.0.0](/architecture/kernel-contracts). The signed receipt chain is on main (internal) and covers effect receipts from the gate's tool path; policy receipts are not yet on the signed chain.
 
 ## Availability
 
 | Part | Status | Notes |
 |------|--------|-------|
-| Permission floor (hard policy first, no bypass) | **AVAILABLE** | On by default. |
-| Fail-closed judge | **PREVIEW** | Opt-in for internal flows. |
-| Policy, authority and environment contracts | **AVAILABLE** | Kernel ABI 1.0.0. |
-| Authority profiles served over the API | **PREVIEW** | `GET /v1/authority-profiles` in the v0.3 contract. |
-| Signed policy receipts | **DESIGN — NOT YET IMPLEMENTED** | The chain exists for effect receipts; policy receipts are still content-hashed only. |
+| Permission floor (hard policy first, no bypass) | **ENABLED** · INTERNAL | On by default. |
+| Fail-closed judge | **IMPLEMENTED** · INTERNAL | Opt-in for internal flows. |
+| Policy, authority and environment contracts | **IMPLEMENTED** | Kernel ABI 1.0.0. |
+| Authority profiles served over the API | **PUBLIC PREVIEW** (contract; not served) | `GET /v1/authority-profiles` in the v0.3 contract. |
+| Signed policy receipts | **DESIGN** | The chain exists for effect receipts; policy receipts are still content-hashed only. |
 
 ## Developer relevance
 

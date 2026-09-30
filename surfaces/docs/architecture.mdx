@@ -15,6 +15,23 @@ Allternit implements agency as a system. Models do not own the agent. Allternit 
 Then read [Why this is different from an agent loop](/architecture/agent-loop).
 </Tip>
 
+## Three systems
+
+Allternit today is three systems. Keep them apart when you read these docs.
+
+```mermaid
+flowchart TD
+    P["ALLTERNIT PRODUCT TODAY"] --> A["(a) EXISTING PLATFORM<br/>Cloud API · Allternit API · Gizzi runtime<br/>Agents / Providers / Tools APIs<br/>Surfaces · BYOC / Fabric"]
+    P --> B["(b) AGENCY KERNEL<br/>frozen contracts · Work Runtime<br/>Cognitive Runtime · policy<br/>receipts · replay"]
+    P --> C["(c) AGENCY API<br/>future simple public surface<br/>over the kernel"]
+    B -. implemented inside .-> A
+    C -. served over .-> B
+```
+
+The Agency Kernel is being implemented inside the existing Allternit platform. Some components are already on the main execution path, some are internal or shadow-only, and others remain design or research. The status shown for each component refers to implementation and exposure separately.
+
+Existing runtime/provider APIs expose implementation controls intentionally. The Agency API is the abstraction that hides those controls behind capabilities and one durable agent identity.
+
 ## The canonical diagram
 
 One request, from the developer's call to a verified result:
@@ -39,7 +56,7 @@ flowchart TD
 
 A caller sends a goal with optional resources, authority, budget and completion criteria. The **request compiler** turns it into explicit internal contracts: a typed task (TaskIR), the run's semantic state (AgentState) and an executable work plan (ComputeGraphIR). The **Work Machine** admits and leases each graph node and carries it across time. The **Cognitive Machine** decides how each step is thought through, at the lowest sufficient [cognition level](/architecture/cognition-levels). **Execution** runs a tool, a deterministic backend, a decision head or a model from the pool. Every result passes **policy and verification**, and every effect, input and verdict is written as a **receipt**. The run is durable the whole way through, callers observe it as typed events, and a finished run can be replayed.
 
-Several boxes are not live yet. The Agency API endpoint and the request compiler are not served, and nothing calls the router in production. See [what is live today](#what-is-live-today).
+Several boxes are not live yet. The Agency API endpoint and the request compiler are not served, and nothing calls the router on the normal path. See [current reality](#current-reality).
 
 <Note>
 **About "One Brain, Many Faces".** That was the earlier product metaphor: one runtime behind many surfaces. It still describes the product shape, but it is not the technical explanation, and the "brain" was never a model. The systems architecture is the **Agency Kernel** shown above.
@@ -50,15 +67,15 @@ Several boxes are not live yet. The Agency API endpoint and the request compiler
 Two names appear throughout these docs. They are different things:
 
 - **The kernel** is the system that runs agent work: it compiles a goal into typed contracts, carries the run durably, enforces policy, verifies results and writes receipts. See [The kernel](/architecture/kernel).
-- **The Agency API** is the public HTTP surface over the kernel: send a goal, get one durable, verified run. It is **PREVIEW**: the [v0.3 contract](/api/agency/overview) is published and the endpoint is not served yet.
+- **The Agency API** is the public HTTP surface over the kernel: send a goal, get one durable, verified run. Its status is Implementation **DESIGN** (server) · Exposure **PUBLIC PREVIEW** (contract): the [v0.3 contract](/api/agency/overview) is published and the endpoint is not served yet.
 
 There is one public origin, `https://api.allternit.com`. `/v1/agency` is a new surface of the existing [Cloud API](/api/overview), not a separate service.
 
 ```mermaid
 flowchart LR
     C[Your app, SDK or CLI] --> O["https://api.allternit.com"]
-    O --> CA["Cloud API routes (AVAILABLE)"]
-    O --> AG["/v1/agency — Agency API (PREVIEW)"]
+    O --> CA["Cloud API routes (live)"]
+    O --> AG["/v1/agency — Agency API (contract only, not served)"]
     AG --> K[Kernel: compiler, work runtime, cognition, policy, verification, receipts]
     CA --> N[Paired node: Allternit API + Gizzi runtime]
     K --> N
@@ -69,14 +86,28 @@ The detailed path of one request inside the kernel is in [Request path](#request
 
 ## Status labels
 
-Every page and feature in the architecture docs carries one of these labels.
+Status has two axes, because "the code exists" and "you can use it" are different facts. Every architecture page carries both, plus a four-field block: **Architecture** (what the final contract requires) · **Implemented today** (what code exists on main) · **Active path** (whether normal execution uses it: yes / partial / internal / no) · **Public exposure** (whether an external developer can use it).
 
-| Label | Meaning |
+**Implementation**
+
+| Value | Meaning |
 |-------|---------|
-| **AVAILABLE** | On main and enabled by default. You can use it today. |
-| **PREVIEW** | Published for review or opt-in only. It may change, and it is not on by default. |
-| **DESIGN — NOT YET IMPLEMENTED** | Specified and designed. No working implementation yet. |
+| **DESIGN** | Specified. No working code on main. |
+| **IMPLEMENTED** | Code and tests on main, but not on by default in the normal path, or nothing calls it yet. |
+| **SHADOW** | Runs alongside the real path (or behind an off-by-default flag) and observes; its output changes nothing. |
+| **ENABLED** | On main and on by default in the path it belongs to. |
 | **RESEARCH** | Being investigated. No committed design. |
+
+**Exposure**
+
+| Value | Meaning |
+|-------|---------|
+| **—** | Nothing to expose yet. |
+| **INTERNAL** | Used inside Allternit only. An external developer cannot reach it. |
+| **PUBLIC PREVIEW** | A published contract or opt-in surface for review. It may change, and it may not be served yet. |
+| **PUBLIC** | Supported and usable by external developers. For contracts, "PUBLIC (docs)" means published as documentation with no endpoint. |
+
+Optionally, a row adds **Production verified: yes/no**: whether the behavior has been checked on a production deployment, not only in tests.
 
 ## The invariant
 
@@ -164,13 +195,13 @@ Four further rules follow from these and are covered on their own pages:
 
 ## How today's pieces map
 
-The architecture is a target that the existing product is being moved onto. These are the parts you can use now and where they sit.
+The Agency Kernel is being implemented inside the existing Allternit platform. These are the existing parts and where they sit in the architecture.
 
 | Piece | Role in the architecture | Docs |
 |-------|--------------------------|------|
 | **Gizzi Code** | The agent runtime and CLI. It executes work: sessions, tools, sandboxing, model calls. | [Gizzi runtime](/core/gizzi-runtime), [CLI](/cli/overview) |
 | **CommRails** | The work runtime (Work Orchestration plane). It carries work as a graph of nodes with outputs, wait gates, leases and campaigns. | [CommRails](/core/commrails) |
-| **Permission floor** | The start of the Governance plane. Hard policy runs first and no executor's native bypass mode is honored. | [Policy and safety](/architecture/policy) |
+| **Permission floor** | The start of the Governance plane. Hard policy runs first. Work-bound executor paths are being converged on the Allternit policy gate; direct interactive runtime behavior may differ from Agency/work-runtime execution. | [Policy and safety](/architecture/policy) |
 | **Kernel ABI 1.0.0** | The frozen contract package that every plane is built against. | [Kernel contracts](/architecture/kernel-contracts) |
 | **Surfaces** | The Experience plane today: desktop, web, mobile, extensions. | [Desktop](/surfaces/desktop), [Platform](/surfaces/platform) |
 
@@ -192,32 +223,57 @@ The surfaces are the Experience plane today. They hold no agent logic of their o
 
 ## What is live today
 
-| Part | Status | Notes |
-|------|--------|-------|
-| Gizzi Code runtime and CLI | **AVAILABLE** | See [CLI overview](/cli/overview). |
-| Work runtime: node outputs | **AVAILABLE** | Outputs are first-class and consumed by reference. |
-| Work runtime: wait gates | **AVAILABLE** | Manual and timer gates on graph nodes. |
-| Work runtime: leases and reclaim | **AVAILABLE** | Heartbeat plus reclaim of stale leases. |
-| Campaigns in the work runtime | **AVAILABLE** | Scheduled waking through the Agency API stays off until an explicit go-live. |
-| Attention gate | **AVAILABLE** | Agents request attention; they do not notify people directly. |
-| Permission floor | **AVAILABLE** | Hard policy before probabilistic judgment; no bypass through an executor's native mode. |
-| Kernel ABI 1.0.0 contracts | **AVAILABLE** | Frozen contract package, registry and schema tests. See [Kernel contracts](/architecture/kernel-contracts). |
-| Fail-closed judge and verifier-owned completion | **PREVIEW** | Opt-in for internal flows. Forced on, and not client-disableable, for agency-origin work. |
-| Agency API (`/v1/agency`) | **PREVIEW** (contract) · **DESIGN — NOT YET IMPLEMENTED** (server) | The v0.3 contract is published as a [preview reference](/api/agency/overview). The endpoint is not served. |
-| Cognitive Execution Router and model pool | **PREVIEW** | On main as library code plus an internal model pool registry. Nothing calls the router in production yet. See [Routing](/architecture/routing). |
-| Replay and cassette recording | **PREVIEW** | Internal. Cassettes recorded from the receipt chain, recorded-only replay, divergence reports, and a replay mode in the gate. Not exposed through `https://api.allternit.com`. See [Replay](/architecture/replay). |
-| Signed receipt chain and effect receipts | **AVAILABLE** | Internal. Ed25519-signed, hash-chained effect receipts, at most once per idempotency key. See [Receipts](/architecture/receipts). |
-| Receipt keys (JWKS) and chain check | **PREVIEW** | Served by the internal work runtime service. Public JWKS waits for the Agency API. |
-| Primitive registry (191 IDs) | **AVAILABLE** | Contract. See [Primitives](/architecture/cognitive-runtime/primitives). |
-| Typed node lifecycle and graph validator | **PREVIEW** | Merged as library code; not yet enforced on every graph. See [Lifecycle](/architecture/work-runtime/lifecycle), [Graphs](/architecture/graphs). |
-| Per-node execution environment and egress guard | **AVAILABLE** | Internal. See [Admission](/architecture/work-runtime/admission). |
-| Gate in front of every CLI harness | **AVAILABLE** | Internal. Every CLI harness runs in its own auto-approve mode with Allternit's gate in front of it. See [Policy](/architecture/policy). |
-| Decision runtime (S1) | **PREVIEW** | Shadow only. No calibration manifests exist yet, so S1 acts on nothing. See [Decision runtime](/architecture/cognitive-runtime/decision-runtime). |
-| Context compiler and tool call compiler | **PREVIEW** | On main behind a flag that is off by default; shadow only. See [Context](/architecture/context). |
-| Runtime conformance suite (kernel layer) | **PREVIEW** | Kernel-level conformance tests run on main: restart, resume, verify, replay, fault, rollback, idempotency, concurrency, security, model swap. |
-| Agency API conformance and alpha gate | **DESIGN — NOT YET IMPLEMENTED** | API-level tests are written; the gate stays closed until they pass against a running Agency API. |
-| End-to-end bug-fix run through the Agency API | **DESIGN — NOT YET IMPLEMENTED** | The first task type the alpha gate is measured on. |
-| Cross-component cache and state transfer | **RESEARCH** | Contracts reserve the shape; no committed design for the mechanism. See [Routing](/architecture/routing). |
+Checked against main on 2026-09-30. Production verified: no, unless a row says so.
+
+| Component | Implementation | Exposure | Notes |
+|-----------|----------------|----------|-------|
+| Existing platform (Cloud API, Allternit API, Gizzi runtime, surfaces) | **ENABLED** | **PUBLIC** | The product you use today. See [API overview](/api/overview). |
+| Kernel ABI 1.0.0 | **IMPLEMENTED** | **PUBLIC** (docs) | Frozen contract package, registry, generated types, schema tests. See [Kernel contracts](/architecture/kernel-contracts). |
+| Work runtime: outputs, wait gates, leases and reclaim, campaigns, attention gate | **ENABLED** | **INTERNAL** | Runs inside the internal work runtime. See [Work Machine](/architecture/work-machine). |
+| Permission floor | **ENABLED** | **INTERNAL** | Hard policy before probabilistic judgment. See [Policy](/architecture/policy). |
+| Policy gate on executor paths | **IMPLEMENTED** (converging) | **INTERNAL** | Work-bound executor paths are being converged on the Allternit policy gate; direct interactive runtime behavior may differ from Agency/work-runtime execution. |
+| Fail-closed judge, verifier-owned completion | **IMPLEMENTED** (opt-in) | **INTERNAL** | Opt-in for internal flows; forced on for agency-origin work. See [Verification](/architecture/verification). |
+| Decision Runtime (S1) | **SHADOW** | **INTERNAL** | No calibration manifest has passed, so S1 acts on nothing. See [Decision runtime](/architecture/cognitive-runtime/decision-runtime). |
+| Cognitive Router | **IMPLEMENTED** | **INTERNAL** | Library code. Nothing calls it on the normal path yet. See [Routing](/architecture/routing). |
+| ModelPool | **IMPLEMENTED** | **INTERNAL** | Registry served internally; normal execution does not select through it. |
+| Replay: cassettes, recorded-only replay, divergence, `POST /v1/replays` on the work runtime service, gate replay mode | **IMPLEMENTED** | **INTERNAL** | On demand, not part of normal execution. See [Replay](/architecture/replay). |
+| Context Compiler, Tool Call Compiler | **SHADOW** | **INTERNAL** | Behind a flag that is off by default. See [Context](/architecture/context). |
+| Signed effect receipts and JWKS | **ENABLED** | **INTERNAL** | Keys served by the internal work runtime service, not on `api.allternit.com`. Not every receipt type is on the signed chain. See [Receipts](/architecture/receipts). |
+| ExecutionEnvironment: resolution and ledger recording | **ENABLED** | **INTERNAL** | Every work-runtime spawn resolves and records its environment (`inherit_process_env: false` in the document). See [ExecutionEnvironment](/architecture/tools-execution/execution-environment). |
+| ExecutionEnvironment: stripping the process env | **IMPLEMENTED** (opt-in) | **INTERNAL** | Only with `ALLTERNIT_EXEC_ENV_ENFORCE=1`; off by default. |
+| Egress guard | **ENABLED** (web proxy, design connector import) · **DESIGN** (work-runtime nodes) | **INTERNAL** | Per path. See [Network and SSRF](/architecture/tools-execution/network-ssrf). |
+| Typed node lifecycle, graph validator | **IMPLEMENTED** | **INTERNAL** | Library code; not enforced on every graph. |
+| Kernel conformance suite | **IMPLEMENTED** | **INTERNAL** | Kernel-layer tests on main. See [Conformance](/architecture/observability/conformance). |
+| Agency API conformance, alpha gate | **DESIGN** | **—** | Tests are written; there is no server to run them against. |
+| Agency API (`/v1/agency`) | **DESIGN** (server; contract only) | **PUBLIC PREVIEW** | The [v0.3 contract](/api/agency/overview) is published. The endpoint is not served. |
+| Request compiler, runtime state store | **DESIGN** | **—** | Contracts only. |
+| Cross-model KV / state transfer | **RESEARCH** | **—** | Contracts reserve the shape. See [Routing](/architecture/routing). |
+
+## Current reality
+
+**Implemented foundation**
+
+- Frozen Kernel ABI 1.0.0 with a 191-ID primitive registry.
+- The internal work runtime: node outputs, wait gates, leases and reclaim, campaigns, the attention gate.
+- The permission floor, on by default.
+- Signed, hash-chained effect receipts, with keys served internally.
+- Replay: cassettes, recorded-only replay, divergence reports.
+- Cognitive Router and ModelPool as internal code; Decision Runtime and both compilers in shadow.
+- Per-node ExecutionEnvironment resolution and ledger recording.
+- The kernel-layer conformance suite.
+
+**Not yet the full system**
+
+- `/v1/agency` is not live.
+- The request compiler path has not reached alpha.
+- The conformance gate is incomplete: Agency API conformance and the alpha gate cannot run.
+- Not all receipt types are signed.
+- Public JWKS is not exposed.
+- S1 cannot act.
+- The Context Compiler and Tool Call Compiler are shadow.
+- Cross-model KV is research.
+- Some environment and security enforcement is flag- or path-dependent.
+- The default runtime path is not converged on the policy gate.
 
 The Agency API opens for alpha only after one end-to-end run can survive restart, resume, verify, replay and receipt-backed completion. That gate is not met.
 
@@ -299,7 +355,7 @@ See [BYOC Overview](/byoc/overview).
     The frozen ABI 1.0.0 package.
   </Card>
   <Card title="Agency API" icon="code" href="/api/agency/overview">
-    The public surface over the kernel (PREVIEW).
+    The public surface over the kernel (public preview contract, not served).
   </Card>
 </CardGroup>
 

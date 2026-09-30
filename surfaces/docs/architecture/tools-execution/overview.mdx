@@ -32,10 +32,12 @@ On main, every spawned node has an execution environment recorded in the ledger,
 
 | Part | Status |
 |------|--------|
-| ISA groups and primitive registry | **AVAILABLE (contract)** |
-| Per-node ExecutionEnvironment, shared egress guard | **AVAILABLE (internal)** |
-| Effect receipts | **AVAILABLE (internal; not reachable through api.allternit.com)** |
-| Tool Call Compiler | **PREVIEW** (flag off by default, shadow) |
+| ISA groups and primitive registry | **IMPLEMENTED (contract)** |
+| Per-node ExecutionEnvironment resolution and recording | **ENABLED · INTERNAL** |
+| Process-env stripping | **IMPLEMENTED (opt-in, off by default) · INTERNAL** |
+| Shared egress guard | **ENABLED on the web proxy and design connector import · DESIGN for work-runtime nodes** |
+| Effect receipts | **ENABLED (internal; not reachable through api.allternit.com)** |
+| Tool Call Compiler | **SHADOW** · INTERNAL |
 
 ## Developer relevance
 

@@ -44,14 +44,14 @@ The ownership map is recorded in the repository structure guide and is used to p
 
 | Plane | What exists on main | Status |
 |-------|---------------------|--------|
-| 1 Experience / API | Cloud API, SDK, surfaces. Agency API contract published, endpoint not served. | **AVAILABLE** (existing API) · **PREVIEW** (Agency API) |
-| 2 Agent | Primitive registry, Agent ISA enum, state schemas | **AVAILABLE** (contracts) · **PREVIEW** (runtime use) |
-| 3 Work Orchestration | Work runtime: outputs, leases, wait gates, campaigns, wake. Typed lifecycle and graph validator as library. | **AVAILABLE** (internal) · **PREVIEW** (typed lifecycle) |
-| 4 Cognition | Decision runtime in shadow mode, fail-closed judge | **PREVIEW** |
-| 5 Context + State | Context packs, memory services. Context compiler behind an off-by-default flag, shadow. | **AVAILABLE** (packs, internal) · **PREVIEW** (compiler) |
-| 6 Execution / Model | Tool runtimes, execution environment, egress guard. Router as library code and an internal model pool registry; nothing calls the router in production yet. | **AVAILABLE** (tools, internal) · **PREVIEW** (router, model pool) |
-| 7 Governance + Observability | Permission floor, gate in front of every CLI harness, signed receipt chain, recorded-only replay with divergence reports. No conformance suite. | **AVAILABLE** (floor, receipts; internal) · **PREVIEW** (replay, internal) |
-| 8 Product Operations | Attention gate, needs-you queue, surfaces | **AVAILABLE** |
+| 1 Experience / API | Cloud API, SDK, surfaces. Agency API contract published, endpoint not served. | **ENABLED** (existing API) · **PUBLIC PREVIEW** (Agency API; not served) |
+| 2 Agent | Primitive registry, Agent ISA enum, state schemas | **IMPLEMENTED** (contract) · **IMPLEMENTED** (runtime use) |
+| 3 Work Orchestration | Work runtime: outputs, leases, wait gates, campaigns, wake. Typed lifecycle and graph validator as library. | **ENABLED** · INTERNAL · **IMPLEMENTED** (typed lifecycle) |
+| 4 Cognition | Decision runtime in shadow mode, fail-closed judge | **SHADOW** · INTERNAL |
+| 5 Context + State | Context packs, memory services. Context compiler behind an off-by-default flag, shadow. | **ENABLED** (packs, internal) · **SHADOW** · INTERNAL |
+| 6 Execution / Model | Tool runtimes, execution environment, egress guard. Router as library code and an internal model pool registry; nothing calls the router in production yet. | **ENABLED** (tools, internal) · **IMPLEMENTED** (router, model pool) |
+| 7 Governance + Observability | Permission floor, policy gate on work-bound executor paths (converging), signed receipt chain for effect receipts, recorded-only replay with divergence reports, kernel-layer conformance suite. | **ENABLED** (floor, receipts; internal) · **IMPLEMENTED** (replay, internal) |
+| 8 Product Operations | Attention gate, needs-you queue, surfaces | **ENABLED** · INTERNAL |
 
 ## Developer relevance
 

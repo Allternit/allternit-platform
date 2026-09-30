@@ -18,7 +18,7 @@ Safety is a floor that holds even when a component misbehaves. This page lists t
 
 | Threat | Defense | State |
 |--------|---------|-------|
-| Executor bypasses policy through its own auto-approve mode | Allternit's gate in front of every executor, hook or ACP client, plus environment fence | On main (internal) |
+| Executor bypasses policy through its own auto-approve mode | Allternit policy gate on work-bound executor paths (converging), plus the recorded execution environment | Partial: work-bound paths only; env stripping opt-in |
 | SSRF through a tool | Default-deny policy, shared egress guard with private-address, redirect and rebinding checks | On main (internal) |
 | Secret leakage through inherited environment | Environment allowlist, no raw inheritance, secret references | On main (internal) |
 | Model declares itself done | Verifier-owned completion | On main for agency-origin work |
@@ -37,8 +37,8 @@ The rows marked on main are implemented and internal. They are not reachable thr
 
 | Part | Status |
 |------|--------|
-| Gate, egress guard, environment fence | **AVAILABLE (internal)** |
-| Continuous conformance testing of defenses | **PREVIEW** (kernel-level security conformance tests on main) |
+| Policy gate (work-bound executor paths, converging), egress guard (web proxy and design connector import), recorded environment (env stripping opt-in) | **ENABLED** on those paths · **INTERNAL** |
+| Continuous conformance testing of defenses | **IMPLEMENTED** (kernel-level security conformance tests on main) |
 
 ## Developer relevance
 
