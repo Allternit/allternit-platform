@@ -1,65 +1,39 @@
 ---
 title: Platform
-description: The Next.js web shell — the primary UI surface for Allternit
+description: The workspace web UI and the platform.allternit.com cloud console
 ---
 
-## Overview
+<Note>
+**Status:** Implementation IMPLEMENTED × Exposure PUBLIC for both surfaces described here.
+</Note>
 
-`allternit-platform` is the main web-based UI surface. It is a Next.js 15 application that serves as the shell for all agent interactions, workflows, and tooling. It runs on **Turbopack** in development for fast, low-memory compilation.
+## Two things called "platform"
 
-## Local Development
+| Surface | What it is | Where it lives |
+|---|---|---|
+| Workspace UI | Chat, code, cowork, design and agent views. Packaged into [Desktop](/surfaces/desktop) and served as the web app. Vite + React SPA. | Separate `allternit-ai` repository (Desktop builds it via `ALLTERNIT_AI_PATH`) |
+| Cloud console | `@allternit/platform-console`: organization management, compute, billing, API keys, docs, and the runtime pairing approval page (`/pair`) | `surfaces/platform.allternit.com` |
+
+Earlier versions of this page described a Next.js 15 app in `surfaces/allternit-platform` on port 3013 with Prisma and Drizzle. That directory no longer exists on main.
+
+## Cloud console: local development
 
 ```bash
-cd surfaces/allternit-platform
-pnpm dev        # starts on http://localhost:3013 (Turbopack)
-pnpm dev:clean  # clears .next cache first, then starts
+cd surfaces/platform.allternit.com
+cp .env.local.example .env.local   # add your Clerk publishable key
+pnpm install
+pnpm dev                           # vite --port 3016 --strictPort
 ```
 
-## Features
+The dev server runs on `http://localhost:3016`. `pnpm build` runs a Vite build and `scripts/postbuild.mjs`.
 
-<CardGroup cols={2}>
-  <Card title="Chat View" icon="message-square">
-    Full agent chat with streaming, tool calls, and thought traces
-  </Card>
-  <Card title="Code View" icon="code">
-    Integrated code editor with agent-assisted coding sessions
-  </Card>
-  <Card title="Workspace (Cowork)" icon="layout">
-    Multi-agent collaborative workspace with task management
-  </Card>
-  <Card title="Design View" icon="pen-tool">
-    Visual design surface powered by agents
-  </Card>
-  <Card title="Agent Hub" icon="cpu">
-    Create, configure, and manage agents via the wizard
-  </Card>
-  <Card title="MCP Integration" icon="plug">
-    Model Context Protocol server management and tool discovery
-  </Card>
-</CardGroup>
+## Workspace UI: what it does
 
-## Tech Stack
+- Streaming agent chat with tool calls
+- Code sessions, cowork teams, design view
+- Agent creation and management ([Agents API](/api/agents))
+- MCP server management ([MCP](/tools/mcp))
 
-| Layer | Technology |
-|---|---|
-| Framework | Next.js 15 (App Router) |
-| Bundler (dev) | Turbopack |
-| Auth | Clerk (with stub fallback) |
-| Database | SQLite via Prisma + Drizzle |
-| State | Zustand |
-| AI SDK | AI SDK (`ai` package) |
+## How this relates to the Agency Kernel
 
-## Environment
-
-Requires a `.env.local` file in `surfaces/allternit-platform/`:
-
-```env
-DATABASE_URL=file:./dev.db
-# Optional: Clerk auth keys
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=...
-CLERK_SECRET_KEY=...
-```
-
-## Port
-
-Always runs on **port 3013**. The Electron desktop app loads this URL when the platform server is running.
+Neither surface is part of the [Agency Kernel](/architecture). Both call the Cloud API and Allternit API documented under [API](/api/overview).
