@@ -1,0 +1,30 @@
+<!doctype html>
+<!-- fixture: idle — logged in, new chat, composer ready (kimi-web v1 shape, unverified) -->
+<html lang="en">
+  <head><meta charset="utf-8"><title>kimi-web fixture — idle</title></head>
+  <body data-state="idle">
+    <aside class="sidebar">
+      <div class="sidebar-footer"><div class="user-info"><img class="avatar" alt="" /><span>Eoj</span></div></div>
+    </aside>
+    <main>
+      <div id="thread"></div>
+      <div class="current-model">K2.6</div>
+      <div class="chat-input-editor" role="textbox" aria-label="Ask Anything..." contenteditable="true"></div>
+      <div class="send-button-container"><button class="send-button" type="button" aria-label="Send">➤</button></div>
+    </main>
+    <script>
+      document.querySelector(".send-button").addEventListener("click", () => {
+        const input = document.querySelector(".chat-input-editor");
+        const prompt = input.textContent;
+        document.body.dataset.submitted = "true";
+        // Like Kimi: Send clears the composer and shows the user turn.
+        input.textContent = "";
+        const turn = document.createElement("div");
+        turn.className = "segment segment-user";
+        turn.innerHTML = "<div class=\"segment-content\"></div>";
+        turn.firstChild.textContent = prompt;
+        document.getElementById("thread").appendChild(turn);
+      });
+    </script>
+  </body>
+</html>
