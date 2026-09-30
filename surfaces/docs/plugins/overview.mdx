@@ -22,7 +22,7 @@ The UI layer is the open [MCP Apps](https://github.com/modelcontextprotocol/ext-
 Allternit adds a small set of optional extensions under the `x-allternit/*` prefix (saving an artifact, dispatching an agent, and so on). They are feature-detected: a View that uses them keeps working in other hosts, with those features turned off. See [window.allternit extensions](/plugins/reference/window-allternit).
 
 <Note>
-Views that use only the standard bridge run in Allternit without changes. Views that call ChatGPT-specific APIs such as `window.openai` need a small port. See [Porting from ChatGPT or Claude](/plugins/guides/porting).
+Views that use only the standard bridge run in Allternit without changes. Views that call host-specific globals need a small port. See [Porting from other hosts](/plugins/guides/porting).
 </Note>
 
 ## How the pieces fit

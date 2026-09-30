@@ -3,7 +3,7 @@ title: 'window.allternit extensions'
 description: 'Reference for the optional x-allternit/* methods and the window.allternit shim'
 ---
 
-The MCP Apps standard covers rendering, theming, tool calls, and messages. Allternit adds a small set of optional methods for things the standard does not cover. They follow the same idea as ChatGPT's `window.openai`: a View that uses only the standard runs everywhere, and a View that wants more **feature-detects** and degrades when the extension is absent.
+The MCP Apps standard covers rendering, theming, tool calls, and messages. Allternit adds a small set of optional methods for things the standard does not cover. They follow the usual pattern for host extensions: a View that uses only the standard runs everywhere, and a View that wants more **feature-detects** and degrades when the extension is absent.
 
 - **Transport.** The standard View to host JSON-RPC bridge, with methods prefixed `x-allternit/`.
 - **Confirmation.** Methods that save data or start work show a prompt drawn by the host over the View. The View cannot draw, skip, or answer it.

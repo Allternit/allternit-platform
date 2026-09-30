@@ -17,7 +17,7 @@ registerAppTool(server, "show_weather", {
 }, handler);
 ```
 
-Allternit also reads the older flat keys `_meta["ui/resourceUri"]` and `_meta["openai/outputTemplate"]`, so a server written for another host is found without changes. `registerAppTool` from `@modelcontextprotocol/ext-apps/server` writes both `ui.resourceUri` and `ui/resourceUri`.
+Allternit also reads the older flat key `_meta["ui/resourceUri"]` and the output-template key some hosts use (see [Porting](/plugins/guides/porting)), so a server written for another host is found without changes. `registerAppTool` from `@modelcontextprotocol/ext-apps/server` writes both `ui.resourceUri` and `ui/resourceUri`.
 
 Serve the resource with:
 
