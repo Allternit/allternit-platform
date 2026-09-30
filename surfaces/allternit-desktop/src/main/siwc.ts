@@ -31,6 +31,9 @@ import { constantTimeEqual, generatePkce, generateState } from './mini-app-oauth
 
 // ─── Documented constants ─────────────────────────────────────────────────────
 
+/** Plain fetch signature (Bun's `typeof fetch` also carries `preconnect`). */
+export type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
 export const SIWC_FLAG = 'feature.siwc';
 export const SIWC_ISSUER = 'https://auth.openai.com';
 export const SIWC_AUTHORIZE_URL = `${SIWC_ISSUER}/api/accounts/authorize`;
@@ -68,7 +71,7 @@ export interface SiwcHost {
   writeSecret(key: string, value: string): void;
   deleteSecret(key: string): void;
   openExternal(url: string): void | Promise<void>;
-  fetch?: typeof fetch;
+  fetch?: FetchFn;
   now?: () => number;
   /** Backoff between revocation retries (tests pass 0). */
   retryDelayMs?: number;
@@ -273,7 +276,7 @@ export interface SiwcManager {
 }
 
 export function createSiwcManager(host: SiwcHost): SiwcManager {
-  const doFetch: typeof fetch = host.fetch ?? ((...a) => fetch(...a));
+  const doFetch: FetchFn = host.fetch ?? ((input, init) => fetch(input, init));
   const now = host.now ?? Date.now;
   const log = (m: string) => host.logger?.(`[siwc] ${m}`);
   const listeners = new Set<(s: SiwcStatus) => void>();
