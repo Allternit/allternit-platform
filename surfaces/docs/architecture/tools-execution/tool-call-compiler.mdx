@@ -3,7 +3,7 @@ title: "Tool Call Compiler"
 description: "Turning intent into a validated, authorized tool invocation without free-form generation where it is not needed"
 ---
 
-**Status: DESIGN — NOT YET IMPLEMENTED (draft behind an off-by-default flag).** See [status labels](/architecture#status-labels).
+**Status: PREVIEW (on main behind an off-by-default flag, shadow).** See [status labels](/architecture#status-labels).
 
 The compiler narrows a decision to one concrete, checkable call. Free generation is used only for values that cannot be derived.
 
@@ -17,15 +17,15 @@ Why: a call whose arguments come from a model's prose cannot be validated or rep
 
 ## Current implementation
 
-Not on main. The invocation and receipt schemas are frozen. The compiler (WP9) exists as a draft branch behind a flag that is off by default.
+On main behind a flag that is off by default. The invocation and receipt schemas are frozen. With the flag on, the compiler runs in shadow: it records argument provenance, tiered disclosure and tool receipts alongside the existing path without changing it.
 
 ## Availability
 
 | Part | Status |
 |------|--------|
 | ToolInvocationV1 and ToolReceiptV1 | **AVAILABLE (contract)** |
-| Compiler | **DESIGN — NOT YET IMPLEMENTED** |
-| Tiered disclosure | **DESIGN — NOT YET IMPLEMENTED** |
+| Compiler | **PREVIEW** (flag off by default, shadow) |
+| Tiered disclosure | **PREVIEW** (inside the flagged compiler) |
 
 ## Developer relevance
 

@@ -3,7 +3,7 @@ title: "Routing: the router, the model pool and M0–M6"
 description: "How a capability request becomes an execution plan, and why model identity is evidence rather than workflow"
 ---
 
-**Status: DESIGN — NOT YET IMPLEMENTED (Cognitive Execution Router, model pool) · RESEARCH (cross-model KV state transfer).** See [status labels](/architecture#status-labels).
+**Status: PREVIEW (Cognitive Execution Router as library code, model pool registry served internally; nothing calls the router in production yet) · RESEARCH (cross-model KV state transfer).** See [status labels](/architecture#status-labels).
 
 A graph node asks for a capability. The **Cognitive Execution Router** decides how to provide it: which execution mode, which component, with which context and fallbacks. The **model pool** keeps components loaded and ready.
 
@@ -50,15 +50,15 @@ Why: choosing the component per step, from measured capability, lets the system 
 
 ## Current implementation
 
-None of the router or model pool is on main. Model calls today go through the [Gizzi runtime](/core/gizzi-runtime) and its provider configuration. The [decision runtime](/architecture/cognitive-runtime/decision-runtime) has its own small internal router for decision requests, which is not this component.
+The Cognitive Execution Router is on main as library code in the work runtime. It turns a graph node into an execution plan: legal modes for the node's role, policy, trust and locality filters before any scoring, a fail-closed budget check, then cheapest-correct-mode-first ordering with a fallback chain. S1 is refused unless the model pool entry carries a gate-passing calibration manifest, and it stays shadow by default. The model pool is a capability and residency registry served internally by the runtime; backend identity is opaque in plans. **Nothing calls the router in production yet**: model calls today still go through the [Gizzi runtime](/core/gizzi-runtime) and its provider configuration. The [decision runtime](/architecture/cognitive-runtime/decision-runtime) has its own small internal router for decision requests, which is not this component.
 
 ## Availability
 
 | Part | Status |
 |------|--------|
 | Capability request, execution plan, model capability profile and pool entry schemas | **AVAILABLE** (contract) |
-| Cognitive Execution Router | **DESIGN — NOT YET IMPLEMENTED** |
-| Model pool | **DESIGN — NOT YET IMPLEMENTED** |
+| Cognitive Execution Router | **PREVIEW** (library on main; nothing calls it in production yet) |
+| Model pool | **PREVIEW** (capability and residency registry served internally by the runtime) |
 | Native cache reuse and semantic rebuild | **DESIGN — NOT YET IMPLEMENTED** |
 | Cross-model KV translation | **RESEARCH** |
 

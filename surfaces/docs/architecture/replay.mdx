@@ -3,7 +3,7 @@ title: Replay
 description: Re-running a finished run from its recording with recorded effects only, and the divergence report
 ---
 
-**Status: DESIGN — NOT YET IMPLEMENTED.** See [status labels](/architecture#status-labels).
+**Status: PREVIEW (internal: cassette recording, recorded-only replay, divergence reports, gate replay mode) · Agency API replay endpoints not served.** See [status labels](/architecture#status-labels).
 
 Replay answers one question: given the same recorded world, does the system make the same decisions? It is how a change to the system is tested against real past runs without touching the outside world.
 
@@ -30,16 +30,16 @@ Replay is on the critical path for the Agency API alpha: the API does not open u
 
 ## Current implementation
 
-Replay and cassette recording are designed and specified (`CassetteV1`, `DivergenceReportV1` in the kernel ABI, and the replay endpoints in the Agency API v0.3 contract). No implementation exists yet. Replay is on the critical path for the Agency API alpha.
+Replay is on main, internal only. A cassette is recorded from a finished run's receipt chain. Replay runs in recorded-only mode and produces a `DivergenceReportV1`. The gate has a replay mode: tool results and policy decisions are served from the recording, and any attempt to execute live is denied on every gate path. The internal work runtime service accepts `POST /v1/replays` and enforces `effects: recorded_only`, and an operator command records and checks replays. None of this is reachable through `https://api.allternit.com` yet. Replay remains on the critical path for the Agency API alpha, which also needs the public endpoint.
 
 ## Availability
 
 | Part | Status | Notes |
 |------|--------|-------|
 | Replay contracts (`CassetteV1`, `DivergenceReportV1`) | **AVAILABLE** | Kernel ABI 1.0.0; specification only. |
-| Cassette recording | **DESIGN — NOT YET IMPLEMENTED** |  |
-| Replay execution and divergence reports | **DESIGN — NOT YET IMPLEMENTED** |  |
-| Agency API replay endpoints | **PREVIEW** | Contract only. |
+| Cassette recording | **PREVIEW** | Internal. Recorded from the receipt chain. |
+| Replay execution and divergence reports | **PREVIEW** | Internal. Recorded-only; the gate denies live execution in replay mode. |
+| Agency API replay endpoints | **PREVIEW** (contract) · **DESIGN — NOT YET IMPLEMENTED** (public server) | Not served through `https://api.allternit.com`. |
 
 ## Developer relevance
 

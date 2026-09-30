@@ -9,7 +9,7 @@ description: 'Re-run a finished run from its recording, with recorded effects on
 
 A **replay** re-runs a finished run at the decision and tool boundary, using the run's trace, receipts and recording (its cassette). It answers whether the system makes the same decisions given the same recorded world. For the concepts see [Replay](/architecture/replay).
 
-Replay and cassette recording are not built yet. Replay is one of the five conditions of the alpha gate: a run must survive restart, resume, verify, replay and receipt-backed completion before alpha opens.
+The replay engine is on main inside the kernel (internal only: cassette recording from the receipt chain, recorded-only replay and divergence reports), but this public endpoint is not served. Replay is one of the five conditions of the alpha gate: a run must survive restart, resume, verify, replay and receipt-backed completion before alpha opens.
 
 ## Replays never cause effects
 

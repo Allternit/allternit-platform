@@ -3,7 +3,7 @@ title: "Tools and execution"
 description: "The agent instruction set, how tools are called, and where every effect is fenced"
 ---
 
-**Status: AVAILABLE (execution environment, egress guard, effect receipts; internal) · DESIGN — NOT YET IMPLEMENTED (Tool Call Compiler).** See [status labels](/architecture#status-labels).
+**Status: AVAILABLE (execution environment, egress guard, effect receipts; internal) · PREVIEW (Tool Call Compiler, flag off by default, shadow).** See [status labels](/architecture#status-labels).
 
 Tools are how a run changes the world. The kernel treats every tool call as a typed, authorized, receipted effect, not as text a model emits.
 
@@ -19,7 +19,7 @@ Tool family, operation, candidate arguments, schema validation, policy validatio
 
 ## Current implementation
 
-On main, every spawned node has an execution environment recorded in the ledger, network egress goes through one shared guard, and effects leave signed receipts in an internal receipt chain. The typed Tool Call Compiler is in draft behind an off-by-default flag and is not on main.
+On main, every spawned node has an execution environment recorded in the ledger, network egress goes through one shared guard, and effects leave signed receipts in an internal receipt chain. The typed Tool Call Compiler is on main behind a flag that is off by default, and runs in shadow when enabled.
 
 ## Availability
 
@@ -28,7 +28,7 @@ On main, every spawned node has an execution environment recorded in the ledger,
 | ISA groups and primitive registry | **AVAILABLE (contract)** |
 | Per-node ExecutionEnvironment, shared egress guard | **AVAILABLE (internal)** |
 | Effect receipts | **AVAILABLE (internal; not reachable through api.allternit.com)** |
-| Tool Call Compiler | **DESIGN — NOT YET IMPLEMENTED** |
+| Tool Call Compiler | **PREVIEW** (flag off by default, shadow) |
 
 ## Developer relevance
 

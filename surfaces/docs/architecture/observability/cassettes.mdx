@@ -3,7 +3,7 @@ title: "Cassettes"
 description: "Recording a run at the decision and tool boundary so it can be replayed"
 ---
 
-**Status: DESIGN — NOT YET IMPLEMENTED.** See [status labels](/architecture#status-labels).
+**Status: PREVIEW (internal; not exposed through api.allternit.com).** See [status labels](/architecture#status-labels).
 
 A cassette is a content-addressed recording of the results a run received from the outside world, so replay can substitute them for live effects.
 
@@ -15,14 +15,14 @@ Why: replay turns every real run into a regression test and gives the router evi
 
 ## Current implementation
 
-Not on main. The cassette and divergence schemas are frozen. Recording and replay (WP5) are not implemented.
+On main, internal only. Cassettes are recorded from a run's receipt chain; replay runs in recorded-only mode and produces a divergence report; the gate has a replay mode that serves recorded results and denies live execution; and the internal work runtime service accepts `POST /v1/replays`. None of this is reachable through `https://api.allternit.com` yet.
 
 ## Availability
 
 | Part | Status |
 |------|--------|
 | Cassette schema | **AVAILABLE (contract)** |
-| Recording and replay | **DESIGN — NOT YET IMPLEMENTED** |
+| Recording and replay | **PREVIEW** (internal) |
 
 ## Developer relevance
 
