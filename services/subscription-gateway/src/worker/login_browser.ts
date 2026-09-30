@@ -24,6 +24,10 @@ export function firefoxProfileFor(userDataDir: string): string {
 }
 
 export interface LoginBrowser {
+  /** The profile the login browser signs in on, for an account's Chrome user-data dir. */
+  profileFor(userDataDir: string): string;
+  /** That profile's cookies (for sign-in detection). */
+  readCookies(profile: string): ImportableCookie[];
   open(accountId: string, userDataDir: string, url: string): Promise<void>;
   isOpen(accountId: string): boolean;
   // Graceful close so Firefox flushes cookies.sqlite; no-op when not open.
@@ -52,6 +56,8 @@ export function createFirefoxLoginBrowser(opts: FirefoxLoginBrowserOptions): Log
   const open = new Map<string, ChildProcess>();
 
   return {
+    profileFor: firefoxProfileFor,
+    readCookies: (profile) => readFirefoxCookies(profile),
     async open(accountId, userDataDir, url) {
       if (open.has(accountId)) return;
       const profile = firefoxProfileFor(userDataDir);
@@ -82,6 +88,126 @@ export function createFirefoxLoginBrowser(opts: FirefoxLoginBrowserOptions): Log
       open.delete(accountId);
     },
   };
+}
+
+// Login in a plain Google Chrome window — no automation flags, no DevTools
+// port — on the account's own Chrome user-data dir, the one the adapter's
+// automated Chrome uses. Google sign-in and Cloudflare see an ordinary
+// Chrome, and nothing is copied afterwards: the adapter relaunches on the
+// same profile. --password-store=basic matches Playwright's launch so both
+// read the same cookie encryption.
+export interface ChromeLoginBrowserOptions {
+  executable: string;
+  spawnFn?: typeof spawn;
+  closeTimeoutMs?: number;
+}
+
+export function createChromeLoginBrowser(opts: ChromeLoginBrowserOptions): LoginBrowser {
+  const spawnFn = opts.spawnFn ?? spawn;
+  const closeTimeoutMs = opts.closeTimeoutMs ?? 15000;
+  const open = new Map<string, ChildProcess>();
+
+  return {
+    profileFor: (userDataDir) => userDataDir,
+    readCookies: (profile) => readChromeCookies(profile),
+    async open(accountId, userDataDir, url) {
+      if (open.has(accountId)) return;
+      mkdirSync(userDataDir, { recursive: true, mode: 0o700 });
+      // A killed Chrome leaves its singleton lock behind; the adapter's
+      // Chrome is already closed for this account.
+      for (const lock of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
+        rmSync(join(userDataDir, lock), { force: true });
+      }
+      const child = spawnFn(
+        opts.executable,
+        [
+          `--user-data-dir=${userDataDir}`,
+          "--password-store=basic",
+          "--no-first-run",
+          "--no-default-browser-check",
+          "--hide-crash-restore-bubble",
+          "--new-window",
+          url,
+        ],
+        { stdio: "ignore", env: process.env }
+      );
+      child.once("exit", () => open.delete(accountId));
+      open.set(accountId, child);
+    },
+    isOpen(accountId) {
+      return open.has(accountId);
+    },
+    async close(accountId) {
+      const child = open.get(accountId);
+      if (!child) return;
+      // SIGTERM: Chrome shuts down cleanly and flushes its cookie store.
+      const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+      child.kill("SIGTERM");
+      const timer = new Promise<"timeout">((r) => setTimeout(() => r("timeout"), closeTimeoutMs));
+      if ((await Promise.race([exited, timer])) === "timeout") {
+        child.kill("SIGKILL");
+        await exited;
+      }
+      open.delete(accountId);
+    },
+  };
+}
+
+// Chrome's cookies for sign-in detection only (a copy, so the live database
+// is never touched). Values are encrypted on disk; `value` is the encrypted
+// blob in hex — it changes when the cookie changes, which is all the login
+// watcher compares. Never logged, never imported anywhere.
+export function readChromeCookies(userDataDir: string, nowS = Date.now() / 1000): ImportableCookie[] {
+  const src = [join(userDataDir, "Default", "Network", "Cookies"), join(userDataDir, "Default", "Cookies")].find(
+    (p) => existsSync(p)
+  );
+  if (!src) return [];
+  const tmp = mkdtempSync(join(tmpdir(), "chck-"));
+  try {
+    const dst = join(tmp, "Cookies");
+    copyFileSync(src, dst);
+    for (const ext of ["-wal", "-journal"]) {
+      if (existsSync(src + ext)) copyFileSync(src + ext, dst + ext);
+    }
+    const db = new Database(dst, { readonly: true });
+    try {
+      const rows = db
+        .prepare(
+          "SELECT name, value, encrypted_value, host_key, path, expires_utc, is_secure, is_httponly FROM cookies"
+        )
+        .all() as Array<{
+        name: string;
+        value: string;
+        encrypted_value: Buffer | null;
+        host_key: string;
+        path: string;
+        expires_utc: number;
+        is_secure: number;
+        is_httponly: number;
+      }>;
+      const out: ImportableCookie[] = [];
+      for (const r of rows) {
+        // Chrome time: microseconds since 1601-01-01; 0 = session cookie.
+        const expires = Number(r.expires_utc) > 0 ? Number(r.expires_utc) / 1e6 - 11644473600 : -1;
+        if (expires > 0 && expires <= nowS) continue;
+        out.push({
+          name: r.name,
+          value: r.value || (r.encrypted_value ? Buffer.from(r.encrypted_value).toString("hex") : ""),
+          domain: r.host_key,
+          path: r.path || "/",
+          expires,
+          secure: r.is_secure === 1,
+          httpOnly: r.is_httponly === 1,
+          sameSite: "Lax",
+        });
+      }
+      return out;
+    } finally {
+      db.close();
+    }
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 export interface ImportableCookie {
