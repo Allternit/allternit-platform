@@ -10,13 +10,13 @@ The Orchestrator API is a stateless passthrough to the canonical Gizzi orchestra
 ## Base URL
 
 ```text
-https://api.allternit.com/api/orchestrator
+https://api.allternit.com/api/v1/orchestrator
 ```
 
 For local development:
 
 ```text
-http://127.0.0.1:8013/api/orchestrator
+http://127.0.0.1:8013/api/v1/orchestrator
 ```
 
 The upstream target is the configured terminal server at `/v1/orchestrator`.
@@ -35,7 +35,7 @@ All requests require a valid bearer token in the `Authorization` header. The pla
 ## Proxy example
 
 ```bash
-curl -X GET https://api.allternit.com/api/orchestrator/status \
+curl -X GET https://api.allternit.com/api/v1/orchestrator/status \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -50,7 +50,7 @@ https://terminal-server.internal/v1/orchestrator/status
 If the upstream returns `text/event-stream`, the platform proxies the byte stream without buffering and sets the appropriate SSE headers:
 
 ```bash
-curl -N https://api.allternit.com/api/orchestrator/sessions/sess_123/events \
+curl -N https://api.allternit.com/api/v1/orchestrator/sessions/sess_123/events \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -59,7 +59,7 @@ curl -N https://api.allternit.com/api/orchestrator/sessions/sess_123/events \
 JSON bodies are forwarded verbatim:
 
 ```bash
-curl -X POST https://api.allternit.com/api/orchestrator/execute \
+curl -X POST https://api.allternit.com/api/v1/orchestrator/execute \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

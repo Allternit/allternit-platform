@@ -45,6 +45,11 @@ curl https://api.allternit.com/api/local-engine/health \
 |--------|------|-------------|
 | `GET` | `/api/local-engine/health` | Controller health check. |
 | `GET` | `/api/local-engine/status` | Host diagnostics and engine state. |
+| `GET` | `/api/local-engine/catalog` | Model catalog. |
+| `POST` | `/api/local-engine/catalog/refresh` | Refresh the catalog. |
+| `POST` | `/api/local-engine/assess` | Assess whether this host can run a model. |
+| `POST` | `/api/local-engine/assess/batch` | Assess several models at once. |
+| `POST` | `/api/local-engine/recommend` | Recommend models for this host. |
 | `GET` | `/api/local-engine/models` | List cached/downloaded models. |
 | `POST` | `/api/local-engine/models/import` | Import a model from a local directory. |
 | `POST` | `/api/local-engine/models/download` | Queue a Hugging Face model download. |
