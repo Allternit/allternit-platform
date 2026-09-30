@@ -1,95 +1,176 @@
 ---
-title: Architecture
-description: Understanding the One Brain, Many Faces model
+title: Living Agent Architecture
+description: How Allternit builds the agent as a system, what each part owns, and what is live today
 ---
 
-## Overview
+## The invariant
 
-The Allternit platform follows a unique architectural pattern that separates the core intelligence (Brain) from the user interfaces (Faces) while maintaining a unified communication layer (Nervous System).
+Allternit does not use a model to simulate an agent. Allternit implements the agent as a system and uses models as interchangeable cognitive components.
 
-## The Brain (Gizzi)
+In practice this means the parts of an agent that must be dependable are owned by the system, not by a model:
 
-Gizzi is the central orchestration engine responsible for:
+- **State** lives in typed, versioned records, not in a transcript.
+- **Authority** comes from explicit, scoped grants checked by policy, not from a prompt.
+- **Lifecycle** (start, wait, resume, cancel, finish) is driven by a work runtime, not by a model loop.
+- **Completion** is decided by the system from verification evidence, not by a model saying it is done.
 
-- **Agent lifecycle management** - Creating, running, and terminating agents
-- **Code execution and sandboxing** - Secure environment for agent code
-- **Model interaction** - Prompt engineering and LLM communication
-- **State management** - Persistence and memory for agents
-- **Event coordination** - Message routing between agents
+There is a test for this. If swapping one model for another changes the agent loop, the state model, tool authority, completion semantics or the workflow graph, the implementation does not conform to the architecture.
 
-```typescript
-import { GizziRuntime } from '@allternit/core';
+<Note>
+This page describes both the design and the current state of the build. Each section says which is which, and the [status table](#what-is-live-today) at the end lists what runs today and what does not.
+</Note>
 
-const runtime = new GizziRuntime({
-  model: 'gizzi-pro',
-  sandbox: true,
-  memory: 'persistent',
-});
+## Two machines
 
-await runtime.initialize();
+The agent is two machines that share a policy layer and a compute fabric.
+
+| Machine | What it does | Main parts |
+|---------|--------------|------------|
+| **Cognitive Machine** | Decides and produces. Picks the cheapest correct form of inference for each step. | S0–S3 cognition levels, decision runtime, context compiler, Cognitive Execution Router, model pool, verification |
+| **Work Machine** | Makes work durable. Carries a run across time, processes and restarts. | Compute graph lifecycle, node outputs and receipts, leases and heartbeats, admission and spawn caps, wait gates, campaigns, wake and attention |
+
+Both run on top of policy (what is allowed) and the fabric (where compute runs). A model is one component inside the Cognitive Machine. It is not the agent.
+
+## Request path
+
+This is the designed path of one request through the system. The Agency API entry point and the router are not built yet; see [what is live today](#what-is-live-today).
+
+```mermaid
+flowchart TD
+    A[Agency request: goal] --> B[Compiler: normalize, authenticate, idempotency]
+    B --> C[Task + agent state]
+    C --> D[Compute graph]
+    D --> E[Work runtime: admission, leases, wait gates, campaigns]
+    E --> F[Cognitive Execution Router]
+    F --> G1[Deterministic code]
+    F --> G2[Decisions]
+    F --> G3[Models]
+    F --> G4[Tools]
+    G1 --> H[Verification + policy]
+    G2 --> H
+    G3 --> H
+    G4 --> H
+    H --> I[Receipts]
+    I --> J[Durable run]
+    J --> K[Events, artifacts, final output]
+    H -. continue or replan .-> E
 ```
 
-## The Faces (Surfaces)
+A caller sends a goal. The compiler turns it into explicit internal contracts: a task, an agent state record and a compute graph. The work runtime admits and leases each graph node. The router picks how each node is executed. Every result is verified and checked against policy, and every effect, input and verdict is written as a receipt. The run is durable the whole way through, and callers observe it as typed events.
 
-Surfaces are the user-facing interfaces that interact with the Brain:
+## The eight planes
+
+Each responsibility in the system has one owner. The architecture groups owners into eight planes.
+
+| # | Plane | Owns |
+|---|-------|------|
+| 1 | Experience / API | The single external agent identity, API and SDK surface, event streams, artifacts. The [Agency API](/api/agency/overview) lives here. |
+| 2 | Agent | The task record, agent state, the agent instruction set and capability semantics. |
+| 3 | Work Orchestration | The compute graph, node lifecycle, node outputs, leases, heartbeat and reclaim, admission, campaigns, wait and wake, idempotency, replay hooks. |
+| 4 | Cognition | The S0–S3 levels, the decision runtime, the judge runtime and verification cognition. |
+| 5 | Context + State | The context compiler, chunk store, memory, and cognitive state. |
+| 6 | Execution / Model | The Cognitive Execution Router, the model pool, tool runtimes and fabric placement. |
+| 7 | Governance + Observability | Policy, receipts, replay, evaluations, provenance and budgets. |
+| 8 | Product Operations | Attention, human approvals, channels, remote control, quiet hours and caps, pause, resume and kill, the needs-you queue, audit views. This plane is not a second agent runtime. |
+
+## Cognition levels S0–S3
+
+Each graph node is assigned one cognition level. The levels are roles within one agent, not separate agents.
+
+| Level | What it is | Output | Limits |
+|-------|-----------|--------|--------|
+| **S0** | Exact deterministic computation, policy checks and tool execution | A typed fact or a receipt | None beyond the code itself |
+| **S1** | A bounded probabilistic decision over known candidates | A decision with a confidence | Owns no authority, no free-form reasoning, no durable state and no side effects |
+| **S2** | Bounded generation | A candidate artifact | Output is a candidate, never truth, until verified |
+| **S3** | Deep escalation: a larger solver, an ensemble, a specialist or a human | A candidate or an answer | Selected by policy and routing, never by a weaker model judging itself. A human route always goes through an attention request |
+
+The rule for choosing is to pick the cheapest correct form of inference before picking a model:
+
+1. Deterministic code, when the answer can be computed (S0).
+2. Candidate scoring, when every legal answer is known in advance (S1).
+3. Structured decoding, when the shape is known but the values are not (S2 with a grammar).
+4. Free generation, when none of the above fit (S2 or S3).
+
+Every transition records its evidence, state version, capability, confidence and verification status.
+
+## Design laws
+
+| # | Law | Plain meaning |
+|---|-----|---------------|
+| 1 | No implicit agency | Nothing acts unless an explicit contract (a graph node, a grant) says it may. There is no free-form loop. |
+| 2 | State before prose | Truth is typed state. Text a model wrote is not the record. |
+| 3 | Select before generate | If the legal answers are known, choose among them instead of generating text. |
+| 4 | Candidate, not truth | Model output is a candidate until a verifier passes it. |
+| 5 | One external identity | Callers see one logical agent. Which internal components ran is execution evidence, shown only in receipts and debug views. |
+| 6 | Contracts, never model names | Contracts name capabilities, classes, locality and trust. No contract names a model or vendor. |
+| 7 | Policy outranks probability | A hard policy deny is never overridden by a probabilistic judgment. |
+| 8 | Graceful degradation | When a component is missing or slow, the system falls back to a safer path instead of failing open. |
+| 9 | Measure system lift | Evaluate the whole system on the task, not a model in isolation. |
+| 10 | Hardware independence | The contracts do not assume a particular machine size or accelerator. |
+
+Four further rules follow from these and are covered on their own pages:
+
+- Models cannot own permission, lifecycle, completion, durable truth or policy. See [Policy and safety](/core/policy-and-safety).
+- Completion is owned by the verifier and the system. See [Runs and completion](/core/runs-and-completion).
+- Effectful retries need idempotency keys and receipts. Run state survives model eviction, cache loss, executor death and process restart. See [Receipts and replay](/core/receipts-and-replay).
+- The contracts between all of these parts are frozen and versioned. See [Kernel contracts](/core/kernel-contracts).
+
+## How today's pieces map
+
+The architecture is a target that the existing product is being moved onto. These are the parts you can use now and where they sit.
+
+| Piece | Role in the architecture | Docs |
+|-------|--------------------------|------|
+| **Gizzi Code** | The agent runtime and CLI. It executes work: sessions, tools, sandboxing, model calls. | [Gizzi runtime](/core/gizzi-runtime), [CLI](/cli/overview) |
+| **CommRails** | The work runtime (Work Orchestration plane). It carries work as a graph of nodes with outputs, wait gates, leases and campaigns. | [CommRails](/core/commrails) |
+| **Permission floor** | The start of the Governance plane. Hard policy runs first and no executor's native bypass mode is honored. | [Policy and safety](/core/policy-and-safety) |
+| **Kernel ABI 1.0.0** | The frozen contract package that every plane is built against. | [Kernel contracts](/core/kernel-contracts) |
+| **Surfaces** | The Experience plane today: desktop, web, mobile, extensions. | [Desktop](/surfaces/desktop), [Platform](/surfaces/platform) |
+
+### One Brain, Many Faces
+
+Earlier docs described Allternit as "One Brain, Many Faces". That description still holds and maps onto the planes above.
+
+- **The Brain (Gizzi)** is the runtime that manages agent lifecycle, code execution and sandboxing, model interaction, state and event coordination. In the architecture it spans the Agent, Cognition and Execution planes.
+- **The Faces (Surfaces)** are the user-facing interfaces. They belong to the Experience plane and hold no agent logic of their own.
+- **The Nervous System (SDK and communication layer)** connects surfaces to the runtime. See the [TypeScript SDK](/sdk/typescript), [Communication](/core/communication) and [Git DAG](/core/git-dag).
 
 <CardGroup cols={3}>
   <Card title="Desktop App" icon="desktop" href="/surfaces/desktop">
-    Packaged Electron app — loads the platform, manages local VMs, global hotkeys
+    Packaged Electron app. Loads the platform, manages local VMs and global hotkeys.
   </Card>
   <Card title="Platform" icon="browser" href="/surfaces/platform">
-    Next.js 15 web shell — chat, code, workspace, design, and Agent Hub
+    Web shell for chat, code, workspace, design and Agent Hub.
   </Card>
   <Card title="Extensions" icon="puzzle" href="/surfaces/extensions">
-    Chrome extension for browser automation + Office add-ins for Excel/Word/PowerPoint
+    Browser extension for browser automation, plus Office add-ins.
   </Card>
 </CardGroup>
 
-## The Nervous System (SDK)
+## What is live today
 
-The SDK provides a unified interface for all surfaces to communicate with the Brain:
+| Part | Status | Notes |
+|------|--------|-------|
+| Gizzi Code runtime and CLI | Live | See [CLI overview](/cli/overview). |
+| CommRails work runtime: node outputs | Live | Outputs are first-class and consumed by reference. |
+| CommRails wait gates | Live | Manual and timer gates on graph nodes. |
+| CommRails leases and reclaim | Live | Heartbeat plus reclaim of stale leases. |
+| Campaigns | Live in the work runtime | Scheduled autonomous waking through the Agency API stays off until an explicit go-live. |
+| Attention gate | Live | Agents request attention; they do not notify people directly. |
+| Fail-closed judge | Live, opt-in | The judge and verifier-owned close are opt-in for internal flows today. They will be always on for Agency API runs. |
+| Permission floor | Live | Hard policy before probabilistic judgment; no bypass through an executor's native mode. |
+| Kernel ABI 1.0.0 contracts | Frozen | Schemas, registry and schema conformance tests are in the repository. |
+| Cognitive Execution Router | Not built | Designed; no implementation yet. |
+| Replay and cassette recording | Not built | Designed; no implementation yet. |
+| Agency API (`/v1/agency`) | Not built | The v0.3 contract is published as a [preview reference](/api/agency/overview). |
+| Signed receipt chain | Not built | Receipts exist as hashes today. The per-run chain and signatures are designed, not implemented. |
+| Runtime conformance suite | Not built | Only the contract-level schema tests exist. |
 
-```typescript
-import { AllternitClient } from '@allternit/sdk';
-
-const client = new AllternitClient({
-  endpoint: 'https://api.allternit.com',
-  token: process.env.ALLTERNIT_TOKEN,
-});
-
-// Start an agent
-await client.agents.run({
-  agentId: 'my-agent',
-  input: 'Hello, world!',
-});
-```
-
-## Communication Layer
-
-The **ac (Agent Communication)** protocol is Allternit's inter-agent messaging layer. It provides:
-
-- **Message Board** - Persistent, ordered message log per channel
-- **Git DAG** - Cryptographically auditable lineage for every message
-- **API Keys** - Per-agent scoped keys with rate limiting
-
-```typescript
-import { AcClient } from '@allternit/ac';
-
-const ac = new AcClient({ apiKey: process.env.AC_API_KEY });
-
-// Subscribe to a channel
-const unsub = ac.channels.subscribe('agent.events', (msg) => {
-  console.log(msg.type, msg.payload);
-});
-
-// Publish a message
-await ac.channels.publish('agent.events', {
-  type: 'task.completed',
-  payload: { taskId: 'abc123', result: 'ok' },
-});
-```
+The Agency API opens for alpha only after one end-to-end run can survive restart, resume, verify, replay and receipt-backed completion. That gate is not met.
 
 ## Production topology
+
+This section describes how the product is deployed today. It is independent of the architecture above.
 
 There is **one public API**. The Cloud API is the control plane. Allternit API is the data plane and is never a public hostname.
 
@@ -130,3 +211,20 @@ Full split: [API Overview](/api/overview).
 </AccordionGroup>
 
 See [BYOC Overview](/byoc/overview).
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Runs and completion" icon="list-check" href="/core/runs-and-completion">
+    The durable run, its statuses and who decides it is done.
+  </Card>
+  <Card title="Receipts and replay" icon="receipt" href="/core/receipts-and-replay">
+    What a receipt proves and how a run is replayed without effects.
+  </Card>
+  <Card title="Policy and safety" icon="shield" href="/core/policy-and-safety">
+    The policy floor and why there is no bypass profile.
+  </Card>
+  <Card title="Kernel contracts" icon="file-contract" href="/core/kernel-contracts">
+    The frozen ABI 1.0.0 package.
+  </Card>
+</CardGroup>

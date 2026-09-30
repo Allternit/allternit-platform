@@ -1,0 +1,440 @@
+---
+title: 'Agency API quickstart'
+description: 'Create a run, stream its events, answer an attention request, fetch artifacts and receipts, and verify the receipt chain.'
+---
+
+<Warning>
+Preview — the Agency API is in development and not yet available. This reference describes the v0.3 contract; details may change before alpha.
+</Warning>
+
+This walkthrough shows one run from start to finish against the v0.3 contract. The endpoints are not live, so the code will not run against production today. It shows what an integration will look like. The alpha opens only after a run can survive restart, resume, verify, replay and receipt-backed completion.
+
+The examples use `curl`, the built-in `fetch` in Node.js 18 or later, and the Python `requests` library. There is no SDK dependency.
+
+## Setup
+
+<CodeGroup>
+
+```bash curl
+export ALLTERNIT_API_KEY="<your api key>"
+export BASE="https://api.allternit.com"
+```
+
+```typescript TypeScript
+const BASE = "https://api.allternit.com";
+const KEY = process.env.ALLTERNIT_API_KEY!;
+
+const headers = (extra: Record<string, string> = {}) => ({
+  Authorization: `Bearer ${KEY}`,
+  "Allternit-Version": "2026-09-29",
+  ...extra,
+});
+```
+
+```python Python
+import os, uuid, json
+import requests
+
+BASE = "https://api.allternit.com"
+KEY = os.environ["ALLTERNIT_API_KEY"]
+
+def headers(**extra):
+    return {
+        "Authorization": f"Bearer {KEY}",
+        "Allternit-Version": "2026-09-29",
+        **extra,
+    }
+```
+
+</CodeGroup>
+
+## 1. Create a run
+
+Only `goal` is required. `Idempotency-Key` is required on this call. Generate one key per logical request and reuse it if you retry.
+
+<CodeGroup>
+
+```bash curl
+curl -X POST "$BASE/v1/agency" \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -H "Allternit-Version: 2026-09-29" \
+  -H "Content-Type: application/json" \
+  -d '{"goal": "Fix the failing checkout tests and verify the repair"}'
+```
+
+```typescript TypeScript
+import { randomUUID } from "node:crypto";
+
+const createRes = await fetch(`${BASE}/v1/agency`, {
+  method: "POST",
+  headers: headers({
+    "Content-Type": "application/json",
+    "Idempotency-Key": randomUUID(),
+  }),
+  body: JSON.stringify({
+    goal: "Fix the failing checkout tests and verify the repair",
+  }),
+});
+if (createRes.status !== 202) {
+  const { error } = await createRes.json();
+  throw new Error(`${error.code}: ${error.message}`);
+}
+const run = await createRes.json();
+console.log(run.id, run.status, run.resolved.defaults_source);
+```
+
+```python Python
+res = requests.post(
+    f"{BASE}/v1/agency",
+    headers=headers(**{"Idempotency-Key": str(uuid.uuid4())}),
+    json={"goal": "Fix the failing checkout tests and verify the repair"},
+)
+if res.status_code != 202:
+    err = res.json()["error"]
+    raise RuntimeError(f'{err["code"]}: {err["message"]}')
+run = res.json()
+print(run["id"], run["status"], run["resolved"]["defaults_source"])
+```
+
+</CodeGroup>
+
+The response is `202 Accepted` with a [Run](/api/agency/schemas#run). The run is already persisted. Read `run.resolved` to see the workspace, authority profile, budget and completion criteria the server resolved for you. Nothing executes before those are recorded.
+
+If the server cannot resolve safe defaults you get `422 ERR_DEFAULTS_UNRESOLVABLE` and no run is created. Supply the missing field explicitly:
+
+```json
+{
+  "goal": "Fix the failing checkout tests and verify the repair",
+  "workspace": { "repo": "repo://acme/store" },
+  "authority": { "profile": "code-safe" },
+  "budget": { "max_seconds": 900, "max_cost_usd": 2.0 },
+  "completion": { "require": ["tests_pass", "no_new_regressions"] }
+}
+```
+
+## 2. Stream events
+
+Open the run's event stream with `Accept: text/event-stream`. Each message has an `id`, an `event` type and a JSON `data` line. Keep the last `id` you processed. If the connection drops, reconnect with `Last-Event-ID` and delivery restarts strictly after that event.
+
+<CodeGroup>
+
+```bash curl
+curl -N "$BASE/v1/runs/run_01JB2K4Y7MQ8/events" \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Accept: text/event-stream"
+
+# Resume after a disconnect
+curl -N "$BASE/v1/runs/run_01JB2K4Y7MQ8/events" \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Accept: text/event-stream" \
+  -H "Last-Event-ID: evt_01JB2K50000007"
+```
+
+```typescript TypeScript
+type RunEvent = { id: string; seq: number; type: string; data: any };
+
+async function* streamEvents(runId: string, lastEventId?: string): AsyncGenerator<RunEvent> {
+  const res = await fetch(`${BASE}/v1/runs/${runId}/events`, {
+    headers: headers({
+      Accept: "text/event-stream",
+      ...(lastEventId ? { "Last-Event-ID": lastEventId } : {}),
+    }),
+  });
+  if (!res.ok || !res.body) throw new Error(`stream failed: ${res.status}`);
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) return;
+    buffer += decoder.decode(value, { stream: true });
+    let end: number;
+    while ((end = buffer.indexOf("\n\n")) !== -1) {
+      const frame = buffer.slice(0, end);
+      buffer = buffer.slice(end + 2);
+      const data = frame
+        .split("\n")
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trimStart())
+        .join("\n");
+      if (data) yield JSON.parse(data) as RunEvent; // comment lines (": ping") carry no data
+    }
+  }
+}
+
+let lastId: string | undefined;
+let openAttention: any = null;
+for await (const event of streamEvents(run.id)) {
+  lastId = event.id;
+  switch (event.type) {
+    case "run.progress":
+      console.log("step:", event.data.step);
+      break;
+    case "attention.requested":
+      openAttention = event.data;
+      console.log("needs you:", event.data.topic);
+      break;
+    case "run.status_changed":
+      console.log(event.data.from, "->", event.data.to);
+      break;
+    default:
+      break; // ignore event types you do not know
+  }
+}
+```
+
+```python Python
+def stream_events(run_id, last_event_id=None):
+    h = headers(Accept="text/event-stream")
+    if last_event_id:
+        h["Last-Event-ID"] = last_event_id
+    with requests.get(f"{BASE}/v1/runs/{run_id}/events", headers=h, stream=True) as res:
+        res.raise_for_status()
+        data_lines = []
+        for raw in res.iter_lines(decode_unicode=True):
+            if raw is None:
+                continue
+            if raw == "":                      # blank line ends one message
+                if data_lines:
+                    yield json.loads("\n".join(data_lines))
+                data_lines = []
+            elif raw.startswith("data:"):
+                data_lines.append(raw[5:].lstrip())
+            # lines starting with ":" are heartbeats; ignore them
+
+last_id = None
+open_attention = None
+for event in stream_events(run["id"]):
+    last_id = event["id"]
+    if event["type"] == "run.progress":
+        print("step:", event["data"]["step"])
+    elif event["type"] == "attention.requested":
+        open_attention = event["data"]
+        print("needs you:", event["data"]["topic"])
+    elif event["type"] == "run.status_changed":
+        print(event["data"]["from"], "->", event["data"]["to"])
+    # ignore event types you do not know
+```
+
+</CodeGroup>
+
+The stream closes after the terminal `run.status_changed` event (`data.terminal` is `true`). If it closes earlier, reconnect with the last `id`. You can also poll the same endpoint with `Accept: application/json`. See [Events](/api/agency/events).
+
+## 3. Answer an attention request
+
+When the run needs a person it emits `attention.requested` and its status becomes `needs_attention`. The event's `data` is an [AttentionRequest](/api/agency/schemas#attentionrequest). Read `kind`, `reason`, `proposed_action` and `response_options` before answering.
+
+```json
+{
+  "id": "att_01JB2K61QF",
+  "object": "attention_request",
+  "run_id": "run_01JB2K4Y7MQ8",
+  "kind": "approval",
+  "reason": "approval_required",
+  "urgency": "normal",
+  "topic": "Write changes to checkout/cart.ts",
+  "proposed_action": {
+    "description": "Apply a 14-line patch to checkout/cart.ts",
+    "effect_class": "reversible",
+    "resources": ["repo://acme/store/checkout/cart.ts"],
+    "estimated_cost_usd": null
+  },
+  "response_options": ["approval", "rejection"],
+  "expires_at": "2026-09-29T18:00:00Z",
+  "on_expiry": "reject",
+  "status": "open",
+  "created_at": "2026-09-29T17:02:10Z"
+}
+```
+
+Answer it. The first valid response wins and is receipted before it takes effect.
+
+<CodeGroup>
+
+```bash curl
+curl -X POST "$BASE/v1/attention/att_01JB2K61QF/responses" \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -H "Content-Type: application/json" \
+  -d '{"type": "approval", "comment": "Patch looks scoped to the failing test."}'
+```
+
+```typescript TypeScript
+const answer = await fetch(`${BASE}/v1/attention/${openAttention.id}/responses`, {
+  method: "POST",
+  headers: headers({
+    "Content-Type": "application/json",
+    "Idempotency-Key": randomUUID(),
+  }),
+  body: JSON.stringify({ type: "approval", comment: "Patch looks scoped to the failing test." }),
+});
+if (answer.status === 409) {
+  console.log("someone else already answered"); // ERR_ATTENTION_RESOLVED
+}
+```
+
+```python Python
+answer = requests.post(
+    f'{BASE}/v1/attention/{open_attention["id"]}/responses',
+    headers=headers(**{"Idempotency-Key": str(uuid.uuid4())}),
+    json={"type": "approval", "comment": "Patch looks scoped to the failing test."},
+)
+if answer.status_code == 409:
+    print("someone else already answered")  # ERR_ATTENTION_RESOLVED
+```
+
+</CodeGroup>
+
+An approval only resolves a policy ask. It cannot override a hard policy deny; that returns `403 ERR_POLICY_DENIED`. An approval request that expires unanswered is treated as a rejection. After answering, keep reading the event stream (reconnect with `Last-Event-ID` if you closed it).
+
+## 4. Check the result
+
+When the stream ends, fetch the run. `status` tells you how it ended and `completion` shows each criterion with the receipts that back it.
+
+<CodeGroup>
+
+```bash curl
+curl "$BASE/v1/runs/run_01JB2K4Y7MQ8" \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+```typescript TypeScript
+const final = await (await fetch(`${BASE}/v1/runs/${run.id}`, { headers: headers() })).json();
+console.log(final.status, final.completion.status);
+for (const c of final.completion.criteria) {
+  console.log(c.criterion, c.result, c.receipt_ids);
+}
+```
+
+```python Python
+final = requests.get(f'{BASE}/v1/runs/{run["id"]}', headers=headers()).json()
+print(final["status"], final["completion"]["status"])
+for c in final["completion"]["criteria"]:
+    print(c["criterion"], c["result"], c.get("receipt_ids"))
+```
+
+</CodeGroup>
+
+A run is `completed` only when every required criterion has a passing verification receipt. The agent reporting that it is finished does not complete a run. See [Runs and completion](/core/runs-and-completion#verifier-owned-completion).
+
+## 5. Fetch artifacts
+
+<CodeGroup>
+
+```bash curl
+curl "$BASE/v1/runs/run_01JB2K4Y7MQ8/artifacts" \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+```typescript TypeScript
+const artifacts = await (
+  await fetch(`${BASE}/v1/runs/${run.id}/artifacts`, { headers: headers() })
+).json();
+for (const a of artifacts.data) {
+  console.log(a.name, a.kind, a.hash, a.verification_status);
+  if (a.content_url) {
+    const bytes = await (await fetch(a.content_url)).arrayBuffer(); // short-lived URL
+  }
+}
+```
+
+```python Python
+import hashlib
+
+artifacts = requests.get(f'{BASE}/v1/runs/{run["id"]}/artifacts', headers=headers()).json()
+for a in artifacts["data"]:
+    print(a["name"], a.get("kind"), a["hash"], a["verification_status"])
+    if a.get("content_url"):
+        body = requests.get(a["content_url"]).content  # short-lived URL
+        assert "sha256:" + hashlib.sha256(body).hexdigest() == a["hash"]
+```
+
+</CodeGroup>
+
+Artifacts are immutable and content-addressed. `hash` lets you check the bytes you downloaded. `receipt_id` points at the receipt that recorded the artifact.
+
+## 6. Fetch receipts and verify the chain
+
+List the run's receipts in chain order, following `next_cursor` until `has_more` is `false`. Then check the chain.
+
+<CodeGroup>
+
+```bash curl
+curl "$BASE/v1/runs/run_01JB2K4Y7MQ8/receipts?limit=200" \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+
+# Server-side check (a convenience, not the trust root)
+curl "$BASE/v1/runs/run_01JB2K4Y7MQ8/receipts/verification" \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+```typescript TypeScript
+async function allReceipts(runId: string) {
+  const out: any[] = [];
+  let cursor: string | null = null;
+  do {
+    const url = new URL(`${BASE}/v1/runs/${runId}/receipts`);
+    url.searchParams.set("limit", "200");
+    if (cursor) url.searchParams.set("cursor", cursor);
+    const page = await (await fetch(url, { headers: headers() })).json();
+    out.push(...page.data);
+    cursor = page.has_more ? page.next_cursor : null;
+  } while (cursor);
+  return out;
+}
+
+const receipts = await allReceipts(run.id);
+
+// Link check: each prev_hash must equal the previous content_hash
+receipts.forEach((r, i) => {
+  const expected = i === 0 ? null : receipts[i - 1].content_hash;
+  if (r.index !== i || r.prev_hash !== expected) throw new Error(`chain broken at ${i}`);
+});
+
+const check = await (
+  await fetch(`${BASE}/v1/runs/${run.id}/receipts/verification`, { headers: headers() })
+).json();
+console.log(check.hash_chain_valid, check.signatures_valid, check.head_hash);
+```
+
+```python Python
+def all_receipts(run_id):
+    out, cursor = [], None
+    while True:
+        params = {"limit": 200, **({"cursor": cursor} if cursor else {})}
+        page = requests.get(f"{BASE}/v1/runs/{run_id}/receipts", headers=headers(), params=params).json()
+        out.extend(page["data"])
+        if not page["has_more"]:
+            return out
+        cursor = page["next_cursor"]
+
+receipts = all_receipts(run["id"])
+
+# Link check: each prev_hash must equal the previous content_hash
+for i, r in enumerate(receipts):
+    expected = None if i == 0 else receipts[i - 1]["content_hash"]
+    assert r["index"] == i and r["prev_hash"] == expected, f"chain broken at {i}"
+
+check = requests.get(f'{BASE}/v1/runs/{run["id"]}/receipts/verification', headers=headers()).json()
+print(check["hash_chain_valid"], check["signatures_valid"], check["head_hash"])
+```
+
+</CodeGroup>
+
+The link check above confirms the chain is ordered and unbroken. To also confirm that each receipt's content matches its hash and that each signature is valid, recompute the hashes and verify the Ed25519 signatures with the public keys at `/.well-known/jwks.json`. Complete code for that is in [Receipts: verify independently](/api/agency/receipts#verify-independently).
+
+Last, confirm that the run's terminal receipt is part of the chain you verified:
+
+```python
+assert final["output"]["run_receipt_id"] in {r["id"] for r in receipts}
+```
+
+## What to read next
+
+- [Runs](/api/agency/runs) for pause, resume, cancel and steering
+- [Events](/api/agency/events) for every event type
+- [Idempotency](/api/agency/idempotency) for safe retries
+- [Errors](/api/agency/errors) for the error envelope and codes
+- [Campaigns](/api/agency/campaigns) for objectives that run over time

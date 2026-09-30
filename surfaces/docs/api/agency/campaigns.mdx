@@ -1,0 +1,380 @@
+---
+title: 'Campaigns'
+description: 'Persistent objectives that create and drive runs over time: create, list, read, pause, resume and cancel.'
+---
+
+<Warning>
+Preview — the Agency API is in development and not yet available. This reference describes the v0.3 contract; details may change before alpha.
+</Warning>
+
+A **campaign** is a persistent objective that wakes and drives runs over time. A campaign is not a cron job. It owns an objective, a budget, completion criteria and the logic for deciding when another check is useful. Wake triggers only make a wake eligible; the campaign then decides whether to start a run.
+
+<Note>
+**Scheduled waking is off.** Campaigns can be created and wake triggers are accepted, but autonomous scheduled waking stays disabled until the API has passed alpha and conformance and an explicit go-live decision is made. Until then every campaign reports `scheduling: "disabled_pending_golive"`, no wake fires, `next_wake` is `null`, and manual runs still work. The alpha itself opens only after a run can survive restart, resume, verify, replay and receipt-backed completion.
+</Note>
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/campaigns` | [Create a campaign](#create-a-campaign) |
+| `GET` | `/v1/campaigns` | [List campaigns](#list-campaigns) |
+| `GET` | `/v1/campaigns/{campaign_id}` | [Get a campaign](#get-a-campaign) |
+| `GET` | `/v1/campaigns/{campaign_id}/runs` | [List campaign runs](#list-campaign-runs) |
+| `POST` | `/v1/campaigns/{campaign_id}/pause` | [Pause a campaign](#pause-a-campaign) |
+| `POST` | `/v1/campaigns/{campaign_id}/resume` | [Resume a campaign](#resume-a-campaign) |
+| `POST` | `/v1/campaigns/{campaign_id}/cancel` | [Cancel a campaign](#cancel-a-campaign) |
+
+## The Campaign object
+
+{{fields:Campaign}}
+
+Campaign IDs match `^cmp_[A-Za-z0-9]+$`.
+
+### Status
+
+[CampaignStatus](/api/agency/schemas#campaignstatus). Status is independent of `scheduling`.
+
+| `status` | Meaning |
+|----------|---------|
+| `active` | Created; first wake pending. |
+| `sleeping` | Waiting for `next_wake`. |
+| `running` | At least one child run is not terminal. |
+| `needs_attention` | A child run or the campaign itself has an open attention request. |
+| `paused` | Paused; no future wakes. |
+| `completed` | The campaign's completion criteria are met by receipts. |
+| `failed` | The campaign failed. |
+| `cancelled` | The campaign was cancelled. |
+
+### Budget
+
+[CampaignBudget](/api/agency/schemas#campaignbudget): caps for the whole campaign plus a per-run [Budget](/api/agency/schemas#budget) applied to every child run. At least one of `max_cost_usd` or `max_runs` is required.
+
+{{fields:CampaignBudget}}
+
+### Wake policy
+
+[WakePolicy](/api/agency/schemas#wakepolicy): when the campaign may consider waking. Limits are versioned defaults (`defaults_version`).
+
+{{fields:WakePolicy}}
+
+Each trigger is a [WakeTrigger](/api/agency/schemas#waketrigger), one of five variants selected by `type`:
+
+| `type` | Fields | Wake becomes eligible |
+|--------|--------|-----------------------|
+| `interval` | `interval_seconds` (min 60), `jitter_seconds` (default 0) | Every interval. |
+| `schedule` | `cron`, `timezone` | At times matching the schedule. |
+| `event` | `source` (resource URI or connector event, for example `repo://acme/store#push`), `filter` (string map) | When the event occurs. |
+| `run_finished` | none | When a child run finishes. |
+| `manual` | none | Only when started manually. |
+
+### Attention policy
+
+[AttentionPolicy](/api/agency/schemas#attentionpolicy): how attention requests from this campaign's runs are delivered.
+
+{{fields:AttentionPolicy}}
+
+## Create a campaign
+
+```http
+POST /v1/campaigns
+```
+
+Only `objective` is required. Workspace, authority, budget, completion criteria and wake policy resolve from the agent's and profile's defaults and are returned on `Campaign.resolved` before any run is created. There are no hidden permissive defaults: if a safe value cannot be resolved the request fails with `ERR_DEFAULTS_UNRESOLVABLE`.
+
+### Parameters
+
+{{params:createCampaign}}
+
+### Request body
+
+[CampaignCreate](/api/agency/schemas#campaigncreate)
+
+{{fields:CampaignCreate}}
+
+`workspace`, `authority` and `completion_criteria` have the same shape as on a run request. See [Create a run](/api/agency/runs#create-a-run).
+
+### Responses
+
+{{responses:createCampaign}}
+
+### Example
+
+```bash
+curl -X POST https://api.allternit.com/v1/campaigns \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Idempotency-Key: 61c0e5d2-8f3a-4b7c-9d1e-2a3b4c5d6e7f" \
+  -H "Allternit-Version: 2026-09-29" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "objective": "Keep the checkout test suite passing on main",
+    "workspace": {"repo": "repo://acme/store", "ref": "main"},
+    "authority": {"profile": "code-safe"},
+    "budget": {
+      "max_cost_usd": 40.0,
+      "max_runs": 30,
+      "per_run": {"max_seconds": 900, "max_cost_usd": 2.0}
+    },
+    "completion_criteria": {"require": ["tests_pass", "no_new_regressions"]},
+    "wake_policy": {
+      "triggers": [{"type": "event", "source": "repo://acme/store#push"}],
+      "min_interval_seconds": 900,
+      "max_wakes_per_day": 24,
+      "skip_if_run_active": true
+    },
+    "attention_policy": {
+      "channels": ["in_app"],
+      "quiet_hours": {"start": "22:00", "end": "07:00", "timezone": "America/Chicago"},
+      "interrupt_quiet_hours_at": "critical",
+      "max_per_hour": 4,
+      "max_per_day": 20
+    }
+  }'
+```
+
+```json
+{
+  "id": "cmp_01JB2M0A3T",
+  "object": "campaign",
+  "agent": "allternit-code@v1",
+  "objective": "Keep the checkout test suite passing on main",
+  "status": "active",
+  "owner": "user_42",
+  "budget": {
+    "max_cost_usd": 40.0,
+    "max_runs": 30,
+    "per_run": { "max_seconds": 900, "max_cost_usd": 2.0, "on_exhaustion": "request_attention" },
+    "on_exhaustion": "request_attention"
+  },
+  "budget_usage": { "seconds": 0, "cost_usd": 0, "steps": 0 },
+  "wake_policy": {
+    "triggers": [{ "type": "event", "source": "repo://acme/store#push" }],
+    "min_interval_seconds": 900,
+    "max_wakes_per_day": 24,
+    "skip_if_run_active": true,
+    "until": null,
+    "defaults_version": "2026-09-29"
+  },
+  "attention_policy": {
+    "channels": ["in_app"],
+    "quiet_hours": { "start": "22:00", "end": "07:00", "timezone": "America/Chicago" },
+    "interrupt_quiet_hours_at": "critical",
+    "max_per_hour": 4,
+    "max_per_day": 20,
+    "dedupe_window_seconds": 3600,
+    "escalate_after_seconds": null,
+    "defaults_version": "2026-09-29"
+  },
+  "completion_criteria": { "require": ["tests_pass", "no_new_regressions"], "allow_partial": false },
+  "completion": { "status": "pending", "criteria": [] },
+  "next_wake": null,
+  "last_wake": null,
+  "active_run_ids": [],
+  "created_at": "2026-09-29T18:00:00Z",
+  "updated_at": "2026-09-29T18:00:00Z",
+  "metadata": {},
+  "scheduling": "disabled_pending_golive",
+  "defaults_version": "2026-09-29",
+  "resolved": {
+    "workspace": { "repo": "repo://acme/store", "ref": "main" },
+    "authority": {
+      "profile": { "id": "code-safe", "version": 1 },
+      "grants_summary": {
+        "capabilities": ["cap.code.read", "cap.code.edit", "cap.test.run"],
+        "filesystem_scope": { "read": "workspace", "write": "workspace_paths_declared_writable", "execute": "sandboxed_workspace", "outside_workspace": "deny" },
+        "network": { "default": "deny" },
+        "approval_requirements": [{ "effect": "network", "mode": "always_ask" }]
+      },
+      "interaction_mode": "approval_gated"
+    },
+    "budget": { "max_seconds": 900, "max_cost_usd": 2.0, "on_exhaustion": "request_attention" },
+    "completion": {
+      "contract_id": "cc_01JB2M0A3V",
+      "contract_version": 1,
+      "require": [{ "id": "tests_pass", "version": 1 }, { "id": "no_new_regressions", "version": 1 }],
+      "allow_partial": false
+    },
+    "defaults_source": "request",
+    "enforcement": { "judge_fail_closed": true, "verifier_owned_completion": true },
+    "resolved_at": "2026-09-29T18:00:00Z"
+  }
+}
+```
+
+## List campaigns
+
+```http
+GET /v1/campaigns
+```
+
+### Parameters
+
+{{params:listCampaigns}}
+
+`status` takes a comma-separated list.
+
+### Responses
+
+{{responses:listCampaigns}}
+
+[CampaignPage](/api/agency/schemas#campaignpage):
+
+{{fields:CampaignPage}}
+
+### Example
+
+```bash
+curl "https://api.allternit.com/v1/campaigns?status=active,running" \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+```json
+{
+  "object": "list",
+  "data": [
+    { "id": "cmp_01JB2M0A3T", "object": "campaign", "objective": "Keep the checkout test suite passing on main", "status": "active", "scheduling": "disabled_pending_golive", "next_wake": null }
+  ],
+  "has_more": false,
+  "next_cursor": null
+}
+```
+
+The example item is shortened. Each item is a full Campaign.
+
+## Get a campaign
+
+```http
+GET /v1/campaigns/{campaign_id}
+```
+
+### Parameters
+
+{{params:getCampaign}}
+
+### Responses
+
+{{responses:getCampaign}}
+
+### Example
+
+```bash
+curl https://api.allternit.com/v1/campaigns/cmp_01JB2M0A3T \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+The response is one [Campaign](#the-campaign-object).
+
+## List campaign runs
+
+```http
+GET /v1/campaigns/{campaign_id}/runs
+```
+
+Runs created by this campaign. You can also filter [`GET /v1/runs`](/api/agency/runs#list-runs) with `campaign_id`.
+
+### Parameters
+
+{{params:listCampaignRuns}}
+
+### Responses
+
+{{responses:listCampaignRuns}}
+
+### Example
+
+```bash
+curl https://api.allternit.com/v1/campaigns/cmp_01JB2M0A3T/runs \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+The response is a [RunPage](/api/agency/schemas#runpage). Each run carries its own `campaign_id` and its own `resolved` block.
+
+## Pause a campaign
+
+```http
+POST /v1/campaigns/{campaign_id}/pause
+```
+
+Asynchronous and idempotent. Stops future wakes. Runs already in flight are unaffected unless `cascade` is `true`.
+
+### Parameters
+
+{{params:pauseCampaign}}
+
+### Request body
+
+Optional. [CampaignControlRequest](/api/agency/schemas#campaigncontrolrequest)
+
+{{fields:CampaignControlRequest}}
+
+### Responses
+
+{{responses:pauseCampaign}}
+
+### Example
+
+```bash
+curl -X POST https://api.allternit.com/v1/campaigns/cmp_01JB2M0A3T/pause \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Idempotency-Key: 84a1c3e5-2b4d-4f6a-8c0e-1a3c5e7a9b0d" \
+  -H "Content-Type: application/json" \
+  -d '{"reason": "Release freeze", "cascade": false}'
+```
+
+The response is the Campaign.
+
+## Resume a campaign
+
+```http
+POST /v1/campaigns/{campaign_id}/resume
+```
+
+Resumes a paused campaign. `next_wake` is recomputed. This operation takes no request body.
+
+### Parameters
+
+{{params:resumeCampaign}}
+
+### Responses
+
+{{responses:resumeCampaign}}
+
+### Example
+
+```bash
+curl -X POST https://api.allternit.com/v1/campaigns/cmp_01JB2M0A3T/resume \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Idempotency-Key: b7d9f1a3-5c6e-4a8b-9d0f-2b4d6f8a0c1e"
+```
+
+## Cancel a campaign
+
+```http
+POST /v1/campaigns/{campaign_id}/cancel
+```
+
+Asynchronous, idempotent and terminal. With `cascade` (default `true`) every non-terminal child run is cancelled with [run cancel semantics](/api/agency/runs#cancel-a-run).
+
+### Parameters
+
+{{params:cancelCampaign}}
+
+### Request body
+
+Optional. [CampaignControlRequest](/api/agency/schemas#campaigncontrolrequest) (`reason`, `cascade`).
+
+### Responses
+
+{{responses:cancelCampaign}}
+
+### Example
+
+```bash
+curl -X POST https://api.allternit.com/v1/campaigns/cmp_01JB2M0A3T/cancel \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Idempotency-Key: d2f4a6c8-7e9b-4c1d-a3f5-4c6e8a0b2d3f" \
+  -H "Content-Type: application/json" \
+  -d '{"reason": "Project closed", "cascade": true}'
+```
+
+The response is the Campaign. Its status becomes `cancelled` once child runs have settled.

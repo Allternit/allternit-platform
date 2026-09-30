@@ -42,6 +42,10 @@
           {
             "group": "Core Concepts",
             "pages": [
+              "core/runs-and-completion",
+              "core/receipts-and-replay",
+              "core/policy-and-safety",
+              "core/kernel-contracts",
               "core/gizzi-runtime",
               "core/gizzi-core",
               "core/commrails",
@@ -263,6 +267,26 @@
               "api/status",
               "api/me",
               "api/quickstart"
+            ]
+          },
+          {
+            "group": "Agency API (Preview)",
+            "pages": [
+              "api/agency/overview",
+              "api/agency/quickstart",
+              "api/agency/runs",
+              "api/agency/events",
+              "api/agency/attention",
+              "api/agency/artifacts",
+              "api/agency/receipts",
+              "api/agency/campaigns",
+              "api/agency/replays",
+              "api/agency/decisions",
+              "api/agency/catalog",
+              "api/agency/errors",
+              "api/agency/idempotency",
+              "api/agency/versioning",
+              "api/agency/schemas"
             ]
           },
           {

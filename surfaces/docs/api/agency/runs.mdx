@@ -1,0 +1,550 @@
+---
+title: 'Runs'
+description: 'Create, list, read, steer, pause, resume and cancel runs, and inspect the compiled graph.'
+---
+
+<Warning>
+Preview — the Agency API is in development and not yet available. This reference describes the v0.3 contract; details may change before alpha.
+</Warning>
+
+A **Run** is one durable execution of a goal. It is persisted before the create call returns and survives process restart. The alpha opens only after a run can survive restart, resume, verify, replay and receipt-backed completion. For the concepts behind this page see [Runs and completion](/core/runs-and-completion).
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/agency` | [Create a run](#create-a-run) |
+| `GET` | `/v1/runs` | [List runs](#list-runs) |
+| `GET` | `/v1/runs/{run_id}` | [Get a run](#get-a-run) |
+| `POST` | `/v1/runs/{run_id}/input` | [Submit input](#submit-input) |
+| `POST` | `/v1/runs/{run_id}/pause` | [Pause a run](#pause-a-run) |
+| `POST` | `/v1/runs/{run_id}/resume` | [Resume a run](#resume-a-run) |
+| `POST` | `/v1/runs/{run_id}/cancel` | [Cancel a run](#cancel-a-run) |
+| `GET` | `/v1/runs/{run_id}/graph` | [Get the compiled graph](#get-the-compiled-graph) |
+
+Related: [events](/api/agency/events), [attention](/api/agency/attention), [artifacts](/api/agency/artifacts) and [receipts](/api/agency/receipts) of a run.
+
+## The Run object
+
+{{fields:Run}}
+
+Run IDs match `^run_[A-Za-z0-9]+$`.
+
+### Status
+
+| Status | Terminal | Meaning |
+|--------|----------|---------|
+| `accepted` | no | Persisted. Stays here until `resolved` is recorded. |
+| `running` | no | At least one node is executing or verifying. |
+| `waiting` | no | Nodes are on a wait gate or a lease reclaim is pending; none is running. |
+| `needs_attention` | no | An attention request is open. Includes `budget_exhausted` after spend is halted. |
+| `paused` | no | Paused by an operator; leases released at a safe boundary. |
+| `cancelling` | no | Cancel receipted; in-flight effects are settling. |
+| `completed` | yes | The completion predicate is true. |
+| `partial` | yes | Closed with unmet criteria, only when `allow_partial` is `true`. |
+| `failed` | yes | Closed after an unrecoverable failure or a budget stop. |
+| `cancelled` | yes | Closed after a cancel. |
+
+Precedence when nodes differ: `cancelling` > `paused` > `needs_attention` > `running` > `waiting` > `accepted`.
+
+### Resolved defaults
+
+`resolved` is always present. It holds everything the server resolved before execution.
+
+{{fields:ResolvedDefaults}}
+
+`resolved.authority` is a [ResolvedAuthority](/api/agency/schemas#resolvedauthority):
+
+{{fields:ResolvedAuthority}}
+
+`resolved.completion` is a [ResolvedCompletion](/api/agency/schemas#resolvedcompletion):
+
+{{fields:ResolvedCompletion}}
+
+### Nested objects
+
+`budget_usage` ([BudgetUsage](/api/agency/schemas#budgetusage)):
+
+{{fields:BudgetUsage}}
+
+`completion` ([CompletionState](/api/agency/schemas#completionstate)). Each `result` is one of `pending`, `pass`, `fail`, `inconclusive`, `error` ([VerificationResult](/api/agency/schemas#verificationresult)). `inconclusive` is never a pass.
+
+{{fields:CompletionState}}
+
+`output` ([RunOutput](/api/agency/schemas#runoutput)):
+
+{{fields:RunOutput}}
+
+`cancellation` ([CancellationState](/api/agency/schemas#cancellationstate)):
+
+{{fields:CancellationState}}
+
+`links` ([RunLinks](/api/agency/schemas#runlinks)):
+
+{{fields:RunLinks}}
+
+`debug` ([RunDebugView](/api/agency/schemas#rundebugview)), only with `view=debug` and scope `debug:read`. Its fields may change without a major version.
+
+{{fields:RunDebugView}}
+
+## Create a run
+
+```http
+POST /v1/agency
+```
+
+Compiles the request into explicit internal contracts and returns the Run immediately. It never executes an implicit free-form loop. The run is persisted before `202` is returned.
+
+Only `goal` is required. The server resolves workspace, authority, budget and completion from the agent's and profile's versioned defaults and records them on `Run.resolved` before any execution. There are no hidden permissive defaults: if a default cannot be safely resolved the call fails with `422 ERR_DEFAULTS_UNRESOLVABLE` and no run executes. Runs created here always have judge fail-closed and verifier-owned completion enabled; clients cannot disable either.
+
+### Parameters
+
+{{params:createAgencyRun}}
+
+### Request body
+
+[AgencyRequest](/api/agency/schemas#agencyrequest)
+
+{{fields:AgencyRequest}}
+
+Unknown fields are rejected with `ERR_INPUT_UNSUPPORTED`, including any attempt to disable judge fail-closed or verifier-owned completion. Extension properties named `x-<name>` are accepted.
+
+#### workspace
+
+[Workspace](/api/agency/schemas#workspace). `resources` items are [ResourceRef](/api/agency/schemas#resourceref).
+
+{{fields:Workspace}}
+
+{{fields:ResourceRef}}
+
+#### context
+
+Array of [ContextItem](/api/agency/schemas#contextitem). Supplied context enters as `UNTRUSTED` unless policy grants a trust class.
+
+{{fields:ContextItem}}
+
+#### authority
+
+[Authority](/api/agency/schemas#authority). `profile` is `read-only`, `code-safe` or `code-write`, optionally pinned as `name@version`. Bypass-style names are rejected with `ERR_AUTHORITY_PROFILE_FORBIDDEN`.
+
+{{fields:Authority}}
+
+`grants` items ([Grant](/api/agency/schemas#grant)):
+
+{{fields:Grant}}
+
+`network` ([NetworkPolicy](/api/agency/schemas#networkpolicy)). Private-address, redirect-hop and DNS-rebind defenses are always on.
+
+{{fields:NetworkPolicy}}
+
+`environment` ([ExecutionEnvironment](/api/agency/schemas#executionenvironment)). Raw environment inheritance is never allowed.
+
+{{fields:ExecutionEnvironment}}
+
+#### budget
+
+[Budget](/api/agency/schemas#budget). At least one of `max_seconds` or `max_cost_usd` is required when you supply a budget. On exhaustion the platform first hard-stops all billable and effectful execution, then asks or stops.
+
+{{fields:Budget}}
+
+#### completion
+
+[CompletionCriteria](/api/agency/schemas#completioncriteria). Items in `require` are registry IDs (a string, latest version) or pinned `{id, version}` objects ([CriterionRef](/api/agency/schemas#criterionref)).
+
+{{fields:CompletionCriteria}}
+
+Custom `criteria` items ([Criterion](/api/agency/schemas#criterion)):
+
+{{fields:Criterion}}
+
+#### capabilities (tier B)
+
+[CapabilityLimits](/api/agency/schemas#capabilitylimits)
+
+{{fields:CapabilityLimits}}
+
+#### models (tier B)
+
+[ModelConstraints](/api/agency/schemas#modelconstraints). Constrain by logical class, locality and trust. Model or vendor names are rejected.
+
+{{fields:ModelConstraints}}
+
+#### graph (tier C)
+
+[GraphSpec](/api/agency/schemas#graphspec). Treated as opaque until the public Graph contract is frozen.
+
+{{fields:GraphSpec}}
+
+#### runtime (tier D)
+
+[RuntimeHints](/api/agency/schemas#runtimehints). Hints never change semantics, eligibility, policy or evidence.
+
+{{fields:RuntimeHints}}
+
+### Responses
+
+{{responses:createAgencyRun}}
+
+### Example
+
+```bash
+curl -X POST https://api.allternit.com/v1/agency \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Idempotency-Key: 3f1c2a9e-7b1d-4c55-9a0e-1d2b3c4d5e6f" \
+  -H "Allternit-Version: 2026-09-29" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent": "allternit-code",
+    "goal": "Fix the failing checkout tests and verify the repair",
+    "workspace": {"repo": "repo://acme/store"},
+    "authority": {"profile": "code-safe"},
+    "budget": {"max_seconds": 900, "max_cost_usd": 2.0},
+    "completion": {"require": ["tests_pass", "no_new_regressions"]},
+    "stream": true
+  }'
+```
+
+The `202` response body is a Run with `status: "accepted"`. A full response, including `resolved`, is shown in the [overview](/api/agency/overview#the-minimal-call).
+
+Error example, when defaults cannot be resolved:
+
+```json
+{
+  "error": {
+    "family": "INPUT",
+    "code": "ERR_DEFAULTS_UNRESOLVABLE",
+    "message": "No default workspace can be resolved for agent allternit-code. Supply workspace.",
+    "retryable": false,
+    "request_id": "req_8f2c1d",
+    "param": "workspace"
+  }
+}
+```
+
+## List runs
+
+```http
+GET /v1/runs
+```
+
+Returns a page of runs, newest first.
+
+### Parameters
+
+{{params:listRuns}}
+
+`status` takes a comma-separated list, for example `?status=running,needs_attention`.
+
+### Responses
+
+{{responses:listRuns}}
+
+[RunPage](/api/agency/schemas#runpage):
+
+{{fields:RunPage}}
+
+### Example
+
+```bash
+curl "https://api.allternit.com/v1/runs?status=running,needs_attention&limit=20" \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "run_01JB2K4Y7MQ8",
+      "object": "run",
+      "status": "needs_attention",
+      "agent": "allternit-code@v1",
+      "thread_id": "thr_01JB2K4Y7N",
+      "created_at": "2026-09-29T17:00:00Z",
+      "updated_at": "2026-09-29T17:02:10Z",
+      "version": 9,
+      "open_attention_count": 1
+    }
+  ],
+  "has_more": false,
+  "next_cursor": null
+}
+```
+
+The example item is shortened. Each item is a full Run.
+
+## Get a run
+
+```http
+GET /v1/runs/{run_id}
+```
+
+Returns the current run state. The default view hides kernel internals.
+
+### Parameters
+
+{{params:getRun}}
+
+### Responses
+
+{{responses:getRun}}
+
+### Example
+
+```bash
+curl https://api.allternit.com/v1/runs/run_01JB2K4Y7MQ8 \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+A completed run (shortened; `resolved` and `links` omitted):
+
+```json
+{
+  "id": "run_01JB2K4Y7MQ8",
+  "object": "run",
+  "status": "completed",
+  "terminal": true,
+  "agent": "allternit-code@v1",
+  "thread_id": "thr_01JB2K4Y7N",
+  "created_at": "2026-09-29T17:00:00Z",
+  "updated_at": "2026-09-29T17:09:42Z",
+  "finished_at": "2026-09-29T17:09:42Z",
+  "version": 31,
+  "budget": { "max_seconds": 900, "max_cost_usd": 2.0, "on_exhaustion": "request_attention" },
+  "budget_usage": { "seconds": 581.4, "cost_usd": 0.62, "steps": 14, "spend_halted": false },
+  "attention": null,
+  "open_attention_count": 0,
+  "completion": {
+    "status": "satisfied",
+    "criteria": [
+      { "criterion": "tests_pass", "result": "pass", "receipt_ids": ["rcpt_01JB2K9A01"] },
+      { "criterion": "no_new_regressions", "result": "pass", "receipt_ids": ["rcpt_01JB2K9A02"] }
+    ]
+  },
+  "output": {
+    "summary": "Fixed a rounding error in cart totals; 3 failing tests now pass.",
+    "artifact_ids": ["art_01JB2K8Z11"],
+    "run_receipt_id": "rcpt_01JB2K9A03"
+  },
+  "effect_receipt_ids": ["rcpt_01JB2K7Q05"]
+}
+```
+
+## Submit input
+
+```http
+POST /v1/runs/{run_id}/input
+```
+
+Answer an attention request, steer the run, or add data. `approval` and `rejection` must carry `attention_id`. An approval only resolves a policy ask; it can never override a hard policy deny (`403 ERR_POLICY_DENIED`). Input is recorded as a receipt before it takes effect.
+
+### Parameters
+
+{{params:submitRunInput}}
+
+### Request body
+
+[RunInput](/api/agency/schemas#runinput)
+
+{{fields:RunInput}}
+
+| `type` | Use |
+|--------|-----|
+| `message` | Send a message to the run. |
+| `approval` | Approve an attention request. Requires `attention_id`. |
+| `rejection` | Reject an attention request. Requires `attention_id`. |
+| `steer` | Redirect the run with free text. |
+| `data` | Supply a typed payload in `value`. |
+
+### Responses
+
+{{responses:submitRunInput}}
+
+[InputAccepted](/api/agency/schemas#inputaccepted):
+
+{{fields:InputAccepted}}
+
+### Example
+
+```bash
+curl -X POST https://api.allternit.com/v1/runs/run_01JB2K4Y7MQ8/input \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Idempotency-Key: 7a0e2b51-52c1-4a41-8d0b-2d3f7c1b9e10" \
+  -H "Content-Type: application/json" \
+  -d '{"type": "approval", "attention_id": "att_01JB2K61QF", "comment": "Approved."}'
+```
+
+```json
+{
+  "run_id": "run_01JB2K4Y7MQ8",
+  "receipt_id": "rcpt_01JB2K7Q04",
+  "attention_id": "att_01JB2K61QF",
+  "status": "running"
+}
+```
+
+## Pause a run
+
+```http
+POST /v1/runs/{run_id}/pause
+```
+
+Asynchronous and idempotent. Nodes stop at the next safe boundary; in-flight effects finish and are receipted; leases are released. Status goes to `paused`. Pausing a paused run is a no-op (`202`, same Run).
+
+### Parameters
+
+{{params:pauseRun}}
+
+### Request body
+
+Optional. [ControlRequest](/api/agency/schemas#controlrequest)
+
+{{fields:ControlRequest}}
+
+### Responses
+
+{{responses:pauseRun}}
+
+### Example
+
+```bash
+curl -X POST https://api.allternit.com/v1/runs/run_01JB2K4Y7MQ8/pause \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Idempotency-Key: 0c6d2f7e-3b1a-4f0e-9a55-7e1d2c3b4a59" \
+  -H "Content-Type: application/json" \
+  -d '{"reason": "Holding until the release branch is cut"}'
+```
+
+The response is the Run. Its status becomes `paused` once nodes reach a safe boundary.
+
+## Resume a run
+
+```http
+POST /v1/runs/{run_id}/resume
+```
+
+Asynchronous and idempotent. Resumes from durable state and receipts, never from a transcript. A node interrupted in the middle of an effect is not blindly re-run: it resumes only if its effect is idempotency-keyed and receipted. Otherwise the run raises an attention request (reason `unsafe_resume`).
+
+### Parameters
+
+{{params:resumeRun}}
+
+### Request body
+
+Optional. [ControlRequest](/api/agency/schemas#controlrequest) (`reason`).
+
+### Responses
+
+{{responses:resumeRun}}
+
+### Example
+
+```bash
+curl -X POST https://api.allternit.com/v1/runs/run_01JB2K4Y7MQ8/resume \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Idempotency-Key: 5b9f1c22-0d4e-4c7a-b1f3-8a6e9d0c2b17"
+```
+
+## Cancel a run
+
+```http
+POST /v1/runs/{run_id}/cancel
+```
+
+Asynchronous and idempotent. Status goes `cancelling`, then `cancelled`.
+
+- No new node is admitted or leased after the request is receipted.
+- Effects already dispatched are not silently abandoned. Each one completes, times out, or is rolled back where the node declares a rollback, and its outcome is receipted. `Run.cancellation.effects_in_flight` lists them until settled.
+- Open attention requests are withdrawn.
+- Repeating cancel on a `cancelling` or `cancelled` run returns `202` with the current Run.
+- Cancelling a run already `completed`, `partial` or `failed` returns `409 ERR_RUN_TERMINAL`.
+
+### Parameters
+
+{{params:cancelRun}}
+
+### Request body
+
+Optional. [CancelRequest](/api/agency/schemas#cancelrequest)
+
+{{fields:CancelRequest}}
+
+### Responses
+
+{{responses:cancelRun}}
+
+### Example
+
+```bash
+curl -X POST https://api.allternit.com/v1/runs/run_01JB2K4Y7MQ8/cancel \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Idempotency-Key: 9d3e7a10-6f2b-4b8c-a4d1-1c5e0f7b3a66" \
+  -H "Content-Type: application/json" \
+  -d '{"reason": "Superseded by a newer request", "rollback_reversible_effects": true}'
+```
+
+```json
+{
+  "id": "run_01JB2K4Y7MQ8",
+  "object": "run",
+  "status": "cancelling",
+  "terminal": false,
+  "cancellation": {
+    "requested_at": "2026-09-29T17:05:00Z",
+    "reason": "Superseded by a newer request",
+    "receipt_id": "rcpt_01JB2K7Q09",
+    "effects_in_flight": [
+      {
+        "description": "Patch applied to checkout/cart.ts",
+        "effect_class": "reversible",
+        "state": "settling",
+        "receipt_id": null
+      }
+    ]
+  }
+}
+```
+
+The example is shortened to the fields that change.
+
+## Get the compiled graph
+
+```http
+GET /v1/runs/{run_id}/graph
+```
+
+Disclosure tier C. Requires scope `graph:read`. This is not part of the Goal API. It shows the graph the request compiled into, and each node's lifecycle position.
+
+### Parameters
+
+{{params:getRunGraph}}
+
+### Responses
+
+{{responses:getRunGraph}}
+
+[GraphView](/api/agency/schemas#graphview):
+
+{{fields:GraphView}}
+
+### Example
+
+```bash
+curl https://api.allternit.com/v1/runs/run_01JB2K4Y7MQ8/graph \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+```json
+{
+  "graph_id": "graph_01JB2K4Y80",
+  "version": 1,
+  "template_id": null,
+  "nodes": [
+    { "node_id": "n1", "primitive_id": "obs.read_file", "lifecycle": "CLOSE", "wait_gate": null, "output_ids": ["art_01JB2K5A01"] },
+    { "node_id": "n2", "primitive_id": "ver.run_tests", "lifecycle": "RUN", "wait_gate": null, "output_ids": [] }
+  ],
+  "edges": [
+    { "from": "n1", "to": "n2", "when": null }
+  ]
+}
+```

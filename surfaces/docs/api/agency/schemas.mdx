@@ -1,0 +1,1304 @@
+---
+title: 'Agency API schemas'
+description: 'Every object, enum and field in the Agency API v0.3 contract.'
+---
+
+<Warning>
+Preview — the Agency API is in development and not yet available. This reference describes the v0.3 contract; details may change before alpha.
+</Warning>
+
+This page lists all 98 component schemas in the [v0.3 OpenAPI contract](/api/agency/overview#openapi-file), in contract order. The tables are generated from the contract file, so they match it field for field. Nested inline objects are flattened with dotted names (`data.from`, `criteria[].result`).
+
+## Reading the tables
+
+- **Required** means the field must be present: in a request body you must send it, and in a response the server always returns it. A field marked `no` may be absent.
+- **Disclosure tier** marks fields outside the everyday surface: B is the capability tier, C is the graph tier, D is the runtime tier. See [progressive disclosure](/api/agency/overview#progressive-disclosure).
+- Request objects are closed unless the table says otherwise. Unknown request fields are rejected with `ERR_INPUT_UNSUPPORTED`. Clients must ignore unknown response fields and treat unknown enum values as not understood. See [Versioning](/api/agency/versioning).
+- Names ending in `V1` in descriptions (for example `AttentionRequestV1`) refer to [kernel contracts](/core/kernel-contracts). The API objects are public views of those contracts.
+
+## Index
+
+[Extensions](#extensions) · [Metadata](#metadata) · [Timestamp](#timestamp) · [TrustClass](#trustclass) · [PageBase](#pagebase) · [ErrorEnvelope](#errorenvelope) · [Error](#error) · [AgencyRequest](#agencyrequest) · [Workspace](#workspace) · [ResourceRef](#resourceref) · [ContextItem](#contextitem) · [Authority](#authority) · [Grant](#grant) · [NetworkPolicy](#networkpolicy) · [ExecutionEnvironment](#executionenvironment) · [Budget](#budget) · [BudgetUsage](#budgetusage) · [CompletionCriteria](#completioncriteria) · [CriterionRef](#criterionref) · [Criterion](#criterion) · [CapabilityLimits](#capabilitylimits) · [ModelConstraints](#modelconstraints) · [GraphSpec](#graphspec) · [RuntimeHints](#runtimehints) · [RunStatus](#runstatus) · [Run](#run) · [RunLinks](#runlinks) · [RunOutput](#runoutput) · [CompletionState](#completionstate) · [VerificationResult](#verificationresult) · [CancellationState](#cancellationstate) · [RunDebugView](#rundebugview) · [ControlRequest](#controlrequest) · [CancelRequest](#cancelrequest) · [RunInput](#runinput) · [InputAccepted](#inputaccepted) · [RunPage](#runpage) · [RunEventType](#runeventtype) · [RunEventBase](#runeventbase) · [RunEvent](#runevent) · [RunStatusChangedEvent](#runstatuschangedevent) · [RunProgressEvent](#runprogressevent) · [RunMessageEvent](#runmessageevent) · [AttentionRequestedEvent](#attentionrequestedevent) · [AttentionResolvedEvent](#attentionresolvedevent) · [InputAcceptedEvent](#inputacceptedevent) · [ArtifactCreatedEvent](#artifactcreatedevent) · [ReceiptAppendedEvent](#receiptappendedevent) · [VerificationCompletedEvent](#verificationcompletedevent) · [BudgetThresholdEvent](#budgetthresholdevent) · [DebugTraceEvent](#debugtraceevent) · [RunEventPage](#runeventpage) · [AttentionStatus](#attentionstatus) · [AttentionRequest](#attentionrequest) · [ProposedAction](#proposedaction) · [AttentionResolution](#attentionresolution) · [AttentionResponse](#attentionresponse) · [AttentionPage](#attentionpage) · [Artifact](#artifact) · [ArtifactPage](#artifactpage) · [ReceiptType](#receipttype) · [Receipt](#receipt) · [ReceiptSignature](#receiptsignature) · [Provenance](#provenance) · [ReceiptChainVerification](#receiptchainverification) · [ReceiptPage](#receiptpage) · [GraphView](#graphview) · [CampaignStatus](#campaignstatus) · [CampaignCreate](#campaigncreate) · [CampaignBudget](#campaignbudget) · [WakePolicy](#wakepolicy) · [WakeTrigger](#waketrigger) · [AttentionPolicy](#attentionpolicy) · [Campaign](#campaign) · [CampaignControlRequest](#campaigncontrolrequest) · [CampaignPage](#campaignpage) · [ReplayRequest](#replayrequest) · [ReplayStatus](#replaystatus) · [Replay](#replay) · [ReplayResults](#replayresults) · [DecisionRequest](#decisionrequest) · [DecisionResult](#decisionresult) · [Capability](#capability) · [CapabilityPage](#capabilitypage) · [Agent](#agent) · [AgentPage](#agentpage) · [ModelClass](#modelclass) · [ModelClassPage](#modelclasspage) · [AuthorityProfile](#authorityprofile) · [AuthorityProfilePage](#authorityprofilepage) · [FilesystemScope](#filesystemscope) · [ApprovalRequirement](#approvalrequirement) · [ResolvedAuthority](#resolvedauthority) · [ResolvedCompletion](#resolvedcompletion) · [ResolvedDefaults](#resolveddefaults) · [CompletionCriterion](#completioncriterion) · [CompletionCriterionPage](#completioncriterionpage) · [Jwks](#jwks)
+
+## Extensions
+
+Extension pattern. Any closed object may carry properties named `x-<vendor-neutral-name>`. Servers preserve unknown `x-` properties; they never change kernel semantics.
+
+Property names must match `^x-[a-z0-9-]+$`; values are unconstrained.
+
+## Metadata
+
+Caller-owned annotations. Max 50 keys; values ≤ 500 chars.
+
+Map of string to string.
+
+## Timestamp
+
+Type: string (date-time).
+
+## TrustClass
+
+Type: string enum.
+
+| Value |
+|-------|
+| `PUBLIC` |
+| `INTERNAL` |
+| `RESTRICTED` |
+| `SECRET` |
+| `UNTRUSTED` |
+
+## PageBase
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `object` | `"list"` | yes |  |
+| `has_more` | boolean | yes |  |
+| `next_cursor` | string \| null | yes |  |
+
+## ErrorEnvelope
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `error` | [Error](#error) | yes |  |
+
+No other properties are accepted.
+
+## Error
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `family` | string enum | yes | Runtime error family (§24.2) plus API-surface families. One of: `INPUT`, `STATE`, `CONTEXT`, `ROUTING`, `DECISION`, `TOOL`, `POLICY`, `MUTATION`, `VERIFY`, `TRANSFER`, `BUDGET`, `SYSTEM`, `AUTH`, `NOT_FOUND`, `IDEMPOTENCY`, `RATE_LIMIT`, `VERSION`. |
+| `code` | string | yes | `ERR_*` code. Kernel codes pass through unchanged (e.g. ERR_INPUT_AMBIGUOUS, ERR_STATE_CONFLICT, ERR_POLICY_DENIED, ERR_APPROVAL_REQUIRED, ERR_COST_BUDGET, ERR_WORKER_LOST). API codes: ERR_AUTH_INVALID, ERR_AUTH_SCOPE, ERR_NOT_FOUND, ERR_RUN_TERMINAL, ERR_ATTENTION_RESOLVED, ERR_IDEMPOTENCY_KEY_REUSED, ERR_IDEMPOTENCY_IN_PROGRESS, ERR_RATE_LIMIT, ERR_VERSION_UNSUPPORTED, ERR_CURSOR_EXPIRED, ERR_REPLAY_UNRECORDED, ERR_AUTHORITY_PROFILE_FORBIDDEN, ERR_DEFAULTS_UNRESOLVABLE (request cannot be safely defaulted; no run executes). New codes may be added; treat unknown codes by `family` and `retryable`. Pattern: `^ERR_[A-Z0-9_]+$`. |
+| `message` | string | yes |  |
+| `retryable` | boolean | yes |  |
+| `request_id` | string | yes |  |
+| `run_id` | string \| null | no |  |
+| `param` | string \| null | no | Offending request field, if any. |
+| `policy_reason_codes` | array of string | no |  |
+| `receipt_id` | string \| null | no | Receipt recording the denial or failure, if any. |
+| `docs_url` | string \| null (uri) | no |  |
+
+## AgencyRequest
+
+Only `goal` is required. `workspace`, `authority`, `budget` and `completion` are optional; when omitted the server resolves each from the agent's/profile's versioned defaults and returns the resolved values on `Run.resolved` before execution. Supplying a field overrides the default (never widening beyond caller entitlement or hard policy). There are no hidden permissive defaults. `capabilities` and `models` are Level B, `graph` is Level C, `runtime` is Level D. Unknown fields are rejected, including any attempt to disable judge fail-closed or verifier-owned completion. `thread_id` is a correlation ID only.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `agent` | string | no | Logical agent ID, optionally `@version` (e.g. `allternit-code@v1`). Default: `"allternit-code"`. Pattern: `^[a-z0-9-]+(@v[0-9]+)?$`. |
+| `goal` | string | yes | Min length: 1. Max length: 20000. |
+| `workspace` | [Workspace](#workspace) | no |  |
+| `context` | array of [ContextItem](#contextitem) | no | Supplied context. Enters as UNTRUSTED unless a trust_class is granted by policy. |
+| `authority` | [Authority](#authority) | no |  |
+| `budget` | [Budget](#budget) | no |  |
+| `completion` | [CompletionCriteria](#completioncriteria) | no |  |
+| `capabilities` | [CapabilityLimits](#capabilitylimits) | no |  |
+| `models` | [ModelConstraints](#modelconstraints) | no |  |
+| `graph` | [GraphSpec](#graphspec) | no | Opaque until the public Graph contract is frozen. |
+| `runtime` | [RuntimeHints](#runtimehints) | no |  |
+| `stream` | boolean | no | When true, `Run.links.events` is ready to open immediately. Default: `true`. |
+| `thread_id` | string \| null | no | Correlation ID only. There are no Thread endpoints in v1; messages arrive as `run.message` events. |
+| `metadata` | [Metadata](#metadata) | no |  |
+
+No other properties are accepted except extension properties matching `^x-[a-z0-9-]+$`.
+
+## Workspace
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `repo` | string (uri) | no | Shorthand for one read/write repo resource, e.g. `repo://acme/store`. |
+| `ref` | string | no | Branch, tag or commit for `repo`. |
+| `resources` | array of [ResourceRef](#resourceref) | no |  |
+
+No other properties are accepted.
+
+## ResourceRef
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `uri` | string (uri) | yes |  |
+| `kind` | string enum | no | One of: `repo`, `directory`, `file`, `dataset`, `url`, `connector`, `secret_store`. |
+| `access` | string enum | yes | One of: `read`, `write`. |
+| `trust_class` | [TrustClass](#trustclass) | no |  |
+
+No other properties are accepted.
+
+## ContextItem
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `kind` | string enum | yes | One of: `text`, `file`, `url`, `artifact`. |
+| `text` | string | no |  |
+| `uri` | string (uri) | no |  |
+| `artifact_id` | string | no |  |
+| `label` | string | no |  |
+
+No other properties are accepted.
+
+## Authority
+
+Explicit authority (optional on the request; resolved from the agent's default profile when omitted and returned in `Run.resolved.authority`). A named `profile` (`read-only`, `code-safe`, `code-write`, optionally pinned `name@version`) compiles into capabilities and policy, not magic strings (GET /v1/authority-profiles). `grants` may only add scoped grants within the caller's entitlement; nothing can weaken a hard policy deny. There is no bypass/yolo/auto-approve profile: such names are rejected with `ERR_AUTHORITY_PROFILE_FORBIDDEN` and no executor's native bypass mode is honored.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `profile` | string | yes | Pattern: `^[a-z0-9-]+(@[0-9]+)?$`. |
+| `interaction_mode` | string enum | no | `autonomous` still stops at every policy ASK; it only removes discretionary review. One of: `autonomous`, `approval_gated`, `recommend_only`. Default: `"approval_gated"`. |
+| `grants` | array of [Grant](#grant) | no |  |
+| `network` | [NetworkPolicy](#networkpolicy) | no |  |
+| `environment` | [ExecutionEnvironment](#executionenvironment) | no |  |
+| `expires_at` | string \| null (date-time) | no | Defaults to run end. Grants never outlive the run. |
+
+No other properties are accepted.
+
+## Grant
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `scope` | string | yes | Capability ID (`cap.*`), tool family, or resource URI. |
+| `actions` | array of string enum | yes | Min items: 1. Items one of: `read`, `write`, `execute`, `network`, `spend`, `external_send`. |
+| `resources` | array of string | no |  |
+| `effect_class` | string enum | no | One of: `none`, `reversible`, `external`, `irreversible`. |
+| `requires_approval` | boolean | no | Default: `false`. |
+| `expires_at` | string \| null (date-time) | no |  |
+
+No other properties are accepted.
+
+## NetworkPolicy
+
+Public view of NetworkAccessPolicyV1. Private-address, redirect-hop and DNS-rebind defenses are always on.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `default` | string enum | no | One of: `deny`, `allowlist`. Default: `"deny"`. |
+| `domains` | array of string | no |  |
+| `private_ip` | string enum | no | One of: `deny`. Default: `"deny"`. |
+| `max_redirects` | integer | no | Default: `3`. Min: 0. Max: 10. |
+| `redirect_scope` | string enum | no | One of: `same_domain`, `allowlist`. Default: `"allowlist"`. |
+| `dns_rebind` | string enum | no | One of: `pin_resolution`. Default: `"pin_resolution"`. |
+| `defaults_version` | string | no | Version of the platform defaults applied to unset fields. Defaults are versioned, not architecture constants. Read-only. |
+
+No other properties are accepted.
+
+## ExecutionEnvironment
+
+Public view of ExecutionEnvironmentV1. Raw environment inheritance is never allowed.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `allowed_env_keys` | array of string | no |  |
+| `secret_refs` | array of string | no |  |
+
+No other properties are accepted.
+
+## Budget
+
+On exhaustion the platform first hard-stops ALL further billable/effectful execution, then moves the run to `needs_attention` with attention reason `budget_exhausted`. No spend occurs while waiting; only a human answer can raise the budget.
+
+At least one of `max_seconds`, `max_cost_usd` is required.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `max_seconds` | integer | no | Min: 1. |
+| `max_cost_usd` | number | no | Min: 0. |
+| `max_steps` | integer | no | Cap on executed work nodes. Min: 1. |
+| `max_attention_requests` | integer | no | Min: 0. |
+| `on_exhaustion` | string enum | no | `request_attention` (default): hard-stop, then `needs_attention/budget_exhausted`. `stop`: hard-stop then `failed`. A model can never raise its own budget. One of: `request_attention`, `stop`. Default: `"request_attention"`. |
+
+No other properties are accepted.
+
+## BudgetUsage
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `seconds` | number | yes |  |
+| `cost_usd` | number | yes |  |
+| `steps` | integer | yes |  |
+| `spend_halted` | boolean | no | True once budget exhaustion has hard-stopped billable/effectful execution. |
+
+## CompletionCriteria
+
+Verifier-owned completion. The run reaches `completed` only when the system evaluates: every required criterion has a PASS verification receipt, no blocking failure is unresolved, required artifacts exist, and policy obligations are met. A model saying "done" is a proposal with no authority. INCONCLUSIVE is never PASS. Items in `require` are string ids or `{id, version?}` referring to the versioned registry (GET /v1/completion-criteria); omitted version means latest at resolution time and the resolved version is recorded in `Run.resolved.completion`. `allow_partial` is the only way a run may end `partial`.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `require` | array of [CriterionRef](#criterionref) | yes | Min items: 1. |
+| `criteria` | array of [Criterion](#criterion) | no | Custom criteria, referenced from `require` by `id`. |
+| `allow_partial` | boolean | no | If true, a run that stops with some criteria unmet ends `partial`. `partial` is only ever produced when this is true, and is never a synonym for failed or unfinished. Default: `false`. |
+
+No other properties are accepted.
+
+## CriterionRef
+
+Registry criterion by id (string, latest) or pinned `{id, version}`. Built-ins keep their names: tests_pass, no_new_regressions, build_passes, typecheck_passes, lint_clean, artifact_exists, requirement_verified, human_review.
+
+One of: string.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | yes | Pattern: `^[a-z0-9_.-]+$`. |
+| `version` | integer | no | Min: 1. |
+
+## Criterion
+
+Custom criterion registered inline for this run/campaign; built-in and registry criteria are referenced from `require`.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | yes | Pattern: `^[a-z0-9_.-]+$`. |
+| `description` | string | yes |  |
+| `verifier` | string enum | yes | One of: `parse`, `format`, `lint`, `typecheck`, `unit_test`, `integration_test`, `build`, `semantic_rule`, `requirement`, `security`, `regression`, `diff_review`, `human`. |
+| `command` | string | no | Optional check command run in the sandbox under the run's authority. |
+| `blocking` | boolean | no | Default: `true`. |
+
+No other properties are accepted.
+
+## CapabilityLimits
+
+Disclosure tier: B.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `allow` | array of string | no |  |
+| `deny` | array of string | no |  |
+| `tools_allow` | array of string | no |  |
+| `tools_deny` | array of string | no |  |
+
+No other properties are accepted.
+
+## ModelConstraints
+
+Constrain by logical class, locality and trust. Model or vendor names are rejected.
+
+Disclosure tier: B.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `allow_classes` | array of string | no |  |
+| `deny_classes` | array of string | no |  |
+| `locality` | string enum | no | One of: `local_only`, `local_preferred`, `any`. Default: `"any"`. |
+| `max_data_trust_class_to_remote` | [TrustClass](#trustclass) | no |  |
+
+No other properties are accepted.
+
+## GraphSpec
+
+Advanced input is treated as opaque until the public Graph contract is frozen.
+
+Disclosure tier: C.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `template_id` | string | no |  |
+| `template_params` | object | no | Open object. |
+| `ir` | object | no | Full graph IR. Statically validated; vendor or model names are rejected. Open object. |
+
+No other properties are accepted.
+
+## RuntimeHints
+
+Research/infra hints. Never change semantics, eligibility, policy or evidence.
+
+Disclosure tier: D.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `deployment_profile` | string enum | no | One of: `micro`, `tiny`, `compact`, `medium`, `workstation`, `large`, `fabric`. |
+| `readout_level_min` | string enum | no | One of: `L0`, `L1`, `L2`. |
+| `record_cassette` | boolean | no | Default: `true`. |
+
+No other properties are accepted.
+
+## RunStatus
+
+Aggregate of the work-node lifecycle and the run receipt's completion status. When nodes differ, precedence is `cancelling` &gt; `paused` &gt; `needs_attention` &gt; `running` &gt; `waiting` &gt; `accepted`. See [Runs and completion](/core/runs-and-completion#run-status).
+
+| Value | Meaning |
+|-------|---------|
+| `accepted` | Persisted; node work is declared, admitted or ready. Also the status until `Run.resolved` is recorded. |
+| `running` | At least one node is leased, spawned, running, producing output, verifying, continuing or replanning. |
+| `waiting` | Active nodes are on a timer, dependency or event wait gate, or a lease reclaim is pending, and none is running. |
+| `needs_attention` | A node needs a human (an open AttentionRequest), including `budget_exhausted` after billable and effectful execution has been hard-stopped. |
+| `paused` | Operator pause; leases were released at a safe boundary. |
+| `cancelling` | The cancel is receipted; in-flight effects are settling. |
+| `completed` | Terminal. The completion predicate evaluated true. |
+| `partial` | Terminal. The run closed with the predicate false and the completion contract has `allow_partial: true`. Never a synonym for failed or unfinished. |
+| `failed` | Terminal. Closed after an unrecoverable failure or a budget stop. |
+| `cancelled` | Terminal. Closed after a cancel. |
+
+## Run
+
+Durable execution instance. `resolved` is required and is populated before execution; status stays `accepted` until resolution is recorded.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | yes | Pattern: `^run_`. |
+| `object` | `"run"` | yes |  |
+| `status` | [RunStatus](#runstatus) | yes |  |
+| `status_reason` | string \| null | no | Short human-readable reason for the current status. |
+| `terminal` | boolean | no |  |
+| `agent` | string | yes | Logical agent ID and version, e.g. allternit-code@v1. |
+| `thread_id` | string | yes | Correlation ID only; there are no Thread endpoints. |
+| `campaign_id` | string \| null | no |  |
+| `goal` | string | no |  |
+| `created_at` | [Timestamp](#timestamp) | yes |  |
+| `updated_at` | [Timestamp](#timestamp) | yes |  |
+| `finished_at` | string \| null (date-time) | no |  |
+| `version` | integer | yes | Monotonic durable state version (ETag source). Min: 0. |
+| `budget` | [Budget](#budget) | yes |  |
+| `budget_usage` | [BudgetUsage](#budgetusage) | yes |  |
+| `attention` | [AttentionRequest](#attentionrequest) \| null | yes | The oldest open AttentionRequest, or null. |
+| `open_attention_count` | integer | no | Min: 0. |
+| `completion` | [CompletionState](#completionstate) | yes |  |
+| `output` | [RunOutput](#runoutput) \| null | no |  |
+| `cancellation` | [CancellationState](#cancellationstate) \| null | no |  |
+| `error` | [Error](#error) \| null | no |  |
+| `links` | [RunLinks](#runlinks) | yes |  |
+| `metadata` | [Metadata](#metadata) | no |  |
+| `debug` | [RunDebugView](#rundebugview) \| null | no | Present only with `view=debug`. |
+| `resolved` | [ResolvedDefaults](#resolveddefaults) | yes |  |
+| `effect_receipt_ids` | array of string | no | Durable effect receipt ids linked to this run/creating request. Receipts outlive the 24 h API replay window. |
+
+## RunLinks
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `self` | string (uri-reference) | yes |  |
+| `events` | string (uri-reference) | yes |  |
+| `artifacts` | string (uri-reference) | yes |  |
+| `receipts` | string (uri-reference) | yes |  |
+| `attention` | string (uri-reference) | no |  |
+
+## RunOutput
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `summary` | string | yes |  |
+| `artifact_ids` | array of string | yes |  |
+| `run_receipt_id` | string \| null | no | The run receipt that proves the terminal state. |
+
+## CompletionState
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `status` | string enum | yes | One of: `pending`, `satisfied`, `unsatisfied`. |
+| `criteria` | array of object | yes |  |
+| `criteria[].criterion` | string | yes |  |
+| `criteria[].result` | [VerificationResult](#verificationresult) | yes |  |
+| `criteria[].receipt_ids` | array of string | no |  |
+
+## VerificationResult
+
+Type: string enum.
+
+| Value |
+|-------|
+| `pending` |
+| `pass` |
+| `fail` |
+| `inconclusive` |
+| `error` |
+
+## CancellationState
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `requested_at` | [Timestamp](#timestamp) | yes |  |
+| `reason` | string \| null | no |  |
+| `receipt_id` | string | no |  |
+| `effects_in_flight` | array of object | yes |  |
+| `effects_in_flight[].description` | string | yes |  |
+| `effects_in_flight[].effect_class` | string enum | no | One of: `reversible`, `external`, `irreversible`. |
+| `effects_in_flight[].state` | string enum | yes | One of: `settling`, `completed`, `rolled_back`, `rollback_failed`, `timed_out`. |
+| `effects_in_flight[].receipt_id` | string \| null | no |  |
+
+## RunDebugView
+
+Opt-in kernel internals (`view=debug`, scope `debug:read`). Open object; fields may change without a major version.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `task_ref` | string | no |  |
+| `graph_id` | string | no |  |
+| `graph_version` | integer | no |  |
+| `components_used` | array of object | no | Execution evidence only (role, mode, capability, opaque component ID). |
+| `trace_ref` | string | no |  |
+
+Open object: additional properties are allowed.
+
+## ControlRequest
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `reason` | string | no | Max length: 1000. |
+
+No other properties are accepted.
+
+## CancelRequest
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `reason` | string | no | Max length: 1000. |
+| `rollback_reversible_effects` | boolean | no | Default: `true`. |
+
+No other properties are accepted.
+
+## RunInput
+
+When `type` is `approval` or `rejection`, `attention_id` is required.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string enum | yes | One of: `message`, `approval`, `rejection`, `steer`, `data`. |
+| `attention_id` | string | no | Pattern: `^att_`. |
+| `value` | any | no | Free text for message/steer; typed payload for data. |
+| `comment` | string | no |  |
+
+No other properties are accepted.
+
+## InputAccepted
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `run_id` | string | yes |  |
+| `receipt_id` | string | yes |  |
+| `attention_id` | string \| null | no |  |
+| `status` | [RunStatus](#runstatus) | yes |  |
+
+## RunPage
+
+Extends [PageBase](#pagebase).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `data` | array of [Run](#run) | no |  |
+
+## RunEventType
+
+Type: string enum.
+
+| Value |
+|-------|
+| `run.status_changed` |
+| `run.progress` |
+| `run.message` |
+| `attention.requested` |
+| `attention.resolved` |
+| `input.accepted` |
+| `artifact.created` |
+| `receipt.appended` |
+| `verification.completed` |
+| `budget.threshold` |
+| `debug.trace` |
+
+## RunEventBase
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | yes | Event cursor; use as SSE `Last-Event-ID`. |
+| `seq` | integer | yes | Gap-free per-run sequence. Min: 1. |
+| `run_id` | string | yes |  |
+| `type` | [RunEventType](#runeventtype) | yes |  |
+| `created_at` | [Timestamp](#timestamp) | yes |  |
+| `run_version` | integer | no |  |
+
+## RunEvent
+
+Discriminated on `type`. Unknown types must be ignored by clients.
+
+One of: [RunStatusChangedEvent](#runstatuschangedevent), [RunProgressEvent](#runprogressevent), [RunMessageEvent](#runmessageevent), [AttentionRequestedEvent](#attentionrequestedevent), [AttentionResolvedEvent](#attentionresolvedevent), [InputAcceptedEvent](#inputacceptedevent), [ArtifactCreatedEvent](#artifactcreatedevent), [ReceiptAppendedEvent](#receiptappendedevent), [VerificationCompletedEvent](#verificationcompletedevent), [BudgetThresholdEvent](#budgetthresholdevent), [DebugTraceEvent](#debugtraceevent). Discriminated on `type`.
+
+## RunStatusChangedEvent
+
+Extends [RunEventBase](#runeventbase).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `"run.status_changed"` | yes |  |
+| `data` | object | yes |  |
+| `data.from` | [RunStatus](#runstatus) | yes |  |
+| `data.to` | [RunStatus](#runstatus) | yes |  |
+| `data.terminal` | boolean | yes |  |
+| `data.reason` | string \| null | no |  |
+| `data.run_receipt_id` | string \| null | no |  |
+
+## RunProgressEvent
+
+Extends [RunEventBase](#runeventbase).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `"run.progress"` | yes |  |
+| `data` | object | yes |  |
+| `data.step` | string | yes | Plain-language step, e.g. "Running affected tests". |
+| `data.completed_steps` | integer | no |  |
+| `data.estimated_steps` | integer \| null | no |  |
+
+## RunMessageEvent
+
+Extends [RunEventBase](#runeventbase).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `"run.message"` | yes |  |
+| `data` | object | yes |  |
+| `data.role` | string enum | yes | One of: `agent`, `user`, `system`. |
+| `data.text` | string | yes |  |
+| `data.delta` | boolean | no | If true, append to the previous message. Default: `false`. |
+
+## AttentionRequestedEvent
+
+Extends [RunEventBase](#runeventbase).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `"attention.requested"` | yes |  |
+| `data` | [AttentionRequest](#attentionrequest) | yes |  |
+
+## AttentionResolvedEvent
+
+Extends [RunEventBase](#runeventbase).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `"attention.resolved"` | yes |  |
+| `data` | [AttentionRequest](#attentionrequest) | yes |  |
+
+## InputAcceptedEvent
+
+Extends [RunEventBase](#runeventbase).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `"input.accepted"` | yes |  |
+| `data` | [InputAccepted](#inputaccepted) | yes |  |
+
+## ArtifactCreatedEvent
+
+Extends [RunEventBase](#runeventbase).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `"artifact.created"` | yes |  |
+| `data` | [Artifact](#artifact) | yes |  |
+
+## ReceiptAppendedEvent
+
+Extends [RunEventBase](#runeventbase).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `"receipt.appended"` | yes |  |
+| `data` | object | yes |  |
+| `data.receipt_id` | string | yes |  |
+| `data.receipt_type` | [ReceiptType](#receipttype) | yes |  |
+| `data.content_hash` | string | yes |  |
+| `data.summary` | string | no |  |
+
+## VerificationCompletedEvent
+
+Extends [RunEventBase](#runeventbase).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `"verification.completed"` | yes |  |
+| `data` | object | yes |  |
+| `data.criterion` | string \| null | yes |  |
+| `data.verifier` | string | no |  |
+| `data.result` | [VerificationResult](#verificationresult) | yes |  |
+| `data.receipt_id` | string | yes |  |
+
+## BudgetThresholdEvent
+
+Extends [RunEventBase](#runeventbase).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `"budget.threshold"` | yes |  |
+| `data` | object | yes |  |
+| `data.dimension` | string enum | yes | One of: `seconds`, `cost_usd`, `steps`. |
+| `data.fraction_used` | number enum | yes | One of: `0.5`, `0.8`, `1.0`. |
+
+## DebugTraceEvent
+
+Only delivered with `view=debug`.
+
+Extends [RunEventBase](#runeventbase).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `"debug.trace"` | yes |  |
+| `data` | object | yes | Open object. |
+
+## RunEventPage
+
+Extends [PageBase](#pagebase).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `data` | array of [RunEvent](#runevent) | no |  |
+
+## AttentionStatus
+
+Type: string enum.
+
+| Value |
+|-------|
+| `open` |
+| `resolved` |
+| `expired` |
+| `withdrawn` |
+
+## AttentionRequest
+
+Public view of AttentionRequestV1. Agents request attention; the AttentionController owns delivery, quiet hours, dedupe and quotas. Only policy ASK outcomes become approval requests; hard DENY outcomes never do.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | yes | Pattern: `^att_`. |
+| `object` | `"attention_request"` | yes |  |
+| `run_id` | string | yes |  |
+| `campaign_id` | string \| null | no |  |
+| `reason` | string enum | yes | One of: `approval_required`, `clarification_needed`, `budget_exhausted`, `verification_inconclusive`, `low_confidence`, `unsafe_resume`, `review_requested`. |
+| `urgency` | string enum | yes | One of: `low`, `normal`, `high`, `critical`. |
+| `topic` | string | yes |  |
+| `summary` | string | no |  |
+| `expected_loss` | string \| null | no | Plain-language cost of not answering. |
+| `proposed_action` | [ProposedAction](#proposedaction) \| null | no |  |
+| `response_options` | array of string enum | yes | Items one of: `approval`, `rejection`, `data`, `message`. |
+| `requested_channel` | string \| null | no |  |
+| `expires_at` | string \| null (date-time) | no |  |
+| `on_expiry` | string enum | no | Derived from `kind`: approval =&gt; reject, informational =&gt; none. One of: `reject`, `none`. |
+| `evidence_refs` | array of string | no |  |
+| `status` | [AttentionStatus](#attentionstatus) | yes |  |
+| `resolution` | [AttentionResolution](#attentionresolution) \| null | no |  |
+| `created_at` | [Timestamp](#timestamp) | yes |  |
+| `kind` | string enum | yes | `approval`: policy ASK; expiry = rejection/deny (fail closed). `informational`: expiry sets status `expired` with no semantic rejection. One of: `approval`, `informational`. |
+| `defaults_version` | string | no | Version of attention limit defaults applied. |
+
+## ProposedAction
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `description` | string | yes |  |
+| `effect_class` | string enum | yes | One of: `reversible`, `external`, `irreversible`. |
+| `resources` | array of string | no |  |
+| `estimated_cost_usd` | number \| null | no |  |
+
+## AttentionResolution
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string enum | yes | One of: `approval`, `rejection`, `data`, `message`, `expired`, `withdrawn`. |
+| `resolved_by` | string \| null | no |  |
+| `resolved_at` | [Timestamp](#timestamp) | yes |  |
+| `receipt_id` | string | yes |  |
+| `outcome` | string enum | no | Expired approval =&gt; `rejected` (deny). Expired informational =&gt; `none`. One of: `approved`, `rejected`, `answered`, `none`. |
+
+## AttentionResponse
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string enum | yes | One of: `approval`, `rejection`, `data`, `message`. |
+| `value` | any | no |  |
+| `comment` | string | no |  |
+
+No other properties are accepted.
+
+## AttentionPage
+
+Extends [PageBase](#pagebase).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `data` | array of [AttentionRequest](#attentionrequest) | no |  |
+
+## Artifact
+
+Public view of NodeOutputV1. Immutable, content-addressed.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | yes |  |
+| `object` | `"artifact"` | yes |  |
+| `run_id` | string | yes |  |
+| `name` | string | yes |  |
+| `kind` | string enum | no | One of: `patch`, `file`, `report`, `dataset`, `log`, `other`. |
+| `mime_type` | string | yes |  |
+| `size_bytes` | integer | no |  |
+| `hash` | string | yes | Pattern: `^sha256:[0-9a-f]{64}$`. |
+| `trust_class` | [TrustClass](#trustclass) | no |  |
+| `verification_status` | string enum | yes | One of: `unverified`, `pass`, `fail`, `inconclusive`, `error`. |
+| `receipt_id` | string | yes |  |
+| `content_url` | string \| null (uri) | no | Short-lived download URL. |
+| `created_at` | [Timestamp](#timestamp) | yes |  |
+| `metadata` | object | no | Open object. |
+
+## ArtifactPage
+
+Extends [PageBase](#pagebase).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `data` | array of [Artifact](#artifact) | no |  |
+
+## ReceiptType
+
+Type: string enum.
+
+| Value |
+|-------|
+| `run` |
+| `tool` |
+| `action` |
+| `mutation` |
+| `verification` |
+| `policy` |
+| `node_output` |
+| `input` |
+| `attention` |
+| `control` |
+| `spawn` |
+
+## Receipt
+
+Append-only, content-addressed, hash-chained per run. `content_hash` = sha256 over the canonical JSON (RFC 8785) of every field except `content_hash` and `signature`. `prev_hash` links to the previous receipt in the run chain (null only at index 0). Corrections append a new receipt with `supersedes`. Signing: per-run previous-hash chain; RFC 8785 JCS canonicalization, SHA-256, Ed25519. The signed material is the JCS-canonical object &#123;`schema_id`, `schema_version`, `domain`, `content_hash`&#125;, so signatures bind schema id, schema version and the domain-separation tag `allternit.receipt.v1`. Verification keys: `/.well-known/jwks.json`.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | yes | Pattern: `^rcpt_`. |
+| `object` | `"receipt"` | yes |  |
+| `run_id` | string | yes |  |
+| `type` | [ReceiptType](#receipttype) | yes |  |
+| `index` | integer | yes | Min: 0. |
+| `content_hash` | string | yes | Pattern: `^sha256:[0-9a-f]{64}$`. |
+| `prev_hash` | string \| null | yes |  |
+| `signature` | [ReceiptSignature](#receiptsignature) \| null | no |  |
+| `supersedes` | string \| null | no |  |
+| `idempotency_key` | string \| null | no | Required on action receipts for external or irreversible effects. |
+| `summary` | string | no |  |
+| `provenance` | array of [Provenance](#provenance) | yes |  |
+| `payload` | object | yes | Type-specific body (e.g. tool exit class, verification result, policy decision). Open by design; component identities appear only with `view=debug`. Open object. |
+| `created_at` | [Timestamp](#timestamp) | yes |  |
+| `schema_id` | string | yes | Included in the signed payload. |
+| `schema_version` | string | yes | Included in the signed payload. |
+
+## ReceiptSignature
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `alg` | string enum | yes | One of: `ed25519`. |
+| `key_id` | string | yes |  |
+| `value` | string | yes | base64url Ed25519 signature over JCS(&#123;schema_id, schema_version, domain, content_hash&#125;). |
+| `jwks_url` | string (uri) | no | Always `https://api.allternit.com/.well-known/jwks.json`. |
+| `domain` | `"allternit.receipt.v1"` | yes | Domain-separation tag included in the signed payload. |
+
+## Provenance
+
+AbiEnvelope provenance.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `source_type` | string enum | yes | One of: `USER`, `FILE`, `TOOL`, `MODEL`, `POLICY`, `SYSTEM`, `CACHE`, `RETRIEVAL`. |
+| `source_id` | string | no |  |
+| `trust_class` | [TrustClass](#trustclass) | yes |  |
+| `content_hash` | string \| null | no |  |
+| `observed_at` | string \| null (date-time) | no |  |
+
+## ReceiptChainVerification
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `run_id` | string | yes |  |
+| `receipt_count` | integer | yes |  |
+| `head_hash` | string | yes |  |
+| `hash_chain_valid` | boolean | yes |  |
+| `signatures_valid` | boolean \| null | yes | Null if any receipt is unsigned. |
+| `first_invalid_index` | integer \| null | no |  |
+| `checked_at` | [Timestamp](#timestamp) | yes |  |
+
+## ReceiptPage
+
+Extends [PageBase](#pagebase).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `data` | array of [Receipt](#receipt) | no |  |
+
+## GraphView
+
+Disclosure tier: C.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `graph_id` | string | yes |  |
+| `version` | integer | yes |  |
+| `template_id` | string \| null | no |  |
+| `nodes` | array of object | yes |  |
+| `nodes[].node_id` | string | yes |  |
+| `nodes[].primitive_id` | string | yes |  |
+| `nodes[].lifecycle` | string enum | yes | One of: `DECLARE`, `ADMIT`, `READY`, `LEASE`, `SPAWN`, `RUN`, `HEARTBEAT`, `OUTPUT`, `VERIFY`, `COMMIT`, `CONTINUE`, `REPLAN`, `NEEDS_HUMAN`, `CLOSE`, `VAULT`, `LEARN`. |
+| `nodes[].wait_gate` | string \| null | no |  |
+| `nodes[].output_ids` | array of string | no |  |
+| `edges` | array of object | yes |  |
+| `edges[].from` | string | yes |  |
+| `edges[].to` | string | yes |  |
+| `edges[].when` | string \| null | no |  |
+
+## CampaignStatus
+
+active = created, first wake pending; sleeping = waiting for next_wake; running = at least one child run non-terminal; needs_attention = a child run or the campaign itself has an open AttentionRequest; paused; completed = campaign completion criteria met by receipts; failed; cancelled. Independent of `scheduling`.
+
+Type: string enum.
+
+| Value |
+|-------|
+| `active` |
+| `sleeping` |
+| `running` |
+| `needs_attention` |
+| `paused` |
+| `completed` |
+| `failed` |
+| `cancelled` |
+
+## CampaignCreate
+
+Only `objective` is required. workspace, authority, budget, completion_criteria and wake_policy resolve from the agent/profile defaults and are returned explicitly on Campaign.resolved before any run is created. No hidden permissive defaults: if a safe value cannot be resolved the request fails with ERR_DEFAULTS_UNRESOLVABLE.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `agent` | string | no | Default: `"allternit-code"`. |
+| `objective` | string | yes |  |
+| `workspace` | [Workspace](#workspace) | no |  |
+| `authority` | [Authority](#authority) | no |  |
+| `budget` | [CampaignBudget](#campaignbudget) | no |  |
+| `completion_criteria` | [CompletionCriteria](#completioncriteria) | no |  |
+| `graph_template` | string | no | Disclosure tier C. |
+| `wake_policy` | [WakePolicy](#wakepolicy) | no |  |
+| `attention_policy` | [AttentionPolicy](#attentionpolicy) | no |  |
+| `metadata` | [Metadata](#metadata) | no |  |
+
+No other properties are accepted except extension properties matching `^x-[a-z0-9-]+$`.
+
+## CampaignBudget
+
+Whole-campaign caps plus a per-run budget applied to every child run.
+
+At least one of `max_cost_usd`, `max_runs` is required.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `max_cost_usd` | number | no | Min: 0. |
+| `max_runs` | integer | no | Min: 1. |
+| `per_run` | [Budget](#budget) | yes |  |
+| `on_exhaustion` | string enum | no | One of: `request_attention`, `stop`. Default: `"request_attention"`. |
+
+No other properties are accepted.
+
+## WakePolicy
+
+When the campaign may consider waking. Triggers only make a wake *eligible*; the campaign then decides whether another check is useful (not cron). Wake triggers are accepted, but autonomous scheduled waking is disabled until go-live: the Campaign reports `scheduling: disabled_pending_golive`. Limits are versioned defaults (`defaults_version`).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `triggers` | array of [WakeTrigger](#waketrigger) | yes | Min items: 1. |
+| `min_interval_seconds` | integer | no | Default: `900`. Min: 60. |
+| `max_wakes_per_day` | integer | no | Default: `24`. Min: 1. |
+| `skip_if_run_active` | boolean | no | Default: `true`. |
+| `until` | string \| null (date-time) | no |  |
+| `defaults_version` | string | no | Read-only. |
+
+No other properties are accepted.
+
+## WakeTrigger
+
+One of the following variants, discriminated on `type`.
+
+Variant `interval`:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `"interval"` | yes |  |
+| `interval_seconds` | integer | yes | Min: 60. |
+| `jitter_seconds` | integer | no | Default: `0`. Min: 0. |
+
+Variant `schedule`:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `"schedule"` | yes |  |
+| `cron` | string | yes |  |
+| `timezone` | string | yes |  |
+
+Variant `event`:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `"event"` | yes |  |
+| `source` | string | yes | Resource URI or connector event, e.g. `repo://acme/store#push`. |
+| `filter` | map of string to string | no |  |
+
+Variant `run_finished`:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `"run_finished"` | yes |  |
+
+Variant `manual`:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `"manual"` | yes |  |
+
+## AttentionPolicy
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `channels` | array of string | no | Default: `["in_app"]`. |
+| `quiet_hours` | object \| null | no |  |
+| `quiet_hours.start` | string | yes | Pattern: `^[0-2][0-9]:[0-5][0-9]$`. |
+| `quiet_hours.end` | string | yes | Pattern: `^[0-2][0-9]:[0-5][0-9]$`. |
+| `quiet_hours.timezone` | string | yes |  |
+| `interrupt_quiet_hours_at` | string enum | no | One of: `critical`, `never`. Default: `"critical"`. |
+| `max_per_hour` | integer | no | Default: `4`. Min: 0. |
+| `max_per_day` | integer | no | Default: `20`. Min: 0. |
+| `dedupe_window_seconds` | integer | no | Default: `3600`. Min: 0. |
+| `escalate_after_seconds` | integer \| null | no | Min: 60. |
+| `defaults_version` | string | no | Versioned defaults for caps/dedupe/quiet-hours; not architecture constants. Read-only. |
+
+No other properties are accepted.
+
+## Campaign
+
+Campaigns can be created but autonomous scheduled waking is disabled until go-live; see `scheduling`.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | yes | Pattern: `^cmp_`. |
+| `object` | `"campaign"` | yes |  |
+| `agent` | string | yes |  |
+| `objective` | string | yes |  |
+| `status` | [CampaignStatus](#campaignstatus) | yes |  |
+| `owner` | string | yes |  |
+| `budget` | [CampaignBudget](#campaignbudget) | yes |  |
+| `budget_usage` | [BudgetUsage](#budgetusage) & object | yes |  |
+| `wake_policy` | [WakePolicy](#wakepolicy) | yes |  |
+| `attention_policy` | [AttentionPolicy](#attentionpolicy) | yes |  |
+| `completion_criteria` | [CompletionCriteria](#completioncriteria) | yes |  |
+| `completion` | [CompletionState](#completionstate) | no |  |
+| `next_wake` | string \| null (date-time) | yes |  |
+| `last_wake` | string \| null (date-time) | no |  |
+| `active_run_ids` | array of string | no |  |
+| `created_at` | [Timestamp](#timestamp) | yes |  |
+| `updated_at` | [Timestamp](#timestamp) | no |  |
+| `metadata` | [Metadata](#metadata) | no |  |
+| `scheduling` | string enum | yes | `disabled_pending_golive` until Agency API alpha/conformance and an explicit go-live decision. While disabled, no wake fires and `next_wake` is null; manual runs still work. One of: `disabled_pending_golive`, `enabled`. |
+| `defaults_version` | string | yes | Version of campaign limit defaults. |
+| `resolved` | [ResolvedDefaults](#resolveddefaults) | yes | Explicit workspace/authority/budget/completion the campaign's runs will use, recorded before the first run. Each run also carries its own Run.resolved. |
+
+## CampaignControlRequest
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `reason` | string | no |  |
+| `cascade` | boolean | no | Default: `true`. |
+
+No other properties are accepted.
+
+## CampaignPage
+
+Extends [PageBase](#pagebase).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `data` | array of [Campaign](#campaign) | no |  |
+
+## ReplayRequest
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `source_run_id` | string | yes |  |
+| `effects` | `"recorded_only"` | no | The only allowed value. Replays never perform external effects. Default: `"recorded_only"`. |
+| `overrides` | object | no | What to vary. Anything not overridden is taken from the source run's recording. |
+| `overrides.authority_profile` | string | no |  |
+| `overrides.completion` | [CompletionCriteria](#completioncriteria) | no |  |
+| `overrides.models` | [ModelConstraints](#modelconstraints) | no |  |
+| `overrides.runtime` | [RuntimeHints](#runtimehints) | no |  |
+
+No other properties are accepted.
+
+## ReplayStatus
+
+Type: string enum.
+
+| Value |
+|-------|
+| `queued` |
+| `running` |
+| `completed` |
+| `failed` |
+| `cancelled` |
+
+## Replay
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | yes | Pattern: `^rpl_`. |
+| `object` | `"replay"` | yes |  |
+| `source_run_id` | string | yes |  |
+| `status` | [ReplayStatus](#replaystatus) | yes |  |
+| `effects` | `"recorded_only"` | yes |  |
+| `verdict` | string \| null enum | no | One of: `equivalent`, `diverged_expected`, `diverged_unexpected`, `null`. |
+| `created_at` | [Timestamp](#timestamp) | yes |  |
+| `finished_at` | string \| null (date-time) | no |  |
+| `results_url` | string (uri-reference) | no |  |
+| `error` | [Error](#error) \| null | no |  |
+
+## ReplayResults
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `replay_id` | string | yes |  |
+| `verdict` | string enum | yes | One of: `equivalent`, `diverged_expected`, `diverged_unexpected`. |
+| `decisions_total` | integer | yes |  |
+| `decisions_matched` | integer | yes |  |
+| `completion_matched` | boolean | no |  |
+| `divergences` | array of object | yes |  |
+| `divergences[].step_ref` | string | yes |  |
+| `divergences[].kind` | string enum | yes | One of: `expected`, `unexpected`. |
+| `divergences[].description` | string | no |  |
+| `divergences[].source_receipt_id` | string \| null | no |  |
+| `divergences[].replay_receipt_id` | string \| null | no |  |
+| `has_more` | boolean | yes |  |
+| `next_cursor` | string \| null | yes |  |
+
+## DecisionRequest
+
+When `operation` is `choice` or `rank` or `subset` or `gate` or `pair_score`, `candidates` is required.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `operation` | string enum | yes | One of: `belief`, `choice`, `score`, `rank`, `subset`, `estimate`, `gate`, `verify`, `pair_score`. |
+| `question` | string | yes |  |
+| `state` | any | yes | Caller-supplied state (object or text). |
+| `candidates` | array of object | no | Required for choice/rank/subset/gate/pair_score. The backend never invents options. |
+| `candidates[].id` | string | yes |  |
+| `candidates[].label` | string | no |  |
+| `candidates[].value` | any | no |  |
+| `scale` | array of string | no | Ordered labels for score. |
+| `range` | object | no | Bounds for estimate. |
+| `range.min` | number | no |  |
+| `range.max` | number | no |  |
+| `require_level` | string enum | no | Minimum calibration level. Raw uncalibrated readouts are never served for action. One of: `L0`, `L1`, `L2`, `auto`. Default: `"auto"`. |
+| `max_latency_ms` | integer | no | Min: 1. |
+
+No other properties are accepted.
+
+## DecisionResult
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `operation` | string | yes |  |
+| `answer` | any | yes | Typed answer (candidate id, id list, number, or boolean). |
+| `probabilities` | object \| null | no |  |
+| `confidence` | number | yes | Min: 0. Max: 1. |
+| `calibration` | object | yes |  |
+| `calibration.level_served` | string enum | yes | One of: `L0`, `L1`, `L2`. |
+| `calibration.calibrated` | boolean | no |  |
+| `calibration.calibration_id` | string \| null | no |  |
+| `threshold_action` | string \| null enum | no | One of: `auto`, `review`, `escalate`, `reject`, `null`. |
+| `evidence_refs` | array of string | yes |  |
+| `debug` | object \| null | no | Present only with `view=debug` (backend class, component identity, latency). |
+
+## Capability
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | yes | Pattern: `^cap\.`. |
+| `object` | `"capability"` | yes |  |
+| `description` | string | yes |  |
+| `status` | string enum | yes | One of: `available`, `degraded`, `unavailable`. |
+| `trust_classes` | array of [TrustClass](#trustclass) | no |  |
+| `localities` | array of string enum | no | Items one of: `local`, `fabric`, `remote`. |
+
+## CapabilityPage
+
+Extends [PageBase](#pagebase).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `data` | array of [Capability](#capability) | no |  |
+
+## Agent
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | yes |  |
+| `object` | `"agent"` | yes |  |
+| `description` | string | no |  |
+| `versions` | array of string | yes |  |
+| `default_version` | string | yes |  |
+| `capabilities` | array of string | no |  |
+| `completion_criteria` | array of [CriterionRef](#criterionref) | no | Built-in criteria this agent can verify. |
+| `authority_profiles` | array of string | no |  |
+| `templates` | array of string | no |  |
+
+## AgentPage
+
+Extends [PageBase](#pagebase).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `data` | array of [Agent](#agent) | no |  |
+
+## ModelClass
+
+Logical class only. Concrete models are interchangeable components and are never listed here. Logical capability/locality/trust classes only; never vendor identities in default responses. The first-party workspace UI may show model choice separately.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | yes | Pattern: `^mc\.[a-z0-9_.-]+$`. |
+| `object` | `"model_class"` | yes |  |
+| `description` | string | no |  |
+| `trust_classes` | array of [TrustClass](#trustclass) | yes | Highest data trust class this class may receive. |
+| `locality` | string enum | yes | One of: `local`, `fabric`, `remote`. |
+| `capabilities` | array of string | no |  |
+| `latency_class` | string enum | no | One of: `interactive`, `normal`, `background`. |
+
+## ModelClassPage
+
+Extends [PageBase](#pagebase).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `data` | array of [ModelClass](#modelclass) | no |  |
+
+## AuthorityProfile
+
+Exact typed semantics of a profile. Compiles into capabilities/policy. Only `read-only`, `code-safe` and `code-write` exist; no bypass equivalent is ever public.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string enum | yes | One of: `read-only`, `code-safe`, `code-write`. |
+| `object` | `"authority_profile"` | yes |  |
+| `description` | string | yes |  |
+| `grants` | array of [Grant](#grant) | yes |  |
+| `network` | [NetworkPolicy](#networkpolicy) | yes |  |
+| `version` | integer | yes | Profile version; runs record `id@version` in `Run.resolved.authority`. Min: 1. |
+| `capabilities` | array of string | yes | Capabilities the profile grants (`cap.*`). |
+| `denied_capabilities` | array of string | no |  |
+| `filesystem_scope` | [FilesystemScope](#filesystemscope) | yes |  |
+| `approval_requirements` | array of [ApprovalRequirement](#approvalrequirement) | yes |  |
+| `defaults_version` | string | no | Version of platform limit defaults referenced. |
+
+## AuthorityProfilePage
+
+Extends [PageBase](#pagebase).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `data` | array of [AuthorityProfile](#authorityprofile) | no |  |
+
+## FilesystemScope
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `read` | string enum | yes | One of: `none`, `workspace`, `workspace_and_declared_resources`. |
+| `write` | string enum | yes | One of: `none`, `scratch_only`, `workspace_paths_declared_writable`. |
+| `execute` | string enum | yes | One of: `none`, `sandboxed_workspace`. |
+| `outside_workspace` | string enum | no | One of: `deny`. Default: `"deny"`. |
+
+No other properties are accepted.
+
+## ApprovalRequirement
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `effect` | string enum | yes | One of: `write`, `execute`, `network`, `spend`, `external`, `irreversible`. |
+| `mode` | string enum | yes | One of: `never_allowed`, `always_ask`, `ask_unless_granted`, `allowed`. |
+
+No other properties are accepted.
+
+## ResolvedAuthority
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `profile` | object | yes |  |
+| `profile.id` | string | yes |  |
+| `profile.version` | integer | yes |  |
+| `grants_summary` | object | yes | Summary of the compiled grants. |
+| `grants_summary.capabilities` | array of string | yes |  |
+| `grants_summary.filesystem_scope` | [FilesystemScope](#filesystemscope) | yes |  |
+| `grants_summary.network` | [NetworkPolicy](#networkpolicy) | yes |  |
+| `grants_summary.approval_requirements` | array of [ApprovalRequirement](#approvalrequirement) | yes |  |
+| `grants_summary.grant_count` | integer | no |  |
+| `interaction_mode` | string enum | no | One of: `autonomous`, `approval_gated`, `recommend_only`. |
+| `expires_at` | string \| null (date-time) | no |  |
+
+No other properties are accepted.
+
+## ResolvedCompletion
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `contract_id` | string | yes |  |
+| `contract_version` | integer | yes |  |
+| `require` | array of object | yes |  |
+| `require[].id` | string | yes |  |
+| `require[].version` | integer | yes |  |
+| `allow_partial` | boolean | yes |  |
+
+No other properties are accepted.
+
+## ResolvedDefaults
+
+Everything the server resolved before execution: explicit, safe, versioned and auditable. Populated before the run leaves `accepted`; the run cannot execute without it. Never contains a permissive fallback.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `workspace` | [Workspace](#workspace) | yes |  |
+| `authority` | [ResolvedAuthority](#resolvedauthority) | yes |  |
+| `budget` | [Budget](#budget) | yes |  |
+| `completion` | [ResolvedCompletion](#resolvedcompletion) | yes |  |
+| `defaults_source` | string | yes | Which agent/profile defaults (with versions) filled omitted fields; `request` if all four were supplied. |
+| `defaults_version` | string | no | Version of platform limit defaults. |
+| `enforcement` | object | yes | Always true for runs created via this API; not client-disableable. |
+| `enforcement.judge_fail_closed` | `true` | yes |  |
+| `enforcement.verifier_owned_completion` | `true` | yes |  |
+| `resolved_at` | [Timestamp](#timestamp) | yes |  |
+
+No other properties are accepted.
+
+## CompletionCriterion
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | yes | Pattern: `^[a-z0-9_.-]+$`. |
+| `object` | `"completion_criterion"` | yes |  |
+| `version` | integer | yes | Min: 1. |
+| `description` | string | yes |  |
+| `verifier_semantics` | string | yes | Precise text of what PASS means, including that INCONCLUSIVE is never PASS. |
+| `verifier_kind` | string enum | yes | One of: `parse`, `format`, `lint`, `typecheck`, `unit_test`, `integration_test`, `build`, `semantic_rule`, `requirement`, `security`, `regression`, `diff_review`, `human`. |
+| `built_in` | boolean | no |  |
+| `deprecated` | boolean | no |  |
+| `blocking_default` | boolean | no |  |
+
+## CompletionCriterionPage
+
+Extends [PageBase](#pagebase).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `data` | array of [CompletionCriterion](#completioncriterion) | no |  |
+
+## Jwks
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `keys` | array of object | yes |  |
+| `keys[].kty` | `"OKP"` | yes |  |
+| `keys[].crv` | `"Ed25519"` | yes |  |
+| `keys[].x` | string | yes |  |
+| `keys[].kid` | string | yes |  |
+| `keys[].use` | `"sig"` | no |  |
+| `keys[].alg` | `"EdDSA"` | no |  |
