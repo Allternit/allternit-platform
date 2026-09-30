@@ -42,6 +42,9 @@
             "group": "Architecture",
             "pages": [
               "architecture",
+              "architecture/two-machines",
+              "architecture/contracts-not-models",
+              "architecture/agent-loop",
               "architecture/agents",
               "architecture/kernel",
               "architecture/planes",
