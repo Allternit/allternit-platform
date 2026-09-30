@@ -43,6 +43,10 @@ pub enum HarnessGate {
     /// Every tool call passes through the Allternit PreToolUse hook
     /// (hard floor + Gate 2 when a WIH is bound).
     Hook,
+    /// No hook, but an ACP server: when driven over ACP the client answers
+    /// every `session/request_permission` with the gate's verdict
+    /// (gizzi-code `acp-gate.ts`), so nothing waits on a person.
+    Acp,
     /// No hook; runs auto-approve inside Allternit's execution environment
     /// (worktree, env allowlist, egress guard). Not lease-precise.
     Sandbox,
@@ -55,6 +59,7 @@ impl HarnessGate {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Hook => "hook",
+            Self::Acp => "acp",
             Self::Sandbox => "sandbox",
             Self::Ungated => "ungated",
         }
@@ -66,7 +71,8 @@ pub fn harness_gate(harness: &str) -> HarnessGate {
     let name = shell::basename(harness.trim()).to_ascii_lowercase();
     match name.as_str() {
         "claude" | "claude-code" => HarnessGate::Hook,
-        "codex" => HarnessGate::Sandbox,
+        "codex" | "qwen" | "qwen-code" => HarnessGate::Hook,
+        "kimi" | "kimi-code" | "gemini" => HarnessGate::Acp,
         _ => HarnessGate::Ungated,
     }
 }
@@ -145,7 +151,7 @@ impl HookRequest {
     fn is_shell(&self) -> bool {
         matches!(
             self.tool_name.as_str(),
-            "Bash" | "shell" | "local_shell" | "exec_command" | "container.exec" | "unified_exec"
+            "Bash" | "run_shell_command" | "shell" | "local_shell" | "exec_command" | "container.exec" | "unified_exec"
         )
     }
 
@@ -392,6 +398,41 @@ fn relative_to_root(path: &Path, root_forms: &[PathBuf]) -> Option<String> {
     None
 }
 
+/// Which vendor hook dialect a `HarnessGate::Hook` harness speaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookFlavor {
+    Claude,
+    Codex,
+    Qwen,
+}
+
+impl HookFlavor {
+    pub fn of(harness: &str) -> Option<Self> {
+        match shell::basename(harness.trim()).to_ascii_lowercase().as_str() {
+            "claude" | "claude-code" => Some(Self::Claude),
+            "codex" => Some(Self::Codex),
+            "qwen" | "qwen-code" => Some(Self::Qwen),
+            _ => None,
+        }
+    }
+    /// Subcommand of `allternit-commrails hook`. All three run the same
+    /// decision path (`decide`); the names only label the harness.
+    pub fn subcommand(self) -> &'static str {
+        match self {
+            Self::Claude => "claude-pretool",
+            Self::Codex => "codex-pretool",
+            Self::Qwen => "qwen-pretool",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Claude => "claude-code",
+            Self::Codex => "codex",
+            Self::Qwen => "qwen",
+        }
+    }
+}
+
 /// Claude Code PreToolUse stdout for a verdict. Allow prints nothing so the
 /// session's permission rules still apply; deny blocks the call.
 pub fn claude_hook_output(verdict: &Verdict) -> Option<String> {
@@ -498,10 +539,17 @@ pub struct HookTarget<'a> {
 
 /// The hook command line Claude Code runs for every tool call.
 pub fn claude_hook_command(target: HookTarget<'_>) -> String {
+    hook_command(HookFlavor::Claude, target)
+}
+
+/// The hook command line for any hooked harness.
+pub fn hook_command(flavor: HookFlavor, target: HookTarget<'_>) -> String {
     let mut cmd = format!(
-        "{} --root {} hook claude-pretool --harness claude-code",
+        "{} --root {} hook {} --harness {}",
         sh_quote(&target.commrails_bin.to_string_lossy()),
-        sh_quote(&target.root.to_string_lossy())
+        sh_quote(&target.root.to_string_lossy()),
+        flavor.subcommand(),
+        flavor.label()
     );
     if let Some(ws) = target.workspace {
         cmd.push_str(" --workspace ");
@@ -532,6 +580,47 @@ pub fn claude_settings(target: HookTarget<'_>) -> Value {
             }]
         }
     })
+}
+
+/// Session-scoped qwen settings (`QWEN_CODE_SYSTEM_SETTINGS_PATH=<file>`).
+/// Same PreToolUse schema and `permissionDecision` output as Claude Code;
+/// the user's `~/.qwen/settings.json` is never touched.
+pub fn qwen_settings(target: HookTarget<'_>) -> Value {
+    json!({
+        "hooks": {
+            "PreToolUse": [{
+                "matcher": "*",
+                "hooks": [{
+                    "type": "command",
+                    "command": hook_command(HookFlavor::Qwen, target),
+                    "timeout": 30,
+                }]
+            }]
+        }
+    })
+}
+
+/// TOML basic string.
+fn toml_str(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// The per-spawn `-c` override registering codex's PreToolUse hook.
+pub fn codex_hook_override(target: HookTarget<'_>) -> String {
+    format!(
+        "hooks.PreToolUse=[{{matcher=\"*\",hooks=[{{type=\"command\",command={},timeout=30}}]}}]",
+        toml_str(&hook_command(HookFlavor::Codex, target))
+    )
+}
+
+/// Session settings file a hooked harness reads, if it uses one:
+/// `(file suffix, contents)`. Codex takes its hook via `-c`, no file.
+pub fn hook_settings_file(harness: &str, target: HookTarget<'_>) -> Option<(&'static str, Value)> {
+    match HookFlavor::of(harness)? {
+        HookFlavor::Claude => Some(("claude-settings.json", claude_settings(target))),
+        HookFlavor::Qwen => Some(("qwen-settings.json", qwen_settings(target))),
+        HookFlavor::Codex => None,
+    }
 }
 
 /// Locate the `allternit-commrails` binary a hook should run:
@@ -565,6 +654,106 @@ pub fn find_commrails_bin() -> Option<PathBuf> {
 /// Returns the new argv; `settings_path` must already contain
 /// [`claude_settings`] for Claude.
 pub fn gate_argv(cmd: &[String], settings_path: Option<&Path>) -> Vec<String> {
+    gate_spawn(cmd, settings_path, None).argv
+}
+
+/// A gated launch: rewritten argv plus env the harness needs to find its
+/// per-spawn gate config.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GatedSpawn {
+    pub argv: Vec<String>,
+    pub env: Vec<(String, String)>,
+}
+
+/// [`gate_argv`] for every hooked harness. `settings_path` holds the session
+/// settings ([`hook_settings_file`]); `target` is needed for codex, whose
+/// hook rides `-c`.
+pub fn gate_spawn(cmd: &[String], settings_path: Option<&Path>, target: Option<HookTarget<'_>>) -> GatedSpawn {
+    let Some(first) = cmd.first() else {
+        return GatedSpawn { argv: Vec::new(), env: Vec::new() };
+    };
+    match HookFlavor::of(first) {
+        Some(HookFlavor::Codex) => return gate_codex(cmd, target),
+        Some(HookFlavor::Qwen) => return gate_qwen(cmd, settings_path),
+        _ => {}
+    }
+    let argv = gate_argv_claude_or_other(cmd, settings_path);
+    GatedSpawn { argv, env: Vec::new() }
+}
+
+/// codex: full auto-approve/no codex sandbox, plus our PreToolUse hook, all
+/// per spawn (`-c` + the hook-trust flag; `~/.codex` is never written).
+/// Global options go right after the binary so they precede `exec`,
+/// `exec resume`, or no subcommand.
+fn gate_codex(cmd: &[String], target: Option<HookTarget<'_>>) -> GatedSpawn {
+    let mut rest = Vec::with_capacity(cmd.len());
+    let mut skip_next = false;
+    for (i, w) in cmd.iter().enumerate().skip(1) {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        let overrides_policy = |v: &str| {
+            v.starts_with("sandbox_mode") || v.starts_with("approval_policy") || v.starts_with("hooks.PreToolUse")
+        };
+        if (w == "-c" || w == "--config") && cmd.get(i + 1).map(|v| overrides_policy(v)).unwrap_or(false) {
+            skip_next = true;
+            continue;
+        }
+        if w == "--dangerously-bypass-approvals-and-sandbox"
+            || w == "--yolo"
+            || w == "--dangerously-bypass-hook-trust"
+            || w.starts_with("--sandbox=")
+        {
+            continue;
+        }
+        if w == "--sandbox" || w == "-s" {
+            skip_next = true;
+            continue;
+        }
+        rest.push(w.clone());
+    }
+    let mut argv = vec![cmd[0].clone()];
+    for config in ["sandbox_mode=\"danger-full-access\"", "approval_policy=\"never\""] {
+        argv.push("-c".to_string());
+        argv.push(config.to_string());
+    }
+    if let Some(target) = target {
+        argv.push("-c".to_string());
+        argv.push(codex_hook_override(target));
+        argv.push("--dangerously-bypass-hook-trust".to_string());
+    }
+    argv.extend(rest);
+    GatedSpawn { argv, env: Vec::new() }
+}
+
+/// qwen: keep `--yolo`; the hook comes from a system-settings file.
+fn gate_qwen(cmd: &[String], settings_path: Option<&Path>) -> GatedSpawn {
+    let mut argv = vec![cmd[0].clone()];
+    let mut skip_next = false;
+    for w in &cmd[1..] {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        match w.as_str() {
+            "--yolo" | "-y" => continue,
+            "--approval-mode" => {
+                skip_next = true;
+                continue;
+            }
+            _ if w.starts_with("--approval-mode=") => continue,
+            _ => argv.push(w.clone()),
+        }
+    }
+    argv.push("--yolo".to_string());
+    let env = settings_path
+        .map(|p| vec![("QWEN_CODE_SYSTEM_SETTINGS_PATH".to_string(), p.to_string_lossy().to_string())])
+        .unwrap_or_default();
+    GatedSpawn { argv, env }
+}
+
+fn gate_argv_claude_or_other(cmd: &[String], settings_path: Option<&Path>) -> Vec<String> {
     let Some(first) = cmd.first() else { return Vec::new() };
     match harness_gate(first) {
         HarnessGate::Hook => {
@@ -632,7 +821,7 @@ pub fn gate_argv(cmd: &[String], settings_path: Option<&Path>) -> Vec<String> {
             }
             out
         }
-        HarnessGate::Ungated => cmd.to_vec(),
+        HarnessGate::Acp | HarnessGate::Ungated => cmd.to_vec(),
     }
 }
 
