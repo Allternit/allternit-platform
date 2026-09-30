@@ -4,7 +4,7 @@ description: 'Create a run, stream its events, answer an attention request, fetc
 ---
 
 <Warning>
-Preview — the Agency API is in development and not yet available. This reference describes the v0.3 contract; details may change before alpha.
+**PREVIEW.** The Agency API is not live yet. This page describes the published v0.3 contract so you can review and build against it; details may change before alpha. Implementation status: DESIGN — NOT YET IMPLEMENTED.
 </Warning>
 
 This walkthrough shows one run from start to finish against the v0.3 contract. The endpoints are not live, so the code will not run against production today. It shows what an integration will look like. The alpha opens only after a run can survive restart, resume, verify, replay and receipt-backed completion.
@@ -317,7 +317,7 @@ for c in final["completion"]["criteria"]:
 
 </CodeGroup>
 
-A run is `completed` only when every required criterion has a passing verification receipt. The agent reporting that it is finished does not complete a run. See [Runs and completion](/architecture/verification#verifier-owned-completion).
+A run is `completed` only when every required criterion has a passing verification receipt. The agent reporting that it is finished does not complete a run. See [Verification](/architecture/verification#verifier-owned-completion).
 
 ## 5. Fetch artifacts
 
