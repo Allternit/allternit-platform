@@ -240,45 +240,38 @@ async fn decision_event_lands_in_ledger() {
 }
 
 #[tokio::test]
-async fn admission_refuses_ungated_harness_on_leased_wih() {
+async fn admission_admits_every_harness_in_auto_approve() {
+    // Eoj, 2026-09-30: no harness is refused or held out of auto-approve;
+    // Allternit's gate is the gate. admit() only records the enforcement class.
     let f = fixture().await;
     let wih = bound_wih(&f).await;
-    let policy = load_wih_policy(&f.ledger, &wih).await.unwrap();
-    assert_eq!(policy.requires_lease_for_write, Some(true));
-
-    for harness in ["kimi", "gemini", "qwen", "cline", "pi", "agy", "opencode", "codex"] {
-        let err = admit(harness, Some(&policy)).expect_err(harness);
-        assert!(err.contains("refusing to spawn"), "{err}");
-    }
-    assert_eq!(admit("claude", Some(&policy)), Ok(HarnessGate::Hook));
-    // Unbound runs are admitted (no regression for plain delegation).
-    assert_eq!(admit("kimi", None), Ok(HarnessGate::Ungated));
-    // A WIH whose policy lets writes skip the lease has nothing to enforce.
-    let open = WihPolicy {
-        wih_id: "w".into(),
-        requires_lease_for_write: Some(false),
-    };
-    assert!(admit("kimi", Some(&open)).is_ok());
-    // Unknown WIH → fail closed.
+    let leased = load_wih_policy(&f.ledger, &wih).await.unwrap();
+    assert_eq!(leased.requires_lease_for_write, Some(true));
+    let open = WihPolicy { wih_id: "w".into(), requires_lease_for_write: Some(false) };
     let unknown = load_wih_policy(&f.ledger, "wih_nope").await.unwrap();
-    assert!(admit("gemini", Some(&unknown)).is_err());
+    for policy in [Some(&leased), Some(&open), Some(&unknown), None] {
+        for h in ["kimi", "gemini", "qwen", "cline", "pi", "agy", "opencode", "/usr/bin/qwen"] {
+            assert_eq!(admit(h, policy), Ok(HarnessGate::Ungated), "{h}");
+        }
+        assert_eq!(admit("codex", policy), Ok(HarnessGate::Sandbox));
+        assert_eq!(admit("claude", policy), Ok(HarnessGate::Hook));
+    }
 }
 
 #[test]
-fn claude_settings_carry_hook_and_no_bypass() {
+fn claude_settings_carry_hook_in_bypass_mode() {
     let s = claude_settings(HookTarget {
         commrails_bin: Path::new("/opt/bin/allternit-commrails"),
         root: Path::new("/w/it's"),
         workspace: Some(Path::new("/w/wt")),
         wih_id: Some("wih_1"),
     });
-    assert_eq!(s["permissions"]["defaultMode"], "acceptEdits");
+    assert_eq!(s["permissions"]["defaultMode"], "bypassPermissions");
     let hook = &s["hooks"]["PreToolUse"][0];
     assert_eq!(hook["matcher"], "*");
     let cmd = hook["hooks"][0]["command"].as_str().unwrap();
     assert!(cmd.starts_with("'/opt/bin/allternit-commrails' --root '/w/it'\\''s' hook claude-pretool"));
     assert!(cmd.ends_with("--workspace '/w/wt' --wih 'wih_1'"));
-    assert!(!s.to_string().contains("bypassPermissions"));
 }
 
 #[test]
@@ -290,8 +283,8 @@ fn gate_argv_rewrites_bypass_flags() {
     let out = gate_argv(&argv, Some(Path::new("/s/settings.json")));
     let joined = out.join(" ");
     assert!(!joined.contains("dangerously"));
-    assert!(!joined.contains("bypassPermissions"));
-    assert!(joined.ends_with("--permission-mode acceptEdits --settings /s/settings.json"));
+    assert_eq!(joined.matches("--permission-mode").count(), 1);
+    assert!(joined.ends_with("--permission-mode bypassPermissions --settings /s/settings.json"));
 
     let argv: Vec<String> = ["codex", "exec", "hi", "--dangerously-bypass-approvals-and-sandbox", "-s", "danger-full-access", "-c", "sandbox_mode=\"danger-full-access\""]
         .iter()
@@ -299,9 +292,9 @@ fn gate_argv_rewrites_bypass_flags() {
         .collect();
     let joined = gate_argv(&argv, None).join(" ");
     assert!(!joined.contains("dangerously"));
-    assert!(!joined.contains("danger-full-access"));
-    assert!(joined.contains("-c sandbox_mode=\"workspace-write\""));
-    assert!(joined.contains("sandbox_workspace_write.network_access=true"));
+    assert!(!joined.contains("-s danger-full-access"));
+    assert_eq!(joined.matches("sandbox_mode=").count(), 1);
+    assert!(joined.contains("-c sandbox_mode=\"danger-full-access\""));
     assert!(joined.contains("approval_policy=\"never\""));
 
     let kimi: Vec<String> = vec!["kimi".into(), "--yolo".into()];
