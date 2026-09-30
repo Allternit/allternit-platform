@@ -534,6 +534,18 @@ async fn put_exec(State(state): State<Arc<AppState>>, Extension(user): Extension
             return Err(ApiErr::bad("type must be allternit|vendor and mode native|hosted|linked|mirror"));
         }
         require_account(&conn, &owner, &b.account_binding_id)?;
+        // An account restricted to one bot can't back any other bot.
+        if let Some(aid) = &b.account_binding_id {
+            let restricted: Option<String> = conn
+                .query_row("SELECT restricted_bot_id FROM provider_account_bindings WHERE id = ?1 AND owner = ?2", params![aid, owner], |r| r.get(0))
+                .optional()?
+                .flatten();
+            if let Some(rb) = restricted {
+                if rb != bot_id {
+                    return Err(ApiErr::bad("accountBindingId is restricted to another bot"));
+                }
+            }
+        }
         let caps = b.capabilities.as_ref().map(|v| v.to_string());
         let health = b.health.as_ref().map(|v| v.to_string());
         let existing = one(&conn, &format!("SELECT {EXEC_COLS} FROM bot_execution_bindings WHERE bot_id = ?1 AND owner = ?2"), &[&bot_id, &owner])?;
@@ -1074,6 +1086,17 @@ mod tests {
         assert_eq!(audits, 6, "created + 5 state changes");
         let evs: i64 = conn.query_row("SELECT COUNT(*) FROM bot_events WHERE event_type = 'gateway.execution_binding.state_changed' AND bot_id = 'bot-1'", [], |r| r.get(0)).unwrap();
         assert_eq!(evs, 3, "bound, ready, needs_auth");
+    }
+
+    #[tokio::test]
+    async fn restricted_account_backs_only_its_bot() {
+        let st = setup("restr").await;
+        let (s, v) = call(&st, "POST", "/provider-accounts", "user-a", Some(json!({"vendor": "openai", "authType": "api_key", "secretRef": "vault://k", "restrictedBotId": "bot-1"}))).await;
+        assert_eq!(s, StatusCode::CREATED, "{v}");
+        let aid = v["account"]["id"].as_str().unwrap().to_string();
+        bind(&st, "bot-1", &aid).await;
+        let (s, _) = call(&st, "PUT", "/bots/bot-2/execution-binding", "user-a", Some(json!({"vendor": "openai", "accountBindingId": aid}))).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
