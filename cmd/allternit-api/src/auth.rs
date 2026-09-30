@@ -66,13 +66,18 @@ const DEFAULT_CLERK_JWKS_URL: &str = "https://clerk.allternit.com/.well-known/jw
 const DEFAULT_CLERK_ISSUER: &str = "https://clerk.allternit.com";
 /// First-party Clerk proxy used by Fabric Transport. Browser session JWTs
 /// carry this `iss`; cloud-api already accepts it.
-const CLERK_PROXY_ISSUER: &str = "https://allternit.com/__clerk";
+pub(crate) const CLERK_PROXY_ISSUER: &str = "https://allternit.com/__clerk";
 
 fn allowed_clerk_issuers(primary: &str) -> Vec<&str> {
     let mut list = vec![primary, DEFAULT_CLERK_ISSUER, CLERK_PROXY_ISSUER];
     list.sort_unstable();
     list.dedup();
     list
+}
+
+/// True when `iss` is one of the Clerk issuers this API accepts.
+pub(crate) fn is_clerk_issuer(iss: &str, primary: &str) -> bool {
+    allowed_clerk_issuers(primary).contains(&iss)
 }
 
 /// How long to cache JWKS before refreshing
@@ -411,6 +416,18 @@ pub async fn verify_token(
     token: &str,
     config: &AuthConfig,
 ) -> Result<AuthUser, AuthError> {
+    let claims = verify_token_claims(jwks, token, config).await?;
+    user_from_claims(&claims)
+}
+
+/// Verifies signature + issuer + expiry and returns the raw claims. Split out
+/// of `verify_token` so the MCP server can additionally enforce `aud`/scope on
+/// OAuth access tokens (`mcp_agents`).
+pub(crate) async fn verify_token_claims(
+    jwks: &JwksManager,
+    token: &str,
+    config: &AuthConfig,
+) -> Result<serde_json::Value, AuthError> {
     // jsonwebtoken v10's Header flattens non-standard claims into
     // `HashMap<String, String> extras`, so any non-string custom claim
     // (Clerk's numeric `oiat`) fails decode_header AND decode() for every
@@ -432,8 +449,10 @@ pub async fn verify_token(
         .as_ref()
         .ok_or_else(|| AuthError::KeyNotFound("JWK missing 'e'".to_string()))?;
 
-    let claims = verify_rs256(token, n, e, &config.clerk_issuer)?;
+    verify_rs256(token, n, e, &config.clerk_issuer)
+}
 
+pub(crate) fn user_from_claims(claims: &serde_json::Value) -> Result<AuthUser, AuthError> {
     let (organization_id, organization_role, organization_slug) = match claims.get("o") {
         Some(o) => (
             str_claim(o, "id"),
@@ -441,9 +460,9 @@ pub async fn verify_token(
             str_claim(o, "slg"),
         ),
         None => (
-            str_claim(&claims, "org_id"),
-            str_claim(&claims, "org_role"),
-            str_claim(&claims, "org_slug"),
+            str_claim(claims, "org_id"),
+            str_claim(claims, "org_role"),
+            str_claim(claims, "org_slug"),
         ),
     };
 
@@ -453,9 +472,9 @@ pub async fn verify_token(
             .and_then(|v| v.as_str())
             .ok_or_else(|| AuthError::TokenDecode("Token missing 'sub'".to_string()))?
             .to_string(),
-        email: str_claim(&claims, "email"),
-        name: str_claim(&claims, "name"),
-        avatar_url: str_claim(&claims, "image_url"),
+        email: str_claim(claims, "email"),
+        name: str_claim(claims, "name"),
+        avatar_url: str_claim(claims, "image_url"),
         tenant_id: None,
         organization_id,
         organization_role,
@@ -1163,6 +1182,13 @@ pub fn get_user(headers: &HeaderMap) -> Option<AuthUser> {
 /// [`JwksManager`]'s cache, so tests exercise the real `verify_token` path.
 #[cfg(test)]
 pub(crate) async fn test_clerk_token(jwks: &JwksManager, issuer: &str, sub: &str, expires_in: i64) -> String {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+    test_clerk_token_with_claims(jwks, json!({"iss": issuer, "sub": sub, "exp": now + expires_in, "iat": now})).await
+}
+
+/// Like [`test_clerk_token`] but signs an arbitrary claim set (OAuth `aud`/`scope` tests).
+#[cfg(test)]
+pub(crate) async fn test_clerk_token_with_claims(jwks: &JwksManager, claims: serde_json::Value) -> String {
     use aws_lc_rs::rsa::{KeyPair, KeySize, PublicKeyComponents};
     use aws_lc_rs::signature::KeyPair as _;
     let key_pair = KeyPair::generate(KeySize::Rsa2048).expect("rsa key");
@@ -1182,9 +1208,8 @@ pub(crate) async fn test_clerk_token(jwks: &JwksManager, issuer: &str, sub: &str
         cached.keys.insert(kid.clone(), jwk);
         cached.fetched_at = Instant::now();
     }
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
     let header = URL_SAFE_NO_PAD.encode(json!({"alg": "RS256", "typ": "JWT", "kid": kid}).to_string());
-    let payload = URL_SAFE_NO_PAD.encode(json!({"iss": issuer, "sub": sub, "exp": now + expires_in, "iat": now}).to_string());
+    let payload = URL_SAFE_NO_PAD.encode(claims.to_string());
     let signing_input = format!("{header}.{payload}");
     let mut signature = vec![0; key_pair.public_modulus_len()];
     key_pair

@@ -34,7 +34,8 @@ use crate::mcp_tunnel_auth::require_tunnel_auth;
 use crate::tool_routes::{execute_tool_internal, ExecuteToolRequest};
 use crate::AppState;
 
-const PROTOCOL_VERSION: &str = "2025-03-26";
+const PROTOCOL_VERSION: &str = "2025-06-18";
+const SUPPORTED_PROTOCOL_VERSIONS: [&str; 2] = ["2025-06-18", "2025-03-26"];
 const SERVER_NAME: &str = "allternit-api";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -242,7 +243,13 @@ async fn handle_rpc(
     ) {
         Ok(_) => {
             let org_id = user.organization_id.as_deref().or(user.tenant_id.as_deref());
-            handle_rpc_inner(&state, &user.user_id, org_id, req).await
+            // OAuth access tokens (ChatGPT / Claude connectors) are verified
+            // for audience + scope and limited to the read-only agent tools.
+            let agents_only = match crate::mcp_agents::authorize_bearer(&state, &headers).await {
+                Ok(v) => v,
+                Err(resp) => return resp,
+            };
+            handle_rpc_inner(&state, &user.user_id, org_id, req, agents_only).await
         }
         Err(result) => (
             StatusCode::UNAUTHORIZED,
@@ -284,7 +291,7 @@ pub async fn mcp_tools_internal(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
     match user_id {
-        Some(user_id) => handle_rpc_inner(&state, &user_id, org_id.as_deref(), req).await,
+        Some(user_id) => handle_rpc_inner(&state, &user_id, org_id.as_deref(), req, false).await,
         None => (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "x-allternit-user-id header is required"})),
@@ -314,7 +321,7 @@ pub async fn mcp_tools_internal_stdio(state: &Arc<AppState>, user_id: &str, line
         return None;
     }
 
-    let response = handle_rpc_inner_value(state, user_id, None, req).await;
+    let response = handle_rpc_inner_value(state, user_id, None, req, false).await;
     Some(serde_json::to_string(&response).unwrap_or_default())
 }
 
@@ -325,6 +332,7 @@ async fn handle_rpc_inner(
     user_id: &str,
     org_id: Option<&str>,
     req: JsonRpcRequest,
+    agents_only: bool,
 ) -> axum::response::Response {
     // JSON-RPC notifications (no `id`) get no response body — the caller
     // isn't waiting on one. `notifications/initialized` is the only one this
@@ -333,7 +341,7 @@ async fn handle_rpc_inner(
         return StatusCode::ACCEPTED.into_response();
     };
 
-    Json(handle_rpc_inner_value(state, user_id, org_id, req).await).into_response()
+    Json(handle_rpc_inner_value(state, user_id, org_id, req, agents_only).await).into_response()
 }
 
 /// Value-returning core so the stdio binary can reuse the same dispatch logic
@@ -343,22 +351,49 @@ async fn handle_rpc_inner_value(
     user_id: &str,
     org_id: Option<&str>,
     req: JsonRpcRequest,
+    agents_only: bool,
 ) -> Value {
     let id = req.id.clone().unwrap_or_default();
 
     match req.method.as_str() {
-        "initialize" => success(
-            id,
-            json!({
-                "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": { "tools": { "listChanged": false } },
-                "serverInfo": { "name": SERVER_NAME, "version": SERVER_VERSION }
-            }),
-        ),
+        "initialize" => {
+            let requested = req.params.get("protocolVersion").and_then(|v| v.as_str());
+            let version = requested
+                .filter(|v| SUPPORTED_PROTOCOL_VERSIONS.contains(v))
+                .unwrap_or(PROTOCOL_VERSION);
+            success(
+                id,
+                json!({
+                    "protocolVersion": version,
+                    "capabilities": {
+                        "tools": { "listChanged": false },
+                        "resources": { "subscribe": false, "listChanged": false }
+                    },
+                    "serverInfo": { "name": SERVER_NAME, "version": SERVER_VERSION },
+                    "instructions": crate::mcp_agents::SERVER_INSTRUCTIONS
+                }),
+            )
+        }
 
         "ping" => success(id, json!({})),
 
-        "tools/list" => success(id, json!({ "tools": tool_catalog(state).await })),
+        "tools/list" => {
+            let mut tools = if agents_only { Vec::new() } else { tool_catalog(state).await };
+            tools.extend(crate::mcp_agents::tool_descriptors());
+            success(id, json!({ "tools": tools }))
+        }
+
+        "resources/list" => success(id, json!({ "resources": crate::mcp_agents::resource_descriptors() })),
+
+        "resources/templates/list" => success(id, json!({ "resourceTemplates": [] })),
+
+        "resources/read" => {
+            let uri = req.params.get("uri").and_then(|v| v.as_str()).unwrap_or_default();
+            match crate::mcp_agents::read_resource(uri) {
+                Some(result) => success(id, result),
+                None => rpc_error(id, -32002, format!("Resource not found: {uri}")),
+            }
+        }
 
         "tools/call" => {
             let name = req
@@ -372,6 +407,15 @@ async fn handle_rpc_inner_value(
                 .get("arguments")
                 .cloned()
                 .unwrap_or_else(|| json!({}));
+
+            if let Some(result) =
+                crate::mcp_agents::call_tool(state, user_id, &name, arguments.clone()).await
+            {
+                return success(id, result);
+            }
+            if agents_only {
+                return rpc_error(id, -32602, format!("Unknown tool: {name}"));
+            }
 
             let result = if name.starts_with("inference.") || name == "time.now" {
                 handle_builtin_dotted_tool(state, user_id, org_id, &name, arguments).await

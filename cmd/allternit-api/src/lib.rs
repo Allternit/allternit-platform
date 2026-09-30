@@ -176,6 +176,7 @@ pub mod long_running_task_routes;
 pub mod local_studio_routes;
 pub mod mcp_dispatcher;
 pub mod mcp_routes;
+pub mod mcp_agents;
 pub mod mcp_server_routes;
 pub mod mcp_tunnel_auth;
 pub mod marketplace_routes;
