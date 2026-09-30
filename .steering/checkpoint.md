@@ -1,4 +1,4 @@
-Goal: F5 fixes #14, #18–#22; draft PR only; dag:dag_211503.
-Just did: Every assigned finding reproduced with failing tests. #14 and compiler fixes are published on the task branch. Lifecycle integration 4/4, kernel suite 58/58, conformance 25/25, judge 21/21, decision suite 33/33, compiler suite 21/21. Shared role/mode resolution rejects inferred S2 writes and invalid/nonlegal mode restrictions. gate.rs changes confined to validate_mutations status checks.
-Next: Publish #19, #20, #18 as separate fixes; finish draft PR and FIX_F5_NOTES.md. Final integration check reruns after graph/router edits.
-Open questions: None. No auth/launch-mode changes, deploy paths, migrations, broad builds, or shared-checkout writes. Preserve worktree for draft review.
+Goal: Execute WP10 exactly in allternit-wt-wp10; draft PR only, never merge.
+Just did: Completed graph template (N00–N23 + explicit fallbacks, deep escalation, rollback and response acceptance), seven registered packs, 18-code domain bank, 11-step ladder. Targeted cargo wp10: 2/2 pass, including all seven static invariants and pack coverage. DAG node n_4839 closed; next n_3103 picked up.
+Next: Verify external chain append and flagged compiler transport; then disposable TS/Vitest end-to-end test and draft PR.
+Open questions: None. Receipt routes have no auth; new append must enforce peer loopback and reject missing connection identity. No production auto-deploy paths planned. Shared checkout is read-only; only allowed dependency symlinks created. Required final WP10_NOTES report/sentinel is the task's explicit reporting exception outside the worktree.
