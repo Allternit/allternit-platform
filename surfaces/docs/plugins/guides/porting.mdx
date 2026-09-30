@@ -1,0 +1,88 @@
+---
+title: 'Porting from ChatGPT or Claude'
+description: 'What runs unchanged in Allternit, how window.openai maps to the standard bridge, and where hosts differ'
+---
+
+The UI layer of an Allternit Plugin is the open MCP Apps standard. An app built to the standard for ChatGPT or Claude runs in Allternit without changes, and an Allternit app that uses only the standard runs there.
+
+## What works unchanged
+
+- **Your MCP server.** Tools, schemas, annotations, `instructions`, and streamable HTTP transport. See [Build: MCP server](/plugins/develop/mcp-server).
+- **`_meta.ui.resourceUri`** on tools, and `ui://` resources with the MIME type `text/html;profile=mcp-app`.
+- **`_meta.ui.csp`, `permissions`, and `prefersBorder`** on the resource.
+- **Tool visibility** with `_meta.ui.visibility`.
+- **The View bridge.** `ui/initialize`, `ui/notifications/tool-input`, `tool-result`, `host-context-changed`, `size-changed`, `ui/open-link`, `ui/message`, `ui/update-model-context`, `ui/request-display-mode`, and `tools/call` and `resources/*` from the View. See [Build: MCP App UI](/plugins/develop/mcp-app-ui).
+- **Views built with the `App` class** from `@modelcontextprotocol/ext-apps`.
+- **Theming** through `hostContext.styles.variables`.
+- **OAuth 2.1** with PKCE and client ID metadata documents. See [Authentication](/plugins/develop/authentication).
+
+## If your View uses `window.openai`
+
+`window.openai` is specific to ChatGPT. It does not exist in Allternit. Replace each use with the standard method below, and feature-detect `window.openai` only if you still target ChatGPT's older APIs.
+
+| `window.openai` | Standard / Allternit replacement |
+|-----------------|----------------------------------|
+| `toolInput` | `ui/notifications/tool-input` (`arguments`). |
+| `toolOutput` | `ui/notifications/tool-result`. Read `structuredContent` and `content`. |
+| `toolResponseMetadata` | `_meta` on the tool-result notification. |
+| `callTool(name, args)` | Request `tools/call` with `{ name, arguments }`. The tool's `_meta.ui.visibility` must include `"app"`. |
+| `sendFollowUpMessage({ prompt })` | Request `ui/message` with a `user` role and text content. |
+| `openExternal({ href })` | Request `ui/open-link` with `{ url }`. |
+| `requestDisplayMode({ mode })` | Request `ui/request-display-mode`. Allternit supports `inline` and `fullscreen` only. |
+| `requestClose()` | Notification `ui/notifications/request-teardown`. |
+| `notifyIntrinsicHeight()` | Notification `ui/notifications/size-changed` with `height`. |
+| `theme` | `hostContext.theme` and `hostContext.styles.variables`. |
+| `displayMode`, `maxHeight` | `hostContext.displayMode` and `hostContext.containerDimensions`. |
+| `locale`, `userAgent` | `hostContext.locale` and `hostContext.userAgent`. |
+| `widgetState`, `setWidgetState()` | No equivalent. The View has no storage. Keep durable state on your server behind an app-only tool, and use `ui/update-model-context` for what the model should know. |
+| `requestModal()` | No equivalent. Use fullscreen display mode. |
+| `uploadFile()`, `getFileDownloadUrl()` | Not supported. |
+| `requestCheckout()` | `x-allternit/requestCheckout`. A [preview](/plugins/guides/selling). |
+| Safe-area insets | Not sent by the host. Use normal page padding. |
+
+To save a result or start an agent task, which the standard does not cover, use the optional [`window.allternit` extensions](/plugins/reference/window-allternit).
+
+### A small compatibility layer
+
+If one View has to run in several hosts, wrap the differences in one place:
+
+```js
+const host = {
+  callTool: (name, args) =>
+    window.openai?.callTool
+      ? window.openai.callTool(name, args)
+      : request("tools/call", { name, arguments: args }),
+  openLink: (url) =>
+    window.openai?.openExternal
+      ? window.openai.openExternal({ href: url })
+      : request("ui/open-link", { url }),
+};
+```
+
+`request` is your JSON-RPC helper from the [quickstart](/plugins/quickstart), or the equivalent method on the `App` class.
+
+## Server-side changes
+
+- **MIME type.** Allternit renders `text/html;profile=mcp-app` (and plain `text/html`). If your server uses ChatGPT's older Apps SDK type `text/html+skybridge`, serve the standard type to Allternit.
+- **Tool metadata.** Allternit reads `_meta.ui.resourceUri`, the flat `_meta["ui/resourceUri"]`, and the older `_meta["openai/outputTemplate"]` to find a View. Other `openai/*` keys are not read.
+- **Auth.** Allternit sends `resource` and PKCE but no `scope` parameter. See [Authentication](/plugins/develop/authentication).
+
+## Where Allternit differs
+
+| Area | Allternit |
+|------|-----------|
+| Sandbox | Two nested iframes; the View has an opaque origin. No cookies, `localStorage`, or IndexedDB. |
+| Display modes | `inline` and `fullscreen`. No picture-in-picture. |
+| CSP | Closed by default. Declare every domain the View uses. |
+| Tool permissions | Per-app mode: always ask, before changes, or before important changes. Driven by your tool annotations. |
+| Distribution | Your listing goes through [Submit & review](/plugins/publish/submit-and-review), including domain verification and held updates for tool changes. |
+| Extensions | Optional `x-allternit/*` methods. Feature-detect them. |
+| Commerce | A [preview](/plugins/guides/selling); test mode only. |
+
+## Porting from Claude
+
+Claude and Allternit both implement the standard, so there is little to change. Check the CSP you declare, remove any dependency on browser storage, and confirm your OAuth server accepts Allternit's client ID metadata document.
+
+## Porting to other hosts
+
+An Allternit app that uses only the standard bridge runs in any host that implements the specification. If you use `window.allternit`, guard every call with `detect()` and `supports()`. The extension methods are not part of the standard, and other hosts will not have them.

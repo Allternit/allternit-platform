@@ -4,7 +4,7 @@ description: 'Send a goal, get one durable, verified Run. Object model, base URL
 ---
 
 <Warning>
-**PREVIEW.** The Agency API is not live yet. This page describes the published v0.3 contract so you can review and build against it; details may change before alpha. Implementation status: DESIGN — NOT YET IMPLEMENTED.
+**Implementation: DESIGN (server) · Exposure: PUBLIC PREVIEW (contract).** The Agency API is not live yet. This page describes the published v0.3 contract so you can review and build against it; details may change before alpha.
 </Warning>
 
 ## What it is
@@ -13,15 +13,42 @@ The Agency API is the public developer surface for the Allternit agent kernel. Y
 
 The contract summary is: goal in, one durable verified Run out.
 
+```mermaid
+flowchart TD
+    G["goal"] --> RUN["Run"]
+    R["resources"] --> RUN
+    A["authority"] --> RUN
+    B["budget"] --> RUN
+    C["completion"] --> RUN
+```
+
+```mermaid
+flowchart TD
+    P["POST /v1/agency"] --> D["Durable Run<br/>status · events · artifacts<br/>attention · receipts · replay"]
+```
+
+Only `goal` is required. Everything else has a resolved, recorded default. What comes back is one durable object you can observe and control for the life of the work.
+
 ### Availability
 
-No endpoint on this page is live. The alpha opens only after one end-to-end run can survive **restart, resume, verify, replay and receipt-backed completion**. That gate is not met today: replay is not built, receipts are not yet chained or signed, and work-runtime runs have no event stream. See [what is live today](/architecture#what-is-live-today).
+No endpoint on this page is live. The alpha opens only after one end-to-end run can survive **restart, resume, verify, replay and receipt-backed completion**. That gate is not met today: the public endpoint and the request compiler are not served, the conformance suite is not built, and no end-to-end bug-fix run has passed the gate. Inside the kernel, the signed receipt chain (effect receipts) and recorded-only replay are on main, internal only, and work-runtime runs have no public event stream yet. See [what is live today](/architecture#what-is-live-today).
 
 Use this reference to understand the shape of the API and to plan an integration. Do not build production systems against it yet.
 
 <Note>
 Example values throughout this reference (IDs, capability and model class names, amounts, dates, default values) are illustrative. The structure and field names follow the contract.
 </Note>
+
+## Agents API vs Agency API
+
+**An Agent is configuration and identity. Agency is execution of work.**
+
+| API | What it is for |
+|-----|----------------|
+| [Agents API](/api/agents) | Configure persistent agent identities and profiles: instructions, capabilities, policies, a default model preference. |
+| [Agency API](/api/agency/overview) | Submit durable autonomous work: a goal becomes one verified Run. **PREVIEW.** |
+| [Runs](/api/agency/runs) | Observe and control execution: stream, steer, pause, cancel, audit. **PREVIEW.** |
+| [Decisions](/api/agency/decisions) | Make a bounded, typed decision with no side effects. **PREVIEW.** |
 
 ## Simple outside, explicit inside
 

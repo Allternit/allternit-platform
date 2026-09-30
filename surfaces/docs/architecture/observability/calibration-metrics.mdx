@@ -3,7 +3,14 @@ title: "Calibration metrics"
 description: "How a decision primitive earns authority beyond shadow mode"
 ---
 
-**Status: PREVIEW (decision runtime, S1 shadow-only) · DESIGN — NOT YET IMPLEMENTED (automated eval pipeline).** See [status labels](/architecture#status-labels).
+**Implementation: SHADOW (decision runtime) · DESIGN (automated eval pipeline) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Every decision head is measured before and after it may act. |
+| **Implemented today** | The decision runtime records metrics in shadow. No automated evaluation pipeline. |
+| **Active path** | No. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 Agreement with another model is not evidence of correctness. A primitive gains authority only through measured calibration on held-out data.
 
@@ -29,9 +36,9 @@ The decision runtime is on main and S1 runs shadow-only: it records what it woul
 
 | Part | Status |
 |------|--------|
-| Decision runtime, S1 shadow | **PREVIEW** |
-| Calibration manifest contract | **AVAILABLE (contract)** |
-| Promotion of any primitive beyond shadow | **DESIGN — NOT YET IMPLEMENTED** |
+| Decision runtime, S1 shadow | **SHADOW** · INTERNAL |
+| Calibration manifest contract | **IMPLEMENTED (contract)** |
+| Promotion of any primitive beyond shadow | **DESIGN** |
 
 ## Developer relevance
 

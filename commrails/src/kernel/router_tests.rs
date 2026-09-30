@@ -370,3 +370,16 @@ fn pool_http_body_parses_and_rejects_unknown_fields() {
     let body = json!({"entries": [bad]}).to_string();
     assert!(matches!(StaticModelPool::from_http_body(&body), Err(RouteError::PoolUnavailable(_))));
 }
+
+#[test]
+fn invalid_nonempty_allowed_modes_fail_closed() {
+    let (p, cfg) = (pool(), RouterConfig::default());
+    let r = Router::new(&p, &cfg);
+    let mut n = node("typo", Some("S2"), Some("cap.code.edit"), "PUBLIC");
+    n.allowed_modes = vec!["M5.GENERATIV".into()];
+    assert!(r.route(&n, &ledger(10.0)).is_err());
+    n.allowed_modes = vec!["M5.GENERATIVE".into(), "M5.GENERATIV".into()];
+    assert!(r.route(&n, &ledger(10.0)).is_err());
+    n.allowed_modes.clear();
+    assert_eq!(r.route(&n, &ledger(10.0)).unwrap().execution_mode, Mode::M5Generative);
+}

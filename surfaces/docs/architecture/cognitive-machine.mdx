@@ -3,9 +3,16 @@ title: "The Cognitive Machine"
 description: "The half of the agent that decides and produces: cognition levels, the decision runtime, context, routing and verification"
 ---
 
-**Status: PREVIEW (decision runtime, shadow only) · DESIGN — NOT YET IMPLEMENTED (router, model pool, context compiler).** See [status labels](/architecture#status-labels).
+**Implementation: SHADOW (decision runtime, compilers) · IMPLEMENTED (router, model pool) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
 
-The agent is two machines that share a policy layer and a compute fabric. The **Cognitive Machine** decides and produces. The [Work Machine](/architecture/work-machine) makes that work durable. This page covers the first.
+| | |
+|---|---|
+| **Architecture** | The system decides how each step is thought through: S0–S3, context compiler, cognitive router. |
+| **Implemented today** | Decision runtime (shadow), router and model pool (library and internal registry), context and tool call compilers (behind an off-by-default flag). |
+| **Active path** | No. None of these change normal execution yet. |
+| **Public exposure** | No. Not reachable by an external developer. |
+
+The agent is [two machines](/architecture/two-machines). The Cognitive Machine decides how cognition is performed. The [Work Machine](/architecture/work-machine) decides how work persists and progresses. This page covers the first: **"How should we think?"**
 
 ## Architecture contract
 
@@ -13,7 +20,7 @@ The Cognitive Machine owns every step where the system has to judge, choose or g
 
 | Part | What it does | Page |
 |------|--------------|------|
-| Cognition levels S0–S3 | Classify each graph node by the kind of inference it needs | [S0–S3](/architecture/cognition-levels) |
+| Cognition levels S0–S3 | Classify each graph node by the kind of inference it needs; use the lowest sufficient level | [S0–S3](/architecture/cognition-levels) |
 | Decision runtime | Answer bounded questions over known candidates with a calibrated confidence | [Decision runtime](/architecture/cognitive-runtime/decision-runtime) |
 | Context compiler | Build the exact input a component sees from canonical state | [Context](/architecture/context) |
 | Cognitive Execution Router and model pool | Pick the execution mode and component for each capability request | [Routing](/architecture/routing) |
@@ -31,16 +38,17 @@ Why split it this way: the parts of an agent that must be dependable (state, aut
 
 - The canonical decision runtime is on main. It serves the nine decision operations from the kernel contracts and runs in **shadow mode by default**: it records what it would decide, abstains, and never acts. No calibration manifest exists yet, so no decision primitive has passed its go-live gate.
 - Verifier-owned completion is enforced for agency-origin work. See [Verification](/architecture/verification).
-- The router, model pool, context compiler and tool call compiler are designed but not on main.
+- The Cognitive Execution Router is on main as library code, and the model pool registry is served internally by the runtime. Nothing calls the router on the normal path yet.
+- The context compiler and tool call compiler are on main behind a flag that is off by default. With the flag on they run in shadow.
 
 ## Availability
 
 | Part | Status |
 |------|--------|
-| Decision runtime (shadow) | **PREVIEW** |
-| Verifier-owned completion for agency-origin work | **PREVIEW** |
-| Cognitive Execution Router, model pool | **DESIGN — NOT YET IMPLEMENTED** |
-| Context compiler, tool call compiler | **DESIGN — NOT YET IMPLEMENTED** |
+| Decision runtime (shadow) | **SHADOW** · INTERNAL |
+| Verifier-owned completion for agency-origin work | **IMPLEMENTED** · INTERNAL |
+| Cognitive Execution Router, model pool | **IMPLEMENTED** (library; not called on the normal path) |
+| Context compiler, tool call compiler | **SHADOW** · INTERNAL |
 | Cross-component state transfer | **RESEARCH** |
 
 ## Developer relevance

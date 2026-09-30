@@ -13,7 +13,9 @@ use crate::core::io::{ensure_dir, read_json_file, write_json_atomic};
 use crate::work::graph::ready_nodes;
 use crate::work::projection::project_dag;
 use crate::work::types::{DagNode, DagState};
-use crate::{AllternitEvent, Actor, ActorType, DagMutation, Gate, Index, Ledger, LedgerQuery, WorkOps};
+use crate::{
+    Actor, ActorType, AllternitEvent, DagMutation, Gate, Index, Ledger, LedgerQuery, WorkOps,
+};
 
 #[derive(Subcommand)]
 pub enum WorkCmd {
@@ -563,35 +565,26 @@ async fn update_issue(
         }
     }
 
-    if !patch.is_empty() {
-        let _ = ctx
-            .gate
-            .mutate_with_decision(
-                &dag_id,
-                "allternit work update",
-                None,
-                vec![DagMutation::UpdateNode {
-                    node_id: node_id.clone(),
-                    patch: json!(patch),
-                }],
-            )
-            .await?;
-    }
+    let mut mutations = Vec::new();
     if let Some(status) = status_override {
-        let from = "NEW".to_string();
-        let _ = ctx
-            .gate
-            .mutate_with_decision(
-                &dag_id,
-                "allternit work status",
-                None,
-                vec![DagMutation::ChangeStatus {
-                    node_id,
-                    from,
-                    to: status,
-                    reason: None,
-                }],
-            )
+        let from = current_node_status(ctx, &dag_id, &node_id).await?;
+        crate::kernel::lifecycle::check_legacy_change(&from, &status)?;
+        mutations.push(DagMutation::ChangeStatus {
+            node_id: node_id.clone(),
+            from,
+            to: status,
+            reason: None,
+        });
+    }
+    if !patch.is_empty() {
+        mutations.push(DagMutation::UpdateNode {
+            node_id,
+            patch: json!(patch),
+        });
+    }
+    if !mutations.is_empty() {
+        ctx.gate
+            .mutate_with_decision(&dag_id, "allternit work update", None, mutations)
             .await?;
     }
     Ok(())
@@ -600,6 +593,8 @@ async fn update_issue(
 async fn close_issue(ctx: &WorkContext, id: &str, reason: Option<String>) -> Result<()> {
     let dag_id = id.to_string();
     let node_id = resolve_node_id(ctx, &dag_id, None).await?;
+    let from = current_node_status(ctx, &dag_id, &node_id).await?;
+    crate::kernel::lifecycle::check_legacy_change(&from, "DONE")?;
     let _ = ctx
         .gate
         .mutate_with_decision(
@@ -608,7 +603,7 @@ async fn close_issue(ctx: &WorkContext, id: &str, reason: Option<String>) -> Res
             reason.clone(),
             vec![DagMutation::ChangeStatus {
                 node_id,
-                from: "IN_PROGRESS".to_string(),
+                from,
                 to: "DONE".to_string(),
                 reason,
             }],
@@ -620,6 +615,8 @@ async fn close_issue(ctx: &WorkContext, id: &str, reason: Option<String>) -> Res
 async fn reopen_issue(ctx: &WorkContext, id: &str, reason: Option<String>) -> Result<()> {
     let dag_id = id.to_string();
     let node_id = resolve_node_id(ctx, &dag_id, None).await?;
+    let from = current_node_status(ctx, &dag_id, &node_id).await?;
+    crate::kernel::lifecycle::check_legacy_change(&from, "NEW")?;
     let _ = ctx
         .gate
         .mutate_with_decision(
@@ -628,7 +625,7 @@ async fn reopen_issue(ctx: &WorkContext, id: &str, reason: Option<String>) -> Re
             reason.clone(),
             vec![DagMutation::ChangeStatus {
                 node_id,
-                from: "DONE".to_string(),
+                from,
                 to: "NEW".to_string(),
                 reason,
             }],
@@ -1305,6 +1302,15 @@ fn resolve_root_node_id(dag: &DagState) -> Option<String> {
         .filter(|n| n.parent_node_id.is_none())
         .min_by_key(|n| n.created_at.clone())
         .map(|n| n.node_id.clone())
+}
+
+async fn current_node_status(ctx: &WorkContext, dag_id: &str, node_id: &str) -> Result<String> {
+    let events = ctx.ledger.query(LedgerQuery::default()).await?;
+    let dag = project_dag(&events_for_dag(&events, dag_id), dag_id);
+    dag.nodes
+        .get(node_id)
+        .map(|node| node.status.clone())
+        .ok_or_else(|| anyhow!("node {node_id} not found in dag {dag_id}"))
 }
 
 async fn resolve_node_id(ctx: &WorkContext, dag_id: &str, node_id: Option<&str>) -> Result<String> {

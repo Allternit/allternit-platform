@@ -1,0 +1,131 @@
+---
+title: 'Authentication'
+description: 'OAuth 2.1 for your MCP server: protected-resource metadata, PKCE, client ID metadata documents, and permission prompts'
+---
+
+If your server reads or changes a user's data, it must authenticate the user with OAuth. Allternit acts as an OAuth client on the user's behalf, stores the resulting token, and attaches it to requests it makes to your server. Views never receive the token.
+
+## What your server must do
+
+1. **Return `401` with a challenge** for requests that have no valid token:
+
+   ```http
+   HTTP/1.1 401 Unauthorized
+   WWW-Authenticate: Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource/mcp"
+   ```
+
+2. **Publish protected-resource metadata** ([RFC 9728](https://www.rfc-editor.org/rfc/rfc9728)). The document goes at `/.well-known/oauth-protected-resource`, with your resource path appended when your endpoint is not at the root:
+
+   ```json
+   {
+     "resource": "https://example.com/mcp",
+     "authorization_servers": ["https://auth.example.com"],
+     "scopes_supported": ["invoices:read"],
+     "bearer_methods_supported": ["header"],
+     "resource_name": "Example Invoices"
+   }
+   ```
+
+3. **Publish authorization-server metadata** ([RFC 8414](https://www.rfc-editor.org/rfc/rfc8414)) at `/.well-known/oauth-authorization-server` on the authorization server (`/.well-known/openid-configuration` is also read). Include `authorization_endpoint`, `token_endpoint`, and `code_challenge_methods_supported: ["S256"]`. If you accept client ID metadata documents, set `client_id_metadata_document_supported: true`.
+
+4. **Validate every access token.** Check the signature, issuer, expiry, and that the audience (`aud`) is your MCP resource URL. Reject tokens minted for another resource. Return `403` with `insufficient_scope` when a token lacks the scope a tool needs.
+
+<Warning>
+Do not accept a token just because it is well-formed. A token issued for another service must not work on yours.
+</Warning>
+
+## What Allternit does
+
+When a user connects your server, Allternit runs the authorization-code flow with PKCE:
+
+1. **Discovery.** It fetches `/.well-known/oauth-protected-resource` on your server's origin and takes the first entry of `authorization_servers`. If that document is missing, it uses your server's origin as the authorization server. It then reads `/.well-known/oauth-authorization-server` (then `/.well-known/openid-configuration`) on that issuer for `authorization_endpoint` and `token_endpoint`. If neither is found, it falls back to `<issuer>/authorize`, and to token-endpoint discovery under your MCP server URL (`/.well-known/oauth-authorization-server`, then `/oauth/token`, `/token`, `/v1/token`).
+2. **Authorization request.** It redirects the user's browser to your `authorization_endpoint` with these query parameters:
+
+   | Parameter | Value |
+   |-----------|-------|
+   | `response_type` | `code` |
+   | `client_id` | Allternit's client ID (see below) |
+   | `redirect_uri` | Allternit's callback (see below) |
+   | `state` | A random value, checked on return |
+   | `code_challenge` | SHA-256 of a random verifier, base64url |
+   | `code_challenge_method` | `S256` |
+   | `resource` | Your MCP server URL, as registered in the connector |
+
+3. **Callback.** Your authorization server redirects back with `code` and `state`. Allternit exchanges the code at the `token_endpoint` from your authorization-server metadata (`grant_type=authorization_code`, `code`, `code_verifier`, `redirect_uri`, `resource`, `state`, and `client_id`), then stores the tokens encrypted. When an access token expires, Allternit uses your refresh token at the same endpoint, again with `resource`. Tokens are used only in an `Authorization: Bearer` header on requests to your server, and are never logged or returned to the browser.
+
+Every fetch Allternit makes during discovery refuses private, loopback, and link-local addresses.
+
+<Note>
+Allternit does not send a `scope` parameter in the authorization request. Configure your authorization server to grant your default scopes when none are requested, and advertise them in `scopes_supported`.
+</Note>
+
+## Client ID metadata documents
+
+Allternit identifies itself with a [client ID metadata document](https://datatracker.ietf.org/doc/draft-ietf-oauth-client-id-metadata-document/) (CIMD). The `client_id` is the URL of a JSON document Allternit hosts, so your authorization server does not need to register Allternit ahead of time.
+
+The document is served by the Allternit API at `/oauth/client.json`:
+
+```json
+{
+  "client_id": "https://api.allternit.com/oauth/client.json",
+  "client_name": "Allternit",
+  "client_uri": "https://api.allternit.com",
+  "redirect_uris": ["https://api.allternit.com/mcp/oauth/callback"],
+  "grant_types": ["authorization_code", "refresh_token"],
+  "response_types": ["code"],
+  "token_endpoint_auth_method": "none"
+}
+```
+
+To accept it, your authorization server:
+
+- sets `client_id_metadata_document_supported: true` in its metadata,
+- fetches the `client_id` URL when it sees one,
+- checks that the `redirect_uri` in the request is listed in `redirect_uris`,
+- treats the client as a public client (`token_endpoint_auth_method: none`) and requires PKCE.
+
+The URLs come from the API's configured public base URL. The values above are the ones the code's tests use; check the document itself for the values your deployment serves.
+
+<Tip>
+If your authorization server does not support CIMD, Allternit needs a client ID registered for it. Registering a client ID and secret on the connector is possible through the connector API (`oauth_client_id`, `oauth_client_secret`). When CIMD is unsupported and no client ID is configured on the connector, the connect step fails with a message saying so.
+</Tip>
+
+## Redirect URI
+
+Register the `redirect_uri` from the CIMD document with your authorization server if it needs an allowlist. It is the Allternit API's `/mcp/oauth/callback`.
+
+## How users connect
+
+1. The user adds your server (from a plugin package or a directory listing) as a connector.
+2. Allternit creates the connector for your server URL and starts the flow above.
+3. The user signs in and approves access on your authorization server.
+4. Allternit stores the token. From then on, tool calls to your server carry it.
+
+Each user has their own connector and token. A connector is never shared, and the host only ever forwards requests for a connector that belongs to the signed-in user.
+
+## Permission prompts
+
+Every installed app has a permission mode. It decides when Allternit asks the user before running one of your tools:
+
+| Mode | Asks before |
+|------|-------------|
+| Always ask | Every tool call. |
+| Ask before changes | Any tool that is not `readOnlyHint: true`. This is the default. |
+| Ask before important changes | Tools that are not read-only and are either `destructiveHint: true` or `openWorldHint: true`. |
+
+The decision comes from your tool annotations, so accurate annotations matter. See [annotations](/plugins/develop/mcp-server#annotations). A tool with no `readOnlyHint` is treated as a change.
+
+<Note>
+The host enforces the install's permission mode on tool calls your View makes, using the annotations from your server's own `tools/list`. A tool it cannot find is treated as destructive. Tool calls the model makes during a chat turn do not go through this check yet (**Planned**). Expect users to change the mode.
+</Note>
+
+Separately, the [`x-allternit/*` extensions](/plugins/reference/window-allternit) that write data or start work show a confirmation prompt drawn by the host over the View. The View cannot skip or answer it.
+
+## Testing your OAuth setup
+
+- Fetch your two metadata documents with `curl` and confirm `resource` matches your MCP URL exactly.
+- Call your endpoint with no token and confirm you get `401` with a `resource_metadata` parameter.
+- Run the flow with a tool such as the [MCP Inspector](https://github.com/modelcontextprotocol/inspector) before you connect it in Allternit.
+- After connecting, call a tool and check that your server sees a token whose `aud` is your resource URL.
+
+See [Troubleshooting](/plugins/guides/troubleshooting) for common failures.

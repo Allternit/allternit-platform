@@ -55,6 +55,9 @@
             "group": "Architecture",
             "pages": [
               "architecture",
+              "architecture/two-machines",
+              "architecture/contracts-not-models",
+              "architecture/agent-loop",
               "architecture/agents",
               "architecture/kernel",
               "architecture/planes",
@@ -408,6 +411,54 @@
             "group": "Release Notes",
             "pages": [
               "release-notes"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Plugins & MCP Apps",
+        "groups": [
+          {
+            "group": "Concepts",
+            "pages": [
+              "plugins/overview"
+            ]
+          },
+          {
+            "group": "Get Started",
+            "pages": [
+              "plugins/quickstart"
+            ]
+          },
+          {
+            "group": "Build",
+            "pages": [
+              "plugins/develop/mcp-server",
+              "plugins/develop/mcp-app-ui",
+              "plugins/develop/authentication"
+            ]
+          },
+          {
+            "group": "Test & Publish",
+            "pages": [
+              "plugins/publish/package",
+              "plugins/publish/submit-and-review",
+              "plugins/publish/app-guidelines"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "plugins/guides/selling",
+              "plugins/guides/vendor-packs",
+              "plugins/guides/porting",
+              "plugins/guides/troubleshooting"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "plugins/reference/window-allternit"
             ]
           }
         ]

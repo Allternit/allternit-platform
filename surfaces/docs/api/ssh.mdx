@@ -10,7 +10,7 @@ The SSH Connections API stores SSH connection metadata and lets you test, connec
 ## Base URL
 
 ```
-https://api.allternit.com/v1/ssh-connections
+https://api.allternit.com/api/v1/ssh-connections
 ```
 
 All endpoints require a valid Bearer token in the `Authorization` header. See [Authentication](/api/authentication) for details.
@@ -19,6 +19,7 @@ All endpoints require a valid Bearer token in the `Authorization` header. See [A
 
 | Method | Path | Description |
 |--------|------|-------------|
+| GET | `/ssh` | Service status. |
 | GET | `/ssh-connections` | List SSH connections. |
 | POST | `/ssh-connections` | Create an SSH connection record. |
 | GET | `/ssh-connections/:id` | Get an SSH connection. |

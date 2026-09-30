@@ -1,143 +1,76 @@
 ---
 title: 'Document Generator'
-description: 'Generate academic and office artifacts through the Allternit Document Generator service.'
+description: 'FastAPI service that generates PPTX decks, DOCX/PDF study guides and XLSX rubrics.'
 ---
 
 ## Overview
 
-The **Allternit Document Generator** is a FastAPI service that generates office artifacts such as photo-card decks, study guides, and rubric spreadsheets. Generated files can be returned directly or uploaded to a configured document store.
+The **Allternit Document Generator** (`services/document-generator`) is a FastAPI skill server that generates office artifacts: photo-card decks, study guides and rubric spreadsheets. It can also create a Canvas LMS module. Generated files are uploaded to SharePoint and the response returns the file URL.
 
-## Base URL
+Status: Implementation IMPLEMENTED / Exposure INTERNAL. The service is not mounted behind `api.allternit.com`; run it yourself and call it directly. The [Agent Swarm](/tools/agent-swarm) `document-generator` tool is the HTTP bridge to it.
 
-Local development:
+## Run locally
 
-```text
-http://127.0.0.1:8000
+```bash
+cd services/document-generator
+pip install -r requirements.txt
+export API_KEY=your-secret-api-key
+uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-When deployed behind the Allternit platform gateway:
-
-```text
-https://api.allternit.com/api/documents
-```
+SharePoint upload uses `TENANT_ID`, `CLIENT_ID` and `CLIENT_SECRET`. If `API_KEY` is unset the service falls back to the placeholder `your-secret-api-key`; always set your own.
 
 ## Authentication
 
-All action endpoints require the `X-API-Key` header:
-
-```text
-X-API-Key: your-secret-api-key
-```
+Action endpoints require the `X-API-Key` header, compared against `API_KEY`.
 
 ## Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/health` | Health check |
+| GET | `/health` | Health check (`ok`, `service`, `version`, `time_utc`) |
 | POST | `/actions/generatePhotoCardDeck` | Generate a PPTX photo-card deck |
 | POST | `/actions/generateStudyGuide` | Generate a DOCX or PDF study guide |
-| POST | `/actions/generateRubricSpreadsheet` | Generate an XLSX rubric or tracker |
+| POST | `/actions/generateRubricSpreadsheet` | Generate an XLSX rubric, tracker or calculator |
+| POST | `/actions/createCanvasModule` | Create a module in a Canvas course (`course_id`, `name`) |
 
-## JSON examples
+## Request fields
 
-### Generate a photo-card deck
+| Endpoint | Fields |
+|----------|--------|
+| `generatePhotoCardDeck` | `title` (required), `audience`, `slide_count` (4-10, default 6), `deck_style` (default `photo_card`), `key_points`, `outline`, `images`, `citations`, `sharepoint_target`, `output`, `request_meta` |
+| `generateStudyGuide` | `topic` (required), `audience`, `format` (`docx` default, or `pdf`), `length` (default `short`), `learning_objectives`, `key_terms`, `include_self_check`, `examples`, `citations`, `sharepoint_target`, `output`, `request_meta` |
+| `generateRubricSpreadsheet` | `template_type` (required), `title`, `columns`, `rows`, `validation`, `formulas`, `citations`, `sharepoint_target`, `output`, `request_meta` |
 
-```bash
-curl -X POST http://127.0.0.1:8000/actions/generatePhotoCardDeck \
-  -H 'X-API-Key: your-secret-api-key' \
-  -H 'content-type: application/json' \
-  -d '{
-    "title": "Solar System",
-    "cards": [
-      { "term": "Mercury", "definition": "Closest planet to the Sun" },
-      { "term": "Venus", "definition": "Second planet from the Sun" }
-    ]
-  }'
-```
-
-Response:
-
-```json
-{
-  "success": true,
-  "download_url": "https://sharepoint.example.com/files/solar-system.pptx",
-  "format": "pptx",
-  "created_at": "2026-08-13T19:00:00.000Z"
-}
-```
-
-### Generate a study guide
+## Example: study guide
 
 ```bash
 curl -X POST http://127.0.0.1:8000/actions/generateStudyGuide \
   -H 'X-API-Key: your-secret-api-key' \
   -H 'content-type: application/json' \
   -d '{
-    "title": "Biology 101",
-    "sections": [
-      { "heading": "Cell Structure", "content": "Cells are the basic unit of life." }
-    ],
-    "format": "pdf"
+    "topic": "Cell Biology",
+    "format": "docx",
+    "length": "short",
+    "learning_objectives": ["Describe the cell membrane"],
+    "key_terms": ["nucleus", "mitochondria"]
   }'
 ```
 
-Response:
+Artifact responses share one shape:
 
 ```json
 {
-  "success": true,
-  "download_url": "https://sharepoint.example.com/files/biology-101.pdf",
-  "format": "pdf",
-  "created_at": "2026-08-13T19:00:00.000Z"
+  "request_id": "req_0123456789abcdef",
+  "artifact_type": "docx",
+  "file_name": "cell-biology-study-guide.docx",
+  "sharepoint_file_url": "https://...",
+  "expires_at_utc": null,
+  "warnings": []
 }
 ```
-
-### Generate a rubric spreadsheet
-
-```bash
-curl -X POST http://127.0.0.1:8000/actions/generateRubricSpreadsheet \
-  -H 'X-API-Key: your-secret-api-key' \
-  -H 'content-type: application/json' \
-  -d '{
-    "title": "Essay Rubric",
-    "criteria": [
-      { "name": "Thesis", "points": 25 },
-      { "name": "Evidence", "points": 25 }
-    ]
-  }'
-```
-
-Response:
-
-```json
-{
-  "success": true,
-  "download_url": "https://sharepoint.example.com/files/essay-rubric.xlsx",
-  "format": "xlsx",
-  "created_at": "2026-08-13T19:00:00.000Z"
-}
-```
-
-## Configuration
-
-| Variable | Purpose |
-|----------|---------|
-| `API_KEY` | Secret key for API authentication |
-| `TENANT_ID` | Microsoft tenant ID for document store integration |
-| `CLIENT_ID` | Microsoft app client ID |
-| `CLIENT_SECRET` | Microsoft app client secret |
-
-## Error codes
-
-| HTTP | Code | Meaning |
-|------|------|---------|
-| 200 | — | Success |
-| 400 | `bad_request` | Invalid payload |
-| 401 | `unauthorized` | Missing or invalid `X-API-Key` |
-| 422 | `generation_failed` | Artifact generation failed |
-| 500 | `internal_error` | Unexpected server error |
 
 ## Related pages
 
+- [Agent Swarm Tools](/tools/agent-swarm)
 - [Office Engine](/tools/office-engine)
-- [Native Tool Belt](/tools/tool-belt)

@@ -1,0 +1,124 @@
+---
+title: 'Package your plugin'
+description: 'The ZIP layout, manifest fields, and limits for an Allternit Plugin package'
+---
+
+A plugin package is a ZIP file that describes your plugin and points at your MCP server. Allternit can import a package to create the connector and skills, and can export one back to the same layout. The layout (a `plugin.json` manifest, `skills/` folders, and an `mcp.json`) follows the shape used by other plugin systems, so an existing package usually needs few changes.
+
+The package does not contain your server. It only says where your server is.
+
+## Layout
+
+```text
+my-plugin.zip
+├── plugin.json                  required
+├── mcp.json                     required
+├── skills/
+│   └── invoice-helper/
+│       └── SKILL.md             optional, one folder per skill
+└── assets/
+    └── icon.png                 optional
+```
+
+A ZIP made by compressing a folder, so that everything sits under one top-level directory, is accepted: the single root folder is stripped when it contains `plugin.json`. `__MACOSX/` entries are ignored.
+
+## `plugin.json`
+
+```json
+{
+  "name": "Example Invoices",
+  "version": "1.0.0",
+  "description": "Look up and review invoices from Example.",
+  "author": { "name": "Example, Inc.", "url": "https://example.com" },
+  "icon": "assets/icon.png",
+  "homepage": "https://example.com/integrations/allternit"
+}
+```
+
+| Field | Type | Rule |
+|-------|------|------|
+| `name` | string | Required. 1 to 30 characters. |
+| `version` | string | Recommended. A missing version is a warning. |
+| `description` | string | Recommended. A missing description is a warning. |
+| `author` | string or `{ name, url }` | Shown as the publisher. |
+| `icon` | string | A path inside the package, an `https:`/`http:` URL, or a `data:` URL. A path that is not in the ZIP is a warning. |
+| `homepage` | string | Optional. |
+
+Other fields are kept as they are.
+
+## `mcp.json`
+
+Declare exactly one server under `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "example-invoices": {
+      "type": "streamable-http",
+      "url": "https://mcp.example.com/mcp"
+    }
+  }
+}
+```
+
+| Field | Rule |
+|-------|------|
+| `type` | `streamable-http` (default when omitted). `streamable_http` and `http` are accepted as the same thing. Any other transport is an error. |
+| `url` | Required. Must be an `https://` URL. |
+| `headers` | Optional. A header whose name contains `secret`, `password`, `token`, `api-key`, or `authorization` is an error. Use OAuth for credentials. See [Authentication](/plugins/develop/authentication). |
+
+A package with zero or several servers is rejected.
+
+## `skills/<name>/SKILL.md`
+
+Skills tell the model when and how to use your tools. Each is a Markdown file that starts with frontmatter that includes a `description`:
+
+```markdown
+---
+name: invoice-helper
+description: Use when the user asks about invoices, payments due, or overdue accounts.
+---
+
+# Invoice helper
+
+Use `list_invoices` to find invoices, then `get_invoice` for detail. Only call
+`show_invoice` when the user wants to see an invoice displayed.
+```
+
+A SKILL.md without frontmatter or without a `description` is a warning. Write skills about your own tools only. Do not tell the model to use your app in place of others.
+
+## Limits
+
+| Limit | Value |
+|-------|-------|
+| Files in the archive | 500 |
+| Total uncompressed size | 50 MB |
+| Paths | Absolute paths, drive-letter paths, and any path containing `..` cause the whole package to be rejected |
+
+## Import checks
+
+Importing reads the ZIP and reports findings as errors or warnings. Any error means the package is not imported. The messages and codes you may see:
+
+| Code | Meaning |
+|------|---------|
+| `zip.invalid` | The file is not a readable ZIP archive. |
+| `zip.too-many-entries`, `zip.too-large` | Over the limits above. |
+| `zip.unsafe-path` | A path escapes the package. |
+| `plugin.missing`, `plugin.json-invalid` | `plugin.json` is absent or not a JSON object. |
+| `plugin.name-missing`, `plugin.name-too-long` | Problems with `name`. |
+| `mcp.missing`, `mcp.json-invalid` | `mcp.json` is absent or invalid. |
+| `mcp.server-count` | Not exactly one server. |
+| `mcp.transport`, `mcp.url` | Unsupported transport, or a URL that is not valid `https`. |
+| `mcp.embedded-credential` | A credential-like header in `mcp.json`. |
+
+The warnings are `plugin.version-missing`, `plugin.description-missing`, `plugin.icon-missing`, and `skill.frontmatter`.
+
+## Building the ZIP
+
+From the folder that holds `plugin.json`:
+
+```bash
+zip -r ../my-plugin.zip plugin.json mcp.json skills assets
+```
+
+The package is then what you submit for the directory. See [Submit & review](/plugins/publish/submit-and-review).

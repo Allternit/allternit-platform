@@ -220,6 +220,31 @@ fn receipt_id(r: &Value) -> String {
     r["chain"]["receipt_id"].as_str().unwrap_or("").to_string()
 }
 
+/// What a cassette entry for receipt `r` must say, recomputed from the signed
+/// receipt itself: `(boundary, node_id, request_hash, effectful, recorded_result_hash)`.
+/// `None` for receipts that are not boundaries. Used to record and, on load, to bind
+/// every cassette entry to its signed receipt (review #13).
+fn entry_binding(r: &Value, run_node: &str) -> Result<Option<(Boundary, String, String, bool, String)>> {
+    let sid = schema_id(r);
+    let node_id = id_or(r["envelope"]["node_id"].as_str(), run_node);
+    let x_boundary = r["extensions"]["x-boundary"].as_str().and_then(Boundary::parse);
+    Ok(match sid {
+        "allternit.kernel.ActionReceiptV1" => {
+            let tool_id = r["extensions"]["x-tool-id"].as_str().unwrap_or("");
+            let args_hash = r["extensions"]["x-args-hash"].as_str().unwrap_or("");
+            let class = r["effect_class"].as_str().unwrap_or("");
+            Some((x_boundary.unwrap_or(Boundary::Tool), node_id,
+                  tool_request_hash(tool_id, args_hash, class)?, true, effect_result_hash(r)?))
+        }
+        "allternit.kernel.RunReceiptV1" => None,
+        _ => {
+            let b = x_boundary.unwrap_or(if sid == "allternit.kernel.PolicyReceiptV1" { Boundary::Policy } else { Boundary::Decision });
+            let rh = boundary_request_hash(b, &node_id, sid)?;
+            Some((b, node_id, rh, false, body_result_hash(r)?))
+        }
+    })
+}
+
 /// Build a cassette from a run's WP3 receipt chain. The chain must verify.
 pub fn record_cassette(cs: &ChainStore, run_id: &str, graph_id: Option<&str>, graph_version: u64) -> Result<CassetteV1> {
     let rep = cs.verify_chain(run_id)?;
@@ -240,52 +265,31 @@ pub fn record_cassette(cs: &ChainStore, run_id: &str, graph_id: Option<&str>, gr
     for r in &receipts {
         let sid = schema_id(r);
         let rid = receipt_id(r);
-        let node_id = id_or(r["envelope"]["node_id"].as_str(), &run_node);
-        let x_boundary = r["extensions"]["x-boundary"].as_str().and_then(Boundary::parse);
         let seq = entries.len() as u64;
-        match sid {
-            "allternit.kernel.ActionReceiptV1" => {
-                match r["status"].as_str() {
-                    Some("INTENDED") | Some("UNKNOWN") => {
-                        if superseded.contains_key(&rid) { continue; }
-                        bail!("run {run_id} has an unresolved {} effect receipt {rid}; reconcile before recording",
-                              r["status"].as_str().unwrap_or(""));
-                    }
-                    _ => {}
+        if sid == "allternit.kernel.ActionReceiptV1" {
+            match r["status"].as_str() {
+                Some("INTENDED") | Some("UNKNOWN") => {
+                    if superseded.contains_key(&rid) { continue; }
+                    bail!("run {run_id} has an unresolved {} effect receipt {rid}; reconcile before recording",
+                          r["status"].as_str().unwrap_or(""));
                 }
-                let tool_id = r["extensions"]["x-tool-id"].as_str().unwrap_or("");
-                let args_hash = r["extensions"]["x-args-hash"].as_str().unwrap_or("");
-                let class = r["effect_class"].as_str().unwrap_or("");
-                let mut ids = vec![];
-                if let Some(sp) = r["chain"]["supersedes"].as_str() { ids.push(sp.to_string()); }
-                ids.push(rid.clone());
-                entries.push(CassetteEntry {
-                    seq, node_id, boundary: x_boundary.unwrap_or(Boundary::Tool),
-                    primitive_id: primitive_id(tool_id),
-                    request_hash: tool_request_hash(tool_id, args_hash, class)?,
-                    recorded_result_hash: effect_result_hash(r)?,
-                    result_ref: rid, effectful: Some(true), branch_taken: None, receipt_ids: Some(ids),
-                });
-            }
-            // The run summary is not a boundary.
-            "allternit.kernel.RunReceiptV1" => continue,
-            _ => {
-                let boundary = x_boundary.unwrap_or(if sid == "allternit.kernel.PolicyReceiptV1" {
-                    Boundary::Policy
-                } else {
-                    Boundary::Decision
-                });
-                let branch = r["decision"].as_str().or_else(|| r["branch"].as_str()).map(String::from);
-                entries.push(CassetteEntry {
-                    seq, boundary,
-                    primitive_id: None,
-                    request_hash: boundary_request_hash(boundary, &node_id, sid)?,
-                    node_id,
-                    recorded_result_hash: body_result_hash(r)?,
-                    result_ref: rid.clone(), effectful: Some(false), branch_taken: branch, receipt_ids: Some(vec![rid]),
-                });
+                _ => {}
             }
         }
+        // Same derivation the Replayer uses to bind entries to receipts on load.
+        let Some((boundary, node_id, request_hash, effectful, recorded_result_hash)) = entry_binding(r, &run_node)? else { continue };
+        let (primitive, branch, ids) = if effectful {
+            let mut ids = vec![];
+            if let Some(sp) = r["chain"]["supersedes"].as_str() { ids.push(sp.to_string()); }
+            ids.push(rid.clone());
+            (primitive_id(r["extensions"]["x-tool-id"].as_str().unwrap_or("")), None, ids)
+        } else {
+            (None, r["decision"].as_str().or_else(|| r["branch"].as_str()).map(String::from), vec![rid.clone()])
+        };
+        entries.push(CassetteEntry {
+            seq, node_id, boundary, primitive_id: primitive, request_hash, recorded_result_hash,
+            result_ref: rid, effectful: Some(effectful), branch_taken: branch, receipt_ids: Some(ids),
+        });
     }
     if entries.is_empty() {
         bail!("run {run_id} has no replayable boundaries");
@@ -402,6 +406,12 @@ pub struct Replayer<'a> {
     steps: u64,
     divergences: Vec<Divergence>,
     expected: Vec<DivergenceKind>,
+    /// Set when the recorded chain does not verify or the cassette is not bound to
+    /// the chain head: nothing is served (review #12).
+    untrusted: Option<String>,
+    /// Entries not bound to their signed receipt, with the divergence reported at
+    /// open: refused when reached (review #13).
+    unbound: HashMap<usize, Divergence>,
 }
 
 impl<'a> Replayer<'a> {
@@ -424,21 +434,48 @@ impl<'a> Replayer<'a> {
             cs, replay_run_id: id_or(Some(replay_run_id), "replay"),
             receipts: HashMap::new(), consumed: vec![false; cassette.entries.len()],
             steps: 0, divergences: vec![], expected: vec![], cassette,
+            untrusted: None, unbound: HashMap::new(),
         };
         let run_id = me.cassette.run_id.clone();
         let rep = me.cs.verify_chain(&run_id)?;
         if let Some(b) = rep.first_break {
-            me.push(b.index, "chain", DivergenceKind::ResultHash, None, None,
-                    format!("recorded receipt chain does not verify at index {}: {}", b.index, b.reason));
+            let why = format!("recorded receipt chain does not verify at index {}: {}", b.index, b.reason);
+            me.push(b.index, "chain", DivergenceKind::ResultHash, None, None, why.clone());
+            me.untrusted = Some(why);
         }
         let all = me.cs.read_run(&run_id)?;
         let head = all.last().and_then(|r| r["chain"]["content_hash"].as_str()).map(String::from);
         if head.as_deref() != Some(me.cassette.run_receipt_hash.as_str()) {
             let rec = Some(me.cassette.run_receipt_hash.clone());
-            me.push(0, "chain", DivergenceKind::ResultHash, rec, head,
-                    "cassette run_receipt_hash does not match the recorded chain head".into());
+            let why = "cassette run_receipt_hash does not match the recorded chain head".to_string();
+            me.push(0, "chain", DivergenceKind::ResultHash, rec, head, why.clone());
+            me.untrusted.get_or_insert(why);
         }
         me.receipts = all.into_iter().map(|r| (receipt_id(&r), r)).collect();
+        // Bind every entry to its signed receipt: the cassette is editable, the
+        // chain is not. Recompute what the entry must say from the receipt.
+        let run_node = id_or(Some(&run_id), "run");
+        let mut refs = std::collections::HashSet::new();
+        for i in 0..me.cassette.entries.len() {
+            let e = me.cassette.entries[i].clone();
+            let Some(r) = me.receipts.get(&e.result_ref) else { continue }; // MissingEntry when reached
+            let why = match entry_binding(r, &run_node) {
+                _ if !refs.insert(e.result_ref.clone()) => Some("cassette entry reuses another entry's receipt".to_string()),
+                Ok(Some((b, node, rh, eff, res))) => {
+                    if b != e.boundary || rh != e.request_hash || node != e.node_id || eff != e.is_effectful() {
+                        Some("cassette entry request is not the request its signed receipt records".to_string())
+                    } else if res != e.recorded_result_hash {
+                        Some("cassette result hash does not match the recorded receipt".to_string())
+                    } else { None }
+                }
+                Ok(None) => Some("cassette entry points at a receipt that is not a boundary".to_string()),
+                Err(err) => Some(format!("receipt not bindable: {err}")),
+            };
+            if let Some(why) = why {
+                let d = me.push(e.seq, &e.node_id, DivergenceKind::ResultHash, Some(e.recorded_result_hash.clone()), None, why);
+                me.unbound.insert(i, d);
+            }
+        }
         Ok(me)
     }
 
@@ -469,7 +506,8 @@ impl<'a> Replayer<'a> {
                 let prior = self.cassette.entries.iter().enumerate().find(|(j, e)| self.consumed[*j]
                     && e.boundary == s.boundary && e.request_hash == s.request_hash
                     && Some(e.result_ref.as_str()) == found.as_deref());
-                if let Some((_, e)) = prior {
+                if let Some((j, e)) = prior.filter(|(j, _)| self.untrusted.is_none() && !self.unbound.contains_key(j)) {
+                    let _ = j;
                     if let Some(r) = self.receipts.get(&e.result_ref) {
                         if r["status"].as_str() == Some("COMMITTED") {
                             return StepOutcome::Recorded(RecordedResult {
@@ -488,6 +526,9 @@ impl<'a> Replayer<'a> {
         };
         self.consumed[i] = true;
         let e = self.cassette.entries[i].clone();
+        if let Some(d) = self.unbound.get(&i) {
+            return StepOutcome::Refused(d.clone()); // already reported at open
+        }
         if Some(i) != next || e.node_id != s.node_id {
             let rec = next.map(|n| self.cassette.entries[n].node_id.clone()).or(Some(e.node_id.clone()));
             self.push(e.seq, &e.node_id, DivergenceKind::NodeOrder, rec, Some(s.node_id.clone()),
@@ -526,6 +567,11 @@ impl<'a> Replayer<'a> {
                               Some(h.clone()), "replay produced a different result".into());
                 }
             }
+        }
+        if let Some(why) = self.untrusted.clone() {
+            let d = self.push(e.seq, &e.node_id, DivergenceKind::ResultHash, Some(e.recorded_result_hash.clone()), None,
+                              format!("recorded result not served: {why}"));
+            return StepOutcome::Refused(d);
         }
         StepOutcome::Recorded(RecordedResult {
             seq: e.seq, receipt_id: e.result_ref.clone(), result_hash: e.recorded_result_hash.clone(),

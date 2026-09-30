@@ -1,0 +1,140 @@
+---
+title: 'Vendor packs'
+description: 'How a vendor appears inside Allternit: an open MCP App, design tokens, or a look pack'
+---
+
+<Warning>
+**Preview.** Vendor packs are implemented as a schema, a registry, and a renderer. The registry is in memory and is filled at startup. You link a bot to a pack in the bot's **Look** setting (Edit bot), and bot chat then shows the vendor header. The bot's `vendorPackId` is saved with the rest of its profile. There is no submission path for vendor packs yet. Treat this page as a description of the format, which may change.
+</Warning>
+
+A vendor pack is a small `vendor-pack.json` file that says how one vendor looks inside Allternit. It has three tiers. The tier is a property of the file, so a pack can move up a tier by editing its JSON.
+
+| Tier | Name | What you supply | What Allternit does |
+|------|------|-----------------|---------------------|
+| 1 | Open MCP App | An MCP server URL with `ui://` resources | Installs it as a connector and renders your Views with the [MCP Apps host](/plugins/develop/mcp-app-ui). |
+| 2 | Tokens | [Design tokens](https://www.designtokens.org/) in DTCG format | Applies them to a vendor surface. |
+| 3 | Look pack | A look profile: avatar, bubbles, header, composer, wording | Renders the vendor surface from the profile. |
+
+Tier 1 is the destination. If you can build an [MCP server with a View](/plugins/quickstart), do that.
+
+## What a pack cannot change
+
+- **The "via Allternit" badge is always shown.** `viaBadge.enabled` must be `true`. You can change the label text (up to 32 characters).
+- **The Allternit provenance header is not restyled.** It sits outside the pack's styling and uses none of the pack's variables.
+- **Logos are shown as supplied.** `logo.recolor` must be `false`. Allternit does not recolor or distort a logo.
+
+A pack that tries to turn the badge off or recolor a logo fails validation.
+
+## `vendor-pack.json`
+
+```json
+{
+  "id": "example-tokens",
+  "version": "1.0.0",
+  "vendor": { "id": "example", "displayName": "Example" },
+  "tier": 2,
+  "logo": { "placement": "both" },
+  "viaBadge": { "enabled": true, "label": "via Allternit" },
+  "tokens": {
+    "color": {
+      "$type": "color",
+      "brand": { "$value": "#1f6feb" },
+      "onBrand": { "$value": "#ffffff" },
+      "bubble": { "$value": "{color.brand}" },
+      "surface": { "$value": "#ffffff" }
+    },
+    "font": {
+      "body": { "$type": "fontFamily", "$value": ["Inter", "system-ui", "sans-serif"] },
+      "weight": { "$type": "fontWeight", "$value": "500" }
+    },
+    "radius": { "$type": "dimension", "bubble": { "$value": "14px" }, "card": { "$value": "10px" } },
+    "spacing": { "$type": "dimension", "sm": { "$value": "8px" }, "md": { "$value": "12px" } }
+  }
+}
+```
+
+| Field | Type | Rule |
+|-------|------|------|
+| `id` | string | Lowercase letters, digits, and dashes. 2 to 63 characters, starting with a letter or digit. |
+| `version` | string | Semantic version, `major.minor.patch`. |
+| `vendor.id` | string | Same format as `id`. |
+| `vendor.displayName` | string | 1 to 60 characters. |
+| `vendor.legalName` | string | Optional, up to 120 characters. |
+| `tier` | `1`, `2`, or `3` | Required. |
+| `tokens` | object | DTCG tokens. Required for tier 2. Optional accent tokens for tier 3. |
+| `look` | object | Look profile. Required for tier 3. |
+| `logo.asset` | string | An `https://` URL or an absolute app path. Without it a monogram is drawn. |
+| `logo.placement` | `header`, `avatar`, or `both` | Default `both`. |
+| `logo.minSizePx` | integer | 12 to 64. Default 16. |
+| `viaBadge` | object | `enabled` must be `true`. `label` defaults to `via Allternit`. |
+| `mcpServerUrl` | string | An `https://` URL. Required for tier 1. |
+
+### Tier 1: open MCP App
+
+```json
+{
+  "id": "example-app",
+  "version": "1.0.0",
+  "vendor": { "id": "example", "displayName": "Example" },
+  "tier": 1,
+  "mcpServerUrl": "https://mcp.example.com/mcp"
+}
+```
+
+Allternit installs the server as a connector, through the same path as the connector marketplace, so [authentication](/plugins/develop/authentication), tool discovery, and permission prompts work as for any other plugin. Nothing in the pack renders the app. The pack supplies the URL and the vendor identity (badge, logo) around it.
+
+### Tier 2: tokens
+
+`tokens` is a [DTCG](https://www.designtokens.org/) document. The importer supports the `color`, `fontFamily`, `fontWeight`, `number`, and `dimension` types. The name of the top-level group decides how a token is used: `color` (or `colors`), `font` (`fonts`, `typography`), `radius` (`radii`, `borderRadius`), and `spacing` (`space`). It also supports:
+
+- `$type` inherited from parent groups.
+- `{alias}` references, such as `{color.brand}`, resolved with cycle detection.
+- Dimension values as strings (`"14px"`) or objects.
+
+Each token becomes a CSS variable named `--vp-<path>`, for example `color.brand` becomes `--vp-color-brand`. Variables are scoped to `[data-vendor-pack="<id>"]`, so they apply to the vendor surface only. A value that could carry unsafe CSS is skipped and reported.
+
+### Tier 3: look pack
+
+```json
+{
+  "id": "example-look",
+  "version": "1.0.0",
+  "vendor": { "id": "example", "displayName": "Example" },
+  "tier": 3,
+  "tokens": {
+    "color": { "$type": "color", "brand": { "$value": "#0f766e" } }
+  },
+  "look": {
+    "avatarTreatment": "rounded",
+    "bubbleStyle": "outlined",
+    "headerLayout": "centered",
+    "composerStyle": "pill",
+    "terminology": { "thread": "chat", "task": "routine" },
+    "statusVocabulary": { "working": "Thinking", "done": "All set" }
+  }
+}
+```
+
+| `look` field | Values | Default |
+|--------------|--------|---------|
+| `avatarTreatment` | `circle`, `rounded`, `square` | `circle` |
+| `bubbleStyle` | `filled`, `outlined`, `plain` | `filled` |
+| `headerLayout` | `left`, `centered` | `left` |
+| `composerStyle` | `pill`, `box` | `box` |
+| `terminology` | Map of Allternit term to your word (each up to 40 characters) | none |
+| `statusVocabulary` | Map of Allternit thread state to your wording (each up to 40 characters) | none |
+
+## How a vendor supplies design tokens
+
+1. Export your tokens from your design tool or repository as DTCG JSON.
+2. Keep to the supported types and group names above. Use aliases for semantic names (`bubble` pointing at `brand`) so one change updates everything.
+3. Put them under `tokens` in `vendor-pack.json` and set `tier` to `2`.
+4. Validate the file against the field rules above.
+
+Use real, contrasting colors. Allternit does not adjust a pack for accessibility, so check contrast for text on your `brand` color yourself.
+
+## Not yet available
+
+- Persisting packs on the server. The registry is in memory.
+- A submission or review flow for vendor packs.
+- Look-profile fields beyond those listed above, such as approval-card and computer-view styling.

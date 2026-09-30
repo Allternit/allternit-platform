@@ -210,7 +210,8 @@ describe('validateIdToken', () => {
   });
 });
 
-describe('sign in', () => {
+// Real loopback callback + token exchange per test: slow on shared CI runners.
+describe('sign in', { timeout: 20_000 }, () => {
   it('registers, exchanges with the issued client id, and stores credentials', async () => {
     const f = setup();
     const m = createSiwcManager(f.host);

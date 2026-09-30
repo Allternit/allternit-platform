@@ -263,11 +263,15 @@ pub(crate) fn seal_token_set(tokens: &serde_json::Value) -> String {
     crate::token_crypto::seal(&serde_json::to_string(&stamped).unwrap_or_default())
 }
 
-/// One-shot conversion of pre-existing plaintext connector secrets to sealed
-/// form. Idempotent; not called at startup — the read path accepts both forms,
-/// so running it is an operator decision. Returns the number of values sealed.
+/// Seal pre-existing plaintext connector secrets (legacy bare values and
+/// `plain:` values written while no key was configured). Idempotent; run at
+/// startup only when an encryption key is configured, since sealing without a
+/// key just re-marks values `plain:`. Returns the number of values sealed.
 pub fn seal_legacy_mcp_secrets(conn: &rusqlite::Connection) -> rusqlite::Result<usize> {
-    let is_plain = |v: &str| !v.is_empty() && !v.starts_with("enc:v1:") && !v.starts_with("plain:");
+    if !crate::token_crypto::encryption_enabled() {
+        return Ok(0);
+    }
+    let is_plain = |v: &str| !v.is_empty() && !v.starts_with("enc:v1:");
     let mut sealed = 0;
     for (table, column) in [("mcp_oauth_sessions", "tokens"), ("mcp_connectors", "oauth_client_secret")] {
         let rows: Vec<(String, String)> = {
@@ -280,7 +284,7 @@ pub fn seal_legacy_mcp_secrets(conn: &rusqlite::Connection) -> rusqlite::Result<
         for (id, value) in rows.into_iter().filter(|(_, v)| is_plain(v)) {
             conn.execute(
                 &format!("UPDATE {table} SET {column} = ?1 WHERE id = ?2"),
-                params![crate::token_crypto::seal(&value), id],
+                params![crate::token_crypto::seal(value.strip_prefix("plain:").unwrap_or(&value)), id],
             )?;
             sealed += 1;
         }

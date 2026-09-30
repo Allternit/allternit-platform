@@ -10,13 +10,13 @@ The Visualizations API renders chart data into SVG, PNG, or PDF formats. It is u
 ## Base URL
 
 ```
-https://api.allternit.com/api/v1/viz
+https://api.allternit.com/viz
 ```
 
 For local development:
 
 ```
-http://127.0.0.1:8013/api/v1/viz
+http://127.0.0.1:8013/viz
 ```
 
 ## Authentication
@@ -27,10 +27,10 @@ Visualization routes inherit the standard bearer-token auth middleware. See [Aut
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/v1/viz` | Service status and supported formats. |
-| `POST` | `/api/v1/viz/render/svg` | Render a chart to SVG. |
-| `POST` | `/api/v1/viz/render/png` | Render a chart to base64 PNG. |
-| `POST` | `/api/v1/viz/render/pdf` | Render a chart to base64 PDF. |
+| `GET` | `/viz` | Service status and supported formats. |
+| `POST` | `/viz/render/svg` | Render a chart to SVG. |
+| `POST` | `/viz/render/png` | Render a chart to base64 PNG. |
+| `POST` | `/viz/render/pdf` | Render a chart to base64 PDF. |
 
 ## Request body
 
@@ -53,13 +53,13 @@ Visualization routes inherit the standard bearer-token auth middleware. See [Aut
 ## Render to SVG
 
 ```http
-POST /api/v1/viz/render/svg
+POST /viz/render/svg
 ```
 
 ### Example request
 
 ```bash
-curl -X POST https://api.allternit.com/api/v1/viz/render/svg \
+curl -X POST https://api.allternit.com/viz/render/svg \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -87,7 +87,7 @@ curl -X POST https://api.allternit.com/api/v1/viz/render/svg \
 ## Render to PNG
 
 ```http
-POST /api/v1/viz/render/png
+POST /viz/render/png
 ```
 
 Returns the rendered PNG as a base64-encoded string.
@@ -103,7 +103,7 @@ Returns the rendered PNG as a base64-encoded string.
 ## Render to PDF
 
 ```http
-POST /api/v1/viz/render/pdf
+POST /viz/render/pdf
 ```
 
 Returns the rendered PDF as a base64-encoded string.
@@ -119,7 +119,7 @@ Returns the rendered PDF as a base64-encoded string.
 ## Service status
 
 ```http
-GET /api/v1/viz
+GET /viz
 ```
 
 ### Example response

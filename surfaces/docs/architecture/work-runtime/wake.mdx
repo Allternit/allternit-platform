@@ -3,7 +3,14 @@ title: "Wake"
 description: "A durable, keyed queue of 'look at this again at time T', shared by timers and campaigns"
 ---
 
-**Status: AVAILABLE (keyed wake queue, internal) · PREVIEW (autonomous waking through the Agency API, not enabled).** See [status labels](/architecture#status-labels).
+**Implementation: ENABLED (keyed wake queue) · DESIGN (autonomous waking through the Agency API) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Work wakes from a keyed queue, not a polling model. |
+| **Implemented today** | Keyed wake queue in the internal work runtime. |
+| **Active path** | Yes, inside the internal work runtime. |
+| **Public exposure** | Not yet. Planned through the Agency API (contract published, endpoint not served). |
 
 A **wake** means "look at this again at time T". The wake controller holds these durably, so nothing has to stay running to remember them.
 
@@ -24,9 +31,9 @@ The work runtime on main has a keyed wake queue stored in its ledger as schedule
 
 | Part | Status |
 |------|--------|
-| Keyed wake queue with coalescing and at-most-once claim | **AVAILABLE** (internal) |
-| Autonomous waking through the Agency API | **PREVIEW** (not enabled) |
-| Wake aggregation across campaigns | **DESIGN — NOT YET IMPLEMENTED** |
+| Keyed wake queue with coalescing and at-most-once claim | **ENABLED** · INTERNAL |
+| Autonomous waking through the Agency API | **IMPLEMENTED** (not enabled) |
+| Wake aggregation across campaigns | **DESIGN** |
 
 ## Developer relevance
 

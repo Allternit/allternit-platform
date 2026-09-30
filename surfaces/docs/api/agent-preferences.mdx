@@ -14,10 +14,14 @@ Supported response styles are:
 - `detailed` — full reasoning, context, and edge cases.
 - `custom` — driven entirely by `custom_instructions`.
 
+<Note>
+This namespace is served by the Allternit API data-plane node (`http://127.0.0.1:8013` on the same machine, or your paired or provisioned node). The hosted Cloud API at `https://api.allternit.com` does not route it; it relays only agent sessions, canvases, office and beta research/sessions. See [Cloud API](/api/cloud-api).
+</Note>
+
 ## Base URL
 
 ```
-https://api.allternit.com/api
+http://127.0.0.1:8013/api
 ```
 
 ## Authentication
@@ -46,7 +50,7 @@ Returns the caller's preferences. If no row exists, returns the default style `b
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-  https://api.allternit.com/api/agent-preferences
+  http://127.0.0.1:8013/api/agent-preferences
 ```
 
 #### Example response
@@ -77,7 +81,7 @@ Updates the caller's preferences. Omitted fields are merged with existing values
 #### Example request
 
 ```bash
-curl -X PUT https://api.allternit.com/api/agent-preferences \
+curl -X PUT http://127.0.0.1:8013/api/agent-preferences \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

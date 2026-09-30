@@ -135,6 +135,10 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (mdxPath.endsWith('surfaces/subscriptions.mdx')) continue;
       if (mdxPath.endsWith('guides/subscriptions.mdx')) continue;
       if (mdxPath.endsWith('guides/platform-workflows.mdx')) continue;
+      // Porting an MCP App from another host has to name that host and its globals.
+      if (mdxPath.endsWith('plugins/guides/porting.mdx')) continue;
+      // Provider env vars (OPENAI_API_KEY etc.) are configuration, not endorsement.
+      if (mdxPath.endsWith('tools/open-notebook.mdx')) continue;
       fail(
         `competitor mention in ${path.relative(ROOT, mdxPath)}:${i + 1}: ${line.trim()}`
       );

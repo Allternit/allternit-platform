@@ -15,7 +15,13 @@ CommRails powers:
 - Receipts, vault archival, and context-pack checkpoints
 - Ticket tracking with graph analytics and external-tracker sync
 
-The HTTP surface is mounted in `allternit-api` at `/api/rails` and `/rails`, and is also available as the standalone `allternit-rails-service` on port `3011`.
+The HTTP surface is mounted in `allternit-api` at `/api/rails`, `/rails`, `/api/commrails` and `/commrails` (all four are the same router), and is also available as the standalone `allternit-commrails-service` binary (crate `commrails/`), which listens on port `3011` by default.
+
+**Status:** Implementation IMPLEMENTED × Exposure PUBLIC (mounted in the production API).
+
+## How this relates to the Agency Kernel
+
+CommRails is the coordination and ledger substrate that existing agents, peers and cowork runs use today. The Agency Kernel is a separate execution layer with its own run state; it is not built on CommRails `runs`. See [Architecture](/architecture).
 
 ## Base URL
 
@@ -23,7 +29,7 @@ The HTTP surface is mounted in `allternit-api` at `/api/rails` and `/rails`, and
 https://api.allternit.com/api/rails
 ```
 
-Local development (`allternit-rails-service`):
+Local development (`allternit-commrails-service`):
 
 ```
 http://127.0.0.1:3011
@@ -71,7 +77,10 @@ All routes below are relative to the base URL. Requests must include an `Authori
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/mail/send` | Send a mail message (legacy or typed envelope) |
-| `GET` | `/mail/threads` | List mail threads |
+| `GET` / `POST` | `/mail/threads` | List mail threads / ensure a thread exists |
+| `POST` | `/mail/ack` | Acknowledge a message |
+| `POST` | `/mail/review` | Request a review |
+| `POST` | `/mail/archive` | Archive a thread |
 | `GET` | `/mail/thread/:thread_id` | Read messages in a thread |
 | `POST` | `/mail/share` | Share an asset into a thread |
 | `POST` | `/mail/decide` | Record a review decision |
@@ -101,6 +110,17 @@ All routes below are relative to the base URL. Requests must include an `Authori
 | `POST` | `/workspace/:workspace_id/dags` | Create a DAG |
 | `GET` | `/workspace/:workspace_id/dags/:dag_id` | Get DAG details |
 | `POST` | `/workspace/:workspace_id/dags/:dag_id/start` | Start DAG execution |
+| `GET` | `/plans` | List plans |
+| `GET` | `/dags` | DAG overview |
+| `POST` | `/plan` | Create a plan |
+| `POST` | `/plan/from-text` | Create a plan from text |
+| `POST` | `/plan/refine` | Refine a plan |
+| `GET` | `/plan/:dag_id` | Show a plan |
+| `GET` | `/dags/:dag_id/render` | Render a DAG |
+| `POST` | `/dags/:dag_id/execute` | Execute a DAG |
+| `POST` | `/dags/:dag_id/nodes` | Add a node |
+| `PATCH` | `/dags/:dag_id/nodes/:node_id` | Update a node |
+| `DELETE` | `/dags/:dag_id/nodes/:node_id` | Delete a node |
 
 ### Leases
 
@@ -108,6 +128,7 @@ All routes below are relative to the base URL. Requests must include an `Authori
 |---|---|---|
 | `POST` | `/leases` | Request a resource lease |
 | `GET` | `/leases/:lease_id` | Get lease status |
+| `POST` | `/leases/:lease_id/renew` | Renew a lease |
 
 ### Context packs
 
@@ -115,12 +136,20 @@ All routes below are relative to the base URL. Requests must include an `Authori
 |---|---|---|
 | `POST` | `/workspace/:workspace_id/packs` | Create a context-pack checkpoint |
 | `GET` | `/workspace/:workspace_id/packs/:pack_id` | Retrieve a context pack |
+| `POST` | `/context-packs` | List context packs |
+| `POST` | `/context-packs/seal` | Seal a context pack |
 
 ### Gate / policy
 
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/gate/evaluate` | Evaluate a policy decision |
+| `GET` | `/gate/status` | Gate status |
+| `POST` | `/gate/check` | Check an action against the gate |
+| `GET` | `/gate/rules` | List gate rules |
+| `POST` | `/gate/verify` | Verify |
+| `POST` | `/gate/decision` | Record a gate decision |
+| `POST` | `/gate/mutate` | Gated mutation |
 
 ### Vault
 
@@ -128,6 +157,37 @@ All routes below are relative to the base URL. Requests must include an `Authori
 |---|---|---|
 | `GET` | `/vault/status` | List completed vault archive jobs |
 | `POST` | `/vault/archive` | Archive a WIH to the vault |
+
+### Runs, jobs and handoffs (cowork)
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` / `GET` | `/runs` | Create / list runs |
+| `GET` | `/runs/:run_id` | Get a run |
+| `POST` | `/runs/:run_id/start` | Start a run |
+| `POST` | `/runs/:run_id/cancel` | Cancel a run |
+| `POST` | `/runs/:run_id/state` | Transition run state |
+| `GET` | `/runs/:run_id/events/stream` | Stream run events (SSE) |
+| `POST` / `GET` | `/runs/:run_id/jobs` | Create / list jobs |
+| `POST` | `/runs/:run_id/jobs/:job_id/state` | Transition job state |
+| `POST` / `GET` | `/runs/:run_id/handoffs` | Create / list handoffs |
+| `POST` | `/runs/:run_id/handoffs/:handoff_id/ack` | Acknowledge a handoff |
+| `POST` | `/runs/:run_id/attach` | Attach a client to a run |
+| `POST` | `/reattach` | Reattach |
+| `POST` | `/attachments/:attachment_id/detach` | Detach |
+| `GET` | `/runs/:run_id/attachments` | List attachments |
+
+### Fabric transport
+
+`/fabric/transport/*` routes carry fabric intents, approvals, job claims (claim, heartbeat, renew, complete), principal tokens and capabilities, connector sessions and delegation rules. They are used by fabric workers; see `cmd/allternit-api/src/rails/fabric_transport_routes.rs` for the full list.
+
+### Service
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/health` | Health check |
+| `GET` | `/visibility` | Visibility snapshot |
+| `POST` | `/index/rebuild` | Rebuild the index |
 
 ### Tickets
 

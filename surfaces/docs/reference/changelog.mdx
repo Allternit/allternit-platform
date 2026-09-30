@@ -18,11 +18,11 @@ This log covers the kernel contracts and the architecture docs. The platform cha
 
 ### On main at this date
 
-Node lifecycle library, primitive registry and graph validator library; signed receipt chain and effect receipts (internal); per-node execution environment and shared egress guard; a gate in front of every executor; verifier-owned completion for agency-origin work; decision runtime with S1 shadow only.
+Node lifecycle library, primitive registry and graph validator library; signed receipt chain and effect receipts (internal); per-node execution environment and shared egress guard; a gate in front of every executor; verifier-owned completion for agency-origin work; decision runtime with S1 shadow only; replay and cassettes with divergence reports and a gate replay mode (internal); Cognitive Execution Router (library, not yet called in production) and ModelPool registry (internal); context and tool call compilers behind an off-by-default flag (shadow).
 
 ### Not on main
 
-Replay and cassettes, router and ModelPool, the context and tool call compilers, the conformance suite and the alpha gate.
+The Agency API server, the request compiler, the conformance suite and the alpha gate, and an end-to-end bug-fix run.
 
 ## Current implementation
 

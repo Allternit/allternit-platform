@@ -12,7 +12,7 @@ The Enrollment API binds a human user (email + display name) to an agent within 
 Profile management:
 
 ```
-https://api.allternit.com/v1/beta/user-profiles
+https://api.allternit.com/api/v1/beta/user-profiles
 ```
 
 Public enrollment acceptor:
@@ -162,6 +162,7 @@ Response:
 | 400 | `bad_request` | Invalid body, missing organization scope, duplicate profile, or invalid metadata. |
 | 400 | `invalid or expired enrollment token` | Token signature invalid or expired. |
 | 400 | `enrollment token already used` | Token was already consumed. |
+| 400 | `profile is already enrolled` | An enrollment URL was requested for a profile that is already `enrolled`. |
 | 400 | `enrollment token not found` | Token hash not recorded. |
 | 401 | `unauthorized` | Missing or invalid authentication (profile endpoints). |
 | 404 | `not_found` | Profile not found. |

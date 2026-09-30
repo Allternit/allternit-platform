@@ -3,7 +3,14 @@ title: "Node lifecycle"
 description: "The typed states a work node moves through, the legal transitions, and why no executor closes its own node"
 ---
 
-**Status: AVAILABLE (work runtime node statuses, internal) · PREVIEW (typed WorkNodeLifecycleV1 as the enforced path).** See [status labels](/architecture#status-labels).
+**Implementation: ENABLED (node statuses) · IMPLEMENTED (typed WorkNodeLifecycleV1) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Every node moves through one typed lifecycle. |
+| **Implemented today** | Work-runtime node statuses; the typed lifecycle as library code. |
+| **Active path** | Partial. Typed lifecycle not enforced. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 A run is a graph of work nodes. Every node moves through one lifecycle, owned by the work runtime.
 
@@ -46,10 +53,10 @@ The work runtime stores node statuses as strings in its ledger and has done so f
 
 | Part | Status |
 |------|--------|
-| Stored node statuses and transitions | **AVAILABLE** (internal) |
-| Typed lifecycle, transition table, legacy mapping | **PREVIEW** |
-| Builder cannot close its own node (agency-origin work) | **PREVIEW** |
-| Transition guards and event names in the contract | **DESIGN — NOT YET IMPLEMENTED** |
+| Stored node statuses and transitions | **ENABLED** · INTERNAL |
+| Typed lifecycle, transition table, legacy mapping | **IMPLEMENTED** · INTERNAL |
+| Builder cannot close its own node (agency-origin work) | **IMPLEMENTED** · INTERNAL |
+| Transition guards and event names in the contract | **DESIGN** |
 
 ## Developer relevance
 

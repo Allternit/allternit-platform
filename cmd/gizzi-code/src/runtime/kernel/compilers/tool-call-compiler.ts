@@ -166,35 +166,37 @@ export function compileToolCall(input: CompileToolCallInput): CompiledToolCall {
 
   for (const p of op.params) {
     const b = bindings[p.name]
+    let value: unknown
+    let provenance: ArgProvenanceClass
     if (Object.prototype.hasOwnProperty.call(fixed, p.name)) {
       if (b && b.class !== "POLICY") diagnostics.push(`POLICY_OVERRIDE:${p.name}:${b.class}`)
-      args[p.name] = fixed[p.name]
-      prov[p.name] = "POLICY"
-      continue
+      value = fixed[p.name]
+      provenance = "POLICY"
+    } else {
+      if (!b) {
+        if (p.required) throw new ToolCompileError("MISSING_ARGUMENT", `required parameter "${p.name}" has no binding`)
+        continue
+      }
+      if (p.policy_only) throw new ToolCompileError("POLICY_ONLY_ARGUMENT", `"${p.name}" may only be set by policy`)
+      if (b.class === "POLICY") throw new ToolCompileError("UNBACKED_POLICY_ARGUMENT", `"${p.name}" claims POLICY but policy did not fix it`)
+      provenance = b.class
+      if (b.class === "STATE") {
+        if (!b.state_path) throw new ToolCompileError("STATE_PATH_REQUIRED", `"${p.name}" is STATE-bound without a state_path`)
+        value = resolveStatePath(state, b.state_path)
+        if (value === undefined) throw new ToolCompileError("STATE_UNRESOLVED", `state path "${b.state_path}" is undefined`)
+      } else value = b.value // USER verbatim; RETRIEVAL/GENERATED as supplied
     }
-    if (!b) {
-      if (p.required) throw new ToolCompileError("MISSING_ARGUMENT", `required parameter "${p.name}" has no binding`)
-      continue
-    }
-    if (p.policy_only) throw new ToolCompileError("POLICY_ONLY_ARGUMENT", `"${p.name}" may only be set by policy`)
-    if (b.class === "POLICY") throw new ToolCompileError("UNBACKED_POLICY_ARGUMENT", `"${p.name}" claims POLICY but policy did not fix it`)
-    let value: unknown
-    if (b.class === "STATE") {
-      if (!b.state_path) throw new ToolCompileError("STATE_PATH_REQUIRED", `"${p.name}" is STATE-bound without a state_path`)
-      value = resolveStatePath(state, b.state_path)
-      if (value === undefined) throw new ToolCompileError("STATE_UNRESOLVED", `state path "${b.state_path}" is undefined`)
-    } else value = b.value // USER verbatim; RETRIEVAL/GENERATED as supplied
     if (value === undefined) {
       if (p.required) throw new ToolCompileError("MISSING_ARGUMENT", `required parameter "${p.name}" is undefined`)
       continue
     }
     if (!typeOk(p, value) || (p.enum && !p.enum.some((e) => e === value)))
       throw new ToolCompileError(
-        b.class === "GENERATED" ? "GENERATED_SCHEMA_VIOLATION" : "SCHEMA_VIOLATION",
+        provenance === "GENERATED" ? "GENERATED_SCHEMA_VIOLATION" : "SCHEMA_VIOLATION",
         `"${p.name}" does not match ${p.type}${p.enum ? " enum" : ""}`,
       )
     args[p.name] = value
-    prov[p.name] = b.class
+    prov[p.name] = provenance
   }
 
   const resources = op.params

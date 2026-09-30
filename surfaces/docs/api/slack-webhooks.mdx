@@ -19,6 +19,15 @@ This endpoint is public because Slack signs every request with its own signature
 
 | Method | Path | Description |
 |--------|------|-------------|
+| GET | `/agents/:id/slack-channels` | List Slack channels bound to a bot (authenticated, owner only). |
+| POST | `/agents/:id/slack-channels` | Bind a Slack channel ID (for example `C0123ABCD`) to a bot. Returns `409` if the channel is bound to someone else's bot. |
+| DELETE | `/agents/:id/slack-channels/:channel` | Unbind a channel. |
+
+The binding routes sit under the authenticated API prefix. The events endpoint below is public.
+
+
+| Method | Path | Description |
+|--------|------|-------------|
 | POST | `/webhooks/slack/events` | Receive a Slack event. |
 
 ## Request signature
@@ -52,6 +61,8 @@ For `event_callback` events with a plain `message` subtype (no `bot_id`), the AP
 2. Sends the message text to the session.
 3. Polls for the assistant's completed reply.
 4. Posts the reply to the same Slack thread via `chat.postMessage`.
+
+A channel bound to a bot goes to that bot: each Slack thread becomes one task thread on the bot, and the turn runs with the bot's instructions and memory. Unbound channels share one default agent and model. Handling is text-only (no file or image attachments). Edits, deletes, reactions and bot echoes are recorded on the channel binding and never start a new turn.
 
 The endpoint immediately returns `200 OK` to avoid Slack retries.
 

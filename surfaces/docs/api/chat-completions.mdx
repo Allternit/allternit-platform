@@ -21,6 +21,10 @@ For local development:
 http://127.0.0.1:8013/v1
 ```
 
+<Note>
+On the hosted Cloud API (`https://api.allternit.com`), only `POST /v1/chat/completions` and `GET /v1/models` are served under `/v1`. `best_of`, `partial` and `/v1/tokens` below are served by the Allternit API data-plane node (`http://127.0.0.1:8013/v1`).
+</Note>
+
 ## Endpoints
 
 | Method | Path | Description |

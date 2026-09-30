@@ -3,7 +3,14 @@ title: "Retries and idempotent effects"
 description: "How a step is retried without repeating a side effect, and why a retry must change something"
 ---
 
-**Status: AVAILABLE (effect receipts with idempotency keys on the gate's tool path, internal) · PREVIEW (retry-policy checks in the graph validator).** See [status labels](/architecture#status-labels).
+**Implementation: ENABLED (idempotent effect receipts on the gate's tool path) · IMPLEMENTED (retry checks in the validator) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Effectful retries are safe because every effect has an idempotency key and a receipt. |
+| **Implemented today** | Effect receipts with idempotency keys on the gate's tool path. Retry-policy checks as validator library code. |
+| **Active path** | Partial. |
+| **Public exposure** | No. Not reachable by an external developer. |
 
 Retrying a step that only reads is easy. Retrying a step that changed something outside the run (sent a message, charged a card, pushed a commit) can do it twice. Allternit treats those two cases differently.
 
@@ -26,10 +33,10 @@ Why: most costly agent failures are repeats: the same failing step run again, or
 
 | Part | Status |
 |------|--------|
-| At-most-once effects and effect receipts on the gate's tool path | **AVAILABLE** (internal) |
-| Unsafe-resume hold | **AVAILABLE** (internal, drive runner) |
-| Retry-must-change check | **PREVIEW** (graph validator) |
-| Idempotency on the Agency API | **PREVIEW** (contract). See [Idempotency](/api/agency/idempotency). |
+| At-most-once effects and effect receipts on the gate's tool path | **ENABLED** · INTERNAL |
+| Unsafe-resume hold | **ENABLED** (internal, drive runner) |
+| Retry-must-change check | **IMPLEMENTED** (graph validator) |
+| Idempotency on the Agency API | **PUBLIC PREVIEW** (contract; not served). See [Idempotency](/api/agency/idempotency). |
 
 ## Developer relevance
 

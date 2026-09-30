@@ -3,7 +3,14 @@ title: Kernel contracts
 description: "The frozen kernel ABI 1.0.0 package: what it contains, how it is versioned, and how to regenerate types and run the conformance tests"
 ---
 
-**Status: AVAILABLE (contract package).** See [status labels](/architecture#status-labels).
+**Implementation: IMPLEMENTED · Exposure: PUBLIC (docs).** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | Every plane is built against one frozen, versioned contract package. |
+| **Implemented today** | Kernel ABI 1.0.0: schemas, registry, generated types, schema tests. |
+| **Active path** | Partial. Kernel components on main use it; the existing platform APIs predate it. |
+| **Public exposure** | Readable as documentation. No endpoint serves the contracts. |
 
 The **kernel ABI** is the set of typed contracts that every part of the [Living Agent Architecture](/architecture) is built against. A contract defines the exact shape of one thing that crosses a boundary: a task, a policy decision, a lease, a receipt. Components agree on contracts, not on each other's internals, which is what lets a model, a tool runtime or an executor be replaced without changing the agent.
 
@@ -138,9 +145,9 @@ The contracts, the primitive registry, the built-in completion data, generated T
 
 | Part | Status | Notes |
 |------|--------|-------|
-| Schemas, registry, data, generated types | **AVAILABLE** | `spec/Contracts/kernel/v1/`. |
-| Schema-level conformance tests | **AVAILABLE** |  |
-| Runtime conformance suite | **DESIGN — NOT YET IMPLEMENTED** | Tests a running kernel, not only the contracts. |
+| Schemas, registry, data, generated types | **IMPLEMENTED** | `spec/Contracts/kernel/v1/`. |
+| Schema-level conformance tests | **IMPLEMENTED** |  |
+| Runtime conformance suite | **PUBLIC PREVIEW** (contract; not served) | Tests a running kernel, not only the contracts. Kernel layer on main; Agency API layer pending. |
 
 ## Developer relevance
 

@@ -9,13 +9,9 @@ description: 'Collaborative wiki and documentation surface for Allternit teams.'
 
 ## Base URL
 
-When deployed as part of the Allternit platform:
+Allternit does not deploy or host a Docmost instance in this repository, and `docs.allternit.com` is the public documentation site, not a Docmost workspace. The platform integrates with a Docmost instance you run, through the `DocmostAdapter` (allternit-ai repo, `src/services/docmost/DocmostAdapter.ts`), which takes a base URL and API token.
 
-```text
-https://docs.allternit.com
-```
-
-Local development:
+Typical local development:
 
 ```text
 http://127.0.0.1:3000

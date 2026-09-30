@@ -7,21 +7,19 @@ description: 'Clone, push, and pull Allternit brains using standard git smart-HT
 
 Brains are per-user bare Git repositories that act as hosted knowledge remotes for agents. The Brain Git API exposes each brain through standard git smart-HTTP so you can use ordinary git clients to clone, push, and pull knowledge pages. Brain management and git-token lifecycle are covered on the [Brains API](/api/brains) page; this page covers the git transport.
 
+<Note>
+This namespace is served by the Allternit API data-plane node (`http://127.0.0.1:8013` on the same machine, or your paired or provisioned node). The hosted Cloud API at `https://api.allternit.com` does not route it; it relays only agent sessions, canvases, office and beta research/sessions. See [Cloud API](/api/cloud-api).
+</Note>
+
 ## Base URL
 
 Management and read endpoints:
 
 ```
-https://api.allternit.com/api/v1
+http://127.0.0.1:8013/api/v1
 ```
 
 Git smart-HTTP endpoints:
-
-```
-https://api.allternit.com/api/v1/brains/:id/git
-```
-
-For local development:
 
 ```
 http://127.0.0.1:8013/api/v1/brains/:id/git
@@ -44,14 +42,14 @@ Use the clone URL returned by `POST /api/v1/brains` or `GET /api/v1/brains`.
 ### With Bearer header
 
 ```bash
-git clone https://api.allternit.com/v1/brains/brain_8f7e6d5c/git \
+git clone http://127.0.0.1:8013/api/v1/brains/brain_8f7e6d5c/git \
   --config http.extraHeader="Authorization: Bearer allternit_git_a1b2c3d4e5f678901234567890123456"
 ```
 
 ### With HTTP Basic auth
 
 ```bash
-git clone https://x-allternit-git-token:allternit_git_a1b2c3d4e5f678901234567890123456@api.allternit.com/v1/brains/brain_8f7e6d5c/git
+git clone http://x-allternit-git-token:allternit_git_a1b2c3d4e5f678901234567890123456@127.0.0.1:8013/api/v1/brains/brain_8f7e6d5c/git
 ```
 
 ## Push and pull

@@ -1,16 +1,15 @@
 <!doctype html>
-<!-- fixture: challenge — Cloudflare's live interstitial shape (2026-09-30): the
-     Turnstile iframe sits in a CLOSED shadow root and its "Verify you are human"
-     label is inside that cross-origin iframe, so neither is reachable from the
-     top frame. Only the page's own heading text is. halt + needs_user, never retried -->
+<!-- fixture: challenge — chatgpt.com's live interstitial (2026-09-30): no text
+     at all, just the logo and the Turnstile widget. The widget's iframe and
+     its "Verify you are human" label are in a closed shadow root; only the
+     hidden response input is in the light DOM. halt + needs_user, never retried -->
 <html lang="en">
   <head><meta charset="utf-8"><title>Just a moment...</title></head>
   <body data-state="challenge">
     <main>
-      <h1>chatgpt.com</h1>
-      <h2>Performing security verification</h2>
-      <p>This website uses a security service to protect against malicious bots. This page is displayed while the website verifies you are not a bot.</p>
+      <svg aria-hidden="true" width="40" height="40"></svg>
       <div id="turnstile-host"></div>
+      <input type="hidden" name="cf-turnstile-response" id="cf-chl-widget-abc12_response" />
       <script>
         const root = document.getElementById("turnstile-host").attachShadow({ mode: "closed" });
         const frame = document.createElement("iframe");

@@ -1,0 +1,69 @@
+---
+title: 'App guidelines'
+description: 'Quality, safety, privacy, and honesty expectations for apps in the Allternit directory'
+---
+
+These guidelines describe what reviewers look for. Some are checked by the [automated scan](/plugins/publish/submit-and-review#automated-scan). Others are judged by a person. Following them does not guarantee approval.
+
+## Do something useful and finish the job
+
+- Solve a specific problem. An app should do something a user would ask for in a sentence.
+- Make each tool do one thing and describe it precisely. Prefer several clear tools over one tool with a mode parameter.
+- Return results the model can use: concise text in `content`, typed data in `structuredContent`. Report failures with `isError: true` and a message that says what to try next.
+- Keep responses fast and small. A View should show something useful before every request has finished.
+- Test on light and dark themes, at narrow widths, and in fullscreen.
+
+## Describe your app honestly
+
+- The name, descriptions, icon, and screenshots must show what the app does today. Do not describe features you have not built.
+- Do not claim endorsement or affiliation you do not have. Do not imitate Allternit or another company's interface.
+- Declare tool annotations that match behavior. A tool that writes, deletes, or sends must not be marked `readOnlyHint: true`. See [annotations](/plugins/develop/mcp-server#annotations).
+- Provide a real privacy policy and terms of service at public `https` URLs.
+- Do not use Allternit's brand, or a person's name, likeness, or voice, without permission.
+
+## Do not steer the model
+
+Tool descriptions and server instructions are for explaining your tools. They are not for competing with other apps or overriding the model's instructions. The scan flags descriptions that:
+
+- tell the model to always or only use your tool,
+- tell it not to use other tools or apps, or to use yours instead of them,
+- call your tool the best or preferred option,
+- try to override earlier or system instructions, or contain injected instruction markup,
+- force your tool to run before any other.
+
+Say what your tool does and when it is the right choice. Leave the decision to the model and the user.
+
+## Minimize the data you ask for and keep
+
+- Request only the scopes and tool inputs you need to do the task. Do not add inputs "for later".
+- Do not ask for, or infer, sensitive information the task does not need: government identifiers, precise location, health data, financial account numbers, or credentials.
+- Do not put secrets, tokens, or conversation-wide context into tool results or View state.
+- Keep retention short and tell users what you keep in your privacy policy. Delete data on request.
+- Send only the data a tool call needs to your own backend and to third parties you name.
+
+## Keep users in control
+
+- **Ask before consequential actions.** Anything that spends money, sends a message, or deletes data should be a separate, clearly named tool with `destructiveHint` or `openWorldHint` set, so Allternit can prompt.
+- **Use permissions sparingly.** Declare `camera`, `microphone`, `geolocation`, or `clipboardWrite` only if the feature needs it, and explain why in the listing.
+- **Keep the View's network access narrow.** List exact hosts in `connectDomains` and `resourceDomains`. Avoid wildcards, non-TLS origins, and `frameDomains`. If you need `frameDomains`, be ready to justify each one.
+- **Do not fight the sandbox.** Do not try to read the host page, other Views, or other users' data, or to escape the iframe.
+
+## Sell honestly
+
+If you charge for anything, follow [Selling in your MCP App](/plugins/guides/selling): a real refund policy, accurate line items, and no hidden charges. Commerce is a preview and test mode only.
+
+## Security
+
+- Validate every token: signature, issuer, expiry, and audience. See [Authentication](/plugins/develop/authentication).
+- Treat tool inputs as untrusted. Validate them on the server, whether the call came from the model or from a View.
+- Do not put credentials in `mcp.json` or in the package.
+- Keep your server patched, and tell your users if you have a data incident.
+
+## What reviewers may reject
+
+- Apps that do not work with the test account or the test cases you supplied.
+- Tool metadata that does not match behavior.
+- Descriptions that steer the model.
+- Requests for more data or more permissions than the task needs.
+- Misleading listings, missing policies, or impersonation.
+- Apps that put users, their data, or their accounts at risk.

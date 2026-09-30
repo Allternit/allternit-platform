@@ -3,7 +3,14 @@ title: Verification and completion
 description: Verifier-owned completion, the completion predicate, and the completion criteria registry
 ---
 
-**Status: AVAILABLE (contracts) · PREVIEW (opt-in verifier-owned close; not on by default).** See [status labels](/architecture#status-labels).
+**Implementation: IMPLEMENTED (completion contracts, fail-closed judge, verifier-owned close) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | The verifier and the system, not a model, decide a run is done. |
+| **Implemented today** | Completion contracts and criteria. The judge and verifier-owned close run for internal flows when opted in, and are forced on for agency-origin work. |
+| **Active path** | Partial. Opt-in; not on by default. |
+| **Public exposure** | Not yet. Planned through the Agency API (contract published, endpoint not served). |
 
 A run is done when the system can prove it is done, not when a model says so. This page describes who decides completion and what evidence they need.
 
@@ -12,6 +19,18 @@ A run is done when the system can prove it is done, not when a model says so. Th
 ### Verifier-owned completion
 
 A model saying "done" is a proposal. It carries no authority. The builder or a decision step may propose completion; verifiers and humans supply evidence; the system performs the close.
+
+```mermaid
+flowchart TD
+    W["Worker or model"] --> P["CompletionProposal"]
+    P --> E["Required evidence<br/>target tests · affected tests<br/>diff review · requirement check"]
+    E --> V["Verifier(s)<br/>not the builder"]
+    V --> D["CompletionDecision"]
+    D --> S["The SYSTEM transitions<br/>node / run → DONE"]
+    V -. fail or inconclusive .-> A["stay open, retry<br/>or attention request"]
+```
+
+**Workers propose completion. They do not grant it.**
 
 A run is complete only when all of the following hold:
 
@@ -63,10 +82,10 @@ The completion contracts (`CompletionCriterionV1`, `CompletionPolicyV1`, `Comple
 
 | Part | Status | Notes |
 |------|--------|-------|
-| Completion contracts and criteria registry data | **AVAILABLE** | Kernel ABI 1.0.0 package. |
-| Verifier-owned close | **PREVIEW** | Opt-in for internal flows; not enabled by default. |
-| Always-on verifier-owned completion for Agency API runs | **PREVIEW** | Enforced in the kernel for agency-origin work: verification is forced on, a builder's close becomes a proposal, and the verifier must differ from the builder. The Agency API that creates these runs is in Preview. |
-| Evidence sets beyond bug fixes | **DESIGN — NOT YET IMPLEMENTED** | Defined as each task type is built. |
+| Completion contracts and criteria registry data | **IMPLEMENTED** | Kernel ABI 1.0.0 package. |
+| Verifier-owned close | **IMPLEMENTED** · INTERNAL | Opt-in for internal flows; not enabled by default. |
+| Always-on verifier-owned completion for Agency API runs | **PUBLIC PREVIEW** (contract; not served) | Enforced in the kernel for agency-origin work: verification is forced on, a builder's close becomes a proposal, and the verifier must differ from the builder. The Agency API that creates these runs is in Preview. |
+| Evidence sets beyond bug fixes | **DESIGN** | Defined as each task type is built. |
 
 ## Developer relevance
 

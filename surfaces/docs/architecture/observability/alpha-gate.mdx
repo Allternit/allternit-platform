@@ -3,7 +3,14 @@ title: "Alpha gate"
 description: "The bar for calling the Agency API alpha"
 ---
 
-**Status: DESIGN — NOT YET IMPLEMENTED.** See [status labels](/architecture#status-labels).
+**Implementation: DESIGN · Exposure: —.** See [status labels](/architecture#status-labels).
+
+| | |
+|---|---|
+| **Architecture** | The Agency API opens for alpha only after one end-to-end run passes restart, resume, verify, replay and receipt-backed completion. |
+| **Implemented today** | API-level tests are written. The gate cannot run: there is no Agency API server. |
+| **Active path** | No. |
+| **Public exposure** | No. |
 
 The alpha gate is the list of things that must be demonstrably true before the Agency API leaves preview.
 
@@ -19,7 +26,7 @@ The gate is a design target. It has not been run and the Agency API is not live.
 
 | Part | Status |
 |------|--------|
-| Alpha gate | **DESIGN — NOT YET IMPLEMENTED** |
+| Alpha gate | **DESIGN** |
 
 ## Developer relevance
 

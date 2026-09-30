@@ -132,6 +132,29 @@ describe("router", () => {
     expect((await new DecisionRouter(cfg).decide(req, "s", { reversible: true })).threshold_action).toBe("AUTO");
     expect((await new DecisionRouter(cfg).decide(req, "s", {})).threshold_action).toBe("REVIEW");
   });
+  test("live router refuses calibration for a different deployed readout head", async () => {
+    const runtimeDeployment = { ...deployment, readout_point: "head-new" };
+    const runtimeScope = { ...scopeFor(req), ...runtimeDeployment };
+    const old = manifestFor(goodSet(), { ...runtimeScope, readout_point: "head-old" });
+    expect(old.gate.passed).toBe(true);
+    expect(checkBinding(old, runtimeScope).ok).toBe(false);
+    const r = await new DecisionRouter({
+      provider: new FixtureReadoutProvider("backend.t", [0.999, 0.001], runtimeDeployment),
+      manifests: [old], mode: "live", primitiveId: "dec.choice",
+    }).decide(req, "s", { reversible: true });
+    expect(r.threshold_action).toBe("REVIEW");
+    expect(r.confidence_semantics).toBe("UNCALIBRATED");
+    expect(r.abstained).toBe(true);
+    expect(r.calibration_id).toBeNull();
+    expect((r.extensions!["x-reasons"] as string[]).join()).toContain("scope mismatch");
+    const bound = manifestFor(goodSet(), runtimeScope);
+    const live = await new DecisionRouter({
+      provider: new FixtureReadoutProvider("backend.t", [0.999, 0.001], runtimeDeployment),
+      manifests: [old, bound], mode: "live", primitiveId: "dec.choice",
+    }).decide(req, "s", { reversible: true });
+    expect(live.threshold_action).toBe("AUTO");
+    expect(live.calibration_id).toBe(bound.manifest_id);
+  });
   test("manifest bound to a different candidate set does not serve", async () => {
     const other = buildRequest("ROUTE", { envelope: env, state_projection_ref: "s", instructions: "x", decision_bank_id: "b", question_id: "q.route", candidates: [{ candidate_id: "a" }, { candidate_id: "c" }] });
     const r = await new DecisionRouter({ provider: provider([0.999, 0.001]), manifests: [manifestFor(goodSet())], mode: "live" }).decide(other, "s", { reversible: true });

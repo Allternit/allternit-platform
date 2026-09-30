@@ -7,13 +7,39 @@ description: Persistent, queryable graph of intent nodes and edges that underpin
 
 The **Allternit Intent Graph Kernel (IGK)** is a durable, queryable graph database for intent, work, and memory. It stores typed **nodes** (intents, tasks, goals, decisions, plans, artifacts, and memories) and typed **edges** that describe how those nodes relate to one another. Every mutation is recorded as a provenance event, so the graph remains auditable and reproducible over time.
 
-IGK serves as the substrate for higher-level projections in the Allternit platform:
+IGK is designed as the substrate for higher-level projections:
 
 - **UI projections** — render boards, canvases, and agent workspaces from live graph state.
 - **Context projections** — assemble token-bounded context windows for agent reasoning.
 - **Memory projections** — surface now / next / later views of active and pending work.
 
-The kernel is implemented as the Rust crate `intent-graph-kernel` and exposes an HTTP service on port `3120` by default.
+The kernel is implemented as the Rust crate `intent-graph-kernel` (`domains/kernel/allternit-intent-graph-kernel/`) and exposes a standalone HTTP service on port `3120` by default.
+
+**Status:** Implementation IMPLEMENTED × Exposure — . The crate and its service exist and are tested, but on main nothing in the platform API, the cloud API or the UI calls it yet, and it is not part of the hosted deployment. The projections listed above are its design purpose, not live product features.
+
+## How this relates to the Agency Kernel
+
+IGK is not part of the Agency Kernel's run path. The kernel keeps its own run-level state; IGK is the long-lived layer that could inform runs. See [Architecture](/architecture) for the kernel itself.
+
+### How IGK relates to run state
+
+IGK sits above the run. It holds what persists across runs; the kernel's run-level records hold what one run knows and does.
+
+```mermaid
+flowchart TD
+    K["Intent Graph Kernel<br/>long-lived intent, knowledge<br/>and projections"] -->|"informs"| T["TaskIR + AgentState<br/>run-level semantic state"]
+    T --> G["ComputeGraphIR<br/>executable work plan"]
+    G --> L["Work runtime ledger<br/>operational lifecycle,<br/>leases and attempts"]
+```
+
+| Store | Is the store for | Is not the store for |
+|-------|------------------|----------------------|
+| [Intent Graph Kernel](/core/intent-graph-kernel) | Long-lived intent, knowledge and memory across runs, and the projections built from them | The state of any one run, or where a node is in its lifecycle |
+| [TaskIR and AgentState](/architecture/state) | What one run was asked to do, and its canonical semantic truth (facts, hypotheses, artifacts, verification, completion) | Long-lived knowledge, or lease and attempt bookkeeping |
+| [ComputeGraphIR](/architecture/graphs) | The executable plan for one run: nodes, edges, capabilities, levels | Whether a node is running right now |
+| Work runtime ledger | Operational lifecycle: node status, leases, heartbeats, attempts, outputs, receipts | Semantic truth about the task or long-lived knowledge |
+
+Information flows down. The Intent Graph Kernel informs a run; it does not drive it.
 
 ## Core invariants
 

@@ -130,6 +130,10 @@ Published skills are stored in `localStorage` and broadcast via `allternit:api-s
 |---|---|---|
 | `POST` | `/api/har-derived-api/ingest` | Parse a HAR JSON payload and return derived endpoints + stats |
 | `POST` | `/api/har-derived-api/client` | Generate a client for the requested endpoints and language |
+| `GET` | `/api/har-derived-api/contracts` | List stored contracts |
+| `GET` | `/api/har-derived-api/contracts/:contract_id` | Get one contract |
+| `DELETE` | `/api/har-derived-api/contracts/:contract_id` | Delete a contract |
+| `POST` | `/api/har-derived-api/contracts/:contract_id/replay/:endpoint_id` | Replay one captured endpoint |
 
 ## Client generation example
 
