@@ -18,6 +18,7 @@
 
 pub mod blocklist;
 pub mod floor;
+pub mod rules;
 pub mod shell;
 
 use std::path::{Path, PathBuf};
@@ -246,6 +247,8 @@ impl HookRequest {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Verdict {
     Allow(String),
+    /// Raises an attention request: the call does not run until a human answers.
+    Ask(String),
     Deny(String),
 }
 
@@ -255,7 +258,7 @@ impl Verdict {
     }
     pub fn reason(&self) -> &str {
         match self {
-            Self::Allow(r) | Self::Deny(r) => r,
+            Self::Allow(r) | Self::Ask(r) | Self::Deny(r) => r,
         }
     }
 }
@@ -309,6 +312,16 @@ pub async fn decide(req: &HookRequest, root: &Path, home: Option<&Path>, wih: Op
     let Some(wih) = wih else {
         return decide_unbound(req, root, home, env_strict);
     };
+
+    // Agent rules resolved into the WIH policy at run creation.
+    let rules = wih.gate.wih_rules(wih.wih_id).await.unwrap_or_default();
+    let mut pending_ask: Option<String> = None;
+    if let Some(hit) = rules::evaluate_network(&rules, req) {
+        match hit {
+            rules::Hit::Ask(r) => pending_ask = Some(r),
+            rules::Hit::Deny(r) => return Decision { verdict: Verdict::Deny(r), paths: Vec::new() },
+        }
+    }
 
     // Replay (effects: recorded_only): no hooked or ACP harness runs a real tool;
     // the gate's post-call step serves the recorded result.
@@ -369,13 +382,14 @@ pub async fn decide(req: &HookRequest, root: &Path, home: Option<&Path>, wih: Op
                         Some(rel) => rel_paths.push(rel),
                         None => {
                             rel_paths.push(p.to_string_lossy().to_string());
+                            let why = format!(
+                                "write outside WIH {} lease: `{what}` names path {} outside {}",
+                                wih.wih_id,
+                                canonical_lenient(&p).display(),
+                                root.display()
+                            );
                             return Decision {
-                                verdict: Verdict::Deny(format!(
-                                    "write outside WIH {} lease: `{what}` names path {} outside {}",
-                                    wih.wih_id,
-                                    canonical_lenient(&p).display(),
-                                    root.display()
-                                )),
+                                verdict: if rules.ask_outside_scope { Verdict::Ask(why) } else { Verdict::Deny(why) },
                                 paths: rel_paths,
                             };
                         }
@@ -393,17 +407,43 @@ pub async fn decide(req: &HookRequest, root: &Path, home: Option<&Path>, wih: Op
                     } else {
                         String::new()
                     };
+                    let why = format!(
+                        "write outside WIH {} lease: {}{via} is outside {}",
+                        wih.wih_id,
+                        p.display(),
+                        root.display()
+                    );
                     return Decision {
-                        verdict: Verdict::Deny(format!(
-                            "write outside WIH {} lease: {}{via} is outside {}",
-                            wih.wih_id,
-                            p.display(),
-                            root.display()
-                        )),
+                        verdict: if rules.ask_outside_scope { Verdict::Ask(why) } else { Verdict::Deny(why) },
                         paths: rel_paths,
                     };
                 }
             },
+        }
+    }
+
+    // Custom rules (tool / command / paths): deny is final, ask is held.
+    if let Some(hit) = rules::custom_hit(&rules.custom, &req.tool_name, req.command().as_deref(), &rel_paths) {
+        match hit {
+            rules::Hit::Deny(r) => return Decision { verdict: Verdict::Deny(r), paths: rel_paths },
+            rules::Hit::Ask(r) => {
+                pending_ask.get_or_insert(r);
+            }
+        }
+    }
+    // Outside the WIH's own leases: ask (approvals.outside_scope) before Gate 2's
+    // coverage check would deny.
+    if rules.ask_outside_scope && !rel_paths.is_empty() {
+        if let Ok(own) = wih.leases.active_paths_for_wih(wih.wih_id).await {
+            if let Some(uncovered) = rel_paths.iter().find(|p| !own.iter().any(|l| lease_matches(l, p))) {
+                return Decision {
+                    verdict: Verdict::Ask(format!(
+                        "write outside WIH {} lease: {uncovered} is not covered by a lease this WIH holds",
+                        wih.wih_id
+                    )),
+                    paths: rel_paths,
+                };
+            }
         }
     }
 
@@ -463,6 +503,9 @@ pub async fn decide(req: &HookRequest, root: &Path, home: Option<&Path>, wih: Op
     } else {
         format!("; unresolved_effect recorded: {}", unresolved_effects.join("; "))
     };
+    if let Some(why) = pending_ask {
+        return Decision { verdict: Verdict::Ask(why), paths: rel_paths };
+    }
     Decision {
         verdict: Verdict::Allow(format!("Gate 2 allowed {} for WIH {}{recorded}", req.tool_name, wih.wih_id)),
         paths: rel_paths,
@@ -682,6 +725,16 @@ impl HookFlavor {
 pub fn claude_hook_output(verdict: &Verdict) -> Option<String> {
     match verdict {
         Verdict::Allow(_) => None,
+        Verdict::Ask(reason) => Some(
+            json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "ask",
+                    "permissionDecisionReason": format!("Allternit spawn gate: {reason}"),
+                }
+            })
+            .to_string(),
+        ),
         Verdict::Deny(reason) => Some(
             json!({
                 "hookSpecificOutput": {
@@ -730,6 +783,8 @@ pub fn decision_event(req: &HookRequest, harness: &str, wih_id: Option<&str>, de
 pub fn decision_label(req: &HookRequest, decision: &Decision) -> &'static str {
     if decision.verdict.is_deny() {
         "deny"
+    } else if matches!(decision.verdict, Verdict::Ask(_)) {
+        "ask"
     } else if !req.unresolved_effects().is_empty() {
         "unresolved"
     } else {

@@ -324,6 +324,22 @@ impl Default for RouterPolicy {
 pub struct RouterConfig {
     pub s1_mode: S1Mode,
     pub policy: RouterPolicy,
+    /// Preferred model classes, best first. Key lookup order: the node's
+    /// `<capability>@<role>`, then `role:<S0..S3>`, then `*`. A soft preference: it
+    /// orders the eligible candidates (an empty or unmatched list changes
+    /// nothing), so the list doubles as an escalation order.
+    pub class_preference: HashMap<String, Vec<String>>,
+}
+
+/// Logical model class of a pool entry (`x-model_class`, else by residency).
+pub fn model_class(e: &PoolEntry) -> String {
+    e.extensions.as_ref().and_then(|x| x.get("x-model_class")).and_then(Value::as_str).map(str::to_string)
+        .unwrap_or_else(|| if e.residency == Residency::Remote { "mc.remote".into() } else { "mc.local".into() })
+}
+
+/// Class match by dotted prefix in either direction (`mc.remote` ~ `mc.remote.fast`).
+pub fn class_matches(entry: &str, c: &str) -> bool {
+    entry == c || entry.starts_with(&format!("{c}.")) || c.starts_with(&format!("{entry}."))
 }
 
 /// Remaining run budget (resolved `AgentStateV1.budgets` minus spend).
@@ -520,10 +536,23 @@ impl<'a, P: ModelPool> Router<'a, P> {
                 .then(utility(b).partial_cmp(&utility(a)).unwrap_or(std::cmp::Ordering::Equal))
                 .then(a.backend_id.cmp(&b.backend_id))
         });
+        let prefs: Vec<String> = [format!("{capability}@{role:?}"), format!("role:{role:?}"), "*".to_string()]
+            .iter().find_map(|k| self.config.class_preference.get(k).filter(|v| !v.is_empty()).cloned()).unwrap_or_default();
+        let rank = |e: &PoolEntry| {
+            let c = model_class(e);
+            prefs.iter().position(|p| class_matches(&c, p)).unwrap_or(prefs.len())
+        };
+        fits.sort_by_key(|e| rank(e)); // stable: the order above breaks ties
         let chosen = fits[0];
+        let chosen_rank = rank(chosen);
         let fallback: Vec<String> = fits[1..].iter().map(|e| e.backend_id.clone()).collect();
         let calibration = s1_cal.get(&chosen.backend_id).cloned();
         let mut ext = ext;
+        if !prefs.is_empty() {
+            ext.insert("x-route_preference".into(), Value::from(prefs.clone()));
+            ext.insert("x-route_class".into(), Value::String(model_class(chosen)));
+            ext.insert("x-route_preference_hit".into(), Value::Bool(chosen_rank < prefs.len()));
+        }
         if role == Role::S1 {
             // Live only when BOTH the router config and the pool entry say live.
             let live = self.config.s1_mode == S1Mode::Live && entry_s1_live(chosen);

@@ -397,6 +397,53 @@ impl AgencyStore {
         self.transition(rec, "needs_attention", Some(super::guard::CAP_TITLE)).await
     }
 
+    /// Agent rules `approvals.spend_over_usd`: raise attention once per run
+    /// when its spend crosses the threshold, then park. Returns whether the
+    /// run was parked (false = already raised or not applicable).
+    pub async fn park_for_spend(&self, run_id: &str, threshold: f64) -> anyhow::Result<bool> {
+        let _g = self.lock().await;
+        let mut rec = self.load_run(run_id).await?.ok_or_else(|| anyhow::anyhow!("run not found"))?;
+        let st = rec.run["status"].as_str().unwrap_or_default().to_string();
+        if TERMINAL.contains(&st.as_str()) || st == "needs_attention" || rec.attention.iter().any(|a| a["reason"] == super::guard::SPEND_REASON) {
+            return Ok(false);
+        }
+        let spent = rec.run["budget_usage"]["cost_usd"].as_f64().unwrap_or(0.0);
+        if spent < threshold {
+            return Ok(false);
+        }
+        let v = rec.run["version"].as_i64().unwrap_or(0);
+        let att = json!({
+            "id": new_id("att"), "object": "attention_request", "run_id": run_id, "status": "open",
+            "reason": super::guard::SPEND_REASON, "title": super::guard::SPEND_TITLE,
+            "detail": format!("This run has spent ${spent:.2}, past the ${threshold:.2} approval threshold. Approve to continue or reject to stop."),
+            "created_at": now(), "resolution": null
+        });
+        rec.attention.push(att.clone());
+        self.emit(run_id, v, "attention.requested", json!({ "data": { "attention": att } })).await?;
+        self.transition(rec, "needs_attention", Some(super::guard::SPEND_TITLE)).await?;
+        Ok(true)
+    }
+
+    /// Fail closed with attention: open an attention request and park the run
+    /// in `needs_attention` (routing policy cannot be satisfied, a template
+    /// attention step). `extra` fields are merged into the request.
+    pub async fn park_attention(&self, run_id: &str, reason: &str, title: &str, detail: &str, extra: Value) -> anyhow::Result<RunRecord> {
+        let _g = self.lock().await;
+        let mut rec = self.load_run(run_id).await?.ok_or_else(|| anyhow::anyhow!("run not found"))?;
+        if TERMINAL.contains(&rec.run["status"].as_str().unwrap_or_default()) {
+            return Ok(rec);
+        }
+        let v = rec.run["version"].as_i64().unwrap_or(0);
+        let mut att = json!({ "id": new_id("att"), "object": "attention_request", "run_id": run_id, "status": "open",
+            "reason": reason, "title": title, "detail": detail, "created_at": now(), "resolution": null });
+        if let (Some(a), Some(e)) = (att.as_object_mut(), extra.as_object()) {
+            a.extend(e.clone());
+        }
+        rec.attention.push(att.clone());
+        self.emit(run_id, v, "attention.requested", json!({ "data": { "attention": att } })).await?;
+        self.transition(rec, "needs_attention", Some(title)).await
+    }
+
     // ── campaigns / replays: snapshot records keyed by id ────────────────────
 
     pub async fn save_object(&self, ty: &str, id: &str, owner: &str, obj: &Value) -> anyhow::Result<()> {

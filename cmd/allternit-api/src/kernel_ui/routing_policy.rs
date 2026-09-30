@@ -1,6 +1,9 @@
 //! Section 2: models and tiers. Stored per scope; changing `s1_backend`
 //! returns every decision type to shadow. `s2`/`s3`/`retrieval`/`local_only`
-//! are stored, not yet enforced (the router takes its pool from gizzi-code).
+//! are enforced by the agency executor (`executor::apply_policy`): class
+//! preferences, escalation order, local_only (fail closed) and the S1 backend.
+//! `retrieval` is recorded in the routing trace only: the context compiler
+//! takes no model yet.
 
 use super::*;
 use axum::extract::{Query, State};
@@ -145,6 +148,14 @@ pub async fn backends() -> KRes {
                 "reason": if available { Value::Null } else { json!(if *b == "jev_api" { "TYPESAFE_API_KEY is not set" } else { "not reachable on this server" }) } })
     }).collect();
     Ok(Json(json!({ "s1": s1, "models": models, "pool_error": pool_error })))
+}
+
+/// Effective routing policy for a run: the chain is most specific first
+/// (project, workspace, org). Returns (effective, per-field source scope kind).
+pub fn resolve(db: &crate::db::DbHandle, chain: &[String]) -> Result<(Value, Value), KErr> {
+    let conn = db.connect().map_err(KErr::internal)?;
+    conn.execute_batch(super::SCHEMA)?;
+    effective(&conn, "routing", &defaults(), LEAVES, chain)
 }
 
 /// Current S1 backend for a chain (used by decision types).

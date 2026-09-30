@@ -95,6 +95,20 @@ pub fn spawn(st: Arc<AppState>, run_id: String) {
     }
 }
 
+/// Drive a kernel-UI template run (model steps). The caller has checked the
+/// flags and org allowlist; admission here is the run being `waiting`.
+pub(crate) fn spawn_template(st: Arc<AppState>, run_id: String) {
+    let h = Handle::current();
+    tokio::task::spawn_blocking(move || {
+        let s = super::store(&st);
+        let org = h.block_on(s.load_run(&run_id)).ok().flatten().map(|r| super::guard::run_org(&r.task_ir)).unwrap_or_default();
+        if let Err(e) = super::template_exec::drive(&h, &st, &s, &run_id, &org) {
+            tracing::warn!(run_id = %run_id, error = %e, "template executor stopped with an error");
+            let _ = h.block_on(finish(&s, &run_id, "failed", &format!("executor error: {e}"), None));
+        }
+    });
+}
+
 /// Start driving regardless of the flag, with no spending guard (tests;
 /// `spawn` is the gated entry).
 pub(crate) fn start(st: Arc<AppState>, run_id: String) {
@@ -110,6 +124,7 @@ pub(crate) async fn admit_and_start(st: Arc<AppState>, run_id: String, limits: L
         return false; // kernel-UI template runs are driven by kernel_ui::templates
     }
     let org = super::guard::run_org(&rec.task_ir);
+    let limits = limits.tightened(&rec.task_ir["rules"]);
     if !limits.org_allowed(&org) {
         return false;
     }
@@ -186,7 +201,7 @@ pub fn resume_inflight_once(st: &Arc<AppState>) {
     });
 }
 
-async fn finish(s: &AgencyStore, run_id: &str, to: &str, reason: &str, patch: Option<Value>) -> Result<()> {
+pub(crate) async fn finish(s: &AgencyStore, run_id: &str, to: &str, reason: &str, patch: Option<Value>) -> Result<()> {
     let _g = s.lock().await;
     let Some(mut rec) = s.load_run(run_id).await? else { return Ok(()) };
     let st = rec.run["status"].as_str().unwrap_or_default();
@@ -205,12 +220,77 @@ async fn finish(s: &AgencyStore, run_id: &str, to: &str, reason: &str, patch: Op
 // ── model pool / router ──────────────────────────────────────────────────────
 
 fn class_of(e: &PoolEntry) -> String {
-    e.extensions.as_ref().and_then(|x| x.get("x-model_class")).and_then(Value::as_str).map(str::to_string)
-        .unwrap_or_else(|| if e.residency == Residency::Remote { "mc.remote".into() } else { "mc.local".into() })
+    allternit_commrails::kernel::router::model_class(e)
 }
 
-fn class_matches(entry: &str, c: &str) -> bool {
-    entry == c || entry.starts_with(&format!("{c}.")) || c.starts_with(&format!("{entry}."))
+use allternit_commrails::kernel::router::class_matches;
+
+pub const EV_ROUTING: &str = "agency.exec.routing";
+
+/// Enforce the stored routing policy (kernel UI section 2) on a pool snapshot.
+/// `eff` is the effective policy, `sources` its per-field scope kinds.
+/// * `s2.default` / `s2.overrides[cap]` become the preferred model class for
+///   S2 nodes (soft: an unmatched class falls through to any eligible entry);
+/// * `s3.solver` then `s3.fallback` is the escalation order for S3 nodes;
+/// * `local_only` drops remote entries and fails closed (Err) when no local
+///   generative candidate is left;
+/// * `retrieval` is recorded in the trace only (the context compiler takes no
+///   model yet). Plans keep opaque backend ids.
+/// Returns the pool, router config and the trace (Routing tab data).
+pub fn apply_policy(mut pool: StaticModelPool, mut cfg: RouterConfig, eff: &Value, sources: &Value) -> Result<(StaticModelPool, RouterConfig, Value), String> {
+    let text = |v: &Value| v.as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let local_only = eff["local_only"] == true;
+    if local_only {
+        pool.entries.retain(|e| e.residency != Residency::Remote);
+        cfg.policy.allow_remote = false;
+        if !pool.entries.iter().any(|e| e.cognitive_roles.iter().any(|r| matches!(r, Role::S2 | Role::S3))) {
+            return Err("the routing policy is local_only and no local model candidate is available".into());
+        }
+    }
+    let default = text(&eff["s2"]["default"]);
+    if let Some(d) = &default {
+        cfg.class_preference.insert("role:S2".into(), vec![d.clone()]);
+    }
+    let mut overrides = Map::new();
+    for (cap, v) in eff["s2"]["overrides"].as_object().into_iter().flatten() {
+        if let Some(c) = text(v) {
+            cfg.class_preference.insert(format!("{cap}@S2"), std::iter::once(c.clone()).chain(default.clone()).collect());
+            overrides.insert(cap.clone(), json!(c));
+        }
+    }
+    let escalation: Vec<String> = [&eff["s3"]["solver"], &eff["s3"]["fallback"]].into_iter().filter_map(text).collect();
+    if !escalation.is_empty() {
+        cfg.class_preference.insert("role:S3".into(), escalation.clone());
+    }
+    let from_policy = sources.as_object().is_some_and(|m| m.values().any(|v| v != "default"));
+    let trace = json!({
+        "policy_source": if from_policy { "routing_policy" } else { "default" }, "field_sources": sources,
+        "s2": { "default": default, "overrides": overrides }, "s3": { "escalation": escalation },
+        "retrieval": { "model": text(&eff["retrieval"]), "applied": false, "note": "the context compiler takes no model yet; recorded only" },
+        "local_only": local_only, "s1_backend": eff["s1_backend"], "candidates": pool.entries.len(),
+    });
+    Ok((pool, cfg, trace))
+}
+
+/// Effective routing policy for a run (most specific scope first, org last).
+pub fn policy_for_run(st: &AppState, ir: &Value, org: &str) -> Option<(Value, Value)> {
+    let mut chain: Vec<String> = ir["routing_scopes"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
+    let o = format!("org:{org}");
+    if !chain.contains(&o) {
+        chain.push(o);
+    }
+    crate::kernel_ui::routing_policy::resolve(&st.db, &chain).ok()
+}
+
+/// Section-6 speed fields for one step. `tokens_in/out` are the gizzi split
+/// (null when gizzi reported none); `tok_per_s` uses output tokens when known,
+/// else the total, over model time.
+pub fn speed_fields(started_at: String, duration_ms: u64, tin: u64, tout: u64, total: u64, model_ms: u64, wait_ms: u64) -> Value {
+    let rate_tokens = if tout > 0 { tout } else { total };
+    let tok_per_s = (rate_tokens > 0 && model_ms > 0).then(|| (rate_tokens as f64 * 1000.0 / model_ms as f64 * 10.0).round() / 10.0);
+    let split = tin > 0 || tout > 0;
+    json!({ "started_at": started_at, "duration_ms": duration_ms, "tokens_in": split.then_some(tin), "tokens_out": split.then_some(tout),
+            "tokens": total, "tok_per_s": tok_per_s, "wait_ms": wait_ms })
 }
 
 /// Apply the request's `models` constraints (model classes / locality) to a
@@ -244,7 +324,7 @@ fn scripted_entry(id: &str, role: Role, mode: Mode, residency: Residency, caps: 
 
 /// Deterministic stand-in pool for the scripted executor: one local and one
 /// remote class, so `models.allow_classes` routing is exercised for real.
-fn scripted_pool(g: &ComputeGraph) -> StaticModelPool {
+pub(crate) fn scripted_pool(g: &ComputeGraph) -> StaticModelPool {
     let caps: Vec<String> = g.nodes.iter()
         .filter_map(|n| n.capability_request.as_ref()?.get("capability")?.as_str().map(str::to_string)).collect();
     let mut entries = vec![];
@@ -287,9 +367,9 @@ pub(crate) fn bridge_task_caps(mut pool: StaticModelPool, g: &ComputeGraph) -> S
 }
 
 /// Backends one cognitive step may try before it fails.
-const MAX_BACKEND_FALLBACKS: usize = 4;
+pub(crate) const MAX_BACKEND_FALLBACKS: usize = 4;
 
-fn scripted() -> bool {
+pub(crate) fn scripted() -> bool {
     std::env::var("ALLTERNIT_AGENCY_COGNITION").is_ok_and(|v| v == "scripted")
 }
 
@@ -344,13 +424,13 @@ fn resolve_source(h: &Handle, repo: &str) -> Result<Source, String> {
     Ok(Source::Local(p))
 }
 
-struct Ws {
-    root: PathBuf,
-    repo: PathBuf,
+pub(crate) struct Ws {
+    pub(crate) root: PathBuf,
+    pub(crate) repo: PathBuf,
 }
 
 impl Ws {
-    fn new(run_id: &str) -> Result<Self> {
+    pub(crate) fn new(run_id: &str) -> Result<Self> {
         let base = runs_root();
         std::fs::create_dir_all(&base)?;
         let base = base.canonicalize()?;
@@ -366,7 +446,7 @@ impl Ws {
 
     /// Run a command under the strict fence: cleared env + allowlist, cwd in
     /// the run's checkout, HOME/TMPDIR inside the run dir, bounded time.
-    fn cmd(&self, cwd: &Path, args: &[&str]) -> Result<(bool, String)> {
+    pub(crate) fn cmd(&self, cwd: &Path, args: &[&str]) -> Result<(bool, String)> {
         let mut c = Command::new(args[0]);
         c.args(&args[1..]).current_dir(cwd).env_clear();
         for k in ENV_ALLOW {
@@ -440,7 +520,15 @@ struct Exec<'a> {
     mark: std::cell::Cell<Instant>,
     mark_at: std::cell::RefCell<String>,
     step_tokens: std::cell::Cell<u64>,
+    step_tokens_in: std::cell::Cell<u64>,
+    step_tokens_out: std::cell::Cell<u64>,
     step_model_ms: std::cell::Cell<u64>,
+    /// Attention wait time not yet reported (added to the next step's wait_ms).
+    pending_wait_ms: std::cell::Cell<u64>,
+    /// Routing policy trace (why this route), added to every plan record.
+    routing: Value,
+    /// S1 shadow backend from the routing policy ("env" = no policy stored).
+    s1_backend: String,
 }
 
 /// Deterministic (S0) error code for a failing test run's output. Only a known
@@ -460,15 +548,16 @@ fn s0_error_code(out: &str) -> &'static str {
 /// classify the failure S0 just reproduced, record the result, then report the
 /// S0 truth as ground truth. Advisory only: the verdict is ignored, every error
 /// (incl. an unreachable runtime) is swallowed, and control flow never changes.
-fn s1_shadow_classify(h: &Handle, reporter: &OutcomeReporter, run_id: &str, failure: &str, evidence: &mut Vec<String>) {
-    if !reporter.enabled {
+fn s1_shadow_classify(h: &Handle, reporter: &OutcomeReporter, backend: &str, run_id: &str, failure: &str, evidence: &mut Vec<String>) {
+    // The routing policy's s1_backend: `off` skips the shadow call.
+    if backend == "off" || !reporter.enabled {
         return;
     }
     let bank = bug_fix::error_ontology();
     let candidates: Vec<Value> = bank.classes.iter().map(|c| json!({ "candidate_id": c, "label": c }))
         .chain(std::iter::once(json!({ "candidate_id": bank.unknown, "label": bank.unknown, "is_unknown": true }))).collect();
     let tail: String = failure.chars().rev().take(4000).collect::<Vec<_>>().into_iter().rev().collect();
-    let body = json!({ "state": tail, "reversible": true, "request": {
+    let body = json!({ "state": tail, "reversible": true, "backend": backend, "request": {
         "envelope": { "abi_version": "1.0.0", "schema_id": "allternit.kernel.DecisionRequestV1", "schema_version": "1.0.0",
             "run_id": run_id, "node_id": "N10" },
         "operation": "CHOICE", "state_projection_ref": format!("run:{run_id}:N10"),
@@ -496,6 +585,16 @@ fn s1_shadow_classify(h: &Handle, reporter: &OutcomeReporter, run_id: &str, fail
     // spawn_report needs a runtime context; the executor thread has none.
     let _g = h.enter();
     bug_fix::reconcile_s0_classification(reporter, Some(&result), s0_error_code(failure));
+}
+
+/// Time earlier drives of this run spent parked on attention/approvals
+/// (created_at to resolved_at of every resolved request), in ms.
+pub fn attention_wait_ms(attention: &[Value]) -> u64 {
+    let parse = |v: &Value| v.as_str().and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok());
+    attention.iter().filter_map(|a| {
+        let (c, r) = (parse(&a["created_at"])?, parse(&a["resolution"]["resolved_at"])?);
+        Some((r - c).num_milliseconds().max(0) as u64)
+    }).sum()
 }
 
 /// Why the drive stopped early without an error (the run is already settled
@@ -526,16 +625,19 @@ impl Exec<'_> {
 
     /// Section 6: speed fields for the step that just ended, then restart the
     /// step clock. `tok_per_s` only for model (S2) steps; `tokens_in/out` are
-    /// null because usage reports a total; `wait_ms` is 0 (this executor has
-    /// no approval wait path yet).
+    /// gizzi's split; `wait_ms` is attention/approval wait time from earlier
+    /// drives of this run, reported on the first step after the resume.
     fn take_speed(&self) -> Value {
         let started_at = self.mark_at.replace(super::store::now());
         let duration_ms = self.mark.replace(Instant::now()).elapsed().as_millis() as u64;
-        let tokens = self.step_tokens.replace(0);
-        let model_ms = self.step_model_ms.replace(0);
-        let tok_per_s = (tokens > 0 && model_ms > 0).then(|| (tokens as f64 * 1000.0 / model_ms as f64 * 10.0).round() / 10.0);
-        json!({ "started_at": started_at, "duration_ms": duration_ms, "tokens_in": null, "tokens_out": null,
-                "tokens": tokens, "tok_per_s": tok_per_s, "wait_ms": 0 })
+        speed_fields(started_at, duration_ms, self.step_tokens_in.replace(0), self.step_tokens_out.replace(0),
+            self.step_tokens.replace(0), self.step_model_ms.replace(0), self.pending_wait_ms.replace(0))
+    }
+
+    /// Record the gizzi token split for the model call being charged.
+    fn note_split(&self, tin: u64, tout: u64) {
+        self.step_tokens_in.set(self.step_tokens_in.get() + tin);
+        self.step_tokens_out.set(self.step_tokens_out.get() + tout);
     }
 
     fn admit(&self) -> Step<()> {
@@ -551,6 +653,14 @@ impl Exec<'_> {
             tracing::info!(run_id = %self.run_id, scope, dim, "agency daily budget cap reached; parking run");
             self.h.block_on(self.s.park_for_cap(&self.run_id, scope, dim))?;
             return Err(StepErr::Stop);
+        }
+        // Agent rules: per-run spend threshold raises attention before continuing.
+        if let Some(rec) = self.h.block_on(self.s.load_run(&self.run_id))? {
+            if let Some(t) = rec.task_ir["rules"]["spend_over_usd"].as_f64() {
+                if self.h.block_on(self.s.park_for_spend(&self.run_id, t))? {
+                    return Err(StepErr::Stop);
+                }
+            }
         }
         Ok(())
     }
@@ -639,7 +749,7 @@ impl Exec<'_> {
         let attempt = { let a = self.attempts.entry(ran.clone()).or_insert(0); *a += 1; *a };
         let primitive = self.graph.node(&ran).map(|n| n.primitive_id.clone()).unwrap_or_default();
         self.h.block_on(self.s.append_raw(EV_PLAN, &self.run_id,
-            json!({ "run_id": self.run_id, "node_id": ran, "attempt": attempt, "plan": plan, "outcome": if verified { "committed" } else { "failed" } })))?;
+            json!({ "run_id": self.run_id, "node_id": ran, "attempt": attempt, "plan": plan, "routing": self.routing, "outcome": if verified { "committed" } else { "failed" } })))?;
         let speed = self.take_speed();
         self.emit("run.progress", json!({ "step": ran, "attempt": attempt, "primitive_id": primitive,
             "cognitive_role": plan.cognitive_role, "outcome": if verified { "committed" } else { "failed" },
@@ -693,6 +803,8 @@ impl Exec<'_> {
                 let reply = self.h.block_on(crate::gizzi_completion::complete_ephemeral_usage(&prompt, Some(sys), model.as_ref()));
                 if let Some((_, u)) = &reply {
                     used.tokens += u.tokens;
+                    used.tokens_in += u.tokens_in;
+                    used.tokens_out += u.tokens_out;
                     used.cost_usd += u.cost_usd;
                 }
                 let json = reply.as_ref().and_then(|(text, _)| {
@@ -717,6 +829,7 @@ impl Exec<'_> {
                 }
                 self.admit()?;
             }
+            self.note_split(used.tokens_in, used.tokens_out);
             let Some(j) = found else {
                 self.charge_tokens(t0.elapsed().as_secs_f64(), used.cost_usd, 1, used.tokens)?;
                 return Err(StepErr::Fail(anyhow!("cognition returned no JSON patch")));
@@ -780,7 +893,7 @@ impl Exec<'_> {
         {
             let out = self.last_test_output.clone();
             let mut evidence = Vec::new(); // s1-verify refs; kept for the node's completion decision
-            s1_shadow_classify(self.h, &OutcomeReporter::from_env(), &self.run_id, &out, &mut evidence);
+            s1_shadow_classify(self.h, &OutcomeReporter::from_env(), &self.s1_backend, &self.run_id, &out, &mut evidence);
         }
         let mut passed: Option<(String, String, String)> = None; // (target receipt ref, path, content)
         let mut failure = before.clone();
@@ -925,6 +1038,7 @@ fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str, limits: &Limi
         return Ok(());
     }
     let ir = rec.task_ir.clone();
+    let limits = &limits.tightened(&ir["rules"]);
     let task_id = ir["wih_policy"]["task_id"].as_str().unwrap_or("task.bug_fix").to_string();
     let write_set: Vec<String> = ir["wih_policy"]["write_set"].as_array().map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default();
     let graph = bug_fix::instantiate(&task_id, &write_set)?;
@@ -934,8 +1048,24 @@ fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str, limits: &Limi
     } else {
         h.block_on(fetch_model_pool(&gizzi_url(), None)).map_err(|e| anyhow!("{e}")).map(|p| bridge_task_caps(p, &graph))
     };
+    let policy = policy_for_run(st, &ir, org);
+    let s1_backend = policy.as_ref().map(|(e, src)| if src["s1_backend"] == "default" { "env".to_string() } else { e["s1_backend"].as_str().unwrap_or("off").to_string() })
+        .unwrap_or_else(|| "env".into());
+    let mut routing = json!({ "policy_source": "default" });
     let (pool, cfg) = match raw_pool {
-        Ok(p) => { let (p, c) = constrain(p, &models); (Some(p), c) }
+        Ok(p) => {
+            let (p, c) = constrain(p, &models);
+            match policy.as_ref().map(|(e, src)| apply_policy(p.clone(), c.clone(), e, src)) {
+                None => (Some(p), c),
+                Some(Ok((p, c, trace))) => { routing = trace; (Some(p), c) }
+                Some(Err(why)) => {
+                    // Fail closed: no candidate satisfies local_only. Attention, no effect.
+                    tracing::warn!(run_id, %why, "routing policy cannot be satisfied; failing closed with attention");
+                    h.block_on(s.park_attention(run_id, "routing_policy_unsatisfied", "No local model available", &why, json!({})))?;
+                    return Ok(());
+                }
+            }
+        }
         Err(e) => {
             tracing::warn!(run_id, error = %e, "model pool unavailable; cognitive steps will fail closed");
             (None, RouterConfig::default())
@@ -944,7 +1074,8 @@ fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str, limits: &Limi
     let mut x = Exec {
         last_test_output: String::new(),
         mark: std::cell::Cell::new(Instant::now()), mark_at: std::cell::RefCell::new(super::store::now()),
-        step_tokens: Default::default(), step_model_ms: Default::default(),
+        step_tokens: Default::default(), step_model_ms: Default::default(), step_tokens_in: Default::default(), step_tokens_out: Default::default(),
+        pending_wait_ms: std::cell::Cell::new(attention_wait_ms(&rec.attention)), routing, s1_backend,
         h, st, s, run_id: run_id.to_string(), dag_id: ir["dag_id"].as_str().unwrap_or_default().to_string(), seq: 0,
         ws: Ws::new(run_id)?, graph, pool, cfg, attempts: Default::default(), limits: limits.clone(), org: org.to_string(),
     };
@@ -1021,7 +1152,7 @@ mod s1_shadow_tests {
         let r = reporter(&url);
         let ev = tokio::task::spawn_blocking(move || {
             let mut ev = vec![];
-            s1_shadow_classify(&h, &r, "run_1", "FAILED: AssertionError: expected 2 got 3", &mut ev);
+            s1_shadow_classify(&h, &r, "laya_bundled", "run_1", "FAILED: AssertionError: expected 2 got 3", &mut ev);
             ev
         }).await.unwrap();
         assert_eq!(ev, vec!["s1-verify:dec-123".to_string()]);
@@ -1040,10 +1171,105 @@ mod s1_shadow_tests {
         let r = reporter("http://127.0.0.1:1");
         let ev = tokio::task::spawn_blocking(move || {
             let mut ev = vec![];
-            s1_shadow_classify(&h, &r, "run_1", "AssertionError", &mut ev);
+            s1_shadow_classify(&h, &r, "laya_bundled", "run_1", "AssertionError", &mut ev);
             ev
         }).await.unwrap();
         assert!(ev.is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn agency_s1_off_backend_skips_the_shadow_call() {
+        let (url, mut rx) = mock().await;
+        let h = Handle::current();
+        let r = reporter(&url);
+        let ev = tokio::task::spawn_blocking(move || {
+            let mut ev = vec![];
+            s1_shadow_classify(&h, &r, "off", "run_1", "AssertionError: expected 2 got 3", &mut ev);
+            ev
+        }).await.unwrap();
+        assert!(ev.is_empty());
+        assert!(tokio::time::timeout(Duration::from_millis(400), rx.recv()).await.is_err(), "no request reaches the runtime");
+    }
+
+    fn pool_of(entries: Vec<PoolEntry>) -> StaticModelPool { StaticModelPool { entries } }
+
+    fn classed(id: &str, class: &str, res: Residency, caps: &[&str]) -> PoolEntry {
+        let caps: Vec<String> = caps.iter().map(|c| c.to_string()).collect();
+        let mut e = scripted_entry(id, Role::S2, Mode::M5Generative, res, &caps);
+        e.extensions.as_mut().unwrap().insert("x-model_class".into(), json!(class));
+        e
+    }
+
+    fn gen_node(id: &str, role: &str, cap: &str) -> allternit_commrails::kernel::graph::GraphNode {
+        serde_json::from_value(json!({ "node_id": id, "primitive_id": "prim.t", "node_kind": "COMPUTE", "cognitive_role": role,
+            "capability_request": { "capability": cap }, "on_failure": { "strategy": "fail" } })).unwrap()
+    }
+
+    fn route(pool: &StaticModelPool, cfg: &RouterConfig, n: &allternit_commrails::kernel::graph::GraphNode) -> ExecutionPlan {
+        Router::new(pool, cfg).route(n, &BudgetLedger { remaining_cost_units: 1.0e9, remaining_wall_ms: None }).unwrap()
+    }
+
+    #[test]
+    fn routing_policy_override_picks_the_preferred_class_per_capability() {
+        let pool = pool_of(vec![
+            classed("be.a", "mc.fast", Residency::Remote, &["cap.x", "cap.y"]),
+            classed("be.b", "mc.deep", Residency::Remote, &["cap.x", "cap.y"]),
+        ]);
+        let eff = json!({ "s1_backend": "off", "s2": { "default": "mc.fast", "overrides": { "cap.y": "mc.deep" } },
+            "s3": { "solver": "", "fallback": "" }, "retrieval": "mc.ret", "local_only": false });
+        let (p, cfg, trace) = apply_policy(pool, RouterConfig::default(), &eff, &json!({ "s2.default": "org" })).unwrap();
+        assert_eq!(route(&p, &cfg, &gen_node("N1", "S2", "cap.x")).backend_id, "be.a");
+        let plan = route(&p, &cfg, &gen_node("N2", "S2", "cap.y"));
+        assert_eq!(plan.backend_id, "be.b", "override beats the default");
+        assert_eq!(plan.extensions.as_ref().unwrap()["x-route_class"], "mc.deep");
+        assert_eq!(trace["policy_source"], "routing_policy");
+        assert_eq!(trace["retrieval"]["applied"], false);
+        assert_eq!(trace["retrieval"]["model"], "mc.ret");
+    }
+
+    #[test]
+    fn routing_policy_s3_solver_then_fallback_orders_escalation() {
+        let mut a = classed("be.a", "mc.fast", Residency::Remote, &["cap.x"]);
+        let mut b = classed("be.b", "mc.deep", Residency::Remote, &["cap.x"]);
+        a.cognitive_roles = vec![Role::S3]; a.modes = vec![Mode::M6DeepSolver];
+        b.cognitive_roles = vec![Role::S3]; b.modes = vec![Mode::M6DeepSolver];
+        let eff = json!({ "s2": { "default": "", "overrides": {} }, "s3": { "solver": "mc.deep", "fallback": "mc.fast" }, "local_only": false });
+        let (mut p, cfg, _) = apply_policy(pool_of(vec![a, b]), RouterConfig::default(), &eff, &json!({})).unwrap();
+        let n = gen_node("N17", "S3", "cap.x");
+        assert_eq!(route(&p, &cfg, &n).backend_id, "be.b");
+        p.entries.retain(|e| e.backend_id != "be.b");
+        assert_eq!(route(&p, &cfg, &n).backend_id, "be.a", "falls back to the fallback class");
+    }
+
+    #[test]
+    fn routing_policy_local_only_with_no_local_candidate_fails_closed() {
+        let remote = pool_of(vec![classed("be.r", "mc.remote", Residency::Remote, &["cap.x"])]);
+        let eff = json!({ "s2": { "default": "", "overrides": {} }, "s3": { "solver": "", "fallback": "" }, "local_only": true });
+        assert!(apply_policy(remote, RouterConfig::default(), &eff, &json!({})).is_err());
+        let mixed = pool_of(vec![classed("be.r", "mc.remote", Residency::Remote, &["cap.x"]), classed("be.l", "mc.local", Residency::Warm, &["cap.x"])]);
+        let (p, cfg, _) = apply_policy(mixed, RouterConfig::default(), &eff, &json!({})).unwrap();
+        assert_eq!(route(&p, &cfg, &gen_node("N1", "S2", "cap.x")).backend_id, "be.l");
+        assert!(!cfg.policy.allow_remote);
+    }
+
+    #[test]
+    fn speed_split_is_recorded_and_rate_uses_output_tokens() {
+        let v = speed_fields("t".into(), 900, 100, 50, 150, 1000, 250);
+        assert_eq!((v["tokens_in"].as_u64(), v["tokens_out"].as_u64(), v["tokens"].as_u64(), v["wait_ms"].as_u64()), (Some(100), Some(50), Some(150), Some(250)));
+        assert_eq!(v["tok_per_s"].as_f64(), Some(50.0));
+        let none = speed_fields("t".into(), 10, 0, 0, 0, 0, 0);
+        assert!(none["tokens_in"].is_null() && none["tok_per_s"].is_null());
+        // total only (no split reported): rate falls back to the total
+        assert_eq!(speed_fields("t".into(), 10, 0, 0, 40, 1000, 0)["tok_per_s"].as_f64(), Some(40.0));
+        let u = crate::gizzi_completion::usage_from_info(&json!({ "tokens": { "input": 7, "output": 3, "reasoning": 2 }, "cost": 0.5 }));
+        assert_eq!((u.tokens, u.tokens_in, u.tokens_out), (12, 7, 5));
+    }
+
+    #[test]
+    fn attention_wait_is_summed_from_resolved_requests() {
+        let a = json!([{ "created_at": "2026-09-30T10:00:00.000Z", "resolution": { "resolved_at": "2026-09-30T10:00:02.500Z" } },
+                       { "created_at": "2026-09-30T10:00:00.000Z", "resolution": null }]);
+        assert_eq!(attention_wait_ms(a.as_array().unwrap()), 2500);
     }
 
     #[test]

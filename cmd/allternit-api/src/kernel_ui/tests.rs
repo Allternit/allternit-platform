@@ -309,3 +309,133 @@ async fn api_v1_paths_and_kernel_run_aliases_resolve() {
     // /api/v1/runs stays Cowork's: not served by this router
     assert_eq!(hit("GET", "/api/v1/runs".into(), None).await.0, 404);
 }
+
+// ── enforcement of the rules that used to be stored-only ───────────────────
+
+fn chain_of(v: &[&str]) -> Vec<String> { v.iter().map(|s| s.to_string()).collect() }
+
+#[tokio::test]
+async fn enforced_map_marks_every_field() {
+    let t = setup().await;
+    let u = user("u1", Some("acme"));
+    let (_, v, _) = call(&t, "GET", "/v1/kernel/agent-rules?scope=org:acme", &u, None).await;
+    for l in agent_rules::LEAVES {
+        assert_eq!(v["enforced"][*l], true, "{l}");
+    }
+    assert_eq!(v["enforced"]["completion.agent_may_self_close"], true);
+}
+
+#[tokio::test]
+async fn level_maps_to_fence_and_off_keeps_only_the_blocklist() {
+    use allternit_commrails::judge::policy::{Fence, JudgePolicy, RuleAction, VerifyMode};
+    let mut e = agent_rules::defaults();
+    let mut p = JudgePolicy::default();
+    agent_rules::rules_to_policy(&e, &mut p);
+    assert_eq!(p.fence, Some(Fence::Guardrail), "guardrails = Q25 default");
+    assert_eq!((p.ask_outside_scope, p.ask_private_network), (Some(true), Some(true)));
+    assert_eq!(p.verify, Some(VerifyMode::Judge), "require_verifier on by default");
+    set_path(&mut e, "guardrails.level", json!("strict"));
+    let mut p = JudgePolicy::default();
+    agent_rules::rules_to_policy(&e, &mut p);
+    assert_eq!(p.fence, Some(Fence::Strict));
+    // hosted runs already strict stay strict under level=guardrails (stricter wins)
+    let mut hosted = JudgePolicy { fence: Some(Fence::Strict), ..Default::default() };
+    agent_rules::rules_to_policy(&agent_rules::defaults(), &mut hosted);
+    assert_eq!(hosted.fence, Some(Fence::Strict));
+    set_path(&mut e, "guardrails.level", json!("off"));
+    set_path(&mut e, "custom", json!([{ "id": "c1", "text": "t", "when": "x", "action": "ask" }]));
+    set_path(&mut e, "completion.require_verifier", json!(false));
+    let mut p = JudgePolicy::default();
+    agent_rules::rules_to_policy(&e, &mut p);
+    assert_eq!((p.ask_outside_scope, p.ask_private_network, p.custom_rules.is_none(), p.verify), (Some(false), Some(false), true, None));
+    // custom rules carry through when not off
+    set_path(&mut e, "guardrails.level", json!("guardrails"));
+    let mut p = JudgePolicy::default();
+    agent_rules::rules_to_policy(&e, &mut p);
+    assert_eq!(p.custom_rules.unwrap()[0].action, RuleAction::Ask);
+}
+
+#[tokio::test]
+async fn budgets_take_the_stricter_scope_and_tighten_the_guard() {
+    let t = setup().await;
+    let u = user("u1", Some("acme"));
+    call(&t, "PUT", "/v1/kernel/agent-rules?scope=org:acme", &u, Some(json!({ "budgets": { "daily_usd": 5, "max_concurrent": 4 } }))).await;
+    // project asks for MORE than the org: the org's value still wins
+    call(&t, "PUT", "/v1/kernel/agent-rules?scope=project:p1", &u, Some(json!({ "budgets": { "daily_usd": 50, "max_concurrent": 2 } }))).await;
+    let ch = chain_of(&["project:p1", "org:acme"]);
+    let e = blocking(t.st.db.clone(), move |c| agent_rules::resolve(c, &ch)).await.ok().unwrap();
+    assert_eq!((e["budgets"]["daily_usd"].as_f64(), e["budgets"]["max_concurrent"].as_f64()), (Some(5.0), Some(2.0)));
+    let ov = agent_rules::run_overrides(&e);
+    // env ceiling stays: a looser rule never raises the server-wide limit
+    use crate::agency_api::guard::{Cap, Limits};
+    let env = Limits::from_lookup(|k| (k == crate::agency_api::guard::ORG_DAILY_ENV).then(|| "usd=3".to_string()));
+    assert_eq!(env.tightened(&ov).org_daily, Cap { tokens: None, usd: Some(3.0) });
+    let open = Limits::from_lookup(|k| (k == crate::agency_api::guard::ORG_DAILY_ENV).then(|| "off".to_string()));
+    assert_eq!(open.tightened(&ov).org_daily.usd, Some(5.0));
+    assert_eq!(open.tightened(&ov).org_max_concurrent, 1, "min(env default 1, rule 2)");
+    // and the rules reach the run's task_ir
+    let mut p = allternit_commrails::judge::policy::JudgePolicy::default();
+    let mut ir = json!({});
+    agent_rules::apply_to_run(&t.st, "acme", vec!["project:p1".into()], &mut p, &mut ir).await;
+    assert_eq!(ir["rules"]["daily_usd"].as_f64(), Some(5.0));
+}
+
+#[tokio::test]
+async fn spend_threshold_raises_attention_once() {
+    let t = setup().await;
+    let s = AgencyStore::new(t.st.rails.ledger.clone());
+    s.save(RunRecord { owner: "u1".into(), idempotency_key: None, task_ir: json!({ "rules": { "spend_over_usd": 1.0 } }), attention: vec![],
+        run: json!({ "id": "run_sp", "status": "running", "version": 1, "budget_usage": { "cost_usd": 0.4 } }) }).await.unwrap();
+    assert!(!s.park_for_spend("run_sp", 1.0).await.unwrap(), "under threshold: continue");
+    let mut rec = s.load_run("run_sp").await.unwrap().unwrap();
+    rec.run["budget_usage"]["cost_usd"] = json!(1.2);
+    s.save(rec).await.unwrap();
+    assert!(s.park_for_spend("run_sp", 1.0).await.unwrap(), "crossed: attention raised");
+    let rec = s.load_run("run_sp").await.unwrap().unwrap();
+    assert_eq!(rec.run["status"], "needs_attention");
+    assert_eq!(rec.attention[0]["reason"], crate::agency_api::guard::SPEND_REASON);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn model_template_compiles_and_runs_on_the_executor_with_scripted_cognition() {
+    use crate::agency_api::template_exec;
+    let t = setup().await;
+    let u = user("u2", None);
+    std::env::set_var("ALLTERNIT_AGENCY_COGNITION", "scripted");
+    let steps = json!([{ "kind": "s1_decision", "label": "pick" }, { "kind": "s2_generate", "label": "draft" }, { "kind": "parallel", "label": "grp" }, { "kind": "verifier", "label": "v" }]);
+    let (_, m, _) = call(&t, "POST", "/v1/kernel/templates", &u, Some(tpl("mgen", steps))).await;
+    // compiled graph: one node per step, an S2 fallback for the s1 step, verifier completes
+    let g = template_exec::compile(&m).unwrap();
+    assert_eq!((g.nodes.len(), g.edges.len(), g.completion_nodes.clone()), (5, 3, vec!["T04".to_string()]));
+    assert!(template_exec::compile(&json!({ "id": "x", "steps": [{ "kind": "s2_generate", "label": "g" }] })).is_err(), "must end in a verifier");
+
+    let store = AgencyStore::new(t.st.rails.ledger.clone());
+    let drive = |rid: String| {
+        let (h, st, s) = (tokio::runtime::Handle::current(), t.st.clone(), AgencyStore::new(t.st.rails.ledger.clone()));
+        async move { tokio::task::spawn_blocking(move || template_exec::drive(&h, &st, &s, &rid, "default")).await.unwrap().unwrap() }
+    };
+    let (_, r, _) = call(&t, "POST", &format!("/v1/kernel/templates/{}/run", m["id"].as_str().unwrap()), &u, Some(json!({ "inputs": { "topic": "x" } }))).await;
+    let rid = r["run_id"].as_str().unwrap().to_string();
+    assert_eq!(store.load_run(&rid).await.unwrap().unwrap().run["status"], "waiting");
+    drive(rid.clone()).await;
+    let run = store.load_run(&rid).await.unwrap().unwrap().run;
+    assert_eq!((run["status"].as_str(), run["completion"]["status"].as_str()), (Some("completed"), Some("verified")), "{run}");
+    let evs = store.events(&rid).await.unwrap();
+    let prog: Vec<&Value> = evs.iter().filter(|e| e["type"] == "run.progress").collect();
+    assert_eq!(prog.len(), 4);
+    assert_eq!(prog[0]["data"]["cognitive_role"], "S2", "uncalibrated S1 falls back to the S2 node");
+    assert_eq!(prog[3]["data"]["kind"], "verifier");
+    for k in ["started_at", "duration_ms", "tokens_in", "tokens_out", "tok_per_s", "wait_ms"] {
+        assert!(prog[1]["data"].get(k).is_some(), "missing {k}");
+    }
+    assert_eq!(store.events_of_type(crate::agency_api::executor::EV_ROUTING).await.unwrap().len(), 1, "routing trace recorded");
+
+    // an attention step opens a real attention request and parks the run
+    let (_, a, _) = call(&t, "POST", "/v1/kernel/templates", &u, Some(tpl("mask", json!([{ "kind": "s2_generate", "label": "g" }, { "kind": "attention", "label": "ok?" }, { "kind": "verifier", "label": "v" }])))).await;
+    let (_, r, _) = call(&t, "POST", &format!("/v1/kernel/templates/{}/run", a["id"].as_str().unwrap()), &u, None).await;
+    let rid = r["run_id"].as_str().unwrap().to_string();
+    drive(rid.clone()).await;
+    let run = store.load_run(&rid).await.unwrap().unwrap();
+    assert_eq!((run.run["status"].as_str(), run.attention.len(), run.attention[0]["resume_from"].as_u64()), (Some("needs_attention"), 1, Some(1)));
+    std::env::remove_var("ALLTERNIT_AGENCY_COGNITION");
+}
