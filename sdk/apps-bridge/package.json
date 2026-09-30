@@ -1,0 +1,28 @@
+{
+  "name": "@allternit/apps-bridge",
+  "version": "0.1.0",
+  "description": "Typed, dependency-free client for MCP App Views: the standard ui/* calls, window.allternit, and the window.openai compatibility shim.",
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./sources": { "types": "./dist/sources.d.ts", "import": "./dist/sources.js" },
+    "./allternit-ext.js": "./dist/allternit-ext.js",
+    "./openai-compat.js": "./dist/openai-compat.js",
+    "./compat.js": "./dist/openai-compat.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-runtime.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "happy-dom": "^15.11.7",
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0"
+  }
+}

@@ -154,6 +154,8 @@ struct OAuthMaterial {
     expires_at: Option<i64>,
     client_id: Option<String>,
     client_secret: Option<String>,
+    /// Token-endpoint auth method when `client_id` was issued by dynamic registration.
+    client_auth_method: Option<String>,
     /// The whole stored token-exchange response, kept so a refresh can merge into it.
     tokens: Option<Value>,
     /// Recorded by the OAuth start from the auth server's metadata.
@@ -240,13 +242,13 @@ fn read_connector(conn: &rusqlite::Connection, row: ConnectorRow) -> rusqlite::R
     if row.enabled == 0 {
         return Ok(None);
     }
-    let session: Option<(String, String, Option<String>, Option<String>)> = conn
+    let session: Option<(String, String, Option<String>, Option<String>, Option<String>)> = conn
         .query_row(
-            "SELECT id, tokens, updated_at, metadata FROM mcp_oauth_sessions
+            "SELECT id, tokens, updated_at, metadata, client_info FROM mcp_oauth_sessions
              WHERE mcp_connector_id = ?1 AND is_authenticated = 1 AND tokens IS NOT NULL
              ORDER BY updated_at DESC LIMIT 1",
             params![row.id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
         )
         .ok();
     let mut oauth = OAuthMaterial {
@@ -259,7 +261,8 @@ fn read_connector(conn: &rusqlite::Connection, row: ConnectorRow) -> rusqlite::R
         ..OAuthMaterial::default()
     };
     let mut token = None;
-    if let Some((session_row, stored, updated_at, metadata)) = session {
+    if let Some((session_row, stored, updated_at, metadata, client_info)) = session {
+        oauth.client_auth_method = crate::mcp_directory_routes::dcr_auth_method(client_info.as_deref());
         oauth.token_endpoint = crate::mcp_routes::session_meta_str(metadata.as_deref(), "tokenEndpoint");
         oauth.resource = crate::mcp_routes::session_meta_str(metadata.as_deref(), "resource");
         // Sealed rows open; legacy plaintext rows pass through unchanged.
@@ -336,9 +339,23 @@ async fn refresh_if_needed(state: &Arc<AppState>, connector: &mut Connector, all
         Err(reason) => {
             warn!(connector_id = %connector.id, reason, "mcp connector: token refresh failed");
             connector.auth_failed = true;
+            if reason == INVALID_CLIENT {
+                // A dynamically registered client the server dropped: forget it so the next
+                // OAuth start registers a new one. User-configured clients are never cleared.
+                if let Some(client_id) = connector.oauth.client_id.clone() {
+                    let (db, id) = (state.db.clone(), connector.id.clone());
+                    let _ = tokio::task::spawn_blocking(move || {
+                        db.connect().map(|c| crate::mcp_directory_routes::clear_dcr_client(&c, &id, &client_id))
+                    })
+                    .await;
+                }
+            }
         }
     }
 }
+
+/// `request_refresh` error for an `invalid_client` answer (the auth server forgot our client).
+const INVALID_CLIENT: &str = "token endpoint rejected the client (invalid_client)";
 
 /// RFC 6749 §6 refresh-token grant. Returns the new token-endpoint response.
 async fn request_refresh(connector: &Connector, refresh_token: &str, allow_private: bool) -> Result<Value, &'static str> {
@@ -356,19 +373,26 @@ async fn request_refresh(connector: &Connector, refresh_token: &str, allow_priva
     let client = guarded_client(&token_url, allow_private).await.map_err(|_| "token endpoint not allowed")?;
 
     let mut form = vec![("grant_type", "refresh_token"), ("refresh_token", refresh_token)];
+    let method = connector.oauth.client_auth_method.as_deref();
     if let Some(resource) = connector.oauth.resource.as_deref() {
         form.push(("resource", resource));
     }
     if let Some(id) = connector.oauth.client_id.as_deref() {
         form.push(("client_id", id));
     }
+    if let (Some(secret), Some("client_secret_post")) = (connector.oauth.client_secret.as_deref(), method) {
+        form.push(("client_secret", secret));
+    }
     let mut req = client.post(&token_url).form(&form);
     if let (Some(id), Some(secret)) = (connector.oauth.client_id.as_deref(), connector.oauth.client_secret.as_deref()) {
-        req = req.basic_auth(id, Some(secret));
+        if method != Some("client_secret_post") {
+            req = req.basic_auth(id, Some(secret));
+        }
     }
     let res = req.send().await.map_err(|_| "token endpoint unreachable")?;
     if !res.status().is_success() {
-        return Err("token endpoint refused the refresh token");
+        let invalid = crate::mcp_directory_routes::is_invalid_client(&res.text().await.unwrap_or_default());
+        return Err(if invalid { INVALID_CLIENT } else { "token endpoint refused the refresh token" });
     }
     let body: Value = res.json().await.map_err(|_| "token endpoint returned invalid JSON")?;
     if access_token_of(&body.to_string()).is_none() {

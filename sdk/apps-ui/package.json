@@ -1,0 +1,26 @@
+{
+  "name": "@allternit/apps-ui",
+  "version": "0.1.0",
+  "description": "The Allternit view kit for MCP App Views: framework-free web components (Card, Table, List, Form, Detail) that read look-pack CSS variables.",
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./sources": { "types": "./dist/sources.d.ts", "import": "./dist/sources.js" },
+    "./allternit-ui.js": "./dist/allternit-ui.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-runtime.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "happy-dom": "^15.11.7",
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0"
+  }
+}

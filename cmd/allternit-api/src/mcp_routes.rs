@@ -98,15 +98,15 @@ async fn complete_oauth_callback(
         )
     })?;
 
-    let session: Option<(String, String, Option<String>, Option<String>)> = conn
+    let session: Option<(String, String, Option<String>, Option<String>, Option<String>)> = conn
         .query_row(
-            "SELECT id, mcp_connector_id, code_verifier, metadata FROM mcp_oauth_sessions WHERE state = ?1",
+            "SELECT id, mcp_connector_id, code_verifier, metadata, client_info FROM mcp_oauth_sessions WHERE state = ?1",
             [&state_val],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )
         .ok();
 
-    let (session_id, connector_id, code_verifier, metadata_json) = session.ok_or_else(|| {
+    let (session_id, connector_id, code_verifier, metadata_json, client_info) = session.ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             render_html(
@@ -174,6 +174,7 @@ async fn complete_oauth_callback(
         code_verifier.as_deref(),
         client_id.as_deref(),
         client_secret.as_deref(),
+        crate::mcp_directory_routes::dcr_auth_method(client_info.as_deref()).as_deref(),
         &redirect_uri,
         session_meta_str(metadata_json.as_deref(), "tokenEndpoint").as_deref(),
         session_meta_str(metadata_json.as_deref(), "resource").as_deref(),
@@ -208,6 +209,15 @@ async fn complete_oauth_callback(
                 error = %e,
                 "MCP OAuth token exchange failed — code stored for retry"
             );
+            // The auth server no longer knows the client Allternit registered for this connector:
+            // forget it (DCR-issued clients only) so the next start registers a fresh one.
+            if crate::mcp_directory_routes::is_invalid_client(&e) {
+                if let Some(id) = client_id.as_deref() {
+                    if crate::mcp_directory_routes::clear_dcr_client(&conn, &connector_id, id) {
+                        warn!(connector_name = conn_name, "MCP OAuth: dynamically registered client rejected; cleared");
+                    }
+                }
+            }
 
             // Code is already stored in metadata. Return a message that indicates
             // the auth code was received but token exchange needs manual completion.
@@ -332,6 +342,8 @@ async fn exchange_code_for_tokens(
     code_verifier: Option<&str>,
     client_id: Option<&str>,
     client_secret: Option<&str>,
+    // Token-endpoint auth method of a dynamically registered client; `None` keeps the legacy behavior.
+    client_auth_method: Option<&str>,
     redirect_uri: &str,
     recorded_token_endpoint: Option<&str>,
     resource: Option<&str>,
@@ -373,17 +385,23 @@ async fn exchange_code_for_tokens(
         params.push(("resource", resource));
     }
 
-    // Add client credentials to params
-    if let (Some(id), Some(secret)) = (client_id, client_secret) {
+    // Client credentials. A DCR client declared one method at registration and RFC 6749 §2.3
+    // allows only one per request; other clients keep sending both.
+    let (in_body, in_header) = match client_auth_method {
+        Some("client_secret_post") => (true, false),
+        Some("client_secret_basic") => (false, true),
+        _ => (true, true),
+    };
+    if let Some(id) = client_id {
         params.push(("client_id", id));
+    }
+    if let (Some(secret), true) = (client_secret, in_body) {
         params.push(("client_secret", secret));
-    } else if let Some(id) = client_id {
-        params.push(("client_id", id));
     }
 
     // Build request with all params
     let mut req = client.post(&token_url).form(&params);
-    if let (Some(id), Some(secret)) = (client_id, client_secret) {
+    if let (Some(id), Some(secret), true) = (client_id, client_secret, in_header) {
         req = req.basic_auth(id, Some(secret));
     }
 
@@ -899,7 +917,7 @@ mod tests {
     async fn token_exchange_refuses_private_token_endpoints_and_never_sends_the_secret() {
         let (origin, forms) = spawn_token_server().await;
         // the same loopback server, without the development override: refused before any request
-        let err = exchange_code_for_tokens(&origin, "code", "st", Some("v"), Some("id"), Some("secret"), "https://app.test/cb", None, None, false)
+        let err = exchange_code_for_tokens(&origin, "code", "st", Some("v"), Some("id"), Some("secret"), None, "https://app.test/cb", None, None, false)
             .await
             .unwrap_err();
         assert!(err.contains("local or private"), "{err}");
