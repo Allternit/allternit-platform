@@ -175,6 +175,7 @@ enum HookCmd {
     /// Claude Code PreToolUse hook: reads the hook JSON on stdin, prints a
     /// deny decision (or nothing, to allow). Always exits 0; every internal
     /// error is a deny, so a broken gate never fails open.
+    #[command(aliases = ["codex-pretool", "qwen-pretool"])]
     ClaudePretool {
         /// WIH the spawned session is bound to. Without it only the hard floor applies.
         #[arg(long, env = "ALLTERNIT_COMMRAILS_WIH")]

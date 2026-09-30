@@ -159,15 +159,15 @@ impl Orchestrator {
             (opts.repo.to_path_buf(), false)
         };
 
-        let settings_path = match &commrails_bin {
-            Some(bin) => {
-                let path = logdir.join(format!("{}.claude-settings.json", session));
-                let settings = hook::claude_settings(HookTarget {
-                    commrails_bin: bin,
-                    root: &self.root_dir,
-                    workspace: Some(&workdir),
-                    wih_id: opts.wih,
-                });
+        let hook_target = commrails_bin.as_deref().map(|bin| HookTarget {
+            commrails_bin: bin,
+            root: &self.root_dir,
+            workspace: Some(&workdir),
+            wih_id: opts.wih,
+        });
+        let settings_path = match hook_target.and_then(|t| hook::hook_settings_file(harness, t)) {
+            Some((suffix, settings)) => {
+                let path = logdir.join(format!("{}.{}", session, suffix));
                 if let Err(err) = tokio::fs::write(&path, serde_json::to_string_pretty(&settings)?).await {
                     if wt_created {
                         let _ = remove_worktree(&workdir).await;
@@ -178,7 +178,8 @@ impl Orchestrator {
             }
             None => None,
         };
-        let cmd = hook::gate_argv(opts.cmd, settings_path.as_deref());
+        let gated = hook::gate_spawn(opts.cmd, settings_path.as_deref(), hook_target);
+        let cmd = gated.argv;
 
         // ExecutionEnvironmentV1: resolve per node, write beside the log, and
         // record in the ledger. `ALLTERNIT_EXEC_ENV_ENFORCE=1` additionally
@@ -227,10 +228,18 @@ impl Orchestrator {
         };
         // Claude refuses bypassPermissions as root unless told it is in a
         // sandbox; Allternit's execution environment is that sandbox.
-        let env_prefix = if gate == HarnessGate::Hook {
-            if env_prefix.is_empty() { "env IS_SANDBOX=1 ".to_string() } else { format!("{env_prefix}IS_SANDBOX=1 ") }
-        } else {
+        let mut gate_env = gated.env;
+        if hook::HookFlavor::of(harness) == Some(hook::HookFlavor::Claude) {
+            gate_env.push(("IS_SANDBOX".to_string(), "1".to_string()));
+        }
+        let env_prefix = if gate_env.is_empty() {
             env_prefix
+        } else {
+            let mut p = if env_prefix.is_empty() { "env ".to_string() } else { env_prefix };
+            for (k, v) in &gate_env {
+                p.push_str(&format!("{k}={} ", shell_escape(v)));
+            }
+            p
         };
 
         // Write the runner file to sidestep shell quoting issues.
@@ -497,7 +506,8 @@ impl Orchestrator {
         executors.push(probe_executor("kimi", "kimi", &["--yolo"], &[]).await);
         // Probe the flags the spawn gate actually launches with (see hook::gate_argv):
         // all auto-approve; claude also gets a --settings PreToolUse hook.
-        executors.push(probe_executor("codex", "codex", &["--config"], &["exec"]).await);
+        executors.push(probe_executor("codex", "codex", &["--config", "--dangerously-bypass-hook-trust"], &["exec"]).await);
+        executors.push(probe_executor("qwen", "qwen", &["--yolo"], &[]).await);
         executors.push(probe_executor("claude", "claude", &["--permission-mode", "--settings"], &["-p", "--permission-mode", "--settings"]).await);
         executors.push(probe_executor("agy", "agy", &["--dangerously-skip-permissions"], &[]).await);
 

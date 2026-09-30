@@ -250,11 +250,15 @@ async fn admission_admits_every_harness_in_auto_approve() {
     let open = WihPolicy { wih_id: "w".into(), requires_lease_for_write: Some(false) };
     let unknown = load_wih_policy(&f.ledger, "wih_nope").await.unwrap();
     for policy in [Some(&leased), Some(&open), Some(&unknown), None] {
-        for h in ["kimi", "gemini", "qwen", "cline", "pi", "agy", "opencode", "/usr/bin/qwen"] {
+        for h in ["cline", "pi", "agy", "opencode"] {
             assert_eq!(admit(h, policy), Ok(HarnessGate::Ungated), "{h}");
         }
-        assert_eq!(admit("codex", policy), Ok(HarnessGate::Sandbox));
-        assert_eq!(admit("claude", policy), Ok(HarnessGate::Hook));
+        for h in ["kimi", "gemini", "/usr/bin/kimi"] {
+            assert_eq!(admit(h, policy), Ok(HarnessGate::Acp), "{h}");
+        }
+        for h in ["codex", "claude", "qwen", "/usr/bin/qwen"] {
+            assert_eq!(admit(h, policy), Ok(HarnessGate::Hook), "{h}");
+        }
     }
 }
 
@@ -311,4 +315,68 @@ fn codex_array_commands_are_unwrapped() {
     .unwrap();
     assert_eq!(req.command().as_deref(), Some("rm -rf ~"));
     assert!(floor::check(&req.command().unwrap(), Some(Path::new(HOME))).is_some());
+}
+
+fn target() -> HookTarget<'static> {
+    HookTarget {
+        commrails_bin: Path::new("/bin/allternit-commrails"),
+        root: Path::new("/r"),
+        workspace: Some(Path::new("/w")),
+        wih_id: Some("wih_1"),
+    }
+}
+
+fn strs(v: &[&str]) -> Vec<String> {
+    v.iter().map(|s| s.to_string()).collect()
+}
+
+#[test]
+fn codex_spawn_carries_hook_per_spawn_and_stays_yolo() {
+    let argv = strs(&["codex", "exec", "hi", "--dangerously-bypass-approvals-and-sandbox", "-c", "sandbox_mode=\"read-only\""]);
+    let out = gate_spawn(&argv, None, Some(target())).argv;
+    assert_eq!(out[0], "codex");
+    // Global options precede the subcommand.
+    let exec_at = out.iter().position(|w| w == "exec").unwrap();
+    let hook_at = out.iter().position(|w| w.starts_with("hooks.PreToolUse=")).unwrap();
+    assert!(hook_at < exec_at);
+    assert!(out.contains(&"--dangerously-bypass-hook-trust".to_string()));
+    assert!(out.contains(&"approval_policy=\"never\"".to_string()));
+    assert_eq!(out.iter().filter(|w| w.starts_with("sandbox_mode=")).count(), 1);
+    assert!(out.contains(&"sandbox_mode=\"danger-full-access\"".to_string()));
+    let hook = &out[hook_at];
+    assert!(hook.contains("codex-pretool --harness codex"), "{hook}");
+    assert!(hook.contains("--wih 'wih_1'"), "{hook}");
+}
+
+#[test]
+fn qwen_spawn_keeps_yolo_and_points_at_session_settings() {
+    let argv = strs(&["qwen", "--approval-mode", "default", "-p", "hi"]);
+    let out = gate_spawn(&argv, Some(Path::new("/s/q.json")), Some(target()));
+    assert_eq!(out.argv, strs(&["qwen", "-p", "hi", "--yolo"]));
+    assert_eq!(
+        out.env,
+        vec![("QWEN_CODE_SYSTEM_SETTINGS_PATH".to_string(), "/s/q.json".to_string())]
+    );
+    let (name, settings) = hook_settings_file("qwen", target()).unwrap();
+    assert_eq!(name, "qwen-settings.json");
+    let cmd = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"].as_str().unwrap();
+    assert!(cmd.contains("qwen-pretool --harness qwen"), "{cmd}");
+    assert!(hook_settings_file("codex", target()).is_none());
+}
+
+#[tokio::test]
+async fn one_decision_path_for_codex_and_qwen_payloads() {
+    // codex sends `Bash`; qwen sends `run_shell_command`; both hit the same floor.
+    for tool in ["Bash", "run_shell_command"] {
+        let deny = HookRequest::from_json(&json!({
+            "tool_name": tool, "tool_input": { "command": "rm -rf ~" }, "cwd": "/w", "session_id": "s",
+        }))
+        .unwrap();
+        let ok = HookRequest::from_json(&json!({
+            "tool_name": tool, "tool_input": { "command": "ls -la" }, "cwd": "/w", "session_id": "s",
+        }))
+        .unwrap();
+        assert!(decide(&deny, Path::new("/w"), Some(Path::new(HOME)), None).await.verdict.is_deny(), "{tool}");
+        assert!(!decide(&ok, Path::new("/w"), Some(Path::new(HOME)), None).await.verdict.is_deny(), "{tool}");
+    }
 }
