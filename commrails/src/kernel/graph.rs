@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::registry::PrimitiveRegistry;
-use super::router::{resolve_role, Role};
+use super::router::{resolve_modes, resolve_role, Role};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RetryPolicy {
@@ -172,8 +172,9 @@ pub fn validate(g: &ComputeGraph, reg: &PrimitiveRegistry) -> Vec<Violation> {
         }
     }
     for n in &g.nodes {
-        if let Err(err) = resolve_role(n) {
-            v.push(st(Some(&n.node_id), err.to_string()));
+        match resolve_role(n).and_then(|role| resolve_modes(n, role)) {
+            Ok(_) => {}
+            Err(err) => v.push(st(Some(&n.node_id), err.to_string())),
         }
         if reg.resolve(&n.primitive_id).is_err() {
             v.push(st(Some(&n.node_id), format!("unknown primitive '{}'", n.primitive_id)));
@@ -387,6 +388,20 @@ mod tests {
         let mut g = good();
         g["nodes"][0]["cognitive_role"] = json!("S9");
         assert!(check(g).iter().any(|x| matches!(x, Violation::Structure { detail, .. } if detail.contains("unknown cognitive_role"))));
+    }
+
+    #[test]
+    fn graph_rejects_unknown_and_role_incompatible_mode_restrictions() {
+        for modes in [json!(["M5.GENERATIV"]), json!(["M0.DETERMINISTIC", "M5.GENERATIV"]), json!(["M5.GENERATIVE"])] {
+            let mut g = good();
+            g["nodes"][0]["allowed_modes"] = modes;
+            assert!(check(g).iter().any(|x| matches!(x, Violation::Structure { detail, .. } if detail.contains("mode"))));
+        }
+        let mut g = good();
+        g["nodes"][0]["allowed_modes"] = json!(["M0.DETERMINISTIC"]);
+        assert_eq!(check(g.clone()), vec![]);
+        g["nodes"][0]["allowed_modes"] = json!([]);
+        assert_eq!(check(g), vec![]);
     }
 
     #[test]
