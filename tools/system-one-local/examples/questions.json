@@ -1,0 +1,20 @@
+{
+  "refund_requested": {
+    "type": "noul",
+    "instructions": "Does the message request a refund?"
+  },
+  "department": {
+    "type": "choice",
+    "instructions": "Which team should handle this message?",
+    "criteria": {
+      "billing": "Payments, invoicing, refunds",
+      "technical": "Bugs, outages, integrations",
+      "sales": "Pricing, upgrades, new accounts"
+    }
+  },
+  "urgency": {
+    "type": "score",
+    "instructions": "How time-sensitive is this message?",
+    "criteria": ["No deadline", "Within a week", "Today or sooner"]
+  }
+}

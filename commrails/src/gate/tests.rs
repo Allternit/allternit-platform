@@ -165,3 +165,36 @@ mod autoland_tests {
         assert!(root.path().join(".allternit").join("backups").exists());
     }
 }
+
+#[cfg(test)]
+mod wp3_effect_tests {
+    use super::super::*;
+    use crate::ledger::ledger::{Ledger, LedgerOptions};
+    use crate::leases::leases::{Leases, LeasesOptions};
+    use crate::receipts::store::{ReceiptStore, ReceiptStoreOptions};
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn gate_tool_call_is_chained_and_duplicate_key_not_reexecuted() {
+        let root = tempfile::tempdir().unwrap();
+        let ledger = Arc::new(Ledger::new(LedgerOptions { root_dir: Some(root.path().to_path_buf()), ledger_dir: None }));
+        let leases = Arc::new(Leases::new(LeasesOptions {
+            root_dir: Some(root.path().to_path_buf()), leases_dir: None, ..Default::default() }).await.unwrap());
+        let receipts = Arc::new(ReceiptStore::new(ReceiptStoreOptions {
+            root_dir: Some(root.path().to_path_buf()), receipts_dir: None, blobs_dir: None }).unwrap());
+        let gate = Gate::new(GateOptions {
+            ledger, leases, receipts: receipts.clone(), index: None, vault: None, oauth_vault: None,
+            root_dir: Some(root.path().to_path_buf()), actor_id: Some("t".into()),
+            strict_provenance: Some(false), visual_provider: None, visual_config: None,
+        });
+        let p = serde_json::json!({"idempotency_key": "gate-key-0001", "cmd": "touch x"});
+        let a = gate.post_tool("w1", "shell", p.clone()).await.unwrap();
+        let b = gate.post_tool("w1", "shell", p).await.unwrap();
+        assert_eq!(a, b, "replay returns the recorded receipt");
+        let all = receipts.query_receipts(&Default::default()).unwrap();
+        assert_eq!(all.len(), 1, "duplicate key must not write a second legacy receipt");
+        let rep = receipts.chain_store().unwrap().verify_chain("run_w1").unwrap();
+        assert!(rep.ok && rep.length == 2, "{rep:?}");
+        assert_eq!(receipts.verify_receipt(&a).unwrap().integrity, "legacy (unsigned, unchained)");
+    }
+}
