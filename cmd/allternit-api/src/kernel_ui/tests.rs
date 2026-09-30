@@ -318,7 +318,7 @@ fn chain_of(v: &[&str]) -> Vec<String> { v.iter().map(|s| s.to_string()).collect
 async fn enforced_map_marks_every_field() {
     let t = setup().await;
     let u = user("u1", Some("acme"));
-    let (_, v, _) = call(&t, "GET", "/v1/agent-rules?scope=org:acme", &u, None).await;
+    let (_, v, _) = call(&t, "GET", "/v1/kernel/agent-rules?scope=org:acme", &u, None).await;
     for l in agent_rules::LEAVES {
         assert_eq!(v["enforced"][*l], true, "{l}");
     }
@@ -359,9 +359,9 @@ async fn level_maps_to_fence_and_off_keeps_only_the_blocklist() {
 async fn budgets_take_the_stricter_scope_and_tighten_the_guard() {
     let t = setup().await;
     let u = user("u1", Some("acme"));
-    call(&t, "PUT", "/v1/agent-rules?scope=org:acme", &u, Some(json!({ "budgets": { "daily_usd": 5, "max_concurrent": 4 } }))).await;
+    call(&t, "PUT", "/v1/kernel/agent-rules?scope=org:acme", &u, Some(json!({ "budgets": { "daily_usd": 5, "max_concurrent": 4 } }))).await;
     // project asks for MORE than the org: the org's value still wins
-    call(&t, "PUT", "/v1/agent-rules?scope=project:p1", &u, Some(json!({ "budgets": { "daily_usd": 50, "max_concurrent": 2 } }))).await;
+    call(&t, "PUT", "/v1/kernel/agent-rules?scope=project:p1", &u, Some(json!({ "budgets": { "daily_usd": 50, "max_concurrent": 2 } }))).await;
     let ch = chain_of(&["project:p1", "org:acme"]);
     let e = blocking(t.st.db.clone(), move |c| agent_rules::resolve(c, &ch)).await.ok().unwrap();
     assert_eq!((e["budgets"]["daily_usd"].as_f64(), e["budgets"]["max_concurrent"].as_f64()), (Some(5.0), Some(2.0)));
@@ -394,4 +394,46 @@ async fn spend_threshold_raises_attention_once() {
     let rec = s.load_run("run_sp").await.unwrap().unwrap();
     assert_eq!(rec.run["status"], "needs_attention");
     assert_eq!(rec.attention[0]["reason"], crate::agency_api::guard::SPEND_REASON);
+#[tokio::test(flavor = "multi_thread")]
+async fn model_template_compiles_and_runs_on_the_executor_with_scripted_cognition() {
+    use crate::agency_api::template_exec;
+    let t = setup().await;
+    let u = user("u2", None);
+    std::env::set_var("ALLTERNIT_AGENCY_COGNITION", "scripted");
+    let steps = json!([{ "kind": "s1_decision", "label": "pick" }, { "kind": "s2_generate", "label": "draft" }, { "kind": "parallel", "label": "grp" }, { "kind": "verifier", "label": "v" }]);
+    let (_, m, _) = call(&t, "POST", "/v1/kernel/templates", &u, Some(tpl("mgen", steps))).await;
+    // compiled graph: one node per step, an S2 fallback for the s1 step, verifier completes
+    let g = template_exec::compile(&m).unwrap();
+    assert_eq!((g.nodes.len(), g.edges.len(), g.completion_nodes.clone()), (5, 3, vec!["T04".to_string()]));
+    assert!(template_exec::compile(&json!({ "id": "x", "steps": [{ "kind": "s2_generate", "label": "g" }] })).is_err(), "must end in a verifier");
+
+    let store = AgencyStore::new(t.st.rails.ledger.clone());
+    let drive = |rid: String| {
+        let (h, st, s) = (tokio::runtime::Handle::current(), t.st.clone(), AgencyStore::new(t.st.rails.ledger.clone()));
+        async move { tokio::task::spawn_blocking(move || template_exec::drive(&h, &st, &s, &rid, "default")).await.unwrap().unwrap() }
+    };
+    let (_, r, _) = call(&t, "POST", &format!("/v1/kernel/templates/{}/run", m["id"].as_str().unwrap()), &u, Some(json!({ "inputs": { "topic": "x" } }))).await;
+    let rid = r["run_id"].as_str().unwrap().to_string();
+    assert_eq!(store.load_run(&rid).await.unwrap().unwrap().run["status"], "waiting");
+    drive(rid.clone()).await;
+    let run = store.load_run(&rid).await.unwrap().unwrap().run;
+    assert_eq!((run["status"].as_str(), run["completion"]["status"].as_str()), (Some("completed"), Some("verified")), "{run}");
+    let evs = store.events(&rid).await.unwrap();
+    let prog: Vec<&Value> = evs.iter().filter(|e| e["type"] == "run.progress").collect();
+    assert_eq!(prog.len(), 4);
+    assert_eq!(prog[0]["data"]["cognitive_role"], "S2", "uncalibrated S1 falls back to the S2 node");
+    assert_eq!(prog[3]["data"]["kind"], "verifier");
+    for k in ["started_at", "duration_ms", "tokens_in", "tokens_out", "tok_per_s", "wait_ms"] {
+        assert!(prog[1]["data"].get(k).is_some(), "missing {k}");
+    }
+    assert_eq!(store.events_of_type(crate::agency_api::executor::EV_ROUTING).await.unwrap().len(), 1, "routing trace recorded");
+
+    // an attention step opens a real attention request and parks the run
+    let (_, a, _) = call(&t, "POST", "/v1/kernel/templates", &u, Some(tpl("mask", json!([{ "kind": "s2_generate", "label": "g" }, { "kind": "attention", "label": "ok?" }, { "kind": "verifier", "label": "v" }])))).await;
+    let (_, r, _) = call(&t, "POST", &format!("/v1/kernel/templates/{}/run", a["id"].as_str().unwrap()), &u, None).await;
+    let rid = r["run_id"].as_str().unwrap().to_string();
+    drive(rid.clone()).await;
+    let run = store.load_run(&rid).await.unwrap().unwrap();
+    assert_eq!((run.run["status"].as_str(), run.attention.len(), run.attention[0]["resume_from"].as_u64()), (Some("needs_attention"), 1, Some(1)));
+    std::env::remove_var("ALLTERNIT_AGENCY_COGNITION");
 }

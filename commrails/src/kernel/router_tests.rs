@@ -397,3 +397,23 @@ fn recording_appends_verify_ref_once() {
     apply_s1_result_recording(&plan, &r, &mut ev);
     assert_eq!(ev, vec!["s1-verify:d-1".to_string()]);
 }
+
+#[test]
+fn class_preference_orders_candidates_and_records_the_route() {
+    let mut a = entry("be.a", &[Role::S2], &[Mode::M5Generative], "cap.x", 0.9, 0.1, Residency::Remote);
+    let mut b = entry("be.b", &[Role::S2], &[Mode::M5Generative], "cap.x", 0.9, 0.1, Residency::Remote);
+    a.extensions.get_or_insert_with(Default::default).insert("x-model_class".into(), json!("mc.fast"));
+    b.extensions.get_or_insert_with(Default::default).insert("x-model_class".into(), json!("mc.deep"));
+    let pool = StaticModelPool { entries: vec![a, b] };
+    let n = node("N1", Some("S2"), Some("cap.x"), "PUBLIC");
+    let ledger = BudgetLedger { remaining_cost_units: 1.0e9, remaining_wall_ms: None };
+    let plain = Router::new(&pool, &RouterConfig::default()).route(&n, &ledger).unwrap();
+    assert!(plain.extensions.as_ref().map_or(true, |x| !x.contains_key("x-route_class")));
+    let mut cfg = RouterConfig::default();
+    cfg.class_preference.insert("role:S2".into(), vec!["mc.deep".into()]);
+    let p = Router::new(&pool, &cfg).route(&n, &ledger).unwrap();
+    assert_eq!(p.backend_id, "be.b");
+    assert_eq!(p.extensions.as_ref().unwrap()["x-route_class"], "mc.deep");
+    cfg.class_preference.insert("cap.x@S2".into(), vec!["mc.fast".into()]);
+    assert_eq!(Router::new(&pool, &cfg).route(&n, &ledger).unwrap().backend_id, "be.a", "capability override wins");
+}

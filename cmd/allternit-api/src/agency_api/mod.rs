@@ -17,6 +17,7 @@ pub mod compiler;
 pub mod executor;
 pub mod guard;
 pub mod store;
+pub mod template_exec;
 
 #[cfg(test)]
 mod tests;
