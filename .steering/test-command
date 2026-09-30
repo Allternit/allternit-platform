@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Read Phase 2 evidence; never start servers or run unrelated builds from a hook.
-evidence_dir="$HOME/.agent-orchestrator/evidence/cloud-computer-orgo-p2"
-for name in cargo-check-final.log cargo-test-api.log cargo-test-cloud.log tsc-final.log smoke.log; do
-  echo "$name"
-  if [[ -f "$evidence_dir/$name" ]]; then tail -n 12 "$evidence_dir/$name"; else echo 'Pending'; fi
-done
+# Read only the completed WP13 targeted-test evidence; never launch unrelated builds.
+if [[ -f .tmp-wp13/validation.log ]]; then
+  tail -n 24 .tmp-wp13/validation.log
+else
+  echo 'WP13 validation evidence pending'
+fi
+if [[ -f .tmp-wp13/steering-validation.log ]]; then
+  cat .tmp-wp13/steering-validation.log
+fi

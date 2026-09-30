@@ -7,6 +7,10 @@ export class MockBackend implements Backend {
   constructor(readonly id: string) {}
   async complete(request: ModelRequest): Promise<Completion> {
     if (request.backendId !== this.id) throw new Error("backend mismatch")
+    if (request.responseFormat === "text") {
+      const text = JSON.stringify({ mock: true, stage: request.stage ?? "unspecified" })
+      return { text, patch: "", usage: { ...emptyUsage(), input: Math.ceil(JSON.stringify(request.files).length / 4), output: Math.ceil(text.length / 4), estimated: true } }
+    }
     const before = request.files["src/lib.ts"]
     let after = before.replace("i < n", "i <= n")
       .replace("value!.trim()", "value?.trim() ?? ''")
@@ -15,7 +19,7 @@ export class MockBackend implements Backend {
       .replace("value || fallback", "value ?? fallback")
     if (request.feedback) after = after.replace("const value = readLabel()", "const value = await readLabel()")
     const patch = before === after ? "" : sourcePatch(before, after)
-    return { patch, usage: { ...emptyUsage(), input: Math.ceil(JSON.stringify(request.files).length / 4),
+    return { patch, text: patch, usage: { ...emptyUsage(), input: Math.ceil(JSON.stringify(request.files).length / 4),
       output: Math.ceil(patch.length / 4), estimated: true } }
   }
 }
@@ -58,9 +62,10 @@ export class HttpModelPoolBackend implements Backend {
     try {
       const reply = await this.request(path + "/message", "POST", {
         model, fallbackModels: [], tools,
-        system: "Produce one bounded unified diff modifying only src/lib.ts. Return only the diff. No tools, planning, delegation or extra turns.",
+        system: "Produce exactly one textual completion. No tools, delegation or extra turns. " +
+          (input.instruction ?? "Produce one bounded unified diff modifying only src/lib.ts. Return only the diff."),
         parts: [{ type: "text", text: JSON.stringify({ bug_report: input.report, repo: input.files, feedback: input.feedback,
-          max_tokens: input.budget.maxTokens }) }],
+          stage: input.stage, response_format: input.responseFormat ?? "patch", max_tokens: input.budget.maxTokens }) }],
       }, signal)
       if (reply.info?.error) throw new Error("generation failed")
       if (reply.info?.providerID !== model.providerID || reply.info?.modelID !== model.modelID) throw new Error("model substituted")
@@ -72,9 +77,10 @@ export class HttpModelPoolBackend implements Backend {
       const values = [tokens?.input, tokens?.output, tokens?.reasoning, tokens?.cache?.read, tokens?.cache?.write]
       if (values.some(x => !Number.isFinite(x) || x < 0)) throw new Error("token telemetry missing")
       const usage: Usage = { input: values[0], output: values[1], reasoning: values[2], cacheRead: values[3], cacheWrite: values[4], estimated: !!reply.info.tokensEstimated }
-      let patch = reply.parts.filter((p: any) => p.type === "text").map((p: any) => p.text).join("\n").trim()
+      const text = reply.parts.filter((p: any) => p.type === "text").map((p: any) => p.text).join("\n").trim()
+      let patch = input.responseFormat === "text" ? "" : text
       if (/^```(?:diff)?\n[\s\S]*\n```$/.test(patch)) patch = patch.replace(/^```(?:diff)?\n/, "").replace(/\n```$/, "")
-      return { patch: patch ? patch + "\n" : "", usage }
+      return { patch: patch ? patch + "\n" : "", text, usage }
     } finally {
       // Abort/delete only this call's fresh session, including when HTTP times out.
       const cleanupSignal = AbortSignal.timeout(5000)

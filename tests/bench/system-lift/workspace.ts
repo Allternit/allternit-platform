@@ -1,18 +1,34 @@
 import { mkdir, writeFile, readFile, symlink, lstat } from "node:fs/promises"
 import { dirname, resolve, join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { spawn } from "node:child_process"
 import type { Check, Files, Fixture, Verification } from "./types"
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..")
 export const DEPENDENCIES = join(ROOT, "node_modules")
 export async function command(argv: string[], cwd: string, timeoutMs = 30000): Promise<Check> {
-  const proc = Bun.spawn(argv, { cwd, stdout: "pipe", stderr: "pipe", env: { ...process.env, CI: "1", NO_COLOR: "1" } })
-  let timedOut = false
-  const timer = setTimeout(() => { timedOut = true; proc.kill() }, timeoutMs)
-  try {
-    const [exitCode, stdout, stderr] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()])
-    return { passed: exitCode === 0 && !timedOut, exitCode, output: (timedOut ? "Timeout\n" : "") + (stdout + stderr).slice(-12000) }
-  } finally { clearTimeout(timer) }
+  return new Promise((resolveCheck, reject) => {
+    const proc = spawn(argv[0], argv.slice(1), { cwd, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, CI: "1", NO_COLOR: "1" } })
+    let timedOut = false, output = ""
+    const collect = (data: Buffer) => { output = (output + data.toString()).slice(-12000) }
+    proc.stdout.on("data", collect)
+    proc.stderr.on("data", collect)
+    const killOwnedGroup = () => {
+      try {
+        // This detached process group contains only this invocation and its workers.
+        if (process.platform !== "win32" && proc.pid) process.kill(-proc.pid, "SIGKILL")
+        else proc.kill("SIGKILL")
+      } catch { /* The owned process already exited. */ }
+    }
+    const timer = setTimeout(() => { timedOut = true; killOwnedGroup() }, timeoutMs)
+    proc.on("error", error => { clearTimeout(timer); reject(error) })
+    proc.on("close", code => {
+      clearTimeout(timer)
+      resolveCheck({ passed: code === 0 && !timedOut, exitCode: code ?? 128,
+        output: (timedOut ? "Timeout\n" : "") + output })
+    })
+  })
 }
 export async function writeFiles(repo: string, files: Files) {
   for (const [path, content] of Object.entries(files)) {
@@ -33,7 +49,9 @@ export async function materialize(fixture: Fixture, repo: string) {
 }
 export async function sourceFiles(repo: string): Promise<Files> {
   const files: Files = {}
+  if (!(await lstat(repo)).isDirectory()) throw new Error("workspace must not be a symlink")
   for (const path of ["src/lib.ts", "src/dep.ts"]) {
+    if (!(await lstat(join(repo, "src"))).isDirectory()) throw new Error("source directory must not be a symlink")
     if (!(await lstat(join(repo, path))).isFile()) throw new Error("source must be a regular file")
     files[path] = await readFile(join(repo, path), "utf8")
   }
@@ -47,7 +65,7 @@ export async function applyPatch(repo: string, patch: string): Promise<boolean> 
   if (!/^--- a\/src\/lib\.ts$/m.test(patch) || !/^\+\+\+ b\/src\/lib\.ts$/m.test(patch)) return false
   if (/^(?:new file mode|deleted file mode|old mode|new mode|rename|copy|--- |\+\+\+ )/m.test(
     patch.replace(/^--- a\/src\/lib\.ts\n/m, "").replace(/^\+\+\+ b\/src\/lib\.ts\n/m, ""))) return false
-  if (!(await lstat(join(repo, "src/lib.ts"))).isFile()) return false
+  if (!(await lstat(repo)).isDirectory() || !(await lstat(join(repo, "src"))).isDirectory() || !(await lstat(join(repo, "src/lib.ts"))).isFile()) return false
   const patchPath = join(repo, ".candidate.patch")
   await writeFile(patchPath, patch)
   if (!(await command(["git", "apply", "--check", patchPath], repo)).passed) return false

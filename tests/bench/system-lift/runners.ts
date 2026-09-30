@@ -11,6 +11,14 @@ function meter(task: Task, backend: Backend, callLimit = task.budget.maxCalls) {
     if (performance.now() - start >= task.budget.timeoutMs) throw new Error("wall-time budget exceeded")
     if (tokenCount(usage) >= task.budget.maxTokens) throw new Error("token budget exhausted")
   }
+  function accountUsage(extra: ReturnType<typeof emptyUsage>) {
+    if (!extra || typeof extra.estimated !== "boolean" ||
+      [extra.input, extra.output, extra.reasoning, extra.cacheRead, extra.cacheWrite].some(value => !Number.isFinite(value) || value < 0)) {
+      telemetryComplete = false; throw new Error("invalid token telemetry")
+    }
+    usage = addUsage(usage, extra)
+    if (tokenCount(usage) > task.budget.maxTokens) throw new Error("token budget exceeded")
+  }
   const model: Backend = {
     id: backend.id, kind: backend.kind,
     async complete(request: ModelRequest) {
@@ -23,16 +31,12 @@ function meter(task: Task, backend: Backend, callLimit = task.budget.maxCalls) {
         result = await backend.complete({ ...request, budget: { ...task.budget,
           maxTokens: task.budget.maxTokens - tokenCount(usage), timeoutMs: Math.max(1, task.budget.timeoutMs - Math.ceil(performance.now() - start)) } })
       } catch (error) { telemetryComplete = false; throw error }
-      if (Object.entries(result.usage).some(([key, value]) => key !== "estimated" && (!Number.isFinite(value) || (value as number) < 0))) {
-        telemetryComplete = false; throw new Error("invalid token telemetry")
-      }
-      usage = addUsage(usage, result.usage)
-      if (tokenCount(usage) > task.budget.maxTokens) throw new Error("token budget exceeded")
+      accountUsage(result.usage)
       if (performance.now() - start >= task.budget.timeoutMs) throw new Error("wall-time budget exceeded")
       return result
     },
   }
-  return { model, check, output: () => ({ usage: telemetryComplete ? usage : null, calls }) }
+  return { model, check, accountUsage, output: () => ({ usage: telemetryComplete ? usage : null, calls }) }
 }
 
 export class NakedRunner implements Runner {
@@ -59,20 +63,24 @@ export class SystemRunner implements Runner {
     const m = meter(task, this.backend)
     let evidence: GraphEvidence | null = null, patchAccepted = false, error: string | undefined
     try {
-      evidence = await this.graph.execute({ task, model: m.model,
+      evidence = await this.graph.execute({ task, signal: AbortSignal.timeout(task.budget.timeoutMs), model: m.model, accountUsage: m.accountUsage,
         verify: async () => { m.check(); return this.verify(task) },
         applyPatch: async patch => { m.check(); const accepted = await applyPatch(task.repo, patch); patchAccepted ||= accepted; return accepted },
       })
       m.check()
     } catch (e) { error = String(e) }
-    return { ...m.output(), patchAccepted, evidence, error }
+    const output = m.output()
+    if (this.graph.production && evidence?.telemetryComplete !== true) output.usage = null
+    return { ...output, patchAccepted, evidence, error }
   }
 }
 
 export function evidencePass(e: GraphEvidence | null): boolean {
   return !!e && e.verdict === "PASS" && e.completionOwner === "verifier" && e.receiptsValidated === true &&
-    !!e.runId && !!e.runReceiptId && !!e.verifierId && !!e.workerId && e.verifierId !== e.workerId &&
-    e.mutationReceiptIds?.length > 0 && e.verificationReceiptIds?.length > 0 && CRITERIA.every(c => e.criteria?.[c] === true)
+    [e.runId, e.runReceiptId, e.verifierId, e.workerId].every(id => typeof id === "string" && id.trim().length > 0) && e.verifierId !== e.workerId &&
+    Array.isArray(e.mutationReceiptIds) && e.mutationReceiptIds.length > 0 && e.mutationReceiptIds.every(id => typeof id === "string" && !!id) &&
+    Array.isArray(e.verificationReceiptIds) && e.verificationReceiptIds.length > 0 && e.verificationReceiptIds.every(id => typeof id === "string" && !!id) &&
+    CRITERIA.every(c => e.criteria?.[c] === true)
 }
 
 /** Offline wiring exercise only. It is not WP10 and can never satisfy eligibility. */
@@ -94,7 +102,7 @@ export class MockBugFixGraph implements BugFixGraph {
         return { runId, runReceiptId: `${runId}:run-receipt`, mutationReceiptIds: [`${runId}:mutation`],
           verificationReceiptIds: [`${runId}:verification`], verifierId: "mock-verifier", workerId: "mock-worker",
           verdict: "PASS", criteria: Object.fromEntries(CRITERIA.map(c => [c, true])) as GraphEvidence["criteria"],
-          receiptsValidated: true, completionOwner: "verifier" }
+          receiptsValidated: true, completionOwner: "verifier", telemetryComplete: true }
       }
       feedback = verification.target.output + "\n" + verification.regression.output
     }

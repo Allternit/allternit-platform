@@ -1,10 +1,10 @@
 import { performance } from "node:perf_hooks"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile, readFile } from "node:fs/promises"
 import { cpus, platform, arch } from "node:os"
 import { join, resolve } from "node:path"
 import { createHash } from "node:crypto"
 import { generateFixtures, random } from "./fixtures"
-import { evaluate, materialize, ROOT, runTests } from "./workspace"
+import { DEPENDENCIES, evaluate, materialize, ROOT, runTests } from "./workspace"
 import { NakedRunner, SystemRunner, evidencePass } from "./runners"
 import { markdown, summarize, type Observation } from "./metrics"
 import { CRITERIA, type Backend, type Budget, type BugFixGraph, type Fixture, type Task } from "./types"
@@ -16,6 +16,8 @@ export interface BenchmarkConfig {
 export async function benchmark(config: BenchmarkConfig) {
   const { backend, graph, budget } = config
   if (!backend.id) throw new Error("backend ID required")
+  if (!graph.gates || typeof graph.revision !== "string" || !graph.revision.trim() || typeof graph.production !== "boolean" ||
+    [graph.gates.wp10, graph.gates.wp12].some(x => x !== null && (typeof x !== "string" || !x.trim()))) throw new Error("invalid graph metadata or gate attestations")
   if (![budget.maxTokens, budget.maxCalls, budget.timeoutMs].every(x => Number.isSafeInteger(x) && x > 0)) throw new Error("positive integer budgets required")
   const output = resolve(config.output)
   if (!output.startsWith(ROOT + "/")) throw new Error("benchmark output must be inside this worktree")
@@ -39,8 +41,8 @@ export async function benchmark(config: BenchmarkConfig) {
       for (const mode of modes) {
         const repo = join(scratch, fixture.id, mode)
         await materialize(fixture, repo)
-        const task: Task = { fixtureId: fixture.id, report: fixture.report, repo, files: { ...fixture.files },
-          editablePaths: [fixture.truth.file], backendId: backend.id, budget: { ...budget } }
+        const task: Task = Object.freeze({ fixtureId: fixture.id, report: fixture.report, repo, files: Object.freeze({ ...fixture.files }),
+          editablePaths: [fixture.truth.file], backendId: backend.id, budget: Object.freeze({ ...budget }) })
         const start = performance.now(), result = await runners[mode].run(task)
         const runnerWallMs = performance.now() - start
         const verificationStart = performance.now()
@@ -72,10 +74,10 @@ export async function benchmark(config: BenchmarkConfig) {
         backendKind: backend.kind, graphId: graph.id, graphRevision: graph.revision, gates: graph.gates, budget,
         bootstrapSamples: config.bootstrapSamples ?? 2000 },
       environment: { platform: platform(), arch: arch(), cpu: cpus()[0]?.model, logicalCpus: cpus().length,
-        runtime: `bun ${Bun.version}`, vitest: "1.6.1" },
+        runtime: `bun ${Bun.version}`, vitest: JSON.parse(await readFile(join(DEPENDENCIES, "vitest/package.json"), "utf8")).version },
       definitions: { fix: "trusted target and regression tests pass with protected-file integrity",
         regression: "previously passing regression suite fails", completion: "fix plus runner success; system requires verifier-owned validated receipts",
-        tokens: "input + output + reasoning + cache read + cache write, summed over all generator calls",
+        tokens: "input + output + reasoning + cache read + cache write; generator calls plus adapter-accounted auxiliary cognition",
         wall: "runner including graph verification + independent final evaluation; excludes fixture setup/baseline",
         criteria: CRITERIA, confidence: "Wilson 95% rates; paired seeded percentile bootstrap 95% lift" },
       fixtures: fixtures.map(f => ({ id: f.id, seed: f.seed, category: f.category,

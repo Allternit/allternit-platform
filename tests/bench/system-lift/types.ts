@@ -1,4 +1,5 @@
-export const GRAPH_ID = "bug_fix.v1"
+export const GRAPH_ID = "coding.bug_fix.v1"
+export const TEMPLATE_ID = "BUG_FIX"
 export const CRITERIA = ["target_tests_pass", "affected_tests_pass", "no_new_regressions", "diff_review_accept", "requirements_satisfied"] as const
 export type Category = "off-by-one" | "null-handling" | "wrong-import" | "async-await" | "sort-comparator" | "falsy-default"
 export type Files = Record<string, string>
@@ -15,9 +16,11 @@ export interface Task {
 export interface Usage {
   input: number; output: number; reasoning: number; cacheRead: number; cacheWrite: number; estimated: boolean
 }
-export interface Completion { patch: string; usage: Usage }
+export interface Completion { patch: string; text: string; usage: Usage }
 export interface ModelRequest {
   backendId: string; report: string; files: Files; feedback?: string; attempt: number; budget: Budget
+  /** Production graph nodes may request hypotheses/reviews rather than a patch. */
+  stage?: string; instruction?: string; responseFormat?: "patch" | "text"
 }
 export interface Backend {
   id: string; kind: "mock" | "http"
@@ -31,6 +34,8 @@ export interface GraphEvidence {
   criteria: Record<(typeof CRITERIA)[number], boolean>
   /** Receipt resolution and identity checks are performed by the production adapter. */
   receiptsValidated: boolean; completionOwner: "verifier"
+  /** All additional cognitive usage was recorded through context.accountUsage. */
+  telemetryComplete: boolean
 }
 export interface RunOutput {
   usage: Usage | null; calls: number; evidence: GraphEvidence | null; patchAccepted: boolean; error?: string
@@ -38,8 +43,11 @@ export interface RunOutput {
 export interface Runner { mode: "naked" | "system"; run(task: Task): Promise<RunOutput> }
 export interface GraphContext {
   task: Task
+  signal: AbortSignal
   /** A budgeted handle to the SAME backend as the naked mode. */
   model: Backend
+  /** Charge non-generator cognition (decision/verifier work) to the same total budget. */
+  accountUsage(usage: Usage): void
   verify(): Promise<Verification>
   applyPatch(patch: string): Promise<boolean>
 }
