@@ -36,7 +36,8 @@ export type DisclosureTier = "SNIPPET" | "SCHEMA" | "DOCS"
 
 export interface OperationParam {
   name: string
-  type: "string" | "number" | "integer" | "boolean" | "object" | "array"
+  /** "any" = the tool schema has no single JSON type here (anyOf/unions). */
+  type: "string" | "number" | "integer" | "boolean" | "object" | "array" | "any"
   required?: boolean
   description?: string
   enum?: unknown[]
@@ -103,6 +104,8 @@ function typeOk(p: OperationParam, v: unknown): boolean {
       return Array.isArray(v)
     case "object":
       return !!v && typeof v === "object" && !Array.isArray(v)
+    case "any":
+      return v !== undefined
   }
 }
 

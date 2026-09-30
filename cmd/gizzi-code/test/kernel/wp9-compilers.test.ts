@@ -22,6 +22,9 @@ import {
   type OperationDescriptor,
 } from "../../src/runtime/kernel/compilers/tool-call-compiler"
 import { KernelTurn } from "../../src/runtime/kernel/compilers/turn-hook"
+import z from "zod/v4"
+import { GlobTool } from "../../src/runtime/tools/builtins/glob"
+import { ReadTool } from "../../src/runtime/tools/builtins/read"
 
 // --- ABI schema validator (frozen 1.0.0 package) ---------------------------
 const SCHEMA_DIR = path.resolve(import.meta.dir, "../../../../spec/Contracts/kernel/v1/schemas")
@@ -317,5 +320,54 @@ describe("feature flag wiring (GIZZI_KERNEL_COMPILERS)", () => {
     expect(rec.receipts.map((r) => r.exit_class)).toEqual(["SUCCESS", "FAILURE"])
     for (const r of rec.receipts) expect(valid("tool.schema.json", "ToolReceiptV1", r)).toBe(true)
     expect(rec.receipts[0].extensions!["x-argument_provenance"]).toEqual({ filePath: "GENERATED", oldString: "GENERATED", newString: "GENERATED" })
+  })
+
+  test("tool descriptors come from the registry tool's real schema", async () => {
+    const glob = await GlobTool.init()
+    const op = KernelTurn.descriptorFromJsonSchema("glob", glob.description, z.toJSONSchema(glob.parameters))
+    const shape = Object.keys((glob.parameters as any).shape).sort()
+    expect(op.params.map((p) => p.name)).toEqual(shape)
+    expect(op.params.find((p) => p.name === "pattern")).toMatchObject({ type: "string", required: true })
+    expect(op.params.find((p) => p.name === "path")).toMatchObject({ required: false, resource: "fs" })
+    expect(op.effect_class).toBe("READ")
+    expect(disclose(op, "SNIPPET").parameters).toBeUndefined()
+    const read = await ReadTool.init()
+    const rop = KernelTurn.descriptorFromJsonSchema("read", read.description, z.toJSONSchema(read.parameters))
+    // a schema-violating model arg is caught by the compiler (not guessed around)
+    expect(() =>
+      compileToolCall({ state: state(), op: rop, now: NOW, policy: { policy_decision_id: "pd", environment_id: "env" }, bindings: { filePath: { class: "GENERATED", value: 42 } } }),
+    ).toThrow("GENERATED_SCHEMA_VIOLATION")
+  })
+
+  test("receipt carries the real gate decision; ungated calls say why", async () => {
+    process.env[KernelTurn.FLAG] = "1"
+    const glob = await GlobTool.init()
+    const schema = () => z.toJSONSchema(glob.parameters)
+    // gate allowed call c1, denied call c2 (as PermissionNext.ask records them)
+    KernelTurn.noteGateDecision("c1", { permission: "glob", pattern: "src/**", action: "allow", source: "project" })
+    KernelTurn.noteGateDecision("c2", { permission: "glob", pattern: "/etc/**", action: "ask", source: "default" })
+    KernelTurn.noteGateDecision("c2", { permission: "glob", pattern: "/etc/**", action: "deny", source: "user_reply" })
+    await KernelTurn.withToolReceipt({ sessionID: "s", callID: "c1", tool: "glob", args: { pattern: "src/**" }, schema, description: glob.description }, async () => ({ output: "a.ts" }))
+    await expect(
+      KernelTurn.withToolReceipt({ sessionID: "s", callID: "c2", tool: "glob", args: { pattern: "/etc/**" }, schema }, async () => { throw new Error("rejected") }),
+    ).rejects.toThrow("rejected")
+    await KernelTurn.withToolReceipt({ sessionID: "s", callID: "c3", tool: "glob", args: { pattern: "x" }, schema }, async () => ({ output: "" }))
+    const rec = KernelTurn.record("s")!
+    expect(rec.errors).toEqual([])
+    const [r1, r2, r3] = rec.receipts
+    expect(r1.policy_receipt_id).toMatch(/^pd\.gate\.[0-9a-f]{24}$/)
+    expect(r1.extensions!["x-gate_decisions"]).toEqual([{ permission: "glob", pattern: "src/**", action: "allow", source: "project" }])
+    expect(r2.exit_class).toBe("DENIED")
+    expect(r2.policy_receipt_id).not.toBe(r1.policy_receipt_id)
+    expect(r3.policy_receipt_id).toBe("pd.ungated.c3")
+    expect(r3.extensions!["x-gate_reason"]).toContain("no PermissionNext check")
+    for (const r of rec.receipts) expect(valid("tool.schema.json", "ToolReceiptV1", r)).toBe(true)
+    // decisions are consumed once
+    expect(KernelTurn.takeGateDecisions("c1")).toEqual([])
+  })
+
+  test("flag off: gate decisions are not recorded", () => {
+    KernelTurn.noteGateDecision("c9", { permission: "bash", pattern: "ls", action: "allow", source: "default" })
+    expect(KernelTurn.takeGateDecisions("c9")).toEqual([])
   })
 })

@@ -1333,7 +1333,15 @@ const message = await createUserMessage(input)
           // WP9: Tool Call Compiler, shadow mode behind GIZZI_KERNEL_COMPILERS
           // (off by default → plain pass-through to the existing call).
           const result = await KernelTurn.withToolReceipt(
-            { sessionID: ctx.sessionID, callID: ctx.callID, tool: item.id, args, directory: input.session.directory },
+            {
+              sessionID: ctx.sessionID,
+              callID: ctx.callID,
+              tool: item.id,
+              args,
+              directory: input.session.directory,
+              description: item.description,
+              schema: () => z.toJSONSchema(item.parameters),
+            },
             () =>
               ToolDedupe.execute({
                 sessionID: ctx.sessionID,
