@@ -16,6 +16,7 @@
 //!   environment only. Every harness is admitted in its own auto-approve
 //!   mode ([`admit`] never refuses).
 
+pub mod blocklist;
 pub mod floor;
 pub mod shell;
 
@@ -269,11 +270,26 @@ pub async fn decide(req: &HookRequest, root: &Path, home: Option<&Path>, wih: Op
             };
         }
     }
-    let Some(wih) = wih else {
+    // Q25 always-on blocklist: metadata egress and undeclared credential
+    // reads, WIH or not. Strict (opt-in) additionally refuses local egress.
+    let env_strict = fence_env_strict();
+    let (allow_entries, wih_strict) = match &wih {
+        Some(w) => (
+            w.gate.wih_credential_allow(w.wih_id).await.unwrap_or_default(),
+            w.gate.wih_fence_strict(w.wih_id).await.unwrap_or(false),
+        ),
+        None => (blocklist::env_allow_entries(), false),
+    };
+    let known_strict = env_strict || wih_strict;
+    let allow = blocklist::allow_list(&allow_entries, home);
+    if let Some(reason) = blocklist_check(req, home, &allow, known_strict) {
         return Decision {
-            verdict: Verdict::Allow("hard floor passed (no WIH bound)".to_string()),
+            verdict: Verdict::Deny(reason),
             paths: Vec::new(),
         };
+    }
+    let Some(wih) = wih else {
+        return decide_unbound(req, root, home, env_strict);
     };
 
     // Replay (effects: recorded_only): no hooked or ACP harness runs a real tool;
@@ -288,7 +304,7 @@ pub async fn decide(req: &HookRequest, root: &Path, home: Option<&Path>, wih: Op
     let root_forms = path_forms(root);
     let mut rel_paths = Vec::new();
     let mut unresolved_effects = Vec::new();
-    let mut strict: Option<bool> = None;
+    let mut strict: Option<bool> = known_strict.then_some(true);
     for target in req.write_targets(home) {
         match target {
             Target::Unresolved(raw) => {
@@ -435,6 +451,124 @@ pub async fn decide(req: &HookRequest, root: &Path, home: Option<&Path>, wih: Op
     }
 }
 
+/// Whether the spawn runs under the opt-in strict fence
+/// (`ALLTERNIT_FENCE=strict`, set by the orchestrator for strict runs).
+pub fn fence_env_strict() -> bool {
+    std::env::var(FENCE_ENV).map(|v| v.eq_ignore_ascii_case("strict")).unwrap_or(false)
+}
+
+/// Env var carrying the fence profile into a spawned harness and its hook.
+pub const FENCE_ENV: &str = "ALLTERNIT_FENCE";
+
+/// The always-on blocklist applied to one tool call.
+pub fn blocklist_check(req: &HookRequest, home: Option<&Path>, allow: &[PathBuf], strict: bool) -> Option<String> {
+    let cwd = req.cwd.clone().unwrap_or_else(|| PathBuf::from("/"));
+    if let Some(cmd) = req.command() {
+        return blocklist::check_command(&cmd, &cwd, home, allow, strict);
+    }
+    for key in ["url", "uri"] {
+        if let Some(u) = req.tool_input.get(key).and_then(Value::as_str) {
+            if let Some(r) = blocklist::check_egress(u, strict) {
+                return Some(r);
+            }
+        }
+    }
+    if req.tool_name == "Write" {
+        return None;
+    }
+    let dir_reader = matches!(req.tool_name.as_str(), "Grep" | "Glob");
+    for key in ["file_path", "path", "notebook_path"] {
+        if let Some(p) = req.tool_input.get(key).and_then(Value::as_str) {
+            if let Target::Path(p) = shell::resolve(p, &cwd, home) {
+                if let Some(r) = blocklist::check_read(&p, dir_reader, allow) {
+                    return Some(r);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Temp roots a strict run may write besides its worktree.
+fn temp_roots() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for p in [std::env::temp_dir(), PathBuf::from("/tmp"), PathBuf::from("/var/tmp")] {
+        for f in path_forms(&p) {
+            if !out.contains(&f) {
+                out.push(f);
+            }
+        }
+    }
+    out
+}
+
+/// No WIH bound: guardrails only. Write targets are resolved for the audit
+/// record; under the strict fence they must stay in the worktree or temp.
+fn decide_unbound(req: &HookRequest, root: &Path, home: Option<&Path>, strict: bool) -> Decision {
+    let mut paths = Vec::new();
+    let mut allowed_roots = path_forms(root);
+    if strict {
+        allowed_roots.extend(temp_roots());
+    }
+    for target in req.write_targets(home) {
+        match target {
+            Target::Path(p) => {
+                let shown = relative_to_root(&p, &path_forms(root)).unwrap_or_else(|| p.to_string_lossy().to_string());
+                paths.push(shown);
+                if strict && relative_to_root(&p, &allowed_roots).is_none() {
+                    return Decision {
+                        verdict: Verdict::Deny(format!(
+                            "strict fence: write to {} is outside the worktree {} and temp",
+                            p.display(),
+                            root.display()
+                        )),
+                        paths,
+                    };
+                }
+            }
+            Target::Unresolved(raw) => {
+                paths.push(raw.clone());
+                if strict {
+                    return Decision {
+                        verdict: Verdict::Deny(format!("strict fence: unresolved write target `{raw}`")),
+                        paths,
+                    };
+                }
+            }
+            Target::UnknownEffect { what, .. } => {
+                if strict {
+                    return Decision {
+                        verdict: Verdict::Deny(format!(
+                            "strict fence: unresolved write effect `{what}`; use the file-edit tools or a command the gate can scan"
+                        )),
+                        paths,
+                    };
+                }
+            }
+        }
+    }
+    Decision {
+        verdict: Verdict::Allow("guardrails passed (no WIH bound)".to_string()),
+        paths,
+    }
+}
+
+/// Append a hook decision to the ledger. Every decision is recorded (allow,
+/// deny or unresolved): Q25 audit, not only denials. A ledger failure never
+/// flips a deny into an allow.
+pub async fn record_decision(ledger: &Ledger, req: Option<&HookRequest>, harness: &str, wih_id: Option<&str>, decision: &Decision) {
+    let unparsed = HookRequest {
+        tool_name: "<unparsed>".to_string(),
+        tool_input: Value::Null,
+        cwd: None,
+        session_id: None,
+    };
+    let event = decision_event(req.unwrap_or(&unparsed), harness, wih_id, decision);
+    if let Err(err) = ledger.append(event).await {
+        eprintln!("allternit spawn gate: ledger append failed: {err}");
+    }
+}
+
 /// Same matching rule as `Leases::check_coverage` (one implementation).
 fn lease_matches(lease_path: &str, candidate: &str) -> bool {
     crate::leases::leases::matches_path(lease_path, candidate)
@@ -562,7 +696,7 @@ pub fn decision_event(req: &HookRequest, harness: &str, wih_id: Option<&str>, de
             "harness": harness,
             "harness_session_id": req.session_id,
             "tool": req.tool_name,
-            "decision": if decision.verdict.is_deny() { "deny" } else { "allow" },
+            "decision": decision_label(req, decision),
             "reason": decision.verdict.reason(),
             "paths": decision.paths,
             "command": req.command(),
@@ -570,6 +704,18 @@ pub fn decision_event(req: &HookRequest, harness: &str, wih_id: Option<&str>, de
             "unresolved_effect": req.unresolved_effects(),
         }),
         provenance: None,
+    }
+}
+
+/// `deny`, `unresolved` (allowed, but a program's effect could not be
+/// scanned) or `allow`.
+pub fn decision_label(req: &HookRequest, decision: &Decision) -> &'static str {
+    if decision.verdict.is_deny() {
+        "deny"
+    } else if !req.unresolved_effects().is_empty() {
+        "unresolved"
+    } else {
+        "allow"
     }
 }
 
