@@ -97,7 +97,7 @@ describe("bindings", () => {
     rt(remoteThreadBindingSchema, { id: "r", threadId: "t", generation: 1, executionBindingId: "1", lane: "official", state: "ACTIVE" });
     rt(channelConversationBindingSchema, {
       threadId: "t", provider: "slack", accountBindingId: "a", externalConversationId: "C1",
-      bidirectional: true, readOnly: false, syncState: "live",
+      bidirectional: true, readOnly: false, syncState: "LIVE",
     });
   });
   it("rejects bad states", () => {
