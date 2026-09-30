@@ -380,11 +380,22 @@ pub struct WihCloseRequest {
     /// evidence). See `spec/STORAGE_LAYOUT.md`.
     #[serde(default)]
     pub output: Option<String>,
+    /// Who is closing: `user:<id>` | `agent:<id>` (bare id = user). Matters
+    /// under the judge policy (`close_by: verifier`, `verify: judge`); unset
+    /// counts as the worker. See `spec/JUDGE.md`.
+    #[serde(default)]
+    pub actor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WihCloseResponse {
     pub closed: bool,
+    /// Node status after the close (`DONE`, `EXCEPTION`, `NEEDS_HUMAN`, ...).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_status: Option<String>,
+    /// Judge verdict when the node policy has `verify: judge`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<serde_json::Value>,
 }
 
 // ============================================================================
@@ -1415,19 +1426,35 @@ async fn wih_close(
         ..Default::default()
     };
     ensure_policy_injected(&state, Some(scope)).await?;
+    let closer = match request.actor.as_deref().map(crate::cli::judge::parse_actor).transpose() {
+        Ok(c) => c,
+        Err(_) => return Err(StatusCode::BAD_REQUEST),
+    };
     match state
         .gate
-        .wih_close_with(
+        .wih_close_as(
             &wih_id,
             &request.status,
             &request.evidence,
             request.output.as_deref(),
+            closer.as_ref(),
         )
         .await
     {
-        Ok(_) => Ok((StatusCode::OK, Json(WihCloseResponse { closed: true }))),
+        Ok(outcome) => Ok((
+            StatusCode::OK,
+            Json(WihCloseResponse {
+                closed: true,
+                node_status: Some(outcome.node_status),
+                verdict: outcome.verdict.and_then(|v| serde_json::to_value(v).ok()),
+            }),
+        )),
         Err(e) => {
             tracing::error!("wih_close failed: {}", e);
+            // Structured Gate 4 refusal (close_by_verifier, wih_already_closed).
+            if crate::gate::GateError::from_anyhow(&e).is_some() {
+                return Err(StatusCode::CONFLICT);
+            }
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }

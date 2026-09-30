@@ -34,6 +34,13 @@ use crate::work::graph::{would_create_cycle, would_create_parent_cycle};
 use crate::work::projection::project_dag;
 use crate::work::types::{DagEdge, DagNode, DagRelation, DagState};
 
+// Fail-closed judge wiring (Gate 2 judge step, Gate 4 verdict, verifier-only
+// close, lease heartbeats/reclaim). Child module so it can reach the Gate's
+// private stores; see `gate_judge.rs` and `spec/JUDGE.md`.
+#[path = "gate_judge.rs"]
+mod gate_judge;
+pub use gate_judge::{CloseOutcome, HumanDecision, JudgeHandle, ReclaimRecord};
+
 #[derive(Clone)]
 pub struct GateOptions {
     pub ledger: Arc<Ledger>,
@@ -63,6 +70,8 @@ pub struct Gate {
     strict_provenance: bool,
     visual_provider: Option<Arc<dyn VerificationProvider>>,
     visual_config: Option<VisualConfig>,
+    /// Installed judge (`with_judge`); None = load `.allternit/judge/config.json`.
+    judge: Option<JudgeHandle>,
 }
 
 #[derive(Debug)]
@@ -179,6 +188,7 @@ impl Gate {
             strict_provenance: opts.strict_provenance.unwrap_or(true),
             visual_provider: opts.visual_provider,
             visual_config: opts.visual_config,
+            judge: None,
         }
     }
 
@@ -1068,7 +1078,10 @@ impl Gate {
         Ok(())
     }
 
-    pub async fn pre_tool(
+    /// Gate 2 base checks (open-signed, allowed tools, lease coverage). The
+    /// public `pre_tool` / `pre_tool_with` (gate_judge.rs) add the optional
+    /// judge step on top.
+    async fn pre_tool_base(
         &self,
         wih_id: &str,
         tool: &str,
@@ -1467,6 +1480,25 @@ impl Gate {
         evidence_refs: &[String],
         output: Option<&str>,
     ) -> Result<Option<String>> {
+        self.wih_close_as(wih_id, status, evidence_refs, output, None)
+            .await
+            .map(|c| c.output_receipt_id)
+    }
+
+    /// Gate 4 close with an explicit closer. With the node/plan judge policy
+    /// off (the default) this is exactly `wih_close_with`. `close_by:
+    /// verifier` refuses a DONE/PASS close by the worker (`closer` None, the
+    /// gate, or the WIH's own agent); `verify: judge` asks the judge for a
+    /// verdict and lands the node DONE / EXCEPTION / NEEDS_HUMAN
+    /// (`gate_judge.rs`, `spec/JUDGE.md`).
+    pub async fn wih_close_as(
+        &self,
+        wih_id: &str,
+        status: &str,
+        evidence_refs: &[String],
+        output: Option<&str>,
+        closer: Option<&Actor>,
+    ) -> Result<CloseOutcome> {
         let scope = EventScope {
             wih_id: Some(wih_id.to_string()),
             ..Default::default()
@@ -1479,6 +1511,8 @@ impl Gate {
         let wih_state = project_wih(&wih_events, wih_id).ok_or_else(|| anyhow!("wih not found"))?;
         let dag_id = wih_state.dag_id.clone();
         let node_id = wih_state.node_id.clone();
+        let judge_policy = self.gate4_precheck(&wih_state, status, closer).await?;
+        let requested_status = status;
 
         let mut evidence_refs: Vec<String> = evidence_refs.to_vec();
         let output_receipt_id = match output {
@@ -1492,6 +1526,9 @@ impl Gate {
             None => None,
         };
         let evidence_refs = evidence_refs.as_slice();
+        let decision = self
+            .gate4_verdict(&wih_state, requested_status, closer, &judge_policy, evidence_refs, output)
+            .await?;
 
         let close_req = AllternitEvent {
             event_id: create_event_id(),
@@ -1499,10 +1536,13 @@ impl Gate {
             actor: gate_actor(&self.actor_id),
             scope: None,
             r#type: "WIHCloseRequested".to_string(),
-            payload: json!({ "wih_id": wih_id, "dag_id": dag_id, "node_id": node_id, "status": status, "evidence_refs": evidence_refs }),
+            payload: json!({ "wih_id": wih_id, "dag_id": dag_id, "node_id": node_id, "status": requested_status, "evidence_refs": evidence_refs }),
             provenance: None,
         };
         self.emit(close_req).await?;
+        // From here on `status` is the verdict-mapped status (unchanged when
+        // the judge policy is off).
+        let status = decision.final_status.as_str();
 
         let closed = AllternitEvent {
             event_id: create_event_id(),
@@ -1568,7 +1608,12 @@ impl Gate {
         self.refresh_wih_view(wih_id).await?;
         self.refresh_dag_view(&dag_id).await?;
 
-        Ok(output_receipt_id)
+        Ok(CloseOutcome {
+            output_receipt_id,
+            final_status: decision.final_status.clone(),
+            node_status: decision.node_status.clone(),
+            verdict: decision.verdict.clone(),
+        })
     }
 
     pub async fn lease_request(
