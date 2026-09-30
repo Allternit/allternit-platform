@@ -26,9 +26,9 @@ bundle id `com.anysphere.sand`) over local CDP. Not an official API. Events are 
   (Allow once / Always allow / Deny or Skip), usage-limit and rate-limit messages. Bots keep memory across chats, so context
   isolation is declared `shared`; one main window means `maxParallel: 1`.
 
-## Selectors strategy (`selectors.ts`, version `v1`)
+## Selectors strategy (`selectors.ts`, version `v2`)
 Named keys, each with ordered CSS fallbacks; `composer` and `appRoot` are critical. Missing composer with no Sign-in gate, or an
-assistant turn without `.sand-message-content`, is **drift**: provider latches `ADAPTER_DRIFT` and stops. Buttons and approval
+assistant turn without `.sand-message-prose`, is **drift**: provider latches `ADAPTER_DRIFT` and stops. Buttons and approval
 cards are located by accessible name (`NAMES`), approval cards by the ancestor whose text says it needs approval.
 
 ## Files
@@ -49,11 +49,17 @@ Regenerate fixtures: `node node_modules/tsx/dist/cli.mjs adapters/grok-bot/fixtu
   self pacing limits → `RATE_LIMITED`. `clearHalt()` releases a latch after the user resolves it or the selectors are updated.
 - Approvals are only ever answered by a `human` actor; anything else is `APPROVAL_REQUIRED`. An approval answered inside the app becomes `cancelled` (outcome not observable).
 
-## UNVERIFIED LIVE (needs one user-consented session)
-Written from the bundle, never run against the live app. To confirm: (1) app honours `--remote-debugging-port` and the renderer target URL match;
-(2) composer `Input.insertText` + `Send message` click actually submits; (3) streaming is signalled by the `Stop` button; (4) the real approval-card,
-banner and routine markup (fixtures use inferred containers); (5) signed-in detection (composer visible, no Sign-in gate); (6) whether `New chat` is a
-button with that name. Fixtures are hand-built, so selector drift shows up first at that gate.
+## Verified live (2026-09-29, Grok Bot 0.61.0, Electron 42.1 / Chrome 148)
+Ran with consent: quit, relaunch with `--remote-debugging-port=9333`, adapter attached, one message sent, app restored without the port.
+- **Debug flag**: honoured; endpoint on localhost only; one `page` target, url `.../app.asar/dist/renderer/index.html` (matches the driver's target regex).
+- **health / identity**: `healthy` (signed-in = composer present, no Sign-in gate); identity returns `grok-bot`.
+- **Matched as written**: `appRoot #root`, `turn .sand-message[role=article]` (+ `data-role=user|assistant`), `.sand-transcript-row`, composer `.ProseMirror[contenteditable=true]` / `[role=textbox]`, `alert`/`status` live regions (always present, empty when idle), `New chat` (sidebar button, aria-label).
+- **Fixed in v2**: `turnContent` is `.sand-message-prose` (`.sand-message-content` does not exist); `.ui-prompt-input-editor__input` does not exist (kept last as fallback); composer now leads with the ProseMirror selector.
+- **New finding, New chat is a Bot picker**: clicking `New chat` opens a Bot list (`Close new chat`, `Create new Bot`, `Create group chat`, one button per Bot); the composer is present but its send button stays disabled until a Bot is chosen. Provider gained `botName` (exact Bot display name) and `PageState.picker`; without `botName` it refuses with POLICY_DENIED rather than guess. Choosing a Bot appended to that Bot's existing thread (transcript articles 4 to 6), so treat it as a persistent per-Bot chat, not an empty one.
+- **Send control**: `button.sand-prompt-send`; its aria-label is `Start voice input` while the composer is empty and `Send message` (type=submit) once text exists. `Input.insertText` after focus works; the name-based send click works.
+- **Round trip** (test message, reply `ok`): open ~4s, message to reply ~7s. Events: `context.opened`, `activity.started` (sent, best_effort), `activity.started` (streaming, inferred), `message.delta` (best_effort), `message.completed`. Reply was too fast to catch the streaming DOM.
+- **Fixtures** now mirror the live structure (rows, message, prose, tiptap composer, send button, picker), text placeholder only.
+- **Still UNVERIFIED live**: the `Stop` button markup while streaming, approval-card container, rate-limit / bot-check banners, routine cards, logged-out gate (fixtures for these remain inferred from the message catalog).
 
 ## Registration (src/aai/registry.ts, owned elsewhere)
 `import { grokBot } from "../../adapters/grok-bot/index.js"; registry.register({ adapterId: grokBot.adapterId, manifest: grokBot.manifest, create: grokBot.create });`
