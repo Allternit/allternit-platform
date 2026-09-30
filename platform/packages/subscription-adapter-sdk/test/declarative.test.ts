@@ -329,6 +329,18 @@ describe("DeclarativeChatAdapter end-to-end (§A3.3, P2 verify)", () => {
     await page.close();
   });
 
+  it("a limit that blocks sending stops the task before anything is typed (fallback-eligible)", async () => {
+    const { events, marks, page } = await runAdapter("limit-banner.html", {
+      banners: [{ kind: "limit_banner", pattern: /limit reached/i, blocksSend: true }],
+    });
+    expect(types(events)).not.toContain("submitted");
+    expect(marks).toEqual([]);
+    const err = events.find((e) => (e as { t: string }).t === "error") as Extract<AdapterEvent, { t: "error" }>;
+    expect(err.error).toMatchObject({ class: "quota_exhausted", fallback_eligible: true, retryable: true });
+    expect(await page.evaluate(() => document.body.dataset.fwSubmitted)).toBeUndefined();
+    await page.close();
+  });
+
   it("limit-banner: quota.signal emitted for the limit banners", async () => {
     const { events, page } = await runAdapter("limit-banner.html");
     const signals = events.filter(

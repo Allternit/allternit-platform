@@ -180,12 +180,15 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
 
     const classifier = createBannerClassifier(cfg.banners);
     const seenQuotaKinds = new Set<string>();
+    // Set when a notice that blocks sending is on screen (see BannerPattern).
+    let sendBlockedBy: string | null = null;
     const scanBanners = async (): Promise<AdapterEvent[]> => {
       const out: AdapterEvent[] = [];
       const bannerLoc = await resolver.tryResolveLocator("banner");
       if (!bannerLoc) return out;
       for (const el of await bannerLoc.all()) {
         const hit = classifier.classify(await el.innerText());
+        if (hit?.blocksSend && sendBlockedBy === null) sendBlockedBy = hit.raw_excerpt;
         if (hit && !seenQuotaKinds.has(hit.kind)) {
           seenQuotaKinds.add(hit.kind);
           out.push({
@@ -202,7 +205,13 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
       }
       return out;
     };
+    // A limit notice already on screen: the provider won't take the message.
+    // Stop before typing anything, so routing can fall back to another login.
     yield* await scanBanners();
+    if (sendBlockedBy !== null) {
+      yield { t: "error", error: limitReachedError(sendBlockedBy) };
+      return;
+    }
 
     // Replies already on the page (chat.continue): live text streams only
     // once a new one appears, never the previous turn.
@@ -507,6 +516,20 @@ export async function confirmSend(
 async function countKey(resolver: SdkSelectorResolver, key: string): Promise<number> {
   const loc = await resolver.tryResolveLocator(key);
   return loc ? loc.count() : 0;
+}
+
+// The account is at its usage limit (seen before sending): nothing was sent.
+export function limitReachedError(excerpt: string): TaskError {
+  return {
+    class: "quota_exhausted",
+    scope: "pool",
+    retryable: true,
+    fallback_eligible: true,
+    cooldown_s: null,
+    user_action: null,
+    detail: `usage limit reached before sending: ${excerpt}`.slice(0, 300),
+    evidence_ref: null,
+  };
 }
 
 export function composerDriftError(detail: string): TaskError {
