@@ -2425,7 +2425,55 @@ impl Gate {
                     .with_details(details),
             ))
         };
+        // Validate status writers against the authoritative projected state,
+        // then advance a local view in batch order before any event is emitted.
+        let mut statuses: HashMap<String, String> = dag
+            .nodes
+            .iter()
+            .map(|(id, node)| (id.clone(), node.status.clone()))
+            .collect();
         for m in mutations {
+            match m {
+                DagMutation::CreateNode { node_id, .. } => {
+                    statuses.insert(node_id.clone(), "NEW".to_string());
+                }
+                DagMutation::DeleteNode { node_id } => {
+                    statuses.remove(node_id);
+                }
+                DagMutation::ChangeStatus {
+                    node_id, from, to, ..
+                } => {
+                    let current = match statuses.get(node_id) {
+                        Some(status) => status,
+                        None => {
+                            return reject(
+                                "status_unknown_node",
+                                node_id,
+                                format!("status change targets unknown node {node_id}"),
+                                json!({}),
+                            )
+                        }
+                    };
+                    if from != current {
+                        return reject(
+                            "status_source_mismatch",
+                            node_id,
+                            format!("status source {from} does not match current status {current}"),
+                            json!({ "from": from, "current": current, "to": to }),
+                        );
+                    }
+                    if let Err(err) = crate::kernel::lifecycle::check_legacy_change(current, to) {
+                        return reject(
+                            "status_illegal_transition",
+                            node_id,
+                            err.to_string(),
+                            json!({ "from": current, "to": to }),
+                        );
+                    }
+                    statuses.insert(node_id.clone(), to.clone());
+                }
+                _ => {}
+            }
             let (node_id, description, executor) = match m {
                 DagMutation::CreateNode {
                     node_id,
