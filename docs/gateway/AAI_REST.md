@@ -1,6 +1,6 @@
 # AAI REST reference
 
-Generated from the route tables in `cmd/allternit-api/src/{agent_gateway_routes,gateway_runner,thread_routes,agent_session_routes}.rs`. All paths are under `/api/v1`; all require `Authorization: Bearer <token>` and are owner-scoped (a resource you do not own returns 404). Bodies use the field names the handlers deserialize (mostly `snake_case`; responses are camelCase).
+Generated from the route tables in `cmd/allternit-api/src/{agent_gateway_routes,gateway_runner,thread_routes,agent_session_routes}.rs`. All paths are under `/api/v1`; all require `Authorization: Bearer <token>` and are owner-scoped (a resource you do not own returns 404). Bodies use the field names the handlers deserialize (the handlers in `agent_gateway_routes.rs` use `#[serde(rename_all = "camelCase")]`, so send camelCase such as `authType` and `accountBindingId`; the `snake_case` names in the tables below are what the SDKs send, and the SDKs and handlers disagree, see [QUICKSTART.md](QUICKSTART.md#9-the-same-flow-with-the-sdks); responses are camelCase).
 
 SDKs: TypeScript [`@allternit/aai-sdk`](../../platform/packages/aai-sdk/README.md), Python [`allternit-aai`](../../platform/python/allternit-aai/README.md).
 

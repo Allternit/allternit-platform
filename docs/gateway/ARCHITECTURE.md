@@ -197,3 +197,38 @@ All from the spec, `Research/specs/agent-gateway.md`.
 | 2026-09-29 (v2) | Look packs are authentic; Allternit keeps navigation, inspector, artifacts, memory and a mandatory provenance layer. |
 | 2026-09-29 (v2) | Build order: contracts, loopback and conformance, then adapters Grok Bot, Claude, dots, Muse, OpenClaw. |
 | 2026-09-29 (v2) | An adapter is not done until its look pack renders. |
+
+## 13. Read the code in this order
+
+1. `platform/packages/subscription-fabric-contracts/src/agent.ts`: AAI operations, lanes, guarantees, error codes, event types, approvals.
+2. `platform/packages/subscription-fabric-contracts/src/bindings.ts`: binding schemas and the state transition tables.
+3. `platform/packages/agent-gateway/src/provider.ts` and `router.ts`: the provider interface and the router that adds idempotency, capacity and human-only approvals.
+4. `services/subscription-gateway/src/aai/registry.ts` and `src/http/routes_aai.ts`: how providers are loaded, guarded and called over HTTP.
+5. `services/subscription-gateway/adapters/openclaw/` (small) then `adapters/grok-bot/` (a UI bridge): manifest, provider, `aai.ts`, fixtures.
+6. `cmd/allternit-api/migrations/V198__agent_gateway_bindings.sql` and `V199__gateway_runner.sql`: the tables.
+7. `cmd/allternit-api/src/agent_gateway_routes.rs`: accounts, bindings, packs, gaps, state machines, revocation cascade.
+8. `cmd/allternit-api/src/gateway_runner.rs`: `run_turn`, `open_remote`, `pull_events`, `gate_allternit`, `fail`, approvals.
+9. `cmd/allternit-api/src/gateway_placement.rs` and `aai_facade.rs`: placement, and the shared core behind MCP and A2A.
+10. `cmd/allternit-api/src/channel_gateway.rs` then `channel_transports.rs`: the channel trait, send policy, and per-platform transports.
+
+The web side starts at `allternit-ai/src/lib/gateway/api.ts` and `src/components/gateway/VendorPackSurface.tsx`.
+
+## 14. How to debug a vendor turn
+
+Follow the hops in section 5. At each one, check this before moving on.
+
+| Hop | Symptom | Check |
+|---|---|---|
+| Web send | Turn never leaves the browser, or an error banner | Browser network tab for `POST /api/v1/agent-sessions/:id/messages`. 409 or 428 bodies carry `code` and `approvalId` (`VendorSendError` in `allternit-ai/src/lib/gateway/api.ts`). |
+| Binding | 409 `BINDING_NOT_READY` | `GET /gateway/bots/:bot_id/execution-binding`: `state` must be `READY`, and `health` shows `rateLimitedUntil`. `NEEDS_AUTH` means the account moved (`GET /gateway/provider-accounts/:id`, then `connection_audit` for the event trail). `DISABLED` usually means a latched `LANE_BLOCKED` or the kill switch. |
+| Approval gate | 428 `APPROVAL_REQUIRED` | `GET /threads/:id/approvals?state=pending`. The turn is resent with the approved `allternitApprovalId`. An approval is consumed once (`gateway_approvals.consumed`). |
+| Replay | A retry returns quickly without reaching the vendor | `gateway_sends` has the `(remote_binding_id, correlation_id)` row. Use a new correlation id for a genuine resend. |
+| Remote context | Wrong or missing vendor context | `GET /gateway/threads/:id/remote-bindings`: one row per generation, `state`, `external_context_id`, frozen `lane`. Ledger events `agent.context.opened`. |
+| allternit-api to gateway | 503 `GATEWAY_OFFLINE`, 409 `sessions_computer_not_bound`, `sessions_computer_not_running` | `GET /api/v1/subscriptions/binding`, and whether the Sessions computer is running. `forward` in `subscription_routes.rs` returns these before the gateway sees anything. |
+| Gateway host | `LANE_BLOCKED` with "disabled (kill switch)" or "pacing" | `GET /aai/providers` shows `disabled` and `pacing` per adapter. The message says which limit fired and `retryAfterMs`. |
+| Adapter | `VENDOR_UNAVAILABLE`, `AUTH_REQUIRED`, `ADAPTER_DRIFT` | The adapter's README for the failure list, and its log lines. Run `POST /aai/conformance/<id>` to separate an adapter bug from a vendor change. UI bridges latch after a bot check or drift and need `clearHalt()` after the user resolves it. |
+| Events back | Reply missing from the transcript | `POST /threads/:id/gateway/sync`, then `GET /threads/:id/events?after=0`. `agent.message.completed` becomes a transcript message, deduped by `remote_event_id` (`gizzi-code` `VendorMessage.append` skips duplicates). `remote_thread_bindings.sync_cursor` shows how far the pull got. |
+| Failure effects | Thread shows needs_you | Ledger events `gateway.turn.failed` and `gateway.adapter.drift` carry the AAI code. The mapping is in section 8. |
+| Channel post | Post shows Pending | `channel_message_log` rows for the binding, state `unconfirmed`. It is confirmed by the inbound echo or a resume. It is never re-posted blindly. |
+
+Tables to query directly (SQLite, owner-scoped rows): `bot_execution_bindings`, `provider_account_bindings`, `remote_thread_bindings`, `gateway_approvals`, `gateway_sends`, `connection_audit`, `channel_message_log`, and `bot_events` filtered by `thread_id`.

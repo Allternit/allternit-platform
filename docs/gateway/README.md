@@ -41,6 +41,8 @@ These are decisions from the spec, locked 2026-09-29. The full log is in [ARCHIT
 | [CHANNELS.md](CHANNELS.md) | ChannelTransport, Slack/Teams/Discord/WhatsApp, channel send policy, Muse lane |
 | [OPERATIONS.md](OPERATIONS.md) | Env vars, migrations, the `gateway/integration` gate, known test issues, live-verification checklist |
 | [FACADES.md](FACADES.md) | REST, SDKs, MCP tools, A2A, with examples |
+| [QUICKSTART.md](QUICKSTART.md) | **Start here.** Run it locally, connect Grok Bot, bind a bot, send a turn, approve |
+| [GLOSSARY.md](GLOSSARY.md) | Every term in one or two sentences, with the code location |
 | [AAI_REST.md](AAI_REST.md) | Route-by-route REST reference |
 | [ACCEPTANCE.md](ACCEPTANCE.md) | Acceptance matrix with test names and status |
 

@@ -106,5 +106,5 @@ Execution binding state changes land on the bot ledger with `bot_id`, so the cas
 ## Not built
 
 - No vendor OAuth flow, so `oauth` accounts can only be moved through states by a caller.
-- Vendor memory has an AAI operation (`agent.memory`) but nothing surfaces it in Allternit memory (recorded as blocked in [ACCEPTANCE.md](ACCEPTANCE.md)).
+- Vendor memory is a separate partition under the Bot, and promotion into native memory is explicit. The web UI exists (allternit-ai PR #282: `VendorMemoryPartition.tsx`, calling `GET /gateway/bots/:id/vendor-memory` and `POST .../vendor-memory/:recordId/promote`). Those backend endpoints are **not on `gateway/integration` at this commit**. They are in review on the platform `gateway/accept-rust` branch. Until it merges the panel has no server to talk to, and [ACCEPTANCE.md](ACCEPTANCE.md) still records the line as blocked.
 - Terms acceptance is a UI step. The server does not store who accepted which terms version.
