@@ -324,6 +324,17 @@ impl CreateResponseRequest {
             .and_then(serde_json::Value::as_str)
     }
 
+    /// WIH this turn is bound to (`metadata.allternit_wih_id`). Hooked
+    /// harnesses enforce Gate 2 against it; unhooked ones are refused when
+    /// its policy requires leased writes.
+    pub fn wih_id(&self) -> Option<&str> {
+        self.metadata
+            .as_ref()
+            .and_then(|m| m.get("allternit_wih_id"))
+            .and_then(serde_json::Value::as_str)
+            .filter(|w| !w.is_empty())
+    }
+
     pub fn ignored_fields(&self) -> Vec<String> {
         let mut out = Vec::new();
         if self.tools.is_some() {

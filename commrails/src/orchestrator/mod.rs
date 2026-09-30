@@ -15,6 +15,8 @@ use tokio::process::Command;
 use tokio::time::{sleep, Instant};
 
 use crate::core::io::ensure_dir;
+use crate::hook::{self, HarnessGate, HookTarget};
+use crate::ledger::{Ledger, LedgerOptions};
 use crate::peer::{PeerEnvelope, PeerRegistry, PeerStatus, send_envelope};
 
 /// Options for spawning an executor session.
@@ -28,6 +30,9 @@ pub struct SpawnOptions<'a> {
     pub mode: &'a str,
     pub task_file: Option<&'a Path>,
     pub notes_sentinel: Option<&'a Path>,
+    /// WIH the spawned session is bound to. Hooked harnesses enforce Gate 2
+    /// against it; unhooked ones are refused when its policy needs leased writes.
+    pub wih: Option<&'a str>,
 }
 
 /// Result of a successful spawn.
@@ -101,6 +106,39 @@ impl Orchestrator {
             );
         }
 
+        // Spawn gate (audit S1): admission before any side effect.
+        let harness = opts.cmd.first().map(String::as_str).unwrap_or("");
+        let ledger = Ledger::new(LedgerOptions {
+            root_dir: Some(self.root_dir.clone()),
+            ledger_dir: Some(PathBuf::from(".allternit/ledger")),
+        });
+        let wih_policy = match opts.wih {
+            Some(wih_id) => Some(hook::load_wih_policy(&ledger, wih_id).await?),
+            None => None,
+        };
+        let gate = match hook::admit(harness, wih_policy.as_ref()) {
+            Ok(gate) => gate,
+            Err(reason) => {
+                if let Some(wih_id) = opts.wih {
+                    let _ = ledger
+                        .append(hook::spawn_refused_event(harness, wih_id, &reason))
+                        .await;
+                }
+                bail!(reason);
+            }
+        };
+        // A hooked harness without a reachable hook binary would run unhooked;
+        // refuse instead of falling back to bypass.
+        let commrails_bin = if gate == HarnessGate::Hook {
+            Some(hook::find_commrails_bin().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "cannot install the spawn-gate hook for {harness}: allternit-commrails binary not found (set ALLTERNIT_COMMRAILS_BIN)"
+                )
+            })?)
+        } else {
+            None
+        };
+
         let (workdir, wt_created) = if opts.worktree {
             let (wt, created) = create_worktree(opts.repo, &slug).await?;
             (wt, created)
@@ -108,9 +146,29 @@ impl Orchestrator {
             (opts.repo.to_path_buf(), false)
         };
 
+        let settings_path = match &commrails_bin {
+            Some(bin) => {
+                let path = logdir.join(format!("{}.claude-settings.json", session));
+                let settings = hook::claude_settings(HookTarget {
+                    commrails_bin: bin,
+                    root: &self.root_dir,
+                    workspace: Some(&workdir),
+                    wih_id: opts.wih,
+                });
+                if let Err(err) = tokio::fs::write(&path, serde_json::to_string_pretty(&settings)?).await {
+                    if wt_created {
+                        let _ = remove_worktree(&workdir).await;
+                    }
+                    bail!("writing spawn-gate settings {}: {}", path.display(), err);
+                }
+                Some(path)
+            }
+            None => None,
+        };
+        let cmd = hook::gate_argv(opts.cmd, settings_path.as_deref());
+
         // Write the runner file to sidestep shell quoting issues.
-        let runner_text = opts
-            .cmd
+        let runner_text = cmd
             .iter()
             .map(|s| shell_escape(s))
             .collect::<Vec<_>>()
@@ -137,6 +195,12 @@ impl Orchestrator {
             shell_escape(&peer.inbox_socket.to_string_lossy()),
             shell_escape(&workdir.to_string_lossy())
         );
+        if let Some(wih_id) = opts.wih {
+            inner.push_str(&format!(
+                "export ALLTERNIT_COMMRAILS_WIH={}; ",
+                shell_escape(wih_id)
+            ));
+        }
         if let Some(task) = opts.task_file {
             let task_escaped = shell_escape(&task.to_string_lossy());
             inner.push_str(&format!(
@@ -335,8 +399,10 @@ impl Orchestrator {
 
         let mut executors = Vec::new();
         executors.push(probe_executor("kimi", "kimi", &["--yolo"], &[]).await);
-        executors.push(probe_executor("codex", "codex", &["--dangerously-bypass-approvals-and-sandbox"], &["exec"]).await);
-        executors.push(probe_executor("claude", "claude", &["--dangerously-skip-permissions"], &["-p", "--dangerously-skip-permissions"]).await);
+        // Probe the flags the spawn gate actually launches with (see hook::gate_argv):
+        // codex runs sandboxed, claude runs acceptEdits + a --settings PreToolUse hook.
+        executors.push(probe_executor("codex", "codex", &["--sandbox"], &["exec"]).await);
+        executors.push(probe_executor("claude", "claude", &["--permission-mode", "--settings"], &["-p", "--permission-mode", "--settings"]).await);
         executors.push(probe_executor("agy", "agy", &["--dangerously-skip-permissions"], &[]).await);
 
         // Loopback UDS round-trip (Unix only).
@@ -376,8 +442,14 @@ impl Orchestrator {
         println!("orchestrator doctor: executors");
         for e in &report.executors {
             println!(
-                "  {} ({}): installed={} interactive={} headless={} version={:?}",
-                e.vendor, e.binary, e.installed, e.interactive_flags_ok, e.headless_flags_ok, e.version
+                "  {} ({}): installed={} interactive={} headless={} gate={} version={:?}",
+                e.vendor,
+                e.binary,
+                e.installed,
+                e.interactive_flags_ok,
+                e.headless_flags_ok,
+                hook::harness_gate(&e.binary).as_str(),
+                e.version
             );
         }
         #[cfg(unix)]

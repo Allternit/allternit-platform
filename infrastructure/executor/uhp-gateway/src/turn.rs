@@ -67,6 +67,7 @@ pub async fn run_turn(
     cli_model: Option<String>,
     timeout: Duration,
     driver: DriverKind,
+    wih_id: Option<String>,
     control: Arc<TurnControl>,
     events: mpsc::UnboundedSender<StreamEvent>,
 ) -> Response {
@@ -81,6 +82,7 @@ pub async fn run_turn(
         &prompt,
         cli_model,
         driver,
+        wih_id.as_deref(),
         &control,
         &events,
         deadline,
@@ -121,6 +123,7 @@ async fn run_turn_inner(
     prompt: &str,
     cli_model: Option<String>,
     driver: DriverKind,
+    wih_id: Option<&str>,
     control: &Arc<TurnControl>,
     events: &mpsc::UnboundedSender<StreamEvent>,
     deadline: Instant,
@@ -172,7 +175,15 @@ async fn run_turn_inner(
     };
 
     // ── launch the one-shot CLI in a fresh pane ──────────────────────────────
-    let argv = driver.argv(prompt, cli_model.as_deref(), session.driver_session_ref.as_deref(), &workspace_dir);
+    // Spawn gate: admission + hook settings before anything is launched.
+    let gated = crate::spawn_gate::prepare(driver, &session_dir, &workspace_dir, wih_id).await?;
+    let argv = driver.argv(
+        prompt,
+        cli_model.as_deref(),
+        session.driver_session_ref.as_deref(),
+        &workspace_dir,
+        gated.claude_settings.as_deref(),
+    );
     let transcript_path = session_dir.join(format!("turn-{}.log", response.id));
     let mut env = vec![(
         "HERDR_AO_TRANSCRIPT".to_string(),
@@ -232,7 +243,7 @@ async fn run_turn_inner(
                     session_id,
                     &response.id,
                     new_events,
-                    &events,
+                    events,
                     &mut usage,
                     &mut driver_error,
                     &mut dirty,
@@ -286,7 +297,7 @@ async fn run_turn_inner(
         session_id,
         &response.id,
         new_events,
-        &events,
+        events,
         &mut usage,
         &mut driver_error,
         &mut dirty,
@@ -300,7 +311,7 @@ async fn run_turn_inner(
             session_id,
             &response.id,
             new_events,
-            &events,
+            events,
             &mut usage,
             &mut driver_error,
             &mut dirty,
@@ -441,7 +452,9 @@ fn write_codex_config(session_dir: &std::path::Path) -> std::io::Result<()> {
         concat!(
             "model_provider = \"openai\"\n",
             "approval_policy = \"never\"\n",
-            "sandbox_mode = \"danger-full-access\"\n",
+            "sandbox_mode = \"workspace-write\"\n",
+            "[sandbox_workspace_write]\n",
+            "network_access = true\n",
         ),
     )
 }

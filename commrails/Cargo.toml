@@ -58,5 +58,9 @@ prost-types = { workspace = true }
 serde_bytes = { workspace = true }
 worktree-manager = { path = "../worktree-manager" }
 
+[target.'cfg(unix)'.dependencies]
+# getuid() for the per-user 0700 peer-socket fallback dir.
+libc = "0.2"
+
 [build-dependencies]
 tonic-build = { workspace = true }
