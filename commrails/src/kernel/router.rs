@@ -360,7 +360,8 @@ fn node_budget(node: &GraphNode) -> NodeBudget {
     }
 }
 
-fn resolve_role(node: &GraphNode) -> Result<Role, RouteError> {
+/// Shared effective-role resolver for routing and static graph invariants.
+pub(crate) fn resolve_role(node: &GraphNode) -> Result<Role, RouteError> {
     match node.cognitive_role.as_deref() {
         Some(r) => Role::parse(r).ok_or_else(|| RouteError::BadRole(node.node_id.clone(), r.to_string())),
         // POLICY / VERIFY / WAIT / CONTROL and plain compute without a
