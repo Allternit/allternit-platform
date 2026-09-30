@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "name": "allternit-api loopback session (thread_routes.rs + agent_session_routes.rs shapes)",
+  "interactions": [
+    { "method": "POST", "path": "/threads", "status": 201, "sequence": "generate",
+      "body": { "id": "thr-{{n}}", "botId": "{{body.botId}}", "title": "{{body.title}}", "kind": "task", "status": "active",
+                "currentSessionId": "sess-thr-{{n}}", "generation": 1, "createdBy": "gateway" } },
+    { "method": "GET", "path": "/threads/:id", "status": 200, "sequence": "generate",
+      "body": { "id": "{{id}}", "botId": "bot-1", "currentSessionId": "sess-{{id}}", "generation": 1, "status": "active" } },
+    { "method": "GET", "path": "/threads", "status": 200, "body": { "threads": [] } },
+    { "method": "GET", "path": "/threads/:id/events", "status": 200, "sequence": "generate",
+      "body": { "events": [
+        { "id": "ev-{{id}}-2", "sequence": 2, "type": "thread.status_changed", "actor": { "type": "system", "id": "api" }, "payload": { "to": "active" }, "sessionId": "sess-{{id}}", "occurredAt": "2026-09-29T10:00:02Z" },
+        { "id": "ev-{{id}}-1", "sequence": 1, "type": "thread.created", "actor": { "type": "user", "id": "u1" }, "payload": {}, "sessionId": "sess-{{id}}", "occurredAt": "2026-09-29T10:00:01Z" } ] } },
+    { "method": "POST", "path": "/agent-sessions/:id/messages", "status": 200, "sequence": "generate",
+      "body": { "reply": "ack: {{body.text}}" } },
+    { "method": "POST", "path": "/agent-sessions/:id/abort", "status": 204 },
+    { "method": "GET", "path": "/agent-sessions/:id/status", "status": 200, "body": { "status": "idle", "busy": false } },
+    { "method": "POST", "path": "/permissions/:id/reply", "status": 200, "sequence": "generate", "body": { "ok": true } }
+  ]
+}

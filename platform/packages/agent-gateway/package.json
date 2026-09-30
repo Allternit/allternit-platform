@@ -1,0 +1,26 @@
+{
+  "name": "@allternit/agent-gateway",
+  "version": "0.1.0",
+  "description": "Allternit Agent Gateway runtime: AAI provider interface, router, loopback provider, adapter conformance harness",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@allternit/subscription-fabric-contracts": "workspace:*",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0"
+  }
+}

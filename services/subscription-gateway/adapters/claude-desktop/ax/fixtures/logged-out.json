@@ -1,0 +1,64 @@
+{
+ "formatVersion": 1,
+ "bundleId": "com.anthropic.claudefordesktop",
+ "capturedAt": 0,
+ "root": {
+  "role": "AXApplication",
+  "title": "Claude",
+  "path": [],
+  "children": [
+   {
+    "role": "AXWindow",
+    "title": "Claude",
+    "path": [
+     0
+    ],
+    "children": [
+     {
+      "role": "AXWebArea",
+      "title": "Claude",
+      "path": [
+       0,
+       0
+      ],
+      "children": [
+       {
+        "role": "AXStaticText",
+        "value": "Talk with Claude",
+        "path": [
+         0,
+         0,
+         0
+        ]
+       },
+       {
+        "role": "AXButton",
+        "title": "Continue with Google",
+        "actions": [
+         "AXPress"
+        ],
+        "path": [
+         0,
+         0,
+         1
+        ]
+       },
+       {
+        "role": "AXButton",
+        "title": "Continue with email",
+        "actions": [
+         "AXPress"
+        ],
+        "path": [
+         0,
+         0,
+         2
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

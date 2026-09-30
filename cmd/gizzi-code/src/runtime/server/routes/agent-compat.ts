@@ -49,6 +49,7 @@
 //!   gizzi's session table has no columns for them). A process restart
 //!   forgets the flags; abandoned ephemeral sessions would reappear in list
 //!   responses until deleted.
+import { VendorMessage } from "@/runtime/session/vendor-message"
 import { Hono } from "hono"
 import { streamSSE } from "hono/streaming"
 import { Session } from "@/runtime/session"
@@ -525,6 +526,14 @@ export const AgentCompatRoutes = () =>
         ...(body.noReply === true ? { noReply: true } : {}),
       })
       return c.json(transformMessage(result))
+    })
+    .post("/v1/agent-sessions/:sessionID/vendor-message", async (c) => {
+      // Agent Gateway: append a vendor bot's reply as an assistant message.
+      const sessionID = c.req.param("sessionID")
+      const body = await c.req.json().catch(() => ({}))
+      if (typeof body.text !== "string" || body.text === "") return c.json({ error: "text required" }, 400)
+      if (!(await findSession(sessionID))) return c.json({ error: "Session not found" }, 404)
+      return c.json(await VendorMessage.append({ sessionID, text: body.text, metadata: body.metadata }))
     })
     .post("/v1/agent-sessions/:sessionID/abort", async (c) => {
       // abort_session: stop the loop; incognito sessions are purged on abort.

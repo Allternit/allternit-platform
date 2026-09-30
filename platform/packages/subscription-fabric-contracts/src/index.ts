@@ -25,12 +25,14 @@ export type {
 
 // §S2 — adapter manifest + pacing (§A5)
 export {
+  adapterAgentSectionSchema,
   adapterManifestSchema,
   manifestCapabilitySchema,
   pacingProfileSchema,
   planDefSchema,
 } from "./manifest";
 export type {
+  AdapterAgentSection,
   AdapterManifest,
   ManifestCapability,
   PacingProfile,
@@ -134,3 +136,95 @@ export type {
   AccountObservation,
   SubscriptionAdapter,
 } from "./events";
+
+// Agent Gateway — AAI v0.1
+export {
+  aaiErrorCodeSchema,
+  aaiErrorSchema,
+  aaiOperationSchema,
+  agentCapabilityManifestSchema,
+  approvalAuthoritySchema,
+  approvalSchema,
+  approvalStateSchema,
+  contextIsolationSchema,
+  eventGuaranteeSchema,
+  eventSourceSchema,
+  gatewayEventSchema,
+  gatewayEventTypeSchema,
+  guaranteeSchema,
+  laneSchema,
+  memoryRecordSchema,
+  mirrorFieldStateSchema,
+  threadOriginSchema,
+} from "./agent";
+export type {
+  AAIError,
+  AAIErrorCode,
+  AAIOperation,
+  AgentCapabilityManifest,
+  Approval,
+  ApprovalAuthority,
+  ApprovalState,
+  ContextIsolation,
+  EventGuarantee,
+  EventSource,
+  GatewayEvent,
+  GatewayEventType,
+  Guarantee,
+  Lane,
+  MemoryRecord,
+  MirrorFieldState,
+  ThreadOrigin,
+} from "./agent";
+
+// Agent Gateway — bindings + state machines
+export {
+  CONNECTION_TRANSITIONS,
+  EXECUTION_TRANSITIONS,
+  REMOTE_THREAD_TRANSITIONS,
+  authTypeSchema,
+  botExecutionBindingSchema,
+  botExecutionStateSchema,
+  canTransitionConnection,
+  canTransitionExecution,
+  canTransitionRemoteThread,
+  channelConversationBindingSchema,
+  channelSyncStateSchema,
+  connectionStateSchema,
+  providerAccountBindingSchema,
+  remoteThreadBindingSchema,
+  remoteThreadStateSchema,
+} from "./bindings";
+export type {
+  AuthType,
+  BotExecutionBinding,
+  BotExecutionState,
+  ChannelConversationBinding,
+  ChannelSyncState,
+  ConnectionState,
+  ProviderAccountBinding,
+  RemoteThreadBinding,
+  RemoteThreadState,
+} from "./bindings";
+
+// Agent Gateway — vendor packs
+export {
+  channelPackManifestSchema,
+  connectionProfileSchema,
+  lookProfileSchema,
+  packGapSchema,
+  packGapSeveritySchema,
+  packGapStatusSchema,
+  packGapSurfaceSchema,
+  packParity,
+  vendorPackManifestSchema,
+} from "./vendor-pack";
+export type {
+  ChannelPackManifest,
+  ConnectionProfile,
+  LookProfile,
+  PackGap,
+  PackGapSeverity,
+  PackParity,
+  VendorPackManifest,
+} from "./vendor-pack";

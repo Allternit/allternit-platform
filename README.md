@@ -59,6 +59,7 @@ Three SDKs: public TS SDK in `sdk/` (tag `sdk/v*`), Rust SDK in `platform/rust-s
 - [docs/](./docs/) — documentation hub (archive, gap-analysis, learnings, reports, specs)
 - [DESIGN.md](./docs/design/DESIGN.md) — design system (tokens, typography, colors, animation)
 - [docs/MASTER_INDEX.md](./docs/MASTER_INDEX.md) — full documentation index
+- [docs/gateway/README.md](./docs/gateway/README.md) — Agent Gateway (AAI): overview, quickstart, adapters, operations
 - [docs/public/api/reference.md](./docs/public/api/reference.md) — public API reference
 
 ## Service ports

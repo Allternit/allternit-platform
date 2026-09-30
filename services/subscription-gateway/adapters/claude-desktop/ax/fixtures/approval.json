@@ -1,0 +1,241 @@
+{
+ "formatVersion": 1,
+ "bundleId": "com.anthropic.claudefordesktop",
+ "capturedAt": 0,
+ "root": {
+  "role": "AXApplication",
+  "title": "Claude",
+  "path": [],
+  "children": [
+   {
+    "role": "AXWindow",
+    "title": "Claude",
+    "path": [
+     0
+    ],
+    "children": [
+     {
+      "role": "AXWebArea",
+      "title": "Claude",
+      "path": [
+       0,
+       0
+      ],
+      "children": [
+       {
+        "role": "AXGroup",
+        "description": "Sidebar",
+        "path": [
+         0,
+         0,
+         0
+        ],
+        "children": [
+         {
+          "role": "AXButton",
+          "title": "New chat",
+          "actions": [
+           "AXPress"
+          ],
+          "path": [
+           0,
+           0,
+           0,
+           0
+          ]
+         },
+         {
+          "role": "AXRadioButton",
+          "title": "Chat",
+          "value": "0",
+          "actions": [
+           "AXPress"
+          ],
+          "path": [
+           0,
+           0,
+           0,
+           1
+          ]
+         },
+         {
+          "role": "AXRadioButton",
+          "title": "Cowork",
+          "value": "1",
+          "actions": [
+           "AXPress"
+          ],
+          "path": [
+           0,
+           0,
+           0,
+           2
+          ]
+         },
+         {
+          "role": "AXButton",
+          "title": "New task",
+          "actions": [
+           "AXPress"
+          ],
+          "path": [
+           0,
+           0,
+           0,
+           3
+          ]
+         }
+        ]
+       },
+       {
+        "role": "AXGroup",
+        "description": "Conversation",
+        "path": [
+         0,
+         0,
+         1
+        ],
+        "children": [
+         {
+          "role": "AXGroup",
+          "description": "Your message",
+          "path": [
+           0,
+           0,
+           1,
+           0
+          ],
+          "children": [
+           {
+            "role": "AXStaticText",
+            "value": "Tidy the notes folder",
+            "path": [
+             0,
+             0,
+             1,
+             0,
+             0
+            ]
+           }
+          ]
+         },
+         {
+          "role": "AXGroup",
+          "description": "Claude response",
+          "path": [
+           0,
+           0,
+           1,
+           1
+          ],
+          "children": [
+           {
+            "role": "AXStaticText",
+            "value": "Ready to move the files.",
+            "path": [
+             0,
+             0,
+             1,
+             1,
+             0
+            ]
+           }
+          ]
+         },
+         {
+          "role": "AXGroup",
+          "description": "Permission request",
+          "path": [
+           0,
+           0,
+           1,
+           2
+          ],
+          "children": [
+           {
+            "role": "AXStaticText",
+            "value": "Allow Claude to use Finder?",
+            "path": [
+             0,
+             0,
+             1,
+             2,
+             0
+            ]
+           },
+           {
+            "role": "AXButton",
+            "title": "Deny",
+            "actions": [
+             "AXPress"
+            ],
+            "path": [
+             0,
+             0,
+             1,
+             2,
+             1
+            ]
+           },
+           {
+            "role": "AXButton",
+            "title": "Allow once",
+            "actions": [
+             "AXPress"
+            ],
+            "path": [
+             0,
+             0,
+             1,
+             2,
+             2
+            ]
+           },
+           {
+            "role": "AXButton",
+            "title": "Always allow",
+            "actions": [
+             "AXPress"
+            ],
+            "path": [
+             0,
+             0,
+             1,
+             2,
+             3
+            ]
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "role": "AXTextArea",
+        "description": "Write your prompt to Claude",
+        "value": "",
+        "actions": [],
+        "path": [
+         0,
+         0,
+         2
+        ]
+       },
+       {
+        "role": "AXButton",
+        "title": "Stop response",
+        "actions": [
+         "AXPress"
+        ],
+        "path": [
+         0,
+         0,
+         3
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

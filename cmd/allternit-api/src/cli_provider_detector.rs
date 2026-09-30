@@ -196,9 +196,14 @@ async fn detect_openclaw() -> CliProviderInfo {
 }
 
 async fn detect_grok() -> CliProviderInfo {
-    // Grok has no public local CLI today; keep the provider visible so the UI
-    // shows it as unavailable rather than hiding it entirely.
-    let key_set = env_key_set("XAI_API_KEY");
+    // gizzi drives the Grok Build CLI over ACP (`grok agent stdio`), so the
+    // `grok` binary counts like the other local CLIs; XAI_API_KEY alone keeps
+    // the API route usable.
+    grok_info(command_exists("grok").await, env_key_set("XAI_API_KEY"))
+}
+
+fn grok_info(binary_installed: bool, key_set: bool) -> CliProviderInfo {
+    let available = binary_installed || key_set;
     let models = vec![CliProviderModel {
         id: "grok-3".to_string(),
         name: "Grok 3".to_string(),
@@ -208,12 +213,12 @@ async fn detect_grok() -> CliProviderInfo {
     CliProviderInfo {
         id: "grok".to_string(),
         name: "Grok".to_string(),
-        installed: key_set,
-        available: key_set,
-        reason: if key_set {
+        installed: available,
+        available,
+        reason: if available {
             None
         } else {
-            Some("Set XAI_API_KEY".to_string())
+            Some("`grok` not found on PATH (install Grok Build) or set XAI_API_KEY".to_string())
         },
         models: Some(models),
     }
@@ -380,4 +385,28 @@ async fn probe_ollama_models() -> Vec<CliProviderModel> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::grok_info;
+
+    #[test]
+    fn grok_binary_on_path_is_detected_without_api_key() {
+        let info = grok_info(true, false);
+        assert!(info.installed && info.available);
+        assert!(info.reason.is_none());
+    }
+
+    #[test]
+    fn grok_api_key_alone_is_still_available() {
+        assert!(grok_info(false, true).available);
+    }
+
+    #[test]
+    fn grok_missing_reports_both_remedies() {
+        let info = grok_info(false, false);
+        assert!(!info.available);
+        assert!(info.reason.unwrap().contains("grok"));
+    }
 }
