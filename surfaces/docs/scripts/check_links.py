@@ -79,6 +79,18 @@ def main() -> int:
     for p in nav:
         if page_file(p) is None:
             errors.append(f"docs.json: nav entry '{p}' has no file")
+    # A page that exists locally but is gitignored (e.g. under build/) never
+    # reaches the publish runner; flag nav pages git would not commit.
+    try:
+        import subprocess
+        ignored = subprocess.run(
+            ["git", "check-ignore", "--stdin"], cwd=DOCS, text=True, capture_output=True,
+            input="\n".join(str(page_file(p).relative_to(DOCS)) for p in nav if page_file(p)),
+        ).stdout.split()
+        for f in ignored:
+            errors.append(f"docs.json: nav page '{f}' is gitignored and will not publish")
+    except (OSError, ValueError):
+        pass
     files = [
         f for f in DOCS.rglob("*.mdx")
         if not SKIP & set(f.parts)

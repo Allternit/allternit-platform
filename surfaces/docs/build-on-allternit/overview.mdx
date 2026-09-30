@@ -1,0 +1,46 @@
+---
+title: "Build on Allternit"
+description: "Guides for extending the kernel with your own components"
+---
+
+**Status: PREVIEW (guides describe contracts; most loaders are not on main).** See [status labels](/architecture#status-labels).
+
+Everything you can add to Allternit is a contract-conformant component: a document that validates against a frozen schema, plus evidence that it behaves. These guides say what to produce for each.
+
+## Architecture contract
+
+| Guide | You produce |
+|-------|-------------|
+| [Profile](/build-on-allternit/profile) | An authority profile |
+| [Primitive](/build-on-allternit/primitive) | A primitive descriptor |
+| [Decision backend](/build-on-allternit/decision-backend) | A backend profile, readout profile and calibration manifest |
+| [Model provider](/build-on-allternit/model-provider) | A capability profile |
+| [Tool](/build-on-allternit/tool) | A tool with schemas and an effect class |
+| [Pack](/build-on-allternit/pack) | A primitive pack |
+| [Template](/build-on-allternit/template) | A graph template |
+| [Verifier](/build-on-allternit/verifier) | A verifier that emits verification receipts |
+| [Policy](/build-on-allternit/policy) | A policy check and decisions |
+| [Executor](/build-on-allternit/executor) | An executor that runs inside an environment |
+| [Conformance checklist](/build-on-allternit/conformance-checklist) | Evidence that all of the above hold |
+
+Two rules apply to every guide. Models are interchangeable components, so nothing you build may name a vendor or model in a graph. And the system, not your component, decides completion.
+
+## Current implementation
+
+On main you can validate documents against the frozen schemas, use the registry, and run work through the work runtime. Loaders for packs, bundles and third-party backends are not on main.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Schemas and validation | **AVAILABLE** |
+| Loading third-party components | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+Start from the contract reference for the component you are building.
+
+## Related
+
+- [Kernel contracts reference](/architecture/kernel-contracts-reference)
+- [Why graphs name no vendors](/architecture/cognitive-runtime/no-vendor-names)

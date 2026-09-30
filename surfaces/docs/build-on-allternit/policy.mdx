@@ -1,0 +1,32 @@
+---
+title: "Build a policy"
+description: "Add a policy check that can deny, limit or ask"
+---
+
+**Status: AVAILABLE (contract; internal gate).** See [status labels](/architecture#status-labels).
+
+A policy inspects a proposed action and returns a decision with reason codes.
+
+## Architecture contract
+
+Input is a `PolicyCheckV1` (principal, action, resources, data classes, external effects, spend). Output is a `PolicyDecisionV1` with a precedence: hard deny, hard allow, soft, cognitive, fail-closed. Hard deterministic rules run before any probabilistic risk. A policy may raise friction; it may not weaken a hard deny. Timeouts and missing calibration resolve to `ASK`.
+
+## Current implementation
+
+The gate is on main inside the work runtime and is not exposed as a plug-in point.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Policy contracts | **AVAILABLE (contract)** |
+| Third-party policy plug-ins | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+Return reason codes people can read.
+
+## Related
+
+- [Policy](/architecture/policy)
+- [Approvals](/architecture/verification-safety/approvals)

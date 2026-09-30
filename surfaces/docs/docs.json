@@ -157,18 +157,18 @@
           {
             "group": "Build on Allternit",
             "pages": [
-              "build/overview",
-              "build/profile",
-              "build/primitive",
-              "build/decision-backend",
-              "build/model-provider",
-              "build/tool",
-              "build/pack",
-              "build/template",
-              "build/verifier",
-              "build/policy",
-              "build/executor",
-              "build/conformance-checklist"
+              "build-on-allternit/overview",
+              "build-on-allternit/profile",
+              "build-on-allternit/primitive",
+              "build-on-allternit/decision-backend",
+              "build-on-allternit/model-provider",
+              "build-on-allternit/tool",
+              "build-on-allternit/pack",
+              "build-on-allternit/template",
+              "build-on-allternit/verifier",
+              "build-on-allternit/policy",
+              "build-on-allternit/executor",
+              "build-on-allternit/conformance-checklist"
             ]
           },
           {

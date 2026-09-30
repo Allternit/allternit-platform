@@ -1,0 +1,40 @@
+---
+title: "Conformance checklist"
+description: "What to prepare so a component can pass conformance"
+---
+
+**Status: DESIGN — NOT YET IMPLEMENTED (suite) · AVAILABLE (schema validation).** See [status labels](/architecture#status-labels).
+
+Use this list to prepare. It is not a certification.
+
+## Architecture contract
+
+- Every document you emit validates against its frozen schema.
+- Your component does not name a vendor or model in a graph.
+- Every effect has an effect class, an idempotency key where required and a receipt.
+- Network access uses the shared guard and a declared policy.
+- Your component fails closed on unknown values.
+- Every node has a fallback and a failure path.
+- Verification results use `INCONCLUSIVE` honestly.
+- Decision backends ship a calibration manifest.
+- Behavior on each row of the [failure-injection matrix](/architecture/observability/conformance) is the declared one.
+
+## Current implementation
+
+Only schema validation is runnable today.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Schema validation | **AVAILABLE** |
+| Full suite | **DESIGN — NOT YET IMPLEMENTED** |
+
+## Developer relevance
+
+Run schema validation in your own CI now.
+
+## Related
+
+- [Conformance](/architecture/observability/conformance)
+- [Alpha gate](/architecture/observability/alpha-gate)

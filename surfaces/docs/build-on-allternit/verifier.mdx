@@ -1,0 +1,32 @@
+---
+title: "Build a verifier"
+description: "Produce evidence the system can use to close work"
+---
+
+**Status: AVAILABLE (contract; verifier-owned completion for agency-origin work).** See [status labels](/architecture#status-labels).
+
+A verifier checks a subject and emits a `VerificationReceiptV1`. It never marks work done.
+
+## Architecture contract
+
+Choose the kind (parse, format, lint, typecheck, unit test, integration test, build, semantic rule, requirement, security, regression, diff review or human). Return `PASS`, `FAIL`, `INCONCLUSIVE` or `ERROR`, evidence references, whether you are deterministic and whether a retry can help. `INCONCLUSIVE` is never `PASS`. Deterministic verifiers outrank semantic ones.
+
+## Current implementation
+
+Verifier-owned completion is on main for agency-origin work.
+
+## Availability
+
+| Part | Status |
+|------|--------|
+| Verifier contract | **AVAILABLE (contract)** |
+| Verifier-owned completion | **AVAILABLE (agency-origin work)** |
+
+## Developer relevance
+
+Prefer deterministic checks.
+
+## Related
+
+- [Evidence](/architecture/verification-safety/evidence)
+- [Contracts: verification](/architecture/contracts/verification)
