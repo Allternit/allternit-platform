@@ -331,7 +331,7 @@ struct GizziMessageError {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
-struct GizziMessagePart {
+pub(crate) struct GizziMessagePart {
     #[serde(rename = "type")]
     part_type: String,
     #[serde(default)]
@@ -1176,6 +1176,9 @@ async fn send_message(
         .into_response();
     }
 
+    if let Some(resp) = crate::gateway_runner::intercept_message(&session_id, &body.text, body.metadata.as_ref()).await {
+        return resp;
+    }
     let client = gizzi_client(&headers);
     let path = format!("/v1/session/{}/message", urlencoding::encode(&session_id));
     let payload = send_message_payload(&body);
@@ -2463,6 +2466,10 @@ pub(crate) async fn create_bot_thread_session(
 
 /// Run one user turn in a session and return the assistant's text.
 pub(crate) async fn send_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str, text: &str) -> Result<String, String> {
+    // Vendor-bound bots run through the Agent Gateway; never a native brain.
+    if let Some(vendor) = crate::gateway_runner::intercept_turn(session_id, text, Default::default()).await {
+        return vendor;
+    }
     if let Some(target) = crate::placement::session_target(db, session_id) {
         let mut body = json!({ "text": text, "metadata": { "model": bot_turn_model(db, session_id, bot_id) } });
         if let Some(system) = bot_turn_system(db, session_id, bot_id) {

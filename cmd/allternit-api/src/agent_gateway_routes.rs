@@ -171,11 +171,11 @@ where
     }
 }
 
-fn now() -> String {
+pub(crate) fn now() -> String {
     chrono::Utc::now().to_rfc3339()
 }
 
-fn id(prefix: &str) -> String {
+pub(crate) fn id(prefix: &str) -> String {
     format!("{prefix}_{}", uuid::Uuid::new_v4().simple())
 }
 
@@ -199,7 +199,7 @@ fn camel(s: &str) -> String {
 const BOOL_COLS: &[&str] = &["has_secret_ref", "has_session_ref", "bidirectional", "read_only", "enabled", "fallback_used"];
 
 /// Run a query and return each row as a camelCase JSON object.
-fn rows(conn: &Connection, sql: &str, p: &[&dyn ToSql]) -> rusqlite::Result<Vec<Value>> {
+pub(crate) fn rows(conn: &Connection, sql: &str, p: &[&dyn ToSql]) -> rusqlite::Result<Vec<Value>> {
     let mut st = conn.prepare(sql)?;
     let names: Vec<String> = st.column_names().iter().map(|s| s.to_string()).collect();
     let out = st.query_map(p, |r| {
@@ -228,20 +228,20 @@ fn rows(conn: &Connection, sql: &str, p: &[&dyn ToSql]) -> rusqlite::Result<Vec<
     out.collect()
 }
 
-fn one(conn: &Connection, sql: &str, p: &[&dyn ToSql]) -> rusqlite::Result<Option<Value>> {
+pub(crate) fn one(conn: &Connection, sql: &str, p: &[&dyn ToSql]) -> rusqlite::Result<Option<Value>> {
     Ok(rows(conn, sql, p)?.into_iter().next())
 }
 
-fn s(v: &Value, k: &str) -> String {
+pub(crate) fn s(v: &Value, k: &str) -> String {
     v.get(k).and_then(Value::as_str).unwrap_or_default().to_string()
 }
 
 const ACCT_COLS: &str = "id, owner, vendor, auth_type, external_account_id, display_name, workspace, \
     (secret_ref IS NOT NULL) AS has_secret_ref, (session_ref IS NOT NULL) AS has_session_ref, scopes_json, \
     restricted_bot_id, state, verified_at, expires_at, created_at, updated_at";
-const EXEC_COLS: &str = "id, owner, bot_id, type, mode, vendor, adapter_id, account_binding_id, preferred_lane, \
+pub(crate) const EXEC_COLS: &str = "id, owner, bot_id, type, mode, vendor, adapter_id, account_binding_id, preferred_lane, \
     external_agent_id, capabilities_json, health_json, state, created_at, updated_at";
-const REMOTE_COLS: &str = "id, owner, thread_id, generation, bot_id, execution_binding_id, external_context_id, \
+pub(crate) const REMOTE_COLS: &str = "id, owner, thread_id, generation, bot_id, execution_binding_id, external_context_id, \
     external_task_id, continuation_token, sync_cursor, last_remote_event_id, capability_snapshot, lane, state, \
     created_at, updated_at, closed_at";
 const CHAN_COLS: &str = "id, owner, thread_id, provider, account_binding_id, external_workspace_id, external_channel_id, \
@@ -309,7 +309,7 @@ fn ledger(db: &DbHandle, owner: &str, bot_id: &str, thread_id: Option<&str>, eve
 }
 
 /// Move an execution binding (already validated) and ledger it.
-fn set_exec_state(db: &DbHandle, conn: &Connection, owner: &str, binding: &Value, to: &str, cause: &str) -> rusqlite::Result<()> {
+pub(crate) fn set_exec_state(db: &DbHandle, conn: &Connection, owner: &str, binding: &Value, to: &str, cause: &str) -> rusqlite::Result<()> {
     let (bid, bot_id, from) = (s(binding, "id"), s(binding, "botId"), s(binding, "state"));
     conn.execute("UPDATE bot_execution_bindings SET state = ?1, updated_at = ?2 WHERE id = ?3", params![to, now(), bid])?;
     ledger(
