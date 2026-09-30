@@ -218,23 +218,45 @@ export { botExecutionBindingSchema };
  * subscription worker's `adapter.ts`, so `src/` never imports adapter code statically).
  * Until it finishes, calls for that adapter return UNSUPPORTED.
  */
-export async function registerVendorAdapters(host: AaiHost, adaptersDir: string, env: NodeJS.ProcessEnv): Promise<string[]> {
+/**
+ * What vendor adapters may ask the gateway for. subscriptionProfile: the
+ * Chrome profile of the provider's preferred signed-in subscription account
+ * (Settings → Subscriptions), freed from the chat worker first so the vendor
+ * adapter can open it (one Chrome per profile). null when none is ready.
+ */
+export interface VendorContext {
+  subscriptionProfile?: (provider: string) => Promise<{ dir: string; account_id: string } | null>;
+}
+
+export async function registerVendorAdapters(
+  host: AaiHost,
+  adaptersDir: string,
+  env: NodeJS.ProcessEnv,
+  ctx: VendorContext = {}
+): Promise<string[]> {
   const loaded: string[] = [];
   if (!existsSync(adaptersDir)) return loaded;
   for (const id of readdirSync(adaptersDir).sort()) {
     const file = ["aai.js", "aai.ts"].map((n) => join(adaptersDir, id, n)).find((f) => existsSync(f));
     if (!file) continue;
-    const mod = (await import(pathToFileURL(file).href)) as { createAaiRegistration?: (env: NodeJS.ProcessEnv) => AaiRegistration };
+    const mod = (await import(pathToFileURL(file).href)) as {
+      createAaiRegistration?: (env: NodeJS.ProcessEnv, ctx: VendorContext) => AaiRegistration;
+    };
     if (typeof mod.createAaiRegistration !== "function") {
       throw new Error(`adapter ${id}: aai module has no createAaiRegistration()`);
     }
-    host.register(mod.createAaiRegistration(env));
+    host.register(mod.createAaiRegistration(env, ctx));
     loaded.push(id);
   }
   return loaded;
 }
 
-export function createAaiHost(config: Config, env: NodeJS.ProcessEnv = process.env, fetchImpl?: typeof fetch): AaiHost {
+export function createAaiHost(
+  config: Config,
+  env: NodeJS.ProcessEnv = process.env,
+  fetchImpl?: typeof fetch,
+  ctx: VendorContext = {}
+): AaiHost {
   const host = new AaiHost(config.aai.disabled);
   const token = env.SUBS_GATEWAY_AAI_LOOPBACK_TOKEN;
   host.register({
@@ -245,7 +267,7 @@ export function createAaiHost(config: Config, env: NodeJS.ProcessEnv = process.e
       auth: token ? { token } : undefined,
     }),
   });
-  host.vendorsReady = registerVendorAdapters(host, config.adaptersDir, env).catch((e) => {
+  host.vendorsReady = registerVendorAdapters(host, config.adaptersDir, env, ctx).catch((e) => {
     console.error("[aai] vendor adapter registration failed:", e);
     return [];
   });

@@ -339,6 +339,7 @@
               "surfaces/agent-studio",
               "surfaces/agent-hub",
               "surfaces/bots",
+              "surfaces/subscriptions",
               "surfaces/canvas",
               "surfaces/operator-browser",
               "surfaces/swarm-dashboard",

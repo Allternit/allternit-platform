@@ -9,12 +9,18 @@ import { providerIdSchema, type Account } from "@allternit/subscription-fabric-c
 import {
   accountHasActiveTasks,
   deleteAccount,
+  ensurePreferredAccount,
   getAccount,
   listAccounts,
+  setPreferredAccount,
   upsertAccount,
 } from "../store/queries.js";
 import { firefoxProfileFor, readFirefoxCookies, type ImportableCookie, type SessionStorageKey } from "../worker/login_browser.js";
 import { callerOf, requireScope, type GatewayDeps } from "./server.js";
+
+const patchAccountSchema = z
+  .object({ preferred: z.literal(true).optional(), label: z.string().trim().min(1).max(60).optional() })
+  .strict();
 
 const connectSchema = z.object({
   account_id: z.string().min(1).optional(),
@@ -359,6 +365,7 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
       enabled: true,
     };
     upsertAccount(deps.db, account);
+    ensurePreferredAccount(deps.db, account.provider);
     // Account-scoped ledger entry; the events table is task-keyed, so the
     // synthetic task_id is `account:<id>` (documented in the notes).
     deps.log.append({
@@ -382,7 +389,7 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
           : loginState(account.account_id);
       }
     }
-    res.status(201).json({ ...accountView(account), login });
+    res.status(201).json({ ...accountView(getAccount(deps.db, account.account_id) ?? account), login });
   });
 
   router.post(
@@ -533,7 +540,27 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
       }
     }
     deleteAccount(deps.db, account.account_id);
+    ensurePreferredAccount(deps.db, account.provider);
     res.status(204).end();
+  });
+
+  // Switch which login of a subscription is used first, or rename it
+  // ("Work", "Personal") so two logins of one provider are easy to tell apart.
+  router.patch("/v1/accounts/:id", requireScope("accounts:manage"), (req: Request, res: Response) => {
+    const parsed = patchAccountSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "invalid_account", detail: parsed.error.issues });
+      return;
+    }
+    const account = getAccount(deps.db, req.params.id);
+    if (!account) {
+      res.status(404).json({ error: "account_not_found", account_id: req.params.id });
+      return;
+    }
+    if (parsed.data.label !== undefined) upsertAccount(deps.db, { ...account, label: parsed.data.label });
+    if (parsed.data.preferred === true) setPreferredAccount(deps.db, account.account_id);
+    const fresh = getAccount(deps.db, account.account_id);
+    res.json(fresh ? accountView(fresh) : null);
   });
 
   router.post(

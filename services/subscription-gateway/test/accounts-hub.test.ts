@@ -106,7 +106,7 @@ describe("subscriptions hub", () => {
       },
     });
     const tok = issueToken(deps.db, "admin-1", "test", ["accounts:manage"]).token;
-    const api = (method: "get" | "post" | "delete", path: string) =>
+    const api = (method: "get" | "post" | "patch" | "delete", path: string) =>
       request(deps.app)[method](path).set("authorization", `Bearer ${tok}`);
     return { api, jar, store, calls, host, probe, provider: manifest.provider, closeWindow: () => (open = false) };
   }
@@ -274,4 +274,26 @@ describe("subscriptions hub", () => {
     expect(existsSync(chrome)).toBe(false);
     expect(existsSync(`${chrome}-firefox`)).toBe(false);
   });
+
+  it("two logins of one subscription: the first is preferred, switching and renaming work, deleting promotes the other", async () => {
+    const { api, provider } = setup();
+    const a = (await api("post", "/v1/accounts").send({ provider, label: "Personal" })).body;
+    const b = (await api("post", "/v1/accounts").send({ provider, label: "Work" })).body;
+    expect(a.preferred).toBe(true);
+    expect(b.preferred).toBe(false);
+
+    const switched = await api("patch", `/v1/accounts/${b.account_id}`).send({ preferred: true });
+    expect(switched.status).toBe(200);
+    expect(switched.body.preferred).toBe(true);
+    const rows = (await api("get", "/v1/accounts")).body as Array<{ account_id: string; preferred: boolean }>;
+    expect(rows.filter((r) => r.preferred).map((r) => r.account_id)).toEqual([b.account_id]);
+
+    const renamed = await api("patch", `/v1/accounts/${a.account_id}`).send({ label: "Home" });
+    expect(renamed.body).toMatchObject({ label: "Home", preferred: false });
+    expect((await api("patch", `/v1/accounts/${a.account_id}`).send({ preferred: false })).status).toBe(400);
+
+    expect((await api("delete", `/v1/accounts/${b.account_id}`)).status).toBe(204);
+    expect((await api("get", "/v1/accounts")).body[0]).toMatchObject({ account_id: a.account_id, preferred: true });
+  });
 });
+
