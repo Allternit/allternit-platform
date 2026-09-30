@@ -153,6 +153,39 @@ pub fn parse_actor(raw: &str) -> Result<Actor> {
     })
 }
 
+/// Human authority is not a string. The service has no authenticated-user
+/// channel, so a `user:` actor is honoured only from a local interactive CLI
+/// (stdin is a terminal) that carries no WIH env. Anything launched for a
+/// worker (`ALLTERNIT_COMMRAILS_WIH` set) can never act as a person.
+/// `agent:` actors are unaffected here (Gate-level checks still apply).
+pub fn check_human_channel(
+    actor: &Actor,
+    wih_env: Option<&str>,
+    interactive: bool,
+    require_tty: bool,
+) -> Result<()> {
+    if actor.r#type != ActorType::User {
+        return Ok(());
+    }
+    if wih_env.is_some_and(|w| !w.trim().is_empty()) {
+        bail!("human actor refused: this process runs under a WIH (ALLTERNIT_COMMRAILS_WIH); a worker cannot act as user:{}", actor.id);
+    }
+    if require_tty && !interactive {
+        bail!("human actor refused: resolving as a person needs a local interactive terminal");
+    }
+    Ok(())
+}
+
+fn guard_human(actor: &Actor, require_tty: bool) -> Result<()> {
+    use std::io::IsTerminal;
+    check_human_channel(
+        actor,
+        std::env::var("ALLTERNIT_COMMRAILS_WIH").ok().as_deref(),
+        std::io::stdin().is_terminal(),
+        require_tty,
+    )
+}
+
 fn split_node(node: &str) -> Result<(String, String)> {
     node.split_once('/')
         .filter(|(d, n)| !d.is_empty() && !n.is_empty())
@@ -174,6 +207,7 @@ pub async fn run_judge_command(ctx: &JudgeContext, cmd: JudgeCmd) -> Result<()> 
             actor,
         }) => {
             let actor = parse_actor(&actor)?;
+            guard_human(&actor, false)?;
             let policy = JudgePolicy {
                 verify,
                 close_by,
@@ -237,6 +271,7 @@ pub async fn run_judge_command(ctx: &JudgeContext, cmd: JudgeCmd) -> Result<()> 
         } => {
             let (dag_id, node_id) = split_node(&node)?;
             let actor = parse_actor(&actor)?;
+            guard_human(&actor, false)?;
             let n = ctx
                 .gate
                 .judge_continue(&dag_id, &node_id, &actor, reason.as_deref())
@@ -251,6 +286,7 @@ pub async fn run_judge_command(ctx: &JudgeContext, cmd: JudgeCmd) -> Result<()> 
         } => {
             let (dag_id, node_id) = split_node(&node)?;
             let actor = parse_actor(&actor)?;
+            guard_human(&actor, true)?;
             let to = ctx
                 .gate
                 .judge_resolve(&dag_id, &node_id, decision, &actor, reason.as_deref())
@@ -341,4 +377,32 @@ pub async fn run_leases_command(ctx: &JudgeContext, cmd: LeasesCmd) -> Result<()
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod judge_human_channel_tests {
+    use super::*;
+
+    fn user() -> Actor {
+        parse_actor("user:eoj").unwrap()
+    }
+
+    #[test]
+    fn worker_with_wih_env_cannot_claim_human() {
+        let e = check_human_channel(&user(), Some("wih_123"), true, true).unwrap_err();
+        assert!(e.to_string().contains("worker cannot act"));
+        assert!(check_human_channel(&user(), Some("wih_123"), true, false).is_err());
+    }
+
+    #[test]
+    fn interactive_cli_without_wih_env_may_resolve() {
+        assert!(check_human_channel(&user(), None, true, true).is_ok());
+        assert!(check_human_channel(&user(), Some(""), true, true).is_ok());
+    }
+
+    #[test]
+    fn resolve_needs_a_terminal() {
+        assert!(check_human_channel(&user(), None, false, true).is_err());
+        assert!(check_human_channel(&user(), None, false, false).is_ok());
+    }
 }
