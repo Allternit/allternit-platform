@@ -1,0 +1,180 @@
+import { describe, expect, test } from "bun:test";
+import {
+  DecisionRouter, FixtureReadoutProvider, MOTIFS, actionFor, applyTemperature, buildManifest, buildRequest, candidateSchemaHash, candidateSetHash,
+  checkBinding, coverageAtRisk, ece, evaluateQ22Gate, fitTemperature, macroF1, orderSensitivity, flipSensitivity, scopeFingerprint, validateProfile, wilsonUpper,
+  DEFAULT_PROFILE, type CalibrationScope, type DecisionRequestV1, type Sample,
+} from "../src/decision/index.ts";
+
+const env = { abi_version: "1.0.0", schema_id: "allternit.kernel.DecisionRequestV1" };
+const req: DecisionRequestV1 = buildRequest("ROUTE", {
+  envelope: env, state_projection_ref: "state.x", instructions: "pick", decision_bank_id: "bank.a", question_id: "q.route",
+  candidates: [{ candidate_id: "a" }, { candidate_id: "b" }],
+});
+const deployment = { backend_id: "backend.t", model_ref: "model.test", model_revision: "r1", tokenizer_id: "tok", quantization: "q8", runtime_backend: "rt", readout_point: null };
+const scopeFor = (r: DecisionRequestV1): CalibrationScope => ({
+  ...deployment, question_id: r.question_id!, candidate_schema_hash: candidateSchemaHash(r), candidate_set_hash: candidateSetHash(r), threshold_profile: DEFAULT_PROFILE.profile_id,
+});
+
+// Deterministic well-calibrated synthetic set: confidence c is right with prob c.
+function synth(n: number, conf: number, wrongEvery: number): Sample[] {
+  return Array.from({ length: n }, (_, i) => {
+    const right = (i + 1) % wrongEvery !== 0;
+    return { probs: right ? [conf, 1 - conf] : [1 - conf, conf], label: 0 } as Sample;
+  }).map((s, i) => ((i + 1) % wrongEvery === 0 ? { probs: [conf, 1 - conf], label: 1 } : s));
+}
+const goodSet = () => synth(400, 0.97, 33); // ~3% errors at conf .97
+const manifestFor = (ss: Sample[], scope = scopeFor(req)) => buildManifest({ manifest_id: "cal.1", primitive_id: "dec.choice", scope, heldOut: ss, autoMinConfidence: 0.95 });
+
+describe("metrics", () => {
+  test("perfect calibration has ECE 0; overconfidence is penalized", () => {
+    expect(ece([{ probs: [1, 0], label: 0 }, { probs: [1, 0], label: 0 }])).toBe(0);
+    expect(ece([{ probs: [0.99, 0.01], label: 1 }, { probs: [0.99, 0.01], label: 0 }])).toBeGreaterThan(0.4);
+  });
+  test("macro F1 and coverage-at-risk", () => {
+    expect(macroF1([{ probs: [1, 0], label: 0 }, { probs: [0, 1], label: 1 }])).toBe(1);
+    const ss: Sample[] = [{ probs: [0.99, 0.01], label: 0 }, { probs: [0.9, 0.1], label: 0 }, { probs: [0.6, 0.4], label: 1 }];
+    expect(coverageAtRisk(ss, 0)).toBeCloseTo(2 / 3);
+  });
+  test("flip and order sensitivity count argmax changes", () => {
+    const ss: Sample[] = [
+      { probs: [0.9, 0.1], label: 0, probs_flipped: [0.2, 0.8], probs_reordered: [0.8, 0.2] },
+      { probs: [0.9, 0.1], label: 0, probs_flipped: [0.7, 0.3], probs_reordered: [0.3, 0.7] },
+    ];
+    expect(flipSensitivity(ss)).toBe(0.5);
+    expect(orderSensitivity(ss)).toBe(0.5);
+  });
+  test("wilson upper bound exceeds the point estimate", () => {
+    expect(wilsonUpper(5, 100)).toBeGreaterThan(0.05);
+    expect(wilsonUpper(0, 100)).toBeLessThan(0.03);
+  });
+  test("temperature fit softens an overconfident model", () => {
+    const over: Sample[] = Array.from({ length: 200 }, (_, i) => ({ probs: [0.99, 0.01], label: i % 4 === 0 ? 1 : 0 }));
+    const T = fitTemperature(over);
+    expect(T).toBeGreaterThan(1);
+    expect(applyTemperature([0.99, 0.01], T)[0]).toBeLessThan(0.99);
+  });
+});
+
+describe("Q22 gate", () => {
+  test("passes a well-calibrated, low-error, large-enough held-out set", () => {
+    const m = manifestFor(goodSet());
+    expect(evaluateQ22Gate(m).failures).toEqual([]);
+    expect(m.gate.passed).toBe(true);
+    expect(m.gate.agreement_with_other_model_used).toBe(false);
+  });
+  test("fails on ECE", () => {
+    const m = manifestFor(synth(400, 0.99, 4)); // 25% errors at .99 conf
+    expect(evaluateQ22Gate(m).passed).toBe(false);
+    expect(m.gate.passed).toBe(false);
+  });
+  test("fails on too-small sample even with perfect numbers", () => {
+    const m = manifestFor(synth(50, 0.97, 1000));
+    expect(evaluateQ22Gate(m).failures.join()).toContain("held-out n");
+  });
+  test("fails when auto-act error > 5%", () => {
+    const m = manifestFor(synth(400, 0.97, 10));
+    expect(evaluateQ22Gate(m).passed).toBe(false);
+  });
+  test("agreement-with-another-model can never satisfy the gate", () => {
+    const m = manifestFor(goodSet());
+    (m.gate as any).agreement_with_other_model_used = true;
+    expect(evaluateQ22Gate(m).passed).toBe(false);
+  });
+  test("strictBounds requires upper bounds inside limits", () => {
+    const m = manifestFor(synth(400, 0.97, 22)); // ~4.5% observed, upper bound > 5%
+    expect(evaluateQ22Gate(m).passed).toBe(true);
+    expect(evaluateQ22Gate(m, { strictBounds: true }).passed).toBe(false);
+  });
+  test("floors cannot be lowered", () => {
+    expect(evaluateQ22Gate(manifestFor(synth(50, 0.97, 1000)), { minHeldOutN: 1, minAutoActN: 1 }).passed).toBe(false);
+  });
+});
+
+describe("manifest binding", () => {
+  test("exact scope binds; any drift breaks it", () => {
+    const m = manifestFor(goodSet());
+    expect(checkBinding(m, scopeFor(req)).ok).toBe(true);
+    for (const k of ["model_revision", "runtime_backend", "question_id", "candidate_schema_hash", "candidate_set_hash", "model_ref"] as const) {
+      expect(checkBinding(m, { ...scopeFor(req), [k]: "sha256:" + "0".repeat(64) }).ok).toBe(false);
+    }
+  });
+  test("tampered scope fails the fingerprint", () => {
+    const m = manifestFor(goodSet());
+    m.scope.model_revision = "r2";
+    expect(checkBinding(m, m.scope).ok).toBe(false);
+    expect(scopeFingerprint(m.scope)).not.toBe(m.scope_fingerprint);
+  });
+});
+
+describe("router", () => {
+  const provider = (p: number[]) => new FixtureReadoutProvider("backend.t", p, deployment as any);
+  test("shadow default + no manifest: refuses S1 (UNCALIBRATED, abstained, never AUTO)", async () => {
+    const r = await new DecisionRouter({ provider: provider([0.999, 0.001]), manifests: [] }).decide(req, "s", { reversible: true });
+    expect(r.confidence_semantics).toBe("UNCALIBRATED");
+    expect(r.calibration_level_served).toBe("NONE");
+    expect(r.abstained).toBe(true);
+    expect(r.threshold_action).not.toBe("AUTO");
+    expect((r.extensions as any)["x-refused_uncalibrated"]).toBe(true);
+  });
+  test("failing manifest is refused", async () => {
+    const bad = manifestFor(synth(400, 0.99, 4));
+    const r = await new DecisionRouter({ provider: provider([0.999, 0.001]), manifests: [bad], mode: "live" }).decide(req, "s", { reversible: true });
+    expect(r.threshold_action).not.toBe("AUTO");
+    expect(r.confidence_semantics).toBe("UNCALIBRATED");
+  });
+  test("passing manifest in SHADOW mode is calibrated but AUTO is downgraded", async () => {
+    const r = await new DecisionRouter({ provider: provider([0.999, 0.001]), manifests: [manifestFor(goodSet())] }).decide(req, "s", { reversible: true });
+    expect(r.confidence_semantics).toBe("CALIBRATED");
+    expect(r.threshold_action).toBe("REVIEW");
+  });
+  test("live + passing manifest + reversible => AUTO; not reversible => REVIEW", async () => {
+    const cfg = { provider: provider([0.999, 0.001]), manifests: [manifestFor(goodSet())], mode: "live" as const };
+    expect((await new DecisionRouter(cfg).decide(req, "s", { reversible: true })).threshold_action).toBe("AUTO");
+    expect((await new DecisionRouter(cfg).decide(req, "s", {})).threshold_action).toBe("REVIEW");
+  });
+  test("manifest bound to a different candidate set does not serve", async () => {
+    const other = buildRequest("ROUTE", { envelope: env, state_projection_ref: "s", instructions: "x", decision_bank_id: "b", question_id: "q.route", candidates: [{ candidate_id: "a" }, { candidate_id: "c" }] });
+    const r = await new DecisionRouter({ provider: provider([0.999, 0.001]), manifests: [manifestFor(goodSet())], mode: "live" }).decide(other, "s", { reversible: true });
+    expect(r.confidence_semantics).toBe("UNCALIBRATED");
+  });
+  test("outside coverage region abstains", async () => {
+    const m = manifestFor(goodSet());
+    m.coverage_region = { ...m.coverage_region, max_candidates: 2 }; // request has 3 (incl. unknown)
+    const r = await new DecisionRouter({ provider: provider([0.9, 0.05, 0.05]), manifests: [m], mode: "live" }).decide(req, "s", { reversible: true });
+    expect(r.abstained).toBe(true);
+  });
+});
+
+describe("threshold policy + motifs", () => {
+  test("actions by confidence band", () => {
+    expect([0.99, 0.8, 0.4, 0.1].map((c) => actionFor(DEFAULT_PROFILE, c))).toEqual(["AUTO", "REVIEW", "ESCALATE", "REJECT"]);
+  });
+  test("invalid profile rejected", () => {
+    expect(validateProfile({ ...DEFAULT_PROFILE, review_min: 0.99 })).not.toEqual([]);
+  });
+  test("all ten motifs exist and build valid operations; ROUTE adds an unknown candidate", () => {
+    expect(Object.keys(MOTIFS)).toHaveLength(10);
+    expect(req.candidates!.some((c) => c.is_unknown)).toBe(true);
+    expect(buildRequest("REFLEX", { envelope: env, state_projection_ref: "s", instructions: "i", decision_bank_id: "b", question_id: "q", candidates: [{ candidate_id: "a" }, { candidate_id: "b" }] }).latency_class).toBe("REALTIME");
+    expect(buildRequest("GATE", { envelope: env, state_projection_ref: "s", instructions: "i", decision_bank_id: "b", question_id: "q" }).operation).toBe("GATE");
+    expect(() => buildRequest("JUDGE", { envelope: env, state_projection_ref: "s", instructions: "i", decision_bank_id: "b", question_id: "q" })).toThrow();
+  });
+});
+
+describe("HTTP /v1/decision", () => {
+  test("default server refuses uncalibrated S1 through the ABI route", async () => {
+    const { createHandler } = await import("../src/server.ts");
+    const { SystemOne } = await import("../src/engine.ts");
+    const runtime = {
+      name: "fake", model: "m",
+      async complete() { return { text: "a", top: [{ token: "a", logprob: Math.log(0.99) }, { token: "b", logprob: Math.log(0.01) }], usage: { input: 1, output: 1 } }; },
+    };
+    const engine = new SystemOne({ runtimeUrl: "x", runtimeModel: "m", concurrency: 1, samples: 2, debias: false, logEnabled: false }, { runtime });
+    const res = await createHandler({ engine })(new Request("http://x/v1/decision", { method: "POST", body: JSON.stringify({ request: req, state: "s", reversible: true }) }));
+    expect(res.status).toBe(200);
+    const body: any = await res.json();
+    expect(body.confidence_semantics).toBe("UNCALIBRATED");
+    expect(body.threshold_action).not.toBe("AUTO");
+    expect(body.envelope.schema_id).toBe("allternit.kernel.DecisionResultV1");
+  });
+});

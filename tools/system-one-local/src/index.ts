@@ -11,3 +11,4 @@ export { createHandler, serve, HOST, DEFAULT_PORT } from "./server.ts";
 export { validateRequest } from "./validate.ts";
 export { confidence, weightedScore, labelDistribution, voteDistribution } from "./math.ts";
 export * from "./types.ts";
+export * as decision from "./decision/index.ts";

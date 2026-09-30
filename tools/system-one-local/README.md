@@ -168,3 +168,16 @@ They live here rather than in `.agents/skills/`, which is managed by `skills-loc
 - **Position bias remains** (letter-A preference). Debiasing exists but didn't help on this model.
 - **The hard rules are heuristics over shell text.** They don't expand variables, aliases, or scripts. `bash -c '…'` is inspected recursively, but `eval`, sourced scripts, and indirect paths aren't.
 - **The official-API error body shapes aren't documented publicly** beyond the status codes. The `{error: {type, message}}` bodies here are this server's own.
+
+## Canonical decision runtime (WP8)
+
+This package is the ONE canonical decision server. It speaks the frozen Kernel ABI 1.0.0 decision contracts (`spec/Contracts/kernel/v1/schemas/decision.schema.json`) on `POST /v1/decision` (`{request: DecisionRequestV1, state, reversible?}` returns `DecisionResultV1`); `/v1/systemone` stays as the SDK-compatible wire shape over the same engine.
+
+- `src/decision/readout.ts`: `DecisionReadoutProvider` (logits first, then calibrated readouts). `LocalLogitReadoutProvider` wraps this engine; `FixtureReadoutProvider` is for tests and replay.
+- `src/decision/manifest.ts`: calibration manifests bound to model / revision / tokenizer / quantization / runtime / question / candidate schema / candidate set. Any drift breaks the binding.
+- `src/decision/gate.ts`: the Q22 gate as code. ECE <= 0.05 held-out, <= 5% observed error on the auto-act subset with Wilson/bootstrap bounds, minimum sample floors, reversible-only, and agreement with another LLM is never an input.
+- `src/decision/router.ts`: SHADOW by default. Without a bound, gate-passing manifest the result is `UNCALIBRATED`, abstained, and never `AUTO`. `AUTO` needs live mode + a passing per-primitive manifest + the caller attesting reversibility + confidence inside the calibrated auto-act region.
+- `src/decision/threshold.ts` (CL-158 Threshold Policy) and `src/decision/motifs.ts` (CL-156 DecisionMotif library): thresholds are policy, never model output.
+- Metrics: accuracy, macro F1, Brier, NLL, ECE, coverage-at-risk, flip and order sensitivity (`metrics.ts`).
+
+Python side: `domains/computer-use/core/core/{decision_head,laya_head,semif_head}.py` are in-process `DecisionHead` backends for the computer-use planning loop, not servers. They stay as thin adapters (backend profiles of kind `decoder_readout` / `schema_encoder`) to be consumed through a `DecisionReadoutProvider`; no second server is kept.
