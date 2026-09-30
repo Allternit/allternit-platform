@@ -13,7 +13,7 @@ It is **not** the public API.
 |---|---|---|
 | Public hostname | `https://api.allternit.com` | none |
 | Binary | `allternit-cloud-api` | `allternit-api` |
-| Default bind | `:8082` (behind nginx) | `:8013` on loopback / tailnet |
+| Default bind | `:8082` (behind nginx) | `0.0.0.0:$ALLTERNIT_API_PORT`; default `18013` (dev), production pins `8013`. Firewall it |
 | Database | Postgres | Per-instance SQLite |
 | Role | Auth, billing, pairing, relay, fleet | Node state and execution |
 
@@ -41,18 +41,18 @@ cargo run -p allternit-api
 ```
 
 ```
-http://127.0.0.1:8013
+http://127.0.0.1:18013   # default; set ALLTERNIT_API_PORT=8013 to match Desktop and production
 ```
 
-Health (data plane, local):
+Health (data plane, local; also `/health/live`, `/health/ready`):
 
 ```bash
-curl http://127.0.0.1:8013/health
+curl http://127.0.0.1:${ALLTERNIT_API_PORT:-18013}/health
 ```
 
 The public Cloud API health path is different: `https://api.allternit.com/api/v1/health`.
 
-Override the bind with `ALLTERNIT_API_PORT`. Point the desktop/web fallback at this origin only when you are on the same machine (or a tunnel you control). Production `VITE_ALLTERNIT_GATEWAY_URL` stays `https://api.allternit.com`.
+The listener binds `0.0.0.0`, not loopback (`main.rs`). Point the desktop/web fallback at this origin only when you are on the same machine (or a tunnel you control). Production `VITE_ALLTERNIT_GATEWAY_URL` stays `https://api.allternit.com`.
 
 ## What production clients actually call
 
