@@ -1732,9 +1732,10 @@ pub(crate) mod tests {
                 {
                     "name": "model_only", "description": "Model-only",
                     "inputSchema": { "type": "object" },
+                    "annotations": { "readOnlyHint": true },
                     "_meta": { "ui": { "visibility": ["model"] } }
                 },
-                { "name": "plain", "inputSchema": { "type": "object" } }
+                { "name": "plain", "inputSchema": { "type": "object" }, "annotations": { "destructiveHint": true } }
             ]})),
             "tools/call" => {
                 let name = req["params"]["name"].as_str().unwrap_or("");
