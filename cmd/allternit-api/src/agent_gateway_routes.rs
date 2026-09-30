@@ -241,7 +241,7 @@ const ACCT_COLS: &str = "id, owner, vendor, auth_type, external_account_id, disp
     (secret_ref IS NOT NULL) AS has_secret_ref, (session_ref IS NOT NULL) AS has_session_ref, scopes_json, \
     restricted_bot_id, state, verified_at, expires_at, created_at, updated_at";
 pub(crate) const EXEC_COLS: &str = "id, owner, bot_id, type, mode, vendor, adapter_id, account_binding_id, preferred_lane, \
-    external_agent_id, capabilities_json, health_json, state, created_at, updated_at";
+    external_agent_id, external_agent_name, external_agent_avatar, capabilities_json, health_json, state, created_at, updated_at";
 pub(crate) const REMOTE_COLS: &str = "id, owner, thread_id, generation, bot_id, execution_binding_id, external_context_id, \
     external_task_id, continuation_token, sync_cursor, last_remote_event_id, capability_snapshot, lane, state, \
     created_at, updated_at, closed_at";
@@ -649,7 +649,7 @@ pub(crate) async fn discover_agents(db: &DbHandle, tx: &dyn crate::gateway_runne
             if let Some(d) = a["description"].as_str() {
                 o["description"] = json!(d);
             }
-            if let Some(u) = a["avatarUrl"].as_str() {
+            if let Some(u) = a["avatarUrl"].as_str().filter(|u| valid_avatar(u)) {
                 o["avatarUrl"] = json!(u);
             }
             Some(o)
@@ -660,8 +660,28 @@ pub(crate) async fn discover_agents(db: &DbHandle, tx: &dyn crate::gateway_runne
 async fn list_agents(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(aid): Path<String>) -> Response {
     let tx = crate::gateway_runner::transport(&state);
     match discover_agents(&state.db, tx.as_ref(), &user.user_id, &aid).await {
-        Ok(agents) => (StatusCode::OK, Json(json!({ "agents": agents }))).into_response(),
+        Ok(agents) => {
+            // Discovery is the sync point for vendor identity: bots bound to one of
+            // these agents pick up its current name and avatar.
+            if let Ok(conn) = state.db.connect() {
+                refresh_agent_identity(&conn, &user.user_id, &aid, &agents);
+            }
+            (StatusCode::OK, Json(json!({ "agents": agents }))).into_response()
+        }
         Err((status, code, msg)) => (status, Json(json!({ "error": msg, "code": code }))).into_response(),
+    }
+}
+
+/// Copy each discovered agent's name and avatar onto the bindings that use it.
+pub(crate) fn refresh_agent_identity(conn: &Connection, owner: &str, aid: &str, agents: &[Value]) {
+    for a in agents {
+        let Some(ext) = a["externalAgentId"].as_str() else { continue };
+        let _ = conn.execute(
+            "UPDATE bot_execution_bindings SET external_agent_name = COALESCE(?1, external_agent_name),
+                external_agent_avatar = COALESCE(?2, external_agent_avatar), updated_at = ?3
+             WHERE owner = ?4 AND account_binding_id = ?5 AND external_agent_id = ?6",
+            params![a["name"].as_str(), a["avatarUrl"].as_str(), now(), owner, aid, ext],
+        );
     }
 }
 
@@ -686,8 +706,28 @@ struct PutExec {
     account_binding_id: Option<String>,
     preferred_lane: Option<String>,
     external_agent_id: Option<String>,
+    external_agent_name: Option<String>,
+    external_agent_avatar: Option<String>,
     capabilities: Option<Value>,
     health: Option<Value>,
+}
+
+/// Largest inline avatar we keep (the data URI string, not the decoded bytes).
+const MAX_AVATAR_LEN: usize = 256 * 1024;
+
+/// A vendor agent avatar we store and hand to the browser: an https URL, or an
+/// inline raster data URI. Never fetched server-side (no SSRF surface); never SVG
+/// (scriptable).
+pub(crate) fn valid_avatar(v: &str) -> bool {
+    if v.len() > MAX_AVATAR_LEN {
+        return false;
+    }
+    if let Some(rest) = v.strip_prefix("https://") {
+        return !rest.is_empty() && !v.chars().any(|c| c.is_whitespace() || c == '"' || c == '<' || c == '>');
+    }
+    ["data:image/png;base64,", "data:image/jpeg;base64,", "data:image/webp;base64,", "data:image/gif;base64,"]
+        .iter()
+        .any(|p| v.starts_with(p) && v[p.len()..].bytes().all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'='))
 }
 
 async fn put_exec(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(bot_id): Path<String>, Json(b): Json<PutExec>) -> Response {
@@ -717,6 +757,13 @@ async fn put_exec(State(state): State<Arc<AppState>>, Extension(user): Extension
         }
         let caps = b.capabilities.as_ref().map(|v| v.to_string());
         let health = b.health.as_ref().map(|v| v.to_string());
+        if let Some(a) = b.external_agent_avatar.as_deref() {
+            if !a.is_empty() && !valid_avatar(a) {
+                return Err(ApiErr::bad("externalAgentAvatar must be an https URL or a png/jpeg/webp/gif data URI under 256 KB"));
+            }
+        }
+        let agent_name = b.external_agent_name.as_deref().map(|n| n.chars().take(120).collect::<String>());
+        let agent_avatar = b.external_agent_avatar.clone().filter(|a| !a.is_empty());
         let existing = one(&conn, &format!("SELECT {EXEC_COLS} FROM bot_execution_bindings WHERE bot_id = ?1 AND owner = ?2"), &[&bot_id, &owner])?;
         let (status, bid) = match existing {
             Some(e) => {
@@ -724,8 +771,9 @@ async fn put_exec(State(state): State<Arc<AppState>>, Extension(user): Extension
                 conn.execute(
                     "UPDATE bot_execution_bindings SET type = ?1, mode = ?2, vendor = ?3, adapter_id = ?4, account_binding_id = ?5,
                         preferred_lane = ?6, external_agent_id = ?7, capabilities_json = COALESCE(?8, capabilities_json),
-                        health_json = COALESCE(?9, health_json), updated_at = ?10 WHERE id = ?11",
-                    params![ty, mode, b.vendor, b.adapter_id, b.account_binding_id, b.preferred_lane, b.external_agent_id, caps, health, now(), s(&e, "id")],
+                        health_json = COALESCE(?9, health_json), updated_at = ?10,
+                        external_agent_name = ?12, external_agent_avatar = ?13 WHERE id = ?11",
+                    params![ty, mode, b.vendor, b.adapter_id, b.account_binding_id, b.preferred_lane, b.external_agent_id, caps, health, now(), s(&e, "id"), agent_name, agent_avatar],
                 )?;
                 (StatusCode::OK, s(&e, "id"))
             }
@@ -733,10 +781,12 @@ async fn put_exec(State(state): State<Arc<AppState>>, Extension(user): Extension
                 let bid = id("xb");
                 conn.execute(
                     "INSERT INTO bot_execution_bindings (id, owner, bot_id, type, mode, vendor, adapter_id, account_binding_id,
-                        preferred_lane, external_agent_id, capabilities_json, health_json, state, created_at, updated_at)
-                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'UNBOUND',?13,?13)",
+                        preferred_lane, external_agent_id, capabilities_json, health_json, state, created_at, updated_at,
+                        external_agent_name, external_agent_avatar)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'UNBOUND',?13,?13,?14,?15)",
                     params![bid, owner, bot_id, ty, mode, b.vendor, b.adapter_id, b.account_binding_id, b.preferred_lane,
-                            b.external_agent_id, caps.unwrap_or_else(|| "{}".into()), health.unwrap_or_else(|| "{}".into()), now()],
+                            b.external_agent_id, caps.unwrap_or_else(|| "{}".into()), health.unwrap_or_else(|| "{}".into()), now(),
+                            agent_name, agent_avatar],
                 )?;
                 let row = one(&conn, &format!("SELECT {EXEC_COLS} FROM bot_execution_bindings WHERE id = ?1"), &[&bid])?.unwrap();
                 set_exec_state(db, &conn, &owner, &row, "BOUND", "binding created")?;
@@ -1656,6 +1706,36 @@ mod tests {
         assert_eq!(*d.calls.lock().unwrap(), before);
         // Someone else's account is invisible.
         assert_eq!(discover_agents(&st.db, &d, "user-b", &with_key).await.unwrap_err().0, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn vendor_agent_name_and_avatar_are_validated_stored_and_refreshed_by_discovery() {
+        let st = setup("identity").await;
+        let aid = account(&st).await;
+        let put = |body: Value| { let st = st.clone(); async move { call(&st, "PUT", "/bots/bot-1/execution-binding", "user-a", Some(body)).await } };
+        let base = |extra: Value| { let mut b = json!({"vendor": "openai", "accountBindingId": aid, "externalAgentId": "a1"}); b.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone()); b };
+        // Rejected: svg (scriptable), plain http, oversized.
+        for bad in ["data:image/svg+xml;base64,PHN2Zz4=", "http://x/a.png", "javascript:alert(1)", "https://x/a b.png"] {
+            let (s, v) = put(base(json!({"externalAgentAvatar": bad}))).await;
+            assert_eq!(s, StatusCode::BAD_REQUEST, "{bad}: {v}");
+        }
+        let (s, _) = put(base(json!({"externalAgentAvatar": format!("data:image/png;base64,{}", "A".repeat(300 * 1024))}))).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+        // Accepted: inline png, stored with the name.
+        let (s, v) = put(base(json!({"externalAgentName": "Nova", "externalAgentAvatar": "data:image/png;base64,iVBORw0KGgo="}))).await;
+        assert_eq!(s, StatusCode::CREATED, "{v}");
+        assert_eq!(v["binding"]["externalAgentName"], "Nova");
+        assert_eq!(v["binding"]["externalAgentAvatar"], "data:image/png;base64,iVBORw0KGgo=");
+        // Discovery refreshes the bound agent's identity; unsafe avatars from an adapter are dropped.
+        let conn = st.db.connect().unwrap();
+        refresh_agent_identity(&conn, "user-a", &aid, &[json!({"externalAgentId": "a1", "name": "Alpha", "avatarUrl": "https://x/a.png"})]);
+        let (_, v) = call(&st, "GET", "/bots/bot-1/execution-binding", "user-a", None).await;
+        assert_eq!((v["binding"]["externalAgentName"].as_str(), v["binding"]["externalAgentAvatar"].as_str()), (Some("Alpha"), Some("https://x/a.png")));
+        // Another owner's refresh touches nothing.
+        refresh_agent_identity(&conn, "user-b", &aid, &[json!({"externalAgentId": "a1", "name": "Mallory"})]);
+        let (_, v) = call(&st, "GET", "/bots/bot-1/execution-binding", "user-a", None).await;
+        assert_eq!(v["binding"]["externalAgentName"], "Alpha");
+        assert!(valid_avatar("https://cdn.example/a.webp") && !valid_avatar("data:image/png;base64,<script>"));
     }
 
     #[tokio::test]
