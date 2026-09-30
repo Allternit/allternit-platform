@@ -1,8 +1,8 @@
 //! Shared egress guard: the one place that decides whether Allternit code may
-//! open a connection to a destination. Used by the web proxy, design
-//! connector import, and any other server-side fetch of an attacker-chosen
-//! URL (connectors, MCP fetch, Decision Runtime clients, spawned-harness
-//! egress).
+//! open a connection to a destination. Used today by the web proxy and the
+//! design connector import. Connectors, MCP fetch, Decision Runtime clients
+//! and spawned-harness egress are meant to route through it too, but are not
+//! wired yet (spawned harnesses are only recorded in ExecutionEnvironmentV1).
 //!
 //! Policy: only publicly routable unicast addresses are allowed. Loopback,
 //! private, link-local (cloud metadata 169.254.169.254), CGNAT (the Fabric
