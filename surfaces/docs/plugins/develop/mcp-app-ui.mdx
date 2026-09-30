@@ -1,0 +1,230 @@
+---
+title: 'Build: MCP App UI'
+description: 'ui:// resources, the ui/* bridge, display modes, theming, CSP, and the sandbox'
+---
+
+A *View* is an HTML document your server serves as a `ui://` resource. Allternit renders it inline in the conversation and connects it to the host with a JSON-RPC bridge over `postMessage`. This page follows the MCP Apps specification version `2026-01-26` and lists what Allternit's host implements.
+
+## Linking a tool to a View
+
+Set `_meta.ui.resourceUri` on the tool. The value must start with `ui://`.
+
+```ts
+registerAppTool(server, "show_weather", {
+  description: "Display a weather card for a city.",
+  inputSchema: { city: z.string() },
+  _meta: { ui: { resourceUri: "ui://weather/card.html" } },
+}, handler);
+```
+
+Allternit also reads the older flat keys `_meta["ui/resourceUri"]` and `_meta["openai/outputTemplate"]`, so a server written for another host is found without changes. `registerAppTool` from `@modelcontextprotocol/ext-apps/server` writes both `ui.resourceUri` and `ui/resourceUri`.
+
+Serve the resource with:
+
+- URI starting with `ui://`
+- MIME type `text/html;profile=mcp-app` (Allternit also accepts plain `text/html`)
+- HTML in the `text` field, at most 2 MiB
+
+## Resource metadata
+
+Set these under `_meta.ui` on the resource content:
+
+| Field | Type | Effect |
+|-------|------|--------|
+| `csp` | object | Domains the View may load from or connect to. See [Content Security Policy](#content-security-policy). |
+| `permissions` | object | Browser features the View may use: `camera`, `microphone`, `geolocation`, `clipboardWrite`. |
+| `prefersBorder` | boolean | Whether the host draws a border around the View. Default `true`. |
+| `domain` | string | Read from the resource but not used by Allternit's frame. Every View already runs in its own opaque origin. |
+
+## The bridge
+
+The View talks to the host with JSON-RPC 2.0 messages sent to `window.parent`. You can write these by hand (the [quickstart](/plugins/quickstart) does) or use the `App` class from `@modelcontextprotocol/ext-apps`, which wraps them.
+
+### Lifecycle
+
+1. The View sends the request `ui/initialize` with `protocolVersion`, `appInfo`, and `appCapabilities`.
+2. The host replies with its capabilities and `hostContext` (theme, styles, display mode, and so on).
+3. The View sends the notification `ui/notifications/initialized`.
+4. The host sends `ui/notifications/tool-input` (the arguments) and `ui/notifications/tool-result` (the result).
+
+The host waits up to 20 seconds for the View to initialize. After that it shows an error state instead of a blank frame.
+
+### Messages the host sends to the View
+
+| Method | When |
+|--------|------|
+| `ui/notifications/tool-input` | The tool call's arguments, once known. |
+| `ui/notifications/tool-result` | The tool result (`content`, `structuredContent`, `isError`). |
+| `ui/notifications/host-context-changed` | Theme, display mode, or container size changed. |
+| `ui/resource-teardown` | The View is being removed. It is a request; reply with an empty result. The host waits 1 second. |
+
+### Messages the View can send to the host
+
+| Method | Type | Allternit behavior |
+|--------|------|--------------------|
+| `ui/initialize` | request | Handshake. |
+| `ui/notifications/initialized` | notification | Marks the View ready. |
+| `ui/notifications/size-changed` | notification | Resizes the inline frame to the reported `height`. Ignored in fullscreen. |
+| `ui/notifications/request-teardown` | notification | Dismisses the View. |
+| `ui/open-link` | request | Opens `url` in the browser. |
+| `ui/message` | request | Adds a message to the chat thread from the app. |
+| `ui/update-model-context` | request | Updates context the model sees on its next turn. |
+| `ui/request-display-mode` | request | Switches between `inline` and `fullscreen`. The host replies with the mode it applied. |
+| `tools/call` | request | Forwarded to your server. See [Requests the host makes for a View](/plugins/develop/mcp-server#requests-the-host-makes-for-a-view). |
+| `resources/list`, `resources/read`, `resources/templates/list` | request | Forwarded to your server. |
+| `notifications/message` | notification | Logged by the host at debug level. |
+| `x-allternit/*` | request | Optional Allternit extensions. See [window.allternit extensions](/plugins/reference/window-allternit). |
+
+Any other method is rejected with JSON-RPC error `-32601`. `ui/download-file` is not implemented.
+
+The host advertises these capabilities at initialize: `openLinks`, `serverTools`, `serverResources`, `logging`, and `x-allternit`. It also advertises `sandbox` with the `csp` and `permissions` your resource declared.
+
+### Handling a tool call from the View
+
+```js
+const result = await request("tools/call", {
+  name: "refresh_data",
+  arguments: { id: "abc" },
+});
+```
+
+The call goes through the host to your server with the user's own OAuth token. The View never sees the token.
+
+## Host context
+
+`hostContext` is sent in the `ui/initialize` result and again in `ui/notifications/host-context-changed`.
+
+| Field | Value |
+|-------|-------|
+| `theme` | `"light"` or `"dark"`. |
+| `styles.variables` | CSS variables for the current theme. See [Theming](#theming). |
+| `displayMode` | `"inline"` or `"fullscreen"`. |
+| `availableDisplayModes` | `["inline", "fullscreen"]`. |
+| `containerDimensions` | `maxWidth` and `height` inline; `maxWidth` and `maxHeight` in fullscreen. |
+| `toolInfo` | The tool call's id and its tool definition. |
+| `locale`, `timeZone`, `userAgent` | From the user's browser. |
+| `platform` | `"web"` or `"mobile"`. |
+| `deviceCapabilities` | `touch` and `hover`. |
+| `x-allternit` | The extension advertisement. See [feature detection](/plugins/reference/window-allternit#feature-detection). |
+
+## Display modes
+
+Views start `inline`. Request `fullscreen` with `ui/request-display-mode` when a task needs the space:
+
+```js
+const { mode } = await request("ui/request-display-mode", { mode: "fullscreen" });
+```
+
+Only `inline` and `fullscreen` exist. Picture-in-picture is not supported. Any other requested mode resolves to `inline`. The View is not reloaded when the mode changes. Handle `host-context-changed` to adapt the layout.
+
+## Theming
+
+The host resolves its design tokens to concrete colors and sends them as CSS variables in `hostContext.styles.variables`. Apply them to your document root and use them in your CSS, with fallbacks for hosts that send none:
+
+```js
+function applyTheme(ctx) {
+  const vars = (ctx && ctx.styles && ctx.styles.variables) || {};
+  for (const [name, value] of Object.entries(vars)) {
+    if (value) document.documentElement.style.setProperty(name, value);
+  }
+}
+```
+
+```css
+body {
+  background: var(--color-background-primary, #fff);
+  color: var(--color-text-primary, #1f1e1d);
+  font-family: var(--font-sans, system-ui, sans-serif);
+}
+```
+
+Variables sent:
+
+| Group | Names |
+|-------|-------|
+| Background | `--color-background-primary`, `-secondary`, `-tertiary`, `-ghost`, `-info`, `-danger`, `-success`, `-warning` |
+| Text | `--color-text-primary`, `-secondary`, `-tertiary`, `-info`, `-danger`, `-success`, `-warning` |
+| Border | `--color-border-primary`, `-secondary`, `-tertiary`, `-info`, `-danger`, `-success`, `-warning` |
+| Ring | `--color-ring-primary`, `-info`, `-danger`, `-success`, `-warning` |
+| Font | `--font-sans`, `--font-mono` |
+
+When the user changes theme, the host sends `ui/notifications/host-context-changed` with new values. Re-apply them.
+
+Colors are sent as resolved values, not `var()` references, so they are safe to use inside your View's own stylesheet.
+
+## Content Security Policy
+
+The host builds the View's CSP from the `csp` object on your resource. The default is closed: no network access, no nested frames.
+
+```json
+{
+  "_meta": {
+    "ui": {
+      "csp": {
+        "connectDomains": ["https://api.example.com"],
+        "resourceDomains": ["https://cdn.example.com"],
+        "frameDomains": [],
+        "baseUriDomains": []
+      }
+    }
+  }
+}
+```
+
+| Field | Controls | Default when empty |
+|-------|----------|--------------------|
+| `connectDomains` | `connect-src`: `fetch`, XHR, WebSocket | `'none'` |
+| `resourceDomains` | `script-src`, `style-src`, `img-src`, `font-src`, `media-src` | Only the View itself (`'self'`, inline, and `data:` for images and media) |
+| `frameDomains` | `frame-src`: nested iframes | `'none'` |
+| `baseUriDomains` | `base-uri` | `'none'` |
+
+The resulting policy is:
+
+```text
+default-src 'none';
+script-src 'self' 'unsafe-inline' <resourceDomains>;
+style-src 'self' 'unsafe-inline' <resourceDomains>;
+img-src 'self' data: <resourceDomains>;
+font-src 'self' <resourceDomains>;
+media-src 'self' data: <resourceDomains>;
+connect-src <connectDomains | 'none'>;
+frame-src <frameDomains | 'none'>;
+object-src 'none';
+base-uri <baseUriDomains | 'none'>
+```
+
+Rules for entries:
+
+- Each entry must be an origin: `scheme://host[:port]`, optionally with a leading `*.` wildcard, for example `https://api.example.com` or `https://*.example.com`.
+- Entries that contain whitespace, `;`, `,`, or quotes, or that are bare keywords, a lone `*`, or bare schemes like `data:` or `blob:`, are dropped.
+- Declare only what the View needs. The [review scan](/plugins/publish/submit-and-review#automated-scan) warns on wildcards, non-TLS schemes, more than 10 domains in total, and any `frameDomains`, which need a written justification.
+
+The CSP is applied as a `<meta>` element placed before your document's own content. Inline scripts and styles are allowed, so a single self-contained HTML file works. Because `<script src>` and stylesheet links resolve against an opaque origin, use absolute URLs on a declared `resourceDomains` entry, or inline the code.
+
+CSP violations are reported to the host, which logs them. They do not break the View. If something is silently blocked, look in the browser console for `Content Security Policy` messages.
+
+## Sandbox rules
+
+The View runs inside two layers:
+
+1. The **sandbox proxy** is a static page on a separate origin from Allternit. Allternit's web client embeds it, sends it your HTML over `postMessage`, and refuses to render Views if no sandbox origin is configured.
+2. Inside the proxy, your HTML runs in a nested iframe whose `sandbox` attribute does not include `allow-same-origin`.
+
+What follows for your View:
+
+- **Opaque origin.** `localStorage`, `sessionStorage`, `document.cookie`, and IndexedDB are unavailable or throw. `fetch` from the View carries no cookies and sees no ambient credentials.
+- **No access to the host.** The View cannot read the host page, the proxy page, or the user's tokens.
+- **Nested frames are blocked** unless you declare `frameDomains`.
+- **Navigation.** The sandbox allows scripts, forms, popups (which escape the sandbox), downloads, and modals. It never allows top-level navigation. To send the user elsewhere, call `ui/open-link`.
+- **Permissions.** Camera, microphone, geolocation, and clipboard-write are available only if you declare them in `permissions`.
+- **One View per proxy document.** A View cannot replace itself with another.
+
+## State guidance
+
+Because the View has no storage, treat it as a pure function of what the host gives it.
+
+- Render from `tool-input` and `tool-result`. Do not assume they arrive before your first paint; render a placeholder first.
+- Keep durable state on your server. Save it with a tool that has `visibility: ["app"]` and read it back with `tools/call` on load.
+- Keep model-relevant state out of the View. Use `ui/update-model-context` to tell the model what matters (for example, which row the user selected) and `ui/message` to add a message to the conversation.
+- Expect the View to be torn down and re-created when the conversation is reloaded. Rebuild it from the tool result.
+- Report your content height with `ui/notifications/size-changed` after every layout change, or the inline frame will not fit your content.

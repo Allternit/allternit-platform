@@ -1,0 +1,163 @@
+---
+title: 'window.allternit extensions'
+description: 'Reference for the optional x-allternit/* methods and the window.allternit shim'
+---
+
+The MCP Apps standard covers rendering, theming, tool calls, and messages. Allternit adds a small set of optional methods for things the standard does not cover. They follow the same idea as ChatGPT's `window.openai`: a View that uses only the standard runs everywhere, and a View that wants more **feature-detects** and degrades when the extension is absent.
+
+- **Transport.** The standard View to host JSON-RPC bridge, with methods prefixed `x-allternit/`.
+- **Confirmation.** Methods that save data or start work show a prompt drawn by the host over the View. The View cannot draw, skip, or answer it.
+- **Unknown methods.** Any `x-allternit/*` method (or other method) the host does not implement is rejected with JSON-RPC error `-32601`.
+
+## Feature detection
+
+At `ui/initialize`, the host advertises the extension under the `x-allternit` key, in both `hostCapabilities` (on the result) and `hostContext`:
+
+```json
+{
+  "x-allternit": {
+    "version": 1,
+    "methods": [
+      "x-allternit/saveArtifact",
+      "x-allternit/openInAci",
+      "x-allternit/dispatchAgent",
+      "x-allternit/handoffToComputer",
+      "x-allternit/requestCheckout"
+    ]
+  }
+}
+```
+
+A View that missed the advertisement can call `x-allternit/capabilities` (no parameters) and gets the same object back. If the key is absent, the host does not support the extension: do not call the methods.
+
+## The shim
+
+`allternit-ext.js` is a small dependency-free script (about 2 KB) that defines `window.allternit`. Its source is `mcp-sandbox-proxy/allternit-ext.js` in the Allternit host repository. A public download location is **Planned**. Inline its contents in your View's HTML. A relative `<script src>` will not resolve inside the View's opaque origin, and the View's CSP allows inline scripts.
+
+The shim does nothing when it is not inside an iframe, and it leaves an existing `window.allternit` alone.
+
+```js
+if (window.allternit && (await window.allternit.detect())) {
+  if (window.allternit.supports("saveArtifact")) {
+    const { artifactId, address } = await window.allternit.saveArtifact({
+      title: "Q3 report",
+      mimeType: "text/html",
+      content: html,
+    });
+  }
+}
+```
+
+| Member | Description |
+|--------|-------------|
+| `window.allternit.version` | Shim version, currently `1`. |
+| `detect()` | Resolves `true` when the host advertises `x-allternit`. Resolves `false` if the host rejects the discovery call. |
+| `supports(name)` | `true` if the advertisement lists `x-allternit/<name>`. Call after `detect()`. |
+| `saveArtifact(params)` | Calls `x-allternit/saveArtifact`. |
+| `openInAci(params)` | Calls `x-allternit/openInAci`. |
+| `dispatchAgent(params)` | Calls `x-allternit/dispatchAgent`. |
+| `handoffToComputer(params)` | Calls `x-allternit/handoffToComputer`. |
+| `requestCheckout(params)` | Calls `x-allternit/requestCheckout`. See [Selling in your MCP App](/plugins/guides/selling). |
+
+Every method returns a promise. On failure the promise rejects with an `Error` whose `code` is the JSON-RPC error code.
+
+Without the shim, send the request yourself with the bridge:
+
+```js
+const result = await request("x-allternit/saveArtifact", { title, mimeType, content });
+```
+
+## Methods
+
+| Method | Parameters | Result | Confirms |
+|--------|------------|--------|----------|
+| `x-allternit/saveArtifact` | `{ title, mimeType, content }` | `{ artifactId, address }` | Yes |
+| `x-allternit/openInAci` | `{ url }` or `{ resourceUri }` | `{ opened: true }` | No |
+| `x-allternit/dispatchAgent` | `{ agentId?, prompt }` | `{ taskId }` | Always |
+| `x-allternit/handoffToComputer` | `{ url?, instructions }` | `{ accepted: true }` | Yes |
+| `x-allternit/requestCheckout` | see [Selling](/plugins/guides/selling) | `{ error: "unavailable" }` in the extension bridge today | n/a |
+| `x-allternit/capabilities` | none | the advertisement above | No |
+
+### `x-allternit/saveArtifact`
+
+Saves content to the user's Artifacts Library.
+
+| Parameter | Type | Limit |
+|-----------|------|-------|
+| `title` | string, required | 200 characters |
+| `mimeType` | string, required | 100 characters |
+| `content` | string, required | 2,000,000 characters |
+
+Returns `artifactId` and `address`, of the form `a://artifact/<id>`. The user sees a prompt of the form: "APP wants to save “TITLE” (MIME TYPE) to your Artifacts Library."
+
+### `x-allternit/openInAci`
+
+Opens content in the Allternit workspace, in a mini-app view.
+
+| Parameter | Type | Rule |
+|-----------|------|------|
+| `url` | string | `http` or `https` only. |
+| `resourceUri` | string | Must be this View's own `ui://` resource. Any other value is rejected with `-32602`. |
+
+One of the two is required. `openInAci` is navigation only and does not ask for confirmation.
+
+### `x-allternit/dispatchAgent`
+
+Creates a task for an agent to run.
+
+| Parameter | Type | Limit |
+|-----------|------|-------|
+| `prompt` | string, required | 20,000 characters |
+| `agentId` | string, optional | 200 characters. When present, the task is assigned to that agent. |
+
+Returns `{ taskId }`. This method **always** asks the user first, and the prompt shows the full prompt text. It creates the task in the user's default workspace.
+
+### `x-allternit/handoffToComputer`
+
+Asks Allternit's computer-use agent to take over a task.
+
+| Parameter | Type | Rule |
+|-----------|------|------|
+| `instructions` | string, required | 20,000 characters |
+| `url` | string, optional | `http` or `https` only. |
+
+Returns `{ accepted: true }` after the user confirms. It opens Allternit's browser view with the URL and instructions; the browser view does not act on them automatically yet.
+
+### `x-allternit/requestCheckout`
+
+Reserved for [selling in your MCP App](/plugins/guides/selling), which is a preview. In the extension bridge this method returns `{ "error": "unavailable" }` and never draws payment UI in your View. Treat that as "not supported here."
+
+## Confirmation behavior
+
+- The prompt is rendered by the host, outside your View. It states which app is asking and what it will do.
+- Only one prompt is open at a time. A request that arrives while a prompt is open is declined.
+- A declined or dismissed prompt returns error `-32000` with the message "The user declined this request". The same code is returned when the backing Allternit API call fails.
+- If the View is removed while a prompt is open, the prompt is declined.
+
+Do not call a confirming method on load. Call it in response to a user action, and handle the rejection.
+
+## Errors
+
+| Code | Meaning |
+|------|---------|
+| `-32601` | Unknown method. |
+| `-32602` | Invalid parameters: a missing or oversized field, a URL that is not `http(s)`, or a `resourceUri` that is not this View's own. |
+| `-32000` | The user declined, or the backing API failed. |
+
+## Degrading gracefully
+
+```js
+async function save(html) {
+  const a = window.allternit;
+  if (a && (await a.detect()) && a.supports("saveArtifact")) {
+    try {
+      return await a.saveArtifact({ title: "Report", mimeType: "text/html", content: html });
+    } catch (e) {
+      if (e.code === -32000) return null; // user said no
+      throw e;
+    }
+  }
+  // Fallback for hosts without the extension: offer a download link, or a tool call.
+  return null;
+}
+```

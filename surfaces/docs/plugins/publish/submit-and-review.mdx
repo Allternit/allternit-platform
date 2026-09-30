@@ -1,0 +1,149 @@
+---
+title: 'Submit & review'
+description: 'Domain verification, automated scan, listing fields, test cases, review, publishing, and held updates'
+---
+
+Submitting your plugin to the Allternit directory has five steps: verify your domain, pass the automated scan, fill in the listing, submit for review, and publish once approved.
+
+<Note>
+Review outcomes and timing are decided by human reviewers. Submitting does not guarantee approval, listing, or a review date. The developer portal address for submissions is **Planned**; this page describes the submission flow and the API behind it as they exist in the Allternit code.
+</Note>
+
+## 1. Verify your domain
+
+You prove you control your MCP server's host by serving a token at a fixed path.
+
+1. Request a token for your host. It is issued once, per developer and host, and re-requesting replaces the old one.
+
+   ```http
+   POST /v1/developers/domain-tokens
+   { "host": "mcp.example.com" }
+   ```
+
+   The response is `{ "token": "allternit-verify-<48 hex characters>" }`. Allternit stores only a SHA-256 of the token, so save it when you receive it.
+
+2. Serve the token as plain text at:
+
+   ```text
+   https://mcp.example.com/.well-known/allternit-apps-challenge
+   ```
+
+   The response must be `200`, with the token as the body. A single trailing newline is allowed and nothing else. If you send a `Content-Type`, it must be `text/plain`.
+
+3. Ask Allternit to check it:
+
+   ```http
+   POST /v1/developers/domain-tokens/check
+   { "host": "mcp.example.com" }
+   ```
+
+The check runs on Allternit's servers. It uses HTTPS on the default port only, does not follow redirects, times out after 5 seconds, and reads at most 4 KB. It refuses IP-address hosts and hosts that resolve to private, loopback, or link-local addresses. A redirect is a failure, so serve the file directly from the host you verified.
+
+## 2. Automated scan
+
+The scan connects to your server and lints what it finds. Errors block submission. Warnings and info items do not block it, but a reviewer sees them.
+
+### Server
+
+| Code | Severity | Condition |
+|------|----------|-----------|
+| `server.no-tools` | error | The server lists no tools. |
+| `server.no-ui-resources` | warning | No `ui://` resources, so no View will render. |
+
+### Tools
+
+| Code | Severity | Condition |
+|------|----------|-----------|
+| `tool.name-missing`, `tool.name-duplicate` | error | A tool has no name, or two share one. |
+| `tool.name-format` | warning | Name is not 1 to 64 characters of letters, digits, `_`, `.`, `-`. |
+| `tool.title-missing` | warning | No title. |
+| `tool.description-missing` | error | No description. |
+| `tool.description-short`, `tool.description-long` | warning | Under 15 or over 1000 characters. |
+| `tool.description-steering` | warning | The description pushes the model toward your tool or away from others, or looks like injected instructions. |
+| `tool.input-schema-missing`, `tool.input-schema-type` | error | No `inputSchema`, or its `type` is not `object`. |
+| `tool.annotations-missing`, `tool.readonly-missing` | warning | No annotations, or no `readOnlyHint`. |
+| `tool.annotation-type` | error | An annotation is not a boolean. |
+| `tool.annotations-contradict` | error | Both `readOnlyHint` and `destructiveHint` are `true`. |
+| `tool.readonly-implausible` | warning | The name suggests a write (`create`, `delete`, `send`, and similar) but `readOnlyHint` is `true`. |
+| `tool.write-without-hint` | warning | A write-like name with no `readOnlyHint`. |
+
+### Resources and CSP
+
+| Code | Severity | Condition |
+|------|----------|-----------|
+| `resource.tool-target-missing` | error | A tool points at a `ui://` URI that `resources/list` does not expose. |
+| `resource.mime` | error | A `ui://` resource is not `text/html;profile=mcp-app`. |
+| `csp.not-array` | error | A `csp` field is not an array. |
+| `csp.malformed-domain` | error | An entry is malformed or over-broad (for example `*`). |
+| `csp.wildcard-domain` | warning | A `*.` wildcard entry. List exact hosts. |
+| `csp.insecure-scheme` | warning | A `http:` or `ws:` entry. |
+| `csp.not-minimal` | warning | More than 10 domains in total. |
+| `csp.frame-domains` | warning | Any `frameDomains`. They need written justification. |
+| `csp.duplicate-domain` | info | An entry listed twice. |
+
+## 3. The listing
+
+| Field | Rule |
+|-------|------|
+| Name | Required. At most 30 characters. |
+| Short description | Required. At most 80 characters. |
+| Long description | Required. At most 4000 characters. |
+| Developer | Required. |
+| Privacy policy URL | Required. A public `https://` URL. |
+| Terms of service URL | Required. A public `https://` URL. |
+| Icon | Required. |
+| Screenshots | At least one. |
+| Positive test cases | Five, each with a prompt and an expected result. |
+| Negative test cases | Three, each with a prompt and the reason the app should not trigger. |
+| Reviewer credentials | A test account the reviewer can use. Not part of the public listing. |
+| Plugin package | The ZIP from [Package your plugin](/plugins/publish/package). |
+
+### Test cases
+
+Reviewers run these prompts, so write them as a user would.
+
+- **Positive cases** are prompts where your app should be used, with what you expect to happen. Cover different tools, and include one where your View appears.
+- **Negative cases** are prompts where your app should stay out of the way: a request another app or the model itself should handle, or a similar-sounding request outside your scope. Say why the app should not trigger.
+
+Fill all eight in. The form is rejected with `form.positive-tests` or `form.negative-tests` if any prompt or expected result is empty.
+
+### Reviewer credentials
+
+Give the reviewer an account that has representative data and does not need two-factor codes you cannot supply. Credentials are stored encrypted, separately from the listing and the package. They are excluded from the public listing and from exports, and only a reviewer with admin access can read them.
+
+## 4. Submit
+
+Submitting sends the form, the package, and a snapshot of your server's tool metadata from the scan. The listing moves to `in_review`.
+
+| State | Meaning |
+|-------|---------|
+| `draft` | Not submitted. |
+| `in_review` | Waiting for a reviewer. |
+| `approved` | A reviewer approved it. It is not public yet. |
+| `rejected` | A reviewer rejected it and gave a reason. You can fix the issues and submit again. |
+| `published` | Live in the directory. |
+
+## 5. Publish when ready
+
+Approval does not publish your listing. After it is approved, you choose when to publish it, so you can line it up with your own launch. Publishing is only possible from `approved`.
+
+## Changes after approval
+
+Your server's tools are part of what a reviewer approved. Once a listing is approved, the approved snapshot of your tool metadata stays live and later changes are **held** until a reviewer approves them:
+
+- **Held:** a new tool, and any change to an existing tool's `title`, `description`, `inputSchema`, `annotations`, or `_meta`. Also any change to a `ui://` resource's MIME type or its `_meta.ui` (CSP, permissions).
+- **Applied immediately:** a removed tool or resource, because it only narrows what users can do.
+
+While a change is held, users continue to see the approved metadata. When you submit an update to an approved listing, the new form and package are also held until approval.
+
+Design for this: batch tool changes, ship annotation fixes together with the code that needs them, and expect a re-review when a tool's behavior changes.
+
+## Errors from the submission API
+
+| Status | Meaning |
+|--------|---------|
+| `422` | The form has validation errors. The body lists them by code (for example `form.name-too-long`). |
+| `404` | The submission does not exist, or is not yours. Submissions are visible to their owner and to reviewers only. |
+| `409` | The action is not allowed from the listing's current state (for example, publishing before approval). |
+| `403` | The action needs reviewer (admin) access. |
+| `400` | The request was malformed, for example a host that is not a public hostname. |

@@ -1,0 +1,147 @@
+---
+title: 'Troubleshooting and FAQ'
+description: 'Common problems with connecting, rendering, authentication, submission, and their fixes'
+---
+
+## The card does not appear
+
+The tool runs but no View shows in the chat. Check these in order.
+
+| Check | What to look for |
+|-------|------------------|
+| Tool metadata | `_meta.ui.resourceUri` is set and starts with `ui://`. |
+| `resources/list` | The same URI is listed. The review scan reports `resource.tool-target-missing` when it is not. |
+| `resources/read` | It returns HTML in `text`, with the MIME type `text/html;profile=mcp-app` (plain `text/html` also works), and the HTML is under 2 MiB. |
+| Server name | In chat, the host links a tool call to your connector by name. The name your server is registered under and the connector's `name_id` must normalize to the same value (lowercase letters, digits, and dashes). Register the connector with a `name_id` that matches. |
+| Slow reads | The host gives the lookup 20 seconds. If reading the resource is slower, no View is shown and the chat continues with the text result. |
+
+If a View fails to render, the conversation carries on with the tool's text result. A tool with a View should also return useful `content`.
+
+## "The MCP App sandbox is not configured"
+
+The web client renders Views only through a sandbox proxy on a separate origin, and refuses to render without one. If you run your own Allternit web client, set `VITE_MCP_SANDBOX_ORIGIN` to the sandbox proxy origin. It must differ from the web client's own origin. Development builds fall back to `http://127.0.0.1:3019`, which the dev server starts.
+
+## The View shows an error after a delay
+
+The host waits 20 seconds for the View to complete `ui/initialize`. If it does not, the frame shows an error. Common causes:
+
+- The script throws before it sends `ui/initialize`. Open the browser console and select the View's frame.
+- The View sends messages to the wrong target. Send to `window.parent`.
+- The View ignores replies whose `source` is not `window.parent`, or filters out its own reply. Match the reply to the request `id`.
+- A CSP block prevented your script from loading. See below.
+
+## The View is blank or partly unstyled
+
+Most often a Content Security Policy block. The View's CSP starts from `default-src 'none'`. Look for `Content Security Policy` messages in the console, then add the missing origin to the right field:
+
+| Blocked | Add to |
+|---------|--------|
+| A `fetch` or WebSocket | `connectDomains` |
+| A script, stylesheet, image, font, or media file from a CDN | `resourceDomains` |
+| A nested iframe | `frameDomains` (needs justification in review) |
+
+Entries must be plain origins such as `https://cdn.example.com`. An entry with a path, a space, a semicolon, or a quote is dropped silently.
+
+## `localStorage` or cookies throw
+
+The View runs in an opaque origin, where these are unavailable by design. Remove the dependency. Keep state on your server. See [state guidance](/plugins/develop/mcp-app-ui#state-guidance).
+
+## The View is the wrong height
+
+The inline frame is sized from the height you report. Send `ui/notifications/size-changed` with `height` after every layout change, and once after the first render.
+
+## `tools/call` from the View fails
+
+| Status or code | Meaning | Fix |
+|----------------|---------|-----|
+| `403 action_not_allowed` | The View asked for a method the host does not forward. | Only `tools/list`, `tools/call`, `resources/list`, `resources/read`, and `resources/templates/list` are forwarded. |
+| `403` on a tool | The tool's `_meta.ui.visibility` does not include `"app"`. | Add `"app"`. |
+| `404` | The tool is not in your server's `tools/list`, or the connector is missing, disabled, or belongs to another user. | Check the tool name. |
+| `502 connector_unauthorized` | Your server rejected the stored token. | The user should reconnect. Check your token validation. |
+| `502 connector_unreachable`, `504 connector_timeout` | Allternit could not reach your server in time. | Check that it is public and answers within 30 seconds. |
+
+## The connector will not save or connect
+
+- **Private address.** A connector URL that resolves to a loopback, private, link-local, or shared-address range is refused. Use a public `https` URL. See the [Quickstart](/plugins/quickstart#4-make-the-server-reachable).
+- **Wrong transport.** Serve streamable HTTP at a single endpoint.
+- **Session errors.** If you issue `Mcp-Session-Id`, return `404` for an unknown session so the client re-initializes.
+
+## OAuth fails
+
+| Symptom | Cause and fix |
+|---------|---------------|
+| Connect never leaves Allternit | Your server did not return a `WWW-Authenticate` challenge with `resource_metadata`, or `/.well-known/oauth-protected-resource` is missing. |
+| "does not support client ID metadata documents" | Your authorization server does not advertise `client_id_metadata_document_supported: true`, and no client ID is configured on the connector. Enable CIMD, or register a client for Allternit. |
+| Redirect mismatch | The `redirect_uri` is not in the `redirect_uris` of Allternit's client ID document. Allow it. |
+| No scopes granted | Allternit sends no `scope`. Grant your default scopes when none is requested. |
+| Token endpoint not found | Allternit's callback looks for `/.well-known/oauth-authorization-server`, `/oauth/token`, `/token`, and `/v1/token` under your MCP server URL. See [Authentication](/plugins/develop/authentication#what-allternit-does). |
+| Tools return `401` after connecting | The token's `aud` does not equal your MCP resource URL, or your server validates a different issuer. |
+
+## Domain verification fails
+
+The check fetches `https://<host>/.well-known/allternit-apps-challenge`. It fails when:
+
+- the response is a redirect (redirects are never followed),
+- the status is not `200`,
+- the `Content-Type` is present but not `text/plain`,
+- the body is not exactly the token (one trailing newline is allowed),
+- the host is an IP address, resolves to a private address, or uses a port other than 443,
+- the request takes longer than 5 seconds.
+
+Tokens are per developer and host. Requesting a new token invalidates the old one.
+
+## Package import fails
+
+See the list of codes in [Package your plugin](/plugins/publish/package#import-checks). The most common are `mcp.server-count` (more or fewer than one server), `mcp.url` (not `https`), `mcp.embedded-credential` (an `Authorization` or token header in `mcp.json`), and `zip.unsafe-path`.
+
+## The scan reports errors
+
+Fix errors before submitting. The list of codes is in [Submit & review](/plugins/publish/submit-and-review#automated-scan). The most common:
+
+- **`tool.description-missing`, `tool.input-schema-type`:** every tool needs a description and an object `inputSchema`.
+- **`tool.annotations-contradict`:** a tool cannot be both read-only and destructive.
+- **`csp.malformed-domain`:** an entry like `*` or `cdn.example.com/path`. Use `https://cdn.example.com`.
+
+## My tool changes are "held"
+
+After approval, new or changed tools wait for a reviewer while users keep the approved version. See [Changes after approval](/plugins/publish/submit-and-review#changes-after-approval). Removing a tool takes effect immediately.
+
+## An `x-allternit` call is rejected
+
+| Code | Cause |
+|------|-------|
+| `-32601` | The host does not implement the method. Feature-detect with `detect()` and `supports()`. |
+| `-32602` | A parameter is missing, too long, or not an `http(s)` URL, or `resourceUri` is not the View's own. |
+| `-32000` | The user declined, or the API behind it failed. A second request while a prompt is open is declined. |
+
+## FAQ
+
+**Do I have to use the MCP Apps SDK?**
+No. The bridge is JSON-RPC over `postMessage`. The [quickstart](/plugins/quickstart) View uses none. The `App` class in `@modelcontextprotocol/ext-apps` and helpers such as `registerAppTool` save code, but they are optional.
+
+**Can I use React or another framework in a View?**
+Yes. Bundle everything into a single HTML document (inline the script and styles), or load code from a domain you declare in `resourceDomains`.
+
+**Can the View call my backend directly?**
+Only if you declare the domain in `connectDomains`. Prefer `tools/call`, which goes through the host with the user's token, so your View never handles credentials.
+
+**Does the View see the user's OAuth token?**
+No. The host attaches it when it forwards requests to your server.
+
+**Can I show my own website in an iframe?**
+Only through `frameDomains`, which needs written justification in review. A View that renders your own data with your own HTML is usually a better fit.
+
+**Can I test without submitting?**
+Yes. Add your server as a connector in Allternit and try it in chat. Submission is only for the directory listing.
+
+**How long does review take?**
+Allternit does not promise a review time or an outcome.
+
+**Do I need OAuth for a public, read-only server?**
+Not technically. Servers that act for a user or return user data must use it. Public data with no user context does not need it.
+
+**What does selling cost?**
+Fees have not been decided. See [Selling in your MCP App](/plugins/guides/selling), which is a preview.
+
+**Where do I report a problem with these docs?**
+Email [support@allternit.com](mailto:support@allternit.com).

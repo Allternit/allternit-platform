@@ -1,0 +1,93 @@
+---
+title: 'Plugins & MCP Apps'
+description: 'How to put your app inside Allternit with an MCP server, skills, and an optional interactive UI'
+---
+
+## What an Allternit Plugin is
+
+An Allternit Plugin is a package that adds your product to Allternit. It has up to three parts:
+
+| Part | What it does | Required |
+|------|--------------|----------|
+| **MCP server** | Exposes your data and actions as tools the model can call. Runs on your infrastructure. | Yes |
+| **Skills** | `SKILL.md` files that tell the model when and how to use your tools. | No |
+| **MCP App UI** | An HTML interface (a *View*) that Allternit renders inline in the conversation when a tool returns. | No |
+
+Users connect your server, sign in to your service through OAuth, and then the model can call your tools. If a tool has a UI, Allternit shows it in the chat.
+
+## Built on an open standard
+
+The UI layer is the open [MCP Apps](https://github.com/modelcontextprotocol/ext-apps) standard (specification version `2026-01-26`), an extension of the [Model Context Protocol](https://modelcontextprotocol.io). Allternit's host implements the standard bridge, so a View that only uses the standard does not depend on Allternit. It runs in any host that implements the same specification.
+
+Allternit adds a small set of optional extensions under the `x-allternit/*` prefix (saving an artifact, dispatching an agent, and so on). They are feature-detected: a View that uses them keeps working in other hosts, with those features turned off. See [window.allternit extensions](/plugins/reference/window-allternit).
+
+<Note>
+Views that use only the standard bridge run in Allternit without changes. Views that call ChatGPT-specific APIs such as `window.openai` need a small port. See [Porting from ChatGPT or Claude](/plugins/guides/porting).
+</Note>
+
+## How the pieces fit
+
+```text
+                       ┌──────────────────────────────────────────┐
+                       │            Allternit (host)              │
+  User ── chat ──────► │  model calls a tool on your server       │
+                       │                                          │
+                       │   ┌──────────────────────────────────┐   │
+                       │   │ Sandbox proxy (separate origin)  │   │
+                       │   │  ┌────────────────────────────┐  │   │
+                       │   │  │ View (opaque-origin iframe)│  │   │
+                       │   │  └─────────────▲──────────────┘  │   │
+                       │   └────────────────│─────────────────┘   │
+                       └────────────────────│─────────────────────┘
+                                            │ postMessage
+                        JSON-RPC (ui/*)     │  host ⇄ View
+                                            │
+        ┌───────────────────────────────────┴────────────────────┐
+        │  Host forwards tools/call, resources/read, etc.        │
+        │  over MCP streamable HTTP with the user's OAuth token  │
+        └───────────────────────────────┬────────────────────────┘
+                                        ▼
+                               Your MCP server
+                        (tools, ui:// resources, OAuth)
+```
+
+1. The model calls a tool on your server. The tool declares `_meta.ui.resourceUri`, which points at a `ui://` resource.
+2. When the call completes, the host reads that resource from your server (`resources/read`). The content is HTML with the MIME type `text/html;profile=mcp-app`.
+3. The host loads the HTML into a sandboxed iframe served from a separate origin (the *sandbox proxy*), under a Content Security Policy built from the `csp` you declared.
+4. The host sends the tool arguments and result to the View. The View renders them.
+5. The View can call your server's tools back through the host (`tools/call`) and can ask the host to open links, send a message, or change display mode.
+
+The View never talks to your server directly and never receives the user's OAuth token. The host makes those calls on the user's behalf.
+
+## What is available today
+
+This documentation describes what exists in the Allternit code. Some pieces are complete; others are a preview or still planned.
+
+| Area | Status |
+|------|--------|
+| MCP server connection over streamable HTTP | Available |
+| MCP App Views: sandbox, CSP, bridge, theming | Available |
+| OAuth 2.1 connection (PKCE, client ID metadata document) | Available |
+| `x-allternit/*` extensions | Available, except `requestCheckout` (see below) |
+| Plugin package import and export | Available |
+| Directory submission, domain verification, review, held updates | Built; the developer portal URL is Planned |
+| Enforcement of per-app permission modes on tool calls | Planned |
+| Selling in your MCP App | Preview. Not yet available for live payments |
+| Vendor packs | Preview |
+
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/plugins/quickstart">
+    Build a server with one data tool, one render tool, and a `ui://` View.
+  </Card>
+  <Card title="Build: MCP server" icon="server" href="/plugins/develop/mcp-server">
+    Tools, schemas, annotations, and server instructions.
+  </Card>
+  <Card title="Build: MCP App UI" icon="window" href="/plugins/develop/mcp-app-ui">
+    Bridge messages, theming, CSP, and sandbox rules.
+  </Card>
+  <Card title="Submit & review" icon="clipboard-check" href="/plugins/publish/submit-and-review">
+    Domain verification, scan checks, and review.
+  </Card>
+</CardGroup>
