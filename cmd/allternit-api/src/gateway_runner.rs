@@ -165,7 +165,7 @@ static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 pub(crate) fn transport(state: &Arc<AppState>) -> Arc<dyn AaiTransport> {
     match RUNTIME.get() {
         Some(r) => r.tx.clone(),
-        None => Arc::new(SubsTransport(state.clone())),
+        None => Arc::new(crate::channel_transports::ChannelLaneTransport::new(state.clone(), Arc::new(SubsTransport(state.clone())))),
     }
 }
 
@@ -216,7 +216,7 @@ impl From<rusqlite::Error> for RunErr {
 
 /// Append to the bot ledger tagged with the thread. `Ok(true)` = newly written,
 /// `Ok(false)` = the idempotency key already existed (duplicate).
-fn led(db: &DbHandle, bot_id: &str, thread_id: &str, session: Option<&str>, event_type: &str, actor: (&str, &str), payload: Value, key: Option<String>) -> bool {
+pub(crate) fn led(db: &DbHandle, bot_id: &str, thread_id: &str, session: Option<&str>, event_type: &str, actor: (&str, &str), payload: Value, key: Option<String>) -> bool {
     let key = key.unwrap_or_else(|| format!("gwr:{event_type}:{}", uuid::Uuid::new_v4()));
     let body = AppendEventBody {
         event_type: event_type.to_string(),
@@ -261,12 +261,12 @@ fn set_thread_status(db: &DbHandle, bot_id: &str, thread_id: &str, status: &str,
 }
 
 pub(crate) struct Cx {
-    owner: String,
-    thread_id: String,
-    bot_id: String,
-    generation: i64,
-    session_id: String,
-    exec: Value,
+    pub(crate) owner: String,
+    pub(crate) thread_id: String,
+    pub(crate) bot_id: String,
+    pub(crate) generation: i64,
+    pub(crate) session_id: String,
+    pub(crate) exec: Value,
 }
 
 /// The vendor context for a session's thread, or `None` = native path.
@@ -716,6 +716,10 @@ fn bridge_event(db: &DbHandle, cx: &Cx, remote: &Value, ev: &Value) -> Result<bo
         "adapter": pick("adapter", cx.exec["adapterId"].clone()),
         "lane": pick("lane", remote["lane"].clone()),
         "guarantee": pick("guarantee", json!("best_effort")),
+        // who answered / whose product / over what surface (e.g. Muse / Meta / WhatsApp)
+        "who": pick("who", Value::Null),
+        "whose": pick("whose", Value::Null),
+        "how": pick("how", Value::Null),
         "remoteEventId": remote_event,
         "remoteContextId": pick("remote_context_id", remote["externalContextId"].clone()),
         "causationId": ev.get("causation_id"),
@@ -779,7 +783,7 @@ pub async fn sync_thread(db: &DbHandle, tx: &dyn AaiTransport, owner: &str, thre
 
 // ---------------------------------------------------------------- approvals
 
-fn create_approval(db: &DbHandle, cx: &Cx, authority: &str, action: &str, remote_ref: Option<&str>, detail: Value, corr: Option<&str>) -> Result<String, RunErr> {
+pub(crate) fn create_approval(db: &DbHandle, cx: &Cx, authority: &str, action: &str, remote_ref: Option<&str>, detail: Value, corr: Option<&str>) -> Result<String, RunErr> {
     let conn = db.connect()?;
     if let Some(r) = remote_ref {
         if let Some(existing) = rref_row_id(db, &cx.thread_id, r) {
