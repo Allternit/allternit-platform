@@ -980,7 +980,7 @@ export class LocalCliDriver implements RuntimeDriver {
           root: process.env.ALLTERNIT_COMMRAILS_ROOT,
         })
         {
-          log.info("acp gate decision", { taskId: handle.taskId, allow: verdict.allow, fallback: verdict.fallback ?? false, ...(verdict.allow ? {} : { reason: verdict.reason }) })
+          log.info("acp gate decision", { taskId: handle.taskId, allow: verdict.allow, fallback: verdict.fallback ?? false, ...("reason" in verdict ? { reason: verdict.reason } : {}) })
           const chosen = verdict.allow
             ? pickAllow()
             : options.find((item) => String(item.kind).includes("reject"))
