@@ -180,6 +180,7 @@ impl McpRegistry {
         let transport_str = match server.transport_type {
             TransportType::Stdio => "stdio",
             TransportType::Sse => "sse",
+            TransportType::StreamableHttp => "streamable_http",
         };
 
         sqlx::query(UPSERT_SERVER)
@@ -458,6 +459,7 @@ impl McpRegistry {
         let transport_type = match row.transport_type.as_str() {
             "stdio" => TransportType::Stdio,
             "sse" => TransportType::Sse,
+            "streamable_http" => TransportType::StreamableHttp,
             _ => TransportType::Stdio,
         };
 

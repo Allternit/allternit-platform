@@ -333,6 +333,7 @@ pub fn agent_gateway_router() -> Router<Arc<AppState>> {
         .route("/provider-accounts/:id/agents", get(list_agents))
         .route("/execution-bindings", get(list_exec))
         .route("/provider-accounts/:id", get(get_account_h).patch(patch_account).delete(delete_account))
+        .route("/provider-accounts/sync-subscriptions", post(crate::subscription_sync::sync_route))
         .route("/bots/:bot_id/execution-binding", put(put_exec).get(get_exec).patch(patch_exec))
         .route("/threads/:thread_id/remote-bindings", post(create_remote).get(list_remote))
         .route("/remote-bindings/:id", patch(patch_remote))
@@ -456,19 +457,88 @@ async fn patch_account(State(state): State<Arc<AppState>>, Extension(user): Exte
         )?;
         if moved {
             let to = b.state.as_deref().unwrap();
-            conn.execute("UPDATE provider_account_bindings SET state = ?1 WHERE id = ?2", params![to, aid])?;
-            if to == "CONNECTED" && b.verified_at.is_none() {
-                // Verified only after the probe passed: CONNECTED is only reachable via VERIFYING.
-                conn.execute("UPDATE provider_account_bindings SET verified_at = ?1 WHERE id = ?2", params![t, aid])?;
-            }
-            audit(&conn, &owner, &aid, "state.changed", Some(&from), Some(to), json!({ "reason": b.reason }));
-            if to == "REVOKED" || to == "EXPIRED" {
-                cascade_needs_auth(db, &conn, &owner, &aid, &format!("account {}", to.to_lowercase()))?;
-            }
+            apply_account_state(db, &conn, &owner, &aid, &from, to, b.verified_at.is_some(), json!({ "reason": b.reason }))?;
         }
         ok(json!({ "account": get_account(&conn, &owner, &aid)? }))
     })
     .await
+}
+
+/// One already-checked hop: state, verified_at on CONNECTED, audit, and the
+/// NEEDS_AUTH cascade. Shared by PATCH and the subscription sync so both
+/// leave the same trail.
+pub(crate) fn apply_account_state(
+    db: &DbHandle,
+    conn: &Connection,
+    owner: &str,
+    aid: &str,
+    from: &str,
+    to: &str,
+    verified_given: bool,
+    detail: Value,
+) -> rusqlite::Result<()> {
+    let t = now();
+    conn.execute("UPDATE provider_account_bindings SET state = ?1, updated_at = ?2 WHERE id = ?3 AND owner = ?4", params![to, t, aid, owner])?;
+    if to == "CONNECTED" && !verified_given {
+        // Verified only after the probe passed: CONNECTED is only reachable via VERIFYING.
+        conn.execute("UPDATE provider_account_bindings SET verified_at = ?1 WHERE id = ?2", params![t, aid])?;
+    }
+    audit(conn, owner, aid, "state.changed", Some(from), Some(to), detail);
+    if to == "REVOKED" || to == "EXPIRED" {
+        cascade_needs_auth(db, conn, owner, aid, &format!("account {}", to.to_lowercase()))?;
+    }
+    Ok(())
+}
+
+/// Shortest legal hop list from `from` to `to` (excluding `from`), or None.
+pub(crate) fn connection_path(from: &str, to: &str) -> Option<Vec<&'static str>> {
+    if from == to {
+        return Some(vec![]);
+    }
+    let mut prev: std::collections::HashMap<&'static str, &'static str> = std::collections::HashMap::new();
+    let start = CONNECTION_STATES.iter().copied().find(|x| *x == from)?;
+    let mut queue = std::collections::VecDeque::from([start]);
+    while let Some(cur) = queue.pop_front() {
+        for &n in connection_next(cur) {
+            if n == start || prev.contains_key(n) {
+                continue;
+            }
+            prev.insert(n, cur);
+            if n == to {
+                let mut path = vec![n];
+                let mut at = n;
+                while let Some(&p) = prev.get(at) {
+                    if p == start {
+                        break;
+                    }
+                    path.push(p);
+                    at = p;
+                }
+                path.reverse();
+                return Some(path);
+            }
+            queue.push_back(n);
+        }
+    }
+    None
+}
+
+/// Accounts linked to a Subscriptions login (`externalAccountId = subsfab:<id>`):
+/// (account id, state, subscription login id).
+pub(crate) fn subscription_linked_accounts(conn: &Connection, owner: &str) -> rusqlite::Result<Vec<(String, String, String)>> {
+    let mut st = conn.prepare(
+        "SELECT id, state, substr(external_account_id, 9) FROM provider_account_bindings \
+         WHERE owner = ?1 AND external_account_id LIKE 'subsfab:%' ORDER BY id",
+    )?;
+    let rows = st.query_map(params![owner], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+    rows.collect()
+}
+
+/// Owners with at least one Subscriptions-linked account (the sync's work list).
+pub(crate) fn subscription_linked_owners(conn: &Connection) -> rusqlite::Result<Vec<String>> {
+    let mut st = conn.prepare("SELECT DISTINCT owner FROM provider_account_bindings WHERE external_account_id LIKE 'subsfab:%'")?;
+    let rows = st.query_map([], |r| r.get(0))?;
+    rows.collect()
 }
 
 /// Every dependent execution binding -> NEEDS_AUTH. Bindings whose current
@@ -1341,6 +1411,44 @@ mod tests {
         assert_eq!(audits, 6, "created + 5 state changes");
         let evs: i64 = conn.query_row("SELECT COUNT(*) FROM bot_events WHERE event_type = 'gateway.execution_binding.state_changed' AND bot_id = 'bot-1'", [], |r| r.get(0)).unwrap();
         assert_eq!(evs, 3, "bound, ready, needs_auth");
+    }
+
+    #[tokio::test]
+    async fn subscription_sync_follows_the_login_and_moves_bots() {
+        use crate::subscription_sync::apply_snapshot;
+        use std::collections::HashMap;
+        let st = setup("subsync").await;
+        let aid = account(&st).await;
+        connect(&st, &aid).await;
+        let (s, _) = call(&st, "PATCH", &format!("/provider-accounts/{aid}"), "user-a", Some(json!({"externalAccountId": "subsfab:login-1"}))).await;
+        assert_eq!(s, StatusCode::OK);
+        bind(&st, "bot-1", &aid).await;
+        let snap = |h: Option<&str>| h.map(|h| HashMap::from([("login-1".to_string(), h.to_string())])).unwrap_or_default();
+        let state_of = |st: &Arc<AppState>| st.db.connect().unwrap().query_row("SELECT state FROM provider_account_bindings WHERE id = ?1", params![aid], |r| r.get::<_, String>(0)).unwrap();
+
+        // Healthy: nothing to do.
+        assert!(apply_snapshot(&st.db, "user-a", &snap(Some("ready"))).unwrap().is_empty());
+        // Signed out on the Sessions computer: EXPIRED, bot needs auth.
+        apply_snapshot(&st.db, "user-a", &snap(Some("auth_required"))).unwrap();
+        assert_eq!(state_of(&st), "EXPIRED");
+        let (_, v) = call(&st, "GET", "/bots/bot-1/execution-binding", "user-a", None).await;
+        assert_eq!(v["binding"]["state"], "NEEDS_AUTH");
+        // Signed in again: back to CONNECTED through legal hops.
+        let moved = apply_snapshot(&st.db, "user-a", &snap(Some("ready"))).unwrap();
+        assert_eq!(moved, vec![(aid.clone(), "EXPIRED".to_string(), "CONNECTED".to_string())]);
+        assert_eq!(state_of(&st), "CONNECTED");
+        // A verification check blocks; a removed login revokes (from CONNECTED only: BLOCKED can't be revoked directly, so it stays).
+        apply_snapshot(&st.db, "user-a", &snap(Some("challenge_presented"))).unwrap();
+        assert_eq!(state_of(&st), "BLOCKED");
+        apply_snapshot(&st.db, "user-a", &snap(Some("ready"))).unwrap();
+        apply_snapshot(&st.db, "user-a", &snap(None)).unwrap();
+        assert_eq!(state_of(&st), "REVOKED");
+        // Revoked is the person's to redo: the sync never re-consents.
+        assert!(apply_snapshot(&st.db, "user-a", &snap(Some("ready"))).unwrap().is_empty());
+        assert_eq!(state_of(&st), "REVOKED");
+        let conn = st.db.connect().unwrap();
+        let synced: i64 = conn.query_row("SELECT COUNT(*) FROM connection_audit WHERE account_binding_id = ?1 AND detail_json LIKE '%subscription sync%'", params![aid], |r| r.get(0)).unwrap();
+        assert!(synced >= 5, "every sync hop is audited ({synced})");
     }
 
     #[tokio::test]

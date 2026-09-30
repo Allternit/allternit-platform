@@ -29,6 +29,9 @@ import { SubprocessLanguageModel } from "@/runtime/providers/adapters/loaders/su
 import { SubscriptionFabricLanguageModel } from "@/runtime/providers/fabric/language-model"
 import { fabricConfigured, isFabricProviderID } from "@/runtime/providers/fabric/client"
 import { discoverSubscriptionFabric } from "@/runtime/providers/fabric/discovery"
+import { SiwcLanguageModel, fabricClassFor } from "@/runtime/providers/siwc/language-model"
+import { SIWC_FABRIC_PROVIDER, SIWC_PROVIDER_ID, siwcConfigured } from "@/runtime/providers/siwc/broker"
+import { discoverSiwc } from "@/runtime/providers/siwc/discovery"
 import { cliModel, stripProviderPrefix } from "@/runtime/providers/cli-model"
 import { tapRetryHint } from "@/runtime/providers/retry-hint"
 import { ProviderQuotas } from "@/runtime/providers/quota"
@@ -588,6 +591,7 @@ export namespace Provider {
     // computer — usually after gizzi started. Until one is found, re-check the
     // catalog in the background and add it to the live provider list.
     if (!Object.keys(providers).some(isFabricProviderID)) watchForFabricProviders(providers, isProviderAllowed)
+    watchForSiwc(providers, isProviderAllowed)
 
     return {
       models: languages,
@@ -626,6 +630,43 @@ export namespace Provider {
     timer.unref?.()
   }
 
+  const SIWC_RECHECK_MS = 30_000
+
+  /**
+   * Sign in with ChatGPT can turn on after gizzi started (the user signs in
+   * from Settings). Re-check the broker and, once SIWC serves the lane, swap
+   * it in over the web-chat entry. SIWC is the preferred path; the adapter
+   * stays behind it as the runtime fallback.
+   */
+  function watchForSiwc(providers: Record<string, Info>, isProviderAllowed: (id: string) => boolean) {
+    if (!siwcConfigured() || !isProviderAllowed(SIWC_PROVIDER_ID)) return
+    const timer = setInterval(async () => {
+      if (providers[SIWC_PROVIDER_ID]?.options?.["runtime"] === "siwc") return
+      const [dp] = await discoverSiwc().catch(() => [])
+      if (!dp) return
+      const models = discoveredModels(dp)
+      for (const model of Object.values(models)) {
+        model.variants = mapValues(ProviderTransform.variants(model), (v) => v)
+      }
+      providers[dp.id] = {
+        id: dp.id,
+        name: dp.name,
+        source: "custom",
+        env: [],
+        auth_type: dp.auth_type,
+        options: { ...(dp.options ?? {}) },
+        models,
+      }
+      log.info("siwc-preferred", { providerID: dp.id, models: Object.keys(models).length })
+    }, SIWC_RECHECK_MS)
+    timer.unref?.()
+  }
+
+  /** Subscription lanes (web-chat fabric, SIWC) don't run gizzi's tools or take temperature. */
+  function isSubscriptionRuntime(runtime: unknown): boolean {
+    return runtime === "fabric" || runtime === "siwc"
+  }
+
   function discoveredModels(dp: DiscoveredProvider): Record<string, Model> {
     const dpModels: Record<string, Model> = {}
     for (const m of dp.models) {
@@ -644,12 +685,12 @@ export namespace Provider {
         options: {},
         release_date: "",
         capabilities: {
-          temperature: dp.options?.["runtime"] !== "fabric",
+          temperature: !isSubscriptionRuntime(dp.options?.["runtime"]),
           reasoning: false,
           attachment: false,
           // Fabric chat runs in the provider's web UI: gizzi's tools cannot be
           // called there. Also keeps these models out of auto-tier picks.
-          toolcall: dp.options?.["runtime"] !== "fabric",
+          toolcall: !isSubscriptionRuntime(dp.options?.["runtime"]),
           input:  { text: true, audio: false, image: false, video: false, pdf: false },
           output: { text: true, audio: false, image: false, video: false, pdf: false },
           interleaved: false,
@@ -846,6 +887,24 @@ export namespace Provider {
     if (s.models.has(key)) return s.models.get(key)!
 
     const provider = s.providers[model.providerID]
+
+    // Sign in with ChatGPT — the preferred path for the ChatGPT subscription
+    // lane. Falls back to the web-chat adapter for the same lane when SIWC
+    // cannot serve a turn and a Sessions computer is bound.
+    if (provider?.options?.["runtime"] === "siwc") {
+      const fabricProvider = String(provider.options["fabricProvider"] ?? SIWC_FABRIC_PROVIDER)
+      const language = new SiwcLanguageModel(model.providerID, model.api.id, () =>
+        fabricConfigured()
+          ? (new SubscriptionFabricLanguageModel(
+              model.providerID,
+              fabricProvider,
+              fabricClassFor(model.api.id),
+            ) as unknown as LanguageModelV2)
+          : undefined,
+      )
+      s.models.set(key, language)
+      return language
+    }
 
     // Subscription Fabric providers (subs-*) — the user's web subscription on
     // their Sessions computer, through allternit-api's forwarder.
