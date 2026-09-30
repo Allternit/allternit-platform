@@ -263,7 +263,20 @@ pub async fn fetch_model_pool(base_url: &str, capability: Option<&str>) -> Resul
         url.push_str("?capability=");
         url.push_str(cap);
     }
-    let resp = reqwest::get(&url).await.map_err(|e| RouteError::PoolUnavailable(e.to_string()))?;
+    // Service login for a Clerk-protected gizzi-code: HTTP basic auth from
+    // GIZZI_PASSWORD / GIZZI_SERVER_PASSWORD when set (loopback dev: none).
+    let mut rq = reqwest::Client::new().get(&url);
+    let password = std::env::var("GIZZI_PASSWORD")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .or_else(|| std::env::var("GIZZI_SERVER_PASSWORD").ok().filter(|v| !v.is_empty()));
+    if let Some(pw) = password {
+        let user = std::env::var("GIZZI_USERNAME")
+            .or_else(|_| std::env::var("GIZZI_SERVER_USERNAME"))
+            .unwrap_or_else(|_| "gizzi".to_string());
+        rq = rq.basic_auth(user, Some(pw));
+    }
+    let resp = rq.send().await.map_err(|e| RouteError::PoolUnavailable(e.to_string()))?;
     if !resp.status().is_success() {
         return Err(RouteError::PoolUnavailable(format!("HTTP {}", resp.status())));
     }

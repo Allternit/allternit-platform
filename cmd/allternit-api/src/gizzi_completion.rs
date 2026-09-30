@@ -71,6 +71,7 @@ async fn run(
     let model_label = format!("{}/{}", provider_id, model_id);
 
     let client = Client::builder()
+        .default_headers(crate::gizzi_provider_auth::gizzi_auth_headers())
         .timeout(Duration::from_secs(120))
         .build()
         .unwrap_or_default();
