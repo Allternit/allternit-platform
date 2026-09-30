@@ -61,6 +61,12 @@ jobs:
       - name: CI smoke test
         working-directory: cmd/gizzi-code
         shell: bash
+        env:
+          # Bash is sandboxed by default and fails closed on Linux without
+          # bwrap. The runner has no usable bwrap (Ubuntu restricts
+          # unprivileged user namespaces), so the smoke suite runs the bash
+          # tool unsandboxed; the sandbox itself is covered on macOS.
+          GIZZI_SANDBOX_DISABLE: "1"
         run: |
           if [ ! -f script/ci-smoke-test.sh ]; then
             echo "::error::cmd/gizzi-code/script/ci-smoke-test.sh is missing."

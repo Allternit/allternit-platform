@@ -1,5 +1,6 @@
 // @ts-nocheck
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
+import * as SsrfGuard from "../../src/shared/utils/hooks/ssrfGuard"
 import path from "path"
 import { Instance } from "../../src/project/instance"
 import { WebFetchTool } from "../../src/tool/webfetch"
@@ -21,12 +22,15 @@ async function withFetch(
   mockFetch: (input: string | URL | Request, init?: RequestInit) => Promise<Response>,
   fn: () => Promise<void>,
 ) {
-  const originalFetch = globalThis.fetch
-  globalThis.fetch = mockFetch as unknown as typeof fetch
+  // webfetch goes through the SSRF-guarded, DNS-pinned transport (node:http),
+  // not globalThis.fetch, so stub the transport itself.
+  const spy = spyOn(SsrfGuard, "createGuardedFetch").mockImplementation(
+    () => mockFetch as unknown as ReturnType<typeof SsrfGuard.createGuardedFetch>,
+  )
   try {
     await fn()
   } finally {
-    globalThis.fetch = originalFetch
+    spy.mockRestore()
   }
 }
 

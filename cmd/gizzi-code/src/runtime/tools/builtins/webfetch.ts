@@ -1,8 +1,11 @@
-import { createGuardedFetch } from "@/shared/utils/hooks/ssrfGuard"
+import * as SsrfGuard from "@/shared/utils/hooks/ssrfGuard"
 
 // URLs here are chosen by the model or by page content, so loopback is refused
 // too (only user-configured MCP servers get localhost).
-const guardedWebFetch = createGuardedFetch({ allowLoopback: false })
+// Built per call (a cheap closure) through the module namespace so tests can
+// stub the transport with spyOn instead of a network round trip.
+const guardedWebFetch = (input: string | URL | Request, init?: RequestInit) =>
+  SsrfGuard.createGuardedFetch({ allowLoopback: false })(input, init)
 import z from "zod/v4"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import TurndownService from "turndown"

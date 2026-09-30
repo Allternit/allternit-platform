@@ -94,6 +94,10 @@ jobs:
       - name: CI smoke test
         working-directory: cmd/gizzi-code
         shell: bash
+        env:
+          # Same as publish-gizzi-code-npm.yml: no usable bwrap on the runner,
+          # and bash fails closed without it.
+          GIZZI_SANDBOX_DISABLE: "1"
         run: |
           if [ ! -f script/ci-smoke-test.sh ]; then
             echo "::error::cmd/gizzi-code/script/ci-smoke-test.sh is missing."
