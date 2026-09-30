@@ -1,4 +1,4 @@
-Goal: Fix assigned review findings #14, #18–#22 in F5 worktree; draft PR only.
-Just did: Read binding rules/authority and relocated all findings at ed3598a21. Created dag:dag_211503; wih:wih_3058 tracks #14. Reproduced live AUTO for mismatched deployed head, then bound calibration to actual runtime scope.
-Next: Run decision regression suite, commit/push #14; implement lifecycle and graph/router regressions, compiler regressions.
-Open questions: None. gate.rs changes limited to #18 status mutations; no replay/idempotency edits. No deploy paths intended.
+Goal: Fix F5 findings #14, #18–#22; draft PR only. dag:dag_211503.
+Just did: #14 committed/pushed (929953603), decision suite 33/33. Reproduced #21 accepting policy-fixed numeric filesystem resource; unified type/enum/required validation now rejects it. Compiler regression + WP9 suite 19/19 passing. Read-only dependency symlinks in worktree only, not staged.
+Next: Commit/push #21; reproduce and fix #22. #18 regression harness drafted; Rust test compile typo corrected before rerun. Graph/router next.
+Open questions: None. No auth or harness-mode changes; gate.rs only #18 status validation.
