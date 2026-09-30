@@ -7,3 +7,5 @@ export * from "./readout.ts";
 export * from "./router.ts";
 export * from "./motifs.ts";
 export { LocalLogitReadoutProvider, type LocalDeployment } from "./local-provider.ts";
+export * from "./shadow.ts";
+export * from "./calibrate.ts";

@@ -18,7 +18,7 @@ export function evaluateQ22Gate(m: DecisionCalibrationManifestV1, o: GateOptions
   const h = m.held_out, x = m.metrics;
   const minN = Math.max(o.minHeldOutN ?? DEFAULT_MIN.held_out_n, DEFAULT_MIN.held_out_n);
   const minAuto = Math.max(o.minAutoActN ?? DEFAULT_MIN.auto_act_n, DEFAULT_MIN.auto_act_n);
-  if (m.gate.agreement_with_other_model_used === true) f.push("agreement with another model was used as a criterion");
+  if ((m.gate.agreement_with_other_model_used as unknown) === true) f.push("agreement with another model was used as a criterion");
   if (x.ece === null || !(x.ece <= GATE.ece_max)) f.push(`held-out ECE ${x.ece} > ${GATE.ece_max}`);
   if (!(h.n >= minN)) f.push(`held-out n ${h.n} < ${minN}`);
   if (!(h.auto_act_n >= minAuto)) f.push(`auto-act subset n ${h.auto_act_n} < ${minAuto}`);

@@ -383,3 +383,17 @@ fn invalid_nonempty_allowed_modes_fail_closed() {
     n.allowed_modes.clear();
     assert_eq!(r.route(&n, &ledger(10.0)).unwrap().execution_mode, Mode::M5Generative);
 }
+
+#[test]
+fn recording_appends_verify_ref_once() {
+    let (p, cfg) = (pool(), calibrated());
+    let plan = Router::new(&p, &cfg).route(&node("s1", Some("S1"), Some("cap.decide.choice"), "PUBLIC"), &ledger(1.0)).unwrap();
+    let mut r = result("CALIBRATED", "L1", Some("calib.decide.choice.v1"), "AUTO", 0.9);
+    let mut ext = serde_json::Map::new();
+    ext.insert("x-decision_id".into(), "d-1".into());
+    r.extensions = Some(ext);
+    let mut ev = vec![];
+    apply_s1_result_recording(&plan, &r, &mut ev);
+    apply_s1_result_recording(&plan, &r, &mut ev);
+    assert_eq!(ev, vec!["s1-verify:d-1".to_string()]);
+}

@@ -96,6 +96,20 @@ pub fn error_class(code: &str) -> String {
     if bank.classes.iter().any(|c| c == code) { code.to_owned() } else { bank.unknown }
 }
 
+/// S0 test/parse step hook: the deterministic diagnostic `code` is ground truth for an
+/// S1 CLASSIFY_ERROR decision made on the same failure. Reports it (known class only,
+/// fire-and-forget) when the decision result carries a decision id.
+pub fn reconcile_s0_classification(
+    reporter: &super::s1_outcome::OutcomeReporter,
+    s1_result: Option<&super::router::DecisionResultView>,
+    code: &str,
+) -> String {
+    if let Some(id) = s1_result.and_then(|r| r.decision_id()) {
+        super::s1_outcome::report_classify_outcome(reporter, &id, code, "bug_fix.s0");
+    }
+    error_class(code)
+}
+
 #[derive(Debug, Deserialize)]
 pub struct VerificationStep {
     pub step_id: String,

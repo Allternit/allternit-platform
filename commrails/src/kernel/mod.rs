@@ -12,5 +12,6 @@ pub mod lifecycle;
 pub mod projection;
 pub mod registry;
 pub mod router;
+pub mod s1_outcome;
 
 pub use lifecycle::{CloseOutcome, LifecycleError, NodeState};
