@@ -317,6 +317,26 @@ impl AppConfig {
             .unwrap_or(18013)
     }
 
+    /// Address the data-plane listener binds. The Desktop app (and so every
+    /// cloud computer) sets 127.0.0.1: on a shared host bridge a 0.0.0.0 bind
+    /// lets one user's container reach another's runtime. Unset keeps 0.0.0.0
+    /// for server/container deployments that are reached from outside; a value
+    /// that doesn't parse fails closed to loopback rather than widening.
+    pub fn api_host(&self) -> std::net::IpAddr {
+        use std::net::{IpAddr, Ipv4Addr};
+        match std::env::var("ALLTERNIT_API_HOST") {
+            Err(_) => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            Ok(h) => match h.trim() {
+                "" => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                "localhost" => IpAddr::V4(Ipv4Addr::LOCALHOST),
+                other => other.parse().unwrap_or_else(|_| {
+                    warn!("ALLTERNIT_API_HOST={other:?} is not an IP address; binding 127.0.0.1");
+                    IpAddr::V4(Ipv4Addr::LOCALHOST)
+                }),
+            },
+        }
+    }
+
     /// Port the dedicated inbound webhook receiver listens on.
     pub fn webhook_receiver_port(&self) -> u16 {
         std::env::var("ALLTERNIT_WEBHOOK_RECEIVER_PORT")
