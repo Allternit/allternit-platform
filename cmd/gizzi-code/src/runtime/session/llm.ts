@@ -1,4 +1,5 @@
 import { Installation } from "@/shared/installation"
+import * as TurnRouter from "@/runtime/routing/turn-router"
 import { Provider } from "@/runtime/providers/provider"
 import { Log } from "@/shared/util/log"
 import {
@@ -200,8 +201,14 @@ export namespace LLM {
       },
     )
 
-    const maxOutputTokens =
-      isCodex ? undefined : ProviderTransform.maxOutputTokens(input.model)
+    // O5: a kernel plan cap for this turn, when present, tightens the model cap.
+    // TODO(WP-G1 #1125): merge with transform.ts's call-type caps once both land.
+    const kernelCap = TurnRouter.outputCap(input.sessionID)
+    const maxOutputTokens = isCodex
+      ? undefined
+      : kernelCap !== undefined
+        ? Math.min(kernelCap, ProviderTransform.maxOutputTokens(input.model))
+        : ProviderTransform.maxOutputTokens(input.model)
 
     const tools = await resolveTools(input)
 

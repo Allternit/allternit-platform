@@ -72,6 +72,7 @@ import { SessionPause } from "@/runtime/session/pause"
 import { SessionLimit } from "@/runtime/session/limit"
 import type { QuotaWindow } from "@/runtime/providers/quota"
 import { Budget } from "@/runtime/session/budget"
+import * as TurnRouter from "@/runtime/routing/turn-router"
 
 // @ts-ignore — suppress ai-sdk stdout warnings (see server.ts for details)
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -567,6 +568,7 @@ const message = await createUserMessage(input)
     let structuredOutput: unknown | undefined
 
     let step = 0
+    let turnModel: { providerID: string; modelID: string } | undefined
     const session = await Session.get(sessionID)
     // Usage-limit wrap-up: set once a step crosses land_at mid-turn.
     let wrapUp:
@@ -645,8 +647,8 @@ const message = await createUserMessage(input)
         })
       }
 
-      // Resolve auto-routing before model lookup
-      const resolvedModelRef =
+      // Resolve auto-routing before model lookup (the incumbent router)
+      let resolvedModelRef =
         lastUser.model.providerID === "auto"
           ? await Provider.resolveAuto(
               msgs.map((m) => ({
@@ -659,6 +661,29 @@ const message = await createUserMessage(input)
               sessionID,
             )
           : lastUser.model
+
+      // WP-R1 (O2/O14): the kernel router + S1 ROUTE/ROUTE_MODEL banks in shadow.
+      // The incumbent above decides unless ALLTERNIT_TURN_ROUTE_AUTHORITY=kernel.
+      if (step === 1) {
+        const userID = lastUser.id
+        const userText = msgs
+          .find((m) => m.info.id === userID)
+          ?.parts.filter((p) => p.type === "text")
+          .map((p) => (p as MessageV2.TextPart).text)
+          .join(" ") ?? ""
+        const routed = await TurnRouter.startTurn({
+          sessionID,
+          userMessageID: userID,
+          text: userText,
+          requested: lastUser.model,
+          incumbent: resolvedModelRef,
+        }).catch((e) => {
+          log.warn("turn router failed; incumbent stands", { error: (e as Error).message })
+          return { model: resolvedModelRef }
+        })
+        turnModel = routed.model
+      }
+      if (lastUser.model.providerID === "auto" && turnModel) resolvedModelRef = turnModel
 
       const plan = await Provider.prepareAuth(resolvedModelRef)
 
@@ -1243,6 +1268,19 @@ const message = await createUserMessage(input)
       )
     }
     SessionCompaction.prune({ sessionID })
+    // WP-R1 (O14): label the turn's ROUTE decision from what it actually did.
+    if (TurnRouter.current(sessionID)) {
+      void (async () => {
+        const tools: string[] = []
+        let errored = false
+        for await (const item of MessageV2.stream(sessionID)) {
+          if (item.info.role === "user") break
+          if ((item.info as MessageV2.Assistant).error) errored = true
+          for (const p of item.parts) if (p.type === "tool") tools.push((p as MessageV2.ToolPart).tool)
+        }
+        await TurnRouter.finishTurn(sessionID, { tools, errored })
+      })().catch(() => {})
+    }
     for await (const item of MessageV2.stream(sessionID)) {
       if (item.info.role === "user") continue
       const queued = state()[sessionID]?.callbacks ?? []
