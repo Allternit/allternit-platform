@@ -71,6 +71,26 @@ describe("claude-subscription adapter", () => {
     expect((await mkState(at(-5 * 60_000)).contextOpen({ agentId: "claude" })).ok).toBe(true);
   });
 
+  it("a context survives a gateway restart: continue on its mapping, or start over if there is none", async () => {
+    const { tasks, submitted } = fakeTasks();
+    const p1 = new ClaudeSubscriptionProvider({ tasks, pollMs: 1, sleep: async () => {} });
+    const c = await p1.contextOpen({ agentId: "claude" });
+    if (!c.ok) throw new Error("open");
+    await p1.contextMessage({ contextId: c.value.contextId, correlationId: "a", text: "first" });
+    const p2 = new ClaudeSubscriptionProvider({ tasks, pollMs: 1, sleep: async () => {} }); // restarted gateway
+    const r = await p2.contextMessage({ contextId: c.value.contextId, correlationId: "b", text: "second" });
+    expect(r.ok).toBe(true);
+    expect(submitted.map((b) => b.capability)).toEqual(["chat.create", "chat.continue"]);
+    expect(submitted[1].thread_id).toBe(c.value.contextId);
+    // No mapping on the gateway (409 thread_not_mapped): the turn starts a new conversation instead of failing.
+    const unmapped = fakeTasks();
+    const orig = unmapped.tasks.submit;
+    unmapped.tasks.submit = async (b) => (b.capability === "chat.continue" ? { status: 409, body: { error: "thread_not_mapped" } } : orig(b));
+    const p3 = new ClaudeSubscriptionProvider({ tasks: unmapped.tasks, pollMs: 1, sleep: async () => {} });
+    expect((await p3.contextMessage({ contextId: "cs-gone-1-x", correlationId: "c", text: "hi" })).ok).toBe(true);
+    expect((await p3.contextMessage({ contextId: "not-ours", correlationId: "d", text: "x" })).ok).toBe(false);
+  });
+
   it("without the gateway task client every call is VENDOR_UNAVAILABLE", async () => {
     const p = new ClaudeSubscriptionProvider({});
     expect(await p.contextOpen({ agentId: "claude" })).toMatchObject({ ok: false, error: { code: "VENDOR_UNAVAILABLE" } });

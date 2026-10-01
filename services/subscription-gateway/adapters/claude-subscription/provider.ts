@@ -101,7 +101,19 @@ export class ClaudeSubscriptionProvider extends BaseAaiProvider {
   }
 
   // ---------- contexts ----------
-  private live(id: string): AaiResult<Ctx> { const c = this.ctxs.get(id); return c && !c.closed ? ok(c) : fail("CONTEXT_NOT_FOUND", "No such conversation"); }
+  /**
+   * A context survives a gateway restart: its id is the gateway thread_id, whose mapping to the claude.ai conversation
+   * lives in the gateway DB. An unknown `cs-` id is rebuilt as "already started" (chat.continue; run() falls back to
+   * chat.create if the gateway has no mapping for it).
+   */
+  private live(id: string): AaiResult<Ctx> {
+    const c = this.ctxs.get(id);
+    if (c) return c.closed ? fail("CONTEXT_NOT_FOUND", "No such conversation") : ok(c);
+    if (!id.startsWith("cs-")) return fail("CONTEXT_NOT_FOUND", "No such conversation");
+    const revived: Ctx = { id, closed: false, turns: 1, seq: 0, events: [], done: new Map(), lock: Promise.resolve() };
+    this.ctxs.set(id, revived);
+    return ok(revived);
+  }
   private push(c: Ctx, type: "agent.context.opened" | "agent.activity.started" | "agent.message.completed", correlationId: string, payload: Record<string, unknown>, source: "allternit" | "vendor" = "vendor") {
     c.seq += 1;
     c.events.push({ cursor: String(c.seq), event: {
@@ -112,7 +124,7 @@ export class ClaudeSubscriptionProvider extends BaseAaiProvider {
   async contextOpen(i: OpenContextInput): Promise<AaiResult<OpenContextResult>> {
     if (i.agentId !== AGENT_ID) return fail("CONTEXT_NOT_FOUND", `No such agent ${i.agentId}`);
     if (i.adoptContextId) {
-      const c = this.live(i.adoptContextId);
+      const c = this.live(i.adoptContextId); // also revives a context from before a gateway restart
       return c.ok ? ok({ contextId: c.value.id, isolation: "isolated", guarantee: "best_effort", resumed: true }) : c;
     }
     const r = await this.ready();
@@ -145,8 +157,8 @@ export class ClaudeSubscriptionProvider extends BaseAaiProvider {
     const tasks = this.o.tasks;
     if (!tasks) return fail("VENDOR_UNAVAILABLE", "This gateway can't run Claude subscription turns.");
     this.push(ctx, "agent.activity.started", i.correlationId, { text: i.text }, "allternit");
-    const submitted = await tasks.submit({
-      capability: ctx.turns === 0 ? "chat.create" : "chat.continue",
+    const send = (capability: "chat.create" | "chat.continue") => tasks.submit({
+      capability,
       prompt: i.text,
       thread_id: ctx.id,
       idempotency_key: `${ctx.id}:${i.correlationId}`,
@@ -154,7 +166,10 @@ export class ClaudeSubscriptionProvider extends BaseAaiProvider {
       routing: { provider: SUBSCRIPTION_PROVIDER },
       // The Allternit user sent this turn in a thread (allternit-api only forwards human-initiated turns).
       initiated_by: { kind: "human", user_id: "allternit-thread", action_id: i.correlationId },
-    }).catch((e: Error) => ({ status: 0, body: { error: e.message } }));
+    }).catch((e: Error) => ({ status: 0, body: { error: e.message } as Record<string, unknown> }));
+    let submitted = await send(ctx.turns === 0 ? "chat.create" : "chat.continue");
+    // A revived context whose conversation never started (or was lost) begins again.
+    if (submitted.status === 409 && submitted.body.error === "thread_not_mapped") submitted = await send("chat.create");
     if (submitted.status < 200 || submitted.status >= 300 || typeof submitted.body.task_id !== "string") {
       return fail("VENDOR_UNAVAILABLE", `Claude subscription refused the turn: ${String(submitted.body.detail ?? submitted.body.error ?? submitted.status)}`);
     }
