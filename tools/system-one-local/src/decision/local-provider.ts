@@ -11,12 +11,13 @@ export interface LocalDeployment {
 
 export class LocalLogitReadoutProvider implements DecisionReadoutProvider {
   readonly backend_id: string;
-  constructor(private engine: SystemOne, private dep: LocalDeployment, backendId = "backend.local_logit") {
+  /** `model` picks the engine backend: "local" (logprobs), "laya:<checkpoint>", "typesafe:<model>". */
+  constructor(private engine: SystemOne, private dep: LocalDeployment, backendId = "backend.local_logit", private model = "local") {
     this.backend_id = backendId;
   }
 
   private async ask(state: string, q: Question) {
-    const res = await this.engine.evaluate({ model: "local", state, questions: { q } });
+    const res = await this.engine.evaluate({ model: this.model, state, questions: { q } });
     return { a: res.answers.q, res };
   }
   private criteriaOf(req: DecisionRequestV1) {

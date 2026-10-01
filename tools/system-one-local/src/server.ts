@@ -61,14 +61,22 @@ export function createHandler(opts: ServeOptions = {}) {
   const maxInflight = opts.maxInflight ?? Number(process.env.SYSTEM_ONE_MAX_INFLIGHT ?? 8);
   let inflight = 0;
   const ledger = shadowLedger();
-  const decision = opts.decision ?? new DecisionRouter({
-    provider: new LocalLogitReadoutProvider(engine, {
-      model_ref: engine.config.runtimeModel, model_revision: "unpinned", tokenizer_id: "unknown", quantization: "unknown", runtime_backend: engine.config.runtimeUrl.includes(":11434") ? "ollama" : "openai-compat",
-    }),
-    manifests: loadManifests(),
-    ledger,
-    mode: process.env.ALLTERNIT_S1_MODE === "live" ? "live" : "shadow",
-  });
+  const manifests = loadManifests();
+  const mode = process.env.ALLTERNIT_S1_MODE === "live" ? "live" : "shadow";
+  const routerFor = (provider: LocalLogitReadoutProvider) => new DecisionRouter({ provider, manifests, ledger, mode });
+  // One router per S1 backend (the routing policy's s1_backend, sent as `backend`).
+  // Each has its own backend_id, so shadow rows and calibration never mix (Q22).
+  const local = opts.decision ?? routerFor(new LocalLogitReadoutProvider(engine, {
+    model_ref: engine.config.runtimeModel, model_revision: "unpinned", tokenizer_id: "unknown", quantization: "unknown", runtime_backend: engine.config.runtimeUrl.includes(":11434") ? "ollama" : "openai-compat",
+  }));
+  const laya = opts.decision ?? routerFor(new LocalLogitReadoutProvider(engine, {
+    model_ref: `convaiinnovations/laya/${engine.config.layaModel}`, model_revision: "server-pinned", tokenizer_id: "modernbert", quantization: "none", runtime_backend: "laya-serve",
+  }, "backend.laya", `laya:${engine.config.layaModel}`));
+  const jev = opts.decision ?? (engine.typesafe ? routerFor(new LocalLogitReadoutProvider(engine, {
+    model_ref: "typesafe/jev-latest", model_revision: "remote", tokenizer_id: "unknown", quantization: "unknown", runtime_backend: "typesafe",
+  }, "backend.jev_api", "typesafe:jev-latest")) : undefined);
+  const decisionFor = (backend: unknown): DecisionRouter | undefined =>
+    backend === "laya_bundled" ? laya : backend === "jev_api" ? jev : local;
 
   return async function handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
@@ -82,6 +90,8 @@ export function createHandler(opts: ServeOptions = {}) {
       let b: any;
       try { b = await req.json(); } catch { return err(422, "invalid_request_error", "body is not valid JSON"); }
       if (!b?.request?.operation || typeof b.state !== "string") return err(422, "invalid_request_error", "need {request: DecisionRequestV1, state: string}");
+      const decision = decisionFor(b.backend);
+      if (!decision) return err(401, "authentication_error", "jev_api backend requested but TYPESAFE_API_KEY is not set");
       try {
         return json(200, await decision.decide(b.request, b.state, { reversible: b.reversible === true }));
       } catch (e) {

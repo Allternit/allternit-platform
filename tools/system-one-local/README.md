@@ -88,7 +88,28 @@ Why letters for noul: on llama3.2 3B, bare `Yes`/`No` tokens leaned strongly tow
 | `SYSTEM_ONE_MAX_INFLIGHT` | `8` | → 429 |
 | `SYSTEM_ONE_LOG` | off | `1` = `~/.allternit/system-one/log/<date>.jsonl` (request sha256, token counts, answers — never state or question text) |
 | `TYPESAFE_API_KEY` | unset | enables `typesafe:*` passthrough |
+| `SYSTEM_ONE_LAYA_URL` | `http://127.0.0.1:7718` | local Laya server for `laya:*` / backend `laya_bundled` |
+| `SYSTEM_ONE_LAYA_MODEL` | `typed-decisions` | Laya checkpoint |
 | `OPENROUTER_API_KEY` | from env | only used by `route-model --allow-paid` |
+
+## Laya backend (`laya_bundled`)
+
+[Laya](https://github.com/NandhaKishorM/laya) (`convaiinnovations/laya`, Apache-2.0) is a ModernBERT
+decision model that answers every typed question for a state in one forward pass. It serves the same
+`/v1/systemone` protocol as the TypeSafe API, so it plugs in as a passthrough backend:
+
+```sh
+tools/system-one-local/laya/serve-laya.sh   # installs laya==0.3.22 in its own venv, serves :7718 (MPS on Apple silicon)
+bun src/cli.ts serve                        # System One on :7717
+```
+
+`/v1/decision` picks the backend from the body's `backend` field (the routing policy's `s1_backend`, sent
+by allternit-api): `laya_bundled` → Laya, `jev_api` → TypeSafe (401 without a key), anything else → the
+local logprob engine. Each backend has its own `backend_id`, so shadow rows and calibration never mix.
+allternit-api uses `ALLTERNIT_S1_BACKEND` when no routing policy is stored.
+
+Measured zero-shot on this Mac (M-series, MPS): ~70–300 ms per decision after a ~3.5 s first-call
+warm-up. Zero-shot confidence is not calibrated, which is why it runs in shadow until Q22 passes.
 
 ## Claude Code hook: `hooks/pretooluse-guard`
 

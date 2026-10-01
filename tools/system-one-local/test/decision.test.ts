@@ -185,6 +185,33 @@ describe("threshold policy + motifs", () => {
 });
 
 describe("HTTP /v1/decision", () => {
+  test("backend laya_bundled is decided by Laya, recorded under its own backend_id", async () => {
+    const { createHandler } = await import("../src/server.ts");
+    const { SystemOne } = await import("../src/engine.ts");
+    const runtime = { name: "fake", model: "m", async complete(): Promise<any> { throw new Error("local runtime must not be called"); } };
+    const urls: string[] = [];
+    const fetchImpl = async (u: string, i?: RequestInit) => {
+      urls.push(u);
+      const q = JSON.parse(String(i!.body)).questions.q;
+      const ids = Object.keys(q.criteria ?? {});
+      return new Response(JSON.stringify({ answers: { q: { type: q.type, choice: ids[0], probabilities: Object.fromEntries(ids.map((k, j) => [k, j === 0 ? 0.9 : 0.1 / (ids.length - 1)])), noul: 0.9 } }, usage: { input_tokens: 3, output_tokens: 0 } }));
+    };
+    const engine = new SystemOne({ runtimeUrl: "x", runtimeModel: "m", concurrency: 1, samples: 2, debias: false, layaUrl: "http://laya", layaModel: "typed-decisions", logEnabled: false }, { runtime, fetchImpl });
+    const res = await createHandler({ engine })(new Request("http://x/v1/decision", { method: "POST", body: JSON.stringify({ request: req, state: "s", reversible: true, backend: "laya_bundled" }) }));
+    expect(res.status).toBe(200);
+    const body: any = await res.json();
+    expect(urls).toEqual(["http://laya/v1/systemone"]);
+    expect(JSON.stringify(body)).toContain("backend.laya");
+    expect(body.threshold_action).not.toBe("AUTO");
+  });
+  test("backend jev_api without a key is refused, never silently local", async () => {
+    const { createHandler } = await import("../src/server.ts");
+    const { SystemOne } = await import("../src/engine.ts");
+    const runtime = { name: "fake", model: "m", async complete(): Promise<any> { throw new Error("must not run"); } };
+    const engine = new SystemOne({ runtimeUrl: "x", runtimeModel: "m", concurrency: 1, samples: 2, debias: false, layaUrl: "http://laya", layaModel: "typed-decisions", logEnabled: false }, { runtime });
+    const res = await createHandler({ engine })(new Request("http://x/v1/decision", { method: "POST", body: JSON.stringify({ request: req, state: "s", backend: "jev_api" }) }));
+    expect(res.status).toBe(401);
+  });
   test("default server refuses uncalibrated S1 through the ABI route", async () => {
     const { createHandler } = await import("../src/server.ts");
     const { SystemOne } = await import("../src/engine.ts");
@@ -192,7 +219,7 @@ describe("HTTP /v1/decision", () => {
       name: "fake", model: "m",
       async complete() { return { text: "a", top: [{ token: "a", logprob: Math.log(0.99) }, { token: "b", logprob: Math.log(0.01) }], usage: { input: 1, output: 1 } }; },
     };
-    const engine = new SystemOne({ runtimeUrl: "x", runtimeModel: "m", concurrency: 1, samples: 2, debias: false, logEnabled: false }, { runtime });
+    const engine = new SystemOne({ runtimeUrl: "x", runtimeModel: "m", concurrency: 1, samples: 2, debias: false, layaUrl: "http://laya", layaModel: "typed-decisions", logEnabled: false }, { runtime });
     const res = await createHandler({ engine })(new Request("http://x/v1/decision", { method: "POST", body: JSON.stringify({ request: req, state: "s", reversible: true }) }));
     expect(res.status).toBe(200);
     const body: any = await res.json();

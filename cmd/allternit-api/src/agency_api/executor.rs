@@ -272,6 +272,18 @@ pub fn apply_policy(mut pool: StaticModelPool, mut cfg: RouterConfig, eff: &Valu
     Ok((pool, cfg, trace))
 }
 
+/// S1 shadow backend for a run: the stored routing policy's `s1_backend`, or,
+/// with none stored, `ALLTERNIT_S1_BACKEND` (a server default; e.g.
+/// `laya_bundled`), else the local System One server.
+pub fn s1_backend_for(policy: Option<&(Value, Value)>) -> String {
+    match policy {
+        Some((e, src)) if src["s1_backend"] != "default" => e["s1_backend"].as_str().unwrap_or("off").to_string(),
+        _ => std::env::var("ALLTERNIT_S1_BACKEND").ok()
+            .filter(|b| crate::kernel_ui::routing_policy::S1_BACKENDS.contains(&b.as_str()))
+            .unwrap_or_else(|| "system_one_local".into()),
+    }
+}
+
 /// Effective routing policy for a run (most specific scope first, org last).
 pub fn policy_for_run(st: &AppState, ir: &Value, org: &str) -> Option<(Value, Value)> {
     let mut chain: Vec<String> = ir["routing_scopes"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
@@ -1049,8 +1061,7 @@ fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str, limits: &Limi
         h.block_on(fetch_model_pool(&gizzi_url(), None)).map_err(|e| anyhow!("{e}")).map(|p| bridge_task_caps(p, &graph))
     };
     let policy = policy_for_run(st, &ir, org);
-    let s1_backend = policy.as_ref().map(|(e, src)| if src["s1_backend"] == "default" { "env".to_string() } else { e["s1_backend"].as_str().unwrap_or("off").to_string() })
-        .unwrap_or_else(|| "env".into());
+    let s1_backend = s1_backend_for(policy.as_ref());
     let mut routing = json!({ "policy_source": "default" });
     let (pool, cfg) = match raw_pool {
         Ok(p) => {
