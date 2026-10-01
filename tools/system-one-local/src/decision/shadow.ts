@@ -28,6 +28,16 @@ export interface ShadowDecisionRecord {
   readout_method: string;
   scope: CalibrationScope;
   mode: string;
+  /** Noul criteria (x-criteria) / score scale: needed to rebuild the exact question for fine-tuning. */
+  criteria?: Record<string, string> | null;
+  scale?: unknown[] | null;
+  /** The incumbent decider's answer (x-incumbent), for Q26 non-inferiority. */
+  incumbent?: string | null;
+  /** Canary: S1's answer was acted on live, and/or this decision is in the audit slice. */
+  served_live?: boolean;
+  audit?: boolean;
+  /** Raw state, only with SYSTEM_ONE_SHADOW_STATE=1 (Q28 opt-in). */
+  state?: string;
 }
 
 export interface OutcomeRecord {
@@ -55,6 +65,12 @@ export interface DatasetRow {
   label: string;
   label_index: number;
   scope: CalibrationScope;
+  state?: string;
+  criteria?: Record<string, string> | null;
+  scale?: unknown[] | null;
+  incumbent?: string | null;
+  served_live?: boolean;
+  audit?: boolean;
   provenance: { decision_log: string; outcome_source: string; outcome_ts: string; state_sha256: string; subject_ref: string | null };
 }
 
@@ -139,6 +155,10 @@ export function harvest(dir: string, opts: { primitive?: string; model?: string 
       question: { question_id: d.question_id, instructions: d.instructions },
       candidates: d.candidates, options: d.options, readout: { probs: d.probs, method: d.readout_method },
       label: o.truth, label_index: li, scope: d.scope,
+      ...(typeof d.state === "string" ? { state: d.state } : {}),
+      ...(d.criteria ? { criteria: d.criteria } : {}), ...(d.scale ? { scale: d.scale } : {}),
+      ...(d.incumbent != null ? { incumbent: d.incumbent } : {}),
+      ...(d.served_live ? { served_live: true } : {}), ...(d.audit ? { audit: true } : {}),
       provenance: { decision_log: `decisions/${file}`, outcome_source: o.source, outcome_ts: o.ts, state_sha256: d.state_sha256, subject_ref: d.subject_ref },
     });
   }

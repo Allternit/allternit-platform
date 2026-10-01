@@ -12,7 +12,10 @@ import { DecisionRouter } from "./decision/router.ts";
 import { LocalLogitReadoutProvider } from "./decision/local-provider.ts";
 import { ShadowLedger } from "./decision/shadow.ts";
 import { BASE_DIR } from "./log.ts";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, join } from "node:path";
+import { CanaryController } from "./decision/canary.ts";
 import { SystemOneError, type ErrorBody } from "./types.ts";
 
 export const HOST = "127.0.0.1";
@@ -48,6 +51,45 @@ export function loadManifests(path = process.env.ALLTERNIT_S1_MANIFESTS?.trim())
 }
 
 /** Shadow ledger is opt-in (ALLTERNIT_S1_SHADOW_DIR, or SYSTEM_ONE_SHADOW_LOG=1 for the default dir) so tests never write to $HOME. */
+/** Q29 pinned base revision (same pin as laya/serve-laya.sh and Desktop SystemOneManager). */
+export const LAYA_PINNED_REVISION = "55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851";
+
+/**
+ * The revision Laya is serving, resolved with Desktop's precedence (env path/revision,
+ * then <LAYA_HOME>/config.json {checkpoint}, then the Q29 pin). A local fine-tuned
+ * checkpoint is identified by its allternit_checkpoint.json revision. Every revision is a
+ * distinct backend identity (Q29), so shadow rows and manifests never mix across checkpoints.
+ */
+export function layaRevision(env: Record<string, string | undefined> = process.env): string {
+  const fromPath = (p: string) => {
+    try {
+      const m = JSON.parse(readFileSync(join(p, "allternit_checkpoint.json"), "utf8")) as { revision?: unknown };
+      if (typeof m.revision === "string" && m.revision) return m.revision;
+    } catch { /* not one of ours */ }
+    return `local:${basename(p)}`;
+  };
+  const path = env.ALLTERNIT_LAYA_CHECKPOINT_PATH?.trim() || env.LAYA_CHECKPOINT_PATH?.trim();
+  if (path) return fromPath(path);
+  const rev = env.ALLTERNIT_LAYA_REVISION?.trim() || env.LAYA_REVISION?.trim();
+  if (rev) return rev;
+  const home = env.ALLTERNIT_LAYA_HOME?.trim() || env.LAYA_HOME?.trim() || join(homedir(), "Library", "Application Support", "Allternit", "laya");
+  const cfgPath = join(home, "config.json");
+  if (existsSync(cfgPath)) {
+    try {
+      const cp = (JSON.parse(readFileSync(cfgPath, "utf8")) as { checkpoint?: { path?: unknown; revision?: unknown } }).checkpoint ?? {};
+      if (typeof cp.path === "string" && cp.path.trim()) return fromPath(cp.path.trim());
+      if (typeof cp.revision === "string" && cp.revision.trim()) return cp.revision.trim();
+    } catch { /* fall through to the pin */ }
+  }
+  return LAYA_PINNED_REVISION;
+}
+
+/** Live mode only: the Q26 canary state (ALLTERNIT_S1_CANARY, default <base>/canary.json). */
+export function canaryController(mode: string): CanaryController | undefined {
+  if (mode !== "live") return undefined;
+  return new CanaryController(process.env.ALLTERNIT_S1_CANARY?.trim() || join(BASE_DIR, "canary.json"));
+}
+
 export function shadowLedger(): ShadowLedger | undefined {
   const dir = process.env.ALLTERNIT_S1_SHADOW_DIR?.trim();
   if (dir) return new ShadowLedger(dir);
@@ -63,14 +105,22 @@ export function createHandler(opts: ServeOptions = {}) {
   const ledger = shadowLedger();
   const manifests = loadManifests();
   const mode = process.env.ALLTERNIT_S1_MODE === "live" ? "live" : "shadow";
-  const routerFor = (provider: LocalLogitReadoutProvider) => new DecisionRouter({ provider, manifests, ledger, mode });
+  const canary = canaryController(mode);
+  const routerFor = (provider: LocalLogitReadoutProvider) => new DecisionRouter({ provider, manifests, ledger, mode, canary });
   // One router per S1 backend (the routing policy's s1_backend, sent as `backend`).
   // Each has its own backend_id, so shadow rows and calibration never mix (Q22).
   const local = opts.decision ?? routerFor(new LocalLogitReadoutProvider(engine, {
     model_ref: engine.config.runtimeModel, model_revision: "unpinned", tokenizer_id: "unknown", quantization: "unknown", runtime_backend: engine.config.runtimeUrl.includes(":11434") ? "ollama" : "openai-compat",
   }));
+  // Re-resolved at most every 10 s, so a Desktop checkpoint swap (setCheckpoint restarts
+  // only Laya) changes the identity S1 logs and binds manifests to.
+  let layaRev = { value: layaRevision(), at: Date.now() };
+  const cachedLayaRevision = () => {
+    if (Date.now() - layaRev.at > 10_000) layaRev = { value: layaRevision(), at: Date.now() };
+    return layaRev.value;
+  };
   const laya = opts.decision ?? routerFor(new LocalLogitReadoutProvider(engine, {
-    model_ref: `convaiinnovations/laya/${engine.config.layaModel}`, model_revision: "server-pinned", tokenizer_id: "modernbert", quantization: "none", runtime_backend: "laya-serve",
+    model_ref: `convaiinnovations/laya/${engine.config.layaModel}`, get model_revision() { return cachedLayaRevision(); }, tokenizer_id: "modernbert", quantization: "none", runtime_backend: "laya-serve",
   }, "backend.laya", `laya:${engine.config.layaModel}`));
   const jev = opts.decision ?? (engine.typesafe ? routerFor(new LocalLogitReadoutProvider(engine, {
     model_ref: "typesafe/jev-latest", model_revision: "remote", tokenizer_id: "unknown", quantization: "unknown", runtime_backend: "typesafe",
