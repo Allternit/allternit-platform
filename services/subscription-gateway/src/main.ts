@@ -142,6 +142,7 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
     log,
     logger,
     sessionImport: firefoxLogin ? importFirefoxSessionIfNewer : undefined,
+    laneIdleCloseMs: config.laneIdleCloseMin * 60_000,
   });
   await supervisor.sweepAtBoot();
   const loginBrowser = config.loginBrowser
