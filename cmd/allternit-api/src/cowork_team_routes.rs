@@ -1137,7 +1137,8 @@ async fn parse_prd(
     // Route through the Gizzi runtime completion helper (same path ALabs
     // lesson generation uses) so parse-prd inherits the platform's
     // brain/provider configuration instead of calling a provider directly.
-    let completion = match body
+    let ledger = crate::usage_ledger::LedgerCtx::surface("cowork");
+    let completion = crate::usage_ledger::scope(ledger, async { match body
         .model_id
         .as_deref()
         .and_then(|m| m.split_once('/'))
@@ -1147,7 +1148,8 @@ async fn parse_prd(
             crate::gizzi_completion::complete(&prompt, Some(system), Some(&model)).await
         }
         None => crate::gizzi_completion::complete(&prompt, Some(system), None).await,
-    };
+    } })
+    .await;
 
     let text = match completion {
         Some(text) if !text.trim().is_empty() => text,

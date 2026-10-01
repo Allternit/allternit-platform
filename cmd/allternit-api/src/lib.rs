@@ -266,6 +266,7 @@ pub mod token_crypto;
 pub mod tool_routes;
 pub mod udemy_routes;
 pub mod upload_routes;
+pub mod usage_ledger;
 pub mod usage_routes;
 pub mod v1_routes;
 pub mod viz_routes;

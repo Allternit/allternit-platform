@@ -114,7 +114,7 @@ impl ThreadRuntime for GizziCoordinator {
 
 impl CoordinatorRuntime for GizziCoordinator {
     async fn plan(&self, system: &str, prompt: &str, model: Option<(String, String)>) -> Option<String> {
-        crate::gizzi_completion::complete_ephemeral(prompt, Some(system), model.as_ref()).await
+        crate::usage_ledger::scope(crate::usage_ledger::LedgerCtx::surface("bot"), crate::gizzi_completion::complete_ephemeral(prompt, Some(system), model.as_ref())).await
     }
     async fn send_turn(&self, session_id: &str, bot_id: &str, text: &str) -> Result<String, String> {
         crate::agent_session_routes::send_bot_turn(&self.state.db, session_id, bot_id, text).await

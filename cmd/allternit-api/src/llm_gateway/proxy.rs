@@ -1089,6 +1089,15 @@ pub(crate) fn record_usage_event(
                 if let Some(decision) = &outcome.routing_decision {
                     router::persist_decision(&conn, &row_id, decision)?;
                 }
+                // O15: ledger keys (surface/run/node/tier/lane, cache writes).
+                crate::usage_ledger::stamp_gateway_row(
+                    &conn,
+                    &row_id,
+                    outcome.tags.as_deref(),
+                    outcome.batch_id.as_deref(),
+                    outcome.usage.cache_write_tokens,
+                    outcome.gizzi_session_id.as_deref(),
+                )?;
                 return Ok(row_id);
             }
             warn!("idempotency pre-insert missing at record time; inserting fresh row");
@@ -1136,6 +1145,14 @@ pub(crate) fn record_usage_event(
         if let Some(decision) = &outcome.routing_decision {
             router::persist_decision(&conn, &row_id, decision)?;
         }
+        crate::usage_ledger::stamp_gateway_row(
+            &conn,
+            &row_id,
+            outcome.tags.as_deref(),
+            outcome.batch_id.as_deref(),
+            outcome.usage.cache_write_tokens,
+            outcome.gizzi_session_id.as_deref(),
+        )?;
         Ok(row_id)
     })();
 
@@ -3415,6 +3432,46 @@ mod metering_tests {
             batch_id: None,
             context_cache_id: None,
         }
+    }
+
+    #[test]
+    fn record_usage_event_stamps_ledger_keys_from_tags() {
+        let (db, _dir) = test_db();
+        let key = insert_key(&db, None);
+        let mut tagged = outcome("ok");
+        tagged.tags = Some(r#"{"surface":"cowork","run_id":"run_7","node_id":"N2","tier":"S3"}"#.to_string());
+        tagged.usage.cache_write_tokens = 11;
+        tagged.gizzi_session_id = Some("ses_gw".to_string());
+        // A gizzi self-report for the same session arrived first: dropped.
+        {
+            let conn = db.connect().unwrap();
+            conn.execute(
+                "INSERT INTO llm_usage_events (id, status, source, gizzi_session_id) VALUES ('g1', 'ok', 'gizzi', 'ses_gw')",
+                [],
+            )
+            .unwrap();
+        }
+        record_usage_event(&db, &key, &tagged, None);
+        let mut batch = outcome("ok");
+        batch.batch_id = Some("batch_1".to_string());
+        record_usage_event(&db, &key, &batch, None);
+        record_usage_event(&db, &key, &outcome("ok"), None);
+
+        let conn = db.connect().unwrap();
+        let rows: Vec<(String, String, Option<String>, Option<String>, Option<String>, String, i64)> = conn
+            .prepare("SELECT source, surface, run_id, node_id, tier, lane, cache_write_tokens FROM llm_usage_events ORDER BY surface")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(rows.len(), 3, "{rows:?}");
+        assert_eq!(rows[0], ("gateway".into(), "api".into(), None, None, None, "api".into(), 0));
+        assert_eq!(rows[1].1, "batch");
+        assert_eq!(
+            rows[2],
+            ("gateway".into(), "cowork".into(), Some("run_7".into()), Some("N2".into()), Some("S3".into()), "api".into(), 11)
+        );
     }
 
     #[test]
