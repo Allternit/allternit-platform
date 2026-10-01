@@ -16,6 +16,7 @@ pub mod catalog;
 pub mod compiler;
 pub mod executor;
 pub mod guard;
+pub mod safety;
 pub mod store;
 pub mod template_exec;
 
@@ -171,6 +172,12 @@ pub fn agency_router() -> Router<Arc<AppState>> {
         .route("/v1/attention", get(list_attention))
         .route("/v1/attention/:attention_id", get(get_attention))
         .route("/v1/attention/:attention_id/responses", post(respond_attention))
+        // WP-P1 production safety (see `safety`): org policy, approvals by
+        // org members other than the requester, the effect journal.
+        .route("/v1/agency-safety/policy", get(get_safety_policy).put(put_safety_policy))
+        .route("/v1/agency-safety/approvals", get(list_org_approvals))
+        .route("/v1/agency-safety/approvals/:attention_id/responses", post(respond_org_approval))
+        .route("/v1/agency-safety/runs/:run_id/journal", get(run_journal))
         .route("/v1/campaigns", post(create_campaign).get(list_campaigns))
         .route("/v1/campaigns/:campaign_id", get(get_campaign))
         .route("/v1/campaigns/:campaign_id/runs", get(campaign_runs))
@@ -499,6 +506,14 @@ async fn get_attention(
     a.map(|(_, a)| Json(a).into_response()).ok_or_else(|| ApiError::not_found("attention request", &rid))
 }
 
+fn response_kind(body: &Value, rid: &RequestId) -> Result<String, ApiError> {
+    let kind = body["type"].as_str().unwrap_or_default().to_string();
+    if !matches!(kind.as_str(), "approval" | "rejection" | "data" | "message") {
+        return Err(ApiError::new(400, "INPUT", "ERR_INPUT_INVALID", "type must be approval|rejection|data|message", rid).param(Some("type".into())));
+    }
+    Ok(kind)
+}
+
 /// Answer an attention request. For `budget_exhausted`, an `approval` whose
 /// `value.budget` raises the limits un-halts spend; a `rejection` fails the run.
 async fn respond_attention(
@@ -508,41 +523,99 @@ async fn respond_attention(
     Path(id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    let kind = body["type"].as_str().unwrap_or_default().to_string();
-    if !matches!(kind.as_str(), "approval" | "rejection" | "data" | "message") {
-        return Err(ApiError::new(400, "INPUT", "ERR_INPUT_INVALID", "type must be approval|rejection|data|message", &rid).param(Some("type".into())));
-    }
+    let kind = response_kind(&body, &rid)?;
     let s = store(&st);
     let _g = s.lock().await;
     let (rec, att) = all_attention(&st, &user, &rid).await?.into_iter().find(|(_, a)| a["id"] == id.as_str())
         .ok_or_else(|| ApiError::not_found("attention request", &rid))?;
+    resolve_attention(&st, &s, &user, &rid, rec, att, &id, &kind, &body).await
+}
+
+/// The shared resolution path (`/v1/attention/..` for the requester,
+/// `/v1/agency-safety/approvals/..` for other org members). The caller holds
+/// the store lock and has checked who may see the item.
+#[allow(clippy::too_many_arguments)]
+async fn resolve_attention(
+    st: &Arc<AppState>,
+    s: &AgencyStore,
+    user: &AuthUser,
+    rid: &RequestId,
+    rec: RunRecord,
+    att: Value,
+    id: &str,
+    kind: &str,
+    body: &Value,
+) -> ApiResult {
+    let (rid, kind) = (rid, kind.to_string());
     if att["status"] != "open" {
-        return Err(ApiError::new(409, "STATE", "ERR_ATTENTION_RESOLVED", "attention request already resolved", &rid));
+        return Err(ApiError::new(409, "STATE", "ERR_ATTENTION_RESOLVED", "attention request already resolved", rid));
     }
-    let mut rec = s.load_run(rec.run["id"].as_str().unwrap_or_default()).await.map_err(|e| ApiError::internal(e, &rid))?
-        .ok_or_else(|| ApiError::not_found("run", &rid))?;
+    let mut rec = s.load_run(rec.run["id"].as_str().unwrap_or_default()).await.map_err(|e| ApiError::internal(e, rid))?
+        .ok_or_else(|| ApiError::not_found("run", rid))?;
+    // WP-P1 / memo A: a consequential approval must come from someone other
+    // than the run's requester when the org's policy says so (default: on
+    // for orgs with 2+ members). Rejections are always allowed.
+    let org = guard::run_org(&rec.task_ir);
+    let self_approval = rec.owner == user.user_id;
+    if kind == "approval" && safety::is_consequential(&att) && self_approval && safety::requires_non_requester(&st.db, &org) {
+        return Err(ApiError::new(403, "PERMISSION", "ERR_APPROVAL_REQUIRES_NON_REQUESTER",
+            "this organization requires a member other than the run's requester to approve this request", rid));
+    }
+    // WP-P1 attention reasons: validate the approval before anything is recorded.
+    let reason = att["reason"].as_str().unwrap_or_default().to_string();
+    let mut safety_requeue = false;
+    if kind == "approval" && reason == safety::RUN_CAP_REASON {
+        if let Some(c) = body["value"]["caps"].as_object() {
+            if !rec.run["safety"].is_object() { rec.run["safety"] = json!({}); }
+            for (k, val) in c {
+                if matches!(k.as_str(), "max_steps" | "max_wall_secs" | "max_usd") && val.is_number() {
+                    rec.run["safety"]["caps"][k] = val.clone();
+                }
+            }
+        }
+        let caps = safety::RunCaps::from_env().tightened(&safety::load_org(&st.db, &org).unwrap_or_default()).with_override(&rec.run);
+        if let Some((dim, _)) = caps.reached(&rec.run, &rec.attention) {
+            return Err(ApiError::new(409, "STATE", "ERR_RUN_CAP_STILL_REACHED",
+                format!("the run is still at its {dim} cap; approve with value.caps.{dim} raised above current usage"), rid));
+        }
+        safety_requeue = true;
+    }
+    if kind == "approval" && reason == safety::UNKNOWN_EFFECT_REASON {
+        let applied = match body["value"]["effect_outcome"].as_str() {
+            Some("applied") => true,
+            Some("not_applied") => false,
+            _ => return Err(ApiError::new(400, "INPUT", "ERR_INPUT_INVALID", "value.effect_outcome must be applied|not_applied", rid)
+                .param(Some("value.effect_outcome".into()))),
+        };
+        safety::resolve_unknown(&st.db, att["idempotency_key"].as_str().unwrap_or_default(), applied).map_err(|e| ApiError::internal(e, rid))?;
+        safety_requeue = true;
+    }
+    if kind == "approval" && reason == safety::STUCK_REASON {
+        safety_requeue = true;
+    }
     // A daily cap only lifts when the cap itself allows spend again (next UTC
     // day, or an operator raised it); an approval cannot override it.
-    let cap_org = guard::run_org(&rec.task_ir);
+    let cap_org = org.clone();
     let cap_lifted = if att["reason"] == guard::CAP_REASON && kind == "approval" {
-        let (g, o) = s.daily_spend(&cap_org).await.map_err(|e| ApiError::internal(e, &rid))?;
+        let (g, o) = s.daily_spend(&cap_org).await.map_err(|e| ApiError::internal(e, rid))?;
         if guard::Limits::from_env().daily_reached(&g, &o).is_some() {
-            return Err(ApiError::new(409, "STATE", "ERR_BUDGET_CAP_REACHED", "the daily budget cap is still reached", &rid));
+            return Err(ApiError::new(409, "STATE", "ERR_BUDGET_CAP_REACHED", "the daily budget cap is still reached", rid));
         }
         true
     } else {
         false
     };
     let outcome = match kind.as_str() { "approval" => "approved", "rejection" => "rejected", _ => "answered" };
-    let resolution = json!({ "type": kind, "resolved_by": user.user_id, "resolved_at": now(), "receipt_id": new_id("rcpt"), "outcome": outcome });
-    for a in rec.attention.iter_mut().filter(|a| a["id"] == id.as_str()) {
+    let resolution = json!({ "type": kind, "resolved_by": user.user_id, "resolved_at": now(), "receipt_id": new_id("rcpt"), "outcome": outcome,
+        "requested_by": rec.owner, "self_approval": self_approval });
+    for a in rec.attention.iter_mut().filter(|a| a["id"] == id) {
         a["status"] = json!("resolved");
         a["resolution"] = resolution.clone();
     }
     let run_id = rec.run["id"].as_str().unwrap_or_default().to_string();
     let v = rec.run["version"].as_i64().unwrap_or(0);
     s.emit(&run_id, v, "attention.resolved", json!({ "data": { "attention_id": id, "resolution": resolution } }))
-        .await.map_err(|e| ApiError::internal(e, &rid))?;
+        .await.map_err(|e| ApiError::internal(e, rid))?;
     let mut to = None;
     let mut requeue = false;
     if att["reason"] == "budget_exhausted" {
@@ -583,17 +656,114 @@ async fn respond_attention(
             requeue = true;
         }
     }
+    if matches!(reason.as_str(), safety::RUN_CAP_REASON | safety::STUCK_REASON | safety::UNKNOWN_EFFECT_REASON) {
+        if kind == "rejection" {
+            to = Some(("failed", "stopped by the approver"));
+        } else if safety_requeue {
+            rec.run["budget_usage"]["spend_halted"] = json!(false);
+            to = Some(("waiting", "approved; queued for execution (committed steps replay from the journal)"));
+            requeue = true;
+        }
+    }
     let rec = match to {
         Some((t, why)) => s.transition(rec, t, Some(why)).await,
         None => s.save(rec).await,
     }
-    .map_err(|e| ApiError::internal(e, &rid))?;
+    .map_err(|e| ApiError::internal(e, rid))?;
     if requeue {
         if let Some(run_id) = rec.run["id"].as_str() {
             executor::spawn(st.clone(), run_id.to_string());
         }
     }
     Ok(Json(json!({ "object": "attention_response", "attention_id": id, "resolution": resolution, "run": public_run(&rec) })).into_response())
+}
+
+// ── WP-P1 production safety routes ──────────────────────────────────────────
+
+/// The caller's org safety policy (stored values + effective result).
+async fn get_safety_policy(State(st): State<Arc<AppState>>, Extension(user): Extension<AuthUser>) -> ApiResult {
+    Ok(Json(safety::policy_view(&st.db, &guard::org_of(&user))).into_response())
+}
+
+/// Set the caller's org safety policy. Org owners/admins only (a personal
+/// org is its own admin). Values only tighten the server ceilings.
+async fn put_safety_policy(
+    State(st): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Extension(rid): Extension<RequestId>,
+    Json(body): Json<Value>,
+) -> ApiResult {
+    let org = guard::org_of(&user);
+    let admin = org.starts_with("user:")
+        || crate::rbac::is_admin_role(user.organization_role.as_deref())
+        || st.db.connect().ok().and_then(|c| crate::rbac::is_org_admin(&c, &org, &user.user_id).ok()).unwrap_or(false);
+    if !admin {
+        return Err(ApiError::new(403, "PERMISSION", "ERR_PERMISSION_DENIED", "only an organization owner or admin can change the safety policy", &rid));
+    }
+    let allowed = ["require_non_requester_approval", "runs_per_hour", "max_steps", "max_wall_secs", "max_usd"];
+    if let Some(k) = body.as_object().and_then(|o| o.keys().find(|k| !allowed.contains(&k.as_str()))) {
+        return Err(ApiError::new(400, "INPUT", "ERR_INPUT_INVALID", format!("unknown field {k}"), &rid).param(Some(k.clone())));
+    }
+    let uint = |k: &str| body[k].as_u64();
+    let p = safety::OrgSafety {
+        require_non_requester_approval: body["require_non_requester_approval"].as_bool(),
+        runs_per_hour: uint("runs_per_hour"),
+        max_steps: uint("max_steps"),
+        max_wall_secs: uint("max_wall_secs"),
+        max_usd: body["max_usd"].as_f64().filter(|v| *v >= 0.0),
+        ..Default::default()
+    };
+    safety::save_org(&st.db, &org, &p, &user.user_id).map_err(|e| ApiError::internal(e, &rid))?;
+    Ok(Json(safety::policy_view(&st.db, &org)).into_response())
+}
+
+/// Open consequential attention items on runs of the caller's org, so a
+/// member other than the requester can approve them.
+async fn list_org_approvals(State(st): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Extension(rid): Extension<RequestId>) -> ApiResult {
+    let org = guard::org_of(&user);
+    let runs = store(&st).runs_of_org(&org).await.map_err(|e| ApiError::internal(e, &rid))?;
+    let me = user.user_id.as_str();
+    let items: Vec<Value> = runs.iter().flat_map(|r| r.attention.iter().filter(|a| a["status"] == "open" && safety::is_consequential(a)).map(move |a| {
+        let mut a = a.clone();
+        a["requested_by"] = json!(r.owner);
+        a["you_requested"] = json!(r.owner == me);
+        a
+    })).collect();
+    Ok(Json(page(items)).into_response())
+}
+
+/// Answer an attention item on a run of the caller's org (approval by a
+/// member other than the requester).
+async fn respond_org_approval(
+    State(st): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Extension(rid): Extension<RequestId>,
+    Path(id): Path<String>,
+    Json(body): Json<Value>,
+) -> ApiResult {
+    let kind = response_kind(&body, &rid)?;
+    let org = guard::org_of(&user);
+    if !org.starts_with("user:") && !safety::is_org_member(&st.db, &org, &user.user_id) && user.organization_id.as_deref() != Some(org.as_str()) {
+        return Err(ApiError::not_found("attention request", &rid));
+    }
+    let s = store(&st);
+    let _g = s.lock().await;
+    let runs = s.runs_of_org(&org).await.map_err(|e| ApiError::internal(e, &rid))?;
+    let (rec, att) = runs.into_iter().find_map(|r| r.attention.iter().find(|a| a["id"] == id.as_str()).cloned().map(|a| (r, a)))
+        .ok_or_else(|| ApiError::not_found("attention request", &rid))?;
+    resolve_attention(&st, &s, &user, &rid, rec, att, &id, &kind, &body).await
+}
+
+/// The run's effect journal (owner only): idempotency keys, fence epochs,
+/// status and error class. No results or arguments.
+async fn run_journal(
+    State(st): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Extension(rid): Extension<RequestId>,
+    Path(run_id): Path<String>,
+) -> ApiResult {
+    owned(store(&st).load_run(&run_id).await.map_err(|e| ApiError::internal(e, &rid))?, &user, &rid)?;
+    Ok(Json(page(safety::journal(&st.db, &run_id).map_err(|e| ApiError::internal(e, &rid))?)).into_response())
 }
 
 /// Tier C graph view of the compiled TaskIR (structure only, no backend identity).

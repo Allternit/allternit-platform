@@ -444,6 +444,43 @@ impl AgencyStore {
         self.transition(rec, "needs_attention", Some(title)).await
     }
 
+    /// WP-P1: halt spend durably FIRST (Q11 ordering), then open an attention
+    /// request and park the run in `needs_attention` (per-run caps, stuck
+    /// detection, an effect whose outcome is unknown).
+    pub async fn park_halted(&self, run_id: &str, reason: &str, title: &str, detail: &str, extra: Value) -> anyhow::Result<RunRecord> {
+        let _g = self.lock().await;
+        let mut rec = self.load_run(run_id).await?.ok_or_else(|| anyhow::anyhow!("run not found"))?;
+        let st = rec.run["status"].as_str().unwrap_or_default().to_string();
+        if TERMINAL.contains(&st.as_str()) || st == "needs_attention" {
+            return Ok(rec);
+        }
+        rec.run["budget_usage"]["spend_halted"] = json!(true);
+        let mut rec = self.save(rec).await?;
+        let v = rec.run["version"].as_i64().unwrap_or(0);
+        let mut att = json!({ "id": new_id("att"), "object": "attention_request", "run_id": run_id, "status": "open",
+            "reason": reason, "title": title, "detail": detail, "created_at": now(), "resolution": null });
+        if let (Some(a), Some(e)) = (att.as_object_mut(), extra.as_object()) {
+            a.extend(e.clone());
+        }
+        rec.attention.push(att.clone());
+        self.emit(run_id, v, "attention.requested", json!({ "data": { "attention": att } })).await?;
+        self.transition(rec, "needs_attention", Some(title)).await
+    }
+
+    /// Latest snapshot of every run billed to `org`, newest first.
+    pub async fn runs_of_org(&self, org: &str) -> anyhow::Result<Vec<RunRecord>> {
+        let g = self.index().await?;
+        let mut v: Vec<&(RunRecord, u64)> = g.runs.values().filter(|(r, _)| super::guard::run_org(&r.task_ir) == org).collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1));
+        Ok(v.into_iter().map(|(r, _)| r.clone()).collect())
+    }
+
+    /// Runs of `org` (other than `except`) that started within the last hour.
+    pub async fn org_runs_started_last_hour(&self, org: &str, except: &str) -> anyhow::Result<usize> {
+        let g = self.index().await?;
+        Ok(super::safety::runs_started_last_hour(g.runs.values().map(|(r, _)| (&r.run, &r.task_ir)), org, except))
+    }
+
     // ── campaigns / replays: snapshot records keyed by id ────────────────────
 
     pub async fn save_object(&self, ty: &str, id: &str, owner: &str, obj: &Value) -> anyhow::Result<()> {

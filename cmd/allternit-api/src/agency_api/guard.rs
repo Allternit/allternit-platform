@@ -15,6 +15,10 @@
 //! * `ALLTERNIT_AGENCY_MAX_CONCURRENT` / `ALLTERNIT_AGENCY_ORG_MAX_CONCURRENT`:
 //!   executing runs at once, globally and per org. Extra runs stay `waiting`
 //!   and start when a slot frees.
+//! * `ALLTERNIT_AGENCY_ORG_RUNS_PER_HOUR`: runs an org may START per rolling
+//!   hour (prod API lanes, WP-P1). Extra runs stay `waiting` and are retried
+//!   once a minute. An org policy (`safety::OrgSafety.runs_per_hour`) can only
+//!   lower it.
 //!
 //! The org of a run is the creator's organization id, else tenant id, else
 //! `user:<user id>` (recorded in the TaskIR as `org_id` at creation).
@@ -27,11 +31,13 @@ pub const DAILY_ENV: &str = "ALLTERNIT_AGENCY_DAILY_BUDGET";
 pub const ORG_DAILY_ENV: &str = "ALLTERNIT_AGENCY_ORG_DAILY_BUDGET";
 pub const MAX_CONC_ENV: &str = "ALLTERNIT_AGENCY_MAX_CONCURRENT";
 pub const ORG_MAX_CONC_ENV: &str = "ALLTERNIT_AGENCY_ORG_MAX_CONCURRENT";
+pub const ORG_RUNS_PER_HOUR_ENV: &str = "ALLTERNIT_AGENCY_ORG_RUNS_PER_HOUR";
 
 pub const DEFAULT_DAILY: Cap = Cap { tokens: Some(2_000_000), usd: Some(20.0) };
 pub const DEFAULT_ORG_DAILY: Cap = Cap { tokens: Some(500_000), usd: Some(5.0) };
 pub const DEFAULT_MAX_CONCURRENT: usize = 2;
 pub const DEFAULT_ORG_MAX_CONCURRENT: usize = 1;
+pub const DEFAULT_ORG_RUNS_PER_HOUR: usize = 20;
 
 pub const CAP_REASON: &str = "budget_cap_reached";
 pub const CAP_TITLE: &str = "budget cap reached";
@@ -102,13 +108,15 @@ pub struct Limits {
     pub org_daily: Cap,
     pub max_concurrent: usize,
     pub org_max_concurrent: usize,
+    /// Runs one org may start per rolling hour.
+    pub org_runs_per_hour: usize,
 }
 
 impl Limits {
     /// No allowlist, caps or concurrency limits: tests that call
     /// `executor::start` directly.
     pub fn unlimited() -> Self {
-        Limits { orgs: None, daily: Cap::OFF, org_daily: Cap::OFF, max_concurrent: usize::MAX, org_max_concurrent: usize::MAX }
+        Limits { orgs: None, daily: Cap::OFF, org_daily: Cap::OFF, max_concurrent: usize::MAX, org_max_concurrent: usize::MAX, org_runs_per_hour: usize::MAX }
     }
 
     pub fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Self {
@@ -121,6 +129,7 @@ impl Limits {
             org_daily: get(ORG_DAILY_ENV).map(|v| Cap::parse(&v)).unwrap_or(DEFAULT_ORG_DAILY),
             max_concurrent: conc(MAX_CONC_ENV, DEFAULT_MAX_CONCURRENT),
             org_max_concurrent: conc(ORG_MAX_CONC_ENV, DEFAULT_ORG_MAX_CONCURRENT),
+            org_runs_per_hour: conc(ORG_RUNS_PER_HOUR_ENV, DEFAULT_ORG_RUNS_PER_HOUR),
         }
     }
 
@@ -137,6 +146,15 @@ impl Limits {
         }
         if let Some(n) = rules["max_concurrent"].as_f64().filter(|n| *n >= 0.0) {
             l.org_max_concurrent = l.org_max_concurrent.min((n as usize).max(1));
+        }
+        l
+    }
+
+    /// Tighten with the org's stored safety policy (never raises).
+    pub fn with_org_policy(&self, p: &super::safety::OrgSafety) -> Limits {
+        let mut l = self.clone();
+        if let Some(n) = p.runs_per_hour {
+            l.org_runs_per_hour = l.org_runs_per_hour.min(n as usize);
         }
         l
     }
