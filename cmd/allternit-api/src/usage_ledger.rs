@@ -155,6 +155,19 @@ pub fn insert(conn: &Connection, row: &LedgerRow) -> rusqlite::Result<Option<Str
     }
     let id = uuid::Uuid::new_v4().to_string();
     let c = &row.ctx;
+    // Rows that know their user but not their org (gizzi-code reports carry
+    // no org header; some internal callers have only a user) take the
+    // user's current org, or the per-org Usage summary never sees them.
+    let tenant_id = match id_or_none(&c.tenant_id) {
+        Some(t) => Some(t),
+        None => match id_or_none(&c.user_id) {
+            Some(uid) => conn
+                .query_row("SELECT organization_id FROM users WHERE id = ?1", params![uid], |r| r.get::<_, Option<String>>(0))
+                .optional()?
+                .flatten(),
+            None => None,
+        },
+    };
     conn.execute(
         "INSERT INTO llm_usage_events
             (id, user_id, tenant_id, provider_id, model_id, prompt_tokens, completion_tokens,
@@ -172,7 +185,7 @@ pub fn insert(conn: &Connection, row: &LedgerRow) -> rusqlite::Result<Option<Str
         params![
             id,
             c.user_id,
-            c.tenant_id,
+            tenant_id,
             row.provider_id,
             row.model_id,
             row.prompt_tokens.max(0),
@@ -239,7 +252,23 @@ static LEDGER_DB: OnceLock<DbHandle> = OnceLock::new();
 /// Called once at startup with the app DB, so the free-function completion
 /// helpers can write the ledger.
 pub fn install(db: DbHandle) {
+    if let Err(e) = db.connect().and_then(|c| backfill_missing_tenants(&c)) {
+        tracing::warn!(error = %e, "usage ledger tenant backfill failed");
+    }
     let _ = LEDGER_DB.set(db);
+}
+
+/// Rows stored before `insert` filled the org from the user (gizzi reports
+/// carry no org header) have `tenant_id` NULL and never reach the per-org
+/// summary. Idempotent; touches only rows whose user now has an org.
+pub fn backfill_missing_tenants(conn: &Connection) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE llm_usage_events
+         SET tenant_id = (SELECT u.organization_id FROM users u WHERE u.id = llm_usage_events.user_id)
+         WHERE tenant_id IS NULL AND user_id IS NOT NULL
+           AND EXISTS (SELECT 1 FROM users u WHERE u.id = llm_usage_events.user_id AND u.organization_id IS NOT NULL)",
+        [],
+    )
 }
 
 /// Best-effort write to the installed DB (metering never fails a call).
@@ -573,6 +602,36 @@ mod tests {
         let s1 = insert(&conn, &s1_decision_row(ctx, "laya_bundled", false, 12, None)).unwrap().unwrap();
         let r = row_of(&conn, &s1);
         assert_eq!((r.0.as_str(), r.4.as_deref(), r.5.as_deref(), r.7), ("s1", Some("S1"), Some("local"), 0));
+    }
+
+    #[test]
+    fn rows_without_an_org_take_the_users_current_org() {
+        let (db, _d) = db();
+        let conn = db.connect().unwrap();
+        conn.execute("INSERT OR IGNORE INTO organizations (id, name) VALUES ('org-u', 'U')", []).unwrap();
+        conn.execute("INSERT INTO users (id, email, organization_id) VALUES ('u-org', 'u@test.local', 'org-u')", []).unwrap();
+        let tenant_of = |id: &str| -> Option<String> {
+            conn.query_row("SELECT tenant_id FROM llm_usage_events WHERE id = ?1", [id], |r| r.get(0)).unwrap()
+        };
+        // A gizzi report authenticated with no org header.
+        let call = ReportedCall {
+            kind: None, call_id: "c-org".into(), session_id: Some("ses_org".into()), surface: Some("chat".into()), run_id: None,
+            node_id: None, tier: None, lane: Some("api".into()), provider_id: Some("p".into()), model_id: Some("m".into()),
+            input_tokens: 1, output_tokens: 1, reasoning_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, cost_usd: 0.0,
+            latency_ms: 1, served_by_s1: false, incumbent_cost_usd: None,
+        };
+        let id = insert(&conn, &reported_row(&call, None, "u-org").unwrap()).unwrap().unwrap();
+        assert_eq!(tenant_of(&id).as_deref(), Some("org-u"));
+        // An explicit org always wins; an unknown user stays without one.
+        let explicit = insert(&conn, &vendor_turn_row("v", "corr_org", Some("org-x"), "u-org", 1, true)).unwrap().unwrap();
+        assert_eq!(tenant_of(&explicit).as_deref(), Some("org-x"));
+        let unknown = insert(&conn, &vendor_turn_row("v", "corr_none", None, "u-nobody", 1, true)).unwrap().unwrap();
+        assert_eq!(tenant_of(&unknown), None);
+        // Rows stored before the fix are backfilled once the user has an org.
+        conn.execute("UPDATE llm_usage_events SET tenant_id = NULL WHERE id = ?1", [&id]).unwrap();
+        assert_eq!(backfill_missing_tenants(&conn).unwrap(), 1);
+        assert_eq!(tenant_of(&id).as_deref(), Some("org-u"));
+        assert_eq!(backfill_missing_tenants(&conn).unwrap(), 0, "idempotent");
     }
 
     #[test]
