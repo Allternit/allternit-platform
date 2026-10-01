@@ -78,7 +78,21 @@ pub struct CreatePairingRequest {
     /// its pairing (runtime_type "vps") without a Clerk session.
     #[serde(default)]
     byo_bootstrap_token: Option<String>,
+    /// Cloud computer first-boot token (plan A2), read by the Desktop app
+    /// from /etc/allternit/bootstrap.json. Also accepted as the
+    /// `X-Allternit-Bootstrap-Token` header. When valid it pre-approves this
+    /// same pairing for the instance's owner, forces runtimeType
+    /// "provisioned" and the name "Allternit cloud computer", and links the
+    /// provisioned_instances row; it is consumed at exchange, not here, so a
+    /// crash between the two can retry within the token's expiry.
+    #[serde(default)]
+    bootstrap_token: Option<String>,
 }
+
+/// Header alternative to `CreatePairingRequest::bootstrap_token`.
+pub const BOOTSTRAP_TOKEN_HEADER: &str = "x-allternit-bootstrap-token";
+/// Device name every cloud computer pairs under.
+pub const PROVISIONED_RUNTIME_NAME: &str = "Allternit cloud computer";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -217,10 +231,35 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/api/v1/runtime-devices/:id/revoke-self", post(revoke_self))
 }
 
+/// The cloud computer bootstrap token from the body field, else the header;
+/// blank values count as absent.
+fn bootstrap_token_from(field: Option<String>, headers: &HeaderMap) -> Option<String> {
+    field
+        .filter(|token| !token.trim().is_empty())
+        .or_else(|| {
+            headers
+                .get(BOOTSTRAP_TOKEN_HEADER)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string)
+        })
+        .map(|token| token.trim().to_string())
+        .filter(|token| !token.is_empty())
+}
+
 async fn create_pairing(
     State(state): State<Arc<ApiState>>,
-    Json(request): Json<CreatePairingRequest>,
+    headers: HeaderMap,
+    Json(mut request): Json<CreatePairingRequest>,
 ) -> Result<(StatusCode, Json<CreatePairingResponse>), ApiError> {
+    if let Some(token) = bootstrap_token_from(request.bootstrap_token.take(), &headers) {
+        let instance_id =
+            crate::services::provisioning::provisioned_instance_for_bootstrap_token(&state.db, &token)
+                .await?;
+        request.runtime_type = "provisioned".to_string();
+        request.name = PROVISIONED_RUNTIME_NAME.to_string();
+        request.provisioned_instance_id = Some(instance_id);
+        request.provisioned_bootstrap_token = Some(token);
+    }
     validate_pairing_request(&request)?;
 
     let pairing_id = Uuid::new_v4().to_string();
@@ -1392,6 +1431,24 @@ pub(crate) fn sha256_hex(value: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn bootstrap_token_comes_from_the_field_or_the_header() {
+        let mut headers = HeaderMap::new();
+        assert_eq!(bootstrap_token_from(None, &headers), None);
+        assert_eq!(bootstrap_token_from(Some("  ".to_string()), &headers), None);
+        assert_eq!(bootstrap_token_from(Some(" tok ".to_string()), &headers).as_deref(), Some("tok"));
+        headers.insert(BOOTSTRAP_TOKEN_HEADER, "hdr".parse().unwrap());
+        assert_eq!(bootstrap_token_from(None, &headers).as_deref(), Some("hdr"));
+        assert_eq!(bootstrap_token_from(Some("body".to_string()), &headers).as_deref(), Some("body"));
+        // The camelCase body field deserializes.
+        let request: CreatePairingRequest = serde_json::from_value(serde_json::json!({
+            "name": "x", "runtimeType": "desktop", "publicKey": "k", "bootstrapToken": "t1"
+        }))
+        .unwrap();
+        assert_eq!(request.bootstrap_token.as_deref(), Some("t1"));
+    }
+
     use super::*;
 
     #[test]

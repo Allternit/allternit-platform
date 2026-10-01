@@ -453,7 +453,13 @@ mod tests {
                 deleted_at TIMESTAMPTZ,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                UNIQUE (host_id, incus_name)
+                plan_id TEXT,
+                cancelled_at TIMESTAMPTZ,
+                delete_after TIMESTAMPTZ,
+                snapshot_image TEXT,
+                snapshot_expires_at TIMESTAMPTZ,
+                snapshot_deleted_at TIMESTAMPTZ,
+                restored_from TEXT
             )
             "#,
             r#"
@@ -543,6 +549,24 @@ mod tests {
         }
         async fn delete(&self, name: &str) -> Result<(), crate::services::ProvisionError> {
             self.calls.lock().unwrap().push(format!("delete:{name}"));
+            Ok(())
+        }
+        async fn snapshot_to_image(
+            &self,
+            _name: &str,
+            _alias: &str,
+            _compression: Option<&str>,
+        ) -> Result<(), crate::services::ProvisionError> {
+            Ok(())
+        }
+        async fn delete_image(&self, _alias: &str) -> Result<(), crate::services::ProvisionError> {
+            Ok(())
+        }
+        async fn push_file(
+            &self,
+            _name: &str,
+            _file: &crate::services::provisioning::InstanceFile,
+        ) -> Result<(), crate::services::ProvisionError> {
             Ok(())
         }
     }
@@ -727,8 +751,10 @@ mod tests {
         let body = body_json(response).await;
         assert_eq!(body["instance"]["status"], "provisioning");
         assert_eq!(body["instance"]["subscriptionId"], "sub_ok");
+        let first_id = body["instance"]["id"].clone();
 
-        // A second instance for the same subscription is refused.
+        // A repeat for the same subscription is idempotent: the same
+        // instance comes back, no error and no duplicate.
         let response = router
             .clone()
             .oneshot(authed_request(
@@ -738,7 +764,8 @@ mod tests {
             ))
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(response.status().is_success());
+        assert_eq!(body_json(response).await["instance"]["id"], first_id);
 
         std::env::remove_var(ALLOW_DEV_TOKEN_ENV);
     }
