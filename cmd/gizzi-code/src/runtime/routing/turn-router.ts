@@ -12,8 +12,10 @@
  *      bank (what kind of turn) and the ROUTE_MODEL bank (which class). The
  *      answers are logged with their x-decision_id and never acted on.
  *   4. Outcome labels come from what the turn actually did (tools used,
- *      errors) and from the next turn (user retry / model switch), posted to
- *      `/v1/decision/outcome`.
+ *      errors, a command template run → "template") and from the next turn
+ *      (user retry / model switch), posted to `/v1/decision/outcome`. The
+ *      session's last turn gets its ROUTE_MODEL label when the session ends
+ *      (deleted, or idle for ALLTERNIT_TURN_ROUTE_IDLE_MS, default 30 min).
  *
  * `ALLTERNIT_TURN_ROUTE_SHADOW=0` turns steps 2–4 off. With
  * `ALLTERNIT_TURN_ROUTE_AUTHORITY=kernel` the kernel's pick replaces the
@@ -64,6 +66,9 @@ let deps: TurnRouterDeps | undefined
 export function setDeps(d: Partial<TurnRouterDeps> | undefined) {
   deps = d ? { ...defaultDeps(), ...d } : undefined
   pending.clear()
+  templateNext.clear()
+  for (const t of idleTimers.values()) clearTimeout(t)
+  idleTimers.clear()
 }
 const D = () => (deps ??= defaultDeps())
 
@@ -90,9 +95,16 @@ export interface TurnRecord {
   routeChoice?: string
   routeModelChoice?: string
   routeModelLabeled?: boolean
+  /** The turn's user message came from a command template (WP-S1U-3). */
+  template?: boolean
 }
 
 const pending = new Map<string, TurnRecord>()
+/** Sessions whose next turn runs a command template (set by `SessionPrompt.command`). */
+const templateNext = new Set<string>()
+/** Idle timers that label a session's last ROUTE_MODEL when no next turn comes. */
+const idleTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const DEFAULT_IDLE_MS = 30 * 60 * 1000
 
 export function shadowEnabled(): boolean {
   return D().env.ALLTERNIT_TURN_ROUTE_SHADOW !== "0"
@@ -221,6 +233,8 @@ export async function startTurn(input: {
   requested: ModelRef
   incumbent: ModelRef
 }): Promise<{ model: ModelRef; record?: TurnRecord }> {
+  const template = templateNext.delete(input.sessionID)
+  clearIdle(input.sessionID)
   if (!shadowEnabled()) return { model: input.incumbent }
   let entries: ModelPoolEntryV1[] = []
   try {
@@ -240,6 +254,7 @@ export async function startTurn(input: {
     incumbentClass: inc ? genClassOf(inc) : null,
     incumbentCost: inc ? inc.cost : null,
     kernel: null,
+    template,
   }
   pending.set(input.sessionID, record)
 
@@ -289,10 +304,17 @@ export async function startTurn(input: {
   return { model: { providerID, modelID: rest.join("/") }, record }
 }
 
-/** What the turn actually needed, from its tool calls. "template" is never inferred here. */
-export function routeLabel(tools: string[]): RouteOption {
+/** A tool that runs a template (e.g. an MCP `run_template` / `templates.run`). */
+const TEMPLATE_TOOL = /(run|use|apply|exec|execute|start)[_.\-]?templates?($|[_.\-])|templates?[_.\-](run|use|apply|exec|execute|start)/
+
+/**
+ * What the turn actually needed, from its tool calls. "template" when the turn
+ * ran a command template (`opts.template`) or called a template tool.
+ */
+export function routeLabel(tools: string[], opts: { template?: boolean } = {}): RouteOption {
   const t = tools.map((x) => x.toLowerCase())
   const has = (re: RegExp) => t.some((x) => re.test(x))
+  if (opts.template || has(TEMPLATE_TOOL)) return "template"
   if (t.length === 0) return "answer_from_memory"
   if (has(/^(question|ask_?user)/)) return "clarify"
   if (has(/computer|browser_|desktop|screenshot|mouse|keyboard/)) return "computer_use"
@@ -307,12 +329,53 @@ export function routeLabel(tools: string[]): RouteOption {
 export async function finishTurn(sessionID: string, observed: { tools: string[]; errored: boolean }) {
   const rec = pending.get(sessionID)
   if (!rec) return
-  const truth = routeLabel(observed.tools)
-  await reportOutcome(rec.routeDecisionId, truth, "turn_tools", { "x-tools": observed.tools.length })
+  const truth = routeLabel(observed.tools, { template: rec.template })
+  await reportOutcome(rec.routeDecisionId, truth, rec.template ? "turn_template" : "turn_tools", { "x-tools": observed.tools.length })
   if (observed.errored && rec.incumbentClass && !rec.routeModelLabeled) {
     rec.routeModelLabeled = true
     await reportOutcome(rec.routeModelDecisionId, escalate(rec.incumbentClass), "turn_error", costExtra(rec))
   }
+  // The last turn of a session has no next turn to label its ROUTE_MODEL: if
+  // none comes within the idle window, label it accepted (see endSession).
+  if (!rec.routeModelLabeled) armIdle(sessionID)
+}
+
+/** `SessionPrompt.command` marks the session's next turn as a template run. */
+export function markTemplate(sessionID: string) {
+  templateNext.add(sessionID)
+}
+
+function idleMs(): number {
+  const n = Number(D().env.ALLTERNIT_TURN_ROUTE_IDLE_MS)
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_IDLE_MS
+}
+
+function clearIdle(sessionID: string) {
+  const t = idleTimers.get(sessionID)
+  if (t) clearTimeout(t)
+  idleTimers.delete(sessionID)
+}
+
+function armIdle(sessionID: string) {
+  clearIdle(sessionID)
+  const t = setTimeout(() => void endSession(sessionID, "session_idle"), idleMs())
+  ;(t as any).unref?.()
+  idleTimers.set(sessionID, t)
+}
+
+/**
+ * Session end (deleted, or idle with no next turn): the last turn's
+ * ROUTE_MODEL is labelled with the incumbent's class (the person did not
+ * retry or switch), and the session's record is dropped.
+ */
+export async function endSession(sessionID: string, source: "session_idle" | "session_deleted" | "session_end" = "session_end") {
+  clearIdle(sessionID)
+  templateNext.delete(sessionID)
+  const rec = pending.get(sessionID)
+  pending.delete(sessionID)
+  if (!rec || rec.routeModelLabeled || !rec.incumbentClass) return
+  rec.routeModelLabeled = true
+  await reportOutcome(rec.routeModelDecisionId, rec.incumbentClass, source, costExtra(rec))
 }
 
 function costExtra(rec: TurnRecord) {

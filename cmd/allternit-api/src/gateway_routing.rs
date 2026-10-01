@@ -31,13 +31,29 @@ pub fn tighten_consequential(incumbent: bool, s1_says_consequential: Option<bool
     incumbent || s1_says_consequential == Some(true)
 }
 
+/// A tool that runs a template (`run_template`, `templates.run`, ...); the same
+/// rule as the gizzi turn router's `TEMPLATE_TOOL`.
+pub fn is_template_tool(name: &str) -> bool {
+    const VERBS: [&str; 6] = ["run", "use", "apply", "exec", "execute", "start"];
+    let n = name.to_lowercase();
+    let seps = |c: char| c == '_' || c == '.' || c == '-';
+    let parts: Vec<&str> = n.split(seps).filter(|p| !p.is_empty()).collect();
+    parts.windows(2).any(|w| {
+        let tpl = |x: &str| x == "template" || x == "templates";
+        (VERBS.contains(&w[0]) && tpl(w[1])) || (tpl(w[0]) && VERBS.contains(&w[1]))
+    }) || VERBS.iter().any(|v| parts.iter().any(|p| *p == format!("{v}template") || *p == format!("{v}templates")))
+}
+
 /// What a vendor turn needed, from the tool names in its events. Same rules as
-/// the gizzi turn router's `routeLabel` ("template" is never inferred).
+/// the gizzi turn router's `routeLabel` ("template" when a template tool ran).
 pub fn route_label(tools: &[String]) -> &'static str {
     let t: Vec<String> = tools.iter().map(|x| x.to_lowercase()).collect();
     let starts = |x: &str, ps: &[&str]| ps.iter().any(|p| x.starts_with(p));
     let has = |f: &dyn Fn(&str) -> bool| t.iter().any(|x| f(x));
     let read_like = ["read", "grep", "glob", "list", "ls", "webfetch", "websearch", "search", "memory", "codesearch"];
+    if t.iter().any(|x| is_template_tool(x)) {
+        return "template";
+    }
     if t.is_empty() {
         return "answer_from_memory";
     }
@@ -189,6 +205,10 @@ mod tests {
         assert_eq!(route_label(&v(&["read", "grep"])), "retrieval");
         assert_eq!(route_label(&v(&["send_email"])), "single_tool");
         assert_eq!(route_label(&v(&["a", "b", "c", "d"])), "agent_run");
+        assert_eq!(route_label(&v(&["read", "run_template"])), "template");
+        assert_eq!(route_label(&v(&["templates.run"])), "template");
+        assert_eq!(route_label(&v(&["runTemplate"])), "template");
+        assert_eq!(route_label(&v(&["list_templates"])), "retrieval");
     }
 
     #[test]

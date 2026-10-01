@@ -2739,6 +2739,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       { parts },
     )
 
+    // WP-S1U-3: this turn runs a command template; its ROUTE label is "template".
+    TurnRouter.markTemplate(input.sessionID)
     const result = (await prompt({
       sessionID: input.sessionID,
       messageID: input.messageID,
