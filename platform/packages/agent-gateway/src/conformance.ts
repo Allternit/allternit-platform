@@ -167,13 +167,18 @@ async function parallelism(a: Area, e: Env) {
     if (limit === 0) return a.expect("unbounded declared: several contexts open", opened.length === n, "could not open 3");
     a.expect(`declared max ${limit} contexts open`, opened.length === limit, `only ${opened.length} opened`);
     if (opened.length === limit) {
+      // maxParallel bounds what runs at once. A provider may still let more conversations exist (it limits
+      // concurrent turns instead, so a person's Nth thread isn't locked out); one that drives a single app
+      // window refuses with CONTEXT_BUSY and must free the slot when a conversation closes.
       const over = await safe(a, "open over limit", () => p.contextOpen({ agentId: fx.agentId, title: "over" }));
       if (over.ok) opened.push(over.value.contextId);
-      a.expect("context beyond max is CONTEXT_BUSY", errOf(over)?.code === "CONTEXT_BUSY", `got ${desc(over)}`);
-      await p.contextClose({ contextId: opened[0] });
-      const again = await safe(a, "reopen after close", () => p.contextOpen({ agentId: fx.agentId, title: "again" }));
-      if (again.ok) opened.push(again.value.contextId);
-      a.expect("slot frees after close", again.ok, `got ${desc(again)}`);
+      a.expect("context beyond max opens or is CONTEXT_BUSY", over.ok || errOf(over)?.code === "CONTEXT_BUSY", `got ${desc(over)}`);
+      if (!over.ok) {
+        await p.contextClose({ contextId: opened[0] });
+        const again = await safe(a, "reopen after close", () => p.contextOpen({ agentId: fx.agentId, title: "again" }));
+        if (again.ok) opened.push(again.value.contextId);
+        a.expect("slot frees after close", again.ok, `got ${desc(again)}`);
+      }
     }
   } finally { await closeAll(e, opened); }
 }

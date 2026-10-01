@@ -23,8 +23,12 @@ describe("conformance harness discriminates", () => {
 
   const single: Array<[keyof MemoryDefects, string]> = [
     ["contaminate", "isolation"], ["doubleExecute", "idempotency"], ["autoApprove", "approvals"],
-    ["ignoreCancel", "cancellation"], ["ignoreMaxParallel", "parallelism"],
+    ["ignoreCancel", "cancellation"],
   ];
+  it("letting more conversations exist than maxParallel is allowed (the limit is on what runs at once)", async () => {
+    const r = await runConformance(new MemoryProvider("mem-agent", 2, { ignoreMaxParallel: true }), fx);
+    expect(status(r).parallelism).toBe("pass");
+  });
   for (const [defect, area] of single) {
     it(`defect ${defect} fails only via ${area}`, async () => {
       const r = await runConformance(new MemoryProvider("mem-agent", 2, { [defect]: true }), fx);
