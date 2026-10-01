@@ -9,9 +9,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::db::DbHandle;
-use crate::llm_gateway::embeddings::generate_local_embedding;
-
-const EMBEDDING_DIM: usize = 384;
+use crate::memory_index::{self, Embedded, Scope, MEMORY_TYPES};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryObservation {
@@ -35,6 +33,10 @@ pub struct MemoryFact {
     pub valid_from: String,
     pub valid_until: Option<String>,
     pub source_observation_id: Option<String>,
+    /// MEMORY_TYPE (V208): fact / preference / event / procedure / entity /
+    /// relationship / task_state. None for facts written before V208.
+    #[serde(default)]
+    pub memory_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,6 +100,9 @@ pub struct RecallQuery {
     pub session_id: Option<String>,
     pub query: String,
     pub limit: Option<usize>,
+    /// Retrieve path: let graph expansion return superseded facts too.
+    #[serde(default)]
+    pub include_history: bool,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -110,22 +115,9 @@ pub enum MemoryKernelError {
     Internal(String),
 }
 
-fn f32_vec_to_bytes(vec: &[f32]) -> Vec<u8> {
-    vec.iter().flat_map(|v| v.to_le_bytes()).collect()
-}
-
-fn bytes_to_f32_vec(bytes: &[u8]) -> Vec<f32> {
-    bytes
-        .chunks_exact(4)
-        .map(|chunk| {
-            let mut arr = [0u8; 4];
-            arr.copy_from_slice(chunk);
-            f32::from_le_bytes(arr)
-        })
-        .collect()
-}
-
-/// Store or replace a local embedding for a memory target.
+/// Store or replace the fallback (hash) embedding for a memory target, so the
+/// target is searchable by vector at once. The background indexer
+/// (`memory_index::spawn_indexer`) re-embeds it with the real local model.
 pub fn store_embedding(
     db: &DbHandle,
     user_id: &str,
@@ -133,31 +125,54 @@ pub fn store_embedding(
     target_id: &str,
     text: &str,
 ) -> Result<String, MemoryKernelError> {
-    let id = format!("emb_{}", Uuid::new_v4().simple());
-    let embedding = generate_local_embedding(text, EMBEDDING_DIM);
-    let bytes = f32_vec_to_bytes(&embedding);
+    let emb = memory_index::hash_embed(&[text.to_string()]);
     let conn = db.connect()?;
-    conn.execute(
-        "INSERT INTO memory_embeddings (id, user_id, target_type, target_id, embedding, model)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-         ON CONFLICT(user_id, target_type, target_id)
-         DO UPDATE SET embedding = excluded.embedding, model = excluded.model, created_at = CURRENT_TIMESTAMP",
-        params![id, user_id, target_type, target_id, bytes, "local-hash-384"],
-    )?;
-    Ok(id)
+    memory_index::upsert_embedding(&conn, user_id, target_type, target_id, &emb.model, &emb.vectors[0])?;
+    Ok(format!("{}:{}", target_type, target_id))
 }
 
-/// Load a single memory target as a RecallResult.
+/// Load a single memory target as a RecallResult (current facts only).
 fn load_memory_target(
     conn: &rusqlite::Connection,
     target_type: &str,
     target_id: &str,
+    agent_id: Option<&str>,
 ) -> Result<Option<RecallResult>, MemoryKernelError> {
+    load_target(conn, target_type, target_id, agent_id, false)
+}
+
+/// Load a memory target; `include_history` also returns superseded facts
+/// (`valid_until` set, reported in metadata).
+pub(crate) fn load_target(
+    conn: &rusqlite::Connection,
+    target_type: &str,
+    target_id: &str,
+    agent_id: Option<&str>,
+    include_history: bool,
+) -> Result<Option<RecallResult>, MemoryKernelError> {
+    let agent_ok = |row_agent: &Option<String>| match (row_agent, agent_id) {
+        (Some(a), Some(q)) => a == q,
+        _ => true,
+    };
+    let table = match target_type {
+        "fact" => "memory_facts",
+        "entity" => "memory_entities",
+        "observation" => "memory_observations",
+        _ => return Ok(None),
+    };
+    let row_agent: Option<Option<String>> = conn
+        .query_row(&format!("SELECT agent_id FROM {table} WHERE id = ?1"), params![target_id], |r| r.get(0))
+        .optional()?;
+    match row_agent {
+        Some(ref a) if agent_ok(a) => {}
+        _ => return Ok(None),
+    }
     match target_type {
         "fact" => conn
             .query_row(
-                "SELECT id, fact, confidence, valid_from, source_observation_id FROM memory_facts WHERE id = ?1 AND valid_until IS NULL",
-                params![target_id],
+                "SELECT id, fact, confidence, valid_from, source_observation_id, memory_type, valid_until FROM memory_facts
+                 WHERE id = ?1 AND (?2 OR valid_until IS NULL)",
+                params![target_id, include_history],
                 |row| {
                     Ok(RecallResult {
                         id: row.get::<_, String>(0)?,
@@ -166,7 +181,9 @@ fn load_memory_target(
                         content: row.get::<_, String>(1)?,
                         metadata: serde_json::json!({
                             "confidence": row.get::<_, f64>(2)?,
-                            "source_observation_id": row.get::<_, Option<String>>(3)?,
+                            "source_observation_id": row.get::<_, Option<String>>(4)?,
+                            "memory_type": row.get::<_, Option<String>>(5)?,
+                            "valid_until": row.get::<_, Option<String>>(6)?,
                         }),
                         timestamp: row.get::<_, String>(3)?,
                     })
@@ -223,7 +240,10 @@ fn load_memory_target(
     }
 }
 
-/// Find memory targets whose embeddings are most similar to the query text.
+/// Memory targets most similar to the query text: hybrid keyword + vector
+/// search over the shared index, with the hash query embedding (sync callers;
+/// async callers use [`recall_hybrid`] for the real model). Returns
+/// (target_type, target_id, fused score), best first.
 pub fn recall_semantic(
     db: &DbHandle,
     user_id: &str,
@@ -231,32 +251,10 @@ pub fn recall_semantic(
     limit: usize,
 ) -> Result<Vec<(String, String, f64)>, MemoryKernelError> {
     let conn = db.connect()?;
-    let query_vec = generate_local_embedding(query, EMBEDDING_DIM);
-    let mut stmt = conn.prepare(
-        "SELECT target_type, target_id, embedding FROM memory_embeddings WHERE user_id = ?1",
-    )?;
-    let rows = stmt.query_map(params![user_id], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, Vec<u8>>(2)?,
-        ))
-    })?;
-
-    let mut scored: Vec<(String, String, f64)> = Vec::new();
-    for row in rows.flatten() {
-        let (target_type, target_id, bytes) = row;
-        let candidate = bytes_to_f32_vec(&bytes);
-        if candidate.len() == query_vec.len() {
-            let sim = cosine_similarity(&query_vec, &candidate) as f64;
-            if sim > 0.0 {
-                scored.push((target_type, target_id, sim));
-            }
-        }
-    }
-    scored.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
-    scored.truncate(limit);
-    Ok(scored)
+    let q = memory_index::hash_embed(&[query.to_string()]);
+    let scope = Scope { scope: user_id, target_types: MEMORY_TYPES, only_ids: None };
+    let hits = memory_index::hybrid_search(&conn, &scope, query, Some((&q.model, &q.vectors[0])), limit)?;
+    Ok(hits.into_iter().map(|h| (h.target_type, h.target_id, h.score)).collect())
 }
 
 /// Record a raw observation (turn, tool execution, file event, decision, or checkpoint).
@@ -460,6 +458,7 @@ pub fn persist_facts(
             valid_from: chrono::Utc::now().to_rfc3339(),
             valid_until: None,
             source_observation_id: Some(observation_id.to_string()),
+            memory_type: None,
         });
     }
 
@@ -538,7 +537,8 @@ pub fn prune_turn_derived_facts(db: &DbHandle) -> Result<usize, MemoryKernelErro
     Ok(removed)
 }
 
-/// Recall memories matching a query across facts, entities, and recent observations.
+/// Recall memories matching a query across facts, entities, and observations
+/// (sync; hash query embedding). Prefer [`recall_hybrid`] from async code.
 pub fn recall(
     db: &DbHandle,
     user_id: &str,
@@ -547,201 +547,142 @@ pub fn recall(
     query: &str,
     limit: usize,
 ) -> Result<Vec<RecallResult>, MemoryKernelError> {
-    let conn = db.connect()?;
-    let words: Vec<String> = query
-        .split_whitespace()
-        .filter(|w| w.len() > 2)
-        .map(|w| format!("%{}%", w.to_lowercase()))
-        .collect();
+    let q = memory_index::hash_embed(&[query.to_string()]);
+    recall_with_embedding(db, user_id, agent_id, session_id, query, Some(&q), limit)
+}
 
+/// Recall with the query embedded by the local embedding endpoint (hash
+/// fallback when it is down).
+pub async fn recall_hybrid(
+    db: &DbHandle,
+    client: &memory_index::EmbedClient,
+    user_id: &str,
+    agent_id: Option<&str>,
+    session_id: Option<&str>,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<RecallResult>, MemoryKernelError> {
+    let q = client.embed_or_hash(&[query.to_string()], memory_index::InputType::Query).await;
+    let (db, user_id, agent_id, session_id, query) = (
+        db.clone(),
+        user_id.to_string(),
+        agent_id.map(str::to_string),
+        session_id.map(str::to_string),
+        query.to_string(),
+    );
+    tokio::task::spawn_blocking(move || {
+        recall_with_embedding(&db, &user_id, agent_id.as_deref(), session_id.as_deref(), &query, Some(&q), limit)
+    })
+    .await
+    .map_err(|e| MemoryKernelError::Internal(e.to_string()))?
+}
+
+/// [`recall_hybrid`] that also returns the recall-log id (the join key of
+/// the retrieve-path S1 shadow) and the query embedding it used.
+pub async fn recall_hybrid_logged(
+    db: &DbHandle,
+    client: &memory_index::EmbedClient,
+    user_id: &str,
+    agent_id: Option<&str>,
+    session_id: Option<&str>,
+    query: &str,
+    limit: usize,
+) -> Result<(Vec<RecallResult>, String, Embedded), MemoryKernelError> {
+    let q = client.embed_or_hash(&[query.to_string()], memory_index::InputType::Query).await;
+    let (db, user_id, agent_id, session_id, query, qc) = (
+        db.clone(),
+        user_id.to_string(),
+        agent_id.map(str::to_string),
+        session_id.map(str::to_string),
+        query.to_string(),
+        q.clone(),
+    );
+    let (results, log_id) = tokio::task::spawn_blocking(move || {
+        recall_logged(&db, &user_id, agent_id.as_deref(), session_id.as_deref(), &query, Some(&qc), limit)
+    })
+    .await
+    .map_err(|e| MemoryKernelError::Internal(e.to_string()))??;
+    Ok((results, log_id, q))
+}
+
+/// Hybrid recall: FTS5 keyword + vector candidates from the shared memory
+/// index, fused with reciprocal rank fusion, weighted by item type and
+/// (lightly) recency. An empty query returns the most recent facts/entities.
+pub fn recall_with_embedding(
+    db: &DbHandle,
+    user_id: &str,
+    agent_id: Option<&str>,
+    session_id: Option<&str>,
+    query: &str,
+    query_embedding: Option<&Embedded>,
+    limit: usize,
+) -> Result<Vec<RecallResult>, MemoryKernelError> {
+    recall_logged(db, user_id, agent_id, session_id, query, query_embedding, limit).map(|(r, _)| r)
+}
+
+/// [`recall_with_embedding`] returning the `memory_recall_logs` id too.
+pub fn recall_logged(
+    db: &DbHandle,
+    user_id: &str,
+    agent_id: Option<&str>,
+    session_id: Option<&str>,
+    query: &str,
+    query_embedding: Option<&Embedded>,
+    limit: usize,
+) -> Result<(Vec<RecallResult>, String), MemoryKernelError> {
+    let conn = db.connect()?;
     let mut results: Vec<RecallResult> = Vec::new();
 
-    // 1. Search facts
-    let mut fact_stmt = conn.prepare(
-        "SELECT id, fact, confidence, valid_from, source_observation_id
-         FROM memory_facts
-         WHERE user_id = ?1 AND (agent_id IS NULL OR agent_id = ?2 OR ?2 IS NULL)
-           AND valid_until IS NULL
-         ORDER BY valid_from DESC
-         LIMIT 50",
-    )?;
-
-    let fact_rows = fact_stmt.query_map(params![user_id, agent_id], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, f64>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, Option<String>>(4)?,
-        ))
-    })?;
-
-    for row in fact_rows.flatten() {
-        let (id, fact_text, confidence, valid_from, src_obs) = row;
-        let lower = fact_text.to_lowercase();
-        let match_count = words.iter().filter(|&w| lower.contains(&w[1..w.len() - 1])).count();
-        let score = if words.is_empty() {
-            confidence
-        } else {
-            (match_count as f64 / words.len().max(1) as f64) * confidence + 0.1
-        };
-
-        if score > 0.1 || words.is_empty() {
-            results.push(RecallResult {
-                id,
-                item_type: "fact".to_string(),
-                score,
-                content: fact_text,
-                metadata: serde_json::json!({
-                    "confidence": confidence,
-                    "source_observation_id": src_obs,
-                }),
-                timestamp: valid_from,
-            });
-        }
-    }
-
-    // 2. Search entities — non-fatal: a legacy/partial entities schema (e.g.
-    // a missing `summary` column on a DB that predates the repair migration)
-    // must not fail the whole recall; facts and observations still return.
-    let entity_section = (|| -> Result<(), MemoryKernelError> {
-        let mut entity_stmt = conn.prepare(
-            "SELECT id, entity_id, name, type, summary, last_updated
-             FROM memory_entities
+    if memory_index::fts_query(query).is_none() {
+        // Nothing to search for: most recent facts, then entities.
+        let mut stmt = conn.prepare(
+            "SELECT 'fact', id FROM memory_facts
+             WHERE user_id = ?1 AND (agent_id IS NULL OR agent_id = ?2 OR ?2 IS NULL) AND valid_until IS NULL
+             UNION ALL
+             SELECT 'entity', id FROM memory_entities
              WHERE user_id = ?1 AND (agent_id IS NULL OR agent_id = ?2 OR ?2 IS NULL)
-             ORDER BY last_updated DESC
-             LIMIT 30",
+             LIMIT ?3",
         )?;
-
-        let entity_rows = entity_stmt.query_map(params![user_id, agent_id], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, Option<String>>(4)?,
-                row.get::<_, String>(5)?,
-            ))
-        })?;
-
-        for row in entity_rows.flatten() {
-            let (id, entity_id, name, etype, summary, updated) = row;
-            let search_text = format!("{} {} {}", name, etype, summary.as_deref().unwrap_or("")).to_lowercase();
-            let match_count = words.iter().filter(|&w| search_text.contains(&w[1..w.len() - 1])).count();
-            let score = if words.is_empty() {
-                0.5
-            } else {
-                (match_count as f64 / words.len().max(1) as f64) * 0.9
-            };
-
-            if score > 0.1 || words.is_empty() {
-                results.push(RecallResult {
-                    id,
-                    item_type: "entity".to_string(),
-                    score,
-                    content: format!("[Entity: {} ({})] {}", name, etype, summary.as_deref().unwrap_or("")),
-                    metadata: serde_json::json!({
-                        "entity_id": entity_id,
-                        "name": name,
-                        "type": etype,
-                    }),
-                    timestamp: updated,
-                });
-            }
-        }
-        Ok(())
-    })();
-    if let Err(err) = entity_section {
-        tracing::warn!(error = %err, "memory recall: skipping entity section");
-    }
-
-    // 3. Search observations (fallback/recent context)
-    let mut obs_stmt = conn.prepare(
-        "SELECT id, kind, content, timestamp, source
-         FROM memory_observations
-         WHERE user_id = ?1 AND (agent_id IS NULL OR agent_id = ?2 OR ?2 IS NULL)
-         ORDER BY timestamp DESC
-         LIMIT 20",
-    )?;
-
-    let obs_rows = obs_stmt.query_map(params![user_id, agent_id], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, Option<String>>(4)?,
-        ))
-    })?;
-
-    for row in obs_rows.flatten() {
-        let (id, kind, content, ts, src) = row;
-        let lower = content.to_lowercase();
-        let match_count = words.iter().filter(|&w| lower.contains(&w[1..w.len() - 1])).count();
-        let score = if words.is_empty() {
-            0.3
-        } else {
-            (match_count as f64 / words.len().max(1) as f64) * 0.7
-        };
-
-        if score > 0.15 {
-            results.push(RecallResult {
-                id,
-                item_type: "observation".to_string(),
-                score,
-                content,
-                metadata: serde_json::json!({
-                    "kind": kind,
-                    "source": src,
-                }),
-                timestamp: ts,
-            });
-        }
-    }
-
-    // 4. Augment with semantic/embedding recall when embeddings exist.
-    let semantic_hits = recall_semantic(db, user_id, query, limit.max(20))?;
-    if !semantic_hits.is_empty() {
-        for (target_type, target_id, sim) in semantic_hits {
-            let key = format!("{}:{}", target_type, target_id);
-            if let Some(pos) = results.iter().position(|r| format!("{}:{}", r.item_type, r.id) == key) {
-                // Boost existing keyword result with semantic signal.
-                results[pos].score += sim * 0.35;
-                results[pos].metadata["semantic_similarity"] = serde_json::json!(sim);
-            } else if let Some(mut hit) = load_memory_target(&conn, &target_type, &target_id)? {
-                hit.score = sim * 0.35;
-                hit.metadata["semantic_similarity"] = serde_json::json!(sim);
+        let keys: Vec<(String, String)> = stmt
+            .query_map(params![user_id, agent_id, limit as i64], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<_, _>>()?;
+        for (t, id) in keys {
+            if let Some(mut hit) = load_memory_target(&conn, &t, &id, agent_id)? {
+                hit.score = hit.metadata["confidence"].as_f64().unwrap_or(0.5);
                 results.push(hit);
             }
         }
+    } else {
+        let scope = Scope { scope: user_id, target_types: MEMORY_TYPES, only_ids: None };
+        let qv = query_embedding.and_then(|e| e.vectors.first().map(|v| (e.model.as_str(), v.as_slice())));
+        let hits = memory_index::hybrid_search(&conn, &scope, query, qv, limit.max(10) * 3)?;
+        let now = chrono::Utc::now();
+        for h in hits {
+            let Some(mut item) = load_memory_target(&conn, &h.target_type, &h.target_id, agent_id)? else {
+                continue;
+            };
+            let type_weight = match item.item_type.as_str() {
+                "fact" => 1.2,
+                "entity" => 1.0,
+                _ => 0.8,
+            };
+            // Recency only breaks near-ties: 72h half-life, at most 15%.
+            let recency = parse_ts(&item.timestamp)
+                .map(|t| (-((now - t).num_hours().max(0) as f64) / 72.0).exp())
+                .unwrap_or(0.5);
+            item.score = h.score * type_weight * (0.85 + 0.15 * recency);
+            item.metadata["keyword_rank"] = serde_json::json!(h.keyword_rank);
+            item.metadata["vector_rank"] = serde_json::json!(h.vector_rank);
+            if let Some(sim) = h.similarity {
+                item.metadata["semantic_similarity"] = serde_json::json!(sim);
+            }
+            if let Some(e) = query_embedding {
+                item.metadata["embedding_model"] = serde_json::json!(e.model);
+            }
+            results.push(item);
+        }
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
     }
-
-    // 5-Way Reciprocal Rank Fusion (RRF):
-    // Blend Lexical (0.25), Confidence/Semantic (0.35), Graph Entity (0.20), and Recency (0.20)
-    let k = 60.0;
-    let now = chrono::Utc::now();
-    for (rank, item) in results.iter_mut().enumerate() {
-        let rank_score = 1.0 / (k + (rank as f64) + 1.0);
-        let time_score = if let Ok(parsed_ts) = chrono::DateTime::parse_from_rfc3339(&item.timestamp) {
-            let age_hours = (now - parsed_ts.with_timezone(&chrono::Utc)).num_hours().max(0) as f64;
-            // Half-life decay over 72 hours
-            (-age_hours / 72.0).exp()
-        } else {
-            0.5
-        };
-
-        let type_weight = match item.item_type.as_str() {
-            "fact" => 1.2,
-            "entity" => 1.0,
-            _ => 0.8,
-        };
-
-        // Reciprocal Rank Fusion formula
-        item.score = (item.score * 0.35 + rank_score * 0.25 + time_score * 0.20) * type_weight;
-    }
-
-    // Sort by final fused RRF score descending, then by timestamp
-    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
     results.truncate(limit);
 
     // Record recall log
@@ -753,7 +694,19 @@ pub fn recall(
         params![log_id, user_id, agent_id, session_id, query, results_json],
     );
 
-    Ok(results)
+    Ok((results, log_id))
+}
+
+/// Timestamps come back as RFC 3339 or SQLite's `YYYY-MM-DD HH:MM:SS`.
+fn parse_ts(ts: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc3339(ts)
+        .map(|t| t.with_timezone(&chrono::Utc))
+        .ok()
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S")
+                .ok()
+                .map(|n| n.and_utc())
+        })
 }
 
 /// Cosine similarity helper between two float vectors.
@@ -837,7 +790,7 @@ pub fn list_facts(
 ) -> Result<Vec<MemoryFact>, MemoryKernelError> {
     let conn = db.connect()?;
     let mut stmt = conn.prepare(
-        "SELECT id, user_id, agent_id, fact, confidence, valid_from, valid_until, source_observation_id
+        "SELECT id, user_id, agent_id, fact, confidence, valid_from, valid_until, source_observation_id, memory_type
          FROM memory_facts
          WHERE user_id = ?1 AND (agent_id IS NULL OR agent_id = ?2 OR ?2 IS NULL)
            AND valid_until IS NULL
@@ -855,6 +808,7 @@ pub fn list_facts(
             valid_from: row.get(5)?,
             valid_until: row.get(6)?,
             source_observation_id: row.get(7)?,
+            memory_type: row.get(8)?,
         })
     })?;
 
@@ -1007,15 +961,16 @@ mod tests {
     #[test]
     fn embedding_byte_roundtrip() {
         let vec = vec![1.0f32, -2.5, 3.75, 0.0];
-        let bytes = f32_vec_to_bytes(&vec);
-        let restored = bytes_to_f32_vec(&bytes);
+        let bytes = memory_index::f32_to_bytes(&vec);
+        let restored = memory_index::bytes_to_f32(&bytes);
         assert_eq!(vec, restored);
     }
 
     #[test]
     fn local_embedding_has_configured_dimensions() {
-        let emb = generate_local_embedding("hello world", EMBEDDING_DIM);
-        assert_eq!(emb.len(), EMBEDDING_DIM);
+        let emb = memory_index::hash_embed(&["hello world".to_string()]);
+        assert_eq!(emb.vectors[0].len(), memory_index::HASH_DIM);
+        assert_eq!(emb.dim, memory_index::HASH_DIM);
     }
 
     #[test]

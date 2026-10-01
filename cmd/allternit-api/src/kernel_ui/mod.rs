@@ -9,6 +9,7 @@ pub mod agent_rules;
 pub mod decision_types;
 pub mod routing_policy;
 pub mod templates;
+pub mod turn_route;
 
 #[cfg(test)]
 mod tests;
@@ -208,6 +209,7 @@ fn routes(prefix: &str) -> Router<Arc<AppState>> {
         .route(&format!("{prefix}/templates/:id"), put(templates::update).delete(templates::remove))
         .route(&format!("{prefix}/templates/:id/run"), post(templates::run))
         .route(&format!("{prefix}/activity"), get(activity::list))
+        .route(&format!("{prefix}/turn-route"), post(turn_route::turn_route))
 }
 
 pub fn router() -> Router<Arc<AppState>> {

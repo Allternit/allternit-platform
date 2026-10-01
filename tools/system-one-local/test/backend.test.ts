@@ -196,6 +196,19 @@ describe("typesafe passthrough (mocked HTTP; no network)", () => {
     expect(body.state).toBe(req.state);
     expect(res.x_allternit?.methods.refund).toBe("remote");
   });
+  test("laya: same protocol at a local URL, no auth header, laya: prefix stripped", async () => {
+    let url = "", init: RequestInit | undefined;
+    const fetchImpl = async (u: string, i?: RequestInit) => {
+      url = u; init = i;
+      return new Response(JSON.stringify({ model: "typed-decisions", answers: { refund: { type: "noul", noul: 0.9 } }, usage: { input_tokens: 5, output_tokens: 0 } }));
+    };
+    const res = await new SystemOne({ ...cfg, layaUrl: "http://127.0.0.1:7718" }, { runtime: new MockRuntime(), fetchImpl })
+      .evaluate({ ...req, model: "laya:typed-decisions" });
+    expect(url).toBe("http://127.0.0.1:7718/v1/systemone");
+    expect((init!.headers as any).authorization).toBeUndefined();
+    expect(JSON.parse(String(init!.body)).model).toBe("typed-decisions");
+    expect(res.x_allternit?.backend).toBe("laya");
+  });
   test("maps upstream 429 to rate_limit_error without echoing the key", async () => {
     const b = new TypeSafeBackend("ts_secret", async () => new Response("slow down", { status: 429 }), "https://x");
     try {

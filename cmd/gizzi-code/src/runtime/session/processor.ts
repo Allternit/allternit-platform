@@ -21,6 +21,7 @@ import { SessionTrace } from "@/runtime/session/trace"
 import { ContextProjector } from "@/runtime/session/context-projector"
 import { consumeRetryHint } from "@/runtime/providers/retry-hint"
 import { SessionContext } from "./context-event"
+import { Guardrails } from "./guardrails"
 
 export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
@@ -37,6 +38,8 @@ export namespace SessionProcessor {
     model: Provider.Model
     abort: AbortSignal
     fallbackModels?: { providerID: string; modelID: string }[]
+    /** O12: the turn's guard. Tool calls and observations feed it; a trip ends the turn after this step. */
+    guard?: Guardrails.TurnGuard
   }) {
     const toolcalls: Record<string, MessageV2.ToolPart> = {}
     const toolCallOrder: Record<string, number> = {}
@@ -46,6 +49,16 @@ export namespace SessionProcessor {
     let attempt = 0
     let needsCompaction = false
     let mediaRecovery: "none" | "degraded" | "stripped" = "none"
+    let guardTripped = false
+
+    // A trip lets the in-flight step finish (its tool calls already started),
+    // then process() returns "stop" so no further step runs.
+    function onTrip(trip: Guardrails.Trip | undefined) {
+      if (!trip || guardTripped) return
+      guardTripped = true
+      blocked = true
+      reportTrip(input.sessionID, input.assistantMessage.id, trip)
+    }
 
     const result = {
       get message() {
@@ -296,6 +309,7 @@ export namespace SessionProcessor {
                     Bus.publish(MessageV2.Event.PartUpdated, {
                       part,
                     })
+                    onTrip(input.guard?.recordToolCall(value.toolName))
 
                     const parts = await MessageV2.parts(input.assistantMessage.id)
                     const lastThree = parts.slice(-DOOM_LOOP_THRESHOLD)
@@ -348,6 +362,13 @@ export namespace SessionProcessor {
                     Bus.publish(MessageV2.Event.PartUpdated, {
                       part,
                     })
+                    onTrip(
+                      input.guard?.recordObservation({
+                        tool: match.tool,
+                        input: part.state.input,
+                        output: value.output.output,
+                      }),
+                    )
 
                     delete toolcalls[value.toolCallId]
                   }
@@ -389,6 +410,14 @@ export namespace SessionProcessor {
                       value.error instanceof Question.RejectedError
                     ) {
                       blocked = shouldBreak
+                    } else {
+                      onTrip(
+                        input.guard?.recordObservation({
+                          tool: match.tool,
+                          input: part.state.input,
+                          error: String(value.error),
+                        }),
+                      )
                     }
                     delete toolcalls[value.toolCallId]
                   }
@@ -445,6 +474,7 @@ export namespace SessionProcessor {
                     modelID: input.model.id,
                     tokens: usage.tokens,
                     cost: usage.cost,
+                    callType: streamInput.callType ?? "answer",
                   })
                   if (snapshot) {
                     const patch = await Snapshot.patch(snapshot)
@@ -708,6 +738,7 @@ export namespace SessionProcessor {
                       toolCallOrder[id] = nextToolCallIndex++
                     }
                     Bus.publish(MessageV2.Event.PartUpdated, { part })
+                    onTrip(input.guard?.recordToolCall(part.tool))
                     break
                   }
                   if (observed.__gizzi === "observed_tool_result") {
@@ -740,6 +771,15 @@ export namespace SessionProcessor {
                           },
                     })) as MessageV2.ToolPart
                     Bus.publish(MessageV2.Event.PartUpdated, { part })
+                    onTrip(
+                      input.guard?.recordObservation({
+                        tool: match.tool,
+                        input: match.state.input,
+                        ...(isError
+                          ? { error: String(observed.content ?? "tool call failed") }
+                          : { output: String(observed.content ?? "") }),
+                      }),
+                    )
                     delete toolcalls[id]
                     break
                   }
@@ -965,6 +1005,13 @@ export namespace SessionProcessor {
       },
     }
     return result
+  }
+
+  /** The clear reason event for a guardrail trip: bus event (UI/attention), trace row, log. */
+  export function reportTrip(sessionID: string, messageID: string | undefined, trip: Guardrails.Trip) {
+    log.warn("guardrail tripped", { sessionID, messageID, ...trip })
+    Bus.publish(Guardrails.Event.Tripped, { sessionID, messageID, trip })
+    SessionTrace.append({ sessionID, kind: "guardrail.tripped", messageID, data: trip })
   }
 
   function isPayloadTooLarge(error: unknown) {

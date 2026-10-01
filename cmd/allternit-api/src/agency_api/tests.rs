@@ -669,6 +669,8 @@ async fn agency_guard_global_daily_cap_counts_other_orgs_spend() {
 /// 127.0.0.1:4096 with `locality: local_only` (no metered model can be
 /// routed). Opt-in: `AGENCY_REAL_MODEL_E2E=1 cargo test -p allternit-api --lib
 /// agency_real_model_local_e2e -- --ignored --exact --nocapture`.
+/// `AGENCY_REAL_MODEL_LOCALITY=any` drops `local_only` so a subscription CLI
+/// backend can be routed (point TERMINAL_SERVER_URL at a pool narrowed to it).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "needs a live gizzi-code with a local model"]
 async fn agency_real_model_local_e2e() {
@@ -694,7 +696,7 @@ async fn agency_real_model_local_e2e() {
 
     let t = setup().await;
     let body = json!({ "goal": "Fix add so the tests pass", "workspace": { "repo": repo.path().display().to_string(), "ref": "main" },
-                       "models": { "locality": "local_only" },
+                       "models": { "locality": std::env::var("AGENCY_REAL_MODEL_LOCALITY").unwrap_or_else(|_| "local_only".into()) },
                        "budget": { "max_seconds": 900, "max_cost_usd": 0.5 } });
     let (s, _, b) = call(&t.app, post("/v1/agency", "u1", Some("real-model-e2e-0001"), body)).await;
     assert_eq!(s, StatusCode::ACCEPTED, "{b}");

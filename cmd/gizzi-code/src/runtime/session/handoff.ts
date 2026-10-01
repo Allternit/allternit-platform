@@ -266,6 +266,7 @@ Keep facts, numbers, names and paths exactly as they appear. No advice, no fille
         user: input.user,
         system: [SYSTEM],
         tools: {},
+        callType: "extraction",
         model,
         abort: new AbortController().signal,
         sessionID: input.session.id,

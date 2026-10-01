@@ -57,18 +57,28 @@ describe("ProviderTransform.options - setCacheKey", () => {
     expect(result.promptCacheKey).toBeUndefined()
   })
 
-  test("should not set promptCacheKey when providerOptions is undefined", () => {
+  // O8: the session cache key defaults on; only an explicit false opts out.
+  test("sets promptCacheKey by default when providerOptions is undefined", () => {
     const result = ProviderTransform.options({
       model: mockModel,
       sessionID,
       providerOptions: undefined,
     })
-    expect(result.promptCacheKey).toBeUndefined()
+    expect(result.promptCacheKey).toBe(sessionID)
   })
 
-  test("should not set promptCacheKey when providerOptions does not have setCacheKey", () => {
+  test("sets promptCacheKey by default when providerOptions does not have setCacheKey", () => {
     const result = ProviderTransform.options({ model: mockModel, sessionID, providerOptions: {} })
+    expect(result.promptCacheKey).toBe(sessionID)
+  })
+
+  test("openai-compatible gets the OpenAI wire name, since unknown options pass through verbatim", () => {
+    const compatible = { ...mockModel, providerID: "acme", api: { ...mockModel.api, npm: "@ai-sdk/openai-compatible" } }
+    const result = ProviderTransform.options({ model: compatible, sessionID, providerOptions: {} })
+    expect(result.prompt_cache_key).toBe(sessionID)
     expect(result.promptCacheKey).toBeUndefined()
+    const off = ProviderTransform.options({ model: compatible, sessionID, providerOptions: { setCacheKey: false } })
+    expect(off.prompt_cache_key).toBeUndefined()
   })
 
   test("should set promptCacheKey for openai provider regardless of setCacheKey", () => {

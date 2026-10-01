@@ -185,6 +185,33 @@ describe("threshold policy + motifs", () => {
 });
 
 describe("HTTP /v1/decision", () => {
+  test("backend laya_bundled is decided by Laya, recorded under its own backend_id", async () => {
+    const { createHandler } = await import("../src/server.ts");
+    const { SystemOne } = await import("../src/engine.ts");
+    const runtime = { name: "fake", model: "m", async complete(): Promise<any> { throw new Error("local runtime must not be called"); } };
+    const urls: string[] = [];
+    const fetchImpl = async (u: string, i?: RequestInit) => {
+      urls.push(u);
+      const q = JSON.parse(String(i!.body)).questions.q;
+      const ids = Object.keys(q.criteria ?? {});
+      return new Response(JSON.stringify({ answers: { q: { type: q.type, choice: ids[0], probabilities: Object.fromEntries(ids.map((k, j) => [k, j === 0 ? 0.9 : 0.1 / (ids.length - 1)])), noul: 0.9 } }, usage: { input_tokens: 3, output_tokens: 0 } }));
+    };
+    const engine = new SystemOne({ runtimeUrl: "x", runtimeModel: "m", concurrency: 1, samples: 2, debias: false, layaUrl: "http://laya", layaModel: "typed-decisions", logEnabled: false }, { runtime, fetchImpl });
+    const res = await createHandler({ engine })(new Request("http://x/v1/decision", { method: "POST", body: JSON.stringify({ request: req, state: "s", reversible: true, backend: "laya_bundled" }) }));
+    expect(res.status).toBe(200);
+    const body: any = await res.json();
+    expect(urls).toEqual(["http://laya/v1/systemone"]);
+    expect(JSON.stringify(body)).toContain("backend.laya");
+    expect(body.threshold_action).not.toBe("AUTO");
+  });
+  test("backend jev_api without a key is refused, never silently local", async () => {
+    const { createHandler } = await import("../src/server.ts");
+    const { SystemOne } = await import("../src/engine.ts");
+    const runtime = { name: "fake", model: "m", async complete(): Promise<any> { throw new Error("must not run"); } };
+    const engine = new SystemOne({ runtimeUrl: "x", runtimeModel: "m", concurrency: 1, samples: 2, debias: false, layaUrl: "http://laya", layaModel: "typed-decisions", logEnabled: false }, { runtime });
+    const res = await createHandler({ engine })(new Request("http://x/v1/decision", { method: "POST", body: JSON.stringify({ request: req, state: "s", backend: "jev_api" }) }));
+    expect(res.status).toBe(401);
+  });
   test("default server refuses uncalibrated S1 through the ABI route", async () => {
     const { createHandler } = await import("../src/server.ts");
     const { SystemOne } = await import("../src/engine.ts");
@@ -192,7 +219,7 @@ describe("HTTP /v1/decision", () => {
       name: "fake", model: "m",
       async complete() { return { text: "a", top: [{ token: "a", logprob: Math.log(0.99) }, { token: "b", logprob: Math.log(0.01) }], usage: { input: 1, output: 1 } }; },
     };
-    const engine = new SystemOne({ runtimeUrl: "x", runtimeModel: "m", concurrency: 1, samples: 2, debias: false, logEnabled: false }, { runtime });
+    const engine = new SystemOne({ runtimeUrl: "x", runtimeModel: "m", concurrency: 1, samples: 2, debias: false, layaUrl: "http://laya", layaModel: "typed-decisions", logEnabled: false }, { runtime });
     const res = await createHandler({ engine })(new Request("http://x/v1/decision", { method: "POST", body: JSON.stringify({ request: req, state: "s", reversible: true }) }));
     expect(res.status).toBe(200);
     const body: any = await res.json();
@@ -265,5 +292,80 @@ describe("manifest source shared with the ModelPool", () => {
     const f = `${require("node:os").tmpdir()}/s1-manifests-${Date.now()}.json`;
     require("node:fs").writeFileSync(f, JSON.stringify([{ manifest_id: "m1" }]));
     expect(loadManifests(f)).toEqual([{ manifest_id: "m1" }]);
+  });
+});
+
+describe("Laya provider: menus over 16 options", () => {
+  test("decides coarse-to-fine in two passes; probabilities sum to 1", async () => {
+    const { SystemOne } = await import("../src/engine.ts");
+    const { LocalLogitReadoutProvider } = await import("../src/decision/local-provider.ts");
+    const ids = Array.from({ length: 18 }, (_, i) => `C${i}`);
+    const sent: string[][] = [];
+    const fetchImpl = async (_u: string, i?: RequestInit) => {
+      const keys = Object.keys(JSON.parse(String(i!.body)).questions.q.criteria);
+      sent.push(keys);
+      // coarse: prefer the second group; fine: prefer C12
+      const pick = keys.includes("group_1") ? "group_1" : keys.includes("C12") ? "C12" : keys[0];
+      const probabilities = Object.fromEntries(keys.map((k) => [k, k === pick ? 0.8 : 0.2 / (keys.length - 1)]));
+      return new Response(JSON.stringify({ answers: { q: { type: "choice", choice: pick, probabilities } }, usage: { input_tokens: 1, output_tokens: 0 } }));
+    };
+    const runtime = { name: "fake", model: "m", async complete(): Promise<any> { throw new Error("no local"); } };
+    const engine = new SystemOne({ runtimeUrl: "x", runtimeModel: "m", concurrency: 1, samples: 2, debias: false, layaUrl: "http://laya", layaModel: "typed-decisions", logEnabled: false }, { runtime, fetchImpl });
+    const p = new LocalLogitReadoutProvider(engine, { model_ref: "laya", model_revision: "r", tokenizer_id: "t", quantization: "none", runtime_backend: "laya-serve" }, "backend.laya", "laya:typed-decisions");
+    const r = await p.readout({ operation: "CHOICE", instructions: "pick", candidates: ids.map((candidate_id) => ({ candidate_id })) } as any, "s");
+    expect(sent.length).toBe(2);
+    expect(sent[0]).toEqual(["group_0", "group_1"]);
+    expect(sent[1]).toEqual(ids.slice(9));
+    expect(r.probs.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 6);
+    expect(r.options[r.probs.indexOf(Math.max(...r.probs))]).toBe("C12");
+  });
+});
+
+describe("shadow ledger privacy (Q28)", () => {
+  test("raw state is stored only when SYSTEM_ONE_SHADOW_STATE=1", async () => {
+    const { ShadowLedger } = await import("../src/decision/shadow.ts");
+    const { mkdtempSync, readFileSync, readdirSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const read = (dir: string) => readdirSync(join(dir, "decisions")).map((f) => readFileSync(join(dir, "decisions", f), "utf8")).join("");
+    const base = { primitive_id: "p", operation: "CHOICE", question_id: "", instructions: "i", subject_ref: null, candidates: [], options: [], shape: "categorical", probs: [], readout_method: "remote", scope: {}, mode: "shadow" } as any;
+    const off = mkdtempSync(join(tmpdir(), "s1-")); delete process.env.SYSTEM_ONE_SHADOW_STATE;
+    new ShadowLedger(off).logDecision({ ...base, state: "secret user text" });
+    const on = mkdtempSync(join(tmpdir(), "s1-")); process.env.SYSTEM_ONE_SHADOW_STATE = "1";
+    new ShadowLedger(on).logDecision({ ...base, state: "secret user text" });
+    delete process.env.SYSTEM_ONE_SHADOW_STATE;
+    await new Promise((r) => setTimeout(r, 10));
+    expect(read(off)).not.toContain("secret user text");
+    expect(read(on)).toContain("secret user text");
+  });
+});
+
+describe("backend auto", () => {
+  test("auto uses Laya when its health check answers, local engine otherwise", async () => {
+    const { createHandler } = await import("../src/server.ts");
+    const { SystemOne } = await import("../src/engine.ts");
+    const mk = (layaUp: boolean) => {
+      const urls: string[] = [];
+      const runtime = { name: "fake", model: "m", async complete() { urls.push("local"); return { text: "a", top: [{ token: "a", logprob: Math.log(0.9) }, { token: "b", logprob: Math.log(0.1) }], usage: { input: 1, output: 1 } }; } };
+      const fetchImpl = async (u: string, i?: RequestInit) => {
+        urls.push(u);
+        const q = JSON.parse(String(i!.body)).questions.q; const ids = Object.keys(q.criteria ?? {});
+        return new Response(JSON.stringify({ answers: { q: { type: q.type, choice: ids[0], probabilities: Object.fromEntries(ids.map((k, j) => [k, j ? 0.1 : 0.9])), noul: 0.9 } }, usage: { input_tokens: 1, output_tokens: 0 } }));
+      };
+      const engine = new SystemOne({ runtimeUrl: "x", runtimeModel: "m", concurrency: 1, samples: 2, debias: false, layaUrl: `http://127.0.0.1:${layaUp ? 1 : 2}`, layaModel: "typed-decisions", logEnabled: false }, { runtime: runtime as any, fetchImpl });
+      return { engine, urls };
+    };
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (u: any) => new Response("{}", { status: String(u).includes(":1/") ? 200 : 503 })) as any;
+    try {
+      for (const up of [true, false]) {
+        const { engine, urls } = mk(up);
+        const res = await createHandler({ engine })(new Request("http://x/v1/decision", { method: "POST", body: JSON.stringify({ request: req, state: "s", reversible: true, backend: "auto" }) }));
+        const body: any = await res.json();
+        expect(res.status).toBe(200);
+        expect(body.backend_id).toBe(up ? "backend.laya" : "backend.local_logit");
+        expect(urls.some((u) => u.includes("/v1/systemone"))).toBe(up);
+      }
+    } finally { globalThis.fetch = realFetch; }
   });
 });

@@ -9,14 +9,23 @@ export interface LocalDeployment {
   model_ref: string; model_revision: string; tokenizer_id: string; quantization: string; runtime_backend: string;
 }
 
+/**
+ * Laya's choice head shares a ~192-token budget across options and degrades
+ * past ~16-20 (their recommendation: coarse-to-fine). Larger menus are decided
+ * in two passes: a choice over <=16 consecutive groups, then within the winner;
+ * p(option) = p(group) * p(option | group), other groups' mass spread evenly.
+ */
+export const LAYA_MAX_DIRECT_OPTIONS = 16;
+
 export class LocalLogitReadoutProvider implements DecisionReadoutProvider {
   readonly backend_id: string;
-  constructor(private engine: SystemOne, private dep: LocalDeployment, backendId = "backend.local_logit") {
+  /** `model` picks the engine backend: "local" (logprobs), "laya:<checkpoint>", "typesafe:<model>". */
+  constructor(private engine: SystemOne, private dep: LocalDeployment, backendId = "backend.local_logit", private model = "local") {
     this.backend_id = backendId;
   }
 
   private async ask(state: string, q: Question) {
-    const res = await this.engine.evaluate({ model: "local", state, questions: { q } });
+    const res = await this.engine.evaluate({ model: this.model, state, questions: { q } });
     return { a: res.answers.q, res };
   }
   private criteriaOf(req: DecisionRequestV1) {
@@ -49,6 +58,23 @@ export class LocalLogitReadoutProvider implements DecisionReadoutProvider {
       }
       case "CHOICE": case "RANK": {
         // RANK: distribution over "which candidate is best", ordered by probability.
+        if (this.model.startsWith("laya:") && cands.length > LAYA_MAX_DIRECT_OPTIONS) {
+          const n = Math.ceil(cands.length / LAYA_MAX_DIRECT_OPTIONS);
+          const size = Math.ceil(cands.length / n);
+          const groups = Array.from({ length: n }, (_, g) => cands.slice(g * size, (g + 1) * size)).filter((g) => g.length);
+          const gq: Question = { type: "choice", instructions: req.instructions,
+            criteria: Object.fromEntries(groups.map((g, i) => [`group_${i}`, g.map((c) => c.label ?? c.candidate_id).join(", ")])) };
+          const coarse = await this.ask(state, gq); track(coarse.res);
+          const pg = groups.map((_, i) => ((coarse.a as any).probabilities as Record<string, number>)[`group_${i}`] ?? 0);
+          const win = pg.indexOf(Math.max(...pg));
+          const fine = await this.ask(state, choiceQ(groups[win])); track(fine.res);
+          const pIn = Object.fromEntries(probsOf(fine.a, groups[win].map((c) => c.candidate_id)).map((p, j) => [groups[win][j].candidate_id, p]));
+          const byId: Record<string, number> = {};
+          groups.forEach((g, i) => g.forEach((c) => { byId[c.candidate_id] = i === win ? pg[i] * (pIn[c.candidate_id] ?? 0) : pg[i] / g.length; }));
+          const z = Object.values(byId).reduce((x, y) => x + y, 0) || 1;
+          probs = options.map((o) => (byId[o] ?? 0) / z);
+          break;
+        }
         const { a, res } = await this.ask(state, choiceQ(cands));
         track(res); probs = probsOf(a, options); break;
       }

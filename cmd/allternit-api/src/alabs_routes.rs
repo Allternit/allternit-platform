@@ -19,7 +19,6 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
-use crate::gizzi_completion;
 use crate::AppState;
 
 fn db_error(e: impl std::fmt::Display) -> impl IntoResponse {
@@ -423,7 +422,19 @@ async fn generate_lesson(
     // Anthropic directly. This ensures ALabs uses the same brain/provider
     // configuration as the rest of the platform.
     let system = "You are an expert curriculum designer for the Allternit A://Labs learning platform. You create structured lesson content with slides and quizzes. Output ONLY valid JSON matching the requested schema.";
-    let lesson = match gizzi_completion::complete(&prompt, Some(system), None).await {
+    // O7/O9: lesson generation is a doc-type, non-personal call type (exact
+    // cache 24h; semantic cache in shadow); metered on the lessons surface.
+    // O10: the reply is validated against the lesson schema (the cached path
+    // is text, so the schema is enforced by validation, not by the model).
+    let schema = lesson_schema();
+    let ledger = crate::usage_ledger::LedgerCtx::surface("lessons");
+    let reply = crate::usage_ledger::scope(
+        ledger,
+        crate::gizzi_completion::complete_for(crate::completion_cache::CallType::AlabsLesson, &prompt, Some(system), None, false),
+    )
+    .await
+    .map(|(text, _)| crate::structured_output::parse_text(&text, &schema, "alabs.lesson").map(|v| v.to_string()).unwrap_or(text));
+    let lesson = match reply {
         Some(content) if !content.is_empty() => parse_llm_lesson(&content, &body, &course_title),
         _ => {
             warn!("Gizzi completion unavailable — falling back to rule-based generation");
@@ -432,6 +443,42 @@ async fn generate_lesson(
     };
 
     persist_generated_lesson(state, user.user_id, body, lesson).await
+}
+
+/// JSON Schema of a generated lesson (O10).
+pub fn lesson_schema() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "description", "duration_minutes", "scenes"],
+        "properties": {
+            "title": { "type": "string", "minLength": 1 },
+            "description": { "type": "string" },
+            "duration_minutes": { "type": "integer", "minimum": 1, "maximum": 120 },
+            "scenes": { "type": "array", "minItems": 1, "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["type", "title"],
+                "properties": {
+                    "type": { "type": "string", "enum": ["slide", "quiz"] },
+                    "title": { "type": "string" },
+                    "content": { "type": "string" },
+                    "duration": { "type": "integer", "minimum": 0 },
+                    "questions": { "type": "array", "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["question", "options", "correctIndex"],
+                        "properties": {
+                            "question": { "type": "string" },
+                            "options": { "type": "array", "minItems": 2, "items": { "type": "string" } },
+                            "correctIndex": { "type": "integer", "minimum": 0 },
+                            "explanation": { "type": "string" }
+                        }
+                    } }
+                }
+            } }
+        }
+    })
 }
 
 fn build_lesson_prompt(topic: &str, course_title: &str, course_desc: &str, tier: &str) -> String {
@@ -1183,5 +1230,22 @@ async fn create_capability(
         Ok(Ok(())) => (StatusCode::CREATED, Json(json!({ "status": "created" }))).into_response(),
         Ok(Err(e)) => db_error(e).into_response(),
         Err(e) => db_error(e).into_response(),
+    }
+}
+
+#[cfg(test)]
+mod structured_tests {
+    use super::*;
+
+    #[test]
+    fn lesson_schema_validates_replies() {
+        let ok = json!({ "title": "Intro", "description": "d", "duration_minutes": 10, "scenes": [
+            { "type": "slide", "title": "Hi", "content": "## x", "duration": 2 },
+            { "type": "quiz", "title": "Check", "questions": [{ "question": "q", "options": ["a", "b"], "correctIndex": 0 }], "duration": 3 } ] });
+        assert!(crate::structured_output::validate(&lesson_schema(), &ok).is_ok());
+        let bad_scene = json!({ "title": "x", "description": "", "duration_minutes": 5, "scenes": [{ "type": "video", "title": "v" }] });
+        assert!(crate::structured_output::validate(&lesson_schema(), &bad_scene).is_err());
+        let no_scenes = json!({ "title": "x", "description": "", "duration_minutes": 5, "scenes": [] });
+        assert!(crate::structured_output::validate(&lesson_schema(), &no_scenes).is_err());
     }
 }

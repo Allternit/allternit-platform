@@ -530,21 +530,24 @@ async fn triage_with_server_down_writes_unscored_drafts_once() {
     assert_eq!(count(&events, "LessonTriaged"), 2);
 }
 
-/// Minimal System One stand-in answering fixed Nouls.
+/// Minimal `/v1/decision` stand-in answering a fixed P(true) per question.
 async fn mock_system_one(task: f64, reusable: f64, supported: f64) -> String {
     use axum::{routing::post, Json, Router};
     let app = Router::new().route(
-        "/v1/systemone",
+        "/v1/decision",
         post(move |Json(req): Json<Value>| async move {
-            assert_eq!(req["questions"].as_object().unwrap().len(), 3);
+            assert_eq!(req["request"]["decision_bank_id"], "bank.lesson_worthiness");
+            assert_eq!(req["request"]["extensions"]["x-motif"], "CONFIDENCE_GATE");
+            let q = req["request"]["question_id"].as_str().unwrap().to_string();
+            let p = match q.as_str() {
+                "task_success" => task,
+                "reusable_pattern" => reusable,
+                "supported_by_events" => supported,
+                other => panic!("unexpected question {other}"),
+            };
             Json(json!({
-                "model": "local-test",
-                "answers": {
-                    "task_success": {"type": "noul", "noul": task},
-                    "reusable_pattern": {"type": "noul", "noul": reusable},
-                    "supported_by_events": {"type": "noul", "noul": supported}
-                },
-                "usage": {"input_tokens": 1, "output_tokens": 0}
+                "probabilities": {"true": p, "false": 1.0 - p},
+                "extensions": {"x-decision_id": format!("dec-{q}")}
             }))
         }),
     );
@@ -587,6 +590,8 @@ async fn triage_promotes_and_rejects_by_thresholds() {
             .unwrap();
             assert_eq!(d["x_commrails"]["scored"], json!(true));
             assert_eq!(d["x_commrails"]["verdict"], json!("promoted"));
+            assert_eq!(d["x_commrails"]["s1_decision_ids"]["reusable_pattern"], json!("dec-reusable_pattern"));
         }
+        assert_eq!(r[0].decision_ids.len(), 3);
     }
 }

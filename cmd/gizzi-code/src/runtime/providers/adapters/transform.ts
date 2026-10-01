@@ -5,6 +5,13 @@ import type { Provider } from "@/runtime/providers/provider"
 import type { ModelsDev } from "@/runtime/providers/adapters/models"
 import { iife } from "@/shared/util/iife"
 import { Flag } from "@/runtime/context/flag/flag"
+import {
+  DEFAULT_OUTPUT_TOKEN_MAX,
+  OUTPUT_TOKEN_CAPS,
+  PROMPT_CACHE_KEY_DEFAULT,
+  REASONING_OUTPUT_HEADROOM,
+  type OutputCallType,
+} from "@/runtime/session/guardrail-defaults"
 
 type Modality = NonNullable<ModelsDev.Model["modalities"]>["input"][number]
 
@@ -17,7 +24,7 @@ function mimeToModality(mime: string): Modality | undefined {
 }
 
 export namespace ProviderTransform {
-  export const OUTPUT_TOKEN_MAX = Flag.GIZZI_EXPERIMENTAL_OUTPUT_TOKEN_MAX || 32_000
+  export const OUTPUT_TOKEN_MAX = Flag.GIZZI_EXPERIMENTAL_OUTPUT_TOKEN_MAX || DEFAULT_OUTPUT_TOKEN_MAX
 
   // Maps npm package to the key the AI SDK expects for providerOptions
   function sdkKey(npm: string): string | undefined {
@@ -424,8 +431,14 @@ export namespace ProviderTransform {
       }
     }
 
-    if (input.model.providerID === "openai" || input.providerOptions?.setCacheKey) {
-      result["promptCacheKey"] = input.sessionID
+    // O8: the session prompt-cache key is on by default; a provider opts out
+    // with `setCacheKey: false` (openai always keeps it, as before).
+    // openai-compatible passes unknown option keys into the request body
+    // verbatim, so it gets the OpenAI wire name; typed SDKs map (or drop)
+    // the camelCase option themselves.
+    if (input.model.providerID === "openai" || cacheKeyEnabled(input.providerOptions)) {
+      if (input.model.api.npm === "@ai-sdk/openai-compatible") result["prompt_cache_key"] = input.sessionID
+      else result["promptCacheKey"] = input.sessionID
     }
 
     if (input.model.api.npm === "@ai-sdk/google") {
@@ -517,8 +530,24 @@ export namespace ProviderTransform {
     return { [key]: options }
   }
 
-  export function maxOutputTokens(model: Provider.Model): number {
-    return Math.min(model.limit.output, OUTPUT_TOKEN_MAX) || OUTPUT_TOKEN_MAX
+  export function cacheKeyEnabled(providerOptions?: Record<string, any>): boolean {
+    const configured = providerOptions?.["setCacheKey"]
+    return typeof configured === "boolean" ? configured : PROMPT_CACHE_KEY_DEFAULT
+  }
+
+  /**
+   * O5: the output cap for one call. `callType` picks a row of
+   * OUTPUT_TOKEN_CAPS (unknown/omitted = "answer", the previous global
+   * default); reasoning models get REASONING_OUTPUT_HEADROOM on capped rows;
+   * the model's own `limit.output` always clamps the result.
+   */
+  export function maxOutputTokens(model: Provider.Model, callType?: OutputCallType | string): number {
+    const row = callType && callType in OUTPUT_TOKEN_CAPS ? (callType as OutputCallType) : "answer"
+    const cap =
+      row === "answer"
+        ? OUTPUT_TOKEN_MAX
+        : Math.min(OUTPUT_TOKEN_CAPS[row] + (model.capabilities?.reasoning ? REASONING_OUTPUT_HEADROOM : 0), OUTPUT_TOKEN_MAX)
+    return Math.min(model.limit.output, cap) || cap
   }
 
   export function schema(model: Provider.Model, inputSchema: JSONSchema7): JSONSchema7 {

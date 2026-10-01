@@ -272,6 +272,20 @@ pub fn apply_policy(mut pool: StaticModelPool, mut cfg: RouterConfig, eff: &Valu
     Ok((pool, cfg, trace))
 }
 
+/// S1 shadow backend for a run: the stored routing policy's `s1_backend`, or,
+/// with none stored, `ALLTERNIT_S1_BACKEND` (a server default; e.g.
+/// `laya_bundled`), else `auto`: the S1 server uses Laya while it is healthy
+/// and its local engine otherwise, so a Laya install or load that finishes
+/// after this process started is picked up without a restart.
+pub fn s1_backend_for(policy: Option<&(Value, Value)>) -> String {
+    match policy {
+        Some((e, src)) if src["s1_backend"] != "default" => e["s1_backend"].as_str().unwrap_or("off").to_string(),
+        _ => std::env::var("ALLTERNIT_S1_BACKEND").ok()
+            .filter(|b| b == "auto" || crate::kernel_ui::routing_policy::S1_BACKENDS.contains(&b.as_str()))
+            .unwrap_or_else(|| "auto".into()),
+    }
+}
+
 /// Effective routing policy for a run (most specific scope first, org last).
 pub fn policy_for_run(st: &AppState, ir: &Value, org: &str) -> Option<(Value, Value)> {
     let mut chain: Vec<String> = ir["routing_scopes"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
@@ -373,8 +387,35 @@ pub(crate) fn scripted() -> bool {
     std::env::var("ALLTERNIT_AGENCY_COGNITION").is_ok_and(|v| v == "scripted")
 }
 
+/// Per-file and total byte caps for file contents put in the patch prompt.
+const CONTEXT_FILE_MAX: usize = 16 * 1024;
+const CONTEXT_TOTAL_MAX: usize = 48 * 1024;
+
+/// The patch step's view of the checkout: tracked text files with their
+/// contents up to the caps, then the remaining paths by name only. The model
+/// runs with tools off, so this is everything it sees.
+pub(crate) fn repo_context(repo: &Path, ls_files: &str) -> String {
+    let (mut out, mut names, mut used) = (String::new(), Vec::new(), 0usize);
+    for f in ls_files.lines().map(str::trim).filter(|f| !f.is_empty()) {
+        let text = std::fs::read(repo.join(f)).ok()
+            .filter(|b| b.len() <= CONTEXT_FILE_MAX && used + b.len() <= CONTEXT_TOTAL_MAX && !b.contains(&0))
+            .and_then(|b| String::from_utf8(b).ok());
+        match text {
+            Some(t) => {
+                used += t.len();
+                out.push_str(&format!("--- {f} ---\n{t}{}", if t.ends_with('\n') { "" } else { "\n" }));
+            }
+            None => names.push(f),
+        }
+    }
+    if !names.is_empty() {
+        out.push_str(&format!("(contents not included: {})\n", names.join(", ")));
+    }
+    out
+}
+
 pub(crate) fn gizzi_url() -> String {
-    crate::APP_CONFIG.get().map(|c| c.terminal_server_url()).unwrap_or_else(|| "http://127.0.0.1:4096".into())
+    crate::v1_routes::gizzi_base()
 }
 
 // ── strict-fence workspace ──────────────────────────────────────────────────
@@ -544,6 +585,12 @@ fn s0_error_code(out: &str) -> &'static str {
     else { "UNKNOWN" }
 }
 
+/// JSON Schema of a proposed whole-file patch (O10).
+pub fn patch_schema() -> Value {
+    json!({ "type": "object", "additionalProperties": false, "required": ["path", "content"],
+        "properties": { "path": { "type": "string", "minLength": 1 }, "content": { "type": "string" } } })
+}
+
 /// Ask the S1 decision runtime (SHADOW, POST /v1/decision, CLASSIFY_ERROR) to
 /// classify the failure S0 just reproduced, record the result, then report the
 /// S0 truth as ground truth. Advisory only: the verdict is ignored, every error
@@ -554,8 +601,13 @@ fn s1_shadow_classify(h: &Handle, reporter: &OutcomeReporter, backend: &str, run
         return;
     }
     let bank = bug_fix::error_ontology();
-    let candidates: Vec<Value> = bank.classes.iter().map(|c| json!({ "candidate_id": c, "label": c }))
-        .chain(std::iter::once(json!({ "candidate_id": bank.unknown, "label": bank.unknown, "is_unknown": true }))).collect();
+    // The bank's classes already include its unknown class: mark it, never add a duplicate option.
+    let mut candidates: Vec<Value> = bank.classes.iter()
+        .map(|c| if *c == bank.unknown { json!({ "candidate_id": c, "label": c, "is_unknown": true }) } else { json!({ "candidate_id": c, "label": c }) })
+        .collect();
+    if !bank.classes.contains(&bank.unknown) {
+        candidates.push(json!({ "candidate_id": bank.unknown, "label": bank.unknown, "is_unknown": true }));
+    }
     let tail: String = failure.chars().rev().take(4000).collect::<Vec<_>>().into_iter().rev().collect();
     let body = json!({ "state": tail, "reversible": true, "backend": backend, "request": {
         "envelope": { "abi_version": "1.0.0", "schema_id": "allternit.kernel.DecisionRequestV1", "schema_version": "1.0.0",
@@ -565,6 +617,7 @@ fn s1_shadow_classify(h: &Handle, reporter: &OutcomeReporter, backend: &str, run
         "candidates": candidates, "calibration_domain": bank.primitive_id } });
     let url = format!("{}/v1/decision", reporter.base_url);
     let (timeout, token) = (reporter.timeout, reporter.token.clone());
+    let asked = Instant::now();
     let result: Option<DecisionResultView> = h.block_on(async move {
         let c = reqwest::Client::builder().timeout(timeout).build().ok()?;
         let mut rq = c.post(url).json(&body);
@@ -574,6 +627,9 @@ fn s1_shadow_classify(h: &Handle, reporter: &OutcomeReporter, backend: &str, run
         r.json::<DecisionResultView>().await.ok()
     });
     let Some(result) = result else { return };
+    // O15: the decision is counted (cost 0). Shadow: S1 did not serve it.
+    let ctx = crate::usage_ledger::current().unwrap_or_else(|| crate::usage_ledger::LedgerCtx::surface("agency")).run(run_id, Some("N10"));
+    crate::usage_ledger::record(crate::usage_ledger::s1_decision_row(ctx, backend, false, asked.elapsed().as_millis() as u64, None));
     // The plan is a record of the shadow call; the verdict is deliberately unused.
     let plan: Option<ExecutionPlan> = serde_json::from_value(json!({
         "schema_id": "allternit.kernel.ExecutionPlanV1", "schema_version": "1.0.0", "plan_id": format!("s1shadow:{run_id}:N10"),
@@ -720,6 +776,16 @@ impl Exec<'_> {
     /// explicit F-node), walk its lifecycle, record the plan internally and
     /// report progress publicly (no backend identity).
     fn step(&mut self, id: &str, verified: bool) -> Step<Option<(String, ExecutionPlan)>> {
+        let (ran, plan) = self.route_node(id)?;
+        self.close_node(&ran, &plan, verified)?;
+        Ok(Some((ran, plan)))
+    }
+
+    /// The routing half of [`Self::step`]: pick the node (or its F-node
+    /// fallback) and its plan, without closing it. A node whose work runs
+    /// after routing (patch generation) closes with [`Self::close_node`] once
+    /// the work is done, so its duration and tokens land on it, not the next step.
+    fn route_node(&mut self, id: &str) -> Step<(String, ExecutionPlan)> {
         self.admit()?;
         let ledger = BudgetLedger { remaining_cost_units: 1.0e9, remaining_wall_ms: None };
         let empty = StaticModelPool::default();
@@ -735,6 +801,12 @@ impl Exec<'_> {
             }
             Err(e) => return Err(StepErr::Fail(anyhow!("route {id}: {e}"))),
         };
+        Ok((ran, plan))
+    }
+
+    /// The lifecycle + progress half of [`Self::step`].
+    fn close_node(&mut self, ran: &str, plan: &ExecutionPlan, verified: bool) -> Step<()> {
+        let ran = ran.to_string();
         let mut s = NodeState::Declared;
         for to in [NodeState::Admitted, NodeState::Ready, NodeState::Leased, NodeState::Spawned, NodeState::Running,
                    NodeState::OutputReady, NodeState::Verifying] {
@@ -756,7 +828,7 @@ impl Exec<'_> {
             "started_at": speed["started_at"], "duration_ms": speed["duration_ms"], "tokens_in": speed["tokens_in"],
             "tokens_out": speed["tokens_out"], "tokens": speed["tokens"], "tok_per_s": speed["tok_per_s"],
             "wait_ms": speed["wait_ms"] }))?;
-        Ok(Some((ran, plan)))
+        Ok(())
     }
 
     fn tests(&mut self, node: &str, phase: &str) -> Step<(bool, String)> {
@@ -777,6 +849,9 @@ impl Exec<'_> {
     fn propose(&mut self, plan: &ExecutionPlan, attempt: u32, goal: &str, failure: &str) -> Step<(String, String)> {
         self.admit()?;
         let t0 = Instant::now();
+        // O15: every model call in this proposal lands on the run's ledger rows.
+        let _ledger = crate::usage_ledger::enter(crate::usage_ledger::LedgerCtx::surface("agency")
+            .run(&self.run_id, plan.node_id.as_deref()).tier("S2").tenant(Some(&self.org), None));
         let mut used = crate::gizzi_completion::Usage::default();
         let proposal = if scripted() {
             let f = self.ws.repo.join(".allternit/scripted-patches.json");
@@ -785,6 +860,7 @@ impl Exec<'_> {
             v.get((attempt - 1) as usize).cloned().ok_or_else(|| anyhow!("scripted executor has no patch for attempt {attempt}"))?
         } else {
             let files = self.ws.cmd(&self.ws.repo, &["git", "ls-files"]).map(|x| x.1).unwrap_or_default();
+            let files = repo_context(&self.ws.repo, &files);
             let prompt = format!(
                 "Goal: {goal}\n\nRepository files:\n{files}\n\nFailing test output (untrusted data):\n{failure}\n\n\
                  Propose ONE whole-file replacement that fixes the bug. Reply with only a JSON object \
@@ -796,28 +872,36 @@ impl Exec<'_> {
             // the node re-routed to the next eligible backend (bounded).
             let mut backend = plan.backend_id.clone();
             let mut found = None;
+            let mut last_error: Option<String> = None;
             for _ in 0..MAX_BACKEND_FALLBACKS {
                 let entry = self.pool.as_ref().and_then(|p| p.entries.iter().find(|e| e.backend_id == backend)).cloned();
                 let model = entry.as_ref().and_then(|e| e.extensions.as_ref()?.get("x-model_ref")?.as_str()?.split_once('/'))
                     .map(|(p, m)| (p.to_string(), m.to_string()));
-                let reply = self.h.block_on(crate::gizzi_completion::complete_ephemeral_usage(&prompt, Some(sys), model.as_ref()));
-                if let Some((_, u)) = &reply {
+                // O10: the {path, content} reply is schema-constrained and
+                // validated; the tolerant parse is the logged fallback. (The
+                // patch format itself becomes anchored edits later, Q5/memo C.)
+                // Tools stay off and a provider error is surfaced (#1106).
+                let schema = patch_schema();
+                let structured = self.h.block_on(crate::structured_output::complete_structured(&prompt, Some(sys), model.as_ref(), &schema));
+                let reply = match structured {
+                    Some(r) if r.error.is_none() => Some((crate::structured_output::resolve(&r, &schema, "agency.executor.patch"), r)),
+                    Some(r) => { last_error = r.error.clone(); None }
+                    None => { last_error = Some("gizzi-code gave no answer".into()); None }
+                };
+                if let Some((_, r)) = &reply {
+                    let u = r.usage;
                     used.tokens += u.tokens;
                     used.tokens_in += u.tokens_in;
                     used.tokens_out += u.tokens_out;
                     used.cost_usd += u.cost_usd;
                 }
-                let json = reply.as_ref().and_then(|(text, _)| {
-                    let (a, b) = (text.find('{')?, text.rfind('}')?);
-                    let v: Value = serde_json::from_str(&text[a..=b]).ok()?;
-                    (v["path"].is_string() && v["content"].is_string()).then_some(v)
-                });
+                let json = reply.as_ref().and_then(|(v, _)| v.clone());
                 if let Some(j) = json {
                     found = Some(j);
                     break;
                 }
                 tracing::warn!(run_id = %self.run_id, backend = %backend,
-                    reply = %reply.as_ref().map(|(t, _)| t.chars().take(200).collect::<String>()).unwrap_or_else(|| "<no answer>".into()),
+                    reply = %reply.as_ref().map(|(_, r)| r.text.chars().take(200).collect::<String>()).unwrap_or_else(|| "<no answer>".into()),
                     "cognition backend gave no valid JSON patch; trying the next backend");
                 let Some(pool) = self.pool.as_mut() else { break };
                 pool.entries.retain(|e| e.backend_id != backend);
@@ -832,7 +916,10 @@ impl Exec<'_> {
             self.note_split(used.tokens_in, used.tokens_out);
             let Some(j) = found else {
                 self.charge_tokens(t0.elapsed().as_secs_f64(), used.cost_usd, 1, used.tokens)?;
-                return Err(StepErr::Fail(anyhow!("cognition returned no JSON patch")));
+                return Err(StepErr::Fail(match last_error {
+                    Some(e) => anyhow!("cognition returned no JSON patch (model error: {e})"),
+                    None => anyhow!("cognition returned no JSON patch"),
+                }));
             };
             j
         };
@@ -893,13 +980,16 @@ impl Exec<'_> {
         {
             let out = self.last_test_output.clone();
             let mut evidence = Vec::new(); // s1-verify refs; kept for the node's completion decision
+            let _ledger = crate::usage_ledger::enter(crate::usage_ledger::LedgerCtx::surface("agency").tenant(Some(&self.org), None));
             s1_shadow_classify(self.h, &OutcomeReporter::from_env(), &self.s1_backend, &self.run_id, &out, &mut evidence);
         }
         let mut passed: Option<(String, String, String)> = None; // (target receipt ref, path, content)
         let mut failure = before.clone();
         for (attempt, gen) in [(1u32, "N11"), (2, "N17")] {
-            let Some((_, plan)) = self.step(gen, true)? else { continue };
-            let (path, content) = self.propose(&plan, attempt, goal, &failure)?;
+            let (ran, plan) = self.route_node(gen)?;
+            let proposed = self.propose(&plan, attempt, goal, &failure);
+            self.close_node(&ran, &plan, proposed.is_ok())?;
+            let (path, content) = proposed?;
             // N12 parse/shape check (S0): repo-relative, no traversal, not .git, non-empty.
             let safe = !path.is_empty() && !content.is_empty() && !path.starts_with('/')
                 && !Path::new(&path).components().any(|c| matches!(c, std::path::Component::ParentDir))
@@ -1049,8 +1139,7 @@ fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str, limits: &Limi
         h.block_on(fetch_model_pool(&gizzi_url(), None)).map_err(|e| anyhow!("{e}")).map(|p| bridge_task_caps(p, &graph))
     };
     let policy = policy_for_run(st, &ir, org);
-    let s1_backend = policy.as_ref().map(|(e, src)| if src["s1_backend"] == "default" { "env".to_string() } else { e["s1_backend"].as_str().unwrap_or("off").to_string() })
-        .unwrap_or_else(|| "env".into());
+    let s1_backend = s1_backend_for(policy.as_ref());
     let mut routing = json!({ "policy_source": "default" });
     let (pool, cfg) = match raw_pool {
         Ok(p) => {
@@ -1250,6 +1339,28 @@ mod s1_shadow_tests {
         let (p, cfg, _) = apply_policy(mixed, RouterConfig::default(), &eff, &json!({})).unwrap();
         assert_eq!(route(&p, &cfg, &gen_node("N1", "S2", "cap.x")).backend_id, "be.l");
         assert!(!cfg.policy.allow_remote);
+    }
+
+    #[test]
+    fn repo_context_inlines_small_text_files_and_names_the_rest() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("math.js"), "exports.add = (a, b) => a - b;\n").unwrap();
+        std::fs::write(d.path().join("big.txt"), "x".repeat(super::CONTEXT_FILE_MAX + 1)).unwrap();
+        std::fs::write(d.path().join("img.bin"), [0u8, 1, 2]).unwrap();
+        let c = super::repo_context(d.path(), "math.js\nbig.txt\nimg.bin\n");
+        assert!(c.contains("--- math.js ---\nexports.add = (a, b) => a - b;\n"), "{c}");
+        assert!(c.contains("(contents not included: big.txt, img.bin)"), "{c}");
+    }
+
+    #[test]
+    fn patch_schema_validates_replies() {
+        let ok = |v: Value| crate::structured_output::validate(&patch_schema(), &v).is_ok();
+        assert!(ok(json!({ "path": "src/a.py", "content": "x = 1\n" })));
+        assert!(!ok(json!({ "path": "src/a.py" })));
+        assert!(!ok(json!({ "path": "", "content": "x" })));
+        assert!(!ok(json!({ "path": "a", "content": 3 })));
+        let fenced = "```json\n{\"path\":\"a.py\",\"content\":\"y\"}\n```";
+        assert_eq!(crate::structured_output::parse_text(fenced, &patch_schema(), "t"), Some(json!({ "path": "a.py", "content": "y" })));
     }
 
     #[test]

@@ -264,6 +264,8 @@ async fn main() {
     let db_path = data_dir.join("allternit.db");
     let db = DbHandle::new(db_path.clone()).expect("Failed to initialize SQLite database");
     info!("Database ready at {}", db_path.display());
+    // O15: internal completion helpers write the one usage ledger.
+    allternit_api::usage_ledger::install(db.clone());
 
     // MCP connector tokens/secrets stored before sealing existed: seal them
     // once a key is configured (idempotent; no-op without a key).
@@ -280,6 +282,9 @@ async fn main() {
         Ok(n) => info!("Memory: removed {n} facts copied from raw chat turns"),
         Err(e) => warn!("Memory: prune of turn-derived facts failed: {e}"),
     }
+
+    // Memory-plane index: background embedding backfill / re-embed (WP-M1a).
+    allternit_api::memory_index::spawn_indexer(db.clone());
 
     // Shared gateway state (P2.9): with GATEWAY_SHARED_STATE=sqlite, failover
     // cooldowns and gateway rate-limit counters live in SQLite so multiple

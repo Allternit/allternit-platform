@@ -37,7 +37,8 @@ describe("cross-provider protocol goldens", () => {
     }).toEqual({
       temperature: 1,
       topP: 0.95,
-      options: { thinking: { type: "enabled", budgetTokens: 16_000 } },
+      // O8: the session prompt-cache key is on by default for every provider.
+      options: { promptCacheKey: "fixture", thinking: { type: "enabled", budgetTokens: 16_000 } },
     })
   })
 

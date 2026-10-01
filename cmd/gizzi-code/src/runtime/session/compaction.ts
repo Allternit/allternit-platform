@@ -226,6 +226,7 @@ When constructing the summary, try to stick to this template:
           { role: "user", content: [{ type: "text", text: promptText }] },
         ],
         model,
+        callType: "compaction",
       })
       const created = (await MessageV2.parts(msg.id)).filter((part) => !before.has(part.id))
       summary = created.filter((part) => part.type === "text").map((part) => part.text).join("").trim()

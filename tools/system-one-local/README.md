@@ -88,7 +88,30 @@ Why letters for noul: on llama3.2 3B, bare `Yes`/`No` tokens leaned strongly tow
 | `SYSTEM_ONE_MAX_INFLIGHT` | `8` | → 429 |
 | `SYSTEM_ONE_LOG` | off | `1` = `~/.allternit/system-one/log/<date>.jsonl` (request sha256, token counts, answers — never state or question text) |
 | `TYPESAFE_API_KEY` | unset | enables `typesafe:*` passthrough |
+| `SYSTEM_ONE_LAYA_URL` | `http://127.0.0.1:7718` | local Laya server for `laya:*` / backend `laya_bundled` |
+| `SYSTEM_ONE_SHADOW_LOG` | on when served | `0` = no shadow ledger (default dir `~/.allternit/system-one/shadow`, or `ALLTERNIT_S1_SHADOW_DIR`) |
+| `SYSTEM_ONE_SHADOW_STATE` | off | `1` = also store the raw decision state: the training text for fine-tuning S1 (Q28 opt-in) |
+| `SYSTEM_ONE_LAYA_MODEL` | `typed-decisions` | Laya checkpoint |
 | `OPENROUTER_API_KEY` | from env | only used by `route-model --allow-paid` |
+
+## Laya backend (`laya_bundled`)
+
+[Laya](https://github.com/NandhaKishorM/laya) (`convaiinnovations/laya`, Apache-2.0) is a ModernBERT
+decision model that answers every typed question for a state in one forward pass. It serves the same
+`/v1/systemone` protocol as the TypeSafe API, so it plugs in as a passthrough backend:
+
+```sh
+tools/system-one-local/laya/serve-laya.sh   # installs laya==0.3.22 in its own venv, serves :7718 (MPS on Apple silicon)
+bun src/cli.ts serve                        # System One on :7717
+```
+
+`/v1/decision` picks the backend from the body's `backend` field (the routing policy's `s1_backend`, sent
+by allternit-api): `laya_bundled` → Laya, `jev_api` → TypeSafe (401 without a key), anything else → the
+local logprob engine. Each backend has its own `backend_id`, so shadow rows and calibration never mix.
+allternit-api uses `ALLTERNIT_S1_BACKEND` when no routing policy is stored.
+
+Measured zero-shot on this Mac (M-series, MPS): ~70–300 ms per decision after a ~3.5 s first-call
+warm-up. Zero-shot confidence is not calibrated, which is why it runs in shadow until Q22 passes.
 
 ## Claude Code hook: `hooks/pretooluse-guard`
 
@@ -138,6 +161,14 @@ Add the hook to a **project-scoped** `.claude/settings.json`. This repo doesn't 
   }
 }
 ```
+
+**Shadow S1 permission GATE (Q27).** On every call that no hard rule settled, the hook also logs one
+`GATE` decision (bank `bank.permission_gate`, primitive `permission.cli_guard`, `x-subject_ref =
+cc-tool:<tool_use_id>`) to the shared shadow ledger through `src/decision/client.ts`. It is recorded
+in the dry-run record as `s1_gate` and never changes what the hook emits; S1 may only tighten
+(`tighten()`), never allow. To give those decisions outcome labels, add
+`hooks/posttooluse-outcome` as a `PostToolUse` hook with the same matcher: it reports
+"the call proceeded" (`truth: "true"`). Denied calls never reach PostToolUse, so they get no label.
 
 Summarise the dry run with `bun scripts/dryrun-summary.ts [--dir …] [--json]`. It reports:
 
@@ -204,7 +235,7 @@ Python side (in this repo): `domains/computer-use/core/core/{decision_head,laya_
 
 S1 stays in shadow until a primitive has a gate-passing calibration manifest built from REAL labeled outcomes. Nothing here generates data; synthetic fixtures exist only in `test/calibrate.test.ts`. Model agreement is never a metric.
 
-**1. Data accumulates in shadow.** Set `ALLTERNIT_S1_SHADOW_DIR` (or `SYSTEM_ONE_SHADOW_LOG=1` for `~/.allternit/system-one/shadow`) on the server. Every `POST /v1/decision` then appends a record to `decisions/<day>.jsonl`: raw (uncalibrated) readout, options, scope (model/revision/runtime/question/candidate hashes), a SHA-256 of the state (never the state), and `x-decision_id` in the response extensions. Set `request.extensions["x-primitive_id"]` and, for batch joins, `x-subject_ref` (a test-run or tool-call id).
+**1. Data accumulates in shadow.** `system-one serve` keeps the ledger by default in `~/.allternit/system-one/shadow` (Q28; `ALLTERNIT_S1_SHADOW_DIR` overrides, `SYSTEM_ONE_SHADOW_LOG=0` opts out). Every `POST /v1/decision` then appends a record to `decisions/<day>.jsonl`: raw (uncalibrated) readout, options, scope (model/revision/runtime/question/candidate hashes), a SHA-256 of the state (the state itself only with `SYSTEM_ONE_SHADOW_STATE=1`), and `x-decision_id` in the response extensions. Set `request.extensions["x-primitive_id"]` and, for batch joins, `x-subject_ref` (a test-run or tool-call id).
 
 **2. Deterministic code reports ground truth.** When the parser/test/verifier later settles the answer, record it (source is mandatory):
 

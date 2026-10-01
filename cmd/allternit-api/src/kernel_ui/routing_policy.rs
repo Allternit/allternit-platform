@@ -52,9 +52,18 @@ fn validate(path: &str, v: &Value) -> Result<(), KErr> {
 
 #[derive(Deserialize)]
 pub struct Q {
-    scope: String,
+    /// Defaults to the caller's organization, like the decision-types routes.
+    scope: Option<String>,
     parents: Option<String>,
     path: Option<String>,
+}
+
+impl Q {
+    fn scope(&self, u: &AuthUser) -> String {
+        self.scope.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| {
+            format!("org:{}", u.organization_id.clone().filter(|o| !o.is_empty()).unwrap_or_else(|| "default".into()))
+        })
+    }
 }
 
 fn view(conn: &Connection, scope: &str, chain: &[String]) -> Result<Value, KErr> {
@@ -71,22 +80,24 @@ fn reset_decisions(conn: &Connection) -> Result<(), KErr> {
 }
 
 pub async fn get_policy(State(st): State<Arc<AppState>>, Extension(u): Extension<AuthUser>, Query(q): Query<Q>) -> KRes {
-    let ch = chain(&q.scope, &u, q.parents.as_deref())?;
-    Ok(Json(blocking(st.db.clone(), move |c| view(c, &q.scope, &ch)).await?))
+    let scope = q.scope(&u);
+    let ch = chain(&scope, &u, q.parents.as_deref())?;
+    Ok(Json(blocking(st.db.clone(), move |c| view(c, &scope, &ch)).await?))
 }
 
 pub async fn put_policy(State(st): State<Arc<AppState>>, Extension(u): Extension<AuthUser>, Query(q): Query<Q>, Json(body): Json<Value>) -> KRes {
-    let ch = chain(&q.scope, &u, q.parents.as_deref())?;
+    let scope = q.scope(&u);
+    let ch = chain(&scope, &u, q.parents.as_deref())?;
     let patch = flatten(&body, LEAVES)?;
     for (p, v) in &patch {
         validate(p, v)?;
     }
     Ok(Json(blocking(st.db.clone(), move |c| {
         let before = effective(c, "routing", &defaults(), LEAVES, &ch)?.0["s1_backend"].clone();
-        let mut doc = load_doc(c, "routing", &q.scope)?;
+        let mut doc = load_doc(c, "routing", &scope)?;
         doc.extend(patch);
-        save_doc(c, "routing", &q.scope, &doc)?;
-        let mut out = view(c, &q.scope, &ch)?;
+        save_doc(c, "routing", &scope, &doc)?;
+        let mut out = view(c, &scope, &ch)?;
         let changed = out["s1_backend"] != before;
         if changed {
             reset_decisions(c)?;
@@ -97,17 +108,18 @@ pub async fn put_policy(State(st): State<Arc<AppState>>, Extension(u): Extension
 }
 
 pub async fn delete_field(State(st): State<Arc<AppState>>, Extension(u): Extension<AuthUser>, Query(q): Query<Q>) -> KRes {
-    let ch = chain(&q.scope, &u, q.parents.as_deref())?;
+    let scope = q.scope(&u);
+    let ch = chain(&scope, &u, q.parents.as_deref())?;
     let path = q.path.clone().unwrap_or_default();
     if !LEAVES.contains(&path.as_str()) {
         return Err(KErr::bad("path must be a routing-policy field path"));
     }
     Ok(Json(blocking(st.db.clone(), move |c| {
         let before = effective(c, "routing", &defaults(), LEAVES, &ch)?.0["s1_backend"].clone();
-        let mut doc = load_doc(c, "routing", &q.scope)?;
+        let mut doc = load_doc(c, "routing", &scope)?;
         doc.remove(&path);
-        save_doc(c, "routing", &q.scope, &doc)?;
-        let mut out = view(c, &q.scope, &ch)?;
+        save_doc(c, "routing", &scope, &doc)?;
+        let mut out = view(c, &scope, &ch)?;
         let changed = out["s1_backend"] != before;
         if changed {
             reset_decisions(c)?;
@@ -137,15 +149,29 @@ async fn fetch_pool() -> Result<Vec<Value>, String> {
     Ok(summarize_pool(&body))
 }
 
+async fn reachable(url: String) -> bool {
+    let Ok(c) = reqwest::Client::builder().timeout(std::time::Duration::from_millis(800)).build() else { return false };
+    c.get(url).send().await.is_ok_and(|r| r.status().is_success())
+}
+
 pub async fn backends() -> KRes {
     let (models, pool_error) = match fetch_pool().await {
         Ok(m) => (m, Value::Null),
         Err(e) => (vec![], json!(e)),
     };
+    // Decisions go through the local S1 server; Laya also needs its own server.
+    let s1_url = allternit_commrails::kernel::s1_outcome::OutcomeReporter::from_env().base_url;
+    let laya_url = std::env::var("SYSTEM_ONE_LAYA_URL").ok().filter(|u| !u.trim().is_empty())
+        .unwrap_or_else(|| "http://127.0.0.1:7718".into());
+    let (s1_up, laya_up) = tokio::join!(reachable(format!("{s1_url}/healthz")), reachable(format!("{}/health", laya_url.trim_end_matches('/'))));
     let s1: Vec<Value> = S1_BACKENDS.iter().map(|b| {
-        let available = s1_available(b);
-        json!({ "id": b, "available": available,
-                "reason": if available { Value::Null } else { json!(if *b == "jev_api" { "TYPESAFE_API_KEY is not set" } else { "not reachable on this server" }) } })
+        let reason = match *b {
+            "jev_api" if !jev_available() => Some("TYPESAFE_API_KEY is not set"),
+            "laya_bundled" | "system_one_local" | "jev_api" if !s1_up => Some("the System One server is not running (tools/system-one-local: bun src/cli.ts serve)"),
+            "laya_bundled" if !laya_up => Some("Laya is not running (tools/system-one-local/laya/serve-laya.sh)"),
+            _ => None,
+        };
+        json!({ "id": b, "available": reason.is_none(), "reason": reason })
     }).collect();
     Ok(Json(json!({ "s1": s1, "models": models, "pool_error": pool_error })))
 }

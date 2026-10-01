@@ -20,6 +20,7 @@
  */
 
 import { createHash } from "node:crypto"
+import { genClassOf } from "./classes"
 
 export const POOL_ENTRY_SCHEMA_ID = "allternit.kernel.ModelPoolEntryV1"
 export const SCHEMA_VERSION = "1.0.0"
@@ -93,6 +94,7 @@ export function toPoolEntry(m: ProviderModelView): ModelPoolEntryV1 | null {
   const modes: Mode[] = m.reasoning ? ["M5.GENERATIVE", "M6.DEEP_SOLVER"] : ["M5.GENERATIVE"]
   // cost unit: USD per 1k tokens, blended in/out (a prior; the router only compares).
   const cost = Math.max(0, ((m.costIn || 0) + (m.costOut || 0)) / 2 / 1000)
+  const residency: Residency = local ? "WARM" : "REMOTE"
   return {
     schema_id: POOL_ENTRY_SCHEMA_ID,
     schema_version: SCHEMA_VERSION,
@@ -104,8 +106,10 @@ export function toPoolEntry(m: ProviderModelView): ModelPoolEntryV1 | null {
     confidence_estimate: m.reasoning ? 0.8 : 0.6,
     latency_ms: local ? 1000 : 2000,
     cost,
-    residency: local ? "WARM" : "REMOTE",
+    residency,
     extensions: {
+      // O1 capability class (mirrors the kernel router's rule).
+      "x-gen_class": genClassOf({ cognitive_roles: roles, residency, cost, extensions: {} }),
       "x-model_ref": `${m.providerID}/${m.modelID}`,
       "x-source": m.providerID === CATALOG_PROVIDER_ID ? "allternit.model_catalog" : "gizzi.provider",
       "x-context_limit": m.context,

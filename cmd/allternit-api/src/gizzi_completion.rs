@@ -22,7 +22,7 @@ pub async fn complete(
     system: Option<&str>,
     model: Option<&(String, String)>,
 ) -> Option<String> {
-    run(prompt, system, model, false).await.map(|(t, _)| t)
+    run(prompt, system, model, false, false, None, &mut None).await.map(|(t, _)| t)
 }
 
 /// Like [`complete`], but deletes the temporary Gizzi session afterwards, so
@@ -33,7 +33,21 @@ pub async fn complete_ephemeral(
     system: Option<&str>,
     model: Option<&(String, String)>,
 ) -> Option<String> {
-    run(prompt, system, model, true).await.map(|(t, _)| t)
+    run(prompt, system, model, true, false, None, &mut None).await.map(|(t, _)| t)
+}
+
+/// [`complete_ephemeral`] with a JSON-schema constrained reply (O10). gizzi
+/// enforces the schema through its StructuredOutput tool; the structured
+/// object is returned as JSON text. Providers that do not honor the format
+/// still answer in text, which is returned as-is, so callers keep validating.
+pub async fn complete_ephemeral_structured(
+    prompt: &str,
+    system: Option<&str>,
+    model: Option<&(String, String)>,
+    schema: &serde_json::Value,
+) -> Option<String> {
+    let format = json!({ "type": "json_schema", "schema": schema, "retryCount": 1 });
+    run(prompt, system, model, true, true, Some(&format), &mut None).await.map(|(t, _)| t)
 }
 
 /// Model usage gizzi-code reported for a completion (summed over the
@@ -47,6 +61,9 @@ pub struct Usage {
     /// Output tokens (output + reasoning), as gizzi reported them.
     pub tokens_out: u64,
     pub cost_usd: f64,
+    /// Prompt-cache read / write tokens (O15 ledger + cache hit rate).
+    pub cache_read: u64,
+    pub cache_write: u64,
 }
 
 /// Usage from an assistant `message.updated` info payload (the split is kept,
@@ -55,17 +72,75 @@ pub fn usage_from_info(info: &serde_json::Value) -> Usage {
     let t = &info["tokens"];
     let n = |v: &serde_json::Value| v.as_u64().unwrap_or(0);
     let (i, o) = (n(&t["input"]), n(&t["output"]) + n(&t["reasoning"]));
-    Usage { tokens: i + o, tokens_in: i, tokens_out: o, cost_usd: info["cost"].as_f64().unwrap_or(0.0) }
+    Usage {
+        tokens: i + o,
+        tokens_in: i,
+        tokens_out: o,
+        cost_usd: info["cost"].as_f64().unwrap_or(0.0),
+        cache_read: n(&t["cache"]["read"]),
+        cache_write: n(&t["cache"]["write"]),
+    }
 }
 
 /// [`complete_ephemeral`] that also returns the reported token/cost usage
-/// (the Agency executor charges it against its daily caps).
+/// (the Agency executor charges it against its daily caps). `Err` carries
+/// why there is no reply: the provider's own error (e.g. a subscription
+/// usage limit) when gizzi reported one, else that gizzi gave no answer.
+/// Tools are off for the turn: an Agency model step only proposes; every
+/// change goes through the gated, receipted mutation step. (With tools on, a
+/// CLI backend explored the filesystem from gizzi's cwd `/` and a 4 s answer
+/// took 60-90 s.)
 pub async fn complete_ephemeral_usage(
     prompt: &str,
     system: Option<&str>,
     model: Option<&(String, String)>,
+) -> Result<(String, Usage), String> {
+    let mut provider_error = None;
+    let reply = run(prompt, system, model, true, true, None, &mut provider_error).await;
+    match (reply, provider_error) {
+        (_, Some(e)) => Err(e),
+        (Some(r), None) => Ok(r),
+        (None, None) => Err("gizzi-code gave no answer".into()),
+    }
+}
+
+/// Typed completion (O7/O9): the call type decides exact-cache use and TTL
+/// (`crate::completion_cache`), and eligible doc-type calls feed the
+/// S1-gated semantic cache in SHADOW (`crate::semantic_cache`, never serves).
+/// A cache hit returns zero usage (no model spend).
+pub async fn complete_for(
+    call_type: crate::completion_cache::CallType,
+    prompt: &str,
+    system: Option<&str>,
+    model: Option<&(String, String)>,
+    ephemeral: bool,
 ) -> Option<(String, Usage)> {
-    run(prompt, system, model, true).await
+    use crate::completion_cache as cc;
+    let resolved = model.cloned().unwrap_or_else(default_model);
+    let model_label = format!("{}/{}", resolved.0, resolved.1);
+    let store = crate::llm_gateway::response_cache::ResponseCache::global();
+    // Internal calls carry no sampling params or tools of their own; the
+    // key still records them so a future param change can't collide.
+    let key = (cc::internal_enabled() && call_type.policy().exact().is_some()).then(|| {
+        cc::internal_key(call_type, &model_label, &json!({}), &json!([]), system, prompt)
+    });
+    if let Some(key) = &key {
+        if let Some(text) = cc::lookup(store, call_type, key) {
+            info!(call_type = call_type.as_str(), model = %model_label, "internal completion served from exact cache");
+            return Some((text, Usage::default()));
+        }
+    }
+    let out = run(prompt, system, Some(&resolved), ephemeral, false, None, &mut None).await?;
+    if let Some(key) = &key {
+        cc::store(store, call_type, key, &out.0);
+    }
+    crate::semantic_cache::SemanticCache::spawn_shadow(
+        call_type,
+        model_label,
+        prompt.to_string(),
+        out.0.clone(),
+    );
+    Some(out)
 }
 
 async fn run(
@@ -73,13 +148,11 @@ async fn run(
     system: Option<&str>,
     model: Option<&(String, String)>,
     delete_after: bool,
+    tools_off: bool,
+    format: Option<&serde_json::Value>,
+    provider_error: &mut Option<String>,
 ) -> Option<(String, Usage)> {
-    let gizzi = crate::APP_CONFIG
-        .get()
-        .map(|c| c.terminal_server_url())
-        .unwrap_or_else(|| "http://127.0.0.1:4096".to_string())
-        .trim_end_matches('/')
-        .to_string();
+    let gizzi = crate::v1_routes::gizzi_base();
 
     let (provider_id, model_id) = model.cloned().unwrap_or_else(default_model);
     let model_label = format!("{}/{}", provider_id, model_id);
@@ -125,7 +198,9 @@ async fn run(
 
     let session_id = session.get("id")?.as_str()?.to_string();
     info!(session_id, model = %model_label, "Created Gizzi completion session");
-    let text = collect(&client, &gizzi, &session_id, prompt, system).await;
+    let started = std::time::Instant::now();
+    let text = collect(&client, &gizzi, &session_id, prompt, system, tools_off, format, provider_error).await;
+    record_ledger(&provider_id, &model_id, &session_id, text.as_ref().map(|(_, u)| *u), started.elapsed());
     if delete_after {
         if let Err(err) = client
             .delete(format!("{}/v1/session/{}", gizzi, session_id))
@@ -145,10 +220,15 @@ async fn collect(
     session_id: &str,
     prompt: &str,
     system: Option<&str>,
+    tools_off: bool,
+    format: Option<&serde_json::Value>,
+    provider_error: &mut Option<String>,
 ) -> Option<(String, Usage)> {
+    // The StructuredOutput tool's result (json_schema format), when any.
+    let mut structured: Option<String> = None;
     let mut usage: std::collections::HashMap<String, Usage> = std::collections::HashMap::new();
     let total = |u: &std::collections::HashMap<String, Usage>| {
-        u.values().fold(Usage::default(), |a, b| Usage { tokens: a.tokens + b.tokens, tokens_in: a.tokens_in + b.tokens_in, tokens_out: a.tokens_out + b.tokens_out, cost_usd: a.cost_usd + b.cost_usd })
+        u.values().fold(Usage::default(), |a, b| Usage { tokens: a.tokens + b.tokens, tokens_in: a.tokens_in + b.tokens_in, tokens_out: a.tokens_out + b.tokens_out, cost_usd: a.cost_usd + b.cost_usd, cache_read: a.cache_read + b.cache_read, cache_write: a.cache_write + b.cache_write })
     };
 
     // Subscribe to events before sending the message.
@@ -175,15 +255,37 @@ async fn collect(
     if let Some(system_text) = system.map(str::trim).filter(|s| !s.is_empty()) {
         message_payload["system"] = json!(format!("+{system_text}"));
     }
+    if tools_off {
+        // A structured call keeps the one tool gizzi enforces the schema through.
+        message_payload["tools"] = if format.is_some() { crate::structured_output::tools_off_except_structured() } else { json!({ "*": false }) };
+    }
+    if let Some(format) = format {
+        message_payload["format"] = format.clone();
+    }
 
-    if let Err(err) = client
+    match client
         .post(format!("{}/v1/session/{}/message", gizzi, session_id))
         .json(&message_payload)
         .send()
         .await
     {
-        warn!(error = %err, "Failed to send message to Gizzi session");
-        return None;
+        Err(err) => {
+            warn!(error = %err, "Failed to send message to Gizzi session");
+            return None;
+        }
+        // The message call answers with the finished assistant message. A
+        // provider failure (usage limit, auth) shows up only here as
+        // `info.error`; without this check it read as an empty reply.
+        Ok(res) => {
+            let body: serde_json::Value = res.json().await.unwrap_or_default();
+            let e = &body["info"]["error"];
+            if !e.is_null() {
+                let msg = e["data"]["message"].as_str().or_else(|| e["message"].as_str()).or_else(|| e["name"].as_str()).unwrap_or("provider error");
+                warn!(session_id, error = %msg, "Gizzi model call failed");
+                *provider_error = Some(msg.to_string());
+                return None;
+            }
+        }
     }
 
     // Collect text deltas until the session becomes idle after being busy.
@@ -237,6 +339,9 @@ async fn collect(
                         "message.updated" => {
                             let info = &props["info"];
                             if info["role"] == "assistant" {
+                                if let Some(v) = info.get("structured").filter(|v| !v.is_null()) {
+                                    structured = Some(v.to_string());
+                                }
                                 usage.insert(info["id"].as_str().unwrap_or_default().to_string(), usage_from_info(info));
                             }
                         }
@@ -254,7 +359,8 @@ async fn collect(
                             if status_type == "busy" {
                                 was_busy = true;
                             } else if status_type == "idle" && was_busy {
-                                return Some((text_parts.concat(), total(&usage)));
+                                let text = structured.take().unwrap_or_else(|| text_parts.concat());
+                                return Some((text, total(&usage)));
                             }
                         }
                         _ => {}
@@ -270,9 +376,30 @@ async fn collect(
         }
     }
 
+    if let Some(s) = structured {
+        return Some((s, total(&usage)));
+    }
     if text_parts.is_empty() {
         None
     } else {
         Some((text_parts.concat(), total(&usage)))
     }
+}
+
+/// O15: one ledger row per internal completion, attributed by the caller's
+/// [`crate::usage_ledger::scope`]/[`crate::usage_ledger::enter`] context.
+pub(crate) fn record_ledger(provider_id: &str, model_id: &str, session_id: &str, usage: Option<Usage>, elapsed: Duration) {
+    let u = usage.unwrap_or_default();
+    crate::usage_ledger::record(crate::usage_ledger::internal_row(
+        provider_id,
+        model_id,
+        Some(session_id),
+        u.tokens_in,
+        u.tokens_out,
+        u.cache_read,
+        u.cache_write,
+        u.cost_usd,
+        elapsed.as_millis() as u64,
+        usage.is_some(),
+    ));
 }

@@ -422,6 +422,12 @@ pub async fn run_turn<R: ThreadRuntime>(
     };
     let rid = s(&remote_row, "id");
     let ctx_id = s(&remote_row, "externalContextId");
+    // Kernel turn router, shadow (O2/O14): vendor turns get the same ROUTE and a
+    // tighten-only consequential GATE as native turns. Never awaited.
+    let seq_before: i64 = db.connect()?.query_row("SELECT COALESCE(MAX(seq), 0) FROM bot_events WHERE bot_id = ?1", params![cx.bot_id], |r| r.get(0)).unwrap_or(0);
+    if !already_sent {
+        crate::gateway_routing::before_send(&corr, &s(&cx.exec, "vendor"), text, opts.consequential);
+    }
 
     if !already_sent {
         let sent = vcall(db, tx, &cx.owner, "agent.context.message", &cx.exec, json!({ "contextId": ctx_id, "text": text, "correlationId": corr })).await;
@@ -445,6 +451,14 @@ pub async fn run_turn<R: ThreadRuntime>(
     }
 
     let (events, reply) = pull_events(db, tx, &cx, &remote_row).await?;
+    if !already_sent {
+        let tools: Vec<String> = db.connect().ok().and_then(|c| {
+            let mut st = c.prepare("SELECT event_type, payload FROM bot_events WHERE bot_id = ?1 AND thread_id = ?2 AND seq > ?3").ok()?;
+            let rows = st.query_map(params![cx.bot_id, cx.thread_id, seq_before], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).ok()?;
+            Some(rows.flatten().filter_map(|(t, p)| crate::gateway_routing::tool_name(&t, &serde_json::from_str(&p).unwrap_or_default())).collect())
+        }).unwrap_or_default();
+        crate::gateway_routing::after_events(&corr, tools);
+    }
     Ok(Some(TurnReport { reply, events, correlation_id: corr, remote_binding_id: rid }))
 }
 

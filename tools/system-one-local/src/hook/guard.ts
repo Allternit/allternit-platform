@@ -16,6 +16,11 @@ import { appendJsonl, BASE_DIR, sha256 } from "../log.ts";
 import type { SystemOneRequest, SystemOneResponse } from "../types.ts";
 import { evaluateHardRules, type HardRuleResult, type ToolCall, type Verdict } from "./hardrules.ts";
 import { buildPack, shouldEscalate, thresholdsFromEnv, type Thresholds } from "./pack.ts";
+import { reportOutcome, shadowGate, tighten, type Friction } from "../decision/client.ts";
+
+/** Shadow-ledger bank + primitive for the CLI guard's S1 permission GATE. */
+export const GUARD_GATE = { bank: "bank.permission_gate", primitive: "permission.cli_guard", question: "may_proceed" } as const;
+export const subjectRef = (toolUseId: unknown) => (typeof toolUseId === "string" && toolUseId ? `cc-tool:${toolUseId}` : undefined);
 
 export type Mode = "log" | "advise" | "off";
 
@@ -52,6 +57,8 @@ export interface GuardRecord {
   would_escalate: boolean;
   escalate_reasons: string[];
   decision_emitted: Verdict | null;
+  /** Shadow S1 GATE (Q27): logged to the shared ledger, never changes what the hook emits. */
+  s1_gate: { decision_id: string | null; p_true: number | null; recommendation: Friction | null; tightened: Friction } | null;
   latency_ms: number;
 }
 
@@ -84,6 +91,7 @@ export async function runGuard(input: any, deps: GuardDeps = {}): Promise<{ outp
     would_escalate: false,
     escalate_reasons: [],
     decision_emitted: null,
+    s1_gate: null,
     latency_ms: 0,
   };
 
@@ -108,7 +116,19 @@ export async function runGuard(input: any, deps: GuardDeps = {}): Promise<{ outp
       question_ids: Object.keys(pack.request.questions),
     };
     record.redactions = pack.flags;
-    const res = await callServer(pack.request, deps);
+    const [res, gate] = await Promise.all([
+      callServer(pack.request, deps),
+      shadowGate(
+        {
+          producer: "system-one-hook", decision_bank_id: GUARD_GATE.bank, question_id: GUARD_GATE.question, motif: "GATE",
+          primitive_id: GUARD_GATE.primitive, subject_ref: subjectRef(input.tool_use_id),
+          instructions: "Should this tool call proceed without asking the person first? Answer true only if it is clearly safe and routine.",
+        },
+        typeof pack.request.state === "string" ? pack.request.state : JSON.stringify(pack.request.state),
+        { url: deps.serverUrl, fetchImpl: deps.fetchImpl, timeoutMs: deps.timeoutMs },
+      ),
+    ]);
+    if (gate) record.s1_gate = { decision_id: gate.decision_id, p_true: gate.p_true, recommendation: gate.recommendation, tightened: "allow" };
     record.server = res.status;
     if (res.body) {
       record.usage = res.body.usage;
@@ -129,6 +149,8 @@ export async function runGuard(input: any, deps: GuardDeps = {}): Promise<{ outp
   }
   // Invariant: this hook never emits allow, and in log mode never emits anything.
   if (mode === "log") output = null;
+  // What tighten-only S1 would have made of the hook's decision (shadow: recorded, not emitted).
+  if (record.s1_gate) record.s1_gate.tightened = tighten((output?.hookSpecificOutput.permissionDecision ?? "allow") as Friction, record.s1_gate.recommendation);
   record.decision_emitted = output?.hookSpecificOutput.permissionDecision ?? null;
   record.latency_ms = Math.round(performance.now() - t0);
   if (deps.logDir !== null) {
@@ -196,4 +218,18 @@ async function callServer(
     if (name === "HttpError") return { status: "error" };
     return { status: name === "TimeoutError" || name === "AbortError" ? "timeout" : "down" };
   }
+}
+
+/**
+ * PostToolUse: the call ran, so the person (or their settings) let it proceed. Report that as the
+ * outcome label for the shadow GATE logged at PreToolUse (joined by subject_ref = tool_use_id).
+ * Denials never reach PostToolUse, so they produce no label here.
+ */
+export async function reportToolRan(input: any, deps: Pick<GuardDeps, "serverUrl" | "fetchImpl" | "timeoutMs"> = {}): Promise<boolean> {
+  const subject_ref = subjectRef(input?.tool_use_id);
+  if (!subject_ref || modeFromEnv() === "off") return false;
+  return reportOutcome(
+    { subject_ref, question_id: GUARD_GATE.question, truth: "true", source: "cli_hook.post_tool_use" },
+    { url: deps.serverUrl, fetchImpl: deps.fetchImpl, timeoutMs: deps.timeoutMs },
+  );
 }

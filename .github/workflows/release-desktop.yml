@@ -311,6 +311,12 @@ jobs:
         run: node scripts/prepare-connector-sidecar.cjs
         working-directory: surfaces/allternit-desktop
 
+      - name: Build System One (S1) binary + stage Laya scripts
+        # bun build --compile tools/system-one-local/src/cli.ts → resources/bin/system-one,
+        # tools/system-one-local/laya/*.sh → resources/laya/ (Q28, Q29).
+        run: node scripts/prepare-system-one.cjs
+        working-directory: surfaces/allternit-desktop
+
       - name: Install desktop dependencies
         # Deps are already installed by the earlier workspace-wide pnpm
         # install. Use pnpm (not npm): npm reifies over pnpm's symlinked
@@ -500,6 +506,12 @@ jobs:
         run: node scripts/prepare-connector-sidecar.cjs
         working-directory: surfaces/allternit-desktop
 
+      - name: Build System One (S1) binary + stage Laya scripts
+        # bun build --compile tools/system-one-local/src/cli.ts → resources/bin/system-one,
+        # tools/system-one-local/laya/*.sh → resources/laya/ (Q28, Q29).
+        run: node scripts/prepare-system-one.cjs
+        working-directory: surfaces/allternit-desktop
+
       - name: Install desktop dependencies
         # Deps are already installed by the earlier workspace-wide pnpm
         # install. Use pnpm (not npm): npm reifies over pnpm's symlinked
@@ -640,6 +652,12 @@ jobs:
         # inside the app — without it the packaged app has no connector
         # sidecar at all.
         run: node scripts/prepare-connector-sidecar.cjs
+        working-directory: surfaces/allternit-desktop
+
+      - name: Build System One (S1) binary + stage Laya scripts
+        # bun build --compile tools/system-one-local/src/cli.ts → resources/bin/system-one,
+        # tools/system-one-local/laya/*.sh → resources/laya/ (Q28, Q29).
+        run: node scripts/prepare-system-one.cjs
         working-directory: surfaces/allternit-desktop
 
       - name: Install desktop dependencies

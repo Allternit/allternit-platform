@@ -217,12 +217,7 @@ const FALLBACK_HEADER: &str = "x-allternit-fallback";
 const BATCH_HEADER: &str = "x-allternit-batch-id";
 
 fn gizzi_base() -> String {
-    crate::APP_CONFIG
-        .get()
-        .map(|c| c.terminal_server_url())
-        .unwrap_or_else(|| "http://127.0.0.1:4096".to_string())
-        .trim_end_matches('/')
-        .to_string()
+    crate::v1_routes::gizzi_base()
 }
 
 fn http_client() -> reqwest::Client {
@@ -625,6 +620,9 @@ struct Collector {
     ttft: Option<Duration>,
     citations: Vec<Annotation>,
     tool_calls: BTreeMap<u32, ToolCallAccumulator>,
+    /// The assistant message's `structured` value (a json_schema
+    /// `response_format`; gizzi returns it there, not as text).
+    structured: Option<Value>,
 }
 
 impl Collector {
@@ -640,6 +638,16 @@ impl Collector {
             ttft: None,
             citations: Vec::new(),
             tool_calls: BTreeMap::new(),
+            structured: None,
+        }
+    }
+
+    /// The reply text a client sees: the structured value as JSON when the
+    /// request asked for json_schema output, else the streamed text.
+    fn content(&self) -> String {
+        match &self.structured {
+            Some(v) => v.to_string(),
+            None => self.text.clone(),
         }
     }
 
@@ -722,6 +730,9 @@ impl Collector {
                 }
                 self.usage = parse_assistant_usage(info);
                 self.citations = extract_citations(info);
+                if let Some(v) = info.get("structured").filter(|v| !v.is_null()) {
+                    self.structured = Some(v.clone());
+                }
                 if let Some(error) = info.get("error") {
                     let name = error
                         .get("name")
@@ -1094,6 +1105,15 @@ pub(crate) fn record_usage_event(
                 if let Some(decision) = &outcome.routing_decision {
                     router::persist_decision(&conn, &row_id, decision)?;
                 }
+                // O15: ledger keys (surface/run/node/tier/lane, cache writes).
+                crate::usage_ledger::stamp_gateway_row(
+                    &conn,
+                    &row_id,
+                    outcome.tags.as_deref(),
+                    outcome.batch_id.as_deref(),
+                    outcome.usage.cache_write_tokens,
+                    outcome.gizzi_session_id.as_deref(),
+                )?;
                 return Ok(row_id);
             }
             warn!("idempotency pre-insert missing at record time; inserting fresh row");
@@ -1141,6 +1161,14 @@ pub(crate) fn record_usage_event(
         if let Some(decision) = &outcome.routing_decision {
             router::persist_decision(&conn, &row_id, decision)?;
         }
+        crate::usage_ledger::stamp_gateway_row(
+            &conn,
+            &row_id,
+            outcome.tags.as_deref(),
+            outcome.batch_id.as_deref(),
+            outcome.usage.cache_write_tokens,
+            outcome.gizzi_session_id.as_deref(),
+        )?;
         Ok(row_id)
     })();
 
@@ -1941,16 +1969,45 @@ pub async fn chat_completions(
     // DLP, resolution, and the allowlist, so a cached body is never served to
     // a caller who could not run the underlying request. Checked before the
     // idempotency gate: a cache hit never opens an in_progress row.
+    // O7: streams are eligible too (written on completion, replayed as a
+    // synthesized stream); only deterministic requests unless the caller
+    // opts in; keys are namespaced per tenant.
     let response_cache = super::response_cache::ResponseCache::global();
-    let response_cache_key =
-        if response_cache.enabled() && !stream && super::response_cache::is_cacheable(&request) {
-            Some(super::response_cache::cache_key(&request))
-        } else {
-            None
-        };
+    let cache_opt = headers
+        .get(super::response_cache::CACHE_OPT_HEADER)
+        .and_then(|v| v.to_str().ok());
+    let response_cache_key = if response_cache.enabled()
+        && super::response_cache::gateway_cacheable(&request, cache_opt)
+    {
+        Some(super::response_cache::gateway_cache_key(
+            &request,
+            key.tenant_id.as_deref().unwrap_or(&key.user_id),
+        ))
+    } else {
+        None
+    };
     if let Some(cache_key) = &response_cache_key {
-        if let Some(cached_body) = response_cache.get(cache_key) {
+        let replay = response_cache.get(cache_key).and_then(|body| {
+            if !stream {
+                return Some((body, None));
+            }
+            let include_usage = request
+                .stream_options
+                .as_ref()
+                .and_then(|o| o.include_usage)
+                .unwrap_or(false);
+            let frames = super::response_cache::replay_sse_frames(
+                &body,
+                &new_completion_id(),
+                chrono::Utc::now().timestamp(),
+                &request.model,
+                include_usage,
+            )?;
+            Some((body, Some(frames)))
+        });
+        if let Some((cached_body, frames)) = replay {
             crate::metrics::inc_llm_response_cache_hit(&request.model);
+            crate::metrics::inc_completion_cache_event("gateway", "gateway.chat", "hit");
             // Zero-cost usage, same treatment as BYOK: the cached body's
             // token counts are metered, but provider_id is None and cost is
             // 0, so record_usage_event stores/recomputes no spend.
@@ -1998,6 +2055,19 @@ pub async fn chat_completions(
             tokio::task::spawn_blocking(move || {
                 record_usage_event(&db, &key_for_record, &outcome, None)
             });
+            if let Some(frames) = frames {
+                let replayed = futures::stream::iter(
+                    frames
+                        .into_iter()
+                        .map(|f| Ok::<_, Infallible>(Event::default().data(f))),
+                );
+                let mut response = Sse::new(replayed).into_response();
+                response.headers_mut().insert(
+                    HeaderName::from_static("x-allternit-cache"),
+                    HeaderValue::from_static("hit"),
+                );
+                return response;
+            }
             return (
                 StatusCode::OK,
                 [
@@ -2009,6 +2079,7 @@ pub async fn chat_completions(
                 .into_response();
         }
         crate::metrics::inc_llm_response_cache_miss(&request.model);
+        crate::metrics::inc_completion_cache_event("gateway", "gateway.chat", "miss");
     }
 
     // Prompt: system messages → Gizzi `system` field; history → Gizzi parts.
@@ -2244,6 +2315,9 @@ pub async fn chat_completions(
             policy,
             primary,
             fallback_refs,
+            response_cache_key
+                .clone()
+                .map(|k| (k, response_cache.gateway_ttl())),
         )
         .await
     } else {
@@ -2592,11 +2666,11 @@ async fn nonstream_completion(
                     .final_tool_calls()
                     .map(|tc| {
                         super::translate::AssistantMessage::with_tool_calls(
-                            collector.text.clone(),
+                            collector.content(),
                             tc,
                         )
                     })
-                    .unwrap_or_else(|| super::translate::AssistantMessage::new(collector.text.clone()))
+                    .unwrap_or_else(|| super::translate::AssistantMessage::new(collector.content()))
             };
             let mut response = ChatCompletionResponse {
                 id: completion_id,
@@ -2686,6 +2760,9 @@ async fn stream_completion(
     retry_policy: super::failover::RetryPolicy,
     primary: super::failover::ModelRef,
     fallbacks: Vec<super::failover::ModelRef>,
+    // O7: when set, a stream that ends `ok` with plain text (no tool calls,
+    // no refusal) is written to the shared exact cache on completion.
+    response_cache_key: Option<(String, Duration)>,
 ) -> Response {
     let completion_id = new_completion_id();
     let created = chrono::Utc::now().timestamp();
@@ -2713,6 +2790,7 @@ async fn stream_completion(
         let mut send_task = send_task;
         let mut send_done = false;
         let mut failure: Option<(String, String)> = None;
+        let mut streamed_tool_calls = false;
         tokio::pin!(events);
         let deadline = tokio::time::sleep(COMPLETION_TIMEOUT);
         tokio::pin!(deadline);
@@ -2790,6 +2868,7 @@ async fn stream_completion(
                     ));
                 }
                 Progress::ToolCallDelta(delta) => {
+                    streamed_tool_calls = true;
                     yield Ok(Event::default().data(
                         ChatCompletionChunk::tool_calls_chunk(
                             &completion_id, created, &wire_model, vec![delta],
@@ -2802,6 +2881,16 @@ async fn stream_completion(
                     failure = Some((name, message));
                     break 'collect;
                 }
+            }
+        }
+
+        // json_schema output arrives as the message's `structured` value, not
+        // as text deltas: send it as one content chunk.
+        if failure.is_none() && collector.text.is_empty() {
+            if let Some(v) = &collector.structured {
+                yield Ok(Event::default().data(
+                    ChatCompletionChunk::content_chunk(&completion_id, created, &wire_model, &v.to_string()).to_sse_data(),
+                ));
             }
         }
 
@@ -2884,6 +2973,26 @@ async fn stream_completion(
                     ));
                 }
                 yield Ok(Event::default().data("[DONE]"));
+                if let (Some((cache_key, cache_ttl)), false) = (&response_cache_key, is_refusal) {
+                    if !streamed_tool_calls && !collector.text.is_empty() {
+                        let body = super::response_cache::completed_stream_body(
+                            &completion_id,
+                            created,
+                            &wire_model,
+                            &collector.text,
+                            &finish,
+                            Usage::new(
+                                collector.usage.prompt_tokens,
+                                collector.usage.completion_tokens,
+                                collector.usage.reasoning_tokens,
+                                collector.usage.cached_tokens,
+                            ),
+                        );
+                        super::response_cache::ResponseCache::global()
+                            .put_with_ttl(cache_key.clone(), body, *cache_ttl);
+                        crate::metrics::inc_completion_cache_event("gateway", "gateway.chat", "store");
+                    }
+                }
                 outcome = RequestOutcome {
                     status: if is_refusal { "refused" } else { "ok" },
                     error_type: if is_refusal { Some("refusal".to_string()) } else { None },
@@ -3423,6 +3532,46 @@ mod metering_tests {
     }
 
     #[test]
+    fn record_usage_event_stamps_ledger_keys_from_tags() {
+        let (db, _dir) = test_db();
+        let key = insert_key(&db, None);
+        let mut tagged = outcome("ok");
+        tagged.tags = Some(r#"{"surface":"cowork","run_id":"run_7","node_id":"N2","tier":"S3"}"#.to_string());
+        tagged.usage.cache_write_tokens = 11;
+        tagged.gizzi_session_id = Some("ses_gw".to_string());
+        // A gizzi self-report for the same session arrived first: dropped.
+        {
+            let conn = db.connect().unwrap();
+            conn.execute(
+                "INSERT INTO llm_usage_events (id, status, source, gizzi_session_id) VALUES ('g1', 'ok', 'gizzi', 'ses_gw')",
+                [],
+            )
+            .unwrap();
+        }
+        record_usage_event(&db, &key, &tagged, None);
+        let mut batch = outcome("ok");
+        batch.batch_id = Some("batch_1".to_string());
+        record_usage_event(&db, &key, &batch, None);
+        record_usage_event(&db, &key, &outcome("ok"), None);
+
+        let conn = db.connect().unwrap();
+        let rows: Vec<(String, String, Option<String>, Option<String>, Option<String>, String, i64)> = conn
+            .prepare("SELECT source, surface, run_id, node_id, tier, lane, cache_write_tokens FROM llm_usage_events ORDER BY surface")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(rows.len(), 3, "{rows:?}");
+        assert_eq!(rows[0], ("gateway".into(), "api".into(), None, None, None, "api".into(), 0));
+        assert_eq!(rows[1].1, "batch");
+        assert_eq!(
+            rows[2],
+            ("gateway".into(), "cowork".into(), Some("run_7".into()), Some("N2".into()), Some("S3".into()), "api".into(), 11)
+        );
+    }
+
+    #[test]
     fn record_usage_event_persists_tags_and_batch_id() {
         let (db, _dir) = test_db();
         let key = insert_key(&db, None);
@@ -3646,6 +3795,47 @@ mod stream_retry_hint_tests {
         }
     }
 
+    /// O7: a stream that ends ok with plain text writes the shared exact
+    /// cache on completion; the entry replays as an equivalent stream.
+    #[tokio::test]
+    async fn completed_stream_writes_cache_and_replays() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::test_helpers::app_state(dir.path()).await;
+        {
+            let conn = state.db.connect().unwrap();
+            conn.execute("INSERT INTO users (id, email) VALUES ('u-hint', 'hint@example.com')", []).unwrap();
+            conn.execute(
+                "INSERT INTO llm_virtual_keys (id, user_id, key_hash, key_prefix) VALUES ('vk-hint', 'u-hint', 'hash', 'ak-hint')",
+                [],
+            )
+            .unwrap();
+        }
+        let send_task = tokio::spawn(futures::future::pending::<Result<reqwest::Response, reqwest::Error>>());
+        let ev = |t: &str, p: Value| GizziEvent { event_type: t.to_string(), properties: p };
+        let events = futures::stream::iter(vec![
+            ev("session.status", json!({"sessionID": "s-ok", "status": {"type": "busy"}})),
+            ev("message.part.delta", json!({"sessionID": "s-ok", "delta": "cached "})),
+            ev("message.part.delta", json!({"sessionID": "s-ok", "delta": "answer"})),
+            ev("session.status", json!({"sessionID": "s-ok", "status": {"type": "idle"}})),
+        ]);
+        let cache_key = format!("test-stream-{}", uuid::Uuid::new_v4());
+        let response = stream_completion(
+            state, hint_key(), send_task, events, Instant::now(), "s-ok".to_string(),
+            "mock-a/model-a".to_string(), None, None, false, None, None, None, None,
+            RetryPolicy::default(),
+            ModelRef { provider_id: "mock-a".to_string(), model_id: "model-a".to_string() },
+            vec![],
+            Some((cache_key.clone(), Duration::from_secs(60))),
+        )
+        .await;
+        let _ = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let cache = super::super::response_cache::ResponseCache::global();
+        let body = cache.get_any(&cache_key).expect("stream wrote the cache on completion");
+        assert_eq!(body["choices"][0]["message"]["content"], "cached answer");
+        let frames = super::super::response_cache::replay_sse_frames(&body, "id", 0, "m", false).unwrap();
+        assert!(frames[1].contains("cached answer"));
+    }
+
     /// Drive `stream_completion` with a send task that never resolves and an
     /// event stream that fails mid-stream via `session.error`; return the full
     /// SSE body text.
@@ -3705,6 +3895,7 @@ mod stream_retry_hint_tests {
                 model_id: "model-a".to_string(),
             },
             fallbacks,
+            None,
         )
         .await;
 
@@ -3773,5 +3964,20 @@ mod stream_retry_hint_tests {
         let hint = hint_payload(&body);
         assert_eq!(hint["retryable"], false);
         assert_eq!(hint["next_fallback"], Value::Null);
+    }
+}
+
+#[cfg(test)]
+mod structured_tests {
+    use super::*;
+
+    #[test]
+    fn collector_surfaces_structured_output_as_content() {
+        let mut c = Collector::new(Instant::now());
+        assert_eq!(c.content(), "");
+        let ev = GizziEvent { event_type: "message.updated".into(), properties: json!({ "info": {
+            "role": "assistant", "structured": { "ok": true }, "tokens": { "input": 1, "output": 1 } } }) };
+        c.handle_event(&ev);
+        assert_eq!(c.content(), r#"{"ok":true}"#);
     }
 }

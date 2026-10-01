@@ -857,7 +857,21 @@ export namespace Config {
         .int()
         .positive()
         .optional()
-        .describe("Maximum number of agentic iterations before forcing text-only response"),
+        .describe(
+          "Maximum number of agentic iterations before forcing text-only response (default per agent kind, capped by the guardrail ceiling)",
+        ),
+      max_tool_calls: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Maximum tool calls in one turn (default per agent kind, capped by the guardrail ceiling)"),
+      turn_timeout_ms: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Wall-clock budget for one turn in milliseconds (default per agent kind, capped by the guardrail ceiling)"),
       summary_policy: z
         .object({
           min_chars: z.number().int().nonnegative(),
@@ -926,6 +940,8 @@ export namespace Config {
         "hidden",
         "color",
         "steps",
+        "max_tool_calls",
+        "turn_timeout_ms",
         "maxSteps",
         "options",
         "permission",
@@ -1215,7 +1231,7 @@ export namespace Config {
           apiKey: z.string().optional(),
           baseURL: z.string().optional(),
           enterpriseUrl: z.string().optional().describe("GitHub Enterprise URL for authentication"),
-          setCacheKey: z.boolean().optional().describe("Enable promptCacheKey for this provider (default false)"),
+          setCacheKey: z.boolean().optional().describe("Send the session prompt-cache key to this provider (default true; set false to opt out)"),
           timeout: z
             .union([
               z

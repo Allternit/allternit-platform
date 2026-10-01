@@ -334,15 +334,19 @@ async fn continuation_cap_is_configurable() {
 
 // ---------------------------------------------------------- System One
 
+/// `/v1/decision` stand-in. `choice` is the old 3-way label: "complete"/"safe"
+/// means P(true) = confidence, "incomplete"/"risky" means P(false) = confidence.
 async fn system_one_server(choice: &'static str, confidence: f64) -> String {
     use axum::{routing::post, Json, Router};
+    let p_true = if matches!(choice, "complete" | "safe") { confidence } else { 1.0 - confidence };
     let app = Router::new().route(
-        "/v1/systemone",
-        post(move |Json(_body): Json<serde_json::Value>| async move {
+        "/v1/decision",
+        post(move |Json(body): Json<serde_json::Value>| async move {
+            assert_eq!(body["request"]["operation"], "GATE");
+            assert_eq!(body["request"]["decision_bank_id"], "bank.judge_first_pass");
             Json(json!({
-                "model": "jev-latest",
-                "answers": {"q": {"type": "choice", "choice": choice, "probabilities": {}, "confidence": confidence}},
-                "usage": {"input_tokens": 1, "output_tokens": 0}
+                "probabilities": {"true": p_true, "false": 1.0 - p_true},
+                "extensions": {"x-decision_id": "dec-judge"}
             }))
         }),
     );

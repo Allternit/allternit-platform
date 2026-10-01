@@ -114,7 +114,14 @@ impl ThreadRuntime for GizziCoordinator {
 
 impl CoordinatorRuntime for GizziCoordinator {
     async fn plan(&self, system: &str, prompt: &str, model: Option<(String, String)>) -> Option<String> {
-        crate::gizzi_completion::complete_ephemeral(prompt, Some(system), model.as_ref()).await
+        // O10: schema-constrained; the value comes back serialized so the
+        // trait (and its test doubles) keep returning text. Metered as "bot".
+        crate::usage_ledger::scope(crate::usage_ledger::LedgerCtx::surface("bot"), async {
+            let schema = proposal_schema();
+            let reply = crate::structured_output::complete_structured(prompt, Some(system), model.as_ref(), &schema).await?;
+            Some(reply.value.map(|v| v.to_string()).unwrap_or(reply.text))
+        })
+        .await
     }
     async fn send_turn(&self, session_id: &str, bot_id: &str, text: &str) -> Result<String, String> {
         crate::agent_session_routes::send_bot_turn(&self.state.db, session_id, bot_id, text).await
@@ -240,11 +247,41 @@ pub fn planner_prompt(project_title: &str, team: &[TeamBot], open: &[OpenThread]
     p
 }
 
-/// Pull the first JSON object out of a model reply (tolerates code fences).
+/// JSON Schema of a planner reply (O10). Flat (no oneOf) so every provider's
+/// tool-call path accepts it; `action` picks which fields matter.
+pub fn proposal_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["action", "reply"],
+        "properties": {
+            "action": { "type": "string", "enum": ["plan", "route", "answer"] },
+            "reply": { "type": "string" },
+            "threadId": { "type": "string" },
+            "steps": { "type": "array", "maxItems": 6, "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["key", "title", "bot"],
+                "properties": {
+                    "key": { "type": "string", "minLength": 1 },
+                    "title": { "type": "string", "minLength": 1 },
+                    "objective": { "type": "string" },
+                    "bot": { "type": "string", "minLength": 1 },
+                    "dependsOn": { "type": "array", "items": { "type": "string" } },
+                    "todo": { "type": "array", "items": { "type": "string" } },
+                    "budgetUsd": { "type": "number", "minimum": 0 },
+                    "requires": { "type": "array", "items": { "type": "string" } }
+                }
+            } }
+        }
+    })
+}
+
+/// A planner reply → proposal. Schema-validated; the tolerant first-`{`
+/// parse (code fences, prose) runs only as a logged fallback.
 pub fn parse_proposal(raw: &str) -> Option<Proposal> {
-    let start = raw.find('{')?;
-    let end = raw.rfind('}')?;
-    serde_json::from_str(&raw[start..=end]).ok()
+    let v = crate::structured_output::parse_text(raw, &proposal_schema(), "coordinator.plan")?;
+    serde_json::from_value(v).ok()
 }
 
 fn norm(s: &str) -> String {
@@ -1335,6 +1372,10 @@ mod tests {
     #[test]
     fn parses_fenced_json_and_picks_fallback_bot() {
         let p = parse_proposal("```json\n{\"action\":\"answer\",\"reply\":\"Monday.\"}\n```").unwrap();
+        assert!(parse_proposal(r#"{"action":"delete","reply":"x"}"#).is_none(), "schema: action is a closed set");
+        assert!(parse_proposal(r#"{"action":"plan","reply":"x","steps":[{"key":"a","title":"t"}]}"#).is_none(), "schema: a step needs a bot");
+        assert!(parse_proposal(r#"{"action":"route","reply":"x"}"#).is_none(), "schema-valid but no threadId → not a Route");
+        assert_eq!(parse_proposal(r#"{"action":"route","reply":"ok","threadId":"t1"}"#), Some(Proposal::Route { reply: "ok".into(), thread_id: "t1".into() }));
         assert_eq!(p, Proposal::Answer { reply: "Monday.".into() });
         let f = fallback_step(&team(), "Work out our finance numbers for Q4").unwrap();
         assert_eq!(f.bot_id, "ledger");

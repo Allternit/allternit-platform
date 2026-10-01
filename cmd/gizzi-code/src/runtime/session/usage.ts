@@ -9,6 +9,7 @@ import path from "path"
 import { Filesystem } from "@/shared/util/filesystem"
 import { Log } from "@/shared/util/log"
 import { Provider } from "@/runtime/providers/provider"
+import { reportLedgerCall } from "@/runtime/services/telemetry/usageLedgerReport"
 
 export namespace SessionUsage {
   const log = Log.create({ service: "session.usage" })
@@ -43,6 +44,45 @@ export namespace SessionUsage {
       }
     }
     cost: number
+    /** O5/O8: the call type this usage came from ("answer" when unspecified). Absent on pre-O8 rows. */
+    callType?: string
+  }
+
+  /**
+   * O8 cache-hit counter. `prompt` is every input token the provider saw
+   * (uncached input + cache reads + cache writes; gizzi's `tokens.input`
+   * already excludes cached tokens), `read` is the cached share, and
+   * `hitRate = read / prompt` (0 when nothing was sent).
+   */
+  export interface CacheStats {
+    read: number
+    write: number
+    prompt: number
+    hitRate: number
+  }
+
+  export function emptyCacheStats(): CacheStats {
+    return { read: 0, write: 0, prompt: 0, hitRate: 0 }
+  }
+
+  export function addCacheStats(stats: CacheStats, tokens: UsageEntry["tokens"]): CacheStats {
+    stats.read += tokens.cache.read
+    stats.write += tokens.cache.write
+    stats.prompt += tokens.input + tokens.cache.read + tokens.cache.write
+    stats.hitRate = stats.prompt > 0 ? stats.read / stats.prompt : 0
+    return stats
+  }
+
+  /** Cache hit rate over a set of usage entries, overall and per call type. */
+  export function cacheHitRate(entries: Pick<UsageEntry, "tokens" | "callType">[]) {
+    const total = emptyCacheStats()
+    const byCallType: Record<string, CacheStats> = {}
+    for (const entry of entries) {
+      addCacheStats(total, entry.tokens)
+      const key = entry.callType ?? "answer"
+      addCacheStats((byCallType[key] ??= emptyCacheStats()), entry.tokens)
+    }
+    return { total, byCallType }
   }
 
   export interface DailyUsage {
@@ -80,6 +120,8 @@ export namespace SessionUsage {
       messages: number
       sessions: number
     }
+    /** O8: prompt-cache hit rate over the filtered entries, overall and per call type. */
+    cache: ReturnType<typeof cacheHitRate>
   }
 
   // In-memory cache
@@ -118,6 +160,7 @@ export namespace SessionUsage {
         }),
       }),
       cost: z.number(),
+      callType: z.string().optional(),
     }),
     async (input) => {
       const entries = await load()
@@ -129,6 +172,7 @@ export namespace SessionUsage {
         modelID: input.modelID,
         tokens: input.tokens,
         cost: input.cost,
+        ...(input.callType ? { callType: input.callType } : {}),
       }
       entries.push(entry)
       
@@ -144,6 +188,9 @@ export namespace SessionUsage {
         entry.tokens.cache.read + 
         entry.tokens.cache.write
       
+      // O15: the one cost ledger (allternit-api). Fire-and-forget.
+      void reportToLedger(entry)
+
       Bus.publish(Event.Updated, {
         sessionID: input.sessionID,
         usage: {
@@ -153,6 +200,15 @@ export namespace SessionUsage {
       })
     },
   )
+
+  async function reportToLedger(entry: UsageEntry) {
+    try {
+      const session = await Session.get(entry.sessionID).catch(() => undefined)
+      await reportLedgerCall({ ...entry, surface: (session as { surface?: string } | undefined)?.surface })
+    } catch (error) {
+      log.debug("usage ledger report failed", { error })
+    }
+  }
 
   export async function getSummary(options?: {
     sessionID?: string
@@ -272,6 +328,7 @@ export namespace SessionUsage {
       daily,
       sessions,
       grandTotal,
+      cache: cacheHitRate(filtered),
     }
   }
 
