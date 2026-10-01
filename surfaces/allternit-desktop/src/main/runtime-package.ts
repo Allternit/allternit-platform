@@ -19,6 +19,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
+import zlib from 'node:zlib';
 
 /** Bump when the preload/IPC contract the screens rely on changes. */
 export const SHELL_API = 1;
@@ -40,12 +41,25 @@ export interface RuntimeManifest {
 }
 
 export interface FeedEntry {
+  /** 2 = per-file delta feed (manifest + content-addressed objects); absent = one tarball. */
+  format?: number;
   version: string;
   build: number;
   shellApi: number;
-  url: string;
-  sha256: string;
-  size: number;
+  /** format 1: the tarball. */
+  url?: string;
+  sha256?: string;
+  size?: number;
+  /** format 2: the signed manifest, relative to the platform feed dir. */
+  manifest?: string;
+  manifestSha256?: string;
+}
+
+/** What one update had to download, for the log. */
+export interface StageStats {
+  reused: number;
+  downloaded: number;
+  downloadedBytes: number;
 }
 
 interface RuntimeState {
@@ -266,16 +280,23 @@ export class RuntimePackages {
     const finalDir = path.join(this.versionsDir, entry.version);
     fs.rmSync(staging, { recursive: true, force: true });
     try {
-      const dl = await fetchImpl(new URL(entry.url, `${base}/`).toString());
-      if (!dl.ok || !dl.body) throw new Error(`runtime download ${dl.status}`);
-      await pipeline(Readable.fromWeb(dl.body as never), fs.createWriteStream(archive));
-      if ((await sha256File(archive)) !== entry.sha256) throw new Error('runtime archive checksum mismatch');
       fs.mkdirSync(staging, { recursive: true });
-      await new Promise<void>((resolve, reject) => {
-        const tar = spawn('tar', ['-xzf', archive, '-C', staging], { stdio: 'ignore' });
-        tar.on('error', reject);
-        tar.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`tar exited ${code}`))));
-      });
+      if (entry.format === 2) {
+        const feedRoot = feedUrl.replace(/\/$/, '');
+        const stats = await this.stageDelta(entry, base, feedRoot, staging, fetchImpl);
+        this.opts.log?.info('[Runtime] update', entry.version, `reused ${stats.reused} files, downloaded ${stats.downloaded} (${(stats.downloadedBytes / 1e6).toFixed(1)} MB)`);
+      } else {
+        if (!entry.url || !entry.sha256) throw new Error('runtime feed entry has no package');
+        const dl = await fetchImpl(new URL(entry.url, `${base}/`).toString());
+        if (!dl.ok || !dl.body) throw new Error(`runtime download ${dl.status}`);
+        await pipeline(Readable.fromWeb(dl.body as never), fs.createWriteStream(archive));
+        if ((await sha256File(archive)) !== entry.sha256) throw new Error('runtime archive checksum mismatch');
+        await new Promise<void>((resolve, reject) => {
+          const tar = spawn('tar', ['-xzf', archive, '-C', staging], { stdio: 'ignore' });
+          tar.on('error', reject);
+          tar.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`tar exited ${code}`))));
+        });
+      }
       fs.rmSync(finalDir, { recursive: true, force: true });
       fs.renameSync(staging, finalDir);
       const manifest = await this.readVerified(entry.version, true);
@@ -296,6 +317,102 @@ export class RuntimePackages {
       fs.rmSync(archive, { force: true });
       fs.rmSync(staging, { recursive: true, force: true });
     }
+  }
+
+  /**
+   * Local copies by content hash: the active package (its signed manifest) and
+   * the runtime bundled in the app (resources/runtime.json `files`, written at
+   * build time). Only entries whose size still matches are offered.
+   */
+  private localIndex(): Map<string, string> {
+    const index = new Map<string, string>();
+    const add = (root: string, files: Record<string, { sha256: string; size: number }> | undefined) => {
+      for (const [rel, f] of Object.entries(files ?? {})) {
+        const abs = path.join(root, rel);
+        try {
+          if (!index.has(f.sha256) && fs.statSync(abs).size === f.size) index.set(f.sha256, abs);
+        } catch {
+          // missing locally
+        }
+      }
+    };
+    const active = this.readState().active;
+    if (active) {
+      try {
+        const dir = path.join(this.versionsDir, active);
+        add(dir, JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')).files);
+      } catch {
+        // no usable active manifest
+      }
+    }
+    try {
+      add(this.opts.resourcesPath, JSON.parse(fs.readFileSync(path.join(this.opts.resourcesPath, 'runtime.json'), 'utf8')).files);
+    } catch {
+      // app predates the bundled file list
+    }
+    return index;
+  }
+
+  /**
+   * Format 2: fetch the signed manifest, copy every file already on this
+   * machine (same content hash), and download only the rest from the
+   * content-addressed `objects/<sha256>.gz` store. The caller verifies every
+   * file against the manifest afterwards.
+   */
+  private async stageDelta(entry: FeedEntry, base: string, feedRoot: string, staging: string, fetchImpl: typeof fetch): Promise<StageStats> {
+    if (!entry.manifest || !entry.manifestSha256) throw new Error('runtime feed entry has no manifest');
+    const manifestUrl = new URL(entry.manifest, `${base}/`).toString();
+    const manRes = await fetchImpl(manifestUrl, { cache: 'no-store' });
+    if (!manRes.ok) throw new Error(`runtime manifest ${manRes.status}`);
+    const raw = Buffer.from(await manRes.arrayBuffer());
+    if (crypto.createHash('sha256').update(raw).digest('hex') !== entry.manifestSha256) throw new Error('runtime manifest checksum mismatch');
+    const sigRes = await fetchImpl(`${manifestUrl}.sig`, { cache: 'no-store' });
+    const sig = sigRes.ok ? await sigRes.text() : '';
+    if (!verifySignature(raw, sig, this.opts.publicKey)) throw new Error('runtime manifest signature invalid');
+    const manifest = JSON.parse(raw.toString('utf8')) as RuntimeManifest;
+    if (manifest.version !== entry.version || manifest.build !== entry.build || manifest.platform !== this.opts.platform) {
+      throw new Error('runtime manifest does not match the feed');
+    }
+    fs.writeFileSync(path.join(staging, 'manifest.json'), raw);
+    fs.writeFileSync(path.join(staging, 'manifest.sig'), sig);
+
+    const index = this.localIndex();
+    const stats: StageStats = { reused: 0, downloaded: 0, downloadedBytes: 0 };
+    const pending: Array<[string, { sha256: string; size: number }]> = [];
+    for (const [rel, f] of Object.entries(manifest.files)) {
+      const dst = path.join(staging, rel);
+      if (!dst.startsWith(staging + path.sep) || !/^[0-9a-f]{64}$/.test(f.sha256)) throw new Error('bad runtime manifest entry');
+      fs.mkdirSync(path.dirname(dst), { recursive: true });
+      let src = index.get(f.sha256);
+      // Confirm the content: packaging can re-sign binaries inside the app, so a listed copy may differ.
+      if (src && (await sha256File(src)) !== f.sha256) src = undefined;
+      if (!src) {
+        // An older app without a bundled file list: check the bundled copy at the same path.
+        const same = path.join(this.opts.resourcesPath, rel);
+        try {
+          if (fs.statSync(same).size === f.size && (await sha256File(same)) === f.sha256) src = same;
+        } catch {
+          // not present
+        }
+      }
+      if (src) {
+        fs.copyFileSync(src, dst, fs.constants.COPYFILE_FICLONE);
+        stats.reused += 1;
+      } else {
+        pending.push([rel, f]);
+      }
+    }
+    const download = async ([rel, f]: [string, { sha256: string; size: number }]) => {
+      const res = await fetchImpl(`${feedRoot}/objects/${f.sha256}.gz`);
+      if (!res.ok || !res.body) throw new Error(`runtime object ${rel} ${res.status}`);
+      await pipeline(Readable.fromWeb(res.body as never), zlib.createGunzip(), fs.createWriteStream(path.join(staging, rel)));
+      stats.downloaded += 1;
+      stats.downloadedBytes += Number(res.headers.get('content-length') ?? 0) || f.size;
+    };
+    for (let i = 0; i < pending.length; i += 8) {
+      await Promise.all(pending.slice(i, i + 8).map(download));
+    }
+    return stats;
   }
 
   hasPendingUpdate(): boolean {
