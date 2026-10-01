@@ -720,6 +720,16 @@ impl Exec<'_> {
     /// explicit F-node), walk its lifecycle, record the plan internally and
     /// report progress publicly (no backend identity).
     fn step(&mut self, id: &str, verified: bool) -> Step<Option<(String, ExecutionPlan)>> {
+        let (ran, plan) = self.route_node(id)?;
+        self.close_node(&ran, &plan, verified)?;
+        Ok(Some((ran, plan)))
+    }
+
+    /// The routing half of [`Self::step`]: pick the node (or its F-node
+    /// fallback) and its plan, without closing it. A node whose work runs
+    /// after routing (patch generation) closes with [`Self::close_node`] once
+    /// the work is done, so its duration and tokens land on it, not the next step.
+    fn route_node(&mut self, id: &str) -> Step<(String, ExecutionPlan)> {
         self.admit()?;
         let ledger = BudgetLedger { remaining_cost_units: 1.0e9, remaining_wall_ms: None };
         let empty = StaticModelPool::default();
@@ -735,6 +745,12 @@ impl Exec<'_> {
             }
             Err(e) => return Err(StepErr::Fail(anyhow!("route {id}: {e}"))),
         };
+        Ok((ran, plan))
+    }
+
+    /// The lifecycle + progress half of [`Self::step`].
+    fn close_node(&mut self, ran: &str, plan: &ExecutionPlan, verified: bool) -> Step<()> {
+        let ran = ran.to_string();
         let mut s = NodeState::Declared;
         for to in [NodeState::Admitted, NodeState::Ready, NodeState::Leased, NodeState::Spawned, NodeState::Running,
                    NodeState::OutputReady, NodeState::Verifying] {
@@ -756,7 +772,7 @@ impl Exec<'_> {
             "started_at": speed["started_at"], "duration_ms": speed["duration_ms"], "tokens_in": speed["tokens_in"],
             "tokens_out": speed["tokens_out"], "tokens": speed["tokens"], "tok_per_s": speed["tok_per_s"],
             "wait_ms": speed["wait_ms"] }))?;
-        Ok(Some((ran, plan)))
+        Ok(())
     }
 
     fn tests(&mut self, node: &str, phase: &str) -> Step<(bool, String)> {
@@ -905,8 +921,10 @@ impl Exec<'_> {
         let mut passed: Option<(String, String, String)> = None; // (target receipt ref, path, content)
         let mut failure = before.clone();
         for (attempt, gen) in [(1u32, "N11"), (2, "N17")] {
-            let Some((_, plan)) = self.step(gen, true)? else { continue };
-            let (path, content) = self.propose(&plan, attempt, goal, &failure)?;
+            let (ran, plan) = self.route_node(gen)?;
+            let proposed = self.propose(&plan, attempt, goal, &failure);
+            self.close_node(&ran, &plan, proposed.is_ok())?;
+            let (path, content) = proposed?;
             // N12 parse/shape check (S0): repo-relative, no traversal, not .git, non-empty.
             let safe = !path.is_empty() && !content.is_empty() && !path.starts_with('/')
                 && !Path::new(&path).components().any(|c| matches!(c, std::path::Component::ParentDir))
