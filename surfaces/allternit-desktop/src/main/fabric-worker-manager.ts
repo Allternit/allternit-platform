@@ -22,6 +22,7 @@ import { app } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import log from 'electron-log';
+import { runtimeResource } from './runtime-home.js';
 import { URLS } from './config.js';
 
 export type FabricWorkerStatus = 'stopped' | 'starting' | 'up' | 'down';
@@ -62,9 +63,9 @@ export class FabricWorkerManager {
   private resolveBinaryPath(): string | null {
     const binaryName = process.platform === 'win32' ? 'gizzi-code.exe' : 'gizzi-code';
     const candidates = app.isPackaged
-      ? [path.join(process.resourcesPath ?? '', 'bin', binaryName)]
+      ? [runtimeResource('bin', binaryName)]
       : [
-          path.join(process.resourcesPath ?? '', 'bin', binaryName),
+          runtimeResource('bin', binaryName),
           path.join(app.getAppPath(), '..', '..', 'cmd', 'gizzi-code', 'dist', binaryName),
           path.join(__dirname, '..', '..', 'resources', 'bin', binaryName),
         ];

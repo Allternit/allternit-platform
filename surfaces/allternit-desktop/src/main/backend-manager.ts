@@ -22,6 +22,7 @@ import * as path from 'path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 import log from 'electron-log';
+import { runtimeResource } from './runtime-home.js';
 import { PORTS, URLS, webhookReceiverUrl } from './config.js';
 import { resolveApiDataDir } from './desktop-data-dir.js';
 import { spawnSidecar } from './process-lifeline.js';
@@ -592,12 +593,12 @@ export class BackendManager {
     const repoRoot = path.resolve(__dirname, '..', '..', '..', '..');
     const candidates = app.isPackaged
       ? [
-          path.join(process.resourcesPath ?? '', 'bin', binaryName),
+          runtimeResource('bin', binaryName),
         ]
       : [
           path.join(repoRoot, 'target', 'debug', binaryName),
           path.join(repoRoot, 'target', 'release', binaryName),
-          path.join(process.resourcesPath ?? '', 'bin', binaryName),
+          runtimeResource('bin', binaryName),
           path.join(__dirname, '..', '..', 'resources', 'bin', binaryName),
         ];
 
@@ -621,7 +622,7 @@ export class BackendManager {
     const repoRoot = path.resolve(__dirname, '..', '..', '..', '..');
     const candidates = app.isPackaged
       ? [
-          path.join(process.resourcesPath ?? '', 'platform'),
+          runtimeResource('platform'),
         ]
       : [
           path.join(repoRoot, 'surfaces', 'ai.allternit.com', 'dist'),

@@ -67,6 +67,8 @@ import { createStartupWindow } from './startup-window.js';
 import { notebookManager } from './notebook-manager.js';
 import { voiceManager } from './voice-manager.js';
 import { PLATFORM_MANIFEST, shouldUpdateBackend } from './manifest.js';
+import { runtimePackages, runtimeResource } from './runtime-home.js';
+import { DEFAULT_RUNTIME_FEED } from './runtime-package.js';
 import {
   checkPermissions,
   presentGuide,
@@ -176,7 +178,7 @@ function resolveLocalPlatformStaticPath(): string | null {
   // whatever's sitting there could have been built by a plain `vite build`
   // with no desktop flags at all, which is exactly what broke this before.
   const candidates = app.isPackaged
-    ? [join(process.resourcesPath ?? '', 'platform')]
+    ? [runtimeResource('platform')]
     : [
         join(repoRoot, 'surfaces', 'allternit-desktop', 'resources', 'platform'),
         join(repoRoot, 'surfaces', 'ai.allternit.com', 'dist'),
@@ -251,6 +253,7 @@ autoUpdater.on('update-not-available', () => {
   broadcastUpdateStatus({ state: 'up-to-date' });
 });
 autoUpdater.on('update-downloaded', (_event, releaseNotes, releaseName, _releaseDate, updateURL) => {
+  appUpdateDownloaded = true;
   broadcastUpdateStatus({
     state: 'downloaded',
     version: releaseName,
@@ -262,6 +265,31 @@ autoUpdater.on('error', (error) => {
   log.error('[autoUpdater]', error);
   broadcastUpdateStatus({ state: 'error', message: error?.message ?? String(error) });
 });
+
+let appUpdateDownloaded = false;
+let runtimeUpdateTimer: NodeJS.Timeout | null = null;
+
+/**
+ * Runtime packages (allternit-api, gizzi-code, screens) update in the
+ * background from the signed runtime feed; a staged one applies on restart.
+ * ALLTERNIT_RUNTIME_FEED overrides the feed; "off" disables it.
+ */
+function scheduleRuntimeUpdates() {
+  const feed = process.env.ALLTERNIT_RUNTIME_FEED?.trim() || DEFAULT_RUNTIME_FEED;
+  if (!app.isPackaged || feed === 'off' || runtimeUpdateTimer) return;
+  const check = async () => {
+    try {
+      const staged = await runtimePackages().checkForUpdate(feed);
+      if (staged) broadcastUpdateStatus({ state: 'downloaded', version: `runtime ${staged}` });
+    } catch (err) {
+      log.warn('[Runtime] update check failed:', (err as Error).message ?? err);
+    }
+  };
+  runtimeUpdateTimer = setTimeout(function tick() {
+    void check();
+    runtimeUpdateTimer = setTimeout(tick, 6 * 60 * 60 * 1000);
+  }, 60 * 1000);
+}
 
 function broadcastUpdateStatus(status: UpdateStatus) {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -1082,6 +1110,10 @@ async function initializeApp(): Promise<void> {
 
 async function initializeBundledMode(): Promise<void> {
   log.info('[Main] Bundled mode - managing local backend');
+  if (app.isPackaged) {
+    // Pick the runtime package (allternit-api, gizzi-code, screens) before any of it starts.
+    await runtimePackages().prepareForLaunch().catch((err) => log.warn('[Runtime] prepare failed, using bundled runtime:', err));
+  }
   
   // Show startup window: full onboarding wizard on first launch / when signed
   // out, plain loading screen for returning signed-in users. Self-hosted
@@ -1273,6 +1305,13 @@ async function initializeBundledMode(): Promise<void> {
         },
       });
     } catch (apiErr) {
+      if (runtimePackages().failTrial()) {
+        // The just-updated runtime would not start: it is marked bad, so relaunch on the previous one.
+        log.error('[Runtime] updated runtime failed to start; rolling back and relaunching:', apiErr);
+        app.relaunch();
+        app.exit(0);
+        return;
+      }
       const message = (apiErr as Error).message ?? String(apiErr);
       sendToSplash('error', message);
       serviceState.api = { status: 'down', detail: message.slice(0, 120) };
@@ -1283,6 +1322,8 @@ async function initializeBundledMode(): Promise<void> {
     serviceState.api = { status: 'up', detail: `Connected on ${URLS.API}` };
     serviceState.gateway = { status: 'up', detail: `Connected on ${URLS.API}` };
     pushServiceState();
+    runtimePackages().confirmHealthy();
+    scheduleRuntimeUpdates();
     void registerThisComputer();
     store.set('backend.lastLocalVersion', PLATFORM_MANIFEST.backend.version);
 
@@ -2729,6 +2770,12 @@ ipcMain.handle('app:check-for-updates', async () => {
 handleGuarded('app:install-update', async () => {
   // Clean up first so before-quit does not cancel the updater's own quit.
   await runQuitCleanup();
+  if (!appUpdateDownloaded && runtimePackages().hasPendingUpdate()) {
+    // Only the runtime changed: a restart promotes the staged package.
+    app.relaunch();
+    app.exit(0);
+    return;
+  }
   autoUpdater.quitAndInstall();
 });
 // Preload uses sendSync at module load; handle() only answers invoke().
