@@ -12,7 +12,7 @@ import { loadAdapterRegistry, type AdapterRegistry } from "./adapters/registry.j
 import { openDatabase, type Db } from "./store/db.js";
 import { listAccounts, preferredReadyAccount } from "./store/queries.js";
 import { EventLog } from "./events/log.js";
-import { SseHub } from "./events/sse.js";
+import { SseHub, createSubscriber } from "./events/sse.js";
 import { CallerOutbox } from "./events/outbox.js";
 import { Notifier } from "./events/notify.js";
 import {
@@ -190,6 +190,9 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
       gatewayTasks: {
         submit: (body) => udsJson("POST", "/v1/tasks", body),
         get: (taskId) => udsJson("GET", `/v1/tasks/${encodeURIComponent(taskId)}`),
+        // Live task events (reply deltas, reasoning) as the worker logs them; returns unsubscribe.
+        subscribe: (taskId, onEvent) =>
+          hub.subscribe(taskId, createSubscriber((e) => { try { onEvent(e as { kind?: string; payload?: unknown }); } catch { /* adapter's problem */ } return true; })),
         accountState: async (provider) => {
           const all = listAccounts(db).filter((a) => a.provider === provider && a.enabled);
           const best = preferredReadyAccount(all, provider) ?? all.find((a) => a.preferred) ?? all[0];

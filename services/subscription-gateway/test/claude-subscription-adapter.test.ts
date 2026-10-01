@@ -96,3 +96,29 @@ describe("claude-subscription adapter", () => {
     expect(await p.contextOpen({ agentId: "claude" })).toMatchObject({ ok: false, error: { code: "VENDOR_UNAVAILABLE" } });
   });
 });
+
+describe("claude-subscription thinking", () => {
+  it("streams reasoning deltas as thinking activity and attaches the thought to the reply", async () => {
+    const f = fakeTasks();
+    let onEvent: ((e: { kind?: string; payload?: unknown }) => void) | null = null;
+    f.tasks.subscribe = (_id, cb) => { onEvent = cb; return () => { onEvent = null; }; };
+    const origGet = f.tasks.get;
+    let polls = 0;
+    f.tasks.get = async (id) => {
+      polls += 1;
+      if (polls === 1) { onEvent?.({ kind: "reply", payload: { t: "reply", event: { type: "reply.reasoning.delta", delta: "Weighing " } } }); onEvent?.({ kind: "reply", payload: { t: "reply", event: { type: "reply.reasoning.delta", delta: "the options." } } }); }
+      return origGet(id);
+    };
+    const p = new ClaudeSubscriptionProvider({ tasks: f.tasks, pollMs: 1, sleep: async () => {} });
+    const c = await p.contextOpen({ agentId: "claude" });
+    if (!c.ok) throw new Error("open");
+    await p.contextMessage({ contextId: c.value.contextId, correlationId: "t1", text: "decide" });
+    const ev = await p.events({ contextId: c.value.contextId });
+    const evs = ev.ok ? ev.value.events.map((e) => e.event) : [];
+    const acts = evs.filter((e) => e.type === "agent.activity.started" && (e.payload as { kind?: string }).kind === "thinking");
+    expect((acts.at(-1)!.payload as { detail: string }).detail).toBe("Weighing the options.");
+    const done = evs.find((e) => e.type === "agent.message.completed")!;
+    expect((done.payload as { content?: unknown[] }).content).toEqual([{ type: "thinking", text: "Weighing the options." }]);
+    expect(onEvent).toBeNull(); // unsubscribed after the turn
+  });
+});
