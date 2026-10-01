@@ -7,6 +7,22 @@ Releases are tagged `desktop-v<version>`.
 
 (nothing yet)
 
+## [1.1.3] — 2026-10-01
+
+First public release since 1.1.1, for macOS (Apple Silicon and Intel) and
+Windows. Built by release-workflow run 36918022068.
+
+### Fixed
+- **The Windows installer builds again.** Two changes made after 1.1.1 broke
+  the Windows release job: the workspace UI was resolved through bash, which
+  returns a path Node cannot open on Windows, and the installer filename
+  pattern used a build-suffix variable that Windows cannot hold when empty.
+- Windows ships without `allternit-mux`, which is Unix-only (#781).
+
+### Changed
+- The app updates `allternit-api`, `gizzi-code` and the workspace screens
+  from signed runtime packages, without a full app update (#1137).
+
 ## [1.1.1] — 2026-09-08
 
 ### Fixed
