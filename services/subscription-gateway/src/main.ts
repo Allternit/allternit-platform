@@ -1,7 +1,7 @@
 // Boot — order matters: config → secret-store gate (D3/D15: refuse without
 // it) → store+migrations → events/http wiring → UDS (+TCP if enabled) → log binds.
 import { readFileSync } from "node:fs";
-import type { Server } from "node:http";
+import { request as httpRequest, type Server } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -21,7 +21,7 @@ import {
   selectKeychainBackend,
   type KeychainBackend,
 } from "./security/keychain.js";
-import { ensureCliToken } from "./security/tokens.js";
+import { ensureCliToken, CLI_TOKEN_ACCOUNT } from "./security/tokens.js";
 import { createAaiHost } from "./aai/registry.js";
 import { closeServer, createServer, listenTcp, listenUds } from "./http/server.js";
 import { createScheduler } from "./queue/scheduler.js";
@@ -156,6 +156,27 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
   const activity = createActivityTracker();
   const dispatch: DispatchDeps = { db, registry: adapterRegistry, router, scheduler };
 
+  const udsJson = (method: string, path: string, body?: unknown): Promise<{ status: number; body: Record<string, unknown> }> =>
+    new Promise((resolve, reject) => {
+      const token = keychain.get(CLI_TOKEN_ACCOUNT) ?? "";
+      const payload = body === undefined ? undefined : JSON.stringify(body);
+      const req = httpRequest(
+        { socketPath: config.udsPath, path, method, headers: { host: "localhost", authorization: `Bearer ${token}`, ...(payload ? { "content-type": "application/json" } : {}) } },
+        (res) => {
+          let raw = "";
+          res.setEncoding("utf8");
+          res.on("data", (c) => (raw += c));
+          res.on("end", () => {
+            try { resolve({ status: res.statusCode ?? 0, body: raw ? (JSON.parse(raw) as Record<string, unknown>) : {} }); }
+            catch { resolve({ status: res.statusCode ?? 0, body: { error: raw.slice(0, 200) } }); }
+          });
+        },
+      );
+      req.on("error", reject);
+      if (payload) req.write(payload);
+      req.end();
+    });
+
   const app = createServer({
     aai: createAaiHost(config, process.env, deps.fetchImpl, {
       subscriptionProfile: async (provider) => {
@@ -163,6 +184,17 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
         if (!account) return null;
         await pool.deactivate({ provider: account.provider, account_id: account.account_id });
         return { dir: pool.userDataDirFor(account.profile_ref), account_id: account.account_id };
+      },
+      // Vendor adapters that run their turns as this gateway's own tasks (claude-subscription): the task API over
+      // our UDS with the cli-token, so every rule a /v1/tasks caller meets (initiated_by, routing, mapping) applies.
+      gatewayTasks: {
+        submit: (body) => udsJson("POST", "/v1/tasks", body),
+        get: (taskId) => udsJson("GET", `/v1/tasks/${encodeURIComponent(taskId)}`),
+        accountState: async (provider) => {
+          const all = listAccounts(db).filter((a) => a.provider === provider && a.enabled);
+          const best = preferredReadyAccount(all, provider) ?? all.find((a) => a.preferred) ?? all[0];
+          return best ? { health: best.session_health, remainingPct: best.usage?.remaining_pct ?? null, resetsAt: best.usage?.resets_at ?? null } : null;
+        },
       },
     }),
     db,

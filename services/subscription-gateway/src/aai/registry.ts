@@ -226,6 +226,12 @@ export { botExecutionBindingSchema };
  */
 export interface VendorContext {
   subscriptionProfile?: (provider: string) => Promise<{ dir: string; account_id: string } | null>;
+  /** This gateway's own task API (submit/get over its UDS) plus "is a subscription login Ready". */
+  gatewayTasks?: {
+    submit(body: Record<string, unknown>): Promise<{ status: number; body: Record<string, unknown> }>;
+    get(taskId: string): Promise<{ status: number; body: Record<string, unknown> }>;
+    accountState(provider: string): Promise<{ health: string; remainingPct?: number | null; resetsAt?: string | null } | null>;
+  };
 }
 
 export async function registerVendorAdapters(
