@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { RuntimePackages, type RuntimeManifest } from './runtime-package';
+import { RuntimePackages, type RuntimeManifest } from './runtime-package.js';
 
 const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
 const PUB = publicKey.export({ type: 'spki', format: 'pem' }).toString();
