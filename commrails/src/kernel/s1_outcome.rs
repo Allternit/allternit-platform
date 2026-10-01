@@ -12,7 +12,42 @@ use std::time::Duration;
 
 use serde_json::{json, Map, Value};
 
-use crate::judge::types::NodeOutcome;
+use crate::judge::types::{NodeOutcome, ToolDecision};
+
+/// Shadow-ledger ids for the S1 permission GATE (shared with the TS client).
+pub const PERMISSION_GATE_BANK: &str = "bank.permission_gate";
+pub const PERMISSION_GATE_QUESTION: &str = "may_proceed";
+
+/// Q26 tighten-only combinator: the result is never looser than the incumbent,
+/// so an S1 `Allow` can never turn `Ask`/`Deny` into `Allow`.
+pub fn tighten(incumbent: ToolDecision, s1: Option<ToolDecision>) -> ToolDecision {
+    let rank = |d: ToolDecision| match d { ToolDecision::Allow => 0, ToolDecision::Ask => 1, ToolDecision::Deny => 2 };
+    match s1 {
+        Some(r) if rank(r) > rank(incumbent) => r,
+        _ => incumbent,
+    }
+}
+
+/// One shadow GATE question for `/v1/decision`.
+#[derive(Debug, Clone)]
+pub struct GateAsk<'a> {
+    pub producer: &'a str,
+    pub bank: &'a str,
+    pub primitive_id: &'a str,
+    pub question_id: &'a str,
+    /// "GATE" or "CONFIDENCE_GATE".
+    pub motif: &'a str,
+    pub instructions: &'a str,
+    pub subject_ref: Option<&'a str>,
+    pub extensions: Map<String, Value>,
+}
+
+/// What came back from a GATE: the shadow-ledger id and P(true).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GateReadout {
+    pub decision_id: Option<String>,
+    pub p_true: Option<f64>,
+}
 
 pub const DEFAULT_RUNTIME_URL: &str = "http://127.0.0.1:7717";
 pub const VERIFY_REF_PREFIX: &str = "s1-verify:";
@@ -77,6 +112,60 @@ impl OutcomeReporter {
                 false
             }
         }
+    }
+
+    /// POST one GATE to `/v1/decision` (backend `ALLTERNIT_S1_BACKEND`, default `auto`).
+    /// `None` on any failure; never errors.
+    pub async fn gate(&self, ask: &GateAsk<'_>, state: &str) -> Option<GateReadout> {
+        if !self.enabled {
+            return None;
+        }
+        let client = reqwest::Client::builder().timeout(self.timeout).build().ok()?;
+        let mut ext = ask.extensions.clone();
+        ext.insert("x-motif".into(), json!(ask.motif));
+        ext.insert("x-primitive_id".into(), json!(ask.primitive_id));
+        if let Some(s) = ask.subject_ref {
+            ext.insert("x-subject_ref".into(), json!(s));
+        }
+        let now = chrono::Utc::now().to_rfc3339();
+        let request = json!({
+            "envelope": {"abi_version": "1.0.0", "schema_id": "allternit.kernel.DecisionRequestV1", "schema_version": "1.0.0",
+                "run_id": ask.producer, "session_id": ask.producer, "task_id": ask.producer, "state_version": 0,
+                "created_at": now, "producer": ask.producer, "trace_id": ask.producer, "provenance": []},
+            "operation": "GATE", "state_projection_ref": format!("state.{}", ask.producer),
+            "decision_bank_id": ask.bank, "question_id": ask.question_id, "instructions": ask.instructions,
+            "latency_class": "INTERACTIVE", "extensions": ext,
+        });
+        let backend = std::env::var("ALLTERNIT_S1_BACKEND").unwrap_or_else(|_| "auto".into());
+        let mut rb = client
+            .post(format!("{}/v1/decision", self.base_url))
+            .header("content-type", "application/json")
+            .body(json!({ "request": request, "state": state, "backend": backend }).to_string());
+        if let Some(t) = &self.token {
+            rb = rb.bearer_auth(t);
+        }
+        let r = rb.send().await.ok()?;
+        if !r.status().is_success() {
+            return None;
+        }
+        let v: Value = r.json().await.ok()?;
+        Some(GateReadout {
+            decision_id: v.get("extensions").and_then(|e| e.get("x-decision_id")).and_then(Value::as_str).map(str::to_owned),
+            p_true: v.get("probabilities").and_then(|p| p.get("true")).and_then(Value::as_f64),
+        })
+    }
+
+    /// Detached shadow GATE (never awaited, never changes the caller's decision).
+    /// Off under `cfg(test)` so unit tests never write to a real local ledger.
+    pub fn spawn_gate(&self, ask: GateAsk<'static>, state: String) {
+        if !self.enabled || cfg!(test) {
+            return;
+        }
+        let Ok(handle) = tokio::runtime::Handle::try_current() else { return };
+        let me = self.clone();
+        handle.spawn(async move {
+            me.gate(&ask, &state).await;
+        });
     }
 
     /// Detached: returns immediately, the run never waits on or sees the result.
@@ -185,6 +274,40 @@ mod tests {
         report_classify_outcome(&reporter(&url), "dec-9", "TEST_ASSERTION", "parser:test");
         let got = tokio::time::timeout(Duration::from_secs(3), rx.recv()).await.unwrap().unwrap();
         assert!(got.contains("\"truth\":\"TEST_ASSERTION\"") && got.contains("dec-9"), "{got}");
+    }
+
+    #[test]
+    fn tighten_never_loosens() {
+        use ToolDecision::*;
+        assert_eq!(tighten(Ask, Some(Allow)), Ask);
+        assert_eq!(tighten(Deny, Some(Allow)), Deny);
+        assert_eq!(tighten(Allow, Some(Ask)), Ask);
+        assert_eq!(tighten(Deny, None), Deny);
+        let rank = |d: ToolDecision| d as u8;
+        for inc in [Allow, Ask, Deny] {
+            for s1 in [None, Some(Allow), Some(Ask), Some(Deny)] {
+                assert!(rank(tighten(inc, s1)) >= rank(inc));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn gate_posts_a_gate_request_with_bank_primitive_subject() {
+        let (url, mut rx) = mock().await;
+        let r = OutcomeReporter { base_url: url, token: None, timeout: Duration::from_secs(2), enabled: true };
+        let ask = GateAsk {
+            producer: "t", bank: PERMISSION_GATE_BANK, primitive_id: "permission.x", question_id: PERMISSION_GATE_QUESTION,
+            motif: "GATE", instructions: "i", subject_ref: Some("s1"), extensions: Map::new(),
+        };
+        assert_eq!(r.gate(&ask, "state").await, Some(GateReadout::default()));
+        let got = rx.recv().await.unwrap();
+        assert!(got.starts_with("POST /v1/decision "), "{got}");
+        let body: Value = serde_json::from_str(got.split_once('|').unwrap().1).unwrap();
+        assert_eq!(body["request"]["operation"], "GATE");
+        assert_eq!(body["request"]["decision_bank_id"], PERMISSION_GATE_BANK);
+        assert_eq!(body["request"]["extensions"]["x-subject_ref"], "s1");
+        assert_eq!(body["request"]["extensions"]["x-primitive_id"], "permission.x");
+        assert_eq!(body["state"], "state");
     }
 
     #[tokio::test]
