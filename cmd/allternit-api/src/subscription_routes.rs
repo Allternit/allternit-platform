@@ -94,6 +94,35 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/subscriptions/mcp", post(crate::subscription_mcp::handle_rpc))
 }
 
+// ── Local gateway ────────────────────────────────────────────────────────────
+
+/// A subscription gateway on this same machine. An Allternit cloud computer
+/// runs the runtime and the gateway together, so it is its own Sessions
+/// computer: no binding to another computer is needed. Opt-in, set by the
+/// cloud computer image: `ALLTERNIT_LOCAL_SUBS_GATEWAY=1`, optional
+/// `ALLTERNIT_LOCAL_SUBS_GATEWAY_PORT` (7788) and
+/// `ALLTERNIT_LOCAL_SUBS_GATEWAY_STATE_DIR` (/var/lib/subs-gateway, whose
+/// keychain.json holds the gateway's cli-token).
+pub(crate) struct LocalGateway {
+    port: u16,
+    token: String,
+}
+
+pub(crate) fn local_gateway() -> Option<LocalGateway> {
+    local_gateway_from(|key| std::env::var(key).ok())
+}
+
+fn local_gateway_from(env: impl Fn(&str) -> Option<String>) -> Option<LocalGateway> {
+    if !matches!(env("ALLTERNIT_LOCAL_SUBS_GATEWAY").as_deref(), Some("1") | Some("true")) {
+        return None;
+    }
+    let port = env("ALLTERNIT_LOCAL_SUBS_GATEWAY_PORT").and_then(|p| p.parse().ok()).unwrap_or(DEFAULT_GATEWAY_PORT);
+    let dir = env("ALLTERNIT_LOCAL_SUBS_GATEWAY_STATE_DIR").unwrap_or_else(|| "/var/lib/subs-gateway".to_string());
+    let raw = std::fs::read_to_string(std::path::Path::new(&dir).join("keychain.json")).ok()?;
+    let token = serde_json::from_str::<Value>(&raw).ok()?.get("cli-token")?.as_str()?.to_string();
+    (!token.is_empty()).then_some(LocalGateway { port, token })
+}
+
 // ── Storage ──────────────────────────────────────────────────────────────────
 
 struct Binding {
@@ -181,6 +210,21 @@ fn coded(status: StatusCode, body: Value) -> Response {
 // ── Status / binding ─────────────────────────────────────────────────────────
 
 async fn get_status(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>) -> Response {
+    if let Some(local) = local_gateway() {
+        let disclosure = match disclosure_json(&state, &user.user_id) {
+            Ok(d) => d,
+            Err(e) => return db_error(e),
+        };
+        return Json(json!({
+            "bound": true,
+            "local": true,
+            "guest_port": local.port,
+            "token_set": true,
+            "computer": {"id": "local", "name": "This computer", "running": true},
+            "disclosure": disclosure,
+        }))
+        .into_response();
+    }
     let binding = match load_binding(&state.db, &user.user_id) {
         Ok(b) => b,
         Err(e) => return db_error(e),
@@ -713,6 +757,28 @@ pub(crate) async fn forward(
     if body.len() > GATEWAY_BODY_LIMIT {
         return error_response(StatusCode::PAYLOAD_TOO_LARGE, "request body exceeds 10 MB");
     }
+    if let Some(local) = local_gateway() {
+        let mut body = body;
+        if method == Method::POST && path.trim_end_matches('/') == "v1/tasks" {
+            let action = headers.get(HUMAN_ACTION_HEADER).and_then(|v| v.to_str().ok());
+            match prepare_task_submission(&state.db, &user.user_id, &body, action) {
+                Ok(stamped) => body = Bytes::from(stamped),
+                Err(Ok(refusal)) => return refusal.into_response(),
+                Err(Err(e)) => return db_error(e),
+            }
+        }
+        return crate::computer_ws::forward_to_url(
+            &format!("http://127.0.0.1:{}", local.port),
+            local.port,
+            &path,
+            query,
+            method,
+            &gateway_headers(headers, &local.token),
+            body,
+            GATEWAY_REQUEST_TIMEOUT,
+        )
+        .await;
+    }
     let binding = match load_binding(&state.db, &user.user_id) {
         Ok(Some(b)) if !b.token.is_empty() => b,
         Ok(_) => {
@@ -819,6 +885,40 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         (format!("http://{addr}"), seen)
+    }
+
+    #[test]
+    fn local_gateway_is_opt_in_and_reads_the_gateway_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let state_dir = dir.path().to_string_lossy().to_string();
+        let env = |on: Option<&'static str>, sd: String| {
+            move |key: &str| match key {
+                "ALLTERNIT_LOCAL_SUBS_GATEWAY" => on.map(String::from),
+                "ALLTERNIT_LOCAL_SUBS_GATEWAY_STATE_DIR" => Some(sd.clone()),
+                _ => None,
+            }
+        };
+        std::fs::write(dir.path().join("keychain.json"), r#"{"cli-token":"gw-token"}"#).unwrap();
+        assert!(local_gateway_from(env(None, state_dir.clone())).is_none(), "off unless the image opts in");
+        let local = local_gateway_from(env(Some("1"), state_dir.clone())).unwrap();
+        assert_eq!((local.port, local.token.as_str()), (7788, "gw-token"));
+        std::fs::write(dir.path().join("keychain.json"), r#"{}"#).unwrap();
+        assert!(local_gateway_from(env(Some("1"), state_dir)).is_none(), "no token yet: not bound");
+    }
+
+    #[tokio::test]
+    async fn the_local_gateway_gets_the_token_and_the_request() {
+        let (url, seen) = fake_gateway().await;
+        let port: u16 = url.rsplit(':').next().unwrap().parse().unwrap();
+        let response = crate::computer_ws::forward_to_url(
+            &url, port, "v1/accounts", None, Method::GET,
+            &gateway_headers(&HeaderMap::new(), "gw-token"), Bytes::new(), GATEWAY_REQUEST_TIMEOUT,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen[0].1, "/v1/accounts");
+        assert_eq!(seen[0].2.as_deref(), Some("Bearer gw-token"));
     }
 
     async fn setup() -> (Router, Arc<AppState>, Seen) {
