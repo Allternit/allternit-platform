@@ -544,6 +544,12 @@ fn s0_error_code(out: &str) -> &'static str {
     else { "UNKNOWN" }
 }
 
+/// JSON Schema of a proposed whole-file patch (O10).
+pub fn patch_schema() -> Value {
+    json!({ "type": "object", "additionalProperties": false, "required": ["path", "content"],
+        "properties": { "path": { "type": "string", "minLength": 1 }, "content": { "type": "string" } } })
+}
+
 /// Ask the S1 decision runtime (SHADOW, POST /v1/decision, CLASSIFY_ERROR) to
 /// classify the failure S0 just reproduced, record the result, then report the
 /// S0 truth as ground truth. Advisory only: the verdict is ignored, every error
@@ -800,24 +806,26 @@ impl Exec<'_> {
                 let entry = self.pool.as_ref().and_then(|p| p.entries.iter().find(|e| e.backend_id == backend)).cloned();
                 let model = entry.as_ref().and_then(|e| e.extensions.as_ref()?.get("x-model_ref")?.as_str()?.split_once('/'))
                     .map(|(p, m)| (p.to_string(), m.to_string()));
-                let reply = self.h.block_on(crate::gizzi_completion::complete_ephemeral_usage(&prompt, Some(sys), model.as_ref()));
-                if let Some((_, u)) = &reply {
+                // O10: the {path, content} reply is schema-constrained and
+                // validated; the tolerant parse is the logged fallback. (The
+                // patch format itself becomes anchored edits later, Q5/memo C.)
+                let schema = patch_schema();
+                let reply = self.h.block_on(crate::structured_output::complete_structured(&prompt, Some(sys), model.as_ref(), &schema))
+                    .map(|r| (crate::structured_output::resolve(&r, &schema, "agency.executor.patch"), r));
+                if let Some((_, r)) = &reply {
+                    let u = r.usage;
                     used.tokens += u.tokens;
                     used.tokens_in += u.tokens_in;
                     used.tokens_out += u.tokens_out;
                     used.cost_usd += u.cost_usd;
                 }
-                let json = reply.as_ref().and_then(|(text, _)| {
-                    let (a, b) = (text.find('{')?, text.rfind('}')?);
-                    let v: Value = serde_json::from_str(&text[a..=b]).ok()?;
-                    (v["path"].is_string() && v["content"].is_string()).then_some(v)
-                });
+                let json = reply.as_ref().and_then(|(v, _)| v.clone());
                 if let Some(j) = json {
                     found = Some(j);
                     break;
                 }
                 tracing::warn!(run_id = %self.run_id, backend = %backend,
-                    reply = %reply.as_ref().map(|(t, _)| t.chars().take(200).collect::<String>()).unwrap_or_else(|| "<no answer>".into()),
+                    reply = %reply.as_ref().map(|(_, r)| r.text.chars().take(200).collect::<String>()).unwrap_or_else(|| "<no answer>".into()),
                     "cognition backend gave no valid JSON patch; trying the next backend");
                 let Some(pool) = self.pool.as_mut() else { break };
                 pool.entries.retain(|e| e.backend_id != backend);
@@ -1250,6 +1258,17 @@ mod s1_shadow_tests {
         let (p, cfg, _) = apply_policy(mixed, RouterConfig::default(), &eff, &json!({})).unwrap();
         assert_eq!(route(&p, &cfg, &gen_node("N1", "S2", "cap.x")).backend_id, "be.l");
         assert!(!cfg.policy.allow_remote);
+    }
+
+    #[test]
+    fn patch_schema_validates_replies() {
+        let ok = |v: Value| crate::structured_output::validate(&patch_schema(), &v).is_ok();
+        assert!(ok(json!({ "path": "src/a.py", "content": "x = 1\n" })));
+        assert!(!ok(json!({ "path": "src/a.py" })));
+        assert!(!ok(json!({ "path": "", "content": "x" })));
+        assert!(!ok(json!({ "path": "a", "content": 3 })));
+        let fenced = "```json\n{\"path\":\"a.py\",\"content\":\"y\"}\n```";
+        assert_eq!(crate::structured_output::parse_text(fenced, &patch_schema(), "t"), Some(json!({ "path": "a.py", "content": "y" })));
     }
 
     #[test]
