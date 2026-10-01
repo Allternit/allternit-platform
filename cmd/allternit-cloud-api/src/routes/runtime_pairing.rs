@@ -1032,12 +1032,18 @@ async fn verify_device_token(
         .bind(&device.user_id)
         .fetch_optional(&state.db)
         .await?;
+    // The device owner's Clerk org roles, so the peer service can keep an
+    // org owner/admin an owner/admin locally (it never sees the Clerk
+    // session). Best effort: empty on any Clerk failure.
+    let organizations =
+        crate::services::user_trust::clerk_org_memberships(&device.user_id).await;
     Ok(Json(serde_json::json!({
         "runtimeId": device.id,
         "userId": device.user_id,
         "name": device.name,
         "status": device.status,
         "email": email,
+        "organizations": organizations,
     })))
 }
 

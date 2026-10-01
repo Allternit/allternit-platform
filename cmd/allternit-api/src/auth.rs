@@ -933,6 +933,12 @@ pub async fn auth_middleware(
                         .and_then(|v| v.to_str().ok())
                         .filter(|s| !s.is_empty())
                         .map(|s| s.to_string());
+                    // The role comes only from the cloud-verified identity
+                    // (the owner's Clerk memberships), never from a header.
+                    let organization_role = header_org
+                        .as_deref()
+                        .and_then(|org| identity.role_in(org))
+                        .map(str::to_string);
                     let email = header_email
                         .filter(|value| !value.contains("@users.allternit.local"))
                         .or(identity.email);
@@ -943,7 +949,7 @@ pub async fn auth_middleware(
                         avatar_url: None,
                         tenant_id: header_org.clone(),
                         organization_id: header_org,
-                        organization_role: None,
+                        organization_role,
                         organization_slug: None,
                     };
                     match ensure_user_in_db(&state.db, &user) {
