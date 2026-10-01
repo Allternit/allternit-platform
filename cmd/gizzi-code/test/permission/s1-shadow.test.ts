@@ -66,7 +66,7 @@ test("ask path: S1 allow does not skip the card; the person's reply is the outco
           id, sessionID: `ses_${reply}`, permission: "bash", patterns: ["make deploy"], metadata: {}, always: [],
           ruleset: [{ permission: "bash", pattern: "*", action: "ask" }],
         }).then(() => (settled = true), (e) => e)
-        await settle()
+        for (let i = 0; i < 100 && !(await PermissionNext.list()).some((r: any) => r.id === id); i++) await settle()
         expect(settled).toBe(false) // still waiting on the person despite S1's confident allow
         expect(calls[0].body.request.extensions["x-subject_ref"]).toBe(`gizzi-permission:${id}`)
         await PermissionNext.reply({ requestID: id, reply })
