@@ -635,7 +635,11 @@ pub(crate) fn adapter_for_auth(vendor: &str, auth_type: &str) -> Option<&'static
     match (vendor, auth_type) {
         ("anthropic", "browser_session") => Some("claude-subscription"),
         ("anthropic", "api_key") => Some("claude-managed-agents"),
-        ("openai", "browser_session") | ("openai", "desktop_session") => Some("chatgpt-dots"),
+        // ChatGPT browser sign-in is chat (dots need a plan with dots; ChatGPT.app is the dots lane).
+        ("openai", "browser_session") => Some("chatgpt-subscription"),
+        ("openai", "desktop_session") => Some("chatgpt-dots"),
+        ("kimi", "browser_session") => Some("kimi-subscription"),
+        ("hermes", _) => Some("hermes"),
         _ => None,
     }
 }
@@ -1758,6 +1762,10 @@ mod tests {
         assert_eq!(adapter_for_auth("anthropic", "browser_session"), Some("claude-subscription"));
         assert_eq!(adapter_for_auth("anthropic", "api_key"), Some("claude-managed-agents"));
         assert_eq!(adapter_for_auth("anthropic", "desktop_session"), None);
+        assert_eq!(adapter_for_auth("openai", "browser_session"), Some("chatgpt-subscription"));
+        assert_eq!(adapter_for_auth("openai", "desktop_session"), Some("chatgpt-dots"));
+        assert_eq!(adapter_for_auth("kimi", "browser_session"), Some("kimi-subscription"));
+        assert_eq!(adapter_for_auth("hermes", "local_endpoint"), Some("hermes"));
         assert_eq!(adapter_for_auth("grok", "desktop_session"), None);
     }
 
