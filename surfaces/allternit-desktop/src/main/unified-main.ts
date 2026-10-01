@@ -794,16 +794,23 @@ function createMainWindow(): BrowserWindow {
   if (!bounds || !bounds.width || !bounds.height || bounds.width < 100 || bounds.height < 100) {
     bounds = { width: 1400, height: 900 };
   }
-  
+
+  // Never let the minimum size exceed the screen: a cloud computer's display
+  // is 1280x720, and 1366x768 laptops lose height to the taskbar. Larger
+  // minimums pushed the bottom of the app (composer, wizard buttons) off-screen.
+  const workArea = screen.getPrimaryDisplay().workAreaSize;
+  const minWidth = Math.min(1024, workArea.width);
+  const minHeight = Math.min(768, workArea.height);
+
   log.info(`[Main] Creating window with bounds:`, bounds);
 
   const window = new BrowserWindow({
-    width: bounds.width,
-    height: bounds.height,
+    width: Math.min(bounds.width, workArea.width),
+    height: Math.min(bounds.height, workArea.height),
     x: bounds.x,
     y: bounds.y,
-    minWidth: 1024,
-    minHeight: 768,
+    minWidth,
+    minHeight,
     title: 'Allternit Desktop',
     titleBarStyle: isMac ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 16, y: 16 },
@@ -827,6 +834,11 @@ function createMainWindow(): BrowserWindow {
       backgroundThrottling: false,
     },
   });
+
+  // A cloud computer's desktop exists only to show this app.
+  if (isProvisionedMode()) {
+    window.maximize();
+  }
 
   installWillNavigateGuard(window.webContents);
 
