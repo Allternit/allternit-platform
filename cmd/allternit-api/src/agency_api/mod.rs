@@ -22,6 +22,12 @@ pub mod store;
 /// WP-X1: task types beyond BUG_FIX (graphs, completion contracts, eval sets).
 pub mod task_types;
 pub mod template_exec;
+// ── WP-C3a effect connectors (thread:, template:) ──
+#[path = "effects/thread.rs"]
+pub mod effect_thread;
+#[path = "effects/template.rs"]
+pub mod effect_template;
+// ── end WP-C3a ──
 
 #[cfg(test)]
 mod tests;

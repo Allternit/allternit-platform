@@ -15,7 +15,8 @@
 //!
 //! Effects need a surface adapter. This server has one for `fs:` (the document
 //! is written in the run's disposable directory and published as an
-//! artifact); other schemes fail closed outside the scripted executor.
+//! artifact), `thread:` and `template:` (WP-C3a, `agency_api/effects/`);
+//! other schemes fail closed outside the scripted executor.
 
 use super::*;
 use crate::agency_api::task_types::{self, evidence_of, TaskType};
@@ -104,6 +105,10 @@ impl Exec<'_> {
         let digest = allternit_commrails::receipts::jcs::sha256_tagged(content.as_bytes());
         let tool = if primitive == "mut.create_file" { "tool.write_file" } else { "tool.execute" };
         let (ws, body) = (write_set.to_vec(), content.to_string());
+        // ── WP-C3a: connector context (the run's owner identity, no new auth) ──
+        let (st, h, org, run_id, nd) = (self.st, self.h, self.org.clone(), self.run_id.clone(), node.to_string());
+        let owner = self.h.block_on(self.s.load_run(&self.run_id))?.map(|r| r.owner).unwrap_or_default();
+        // ── end WP-C3a ──
         self.effect_with(node, tool, "MUTATE", json!({ "write_set": write_set, "content_digest": digest }), false, move |w| {
             if fail { bail!("scripted: effect failed"); }
             let mut refs = vec![];
@@ -118,6 +123,10 @@ impl Exec<'_> {
                         std::fs::write(&p, &body)?;
                         refs.push(format!("fs:{}:{digest}", rel.display()));
                     }
+                    // ── WP-C3a connectors: stable key per (run, node, resource) ──
+                    "thread" => refs.push(super::super::effect_thread::post(&st.db, &owner, &run_id, &nd, target, &format!("{run_id}:{nd}:{r}"), &body)?),
+                    "template" => refs.push(super::super::effect_template::run(h, st, &owner, &org, &run_id, target, &format!("{run_id}:{nd}:{r}"), json!({ "goal": body }))?),
+                    // ── end WP-C3a ──
                     _ if sc => refs.push(format!("{scheme}:{target}:{digest}")),
                     _ => bail!("no effect adapter for `{scheme}:` on this server (fail closed)"),
                 }
@@ -186,7 +195,7 @@ impl Exec<'_> {
                 if !authorized || unmet {
                     false // no effect without a policy authorization (N13)
                 } else {
-                    let content = out.get("candidate:draft").or_else(|| out.get("candidate:response")).cloned().unwrap_or_else(|| input.clone());
+                    let content = out.get("candidate:draft").or_else(|| out.get("candidate:response")).or_else(|| out.get("candidate:reply")).cloned().unwrap_or_else(|| input.clone());
                     match self.apply_effect(&cur, &node.primitive_id, &node.write_set, &content, &script) {
                         Ok(r) => {
                             if node.primitive_id == "mut.create_file" { doc = Some((write_set[0].clone(), content)); }

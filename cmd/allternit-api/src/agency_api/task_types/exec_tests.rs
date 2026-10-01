@@ -57,6 +57,11 @@ async fn x1_eval_sets_pass_through_the_real_executor() {
     std::env::set_var(super::ENABLE_ENV, format!("BUG_FIX,{}", super::ids().join(",")));
     let t = setup().await;
     let s = AgencyStore::new(t.st.rails.ledger.clone());
+    // WP-C3a: THREAD_WORK and TEMPLATE run their real connectors against the
+    // in-process stores, so the resources the eval sets name must exist.
+    use crate::agency_api::{effect_template, effect_thread};
+    effect_thread::seed(&t.st.db, "th_1", "u1", false);
+    effect_template::seed(&t.st.db, "weekly-report", "u1", effect_template::model_steps());
     let mut n = 0;
     for raw in EVALS {
         let set: Value = serde_json::from_str(raw).unwrap();
@@ -80,7 +85,8 @@ async fn x1_eval_sets_pass_through_the_real_executor() {
             std::fs::create_dir_all(runs.path().join(&id)).unwrap();
             std::fs::write(runs.path().join(&id).join("scripted.json"),
                 json!({ "fail": script["fail"].as_array().cloned().unwrap_or_default(), "withhold": script["withhold"].as_array().cloned().unwrap_or_default() }).to_string()).unwrap();
-            let limits = run_limits(&[(guard::ORGS_ENV, "user:u1")]);
+            // Child template runs (C3a connector) count toward the org run rate too.
+            let limits = run_limits(&[(guard::ORGS_ENV, "user:u1"), (guard::ORG_RUNS_PER_HOUR_ENV, "1000")]);
             assert!(executor::admit_and_start(t.st.clone(), id.clone(), limits.clone()).await, "{tag}: admitted");
             let mut rec = wait_settled(&s, &id).await;
             let mut waited_at = None;
@@ -124,4 +130,13 @@ async fn x1_eval_sets_pass_through_the_real_executor() {
         }
     }
     assert!(n >= 24, "ran {n} cases");
+    // posts_reply + not_delivered reached T06 (policy_denies stopped at T05): one post each.
+    assert_eq!(effect_thread::count(&t.st.db, "th_1"), 2, "one thread message per effect");
+    let text: String = t.st.db.connect().unwrap().query_row(
+        "SELECT json_extract(payload, '$.text') FROM bot_events WHERE thread_id = 'th_1' LIMIT 1", [], |r| r.get(0)).unwrap();
+    assert!(text.starts_with("scripted output of T03"), "the reply candidate is what gets posted: {text}");
+    // runs_steps + step_left_open + checks_fail reached P03: one completed child template run each.
+    let kids = s.runs_with_status(&["completed"]).await.unwrap().into_iter()
+        .filter(|r| r.run["agent"] == "template" && r.run["metadata"]["template_id"] == "weekly-report").count();
+    assert_eq!(kids, 3, "one child template run per effect");
 }
