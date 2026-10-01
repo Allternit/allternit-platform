@@ -6,6 +6,7 @@
 //! one-way projection).
 
 pub mod bug_fix;
+pub mod classes;
 pub mod graph;
 pub mod isa;
 pub mod lifecycle;

@@ -65,6 +65,7 @@ pub mod bot_event_routes;
 pub mod routine_local_scheduler;
 pub mod agent_gateway_routes;
 pub mod thread_routes;
+pub mod gateway_routing;
 pub mod gateway_runner;
 #[cfg(test)]
 mod gateway_acceptance;

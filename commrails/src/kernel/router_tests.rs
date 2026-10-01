@@ -417,3 +417,84 @@ fn class_preference_orders_candidates_and_records_the_route() {
     cfg.class_preference.insert("cap.x@S2".into(), vec!["mc.fast".into()]);
     assert_eq!(Router::new(&pool, &cfg).route(&n, &ledger).unwrap().backend_id, "be.a", "capability override wins");
 }
+
+// ---------------------------------------------------------------- WP-R1 (O1, O5, O13)
+
+fn with_call_type(mut n: GraphNode, ct: &str) -> GraphNode {
+    n.extensions.get_or_insert_with(Map::new).insert("x-call_type".into(), json!(ct));
+    n
+}
+
+#[test]
+fn gen_class_mapping_is_logical_and_overridable() {
+    use crate::kernel::classes::*;
+    let p = pool();
+    let by = |id: &str| p.entries.iter().find(|e| e.backend_id == id).unwrap().clone();
+    assert_eq!(gen_class(&by("be.gen.local")), GEN_SMALL, "local entries are small");
+    assert_eq!(gen_class(&by("be.gen.remote")), GEN_STANDARD);
+    assert_eq!(gen_class(&by("be.deep")), GEN_DEEP, "S3-capable entries are deep");
+    let mut cheap = by("be.gen.remote");
+    cheap.cost = SMALL_COST_MAX;
+    assert_eq!(gen_class(&cheap), GEN_SMALL, "cheap remote entries are small");
+    let mut pinned = by("be.gen.local");
+    pinned.extensions.as_mut().unwrap().insert("x-gen_class".into(), json!("gen.deep"));
+    assert_eq!(gen_class(&pinned), GEN_DEEP, "explicit x-gen_class wins");
+    for ct in ["title", "summary", "compaction", "extraction", "memory_extraction", "lessons"] {
+        assert_eq!(call_type_class(ct), GEN_SMALL, "{ct}");
+    }
+    assert_eq!(call_type_class("answer"), GEN_STANDARD);
+    assert_eq!(call_type_class("plan"), GEN_DEEP);
+}
+
+#[test]
+fn call_type_steers_the_class_and_caps_output() {
+    let p = pool();
+    let cfg = RouterConfig::default();
+    let r = Router::new(&p, &cfg);
+    // A title call prefers gen.small (the local entry) and carries the O5 cap.
+    let plan = r.route(&with_call_type(node("t", Some("S2"), Some("cap.code.edit"), "PUBLIC"), "title"), &ledger(100.0)).unwrap();
+    assert_eq!(plan.backend_id, "be.gen.local");
+    let x = plan.extensions.clone().unwrap();
+    assert_eq!(x["x-gen_class"], "gen.small");
+    assert_eq!(x["x-max_output_tokens"], 64);
+    assert_eq!(x["x-output_caps_version"], "o5.v1");
+    // A plan call prefers gen.deep.
+    let plan = r.route(&with_call_type(node("p", Some("S2"), Some("cap.code.edit"), "PUBLIC"), "plan"), &ledger(100.0)).unwrap();
+    assert_eq!(plan.backend_id, "be.deep");
+    // A node budget max_output_tokens overrides the table; an answer has no default cap.
+    let mut n = with_call_type(node("a", Some("S2"), Some("cap.code.edit"), "PUBLIC"), "answer");
+    let plan = r.route(&n, &ledger(100.0)).unwrap();
+    assert!(plan.extensions.as_ref().unwrap().get("x-max_output_tokens").is_none());
+    n.budget = Some(json!({ "max_output_tokens": 2000 }));
+    let plan = r.route(&n, &ledger(100.0)).unwrap();
+    assert_eq!(plan.extensions.unwrap()["x-max_output_tokens"], 2000);
+    // S1 readouts generate nothing.
+    let plan = r.route(&node("d", Some("S1"), Some("cap.decide.choice"), "PUBLIC"), &ledger(100.0)).unwrap();
+    assert_eq!(plan.extensions.unwrap()["x-max_output_tokens"], 0);
+}
+
+#[test]
+fn s0_first_law_never_routes_an_s0_primitive_to_a_model() {
+    use crate::kernel::classes::S0_IMPLEMENTED;
+    use crate::kernel::registry::PrimitiveRegistry;
+    for id in S0_IMPLEMENTED {
+        assert!(PrimitiveRegistry::global().contains(id), "{id} is not a registry primitive");
+    }
+    let p = pool();
+    let cfg = RouterConfig::default();
+    for id in S0_IMPLEMENTED {
+        for role in ["S1", "S2", "S3"] {
+            let mut n = node("n", Some(role), Some("cap.code.edit"), "PUBLIC");
+            n.primitive_id = (*id).to_string();
+            let plan = Router::new(&p, &cfg).route(&n, &ledger(100.0)).unwrap();
+            assert_eq!(plan.cognitive_role, Role::S0, "{id} asked for {role}");
+            assert_eq!(plan.backend_id, S0_BACKEND_ID);
+            let x = plan.extensions.unwrap();
+            assert_eq!(x["x-s0_first"], true);
+            assert_eq!(x["x-requested_role"], role);
+        }
+    }
+    // A primitive without an S0 implementation still routes to the pool.
+    let plan = Router::new(&p, &cfg).route(&node("g", Some("S2"), Some("cap.code.edit"), "PUBLIC"), &ledger(100.0)).unwrap();
+    assert_ne!(plan.backend_id, S0_BACKEND_ID);
+}

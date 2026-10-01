@@ -443,3 +443,39 @@ async fn model_template_compiles_and_runs_on_the_executor_with_scripted_cognitio
     assert_eq!((run.run["status"].as_str(), run.attention.len(), run.attention[0]["resume_from"].as_u64()), (Some("needs_attention"), 1, Some(1)));
     std::env::remove_var("ALLTERNIT_AGENCY_COGNITION");
 }
+
+fn pool_entry(id: &str, roles: &[&str], modes: &[&str], cost: f64, residency: &str) -> Value {
+    json!({ "schema_id": "allternit.kernel.ModelPoolEntryV1", "schema_version": "1.0.0", "backend_id": id,
+            "cognitive_roles": roles, "modes": modes, "capabilities": ["cap.agent.tool_use", "cap.text.generate"],
+            "trust_tags": ["PUBLIC", "INTERNAL"], "confidence_estimate": 0.7, "latency_ms": 1000.0, "cost": cost,
+            "residency": residency, "extensions": { "x-model_ref": "p/m" } })
+}
+
+#[tokio::test]
+async fn turn_route_answers_class_plan_and_cost_per_call_type() {
+    let t = setup().await;
+    let u = user("u1", Some("acme"));
+    let entries = json!([
+        pool_entry("be.small", &["S2"], &["M5.GENERATIVE"], 0.001, "REMOTE"),
+        pool_entry("be.std", &["S2"], &["M5.GENERATIVE"], 0.006, "REMOTE"),
+        pool_entry("be.deep", &["S2", "S3"], &["M5.GENERATIVE", "M6.DEEP_SOLVER"], 0.03, "REMOTE"),
+    ]);
+    let (s, v, _) = call(&t, "POST", "/v1/kernel/turn-route", &u, Some(json!({ "entries": entries, "call_type": "title" }))).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["gen_class"], "gen.small");
+    assert_eq!(v["backend_id"], "be.small");
+    assert_eq!(v["max_output_tokens"], 64);
+    assert_eq!(v["estimated_cost"], 0.001);
+    assert_eq!(v["plan"]["schema_id"], "allternit.kernel.ExecutionPlanV1");
+    let (_, v, _) = call(&t, "POST", "/v1/kernel/turn-route", &u, Some(json!({ "entries": entries, "call_type": "plan" }))).await;
+    assert_eq!(v["gen_class"], "gen.deep");
+    assert_eq!(v["plan"]["cognitive_role"], "S3");
+    let (_, v, _) = call(&t, "POST", "/v1/kernel/turn-route", &u, Some(json!({ "entries": entries }))).await;
+    assert_eq!(v["call_type"], "answer");
+    assert_eq!(v["class_for_call_type"], "gen.standard");
+    assert_eq!(v["gen_class"], "gen.standard");
+    assert!(v["max_output_tokens"].is_null());
+    // Bad input fails closed with 422, a foreign org scope with 403.
+    assert_eq!(call(&t, "POST", "/v1/kernel/turn-route", &u, Some(json!({ "entries": [] }))).await.0, 422);
+    assert_eq!(call(&t, "POST", "/v1/kernel/turn-route", &u, Some(json!({ "entries": entries, "scope": "org:other" }))).await.0, 403);
+}

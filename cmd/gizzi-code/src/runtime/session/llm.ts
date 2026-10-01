@@ -1,4 +1,5 @@
 import { Installation } from "@/shared/installation"
+import * as TurnRouter from "@/runtime/routing/turn-router"
 import { Provider } from "@/runtime/providers/provider"
 import { Log } from "@/shared/util/log"
 import {
@@ -210,8 +211,12 @@ export namespace LLM {
       },
     )
 
+    // O5: the call-type cap (transform.ts), tightened by the kernel plan's cap
+    // for this turn when the turn router set one.
+    const kernelCap = TurnRouter.outputCap(input.sessionID)
+    const typeCap = isCodex ? undefined : ProviderTransform.maxOutputTokens(input.model, input.callType)
     const maxOutputTokens =
-      isCodex ? undefined : ProviderTransform.maxOutputTokens(input.model, input.callType)
+      typeCap === undefined ? undefined : kernelCap !== undefined ? Math.min(kernelCap, typeCap) : typeCap
 
     // O8: deterministic tool order so the [tools] prefix segment is stable.
     const tools = PromptSegments.orderTools(await resolveTools(input))
