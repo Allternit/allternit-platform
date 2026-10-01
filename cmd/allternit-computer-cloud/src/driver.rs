@@ -600,25 +600,36 @@ impl ExecutionDriver for IncusDriver {
                 token: Some(self.vnc_password.clone()),
             }));
         }
-        // Not in memory — try to recover by reading the instance config from Incus.
-        // We do not know which host owns the VM, so try the first host (best effort).
-        let substrate = &self.pool.hosts()[0].substrate;
-        match substrate.get_config(sandbox_id).await {
-            Ok(config) => {
-                if let Some(port) = parse_vnc_port_from_config(&config) {
-                    self.vnc_ports
-                        .lock()
-                        .unwrap()
-                        .insert(sandbox_id.to_string(), port);
-                    return Ok(Some(DesktopEndpoint {
-                        url: format!("tcp://{}:{}", self.vnc_host, port),
-                        protocol: DesktopProtocol::Vnc,
-                        token: Some(self.vnc_password.clone()),
-                    }));
+        // Not in memory — recover the port from the instance config. We don't
+        // know which host owns the VM, so ask each one. Only when every host
+        // answers "not found" is the instance gone (NotFound); any other
+        // failure stays inconclusive (Ok(None)).
+        let mut all_not_found = true;
+        for host in self.pool.hosts() {
+            match host.substrate.get_config(sandbox_id).await {
+                Ok(config) => {
+                    all_not_found = false;
+                    if let Some(port) = parse_vnc_port_from_config(&config) {
+                        self.vnc_ports
+                            .lock()
+                            .unwrap()
+                            .insert(sandbox_id.to_string(), port);
+                        return Ok(Some(DesktopEndpoint {
+                            url: format!("tcp://{}:{}", self.reachable_host(&host), port),
+                            protocol: DesktopProtocol::Vnc,
+                            token: Some(self.vnc_password.clone()),
+                        }));
+                    }
+                }
+                Err(SubstrateError::NotFound(_)) => {}
+                Err(e) => {
+                    all_not_found = false;
+                    warn!(sandbox_id, host = %host.url, error = %e, "failed to recover VNC port from Incus");
                 }
             }
-            Err(SubstrateError::NotFound(_)) => return Ok(None),
-            Err(e) => warn!(sandbox_id, error = %e, "failed to recover VNC port from Incus"),
+        }
+        if all_not_found {
+            return Err(DriverError::NotFound { id: sandbox_id.to_string() });
         }
         Ok(None)
     }
@@ -972,6 +983,51 @@ fn normalize_image_alias(image: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn incus_host(found: Option<u16>, status: usize) -> (mockito::ServerGuard, Arc<IncusSubstrate>) {
+        let mut server = mockito::Server::new_async().await;
+        let body = match found {
+            Some(port) => serde_json::json!({ "metadata": { "devices": { VNC_DEVICE: { "listen": format!("tcp:0.0.0.0:{port}") } } } }),
+            None => serde_json::json!({ "error": "Instance not found" }),
+        };
+        server
+            .mock("GET", mockito::Matcher::Regex("^/1.0/instances/".into()))
+            .with_status(status)
+            .with_body(body.to_string())
+            .create_async()
+            .await;
+        let substrate = Arc::new(IncusSubstrate::new(server.url()).unwrap());
+        (server, substrate)
+    }
+
+    #[tokio::test]
+    async fn desktop_lookup_asks_every_host_and_uses_the_owning_hosts_address() {
+        let (_a, missing) = incus_host(None, 404).await;
+        let (b, owner) = incus_host(Some(5911), 200).await;
+        let driver = IncusDriver::new(missing, "legacy-vnc");
+        driver.add_host(b.url(), owner);
+        let ep = driver.get_desktop_endpoint_by_native_id("vm-1").await.unwrap().unwrap();
+        assert_eq!(ep.url, format!("tcp://{}:5911", b.host_with_port()));
+    }
+
+    #[tokio::test]
+    async fn desktop_lookup_is_not_found_only_when_every_host_says_so() {
+        let (_a, a) = incus_host(None, 404).await;
+        let (b, b_sub) = incus_host(None, 404).await;
+        let driver = IncusDriver::new(a, "legacy-vnc");
+        driver.add_host(b.url(), b_sub);
+        assert!(matches!(
+            driver.get_desktop_endpoint_by_native_id("vm-1").await,
+            Err(DriverError::NotFound { .. })
+        ));
+
+        // One host failing for another reason keeps it inconclusive.
+        let (_c, c) = incus_host(None, 404).await;
+        let (d, d_sub) = incus_host(None, 500).await;
+        let driver = IncusDriver::new(c, "legacy-vnc");
+        driver.add_host(d.url(), d_sub);
+        assert!(matches!(driver.get_desktop_endpoint_by_native_id("vm-1").await, Ok(None)));
+    }
 
     #[test]
     fn normalize_image_maps_defaults() {

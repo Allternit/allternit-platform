@@ -155,7 +155,16 @@ async fn computer_status(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match fetch_computer(&state, &user, &id).await {
-        Ok(Some(computer)) => Json(status_response(&computer)).into_response(),
+        Ok(Some(computer)) => {
+            if computer.status == ComputerStatus::Running && crate::computer_ws::reconcile_gone_computer(&state, &computer).await {
+                return (
+                    StatusCode::GONE,
+                    Json(serde_json::json!({ "error": "computer_gone", "message": crate::computer_ws::COMPUTER_GONE_MESSAGE })),
+                )
+                    .into_response();
+            }
+            Json(status_response(&computer)).into_response()
+        }
         Ok(None) => crate::computer_routes::error_response(StatusCode::NOT_FOUND, "computer not found"),
         Err(response) => response,
     }
@@ -598,6 +607,48 @@ mod tests {
         assert_eq!(value["status"], "running");
         assert_eq!(value["ws"]["vnc"], "/ws/computers/computer-1/vnc");
         assert_eq!(value["control_state"], "owner_controls");
+    }
+
+    #[tokio::test]
+    async fn status_handler_removes_a_computer_whose_machine_is_gone() {
+        let temp = tempfile::tempdir().unwrap();
+        let driver: Arc<dyn allternit_driver_interface::ExecutionDriver> =
+            Arc::new(crate::computer_ws::tests::StubDriver(None));
+        let state = crate::test_helpers::app_state_with_driver(temp.path(), Some(driver)).await;
+        state
+            .db
+            .connect()
+            .unwrap()
+            .execute(
+                "INSERT INTO computers (id, kind, provider, status, owner_type, owner_id, name, os, native_id, billing_source)
+                 VALUES ('computer-1', 'cloud_desktop', 'incus', 'running', 'user', 'user-1', 'Account computer', 'linux', 'gone-1', 'credits')",
+                [],
+            )
+            .unwrap();
+        let user = AuthUser {
+            user_id: "user-1".into(),
+            organization_id: Some("org-1".into()),
+            tenant_id: None,
+            email: None,
+            name: None,
+            avatar_url: None,
+            organization_role: None,
+            organization_slug: None,
+        };
+        let response = computer_status(State(state.clone()), Extension(user), Path("computer-1".to_string()))
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::GONE);
+        let body = axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["error"], "computer_gone");
+        let status: String = state
+            .db
+            .connect()
+            .unwrap()
+            .query_row("SELECT status FROM computers WHERE id = 'computer-1'", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(status, "deleted");
     }
 
     #[tokio::test]

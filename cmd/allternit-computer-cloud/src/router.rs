@@ -399,8 +399,11 @@ impl ExecutionDriver for SubstrateRouter {
             }
         }
         if let Some(d) = &self.incus {
-            if let Ok(Some(ep)) = d.get_desktop_endpoint_by_native_id(native_id).await {
-                return Ok(Some(ep));
+            match d.get_desktop_endpoint_by_native_id(native_id).await {
+                Ok(Some(ep)) => return Ok(Some(ep)),
+                // No Incus host has the instance (and Tart didn't either).
+                Err(e @ DriverError::NotFound { .. }) => return Err(e),
+                _ => {}
             }
         }
         Ok(None)
