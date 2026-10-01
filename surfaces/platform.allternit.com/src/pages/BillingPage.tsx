@@ -107,11 +107,14 @@ export function BillingPage() {
   const clerk = useClerk();
   const email = user?.primaryEmailAddress?.emailAddress || user?.userEmail || "—";
 
-  const handleSubscribe = () => {
+  // Signed out: sign in, then come back to this page with the plan chosen,
+  // and checkout starts on its own (see the ?plan= handling below).
+  const handleSubscribe = (planId?: PlanId) => {
+    const target = planId && planId !== "free" ? `/billing?plan=${planId}` : "/billing";
     if (clerk?.openSignIn) {
-      clerk.openSignIn({ redirectUrl: "/billing" });
+      clerk.openSignIn({ redirectUrl: target });
     } else {
-      window.location.href = `/sign-in?redirect_url=${encodeURIComponent("/billing")}`;
+      window.location.href = `/sign-in?redirect_url=${encodeURIComponent(target)}`;
     }
   };
 
@@ -126,22 +129,11 @@ export function BillingPage() {
             Plans
           </h1>
           <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-[var(--text-secondary)]">
-            Paid tiers include monthly credits for Allternit Cloud, local + cloud models, and
-            built-in tool use. Beta.
+            Paid plans include monthly Allternit Cloud credits and an always-on cloud computer.
+            Sign in to subscribe; checkout runs through Stripe.
           </p>
         </div>
         <PlanPicker currentPlanName={null} title="Choose a plan" onSubscribe={handleSubscribe} />
-
-        <div className="mt-8 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-secondary)]/40 p-4">
-          <div className="flex items-start gap-3">
-            <Info size={18} className="mt-0.5 shrink-0 text-[var(--accent-primary)]" />
-            <p className="text-[13px] leading-relaxed text-[var(--text-secondary)]">
-              During BETA, subscription tiers and model credits are UI-only. Cloud-model access is
-              provided through upstream providers such as OpenRouter; paid bundled credits will not
-              be sold until appropriate provider terms are in place.
-            </p>
-          </div>
-        </div>
       </div>
     );
   }
@@ -158,6 +150,27 @@ export function BillingPage() {
   const [plans, setPlans] = useState<LiveBillingPlan[]>([]);
   const [subscribingPlanId, setSubscribingPlanId] = useState<PlanId | null>(null);
   const [subscribeError, setSubscribeError] = useState<string | null>(null);
+  const [currentSubscription, setCurrentSubscription] = useState<{
+    plan_id: string;
+    status: string;
+  } | null>(null);
+  const [planNotice, setPlanNotice] = useState<string | null>(null);
+  // `?plan=plus|super|ultra` (the website's Subscribe buttons) starts that
+  // plan's checkout once the page knows the account has no plan yet.
+  const [requestedPlan, setRequestedPlan] = useState<PlanId | null>(() => {
+    if (typeof window === "undefined") return null;
+    const params = new URLSearchParams(window.location.search);
+    const value = params.get("plan");
+    if (value !== "plus" && value !== "super" && value !== "ultra") return null;
+    params.delete("plan");
+    const search = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`,
+    );
+    return value;
+  });
   const [portalBusy, setPortalBusy] = useState(false);
   const [portalAvailable, setPortalAvailable] = useState(true);
   const [portalError, setPortalError] = useState<string | null>(null);
@@ -233,6 +246,26 @@ export function BillingPage() {
       } catch (err) {
         setCredits(null);
         setCreditsError(formatApiError(err, "Unable to load credit balance"));
+      }
+
+      // The account's plan decides Subscribe vs Switch on the plan cards.
+      try {
+        const subscriptionResponse = await fetch(`${billingApiBaseUrl()}/api/v1/billing/subscription`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (subscriptionResponse.ok) {
+          const payload = (await subscriptionResponse.json().catch(() => null)) as {
+            plan_id?: string;
+            status?: string;
+          } | null;
+          setCurrentSubscription(
+            payload?.plan_id && payload.status
+              ? { plan_id: payload.plan_id, status: payload.status }
+              : null,
+          );
+        }
+      } catch {
+        setCurrentSubscription(null);
       }
 
       // Plans feed the PlanPicker subscribe buttons; a failure here falls back to the static
@@ -347,6 +380,12 @@ export function BillingPage() {
         return;
       }
       const payload = await response.json().catch(() => ({}));
+      if (response.status === 409 && payload.error === "already_subscribed") {
+        // One plan per account: changes happen in the Stripe billing portal.
+        setSubscribingPlanId(null);
+        await handleOpenPortal();
+        return;
+      }
       if (!response.ok) {
         throw new Error(
           payload.message || payload.error || `Unable to start subscription checkout (${response.status})`,
@@ -396,6 +435,35 @@ export function BillingPage() {
       setPortalBusy(false);
     }
   };
+
+  const subscribedPlanId: PlanId | null =
+    currentSubscription &&
+    currentSubscription.status !== "none" &&
+    (currentSubscription.plan_id === "plus" ||
+      currentSubscription.plan_id === "super" ||
+      currentSubscription.plan_id === "ultra")
+      ? currentSubscription.plan_id
+      : null;
+
+  // Arrived from a website Subscribe button: start that plan's checkout, or
+  // say where to switch when the account already has a plan.
+  useEffect(() => {
+    if (loading || !requestedPlan) return;
+    const plan = requestedPlan;
+    setRequestedPlan(null);
+    const label = (id: string) => id.charAt(0).toUpperCase() + id.slice(1);
+    if (subscribedPlanId === plan) {
+      setPlanNotice(`You're already on ${label(plan)}.`);
+    } else if (subscribedPlanId) {
+      setPlanNotice(
+        `You're on ${label(subscribedPlanId)}. Switch to ${label(plan)} in Manage billing.`,
+      );
+    } else if (billingAvailable) {
+      void handleSubscribePlan(plan);
+    }
+    // handleSubscribePlan is recreated each render; run once per request.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, requestedPlan, subscribedPlanId, billingAvailable]);
 
   const handleAddKey = async () => {
     const providerId = addingProvider;
@@ -689,11 +757,14 @@ export function BillingPage() {
 
       <PlanPicker
         currentPlanName={entitlement?.planDisplayName}
+        subscribedPlanId={subscribedPlanId}
         onSelect={billingAvailable ? (planId) => void handleSubscribePlan(planId) : undefined}
+        onSwitch={() => void handleOpenPortal()}
         livePlans={billingAvailable && plans.length > 0 ? plans : undefined}
         busyPlanId={subscribingPlanId}
       />
 
+      {planNotice && <p className="text-[13px] text-[var(--text-secondary)]">{planNotice}</p>}
       {subscribeError && (
         <p className="text-[13px] text-[var(--status-error)]">{subscribeError}</p>
       )}
