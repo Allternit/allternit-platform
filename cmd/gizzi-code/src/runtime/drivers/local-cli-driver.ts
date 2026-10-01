@@ -23,7 +23,7 @@ import type {
   RuntimeDriver,
   TaskHandle,
 } from "@/runtime/runtime-driver"
-import { acpCanLoadSession, acpMcpServers, claudeSessionFlags, codexThreadRequest, opencodeResumeFlags, qwenResumeFlags, vendorSessionIdFromEvent, codexMcpConfig, withInstructions } from "@/runtime/drivers/cli-session-flags"
+import { acpCanLoadSession, acpMcpServers, claudeSessionFlags, codexThreadRequest, opencodeResumeFlags, qwenResumeFlags, vendorSessionIdFromEvent, codexMcpConfig, droidSessionFlags, withInstructions } from "@/runtime/drivers/cli-session-flags"
 import { attachmentsToAcpContent } from "./attachments"
 import { RuntimeService, RuntimeNotFoundError, type RegisteredRuntime } from "@/runtime/runtime-service"
 import { ExecutionLogService } from "@/runtime/execution-log"
@@ -1791,6 +1791,31 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
   omp: {
     mode: "one-shot-json",
     buildArgv: ([command], message) => [command, "-p", "--mode", "json", message],
+  },
+
+  // Gemini CLI — ACP stdio (`--acp`; `--experimental-acp` is the deprecated alias).
+  "gemini-cli": {
+    mode: "acp",
+    supportsAttachments: true,
+    buildArgv: ([command]) => [
+      command,
+      "--acp",
+      ...modelFlag(PROVIDER_ENV_KEYS["gemini-cli"]?.model ? process.env[PROVIDER_ENV_KEYS["gemini-cli"]!.model!] : undefined),
+    ],
+  },
+
+  // Droid (Factory) — headless `droid exec`, plain-text answer on stdout.
+  droid: {
+    mode: "one-shot-text",
+    buildArgv: ([command], message, ctx) => [
+      command,
+      "exec",
+      "--auto", "high",
+      "--cwd", ctx.cwd || process.cwd(),
+      ...droidSessionFlags(ctx.vendorSessionId),
+      ...modelFlag(PROVIDER_ENV_KEYS["droid"]?.model ? process.env[PROVIDER_ENV_KEYS["droid"]!.model!] : undefined),
+      message,
+    ],
   },
 
   // Antigravity (agy) — one-shot text.

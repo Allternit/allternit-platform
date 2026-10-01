@@ -33,6 +33,21 @@ describe("CLI discovery off PATH", () => {
     expect(knownInstallPaths({ id: "grok", bin: "grok" }, home)).toContain(path.join(home, ".grok", "bin", "grok"))
   })
 
+  test("CLIs installed by allternit-tools are found in ~/.allternit/tools/bin", () => {
+    const home = "/Users/someone"
+    const prev = process.env.ALLTERNIT_TOOLS_PREFIX
+    delete process.env.ALLTERNIT_TOOLS_PREFIX
+    try {
+      for (const id of ["droid", "opencode", "gemini-cli"]) {
+        const spec = SUBPROCESS_PROVIDERS.find((s) => s.id === id)
+        expect(spec).toBeDefined()
+        expect(knownInstallPaths(spec!, home)).toContain(path.join(home, ".allternit", "tools", "bin", spec!.bin))
+      }
+    } finally {
+      if (prev !== undefined) process.env.ALLTERNIT_TOOLS_PREFIX = prev
+    }
+  })
+
   test("every CLI is also looked for in user bin dirs a Finder-launched app's PATH lacks", () => {
     const home = "/Users/someone"
     for (const spec of SUBPROCESS_PROVIDERS.filter((s) => !s.bin.includes("/"))) {

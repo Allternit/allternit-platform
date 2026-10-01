@@ -343,8 +343,12 @@ pub fn v1_router() -> Router<Arc<AppState>> {
         .route("/voice/voices", get(list_voice_presets))
         .route("/voice/tts/stream", post(proxy_voice_tts_stream))
         .route("/voice/stt/stream", post(proxy_voice_stt_stream))
-        .route("/cli-tools", get(list_cli_tools_stub))
-        .route("/cli-tools/installed", get(list_cli_tools_stub))
+        .route("/cli-tools", get(list_cli_tools_all))
+        .route("/cli-tools/installed", get(list_cli_tools_installed))
+        .route(
+            "/cli-tools/:id/install",
+            post(crate::provider_routes::install_provider_tool),
+        )
 }
 
 async fn health() -> impl IntoResponse {
@@ -679,8 +683,60 @@ async fn proxy_voice_stream(service_path: &str, body: Body) -> Response {
 /// source and its client already falls back to it on 501. Answer 200 with the
 /// same empty-list shape the fallback produces so the console stays quiet,
 /// mirroring /voice/voices.
-async fn list_cli_tools_stub() -> impl IntoResponse {
-    Json(json!({ "tools": [], "total": 0 }))
+/// GET /api/v1/cli-tools — every manifest tool with its installed state,
+/// straight from `allternit-tools status --json`. `/cli-tools/installed`
+/// keeps only the installed ones. Without an installer on this runtime the
+/// list is empty and `installer_available` is false.
+async fn list_cli_tools(installed_only: bool) -> axum::response::Response {
+    match crate::tools_install::list_status(None).await {
+        Ok(status) => {
+            let mut tools: Vec<serde_json::Value> = status
+                .get("tools")
+                .and_then(|t| t.as_array())
+                .cloned()
+                .unwrap_or_default();
+            if installed_only {
+                tools.retain(|t| t.get("installed").and_then(|v| v.as_bool()) == Some(true));
+            }
+            // Shape the rows for the web's CliToolApiResponse (id, name,
+            // description, command, category, installed, version, source,
+            // tags) while keeping the installer's own fields.
+            for t in tools.iter_mut() {
+                if let Some(obj) = t.as_object_mut() {
+                    let kind = obj.get("category").cloned().unwrap_or(json!("cli"));
+                    let name = obj.get("name").cloned().unwrap_or(json!(""));
+                    obj.insert("kind".into(), kind.clone());
+                    obj.insert("category".into(), json!("dev"));
+                    obj.insert("description".into(), name);
+                    obj.insert("source".into(), json!("allternit-tools"));
+                    obj.insert("tags".into(), json!([kind]));
+                }
+            }
+            Json(json!({
+                "tools": tools,
+                "total": tools.len(),
+                "installer_available": true,
+                "bin": status.get("bin"),
+                "selected": status.get("selected"),
+            }))
+            .into_response()
+        }
+        Err(e) => Json(json!({
+            "tools": [],
+            "total": 0,
+            "installer_available": e != "installer_unavailable",
+            "error": e,
+        }))
+        .into_response(),
+    }
+}
+
+async fn list_cli_tools_all() -> axum::response::Response {
+    list_cli_tools(false).await
+}
+
+async fn list_cli_tools_installed() -> axum::response::Response {
+    list_cli_tools(true).await
 }
 
 pub fn agent_chat_router() -> Router<Arc<AppState>> {
