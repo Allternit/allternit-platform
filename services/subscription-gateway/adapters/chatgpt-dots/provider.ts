@@ -33,7 +33,7 @@ interface Ctx {
   events: CursoredEvent[]; seq: number; baseline: number;
   seen: Map<number, { text: string; completed: boolean }>;
   tasks: Map<string, string>; currentCorr?: string; msgN: number; activity: boolean;
-  done: Map<string, Promise<AaiResult<MessageResult>>>; lock: Promise<unknown>;
+  done: Map<string, Promise<AaiResult<MessageResult>>>; lock: Promise<unknown>; sending: number;
 }
 interface Stored { approval: Approval; id: string; policy: Policy; ctxId?: string }
 
@@ -234,7 +234,11 @@ export class ChatGPTDotsProvider extends BaseAaiProvider {
     if (input.adoptContextId) return fail("UNSUPPORTED", "A dot's conversation cannot be adopted by id; the dot's own conversation is opened.");
     // One provider serves every dot: the binding's externalAgentId is "chatgpt-dots:<dot id or name>".
     if (!this.isOurs(input.agentId)) return fail("CONTEXT_NOT_FOUND", `No such agent ${input.agentId}`);
-    if ([...this.ctxs.values()].some((c) => !c.closed)) return fail("CONTEXT_BUSY", `${APP_NAME} drives one conversation at a time. Close the open one first.`);
+    // The app shows one conversation at a time. A new one replaces the open one once that is idle
+    // (no send in flight, nothing streaming); the replaced chat stays in the app, it is only no
+    // longer driven. Refusing outright locked a bot out after its first conversation.
+    const open = [...this.ctxs.values()].filter((c) => !c.closed);
+    if (open.some((c) => c.sending > 0)) return this.busy();
     const cd = this.cooldown(); if (cd) return cd;
     const dots = await this.readDots(); if (!dots.ok) return dots;
     const ref = this.refOf(input.agentId);
@@ -243,6 +247,11 @@ export class ChatGPTDotsProvider extends BaseAaiProvider {
       if (!ref && dots.value.length > 1) return fail("POLICY_DENIED", `You have ${dots.value.length} dots. Choose which one this connection uses.`);
       return fail("CONTEXT_NOT_FOUND", ref ? `No dot named "${ref}" in your ChatGPT account.` : "No dot found in your ChatGPT account (a plan with a dot is required, and dots are created in the desktop app).");
     }
+    if (open.length) {
+      const st = await this.check(true); if (!st.ok) return st;
+      if (st.value.streaming) return this.busy();
+    }
+    for (const o of open) o.closed = true;
     await this.pacer.beforeAction();
     if (!(await this.o.driver.openDot(dot.id))) return fail("CONTEXT_NOT_FOUND", `Could not open dot "${dot.name}".`);
     const after = await this.check(); if (!after.ok) return after;
@@ -250,12 +259,16 @@ export class ChatGPTDotsProvider extends BaseAaiProvider {
     const id = `cd-ctx-${++this.n}`;
     const c: Ctx = {
       id, agentId: `${AGENT_ID}:${dot.id}`, dotId: dot.id, dotName: dot.name, threadId: input.threadId ?? id, closed: false, events: [], seq: 0,
-      baseline: after.value.turns.length, seen: new Map(), tasks: new Map(), msgN: 0, activity: false, done: new Map(), lock: Promise.resolve(),
+      baseline: after.value.turns.length, seen: new Map(), tasks: new Map(), msgN: 0, activity: false, done: new Map(), lock: Promise.resolve(), sending: 0,
     };
     this.ctxs.set(id, c);
     this.push(c, "agent.context.opened", "best_effort", { title: input.title ?? null, dot: dot.name }, "allternit", id);
     this.syncApprovals(after.value, c);
     return ok({ contextId: id, isolation: CAPABILITIES.context.isolation, guarantee: CAPABILITIES.guarantee, resumed: false });
+  }
+
+  private busy(): AaiResult<never> {
+    return fail("CONTEXT_BUSY", `${APP_NAME} is still answering in another conversation. Try again when that reply finishes.`, { retryAfterMs: 30_000 });
   }
 
   private live(id: string): AaiResult<Ctx> {
@@ -268,7 +281,8 @@ export class ChatGPTDotsProvider extends BaseAaiProvider {
     const c = l.value;
     const prior = c.done.get(input.correlationId);
     if (prior) return prior; // idempotent: replays (sequential or concurrent) return the first result
-    const run = c.lock.then(() => this.sendOne(c, input));
+    c.sending += 1;
+    const run = c.lock.then(() => this.sendOne(c, input)).finally(() => { c.sending -= 1; });
     c.lock = run.catch(() => undefined);
     c.done.set(input.correlationId, run);
     return run;
