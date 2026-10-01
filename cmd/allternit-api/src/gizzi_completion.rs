@@ -68,6 +68,45 @@ pub async fn complete_ephemeral_usage(
     run(prompt, system, model, true).await
 }
 
+/// Typed completion (O7/O9): the call type decides exact-cache use and TTL
+/// (`crate::completion_cache`), and eligible doc-type calls feed the
+/// S1-gated semantic cache in SHADOW (`crate::semantic_cache`, never serves).
+/// A cache hit returns zero usage (no model spend).
+pub async fn complete_for(
+    call_type: crate::completion_cache::CallType,
+    prompt: &str,
+    system: Option<&str>,
+    model: Option<&(String, String)>,
+    ephemeral: bool,
+) -> Option<(String, Usage)> {
+    use crate::completion_cache as cc;
+    let resolved = model.cloned().unwrap_or_else(default_model);
+    let model_label = format!("{}/{}", resolved.0, resolved.1);
+    let store = crate::llm_gateway::response_cache::ResponseCache::global();
+    // Internal calls carry no sampling params or tools of their own; the
+    // key still records them so a future param change can't collide.
+    let key = (cc::internal_enabled() && call_type.policy().exact().is_some()).then(|| {
+        cc::internal_key(call_type, &model_label, &json!({}), &json!([]), system, prompt)
+    });
+    if let Some(key) = &key {
+        if let Some(text) = cc::lookup(store, call_type, key) {
+            info!(call_type = call_type.as_str(), model = %model_label, "internal completion served from exact cache");
+            return Some((text, Usage::default()));
+        }
+    }
+    let out = run(prompt, system, Some(&resolved), ephemeral).await?;
+    if let Some(key) = &key {
+        cc::store(store, call_type, key, &out.0);
+    }
+    crate::semantic_cache::SemanticCache::spawn_shadow(
+        call_type,
+        model_label,
+        prompt.to_string(),
+        out.0.clone(),
+    );
+    Some(out)
+}
+
 async fn run(
     prompt: &str,
     system: Option<&str>,

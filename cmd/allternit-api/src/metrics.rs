@@ -35,6 +35,7 @@ struct Metrics {
     llm_failover_skipped_total: CounterVec,
     llm_response_cache_hits_total: CounterVec,
     llm_response_cache_misses_total: CounterVec,
+    completion_cache_events_total: CounterVec,
 }
 
 impl Metrics {
@@ -139,6 +140,25 @@ impl Metrics {
         )
         .expect("invalid llm_response_cache_misses_total metric");
 
+        // O7/O9 (WP-K1): shared exact cache + semantic shadow cache, per
+        // surface (gateway | internal) and call type. Events: hit, miss,
+        // store, sem_candidate, would_serve, would_not_serve, shadow_same,
+        // shadow_different.
+        // TODO(C1 #1126): also write these into the usage ledger once it
+        // lands, so the Usage dashboard (WP-C2) can show cache hit rate and
+        // S1 savings next to cost.
+        let completion_cache_events_total = CounterVec::new(
+            Opts::new(
+                "completion_cache_events_total",
+                "Exact and semantic (shadow) completion cache events",
+            ),
+            &["surface", "call_type", "event"],
+        )
+        .expect("invalid completion_cache_events_total metric");
+
+        registry
+            .register(Box::new(completion_cache_events_total.clone()))
+            .expect("failed to register completion_cache_events_total");
         registry
             .register(Box::new(http_request_duration_seconds.clone()))
             .expect("failed to register http_request_duration_seconds");
@@ -186,6 +206,7 @@ impl Metrics {
             llm_failover_skipped_total,
             llm_response_cache_hits_total,
             llm_response_cache_misses_total,
+            completion_cache_events_total,
         }
     }
 }
@@ -335,6 +356,22 @@ pub fn inc_llm_response_cache_miss(model: &str) {
         .llm_response_cache_misses_total
         .with_label_values(&[model])
         .inc();
+}
+
+/// One completion-cache event (O7 exact / O9 semantic shadow).
+pub fn inc_completion_cache_event(surface: &str, call_type: &str, event: &str) {
+    METRICS
+        .completion_cache_events_total
+        .with_label_values(&[surface, call_type, event])
+        .inc();
+}
+
+/// Current value of one completion-cache counter (tests, admin readouts).
+pub fn completion_cache_event_count(surface: &str, call_type: &str, event: &str) -> u64 {
+    METRICS
+        .completion_cache_events_total
+        .with_label_values(&[surface, call_type, event])
+        .get() as u64
 }
 
 /// Router for the metrics endpoint (no auth required).

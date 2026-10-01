@@ -1941,16 +1941,45 @@ pub async fn chat_completions(
     // DLP, resolution, and the allowlist, so a cached body is never served to
     // a caller who could not run the underlying request. Checked before the
     // idempotency gate: a cache hit never opens an in_progress row.
+    // O7: streams are eligible too (written on completion, replayed as a
+    // synthesized stream); only deterministic requests unless the caller
+    // opts in; keys are namespaced per tenant.
     let response_cache = super::response_cache::ResponseCache::global();
-    let response_cache_key =
-        if response_cache.enabled() && !stream && super::response_cache::is_cacheable(&request) {
-            Some(super::response_cache::cache_key(&request))
-        } else {
-            None
-        };
+    let cache_opt = headers
+        .get(super::response_cache::CACHE_OPT_HEADER)
+        .and_then(|v| v.to_str().ok());
+    let response_cache_key = if response_cache.enabled()
+        && super::response_cache::gateway_cacheable(&request, cache_opt)
+    {
+        Some(super::response_cache::gateway_cache_key(
+            &request,
+            key.tenant_id.as_deref().unwrap_or(&key.user_id),
+        ))
+    } else {
+        None
+    };
     if let Some(cache_key) = &response_cache_key {
-        if let Some(cached_body) = response_cache.get(cache_key) {
+        let replay = response_cache.get(cache_key).and_then(|body| {
+            if !stream {
+                return Some((body, None));
+            }
+            let include_usage = request
+                .stream_options
+                .as_ref()
+                .and_then(|o| o.include_usage)
+                .unwrap_or(false);
+            let frames = super::response_cache::replay_sse_frames(
+                &body,
+                &new_completion_id(),
+                chrono::Utc::now().timestamp(),
+                &request.model,
+                include_usage,
+            )?;
+            Some((body, Some(frames)))
+        });
+        if let Some((cached_body, frames)) = replay {
             crate::metrics::inc_llm_response_cache_hit(&request.model);
+            crate::metrics::inc_completion_cache_event("gateway", "gateway.chat", "hit");
             // Zero-cost usage, same treatment as BYOK: the cached body's
             // token counts are metered, but provider_id is None and cost is
             // 0, so record_usage_event stores/recomputes no spend.
@@ -1998,6 +2027,19 @@ pub async fn chat_completions(
             tokio::task::spawn_blocking(move || {
                 record_usage_event(&db, &key_for_record, &outcome, None)
             });
+            if let Some(frames) = frames {
+                let replayed = futures::stream::iter(
+                    frames
+                        .into_iter()
+                        .map(|f| Ok::<_, Infallible>(Event::default().data(f))),
+                );
+                let mut response = Sse::new(replayed).into_response();
+                response.headers_mut().insert(
+                    HeaderName::from_static("x-allternit-cache"),
+                    HeaderValue::from_static("hit"),
+                );
+                return response;
+            }
             return (
                 StatusCode::OK,
                 [
@@ -2009,6 +2051,7 @@ pub async fn chat_completions(
                 .into_response();
         }
         crate::metrics::inc_llm_response_cache_miss(&request.model);
+        crate::metrics::inc_completion_cache_event("gateway", "gateway.chat", "miss");
     }
 
     // Prompt: system messages → Gizzi `system` field; history → Gizzi parts.
@@ -2244,6 +2287,9 @@ pub async fn chat_completions(
             policy,
             primary,
             fallback_refs,
+            response_cache_key
+                .clone()
+                .map(|k| (k, response_cache.gateway_ttl())),
         )
         .await
     } else {
@@ -2686,6 +2732,9 @@ async fn stream_completion(
     retry_policy: super::failover::RetryPolicy,
     primary: super::failover::ModelRef,
     fallbacks: Vec<super::failover::ModelRef>,
+    // O7: when set, a stream that ends `ok` with plain text (no tool calls,
+    // no refusal) is written to the shared exact cache on completion.
+    response_cache_key: Option<(String, Duration)>,
 ) -> Response {
     let completion_id = new_completion_id();
     let created = chrono::Utc::now().timestamp();
@@ -2713,6 +2762,7 @@ async fn stream_completion(
         let mut send_task = send_task;
         let mut send_done = false;
         let mut failure: Option<(String, String)> = None;
+        let mut streamed_tool_calls = false;
         tokio::pin!(events);
         let deadline = tokio::time::sleep(COMPLETION_TIMEOUT);
         tokio::pin!(deadline);
@@ -2790,6 +2840,7 @@ async fn stream_completion(
                     ));
                 }
                 Progress::ToolCallDelta(delta) => {
+                    streamed_tool_calls = true;
                     yield Ok(Event::default().data(
                         ChatCompletionChunk::tool_calls_chunk(
                             &completion_id, created, &wire_model, vec![delta],
@@ -2884,6 +2935,26 @@ async fn stream_completion(
                     ));
                 }
                 yield Ok(Event::default().data("[DONE]"));
+                if let (Some((cache_key, cache_ttl)), false) = (&response_cache_key, is_refusal) {
+                    if !streamed_tool_calls && !collector.text.is_empty() {
+                        let body = super::response_cache::completed_stream_body(
+                            &completion_id,
+                            created,
+                            &wire_model,
+                            &collector.text,
+                            &finish,
+                            Usage::new(
+                                collector.usage.prompt_tokens,
+                                collector.usage.completion_tokens,
+                                collector.usage.reasoning_tokens,
+                                collector.usage.cached_tokens,
+                            ),
+                        );
+                        super::response_cache::ResponseCache::global()
+                            .put_with_ttl(cache_key.clone(), body, *cache_ttl);
+                        crate::metrics::inc_completion_cache_event("gateway", "gateway.chat", "store");
+                    }
+                }
                 outcome = RequestOutcome {
                     status: if is_refusal { "refused" } else { "ok" },
                     error_type: if is_refusal { Some("refusal".to_string()) } else { None },
@@ -3646,6 +3717,47 @@ mod stream_retry_hint_tests {
         }
     }
 
+    /// O7: a stream that ends ok with plain text writes the shared exact
+    /// cache on completion; the entry replays as an equivalent stream.
+    #[tokio::test]
+    async fn completed_stream_writes_cache_and_replays() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::test_helpers::app_state(dir.path()).await;
+        {
+            let conn = state.db.connect().unwrap();
+            conn.execute("INSERT INTO users (id, email) VALUES ('u-hint', 'hint@example.com')", []).unwrap();
+            conn.execute(
+                "INSERT INTO llm_virtual_keys (id, user_id, key_hash, key_prefix) VALUES ('vk-hint', 'u-hint', 'hash', 'ak-hint')",
+                [],
+            )
+            .unwrap();
+        }
+        let send_task = tokio::spawn(futures::future::pending::<Result<reqwest::Response, reqwest::Error>>());
+        let ev = |t: &str, p: Value| GizziEvent { event_type: t.to_string(), properties: p };
+        let events = futures::stream::iter(vec![
+            ev("session.status", json!({"sessionID": "s-ok", "status": {"type": "busy"}})),
+            ev("message.part.delta", json!({"sessionID": "s-ok", "delta": "cached "})),
+            ev("message.part.delta", json!({"sessionID": "s-ok", "delta": "answer"})),
+            ev("session.status", json!({"sessionID": "s-ok", "status": {"type": "idle"}})),
+        ]);
+        let cache_key = format!("test-stream-{}", uuid::Uuid::new_v4());
+        let response = stream_completion(
+            state, hint_key(), send_task, events, Instant::now(), "s-ok".to_string(),
+            "mock-a/model-a".to_string(), None, None, false, None, None, None, None,
+            RetryPolicy::default(),
+            ModelRef { provider_id: "mock-a".to_string(), model_id: "model-a".to_string() },
+            vec![],
+            Some((cache_key.clone(), Duration::from_secs(60))),
+        )
+        .await;
+        let _ = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let cache = super::super::response_cache::ResponseCache::global();
+        let body = cache.get_any(&cache_key).expect("stream wrote the cache on completion");
+        assert_eq!(body["choices"][0]["message"]["content"], "cached answer");
+        let frames = super::super::response_cache::replay_sse_frames(&body, "id", 0, "m", false).unwrap();
+        assert!(frames[1].contains("cached answer"));
+    }
+
     /// Drive `stream_completion` with a send task that never resolves and an
     /// event stream that fails mid-stream via `session.error`; return the full
     /// SSE body text.
@@ -3705,6 +3817,7 @@ mod stream_retry_hint_tests {
                 model_id: "model-a".to_string(),
             },
             fallbacks,
+            None,
         )
         .await;
 

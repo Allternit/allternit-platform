@@ -169,6 +169,8 @@ pub mod prompt_leak_routes;
 pub mod file_routes;
 pub mod gizzi_chat_stream;
 pub mod gizzi_completion;
+pub mod completion_cache;
+pub mod semantic_cache;
 pub mod gizzi_provider_auth;
 pub mod h5i_routes;
 pub mod har_api_routes;
