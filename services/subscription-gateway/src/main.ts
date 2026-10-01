@@ -196,7 +196,7 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
         accountState: async (provider) => {
           const all = listAccounts(db).filter((a) => a.provider === provider && a.enabled);
           const best = preferredReadyAccount(all, provider) ?? all.find((a) => a.preferred) ?? all[0];
-          return best ? { health: best.session_health, remainingPct: best.usage?.remaining_pct ?? null, resetsAt: best.usage?.resets_at ?? null } : null;
+          return best ? { health: best.session_health, remainingPct: best.usage?.remaining_pct ?? null, resetsAt: best.usage?.resets_at ?? null, agents: best.agents ?? null } : null;
         },
       },
     }),

@@ -385,6 +385,7 @@ interface AccountRow {
   enabled: number;
   identity?: string | null;
   usage?: string | null;
+  agents?: string | null;
   preferred?: number;
 }
 
@@ -400,6 +401,7 @@ function accountFromRow(row: AccountRow): Account {
     enabled: row.enabled === 1,
     identity: row.identity ?? null,
     usage: row.usage ? (JSON.parse(row.usage) as Account["usage"]) : null,
+    agents: row.agents ? (JSON.parse(row.agents) as Account["agents"]) : null,
     preferred: row.preferred === 1,
   };
 }
@@ -408,8 +410,8 @@ export function upsertAccount(db: Db, account: Account): void {
   db.prepare(
     `INSERT INTO accounts (
       account_id, provider, label, plan, plan_observed_at, profile_ref,
-      session_health, enabled, identity, usage, preferred
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      session_health, enabled, identity, usage, preferred, agents
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (account_id) DO UPDATE SET
       provider = excluded.provider,
       label = excluded.label,
@@ -420,7 +422,8 @@ export function upsertAccount(db: Db, account: Account): void {
       enabled = excluded.enabled,
       identity = excluded.identity,
       usage = excluded.usage,
-      preferred = excluded.preferred`
+      preferred = excluded.preferred,
+      agents = excluded.agents`
   ).run(
     account.account_id,
     account.provider,
@@ -432,7 +435,8 @@ export function upsertAccount(db: Db, account: Account): void {
     account.enabled ? 1 : 0,
     account.identity ?? null,
     account.usage ? JSON.stringify(account.usage) : null,
-    account.preferred ? 1 : 0
+    account.preferred ? 1 : 0,
+    account.agents ? JSON.stringify(account.agents) : null
   );
 }
 

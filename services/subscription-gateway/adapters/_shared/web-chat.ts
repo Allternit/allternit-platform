@@ -87,6 +87,8 @@ export interface WebChatSite {
   newChatUrl: string;
   /** A provider thread id → the URL that reopens it (inside manifest.origins). */
   threadUrl(providerThreadId: string): string;
+  /** Where a new chat for this task starts, when not newChatUrl (e.g. inside a Claude Project). null = newChatUrl. */
+  newChatUrlFor?(task: Task): string | null;
 }
 
 export interface WebChatOptions {
@@ -119,7 +121,7 @@ export class WebChatAdapter extends DeclarativeChatAdapter {
       } else {
         // Never type into the page as left by the previous task: the prompt
         // would land in that task's thread.
-        await this.openFreshChat(ctx);
+        await this.openFreshChat(ctx, task);
       }
       await this.dismissAnnouncements(ctx);
       yield* super.execute(task, ctx);
@@ -135,9 +137,10 @@ export class WebChatAdapter extends DeclarativeChatAdapter {
     }
   }
 
-  protected async openFreshChat(ctx: ExecutionContext): Promise<void> {
+  protected async openFreshChat(ctx: ExecutionContext, task?: Task): Promise<void> {
     if (this.opts.freshChat === false) return;
-    await sdkPage(ctx.page).goto(this.site.newChatUrl, { waitUntil: "domcontentloaded" });
+    const url = (task && this.site.newChatUrlFor?.(task)) || this.site.newChatUrl;
+    await sdkPage(ctx.page).goto(url, { waitUntil: "domcontentloaded" });
   }
 
   // Close informational dialogs over the composer. A dialog that asks for

@@ -139,3 +139,27 @@ describe("claude-subscription cursors", () => {
   });
 });
 
+
+describe("claude-subscription Projects", () => {
+  const PID = "0f6f1c2e-6a3b-4c1d-9e8f-123456789abc";
+  it("lists each Claude Project as an agent and starts its chats inside the Project, also after a restart", async () => {
+    const f = fakeTasks();
+    f.tasks.accountState = async () => ({ health: "ready", remainingPct: 50, agents: [{ id: PID, name: "Allternit Brain", kind: "project" }, { id: "not-a-uuid", name: "junk" }] });
+    const p = new ClaudeSubscriptionProvider({ tasks: f.tasks, pollMs: 1, sleep: async () => {} });
+    const l = await p.list();
+    expect(l.ok && l.value.map((a) => [a.agentId, a.displayName])).toEqual([["claude", "Claude"], [`claude:project:${PID}`, "Allternit Brain"]]);
+    expect(await p.identity(`claude:project:${PID}`)).toMatchObject({ ok: true, value: { displayName: "Allternit Brain", lookPack: "claude" } });
+    const c = await p.contextOpen({ agentId: `claude:project:${PID}` });
+    if (!c.ok) throw new Error("open");
+    await p.contextMessage({ contextId: c.value.contextId, correlationId: "p1", text: "hi" });
+    expect(f.submitted[0]).toMatchObject({ capability: "chat.create", options: { project_id: PID } });
+    // A restarted gateway revives the context with its Project; a new conversation (no mapping) still starts there.
+    const unmapped = fakeTasks();
+    const orig = unmapped.tasks.submit;
+    unmapped.tasks.submit = async (b) => (b.capability === "chat.continue" ? { status: 409, body: { error: "thread_not_mapped" } } : orig(b));
+    const p2 = new ClaudeSubscriptionProvider({ tasks: unmapped.tasks, pollMs: 1, sleep: async () => {} });
+    await p2.contextMessage({ contextId: c.value.contextId, correlationId: "p2", text: "again" });
+    expect(unmapped.submitted.at(-1)).toMatchObject({ capability: "chat.create", options: { project_id: PID } });
+    expect(await p.contextOpen({ agentId: "claude:project:nope" })).toMatchObject({ ok: false, error: { code: "CONTEXT_NOT_FOUND" } });
+  });
+});

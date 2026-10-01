@@ -18,7 +18,7 @@ export interface GatewayTasks {
   /** Live task events (the worker's reply/reasoning deltas); returns unsubscribe. Optional. */
   subscribe?(taskId: string, onEvent: (event: { kind?: string; payload?: unknown }) => void): () => void;
   /** The provider's best subscription login: its session_health and usage left (null = none signed in). */
-  accountState(provider: string): Promise<{ health: string; remainingPct?: number | null; resetsAt?: string | null } | null>;
+  accountState(provider: string): Promise<{ health: string; remainingPct?: number | null; resetsAt?: string | null; agents?: { id: string; name: string; kind?: string }[] | null } | null>;
 }
 
 export interface ClaudeSubscriptionOptions {
@@ -28,8 +28,18 @@ export interface ClaudeSubscriptionOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
+/** Agent ids: "claude" (plain chats) or "claude:project:<uuid>" (chats inside that Claude Project). */
+export const PROJECT_PREFIX = `${AGENT_ID}:project:`;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const projectOf = (agentId: string) => {
+  const id = agentId.startsWith(PROJECT_PREFIX) ? agentId.slice(PROJECT_PREFIX.length) : null;
+  return id && UUID.test(id) ? id : null;
+};
+/** The Project rides in the context id ("…~p<uuid>"), so a revived context still starts its chats in it. */
+const projectInContext = (contextId: string) => /~p([0-9a-f-]{36})$/.exec(contextId)?.[1] ?? null;
+
 interface Ctx {
-  id: string; closed: boolean; turns: number; seq: number; events: CursoredEvent[];
+  id: string; closed: boolean; turns: number; seq: number; events: CursoredEvent[]; projectId: string | null;
   done: Map<string, Promise<AaiResult<MessageResult>>>; lock: Promise<unknown>;
 }
 
@@ -90,19 +100,35 @@ export class ClaudeSubscriptionProvider extends BaseAaiProvider {
     }
     return ok(true);
   }
+  /** The account's Claude Projects, as the subscription worker last read them. */
+  private async projects(): Promise<{ id: string; name: string }[]> {
+    const s = await this.o.tasks?.accountState(SUBSCRIPTION_PROVIDER).catch(() => null);
+    return (s?.agents ?? []).filter((a) => (a.kind ?? "project") === "project" && UUID.test(a.id));
+  }
+  private known(agentId: string) { return agentId === AGENT_ID || projectOf(agentId) !== null; }
   async list(): Promise<AaiResult<AgentSummary[]>> {
     const r = await this.ready();
-    return ok([this.summary(r.ok ? "READY" : "blocked")]);
+    const state = r.ok ? "READY" : "blocked";
+    const projects = await this.projects();
+    return ok([
+      this.summary(state),
+      ...projects.map((p): AgentSummary => ({ agentId: PROJECT_PREFIX + p.id, displayName: p.name, vendor: VENDOR, state })),
+    ]);
+  }
+  private async nameOf(agentId: string): Promise<string> {
+    const pid = projectOf(agentId);
+    return pid ? (await this.projects()).find((p) => p.id === pid)?.name ?? "Claude Project" : "Claude";
   }
   async get(agentId: string): Promise<AaiResult<AgentDetail>> {
-    if (agentId !== AGENT_ID) return fail("CONTEXT_NOT_FOUND", `No such agent ${agentId}`);
-    return ok({ ...this.summary("READY"), remoteIds: {}, capabilities: CAPABILITIES });
+    if (!this.known(agentId)) return fail("CONTEXT_NOT_FOUND", `No such agent ${agentId}`);
+    const pid = projectOf(agentId);
+    return ok({ agentId, displayName: await this.nameOf(agentId), vendor: VENDOR, state: "READY", remoteIds: pid ? { project: pid } : {}, capabilities: CAPABILITIES });
   }
   async capabilities(agentId: string): Promise<AaiResult<AgentCapabilityManifest>> {
-    return agentId === AGENT_ID ? ok(CAPABILITIES) : fail("CONTEXT_NOT_FOUND", `No such agent ${agentId}`);
+    return this.known(agentId) ? ok(CAPABILITIES) : fail("CONTEXT_NOT_FOUND", `No such agent ${agentId}`);
   }
   async identity(agentId: string): Promise<AaiResult<AgentIdentity>> {
-    return agentId === AGENT_ID ? ok({ agentId, displayName: "Claude", vendor: VENDOR, lookPack: "claude" }) : fail("CONTEXT_NOT_FOUND", `No such agent ${agentId}`);
+    return this.known(agentId) ? ok({ agentId, displayName: await this.nameOf(agentId), vendor: VENDOR, lookPack: "claude" }) : fail("CONTEXT_NOT_FOUND", `No such agent ${agentId}`);
   }
   async health(_i: { agentId?: string }): Promise<AaiResult<HealthResult>> {
     const r = await this.ready();
@@ -119,7 +145,7 @@ export class ClaudeSubscriptionProvider extends BaseAaiProvider {
     const c = this.ctxs.get(id);
     if (c) return c.closed ? fail("CONTEXT_NOT_FOUND", "No such conversation") : ok(c);
     if (!id.startsWith("cs-")) return fail("CONTEXT_NOT_FOUND", "No such conversation");
-    const revived: Ctx = { id, closed: false, turns: 1, seq: 0, events: [], done: new Map(), lock: Promise.resolve() };
+    const revived: Ctx = { id, closed: false, turns: 1, seq: 0, events: [], done: new Map(), lock: Promise.resolve(), projectId: projectInContext(id) };
     this.ctxs.set(id, revived);
     return ok(revived);
   }
@@ -133,7 +159,7 @@ export class ClaudeSubscriptionProvider extends BaseAaiProvider {
   }
 
   async contextOpen(i: OpenContextInput): Promise<AaiResult<OpenContextResult>> {
-    if (i.agentId !== AGENT_ID) return fail("CONTEXT_NOT_FOUND", `No such agent ${i.agentId}`);
+    if (!this.known(i.agentId)) return fail("CONTEXT_NOT_FOUND", `No such agent ${i.agentId}`);
     if (i.adoptContextId) {
       const c = this.live(i.adoptContextId); // also revives a context from before a gateway restart
       return c.ok ? ok({ contextId: c.value.id, isolation: "isolated", guarantee: "best_effort", resumed: true }) : c;
@@ -144,8 +170,9 @@ export class ClaudeSubscriptionProvider extends BaseAaiProvider {
       return fail("CONTEXT_BUSY", `At most ${CAPABILITIES.context.maxParallel} Claude conversations can be open at once.`);
     }
     // The context id is also the gateway thread_id: the subscription's thread mapping keeps the claude.ai conversation.
-    const id = `cs-${i.threadId ?? ""}${i.threadId ? "-" : ""}${++this.n}-${Math.random().toString(36).slice(2, 8)}`;
-    const c: Ctx = { id, closed: false, turns: 0, seq: 0, events: [], done: new Map(), lock: Promise.resolve() };
+    const projectId = projectOf(i.agentId);
+    const id = `cs-${i.threadId ?? ""}${i.threadId ? "-" : ""}${++this.n}-${Math.random().toString(36).slice(2, 8)}${projectId ? `~p${projectId}` : ""}`;
+    const c: Ctx = { id, closed: false, turns: 0, seq: 0, events: [], done: new Map(), lock: Promise.resolve(), projectId };
     this.ctxs.set(id, c);
     this.push(c, "agent.context.opened", `open:${id}`, { title: i.title ?? null });
     return ok({ contextId: id, isolation: "isolated", guarantee: "best_effort", resumed: false });
@@ -175,6 +202,8 @@ export class ClaudeSubscriptionProvider extends BaseAaiProvider {
       idempotency_key: `${ctx.id}:${i.correlationId}`,
       requester_kind: "bot",
       routing: { provider: SUBSCRIPTION_PROVIDER },
+      // A new chat for a Project agent starts inside that Project (claude-web opens the Project page).
+      ...(capability === "chat.create" && ctx.projectId ? { options: { project_id: ctx.projectId } } : {}),
       // The Allternit user sent this turn in a thread (allternit-api only forwards human-initiated turns).
       initiated_by: { kind: "human", user_id: "allternit-thread", action_id: i.correlationId },
     }).catch((e: Error) => ({ status: 0, body: { error: e.message } as Record<string, unknown> }));
