@@ -22,7 +22,7 @@ pub async fn complete(
     system: Option<&str>,
     model: Option<&(String, String)>,
 ) -> Option<String> {
-    run(prompt, system, model, false).await.map(|(t, _)| t)
+    run(prompt, system, model, false, &mut None).await.map(|(t, _)| t)
 }
 
 /// Like [`complete`], but deletes the temporary Gizzi session afterwards, so
@@ -33,7 +33,7 @@ pub async fn complete_ephemeral(
     system: Option<&str>,
     model: Option<&(String, String)>,
 ) -> Option<String> {
-    run(prompt, system, model, true).await.map(|(t, _)| t)
+    run(prompt, system, model, true, &mut None).await.map(|(t, _)| t)
 }
 
 /// Model usage gizzi-code reported for a completion (summed over the
@@ -59,13 +59,21 @@ pub fn usage_from_info(info: &serde_json::Value) -> Usage {
 }
 
 /// [`complete_ephemeral`] that also returns the reported token/cost usage
-/// (the Agency executor charges it against its daily caps).
+/// (the Agency executor charges it against its daily caps). `Err` carries
+/// why there is no reply: the provider's own error (e.g. a subscription
+/// usage limit) when gizzi reported one, else that gizzi gave no answer.
 pub async fn complete_ephemeral_usage(
     prompt: &str,
     system: Option<&str>,
     model: Option<&(String, String)>,
-) -> Option<(String, Usage)> {
-    run(prompt, system, model, true).await
+) -> Result<(String, Usage), String> {
+    let mut provider_error = None;
+    let reply = run(prompt, system, model, true, &mut provider_error).await;
+    match (reply, provider_error) {
+        (_, Some(e)) => Err(e),
+        (Some(r), None) => Ok(r),
+        (None, None) => Err("gizzi-code gave no answer".into()),
+    }
 }
 
 async fn run(
@@ -73,13 +81,9 @@ async fn run(
     system: Option<&str>,
     model: Option<&(String, String)>,
     delete_after: bool,
+    provider_error: &mut Option<String>,
 ) -> Option<(String, Usage)> {
-    let gizzi = crate::APP_CONFIG
-        .get()
-        .map(|c| c.terminal_server_url())
-        .unwrap_or_else(|| "http://127.0.0.1:4096".to_string())
-        .trim_end_matches('/')
-        .to_string();
+    let gizzi = crate::v1_routes::gizzi_base();
 
     let (provider_id, model_id) = model.cloned().unwrap_or_else(default_model);
     let model_label = format!("{}/{}", provider_id, model_id);
@@ -125,7 +129,7 @@ async fn run(
 
     let session_id = session.get("id")?.as_str()?.to_string();
     info!(session_id, model = %model_label, "Created Gizzi completion session");
-    let text = collect(&client, &gizzi, &session_id, prompt, system).await;
+    let text = collect(&client, &gizzi, &session_id, prompt, system, provider_error).await;
     if delete_after {
         if let Err(err) = client
             .delete(format!("{}/v1/session/{}", gizzi, session_id))
@@ -145,6 +149,7 @@ async fn collect(
     session_id: &str,
     prompt: &str,
     system: Option<&str>,
+    provider_error: &mut Option<String>,
 ) -> Option<(String, Usage)> {
     let mut usage: std::collections::HashMap<String, Usage> = std::collections::HashMap::new();
     let total = |u: &std::collections::HashMap<String, Usage>| {
@@ -176,14 +181,29 @@ async fn collect(
         message_payload["system"] = json!(format!("+{system_text}"));
     }
 
-    if let Err(err) = client
+    match client
         .post(format!("{}/v1/session/{}/message", gizzi, session_id))
         .json(&message_payload)
         .send()
         .await
     {
-        warn!(error = %err, "Failed to send message to Gizzi session");
-        return None;
+        Err(err) => {
+            warn!(error = %err, "Failed to send message to Gizzi session");
+            return None;
+        }
+        // The message call answers with the finished assistant message. A
+        // provider failure (usage limit, auth) shows up only here as
+        // `info.error`; without this check it read as an empty reply.
+        Ok(res) => {
+            let body: serde_json::Value = res.json().await.unwrap_or_default();
+            let e = &body["info"]["error"];
+            if !e.is_null() {
+                let msg = e["data"]["message"].as_str().or_else(|| e["message"].as_str()).or_else(|| e["name"].as_str()).unwrap_or("provider error");
+                warn!(session_id, error = %msg, "Gizzi model call failed");
+                *provider_error = Some(msg.to_string());
+                return None;
+            }
+        }
     }
 
     // Collect text deltas until the session becomes idle after being busy.

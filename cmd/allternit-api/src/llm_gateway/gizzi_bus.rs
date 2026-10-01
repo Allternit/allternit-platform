@@ -98,12 +98,7 @@ pub async fn session_events(
 
 /// Base URL of the Gizzi runtime, from the unified app config.
 fn gizzi_base() -> String {
-    crate::APP_CONFIG
-        .get()
-        .map(|c| c.terminal_server_url())
-        .unwrap_or_else(|| "http://127.0.0.1:4096".to_string())
-        .trim_end_matches('/')
-        .to_string()
+    crate::v1_routes::gizzi_base()
 }
 
 /// Reconnect-forever pump: one SSE connection to Gizzi, fan-out to `tx`.

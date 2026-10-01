@@ -217,12 +217,7 @@ const FALLBACK_HEADER: &str = "x-allternit-fallback";
 const BATCH_HEADER: &str = "x-allternit-batch-id";
 
 fn gizzi_base() -> String {
-    crate::APP_CONFIG
-        .get()
-        .map(|c| c.terminal_server_url())
-        .unwrap_or_else(|| "http://127.0.0.1:4096".to_string())
-        .trim_end_matches('/')
-        .to_string()
+    crate::v1_routes::gizzi_base()
 }
 
 fn http_client() -> reqwest::Client {

@@ -52,9 +52,18 @@ fn validate(path: &str, v: &Value) -> Result<(), KErr> {
 
 #[derive(Deserialize)]
 pub struct Q {
-    scope: String,
+    /// Defaults to the caller's organization, like the decision-types routes.
+    scope: Option<String>,
     parents: Option<String>,
     path: Option<String>,
+}
+
+impl Q {
+    fn scope(&self, u: &AuthUser) -> String {
+        self.scope.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| {
+            format!("org:{}", u.organization_id.clone().filter(|o| !o.is_empty()).unwrap_or_else(|| "default".into()))
+        })
+    }
 }
 
 fn view(conn: &Connection, scope: &str, chain: &[String]) -> Result<Value, KErr> {
@@ -71,22 +80,24 @@ fn reset_decisions(conn: &Connection) -> Result<(), KErr> {
 }
 
 pub async fn get_policy(State(st): State<Arc<AppState>>, Extension(u): Extension<AuthUser>, Query(q): Query<Q>) -> KRes {
-    let ch = chain(&q.scope, &u, q.parents.as_deref())?;
-    Ok(Json(blocking(st.db.clone(), move |c| view(c, &q.scope, &ch)).await?))
+    let scope = q.scope(&u);
+    let ch = chain(&scope, &u, q.parents.as_deref())?;
+    Ok(Json(blocking(st.db.clone(), move |c| view(c, &scope, &ch)).await?))
 }
 
 pub async fn put_policy(State(st): State<Arc<AppState>>, Extension(u): Extension<AuthUser>, Query(q): Query<Q>, Json(body): Json<Value>) -> KRes {
-    let ch = chain(&q.scope, &u, q.parents.as_deref())?;
+    let scope = q.scope(&u);
+    let ch = chain(&scope, &u, q.parents.as_deref())?;
     let patch = flatten(&body, LEAVES)?;
     for (p, v) in &patch {
         validate(p, v)?;
     }
     Ok(Json(blocking(st.db.clone(), move |c| {
         let before = effective(c, "routing", &defaults(), LEAVES, &ch)?.0["s1_backend"].clone();
-        let mut doc = load_doc(c, "routing", &q.scope)?;
+        let mut doc = load_doc(c, "routing", &scope)?;
         doc.extend(patch);
-        save_doc(c, "routing", &q.scope, &doc)?;
-        let mut out = view(c, &q.scope, &ch)?;
+        save_doc(c, "routing", &scope, &doc)?;
+        let mut out = view(c, &scope, &ch)?;
         let changed = out["s1_backend"] != before;
         if changed {
             reset_decisions(c)?;
@@ -97,17 +108,18 @@ pub async fn put_policy(State(st): State<Arc<AppState>>, Extension(u): Extension
 }
 
 pub async fn delete_field(State(st): State<Arc<AppState>>, Extension(u): Extension<AuthUser>, Query(q): Query<Q>) -> KRes {
-    let ch = chain(&q.scope, &u, q.parents.as_deref())?;
+    let scope = q.scope(&u);
+    let ch = chain(&scope, &u, q.parents.as_deref())?;
     let path = q.path.clone().unwrap_or_default();
     if !LEAVES.contains(&path.as_str()) {
         return Err(KErr::bad("path must be a routing-policy field path"));
     }
     Ok(Json(blocking(st.db.clone(), move |c| {
         let before = effective(c, "routing", &defaults(), LEAVES, &ch)?.0["s1_backend"].clone();
-        let mut doc = load_doc(c, "routing", &q.scope)?;
+        let mut doc = load_doc(c, "routing", &scope)?;
         doc.remove(&path);
-        save_doc(c, "routing", &q.scope, &doc)?;
-        let mut out = view(c, &q.scope, &ch)?;
+        save_doc(c, "routing", &scope, &doc)?;
+        let mut out = view(c, &scope, &ch)?;
         let changed = out["s1_backend"] != before;
         if changed {
             reset_decisions(c)?;

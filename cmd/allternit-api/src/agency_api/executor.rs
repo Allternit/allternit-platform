@@ -374,7 +374,7 @@ pub(crate) fn scripted() -> bool {
 }
 
 pub(crate) fn gizzi_url() -> String {
-    crate::APP_CONFIG.get().map(|c| c.terminal_server_url()).unwrap_or_else(|| "http://127.0.0.1:4096".into())
+    crate::v1_routes::gizzi_base()
 }
 
 // ── strict-fence workspace ──────────────────────────────────────────────────
@@ -796,11 +796,15 @@ impl Exec<'_> {
             // the node re-routed to the next eligible backend (bounded).
             let mut backend = plan.backend_id.clone();
             let mut found = None;
+            let mut last_error: Option<String> = None;
             for _ in 0..MAX_BACKEND_FALLBACKS {
                 let entry = self.pool.as_ref().and_then(|p| p.entries.iter().find(|e| e.backend_id == backend)).cloned();
                 let model = entry.as_ref().and_then(|e| e.extensions.as_ref()?.get("x-model_ref")?.as_str()?.split_once('/'))
                     .map(|(p, m)| (p.to_string(), m.to_string()));
-                let reply = self.h.block_on(crate::gizzi_completion::complete_ephemeral_usage(&prompt, Some(sys), model.as_ref()));
+                let reply = match self.h.block_on(crate::gizzi_completion::complete_ephemeral_usage(&prompt, Some(sys), model.as_ref())) {
+                    Ok(r) => Some(r),
+                    Err(e) => { last_error = Some(e); None }
+                };
                 if let Some((_, u)) = &reply {
                     used.tokens += u.tokens;
                     used.tokens_in += u.tokens_in;
@@ -832,7 +836,10 @@ impl Exec<'_> {
             self.note_split(used.tokens_in, used.tokens_out);
             let Some(j) = found else {
                 self.charge_tokens(t0.elapsed().as_secs_f64(), used.cost_usd, 1, used.tokens)?;
-                return Err(StepErr::Fail(anyhow!("cognition returned no JSON patch")));
+                return Err(StepErr::Fail(match last_error {
+                    Some(e) => anyhow!("cognition returned no JSON patch (model error: {e})"),
+                    None => anyhow!("cognition returned no JSON patch"),
+                }));
             };
             j
         };
