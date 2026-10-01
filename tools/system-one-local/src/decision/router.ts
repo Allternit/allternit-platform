@@ -3,7 +3,9 @@
 // abstained, and can never be AUTO. Hard policy and deterministic verification
 // stay authoritative; this router only ever proposes.
 import type { CalibrationScope, DecisionCalibrationManifestV1, DecisionRequestV1, DecisionResultV1, ThresholdAction } from "./contract.ts";
+import type { CanaryController } from "./canary.ts";
 import { evaluateQ22Gate, type GateOptions } from "./gate.ts";
+import { evaluateQ26Manifest } from "./q26.ts";
 import { candidateSchemaHash, candidateSetHash, checkBinding } from "./manifest.ts";
 import { calibrateProbs, shapeAnswer, type DecisionReadoutProvider } from "./readout.ts";
 import type { ShadowLedger } from "./shadow.ts";
@@ -26,6 +28,8 @@ export interface RouterConfig {
   gate?: GateOptions;
   /** When set, every decision appends a shadow record (raw readout, scope) for later harvest + calibration. */
   ledger?: ShadowLedger;
+  /** Q26 rollout: exposure budget, audit slice, CUSUM rollback. Q26 manifests only serve live through it. */
+  canary?: CanaryController;
 }
 
 export class DecisionRouter {
@@ -56,6 +60,9 @@ export class DecisionRouter {
     let level: DecisionResultV1["calibration_level_served"] = "NONE";
     let action: ThresholdAction = "REVIEW"; // uncalibrated: never trust the numbers, never AUTO
     let abstained = true;
+    const primitive_id = String(req.extensions?.["x-primitive_id"] ?? this.cfg.primitiveId ?? req.decision_bank_id);
+    let servedLive = false;
+    let audit: boolean | null = null;
     if (served) {
       probs = calibrateProbs(raw.probs, served.extensions?.["x-temperature"] ?? 1, raw.shape);
       semantics = "CALIBRATED"; level = "L1"; abstained = false;
@@ -65,15 +72,26 @@ export class DecisionRouter {
         if (this.mode !== "live") { action = "REVIEW"; reasons.push("shadow mode: AUTO downgraded to REVIEW"); }
         else if (ctx.reversible !== true) { action = "REVIEW"; reasons.push("not attested reversible/low-consequence: AUTO downgraded"); }
         else if (conf < (served.extensions?.["x-auto_min_confidence"] ?? 1)) { action = "REVIEW"; reasons.push("confidence below the calibrated auto-act region"); }
+        else if (this.cfg.canary) {
+          const adm = this.cfg.canary.admit(primitive_id);
+          audit = adm.audit;
+          if (adm.live) servedLive = true; else { action = "REVIEW"; reasons.push(adm.reason); }
+        } else if (served.extensions?.["x-gate"] === "Q26") { action = "REVIEW"; reasons.push("Q26: live serving only through a canary exposure budget"); }
+        else servedLive = true;
       }
     }
     const shaped = shapeAnswer(req.operation, raw.options, probs, req.scale);
-    const primitive_id = String(req.extensions?.["x-primitive_id"] ?? this.cfg.primitiveId ?? req.decision_bank_id);
+    if (audit === null) audit = this.cfg.canary?.sampleAudit(primitive_id) ?? false;
+    const ext = req.extensions ?? {};
     const decision_id = this.cfg.ledger?.logDecision({
       primitive_id, operation: req.operation, question_id: req.question_id ?? "", instructions: req.instructions,
       subject_ref: typeof req.extensions?.["x-subject_ref"] === "string" ? (req.extensions["x-subject_ref"] as string) : null,
       state, candidates: (req.candidates ?? []).map((c) => ({ candidate_id: c.candidate_id, label: c.label ?? null })),
       options: raw.options, shape: raw.shape ?? "categorical", probs: raw.probs, readout_method: raw.method, scope, mode: this.mode,
+      ...(ext["x-criteria"] && typeof ext["x-criteria"] === "object" ? { criteria: ext["x-criteria"] as Record<string, string> } : {}),
+      ...(req.scale ? { scale: req.scale as unknown[] } : {}),
+      ...(typeof ext["x-incumbent"] === "string" ? { incumbent: ext["x-incumbent"] as string } : {}),
+      ...(servedLive ? { served_live: true } : {}), ...(audit ? { audit: true } : {}),
     });
     return {
       envelope: { ...req.envelope, schema_id: "allternit.kernel.DecisionResultV1" },
@@ -90,7 +108,7 @@ export class DecisionRouter {
       threshold_action: action,
       latency_ms: raw.latency_ms,
       abstained,
-      extensions: { ...(raw.usage ? { "x-usage": raw.usage } : {}), "x-mode": this.mode, "x-readout_kind": raw.kind, "x-readout_method": raw.method, "x-refused_uncalibrated": !served, ...(decision_id ? { "x-decision_id": decision_id } : {}), "x-reasons": reasons },
+      extensions: { ...(raw.usage ? { "x-usage": raw.usage } : {}), "x-mode": this.mode, "x-readout_kind": raw.kind, "x-readout_method": raw.method, "x-refused_uncalibrated": !served, ...(decision_id ? { "x-decision_id": decision_id } : {}), "x-reasons": reasons, "x-served_live": servedLive, "x-audit": audit },
     };
   }
 
@@ -101,7 +119,7 @@ export class DecisionRouter {
       sawAny = true;
       const b = checkBinding(m, scope);
       if (!b.ok) { reasons.push(`manifest ${m.manifest_id}: ${b.reason}`); continue; }
-      const g = evaluateQ22Gate(m, this.cfg.gate);
+      const g = m.extensions?.["x-gate"] === "Q26" ? evaluateQ26Manifest(m) : evaluateQ22Gate(m, this.cfg.gate);
       if (!g.passed || m.gate.passed !== true) { reasons.push(`manifest ${m.manifest_id}: gate failed (${g.failures.join("; ") || "manifest.gate.passed=false"})`); continue; }
       const cr = m.coverage_region;
       if (cr?.min_candidates !== undefined && nOptions < cr.min_candidates) { reasons.push("outside calibrated coverage: too few candidates"); continue; }

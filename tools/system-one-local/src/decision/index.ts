@@ -10,3 +10,6 @@ export { LocalLogitReadoutProvider, type LocalDeployment } from "./local-provide
 export * from "./shadow.ts";
 export * from "./calibrate.ts";
 export * as client from "./client.ts";
+export * from "./export.ts";
+export * from "./q26.ts";
+export * from "./canary.ts";

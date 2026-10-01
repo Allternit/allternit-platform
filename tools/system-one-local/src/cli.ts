@@ -5,12 +5,18 @@
 //   system-one ask --state <file|-> --questions <file> [--model jev-latest] [--server http://127.0.0.1:7717]
 //   system-one models
 //   system-one route-model --task "..." --allow-paid       (paid OpenRouter call)
+//   system-one export --out <dir>                            ledger -> fine-tuning set (WP-L1)
+//   system-one calibrate --tune <jsonl> --cert <jsonl>       Q26 gate (legacy Q22: --data ... --primitive ... --model ...)
+//   system-one canary <status|enable|grow|sync|rollback>     Q26 exposure budget + CUSUM rollback
 //
 // `ask` evaluates in-process unless --server is given. A state file ending in
 // .json is parsed as JSON (object/array/string); anything else is sent as text.
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { calibrateAndWrite } from "./decision/calibrate.ts";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { appendManifests, calibrateAndWrite } from "./decision/calibrate.ts";
+import { CanaryController } from "./decision/canary.ts";
+import { buildExport, writeExport } from "./decision/export.ts";
+import { runQ26, type Q26Policy, type Q26Report } from "./decision/q26.ts";
 import { harvest, readDataset, ShadowLedger, writeDataset } from "./decision/shadow.ts";
 import { BASE_DIR } from "./log.ts";
 import { SystemOne } from "./engine.ts";
@@ -97,7 +103,54 @@ async function main() {
       console.log(JSON.stringify(new ShadowLedger(dir).recordOutcome({ truth: f.truth, source: f.source, decision_id: str("decision-id"), subject_ref: str("subject-ref"), question_id: str("question-id") })));
       return;
     }
+    case "export": {
+      // Ledger -> fine-tuning set: train/tune/cert/audit.jsonl per (bank, type, option count).
+      const dir = typeof f["shadow-dir"] === "string" ? f["shadow-dir"] : (process.env.ALLTERNIT_S1_SHADOW_DIR ?? join(BASE_DIR, "shadow"));
+      if (typeof f.out !== "string") throw new Error("usage: system-one export --out <dir> [--shadow-dir d] [--primitive bank] [--model ref] [--audit 0.05]");
+      const { rows, summary } = buildExport(dir, {
+        primitive: typeof f.primitive === "string" ? f.primitive : undefined, model: typeof f.model === "string" ? f.model : undefined,
+        auditFraction: typeof f.audit === "string" ? Number(f.audit) : undefined,
+      });
+      writeExport(f.out, rows, summary);
+      console.log(JSON.stringify({ out: f.out, ...summary }, null, 2));
+      return;
+    }
+    case "canary": {
+      // system-one canary <status|enable|grow|sync|rollback> [--bank b] [--report q26.json] [--budget N] [--audit-rate r]
+      const sub = rest[0];
+      const c = new CanaryController(typeof f.state === "string" ? f.state : (process.env.ALLTERNIT_S1_CANARY?.trim() || join(BASE_DIR, "canary.json")));
+      const bank = typeof f.bank === "string" ? f.bank : undefined;
+      const need = () => { if (!bank) throw new Error("--bank is required"); return bank; };
+      if (sub === "status") console.log(JSON.stringify(bank ? c.bank(bank) ?? null : c.snapshot(), null, 2));
+      else if (sub === "enable") {
+        if (typeof f.report !== "string") throw new Error("canary enable needs --report <q26 report json> (the bank must be eligible)");
+        const rep = JSON.parse(readFileSync(f.report, "utf8")) as Q26Report;
+        console.log(JSON.stringify(c.enable(need(), rep, { budget_per_day: typeof f.budget === "string" ? Number(f.budget) : undefined, audit_rate: typeof f["audit-rate"] === "string" ? Number(f["audit-rate"]) : undefined }), null, 2));
+      } else if (sub === "grow") console.log(JSON.stringify(c.grow(need()), null, 2));
+      else if (sub === "rollback") { c.rollback(need(), "manual (cli)"); console.log(JSON.stringify(c.bank(need()), null, 2)); }
+      else if (sub === "sync") {
+        const dir = typeof f["shadow-dir"] === "string" ? f["shadow-dir"] : (process.env.ALLTERNIT_S1_SHADOW_DIR ?? join(BASE_DIR, "shadow"));
+        console.log(JSON.stringify(c.syncFromRows(harvest(dir).rows), null, 2));
+      } else throw new Error("usage: system-one canary <status|enable|grow|sync|rollback> [--bank b] [--report f] [--budget N]");
+      return;
+    }
     case "calibrate": {
+      if (typeof f.tune === "string" || typeof f.cert === "string") {
+        // Q26 (default gate): split A = --tune, split B = --cert (untouched).
+        if (typeof f.tune !== "string" || typeof f.cert !== "string") throw new Error("usage: system-one calibrate --tune <jsonl> --cert <jsonl> [--policy p.json] [--report out.json] [--manifests path]");
+        const policy = typeof f.policy === "string" ? (JSON.parse(readFileSync(f.policy, "utf8")) as Q26Policy) : undefined;
+        const rep = runQ26(readDataset(f.tune), readDataset(f.cert), { policy, datasetRef: f.cert });
+        const reportPath = typeof f.report === "string" ? f.report : `${f.cert}.q26-report.json`;
+        const manifestsPath = typeof f.manifests === "string" ? f.manifests : process.env.ALLTERNIT_S1_MANIFESTS?.trim() || undefined;
+        const passing = rep.bindings.filter((b) => b.passed && b.manifest).map((b) => b.manifest!);
+        if (passing.length && manifestsPath) appendManifests(manifestsPath, passing);
+        else if (passing.length) rep.notes.push("bindings passed but no manifests path (ALLTERNIT_S1_MANIFESTS / --manifests): nothing written");
+        mkdirSync(dirname(reportPath), { recursive: true });
+        writeFileSync(reportPath, JSON.stringify(rep, null, 2) + "\n");
+        console.log(JSON.stringify({ gate: "Q26", report: reportPath, banks: rep.banks, bindings: rep.bindings.map((b) => ({ bank: b.bank, type: b.type, k: b.k, n_tune: b.n_tune, n_cert: b.n_cert, tau: b.tau, cert: b.cert, passed: b.passed, failures: b.failures })), notes: rep.notes }, null, 2));
+        process.exitCode = Object.values(rep.banks).some((b) => b.eligible) ? 0 : 3;
+        return;
+      }
       if (typeof f.data !== "string" || typeof f.primitive !== "string" || typeof f.model !== "string") {
         throw new Error("usage: system-one calibrate --data <jsonl> --primitive <id> --model <ref> [--manifests path] [--report path] [--holdout 0.4] [--strict]");
       }
@@ -112,10 +165,10 @@ async function main() {
       return;
     }
     default:
-      console.error(`usage: system-one <serve|ask|models|route-model|harvest|outcome|calibrate> (default port ${DEFAULT_PORT})`);
+      console.error(`usage: system-one <serve|ask|models|route-model|harvest|outcome|export|calibrate|canary> (default port ${DEFAULT_PORT})`);
       break;
   }
-  if (!["serve", "ask", "models", "route-model", "harvest", "outcome", "calibrate"].includes(cmd ?? "")) process.exitCode = 2;
+  if (!["serve", "ask", "models", "route-model", "harvest", "outcome", "export", "calibrate", "canary"].includes(cmd ?? "")) process.exitCode = 2;
 }
 
 main().catch((e) => {

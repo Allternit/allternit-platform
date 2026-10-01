@@ -197,7 +197,7 @@ describe("guard", () => {
   test("advise: hard deny is emitted and is final (model not consulted)", async () => {
     let called = false;
     const r = await runGuard(input("git push --force origin main"), {
-      mode: "advise", logDir: null, fetchImpl: async () => { called = true; return okServer(calm)(); },
+      mode: "advise", logDir: null, fetchImpl: async (u: string, i?: RequestInit) => { called = true; return okServer(calm)(u, i); },
     });
     expect(r.output!.hookSpecificOutput.permissionDecision).toBe("deny");
     expect(called).toBe(false);
@@ -268,7 +268,7 @@ describe("single decision path", () => {
     const { createHandler } = await import("../src/server.ts");
     const { SystemOne } = await import("../src/engine.ts");
     const runtime = { name: "fake", model: "m", async complete() { return { text: "A", top: [{ token: "A", logprob: Math.log(0.9) }, { token: "B", logprob: Math.log(0.1) }], usage: { input: 1, output: 1 } }; } };
-    const engine = new SystemOne({ runtimeUrl: "x", runtimeModel: "m", concurrency: 1, samples: 2, debias: false, logEnabled: false }, { runtime });
+    const engine = new SystemOne({ runtimeUrl: "x", runtimeModel: "m", concurrency: 1, samples: 2, debias: false, logEnabled: false, layaUrl: "http://127.0.0.1:1", layaModel: "typed-decisions" }, { runtime });
     const res = await createHandler({ engine })(new Request("http://x/v1/systemone", { method: "POST", body: JSON.stringify({ model: "local", state: "s", questions: { q: { type: "noul", instructions: "i" } } }) }));
     expect(res.status).toBe(200);
     expect(((await res.json()) as any).answers.q.type).toBe("noul");
