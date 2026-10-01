@@ -1748,6 +1748,23 @@ pub(crate) async fn forward_to_guest(
         }
     };
 
+    forward_to_url(&base, guest_port, path, query, method, headers, body, timeout).await
+}
+
+/// Forward one request to a guest service already resolved to `base`
+/// (streaming the response, SSE untimed). Shared by guest computers and a
+/// service on this same machine (a cloud computer's own subscription gateway).
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn forward_to_url(
+    base: &str,
+    guest_port: u16,
+    path: &str,
+    query: Option<&str>,
+    method: Method,
+    headers: &HeaderMap,
+    body: Bytes,
+    timeout: std::time::Duration,
+) -> Response {
     let mut url = format!("{}/{}", base.trim_end_matches('/'), path.trim_start_matches('/'));
     if let Some(query) = query {
         url.push('?');
