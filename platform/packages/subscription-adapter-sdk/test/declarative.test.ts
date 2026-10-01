@@ -213,6 +213,26 @@ describe("DeclarativeChatAdapter end-to-end (§A3.3, P2 verify)", () => {
     await page.close();
   });
 
+  it("a provider prompt in place of the answer ends the turn as needs_user, not a stall", async () => {
+    let t = 1_700_000_000_000;
+    const { events, page } = await runAdapter("idle.html", {
+      stallTimeoutS: 5,
+      interrupts: [{ pattern: /do you like this personality\?/i, message: "Answer ChatGPT's question in its window." }],
+      completion: { now: () => t, sleep: async (ms) => { t += ms; }, stabilityMs: 150, pollIntervalMs: 25, timeoutMs: 60_000 },
+    }, async (pg) => {
+      // After Send, the provider shows a survey and no reply text.
+      await pg.evaluate(() => {
+        document.addEventListener("click", () => setTimeout(() => {
+          const d = document.createElement("div"); d.textContent = "Do you like this personality?"; document.body.appendChild(d);
+          const s = document.createElement("button"); s.setAttribute("aria-label", "Stop"); s.textContent = "Stop"; document.body.appendChild(s);
+        }, 10), { once: true });
+      });
+    });
+    const last = events[events.length - 1] as Extract<AdapterEvent, { t: "needs_user" }>;
+    expect(last).toMatchObject({ t: "needs_user", reason: "confirm_dialog", message: "Answer ChatGPT's question in its window." });
+    await page.close();
+  });
+
   it("stall watchdog gate: a heartbeating, growing fixture does NOT trip stalled", async () => {
     let t = 1_700_000_000_000;
     const page = await fixturePage(browser, "streaming.html");

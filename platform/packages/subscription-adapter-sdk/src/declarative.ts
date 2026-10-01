@@ -42,6 +42,11 @@ export interface DeclarativeChatConfig {
   selectorsYaml: string;
   threadUrlPattern: RegExp;
   banners: BannerPattern[];
+  /**
+   * Provider prompts that take the place of an answer (a survey, an A/B pick, a "continue?" gate). While no reply
+   * text has appeared, a match ends the turn as needs_user with \`message\` instead of stalling until the timeout.
+   */
+  interrupts?: { pattern: RegExp; message: string }[];
   criticalKeys?: string[]; // probe-critical subset (default: pack critical keys)
   sampleThreadUrl?: string; // conformance thread-ID check
   sampleThreadId?: string;
@@ -351,10 +356,23 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
       return out;
     };
 
+    let lastInterruptAt = 0;
+    const checkInterrupts = async (): Promise<string | null> => {
+      if (!cfg.interrupts?.length || emitted || now() - lastInterruptAt < LIVE_SAMPLE_MS) return null;
+      lastInterruptAt = now();
+      const text = await page.evaluate("document.body ? document.body.innerText : ''").catch(() => "") as string;
+      return cfg.interrupts.find((i) => i.pattern.test(text))?.message ?? null;
+    };
+
     for (;;) {
       while (pending.length > 0) yield pending.shift() as AdapterEvent;
       for (const e of await sampleThinking()) yield e;
       for (const e of await sampleReply()) yield e;
+      const interrupt = await checkInterrupts();
+      if (interrupt) {
+        yield { t: "needs_user", reason: "confirm_dialog", message: interrupt };
+        return;
+      }
       // Providers route to the thread URL a beat after Send (ChatGPT: / →
       // /c/<id>). Persist the id once it appears so crash reconcile can
       // reopen the mapped thread (the SDK keeps state at acknowledged).
