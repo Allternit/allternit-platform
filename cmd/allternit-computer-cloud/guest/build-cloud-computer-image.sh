@@ -17,6 +17,18 @@
 #   TOOLS_INSTALL - optional command run inside the image after the app is
 #                   installed, e.g. the manifest installer
 #                   ("allternit-tools install --all --accept-terms ...")
+#   GATEWAY_TARBALL - optional: the subscription gateway source, installed as
+#                   the allternit-subs-gateway systemd unit (so subscriptions
+#                   survive a free computer's sleep). Make it on a checkout with
+#                     git archive --format=tar.gz -o gateway.tar.gz origin/main -- \
+#                       package.json pnpm-lock.yaml pnpm-workspace.yaml patches \
+#                       services/subscription-gateway \
+#                       platform/packages/agent-gateway \
+#                       platform/packages/subscription-adapter-sdk \
+#                       platform/packages/subscription-fabric-contracts \
+#                       platform/packages/browser-tools \
+#                       platform/packages/replies-contract mcp/servers
+#                   (the gateway's workspace dependency closure).
 #   SUBS_LANE_IDLE_MIN - minutes before an idle subscription lane closes its
 #                   Chrome (SUBS_GATEWAY_LANE_IDLE_MIN; default 10; 0 = keep open)
 #   KEEP_BUILDER  - if set, do not delete the build container
@@ -42,6 +54,10 @@ cleanup() {
 trap cleanup EXIT
 
 [ -f "${DESKTOP_DEB}" ] || { echo "ERROR: ${DESKTOP_DEB} not found" >&2; exit 1; }
+if [ -n "${GATEWAY_TARBALL:-}" ]; then
+    [ -f "${GATEWAY_TARBALL}" ] || { echo "ERROR: ${GATEWAY_TARBALL} not found" >&2; exit 1; }
+    gzip -t "${GATEWAY_TARBALL}" || { echo "ERROR: ${GATEWAY_TARBALL} is not gzip (use git archive --format=tar.gz)" >&2; exit 1; }
+fi
 
 log "launching ${BASE_IMAGE} as ${BUILD_CONTAINER}"
 incus launch --quiet "${BASE_IMAGE}" "${BUILD_CONTAINER}" -c limits.cpu=4 -c limits.memory=6GiB
@@ -97,6 +113,87 @@ X-GNOME-Autostart-enabled=true
 Terminal=false
 EOF
 '
+
+# ---------------------------------------------------------------------------
+# 2b. Optional: the subscription gateway as a systemd unit.
+# ---------------------------------------------------------------------------
+# Mirrors services/subscription-gateway/scripts/sessions-setup.sh steps 1, 2
+# and 6, but runs under systemd: a nohup'd gateway would not come back after
+# a free computer sleeps (incus stop/start). It listens on 127.0.0.1 only;
+# the runtime on the same computer is its only client. Per-owner opt-ins
+# (e.g. SUBS_GATEWAY_DOTS_CONSENT) go in /var/lib/subs-gateway/gateway.env on
+# the computer, never in the image.
+if [ -n "${GATEWAY_TARBALL:-}" ]; then
+    log "installing the subscription gateway"
+    incus file push --quiet "${GATEWAY_TARBALL}" "${BUILD_CONTAINER}/root/gateway.tar.gz"
+    incus exec "${BUILD_CONTAINER}" --env SUBS_LANE_IDLE_MIN="${SUBS_LANE_IDLE_MIN}" -- bash -c '
+        set -euo pipefail
+        if ! command -v node >/dev/null || [ "$(node -v | cut -dv -f2 | cut -d. -f1)" -lt 20 ]; then
+            curl -fsSL https://nodejs.org/dist/v22.20.0/node-v22.20.0-linux-x64.tar.xz \
+                | tar -xJ -C /usr/local --strip-components=1
+        fi
+        command -v pnpm >/dev/null || { corepack enable; corepack prepare pnpm@10 --activate; }
+        if ! command -v g++ >/dev/null || ! command -v make >/dev/null; then
+            DEBIAN_FRONTEND=noninteractive apt-get update -qq
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 make g++
+        fi
+        rm -rf /opt/subsfab/repo
+        mkdir -p /opt/subsfab/repo
+        tar -xzf /root/gateway.tar.gz -C /opt/subsfab/repo
+        rm -f /root/gateway.tar.gz
+        cd /opt/subsfab/repo
+        CI=1 pnpm install --filter "subscription-gateway..." --reporter=append-only
+        test -x /opt/subsfab/repo/services/subscription-gateway/node_modules/.bin/tsx
+        LOGIN_BROWSER="$(command -v google-chrome-stable || command -v google-chrome)"
+        cat > /etc/systemd/system/allternit-subs-gateway.service <<UNIT
+[Unit]
+Description=Allternit subscription gateway
+After=network-online.target graphical.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/opt/subsfab/repo/services/subscription-gateway
+Environment=DISPLAY=:0
+Environment=SUBS_GATEWAY_STATE_DIR=/var/lib/subs-gateway
+Environment=SUBS_GATEWAY_KEYCHAIN=file
+Environment=SUBS_GATEWAY_TCP=1
+Environment=SUBS_GATEWAY_TCP_HOST=127.0.0.1
+Environment=SUBS_GATEWAY_LOGIN_BROWSER=${LOGIN_BROWSER}
+Environment=SUBS_GATEWAY_LANE_IDLE_MIN=${SUBS_LANE_IDLE_MIN}
+EnvironmentFile=-/var/lib/subs-gateway/gateway.env
+ExecStartPre=/bin/mkdir -p /var/lib/subs-gateway
+ExecStartPre=/bin/chmod 700 /var/lib/subs-gateway
+ExecStart=/opt/subsfab/repo/services/subscription-gateway/node_modules/.bin/tsx src/main.ts
+Restart=always
+RestartSec=5
+KillMode=mixed
+
+[Install]
+WantedBy=graphical.target
+UNIT
+        systemctl daemon-reload
+        systemctl enable allternit-subs-gateway.service
+    '
+    # Prove it starts and listens before the image is published.
+    incus exec "${BUILD_CONTAINER}" -- systemctl restart allternit-subs-gateway.service
+    gateway_up=""
+    for _ in $(seq 1 60); do
+        if incus exec "${BUILD_CONTAINER}" -- sh -c 'journalctl -u allternit-subs-gateway --no-pager | grep -q "listening on http"'; then
+            gateway_up=1
+            break
+        fi
+        sleep 1
+    done
+    if [ -z "${gateway_up}" ]; then
+        incus exec "${BUILD_CONTAINER}" -- journalctl -u allternit-subs-gateway --no-pager -n 40 >&2 || true
+        echo "ERROR: the subscription gateway did not start" >&2
+        exit 1
+    fi
+    log "subscription gateway is up"
+    # The image must not carry this builder's gateway identity (cli token,
+    # keychain, profiles); each computer makes its own on first start.
+    incus exec "${BUILD_CONTAINER}" -- sh -c 'systemctl stop allternit-subs-gateway.service; rm -rf /var/lib/subs-gateway'
+fi
 
 # ---------------------------------------------------------------------------
 # 3. Optional: preinstall the tool manifest.
