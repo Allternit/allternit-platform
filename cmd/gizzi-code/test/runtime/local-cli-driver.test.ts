@@ -21,6 +21,7 @@ const EXPECTED_ACP_CLIS = [
   "qwenpaw",
   "reasonix",
   "traecli",
+  "gemini-cli",
 ]
 
 const EXPECTED_STREAM_JSON_CLIS = [
@@ -58,6 +59,12 @@ describe("LocalCliDriver adapter registry", () => {
       expect(info.supported).toBe(true)
       expect(info.mode).toBe("stream-json")
     }
+  })
+
+  test("Droid (Factory) runs headless via one-shot `droid exec`", () => {
+    const info = getCliAdapterInfo("droid")
+    expect(info.supported).toBe(true)
+    expect(info.mode).toBe("one-shot-text")
   })
 
   test("unsupported CLIs report a clear reason", () => {

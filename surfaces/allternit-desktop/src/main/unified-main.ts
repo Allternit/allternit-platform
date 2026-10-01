@@ -77,6 +77,7 @@ import {
 } from './permission-guide.js';
 import { featureFlagManager } from './feature-flags.js';
 import { persistedState } from './persisted-state.js';
+import { applyToolsEnvironment, runStartupToolsInstall } from './tools-installer-manager.js';
 import { workerBus } from './workers/worker-bus.js';
 import { mcpHostManager } from './mcp-host-manager.js';
 import { isLimaInstalled, installLima, startVM, stopVM, getVMStatus } from './lima.js';
@@ -2163,6 +2164,20 @@ app.on('open-file', (event, filePath) => {
 
 app.whenReady().then(async () => {
   console.log('[Main] App is ready...');
+
+  // allternit-tools: managed CLI bin dir on PATH + installer location for the
+  // API sidecar, before any sidecar spawns. Then (after startup settles) make
+  // sure uv exists and install the tools the user selected.
+  const toolsEnvInput = {
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath(),
+    execPath: process.execPath,
+  };
+  applyToolsEnvironment(toolsEnvInput);
+  setTimeout(() => {
+    void runStartupToolsInstall(toolsEnvInput).catch((e) => console.warn('[Main] tools install failed', e));
+  }, 20_000);
 
   // Phase 0 convenience hook: open the Allternit Docs editor on startup
   // when explicitly requested (e.g. dev smoke test). Delivered to the main

@@ -39,6 +39,8 @@ export const PROVIDER_ENV_KEYS: Record<string, { path: string; model?: string }>
   "claude-cli":   { path: "MULTICA_CLAUDE_PATH",       model: "MULTICA_CLAUDE_MODEL" },
   "codex-cli":    { path: "MULTICA_CODEX_PATH",        model: "MULTICA_CODEX_MODEL" },
   opencode:       { path: "MULTICA_OPENCODE_PATH",     model: "MULTICA_OPENCODE_MODEL" },
+  droid:          { path: "MULTICA_DROID_PATH",        model: "MULTICA_DROID_MODEL" },
+  "gemini-cli":   { path: "MULTICA_GEMINI_PATH",       model: "MULTICA_GEMINI_MODEL" },
   deveco:         { path: "MULTICA_DEVECO_PATH",       model: "MULTICA_DEVECO_MODEL" },
   openclaw:       { path: "MULTICA_OPENCLAW_PATH",     model: "MULTICA_OPENCLAW_MODEL" },
   hermes:         { path: "MULTICA_HERMES_PATH",       model: "MULTICA_HERMES_MODEL" },
@@ -183,6 +185,8 @@ export async function currentCliPath(cliId: string, known: string): Promise<stri
 /** Directories user-level installers put CLIs in, whether or not they're on PATH. */
 function userBinDirs(home: string): string[] {
   return [
+    // allternit-tools (tools/allternit-tools) installs every manifest CLI here.
+    process.env.ALLTERNIT_TOOLS_PREFIX ? path.join(process.env.ALLTERNIT_TOOLS_PREFIX, "bin") : path.join(home, ".allternit", "tools", "bin"),
     path.join(home, ".local", "bin"),
     path.join(home, ".bun", "bin"),
     path.join(home, ".npm-global", "bin"),
@@ -328,8 +332,7 @@ export const SUBPROCESS_PROVIDERS: SubprocessSpec[] = [
     cmd: "gemini -p",
     probe: { args: ["--version"], expect: /\d+\.\d+/ },
     models: [
-      { id: "gemini-1.5-pro-latest",  name: "Gemini 1.5 Pro",  context: 2000000, output: 8192 },
-      { id: "gemini-1.5-flash-latest", name: "Gemini 1.5 Flash", context: 1000000, output: 8192 },
+      { id: "default", name: "Gemini CLI default", context: 1000000, output: 65536 },
     ],
   },
 
@@ -444,6 +447,17 @@ export const SUBPROCESS_PROVIDERS: SubprocessSpec[] = [
     cmd: "opencode",
     probe: { args: ["--version"], expect: /\d+\.\d+/ },
     models: [{ id: "default", name: "OpenCode default", context: 200000, output: 64000 }],
+  },
+
+  // ── Droid (Factory) ──────────────────────────────────────────────────────
+  {
+    bin: "droid",
+    id: "droid",
+    name: "Droid (Factory)",
+    icon: "droid",
+    cmd: "droid exec",
+    probe: { args: ["--version"], expect: /\d+\.\d+/ },
+    models: [{ id: "default", name: "Droid default", context: 200000, output: 64000 }],
   },
 
   // ── OpenClaw ─────────────────────────────────────────────────────────────

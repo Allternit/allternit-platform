@@ -121,6 +121,18 @@
         "to": "build-info.json"
       },
       {
+        "from": "../../tools/allternit-tools/",
+        "to": "allternit-tools/",
+        "filter": [
+          "allternit-tools.mjs",
+          "manifest.json"
+        ]
+      },
+      {
+        "from": "../../infrastructure/executor/ao-engine/src/ao/harness/harness.json",
+        "to": "allternit-tools/harness.json"
+      },
+      {
         "from": "native/dictation-helper/",
         "to": "native/dictation-helper/",
         "filter": [

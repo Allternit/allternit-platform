@@ -82,6 +82,11 @@ export function opencodeResumeFlags(vendorSessionId?: string): string[] {
   return vendorSessionId ? ["--session", vendorSessionId] : []
 }
 
+/** Droid continues an existing session with `exec --session-id <id>`. */
+export function droidSessionFlags(vendorSessionId?: string): string[] {
+  return vendorSessionId ? ["--session-id", vendorSessionId] : []
+}
+
 /** Codex app-server: resume the prior thread (`thread/resume`) instead of `thread/start`. */
 export function codexThreadRequest(
   vendorSessionId: string | undefined,

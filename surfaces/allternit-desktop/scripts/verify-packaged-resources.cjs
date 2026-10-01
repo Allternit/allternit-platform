@@ -88,6 +88,16 @@ const required = [
     label: 'phone-remote viewer (client/index.html)',
     buildStep: 'surfaces/phone-remote/client must ship in extraResources',
   },
+  {
+    path: path.join(repoRoot, 'tools', 'allternit-tools', 'allternit-tools.mjs'),
+    label: 'allternit-tools installer (ships in extraResources as allternit-tools/)',
+    buildStep: 'tools/allternit-tools must ship in extraResources',
+  },
+  {
+    path: path.join(repoRoot, 'infrastructure', 'executor', 'ao-engine', 'src', 'ao', 'harness', 'harness.json'),
+    label: 'ao harness.json (tool wiring data for allternit-tools)',
+    buildStep: 'infrastructure/executor/ao-engine/src/ao/harness/harness.json must ship in extraResources',
+  },
   // NOTE: the compiled sc_capture helper is deliberately NOT hard-required
   // here — it is a gitignored runtime artifact (capture.mjs swiftc-builds it
   // on first launch) and no CI step produces it. Requiring it would red the

@@ -50,6 +50,11 @@ pub fn provider_router() -> Router<Arc<AppState>> {
             "/providers/:id/connect/confirm",
             post(confirm_provider_connect),
         )
+        .route("/providers/:id/install", post(install_provider_tool))
+        .route(
+            "/providers/:id/install/status",
+            get(install_provider_tool_status),
+        )
         .route("/providers/auth/status", get(list_provider_auth_status))
         .route("/providers/video/generate", post(generate_video))
         .route("/media/catalog", get(crate::media::handlers::get_media_catalog))
@@ -379,6 +384,8 @@ static CLI_PROVIDER_SPECS: &[(&str, &str, &str, &str)] = &[
     ("cursor-agent", "Cursor Agent", "cursor-agent", "cursor-agent"),
     ("copilot", "GitHub Copilot CLI", "copilot", "copilot"),
     ("opencode", "OpenCode", "opencode", "opencode"),
+    ("droid", "Droid (Factory)", "droid", "droid"),
+    ("gemini-cli", "Gemini CLI", "gemini", "gemini-cli"),
     ("openclaw", "OpenClaw", "openclaw", "openclaw"),
     ("hermes", "Hermes", "hermes", "hermes"),
     ("pi", "Pi", "pi", "pi"),
@@ -496,6 +503,12 @@ fn compute_provider_status(provider_type: &str, api_key_env_var: Option<&str>) -
 
 /// Best-effort check of whether a command exists on PATH.
 pub(crate) fn command_on_path(cmd: &str) -> Option<std::path::PathBuf> {
+    // allternit-tools installs into ~/.allternit/tools/bin; a Finder-launched
+    // runtime may not have it on PATH yet, so look there first.
+    let own = crate::tools_install::tools_bin_dir().join(cmd);
+    if own.is_file() {
+        return Some(own);
+    }
     let path_env = std::env::var("PATH").unwrap_or_default();
     for dir in path_env.split(':') {
         let candidate = std::path::Path::new(dir).join(cmd);
@@ -1616,6 +1629,29 @@ fn subscription_provider(id: &str) -> Option<(&'static str, SubscriptionProvider
                 api_key_only: false,
             },
         )),
+        "droid" | "factory" | "factory-droid" => Some((
+            "droid",
+            SubscriptionProvider {
+                id: "droid",
+                label: "Droid (Factory)",
+                model: "droid",
+                // Bare `droid` opens Factory's browser sign-in on first run.
+                login: &[],
+                page: "https://app.factory.ai/",
+                api_key_only: false,
+            },
+        )),
+        "gemini" | "gemini-cli" => Some((
+            "gemini",
+            SubscriptionProvider {
+                id: "gemini-cli",
+                label: "Gemini CLI",
+                model: "gemini-cli",
+                login: &[],
+                page: "https://geminicli.com/",
+                api_key_only: false,
+            },
+        )),
         "openclaw" => Some((
             "openclaw",
             SubscriptionProvider {
@@ -1827,8 +1863,18 @@ fn home_file(parts: &[&str]) -> std::path::PathBuf {
 /// cmd/gizzi-code/.../subprocess.ts) AND (b) the provider's auth artifact is
 /// present. This kills the stale-cred / removed-binary false positives that the
 /// old file-exists-only check produced. Claude keeps its real `auth status`.
+/// Bare names resolve through `command_on_path` (which also checks
+/// ~/.allternit/tools/bin) so tools installed by allternit-tools are probed
+/// even when this process's PATH predates the install.
+fn resolve_cli(binary: &str) -> std::path::PathBuf {
+    if binary.contains('/') {
+        return std::path::PathBuf::from(binary);
+    }
+    command_on_path(binary).unwrap_or_else(|| std::path::PathBuf::from(binary))
+}
+
 fn cli_alive(binary: &str, args: &[&str], expect: Option<&str>) -> bool {
-    let out = std::process::Command::new(binary)
+    let out = std::process::Command::new(resolve_cli(binary))
         .args(args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
@@ -1847,7 +1893,7 @@ fn cli_alive(binary: &str, args: &[&str], expect: Option<&str>) -> bool {
 /// `claude auth status` exits 0 even when `loggedIn` is false (no subscription
 /// / expired OAuth). Parse the JSON so Home does not default to a dead Claude.
 fn claude_cli_logged_in(binary: &str) -> bool {
-    let output = std::process::Command::new(binary)
+    let output = std::process::Command::new(resolve_cli(binary))
         .args(["auth", "status"])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
@@ -1899,6 +1945,17 @@ fn subscription_auth_check(id: &str, binary: &str) -> bool {
         }
         "zai" | "z.ai" | "glm" => {
             std::env::var("ZAI_API_KEY").is_ok() || std::env::var("ZHIPU_API_KEY").is_ok()
+        }
+        "gemini" | "gemini-cli" => {
+            cli_alive(binary, &["--version"], None)
+                && (home_file(&[".gemini", "oauth_creds.json"]).exists()
+                    || std::env::var("GEMINI_API_KEY").is_ok())
+        }
+        "droid" | "factory" | "factory-droid" => {
+            cli_alive(binary, &["--version"], None)
+                && (home_file(&[".factory", "auth.json"]).exists()
+                    || home_file(&[".factory", "auth.v2.json"]).exists()
+                    || std::env::var("FACTORY_API_KEY").is_ok())
         }
         // Generic agent-runtime CLI: if the binary is on PATH and answers a
         // version/help probe, assume the user has already installed and
@@ -2011,7 +2068,14 @@ async fn connect_provider(
         }
     }
 
-    if subscription_auth_check(&id, binary) {
+    // Resolve through command_on_path so CLIs installed by allternit-tools
+    // (~/.allternit/tools/bin, maybe not on this process's PATH) still run.
+    let resolved = command_on_path(binary);
+    let binary_path = resolved
+        .as_ref()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| binary.to_string());
+    if subscription_auth_check(&id, &binary_path) {
         // Already authenticated: make it the default brain immediately so a click
         // in Settings is enough to route agents through it.
         crate::onboarding_routes::persist_cli_default(
@@ -2025,19 +2089,35 @@ async fn connect_provider(
         .into_response();
     }
 
-    if command_on_path(binary).is_none() {
+    if resolved.is_none() {
         return Json(json!({
             "status": "not_installed",
             "provider": id,
             "label": meta.label,
             "binary": binary,
             "page": meta.page,
+            "action": "install",
+            "install": crate::tools_install::install_action(&id),
+        }))
+        .into_response();
+    }
+
+    // Droid's only sign-in is its interactive TUI (bare `droid`, which opens
+    // a browser from inside the TUI). Spawned headless with no stdin it just
+    // hangs, so hand the UI the terminal command instead of a hidden process.
+    if meta.id == "droid" {
+        return Json(json!({
+            "status": "sign_in_in_terminal",
+            "provider": id,
+            "label": meta.label,
+            "command": binary_path,
+            "page": meta.page,
         }))
         .into_response();
     }
 
     // Fire-and-forget: the CLI opens the user's browser / sign-in flow itself.
-    let spawned = std::process::Command::new(binary)
+    let spawned = std::process::Command::new(&binary_path)
         .args(meta.login)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -2078,7 +2158,10 @@ async fn connect_provider_status(
                 .into_response()
         }
     };
-    let connected = subscription_auth_check(&id, binary);
+    let binary_path = command_on_path(binary)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| binary.to_string());
+    let connected = subscription_auth_check(&id, &binary_path);
     if connected {
         // Auto-detected completion of an interactive sign-in: promote to default.
         crate::onboarding_routes::persist_cli_default(
@@ -2115,6 +2198,70 @@ async fn confirm_provider_connect(
     // Promote to default so the one-click flow actually routes agents to it.
     crate::onboarding_routes::persist_cli_default(&state, meta.id, meta.label, binary, meta.model);
     Json(json!({ "status": "success", "provider": id, "confirmed": true })).into_response()
+}
+
+// ─── Install (allternit-tools) ────────────────────────────────────────────────
+//
+// POST /providers/:id/install            body: {"accept_terms": bool}
+// GET  /providers/:id/install/status
+// The installer runs one tool with --json; progress events are polled.
+
+pub(crate) async fn install_provider_tool(
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    body: Option<Json<serde_json::Value>>,
+) -> Response {
+    if get_user(&headers).is_none() {
+        return unauthorized();
+    }
+    let id = id.to_ascii_lowercase();
+    if !crate::tools_install::valid_tool_id(&id) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_tool_id"}))).into_response();
+    }
+    let Some(cmd) = crate::tools_install::installer_command() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+                "error": "installer_unavailable",
+                "message": "This runtime cannot install tools. Install from Allternit Desktop or on your Allternit computer.",
+            })),
+        )
+            .into_response();
+    };
+    let accept_terms = body
+        .as_ref()
+        .and_then(|b| b.get("accept_terms"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    match crate::tools_install::start_install(cmd, &id, accept_terms) {
+        Ok(job) => (StatusCode::ACCEPTED, Json(json!({"status": "started", "job": job}))).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "install_failed_to_start", "message": e}))).into_response(),
+    }
+}
+
+async fn install_provider_tool_status(Path(id): Path<String>, headers: HeaderMap) -> Response {
+    if get_user(&headers).is_none() {
+        return unauthorized();
+    }
+    let id = id.to_ascii_lowercase();
+    if !crate::tools_install::valid_tool_id(&id) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_tool_id"}))).into_response();
+    }
+    let installed = subscription_provider(&id)
+        .map(|(binary, _)| command_on_path(binary).is_some())
+        .unwrap_or(false);
+    let job = crate::tools_install::job(&id);
+    let state = job.as_ref().map(|j| j.state.clone()).unwrap_or_else(|| {
+        if installed { "installed".into() } else { "idle".into() }
+    });
+    Json(json!({
+        "provider": id,
+        "state": state,
+        "installed": installed,
+        "installer_available": crate::tools_install::installer_command().is_some(),
+        "job": job,
+    }))
+    .into_response()
 }
 
 // ─── Hugging Face GGUF search (PocketPal-style local model discovery) ────────
@@ -2215,4 +2362,37 @@ async fn search_huggingface(
         .unwrap_or_default();
 
     Json(json!({ "models": results })).into_response()
+}
+
+#[cfg(test)]
+mod provider_install_surface_tests {
+    use super::*;
+
+    #[test]
+    fn provider_table_has_opencode_droid_and_gemini_cli() {
+        let (bin, meta) = subscription_provider("droid").expect("droid");
+        assert_eq!((bin, meta.id), ("droid", "droid"));
+        assert_eq!(subscription_provider("factory").unwrap().0, "droid");
+        let (bin, meta) = subscription_provider("gemini-cli").expect("gemini-cli");
+        assert_eq!((bin, meta.id), ("gemini", "gemini-cli"));
+        assert_eq!(subscription_provider("opencode").unwrap().0, "opencode");
+        for id in ["droid", "gemini-cli", "opencode"] {
+            assert!(CLI_PROVIDER_SPECS.iter().any(|(sid, ..)| *sid == id), "{id} in CLI_PROVIDER_SPECS");
+        }
+    }
+
+    #[test]
+    fn provider_install_routes_merge_without_collisions() {
+        // axum panics on overlapping routes; build the same merge main.rs does.
+        let _ = provider_router().merge(crate::v1_routes::v1_router());
+        let _ = axum::Router::<std::sync::Arc<AppState>>::new().nest("/api", provider_router());
+    }
+
+    #[test]
+    fn provider_not_installed_carries_an_install_action() {
+        let action = crate::tools_install::install_action("droid");
+        assert_eq!(action["route"], "/api/v1/providers/droid/install");
+        assert_eq!(action["status_route"], "/api/v1/providers/droid/install/status");
+        assert!(action["available"].is_boolean());
+    }
 }

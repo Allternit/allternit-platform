@@ -93,6 +93,8 @@ const KNOWN_PROVIDERS: Array<{
   { id: "qwen-cli",    name: "Qwen Code CLI",auth_type: "subprocess", subprocess_cmd: "qwen -p",     models_hint: "qwen-max, qwen-plus" },
   { id: "gemini-cli",  name: "Gemini CLI",   auth_type: "subprocess", subprocess_cmd: "gemini -p",   models_hint: "gemini-2.5-pro" },
   { id: "codex-cli",   name: "Codex CLI",    auth_type: "subprocess", subprocess_cmd: "codex",       models_hint: "codex-mini-latest, codex-latest" },
+  { id: "opencode",    name: "OpenCode",     auth_type: "subprocess", subprocess_cmd: "opencode run", models_hint: "(per provider)" },
+  { id: "droid",       name: "Droid (Factory)", auth_type: "subprocess", subprocess_cmd: "droid exec", models_hint: "(Factory default)" },
 ]
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
