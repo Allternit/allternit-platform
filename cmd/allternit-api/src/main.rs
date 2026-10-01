@@ -1359,9 +1359,10 @@ async fn main() {
     // Data-plane listener: skipped entirely for ALLTERNIT_ROLE=control — a
     // control-only process never binds the main port.
     let listener = if admin_plane.role.serves_data_plane() {
-        let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))
+        let bind_addr = std::net::SocketAddr::new(app_config.api_host(), port);
+        let listener = tokio::net::TcpListener::bind(bind_addr)
             .await
-            .unwrap();
+            .unwrap_or_else(|e| panic!("failed to bind data-plane listener at {bind_addr}: {e}"));
         info!("Server listening on {} ({})", listener.local_addr().unwrap(), port_source);
         info!("Webhook receiver port configured to {}", webhook_receiver_port);
         info!("API Documentation:");
@@ -1481,7 +1482,7 @@ async fn main() {
     match listener {
         Some(listener) => {
             // Peer addresses let the rate limiter tell the desktop's own
-            // loopback UI apart from LAN/public callers (0.0.0.0 bind).
+            // loopback UI apart from LAN/public callers (when bound to 0.0.0.0).
             axum::serve(
                 listener,
                 app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
