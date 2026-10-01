@@ -210,6 +210,7 @@ pub mod memory_notes_routes;
 pub mod memory_reconstruction_routes;
 pub mod memory_routes;
 pub mod memory_kernel_service;
+pub mod memory_index;
 pub mod memory_extraction;
 pub mod metrics;
 pub mod monitor_routes;

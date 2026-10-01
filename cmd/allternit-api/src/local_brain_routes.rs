@@ -15,7 +15,7 @@ use axum::{
 };
 use bytes::Bytes;
 use futures::StreamExt;
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
@@ -175,37 +175,55 @@ async fn query_brain_impl(
     let result_type = q.result_type.unwrap_or_else(|| "all".to_string());
     let pattern = format!("%{}%", query);
 
+    // Documents are searched through the shared memory-plane index
+    // (memory_index): hybrid keyword + vector over their chunks.
+    let query_emb = crate::memory_index::global()
+        .embed_or_hash(&[query.clone()], crate::memory_index::InputType::Query)
+        .await;
+    let doc_query = query.clone();
     let results = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
         let mut all_results: Vec<BrainResult> = vec![];
 
         // Search memory_documents
         if result_type == "all" || result_type == "documents" {
-            let mut stmt = conn.prepare(
-                "SELECT id, title, content, source_url, created_at
-                 FROM memory_documents
-                 WHERE user_id = ?1 AND (title LIKE ?2 OR content LIKE ?2)
-                 ORDER BY created_at DESC LIMIT ?3",
+            crate::memory_index::chunk_pending_documents(&conn, 64)?;
+            let scope = crate::memory_index::Scope { scope: &user_id, target_types: &["chunk"], only_ids: None };
+            let hits = crate::memory_index::hybrid_search(
+                &conn,
+                &scope,
+                &doc_query,
+                query_emb.vectors.first().map(|v| (query_emb.model.as_str(), v.as_slice())),
+                (limit as usize).max(1) * 4,
             )?;
-            let docs = stmt.query_map(params![&user_id, &pattern, limit as i64], |row| {
-                Ok(BrainResult {
-                    id: row.get(0)?,
+            let mut seen = std::collections::HashSet::new();
+            for hit in hits {
+                let doc: Option<(String, String, String, Option<String>, String)> = conn
+                    .query_row(
+                        "SELECT d.id, d.title, c.text, d.source_url, d.created_at
+                         FROM memory_index_chunks c JOIN memory_documents d ON d.id = c.source_id
+                         WHERE c.id = ?1 AND c.source_type = 'document' AND d.user_id = ?2",
+                        params![&hit.target_id, &user_id],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                    )
+                    .optional()?;
+                let Some((id, title, text, source_url, created_at)) = doc else { continue };
+                if !seen.insert(id.clone()) {
+                    continue;
+                }
+                all_results.push(BrainResult {
+                    id,
                     result_type: "document".to_string(),
-                    title: row.get(1)?,
-                    snippet: row
-                        .get::<_, Option<String>>(2)?
-                        .unwrap_or_default()
-                        .chars()
-                        .take(200)
-                        .collect(),
-                    score: 0.85,
-                    source_url: row.get(3)?,
-                    created_at: row.get(4)?,
-                })
-            })?;
-            for doc in docs {
-                if let Ok(d) = doc {
-                    all_results.push(d);
+                    title,
+                    snippet: text.chars().take(200).collect(),
+                    // RRF max is 2/(k+1) for a top hit in both lists; scale to 0..1
+                    // so documents sort alongside the fixed-score sections.
+                    score: (hit.score * (61.0 / 2.0)).min(1.0),
+                    source_url,
+                    created_at,
+                });
+                if seen.len() >= limit as usize {
+                    break;
                 }
             }
         }
@@ -289,7 +307,7 @@ async fn query_brain_impl(
             "query": query,
             "results": data,
             "count": data.len(),
-            "note": "Keyword search (semantic search unavailable — no embedding service configured)"
+            "note": "Documents: hybrid keyword + vector search (memory index); events and conversations: keyword search"
         }))
         .into_response(),
         Ok(Err(e)) => {
@@ -502,12 +520,30 @@ async fn brain_status(
         .await
         .is_ok();
 
-    let semantic_search = ollama_available || embedding_available;
-    let vector_store = embedding_available;
+    // The memory index's own local embedding sidecar (ALLTERNIT_EMBED_URL).
+    let memory_index_url = crate::memory_index::global().url().map(str::to_string);
+    let memory_index_available = match &memory_index_url {
+        Some(u) => client
+            .get(format!("{u}/health"))
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false),
+        None => false,
+    };
+
+    let semantic_search = ollama_available || embedding_available || memory_index_available;
+    let vector_store = embedding_available || memory_index_available;
 
     Json(json!({
         "status": if ollama_available || embedding_available { "healthy" } else { "degraded" },
         "services": {
+            "memory_index_embeddings": {
+                "url": memory_index_url,
+                "model": crate::memory_index::global().preferred_model(),
+                "available": memory_index_available,
+            },
             "ollama": {
                 "url": ollama_url,
                 "available": ollama_available,
