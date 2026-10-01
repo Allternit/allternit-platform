@@ -170,7 +170,7 @@ pub(crate) fn load_target(
     match target_type {
         "fact" => conn
             .query_row(
-                "SELECT id, fact, confidence, valid_from, source_observation_id, memory_type, valid_until FROM memory_facts
+                "SELECT id, fact, confidence, valid_from, source_observation_id, memory_type, valid_until, decay_score FROM memory_facts
                  WHERE id = ?1 AND (?2 OR valid_until IS NULL)",
                 params![target_id, include_history],
                 |row| {
@@ -184,6 +184,7 @@ pub(crate) fn load_target(
                             "source_observation_id": row.get::<_, Option<String>>(4)?,
                             "memory_type": row.get::<_, Option<String>>(5)?,
                             "valid_until": row.get::<_, Option<String>>(6)?,
+                            "decay_score": row.get::<_, Option<f64>>(7)?,
                         }),
                         timestamp: row.get::<_, String>(3)?,
                     })
@@ -670,7 +671,9 @@ pub fn recall_logged(
             let recency = parse_ts(&item.timestamp)
                 .map(|t| (-((now - t).num_hours().max(0) as f64) / 72.0).exp())
                 .unwrap_or(0.5);
-            item.score = h.score * type_weight * (0.85 + 0.15 * recency);
+            // Decayed facts (WP-M1d) rank at half weight until retrieved again.
+            let decay = if item.metadata["decay_score"].is_null() { 1.0 } else { 0.5 };
+            item.score = h.score * type_weight * (0.85 + 0.15 * recency) * decay;
             item.metadata["keyword_rank"] = serde_json::json!(h.keyword_rank);
             item.metadata["vector_rank"] = serde_json::json!(h.vector_rank);
             if let Some(sim) = h.similarity {
@@ -684,6 +687,12 @@ pub fn recall_logged(
         results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
     }
     results.truncate(limit);
+
+    // Retrieval stats feed consolidation's decay (WP-M1d).
+    let fact_ids: Vec<&str> = results.iter().filter(|r| r.item_type == "fact").map(|r| r.id.as_str()).collect();
+    if let Err(e) = crate::memory_consolidation::note_retrieved(&conn, user_id, &fact_ids) {
+        tracing::debug!(error = %e, "memory retrieval stats not recorded");
+    }
 
     // Record recall log
     let log_id = format!("rec_{}", Uuid::new_v4().simple());

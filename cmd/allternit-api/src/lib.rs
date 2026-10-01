@@ -81,6 +81,7 @@ pub mod spend_limits;
 pub mod channel_tools;
 pub mod templates_routes;
 pub mod memory_curation;
+pub mod memory_consolidation;
 pub mod placement;
 pub mod coordinator_routes;
 pub mod gateway_placement;

@@ -326,7 +326,7 @@ pub fn decision_body(backend: &str, bank: &str, motif: &str, node: &str, obs_id:
         "extensions": { "x-motif": motif } } })
 }
 
-fn record_decision(
+pub(crate) fn record_decision(
     conn: &Connection,
     user_id: &str,
     bank: &str,

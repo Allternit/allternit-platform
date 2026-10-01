@@ -14,6 +14,7 @@ import type {
   MemoryImportance,
   FileType,
 } from '../types/memory.types.js';
+import { KernelAdapter } from './kernel-adapter.js';
 
 /**
  * Database schema version
@@ -25,8 +26,11 @@ const SCHEMA_VERSION = 1;
  */
 export class MemoryStore {
   private db: Database;
+  /** Mirror to the canonical allternit-api memory kernel (WP-M1d); undefined = off. */
+  private kernel: KernelAdapter | undefined;
 
-  constructor(databasePath: string) {
+  constructor(databasePath: string, kernel: KernelAdapter | undefined = KernelAdapter.fromEnv()) {
+    this.kernel = kernel;
     this.db = new Database(databasePath);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
@@ -131,12 +135,14 @@ export class MemoryStore {
       JSON.stringify(memory.metadata)
     );
 
-    return {
+    const created = {
       ...memory,
       id,
       createdAt: now,
       updatedAt: now,
     };
+    void this.kernel?.upsert([created]);
+    return created;
   }
 
   /**
@@ -255,7 +261,9 @@ export class MemoryStore {
 
     stmt.run(...values);
 
-    return this.getMemory(id);
+    const updated = this.getMemory(id);
+    if (updated) void this.kernel?.upsert([updated]);
+    return updated;
   }
 
   /**
@@ -264,6 +272,7 @@ export class MemoryStore {
   deleteMemory(id: string): boolean {
     const stmt = this.db.prepare('DELETE FROM memories WHERE id = ?');
     const result = stmt.run(id);
+    if (result.changes > 0) void this.kernel?.remove([id]);
     return result.changes > 0;
   }
 

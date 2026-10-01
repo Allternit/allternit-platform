@@ -8,6 +8,11 @@
  * - Topic .md files discovered and injected into context
  * - Relevance scoring filters which topic files are loaded per session
  *
+ * The allternit-api memory kernel is the canonical store (WP-M1d): saves and
+ * deletes are mirrored to it, the memdir's existing files are imported once,
+ * and search adds the kernel's hybrid recall to the local match. The files
+ * stay the local working copy, so offline / signed-out behaviour is unchanged.
+ *
  * Pre-convergence stores (.gizzi/L1-COGNITIVE/memory, .openclaw L1, the old
  * Global.Path.config per-project store) are read-only fallbacks and are
  * copied (never moved) into the memdir by a one-time best-effort import.
@@ -24,6 +29,7 @@ import { Log } from "@/shared/util/log"
 import { Bus } from "@/shared/bus"
 import { BusEvent } from "@/shared/bus/bus-event"
 import { getAutoMemPathFor } from "@/memdir/paths"
+import { MemoryKernelAdapter } from "./kernel-adapter"
 
 const log = Log.create({ service: "memory-service" })
 
@@ -295,6 +301,13 @@ export namespace MemoryService {
   /** List all memory entries across all dirs (deduplicated by filename, memdir wins) */
   export async function list(): Promise<MemoryEntry[]> {
     await ensureLegacyImport(primaryMemoryDir())
+    const results = await listLocal()
+    // One-time import into the canonical kernel (background, best-effort).
+    void MemoryKernelAdapter.importOnce(primaryMemoryDir(), async () => results)
+    return results
+  }
+
+  async function listLocal(): Promise<MemoryEntry[]> {
     const seen = new Set<string>()
     const results: MemoryEntry[] = []
 
@@ -338,6 +351,7 @@ export namespace MemoryService {
     await upsertIndex(dir, { filename, description: fm.description, type: fm.type })
 
     log.info("memory saved", { filename, type: fm.type })
+    void MemoryKernelAdapter.upsert([{ ...fm, filename, filepath, body }])
     await Bus.publish(MemoryEvent.Updated, { filepath, action: "save" as const }).catch(() => {})
 
     return { ...fm, filename, filepath, body }
@@ -351,6 +365,7 @@ export namespace MemoryService {
         await unlink(filepath).catch(() => {})
         await removeFromIndex(dir, filename)
         log.info("memory deleted", { filename })
+        void MemoryKernelAdapter.remove([filepath])
         await Bus.publish(MemoryEvent.Updated, { filepath, action: "delete" as const }).catch(() => {})
         return true
       }
@@ -362,10 +377,22 @@ export namespace MemoryService {
   export async function search(query: string): Promise<MemoryEntry[]> {
     const all = await list()
     const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
-    return all.filter((e) => {
+    const local = all.filter((e) => {
       const haystack = [e.name, e.description, e.type, e.body].join(" ").toLowerCase()
       return terms.every((t) => haystack.includes(t))
     })
+    // Canonical recall: memdir files the kernel ranks relevant that the
+    // literal match missed (e.g. paraphrases), after the local matches.
+    const byId = new Map(all.map((e) => [MemoryKernelAdapter.externalId(e.filepath), e]))
+    const seen = new Set(local.map((e) => e.filepath))
+    for (const hit of await MemoryKernelAdapter.search(query)) {
+      const e = hit.source === "gizzi.memdir" && hit.external_id ? byId.get(hit.external_id) : undefined
+      if (e && !seen.has(e.filepath)) {
+        seen.add(e.filepath)
+        local.push(e)
+      }
+    }
+    return local
   }
 
   /**

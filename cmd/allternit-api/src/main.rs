@@ -914,6 +914,7 @@ async fn main() {
         .merge(beta_memory_store_router())
         .merge(memory_reconstruction_router())
         .merge(allternit_api::memory_notes_routes::memory_notes_router())
+        .merge(allternit_api::memory_consolidation::memory_consolidation_router())
         .merge(research_task_router())
         .merge(user_profile_router())
         .merge(canvas_router())
@@ -1274,6 +1275,8 @@ async fn main() {
     allternit_api::spend_limits::spawn_sync(state.clone());
     // Bots' saved memory is tidied weekly on their own model (P7.4).
     allternit_api::memory_curation::spawn_weekly(state.clone());
+    // Canonical memory: merge duplicates (S1 RELATION shadow) + soft decay (WP-M1d).
+    allternit_api::memory_consolidation::spawn(state.clone());
 
     // Mount cowork scheduler routes if scheduler is active. These routes
     // create/update/delete schedules and self-gate nothing, so they must be

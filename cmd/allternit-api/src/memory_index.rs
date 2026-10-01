@@ -17,7 +17,10 @@
 //! `vec0` is itself an exact (brute-force) KNN scan, so it would not change
 //! the asymptotics, and it would add a C extension to every Desktop target.
 //! Per-user memory is thousands of rows, where an exact scan is a few ms.
-//! TODO(M1c): persisted HNSW once a scope exceeds the cap.
+//! Above [`HNSW_MIN_ROWS`] vectors per (scope, model) an in-memory HNSW graph
+//! (`instant-distance`, MIT/Apache-2.0) is built lazily on first search and
+//! rebuilt when rows written since the build pass 10% of it; those newer rows
+//! are scanned exactly in the meantime, so search never misses fresh writes.
 //!
 //! Backfill: [`index_pending`] picks rows whose embedding is missing or from
 //! another model, in batches. It is stateless (progress is the data), so it
@@ -39,6 +42,8 @@ pub const DEFAULT_EMBED_URL: &str = "http://127.0.0.1:7719";
 pub const DEFAULT_EMBED_MODEL: &str = "nomic-ai/modernbert-embed-base";
 /// Most recent embedding rows scanned per (scope, model) in vector search.
 pub const VECTOR_SCAN_CAP: usize = 20_000;
+/// Above this many vectors per (scope, model) vector search uses HNSW.
+pub const HNSW_MIN_ROWS: usize = 20_000;
 const RRF_K: f64 = 60.0;
 const CHUNK_CHARS: usize = 1200;
 const CHUNK_OVERLAP: usize = 200;
@@ -331,6 +336,25 @@ pub fn vector_search(
     query: &[f32],
     limit: usize,
 ) -> rusqlite::Result<Vec<(TargetKey, f64)>> {
+    vector_search_with(conn, scope, model, query, limit, HNSW_MIN_ROWS)
+}
+
+/// [`vector_search`] with an explicit HNSW threshold: a (scope, model) with
+/// more than `hnsw_min` vectors is searched through the approximate HNSW
+/// graph (WP-M1d); smaller ones, and id-restricted searches, stay exact.
+pub fn vector_search_with(
+    conn: &Connection,
+    scope: &Scope,
+    model: &str,
+    query: &[f32],
+    limit: usize,
+    hnsw_min: usize,
+) -> rusqlite::Result<Vec<(TargetKey, f64)>> {
+    if scope.only_ids.is_none() {
+        if let Some(hits) = hnsw::search(conn, scope, model, query, limit, hnsw_min)? {
+            return Ok(hits);
+        }
+    }
     let sql = format!(
         "SELECT target_type, target_id, embedding FROM memory_embeddings
          WHERE user_id = ?1 AND model = ?2 AND dim = ?3 AND target_type IN ({})
@@ -544,7 +568,7 @@ pub struct PendingTarget {
 }
 
 /// Rows whose embedding is missing, or (when `model` is Some) from another
-/// model. Facts first, then entities, chunks, observations.
+/// model. Facts first, then entities, chunks, observations, notes, procedures.
 pub fn pending_targets(conn: &Connection, model: Option<&str>, batch: usize) -> rusqlite::Result<Vec<PendingTarget>> {
     let stale = if model.is_some() { "(e.id IS NULL OR e.model IS NOT ?1)" } else { "(e.id IS NULL AND ?1 IS NULL)" };
     let sources = [
@@ -552,6 +576,15 @@ pub fn pending_targets(conn: &Connection, model: Option<&str>, batch: usize) -> 
         ("entity", "SELECT n.user_id, n.id, n.name || ' ' || n.type || ' ' || COALESCE(n.summary, '') FROM memory_entities n", "n.user_id", "n.id", "1"),
         ("chunk", "SELECT c.scope, c.id, c.text FROM memory_index_chunks c", "c.scope", "c.id", "1"),
         ("observation", "SELECT o.user_id, o.id, o.content FROM memory_observations o", "o.user_id", "o.id", "1"),
+        // V209: notes and procedures share the index (WP-M1d).
+        ("note", "SELECT t.user_id, t.id, t.title || ': ' || t.content FROM memory_notes t", "t.user_id", "t.id", "1"),
+        (
+            "procedure",
+            "SELECT p.user_id, p.id, p.name || ': ' || COALESCE(p.description, '') || ' ' || p.trigger_patterns || ' ' || p.steps FROM procedural_memory p",
+            "p.user_id",
+            "p.id",
+            "1",
+        ),
     ];
     let mut out = Vec::new();
     for (ttype, select, scope_col, id_col, filter) in sources {
@@ -729,6 +762,78 @@ pub fn search_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn m1d_db() -> DbHandle {
+        let dir = std::env::temp_dir().join(format!("mem-idx-m1d-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        DbHandle::new(dir.join("t.db")).unwrap()
+    }
+
+    #[test]
+    fn hnsw_above_threshold_matches_exact_and_sees_fresh_rows() {
+        let db = m1d_db();
+        let conn = db.connect().unwrap();
+        // 300 points on 6 axes + noise; HNSW threshold 100.
+        for i in 0..300usize {
+            let mut v = vec![0.05f32 * ((i % 7) as f32 + 1.0); 6];
+            v[i % 6] += 1.0 + (i as f32) * 0.001;
+            upsert_embedding(&conn, "u1", "fact", &format!("f{i}"), "m", &v).unwrap();
+        }
+        hnsw::clear();
+        let types = ["fact"];
+        let scope = Scope { scope: "u1", target_types: &types, only_ids: None };
+        let q = vec![0.0, 0.0, 1.0, 0.0, 0.0, 0.0];
+        let exact = vector_search_with(&conn, &scope, "m", &q, 10, usize::MAX).unwrap();
+        let approx = vector_search_with(&conn, &scope, "m", &q, 10, 100).unwrap();
+        assert_eq!(approx.len(), 10);
+        let exact_ids: HashSet<_> = exact.iter().map(|(k, _)| k.1.clone()).collect();
+        let overlap = approx.iter().filter(|(k, _)| exact_ids.contains(&k.1)).count();
+        assert!(overlap >= 8, "recall@10 too low: {overlap}");
+        // Below the threshold the search is exact (no graph).
+        assert!(hnsw::search(&conn, &scope, "m", &q, 10, 1000).unwrap().is_none());
+        // A row written after the build is found without a rebuild.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        upsert_embedding(&conn, "u1", "fact", "fresh", "m", &[0.0, 0.0, 9.0, 0.0, 0.0, 0.0]).unwrap();
+        let again = vector_search_with(&conn, &scope, "m", &q, 3, 100).unwrap();
+        assert_eq!(again[0].0 .1, "fresh");
+        // Type filter holds on the graph path.
+        upsert_embedding(&conn, "u1", "entity", "e1", "m", &[0.0, 0.0, 1.0, 0.0, 0.0, 0.0]).unwrap();
+        let only_facts = vector_search_with(&conn, &scope, "m", &q, 50, 100).unwrap();
+        assert!(only_facts.iter().all(|(k, _)| k.0 == "fact"));
+    }
+
+    #[test]
+    fn notes_and_procedures_are_in_the_shared_index() {
+        let db = m1d_db();
+        let conn = db.connect().unwrap();
+        conn.execute(
+            "INSERT INTO memory_notes (id, user_id, note_type, title, content) VALUES ('n1', 'u1', 'general', 'Dentist', 'Dr Okafor on Tuesdays')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO procedural_memory (id, user_id, name, description, trigger_patterns, steps)
+             VALUES ('p1', 'u1', 'Deploy docs', 'ship the docs site', '[\"wrangler\"]', '[\"build\",\"publish\"]')",
+            [],
+        )
+        .unwrap();
+        let types = ["note", "procedure"];
+        let scope = Scope { scope: "u1", target_types: &types, only_ids: None };
+        let k = keyword_search(&conn, &scope, "okafor", 5).unwrap();
+        assert_eq!(k, vec![("note".to_string(), "n1".to_string())]);
+        let k = keyword_search(&conn, &scope, "wrangler publish", 5).unwrap();
+        assert_eq!(k, vec![("procedure".to_string(), "p1".to_string())]);
+        // Edits re-index; deletes drop the row.
+        conn.execute("UPDATE memory_notes SET content = 'Dr Mensah now' WHERE id = 'n1'", []).unwrap();
+        assert!(keyword_search(&conn, &scope, "okafor", 5).unwrap().is_empty());
+        assert_eq!(keyword_search(&conn, &scope, "mensah", 5).unwrap().len(), 1);
+        // The indexer embeds them.
+        let pending = pending_targets(&conn, None, 50).unwrap();
+        assert!(pending.iter().any(|p| p.target_type == "note" && p.target_id == "n1"));
+        assert!(pending.iter().any(|p| p.target_type == "procedure" && p.target_id == "p1"));
+        conn.execute("DELETE FROM procedural_memory WHERE id = 'p1'", []).unwrap();
+        assert!(keyword_search(&conn, &scope, "wrangler", 5).unwrap().is_empty());
+    }
     use crate::memory_kernel_service as kernel;
 
     /// Concept groups the mock embedding model "understands".
@@ -963,5 +1068,161 @@ mod tests {
         assert!(chunks.iter().all(|c| c.chars().count() <= CHUNK_CHARS));
         assert!(chunk_text("").is_empty());
         assert_eq!(fts_query("What is the: \"car\"?").as_deref(), Some("\"is\" OR \"car\""));
+    }
+}
+
+// ─── HNSW (WP-M1d) ──────────────────────────────────────────────────────────
+
+pub mod hnsw {
+    use super::*;
+    use instant_distance::{Builder, HnswMap, Point, Search};
+    use std::sync::Arc;
+
+    /// Unit-normalised vector; distance = 1 - cosine.
+    #[derive(Clone, Debug)]
+    pub struct UnitVec(pub Vec<f32>);
+
+    impl UnitVec {
+        pub fn new(mut v: Vec<f32>) -> Self {
+            let n = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if n > 0.0 {
+                v.iter_mut().for_each(|x| *x /= n);
+            }
+            Self(v)
+        }
+    }
+
+    impl Point for UnitVec {
+        fn distance(&self, other: &Self) -> f32 {
+            1.0 - self.0.iter().zip(&other.0).map(|(a, b)| a * b).sum::<f32>()
+        }
+    }
+
+    pub struct Graph {
+        map: HnswMap<UnitVec, TargetKey>,
+        /// Rows at build time.
+        pub rows: usize,
+        /// Newest `created_at` included (upserts bump it, so rows at or after
+        /// it are re-scanned exactly).
+        pub built_through: String,
+    }
+
+    type Key = (String, String, usize); // (scope, model, dim)
+
+    fn cache() -> &'static Mutex<HashMap<Key, Arc<Graph>>> {
+        static C: OnceLock<Mutex<HashMap<Key, Arc<Graph>>>> = OnceLock::new();
+        C.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    /// Drop every cached graph (tests; a model switch rebuilds anyway).
+    pub fn clear() {
+        cache().lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+
+    pub fn build(conn: &Connection, scope: &str, model: &str, dim: usize) -> rusqlite::Result<Graph> {
+        let mut stmt = conn.prepare(
+            "SELECT target_type, target_id, embedding, COALESCE(created_at, '') FROM memory_embeddings
+             WHERE user_id = ?1 AND model = ?2 AND dim = ?3",
+        )?;
+        let mut points = Vec::new();
+        let mut values = Vec::new();
+        let mut built_through = String::new();
+        let rows = stmt.query_map(params![scope, model, dim as i64], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Vec<u8>>(2)?, r.get::<_, String>(3)?))
+        })?;
+        for r in rows {
+            let (t, id, bytes, ts) = r?;
+            if ts > built_through {
+                built_through = ts;
+            }
+            points.push(UnitVec::new(bytes_to_f32(&bytes)));
+            values.push((t, id));
+        }
+        let n = points.len();
+        let map = Builder::default().seed(0x6d31_6421).build(points, values);
+        Ok(Graph { map, rows: n, built_through })
+    }
+
+    /// Approximate search for scopes above `min_rows`; None = use the exact scan.
+    pub fn search(
+        conn: &Connection,
+        scope: &Scope,
+        model: &str,
+        query: &[f32],
+        limit: usize,
+        min_rows: usize,
+    ) -> rusqlite::Result<Option<Vec<(TargetKey, f64)>>> {
+        let dim = query.len();
+        let rows: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_embeddings WHERE user_id = ?1 AND model = ?2 AND dim = ?3",
+            params![scope.scope, model, dim as i64],
+            |r| r.get(0),
+        )?;
+        let rows = rows as usize;
+        if rows <= min_rows {
+            return Ok(None);
+        }
+        let key: Key = (scope.scope.to_string(), model.to_string(), dim);
+        let cached = cache().lock().unwrap_or_else(|e| e.into_inner()).get(&key).cloned();
+        let tail_count = |g: &Graph| -> rusqlite::Result<usize> {
+            conn.query_row(
+                "SELECT COUNT(*) FROM memory_embeddings WHERE user_id = ?1 AND model = ?2 AND dim = ?3 AND created_at >= ?4",
+                params![scope.scope, model, dim as i64, g.built_through],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n as usize)
+        };
+        let graph = match cached {
+            Some(g) if tail_count(&g)? * 10 <= g.rows && rows * 10 >= g.rows * 9 => g,
+            _ => {
+                let g = Arc::new(build(conn, scope.scope, model, dim)?);
+                cache().lock().unwrap_or_else(|e| e.into_inner()).insert(key, g.clone());
+                g
+            }
+        };
+        let allowed: HashSet<&str> = scope.target_types.iter().copied().collect();
+        let q = UnitVec::new(query.to_vec());
+        let mut best: HashMap<TargetKey, f64> = HashMap::new();
+        let mut search = Search::default();
+        // Over-fetch: the graph spans every target type of the scope.
+        let want = (limit * 4).max(limit + 32);
+        for item in graph.map.search(&q, &mut search).take(want) {
+            let (t, id) = item.value;
+            if !allowed.contains(t.as_str()) {
+                continue;
+            }
+            let sim = 1.0 - item.distance as f64;
+            if sim > 0.0 {
+                best.insert((t.clone(), id.clone()), sim);
+            }
+        }
+        // Rows written or re-embedded since the build: exact.
+        let sql = format!(
+            "SELECT target_type, target_id, embedding FROM memory_embeddings
+             WHERE user_id = ?1 AND model = ?2 AND dim = ?3 AND created_at >= ?4 AND target_type IN ({})",
+            scope.type_placeholders(5)
+        );
+        let dim_i = dim as i64;
+        let mut args: Vec<&dyn rusqlite::ToSql> = vec![&scope.scope, &model, &dim_i, &graph.built_through];
+        for t in scope.target_types {
+            args.push(t);
+        }
+        let mut stmt = conn.prepare(&sql)?;
+        let tail = stmt.query_map(params_from_iter(args), |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Vec<u8>>(2)?))
+        })?;
+        for r in tail {
+            let (t, id, bytes) = r?;
+            let sim = crate::memory_kernel_service::cosine_similarity(query, &bytes_to_f32(&bytes)) as f64;
+            if sim > 0.0 {
+                best.insert((t, id), sim);
+            } else {
+                best.remove(&(t, id));
+            }
+        }
+        let mut out: Vec<(TargetKey, f64)> = best.into_iter().collect();
+        out.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        out.truncate(limit);
+        Ok(Some(out))
     }
 }

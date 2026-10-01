@@ -18,6 +18,7 @@
     "ingest:wih": "tsx src/pipelines/wih-indexer.ts",
     "ingest:sessions": "tsx src/pipelines/session-tracker.ts",
     "ingest:all": "pnpm run ingest:receipts && pnpm run ingest:wih && pnpm run ingest:sessions",
+    "kernel:import": "tsx scripts/kernel-import.ts",
     "consolidate:daily": "./scripts/daily-consolidate.sh",
     "setup:cron": "./scripts/setup-cron.sh",
     "test": "vitest run",

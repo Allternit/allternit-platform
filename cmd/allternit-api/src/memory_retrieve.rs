@@ -111,13 +111,15 @@ impl Space {
             _ => None,
         }
     }
-    fn index_type(self) -> Option<&'static str> {
+    fn index_type(self) -> &'static str {
         match self {
-            Space::Facts => Some("fact"),
-            Space::Entities => Some("entity"),
-            Space::Observations => Some("observation"),
-            Space::Documents => Some("chunk"),
-            _ => None,
+            Space::Facts => "fact",
+            Space::Entities => "entity",
+            Space::Observations => "observation",
+            Space::Documents => "chunk",
+            // V209 (WP-M1d): notes and procedures are in the shared index.
+            Space::Procedures => "procedure",
+            Space::Notes => "note",
         }
     }
 }
@@ -281,34 +283,18 @@ fn load_chunk(conn: &Connection, user_id: &str, id: &str) -> rusqlite::Result<Op
     .optional()
 }
 
-/// S0 token-overlap scan for spaces not in the shared index yet.
-fn scan_space(conn: &Connection, space: Space, user_id: &str, agent_id: Option<&str>, query: &str, n: usize) -> rusqlite::Result<Vec<RecallResult>> {
-    let (sql, item_type) = match space {
-        Space::Procedures => (
-            "SELECT id, name || ': ' || COALESCE(description, '') || ' ' || trigger_patterns || ' ' || steps, COALESCE(created_at, '')
-             FROM procedural_memory WHERE user_id = ?1 AND (agent_id IS NULL OR ?2 IS NULL OR agent_id = ?2)
-             ORDER BY created_at DESC LIMIT 500",
-            "procedure",
-        ),
-        Space::Notes => (
-            "SELECT id, title || ': ' || content, COALESCE(created_at, '') FROM memory_notes WHERE user_id = ?1 AND (?2 IS NULL OR 1)
-             ORDER BY created_at DESC LIMIT 500",
-            "note",
-        ),
-        _ => return Ok(vec![]),
+/// One note or procedure, owned by `user_id` (and the agent, for procedures).
+fn load_note_or_procedure(conn: &Connection, t: &str, user_id: &str, agent_id: Option<&str>, id: &str) -> rusqlite::Result<Option<RecallResult>> {
+    let sql = if t == "note" {
+        "SELECT id, title || ': ' || content, COALESCE(created_at, '') FROM memory_notes WHERE id = ?1 AND user_id = ?2 AND (?3 IS NULL OR 1)"
+    } else {
+        "SELECT id, name || ': ' || COALESCE(description, '') || ' ' || trigger_patterns || ' ' || steps, COALESCE(created_at, '')
+         FROM procedural_memory WHERE id = ?1 AND user_id = ?2 AND (agent_id IS NULL OR ?3 IS NULL OR agent_id = ?3)"
     };
-    let q = tokens(query);
-    let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map(params![user_id, agent_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
-    let mut scored: Vec<(usize, RecallResult)> = vec![];
-    for (id, content, ts) in rows.flatten() {
-        let hit = tokens(&content).iter().filter(|t| q.contains(*t)).count();
-        if hit > 0 {
-            scored.push((hit, RecallResult { id, item_type: item_type.into(), score: hit as f64, content, metadata: json!({}), timestamp: ts }));
-        }
-    }
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
-    Ok(scored.into_iter().take(n).map(|(_, r)| r).collect())
+    conn.query_row(sql, params![id, user_id, agent_id], |r| {
+        Ok(RecallResult { id: r.get(0)?, item_type: t.into(), score: 0.0, content: r.get(1)?, metadata: json!({}), timestamp: r.get(2)? })
+    })
+    .optional()
 }
 
 /// S0 anchors for one space, best first.
@@ -322,9 +308,7 @@ pub fn anchors(
     n: usize,
     include_history: bool,
 ) -> Result<Vec<RecallResult>, kernel::MemoryKernelError> {
-    let Some(t) = space.index_type() else {
-        return Ok(scan_space(conn, space, user_id, agent_id, query, n)?);
-    };
+    let t = space.index_type();
     let types = [t];
     let scope = Scope { scope: user_id, target_types: &types, only_ids: None };
     let v = qv.and_then(|e| e.vectors.first().map(|v| (e.model.as_str(), v.as_slice())));
@@ -333,6 +317,8 @@ pub fn anchors(
     for h in hits {
         let item = if t == "chunk" {
             load_chunk(conn, user_id, &h.target_id)?
+        } else if t == "note" || t == "procedure" {
+            load_note_or_procedure(conn, t, user_id, agent_id, &h.target_id)?
         } else {
             kernel::load_target(conn, t, &h.target_id, agent_id, include_history)?
         };
