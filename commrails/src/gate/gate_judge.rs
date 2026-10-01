@@ -938,6 +938,12 @@ impl Gate {
         // `v` is already final, and any later combination must use `s1_outcome::tighten`.
         let mut ext = serde_json::Map::new();
         ext.insert("x-incumbent_action".into(), json!(v.decision.as_str()));
+        // Q26 (#1148): the incumbent's own may_proceed answer (ask defers to the person: none).
+        match v.decision {
+            ToolDecision::Allow => { ext.insert("x-incumbent".into(), json!("true")); }
+            ToolDecision::Deny => { ext.insert("x-incumbent".into(), json!("false")); }
+            _ => {}
+        }
         let subject = tool_call_id.map(crate::kernel::s1_outcome::tool_call_subject_ref);
         crate::kernel::s1_outcome::OutcomeReporter::from_env().spawn_gate_for(
             crate::kernel::s1_outcome::GateAsk {

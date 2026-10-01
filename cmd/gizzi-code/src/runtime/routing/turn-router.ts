@@ -162,6 +162,8 @@ export async function s1Decide(
   options: readonly string[],
   state: string,
   runID: string,
+  /** Q26 (#1148): the incumbent's own answer (an option), sent as x-incumbent. */
+  incumbent?: string | null,
 ): Promise<{ decision_id?: string; choice?: string } | undefined> {
   const { url, token } = s1Base()
   const candidates = [
@@ -186,6 +188,7 @@ export async function s1Decide(
       decision_bank_id: bank,
       candidates,
       calibration_domain: primitive,
+      ...(incumbent && options.includes(incumbent) ? { extensions: { "x-incumbent": incumbent } } : {}),
     },
   }
   try {
@@ -266,7 +269,8 @@ export async function startTurn(input: {
   const runID = `${input.sessionID}:${input.userMessageID}`
   const s1P = Promise.all([
     s1Decide(ROUTE_BANK, "route.describe_cognitive_requirement", "classify what this turn needs", ROUTE_OPTIONS, input.text, runID),
-    s1Decide(ROUTE_MODEL_BANK, "route.select_logical_model", "pick the smallest model class that can answer this turn", GEN_CLASSES, input.text, runID),
+    // ROUTE has no incumbent decider (Q26 policy incumbent "none"); ROUTE_MODEL's is the incumbent's class.
+    s1Decide(ROUTE_MODEL_BANK, "route.select_logical_model", "pick the smallest model class that can answer this turn", GEN_CLASSES, input.text, runID, record.incumbentClass),
   ]).then(([route, routeModel]) => {
     record.routeDecisionId = route?.decision_id
     record.routeChoice = route?.choice

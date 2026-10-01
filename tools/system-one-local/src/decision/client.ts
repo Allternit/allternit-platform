@@ -159,6 +159,15 @@ export function tighten(incumbent: Friction, s1: Friction | null | undefined): F
   return RANK[s1] > RANK[incumbent] ? s1 : incumbent;
 }
 
+/**
+ * Q26 (#1148): the incumbent's answer to a permission GATE (`may_proceed`), for
+ * `x-incumbent`. allow = "true", deny = "false"; ask defers to the person, so it has
+ * no answer of its own (undefined: send nothing).
+ */
+export function incumbentGateAnswer(incumbent: Friction | string | null | undefined): "true" | "false" | undefined {
+  return incumbent === "allow" ? "true" : incumbent === "deny" ? "false" : undefined;
+}
+
 /** One shadow GATE: returns the decision id, P(true) and the recommendation, or null. */
 export async function shadowGate(spec: GateSpec, state: string, opts: DecisionClientOptions = {}) {
   const r = await decide(gateRequest(spec), state, opts);

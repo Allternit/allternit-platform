@@ -92,9 +92,15 @@ fn s1_base() -> (String, Option<String>) {
     (r.base_url, r.token)
 }
 
-fn request(bank: &str, domain: &str, op: &str, instructions: &str, candidates: Vec<Value>, state: &str, corr: &str) -> Value {
+fn request(bank: &str, domain: &str, op: &str, instructions: &str, candidates: Vec<Value>, state: &str, corr: &str, incumbent: Option<&str>) -> Value {
     let tail: String = state.chars().rev().take(2000).collect::<Vec<_>>().into_iter().rev().collect();
+    // Q26 (#1148): the incumbent's own answer, for non-inferiority.
+    let extensions = match incumbent {
+        Some(i) => json!({ "x-incumbent": i }),
+        None => json!({}),
+    };
     json!({ "state": tail, "reversible": true, "backend": "auto", "request": {
+        "extensions": extensions,
         "envelope": { "abi_version": "1.0.0", "schema_id": "allternit.kernel.DecisionRequestV1", "schema_version": "1.0.0",
                       "run_id": corr, "node_id": bank },
         "operation": op, "state_projection_ref": format!("vendor-turn:{corr}"), "instructions": instructions,
@@ -142,10 +148,10 @@ pub fn before_send(corr: &str, vendor: &str, text: &str, consequential: bool) {
         let route_cands: Vec<Value> = ROUTE_OPTIONS.iter().map(|o| json!({ "candidate_id": o, "label": o }))
             .chain(std::iter::once(json!({ "candidate_id": "unknown", "label": "unknown", "is_unknown": true }))).collect();
         let route = decide(request(ROUTE_BANK, "route.vendor", "CHOICE",
-            &format!("what kind of turn is this request to the {vendor} agent"), route_cands, &text, &corr)).await;
+            &format!("what kind of turn is this request to the {vendor} agent"), route_cands, &text, &corr, None)).await;
         let cons = decide(request(CONSEQUENTIAL_BANK, "vendor.consequential", "GATE",
             "does sending this request need the user's approval first (spends money, contacts people, changes or deletes something outside the chat)",
-            vec![], &text, &corr)).await;
+            vec![], &text, &corr, Some(if consequential { "true" } else { "false" }))).await;
         if let Some(cons_id) = &cons {
             // Shadow label: the caller's own flag. Tighten-only means a later live
             // mode may only ever add the approval, never remove it.
@@ -209,6 +215,14 @@ mod tests {
         assert_eq!(route_label(&v(&["templates.run"])), "template");
         assert_eq!(route_label(&v(&["runTemplate"])), "template");
         assert_eq!(route_label(&v(&["list_templates"])), "retrieval");
+    }
+
+    #[test]
+    fn consequential_request_carries_the_incumbent_flag() {
+        let b = request(CONSEQUENTIAL_BANK, "d", "GATE", "i", vec![], "s", "c", Some("true"));
+        assert_eq!(b["request"]["extensions"]["x-incumbent"], "true");
+        let b = request(ROUTE_BANK, "d", "CHOICE", "i", vec![], "s", "c", None);
+        assert!(b["request"]["extensions"].get("x-incumbent").is_none());
     }
 
     #[test]

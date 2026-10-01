@@ -8,6 +8,7 @@
 // changes its action. When S1 is ever combined with a permission decision it
 // goes through `tighten()`, which can never loosen the incumbent (Q26).
 import {
+  incumbentGateAnswer,
   reportOutcome,
   shadowGate,
   tighten,
@@ -63,7 +64,11 @@ export namespace PermissionS1 {
         ids: { session_id: input.sessionID },
         instructions:
           "Should this tool permission proceed without asking the person first? Answer true only if it is clearly safe and routine.",
-        extensions: { "x-incumbent_action": input.incumbent },
+        extensions: {
+          "x-incumbent_action": input.incumbent,
+          // Q26 non-inferiority (#1148): the incumbent's own may_proceed answer.
+          ...(incumbentGateAnswer(input.incumbent) ? { "x-incumbent": incumbentGateAnswer(input.incumbent) } : {}),
+        },
       },
       state,
       o,
