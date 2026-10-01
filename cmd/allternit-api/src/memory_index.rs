@@ -940,6 +940,21 @@ mod tests {
         assert!(hybrid_search(&conn, &scope, "refund policy", None, 3).unwrap().is_empty());
     }
 
+    /// Against the real sidecar: `serve-embed.sh` running on ALLTERNIT_EMBED_URL
+    /// (default :7719). `cargo test -p allternit-api --lib live_sidecar -- --ignored`
+    #[tokio::test]
+    #[ignore]
+    async fn live_sidecar_recall() {
+        let db = DbHandle::new_memory().unwrap();
+        let ids = seed(&db);
+        let client = EmbedClient::from_env();
+        let r = index_pending(&db, &client, 64).await.unwrap();
+        assert!(r.remote, "sidecar not reachable: {r:?}");
+        let hits = kernel::recall_hybrid(&db, &client, "u1", None, None, "which vehicle is mine", 3).await.unwrap();
+        assert_eq!(hits[0].id, ids[0], "{hits:?}");
+        assert_eq!(hits[0].metadata["embedding_model"], DEFAULT_EMBED_MODEL);
+    }
+
     #[test]
     fn chunker_overlaps_and_covers_text() {
         let text = "word ".repeat(1000);
