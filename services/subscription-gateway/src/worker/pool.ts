@@ -299,6 +299,7 @@ export class WorkerPool {
       ...fresh,
       identity: observed?.identity ?? fresh.identity ?? null,
       usage: observed?.usage ?? fresh.usage ?? null,
+      agents: observed?.agents ?? fresh.agents ?? null,
       ...(plan ? { plan, plan_observed_at: new Date().toISOString() } : {}),
     });
   }

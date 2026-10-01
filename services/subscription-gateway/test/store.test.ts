@@ -110,7 +110,7 @@ describe("migrations", () => {
     const versions = db
       .prepare("SELECT version FROM migrations ORDER BY version")
       .all() as { version: number }[];
-    expect(versions).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }]);
+    expect(versions).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }]);
     // a task inserted before re-running migrations survives
     insertTask(db, sampleTask());
     runMigrations(db, MIGRATIONS_DIR);
@@ -259,7 +259,11 @@ describe("account queries", () => {
       usage: null,
     };
     upsertAccount(db, account);
-    expect(getAccount(db, "acct-1")).toEqual({ ...account, preferred: false });
+    expect(getAccount(db, "acct-1")).toEqual({ ...account, preferred: false, agents: null });
+    // The account's own agents (Claude Projects) round-trip.
+    const agents = [{ id: "0f6f1c2e-6a3b-4c1d-9e8f-123456789abc", name: "Allternit Brain", kind: "project" }];
+    upsertAccount(db, { ...account, agents });
+    expect(getAccount(db, "acct-1")?.agents).toEqual(agents);
 
     // Who is signed in and the observed usage round-trip.
     const usage = { remaining_pct: 8, resets_at: null, observed_at: "2026-09-29T14:54:00.000Z" };

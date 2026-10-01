@@ -42,6 +42,11 @@ export class ClaudeWebAdapter extends WebChatAdapter {
       {
         newChatUrl: "https://claude.ai/new",
         threadUrl: (id) => `https://claude.ai/chat/${id}`,
+        // A chat that belongs to a Project starts on the Project's page, so its knowledge and instructions apply.
+        newChatUrlFor: (task) => {
+          const id = task.options.project_id;
+          return typeof id === "string" && /^[0-9a-f-]{36}$/.test(id) ? `https://claude.ai/project/${id}` : null;
+        },
       },
       claudeWebConfig(configOverrides),
       opts
@@ -146,10 +151,21 @@ export class ClaudeWebAdapter extends WebChatAdapter {
           }
         }
       }
-      return { identity, pct, resetsAt };
+      // The account's Projects (each can be its own agent). Names and ids only.
+      let projects: { id: string; name: string; kind: string }[] | null = null;
+      if (org) {
+        const list = (await getJson(`/api/organizations/${org}/projects?limit=100`)) as { uuid?: unknown; name?: unknown; archived_at?: unknown }[] | null;
+        if (Array.isArray(list)) {
+          projects = list
+            .filter((p) => typeof p?.uuid === "string" && typeof p?.name === "string" && !p.archived_at)
+            .map((p) => ({ id: p.uuid as string, name: p.name as string, kind: "project" }));
+        }
+      }
+      return { identity, pct, resetsAt, projects };
     });
     return {
       identity: read.identity,
+      ...(read.projects ? { agents: read.projects } : {}),
       usage:
         read.pct === null
           ? null
