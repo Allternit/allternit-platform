@@ -4,7 +4,8 @@
 // account's default model answers). Selectors are v1-unverified (see
 // selectors/v1.yaml).
 import type { AccountObservation } from "@allternit/subscription-fabric-contracts";
-import type { DeclarativeChatConfig } from "@allternit/subscription-adapter-sdk";
+import type { DeclarativeChatConfig, SdkSelectorResolver } from "@allternit/subscription-adapter-sdk";
+import type { Page } from "playwright";
 import { readFileSync } from "node:fs";
 import { WebChatAdapter, loadManifestAt, type WebChatOptions } from "../_shared/web-chat.js";
 
@@ -45,6 +46,41 @@ export class ClaudeWebAdapter extends WebChatAdapter {
       claudeWebConfig(configOverrides),
       opts
     );
+  }
+
+  /**
+   * The last reply's text blocks from claude.ai's own conversation endpoint (same-origin, in the page), so
+   * extended-thinking summaries and tool chrome never leak into the reply (live 2026-09-30: "Untangling
+   * conflicting instructions…" rode along). Falls back to the DOM when the endpoint gives nothing, e.g. while
+   * the reply is still streaming.
+   */
+  protected override async extractReply(page: Page, resolver: SdkSelectorResolver): Promise<string> {
+    const id = THREAD_URL_PATTERN.exec(page.url())?.[1];
+    if (id) {
+      await page.evaluate("globalThis.__name ??= (fn) => fn");
+      const text = await page
+        .evaluate(async (conv: string) => {
+          const cookieOrg = /(?:^|;\s*)lastActiveOrg=([^;]+)/.exec(document.cookie)?.[1];
+          let org = cookieOrg ? decodeURIComponent(cookieOrg) : null;
+          if (!org) {
+            const r = await fetch("/api/organizations", { credentials: "include" }).catch(() => null);
+            const orgs = r && r.ok ? ((await r.json()) as { uuid?: string; capabilities?: string[] }[]) : [];
+            org = orgs.find((o) => o.capabilities?.includes("chat"))?.uuid ?? null;
+          }
+          if (!org) return null;
+          const r = await fetch(`/api/organizations/${org}/chat_conversations/${conv}?tree=True&rendering_mode=messages`, { credentials: "include" }).catch(() => null);
+          if (!r || !r.ok) return null;
+          const j = (await r.json()) as { chat_messages?: { sender?: string; content?: { type?: string; text?: string }[]; text?: string }[] };
+          const last = [...(j.chat_messages ?? [])].reverse().find((m) => m.sender === "assistant");
+          if (!last) return null;
+          const blocks = Array.isArray(last.content) ? last.content.filter((b) => b.type === "text" && typeof b.text === "string").map((b) => b.text as string) : [];
+          const out = (blocks.length ? blocks.join("\n\n") : last.text ?? "").trim();
+          return out || null;
+        }, id)
+        .catch(() => null);
+      if (text) return text;
+    }
+    return super.extractReply(page, resolver);
   }
 
   // Who is signed in and how much is left. Non-spending: claude.ai's own

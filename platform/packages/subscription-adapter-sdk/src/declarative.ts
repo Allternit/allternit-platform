@@ -112,6 +112,15 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
   }
 
   /** The worker-provided page while attached (for non-spending reads). */
+  /**
+   * The last assistant reply as markdown. Default: the DOM extractor over the
+   * `response` selector. A provider with a reliable same-origin source (e.g. its
+   * conversation API) overrides this to drop things the DOM mixes in.
+   */
+  protected extractReply(page: Page, resolver: SdkSelectorResolver): Promise<string> {
+    return extractLastAssistantTurn(page, resolver);
+  }
+
   protected attachedPage(): Page | null {
     return this.runtimePage;
   }
@@ -307,7 +316,7 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
       if ((await countReplies(resolver)) <= repliesBefore) return [];
       let sample: string;
       try {
-        sample = await extractLastAssistantTurn(page, resolver);
+        sample = await this.extractReply(page, resolver);
       } catch {
         return []; // the node re-rendered mid-read; next sample
       }
@@ -359,7 +368,7 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
     while (pending.length > 0) yield pending.shift() as AdapterEvent;
 
     const hasResponse = (await resolver.tryResolveLocator("response")) !== null;
-    const text = hasResponse ? await extractLastAssistantTurn(page, resolver) : undefined;
+    const text = hasResponse ? await this.extractReply(page, resolver) : undefined;
     // The rest of the reply. `done.text` stays the authoritative full text;
     // a final render that no longer extends what streamed (rare) streams
     // nothing more.
@@ -386,7 +395,7 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
   async readThread(providerThreadId: string, ctx: ExecutionContext): Promise<ThreadSnapshot> {
     const page = sdkPage(ctx.page);
     const resolver = ctx.selectors as SdkSelectorResolver;
-    const markdown = await extractLastAssistantTurn(page, resolver);
+    const markdown = await this.extractReply(page, resolver);
     const turns = await (await resolver.resolveLocator("response")).count();
     return {
       provider_thread_id: providerThreadId,
