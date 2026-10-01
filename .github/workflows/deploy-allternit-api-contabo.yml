@@ -116,6 +116,7 @@ jobs:
       # router panic (duplicate route, 2026-09-30 #1094) or a failing migration
       # (duplicate V205) dies here instead of crash-looping production.
       - name: Boot smoke test (fresh DB, before deploy)
+        # /health is 503 here (no gizzi runtime on the runner); /health/live = booted and serving.
         run: |
           D=$(mktemp -d)
           ALLTERNIT_DATA_DIR=$D ALLTERNIT_API_PORT=18999 \
@@ -123,7 +124,7 @@ jobs:
           PID=$!
           ok=""
           for i in $(seq 1 60); do
-            if curl -sf http://127.0.0.1:18999/health > /dev/null; then ok=1; break; fi
+            if curl -sf http://127.0.0.1:18999/health/live > /dev/null; then ok=1; break; fi
             kill -0 $PID 2>/dev/null || break
             sleep 1
           done
