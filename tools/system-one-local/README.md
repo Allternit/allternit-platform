@@ -258,3 +258,27 @@ system-one calibrate --data data.jsonl --primitive dec.choice --model <ref> [--h
 **4. Go live, per primitive.** With the manifest in `ALLTERNIT_S1_MANIFESTS` (the ModelPool reads the same file) set `ALLTERNIT_S1_MODE=live` and restart. `AUTO` still needs the caller to attest reversibility and confidence inside the calibrated region; anything outside the scope or coverage abstains. Hard policy and deterministic verification stay authoritative.
 
 **How much data.** Floors are held-out n >= 300 and auto-act subset n >= 100, so with a 40% hold-out expect roughly 750 to 1,000+ labeled rows per scope, more if few decisions are high-confidence. The auto-act subset must also show <= 5% error and ECE <= 0.05 on the held-out part. Too little data fails cleanly; a weak model fails regardless of volume.
+
+## Fine-tune + the Q26 gate (WP-L1)
+
+Q26 amends Q22: the primary gate is a certified error bound, ECE is secondary.
+
+1. **Export** (needs raw state, i.e. `SYSTEM_ONE_SHADOW_STATE=1` opt-in):
+   `bun src/cli.ts export --out <dir>` writes `train/tune/cert/audit.jsonl` + `summary.json`
+   per (bank, type, option count). The audit slice (5%, fixed by decision-id hash) is never trained,
+   tuned or certified on; `cert` is the newest rows. Rows without raw state are dropped and counted.
+2. **Fine-tune**: `laya/finetune/run-finetune.sh <dir> <ckpt>` (MPS) or `laya/finetune/finetune_laya_kaggle.ipynb`.
+   Trains the decision head (encoder frozen unless `--unfreeze-last N`), writes a Laya checkpoint dir with
+   `allternit_checkpoint.json` (revision `ft-<sha>`, a new backend identity) and the new checkpoint's raw
+   readouts on the held-out splits (`scored-tune.jsonl`, `scored-cert.jsonl`).
+3. **Gate**: `bun src/cli.ts calibrate --tune <ckpt>/scored-tune.jsonl --cert <ckpt>/scored-cert.jsonl [--policy p.json] --manifests $ALLTERNIT_S1_MANIFESTS`.
+   Temperature per (bank, type, k) and τ (fixed-sequence Learn-Then-Test) on split A; Clopper–Pearson upper bound
+   (δ 0.05) ≤ ε on split B; non-inferior to the incumbent (`x-incumbent` on requests, or policy `incumbent: "none"`);
+   per-class floors; coverage ≥ 30%; ≥ 300 tuning / ≥ 500 certification rows. ε is 5% by default, 10% with policy
+   `consequence: "cheap_retry"`; permission/money/client banks never pass. Only passing bindings get manifests.
+4. **Swap the checkpoint** only after a bank passes: Desktop `SystemOneManager.setCheckpoint({ path })`
+   (or `ALLTERNIT_LAYA_CHECKPOINT_PATH`). The S1 server reports the served revision as `model_revision`.
+5. **Canary** (live mode): `bun src/cli.ts canary enable --bank <b> --report <q26.json> --budget 20` →
+   at most N live auto-acts/day/bank, each audited, plus a 2–5% random audit slice; `canary sync` feeds audited
+   outcomes into a Bernoulli CUSUM that rolls the bank back to shadow automatically; `canary grow` doubles the budget
+   after 50 clean audits. Q26 manifests never serve live without the canary.
