@@ -109,7 +109,7 @@ fn planned(path: &str, content: &str, diff_lines: usize) -> Planned {
 
 #[test]
 fn bugfix_selection_prefers_tests_then_lint_then_votes_then_smallest_diff() {
-    let o = |t: bool, l: bool| Outcome { tests_pass: t, lint_ok: l, output: String::new() };
+    let o = |t: bool, l: bool| Outcome { tests_pass: t, lint_ok: l, output: String::new(), repro_pass: 0, regressions: 0 };
     let a = planned("m.js", "a + b", 10);
     let b = planned("m.js", "a  +  b", 4); // same change, different whitespace
     let c = planned("m.js", "b + a", 2);
@@ -125,7 +125,7 @@ fn bugfix_selection_prefers_tests_then_lint_then_votes_then_smallest_diff() {
     assert_eq!(dedupe(&[a.clone(), b, c]), vec![(0, 2), (2, 1)]);
     // Evidence ref round-trips (re-driven runs recover outcomes).
     let ev = encode(2, &[0, 2], &[o(true, true), o(false, false)]);
-    assert_eq!(ev, "candidates:2:0=PASS,2=LINT");
+    assert_eq!(ev, "candidates:2:0=PASS/r0/g0,2=LINT/r0/g0");
     let d = decode(&ev);
     assert_eq!(d.len(), 2);
     assert!(d[0].1.tests_pass && !d[1].1.lint_ok && d[1].0 == 2);
