@@ -103,6 +103,7 @@ import {
 } from './security.js';
 import { resolveDevUserDataPath } from './desktop-data-dir.js';
 import { coworkDeviceHeaders, coworkDeviceInfo, isInAppBrowsableUrl } from './cowork-device.js';
+import { isProvisionedMode } from './provisioned-bootstrap.js';
 
 // Fix PATH for macOS
 fixPath();
@@ -1588,6 +1589,13 @@ async function initializeBundledMode(): Promise<void> {
         try {
           const daemonStatus = await gizziDaemonManager.getStatus();
           if (daemonStatus.installed) return;
+
+          // An Allternit cloud computer is always on and has nobody to ask.
+          if (isProvisionedMode()) {
+            log.info('[Main] Provisioned computer: enabling the scheduling daemon without asking');
+            await installAlwaysOnGizziRuntime();
+            return;
+          }
 
           const { response } = await dialog.showMessageBox(mainWindow!, {
             type: 'info',
