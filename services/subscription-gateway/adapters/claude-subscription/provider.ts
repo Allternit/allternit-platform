@@ -206,7 +206,8 @@ export class ClaudeSubscriptionProvider extends BaseAaiProvider {
     const reply = ((task.result ?? {}) as { text?: string }).text ?? "";
     if ((task.status !== "completed" && task.status !== "partial") || !reply.trim()) return mapTaskError(task);
     ctx.turns += 1;
-    const messageId = `${ctx.id}:m${ctx.turns}`;
+    // Unique per turn even after a restart revives the context (turn counts restart there).
+    const messageId = `${ctx.id}:${i.correlationId}`;
     if (thinking) this.push(ctx, "agent.activity.completed", i.correlationId, { activityId: i.correlationId });
     // The finished thought rides with the reply as a `thinking` content block (the Claude pack shows "Thought process").
     this.push(ctx, "agent.message.completed", i.correlationId, { reply, messageId, ...(thinking ? { content: [{ type: "thinking", text: thinking }] } : {}) });
