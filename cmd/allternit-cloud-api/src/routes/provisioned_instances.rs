@@ -956,6 +956,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn wake_endpoint_answers_202_with_the_poll_contract() {
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
+        std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
+        let pool = test_pool().await;
+        insert_host(&pool, "host_a").await;
+        let backend = Arc::new(MockBackend::default());
+        let state = test_state(pool.clone(), backend.clone()).await;
+        let view = state.provisioning_service.create_free(DEV_USER).await.unwrap();
+        let other = state.provisioning_service.create_free("other-user").await.unwrap();
+        sqlx::query("UPDATE provisioned_instances SET status = 'sleeping'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let router = routes().with_state(state);
+        let id = view.id.clone();
+
+        let response = router
+            .clone()
+            .oneshot(authed_request("POST", &format!("/api/v1/provisioned-instances/{id}/wake"), ""))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let body = body_json(response).await;
+        assert_eq!(body["status"], "waking");
+        assert_eq!(body["instance"]["runtimeOnline"], false);
+        assert_eq!(body["pollUrl"], format!("/api/v1/provisioned-instances/{id}"));
+        assert_eq!(body["pollIntervalSeconds"], 2);
+
+        // Someone else's computer is not wakeable through this route.
+        let response = router
+            .clone()
+            .oneshot(authed_request(
+                "POST",
+                &format!("/api/v1/provisioned-instances/{}/wake", other.id),
+                "",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM provisioned_instances WHERE id = $1")
+                .bind(&other.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(status, "sleeping");
+
+        std::env::remove_var(ALLOW_DEV_TOKEN_ENV);
+    }
+
+    #[tokio::test]
     async fn lifecycle_status_usage_and_ownership_are_owner_scoped() {
         let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");

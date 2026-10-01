@@ -1129,7 +1129,7 @@ pub(crate) async fn relay_request_to_runtime(
         quota_service,
         provisioning,
         runtime_id,
-        &required_capability,
+        required_capability,
         &request.path,
     )
     .await?

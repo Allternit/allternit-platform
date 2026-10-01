@@ -2,7 +2,7 @@
 -- decision 16).
 --
 -- * provisioned_instances.tier: 'paid' (per subscription, always on, the
---   Desktop image) or 'free' (one per account, runtime-only image, sleeps
+--   Desktop image) or 'free' (one per account, the same image at smaller limits, sleeps
 --   when idle and wakes on a request or a scheduled job).
 -- * Two new statuses: 'sleeping' (free computer stopped by the idle sweep;
 --   costs only its disk) and 'waking' (start issued, not yet running).

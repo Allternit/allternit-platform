@@ -1,10 +1,11 @@
 //! Free sleeping cloud computer (plan PLAN-cloud-computer-provisioning-2026-09-30,
-//! decision 16). A child module of `provisioning`, so it drives the same
-//! service, backend registry and state machine.
+//! decisions 16 and 17). A child module of `provisioning`, so it drives the
+//! same service, backend registry and state machine.
 //!
-//! A free account gets one small runtime-only container (image
-//! `allternit-runtime`: allternit-api + gizzi-code + agent-daemon under
-//! systemd, no Desktop shell). It **sleeps** (`incus stop`, status
+//! A free account gets one small container from the same image as paid
+//! (`allternit-cloud-computer`: the Linux Desktop app in provisioned mode,
+//! Chrome started only when a subscription task needs it, the CLI tools),
+//! with smaller limits. It **sleeps** (`incus stop`, status
 //! `sleeping`, costs only its disk) after `ALLTERNIT_FREE_IDLE_MINUTES` with no
 //! activity and **wakes** (status `waking` → `running`) on:
 //!
@@ -38,8 +39,7 @@
 //! `replaced_by` the paid one, put to sleep, and deleted
 //! `ALLTERNIT_FREE_DELETE_AFTER_DAYS` later. It stays wakeable until then so
 //! the runtime's data can be exported. It is not restored into the paid
-//! computer by image, because the paid image is a different (full Desktop)
-//! image.
+//! computer: the paid computer is created fresh at the plan size.
 
 use super::*;
 

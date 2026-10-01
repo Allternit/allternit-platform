@@ -897,7 +897,7 @@ pub fn can_transition(from: &str, to: &str) -> bool {
         // Cancel lifecycle (plan B2): suspended = stopped awaiting deletion.
         ("provisioning" | "running" | "stopped", "suspended") => true,
         ("suspended", "provisioning" | "running" | "error") => true,
-        ("provisioning" | "stopped", "error") => true,
+        ("stopped", "error") => true,
         // Free computers (decision 16): idle sweep sleeps, a wake starts.
         ("running", "sleeping") => true,
         ("sleeping", "waking" | "running" | "error") => true,
@@ -1527,8 +1527,8 @@ impl ProvisioningService {
     }
 
     /// Shared create for both tiers. `tier` is [`TIER_PAID`] (per
-    /// subscription, plan-sized, Desktop image, cancel snapshot) or
-    /// [`TIER_FREE`] (one per account, runtime image, small, no snapshots).
+    /// subscription, plan-sized, always on, cancel snapshot) or
+    /// [`TIER_FREE`] (one per account, same image, small, sleeps, no snapshots).
     pub(crate) async fn create_tier(
         &self,
         user_id: &str,
@@ -4046,5 +4046,255 @@ pub(crate) mod pg_tests {
         let file = backend.files.lock().unwrap().last().unwrap().clone();
         let contract: serde_json::Value = serde_json::from_slice(&file.content).unwrap();
         assert_eq!(contract["instance_id"], restored.id.as_str());
+    }
+
+    // ── Free sleeping computers (decision 17) ──────────────────────────
+
+    fn test_free_defaults() -> FreeDefaults {
+        FreeDefaults {
+            enabled: true,
+            image: "allternit-cloud-computer".to_string(),
+            cpu_cores: 1,
+            cpu_allowance: None,
+            memory_mb: 2048,
+            disk_gb: 10,
+            idle: Duration::minutes(15),
+            max_awake_per_host: 10,
+            max_wakes_per_hour: 12,
+            delete_after: Duration::days(30),
+            wake_lead: Duration::seconds(120),
+        }
+    }
+
+    fn free_service(
+        pool: PgPool,
+        backend: Arc<MockBackend>,
+        free: FreeDefaults,
+    ) -> Arc<ProvisioningService> {
+        Arc::new(service(pool, backend).with_free_defaults(free))
+    }
+
+    async fn set_status(pool: &PgPool, id: &str, status: &str) {
+        sqlx::query("UPDATE provisioned_instances SET status = $2 WHERE id = $1")
+            .bind(id)
+            .bind(status)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn free_create_is_idempotent_and_free_sized() {
+        let pool = migrated_pool().await;
+        insert_host(&pool, "host_a", 8, 8192, 100).await;
+        let backend = Arc::new(MockBackend::default());
+        let service = free_service(pool.clone(), backend.clone(), test_free_defaults());
+
+        let first = service.create_free("user_1").await.unwrap();
+        let second = service.create_free("user_1").await.unwrap();
+        assert_eq!(first.id, second.id, "a second create returns the live free computer");
+        assert_eq!(first.tier, TIER_FREE);
+        assert_eq!(first.incus_name, free_incus_name_for("user_1"));
+
+        let created = backend.created.lock().unwrap();
+        assert_eq!(created.len(), 1, "the backend is asked to create exactly once");
+        // Decision 17: the same full image as paid, at the free size.
+        assert_eq!(created[0].image, "local:allternit-cloud-computer");
+        assert_eq!((created[0].cpu_cores, created[0].memory_mb, created[0].disk_gb), (1, 2048, 10));
+        drop(created);
+
+        // A free computer reserves only its disk on the host.
+        let allocated: (i32, i64, i64) = sqlx::query_as(
+            "SELECT cpu_cores_allocated, memory_mb_allocated, disk_gb_allocated FROM provisioned_hosts WHERE id = 'host_a'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(allocated, (0, 0, 10));
+    }
+
+    #[tokio::test]
+    async fn idle_free_computer_sleeps_and_recent_or_due_ones_stay_up() {
+        let pool = migrated_pool().await;
+        insert_host(&pool, "host_a", 8, 8192, 100).await;
+        let backend = Arc::new(MockBackend::default());
+        let service = free_service(pool.clone(), backend.clone(), test_free_defaults());
+        let idle = service.create_free("user_1").await.unwrap();
+        let active = service.create_free("user_2").await.unwrap();
+        let now = Utc::now();
+        for (id, last_activity, next_wake) in [
+            (&idle.id, now - Duration::minutes(20), None::<DateTime<Utc>>),
+            (&active.id, now - Duration::minutes(5), None),
+        ] {
+            sqlx::query(
+                "UPDATE provisioned_instances SET status = 'running', last_activity_at = $2, next_wake_at = $3 WHERE id = $1",
+            )
+            .bind(id)
+            .bind(last_activity)
+            .bind(next_wake)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        service.sweep_free(now).await.unwrap();
+        assert_eq!(service.fetch_row(&idle.id, None).await.unwrap().status, "sleeping");
+        assert_eq!(service.fetch_row(&active.id, None).await.unwrap().status, "running");
+        let calls = backend.calls.lock().unwrap().clone();
+        assert!(calls.contains(&format!("stop:{}", idle.incus_name)), "{calls:?}");
+        assert!(!calls.contains(&format!("stop:{}", active.incus_name)), "{calls:?}");
+
+        // An idle computer with a job due inside the wake lead is not slept.
+        sqlx::query(
+            "UPDATE provisioned_instances SET last_activity_at = $2, next_wake_at = $3 WHERE id = $1",
+        )
+        .bind(&active.id)
+        .bind(now - Duration::minutes(30))
+        .bind(now + Duration::seconds(60))
+        .execute(&pool)
+        .await
+        .unwrap();
+        service.sweep_free(now).await.unwrap();
+        assert_eq!(service.fetch_row(&active.id, None).await.unwrap().status, "running");
+    }
+
+    #[tokio::test]
+    async fn wake_starts_a_sleeping_free_computer_once() {
+        let pool = migrated_pool().await;
+        insert_host(&pool, "host_a", 8, 8192, 100).await;
+        let backend = Arc::new(MockBackend::default());
+        let service = free_service(pool.clone(), backend.clone(), test_free_defaults());
+        let view = service.create_free("user_1").await.unwrap();
+        set_status(&pool, &view.id, "sleeping").await;
+
+        // Another user cannot wake it.
+        assert!(service.wake(&view.id, Some("user_2"), WakeReason::Owner).await.is_err());
+
+        let result = service.wake(&view.id, Some("user_1"), WakeReason::Owner).await.unwrap();
+        assert!(result.woke);
+        assert_eq!(result.view.status, "waking");
+        result.task.expect("a start task").await.unwrap();
+        assert_eq!(service.fetch_row(&view.id, None).await.unwrap().status, "running");
+        let starts = backend
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| **call == format!("start:{}", view.incus_name))
+            .count();
+
+        // Waking a running computer is a no-op and counts no wake.
+        let again = service.wake(&view.id, Some("user_1"), WakeReason::Owner).await.unwrap();
+        assert!(!again.woke && again.task.is_none());
+        let starts_after = backend
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| **call == format!("start:{}", view.incus_name))
+            .count();
+        assert_eq!(starts, starts_after);
+        let wakes: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM provisioned_instance_wakes WHERE instance_id = $1 AND reason = 'owner'",
+        )
+        .bind(&view.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(wakes, 1);
+    }
+
+    #[tokio::test]
+    async fn relay_wake_for_device_follows_the_instance_state() {
+        let pool = migrated_pool().await;
+        insert_host(&pool, "host_a", 8, 8192, 100).await;
+        let backend = Arc::new(MockBackend::default());
+        let service = free_service(pool.clone(), backend.clone(), test_free_defaults());
+        let view = service.create_free("user_1").await.unwrap();
+        sqlx::query("UPDATE provisioned_instances SET device_id = 'dev_free', status = 'sleeping' WHERE id = $1")
+            .bind(&view.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            service.wake_for_device("dev_unknown").await.unwrap(),
+            ProvisionedWakeOutcome::NotProvisioned
+        );
+        assert_eq!(
+            service.wake_for_device("dev_free").await.unwrap(),
+            ProvisionedWakeOutcome::Waking
+        );
+        let reason: String = sqlx::query_scalar(
+            "SELECT reason FROM provisioned_instance_wakes WHERE instance_id = $1",
+        )
+        .bind(&view.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(reason, "relay");
+        // Already waking: no second wake is issued. (The mock start is
+        // instant, so pin the state rather than race the start task.)
+        set_status(&pool, &view.id, "waking").await;
+        assert_eq!(
+            service.wake_for_device("dev_free").await.unwrap(),
+            ProvisionedWakeOutcome::Waking
+        );
+        let wakes: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM provisioned_instance_wakes WHERE instance_id = $1",
+        )
+        .bind(&view.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(wakes, 1);
+        set_status(&pool, &view.id, "running").await;
+        assert_eq!(
+            service.wake_for_device("dev_free").await.unwrap(),
+            ProvisionedWakeOutcome::AlreadyActive
+        );
+        set_status(&pool, &view.id, "error").await;
+        assert_eq!(
+            service.wake_for_device("dev_free").await.unwrap(),
+            ProvisionedWakeOutcome::NotWakeable
+        );
+    }
+
+    #[tokio::test]
+    async fn wake_respects_the_host_awake_cap_and_hourly_limit() {
+        let pool = migrated_pool().await;
+        insert_host(&pool, "host_a", 8, 8192, 100).await;
+        let backend = Arc::new(MockBackend::default());
+        let service = free_service(
+            pool.clone(),
+            backend.clone(),
+            FreeDefaults {
+                max_awake_per_host: 1,
+                max_wakes_per_hour: 2,
+                ..test_free_defaults()
+            },
+        );
+        // Create checks the cap too, so put the first one to sleep before
+        // the second is created.
+        let mine = service.create_free("user_1").await.unwrap();
+        set_status(&pool, &mine.id, "sleeping").await;
+        let theirs = service.create_free("user_2").await.unwrap();
+        set_status(&pool, &theirs.id, "running").await;
+
+        // Host cap: one free computer already awake → 503, no wake counted.
+        let error = service.wake(&mine.id, Some("user_1"), WakeReason::Owner).await.unwrap_err();
+        assert!(matches!(error, ApiError::ServiceUnavailable(_)), "{error:?}");
+        set_status(&pool, &theirs.id, "sleeping").await;
+
+        // Hourly limit: two wakes pass, the third is 429.
+        for _ in 0..2 {
+            let result = service.wake(&mine.id, Some("user_1"), WakeReason::Owner).await.unwrap();
+            assert!(result.woke);
+            result.task.unwrap().await.unwrap();
+            set_status(&pool, &mine.id, "sleeping").await;
+        }
+        let error = service.wake(&mine.id, Some("user_1"), WakeReason::Owner).await.unwrap_err();
+        assert!(matches!(error, ApiError::TooManyRequests(_)), "{error:?}");
+        assert_eq!(service.fetch_row(&mine.id, None).await.unwrap().status, "sleeping");
     }
 }
