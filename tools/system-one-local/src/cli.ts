@@ -11,7 +11,7 @@
 //
 // `ask` evaluates in-process unless --server is given. A state file ending in
 // .json is parsed as JSON (object/array/string); anything else is sent as text.
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { appendManifests, calibrateAndWrite } from "./decision/calibrate.ts";
 import { CanaryController } from "./decision/canary.ts";
@@ -138,7 +138,10 @@ async function main() {
       if (typeof f.tune === "string" || typeof f.cert === "string") {
         // Q26 (default gate): split A = --tune, split B = --cert (untouched).
         if (typeof f.tune !== "string" || typeof f.cert !== "string") throw new Error("usage: system-one calibrate --tune <jsonl> --cert <jsonl> [--policy p.json] [--report out.json] [--manifests path]");
-        const policy = typeof f.policy === "string" ? (JSON.parse(readFileSync(f.policy, "utf8")) as Q26Policy) : undefined;
+        // Bundled defaults (q26-policy.json: banks with no incumbent decider), overridden per bank by --policy.
+        const bundled = new URL("../q26-policy.json", import.meta.url);
+        const defaults = existsSync(bundled) ? (JSON.parse(readFileSync(bundled, "utf8")) as Q26Policy) : {};
+        const policy: Q26Policy = { ...defaults, ...(typeof f.policy === "string" ? (JSON.parse(readFileSync(f.policy, "utf8")) as Q26Policy) : {}) };
         const rep = runQ26(readDataset(f.tune), readDataset(f.cert), { policy, datasetRef: f.cert });
         const reportPath = typeof f.report === "string" ? f.report : `${f.cert}.q26-report.json`;
         const manifestsPath = typeof f.manifests === "string" ? f.manifests : process.env.ALLTERNIT_S1_MANIFESTS?.trim() || undefined;

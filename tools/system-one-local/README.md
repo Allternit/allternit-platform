@@ -286,7 +286,8 @@ Q26 amends Q22: the primary gate is a certified error bound, ECE is secondary.
    readouts on the held-out splits (`scored-tune.jsonl`, `scored-cert.jsonl`).
 3. **Gate**: `bun src/cli.ts calibrate --tune <ckpt>/scored-tune.jsonl --cert <ckpt>/scored-cert.jsonl [--policy p.json] --manifests $ALLTERNIT_S1_MANIFESTS`.
    Temperature per (bank, type, k) and τ (fixed-sequence Learn-Then-Test) on split A; Clopper–Pearson upper bound
-   (δ 0.05) ≤ ε on split B; non-inferior to the incumbent (`x-incumbent` on requests, or policy `incumbent: "none"`);
+   (δ 0.05) ≤ ε on split B; non-inferior to the incumbent (`x-incumbent` on requests, or policy `incumbent: "none"`; the bundled
+   `q26-policy.json` marks the banks with no incumbent decider: ROUTE, the judge first pass and lesson triage);
    per-class floors; coverage ≥ 30%; ≥ 300 tuning / ≥ 500 certification rows. ε is 5% by default, 10% with policy
    `consequence: "cheap_retry"`; permission/money/client banks never pass. Only passing bindings get manifests.
 4. **Swap the checkpoint** only after a bank passes: Desktop `SystemOneManager.setCheckpoint({ path })`
