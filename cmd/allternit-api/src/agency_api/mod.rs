@@ -659,6 +659,12 @@ async fn resolve_attention(
             requeue = true;
         }
     }
+    // WP-X2: a task WAIT gate (acceptance / explicit trigger). Either answer
+    // re-queues the run; the executor opens or closes the gate from it.
+    if reason == executor::generic::TASK_WAIT_REASON && matches!(kind.as_str(), "approval" | "rejection") {
+        to = Some(("waiting", "answered; queued for execution (committed steps replay from the journal)"));
+        requeue = true;
+    }
     if matches!(reason.as_str(), safety::RUN_CAP_REASON | safety::STUCK_REASON | safety::UNKNOWN_EFFECT_REASON) {
         if kind == "rejection" {
             to = Some(("failed", "stopped by the approver"));
