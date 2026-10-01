@@ -18,6 +18,13 @@ function resolveHostedUiDir() {
   // One resolver for every build path (scripts/hosted-ui.sh): ALLTERNIT_AI_PATH,
   // else .hosted-ui, else a clean worktree on origin/main — never the shared
   // allternit-ai checkout, whose stale commit kept reverting merged UI.
+  //
+  // The first two cases are resolved here rather than through bash: on the
+  // Windows release runner bash prints a POSIX path (/d/a/...) that Node
+  // cannot open, so the .hosted-ui checkout CI prepared was reported missing.
+  for (const candidate of [process.env.ALLTERNIT_AI_PATH, path.join(repoRoot, '.hosted-ui')]) {
+    if (candidate && fs.existsSync(path.join(candidate, 'package.json'))) return path.resolve(candidate);
+  }
   try {
     const out = execFileSync('bash', ['-c', '. "$0"; resolve_hosted_ui "$1"', path.join(repoRoot, 'scripts', 'hosted-ui.sh'), repoRoot], {
       encoding: 'utf8',
