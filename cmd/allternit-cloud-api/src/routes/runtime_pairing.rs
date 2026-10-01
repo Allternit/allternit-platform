@@ -78,7 +78,21 @@ pub struct CreatePairingRequest {
     /// its pairing (runtime_type "vps") without a Clerk session.
     #[serde(default)]
     byo_bootstrap_token: Option<String>,
+    /// Cloud computer first-boot token (plan A2), read by the Desktop app
+    /// from /etc/allternit/bootstrap.json. Also accepted as the
+    /// `X-Allternit-Bootstrap-Token` header. When valid it pre-approves this
+    /// same pairing for the instance's owner, forces runtimeType
+    /// "provisioned" and the name "Allternit cloud computer", and links the
+    /// provisioned_instances row; it is consumed at exchange, not here, so a
+    /// crash between the two can retry within the token's expiry.
+    #[serde(default)]
+    bootstrap_token: Option<String>,
 }
+
+/// Header alternative to `CreatePairingRequest::bootstrap_token`.
+pub const BOOTSTRAP_TOKEN_HEADER: &str = "x-allternit-bootstrap-token";
+/// Device name every cloud computer pairs under.
+pub const PROVISIONED_RUNTIME_NAME: &str = "Allternit cloud computer";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -217,10 +231,35 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/api/v1/runtime-devices/:id/revoke-self", post(revoke_self))
 }
 
+/// The cloud computer bootstrap token from the body field, else the header;
+/// blank values count as absent.
+fn bootstrap_token_from(field: Option<String>, headers: &HeaderMap) -> Option<String> {
+    field
+        .filter(|token| !token.trim().is_empty())
+        .or_else(|| {
+            headers
+                .get(BOOTSTRAP_TOKEN_HEADER)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string)
+        })
+        .map(|token| token.trim().to_string())
+        .filter(|token| !token.is_empty())
+}
+
 async fn create_pairing(
     State(state): State<Arc<ApiState>>,
-    Json(request): Json<CreatePairingRequest>,
+    headers: HeaderMap,
+    Json(mut request): Json<CreatePairingRequest>,
 ) -> Result<(StatusCode, Json<CreatePairingResponse>), ApiError> {
+    if let Some(token) = bootstrap_token_from(request.bootstrap_token.take(), &headers) {
+        let instance_id =
+            crate::services::provisioning::provisioned_instance_for_bootstrap_token(&state.db, &token)
+                .await?;
+        request.runtime_type = "provisioned".to_string();
+        request.name = PROVISIONED_RUNTIME_NAME.to_string();
+        request.provisioned_instance_id = Some(instance_id);
+        request.provisioned_bootstrap_token = Some(token);
+    }
     validate_pairing_request(&request)?;
 
     let pairing_id = Uuid::new_v4().to_string();
@@ -718,6 +757,34 @@ async fn exchange_pairing(
     .into_response())
 }
 
+/// Device id → provisioned instance id for the user's free cloud computers
+/// the relay can wake (same states `wake_for_device` wakes from). A sleeping
+/// one reads "offline", so clients need this to keep it as a runtime and let
+/// the first relayed request wake it. Only each device's newest instance
+/// counts; a free computer replaced by a paid one is left out.
+async fn wakeable_instances_by_device(
+    db: &PgPool,
+    user_id: &str,
+) -> Result<std::collections::HashMap<String, String>, ApiError> {
+    let rows = sqlx::query_as::<_, (String, String, bool)>(
+        r#"
+        SELECT DISTINCT ON (device_id) device_id, id,
+               (tier = 'free' AND replaced_by IS NULL
+                AND status IN ('sleeping', 'waking', 'provisioning'))
+        FROM provisioned_instances
+        WHERE user_id = $1 AND device_id IS NOT NULL AND status <> 'deleted'
+        ORDER BY device_id, created_at DESC
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(device_id, instance_id, wakeable)| wakeable.then_some((device_id, instance_id)))
+        .collect())
+}
+
 async fn list_runtime_devices(
     State(state): State<Arc<ApiState>>,
     headers: HeaderMap,
@@ -736,6 +803,7 @@ async fn list_runtime_devices(
     .bind(&user.id)
     .fetch_all(&state.db)
     .await?;
+    let wakeable = wakeable_instances_by_device(&state.db, &user.id).await?;
     let mut serialized = Vec::with_capacity(devices.len());
     for device in devices {
         let effective_status = if device.status == "online"
@@ -767,6 +835,10 @@ async fn list_runtime_devices(
         });
         if !relay_connections.is_empty() {
             value["relayConnections"] = serde_json::Value::Array(relay_connections);
+        }
+        if let Some(instance_id) = wakeable.get(&device.id) {
+            value["wakeable"] = serde_json::Value::Bool(true);
+            value["provisionedInstanceId"] = serde_json::Value::String(instance_id.clone());
         }
         serialized.push(value);
     }
@@ -1398,6 +1470,24 @@ pub(crate) fn sha256_hex(value: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn bootstrap_token_comes_from_the_field_or_the_header() {
+        let mut headers = HeaderMap::new();
+        assert_eq!(bootstrap_token_from(None, &headers), None);
+        assert_eq!(bootstrap_token_from(Some("  ".to_string()), &headers), None);
+        assert_eq!(bootstrap_token_from(Some(" tok ".to_string()), &headers).as_deref(), Some("tok"));
+        headers.insert(BOOTSTRAP_TOKEN_HEADER, "hdr".parse().unwrap());
+        assert_eq!(bootstrap_token_from(None, &headers).as_deref(), Some("hdr"));
+        assert_eq!(bootstrap_token_from(Some("body".to_string()), &headers).as_deref(), Some("body"));
+        // The camelCase body field deserializes.
+        let request: CreatePairingRequest = serde_json::from_value(serde_json::json!({
+            "name": "x", "runtimeType": "desktop", "publicKey": "k", "bootstrapToken": "t1"
+        }))
+        .unwrap();
+        assert_eq!(request.bootstrap_token.as_deref(), Some("t1"));
+    }
+
     use super::*;
 
     #[test]
@@ -1481,6 +1571,63 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn wakeable_lists_only_live_unreplaced_free_computers() {
+        let pool = test_pool().await;
+        sqlx::query("DROP TABLE IF EXISTS provisioned_instances CASCADE").execute(&pool).await.unwrap();
+        sqlx::query(
+            r#"
+            CREATE TABLE provisioned_instances (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                device_id TEXT,
+                tier TEXT NOT NULL DEFAULT 'paid',
+                status TEXT NOT NULL,
+                replaced_by TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let rows = [
+            // (id, user, device, tier, status, replaced_by, age_minutes)
+            ("pi_sleep", "user_1", Some("dev_sleep"), "free", "sleeping", None, 0),
+            ("pi_waking", "user_1", Some("dev_waking"), "free", "waking", None, 0),
+            ("pi_running", "user_1", Some("dev_running"), "free", "running", None, 0),
+            ("pi_paid", "user_1", Some("dev_paid"), "paid", "stopped", None, 0),
+            ("pi_replaced", "user_1", Some("dev_replaced"), "free", "sleeping", Some("pi_paid"), 0),
+            ("pi_nodev", "user_1", None, "free", "sleeping", None, 0),
+            ("pi_other", "user_2", Some("dev_other"), "free", "sleeping", None, 0),
+            // An older deleted-then-recreated device: only the newest row counts.
+            ("pi_old", "user_1", Some("dev_reused"), "free", "sleeping", None, 60),
+            ("pi_new", "user_1", Some("dev_reused"), "paid", "running", None, 0),
+        ];
+        for (id, user, device, tier, status, replaced_by, age) in rows {
+            sqlx::query(
+                "INSERT INTO provisioned_instances (id, user_id, device_id, tier, status, replaced_by, created_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, NOW() - make_interval(mins => $7))",
+            )
+            .bind(id)
+            .bind(user)
+            .bind(device)
+            .bind(tier)
+            .bind(status)
+            .bind(replaced_by)
+            .bind(age)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let wakeable = wakeable_instances_by_device(&pool, "user_1").await.unwrap();
+        let mut got: Vec<(&str, &str)> =
+            wakeable.iter().map(|(d, i)| (d.as_str(), i.as_str())).collect();
+        got.sort();
+        assert_eq!(got, vec![("dev_sleep", "pi_sleep"), ("dev_waking", "pi_waking")]);
     }
 
     #[tokio::test]

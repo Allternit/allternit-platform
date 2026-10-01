@@ -332,6 +332,7 @@ fn build_state(db: PgPool, container_api_url: &str) -> Arc<ApiState> {
                 container_api_url.to_string(),
             )),
             quota_service.clone(),
+            Arc::new(services::ProvisioningService::new(db.clone())),
         )),
         provisioning_service: Arc::new(services::ProvisioningService::new(db.clone())),
         mesh_service: None,

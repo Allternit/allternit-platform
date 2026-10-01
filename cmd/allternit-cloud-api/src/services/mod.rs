@@ -56,10 +56,14 @@ pub use node_resolution::{
 };
 pub use provisioning::{
     activate_registered_device, bind_device_slot, build_user_data, can_transition,
-    record_instance_started, record_instance_stopped, select_host, start_provisioning_reconcile_task,
+    incus_name_for, record_instance_started, record_instance_stopped, select_host, snapshot_alias_for,
+    start_provisioning_lifecycle_task, start_provisioning_reconcile_task, BootstrapContract, ComputerSize,
     usage_summary, validate_provisioned_bootstrap, BackendRegistry, BackendStatus, HostCapacity,
     IncusBackendRegistry, IncusHttpBackend, InstanceRow, InstanceView, ProvisionBackend,
     ProvisionDefaults, ProvisionError, ProvisionSpec, ProvisioningService, INIT_SCRIPT,
+    free_incus_name_for, note_runtime_attached, start_free_computer_task,
+    touch_provisioned_activity, FreeDefaults, ProvisionedWakeOutcome, WakeReason, WakeResult,
+    TIER_FREE, TIER_PAID,
 };
 pub use quota_service::{QuotaService, SharedQuotaService, UserQuota};
 pub use run_service::{RunListFilter, RunService, RunServiceImpl};

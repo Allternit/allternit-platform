@@ -218,10 +218,18 @@ async fn apply_and_respond(
     user_id: &str,
     plan_tier_id: &str,
 ) -> Response {
-    match apply_entitlement_and_sync_subscription(&state.db, subscription, event_id, user_id, plan_tier_id)
-        .await
+    let provisioner = provision_on_payment_enabled().then_some(&state.provisioning_service);
+    match apply_entitlement_and_sync_subscription(
+        &state.db,
+        subscription,
+        event_id,
+        user_id,
+        plan_tier_id,
+        provisioner,
+    )
+    .await
     {
-        Ok(applied) => {
+        Ok((applied, _provisioning)) => {
             crate::services::audit::write_audit_log(
                 &state.db,
                 crate::services::audit::AuditEvent {
@@ -257,13 +265,30 @@ async fn apply_and_respond(
 /// NOT subscription metadata, which is exactly why the mirror table exists. The event
 /// mapping already guaranteed clerk_user_id metadata, so these upserts only ever run for
 /// subscriptions from our own checkout flow.
+/// Plan B1 go-live switch: `ALLTERNIT_PROVISION_ON_PAYMENT=1` makes an
+/// active/trialing subscription create its cloud computer. Off by default so
+/// merging (which auto-deploys cloud-api) does not start creating containers
+/// on the fleet before the image carries the Desktop app (A1) and the Stripe
+/// test-mode end-to-end run (B verify) has passed. Cancel handling is always
+/// on: it only acts on computers that already exist.
+fn provision_on_payment_enabled() -> bool {
+    matches!(
+        std::env::var("ALLTERNIT_PROVISION_ON_PAYMENT").as_deref(),
+        Ok("1") | Ok("true")
+    )
+}
+
+/// Every caller of the mirror upsert below is an active/trialing grant
+/// (map_stripe_event filters other statuses), so the presence of a
+/// provisioner is the only gate here.
 async fn apply_entitlement_and_sync_subscription(
     db: &PgPool,
     subscription: &Value,
     event_id: &str,
     user_id: &str,
     plan_tier_id: &str,
-) -> Result<AppliedEntitlement, ApiError> {
+    provisioner: Option<&Arc<crate::services::ProvisioningService>>,
+) -> Result<(AppliedEntitlement, Option<tokio::task::JoinHandle<()>>), ApiError> {
     let applied =
         apply_hosted_entitlement(db, event_id, user_id, plan_tier_id, None, "stripe").await?;
     let subscription_id = subscription["id"].as_str().unwrap_or_default();
@@ -286,8 +311,16 @@ async fn apply_entitlement_and_sync_subscription(
         if let Some(customer_id) = customer_id {
             billing_subscriptions::upsert_user_billing_account(db, user_id, &customer_id).await?;
         }
+        // Plan B1: payment cleared -> the user's cloud computer, fire-and-
+        // forget after the mirror row exists (sizing reads its plan_id and
+        // provisioned_instances.subscription_id references it). Idempotent
+        // per subscription, so Stripe retries and .updated events are no-ops.
+        if let Some(provisioner) = provisioner {
+            let handle = provisioner.spawn_ensure_for_subscription(user_id, subscription_id);
+            return Ok((applied, Some(handle)));
+        }
     }
-    Ok(applied)
+    Ok((applied, None))
 }
 
 /// The Stripe customer id whether the event carries an id string or an expanded customer object.
@@ -338,6 +371,12 @@ async fn revoke_and_respond(
                 {
                     return error.into_response();
                 }
+                // Plan B2: stop the computer now, snapshot it (kept 6
+                // months), delete it 30 days out. Fire-and-forget; a no-op
+                // when the subscription never had a computer.
+                state
+                    .provisioning_service
+                    .spawn_suspend_for_subscription(user_id, subscription_id);
             }
             Json(json!({
                 "received": true,
@@ -1725,6 +1764,7 @@ mod tests {
             &event_id,
             &user_id,
             &plan_tier_id,
+            None,
         )
         .await
         .unwrap();
@@ -1760,6 +1800,92 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(mirror.status, "canceled");
+    }
+
+    #[tokio::test]
+    async fn paid_subscription_provisions_one_computer_and_cancel_suspends_it() {
+        use crate::services::provisioning::pg_tests::{add_provisioning_schema, service, MockBackend};
+        let pool = test_pool().await;
+        sqlx::query("INSERT INTO users (id, email) VALUES ('user_1', 'user_1@example.com')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        add_provisioning_schema(&pool).await;
+        let backend = Arc::new(MockBackend::default());
+        let provisioner = Arc::new(service(pool.clone(), backend.clone()));
+        let metadata = json!({
+            "clerk_user_id": "user_1",
+            "allternit_plan_tier": "pro",
+            "allternit_plan_id": "plus",
+        });
+
+        // created, a Stripe retry of it, then .updated (trialing -> active):
+        // every grant fires the trigger, exactly one computer results.
+        for (event_id, event_type, status) in [
+            ("evt_c1", "customer.subscription.created", "trialing"),
+            ("evt_c1", "customer.subscription.created", "trialing"),
+            ("evt_c2", "customer.subscription.updated", "active"),
+        ] {
+            let event = subscription_event(event_id, event_type, status, metadata.clone());
+            let MappedStripeEvent::Grant { event_id, user_id, plan_tier_id } =
+                map_stripe_event(&event).unwrap()
+            else {
+                panic!("{event_type}/{status} must grant");
+            };
+            let (_, handle) = apply_entitlement_and_sync_subscription(
+                &pool,
+                &event["data"]["object"],
+                &event_id,
+                &user_id,
+                &plan_tier_id,
+                Some(&provisioner),
+            )
+            .await
+            .unwrap();
+            handle.expect("the grant fires the provisioning trigger").await.unwrap();
+        }
+        let rows: Vec<(String, String, i32, i64, i64)> = sqlx::query_as(
+            "SELECT id, status, cpu_cores, memory_mb, disk_gb FROM provisioned_instances WHERE subscription_id = 'sub_123'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 1, "one computer per subscription despite retries");
+        assert_eq!((rows[0].2, rows[0].3, rows[0].4), (2, 4096, 20), "sized from the Plus plan");
+        assert_eq!(backend.created.lock().unwrap().len(), 1);
+
+        // Without a provisioner (ALLTERNIT_PROVISION_ON_PAYMENT unset) the
+        // grant is unchanged and nothing is spawned.
+        let event = subscription_event("evt_c3", "customer.subscription.updated", "active", metadata.clone());
+        let (_, handle) = apply_entitlement_and_sync_subscription(
+            &pool, &event["data"]["object"], "evt_c3", "user_1", "pro", None,
+        )
+        .await
+        .unwrap();
+        assert!(handle.is_none());
+
+        // customer.subscription.deleted maps to Revoke; revoke_and_respond
+        // then fires exactly this suspend.
+        let deleted = subscription_event("evt_d1", "customer.subscription.deleted", "canceled", metadata);
+        let MappedStripeEvent::Revoke { user_id, .. } = map_stripe_event(&deleted).unwrap() else {
+            panic!("deletion must revoke");
+        };
+        provisioner
+            .spawn_suspend_for_subscription(&user_id, "sub_123")
+            .await
+            .unwrap();
+        let (status, delete_after, snapshot): (String, Option<chrono::DateTime<chrono::Utc>>, Option<String>) =
+            sqlx::query_as(
+                "SELECT status, delete_after, snapshot_image FROM provisioned_instances WHERE id = $1",
+            )
+            .bind(&rows[0].0)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(status, "suspended");
+        assert!(delete_after.is_some());
+        assert!(snapshot.is_some(), "cancel snapshot published");
+        assert!(backend.calls.lock().unwrap().iter().any(|call| call.starts_with("stop:")));
     }
 
     #[tokio::test]

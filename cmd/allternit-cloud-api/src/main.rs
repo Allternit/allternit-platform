@@ -234,14 +234,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // P1 control-plane namespaces (agent-sessions/office/beta): resolves the
     // caller's default data-plane node and relays through the runtime relay
     // machinery (routes::data_plane).
+    // P2 per-subscription provisioning lane (Incus fleet): create/start/
+    // stop/status/delete over provisioned_hosts + provisioned_instances.
+    let provisioning_service = Arc::new(services::ProvisioningService::new(db.clone()));
     let data_plane_gateway = Arc::new(routes::data_plane::PgDataPlaneGateway::new(
         db.clone(),
         contabo_runtime_service.clone(),
         quota_service.clone(),
+        provisioning_service.clone(),
     ));
-    // P2 per-subscription provisioning lane (Incus fleet): create/start/
-    // stop/status/delete over provisioned_hosts + provisioned_instances.
-    let provisioning_service = Arc::new(services::ProvisioningService::new(db.clone()));
     let state = Arc::new(ApiState {
         db,
         ssh_executor: allternit_cloud_ssh::SshExecutor::new(),
@@ -277,6 +278,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // P2: keep provisioned instance statuses honest against the Incus hosts
     // and converge their metering sessions.
     services::start_provisioning_reconcile_task(state.clone());
+    // Cancel lifecycle: delete suspended computers 30 days after cancel,
+    // expire their snapshot images after 6 months.
+    services::start_provisioning_lifecycle_task(state.clone());
+    // Free computers (decision 16): sleep when idle, wake for scheduled jobs,
+    // delete when abandoned. Acts on free rows only.
+    services::start_free_computer_task(state.clone());
 
     // Start scheduler service (background task)
     let scheduler_enabled = std::env::var("SCHEDULER_ENABLED")

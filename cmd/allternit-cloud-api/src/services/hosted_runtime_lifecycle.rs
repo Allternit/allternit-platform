@@ -228,7 +228,8 @@ pub async fn touch_runtime_activity(db: &PgPool, runtime_id: &str) -> Result<(),
     .bind(runtime_id)
     .execute(db)
     .await?;
-    Ok(())
+    // Provisioned (free) computers keep their idle clock on their own row.
+    crate::services::touch_provisioned_activity(db, runtime_id).await
 }
 
 pub async fn touch_instance_activity(db: &PgPool, instance_id: &str) -> Result<(), ApiError> {
