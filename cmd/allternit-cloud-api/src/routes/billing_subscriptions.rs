@@ -139,8 +139,8 @@ async fn get_current_subscription(
         r#"
         SELECT user_id, plan_id, plan_tier, status, stripe_customer_id
         FROM billing_subscriptions
-        WHERE user_id = $1 AND status IN ('active', 'trialing')
-        ORDER BY updated_at DESC
+        WHERE user_id = $1 AND status IN ('active', 'trialing', 'past_due', 'unpaid')
+        ORDER BY (status IN ('active', 'trialing')) DESC, updated_at DESC
         LIMIT 1
         "#,
     )
@@ -439,6 +439,24 @@ pub(crate) async fn mark_billing_subscription_canceled(
         "UPDATE billing_subscriptions SET status = 'canceled', updated_at = CURRENT_TIMESTAMP WHERE stripe_subscription_id = $1",
     )
     .bind(stripe_subscription_id)
+    .execute(db)
+    .await
+    .map_err(ApiError::DatabaseError)?;
+    Ok(())
+}
+
+/// Record a failed-renewal status (`past_due` / `unpaid`) on the local mirror. A missing row
+/// is not an error; a later active/trialing grant overwrites the status.
+pub(crate) async fn set_billing_subscription_status(
+    db: &PgPool,
+    stripe_subscription_id: &str,
+    status: &str,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE billing_subscriptions SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE stripe_subscription_id = $1",
+    )
+    .bind(stripe_subscription_id)
+    .bind(status)
     .execute(db)
     .await
     .map_err(ApiError::DatabaseError)?;
