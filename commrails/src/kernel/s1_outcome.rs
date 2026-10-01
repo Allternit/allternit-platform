@@ -114,13 +114,19 @@ impl OutcomeReporter {
         }
     }
 
-    /// POST one GATE to `/v1/decision` (backend `ALLTERNIT_S1_BACKEND`, default `auto`).
-    /// `None` on any failure; never errors.
-    pub async fn gate(&self, ask: &GateAsk<'_>, state: &str) -> Option<GateReadout> {
-        if !self.enabled {
-            return None;
+    /// A reporter for an explicit runtime URL (always enabled; token from `SYSTEM_ONE_TOKEN`).
+    pub fn for_url(base_url: &str, timeout: Duration) -> Self {
+        Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
+            token: std::env::var("SYSTEM_ONE_TOKEN").ok().filter(|t| !t.is_empty()),
+            timeout,
+            enabled: true,
         }
-        let client = reqwest::Client::builder().timeout(self.timeout).build().ok()?;
+    }
+
+    /// The `/v1/decision` request body for one GATE
+    /// (backend `ALLTERNIT_S1_BACKEND`, default `auto`).
+    pub fn gate_body(ask: &GateAsk<'_>, state: &str) -> Value {
         let mut ext = ask.extensions.clone();
         ext.insert("x-motif".into(), json!(ask.motif));
         ext.insert("x-primitive_id".into(), json!(ask.primitive_id));
@@ -137,22 +143,46 @@ impl OutcomeReporter {
             "latency_class": "INTERACTIVE", "extensions": ext,
         });
         let backend = std::env::var("ALLTERNIT_S1_BACKEND").unwrap_or_else(|_| "auto".into());
+        json!({ "request": request, "state": state, "backend": backend })
+    }
+
+    /// Parse a `DecisionResultV1` into a readout.
+    pub fn parse_readout(v: &Value) -> GateReadout {
+        GateReadout {
+            decision_id: v.get("extensions").and_then(|e| e.get("x-decision_id")).and_then(Value::as_str).map(str::to_owned),
+            p_true: v.get("probabilities").and_then(|p| p.get("true")).and_then(Value::as_f64),
+        }
+    }
+
+    /// POST one GATE to `/v1/decision`. `None` on any failure; never errors.
+    pub async fn gate(&self, ask: &GateAsk<'_>, state: &str) -> Option<GateReadout> {
+        if !self.enabled {
+            return None;
+        }
+        self.gate_checked(ask, state).await.ok()
+    }
+
+    /// Like `gate()` but keeps the error, for callers that act on failures
+    /// (an unreachable runtime keeps its `reqwest::Error` for `downcast_ref`).
+    /// Ignores `enabled`.
+    pub async fn gate_checked(&self, ask: &GateAsk<'_>, state: &str) -> anyhow::Result<GateReadout> {
+        let url = format!("{}/v1/decision", self.base_url);
+        let client = reqwest::Client::builder().timeout(self.timeout).build()?;
         let mut rb = client
-            .post(format!("{}/v1/decision", self.base_url))
+            .post(&url)
             .header("content-type", "application/json")
-            .body(json!({ "request": request, "state": state, "backend": backend }).to_string());
+            .body(Self::gate_body(ask, state).to_string());
         if let Some(t) = &self.token {
             rb = rb.bearer_auth(t);
         }
-        let r = rb.send().await.ok()?;
-        if !r.status().is_success() {
-            return None;
+        let r = rb.send().await.map_err(anyhow::Error::from).map_err(|e| e.context(format!("S1 decision runtime unreachable at {url}")))?;
+        let status = r.status();
+        let v: Value = r.json().await.unwrap_or(json!({}));
+        if !status.is_success() {
+            let msg = v.pointer("/error/message").and_then(Value::as_str).unwrap_or("");
+            anyhow::bail!("S1 decision runtime returned {status}: {msg}");
         }
-        let v: Value = r.json().await.ok()?;
-        Some(GateReadout {
-            decision_id: v.get("extensions").and_then(|e| e.get("x-decision_id")).and_then(Value::as_str).map(str::to_owned),
-            p_true: v.get("probabilities").and_then(|p| p.get("true")).and_then(Value::as_f64),
-        })
+        Ok(Self::parse_readout(&v))
     }
 
     /// Detached shadow GATE (never awaited, never changes the caller's decision).
