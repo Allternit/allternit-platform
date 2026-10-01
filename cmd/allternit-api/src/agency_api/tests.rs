@@ -738,3 +738,156 @@ fn agency_live_pool_bridges_task_caps_to_generic_model_caps() {
     assert!(!has(1, "cap.bug_fix.patch_candidate"), "no code.edit, no patch step");
     assert!(b.entries.iter().filter(|e| e.cognitive_roles.iter().all(|r| *r == Role::S1)).all(|e| !e.capabilities.iter().any(|c| c.starts_with("cap.bug_fix."))), "S1 entries untouched");
 }
+
+// ── WP-P1 production safety ─────────────────────────────────────────────────
+
+fn org_user(id: &str, org: &str) -> AuthUser {
+    AuthUser { organization_id: Some(org.into()), ..user(id) }
+}
+
+fn req_as(method: &str, uri: &str, u: AuthUser, key: Option<&str>, body: Value) -> Request<Body> {
+    let mut r = Request::builder().method(method).uri(uri).header("content-type", "application/json").extension(u);
+    if let Some(k) = key {
+        r = r.header("idempotency-key", k);
+    }
+    r.body(Body::from(body.to_string())).unwrap()
+}
+
+fn seed_org(st: &AppState, org: &str, members: &[&str]) {
+    let c = st.db.connect().unwrap();
+    c.execute("INSERT OR IGNORE INTO organizations (id, name) VALUES (?1, 'Org')", rusqlite::params![org]).unwrap();
+    for u in members {
+        c.execute("INSERT OR IGNORE INTO users (id, email) VALUES (?1, ?2)", rusqlite::params![u, format!("{u}@t.local")]).unwrap();
+        c.execute("INSERT OR IGNORE INTO organization_members (id, organization_id, user_id, role) VALUES (?1, ?2, ?3, 'member')",
+            rusqlite::params![format!("{org}:{u}"), org, u]).unwrap();
+    }
+}
+
+async fn create_as(t: &T, u: AuthUser, key: &str) -> String {
+    let (s, _, b) = call(&t.app, req_as("POST", "/v1/agency", u, Some(key), json!({ "goal": "Fix the failing tests" }))).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{b}");
+    serde_json::from_str::<Value>(&b).unwrap()["id"].as_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn agency_safety_consequential_approval_needs_another_member() {
+    let t = setup().await;
+    seed_org(&t.st, "org_p1", &["ra", "rb"]);
+    let id = create_as(&t, org_user("ra", "org_p1"), "p1-nonreq-00001").await;
+    let s = AgencyStore::new(t.st.rails.ledger.clone());
+    let rec = s.park_halted(&id, safety::STUCK_REASON, "run is stuck", "test", json!({ "consequential": true })).await.unwrap();
+    assert_eq!(rec.run["status"], "needs_attention");
+    assert_eq!(rec.run["budget_usage"]["spend_halted"], true, "spend halted before asking");
+    let att = rec.run["attention"]["id"].as_str().unwrap().to_string();
+    // The requester cannot approve their own consequential request.
+    let (st, _, b) = call(&t.app, req_as("POST", &format!("/v1/attention/{att}/responses"), org_user("ra", "org_p1"), None, json!({ "type": "approval" }))).await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "{b}");
+    assert!(b.contains("ERR_APPROVAL_REQUIRES_NON_REQUESTER"));
+    // Another member sees it in the org approvals queue and approves it.
+    let (st, _, b) = call(&t.app, req_as("GET", "/v1/agency-safety/approvals", org_user("rb", "org_p1"), None, json!({}))).await;
+    assert_eq!(st, StatusCode::OK, "{b}");
+    let q: Value = serde_json::from_str(&b).unwrap();
+    assert_eq!(q["data"][0]["id"], att.as_str());
+    assert_eq!(q["data"][0]["you_requested"], false);
+    // A user of another org cannot reach it.
+    let (st, _, _) = call(&t.app, req_as("POST", &format!("/v1/agency-safety/approvals/{att}/responses"), org_user("zz", "org_other"), None, json!({ "type": "approval" }))).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, _, b) = call(&t.app, req_as("POST", &format!("/v1/agency-safety/approvals/{att}/responses"), org_user("rb", "org_p1"), None, json!({ "type": "approval" }))).await;
+    assert_eq!(st, StatusCode::OK, "{b}");
+    let r: Value = serde_json::from_str(&b).unwrap();
+    assert_eq!(r["run"]["status"], "waiting");
+    assert_eq!(r["resolution"]["self_approval"], false);
+    assert_eq!(r["resolution"]["requested_by"], "ra");
+    assert_eq!(s.load_run(&id).await.unwrap().unwrap().run["budget_usage"]["spend_halted"], false);
+}
+
+#[tokio::test]
+async fn agency_safety_single_member_org_may_self_approve_and_rejection_always_allowed() {
+    let t = setup().await;
+    let id = create(&t, "p1-selfok-00001").await["id"].as_str().unwrap().to_string();
+    let s = AgencyStore::new(t.st.rails.ledger.clone());
+    let rec = s.park_halted(&id, safety::STUCK_REASON, "run is stuck", "test", json!({})).await.unwrap();
+    let att = rec.run["attention"]["id"].as_str().unwrap().to_string();
+    let (st, _, b) = call(&t.app, post(&format!("/v1/attention/{att}/responses"), "u1", None, json!({ "type": "approval" }))).await;
+    assert_eq!(st, StatusCode::OK, "personal org: default off: {b}");
+    // Explicit policy on: self-approval refused, self-rejection allowed.
+    let (st, _, b) = call(&t.app, req_as("PUT", "/v1/agency-safety/policy", user("u1"), None, json!({ "require_non_requester_approval": true, "max_steps": 50 }))).await;
+    assert_eq!(st, StatusCode::OK, "{b}");
+    let p: Value = serde_json::from_str(&b).unwrap();
+    assert_eq!(p["effective_require_non_requester_approval"], true);
+    assert_eq!(p["effective_caps"]["max_steps"], 50);
+    let id2 = create(&t, "p1-selfok-00002").await["id"].as_str().unwrap().to_string();
+    let rec = s.park_halted(&id2, safety::RUN_CAP_REASON, "run cap reached", "test", json!({})).await.unwrap();
+    let att = rec.run["attention"]["id"].as_str().unwrap().to_string();
+    let (st, _, _) = call(&t.app, post(&format!("/v1/attention/{att}/responses"), "u1", None, json!({ "type": "approval" }))).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, _, b) = call(&t.app, post(&format!("/v1/attention/{att}/responses"), "u1", None, json!({ "type": "rejection" }))).await;
+    assert_eq!(st, StatusCode::OK, "{b}");
+    assert_eq!(serde_json::from_str::<Value>(&b).unwrap()["run"]["status"], "failed");
+    // Non-admin member of a real org cannot change the policy.
+    seed_org(&t.st, "org_q", &["m1"]);
+    let (st, _, _) = call(&t.app, req_as("PUT", "/v1/agency-safety/policy", org_user("m1", "org_q"), None, json!({ "runs_per_hour": 1 }))).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn agency_safety_run_cap_parks_before_any_effect_and_approval_must_raise_it() {
+    let t = setup().await;
+    let id = create_as(&t, user("cap1"), "p1-cap-0000001").await;
+    safety::save_org(&t.st.db, "user:cap1", &safety::OrgSafety { max_steps: Some(0), ..Default::default() }, "cap1").unwrap();
+    let s = AgencyStore::new(t.st.rails.ledger.clone());
+    assert!(executor::admit_and_start(t.st.clone(), id.clone(), limits(&[(guard::ORGS_ENV, "user:cap1")])).await);
+    let rec = wait_settled(&s, &id).await;
+    assert_eq!(rec.run["status"], "needs_attention", "{}", rec.run);
+    assert_eq!(rec.run["attention"]["reason"], safety::RUN_CAP_REASON);
+    assert_eq!(rec.run["attention"]["dimension"], "max_steps");
+    assert_eq!(rec.run["budget_usage"]["spend_halted"], true);
+    assert_eq!(rec.run["budget_usage"]["steps"], 0, "no effect ran");
+    assert_eq!(rec.run["safety"]["fence_epoch"], 1, "the drive took a fencing token");
+    assert!(rec.run["safety"]["started_at"].is_string());
+    let att = rec.run["attention"]["id"].as_str().unwrap().to_string();
+    // Approving without raising the cap is refused and records nothing.
+    let (st, _, b) = call(&t.app, req_as("POST", &format!("/v1/attention/{att}/responses"), user("cap1"), None, json!({ "type": "approval" }))).await;
+    assert_eq!(st, StatusCode::CONFLICT, "{b}");
+    // The org policy ceiling still applies: a per-run override is granted explicitly.
+    let (st, _, b) = call(&t.app, req_as("POST", &format!("/v1/attention/{att}/responses"), user("cap1"), None,
+        json!({ "type": "rejection" }))).await;
+    assert_eq!(st, StatusCode::OK, "{b}");
+    // Journal is visible to the owner only.
+    let (st, _, _) = call(&t.app, get_req(&format!("/v1/agency-safety/runs/{id}/journal"), "someone-else")).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, _, b) = call(&t.app, req_as("GET", &format!("/v1/agency-safety/runs/{id}/journal"), user("cap1"), None, json!({}))).await;
+    assert_eq!(st, StatusCode::OK, "{b}");
+}
+
+#[tokio::test]
+async fn agency_safety_org_run_rate_keeps_run_queued() {
+    let t = setup().await;
+    let id = create_as(&t, user("rate1"), "p1-rate-000001").await;
+    safety::save_org(&t.st.db, "user:rate1", &safety::OrgSafety { runs_per_hour: Some(0), ..Default::default() }, "rate1").unwrap();
+    assert!(!executor::admit_and_start(t.st.clone(), id.clone(), limits(&[(guard::ORGS_ENV, "user:rate1")])).await);
+    let s = AgencyStore::new(t.st.rails.ledger.clone());
+    assert_eq!(s.load_run(&id).await.unwrap().unwrap().run["status"], "waiting");
+    let l = limits(&[(guard::ORG_RUNS_PER_HOUR_ENV, "3")]).with_org_policy(&safety::OrgSafety { runs_per_hour: Some(9), ..Default::default() });
+    assert_eq!(l.org_runs_per_hour, 3, "org policy never raises the server ceiling");
+}
+
+#[tokio::test]
+async fn agency_safety_unknown_effect_approval_resolves_journal() {
+    let t = setup().await;
+    let id = create(&t, "p1-unknown-0001").await["id"].as_str().unwrap().to_string();
+    let e1 = safety::acquire_fence(&t.st.db, &id, "w1").unwrap();
+    let key = format!("{id}:N30:tool.push:1");
+    safety::prepare(&t.st.db, &key, &id, "N30", "tool.push", "h", e1, false).unwrap();
+    let e2 = safety::acquire_fence(&t.st.db, &id, "w2").unwrap();
+    assert_eq!(safety::prepare(&t.st.db, &key, &id, "N30", "tool.push", "h", e2, false).unwrap(), safety::Prepared::Unknown);
+    let s = AgencyStore::new(t.st.rails.ledger.clone());
+    let rec = s.park_halted(&id, safety::UNKNOWN_EFFECT_REASON, "effect outcome unknown", "t", json!({ "idempotency_key": key })).await.unwrap();
+    let att = rec.run["attention"]["id"].as_str().unwrap().to_string();
+    let (st, _, _) = call(&t.app, post(&format!("/v1/attention/{att}/responses"), "u1", None, json!({ "type": "approval" }))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "the approver must say whether it happened");
+    let (st, _, b) = call(&t.app, post(&format!("/v1/attention/{att}/responses"), "u1", None, json!({ "type": "approval", "value": { "effect_outcome": "applied" } }))).await;
+    assert_eq!(st, StatusCode::OK, "{b}");
+    assert!(matches!(safety::prepare(&t.st.db, &key, &id, "N30", "tool.push", "h", e2, false).unwrap(), safety::Prepared::Committed(_)),
+        "an effect the approver says happened is never re-applied");
+}
