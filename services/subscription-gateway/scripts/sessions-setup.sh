@@ -5,7 +5,10 @@
 #
 # Inputs (uploaded next to this script into /opt/subsfab before running):
 #   gateway.tar.gz   `git archive --format=tar.gz origin/main -- package.json pnpm-lock.yaml
-#                     pnpm-workspace.yaml services/subscription-gateway platform/packages/...`
+#                     pnpm-workspace.yaml patches services/subscription-gateway
+#                     platform/packages/{agent-gateway,subscription-adapter-sdk,subscription-fabric-contracts,browser-tools,replies-contract}
+#                     mcp/servers`
+#                    (`patches` is required: pnpm patchedDependencies fail the install without it)
 #                    (ALWAYS --format=tar.gz: a plain `git archive > x.tar.gz` is an
 #                     uncompressed tar with a misleading name)
 #   firefox.tar.xz   optional: Mozilla's linux64 build. Sessions guests may have no
