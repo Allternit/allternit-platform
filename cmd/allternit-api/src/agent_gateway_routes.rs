@@ -630,13 +630,28 @@ async fn clear_secret(State(state): State<Arc<AppState>>, Extension(user): Exten
     .await
 }
 
+/// Adapter for an account connected a particular way, when it differs from the vendor's default.
+pub(crate) fn adapter_for_auth(vendor: &str, auth_type: &str) -> Option<&'static str> {
+    match (vendor, auth_type) {
+        ("anthropic", "browser_session") => Some("claude-subscription"),
+        ("anthropic", "api_key") => Some("claude-managed-agents"),
+        ("openai", "browser_session") | ("openai", "desktop_session") => Some("chatgpt-dots"),
+        _ => None,
+    }
+}
+
 /// `agent.list` for an account's vendor adapter, via a transient binding.
 pub(crate) async fn discover_agents(db: &DbHandle, tx: &dyn crate::gateway_runner::AaiTransport, owner: &str, aid: &str) -> Result<Vec<Value>, (StatusCode, String, String)> {
     let acct = {
         let conn = db.connect().map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL".to_string(), "database error".to_string()))?;
         get_account(&conn, owner, aid).map_err(|ApiErr(s, v)| (s, "NOT_FOUND".to_string(), v["error"].as_str().unwrap_or("error").to_string()))?
     };
-    let binding = json!({ "type": "vendor", "vendor": s(&acct, "vendor"), "accountBindingId": aid });
+    let mut binding = json!({ "type": "vendor", "vendor": s(&acct, "vendor"), "accountBindingId": aid });
+    // The vendor id alone picks the vendor's default adapter; the way the account was connected can pick another
+    // (a Claude browser login runs on claude-subscription, not the desktop app).
+    if let Some(adapter) = adapter_for_auth(&s(&acct, "vendor"), &s(&acct, "authType")) {
+        binding["adapterId"] = json!(adapter);
+    }
     let v = crate::gateway_runner::vcall(db, tx, owner, "agent.list", &binding, json!({})).await.map_err(map_aai_err)?;
     let list = v["agents"].as_array().or_else(|| v.as_array()).cloned().unwrap_or_default();
     Ok(list
@@ -1736,6 +1751,14 @@ mod tests {
         let (_, v) = call(&st, "GET", "/bots/bot-1/execution-binding", "user-a", None).await;
         assert_eq!(v["binding"]["externalAgentName"], "Alpha");
         assert!(valid_avatar("https://cdn.example/a.webp") && !valid_avatar("data:image/png;base64,<script>"));
+    }
+
+    #[test]
+    fn discovery_uses_the_adapter_the_account_was_connected_with() {
+        assert_eq!(adapter_for_auth("anthropic", "browser_session"), Some("claude-subscription"));
+        assert_eq!(adapter_for_auth("anthropic", "api_key"), Some("claude-managed-agents"));
+        assert_eq!(adapter_for_auth("anthropic", "desktop_session"), None);
+        assert_eq!(adapter_for_auth("grok", "desktop_session"), None);
     }
 
     #[tokio::test]
