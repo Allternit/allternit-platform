@@ -15,6 +15,8 @@ import { ADAPTER_ID, AGENT_ID, CAPABILITIES, SUBSCRIPTION_PROVIDER, VENDOR } fro
 export interface GatewayTasks {
   submit(body: Record<string, unknown>): Promise<{ status: number; body: Record<string, unknown> }>;
   get(taskId: string): Promise<{ status: number; body: Record<string, unknown> }>;
+  /** Cancel a running task (the worker stops it). Optional. */
+  cancel?(taskId: string): Promise<{ status: number; body: Record<string, unknown> }>;
   /** Live task events (the worker's reply/reasoning deltas); returns unsubscribe. Optional. */
   subscribe?(taskId: string, onEvent: (event: { kind?: string; payload?: unknown }) => void): () => void;
   /** The provider's best subscription login: its session_health and usage left (null = none signed in). */
@@ -40,6 +42,8 @@ const projectInContext = (contextId: string) => /~p([0-9a-f-]{36})$/.exec(contex
 
 interface Ctx {
   id: string; closed: boolean; turns: number; seq: number; events: CursoredEvent[]; projectId: string | null;
+  /** The running turn's gateway task, so Stop can cancel it. */
+  runningTask?: string; cancelled?: boolean;
   done: Map<string, Promise<AaiResult<MessageResult>>>; lock: Promise<unknown>;
 }
 
@@ -149,7 +153,7 @@ export class ClaudeSubscriptionProvider extends BaseAaiProvider {
     this.ctxs.set(id, revived);
     return ok(revived);
   }
-  private push(c: Ctx, type: "agent.context.opened" | "agent.activity.started" | "agent.activity.completed" | "agent.message.completed", correlationId: string, payload: Record<string, unknown>, source: "allternit" | "vendor" = "vendor") {
+  private push(c: Ctx, type: "agent.context.opened" | "agent.activity.started" | "agent.activity.completed" | "agent.message.delta" | "agent.message.completed", correlationId: string, payload: Record<string, unknown>, source: "allternit" | "vendor" = "vendor") {
     // Cursors only grow, also across a gateway restart: a revived context must continue past the cursor
     // allternit-api already holds (live: after a redeploy every new event sat below it and never synced).
     c.seq = nextCursor();
@@ -214,13 +218,20 @@ export class ClaudeSubscriptionProvider extends BaseAaiProvider {
       return fail("VENDOR_UNAVAILABLE", `Claude subscription refused the turn: ${String(submitted.body.detail ?? submitted.body.error ?? submitted.status)}`);
     }
     const taskId = submitted.body.task_id as string;
-    // Stream Claude's thinking as live activity while the reply runs.
+    ctx.runningTask = taskId; ctx.cancelled = false;
+    // Unique per turn even after a restart revives the context (turn counts restart there).
+    const messageId = `${ctx.id}:${i.correlationId}`;
+    // Stream Claude's thinking as live activity, and the reply as it types.
     let thinking = "";
     const unsubscribe = tasks.subscribe?.(taskId, (e) => {
       const ev = (e.payload as { event?: { type?: string; delta?: string } } | undefined)?.event;
-      if (e.kind !== "reply" || ev?.type !== "reply.reasoning.delta" || typeof ev.delta !== "string") return;
-      thinking += ev.delta;
-      this.push(ctx, "agent.activity.started", i.correlationId, { activityId: i.correlationId, kind: "thinking", label: "Thinking", detail: thinking });
+      if (e.kind !== "reply" || typeof ev?.delta !== "string") return;
+      if (ev.type === "reply.reasoning.delta") {
+        thinking += ev.delta;
+        this.push(ctx, "agent.activity.started", i.correlationId, { activityId: i.correlationId, kind: "thinking", label: "Thinking", detail: thinking });
+      } else if (ev.type === "reply.text.delta") {
+        this.push(ctx, "agent.message.delta", i.correlationId, { messageId, chunk: ev.delta });
+      }
     });
     const deadline = Date.now() + this.o.replyTimeoutMs;
     let task = submitted.body;
@@ -231,16 +242,25 @@ export class ClaudeSubscriptionProvider extends BaseAaiProvider {
         const r = await tasks.get(taskId).catch(() => null);
         if (r && r.status === 200) task = r.body;
       }
-    } finally { unsubscribe?.(); }
+    } finally { unsubscribe?.(); ctx.runningTask = undefined; }
+    if (ctx.cancelled) return fail("UNKNOWN", "The message was stopped.", { details: { cancelled: true } });
     const reply = ((task.result ?? {}) as { text?: string }).text ?? "";
     if ((task.status !== "completed" && task.status !== "partial") || !reply.trim()) return mapTaskError(task);
     ctx.turns += 1;
-    // Unique per turn even after a restart revives the context (turn counts restart there).
-    const messageId = `${ctx.id}:${i.correlationId}`;
     if (thinking) this.push(ctx, "agent.activity.completed", i.correlationId, { activityId: i.correlationId });
     // The finished thought rides with the reply as a `thinking` content block (the Claude pack shows "Thought process").
     this.push(ctx, "agent.message.completed", i.correlationId, { reply, messageId, ...(thinking ? { content: [{ type: "thinking", text: thinking }] } : {}) });
     return ok({ messageId, correlationId: i.correlationId, reply, guarantee: "best_effort" });
+  }
+
+  async contextCancel(i: { contextId: string }): Promise<AaiResult<{ confirmed: boolean }>> {
+    const c = this.live(i.contextId);
+    if (!c.ok) return c;
+    const task = c.value.runningTask;
+    if (!task || !this.o.tasks?.cancel) return ok({ confirmed: false });
+    c.value.cancelled = true;
+    const r = await this.o.tasks.cancel(task).catch(() => ({ status: 0, body: {} }));
+    return ok({ confirmed: r.status >= 200 && r.status < 300 });
   }
 
   async contextClose(i: { contextId: string }): Promise<AaiResult<{ closed: boolean }>> {

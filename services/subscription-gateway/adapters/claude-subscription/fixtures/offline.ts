@@ -5,6 +5,8 @@ import { ClaudeSubscriptionProvider, type GatewayTasks } from "../index.js";
 
 function fake(fault?: "vendor_down" | "rate_limited" | "auth_revoked"): GatewayTasks {
   const store = new Map<string, Record<string, unknown>>();
+  const subs = new Map<string, (e: { kind?: string; payload?: unknown }) => void>();
+  const streamed = new Set<string>();
   let n = 0;
   return {
     accountState: async () => {
@@ -20,7 +22,14 @@ function fake(fault?: "vendor_down" | "rate_limited" | "auth_revoked"): GatewayT
         : { task_id: id, status: "completed", result: { artifact_ids: [], text: `ok: ${String(body.prompt)}` } });
       return { status: 202, body: { task_id: id, status: "queued" } };
     },
-    get: async (id) => ({ status: 200, body: store.get(id) ?? { status: "failed" } }),
+    get: async (id) => {
+      const t = store.get(id);
+      // Stream the reply out to subscribers once, as the worker would.
+      if (t && !streamed.has(id) && subs.has(id)) { streamed.add(id); const text = String((t.result as { text?: string } | undefined)?.text ?? ""); for (const ch of [text.slice(0, 3), text.slice(3)]) if (ch) subs.get(id)!({ kind: "reply", payload: { event: { type: "reply.text.delta", delta: ch } } }); }
+      return { status: 200, body: t ?? { status: "failed" } };
+    },
+    subscribe: (id, cb) => { subs.set(id, cb); return () => subs.delete(id); },
+    cancel: async (id) => { const t = store.get(id); if (!t) return { status: 404, body: {} }; store.set(id, { ...t, status: "cancelled" }); return { status: 200, body: {} }; },
   };
 }
 const mk = (f?: Parameters<typeof fake>[0]) => new ClaudeSubscriptionProvider({ tasks: fake(f), pollMs: 1, sleep: async () => {} });

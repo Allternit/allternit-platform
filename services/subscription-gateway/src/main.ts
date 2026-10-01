@@ -190,6 +190,7 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
       gatewayTasks: {
         submit: (body) => udsJson("POST", "/v1/tasks", body),
         get: (taskId) => udsJson("GET", `/v1/tasks/${encodeURIComponent(taskId)}`),
+        cancel: (taskId) => udsJson("POST", `/v1/tasks/${encodeURIComponent(taskId)}/cancel`, {}),
         // Live task events (reply deltas, reasoning) as the worker logs them; returns unsubscribe.
         subscribe: (taskId, onEvent) =>
           hub.subscribe(taskId, createSubscriber((e) => { try { onEvent(e as { kind?: string; payload?: unknown }); } catch { /* adapter's problem */ } return true; })),
