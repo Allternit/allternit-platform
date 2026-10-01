@@ -151,7 +151,7 @@ async fn evidence_loop_stops_when_enough_and_is_bounded_otherwise() {
     assert!(out.stopped_early);
     assert_eq!(out.evidence.len(), 2);
     // Low confidence does not count as evidence.
-    let low: Brain = Arc::new(|b, _| (if b == BANK_IS_RELEVANT { "relevant".into() } else { "high".into() }, 0.3));
+    let low: Brain = Arc::new(|b, _| (match b { BANK_ROUTE => "observations", BANK_IS_RELEVANT => "relevant", _ => "high" }.into(), 0.3));
     let (url, _rx) = mock_s1(low).await;
     let out = retrieve(&S1Client::new(&url), &db, "u1", None, "rq", "cello scales", None, &cfg).await.unwrap();
     assert_eq!((out.checks, out.evidence.len()), (4, 0));
@@ -308,10 +308,11 @@ async fn eval_harness_runs_on_the_tiny_fixture() {
         assert!((0.0..=1.0).contains(&arm.recall_at_k) && (0.0..=1.0).contains(&arm.evidence_precision));
     }
     assert!(report.pipeline.recall_at_k > 0.0);
-    // Superseded Austin fact never comes back; the car question reaches the tires via expansion.
+    // The superseded Austin fact never comes back. (The tires fact reaches
+    // RANK by expansion; the keyword mock scores it low, which is RANK working.)
     assert!(report.per_question.iter().all(|q| !q.pipeline.contains(&"F1".to_string())));
     let car = report.per_question.iter().find(|q| q.question.contains("car")).unwrap();
-    assert!(car.pipeline.contains(&"F5".to_string()), "{car:?}");
+    assert!(car.pipeline.contains(&"F4".to_string()), "{car:?}");
     // S1 off: the S0-only pipeline still runs.
     let mut off = S1Client::new("http://127.0.0.1:9");
     off.enabled = false;

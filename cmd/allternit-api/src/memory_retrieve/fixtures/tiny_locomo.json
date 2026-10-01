@@ -17,7 +17,7 @@
         { "id": "F1", "text": "Maya lives in Austin." },
         { "id": "F2", "text": "Maya lives in Denver.", "edges": [ { "relation": "updates", "to": "F1" } ] },
         { "id": "F3", "text": "Maya works as a night nurse in the ICU." },
-        { "id": "F4", "text": "Maya drives a blue Subaru." },
+        { "id": "F4", "text": "Maya's car is a blue Subaru." },
         { "id": "F5", "text": "The Subaru needs new tires after the mountain trip.", "edges": [ { "relation": "about_entity", "to": "F4" } ] },
         { "id": "F6", "text": "Maya has a dog named Biscuit." }
       ],
