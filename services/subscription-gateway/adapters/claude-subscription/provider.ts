@@ -15,6 +15,8 @@ import { ADAPTER_ID, AGENT_ID, CAPABILITIES, SUBSCRIPTION_PROVIDER, VENDOR } fro
 export interface GatewayTasks {
   submit(body: Record<string, unknown>): Promise<{ status: number; body: Record<string, unknown> }>;
   get(taskId: string): Promise<{ status: number; body: Record<string, unknown> }>;
+  /** Live task events (the worker's reply/reasoning deltas); returns unsubscribe. Optional. */
+  subscribe?(taskId: string, onEvent: (event: { kind?: string; payload?: unknown }) => void): () => void;
   /** The provider's best subscription login: its session_health and usage left (null = none signed in). */
   accountState(provider: string): Promise<{ health: string; remainingPct?: number | null; resetsAt?: string | null } | null>;
 }
@@ -114,7 +116,7 @@ export class ClaudeSubscriptionProvider extends BaseAaiProvider {
     this.ctxs.set(id, revived);
     return ok(revived);
   }
-  private push(c: Ctx, type: "agent.context.opened" | "agent.activity.started" | "agent.message.completed", correlationId: string, payload: Record<string, unknown>, source: "allternit" | "vendor" = "vendor") {
+  private push(c: Ctx, type: "agent.context.opened" | "agent.activity.started" | "agent.activity.completed" | "agent.message.completed", correlationId: string, payload: Record<string, unknown>, source: "allternit" | "vendor" = "vendor") {
     c.seq += 1;
     c.events.push({ cursor: String(c.seq), event: {
       type, botId: AGENT_ID, threadId: c.id, generationId: "1", source, vendor: VENDOR, adapter: ADAPTER_ID, lane: "ui_bridge",
@@ -174,19 +176,31 @@ export class ClaudeSubscriptionProvider extends BaseAaiProvider {
       return fail("VENDOR_UNAVAILABLE", `Claude subscription refused the turn: ${String(submitted.body.detail ?? submitted.body.error ?? submitted.status)}`);
     }
     const taskId = submitted.body.task_id as string;
+    // Stream Claude's thinking as live activity while the reply runs.
+    let thinking = "";
+    const unsubscribe = tasks.subscribe?.(taskId, (e) => {
+      const ev = (e.payload as { event?: { type?: string; delta?: string } } | undefined)?.event;
+      if (e.kind !== "reply" || ev?.type !== "reply.reasoning.delta" || typeof ev.delta !== "string") return;
+      thinking += ev.delta;
+      this.push(ctx, "agent.activity.started", i.correlationId, { activityId: i.correlationId, kind: "thinking", label: "Thinking", detail: thinking });
+    });
     const deadline = Date.now() + this.o.replyTimeoutMs;
     let task = submitted.body;
-    while (!TERMINAL.has(String(task.status))) {
-      if (Date.now() > deadline) return fail("VENDOR_UNAVAILABLE", "Claude hasn't answered yet. The reply will still land in claude.ai; try again shortly.", { details: { taskId } });
-      await this.o.sleep(this.o.pollMs);
-      const r = await tasks.get(taskId).catch(() => null);
-      if (r && r.status === 200) task = r.body;
-    }
+    try {
+      while (!TERMINAL.has(String(task.status))) {
+        if (Date.now() > deadline) return fail("VENDOR_UNAVAILABLE", "Claude hasn't answered yet. The reply will still land in claude.ai; try again shortly.", { details: { taskId } });
+        await this.o.sleep(this.o.pollMs);
+        const r = await tasks.get(taskId).catch(() => null);
+        if (r && r.status === 200) task = r.body;
+      }
+    } finally { unsubscribe?.(); }
     const reply = ((task.result ?? {}) as { text?: string }).text ?? "";
     if ((task.status !== "completed" && task.status !== "partial") || !reply.trim()) return mapTaskError(task);
     ctx.turns += 1;
     const messageId = `${ctx.id}:m${ctx.turns}`;
-    this.push(ctx, "agent.message.completed", i.correlationId, { reply, messageId });
+    if (thinking) this.push(ctx, "agent.activity.completed", i.correlationId, { activityId: i.correlationId });
+    // The finished thought rides with the reply as a `thinking` content block (the Claude pack shows "Thought process").
+    this.push(ctx, "agent.message.completed", i.correlationId, { reply, messageId, ...(thinking ? { content: [{ type: "thinking", text: thinking }] } : {}) });
     return ok({ messageId, correlationId: i.correlationId, reply, guarantee: "best_effort" });
   }
 

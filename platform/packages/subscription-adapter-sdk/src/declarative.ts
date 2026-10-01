@@ -121,6 +121,11 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
     return extractLastAssistantTurn(page, resolver);
   }
 
+  /** The current reply's thinking text, for providers that show it; null = none (the default). */
+  protected extractThinking(_page: Page, _resolver: SdkSelectorResolver): Promise<string | null> {
+    return Promise.resolve(null);
+  }
+
   protected attachedPage(): Page | null {
     return this.runtimePage;
   }
@@ -326,8 +331,29 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
       return emitText(stable.slice(emitted.length));
     };
 
+    // Live thinking (providers that expose it): emitted as reply.reasoning.delta while the reply runs.
+    let thinkingEmitted = "";
+    let lastThinkingAt = 0;
+    const sampleThinking = async (force = false): Promise<AdapterEvent[]> => {
+      if (!force && now() - lastThinkingAt < LIVE_SAMPLE_MS) return [];
+      lastThinkingAt = now();
+      let thinking: string | null = null;
+      try { thinking = await this.extractThinking(page, resolver); } catch { return []; }
+      if (!thinking || thinking.length <= thinkingEmitted.length || !thinking.startsWith(thinkingEmitted)) return [];
+      const delta = thinking.slice(thinkingEmitted.length);
+      thinkingEmitted = thinking;
+      const out: AdapterEvent[] = [];
+      if (!replyStarted) {
+        replyStarted = true;
+        out.push({ t: "reply", event: { type: "reply.started", replyId, runId, ts: now() } });
+      }
+      out.push({ t: "reply", event: { type: "reply.reasoning.delta", replyId, runId, itemId: "reasoning-1", delta, ts: now() } });
+      return out;
+    };
+
     for (;;) {
       while (pending.length > 0) yield pending.shift() as AdapterEvent;
+      for (const e of await sampleThinking()) yield e;
       for (const e of await sampleReply()) yield e;
       // Providers route to the thread URL a beat after Send (ChatGPT: / →
       // /c/<id>). Persist the id once it appears so crash reconcile can
@@ -366,6 +392,8 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
       await sleep(pollIntervalMs);
     }
     while (pending.length > 0) yield pending.shift() as AdapterEvent;
+    // The finished thought, if the provider only exposes it once the reply is done.
+    for (const e of await sampleThinking(true)) yield e;
 
     const hasResponse = (await resolver.tryResolveLocator("response")) !== null;
     const text = hasResponse ? await this.extractReply(page, resolver) : undefined;

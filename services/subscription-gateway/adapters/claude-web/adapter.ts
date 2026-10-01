@@ -49,38 +49,48 @@ export class ClaudeWebAdapter extends WebChatAdapter {
   }
 
   /**
-   * The last reply's text blocks from claude.ai's own conversation endpoint (same-origin, in the page), so
-   * extended-thinking summaries and tool chrome never leak into the reply (live 2026-09-30: "Untangling
-   * conflicting instructions…" rode along). Falls back to the DOM when the endpoint gives nothing, e.g. while
-   * the reply is still streaming.
+   * The last assistant message from claude.ai's own conversation endpoint (same-origin, in the page): its text blocks
+   * and its thinking blocks, kept apart so a thinking summary never leaks into the reply (live 2026-09-30:
+   * "Untangling conflicting instructions…" rode along) and can be streamed as thinking instead. null when the
+   * endpoint gives nothing (e.g. mid-stream); callers fall back to the DOM.
    */
-  protected override async extractReply(page: Page, resolver: SdkSelectorResolver): Promise<string> {
+  private async lastAssistant(page: Page): Promise<{ text: string; thinking: string } | null> {
     const id = THREAD_URL_PATTERN.exec(page.url())?.[1];
-    if (id) {
-      await page.evaluate("globalThis.__name ??= (fn) => fn");
-      const text = await page
-        .evaluate(async (conv: string) => {
-          const cookieOrg = /(?:^|;\s*)lastActiveOrg=([^;]+)/.exec(document.cookie)?.[1];
-          let org = cookieOrg ? decodeURIComponent(cookieOrg) : null;
-          if (!org) {
-            const r = await fetch("/api/organizations", { credentials: "include" }).catch(() => null);
-            const orgs = r && r.ok ? ((await r.json()) as { uuid?: string; capabilities?: string[] }[]) : [];
-            org = orgs.find((o) => o.capabilities?.includes("chat"))?.uuid ?? null;
-          }
-          if (!org) return null;
-          const r = await fetch(`/api/organizations/${org}/chat_conversations/${conv}?tree=True&rendering_mode=messages`, { credentials: "include" }).catch(() => null);
-          if (!r || !r.ok) return null;
-          const j = (await r.json()) as { chat_messages?: { sender?: string; content?: { type?: string; text?: string }[]; text?: string }[] };
-          const last = [...(j.chat_messages ?? [])].reverse().find((m) => m.sender === "assistant");
-          if (!last) return null;
-          const blocks = Array.isArray(last.content) ? last.content.filter((b) => b.type === "text" && typeof b.text === "string").map((b) => b.text as string) : [];
-          const out = (blocks.length ? blocks.join("\n\n") : last.text ?? "").trim();
-          return out || null;
-        }, id)
-        .catch(() => null);
-      if (text) return text;
-    }
+    if (!id) return null;
+    await page.evaluate("globalThis.__name ??= (fn) => fn");
+    return page
+      .evaluate(async (conv: string) => {
+        const cookieOrg = /(?:^|;\s*)lastActiveOrg=([^;]+)/.exec(document.cookie)?.[1];
+        let org = cookieOrg ? decodeURIComponent(cookieOrg) : null;
+        if (!org) {
+          const r = await fetch("/api/organizations", { credentials: "include" }).catch(() => null);
+          const orgs = r && r.ok ? ((await r.json()) as { uuid?: string; capabilities?: string[] }[]) : [];
+          org = orgs.find((o) => o.capabilities?.includes("chat"))?.uuid ?? null;
+        }
+        if (!org) return null;
+        const r = await fetch(`/api/organizations/${org}/chat_conversations/${conv}?tree=True&rendering_mode=messages`, { credentials: "include" }).catch(() => null);
+        if (!r || !r.ok) return null;
+        type Block = { type?: string; text?: string; thinking?: string };
+        const j = (await r.json()) as { chat_messages?: { sender?: string; content?: Block[]; text?: string }[] };
+        const last = [...(j.chat_messages ?? [])].reverse().find((m) => m.sender === "assistant");
+        if (!last) return null;
+        const blocks = Array.isArray(last.content) ? last.content : [];
+        const text = (blocks.filter((b) => b.type === "text" && typeof b.text === "string").map((b) => b.text as string).join("\n\n") || last.text || "").trim();
+        const thinking = blocks.filter((b) => b.type === "thinking" && typeof b.thinking === "string").map((b) => b.thinking as string).join("\n\n").trim();
+        return { text, thinking };
+      }, id)
+      .catch(() => null);
+  }
+
+  protected override async extractReply(page: Page, resolver: SdkSelectorResolver): Promise<string> {
+    const last = await this.lastAssistant(page);
+    if (last?.text) return last.text;
     return super.extractReply(page, resolver);
+  }
+
+  protected override async extractThinking(page: Page, _resolver: SdkSelectorResolver): Promise<string | null> {
+    const last = await this.lastAssistant(page);
+    return last?.thinking || null;
   }
 
   // Who is signed in and how much is left. Non-spending: claude.ai's own
