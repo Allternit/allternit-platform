@@ -141,6 +141,15 @@ pub fn before_send(corr: &str, vendor: &str, text: &str, consequential: bool) {
     });
 }
 
+/// Count one sent vendor turn in the usage ledger (cost 0; see
+/// `usage_ledger::vendor_turn_row`), attributed to the owner's org.
+pub fn record_turn(db: &crate::db::DbHandle, owner: &str, vendor: &str, corr: &str, latency_ms: u64, ok: bool) {
+    let tenant: Option<String> = db.connect().ok().and_then(|c| {
+        c.query_row("SELECT organization_id FROM users WHERE id = ?1", [owner], |r| r.get(0)).ok().flatten()
+    });
+    crate::usage_ledger::record(crate::usage_ledger::vendor_turn_row(vendor, corr, tenant.as_deref(), owner, latency_ms, ok));
+}
+
 /// After the vendor's events were pulled: label ROUTE from the turn's tools.
 pub fn after_events(corr: &str, tools: Vec<String>) {
     let rec = pending().lock().ok().and_then(|mut p| p.remove(corr));

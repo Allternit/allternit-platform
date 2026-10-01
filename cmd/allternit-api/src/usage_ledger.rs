@@ -9,7 +9,10 @@
 //!   the sync Agency/template executors that `block_on`);
 //! - gizzi-code's own model calls, reported to `POST /usage/ledger`
 //!   (`source = gizzi`, existing user auth, no new auth path);
-//! - S1 decisions (`source = s1`, `tier = S1`, cost 0 but counted).
+//! - S1 decisions (`source = s1`, `tier = S1`, cost 0 but counted);
+//! - Agent Gateway vendor turns (`source = vendor`, `lane = vendor`): the
+//!   vendor bills the user's own subscription and reports no usage, so the
+//!   row is cost 0 but counted, keyed by the turn's correlation id.
 //!
 //! Dedupe: gizzi serves the gateway's and `gizzi_completion`'s sessions too,
 //! so its per-call reports for a session that allternit-api already metered
@@ -29,7 +32,7 @@ pub const SURFACES: &[&str] = &[
     "batch", "api", "internal",
 ];
 pub const TIERS: &[&str] = &["S0", "S1", "S2", "S3"];
-pub const LANES: &[&str] = &["api", "subscription-cli", "local"];
+pub const LANES: &[&str] = &["api", "subscription-cli", "local", "vendor"];
 
 fn allowed(v: Option<&str>, set: &[&str]) -> Option<String> {
     v.map(str::trim).filter(|s| set.contains(s)).map(str::to_string)
@@ -279,6 +282,22 @@ pub fn internal_row(
         latency_ms: latency_ms as i64,
         status: if ok { "ok" } else { "error" }.into(),
         gizzi_session_id: session_id.map(str::to_string),
+        ..Default::default()
+    }
+}
+
+/// Row for one Agent Gateway vendor turn: surface bot, tier S2, lane vendor,
+/// model = the vendor, cost 0 (no usage is reported back). The correlation id
+/// is the idempotency key, so a retried turn never counts twice.
+pub fn vendor_turn_row(vendor: &str, correlation_id: &str, tenant_id: Option<&str>, user_id: &str, latency_ms: u64, ok: bool) -> LedgerRow {
+    LedgerRow {
+        source: "vendor",
+        ctx: LedgerCtx::surface("bot").tier("S2").lane("vendor").tenant(tenant_id, Some(user_id)),
+        provider_id: Some("vendor".into()),
+        model_id: Some(vendor.to_string()),
+        latency_ms: latency_ms as i64,
+        status: if ok { "ok" } else { "error" }.into(),
+        idempotency_key: Some(format!("vendor-turn:{correlation_id}")),
         ..Default::default()
     }
 }
@@ -536,7 +555,7 @@ mod tests {
 
     #[test]
     fn unknown_values_are_dropped_not_stored() {
-        let ctx = LedgerCtx::surface("nope").tier("S9").lane("vendor");
+        let ctx = LedgerCtx::surface("nope").tier("S9").lane("cloud");
         assert_eq!((ctx.surface, ctx.tier, ctx.lane), (None, None, None));
     }
 
@@ -554,6 +573,21 @@ mod tests {
         let s1 = insert(&conn, &s1_decision_row(ctx, "laya_bundled", false, 12, None)).unwrap().unwrap();
         let r = row_of(&conn, &s1);
         assert_eq!((r.0.as_str(), r.4.as_deref(), r.5.as_deref(), r.7), ("s1", Some("S1"), Some("local"), 0));
+    }
+
+    #[test]
+    fn vendor_turns_are_counted_once_at_zero_cost() {
+        let (db, _d) = db();
+        let conn = db.connect().unwrap();
+        let id = insert(&conn, &vendor_turn_row("claude-code", "corr_1", Some("org-1"), "u1", 40, true)).unwrap().unwrap();
+        let r = row_of(&conn, &id);
+        assert_eq!((r.0.as_str(), r.1.as_deref(), r.4.as_deref(), r.5.as_deref(), r.7), ("vendor", Some("bot"), Some("S2"), Some("vendor"), 0));
+        // A retried turn (same correlation id) updates the row, never doubles it.
+        insert(&conn, &vendor_turn_row("claude-code", "corr_1", Some("org-1"), "u1", 55, false)).unwrap();
+        let (n, status): (i64, String) = conn
+            .query_row("SELECT COUNT(*), MAX(status) FROM llm_usage_events WHERE source = 'vendor'", [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!((n, status.as_str()), (1, "error"));
     }
 
     #[test]
