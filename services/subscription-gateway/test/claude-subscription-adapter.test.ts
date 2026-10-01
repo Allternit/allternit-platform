@@ -63,6 +63,14 @@ describe("claude-subscription adapter", () => {
     expect(await p2.contextMessage({ contextId: c2.value.contextId, correlationId: "y", text: "hi" })).toMatchObject({ ok: false, error: { code: "LANE_BLOCKED" } });
   });
 
+  it("a 0% usage reading is a limit until its reset time, then stale", async () => {
+    const at = (ms: number) => new Date(Date.now() + ms).toISOString();
+    const mkState = (resetsAt: string | null) => new ClaudeSubscriptionProvider({ tasks: { ...fakeTasks().tasks, accountState: async () => ({ health: "ready", remainingPct: 0, resetsAt }) }, pollMs: 1, sleep: async () => {} });
+    expect(await mkState(at(30 * 60_000)).contextOpen({ agentId: "claude" })).toMatchObject({ ok: false, error: { code: "RATE_LIMITED" } });
+    expect(await mkState(null).contextOpen({ agentId: "claude" })).toMatchObject({ ok: false, error: { code: "RATE_LIMITED" } });
+    expect((await mkState(at(-5 * 60_000)).contextOpen({ agentId: "claude" })).ok).toBe(true);
+  });
+
   it("without the gateway task client every call is VENDOR_UNAVAILABLE", async () => {
     const p = new ClaudeSubscriptionProvider({});
     expect(await p.contextOpen({ agentId: "claude" })).toMatchObject({ ok: false, error: { code: "VENDOR_UNAVAILABLE" } });
