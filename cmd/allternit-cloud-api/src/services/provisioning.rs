@@ -682,6 +682,25 @@ impl ProvisionBackend for IncusHttpBackend {
     }
 
     async fn delete(&self, name: &str) -> Result<(), ProvisionError> {
+        // Incus refuses to delete a running instance (400 "Instance is
+        // running"), so deleting a computer that was awake always failed.
+        if matches!(
+            self.status(name).await?,
+            BackendStatus::Running | BackendStatus::Busy
+        ) {
+            let (status, json) = self
+                .transport
+                .request(
+                    reqwest::Method::PUT,
+                    &format!("/1.0/instances/{name}/state"),
+                    Some(serde_json::json!({ "action": "stop", "force": true })),
+                )
+                .await?;
+            if !is_success(status) {
+                return Err(error_from_status(status, &json));
+            }
+            self.wait_operation(&json).await?;
+        }
         let path = format!("/1.0/instances/{name}");
         let (status, json) = self
             .transport
@@ -2969,6 +2988,10 @@ mod tests {
                 _ => backend.stop("n1").await.unwrap(),
             }
         }
+        mock.responses.lock().unwrap().push_back((
+            200,
+            serde_json::json!({ "metadata": { "status": "Stopped" } }),
+        ));
         mock.responses
             .lock()
             .unwrap()
@@ -2980,8 +3003,40 @@ mod tests {
         assert_eq!(requests[0].1, "/1.0/instances/n1/state");
         assert_eq!(requests[0].2.as_ref().unwrap()["action"], "start");
         assert_eq!(requests[2].2.as_ref().unwrap()["action"], "stop");
-        assert_eq!(requests[4].0, "DELETE");
+        // A stopped instance is deleted straight away.
+        assert_eq!(requests[4].0, "GET");
         assert_eq!(requests[4].1, "/1.0/instances/n1");
+        assert_eq!(requests[5].0, "DELETE");
+        assert_eq!(requests[5].1, "/1.0/instances/n1");
+    }
+
+    #[tokio::test]
+    async fn incus_delete_force_stops_a_running_instance_first() {
+        let mock = Arc::new(MockTransport::default());
+        let backend = IncusHttpBackend::with_transport(Box::new(SharedTransport(mock.clone())));
+        mock.responses.lock().unwrap().push_back((
+            200,
+            serde_json::json!({ "metadata": { "status": "Running" } }),
+        ));
+
+        backend.delete("n1").await.unwrap();
+
+        let requests = mock.requests.lock().unwrap();
+        let calls: Vec<(&str, &str)> = requests
+            .iter()
+            .map(|(method, path, _)| (method.as_str(), path.as_str()))
+            .collect();
+        assert_eq!(
+            calls,
+            vec![
+                ("GET", "/1.0/instances/n1"),
+                ("PUT", "/1.0/instances/n1/state"),
+                ("DELETE", "/1.0/instances/n1"),
+            ]
+        );
+        let stop = requests[1].2.as_ref().unwrap();
+        assert_eq!(stop["action"], "stop");
+        assert_eq!(stop["force"], true);
     }
 
     #[tokio::test]
