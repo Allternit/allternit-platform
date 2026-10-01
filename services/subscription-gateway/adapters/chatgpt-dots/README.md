@@ -32,7 +32,7 @@ The ChatGPT desktop app on macOS is native (not Electron) so it cannot be driven
 Failures: usage limit banner => `RATE_LIMITED` (cooldown); verification challenge/captcha/unusual activity => `LANE_BLOCKED`, latched, never retried, never solved; selector drift => `ADAPTER_DRIFT`, latched until `clearHalt()`; logged out => `AUTH_REQUIRED` (`AUTH_REVOKED` if it was signed in before); dot shown as paused => `LANE_BLOCKED` (not latched; resume it in ChatGPT yourself).
 
 ## Isolation and parallelism (honest)
-`maxParallel: 1`, `parallel: false`, `isolation: shared`. One browser page, one dot conversation at a time (`CONTEXT_BUSY` otherwise). A dot keeps one memory across everything it does; memory is opaque (the user cannot inspect it, so neither can we).
+`maxParallel: 1`, `parallel: false`, `isolation: shared`. One browser page, one dot conversation at a time: opening another replaces the open one when it is idle (`CONTEXT_BUSY` while a reply is still running). A dot keeps one memory across everything it does; memory is opaque (the user cannot inspect it, so neither can we).
 
 ## Auth
 `browser_session`: the user signs in themselves in the dedicated Chrome profile. No password or cookie paste, ever. The adapter never reads cookies, storage or profile files. The login watcher and session import remain chatgpt-web's. `requiresUserOwnedSubscription: true`, with a terms warning in the manifest.

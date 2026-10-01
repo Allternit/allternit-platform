@@ -117,6 +117,18 @@ describe("behaviour", () => {
     const [a, b] = await Promise.all([1, 2].map(() => p.contextMessage({ contextId: c.value.contextId, correlationId: "same", text: "x" })));
     expect(a).toEqual(b); expect(driver.sends).toBe(1);
   });
+  it("a new conversation replaces an idle open one, and waits while a reply is in flight", async () => {
+    const { p } = mk();
+    const first = await (async () => { const c = await p.contextOpen({ agentId: AGENT_ID, threadId: "t1" }); if (!c.ok) throw new Error(); return c.value.contextId; })();
+    const sending = p.contextMessage({ contextId: first, correlationId: "busy-1", text: "x" });
+    expect(await p.contextOpen({ agentId: AGENT_ID, threadId: "t2" })).toMatchObject({ ok: false, error: { code: "CONTEXT_BUSY" } });
+    expect(await sending).toMatchObject({ ok: true });
+    const second = await (async () => { const c = await p.contextOpen({ agentId: AGENT_ID, threadId: "t2" }); if (!c.ok) throw new Error(JSON.stringify(c.error)); return c.value.contextId; })();
+    expect(second).not.toBe(first);
+    // The replaced conversation is no longer driven: its thread reopens on its next turn.
+    expect(await p.contextMessage({ contextId: first, correlationId: "late", text: "x" })).toMatchObject({ ok: false, error: { code: "CONTEXT_NOT_FOUND" } });
+    expect(await p.contextMessage({ contextId: second, correlationId: "now", text: "x" })).toMatchObject({ ok: true });
+  });
   it("drift stops the provider (ADAPTER_DRIFT) until cleared", async () => {
     const { p, driver } = mk();
     const c = await p.contextOpen({ agentId: AGENT_ID }); if (!c.ok) throw new Error();

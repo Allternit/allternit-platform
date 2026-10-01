@@ -376,6 +376,25 @@ pub async fn run_turn<R: ThreadRuntime>(
     text: &str,
     opts: TurnOpts,
 ) -> Result<Option<TurnReport>, RunErr> {
+    // Desktop-app adapters (Claude desktop, ChatGPT dots, Grok Bot) drive one conversation at a
+    // time and replace an idle one when another thread opens, so the replaced thread's next send
+    // finds its context gone (CONTEXT_NOT_FOUND: nothing was sent). The lost-context handoff has
+    // already started a new generation from the checkpoint; send the same message there once
+    // instead of asking the person to resend it.
+    match run_turn_once(db, tx, rt, session_id, text, opts.clone()).await {
+        Err(e) if e.code == "CONTEXT_LOST" => run_turn_once(db, tx, rt, session_id, text, opts).await,
+        r => r,
+    }
+}
+
+async fn run_turn_once<R: ThreadRuntime>(
+    db: &DbHandle,
+    tx: &dyn AaiTransport,
+    rt: &R,
+    session_id: &str,
+    text: &str,
+    opts: TurnOpts,
+) -> Result<Option<TurnReport>, RunErr> {
     let Some(mut cx) = resolve(db, session_id)? else { return Ok(None) };
     let corr = opts.correlation_id.clone().unwrap_or_else(|| id("corr"));
     reconcile_stale(db, tx, &cx).await;
@@ -1100,6 +1119,7 @@ mod tests {
         calls: Mutex<Vec<(String, Value)>>,
         events: Mutex<Vec<Value>>,
         fail: Mutex<HashMap<String, AaiError>>,
+        fail_once: Mutex<HashMap<String, AaiError>>,
         opened: Mutex<i64>,
         creds: Mutex<Vec<Option<Value>>>,
         transcript: Mutex<Vec<(String, String, Value)>>,
@@ -1117,6 +1137,9 @@ mod tests {
             e.retry_after_ms = retry_after_ms;
             self.fail.lock().unwrap().insert(op.into(), e);
         }
+        fn fail_op_once(&self, op: &str, code: &str) {
+            self.fail_once.lock().unwrap().insert(op.into(), AaiError::new(code, format!("{code} from vendor")));
+        }
     }
 
     #[async_trait]
@@ -1133,6 +1156,9 @@ mod tests {
             self.calls.lock().unwrap().push((op.into(), input.clone()));
             if let Some(e) = self.fail.lock().unwrap().get(op) {
                 return Err(e.clone());
+            }
+            if let Some(e) = self.fail_once.lock().unwrap().remove(op) {
+                return Err(e);
             }
             Ok(match op {
                 "agent.context.open" => {
@@ -1333,12 +1359,29 @@ mod tests {
         let f = Fake::default();
         turn(&st, &f, "s-th-vendor", "hi", key("k1")).await.unwrap();
         f.fail_op("agent.context.message", "CONTEXT_NOT_FOUND", None);
+        // Lost again on the automatic retry: the error reaches the caller, and it stops there.
         let e = turn(&st, &f, "s-th-vendor", "hi2", key("k2")).await.unwrap_err();
         assert_eq!(e.code, "CONTEXT_LOST");
         let c = st.db.connect().unwrap();
         let gens: i64 = c.query_row("SELECT MAX(generation) FROM bot_thread_sessions WHERE thread_id='th-vendor'", [], |r| r.get(0)).unwrap();
-        assert_eq!(gens, 2);
+        assert_eq!(gens, 3);
         assert_eq!(remote_states(&st)[0].1, "CLOSED");
+    }
+
+    #[tokio::test]
+    async fn a_context_replaced_by_another_thread_resends_once_on_a_new_generation() {
+        let st = setup("replaced").await;
+        let f = Fake::default();
+        turn(&st, &f, "s-th-vendor", "hi", key("k1")).await.unwrap();
+        // The desktop app moved on to another thread's conversation: this context is gone.
+        f.fail_op_once("agent.context.message", "CONTEXT_NOT_FOUND");
+        let r = turn(&st, &f, "s-th-vendor", "hi2", key("k2")).await.unwrap().expect("vendor path");
+        assert!(r.reply.is_some() || !r.correlation_id.is_empty());
+        assert_eq!(f.count("agent.context.open"), 2, "a fresh context was opened for the resend");
+        assert_eq!(f.count("agent.context.message"), 3, "first send, the lost one, the resend");
+        let c = st.db.connect().unwrap();
+        let gens: i64 = c.query_row("SELECT MAX(generation) FROM bot_thread_sessions WHERE thread_id='th-vendor'", [], |r| r.get(0)).unwrap();
+        assert_eq!(gens, 2);
     }
 
     #[tokio::test]
