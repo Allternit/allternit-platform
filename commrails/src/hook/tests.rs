@@ -856,6 +856,13 @@ fn claude_settings_register_the_s1_outcome_hooks_when_given() {
     assert!(s["hooks"]["PreToolUse"][0]["hooks"][0]["command"].as_str().unwrap().contains("hook claude-pretool"));
     let bare = claude_settings_with_outcome(t, None);
     assert_eq!(bare["hooks"].as_object().unwrap().keys().collect::<Vec<_>>(), vec!["PreToolUse"]);
+    // Qwen gets the same outcome hooks next to its own PreToolUse gate.
+    let q = qwen_settings_with_outcome(t, Some("'/opt/bin/system-one' hook-outcome"));
+    for ev in ["PermissionRequest", "PostToolUse", "PostToolUseFailure", "Stop"] {
+        assert_eq!(q["hooks"][ev][0]["hooks"][0]["command"], "'/opt/bin/system-one' hook-outcome", "{ev}");
+    }
+    assert!(q["hooks"]["PreToolUse"][0]["hooks"][0]["command"].as_str().unwrap().contains("--harness qwen"));
+    assert_eq!(qwen_settings_with_outcome(t, None)["hooks"].as_object().unwrap().len(), 1);
 }
 
 #[test]

@@ -906,19 +906,7 @@ pub fn claude_settings_with_outcome(target: HookTarget<'_>, outcome_cmd: Option<
             }]
         }]
     });
-    if let Some(cmd) = outcome_cmd {
-        let entry = |matcher: bool| {
-            let mut e = json!({ "hooks": [{ "type": "command", "command": cmd, "timeout": 10 }] });
-            if matcher {
-                e["matcher"] = json!("*");
-            }
-            json!([e])
-        };
-        for ev in ["PermissionRequest", "PostToolUse", "PostToolUseFailure"] {
-            hooks[ev] = entry(true);
-        }
-        hooks["Stop"] = entry(false);
-    }
+    add_outcome_hooks(&mut hooks, outcome_cmd);
     json!({
         "permissions": {
             "defaultMode": "bypassPermissions",
@@ -961,20 +949,44 @@ pub fn find_system_one_bin() -> Option<PathBuf> {
 
 /// Session-scoped qwen settings (`QWEN_CODE_SYSTEM_SETTINGS_PATH=<file>`).
 /// Same PreToolUse schema and `permissionDecision` output as Claude Code;
-/// the user's `~/.qwen/settings.json` is never touched.
+/// the user's `~/.qwen/settings.json` is never touched. Registers the S1
+/// outcome-label hooks the same way as [`claude_settings`] (default on,
+/// `ALLTERNIT_S1_OUTCOME_HOOKS=0` opts out).
 pub fn qwen_settings(target: HookTarget<'_>) -> Value {
-    json!({
-        "hooks": {
-            "PreToolUse": [{
-                "matcher": "*",
-                "hooks": [{
-                    "type": "command",
-                    "command": hook_command(HookFlavor::Qwen, target),
-                    "timeout": 30,
-                }]
+    qwen_settings_with_outcome(target, s1_outcome_hook_command().as_deref())
+}
+
+/// [`qwen_settings`] with an explicit outcome hook command (`None` = no outcome hooks).
+pub fn qwen_settings_with_outcome(target: HookTarget<'_>, outcome_cmd: Option<&str>) -> Value {
+    let mut hooks = json!({
+        "PreToolUse": [{
+            "matcher": "*",
+            "hooks": [{
+                "type": "command",
+                "command": hook_command(HookFlavor::Qwen, target),
+                "timeout": 30,
             }]
+        }]
+    });
+    add_outcome_hooks(&mut hooks, outcome_cmd);
+    json!({ "hooks": hooks })
+}
+
+/// The S1 outcome-label hook for PermissionRequest / PostToolUse /
+/// PostToolUseFailure (all tools) and Stop. It never prints a decision.
+fn add_outcome_hooks(hooks: &mut Value, outcome_cmd: Option<&str>) {
+    let Some(cmd) = outcome_cmd else { return };
+    let entry = |matcher: bool| {
+        let mut e = json!({ "hooks": [{ "type": "command", "command": cmd, "timeout": 10 }] });
+        if matcher {
+            e["matcher"] = json!("*");
         }
-    })
+        json!([e])
+    };
+    for ev in ["PermissionRequest", "PostToolUse", "PostToolUseFailure"] {
+        hooks[ev] = entry(true);
+    }
+    hooks["Stop"] = entry(false);
 }
 
 /// TOML basic string.

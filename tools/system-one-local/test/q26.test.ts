@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   CanaryController, DEFAULT_PROFILE, DecisionRouter, FixtureReadoutProvider, ShadowLedger, buildExport, buildRequest, candidateSchemaHash, candidateSetHash,
-  clopperPearsonUpper, chooseTau, consequenceFor, evaluateQ26Manifest, layaQuestion, runQ26, unitHash, writeExport,
+  clopperPearsonUpper, chooseTau, consequenceFor, incumbentPolicyFor, evaluateQ26Manifest, layaQuestion, runQ26, unitHash, writeExport,
   type CalibrationScope, type DatasetRow, type DecisionRequestV1,
 } from "../src/decision/index.ts";
 import { layaRevision, LAYA_PINNED_REVISION } from "../src/server.ts";
@@ -107,6 +107,26 @@ describe("Q26 gate", () => {
     const rep = runQ26(better.tune, better.cert, { policy: { "bank.retry": { consequence: "cheap_retry" } } });
     expect(rep.bindings[0].noninferiority!.checked).toBe(true);
     expect(rep.bindings[0].failures.join()).toContain("inferior to the incumbent");
+  });
+  test("per-question incumbent policy: exact id, suffix wildcard, partial, and the bank-level fallback", () => {
+    expect(incumbentPolicyFor({ incumbent: "none" }, "q")).toBe("none");
+    expect(incumbentPolicyFor(undefined, "q")).toBe("required");
+    const pol = { incumbent: "required" as const, questions: { stuck: "none" as const, "*_target": { incumbent: "partial" as const } } };
+    expect(incumbentPolicyFor(pol, "stuck")).toBe("none");
+    expect(incumbentPolicyFor(pol, "click_target")).toBe("partial");
+    expect(incumbentPolicyFor(pol, "operation")).toBe("required");
+    const missing = split("bank.retry", { incAcc: null });
+    // question-level "none" works like the bank-level one
+    expect(runQ26(missing.tune, missing.cert, { policy: { "bank.retry": { questions: { "q.retry": "none" } } } }).banks["bank.retry"].eligible).toBe(true);
+    // a different question's "none" does not cover q.retry
+    expect(runQ26(missing.tune, missing.cert, { policy: { "bank.retry": { questions: { other: "none" } } } }).bindings[0].failures.join()).toContain("incumbent answers missing");
+    // partial: rows without x-incumbent are skipped, rows with one are compared
+    const half = split("bank.retry");
+    half.cert.forEach((r, i) => { if (i % 2) delete (r as any).incumbent; });
+    const rep = runQ26(half.tune, half.cert, { policy: { "bank.retry": { questions: { "*": "partial" } } } });
+    expect(rep.bindings[0].noninferiority!.checked).toBe(true);
+    expect(rep.bindings[0].noninferiority!.n).toBeLessThan(rep.bindings[0].cert!.auto_n);
+    expect(rep.bindings[0].failures.join()).not.toContain("incumbent answers missing");
   });
   test("coverage below 30% fails", () => {
     const { tune, cert } = split("bank.retry", { share: 0.2, hiAcc: 1.0 });

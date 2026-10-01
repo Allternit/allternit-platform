@@ -185,7 +185,7 @@ pass, when `allternit judge tool --tool-call-id` or the CommRails hook passed th
 same hook as `system-one hook-outcome` (stdin in, nothing out, exit 0).
 
 CommRails registers `system-one hook-outcome` for those four events in the session `--settings`
-file it writes for every gated Claude Code spawn (`commrails::hook::claude_settings`), whenever it
+file it writes for every gated Claude Code or Qwen spawn (`commrails::hook::claude_settings` / `qwen_settings`), whenever it
 finds a `system-one` binary (`ALLTERNIT_SYSTEM_ONE_BIN`, next to the CommRails binary or the
 current executable, or on `PATH`). Set `ALLTERNIT_S1_OUTCOME_HOOKS=0` to turn that off. Personal
 `~/.claude` settings are never edited; use the snippet above for a hand-run harness.

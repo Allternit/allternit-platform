@@ -152,8 +152,14 @@ async def test_planning_loop_reports_executed_operations_and_episode_outcome():
     assert goal_inc == {"true", "false"}
     ops = [p for p in sent if p["request"]["question_id"] == "operation"]
     assert any("x-incumbent" in p["request"]["extensions"] for p in ops)
-    assert all("x-incumbent" not in p["request"]["extensions"] for p in sent
-               if p["request"]["question_id"].endswith("_target") or p["request"]["question_id"] == "stuck")
+    assert all("x-incumbent" not in p["request"]["extensions"] for p in sent if p["request"]["question_id"] == "stuck")
+    # A target incumbent is only ever the executed operation's target, as an option.
+    for p in sent:
+        q, ext = p["request"]["question_id"], p["request"]["extensions"]
+        if q.endswith("_target") and "x-incumbent" in ext:
+            assert ext["x-incumbent"] in [c["candidate_id"] for c in p["request"]["candidates"]]
+            same_step = [o for o in ops if o["request"]["extensions"]["x-subject_ref"].rsplit(":", 1)[0] == ext["x-subject_ref"].rsplit(":", 1)[0]]
+            assert same_step and same_step[0]["request"]["extensions"].get("x-incumbent") == q[: -len("_target")]
 
 
 def test_incumbent_is_sent_only_when_it_is_an_option_and_resets_per_step():
