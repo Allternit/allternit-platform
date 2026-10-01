@@ -104,3 +104,86 @@ export async function pairWithBootstrap(
   }
   throw new Error('Bootstrap pairing was not approved in time');
 }
+
+/** True on an Allternit cloud computer (the image sets ALLTERNIT_PROVISIONED=1). */
+export function isProvisioned(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.ALLTERNIT_PROVISIONED === '1';
+}
+
+export interface ProvisionedWaitDeps {
+  read: () => Promise<ProvisionedBootstrap | null>;
+  pair: (bootstrap: ProvisionedBootstrap) => Promise<Record<string, unknown>>;
+  sleep: (ms: number) => Promise<void>;
+  log: (message: string) => void;
+  /** First retry delay; doubles up to maxDelayMs. */
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+}
+
+/**
+ * A provisioned computer has no person at its console, so the interactive
+ * code pairing is never an option there. Wait for provisioning to drop the
+ * bootstrap (it can arrive after boot) and retry a refused or unreachable
+ * pairing with backoff, without exiting: exiting would only make systemd
+ * restart the daemon in a tight loop.
+ */
+export async function waitForProvisionedPairing(
+  deps: ProvisionedWaitDeps,
+): Promise<{ bootstrap: ProvisionedBootstrap; payload: Record<string, unknown> }> {
+  const base = deps.baseDelayMs ?? 5_000;
+  const max = deps.maxDelayMs ?? 300_000;
+  let delay = base;
+  let waitingLogged = false;
+  for (;;) {
+    const bootstrap = await deps.read();
+    if (!bootstrap) {
+      if (!waitingLogged) deps.log('[AgentDaemon] Provisioned computer: waiting for its first-boot bootstrap…');
+      waitingLogged = true;
+      await deps.sleep(base);
+      continue;
+    }
+    waitingLogged = false;
+    try {
+      return { bootstrap, payload: await deps.pair(bootstrap) };
+    } catch (error) {
+      deps.log(`[AgentDaemon] Bootstrap pairing failed (${(error as Error).message}); retrying in ${Math.round(delay / 1000)}s`);
+      await deps.sleep(delay);
+      delay = Math.min(delay * 2, max);
+    }
+  }
+}
+
+export const HUMAN_PROOF_HEADER = 'X-Allternit-Human-Proof';
+export const RELAYED_HEADER = 'X-Allternit-Relayed';
+
+export interface RelayIdentity {
+  userId: string;
+  userEmail: string;
+  organizationId?: string;
+  deviceToken: string;
+}
+
+/**
+ * Headers for a request another device sent through the cloud relay, the
+ * same contract as the Desktop app's relay (auth-manager.ts):
+ * - the caller's own bearer (a Clerk JWT) is kept, else the device token;
+ * - X-Allternit-Relayed marks it as another device, so allternit-api never
+ *   treats it as this computer's own call;
+ * - a caller-supplied human proof is dropped: it proves a person on that
+ *   device, never on this one.
+ */
+export function relayedRequestHeaders(
+  incoming: Record<string, string> | undefined,
+  identity: RelayIdentity,
+): Headers {
+  const headers = new Headers(incoming || {});
+  headers.delete(HUMAN_PROOF_HEADER);
+  if (!headers.has('Authorization')) headers.set('Authorization', `Bearer ${identity.deviceToken}`);
+  headers.set('X-Allternit-Desktop-Access-Token', identity.deviceToken);
+  headers.set(RELAYED_HEADER, '1');
+  headers.set('X-Allternit-User-Id', identity.userId);
+  headers.set('X-Allternit-User-Email', identity.userEmail);
+  headers.delete('X-Allternit-Tenant-Id');
+  if (identity.organizationId) headers.set('X-Allternit-Tenant-Id', identity.organizationId);
+  return headers;
+}

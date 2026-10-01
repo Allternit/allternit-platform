@@ -4,7 +4,15 @@ import { hostname, homedir, platform, arch } from 'node:os';
 import { dirname, join } from 'node:path';
 import WebSocket, { type RawData } from 'ws';
 import { discoverAgentClis } from './discovery';
-import { consumeProvisionedBootstrap, pairWithBootstrap, readProvisionedBootstrap } from './provisioned';
+import {
+  consumeProvisionedBootstrap,
+  isProvisioned,
+  pairWithBootstrap,
+  readProvisionedBootstrap,
+  relayedRequestHeaders,
+  waitForProvisionedPairing,
+  type ProvisionedBootstrap,
+} from './provisioned';
 
 const CLOUD_API_URL = (process.env.ALLTERNIT_CLOUD_API_URL || 'https://api.allternit.com').replace(/\/$/, '');
 const RUNTIME_NAME = process.env.ALLTERNIT_RUNTIME_NAME || `${hostname()} VPS`;
@@ -74,10 +82,9 @@ async function beginPairing(): Promise<RuntimeIdentity> {
 
   // An Allternit cloud computer pairs itself from the bootstrap its
   // provisioning left behind (same contract as the Desktop app).
-  const bootstrap = await readProvisionedBootstrap();
-  if (bootstrap) try {
+  const pairProvisioned = (bootstrap: ProvisionedBootstrap) => {
     console.log('[AgentDaemon] Provisioned computer: pairing with the first-boot bootstrap…');
-    const payload = await pairWithBootstrap(bootstrap, {
+    return pairWithBootstrap(bootstrap, {
       hostname: hostname(),
       platform: `${platform()}-${arch()}`,
       version: process.env.npm_package_version || '0.1.0',
@@ -96,6 +103,8 @@ async function beginPairing(): Promise<RuntimeIdentity> {
       sign: (message) => sign(null, Buffer.from(message), privateKeyPem).toString('base64url'),
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     });
+  };
+  const adoptProvisioned = async (bootstrap: ProvisionedBootstrap, payload: Record<string, unknown>) => {
     const next: RuntimeIdentity = {
       runtimeId: payload.runtimeId as string,
       userId: payload.userId as string,
@@ -111,6 +120,21 @@ async function beginPairing(): Promise<RuntimeIdentity> {
     await consumeProvisionedBootstrap(bootstrap);
     console.log(`[AgentDaemon] Cloud computer paired as ${next.userEmail} (${next.runtimeId}).`);
     return next;
+  };
+  // A provisioned computer has no one at its console: never fall back to the
+  // interactive code pairing, wait for (and retry) its bootstrap instead.
+  if (isProvisioned()) {
+    const { bootstrap, payload } = await waitForProvisionedPairing({
+      read: () => readProvisionedBootstrap(),
+      pair: pairProvisioned,
+      sleep: wait,
+      log: (message) => console.warn(message),
+    });
+    return adoptProvisioned(bootstrap, payload);
+  }
+  const bootstrap = await readProvisionedBootstrap();
+  if (bootstrap) try {
+    return await adoptProvisioned(bootstrap, await pairProvisioned(bootstrap));
   } catch (error) {
     // Expired or rejected token: fall back to the other pairing modes.
     console.warn('[AgentDaemon] Bootstrap pairing failed; falling back:', (error as Error).message);
@@ -340,17 +364,10 @@ async function handleRelayRequest(socket: WebSocket, message: any): Promise<void
   ];
   if (!allowedPrefixes.some((prefix) => requestPath.startsWith(prefix))) return;
   try {
-    const headers = new Headers(message.headers || {});
     // Prefer the caller's own Clerk JWT when the envelope carries one so the
     // local gateway authenticates as the end user; fall back to the device
-    // token (and its identity headers) when it doesn't.
-    if (!headers.has('Authorization')) {
-      headers.set('Authorization', `Bearer ${identity.deviceToken}`);
-    }
-    headers.set('X-Allternit-Desktop-Access-Token', identity.deviceToken);
-    headers.set('X-Allternit-User-Id', identity.userId);
-    headers.set('X-Allternit-User-Email', identity.userEmail);
-    if (identity.organizationId) headers.set('X-Allternit-Tenant-Id', identity.organizationId);
+    // token. Marked as relayed, like the Desktop app's relay.
+    const headers = relayedRequestHeaders(message.headers, identity);
     const body = method === 'GET' || method === 'HEAD' || !message.body
       ? undefined
       : message.body_encoding === 'base64'
@@ -413,13 +430,7 @@ function handleRelaySocketOpen(relaySocket: WebSocket, message: any): void {
     || requestPath.includes('://') || !allowedPrefixes.some((prefix) => requestPath.startsWith(prefix))) return;
   relayLocalSockets.get(socketId)?.close();
   const local = new WebSocket(`${LOCAL_GATEWAY_URL.replace(/^http/, 'ws')}${requestPath}`, {
-    headers: {
-      Authorization: `Bearer ${identity.deviceToken}`,
-      'X-Allternit-Desktop-Access-Token': identity.deviceToken,
-      'X-Allternit-User-Id': identity.userId,
-      'X-Allternit-User-Email': identity.userEmail,
-      ...(identity.organizationId ? { 'X-Allternit-Tenant-Id': identity.organizationId } : {}),
-    },
+    headers: Object.fromEntries(relayedRequestHeaders(undefined, identity).entries()),
   });
   relayLocalSockets.set(socketId, local);
   local.on('open', () => {
