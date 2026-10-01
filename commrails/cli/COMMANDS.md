@@ -324,8 +324,10 @@ level. An agent holding an open WIH in the dag cannot weaken it
 ### `allternit judge policy show --dag <dag_id> [--node <node_id>]`
 Effective policy (no events).
 
-### `allternit judge tool --wih <wih_id> --tool <tool> [--command "<cmd>"] [--paths <p>...] [--json]`
-`allow | ask | deny`. Order: Gate 2 checks (deny is final, judge not asked) → hard
+### `allternit judge tool --wih <wih_id> --tool <tool> [--command "<cmd>"] [--paths <p>...] [--tool-call-id <id>] [--json]`
+`allow | ask | deny`. `--tool-call-id` is the harness's own id for the call (e.g. Claude Code
+`tool_use_id`): the shadow S1 decisions about the call carry `x-subject_ref = cc-tool:<id>`, so
+the harness's outcome hooks label them with what the person answered (ran = true, denied = false). Order: Gate 2 checks (deny is final, judge not asked) → hard
 floor (deny is final) → judge. A judge timeout/error/invalid answer is `ask`, never
 `allow`. Required events:
 - JudgeToolDecision (source gate2 | hard_rule | judge | judge_failed)

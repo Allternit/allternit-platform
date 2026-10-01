@@ -18,6 +18,14 @@ use crate::judge::types::{NodeOutcome, ToolDecision};
 pub const PERMISSION_GATE_BANK: &str = "bank.permission_gate";
 pub const PERMISSION_GATE_QUESTION: &str = "may_proceed";
 
+/// Join key for S1 decisions about one harness tool call. The same key as
+/// `tools/system-one-local/src/hook/guard.ts` `subjectRef`, so the CLI outcome
+/// hooks (PostToolUse / PostToolUseFailure = proceeded, PermissionRequest with
+/// no run before Stop = denied) label every gate on that call.
+pub fn tool_call_subject_ref(tool_call_id: &str) -> String {
+    format!("cc-tool:{tool_call_id}")
+}
+
 /// Q26 tighten-only combinator: the result is never looser than the incumbent,
 /// so an S1 `Allow` can never turn `Ask`/`Deny` into `Allow`.
 pub fn tighten(incumbent: ToolDecision, s1: Option<ToolDecision>) -> ToolDecision {
@@ -188,12 +196,19 @@ impl OutcomeReporter {
     /// Detached shadow GATE (never awaited, never changes the caller's decision).
     /// Off under `cfg(test)` so unit tests never write to a real local ledger.
     pub fn spawn_gate(&self, ask: GateAsk<'static>, state: String) {
+        self.spawn_gate_for(ask, None, state)
+    }
+
+    /// [`OutcomeReporter::spawn_gate`] with an owned `x-subject_ref` (e.g.
+    /// [`tool_call_subject_ref`]); it replaces `ask.subject_ref` when set.
+    pub fn spawn_gate_for(&self, ask: GateAsk<'static>, subject_ref: Option<String>, state: String) {
         if !self.enabled || cfg!(test) {
             return;
         }
         let Ok(handle) = tokio::runtime::Handle::try_current() else { return };
         let me = self.clone();
         handle.spawn(async move {
+            let ask = GateAsk { subject_ref: subject_ref.as_deref().or(ask.subject_ref), ..ask };
             me.gate(&ask, &state).await;
         });
     }

@@ -873,3 +873,47 @@ async fn legacy_dag_without_origin_keeps_defaults() {
     assert_eq!(out.node_status, "DONE");
     assert_eq!(status(&ledger, &dag_id, "lg_a").await, "DONE");
 }
+
+// WP-S1U-3: an `ask` from the first pass carries the harness tool-call id as
+// x-subject_ref, so the harness's outcome hooks can label it with what the
+// person answered.
+#[tokio::test]
+async fn first_pass_tool_ask_carries_the_harness_tool_call_id() {
+    use axum::{routing::post, Json, Router};
+    let seen: Arc<std::sync::Mutex<Vec<serde_json::Value>>> = Default::default();
+    let s = seen.clone();
+    let app = Router::new().route(
+        "/v1/decision",
+        post(move |Json(body): Json<serde_json::Value>| {
+            let s = s.clone();
+            async move {
+                s.lock().unwrap().push(body);
+                Json(json!({ "probabilities": {"true": 0.02, "false": 0.98}, "extensions": {"x-decision_id": "dec-tool"} }))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let tmp = test_root();
+    let (_, _, gate) = build_gate(tmp.path()).await;
+    let gate = gate.with_judge(
+        s1(url, Arc::new(StubJudge::new("accomplished", "allow"))),
+        Duration::from_secs(3),
+        Duration::from_secs(3),
+    );
+    let dag_id = plan_one(&gate, "tj_id", None).await;
+    let wih = open_wih(&gate, &dag_id, "tj_id").await;
+    let v = gate
+        .judge_tool_call_for(&wih, "bash", Some("ls"), &[], Some("toolu_01"))
+        .await
+        .unwrap();
+    assert_eq!(v.decision, ToolDecision::Ask);
+    let bodies = seen.lock().unwrap().clone();
+    let fp = bodies
+        .iter()
+        .find(|b| b["request"]["decision_bank_id"] == "bank.judge_first_pass")
+        .expect("first pass asked");
+    assert_eq!(fp["request"]["extensions"]["x-subject_ref"], "cc-tool:toolu_01");
+}

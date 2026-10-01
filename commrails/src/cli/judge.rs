@@ -33,6 +33,10 @@ pub enum JudgeCmd {
         /// Paths the call touches.
         #[arg(long, num_args = 0..)]
         paths: Vec<String>,
+        /// The harness's tool-call id (e.g. Claude Code `tool_use_id`), so an
+        /// `ask` gets labelled with what the person answered.
+        #[arg(long)]
+        tool_call_id: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -243,11 +247,12 @@ pub async fn run_judge_command(ctx: &JudgeContext, cmd: JudgeCmd) -> Result<()> 
             tool,
             command,
             paths,
+            tool_call_id,
             json: as_json,
         } => {
             let v = ctx
                 .gate
-                .judge_tool_call(&wih, &tool, command.as_deref(), &paths)
+                .judge_tool_call_for(&wih, &tool, command.as_deref(), &paths, tool_call_id.as_deref())
                 .await?;
             if as_json {
                 println!("{}", serde_json::to_string_pretty(&v)?);

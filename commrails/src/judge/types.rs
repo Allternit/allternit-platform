@@ -160,6 +160,12 @@ pub struct ToolJudgeRequest {
     pub command: Option<String>,
     pub paths: Vec<String>,
     pub nonce: String,
+    /// The harness's own tool-call id (e.g. Claude Code `tool_use_id`), when
+    /// the caller knows it. S1 decisions about this call carry it as
+    /// `x-subject_ref` so the harness's later hooks (ran / denied) label them,
+    /// including an `ask` the person answered (WP-S1U-3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 /// Fail-closed result of a node verdict.
