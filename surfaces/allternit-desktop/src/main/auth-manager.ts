@@ -30,6 +30,12 @@ import { URLS } from './config.js';
 import { dropRuntimeCredentialForGizzi, isGizziProviderListPath } from './relay-gizzi-credential.js';
 import { isDesktopAuthNavigation } from './desktop-auth-url.js';
 import { ClerkTokenBroker } from './clerk-token-broker.js';
+import {
+  consumeProvisionedBootstrap,
+  provisionedPairingBody,
+  readProvisionedBootstrap,
+  type ProvisionedBootstrap,
+} from './provisioned-bootstrap.js';
 
 const RUNTIME_CLIENT_ID = 'allternit-desktop-runtime';
 const PAIRING_TIMEOUT_MS = 10 * 60 * 1000;
@@ -426,6 +432,20 @@ export class DesktopAuthManager {
     }
 
     this.splashWindow = window || BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed()) || null;
+
+    // An Allternit cloud computer signs itself in on first boot with the
+    // one-time token its provisioning left behind; nobody is there to click.
+    const bootstrap = readProvisionedBootstrap();
+    if (bootstrap) {
+      try {
+        log.info('[Auth] Provisioned computer: pairing with the first-boot bootstrap');
+        this.notifySplash('auth:login-started', 'Setting up your Allternit cloud computer…');
+        return await this.startPairing(bootstrap);
+      } catch (error) {
+        log.warn('[Auth] Bootstrap pairing failed; falling back to normal sign-in:', error);
+      }
+    }
+
     this.notifySplash('auth:ready', 'Allternit account pairing is ready');
     log.info('[Auth] Startup gate is waiting for runtime pairing');
     return new Promise((resolve) => {
@@ -530,24 +550,28 @@ export class DesktopAuthManager {
     }
   }
 
-  private async startPairing(): Promise<DesktopAuthSession> {
+  private async startPairing(bootstrap?: ProvisionedBootstrap): Promise<DesktopAuthSession> {
     if (this.pendingPairing) return this.pendingPairing.promise;
 
     const { publicKey, privateKey } = generateKeyPairSync('ed25519');
     const publicKeyDer = publicKey.export({ format: 'der', type: 'spki' });
     const publicKeyRaw = publicKeyDer.subarray(publicKeyDer.length - 32).toString('base64url');
     const privateKeyPem = privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
+    const pairingBody = {
+      name: `${machineHostname()} Desktop`,
+      runtimeType: 'desktop',
+      hostname: machineHostname(),
+      platform: `${process.platform}-${process.arch}`,
+      version: app.getVersion(),
+      publicKey: publicKeyRaw,
+    };
     const response = await fetch(`${cloudApiBaseUrl()}/api/v1/runtime-pairings`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: `${machineHostname()} Desktop`,
-        runtimeType: 'desktop',
-        hostname: machineHostname(),
-        platform: `${process.platform}-${process.arch}`,
-        version: app.getVersion(),
-        publicKey: publicKeyRaw,
-      }),
+      headers: {
+        'Content-Type': 'application/json',
+        ...(bootstrap ? { 'X-Allternit-Bootstrap-Token': bootstrap.token } : {}),
+      },
+      body: JSON.stringify(bootstrap ? provisionedPairingBody(pairingBody, bootstrap) : pairingBody),
     });
     if (!response.ok) {
       throw new Error(`Allternit pairing is unavailable (${response.status})`);
@@ -574,6 +598,15 @@ export class DesktopAuthManager {
       exchangeInFlight: false,
     };
     this.pendingPairing = pending;
+
+    if (bootstrap) {
+      // The bootstrap token already approved this pairing for the computer's
+      // owner: exchange it (polling past 428 until the approval commits), and
+      // drop the single-use bootstrap once the identity is saved.
+      void promise.then(() => consumeProvisionedBootstrap(bootstrap), () => {});
+      void this.pollPairing(pending);
+      return promise;
+    }
 
     // Native Clerk auth: open a dedicated auth window with context isolation,
     // load the React/Clerk renderer, and wait for the user to sign in.
