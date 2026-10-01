@@ -383,6 +383,13 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
       const { complete } = await tracker.pollOnce();
       if (complete) break;
       if (tracker.stalled(stallTimeoutS)) {
+        // A usage-limit notice that appeared after Send explains the silence: say so, with the
+        // provider's own wording (e.g. "resets at 4:30 PM"), instead of a generic stall.
+        yield* await scanBanners();
+        if (sendBlockedBy !== null) {
+          yield { t: "error", error: limitReachedError(sendBlockedBy, "after_send") };
+          return;
+        }
         yield {
           t: "error",
           error: stalledError(
@@ -422,6 +429,12 @@ export class DeclarativeChatAdapter implements SubscriptionAdapter {
       for (const e of emitText(text.slice(emitted.length))) yield e;
     }
     yield* await scanBanners();
+    // The page settled with no reply but a usage-limit notice: the provider took the message
+    // and answered with its limit card, so the turn failed on quota, not succeeded empty.
+    if (!text?.trim() && sendBlockedBy !== null) {
+      yield { t: "error", error: limitReachedError(sendBlockedBy, "after_send") };
+      return;
+    }
     yield { t: "done", outcome: "success", text };
   }
 
@@ -573,8 +586,9 @@ async function countKey(resolver: SdkSelectorResolver, key: string): Promise<num
   return loc ? loc.count() : 0;
 }
 
-// The account is at its usage limit (seen before sending): nothing was sent.
-export function limitReachedError(excerpt: string): TaskError {
+// The account is at its usage limit. Before sending, nothing was sent; after sending, the
+// provider took the message but refuses to answer until the limit resets.
+export function limitReachedError(excerpt: string, when: "before_send" | "after_send" = "before_send"): TaskError {
   return {
     class: "quota_exhausted",
     scope: "pool",
@@ -582,7 +596,7 @@ export function limitReachedError(excerpt: string): TaskError {
     fallback_eligible: true,
     cooldown_s: null,
     user_action: null,
-    detail: `usage limit reached before sending: ${excerpt}`.slice(0, 300),
+    detail: `usage limit reached${when === "before_send" ? " before sending" : ""}: ${excerpt}`.slice(0, 300),
     evidence_ref: null,
   };
 }
