@@ -82,14 +82,19 @@ impl RunTemplate for KernelBugFixTemplate {
 #[derive(Clone)]
 pub struct TemplateRegistry {
     bug_fix: Arc<dyn RunTemplate>,
+    /// WP-X2: task types this server runs (`ALLTERNIT_AGENCY_TASK_TYPES`).
+    enabled: Vec<String>,
 }
 
 impl Default for TemplateRegistry {
-    fn default() -> Self { Self { bug_fix: Arc::new(KernelBugFixTemplate) } }
+    fn default() -> Self { Self { bug_fix: Arc::new(KernelBugFixTemplate), enabled: super::task_types::enabled_from_env() } }
 }
 
 impl TemplateRegistry {
-    pub fn with_bug_fix(t: Arc<dyn RunTemplate>) -> Self { Self { bug_fix: t } }
+    pub fn with_bug_fix(t: Arc<dyn RunTemplate>) -> Self { Self { bug_fix: t, ..Self::default() } }
+    /// WP-X2: same templates, explicit enable list (tests; env is the prod path).
+    pub fn with_enabled(mut self, ids: &[&str]) -> Self { self.enabled = ids.iter().map(|s| s.to_string()).collect(); self }
+    pub fn is_enabled(&self, id: &str) -> bool { self.enabled.iter().any(|e| e == id) }
     pub fn get(&self, id: &str) -> Option<Arc<dyn RunTemplate>> {
         if id == "BUG_FIX" {
             return Some(self.bug_fix.clone());
@@ -115,7 +120,7 @@ pub struct Compiled {
 
 const ALLOWED_FIELDS: &[&str] = &[
     "agent", "goal", "workspace", "context", "authority", "budget", "completion", "capabilities",
-    "models", "graph", "runtime", "stream", "thread_id", "metadata",
+    "models", "graph", "runtime", "stream", "thread_id", "metadata", "task_type",
 ];
 
 fn is_extension(k: &str) -> bool {
@@ -195,8 +200,10 @@ fn resolve_authority(obj: &Map<String, Value>, m: &Value) -> Result<Value, Compi
     }))
 }
 
-fn resolve_completion(obj: &Map<String, Value>, m: &Value) -> Result<Value, CompileError> {
-    let cid = m["defaults"]["completion_contract"]["id"].as_str().unwrap_or("completion.bug_fix");
+fn resolve_completion(obj: &Map<String, Value>, m: &Value, template_cid: &str) -> Result<Value, CompileError> {
+    let default_cid = m["defaults"]["completion_contract"]["id"].as_str().unwrap_or("completion.bug_fix");
+    // WP-X2: a non-default task type always uses its own contract.
+    let cid = if template_cid == "completion.bug_fix" { default_cid } else { template_cid };
     let contract = catalog::completion_contract(cid).ok_or_else(|| CompileError::unresolvable("completion", "no completion contract"))?;
     let mut require: Vec<Value> = contract["require"].as_array().cloned().unwrap_or_default();
     if let Some(c) = obj.get("completion") {
@@ -304,7 +311,18 @@ pub fn compile(req: &Value, run_id: &str, templates: &TemplateRegistry) -> Resul
     let workspace = resolve_workspace(obj, &manifest)?;
     let authority = resolve_authority(obj, &manifest)?;
     let budget = resolve_budget(obj, &manifest)?;
-    let completion = resolve_completion(obj, &manifest)?;
+    // WP-X2: explicit `task_type`, validated against the catalog and the
+    // server's enable list; default stays the agent's template (BUG_FIX).
+    let tname = match obj.get("task_type") {
+        None => manifest["default_template"].as_str().unwrap_or("BUG_FIX").to_string(),
+        Some(v) => v.as_str().filter(|s| !s.is_empty()).map(str::to_string)
+            .ok_or_else(|| CompileError::unsupported("task_type", "task_type must be a string"))?,
+    };
+    let template = templates.get(&tname).ok_or_else(|| CompileError::unresolvable("task_type", format!("unknown task type `{tname}`")))?;
+    if !templates.is_enabled(&tname) {
+        return Err(CompileError::new(422, "POLICY", "ERR_POLICY_DENIED", format!("task type `{tname}` is not enabled on this server"), Some("task_type")));
+    }
+    let completion = resolve_completion(obj, &manifest, template.completion_policy())?;
     let models = resolve_models(obj)?;
 
     let omitted: Vec<&str> = ["workspace", "authority", "budget", "completion"].into_iter().filter(|k| !obj.contains_key(*k)).collect();
@@ -314,12 +332,15 @@ pub fn compile(req: &Value, run_id: &str, templates: &TemplateRegistry) -> Resul
         format!("agent:{agent}/profile:{}@{}", authority["profile"]["id"].as_str().unwrap_or(""), authority["profile"]["version"])
     };
 
-    let tname = manifest["default_template"].as_str().unwrap_or("BUG_FIX");
-    let template = templates.get(tname).ok_or_else(|| CompileError::unresolvable("agent", format!("template {tname} unavailable")))?;
-    // The template takes the workspace as one locator string (repo, else ref).
+    // The template takes the workspace as one locator string (repo, else ref);
+    // task types beyond BUG_FIX take the declared writable resources.
     let ws_locator = workspace.get("repo").or_else(|| workspace.get("ref")).and_then(Value::as_str).unwrap_or_default();
+    let mut params = json!({ "workspace": ws_locator, "task_id": format!("task.{}.{run_id}", tname.to_ascii_lowercase()) });
+    if tname != "BUG_FIX" {
+        params["writable_resources"] = obj.get("workspace").and_then(|w| w.get("resources")).cloned().unwrap_or(json!([]));
+    }
     let graph = template
-        .instantiate(&goal, &json!({ "workspace": ws_locator, "task_id": format!("task.bug_fix.{run_id}") }))
+        .instantiate(&goal, &params)
         .map_err(|e| CompileError::new(422, "INPUT", "ERR_INPUT_INVALID", format!("cannot instantiate {}: {e}", template.id()), Some("workspace")))?;
     let dag_id = format!("agency-{run_id}");
     let judge_policy = JudgePolicy {

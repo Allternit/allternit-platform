@@ -33,6 +33,7 @@
 use super::bugfix::{self, edits::{Edit, Planned}}; // WP-B1
 #[path = "bugfix/exec_hooks.rs"]
 mod bugfix_hooks; // WP-B2: repro tests, baseline/flakes, judge, exploration (memo C 4–8)
+pub(crate) mod generic; // WP-X2
 use super::guard::Limits;
 use super::store::{now, new_id, AgencyStore, EffectDenied, TERMINAL};
 use crate::AppState;
@@ -123,8 +124,12 @@ pub(crate) fn start(st: Arc<AppState>, run_id: String) {
 pub(crate) async fn admit_and_start(st: Arc<AppState>, run_id: String, limits: Limits) -> bool {
     let s = super::store(&st);
     let Ok(Some(rec)) = s.load_run(&run_id).await else { return false };
-    if rec.run["status"] != "waiting" || rec.task_ir["task_type"] == "TEMPLATE" {
+    if rec.run["status"] != "waiting" || rec.task_ir.get("template_id").is_some() {
         return false; // kernel-UI template runs are driven by kernel_ui::templates
+    }
+    // WP-X2: only task types enabled on this server run; others stay queued.
+    if !super::task_types::is_enabled(rec.task_ir["task_type"].as_str().unwrap_or("BUG_FIX")) {
+        return false;
     }
     let org = super::guard::run_org(&rec.task_ir);
     let limits = limits.tightened(&rec.task_ir["rules"]).with_org_policy(&super::safety::load_org(&st.db, &org).unwrap_or_default());
@@ -1358,7 +1363,12 @@ fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str, limits: &Limi
     let limits = &limits.tightened(&ir["rules"]);
     let task_id = ir["wih_policy"]["task_id"].as_str().unwrap_or("task.bug_fix").to_string();
     let write_set: Vec<String> = ir["wih_policy"]["write_set"].as_array().map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default();
-    let graph = bug_fix::instantiate(&task_id, &write_set)?;
+    let task_type = ir["task_type"].as_str().unwrap_or("BUG_FIX").to_string();
+    let kernel_type = if task_type == "BUG_FIX" { None } else { Some(super::task_types::require(&task_type)?) };
+    let graph = match kernel_type {
+        None => bug_fix::instantiate(&task_id, &write_set)?,
+        Some(t) => super::task_types::instantiate(t, &task_id, &write_set)?,
+    };
     let models = ir["models"].clone();
     let raw_pool = if scripted() {
         Ok(scripted_pool(&graph))
@@ -1405,7 +1415,10 @@ fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str, limits: &Limi
     let goal = ir["goal"].as_str().unwrap_or_default().to_string();
     let repo = ir["workspace"]["repo"].as_str().unwrap_or_default().to_string();
     let git_ref = ir["workspace"]["ref"].as_str().map(str::to_string);
-    let out = x.run(&goal, &repo, git_ref.as_deref());
+    let out = match kernel_type {
+        None => x.run(&goal, &repo, git_ref.as_deref()),
+        Some(t) => x.run_task_type(t, &goal, &write_set),
+    };
     let result = match out {
         Ok(()) | Err(StepErr::Stop) => Ok(()),
         Err(StepErr::Fail(e)) => {

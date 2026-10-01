@@ -11,27 +11,27 @@ fn user(id: &str) -> AuthUser {
     AuthUser { user_id: id.into(), email: None, name: None, avatar_url: None, tenant_id: None, organization_id: None, organization_role: None, organization_slug: None }
 }
 
-struct T {
+pub(crate) struct T {
     _dir: tempfile::TempDir,
-    st: Arc<AppState>,
-    app: Router,
+    pub(crate) st: Arc<AppState>,
+    pub(crate) app: Router,
 }
 
-async fn setup() -> T {
+pub(crate) async fn setup() -> T {
     let dir = tempfile::tempdir().unwrap();
     let st = app_state(dir.path()).await;
     let app = agency_router().merge(jwks_public_router()).with_state(st.clone());
     T { _dir: dir, st, app }
 }
 
-async fn call(app: &Router, req: Request<Body>) -> (StatusCode, HeaderMap, String) {
+pub(crate) async fn call(app: &Router, req: Request<Body>) -> (StatusCode, HeaderMap, String) {
     let resp = app.clone().oneshot(req).await.unwrap();
     let (parts, body) = resp.into_parts();
     let b = axum::body::to_bytes(body, 1 << 22).await.unwrap();
     (parts.status, parts.headers, String::from_utf8_lossy(&b).to_string())
 }
 
-fn post(uri: &str, u: &str, key: Option<&str>, body: Value) -> Request<Body> {
+pub(crate) fn post(uri: &str, u: &str, key: Option<&str>, body: Value) -> Request<Body> {
     let mut r = Request::builder().method("POST").uri(uri).header("content-type", "application/json").extension(user(u));
     if let Some(k) = key {
         r = r.header("idempotency-key", k);
@@ -39,7 +39,7 @@ fn post(uri: &str, u: &str, key: Option<&str>, body: Value) -> Request<Body> {
     r.body(Body::from(body.to_string())).unwrap()
 }
 
-fn get_req(uri: &str, u: &str) -> Request<Body> {
+pub(crate) fn get_req(uri: &str, u: &str) -> Request<Body> {
     Request::builder().uri(uri).extension(user(u)).body(Body::empty()).unwrap()
 }
 
@@ -411,7 +411,7 @@ async fn agency_executor_off_by_default_parks_runs_with_a_reason() {
 }
 
 /// The scripted e2e runs share process env (runs dir, local-repo allowlist).
-static E2E_ENV: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+pub(crate) static E2E_ENV: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Offline e2e of the bridge: BUG_FIX on a disposable node repo, scripted
 /// cognition (attempt 1 imperfect, attempt 2 correct), strict fence.
@@ -549,7 +549,7 @@ fn limits(pairs: &[(&str, &str)]) -> guard::Limits {
 /// process-wide and many tests run the executor for the same test org in
 /// parallel, so default concurrency caps would refuse admission depending on
 /// test timing. Tests about those caps use [`limits`] with explicit values.
-fn run_limits(pairs: &[(&str, &str)]) -> guard::Limits {
+pub(crate) fn run_limits(pairs: &[(&str, &str)]) -> guard::Limits {
     let mut v: Vec<(&str, &str)> = pairs.to_vec();
     for k in [guard::MAX_CONC_ENV, guard::ORG_MAX_CONC_ENV] {
         if !v.iter().any(|(key, _)| *key == k) {
@@ -618,7 +618,7 @@ async fn agency_guard_admission_refuses_unlisted_org_and_full_slots() {
     let _ = executor::active_count();
 }
 
-async fn wait_settled(s: &AgencyStore, id: &str) -> store::RunRecord {
+pub(crate) async fn wait_settled(s: &AgencyStore, id: &str) -> store::RunRecord {
     for _ in 0..200 {
         let r = s.load_run(id).await.unwrap().unwrap();
         if r.run["status"] != "waiting" && r.run["status"] != "running" { return r; }
