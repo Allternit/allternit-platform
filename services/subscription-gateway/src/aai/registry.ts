@@ -230,6 +230,7 @@ export interface VendorContext {
   gatewayTasks?: {
     submit(body: Record<string, unknown>): Promise<{ status: number; body: Record<string, unknown> }>;
     get(taskId: string): Promise<{ status: number; body: Record<string, unknown> }>;
+    cancel?(taskId: string): Promise<{ status: number; body: Record<string, unknown> }>;
     subscribe?(taskId: string, onEvent: (event: { kind?: string; payload?: unknown }) => void): () => void;
     accountState(provider: string): Promise<{ health: string; remainingPct?: number | null; resetsAt?: string | null; agents?: { id: string; name: string; kind?: string }[] | null } | null>;
   };

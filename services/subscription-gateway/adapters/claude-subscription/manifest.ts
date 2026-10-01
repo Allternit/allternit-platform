@@ -18,7 +18,7 @@ export const CAPABILITIES: AgentCapabilityManifest = agentCapabilityManifestSche
   lane: "ui_bridge",
   guarantee: "best_effort",
   context: { supported: true, resume: true, parallel: true, maxParallel: 4, isolation: "isolated" },
-  messaging: { send: true, stream: false, steer: false, interrupt: false, cancel: false },
+  messaging: { send: true, stream: true, steer: false, interrupt: false, cancel: true },
   memory: { read: false, write: false, snapshot: false, opaque: true },
   tools: { tools: false, mcp: false, plugins: false, connectors: false },
   tasks: { list: false, schedule: false, cancel: false, background: false },

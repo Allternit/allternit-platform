@@ -163,3 +163,40 @@ describe("claude-subscription Projects", () => {
     expect(await p.contextOpen({ agentId: "claude:project:nope" })).toMatchObject({ ok: false, error: { code: "CONTEXT_NOT_FOUND" } });
   });
 });
+
+describe("claude-subscription live typing and stop", () => {
+  it("forwards text deltas under the reply's own message id", async () => {
+    const f = fakeTasks();
+    let onEvent: ((e: { kind?: string; payload?: unknown }) => void) | null = null;
+    f.tasks.subscribe = (_id, cb) => { onEvent = cb; return () => { onEvent = null; }; };
+    const origGet = f.tasks.get;
+    let polls = 0;
+    f.tasks.get = async (id) => { if (++polls === 1) { onEvent?.({ kind: "reply", payload: { event: { type: "reply.text.delta", delta: "Hel" } } }); onEvent?.({ kind: "reply", payload: { event: { type: "reply.text.delta", delta: "lo" } } }); } return origGet(id); };
+    const p = new ClaudeSubscriptionProvider({ tasks: f.tasks, pollMs: 1, sleep: async () => {} });
+    const c = await p.contextOpen({ agentId: "claude" });
+    if (!c.ok) throw new Error("open");
+    await p.contextMessage({ contextId: c.value.contextId, correlationId: "s1", text: "hi" });
+    const ev = await p.events({ contextId: c.value.contextId });
+    const evs = ev.ok ? ev.value.events.map((e) => e.event) : [];
+    const deltas = evs.filter((e) => e.type === "agent.message.delta").map((e) => e.payload as { messageId: string; chunk: string });
+    const done = evs.find((e) => e.type === "agent.message.completed")!.payload as { messageId: string };
+    expect(deltas.map((d) => d.chunk).join("")).toBe("Hello");
+    expect(new Set(deltas.map((d) => d.messageId))).toEqual(new Set([done.messageId]));
+  });
+
+  it("Stop cancels the running gateway task and the turn ends as stopped", async () => {
+    const f = fakeTasks({ finish: () => ({ status: "running" }) });
+    const cancelled: string[] = [];
+    let stored: Record<string, unknown> = { status: "running" };
+    f.tasks.get = async () => ({ status: 200, body: stored });
+    f.tasks.cancel = async (id) => { cancelled.push(id); stored = { status: "cancelled" }; return { status: 200, body: {} }; };
+    let tick = 0;
+    const p = new ClaudeSubscriptionProvider({ tasks: f.tasks, pollMs: 1, sleep: async () => { if (++tick === 3) await p.contextCancel({ contextId: cid }); } });
+    const c = await p.contextOpen({ agentId: "claude" });
+    if (!c.ok) throw new Error("open");
+    const cid = c.value.contextId;
+    const r = await p.contextMessage({ contextId: cid, correlationId: "x", text: "long job" });
+    expect(cancelled).toEqual(["t1"]);
+    expect(r).toMatchObject({ ok: false, error: { details: { cancelled: true } } });
+  });
+});
