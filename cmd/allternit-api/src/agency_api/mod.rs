@@ -15,6 +15,7 @@
 pub mod bugfix; // WP-B1
 pub mod catalog;
 pub mod compiler;
+pub mod effects; // WP-C3a/C3b effect connectors
 pub mod executor;
 pub mod guard;
 pub mod safety;
@@ -22,9 +23,15 @@ pub mod store;
 /// WP-X1: task types beyond BUG_FIX (graphs, completion contracts, eval sets).
 pub mod task_types;
 pub mod template_exec;
+// ── WP-C3a effect connectors (thread:, template:) ──
+#[path = "effects/thread.rs"]
+pub mod effect_thread;
+#[path = "effects/template.rs"]
+pub mod effect_template;
+// ── end WP-C3a ──
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use crate::auth::AuthUser;
 use crate::AppState;

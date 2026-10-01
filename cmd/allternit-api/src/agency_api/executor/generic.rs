@@ -15,7 +15,9 @@
 //!
 //! Effects need a surface adapter. This server has one for `fs:` (the document
 //! is written in the run's disposable directory and published as an
-//! artifact); other schemes fail closed outside the scripted executor.
+//! artifact), `thread:` and `template:` (WP-C3a, `agency_api/effects/`),
+//! `computer:` and `campaign:` (WP-C3b, `agency_api/effects/`);
+//! other schemes fail closed outside the scripted executor.
 
 use super::*;
 use crate::agency_api::task_types::{self, evidence_of, TaskType};
@@ -35,6 +37,12 @@ struct Script {
     fail: HashSet<String>,
     #[serde(default)]
     withhold: HashSet<String>,
+    /// WP-C3b: the scripted text a node produces (default: a placeholder).
+    #[serde(default)]
+    outputs: HashMap<String, String>,
+    /// WP-C3b: effects go through the real connectors (default: recorded refs).
+    #[serde(default)]
+    live: bool,
 }
 
 fn next(g: &ComputeGraph, from: &str, kind: &str) -> Option<String> {
@@ -64,7 +72,7 @@ impl Exec<'_> {
             if script.fail.contains(node) {
                 return Err(StepErr::Fail(anyhow!("scripted: {node} produced no usable output")));
             }
-            (format!("scripted output of {node}"), crate::gizzi_completion::Usage::default())
+            (script.outputs.get(node).cloned().unwrap_or_else(|| format!("scripted output of {node}")), crate::gizzi_completion::Usage::default())
         } else {
             let _ledger = crate::usage_ledger::enter(crate::usage_ledger::LedgerCtx::surface("agency")
                 .run(&self.run_id, Some(node)).tier(&format!("{:?}", plan.cognitive_role)).tenant(Some(&self.org), None));
@@ -100,10 +108,19 @@ impl Exec<'_> {
     /// One effect node: the declared write set, through the fenced effect path.
     fn apply_effect(&mut self, node: &str, primitive: &str, write_set: &[String], content: &str, script: &Script) -> Step<String> {
         let fail = scripted() && script.fail.contains(node);
-        let sc = scripted();
+        let sc = scripted() && !script.live;
+        // ── WP-C3b: computer:/campaign: connectors (approval first, then fenced dispatch) ──
+        let c3b = if !sc && write_set.iter().any(|r| r.starts_with("computer:") || r.starts_with("campaign:")) {
+            Some(self.c3b_ctx(node, write_set, content)?)
+        } else { None };
+        // ── end WP-C3b ──
         let digest = allternit_commrails::receipts::jcs::sha256_tagged(content.as_bytes());
         let tool = if primitive == "mut.create_file" { "tool.write_file" } else { "tool.execute" };
         let (ws, body) = (write_set.to_vec(), content.to_string());
+        // ── WP-C3a: connector context (the run's owner identity, no new auth) ──
+        let (st, h, org, run_id, nd) = (self.st, self.h, self.org.clone(), self.run_id.clone(), node.to_string());
+        let owner = self.h.block_on(self.s.load_run(&self.run_id))?.map(|r| r.owner).unwrap_or_default();
+        // ── end WP-C3a ──
         self.effect_with(node, tool, "MUTATE", json!({ "write_set": write_set, "content_digest": digest }), false, move |w| {
             if fail { bail!("scripted: effect failed"); }
             let mut refs = vec![];
@@ -118,6 +135,15 @@ impl Exec<'_> {
                         std::fs::write(&p, &body)?;
                         refs.push(format!("fs:{}:{digest}", rel.display()));
                     }
+                    // ── WP-C3a connectors: stable key per (run, node, resource) ──
+                    "thread" => refs.push(super::super::effect_thread::post(&st.db, &owner, &run_id, &nd, target, &format!("{run_id}:{nd}:{r}"), &body)?),
+                    "template" => refs.push(super::super::effect_template::run(h, st, &owner, &org, &run_id, target, &format!("{run_id}:{nd}:{r}"), json!({ "goal": body }))?),
+                    // ── end WP-C3a ──
+                    // ── WP-C3b ──
+                    "computer" | "campaign" if c3b.is_some() => {
+                        refs.push(c3b.as_ref().and_then(|c| c.apply(scheme, target, &body)).unwrap_or_else(|| Err(anyhow!("no connector")))?);
+                    }
+                    // ── end WP-C3b ──
                     _ if sc => refs.push(format!("{scheme}:{target}:{digest}")),
                     _ => bail!("no effect adapter for `{scheme}:` on this server (fail closed)"),
                 }
@@ -186,7 +212,8 @@ impl Exec<'_> {
                 if !authorized || unmet {
                     false // no effect without a policy authorization (N13)
                 } else {
-                    let content = out.get("candidate:draft").or_else(|| out.get("candidate:response")).cloned().unwrap_or_else(|| input.clone());
+                    let content = out.get("candidate:draft").or_else(|| out.get("candidate:response")).or_else(|| out.get("candidate:reply"))
+                        .or_else(|| out.get("candidate:action")).or_else(|| out.get("candidate:step")).cloned().unwrap_or_else(|| input.clone());
                     match self.apply_effect(&cur, &node.primitive_id, &node.write_set, &content, &script) {
                         Ok(r) => {
                             if node.primitive_id == "mut.create_file" { doc = Some((write_set[0].clone(), content)); }
@@ -202,7 +229,9 @@ impl Exec<'_> {
                 let prompt = if node.node_kind == "VERIFY" {
                     format!("Goal: {goal}\n\nResult:\n{input}\n\nDoes the result meet the goal? First line: PASS or FAIL, then one sentence.")
                 } else {
-                    format!("Goal: {goal}\n\nContext:\n{input}\n\nProduce: {}", node.extensions.as_ref().and_then(|e| e.get("x-title")).and_then(Value::as_str).unwrap_or("the step's output"))
+                    let hint = if node.outputs.iter().any(|o| o == "candidate:action") { crate::agency_api::effects::computer::ACTION_HINT }
+                        else if node.outputs.iter().any(|o| o == "candidate:step") { crate::agency_api::effects::campaign::STEP_HINT } else { "" }; // WP-C3b
+                    format!("Goal: {goal}\n\nContext:\n{input}\n\nProduce: {}{hint}", node.extensions.as_ref().and_then(|e| e.get("x-title")).and_then(Value::as_str).unwrap_or("the step's output"))
                 };
                 match self.generate(&plan, &cur, &prompt, &script) {
                     Ok(text) => {

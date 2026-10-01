@@ -57,9 +57,25 @@ const VENDOR_WORDS: &[&str] = &[
 
 fn assert_no_vendor(body: &str) {
     let l = body.to_lowercase();
-    for w in VENDOR_WORDS {
-        assert!(!l.contains(w), "response leaks vendor/model name `{w}`: {body}");
+    // Generated ids (`run_…`, `att_…`, uuids) are random text and can spell a
+    // vendor word by chance ("gpt" turned up once), so they are not scanned.
+    let looks_generated = |t: &str| {
+        let tail = t.rsplit('_').next().unwrap_or(t);
+        (t.contains('_') && tail.len() >= 10 && tail.chars().all(|c| c.is_ascii_alphanumeric()))
+            || (t.len() >= 32 && t.chars().all(|c| c.is_ascii_hexdigit() || c == '-'))
+    };
+    for token in l.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-')).filter(|t| !t.is_empty() && !looks_generated(t)) {
+        for w in VENDOR_WORDS {
+            assert!(!token.contains(w), "response leaks vendor/model name `{w}` in `{token}`: {body}");
+        }
     }
+}
+
+#[test]
+fn vendor_scan_ignores_generated_ids_but_not_names() {
+    assert_no_vendor(r#"{"id":"run_9xGptQz81LmN","receipt":"rcpt_abcgptdef123"}"#);
+    assert!(std::panic::catch_unwind(|| assert_no_vendor(r#"{"model":"gpt-4o"}"#)).is_err());
+    assert!(std::panic::catch_unwind(|| assert_no_vendor(r#"{"note":"via claude"}"#)).is_err());
 }
 
 #[tokio::test]
