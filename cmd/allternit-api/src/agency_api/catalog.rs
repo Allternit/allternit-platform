@@ -73,6 +73,8 @@ pub fn criteria() -> Vec<Value> {
         ("tests_pass", "The workspace test suite passes."),
     ]
     .into_iter()
+    // WP-X1 hook: criteria of the task types beyond BUG_FIX.
+    .chain(super::task_types::criteria().iter().copied())
     .map(|(id, d)| json!({ "id": id, "object": "completion_criterion", "version": 1, "description": d, "evidence": "receipt" }))
     .collect()
 }
@@ -83,6 +85,10 @@ pub fn criterion(id: &str) -> Option<Value> {
 
 /// Completion contracts (mirrors `spec/Contracts/kernel/v1/data/completion_policy.bug_fix.v1.json`).
 pub fn completion_contract(id: &str) -> Option<Value> {
+    if id != "completion.bug_fix" {
+        // WP-X1 hook: contracts of the task types beyond BUG_FIX.
+        return super::task_types::catalog_contract(id);
+    }
     (id == "completion.bug_fix").then(|| {
         let require: Vec<Value> = ["target_tests_pass", "affected_tests_pass", "no_new_regressions", "diff_review_accept", "requirements_satisfied"]
             .iter()

@@ -1,0 +1,416 @@
+{
+ "graph_id": "computer.use.v1",
+ "nodes": [
+  {
+   "node_id": "C00",
+   "primitive_id": "obs.parse_task_request",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S0",
+   "inputs": [
+    "state.task"
+   ],
+   "outputs": [
+    "receipt:task_ir"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Normalize request"
+   }
+  },
+  {
+   "node_id": "C01",
+   "primitive_id": "obs.observe_environment",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S0",
+   "inputs": [
+    "state.computer"
+   ],
+   "outputs": [
+    "receipt:screen_before"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Capture screen (before)"
+   }
+  },
+  {
+   "node_id": "C02",
+   "primitive_id": "plan.propose_plan_branches",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S2",
+   "inputs": [
+    "receipt:screen_before"
+   ],
+   "outputs": [
+    "candidate:action"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "ESCALATE",
+    "target": "C02_deep"
+   },
+   "extensions": {
+    "x-title": "Propose action candidate"
+   },
+   "capability_request": {
+    "schema_id": "allternit.kernel.CapabilityRequestV1",
+    "schema_version": "1.0.0",
+    "capability": "cap.computer.action_plan",
+    "modality": "VISION",
+    "latency_class": "NORMAL",
+    "trust_requirement": "INTERNAL",
+    "budget": {}
+   }
+  },
+  {
+   "node_id": "C03",
+   "primitive_id": "policy.authorize_tool_call",
+   "node_kind": "POLICY",
+   "cognitive_role": "S0",
+   "inputs": [
+    "candidate:action",
+    "state.permissions"
+   ],
+   "outputs": [
+    "receipt:policy_authorization"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Authorize action",
+    "x-evidence": "action_authorized"
+   }
+  },
+  {
+   "node_id": "C04",
+   "primitive_id": "tool.execute",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S0",
+   "inputs": [
+    "candidate:action",
+    "receipt:policy_authorization"
+   ],
+   "outputs": [
+    "receipt:action"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [
+    "action_authorized"
+   ],
+   "on_failure": {
+    "strategy": "ROLLBACK",
+    "target": "C04_undo"
+   },
+   "extensions": {
+    "x-title": "Perform action",
+    "x-bind_write_set": true
+   },
+   "capability_request": {
+    "schema_id": "allternit.kernel.CapabilityRequestV1",
+    "schema_version": "1.0.0",
+    "capability": "cap.computer.act",
+    "modality": "TEXT",
+    "latency_class": "NORMAL",
+    "trust_requirement": "INTERNAL",
+    "budget": {}
+   }
+  },
+  {
+   "node_id": "C05",
+   "primitive_id": "ver.behavior_check",
+   "node_kind": "VERIFY",
+   "cognitive_role": "S0",
+   "inputs": [
+    "receipt:action"
+   ],
+   "outputs": [
+    "receipt:screen_after"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Capture screen (after)",
+    "x-evidence": "screenshot_evidence"
+   }
+  },
+  {
+   "node_id": "C06",
+   "primitive_id": "ver.verify_requirements",
+   "node_kind": "VERIFY",
+   "cognitive_role": "S2",
+   "inputs": [
+    "receipt:screen_after"
+   ],
+   "outputs": [
+    "receipt:review"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Review screen against the goal",
+    "x-evidence": "requirements_satisfied"
+   },
+   "capability_request": {
+    "schema_id": "allternit.kernel.CapabilityRequestV1",
+    "schema_version": "1.0.0",
+    "capability": "cap.computer.review",
+    "modality": "VISION",
+    "latency_class": "NORMAL",
+    "trust_requirement": "INTERNAL",
+    "budget": {}
+   }
+  },
+  {
+   "node_id": "gate",
+   "primitive_id": "ver.check_acceptance_evidence",
+   "node_kind": "VERIFY",
+   "cognitive_role": "S0",
+   "inputs": [
+    "state.evidence"
+   ],
+   "outputs": [
+    "receipt:completion_check"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [
+    "action_authorized",
+    "screenshot_evidence",
+    "requirements_satisfied"
+   ],
+   "on_failure": {
+    "strategy": "FALLBACK",
+    "target": "evidence_incomplete"
+   },
+   "extensions": {
+    "x-title": "Completion contract check (verifier-owned)"
+   }
+  },
+  {
+   "node_id": "persist",
+   "primitive_id": "state.persist_run_receipt",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S0",
+   "inputs": [
+    "receipt:completion_check"
+   ],
+   "outputs": [
+    "receipt:run"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [
+    "action_authorized",
+    "screenshot_evidence",
+    "requirements_satisfied"
+   ],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Persist run receipt"
+   }
+  },
+  {
+   "node_id": "evidence_incomplete",
+   "primitive_id": "ctl.request_evidence",
+   "node_kind": "CONTROL",
+   "cognitive_role": "S0",
+   "inputs": [
+    "state.evidence"
+   ],
+   "outputs": [
+    "receipt:evidence_request"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Request missing evidence"
+   }
+  },
+  {
+   "node_id": "C02_deep",
+   "primitive_id": "plan.propose_plan_branches",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S3",
+   "inputs": [
+    "receipt:screen_before"
+   ],
+   "outputs": [
+    "candidate:action"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Propose action candidate (escalated)"
+   },
+   "capability_request": {
+    "schema_id": "allternit.kernel.CapabilityRequestV1",
+    "schema_version": "1.0.0",
+    "capability": "cap.computer.action_plan",
+    "modality": "VISION",
+    "latency_class": "NORMAL",
+    "trust_requirement": "INTERNAL",
+    "budget": {}
+   }
+  },
+  {
+   "node_id": "C04_undo",
+   "primitive_id": "ctl.rollback_mutation",
+   "node_kind": "CONTROL",
+   "cognitive_role": "S0",
+   "inputs": [
+    "receipt:action"
+   ],
+   "outputs": [
+    "receipt:rollback"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Undo action"
+   }
+  }
+ ],
+ "edges": [
+  {
+   "from": "C00",
+   "to": "C01",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "C01",
+   "to": "C02",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "C02",
+   "to": "C03",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "C03",
+   "to": "C04",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "C04",
+   "to": "C05",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "C05",
+   "to": "C06",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "C06",
+   "to": "gate",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "gate",
+   "to": "persist",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "gate",
+   "to": "evidence_incomplete",
+   "edge_kind": "FAILURE"
+  },
+  {
+   "from": "C02",
+   "to": "C02_deep",
+   "edge_kind": "FAILURE"
+  },
+  {
+   "from": "C02_deep",
+   "to": "C03",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "C04",
+   "to": "C04_undo",
+   "edge_kind": "FAILURE"
+  }
+ ],
+ "entry_nodes": [
+  "C00"
+ ],
+ "completion_nodes": [
+  "persist"
+ ]
+}

@@ -1,0 +1,455 @@
+{
+ "graph_id": "campaign.cycle.v1",
+ "nodes": [
+  {
+   "node_id": "K00",
+   "primitive_id": "obs.parse_task_request",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S0",
+   "inputs": [
+    "state.task"
+   ],
+   "outputs": [
+    "receipt:task_ir"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Normalize request"
+   }
+  },
+  {
+   "node_id": "K01",
+   "primitive_id": "ctl.wait_for_dependency",
+   "node_kind": "WAIT",
+   "cognitive_role": "S0",
+   "inputs": [
+    "state.campaign"
+   ],
+   "outputs": [
+    "receipt:wake"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Wake trigger",
+    "x-evidence": "cycle_triggered"
+   },
+   "wait_gate": {
+    "kind": "wake",
+    "auto_wake": false,
+    "timeout_policy": "park"
+   }
+  },
+  {
+   "node_id": "K02",
+   "primitive_id": "ctx.compile_model_context",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S0",
+   "inputs": [
+    "receipt:wake"
+   ],
+   "outputs": [
+    "receipt:campaign_state"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Load campaign state"
+   }
+  },
+  {
+   "node_id": "K03",
+   "primitive_id": "plan.propose_plan_branches",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S2",
+   "inputs": [
+    "receipt:campaign_state"
+   ],
+   "outputs": [
+    "candidate:step"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "ESCALATE",
+    "target": "K03_deep"
+   },
+   "extensions": {
+    "x-title": "Propose next campaign step"
+   },
+   "capability_request": {
+    "schema_id": "allternit.kernel.CapabilityRequestV1",
+    "schema_version": "1.0.0",
+    "capability": "cap.campaign.next_step",
+    "modality": "TEXT",
+    "latency_class": "NORMAL",
+    "trust_requirement": "INTERNAL",
+    "budget": {}
+   }
+  },
+  {
+   "node_id": "K04",
+   "primitive_id": "policy.authorize_tool_call",
+   "node_kind": "POLICY",
+   "cognitive_role": "S0",
+   "inputs": [
+    "candidate:step",
+    "state.permissions"
+   ],
+   "outputs": [
+    "receipt:policy_authorization"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Authorize step",
+    "x-evidence": "step_authorized"
+   }
+  },
+  {
+   "node_id": "K05",
+   "primitive_id": "tool.execute",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S0",
+   "inputs": [
+    "candidate:step",
+    "receipt:policy_authorization"
+   ],
+   "outputs": [
+    "receipt:step"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [
+    "step_authorized"
+   ],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Run step",
+    "x-bind_write_set": true
+   },
+   "capability_request": {
+    "schema_id": "allternit.kernel.CapabilityRequestV1",
+    "schema_version": "1.0.0",
+    "capability": "cap.campaign.step",
+    "modality": "TEXT",
+    "latency_class": "NORMAL",
+    "trust_requirement": "INTERNAL",
+    "budget": {}
+   }
+  },
+  {
+   "node_id": "K06",
+   "primitive_id": "ver.behavior_check",
+   "node_kind": "VERIFY",
+   "cognitive_role": "S0",
+   "inputs": [
+    "receipt:step"
+   ],
+   "outputs": [
+    "receipt:checks"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Step checks",
+    "x-evidence": "checks_pass"
+   }
+  },
+  {
+   "node_id": "K07",
+   "primitive_id": "ver.verify_requirements",
+   "node_kind": "VERIFY",
+   "cognitive_role": "S2",
+   "inputs": [
+    "receipt:checks"
+   ],
+   "outputs": [
+    "receipt:review"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Review against the campaign goal",
+    "x-evidence": "requirements_satisfied"
+   },
+   "capability_request": {
+    "schema_id": "allternit.kernel.CapabilityRequestV1",
+    "schema_version": "1.0.0",
+    "capability": "cap.campaign.review",
+    "modality": "TEXT",
+    "latency_class": "NORMAL",
+    "trust_requirement": "INTERNAL",
+    "budget": {}
+   }
+  },
+  {
+   "node_id": "K08",
+   "primitive_id": "ctl.checkpoint",
+   "node_kind": "CONTROL",
+   "cognitive_role": "S0",
+   "inputs": [
+    "receipt:review"
+   ],
+   "outputs": [
+    "receipt:checkpoint"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Checkpoint campaign state",
+    "x-evidence": "checkpoint_persisted"
+   }
+  },
+  {
+   "node_id": "gate",
+   "primitive_id": "ver.check_acceptance_evidence",
+   "node_kind": "VERIFY",
+   "cognitive_role": "S0",
+   "inputs": [
+    "state.evidence"
+   ],
+   "outputs": [
+    "receipt:completion_check"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [
+    "cycle_triggered",
+    "step_authorized",
+    "checks_pass",
+    "requirements_satisfied",
+    "checkpoint_persisted"
+   ],
+   "on_failure": {
+    "strategy": "FALLBACK",
+    "target": "evidence_incomplete"
+   },
+   "extensions": {
+    "x-title": "Completion contract check (verifier-owned)"
+   }
+  },
+  {
+   "node_id": "persist",
+   "primitive_id": "state.persist_run_receipt",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S0",
+   "inputs": [
+    "receipt:completion_check"
+   ],
+   "outputs": [
+    "receipt:run"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [
+    "cycle_triggered",
+    "step_authorized",
+    "checks_pass",
+    "requirements_satisfied",
+    "checkpoint_persisted"
+   ],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Persist run receipt"
+   }
+  },
+  {
+   "node_id": "evidence_incomplete",
+   "primitive_id": "ctl.request_evidence",
+   "node_kind": "CONTROL",
+   "cognitive_role": "S0",
+   "inputs": [
+    "state.evidence"
+   ],
+   "outputs": [
+    "receipt:evidence_request"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Request missing evidence"
+   }
+  },
+  {
+   "node_id": "K03_deep",
+   "primitive_id": "plan.propose_plan_branches",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S3",
+   "inputs": [
+    "receipt:campaign_state"
+   ],
+   "outputs": [
+    "candidate:step"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Propose next campaign step (escalated)"
+   },
+   "capability_request": {
+    "schema_id": "allternit.kernel.CapabilityRequestV1",
+    "schema_version": "1.0.0",
+    "capability": "cap.campaign.next_step",
+    "modality": "TEXT",
+    "latency_class": "NORMAL",
+    "trust_requirement": "INTERNAL",
+    "budget": {}
+   }
+  }
+ ],
+ "edges": [
+  {
+   "from": "K00",
+   "to": "K01",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "K01",
+   "to": "K02",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "K02",
+   "to": "K03",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "K03",
+   "to": "K04",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "K04",
+   "to": "K05",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "K05",
+   "to": "K06",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "K06",
+   "to": "K07",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "K07",
+   "to": "K08",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "K08",
+   "to": "gate",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "gate",
+   "to": "persist",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "gate",
+   "to": "evidence_incomplete",
+   "edge_kind": "FAILURE"
+  },
+  {
+   "from": "K03",
+   "to": "K03_deep",
+   "edge_kind": "FAILURE"
+  },
+  {
+   "from": "K03_deep",
+   "to": "K04",
+   "edge_kind": "NORMAL"
+  }
+ ],
+ "entry_nodes": [
+  "K00"
+ ],
+ "completion_nodes": [
+  "persist"
+ ]
+}

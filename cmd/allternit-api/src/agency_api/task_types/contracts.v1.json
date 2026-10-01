@@ -1,0 +1,168 @@
+[
+ {
+  "schema_id": "allternit.kernel.CompletionPolicyV1",
+  "schema_version": "1.0.0",
+  "policy_id": "completion.general_task",
+  "policy_version": 1,
+  "task_type": "GENERAL_TASK",
+  "graph_id": "general.task.v1",
+  "require": [
+   {
+    "criterion_id": "response_produced",
+    "criterion_version": 1,
+    "blocking": true
+   },
+   {
+    "criterion_id": "requirements_satisfied",
+    "criterion_version": 1,
+    "blocking": true
+   },
+   {
+    "criterion_id": "user_acceptance",
+    "criterion_version": 1,
+    "blocking": true
+   }
+  ],
+  "allow_partial": false
+ },
+ {
+  "schema_id": "allternit.kernel.CompletionPolicyV1",
+  "schema_version": "1.0.0",
+  "policy_id": "completion.thread_work",
+  "policy_version": 1,
+  "task_type": "THREAD_WORK",
+  "graph_id": "bots.thread_work.v1",
+  "require": [
+   {
+    "criterion_id": "requirements_satisfied",
+    "criterion_version": 1,
+    "blocking": true
+   },
+   {
+    "criterion_id": "post_authorized",
+    "criterion_version": 1,
+    "blocking": true
+   },
+   {
+    "criterion_id": "message_delivered",
+    "criterion_version": 1,
+    "blocking": true
+   }
+  ],
+  "allow_partial": false
+ },
+ {
+  "schema_id": "allternit.kernel.CompletionPolicyV1",
+  "schema_version": "1.0.0",
+  "policy_id": "completion.computer_use",
+  "policy_version": 1,
+  "task_type": "COMPUTER_USE",
+  "graph_id": "computer.use.v1",
+  "require": [
+   {
+    "criterion_id": "action_authorized",
+    "criterion_version": 1,
+    "blocking": true
+   },
+   {
+    "criterion_id": "screenshot_evidence",
+    "criterion_version": 1,
+    "blocking": true
+   },
+   {
+    "criterion_id": "requirements_satisfied",
+    "criterion_version": 1,
+    "blocking": true
+   }
+  ],
+  "allow_partial": false
+ },
+ {
+  "schema_id": "allternit.kernel.CompletionPolicyV1",
+  "schema_version": "1.0.0",
+  "policy_id": "completion.research_doc",
+  "policy_version": 1,
+  "task_type": "RESEARCH_DOC",
+  "graph_id": "research.doc.v1",
+  "require": [
+   {
+    "criterion_id": "citations_resolve",
+    "criterion_version": 1,
+    "blocking": true
+   },
+   {
+    "criterion_id": "document_exists",
+    "criterion_version": 1,
+    "blocking": true
+   },
+   {
+    "criterion_id": "requirements_satisfied",
+    "criterion_version": 1,
+    "blocking": true
+   }
+  ],
+  "allow_partial": false
+ },
+ {
+  "schema_id": "allternit.kernel.CompletionPolicyV1",
+  "schema_version": "1.0.0",
+  "policy_id": "completion.template",
+  "policy_version": 1,
+  "task_type": "TEMPLATE",
+  "graph_id": "template.run.v1",
+  "require": [
+   {
+    "criterion_id": "template_steps_complete",
+    "criterion_version": 1,
+    "blocking": true
+   },
+   {
+    "criterion_id": "checks_pass",
+    "criterion_version": 1,
+    "blocking": true
+   },
+   {
+    "criterion_id": "requirements_satisfied",
+    "criterion_version": 1,
+    "blocking": true
+   }
+  ],
+  "allow_partial": false
+ },
+ {
+  "schema_id": "allternit.kernel.CompletionPolicyV1",
+  "schema_version": "1.0.0",
+  "policy_id": "completion.campaign",
+  "policy_version": 1,
+  "task_type": "CAMPAIGN",
+  "graph_id": "campaign.cycle.v1",
+  "require": [
+   {
+    "criterion_id": "cycle_triggered",
+    "criterion_version": 1,
+    "blocking": true
+   },
+   {
+    "criterion_id": "step_authorized",
+    "criterion_version": 1,
+    "blocking": true
+   },
+   {
+    "criterion_id": "checks_pass",
+    "criterion_version": 1,
+    "blocking": true
+   },
+   {
+    "criterion_id": "requirements_satisfied",
+    "criterion_version": 1,
+    "blocking": true
+   },
+   {
+    "criterion_id": "checkpoint_persisted",
+    "criterion_version": 1,
+    "blocking": true
+   }
+  ],
+  "allow_partial": false
+ }
+]

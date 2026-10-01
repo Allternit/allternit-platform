@@ -1,0 +1,76 @@
+{
+ "task_type": "GENERAL_TASK",
+ "version": 1,
+ "cases": [
+  {
+   "id": "accepted",
+   "goal": "Summarize the attached meeting notes into five bullets",
+   "script": {
+    "wait": {
+     "G06": "open"
+    }
+   },
+   "expect": {
+    "status": "completed"
+   }
+  },
+  {
+   "id": "awaiting_user",
+   "goal": "Draft a reply to the vendor",
+   "script": {},
+   "expect": {
+    "status": "waiting",
+    "stopped_at": "G06"
+   }
+  },
+  {
+   "id": "user_rejects",
+   "goal": "Rename the project in the doc",
+   "script": {
+    "wait": {
+     "G06": "closed"
+    }
+   },
+   "expect": {
+    "status": "failed",
+    "stopped_at": "G06"
+   }
+  },
+  {
+   "id": "escalates_draft",
+   "goal": "Plan the week",
+   "script": {
+    "fail": [
+     "G03"
+    ],
+    "wait": {
+     "G06": "open"
+    }
+   },
+   "expect": {
+    "status": "completed",
+    "visited": [
+     "G03_deep"
+    ]
+   }
+  },
+  {
+   "id": "review_withheld",
+   "goal": "Explain the invoice",
+   "script": {
+    "withhold": [
+     "requirements_satisfied"
+    ],
+    "wait": {
+     "G06": "open"
+    }
+   },
+   "expect": {
+    "status": "needs_evidence",
+    "missing": [
+     "requirements_satisfied"
+    ]
+   }
+  }
+ ]
+}

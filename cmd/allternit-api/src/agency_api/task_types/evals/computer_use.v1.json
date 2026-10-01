@@ -1,0 +1,69 @@
+{
+ "task_type": "COMPUTER_USE",
+ "version": 1,
+ "cases": [
+  {
+   "id": "clicks_through",
+   "goal": "Open settings and turn on dark mode",
+   "params": {
+    "writable_resources": [
+     "computer:local"
+    ]
+   },
+   "script": {},
+   "expect": {
+    "status": "completed"
+   }
+  },
+  {
+   "id": "no_computer",
+   "goal": "Open settings",
+   "params": {},
+   "script": {},
+   "expect": {
+    "status": "refused"
+   }
+  },
+  {
+   "id": "action_fails_undone",
+   "goal": "Close the dialog",
+   "params": {
+    "writable_resources": [
+     "computer:local"
+    ]
+   },
+   "script": {
+    "fail": [
+     "C04"
+    ]
+   },
+   "expect": {
+    "status": "failed",
+    "visited": [
+     "C04_undo"
+    ],
+    "stopped_at": "C04_undo"
+   }
+  },
+  {
+   "id": "no_screenshot",
+   "goal": "Open settings",
+   "params": {
+    "writable_resources": [
+     "computer:local"
+    ]
+   },
+   "script": {
+    "withhold": [
+     "screenshot_evidence"
+    ]
+   },
+   "expect": {
+    "status": "needs_evidence",
+    "missing": [
+     "screenshot_evidence"
+    ]
+   }
+  }
+ ]
+}

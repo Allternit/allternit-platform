@@ -91,7 +91,11 @@ impl Default for TemplateRegistry {
 impl TemplateRegistry {
     pub fn with_bug_fix(t: Arc<dyn RunTemplate>) -> Self { Self { bug_fix: t } }
     pub fn get(&self, id: &str) -> Option<Arc<dyn RunTemplate>> {
-        (id == "BUG_FIX").then(|| self.bug_fix.clone())
+        if id == "BUG_FIX" {
+            return Some(self.bug_fix.clone());
+        }
+        // WP-X1 hook: kernel task types beyond BUG_FIX.
+        super::task_types::template(id)
     }
 }
 

@@ -1,0 +1,76 @@
+{
+ "task_type": "CAMPAIGN",
+ "version": 1,
+ "cases": [
+  {
+   "id": "triggered_cycle",
+   "goal": "Grow the newsletter list",
+   "params": {
+    "writable_resources": [
+     "campaign:cmp_1"
+    ]
+   },
+   "script": {
+    "wait": {
+     "K01": "open"
+    }
+   },
+   "expect": {
+    "status": "completed"
+   }
+  },
+  {
+   "id": "no_self_wake",
+   "goal": "Grow the newsletter list",
+   "params": {
+    "writable_resources": [
+     "campaign:cmp_1"
+    ]
+   },
+   "script": {},
+   "expect": {
+    "status": "waiting",
+    "stopped_at": "K01",
+    "not_visited": [
+     "K05"
+    ]
+   }
+  },
+  {
+   "id": "no_checkpoint",
+   "goal": "Grow the list",
+   "params": {
+    "writable_resources": [
+     "campaign:cmp_1"
+    ]
+   },
+   "script": {
+    "wait": {
+     "K01": "open"
+    },
+    "withhold": [
+     "checkpoint_persisted"
+    ]
+   },
+   "expect": {
+    "status": "needs_evidence",
+    "missing": [
+     "checkpoint_persisted"
+    ]
+   }
+  },
+  {
+   "id": "no_campaign",
+   "goal": "Grow the list",
+   "params": {},
+   "script": {
+    "wait": {
+     "K01": "open"
+    }
+   },
+   "expect": {
+    "status": "refused"
+   }
+  }
+ ]
+}
