@@ -46,6 +46,8 @@ export class ChatGPTDotsProvider extends BaseAaiProvider {
   private n = 0;
   private halted: AAIError | undefined;
   private cooldownUntil = 0;
+  /** The account's plan has no dots: answer from memory until then, without reopening ChatGPT. */
+  private planGate: { until: number; detail: string } | undefined;
   private everLoggedIn = false;
   private approvalsStore = new Map<string, Stored>();
   private pacer: ReturnType<typeof createPacer>;
@@ -109,8 +111,13 @@ export class ChatGPTDotsProvider extends BaseAaiProvider {
   }
 
   // ---------- page gate ----------
+  private planBlocked(detail: string): AaiResult<never> {
+    return fail("LANE_BLOCKED", "This ChatGPT account doesn't include dots (ChatGPT says: \"" + detail + "\"). Dots need a plan that has them; Allternit will not change your plan.", { details: { banner: detail } });
+  }
+
   private async check(allowRateLimited = false): Promise<AaiResult<PageState>> {
     if (this.halted) return { ok: false, error: this.halted };
+    if (this.planGate && this.planGate.until > this.o.now()) return this.planBlocked(this.planGate.detail);
     let html: string;
     try {
       await this.o.driver.connect();
@@ -128,7 +135,11 @@ export class ChatGPTDotsProvider extends BaseAaiProvider {
       case "ok": this.everLoggedIn = true; return ok(st);
       case "unreachable": return fail("VENDOR_UNAVAILABLE", `ChatGPT is not ready (${st.detail}).`);
       case "plan_required":
-        return fail("LANE_BLOCKED", "This ChatGPT account doesn't include dots (ChatGPT says: \"" + st.detail + "\"). Dots need a plan that has them; Allternit will not change your plan.", { details: { banner: st.detail } });
+        // Don't keep the ChatGPT login's browser open for a plan without dots: it locks the profile, and the
+        // ChatGPT chat worker (same login) then can't run at all (live 2026-10-01: profile_locked).
+        this.planGate = { until: this.o.now() + 60 * 60_000, detail: st.detail };
+        await this.o.driver.dispose().catch(() => undefined);
+        return this.planBlocked(st.detail);
       case "logged_out":
         return fail(this.everLoggedIn ? "AUTH_REVOKED" : "AUTH_REQUIRED", "ChatGPT is signed out. Sign in in the ChatGPT browser window yourself, then reconnect.");
       case "rate_limited": {

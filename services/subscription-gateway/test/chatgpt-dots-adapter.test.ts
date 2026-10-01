@@ -270,3 +270,25 @@ describe("dots use the ChatGPT subscription account (one login system)", () => {
     expect(providers).toEqual([]); // lazy: nothing resolved until a dot is opened
   });
 });
+
+describe("plan without dots releases the ChatGPT login", () => {
+  it("closes the browser on the plan gate and answers from memory for an hour without reopening it", async () => {
+    const { ChatGPTDotsProvider } = await import("../adapters/chatgpt-dots/provider.js");
+    const { renderPage } = await import("../adapters/chatgpt-dots/fixtures/markup.js");
+    let connects = 0, disposes = 0, now = 1_000_000;
+    const driver = {
+      connect: async () => { connects += 1; }, html: async () => renderPage({ planRequired: true }), dispose: async () => { disposes += 1; },
+      isAppRunning: async () => true, showDotList: async () => true, openDot: async () => true, showTasks: async () => true, typeText: async () => true, clickButton: async () => true,
+    } as never;
+    const p = new ChatGPTDotsProvider({ driver, now: () => now } as never);
+    const a = await p.contextOpen({ agentId: "chatgpt-dots" });
+    expect(a).toMatchObject({ ok: false, error: { code: "LANE_BLOCKED" } });
+    expect(disposes).toBe(1);
+    const b = await p.contextOpen({ agentId: "chatgpt-dots" });
+    expect(b).toMatchObject({ ok: false, error: { code: "LANE_BLOCKED" } });
+    expect(connects).toBe(1); // no relaunch inside the hour
+    now += 61 * 60_000;
+    await p.contextOpen({ agentId: "chatgpt-dots" });
+    expect(connects).toBe(2);
+  });
+});
