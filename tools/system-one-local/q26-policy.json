@@ -1,5 +1,31 @@
 {
-  "bank.route.v0": { "incumbent": "none" },
-  "bank.judge_first_pass": { "incumbent": "none" },
-  "bank.lesson_worthiness": { "incumbent": "none" }
+  "bank.route.v0": {
+    "incumbent": "none"
+  },
+  "bank.judge_first_pass": {
+    "incumbent": "none"
+  },
+  "bank.lesson_worthiness": {
+    "incumbent": "none"
+  },
+  "memory.route": {
+    "incumbent": "none",
+    "why": "the incumbent recall always searches the fixed facts+entities+observations union; it never picks one of the ROUTE options, so there is no comparable answer (its set is kept in memory_s1_decisions.incumbent_label)"
+  },
+  "computer_use.target": {
+    "questions": {
+      "*_target": {
+        "incumbent": "partial",
+        "why": "the planner's executed target (matched to an element index) is sent for the executed operation's <op>_target question only; the speculative targets of operations it did not choose have no incumbent answer"
+      }
+    }
+  },
+  "computer_use.stuck": {
+    "questions": {
+      "stuck": {
+        "incumbent": "none",
+        "why": "the planner never answers 'stuck'; the loop's only stall check ends the run before the shadow head runs"
+      }
+    }
+  }
 }

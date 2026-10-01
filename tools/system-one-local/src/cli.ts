@@ -96,6 +96,18 @@ async function main() {
       console.log(JSON.stringify({ out: f.out, ...stats }, null, 2));
       return;
     }
+    case "hook-outcome": {
+      // Harness outcome hook (PermissionRequest / PostToolUse / PostToolUseFailure / Stop),
+      // same as hooks/s1-outcome but runnable from the compiled binary. Never prints a
+      // decision, always exits 0. CommRails registers it in its session settings by default.
+      try {
+        const { handleOutcomeHook } = await import("./hook/guard.ts");
+        await handleOutcomeHook(JSON.parse(readFileSync(0, "utf8")));
+      } catch {
+        // outcome labels are best-effort
+      }
+      return;
+    }
     case "outcome": {
       const dir = typeof f["shadow-dir"] === "string" ? f["shadow-dir"] : (process.env.ALLTERNIT_S1_SHADOW_DIR ?? join(BASE_DIR, "shadow"));
       if (typeof f.truth !== "string" || typeof f.source !== "string") throw new Error("usage: system-one outcome --truth <candidate_id> --source <verifier:x> (--decision-id id | --subject-ref ref [--question-id q])");

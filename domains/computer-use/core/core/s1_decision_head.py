@@ -67,6 +67,8 @@ class S1DecisionHead:
         self._step = 0
         # (step, question) -> (decision_id, options)
         self._ids: Dict[Tuple[int, str], Tuple[str, Tuple[str, ...]]] = {}
+        # question -> the planner's answer this step (Q26 x-incumbent)
+        self._incumbent: Dict[str, str] = {}
 
     # Duck-typed planning-loop hooks -------------------------------------
     def begin_run(self, task_id: str) -> None:
@@ -76,6 +78,14 @@ class S1DecisionHead:
 
     def begin_step(self, step_num: int) -> None:
         self._step = int(step_num)
+        self._incumbent = {}
+
+    def set_incumbent(self, answers: Dict[str, str]) -> None:
+        """The live planner's answers for this step (Q26 ``x-incumbent``).
+
+        Call after ``begin_step``. Questions the planner doesn't answer in the
+        head's terms (element-index targets, ``stuck``) are simply absent."""
+        self._incumbent = {k: str(v) for k, v in answers.items() if v is not None}
 
     def decision_id(self, question: str, step: Optional[int] = None) -> Optional[str]:
         hit = self._ids.get((self._step if step is None else step, question))
@@ -103,6 +113,7 @@ class S1DecisionHead:
                 primitive_id=primitive_for(q.name),
                 subject_ref=f"cu:{self._run_id}:{self._step}:{q.name}",
                 run_id=self._run_id,
+                incumbent=self._incumbent.get(q.name),
             )
             try:
                 result = self.client.decide(req, state_text)

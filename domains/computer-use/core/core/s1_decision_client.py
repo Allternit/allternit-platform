@@ -74,13 +74,19 @@ def choice_request(
     primitive_id: Optional[str] = None,
     subject_ref: Optional[str] = None,
     run_id: Optional[str] = None,
+    incumbent: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """A CHOICE ``DecisionRequestV1`` over a closed option set."""
+    """A CHOICE ``DecisionRequestV1`` over a closed option set.
+
+    ``incumbent`` is the live decider's answer (Q26 ``x-incumbent``); it is
+    sent only when it is one of ``options``."""
     ext: Dict[str, Any] = {"x-motif": motif}
     if primitive_id:
         ext["x-primitive_id"] = primitive_id
     if subject_ref:
         ext["x-subject_ref"] = subject_ref
+    if incumbent is not None and incumbent in options:
+        ext["x-incumbent"] = incumbent
     return {
         "envelope": envelope(producer, run_id),
         "operation": "CHOICE",

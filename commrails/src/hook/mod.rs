@@ -884,41 +884,109 @@ pub fn hook_command(flavor: HookFlavor, target: HookTarget<'_>) -> String {
 }
 
 /// Session-scoped Claude Code settings (`claude --settings <file>`).
+///
+/// Also registers the S1 outcome-label hook (`system-one hook-outcome`) for
+/// PermissionRequest / PostToolUse / PostToolUseFailure / Stop when a
+/// `system-one` binary is found, so the GATE decisions this session's tool
+/// calls produce get their labels. On by default; `ALLTERNIT_S1_OUTCOME_HOOKS=0`
+/// turns it off. Only this session file is written, never a user's settings.
 pub fn claude_settings(target: HookTarget<'_>) -> Value {
+    claude_settings_with_outcome(target, s1_outcome_hook_command().as_deref())
+}
+
+/// [`claude_settings`] with an explicit outcome hook command (`None` = no outcome hooks).
+pub fn claude_settings_with_outcome(target: HookTarget<'_>, outcome_cmd: Option<&str>) -> Value {
+    let mut hooks = json!({
+        "PreToolUse": [{
+            "matcher": "*",
+            "hooks": [{
+                "type": "command",
+                "command": claude_hook_command(target),
+                "timeout": 30,
+            }]
+        }]
+    });
+    add_outcome_hooks(&mut hooks, outcome_cmd);
     json!({
         "permissions": {
             "defaultMode": "bypassPermissions",
             "allow": CLAUDE_ALLOWED_TOOLS,
         },
-        "hooks": {
-            "PreToolUse": [{
-                "matcher": "*",
-                "hooks": [{
-                    "type": "command",
-                    "command": claude_hook_command(target),
-                    "timeout": 30,
-                }]
-            }]
-        }
+        "hooks": hooks,
     })
+}
+
+/// The S1 outcome-label hook command, or `None` when opted out
+/// (`ALLTERNIT_S1_OUTCOME_HOOKS=0|false|off`) or no `system-one` binary is found.
+pub fn s1_outcome_hook_command() -> Option<String> {
+    let opt = std::env::var("ALLTERNIT_S1_OUTCOME_HOOKS").unwrap_or_default();
+    if matches!(opt.trim().to_ascii_lowercase().as_str(), "0" | "false" | "off" | "no") {
+        return None;
+    }
+    find_system_one_bin().map(|b| format!("{} hook-outcome", sh_quote(&b.to_string_lossy())))
+}
+
+/// Locate the `system-one` binary: `$ALLTERNIT_SYSTEM_ONE_BIN`, then a sibling
+/// of the CommRails binary or the current executable (Desktop ships both in
+/// `bin/`), then `PATH`.
+pub fn find_system_one_bin() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("ALLTERNIT_SYSTEM_ONE_BIN") {
+        let p = PathBuf::from(p);
+        return p.is_file().then_some(p);
+    }
+    let mut dirs: Vec<PathBuf> = vec![];
+    if let Some(dir) = find_commrails_bin().and_then(|b| b.parent().map(Path::to_path_buf)) {
+        dirs.push(dir);
+    }
+    if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)) {
+        dirs.push(dir);
+    }
+    if let Some(path) = std::env::var_os("PATH") {
+        dirs.extend(std::env::split_paths(&path));
+    }
+    dirs.into_iter().map(|d| d.join("system-one")).find(|c| c.is_file())
 }
 
 /// Session-scoped qwen settings (`QWEN_CODE_SYSTEM_SETTINGS_PATH=<file>`).
 /// Same PreToolUse schema and `permissionDecision` output as Claude Code;
-/// the user's `~/.qwen/settings.json` is never touched.
+/// the user's `~/.qwen/settings.json` is never touched. Registers the S1
+/// outcome-label hooks the same way as [`claude_settings`] (default on,
+/// `ALLTERNIT_S1_OUTCOME_HOOKS=0` opts out).
 pub fn qwen_settings(target: HookTarget<'_>) -> Value {
-    json!({
-        "hooks": {
-            "PreToolUse": [{
-                "matcher": "*",
-                "hooks": [{
-                    "type": "command",
-                    "command": hook_command(HookFlavor::Qwen, target),
-                    "timeout": 30,
-                }]
+    qwen_settings_with_outcome(target, s1_outcome_hook_command().as_deref())
+}
+
+/// [`qwen_settings`] with an explicit outcome hook command (`None` = no outcome hooks).
+pub fn qwen_settings_with_outcome(target: HookTarget<'_>, outcome_cmd: Option<&str>) -> Value {
+    let mut hooks = json!({
+        "PreToolUse": [{
+            "matcher": "*",
+            "hooks": [{
+                "type": "command",
+                "command": hook_command(HookFlavor::Qwen, target),
+                "timeout": 30,
             }]
+        }]
+    });
+    add_outcome_hooks(&mut hooks, outcome_cmd);
+    json!({ "hooks": hooks })
+}
+
+/// The S1 outcome-label hook for PermissionRequest / PostToolUse /
+/// PostToolUseFailure (all tools) and Stop. It never prints a decision.
+fn add_outcome_hooks(hooks: &mut Value, outcome_cmd: Option<&str>) {
+    let Some(cmd) = outcome_cmd else { return };
+    let entry = |matcher: bool| {
+        let mut e = json!({ "hooks": [{ "type": "command", "command": cmd, "timeout": 10 }] });
+        if matcher {
+            e["matcher"] = json!("*");
         }
-    })
+        json!([e])
+    };
+    for ev in ["PermissionRequest", "PostToolUse", "PostToolUseFailure"] {
+        hooks[ev] = entry(true);
+    }
+    hooks["Stop"] = entry(false);
 }
 
 /// TOML basic string.
