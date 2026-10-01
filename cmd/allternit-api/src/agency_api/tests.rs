@@ -910,6 +910,70 @@ async fn agency_safety_unknown_effect_approval_resolves_journal() {
         "an effect the approver says happened is never re-applied");
 }
 
+/// WP-B2: generated reproduction scripts (one reproduces, one is broken and
+/// dropped) rank the candidates after the suite: a suite-passing special-case
+/// fix loses to the real fixes, and the scripted judge breaks the remaining
+/// tie (overriding the smallest-diff/first-generated default). The script
+/// never enters the patch; evidence is labelled model-generated.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn agency_executor_b2_repro_evidence_and_judge_pick_the_winner() {
+    let _env = E2E_ENV.lock().await;
+    if std::process::Command::new("npm").arg("--version").output().is_err() {
+        eprintln!("npm not available; skipping");
+        return;
+    }
+    let repo = tempfile::tempdir().unwrap();
+    let runs = tempfile::tempdir().unwrap();
+    let w = |p: &str, c: &str| { let f = repo.path().join(p); std::fs::create_dir_all(f.parent().unwrap()).unwrap(); std::fs::write(f, c).unwrap(); };
+    w("package.json", r#"{"name":"fx","private":true,"scripts":{"test":"node test.js"}}"#);
+    w("math.js", "exports.add = (a, b) => a - b;\n");
+    w("test.js", "const { add } = require('./math');\nif (add(2, 3) !== 5 || add(-2, 3) !== 1) { console.error('FAIL'); process.exit(1); }\n");
+    let edit = |r: &str| json!({ "edits": [{ "path": "math.js", "search": "exports.add = (a, b) => a - b;\n", "replace": r }] });
+    w(".allternit/scripted-patches.json", &json!([[
+        edit("exports.add = (a, b) => a + b;\n"),
+        edit("exports.add = (a, b) => b + a;\n"),
+        edit("exports.add = (a, b) => a === 10 ? 0 : a + b;\n")
+    ]]).to_string());
+    w(".allternit/scripted-repros.json", &json!([
+        "const { add } = require(process.cwd() + '/math.js');\nif (add(10, 20) !== 30) { console.error('add(10, 20) returned ' + add(10, 20)); process.exit(1); }\n",
+        "this is not js(\n"
+    ]).to_string());
+    w(".allternit/scripted-judge.json", "[2]");
+    let git = |args: &[&str]| assert!(std::process::Command::new("git").args(args).current_dir(repo.path())
+        .env("GIT_CONFIG_GLOBAL", "/dev/null").status().unwrap().success());
+    git(&["init", "-q", "-b", "main"]);
+    git(&["add", "."]);
+    git(&["-c", "user.name=f", "-c", "user.email=f@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "seeded bug"]);
+    std::env::set_var("ALLTERNIT_AGENCY_COGNITION", "scripted");
+    std::env::set_var("ALLTERNIT_AGENCY_RUNS_DIR", runs.path());
+    std::env::set_var("ALLTERNIT_AGENCY_LOCAL_REPOS", repo.path());
+
+    let t = setup().await;
+    let body = json!({ "goal": "Fix add", "workspace": { "repo": repo.path().display().to_string(), "ref": "main" },
+                       "budget": { "max_seconds": 120, "max_cost_usd": 1 } });
+    let (s, _, b) = call(&t.app, post("/v1/agency", "u1", Some("wpb2-repro-00001"), body)).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{b}");
+    let id = serde_json::from_str::<Value>(&b).unwrap()["id"].as_str().unwrap().to_string();
+    executor::start(t.st.clone(), id.clone());
+    let mut run = Value::Null;
+    for _ in 0..600 {
+        let (_, _, b) = call(&t.app, get_req(&format!("/v1/runs/{id}"), "u1")).await;
+        run = serde_json::from_str(&b).unwrap();
+        if run["terminal"] == true { break; }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(run["status"], "completed", "{run}");
+    assert_eq!(run["completion"]["status"], "verified");
+    let (_, _, b) = call(&t.app, get_req(&format!("/v1/runs/{id}/artifacts"), "u1")).await;
+    let arts: Value = serde_json::from_str(&b).unwrap();
+    let diff = arts["data"][0]["content"].as_str().unwrap();
+    assert!(diff.contains("+exports.add = (a, b) => b + a;"), "judge picked the second tied candidate: {diff}");
+    assert!(!diff.contains("repro_") && !diff.contains("test.js"), "generated scripts and gating tests stay out of the patch: {diff}");
+    let (_, _, b) = call(&t.app, get_req(&format!("/v1/runs/{id}/receipts"), "u1")).await;
+    assert!(b.contains("reproduction:human-authored:receipt:") && b.contains("reproduction:model-generated:review-required:receipt:repro:after:1/1"), "{b}");
+    assert_no_vendor(&b);
+}
+
 /// WP-B1: one attempt with three scripted candidates (a wrong fix, a correct
 /// anchored SEARCH/REPLACE fix, an invalid anchor). Each distinct valid one is
 /// tested in its own isolated checkout; the passing one wins and the run
