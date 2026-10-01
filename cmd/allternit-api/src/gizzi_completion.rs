@@ -22,7 +22,7 @@ pub async fn complete(
     system: Option<&str>,
     model: Option<&(String, String)>,
 ) -> Option<String> {
-    run(prompt, system, model, false).await.map(|(t, _)| t)
+    run(prompt, system, model, false, None).await.map(|(t, _)| t)
 }
 
 /// Like [`complete`], but deletes the temporary Gizzi session afterwards, so
@@ -33,7 +33,21 @@ pub async fn complete_ephemeral(
     system: Option<&str>,
     model: Option<&(String, String)>,
 ) -> Option<String> {
-    run(prompt, system, model, true).await.map(|(t, _)| t)
+    run(prompt, system, model, true, None).await.map(|(t, _)| t)
+}
+
+/// [`complete_ephemeral`] with a JSON-schema constrained reply (O10). gizzi
+/// enforces the schema through its StructuredOutput tool; the structured
+/// object is returned as JSON text. Providers that do not honor the format
+/// still answer in text, which is returned as-is, so callers keep validating.
+pub async fn complete_ephemeral_structured(
+    prompt: &str,
+    system: Option<&str>,
+    model: Option<&(String, String)>,
+    schema: &serde_json::Value,
+) -> Option<String> {
+    let format = json!({ "type": "json_schema", "schema": schema, "retryCount": 1 });
+    run(prompt, system, model, true, Some(&format)).await.map(|(t, _)| t)
 }
 
 /// Model usage gizzi-code reported for a completion (summed over the
@@ -65,7 +79,7 @@ pub async fn complete_ephemeral_usage(
     system: Option<&str>,
     model: Option<&(String, String)>,
 ) -> Option<(String, Usage)> {
-    run(prompt, system, model, true).await
+    run(prompt, system, model, true, None).await
 }
 
 async fn run(
@@ -73,6 +87,7 @@ async fn run(
     system: Option<&str>,
     model: Option<&(String, String)>,
     delete_after: bool,
+    format: Option<&serde_json::Value>,
 ) -> Option<(String, Usage)> {
     let gizzi = crate::APP_CONFIG
         .get()
@@ -125,7 +140,7 @@ async fn run(
 
     let session_id = session.get("id")?.as_str()?.to_string();
     info!(session_id, model = %model_label, "Created Gizzi completion session");
-    let text = collect(&client, &gizzi, &session_id, prompt, system).await;
+    let text = collect(&client, &gizzi, &session_id, prompt, system, format).await;
     if delete_after {
         if let Err(err) = client
             .delete(format!("{}/v1/session/{}", gizzi, session_id))
@@ -145,7 +160,10 @@ async fn collect(
     session_id: &str,
     prompt: &str,
     system: Option<&str>,
+    format: Option<&serde_json::Value>,
 ) -> Option<(String, Usage)> {
+    // The StructuredOutput tool's result (json_schema format), when any.
+    let mut structured: Option<String> = None;
     let mut usage: std::collections::HashMap<String, Usage> = std::collections::HashMap::new();
     let total = |u: &std::collections::HashMap<String, Usage>| {
         u.values().fold(Usage::default(), |a, b| Usage { tokens: a.tokens + b.tokens, tokens_in: a.tokens_in + b.tokens_in, tokens_out: a.tokens_out + b.tokens_out, cost_usd: a.cost_usd + b.cost_usd })
@@ -174,6 +192,9 @@ async fn collect(
     });
     if let Some(system_text) = system.map(str::trim).filter(|s| !s.is_empty()) {
         message_payload["system"] = json!(format!("+{system_text}"));
+    }
+    if let Some(format) = format {
+        message_payload["format"] = format.clone();
     }
 
     if let Err(err) = client
@@ -237,6 +258,9 @@ async fn collect(
                         "message.updated" => {
                             let info = &props["info"];
                             if info["role"] == "assistant" {
+                                if let Some(v) = info.get("structured").filter(|v| !v.is_null()) {
+                                    structured = Some(v.to_string());
+                                }
                                 usage.insert(info["id"].as_str().unwrap_or_default().to_string(), usage_from_info(info));
                             }
                         }
@@ -254,7 +278,8 @@ async fn collect(
                             if status_type == "busy" {
                                 was_busy = true;
                             } else if status_type == "idle" && was_busy {
-                                return Some((text_parts.concat(), total(&usage)));
+                                let text = structured.take().unwrap_or_else(|| text_parts.concat());
+                                return Some((text, total(&usage)));
                             }
                         }
                         _ => {}
@@ -270,6 +295,9 @@ async fn collect(
         }
     }
 
+    if let Some(s) = structured {
+        return Some((s, total(&usage)));
+    }
     if text_parts.is_empty() {
         None
     } else {

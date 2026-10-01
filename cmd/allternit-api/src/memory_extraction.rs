@@ -11,6 +11,13 @@
 //! provider directly. When no model answers, the rule-based extractor in
 //! `memory_kernel_service` runs instead, so memory never depends on a model
 //! being configured.
+//!
+//! M1 write path (WP-M1b): each add/update carries a memory type, the insert
+//! writes typed edges (`memory_relations`), and S1 runs in shadow on the
+//! closed-set parts (MEMORY_TYPE, RELATION) with this model's op as the
+//! incumbent that decides. The reply is schema-constrained (O10): gizzi's
+//! json_schema format where the lane honors it, and [`validate_reply`]
+//! always.
 
 use rusqlite::params;
 use serde::Deserialize;
@@ -20,6 +27,7 @@ use tracing::{debug, warn};
 
 use crate::db::DbHandle;
 use crate::memory_kernel_service::{self as kernel, MemoryKernelError};
+use crate::memory_relations::{self as rel, MemoryType, NodeKind, RelationType, TurnOutcome};
 
 /// Existing memories shown to the model: all of them when there are few,
 /// otherwise the most similar to the message.
@@ -35,21 +43,91 @@ You only output JSON.";
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(tag = "op", rename_all = "lowercase")]
 pub enum MemoryOp {
-    Add { fact: String },
-    Update { id: String, fact: String },
+    Add {
+        fact: String,
+        #[serde(default, rename = "type")]
+        memory_type: Option<String>,
+    },
+    Update {
+        id: String,
+        fact: String,
+        #[serde(default, rename = "type")]
+        memory_type: Option<String>,
+    },
     Forget { id: String },
 }
 
-/// Extraction runs through the Claude CLI provider in gizzi-code.
-const DEFAULT_MEMORY_MODEL: (&str, &str) = ("claude-cli", "claude-sonnet-5");
+impl MemoryOp {
+    /// The op's memory type; `fact` when missing or outside the closed set.
+    fn typed(raw: &Option<String>) -> MemoryType {
+        raw.as_deref().and_then(MemoryType::parse).filter(|t| *t != MemoryType::NotMemory).unwrap_or(MemoryType::Fact)
+    }
+}
 
-/// The model used for extraction: `ALLTERNIT_MEMORY_MODEL` ("provider/model")
-/// when set, otherwise Claude CLI.
+/// The `gen.small` lane (O1): fact text is easy generation, so extraction
+/// defaults to a small model. Harness adapter default; the capability-class
+/// router (WP-R1) will own this once it is on the path.
+const DEFAULT_SMALL_MODEL: (&str, &str) = ("claude-cli", "claude-haiku-4-5");
+
+fn parse_model(raw: &str) -> Option<(String, String)> {
+    raw.trim().split_once('/').filter(|(p, m)| !p.is_empty() && !m.is_empty()).map(|(p, m)| (p.to_string(), m.to_string()))
+}
+
+/// The model used for extraction: `ALLTERNIT_MEMORY_MODEL` ("provider/model"),
+/// else the shared small lane `ALLTERNIT_GEN_SMALL_MODEL`, else the built-in
+/// small default.
 pub fn extraction_model() -> (String, String) {
-    std::env::var("ALLTERNIT_MEMORY_MODEL")
-        .ok()
-        .and_then(|raw| raw.trim().split_once('/').map(|(p, m)| (p.to_string(), m.to_string())))
-        .unwrap_or_else(|| (DEFAULT_MEMORY_MODEL.0.to_string(), DEFAULT_MEMORY_MODEL.1.to_string()))
+    ["ALLTERNIT_MEMORY_MODEL", "ALLTERNIT_GEN_SMALL_MODEL"]
+        .iter()
+        .find_map(|k| std::env::var(k).ok().as_deref().and_then(parse_model))
+        .unwrap_or_else(|| (DEFAULT_SMALL_MODEL.0.to_string(), DEFAULT_SMALL_MODEL.1.to_string()))
+}
+
+/// JSON schema of the extraction reply (O10). Sent as gizzi's json_schema
+/// format and enforced locally by [`validate_reply`].
+pub fn reply_schema() -> serde_json::Value {
+    let types: Vec<&str> = MemoryType::ALL.iter().map(|t| t.as_str()).filter(|t| *t != "not_memory").collect();
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["operations"],
+        "properties": { "operations": { "type": "array", "items": { "type": "object",
+            "required": ["op"],
+            "properties": {
+                "op": { "type": "string", "enum": ["add", "update", "forget"] },
+                "id": { "type": "string" },
+                "fact": { "type": "string", "maxLength": MAX_FACT_CHARS },
+                "type": { "type": "string", "enum": types }
+            } } } }
+    })
+}
+
+/// Schema-check one parsed reply: `operations` must be an array; each op must
+/// carry the fields its kind requires (`add`: fact; `update`: id + fact;
+/// `forget`: id) as strings, and `type`, when present, must be in the closed
+/// set. Ops that fail are dropped; a reply without an `operations` array is
+/// rejected (the rule-based fallback runs instead).
+pub fn validate_reply(value: &serde_json::Value) -> Option<Vec<MemoryOp>> {
+    let ops = value.get("operations")?.as_array()?;
+    let s = |op: &serde_json::Value, k: &str| op.get(k).map(|v| v.is_string()).unwrap_or(false);
+    Some(
+        ops.iter()
+            .filter(|op| {
+                let type_ok = match op.get("type") {
+                    None | Some(serde_json::Value::Null) => true,
+                    Some(t) => t.as_str().and_then(MemoryType::parse).is_some(),
+                };
+                let fields_ok = match op.get("op").and_then(|v| v.as_str()) {
+                    Some("add") => s(op, "fact"),
+                    Some("update") => s(op, "id") && s(op, "fact"),
+                    Some("forget") => s(op, "id"),
+                    _ => false,
+                };
+                type_ok && fields_ok
+            })
+            .filter_map(|op| serde_json::from_value::<MemoryOp>(op.clone()).ok())
+            .collect(),
+    )
 }
 
 /// Build the extraction prompt for one user message.
@@ -79,6 +157,7 @@ Do NOT remember:
 
 Write each fact as one short, self-contained sentence in the third person
 ("User is a product designer in Austin.", "User prefers TypeScript over JavaScript.").
+Give each add/update a "type": fact, preference, event, procedure, entity, relationship or task_state.
 
 Current memories:
 {memories}
@@ -90,8 +169,8 @@ Latest user message:
 
 Return JSON only, in this shape:
 {{"operations": [
-  {{"op": "add", "fact": "..."}},
-  {{"op": "update", "id": "<id of the memory it replaces>", "fact": "..."}},
+  {{"op": "add", "fact": "...", "type": "preference"}},
+  {{"op": "update", "id": "<id of the memory it replaces>", "fact": "...", "type": "fact"}},
   {{"op": "forget", "id": "<id the user retracted or said is no longer true>"}}
 ]}}
 Use update when the message changes an existing memory, not add. Never add a fact that is
@@ -107,14 +186,9 @@ pub fn parse_ops(raw: &str) -> Option<Vec<MemoryOp>> {
         return None;
     }
     let slice = &raw[start..=end];
-    // Unknown ops are dropped instead of failing the whole reply.
+    // Unknown or malformed ops are dropped instead of failing the whole reply.
     let value: serde_json::Value = serde_json::from_str(slice).ok()?;
-    let ops = value.get("operations")?.as_array()?;
-    Some(
-        ops.iter()
-            .filter_map(|op| serde_json::from_value::<MemoryOp>(op.clone()).ok())
-            .collect(),
-    )
+    validate_reply(&value)
 }
 
 /// A fact the model returned that is fit to store.
@@ -157,30 +231,29 @@ pub fn candidate_facts(
     Ok(out)
 }
 
-/// End a fact's validity (update or forget). Only facts shown to the model
-/// may be touched, so a hallucinated id cannot erase an unrelated memory.
-fn invalidate(
-    db: &DbHandle,
-    user_id: &str,
-    id: &str,
-    shown: &[(String, String)],
-) -> Result<bool, MemoryKernelError> {
+/// Only facts shown to the model may be touched, so a hallucinated id cannot
+/// erase an unrelated memory.
+fn shown_and_valid(conn: &rusqlite::Connection, user_id: &str, id: &str, shown: &[(String, String)]) -> Result<bool, MemoryKernelError> {
     if !shown.iter().any(|(sid, _)| sid == id) {
         return Ok(false);
     }
-    let conn = db.connect()?;
-    let changed = conn.execute(
-        "UPDATE memory_facts SET valid_until = CURRENT_TIMESTAMP
-         WHERE id = ?1 AND user_id = ?2 AND valid_until IS NULL",
+    Ok(conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM memory_facts WHERE id = ?1 AND user_id = ?2 AND valid_until IS NULL)",
         params![id, user_id],
-    )?;
-    if changed > 0 {
-        conn.execute(
-            "DELETE FROM memory_embeddings WHERE user_id = ?1 AND target_type = 'fact' AND target_id = ?2",
-            params![user_id, id],
-        )?;
-    }
-    Ok(changed > 0)
+        |r| r.get(0),
+    )?)
+}
+
+/// Active fact with this exact text (case-insensitive), if any.
+fn existing_fact_id(conn: &rusqlite::Connection, user_id: &str, fact: &str) -> Result<Option<String>, MemoryKernelError> {
+    use rusqlite::OptionalExtension;
+    Ok(conn
+        .query_row(
+            "SELECT id FROM memory_facts WHERE user_id = ?1 AND lower(fact) = lower(?2) AND valid_until IS NULL LIMIT 1",
+            params![user_id, fact],
+            |r| r.get(0),
+        )
+        .optional()?)
 }
 
 /// Apply model operations. Returns how many memories changed.
@@ -192,36 +265,139 @@ pub fn apply_ops(
     ops: &[MemoryOp],
     shown: &[(String, String)],
 ) -> Result<usize, MemoryKernelError> {
+    apply_ops_typed(db, user_id, agent_id, observation_id, ops, shown).map(|(n, _)| n)
+}
+
+/// Apply model operations and write the M1 graph from them: memory types on
+/// new facts and the observation, typed edges (`update` → new fact
+/// `updates` old; `forget` → observation `contradicts` fact; an `add` that
+/// restates a current memory → observation `same` fact), with soft
+/// supersession through `valid_until`. Returns the change count and the
+/// incumbent's decisions (the S1 shadow's labels).
+pub fn apply_ops_typed(
+    db: &DbHandle,
+    user_id: &str,
+    agent_id: Option<&str>,
+    observation_id: &str,
+    ops: &[MemoryOp],
+    shown: &[(String, String)],
+) -> Result<(usize, TurnOutcome), MemoryKernelError> {
+    let conn = db.connect()?;
     let mut changed = 0;
-    let mut adds = Vec::new();
+    let mut outcome = TurnOutcome::default();
+    // (fact text, type, fact id it updates)
+    let mut writes: Vec<(String, MemoryType, Option<String>)> = Vec::new();
+    let mut adds = 0;
     for op in ops {
         match op {
-            MemoryOp::Add { fact } => {
-                if let Some(fact) = clean_fact(fact) {
-                    if adds.len() < MAX_ADDS_PER_TURN {
-                        adds.push(fact);
-                    }
+            MemoryOp::Add { fact, memory_type } => {
+                let Some(fact) = clean_fact(fact) else { continue };
+                if let Some(existing) = existing_fact_id(&conn, user_id, &fact)? {
+                    rel::write_relation(&conn, user_id, (NodeKind::Observation, observation_id), RelationType::Same,
+                        (NodeKind::Fact, &existing), 0.85, rel::ORIGIN_INCUMBENT, None)?;
+                    outcome.relations.push((existing, RelationType::Same, None));
+                } else if adds < MAX_ADDS_PER_TURN {
+                    adds += 1;
+                    writes.push((fact, MemoryOp::typed(memory_type), None));
                 }
             }
-            MemoryOp::Update { id, fact } => {
+            MemoryOp::Update { id, fact, memory_type } => {
                 if let Some(fact) = clean_fact(fact) {
-                    if invalidate(db, user_id, id, shown)? {
-                        changed += 1;
-                        adds.push(fact);
+                    if shown_and_valid(&conn, user_id, id, shown)? {
+                        writes.push((fact, MemoryOp::typed(memory_type), Some(id.clone())));
                     }
                 }
             }
             MemoryOp::Forget { id } => {
-                if invalidate(db, user_id, id, shown)? {
+                if shown_and_valid(&conn, user_id, id, shown)? {
+                    rel::write_relation(&conn, user_id, (NodeKind::Observation, observation_id), RelationType::Contradicts,
+                        (NodeKind::Fact, id), 0.85, rel::ORIGIN_INCUMBENT, None)?;
+                    outcome.relations.push((id.clone(), RelationType::Contradicts, None));
                     changed += 1;
                 }
             }
         }
     }
-    if !adds.is_empty() {
-        changed += kernel::persist_facts(db, user_id, agent_id, observation_id, &adds)?.len();
+    for (fact, t, updates) in writes {
+        // An update to a restated value still retires the old memory.
+        let new_id = match kernel::persist_facts(db, user_id, agent_id, observation_id, std::slice::from_ref(&fact))?.pop() {
+            Some(f) => {
+                changed += 1;
+                rel::set_fact_type(&conn, user_id, &f.id, t)?;
+                outcome.produced.push((f.id.clone(), t));
+                Some(f.id)
+            }
+            None => existing_fact_id(&conn, user_id, &fact)?,
+        };
+        if let Some(old) = updates {
+            match new_id.as_deref().filter(|n| *n != old) {
+                Some(n) => {
+                    rel::write_relation(&conn, user_id, (NodeKind::Fact, n), RelationType::Updates,
+                        (NodeKind::Fact, &old), 0.85, rel::ORIGIN_INCUMBENT, None)?;
+                }
+                None => {
+                    rel::supersede_fact(&conn, user_id, &old)?;
+                }
+            }
+            changed += 1;
+            outcome.relations.push((old, RelationType::Updates, new_id.clone()));
+        }
     }
-    Ok(changed)
+    outcome.observation_type = match outcome.produced.first() {
+        Some((_, t)) => Some(*t),
+        None if ops.is_empty() => Some(MemoryType::NotMemory),
+        None => None,
+    };
+    if let Some(t) = outcome.observation_type {
+        rel::set_observation_type(&conn, user_id, observation_id, t)?;
+    }
+    Ok((changed, outcome))
+}
+
+/// Candidate memories S1 RELATION judges: those the incumbent touched first,
+/// then the closest current facts from the hybrid index.
+pub fn relation_candidates(
+    db: &DbHandle,
+    user_id: &str,
+    message: &str,
+    ops: &[MemoryOp],
+    shown: &[(String, String)],
+) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for op in ops {
+        let id = match op {
+            MemoryOp::Update { id, .. } | MemoryOp::Forget { id } => id,
+            MemoryOp::Add { .. } => continue,
+        };
+        if let Some(c) = shown.iter().find(|(sid, _)| sid == id) {
+            if !out.iter().any(|(o, _)| o == id) {
+                out.push(c.clone());
+            }
+        }
+    }
+    let Ok(conn) = db.connect() else { return out };
+    if let Ok(hits) = kernel::recall_semantic(db, user_id, message, rel::MAX_RELATION_CANDIDATES * 2) {
+        for (target_type, id, _) in hits {
+            if out.len() >= rel::MAX_RELATION_CANDIDATES {
+                break;
+            }
+            if target_type != "fact" || out.iter().any(|(o, _)| *o == id) {
+                continue;
+            }
+            let fact: Option<String> = conn
+                .query_row(
+                    "SELECT fact FROM memory_facts WHERE id = ?1 AND user_id = ?2 AND valid_until IS NULL",
+                    params![id, user_id],
+                    |row| row.get(0),
+                )
+                .ok();
+            if let Some(fact) = fact {
+                out.push((id, fact));
+            }
+        }
+    }
+    out.truncate(rel::MAX_RELATION_CANDIDATES);
+    out
 }
 
 /// At most two extractions in flight; extra turns wait instead of piling
@@ -251,31 +427,58 @@ pub async fn extract_and_reconcile(
     };
 
     let model = extraction_model();
-    let reply = crate::gizzi_completion::complete_ephemeral(
+    // TODO(WP-C1 #1126): pass the caller's org id here once the per-org usage
+    // ledger lands on main, so memory extraction shows in the org's usage
+    // summary. Not on this branch's base, so no ledger code is added.
+    let reply = crate::gizzi_completion::complete_ephemeral_structured(
         &build_prompt(&message, &shown),
         Some(SYSTEM_PROMPT),
         Some(&model),
+        &reply_schema(),
     )
     .await;
+    let ops = reply.as_deref().and_then(parse_ops);
 
-    let result = tokio::task::spawn_blocking(move || {
-        let agent = agent_id.as_deref();
-        match reply.as_deref().and_then(parse_ops) {
-            Some(ops) => apply_ops(&db, &user_id, agent, &observation_id, &ops, &shown),
-            None => {
-                let facts = kernel::extract_facts_heuristic(&message);
-                if facts.is_empty() {
-                    Ok(0)
-                } else {
-                    kernel::persist_facts(&db, &user_id, agent, &observation_id, &facts).map(|p| p.len())
+    // Candidates are read before the ops apply (an update retires its target).
+    let candidates = match &ops {
+        Some(ops) => {
+            let (db, user_id, message, ops, shown) = (db.clone(), user_id.clone(), message.clone(), ops.clone(), shown.clone());
+            tokio::task::spawn_blocking(move || relation_candidates(&db, &user_id, &message, &ops, &shown))
+                .await
+                .unwrap_or_default()
+        }
+        None => vec![],
+    };
+
+    let result = {
+        let (db, user_id, observation_id, message, ops) = (db.clone(), user_id.clone(), observation_id.clone(), message.clone(), ops.clone());
+        tokio::task::spawn_blocking(move || {
+            let agent = agent_id.as_deref();
+            match ops {
+                Some(ops) => apply_ops_typed(&db, &user_id, agent, &observation_id, &ops, &shown).map(|(n, o)| (n, Some(o))),
+                None => {
+                    let facts = kernel::extract_facts_heuristic(&message);
+                    if facts.is_empty() {
+                        Ok((0, None))
+                    } else {
+                        kernel::persist_facts(&db, &user_id, agent, &observation_id, &facts).map(|p| (p.len(), None))
+                    }
                 }
             }
-        }
-    })
-    .await;
+        })
+        .await
+    };
 
     match result {
-        Ok(Ok(n)) => debug!(changed = n, "memory extraction applied"),
+        Ok(Ok((n, outcome))) => {
+            debug!(changed = n, "memory extraction applied");
+            // S1 shadow: only when the incumbent model actually decided.
+            if let Some(outcome) = outcome {
+                let client = rel::S1Client::from_env();
+                let r = rel::shadow_turn(&client, &db, &user_id, &observation_id, &message, &candidates, &outcome).await;
+                debug!(decisions = r.decisions, outcomes = r.outcomes_reported, "memory s1 shadow");
+            }
+        }
         Ok(Err(e)) => warn!("memory extraction failed: {e}"),
         Err(e) => warn!("memory extraction task failed: {e}"),
     }
@@ -295,12 +498,50 @@ mod tests {
         assert_eq!(
             parse_ops(raw).unwrap(),
             vec![
-                MemoryOp::Add { fact: "User works in Rust.".into() },
+                MemoryOp::Add { fact: "User works in Rust.".into(), memory_type: None },
                 MemoryOp::Forget { id: "fact_1".into() },
             ]
         );
         assert_eq!(parse_ops("{\"operations\": []}").unwrap(), vec![]);
         assert!(parse_ops("no json here").is_none());
+    }
+
+    #[test]
+    fn schema_validator_drops_malformed_ops_and_rejects_bad_replies() {
+        let v = serde_json::json!({"operations": [
+            {"op": "add", "fact": "User likes Go.", "type": "preference"},
+            {"op": "add", "fact": "User likes Zig.", "type": "opinion"},
+            {"op": "update", "fact": "missing id"},
+            {"op": "forget", "id": 7},
+            {"op": "forget", "id": "fact_1"},
+            {"op": "add"}
+        ]});
+        assert_eq!(
+            validate_reply(&v).unwrap(),
+            vec![
+                MemoryOp::Add { fact: "User likes Go.".into(), memory_type: Some("preference".into()) },
+                MemoryOp::Forget { id: "fact_1".into() },
+            ]
+        );
+        assert!(validate_reply(&serde_json::json!({"ops": []})).is_none());
+        assert!(validate_reply(&serde_json::json!({"operations": {}})).is_none());
+        // The schema sent to the model names exactly the closed type set (minus not_memory).
+        let schema = reply_schema();
+        let types = schema["properties"]["operations"]["items"]["properties"]["type"]["enum"].as_array().unwrap();
+        assert_eq!(types.len(), 7);
+        assert!(!types.iter().any(|t| t == "not_memory"));
+    }
+
+    #[test]
+    fn extraction_defaults_to_the_small_lane() {
+        // Only checks the parse + default shape; env is process-global so the
+        // override paths are covered by parse_model.
+        assert_eq!(parse_model("prov/small-1"), Some(("prov".into(), "small-1".into())));
+        assert_eq!(parse_model("noslash"), None);
+        assert_eq!(parse_model("/m"), None);
+        if std::env::var("ALLTERNIT_MEMORY_MODEL").is_err() && std::env::var("ALLTERNIT_GEN_SMALL_MODEL").is_err() {
+            assert_eq!(extraction_model(), (DEFAULT_SMALL_MODEL.0.to_string(), DEFAULT_SMALL_MODEL.1.to_string()));
+        }
     }
 
     #[test]
@@ -320,10 +561,10 @@ mod tests {
         assert_eq!(shown.len(), 2);
 
         let ops = vec![
-            MemoryOp::Update { id: old[0].id.clone(), fact: "User lives in Denver.".into() },
+            MemoryOp::Update { id: old[0].id.clone(), fact: "User lives in Denver.".into(), memory_type: None },
             MemoryOp::Forget { id: other[0].id.clone() },
-            MemoryOp::Add { fact: "What is 2+2?".into() },
-            MemoryOp::Add { fact: "User's API key is sk-123.".into() },
+            MemoryOp::Add { fact: "What is 2+2?".into(), memory_type: None },
+            MemoryOp::Add { fact: "User's API key is sk-123.".into(), memory_type: None },
         ];
         assert_eq!(apply_ops(&db, "u1", None, &obs, &ops, &shown).unwrap(), 3);
 
@@ -345,7 +586,7 @@ mod tests {
     fn caps_adds_per_turn() {
         let db = db();
         let obs = kernel::record_observation(&db, "u1", None, None, "turn_user", "x", Some("user")).unwrap();
-        let ops: Vec<MemoryOp> = (0..9).map(|i| MemoryOp::Add { fact: format!("User likes thing number {i}.") }).collect();
+        let ops: Vec<MemoryOp> = (0..9).map(|i| MemoryOp::Add { fact: format!("User likes thing number {i}."), memory_type: None }).collect();
         assert_eq!(apply_ops(&db, "u1", None, &obs, &ops, &[]).unwrap(), MAX_ADDS_PER_TURN);
     }
 }

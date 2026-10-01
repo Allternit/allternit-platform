@@ -212,6 +212,7 @@ pub mod memory_routes;
 pub mod memory_kernel_service;
 pub mod memory_index;
 pub mod memory_extraction;
+pub mod memory_relations;
 pub mod metrics;
 pub mod monitor_routes;
 pub mod oauth_routes;
