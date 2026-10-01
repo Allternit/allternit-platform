@@ -23,6 +23,7 @@ export namespace SessionTrace {
     "scratchpad.read",
     "scratchpad.written",
     "scratchpad.removed",
+    "guardrail.tripped",
   ])
   export type Kind = z.infer<typeof Kind>
 
