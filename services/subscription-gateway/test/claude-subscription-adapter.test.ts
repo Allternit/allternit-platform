@@ -122,3 +122,20 @@ describe("claude-subscription thinking", () => {
     expect(onEvent).toBeNull(); // unsubscribed after the turn
   });
 });
+
+describe("claude-subscription cursors", () => {
+  it("a revived context's events sort after everything a previous process handed out", async () => {
+    const { tasks } = fakeTasks();
+    const p1 = new ClaudeSubscriptionProvider({ tasks, pollMs: 1, sleep: async () => {} });
+    const c = await p1.contextOpen({ agentId: "claude" });
+    if (!c.ok) throw new Error("open");
+    await p1.contextMessage({ contextId: c.value.contextId, correlationId: "a", text: "one" });
+    const before = await p1.events({ contextId: c.value.contextId });
+    const held = before.ok ? before.value.nextCursor : "0";
+    const p2 = new ClaudeSubscriptionProvider({ tasks, pollMs: 1, sleep: async () => {} });
+    await p2.contextMessage({ contextId: c.value.contextId, correlationId: "b", text: "two" });
+    const after = await p2.events({ contextId: c.value.contextId, cursor: held });
+    expect(after.ok && after.value.events.some((e) => e.event.type === "agent.message.completed")).toBe(true);
+  });
+});
+
