@@ -10,7 +10,7 @@ use clap::Subcommand;
 use crate::ledger::Ledger;
 use crate::lessons::sink::{MemorySink, VaultCandidateSink};
 use crate::lessons::triage::{
-    default_brain_root, report_applied_outcomes, triage_dag, TriageConfig, DEFAULT_MEAN_MIN, DEFAULT_SYSTEM_ONE_MODEL,
+    default_brain_root, report_applied_outcomes, report_rejected_outcomes, triage_dag, TriageConfig, DEFAULT_MEAN_MIN, DEFAULT_SYSTEM_ONE_MODEL,
     DEFAULT_SYSTEM_ONE_URL, DEFAULT_TASK_MIN,
 };
 
@@ -50,7 +50,9 @@ pub enum LessonsCmd {
         force: bool,
     },
     /// Report S1 outcome labels for triage drafts a human applied
-    /// (`<brain-root>/.incoming/applied/`). Each candidate is labelled once.
+    /// (`<brain-root>/.incoming/applied/`, true) or rejected
+    /// (`.incoming/rejected/`, false per `x_rejection.why`). Each candidate is
+    /// labelled once.
     Outcomes {
         #[arg(long = "brain-root")]
         brain_root: Option<PathBuf>,
@@ -65,8 +67,10 @@ pub async fn run_lessons_command(root: &Path, ledger: Arc<Ledger>, cmd: LessonsC
     match cmd {
         LessonsCmd::Outcomes { brain_root, server } => {
             let reporter = crate::kernel::s1_outcome::OutcomeReporter::for_url(&server, Duration::from_secs(5));
-            let n = report_applied_outcomes(&ledger, &brain_root.unwrap_or_else(default_brain_root), &reporter).await?;
-            println!("labelled {n} applied lesson draft(s)");
+            let brain_root = brain_root.unwrap_or_else(default_brain_root);
+            let n = report_applied_outcomes(&ledger, &brain_root, &reporter).await?;
+            let r = report_rejected_outcomes(&ledger, &brain_root, &reporter).await?;
+            println!("labelled {n} applied and {r} rejected lesson draft(s)");
         }
         LessonsCmd::List { dag_id } => {
             let list = sink.list(dag_id.as_deref())?;

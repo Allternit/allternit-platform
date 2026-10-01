@@ -237,6 +237,15 @@ candidates get no draft. Never applies anything; the scorer writes no lesson tex
 Brain root default: `$ALLTERNIT_BRAIN_ROOT`, else `~/Desktop/Allternit/Allternit Brain`.
 Events: LessonTriaged per candidate (re-runs skip triaged candidates unless `--force`).
 
+### `allternit lessons outcomes [--brain-root <dir>] [--server <url>]`
+S1 outcome labels for triage drafts a human reviewed. Applied drafts
+(`<brain-root>/.incoming/applied/`) → `true` for `reusable_pattern` and
+`supported_by_events`. Rejected drafts (`.incoming/rejected/`, written by
+`apply-brain-updates.js --reject <draft> --why not-reusable|unsupported|both|other`)
+→ `false` for the question(s) `--why` names (`other` records the rejection with no
+label). Each candidate is labelled once; if the runtime is down it is retried next run.
+Events: LessonOutcomeReported per candidate.
+
 ## Node wait-gates
 
 ### `allternit wait-gate add --node <dag_id>/<node_id> timer|github-run|github-pr|manual [--description <d>] [--until <rfc3339>] [--repo <owner/repo>] [--run-id <id>] [--pr <n>]`
