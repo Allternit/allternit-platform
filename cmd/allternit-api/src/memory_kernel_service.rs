@@ -33,6 +33,10 @@ pub struct MemoryFact {
     pub valid_from: String,
     pub valid_until: Option<String>,
     pub source_observation_id: Option<String>,
+    /// MEMORY_TYPE (V208): fact / preference / event / procedure / entity /
+    /// relationship / task_state. None for facts written before V208.
+    #[serde(default)]
+    pub memory_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +100,9 @@ pub struct RecallQuery {
     pub session_id: Option<String>,
     pub query: String,
     pub limit: Option<usize>,
+    /// Retrieve path: let graph expansion return superseded facts too.
+    #[serde(default)]
+    pub include_history: bool,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -124,12 +131,24 @@ pub fn store_embedding(
     Ok(format!("{}:{}", target_type, target_id))
 }
 
-/// Load a single memory target as a RecallResult.
+/// Load a single memory target as a RecallResult (current facts only).
 fn load_memory_target(
     conn: &rusqlite::Connection,
     target_type: &str,
     target_id: &str,
     agent_id: Option<&str>,
+) -> Result<Option<RecallResult>, MemoryKernelError> {
+    load_target(conn, target_type, target_id, agent_id, false)
+}
+
+/// Load a memory target; `include_history` also returns superseded facts
+/// (`valid_until` set, reported in metadata).
+pub(crate) fn load_target(
+    conn: &rusqlite::Connection,
+    target_type: &str,
+    target_id: &str,
+    agent_id: Option<&str>,
+    include_history: bool,
 ) -> Result<Option<RecallResult>, MemoryKernelError> {
     let agent_ok = |row_agent: &Option<String>| match (row_agent, agent_id) {
         (Some(a), Some(q)) => a == q,
@@ -151,8 +170,9 @@ fn load_memory_target(
     match target_type {
         "fact" => conn
             .query_row(
-                "SELECT id, fact, confidence, valid_from, source_observation_id FROM memory_facts WHERE id = ?1 AND valid_until IS NULL",
-                params![target_id],
+                "SELECT id, fact, confidence, valid_from, source_observation_id, memory_type, valid_until FROM memory_facts
+                 WHERE id = ?1 AND (?2 OR valid_until IS NULL)",
+                params![target_id, include_history],
                 |row| {
                     Ok(RecallResult {
                         id: row.get::<_, String>(0)?,
@@ -162,6 +182,8 @@ fn load_memory_target(
                         metadata: serde_json::json!({
                             "confidence": row.get::<_, f64>(2)?,
                             "source_observation_id": row.get::<_, Option<String>>(4)?,
+                            "memory_type": row.get::<_, Option<String>>(5)?,
+                            "valid_until": row.get::<_, Option<String>>(6)?,
                         }),
                         timestamp: row.get::<_, String>(3)?,
                     })
@@ -436,6 +458,7 @@ pub fn persist_facts(
             valid_from: chrono::Utc::now().to_rfc3339(),
             valid_until: None,
             source_observation_id: Some(observation_id.to_string()),
+            memory_type: None,
         });
     }
 
@@ -554,6 +577,34 @@ pub async fn recall_hybrid(
     .map_err(|e| MemoryKernelError::Internal(e.to_string()))?
 }
 
+/// [`recall_hybrid`] that also returns the recall-log id (the join key of
+/// the retrieve-path S1 shadow) and the query embedding it used.
+pub async fn recall_hybrid_logged(
+    db: &DbHandle,
+    client: &memory_index::EmbedClient,
+    user_id: &str,
+    agent_id: Option<&str>,
+    session_id: Option<&str>,
+    query: &str,
+    limit: usize,
+) -> Result<(Vec<RecallResult>, String, Embedded), MemoryKernelError> {
+    let q = client.embed_or_hash(&[query.to_string()], memory_index::InputType::Query).await;
+    let (db, user_id, agent_id, session_id, query, qc) = (
+        db.clone(),
+        user_id.to_string(),
+        agent_id.map(str::to_string),
+        session_id.map(str::to_string),
+        query.to_string(),
+        q.clone(),
+    );
+    let (results, log_id) = tokio::task::spawn_blocking(move || {
+        recall_logged(&db, &user_id, agent_id.as_deref(), session_id.as_deref(), &query, Some(&qc), limit)
+    })
+    .await
+    .map_err(|e| MemoryKernelError::Internal(e.to_string()))??;
+    Ok((results, log_id, q))
+}
+
 /// Hybrid recall: FTS5 keyword + vector candidates from the shared memory
 /// index, fused with reciprocal rank fusion, weighted by item type and
 /// (lightly) recency. An empty query returns the most recent facts/entities.
@@ -566,6 +617,19 @@ pub fn recall_with_embedding(
     query_embedding: Option<&Embedded>,
     limit: usize,
 ) -> Result<Vec<RecallResult>, MemoryKernelError> {
+    recall_logged(db, user_id, agent_id, session_id, query, query_embedding, limit).map(|(r, _)| r)
+}
+
+/// [`recall_with_embedding`] returning the `memory_recall_logs` id too.
+pub fn recall_logged(
+    db: &DbHandle,
+    user_id: &str,
+    agent_id: Option<&str>,
+    session_id: Option<&str>,
+    query: &str,
+    query_embedding: Option<&Embedded>,
+    limit: usize,
+) -> Result<(Vec<RecallResult>, String), MemoryKernelError> {
     let conn = db.connect()?;
     let mut results: Vec<RecallResult> = Vec::new();
 
@@ -630,7 +694,7 @@ pub fn recall_with_embedding(
         params![log_id, user_id, agent_id, session_id, query, results_json],
     );
 
-    Ok(results)
+    Ok((results, log_id))
 }
 
 /// Timestamps come back as RFC 3339 or SQLite's `YYYY-MM-DD HH:MM:SS`.
@@ -726,7 +790,7 @@ pub fn list_facts(
 ) -> Result<Vec<MemoryFact>, MemoryKernelError> {
     let conn = db.connect()?;
     let mut stmt = conn.prepare(
-        "SELECT id, user_id, agent_id, fact, confidence, valid_from, valid_until, source_observation_id
+        "SELECT id, user_id, agent_id, fact, confidence, valid_from, valid_until, source_observation_id, memory_type
          FROM memory_facts
          WHERE user_id = ?1 AND (agent_id IS NULL OR agent_id = ?2 OR ?2 IS NULL)
            AND valid_until IS NULL
@@ -744,6 +808,7 @@ pub fn list_facts(
             valid_from: row.get(5)?,
             valid_until: row.get(6)?,
             source_observation_id: row.get(7)?,
+            memory_type: row.get(8)?,
         })
     })?;
 

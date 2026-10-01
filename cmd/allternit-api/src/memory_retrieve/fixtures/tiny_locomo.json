@@ -1,0 +1,34 @@
+{
+  "name": "tiny-synthetic-v1",
+  "conversations": [
+    {
+      "id": "maya",
+      "turns": [
+        { "id": "D1:1", "speaker": "Maya", "text": "Hi! I just got back from a long shift at the hospital.", "session": "1" },
+        { "id": "D1:2", "speaker": "Maya", "text": "My dog Biscuit chewed through another leash while I was out.", "session": "1" },
+        { "id": "D1:3", "speaker": "Maya", "text": "I live in Austin, near the lake, and I love the tacos here.", "session": "1" },
+        { "id": "D1:4", "speaker": "Maya", "text": "Work is busy, I am a night nurse at St. Luke's in the ICU.", "session": "1" },
+        { "id": "D2:1", "speaker": "Maya", "text": "My sister Lena is visiting in March for her birthday.", "session": "2" },
+        { "id": "D2:2", "speaker": "Maya", "text": "Big news: I moved to Denver last week for a new job.", "session": "2" },
+        { "id": "D2:3", "speaker": "Maya", "text": "The blue Subaru made it over the mountains, barely.", "session": "2" },
+        { "id": "D2:4", "speaker": "Maya", "text": "I started learning the cello, practicing scales every morning.", "session": "2" }
+      ],
+      "facts": [
+        { "id": "F1", "text": "Maya lives in Austin." },
+        { "id": "F2", "text": "Maya lives in Denver.", "edges": [ { "relation": "updates", "to": "F1" } ] },
+        { "id": "F3", "text": "Maya works as a night nurse in the ICU." },
+        { "id": "F4", "text": "Maya drives a blue Subaru." },
+        { "id": "F5", "text": "The Subaru needs new tires after the mountain trip.", "edges": [ { "relation": "about_entity", "to": "F4" } ] },
+        { "id": "F6", "text": "Maya has a dog named Biscuit." }
+      ],
+      "qa": [
+        { "question": "Where does Maya live now?", "evidence": ["F2", "D2:2"], "answer": "Denver" },
+        { "question": "What is the name of Maya's dog?", "evidence": ["F6", "D1:2"], "answer": "Biscuit" },
+        { "question": "What does Maya do for work?", "evidence": ["F3", "D1:4"], "answer": "Night nurse in the ICU" },
+        { "question": "When is Lena visiting?", "evidence": ["D2:1"], "answer": "March" },
+        { "question": "What car does Maya drive?", "evidence": ["F4", "F5"], "answer": "A blue Subaru" },
+        { "question": "Which instrument is Maya learning?", "evidence": ["D2:4"], "answer": "Cello" }
+      ]
+    }
+  ]
+}
