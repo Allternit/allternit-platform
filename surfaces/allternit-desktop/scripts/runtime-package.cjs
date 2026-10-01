@@ -148,26 +148,41 @@ function cloudflareToken() {
   return out[out.length - 1].trim();
 }
 
-async function r2(token, method, key, body, contentType, cacheControl) {
+// The wrangler OAuth token lasts about an hour, shorter than a full base upload. Every upload
+// worker shares this one token; the first to get a 401 re-runs `wrangler auth token` (which
+// refreshes it) and the others pick up the new value.
+const auth = { token: '' };
+function refreshToken(stale) {
+  if (auth.token === stale) auth.token = cloudflareToken();
+  return auth.token;
+}
+
+async function r2(method, key, body, contentType, cacheControl) {
   const url = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/r2/buckets/${BUCKET}/objects/${key}`;
-  for (let attempt = 1; ; attempt++) {
+  for (let attempt = 1, refreshed = false; ; attempt++) {
+    const token = auth.token;
     const res = await fetch(url, {
       method,
       headers: { Authorization: `Bearer ${token}`, ...(contentType ? { 'Content-Type': contentType } : {}), ...(cacheControl ? { 'Cache-Control': cacheControl } : {}) },
       body,
     });
     if (res.ok) return res;
+    if (res.status === 401 && !refreshed && !process.env.CLOUDFLARE_API_TOKEN) {
+      refreshed = true;
+      refreshToken(token);
+      continue;
+    }
     if (attempt >= 4 || res.status < 500) throw new Error(`${method} ${key}: ${res.status} ${await res.text()}`);
     await new Promise((r) => setTimeout(r, attempt * 2000));
   }
 }
 
-async function remoteObjects(token) {
+async function remoteObjects() {
   const keys = new Set();
   let cursor = '';
   for (;;) {
     const url = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/r2/buckets/${BUCKET}/objects?prefix=objects/&per_page=1000${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${auth.token}` } });
     if (!res.ok) throw new Error(`list objects: ${res.status} ${await res.text()}`);
     const body = await res.json();
     for (const o of body.result ?? []) keys.add(o.key);
@@ -182,8 +197,8 @@ async function publish(confirm) {
   if (!fs.existsSync(latestPath)) die('nothing packed — run pack first');
   const latest = JSON.parse(fs.readFileSync(latestPath, 'utf8'));
   const manifest = JSON.parse(fs.readFileSync(path.join(platformDir, latest.manifest), 'utf8'));
-  const token = cloudflareToken();
-  const have = await remoteObjects(token);
+  auth.token = cloudflareToken();
+  const have = await remoteObjects();
   const needed = [...new Set(Object.values(manifest.files).map((f) => `objects/${f.sha256}.gz`))].filter((k) => !have.has(k));
   const bytes = needed.reduce((n, k) => n + fs.statSync(path.join(FEED, k)).size, 0);
   console.log(`Runtime ${latest.version} (${PLATFORM}): ${Object.keys(manifest.files).length} files, ${needed.length} new objects to upload (${mb(bytes)}), ${have.size} already in r2://${BUCKET}`);
@@ -195,7 +210,7 @@ async function publish(confirm) {
   const queue = [...needed];
   const worker = async () => {
     for (let key = queue.shift(); key; key = queue.shift()) {
-      await r2(token, 'PUT', key, fs.readFileSync(path.join(FEED, key)), 'application/gzip', 'public, max-age=31536000, immutable');
+      await r2('PUT', key, fs.readFileSync(path.join(FEED, key)), 'application/gzip', 'public, max-age=31536000, immutable');
       done += 1;
       if (done % 500 === 0) console.log(`  ${done}/${needed.length} objects`);
     }
@@ -204,7 +219,7 @@ async function publish(confirm) {
   // Manifest before the pointer, pointer last: a client never sees latest.json naming something missing.
   for (const rel of [latest.manifest, `${latest.manifest}.sig`, 'latest.json.sig', 'latest.json']) {
     const immutable = rel.startsWith('manifests/');
-    await r2(token, 'PUT', `stable/${PLATFORM}/${rel}`, fs.readFileSync(path.join(platformDir, rel)),
+    await r2('PUT', `stable/${PLATFORM}/${rel}`, fs.readFileSync(path.join(platformDir, rel)),
       rel.endsWith('.json') ? 'application/json' : 'text/plain', immutable ? 'public, max-age=31536000, immutable' : 'no-store');
   }
   console.log(`✓ published ${latest.version} → https://runtime.allternit.com/stable/${PLATFORM}/latest.json`);
