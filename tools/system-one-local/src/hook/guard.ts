@@ -12,6 +12,7 @@
 //   advise hard rules emit their deny/ask; the pack may escalate to ask. Also logs.
 //   off    do nothing.
 import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { appendJsonl, BASE_DIR, sha256 } from "../log.ts";
 import type { SystemOneRequest, SystemOneResponse } from "../types.ts";
 import { evaluateHardRules, type HardRuleResult, type ToolCall, type Verdict } from "./hardrules.ts";
@@ -39,6 +40,8 @@ export interface GuardDeps {
   thresholds?: Thresholds;
   fetchImpl?: (url: string, init?: RequestInit) => Promise<Response>;
   logDir?: string | null; // null disables logging (tests)
+  /** Pending-permission store (deny labels); null disables it. Default ~/.allternit/system-one/pending. */
+  pendingDir?: string | null;
   now?: () => Date;
 }
 
@@ -75,6 +78,7 @@ export async function runGuard(input: any, deps: GuardDeps = {}): Promise<{ outp
   const mode = deps.mode ?? modeFromEnv();
   if (mode === "off" || !input || typeof input.tool_name !== "string") return { output: null, record: null };
   const t0 = performance.now();
+  rememberCall(input, deps.pendingDir === undefined && deps.logDir === null ? null : deps.pendingDir);
   const call: ToolCall = { tool_name: input.tool_name, tool_input: input.tool_input ?? {}, cwd: input.cwd };
   const record: GuardRecord = {
     ts: (deps.now ?? (() => new Date()))().toISOString(),
@@ -220,16 +224,133 @@ async function callServer(
   }
 }
 
+// ---------------------------------------------------------------- outcome labels (WP-S1U-3)
+//
+// The shadow GATEs about one tool call (this guard's, the CommRails judge's, the judge first
+// pass) all carry x-subject_ref = cc-tool:<tool_use_id>. Outcome labels, by subject_ref:
+//   PostToolUse         the call ran → true
+//   PostToolUseFailure  the call ran (and failed) → true: it was allowed
+//   PermissionRequest   the person was asked; remembered in a small pending-file store
+//                       (<pending>/<session>/ask-<key>) keyed by session + tool-call id
+//   Stop / SessionEnd   every PermissionRequest with no PostToolUse/Failure since → false
+//                       (the person denied it), then the session's pending files are dropped
+// No question_id is sent: the ledger labels the latest decision of every primitive on that call.
+
+export const OUTCOME_SOURCES = {
+  ran: "cli_hook.post_tool_use",
+  ranFailed: "cli_hook.post_tool_use_failure",
+  denied: "cli_hook.permission_denied",
+} as const;
+
+type OutcomeDeps = Pick<GuardDeps, "serverUrl" | "fetchImpl" | "timeoutMs" | "pendingDir">;
+
+const safeName = (s: string) => s.replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 128);
+const callHash = (input: any) => sha256(`${input?.tool_name ?? ""}\n${JSON.stringify(input?.tool_input ?? {})}`).slice(0, 32);
+
+function pendingRoot(dir: string | null | undefined): string | null {
+  if (dir === null) return null;
+  return dir ?? process.env.SYSTEM_ONE_PENDING_DIR ?? join(BASE_DIR, "pending");
+}
+
+function sessionDir(input: any, dir: string | null | undefined): string | null {
+  const root = pendingRoot(dir);
+  const sid = typeof input?.session_id === "string" && input.session_id ? input.session_id : null;
+  return root && sid ? join(root, safeName(sid)) : null;
+}
+
+function write(path: string, body: string) {
+  mkdirSync(join(path, ".."), { recursive: true, mode: 0o700 });
+  writeFileSync(path, body, { mode: 0o600 });
+}
+
+const rm = (path: string) => {
+  try { unlinkSync(path); } catch { /* not there */ }
+};
+
+/** PreToolUse: remember tool input → tool_use_id, since PermissionRequest inputs may lack the id. */
+export function rememberCall(input: any, dir?: string | null) {
+  try {
+    const sd = sessionDir(input, dir);
+    if (!sd || typeof input?.tool_use_id !== "string" || !input.tool_use_id) return;
+    write(join(sd, `seen-${callHash(input)}`), input.tool_use_id);
+  } catch { /* best-effort */ }
+}
+
+/** PermissionRequest: the person is being asked about this call. */
+export function recordPermissionRequest(input: any, dir?: string | null): boolean {
+  try {
+    const sd = sessionDir(input, dir);
+    if (!sd) return false;
+    const h = callHash(input);
+    let id: string | undefined = typeof input?.tool_use_id === "string" && input.tool_use_id ? input.tool_use_id : undefined;
+    const seen = join(sd, `seen-${h}`);
+    if (!id && existsSync(seen)) id = readFileSync(seen, "utf8").trim() || undefined;
+    const subject_ref = subjectRef(id);
+    if (!subject_ref) return false;
+    write(join(sd, `ask-${safeName(id!)}`), JSON.stringify({ subject_ref, tool: input.tool_name, hash: h, ts: new Date().toISOString() }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearPending(input: any, dir?: string | null) {
+  const sd = sessionDir(input, dir);
+  if (!sd) return;
+  if (typeof input?.tool_use_id === "string" && input.tool_use_id) rm(join(sd, `ask-${safeName(input.tool_use_id)}`));
+  if (input?.tool_name) rm(join(sd, `seen-${callHash(input)}`));
+}
+
 /**
- * PostToolUse: the call ran, so the person (or their settings) let it proceed. Report that as the
- * outcome label for the shadow GATE logged at PreToolUse (joined by subject_ref = tool_use_id).
- * Denials never reach PostToolUse, so they produce no label here.
+ * PostToolUse / PostToolUseFailure: the call ran, so the person (or their settings) let it
+ * proceed. A failed run was still allowed, so it reports true too.
  */
-export async function reportToolRan(input: any, deps: Pick<GuardDeps, "serverUrl" | "fetchImpl" | "timeoutMs"> = {}): Promise<boolean> {
+export async function reportToolRan(input: any, deps: OutcomeDeps = {}): Promise<boolean> {
   const subject_ref = subjectRef(input?.tool_use_id);
   if (!subject_ref || modeFromEnv() === "off") return false;
+  try { clearPending(input, deps.pendingDir); } catch { /* best-effort */ }
+  const source = input?.hook_event_name === "PostToolUseFailure" ? OUTCOME_SOURCES.ranFailed : OUTCOME_SOURCES.ran;
   return reportOutcome(
-    { subject_ref, question_id: GUARD_GATE.question, truth: "true", source: "cli_hook.post_tool_use" },
+    { subject_ref, truth: "true", source },
     { url: deps.serverUrl, fetchImpl: deps.fetchImpl, timeoutMs: deps.timeoutMs },
   );
+}
+
+/** Stop / SessionEnd: every asked call that never ran was denied. Returns how many were labelled. */
+export async function reportDenied(input: any, deps: OutcomeDeps = {}): Promise<number> {
+  const sd = sessionDir(input, deps.pendingDir);
+  if (!sd || !existsSync(sd)) return 0;
+  let n = 0;
+  try {
+    if (modeFromEnv() !== "off") {
+      for (const f of readdirSync(sd).filter((x) => x.startsWith("ask-"))) {
+        let subject_ref: string | undefined;
+        try { subject_ref = JSON.parse(readFileSync(join(sd, f), "utf8")).subject_ref; } catch { /* corrupt */ }
+        if (!subject_ref) continue;
+        const ok = await reportOutcome(
+          { subject_ref, truth: "false", source: OUTCOME_SOURCES.denied },
+          { url: deps.serverUrl, fetchImpl: deps.fetchImpl, timeoutMs: deps.timeoutMs },
+        );
+        if (ok) n++;
+      }
+    }
+  } finally {
+    try { rmSync(sd, { recursive: true, force: true }); } catch { /* best-effort */ }
+  }
+  return n;
+}
+
+/** One entry for every outcome hook event (hooks/s1-outcome). Never prints a decision. */
+export async function handleOutcomeHook(input: any, deps: OutcomeDeps = {}): Promise<void> {
+  switch (input?.hook_event_name) {
+    case "PermissionRequest":
+      if (modeFromEnv() !== "off") recordPermissionRequest(input, deps.pendingDir);
+      return;
+    case "Stop":
+    case "SessionEnd":
+      await reportDenied(input, deps);
+      return;
+    default: // PostToolUse, PostToolUseFailure (and the legacy posttooluse-outcome entry)
+      await reportToolRan(input, deps);
+  }
 }

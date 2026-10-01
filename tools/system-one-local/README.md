@@ -166,9 +166,22 @@ Add the hook to a **project-scoped** `.claude/settings.json`. This repo doesn't 
 `GATE` decision (bank `bank.permission_gate`, primitive `permission.cli_guard`, `x-subject_ref =
 cc-tool:<tool_use_id>`) to the shared shadow ledger through `src/decision/client.ts`. It is recorded
 in the dry-run record as `s1_gate` and never changes what the hook emits; S1 may only tighten
-(`tighten()`), never allow. To give those decisions outcome labels, add
-`hooks/posttooluse-outcome` as a `PostToolUse` hook with the same matcher: it reports
-"the call proceeded" (`truth: "true"`). Denied calls never reach PostToolUse, so they get no label.
+(`tighten()`), never allow. To give those decisions outcome labels, add `hooks/s1-outcome` for
+the `PermissionRequest`, `PostToolUse`, `PostToolUseFailure` and `Stop` events (same matcher for
+the tool events). It never prints a decision. Labels go by `subject_ref = cc-tool:<tool_use_id>`
+with no `question_id`, so every gate on that call (this guard, the CommRails judge and its first
+pass, when `allternit judge tool --tool-call-id` or the CommRails hook passed the id) is labelled:
+
+- `PostToolUse`: the call ran → `true`.
+- `PostToolUseFailure`: the call ran and failed → `true` (it was allowed).
+- `PermissionRequest`: the person is being asked. The hook writes a small pending file,
+  `~/.allternit/system-one/pending/<session_id>/ask-<tool_use_id>` (`SYSTEM_ONE_PENDING_DIR`
+  overrides). PermissionRequest inputs may lack `tool_use_id`, so PreToolUse also writes
+  `seen-<hash of tool + input>` with the id.
+- `Stop` (or `SessionEnd`): every pending ask with no PostToolUse/Failure since was denied →
+  `false` (`cli_hook.permission_denied`). The session's pending files are then removed.
+
+`hooks/posttooluse-outcome` still works and dispatches the same way.
 
 Summarise the dry run with `bun scripts/dryrun-summary.ts [--dir …] [--json]`. It reports:
 

@@ -1,0 +1,5 @@
+#!/bin/sh
+# Claude Code outcome hook (PermissionRequest / PostToolUse / PostToolUseFailure / Stop) for the
+# shadow S1 permission GATEs. Emits nothing.
+command -v bun >/dev/null 2>&1 || exit 0
+exec bun "$(dirname "$0")/s1-outcome.ts"
