@@ -484,3 +484,164 @@ pub fn summary(conn: &Connection, tenant_id: &str, start: &str, end: &str, group
         },
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn db() -> (DbHandle, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = DbHandle::new(dir.path().join("ledger.db")).unwrap();
+        (db, dir)
+    }
+
+    fn row_of(conn: &Connection, id: &str) -> (String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, i64, i64) {
+        conn.query_row(
+            "SELECT source, surface, run_id, node_id, tier, lane, cache_write_tokens, cost_microdollars FROM llm_usage_events WHERE id = ?1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn internal_rows_take_the_task_scope_then_default_to_internal() {
+        let ctx = LedgerCtx::surface("memory").run("run_1", Some("N3")).tier("S2").tenant(Some("org-1"), Some("u1"));
+        let row = scope(ctx, async { internal_row("p", "m", Some("ses_1"), 10, 4, 6, 2, 0.25, 30, true) }).await;
+        assert_eq!(row.ctx.surface.as_deref(), Some("memory"));
+        assert_eq!((row.ctx.run_id.as_deref(), row.ctx.node_id.as_deref()), (Some("run_1"), Some("N3")));
+        assert_eq!(row.ctx.tenant_id.as_deref(), Some("org-1"));
+        assert_eq!((row.cost_microdollars, row.cache_read_tokens, row.cache_write_tokens), (250_000, 6, 2));
+        let bare = internal_row("p", "m", None, 1, 1, 0, 0, 0.0, 1, false);
+        assert_eq!((bare.ctx.surface.as_deref(), bare.ctx.tier.as_deref(), bare.ctx.lane.as_deref()), (Some("internal"), Some("S2"), Some("api")));
+        assert_eq!(bare.status, "error");
+    }
+
+    #[test]
+    fn thread_scope_covers_block_on_callers_and_restores() {
+        assert!(current().is_none());
+        {
+            let _outer = enter(LedgerCtx::surface("agency").run("run_9", Some("N11")));
+            {
+                let _inner = enter(LedgerCtx::surface("template"));
+                assert_eq!(current().unwrap().surface.as_deref(), Some("template"));
+            }
+            let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+            let seen = rt.block_on(async { internal_row("p", "m", None, 0, 0, 0, 0, 0.0, 0, true) });
+            assert_eq!(seen.ctx.surface.as_deref(), Some("agency"));
+            assert_eq!(seen.ctx.node_id.as_deref(), Some("N11"));
+        }
+        assert!(current().is_none());
+    }
+
+    #[test]
+    fn unknown_values_are_dropped_not_stored() {
+        let ctx = LedgerCtx::surface("nope").tier("S9").lane("vendor");
+        assert_eq!((ctx.surface, ctx.tier, ctx.lane), (None, None, None));
+    }
+
+    #[test]
+    fn internal_and_s1_rows_persist_with_ledger_keys() {
+        let (db, _d) = db();
+        let conn = db.connect().unwrap();
+        let ctx = LedgerCtx::surface("agency").run("run_1", Some("N11")).tier("S2").tenant(Some("org-1"), None);
+        let id = insert(&conn, &LedgerRow { source: "internal", ctx: ctx.clone(), cache_write_tokens: 5, cost_microdollars: 7, status: "ok".into(), ..Default::default() })
+            .unwrap()
+            .unwrap();
+        let r = row_of(&conn, &id);
+        assert_eq!((r.0.as_str(), r.1.as_deref(), r.2.as_deref(), r.3.as_deref(), r.4.as_deref()), ("internal", Some("agency"), Some("run_1"), Some("N11"), Some("S2")));
+        assert_eq!((r.6, r.7), (5, 7));
+        let s1 = insert(&conn, &s1_decision_row(ctx, "laya_bundled", false, 12, None)).unwrap().unwrap();
+        let r = row_of(&conn, &s1);
+        assert_eq!((r.0.as_str(), r.4.as_deref(), r.5.as_deref(), r.7), ("s1", Some("S1"), Some("local"), 0));
+    }
+
+    #[test]
+    fn gizzi_reports_dedupe_against_metered_sessions_in_both_orders() {
+        let (db, _d) = db();
+        let conn = db.connect().unwrap();
+        let call = |sid: &str, call_id: &str| ReportedCall {
+            kind: None, call_id: call_id.into(), session_id: Some(sid.into()), surface: Some("chat".into()), run_id: None,
+            node_id: None, tier: None, lane: Some("subscription-cli".into()), provider_id: Some("p".into()), model_id: Some("m".into()),
+            input_tokens: 10, output_tokens: 5, reasoning_tokens: 0, cache_read_tokens: 30, cache_write_tokens: 0, cost_usd: 0.01,
+            latency_ms: 9, served_by_s1: false, incumbent_cost_usd: None,
+        };
+        let count = |c: &Connection| -> i64 { c.query_row("SELECT COUNT(*) FROM llm_usage_events", [], |r| r.get(0)).unwrap() };
+        // Standalone gizzi call: recorded; a re-delivery updates, not doubles.
+        let row = reported_row(&call("ses_a", "c1"), Some("org-1"), "u1").unwrap();
+        assert!(insert(&conn, &row).unwrap().is_some());
+        insert(&conn, &row).unwrap();
+        assert_eq!(count(&conn), 1);
+        // allternit-api then meters the same session → the gizzi row goes.
+        insert(&conn, &internal_row("p", "m", Some("ses_a"), 10, 5, 30, 0, 0.01, 9, true)).unwrap();
+        assert_eq!(conn.query_row("SELECT source FROM llm_usage_events", [], |r| r.get::<_, String>(0)).unwrap(), "internal");
+        // A late gizzi report for a metered session is skipped.
+        let late = reported_row(&call("ses_a", "c2"), Some("org-1"), "u1").unwrap();
+        assert!(insert(&conn, &late).unwrap().is_none());
+        assert_eq!(count(&conn), 1);
+    }
+
+    #[test]
+    fn s1_reports_are_cost_zero_and_keys_are_namespaced_per_user() {
+        let call = ReportedCall {
+            kind: Some("s1".into()), call_id: "d1".into(), session_id: None, surface: Some("chat".into()), run_id: None, node_id: None,
+            tier: Some("S3".into()), lane: None, provider_id: None, model_id: Some("laya_bundled".into()), input_tokens: 99,
+            output_tokens: 99, reasoning_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, cost_usd: 5.0, latency_ms: 4,
+            served_by_s1: true, incumbent_cost_usd: Some(0.002),
+        };
+        let row = reported_row(&call, None, "u1").unwrap();
+        assert_eq!((row.source, row.cost_microdollars, row.prompt_tokens), ("s1", 0, 0));
+        assert_eq!(row.ctx.tier.as_deref(), Some("S1"));
+        assert_eq!(row.s1_incumbent_cost_microdollars, Some(2_000));
+        assert!(row.decision_served_by_s1);
+        assert_eq!(row.idempotency_key.as_deref(), Some("ledger:u1:s1:d1"));
+        assert_ne!(reported_row(&call, None, "u2").unwrap().idempotency_key, row.idempotency_key);
+        assert!(reported_row(&ReportedCall { call_id: " ".into(), ..call }, None, "u1").is_none());
+    }
+
+    fn seed(conn: &Connection) {
+        let ctx = |s: &str, t: &str, l: &str| LedgerCtx::surface(s).tier(t).lane(l).tenant(Some("org-1"), None);
+        let llm = |ctx: LedgerCtx, model: &str, prompt: i64, read: i64, cost: i64| LedgerRow {
+            source: "internal", ctx, provider_id: Some("prov".into()), model_id: Some(model.into()), prompt_tokens: prompt,
+            completion_tokens: 1, cache_read_tokens: read, cost_microdollars: cost, status: "ok".into(), ..Default::default()
+        };
+        insert(conn, &llm(ctx("chat", "S2", "api"), "big", 100, 300, 1_000)).unwrap();
+        insert(conn, &llm(ctx("chat", "S2", "subscription-cli"), "big", 100, 0, 500)).unwrap();
+        insert(conn, &llm(ctx("memory", "S2", "api"), "small", 50, 50, 100)).unwrap();
+        insert(conn, &s1_decision_row(ctx("agency", "S1", "local"), "laya", true, 5, Some(400))).unwrap();
+        insert(conn, &s1_decision_row(ctx("agency", "S1", "local"), "laya", false, 5, Some(999))).unwrap();
+        // Another tenant: never counted.
+        insert(conn, &llm(LedgerCtx::surface("chat").tenant(Some("org-2"), None), "big", 1, 0, 9_999)).unwrap();
+    }
+
+    #[test]
+    fn summary_groups_by_each_dimension_with_hit_rate_and_s1_savings() {
+        let (db, _d) = db();
+        let conn = db.connect().unwrap();
+        seed(&conn);
+        let (s, e) = ("2000-01-01", "2999-01-01");
+        let by = |d: &str| summary(&conn, "org-1", s, e, &parse_group_by(d).unwrap()).unwrap();
+
+        let surface = by("surface");
+        let groups = surface["groups"].as_array().unwrap();
+        assert_eq!(groups[0]["key"]["surface"], "chat");
+        assert_eq!((groups[0]["calls"].as_i64(), groups[0]["cost_microdollars"].as_i64()), (Some(2), Some(1_500)));
+        assert_eq!(surface["totals"]["cost_microdollars"], 1_600);
+        assert_eq!(surface["totals"]["calls"], 5);
+        // reads 350 / (prompt 250 + reads 350)
+        let rate = surface["cache_hit_rate"].as_f64().unwrap();
+        assert!((rate - 350.0 / 600.0).abs() < 1e-9, "{rate}");
+        assert_eq!(surface["s1"]["decisions"], 2);
+        assert_eq!(surface["s1"]["served_by_s1"], 1);
+        assert_eq!(surface["s1"]["estimated_savings_microdollars"], 400);
+
+        let tier_lane = by("tier,lane");
+        let keys: Vec<_> = tier_lane["groups"].as_array().unwrap().iter().map(|g| g["key"].clone()).collect();
+        assert!(keys.contains(&serde_json::json!({"tier": "S1", "lane": "local"})));
+        assert!(keys.contains(&serde_json::json!({"tier": "S2", "lane": "subscription-cli"})));
+        let model = by("model");
+        assert_eq!(model["groups"][0]["key"]["model"], "prov/big");
+        assert!(parse_group_by("surface,secret").is_err());
+        assert!(parse_group_by("").is_err());
+    }
+}

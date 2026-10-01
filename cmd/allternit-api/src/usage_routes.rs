@@ -199,3 +199,67 @@ async fn usage_summary(
             .into_response(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    use crate::content_artifact_routes::tests::{test_app_state, test_user};
+
+    async fn call(app: Router, req: Request<Body>) -> (StatusCode, serde_json::Value) {
+        let resp = app.oneshot(req).await.unwrap();
+        let status = resp.status();
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        (status, serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null))
+    }
+
+    #[tokio::test]
+    async fn gizzi_reports_land_in_the_ledger_and_summary_groups_them() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = test_app_state(temp.path()).await;
+        {
+            let conn = state.db.connect().unwrap();
+            conn.execute("INSERT OR IGNORE INTO users (id, email) VALUES ('u1', 'u1@example.com')", []).unwrap();
+            conn.execute("INSERT INTO organizations (id, name, created_at, updated_at) VALUES ('org-1', 'O', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)", []).unwrap();
+            conn.execute("INSERT INTO organization_members (id, organization_id, user_id, role, joined_at) VALUES ('m1', 'org-1', 'u1', 'owner', CURRENT_TIMESTAMP)", []).unwrap();
+        }
+        let app = usage_router().with_state(state.clone());
+        let report = json!({ "calls": [
+            { "call_id": "a", "session_id": "ses_1", "surface": "chat", "lane": "subscription-cli", "provider_id": "p", "model_id": "m",
+              "input_tokens": 100, "output_tokens": 10, "cache_read_tokens": 100, "cost_usd": 0.002 },
+            { "kind": "s1", "call_id": "d", "surface": "chat", "model_id": "laya", "served_by_s1": true, "incumbent_cost_usd": 0.001 },
+            { "call_id": "" }
+        ]});
+        let req = Request::builder().method("POST").uri("/usage/ledger").header("content-type", "application/json")
+            .extension(test_user("u1", Some("org-1"))).body(Body::from(report.to_string())).unwrap();
+        let (status, body) = call(app.clone(), req).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!((body["recorded"].as_i64(), body["skipped"].as_i64()), (Some(2), Some(1)));
+
+        let uri = "/usage/summary?organization_id=org-1&period_start=2000-01-01&period_end=2999-01-01&group_by=surface,lane";
+        let req = Request::builder().uri(uri).extension(test_user("u1", Some("org-1"))).body(Body::empty()).unwrap();
+        let (status, body) = call(app.clone(), req).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let ledger = &body["ledger"];
+        assert_eq!(ledger["totals"]["cost_microdollars"], 2_000);
+        assert_eq!(ledger["cache_hit_rate"], 0.5);
+        assert_eq!(ledger["s1"]["served_by_s1"], 1);
+        assert_eq!(ledger["s1"]["estimated_savings_microdollars"], 1_000);
+        assert!(ledger["groups"].as_array().unwrap().iter().any(|g| g["key"] == json!({"surface": "chat", "lane": "subscription-cli"})));
+        // Existing invoice fields are unchanged.
+        assert!(body["line_items"].is_array());
+
+        // No group_by → no ledger (old response shape); a bad dimension → 400.
+        let req = Request::builder().uri("/usage/summary?organization_id=org-1&period_start=2000-01-01&period_end=2999-01-01")
+            .extension(test_user("u1", Some("org-1"))).body(Body::empty()).unwrap();
+        let (_, body) = call(app.clone(), req).await;
+        assert!(body.get("ledger").is_none());
+        let req = Request::builder().uri("/usage/summary?organization_id=org-1&period_start=a&period_end=b&group_by=user_id")
+            .extension(test_user("u1", Some("org-1"))).body(Body::empty()).unwrap();
+        assert_eq!(call(app, req).await.0, StatusCode::BAD_REQUEST);
+    }
+}
