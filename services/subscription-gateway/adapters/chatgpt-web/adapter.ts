@@ -92,6 +92,11 @@ export function chatGPTWebConfig(
       { kind: "slow_mode", pattern: /slower (responses|mode)|slow mode/i },
       { kind: "reset_notice", pattern: /(quota|limit|usage) resets? (at|in)/i },
     ],
+    // Live 2026-10-01: ChatGPT showed "Do you like this personality?" in place of the answer, so the turn stalled.
+    interrupts: [
+      { pattern: /do you like this personality\?/i, message: "ChatGPT is asking whether you like its personality instead of answering. Answer it in the ChatGPT window on your Sessions computer, then send again." },
+      { pattern: /which response do you prefer\?/i, message: "ChatGPT is asking you to pick between two responses. Pick one in the ChatGPT window on your Sessions computer, then send again." },
+    ],
     // send_button is not probed: the live UI renders it only once the
     // composer has text (idle shows the voice button), so an idle probe would
     // always report ui_drift. Submit resolves it after fillComposer.
