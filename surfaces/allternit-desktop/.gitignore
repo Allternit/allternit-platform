@@ -31,3 +31,4 @@ resources/computer-use/acu/
 resources/computer-use/darwin/
 resources/computer-use/linux/
 resources/computer-use/win32/
+resources/runtime.json

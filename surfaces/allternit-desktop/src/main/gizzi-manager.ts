@@ -19,6 +19,7 @@ import * as path from 'path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 import log from 'electron-log';
+import { runtimeResource } from './runtime-home.js';
 import { PORTS, URLS } from './config.js';
 import { meshManager } from './mesh-manager.js';
 
@@ -370,10 +371,10 @@ export class GizziManager {
 
     const candidates = app.isPackaged
       ? [
-          path.join(process.resourcesPath ?? '', 'bin', binaryName),
+          runtimeResource('bin', binaryName),
         ]
       : [
-          path.join(process.resourcesPath ?? '', 'bin', binaryName),
+          runtimeResource('bin', binaryName),
           path.join(app.getAppPath(), '..', '..', 'cmd', 'gizzi-code', 'dist', binaryName),
           path.join(__dirname, '..', '..', 'resources', 'bin', binaryName),
         ];
