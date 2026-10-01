@@ -25,6 +25,7 @@ import log from 'electron-log';
 import { PORTS, URLS, webhookReceiverUrl } from './config.js';
 import { resolveApiDataDir } from './desktop-data-dir.js';
 import { spawnSidecar } from './process-lifeline.js';
+import { systemOne } from './system-one-manager.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -285,6 +286,9 @@ export class BackendManager {
       GIZZI_PASSWORD: config.gizziPassword ?? process.env.GIZZI_PASSWORD ?? '',
       RUST_LOG: 'info',
       NODE_ENV: 'production',
+      // Local S1 (Q28/Q29): ALLTERNIT_S1_URL, ALLTERNIT_S1_BACKEND (laya_bundled
+      // once Laya is healthy, else system_one_local), shared shadow ledger dir.
+      ...systemOne.getApiEnvironment(),
       ...(config.extraEnv ?? {}),
     };
     loadTartHostEnv(env);

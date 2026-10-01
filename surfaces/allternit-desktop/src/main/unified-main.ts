@@ -42,6 +42,7 @@ import {
   isBotComputerWindowUrl,
 } from './bot-computer-window.js';
 import { bonsaiCompanion } from './bonsai-companion-manager.js';
+import { systemOne } from './system-one-manager.js';
 import { gizziManager } from './gizzi-manager.js';
 import { connectorSidecarManager } from './connector-sidecar-manager.js';
 import { gizziDaemonManager } from './gizzi-daemon-manager.js';
@@ -1154,6 +1155,11 @@ async function initializeBundledMode(): Promise<void> {
     // the API below only needs gizziUrl, localEngineUrl, and the launch
     // environments from the driver/ACU managers.
     updateSplash('Starting services…', 10);
+    // System One + Laya (Q28/Q29): S1 server now, Laya once installed (first run
+    // installs it in the background). Never awaited: app start never waits on
+    // it; failures land in system-one:get-status. Started this early so Laya is
+    // more likely healthy when the API spawns (ALLTERNIT_S1_BACKEND=laya_bundled).
+    void systemOne.startWithApp();
     const gizziTask = (async (): Promise<string | null> => {
       try {
         const url = await startGizziRuntime();
@@ -2565,6 +2571,7 @@ async function shutdownAllServices(): Promise<void> {
   notebookManager.stop();
   voiceManager.stop();
   bonsaiCompanion.stop();
+  systemOne.stop();
   computerUseDriverManager.stop();
   acuGatewayManager.stop();
   phoneRemoteManager.stop();
@@ -2653,6 +2660,17 @@ handleGuarded('bonsai:cancel-install', () => bonsaiCompanion.cancelInstall());
 handleGuarded('bonsai:start', () => bonsaiCompanion.start());
 handleGuarded('bonsai:stop', () => { bonsaiCompanion.stop(); return true; });
 handleGuarded('bonsai:remove', () => bonsaiCompanion.remove());
+
+// System One (S1) + Laya (install / repair / lifecycle / checkpoint swap)
+ipcMain.handle('system-one:get-status', () => systemOne.getStatus());
+handleGuarded('system-one:install', () => systemOne.install());
+handleGuarded('system-one:cancel-install', () => systemOne.cancelInstall());
+handleGuarded('system-one:repair', () => systemOne.repair());
+handleGuarded('system-one:remove', () => systemOne.remove());
+handleGuarded('system-one:start', () => systemOne.startWithApp());
+handleGuarded('system-one:stop', () => { systemOne.stop(); return true; });
+handleGuarded('system-one:set-checkpoint', (_event, checkpoint: { revision?: string; path?: string } | null) =>
+  systemOne.setCheckpoint(checkpoint));
 
 // Research backend (notebook engine) — lazy start
 ipcMain.handle('research:get-status', () => notebookManager.getStatus());

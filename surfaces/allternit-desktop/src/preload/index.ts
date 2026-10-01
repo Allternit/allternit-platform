@@ -125,6 +125,51 @@ const bonsaiAPI = {
   },
 };
 
+// ─── System One (S1) + Laya ───────────────────────────────────────────────────
+// Settings → Models & tiers reads install state from here (Q28/Q29).
+
+export interface SystemOneStatus {
+  layaSupported: boolean;
+  systemOne: { available: boolean; running: boolean; url: string };
+  laya: {
+    installed: boolean;
+    installing: boolean;
+    running: boolean;
+    url: string;
+    version: string;
+    checkpoint: { source: 'pinned' | 'revision' | 'path'; revision?: string; path?: string };
+    needsUv: boolean;
+    uvHint?: string;
+    installDir: string;
+  };
+  backend: 'laya_bundled' | 'system_one_local';
+  apiBackend?: 'laya_bundled' | 'system_one_local';
+  shadowDir: string | null;
+  error?: string;
+}
+
+export interface SystemOneProgress {
+  stage: 'starting' | 'installing' | 'ready' | 'error' | 'cancelled' | 'needs-uv';
+  message: string;
+}
+
+const systemOneAPI = {
+  getStatus: (): Promise<SystemOneStatus> => ipcRenderer.invoke('system-one:get-status'),
+  install: (): Promise<void> => ipcRenderer.invoke('system-one:install'),
+  cancelInstall: (): Promise<boolean> => ipcRenderer.invoke('system-one:cancel-install'),
+  repair: (): Promise<void> => ipcRenderer.invoke('system-one:repair'),
+  remove: (): Promise<void> => ipcRenderer.invoke('system-one:remove'),
+  start: (): Promise<void> => ipcRenderer.invoke('system-one:start'),
+  stop: (): Promise<boolean> => ipcRenderer.invoke('system-one:stop'),
+  setCheckpoint: (checkpoint: { revision?: string; path?: string } | null): Promise<SystemOneStatus['laya']['checkpoint']> =>
+    ipcRenderer.invoke('system-one:set-checkpoint', checkpoint),
+  onProgress: (handler: (progress: SystemOneProgress) => void): (() => void) => {
+    const listener = (_: IpcRendererEvent, p: SystemOneProgress) => handler(p);
+    ipcRenderer.on('system-one:progress', listener);
+    return () => ipcRenderer.removeListener('system-one:progress', listener);
+  },
+};
+
 // ─── VM Setup (onboarding wizard) ─────────────────────────────────────────────
 
 type DownloadProgress = {
@@ -875,6 +920,7 @@ const allternitDesktopAPI = {
   backend: backendAPI,
   engines: enginesAPI,
   bonsai: bonsaiAPI,
+  systemOne: systemOneAPI,
   vm: vmAPI,
   window: windowAPI,
   store: storeAPI,

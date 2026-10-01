@@ -71,6 +71,51 @@ export interface BonsaiAPI {
   onProgress(handler: (progress: { stage: string; message: string }) => void): () => void;
 }
 
+export type S1Backend = 'laya_bundled' | 'system_one_local';
+
+export interface LayaCheckpoint {
+  source: 'pinned' | 'revision' | 'path';
+  revision?: string;
+  path?: string;
+}
+
+export interface SystemOneStatus {
+  layaSupported: boolean;
+  systemOne: { available: boolean; running: boolean; url: string };
+  laya: {
+    installed: boolean;
+    installing: boolean;
+    running: boolean;
+    url: string;
+    version: string;
+    checkpoint: LayaCheckpoint;
+    needsUv: boolean;
+    uvHint?: string;
+    installDir: string;
+  };
+  backend: S1Backend;
+  apiBackend?: S1Backend;
+  shadowDir: string | null;
+  error?: string;
+}
+
+export interface SystemOneProgress {
+  stage: 'starting' | 'installing' | 'ready' | 'error' | 'cancelled' | 'needs-uv';
+  message: string;
+}
+
+export interface SystemOneAPI {
+  getStatus(): Promise<SystemOneStatus>;
+  install(): Promise<void>;
+  cancelInstall(): Promise<boolean>;
+  repair(): Promise<void>;
+  remove(): Promise<void>;
+  start(): Promise<void>;
+  stop(): Promise<boolean>;
+  setCheckpoint(checkpoint: { revision?: string; path?: string } | null): Promise<LayaCheckpoint>;
+  onProgress(handler: (progress: SystemOneProgress) => void): () => void;
+}
+
 export interface VmSetupAPI {
   checkConnectivity(): Promise<{
     internet: boolean;
@@ -553,6 +598,7 @@ export interface AllternitDesktopAPI {
   connection: ConnectionAPI;
   backend: BackendAPI;
   bonsai: BonsaiAPI;
+  systemOne: SystemOneAPI;
   vm: VmSetupAPI;
   window: WindowAPI;
   store: StoreAPI;

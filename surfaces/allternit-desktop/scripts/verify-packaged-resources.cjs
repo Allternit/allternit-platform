@@ -69,6 +69,16 @@ const required = [
         },
       ]),
   {
+    path: path.join(resourcesDir, 'bin', process.platform === 'win32' ? 'system-one.exe' : 'system-one'),
+    label: 'System One (S1) server binary',
+    buildStep: 'npm run prepare:system-one',
+  },
+  {
+    path: path.join(resourcesDir, 'laya', 'serve-laya.sh'),
+    label: 'Laya install/serve scripts (S1 laya_bundled backend)',
+    buildStep: 'npm run prepare:system-one',
+  },
+  {
     path: path.join(resourcesDir, 'platform', 'index.html'),
     label: 'Platform static export',
     buildStep: 'npm run prepare:platform-static (or scripts/build-desktop.sh)',
