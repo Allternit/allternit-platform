@@ -18,7 +18,8 @@ const USER = arg('user', 'user_3J98Yz8K5m5WVkDix19nQb7AgiL');
 if (!BOT) { console.error('usage: --bot <botId> [--turns N]'); process.exit(2); }
 
 function desktopToken() {
-  const pid = execSync("pgrep -f 'Allternit Desktop.app/Contents/Resources/bin/allternit-api' | head -1").toString().trim();
+  // The bundled binary, or a runtime update's copy under userData/runtime/versions/<v>/bin.
+  const pid = execSync("pgrep -f 'Allternit Desktop.app/Contents/Resources/bin/allternit-api|@allternit/desktop/runtime/versions/[^/]+/bin/allternit-api' | head -1").toString().trim();
   const env = execSync(`ps eww -o command= -p ${pid}`).toString().split(' ');
   return (env.find((e) => e.startsWith('ALLTERNIT_DESKTOP_ACCESS_TOKEN=')) ?? '').split('=')[1];
 }
