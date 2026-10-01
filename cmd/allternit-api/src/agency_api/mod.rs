@@ -15,6 +15,7 @@
 pub mod bugfix; // WP-B1
 pub mod catalog;
 pub mod compiler;
+pub mod effects; // WP-C3a/C3b effect connectors
 pub mod executor;
 pub mod guard;
 pub mod safety;

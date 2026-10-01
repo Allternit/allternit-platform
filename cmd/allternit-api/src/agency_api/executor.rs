@@ -34,6 +34,7 @@ use super::bugfix::{self, edits::{Edit, Planned}}; // WP-B1
 #[path = "bugfix/exec_hooks.rs"]
 mod bugfix_hooks; // WP-B2: repro tests, baseline/flakes, judge, exploration (memo C 4–8)
 pub(crate) mod generic; // WP-X2
+mod effects_c3b; // WP-C3b: computer:/campaign: connector glue
 use super::guard::Limits;
 use super::store::{now, new_id, AgencyStore, EffectDenied, TERMINAL};
 use crate::AppState;
