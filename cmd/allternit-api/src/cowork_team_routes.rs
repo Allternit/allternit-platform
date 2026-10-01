@@ -1059,6 +1059,39 @@ struct ParsedPrdTask {
     depends_on: Option<Vec<serde_json::Value>>,
 }
 
+/// JSON Schema of a parse-prd reply (O10).
+fn prd_schema() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tasks"],
+        "properties": { "tasks": { "type": "array", "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["title"],
+            "properties": {
+                "title": { "type": "string", "minLength": 1 },
+                "description": { "type": "string" },
+                "priority": { "type": ["string", "integer"] },
+                "depends_on": { "type": "array", "items": { "type": ["integer", "string"] } }
+            }
+        } } }
+    })
+}
+
+/// The task list of a reply: the structured value, else the text validated
+/// against the schema, else (logged) a bare JSON array from an older-style
+/// reply.
+fn prd_tasks(reply: &crate::structured_output::StructuredReply, schema: &serde_json::Value) -> Option<Vec<ParsedPrdTask>> {
+    if let Some(v) = crate::structured_output::resolve(reply, schema, "parse_prd") {
+        return serde_json::from_value(v["tasks"].clone()).ok();
+    }
+    let raw = extract_json_array(&reply.text)?;
+    let tasks: Vec<ParsedPrdTask> = serde_json::from_str(raw).ok()?;
+    warn!("parse-prd: no structured output; used the bare-array fallback");
+    Some(tasks)
+}
+
 /// Locate the first JSON array in model output, tolerating surrounding prose
 /// and ```json code fences. Returns the slice from `[` through `]`.
 fn extract_json_array(text: &str) -> Option<&str> {
@@ -1105,9 +1138,9 @@ fn build_prd_parse_prompt(
         prompt.push('\n');
     }
     prompt.push_str(
-        "Respond with ONLY a JSON array (no prose, no code fences) of objects with this shape:\n\
-         [{{\"title\": \"short imperative title\", \"description\": \"1-3 sentences of concrete detail\", \
-         \"priority\": \"low\" | \"medium\" | \"high\", \"depends_on\": [<0-based indexes of earlier tasks this task depends on>]}}]\n\
+        "Respond with ONLY a JSON object (no prose, no code fences) of this shape:\n\
+         {{\"tasks\": [{{\"title\": \"short imperative title\", \"description\": \"1-3 sentences of concrete detail\", \
+         \"priority\": \"low\" | \"medium\" | \"high\", \"depends_on\": [<0-based indexes of earlier tasks this task depends on>]}}]}}\n\
          Rules:\n\
          - Order tasks so dependencies point backwards (a task only depends on lower indexes).\n\
          - Each task must be independently actionable by a coding agent.\n\
@@ -1132,27 +1165,27 @@ async fn parse_prd(
         body.existing_titles.as_deref(),
         max,
     );
-    let system = "You are a precise technical project planner. You decompose product requirements into actionable engineering tasks. You output ONLY valid JSON — a single array of task objects — with no prose and no markdown fences.";
+    let system = "You are a precise technical project planner. You decompose product requirements into actionable engineering tasks. You output ONLY valid JSON — one object with a tasks array — with no prose and no markdown fences.";
 
     // Route through the Gizzi runtime completion helper (same path ALabs
     // lesson generation uses) so parse-prd inherits the platform's
     // brain/provider configuration instead of calling a provider directly.
-    let ledger = crate::usage_ledger::LedgerCtx::surface("cowork");
-    let completion = crate::usage_ledger::scope(ledger, async { match body
+    // O10: schema-constrained (an object with a `tasks` array; providers'
+    // structured-output paths want an object root). Metered as "cowork".
+    let model = body
         .model_id
         .as_deref()
         .and_then(|m| m.split_once('/'))
-        .map(|(p, m)| (p.to_string(), m.to_string()))
-    {
-        Some(model) => {
-            crate::gizzi_completion::complete(&prompt, Some(system), Some(&model)).await
-        }
-        None => crate::gizzi_completion::complete(&prompt, Some(system), None).await,
-    } })
+        .map(|(p, m)| (p.to_string(), m.to_string()));
+    let schema = prd_schema();
+    let completion = crate::usage_ledger::scope(
+        crate::usage_ledger::LedgerCtx::surface("cowork"),
+        crate::structured_output::complete_structured(&prompt, Some(system), model.as_ref(), &schema),
+    )
     .await;
 
-    let text = match completion {
-        Some(text) if !text.trim().is_empty() => text,
+    let reply = match completion {
+        Some(r) if r.value.is_some() || !r.text.trim().is_empty() => r,
         _ => {
             warn!("parse-prd: gizzi completion unavailable");
             return (
@@ -1166,32 +1199,17 @@ async fn parse_prd(
         }
     };
 
-    let Some(raw) = extract_json_array(&text) else {
-        warn!("parse-prd: model output contained no JSON array");
+    let Some(parsed) = prd_tasks(&reply, &schema) else {
+        warn!("parse-prd: model output contained no valid task list");
         return (
             StatusCode::BAD_GATEWAY,
             Json(json!({
                 "error": "parse_failed",
-                "message": "AI response did not contain a JSON task array",
+                "message": "AI response did not contain a valid task list",
             })),
         )
             .into_response();
     };
-    let parsed: Vec<ParsedPrdTask> = match serde_json::from_str(raw) {
-        Ok(tasks) => tasks,
-        Err(e) => {
-            warn!("parse-prd: failed to parse model JSON: {}", e);
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({
-                    "error": "parse_failed",
-                    "message": "AI response was not valid JSON",
-                })),
-            )
-                .into_response();
-        }
-    };
-
     // Honor max_tasks by truncating, then map to the board-item contract the
     // coworkTeamBridge consumes: positional tempIds plus resolved
     // dependencyTempIds (tempId of each referenced task).
@@ -1242,4 +1260,32 @@ async fn cowork_team_status() -> impl IntoResponse {
         "status": "ok",
         "service": "cowork-team",
     }))
+}
+
+#[cfg(test)]
+mod structured_tests {
+    use super::*;
+    use crate::structured_output::StructuredReply;
+
+    #[test]
+    fn prd_reply_paths() {
+        let schema = prd_schema();
+        let structured = StructuredReply {
+            value: Some(json!({ "tasks": [{ "title": "Add login", "priority": "high", "depends_on": [] }, { "title": "Tests", "depends_on": [0] }] })),
+            ..Default::default()
+        };
+        let tasks = prd_tasks(&structured, &schema).unwrap();
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[1].title, "Tests");
+        // Text in the new object shape, fenced: logged tolerant fallback.
+        let text = StructuredReply { text: "```json\n{\"tasks\":[{\"title\":\"A\"}]}\n```".into(), ..Default::default() };
+        assert_eq!(prd_tasks(&text, &schema).unwrap().len(), 1);
+        // Older bare-array reply still reads.
+        let bare = StructuredReply { text: "[{\"title\":\"A\"},{\"title\":\"B\"}]".into(), ..Default::default() };
+        assert_eq!(prd_tasks(&bare, &schema).unwrap().len(), 2);
+        // Schema-invalid (task without a title).
+        let bad = StructuredReply { text: "{\"tasks\":[{\"description\":\"x\"}]}".into(), ..Default::default() };
+        assert!(prd_tasks(&bad, &schema).is_none());
+        assert!(crate::structured_output::validate(&schema, &json!({ "tasks": [{ "title": "x", "extra": 1 }] })).is_err());
+    }
 }

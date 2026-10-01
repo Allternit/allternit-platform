@@ -47,7 +47,7 @@ pub async fn complete_ephemeral_structured(
     schema: &serde_json::Value,
 ) -> Option<String> {
     let format = json!({ "type": "json_schema", "schema": schema, "retryCount": 1 });
-    run(prompt, system, model, true, false, Some(&format), &mut None).await.map(|(t, _)| t)
+    run(prompt, system, model, true, true, Some(&format), &mut None).await.map(|(t, _)| t)
 }
 
 /// Model usage gizzi-code reported for a completion (summed over the
@@ -256,7 +256,8 @@ async fn collect(
         message_payload["system"] = json!(format!("+{system_text}"));
     }
     if tools_off {
-        message_payload["tools"] = json!({ "*": false });
+        // A structured call keeps the one tool gizzi enforces the schema through.
+        message_payload["tools"] = if format.is_some() { crate::structured_output::tools_off_except_structured() } else { json!({ "*": false }) };
     }
     if let Some(format) = format {
         message_payload["format"] = format.clone();
@@ -387,7 +388,7 @@ async fn collect(
 
 /// O15: one ledger row per internal completion, attributed by the caller's
 /// [`crate::usage_ledger::scope`]/[`crate::usage_ledger::enter`] context.
-fn record_ledger(provider_id: &str, model_id: &str, session_id: &str, usage: Option<Usage>, elapsed: Duration) {
+pub(crate) fn record_ledger(provider_id: &str, model_id: &str, session_id: &str, usage: Option<Usage>, elapsed: Duration) {
     let u = usage.unwrap_or_default();
     crate::usage_ledger::record(crate::usage_ledger::internal_row(
         provider_id,

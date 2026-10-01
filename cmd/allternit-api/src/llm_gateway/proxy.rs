@@ -620,6 +620,9 @@ struct Collector {
     ttft: Option<Duration>,
     citations: Vec<Annotation>,
     tool_calls: BTreeMap<u32, ToolCallAccumulator>,
+    /// The assistant message's `structured` value (a json_schema
+    /// `response_format`; gizzi returns it there, not as text).
+    structured: Option<Value>,
 }
 
 impl Collector {
@@ -635,6 +638,16 @@ impl Collector {
             ttft: None,
             citations: Vec::new(),
             tool_calls: BTreeMap::new(),
+            structured: None,
+        }
+    }
+
+    /// The reply text a client sees: the structured value as JSON when the
+    /// request asked for json_schema output, else the streamed text.
+    fn content(&self) -> String {
+        match &self.structured {
+            Some(v) => v.to_string(),
+            None => self.text.clone(),
         }
     }
 
@@ -717,6 +730,9 @@ impl Collector {
                 }
                 self.usage = parse_assistant_usage(info);
                 self.citations = extract_citations(info);
+                if let Some(v) = info.get("structured").filter(|v| !v.is_null()) {
+                    self.structured = Some(v.clone());
+                }
                 if let Some(error) = info.get("error") {
                     let name = error
                         .get("name")
@@ -2650,11 +2666,11 @@ async fn nonstream_completion(
                     .final_tool_calls()
                     .map(|tc| {
                         super::translate::AssistantMessage::with_tool_calls(
-                            collector.text.clone(),
+                            collector.content(),
                             tc,
                         )
                     })
-                    .unwrap_or_else(|| super::translate::AssistantMessage::new(collector.text.clone()))
+                    .unwrap_or_else(|| super::translate::AssistantMessage::new(collector.content()))
             };
             let mut response = ChatCompletionResponse {
                 id: completion_id,
@@ -2865,6 +2881,16 @@ async fn stream_completion(
                     failure = Some((name, message));
                     break 'collect;
                 }
+            }
+        }
+
+        // json_schema output arrives as the message's `structured` value, not
+        // as text deltas: send it as one content chunk.
+        if failure.is_none() && collector.text.is_empty() {
+            if let Some(v) = &collector.structured {
+                yield Ok(Event::default().data(
+                    ChatCompletionChunk::content_chunk(&completion_id, created, &wire_model, &v.to_string()).to_sse_data(),
+                ));
             }
         }
 
@@ -3938,5 +3964,20 @@ mod stream_retry_hint_tests {
         let hint = hint_payload(&body);
         assert_eq!(hint["retryable"], false);
         assert_eq!(hint["next_fallback"], Value::Null);
+    }
+}
+
+#[cfg(test)]
+mod structured_tests {
+    use super::*;
+
+    #[test]
+    fn collector_surfaces_structured_output_as_content() {
+        let mut c = Collector::new(Instant::now());
+        assert_eq!(c.content(), "");
+        let ev = GizziEvent { event_type: "message.updated".into(), properties: json!({ "info": {
+            "role": "assistant", "structured": { "ok": true }, "tokens": { "input": 1, "output": 1 } } }) };
+        c.handle_event(&ev);
+        assert_eq!(c.content(), r#"{"ok":true}"#);
     }
 }
