@@ -70,13 +70,19 @@ export class ClaudeWebAdapter extends WebChatAdapter {
         if (!org) return null;
         const r = await fetch(`/api/organizations/${org}/chat_conversations/${conv}?tree=True&rendering_mode=messages`, { credentials: "include" }).catch(() => null);
         if (!r || !r.ok) return null;
-        type Block = { type?: string; text?: string; thinking?: string };
+        type Block = { type?: string; text?: string; thinking?: string; summaries?: { summary?: string; text?: string }[] };
         const j = (await r.json()) as { chat_messages?: { sender?: string; content?: Block[]; text?: string }[] };
         const last = [...(j.chat_messages ?? [])].reverse().find((m) => m.sender === "assistant");
         if (!last) return null;
         const blocks = Array.isArray(last.content) ? last.content : [];
         const text = (blocks.filter((b) => b.type === "text" && typeof b.text === "string").map((b) => b.text as string).join("\n\n") || last.text || "").trim();
-        const thinking = blocks.filter((b) => b.type === "thinking" && typeof b.thinking === "string").map((b) => b.thinking as string).join("\n\n").trim();
+        // claude.ai hides raw thinking (empty \`thinking\`, thinking_hidden) and shows its summaries; use those then.
+        const thinking = blocks
+          .filter((b) => b.type === "thinking")
+          .map((b) => (typeof b.thinking === "string" && b.thinking.trim()) || (b.summaries ?? []).map((s) => s.summary ?? s.text ?? "").filter(Boolean).join("\n"))
+          .filter(Boolean)
+          .join("\n\n")
+          .trim();
         return { text, thinking };
       }, id)
       .catch(() => null);
