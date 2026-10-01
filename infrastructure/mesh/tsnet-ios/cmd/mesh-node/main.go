@@ -28,14 +28,26 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
 	"time"
 
+	"tailscale.com/tailcfg"
 	"tailscale.com/tsnet"
 )
+
+// keepWarmInterval paces reverse-mode keepalive pings. An idle tailnet peer
+// is trimmed after a few minutes, and the next dial then spends ~10s
+// rediscovering the path (measured 2026-09-30 to the paired Mail VPS: 10.6s
+// cold vs <1s warm), which a person opening a computer's screen sees as a
+// hung viewer. A TSMP ping every 25s keeps the WireGuard session alive.
+const keepWarmInterval = 25 * time.Second
+
+// dialTimeout bounds one reverse-mode dial to the tailnet target.
+const dialTimeout = 45 * time.Second
 
 const defaultControlURL = "https://allternit-headscale.fly.dev"
 
@@ -176,14 +188,50 @@ func serveReverse(srv *tsnet.Server, ip, target string, done <-chan struct{}, lo
 	fmt.Printf("PROXY_READY port=%d\n", ln.Addr().(*net.TCPAddr).Port)
 
 	dial := func() (net.Conn, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		// A freshly started node can need >15s to reach a peer the first time
+		// (seen 2026-09-30: the first screen after Desktop launched failed at
+		// exactly 15s, the retry took 0.5s). Waiting longer beats failing.
+		ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 		defer cancel()
 		return srv.Dial(ctx, "tcp", target)
+	}
+	if host, _, err := net.SplitHostPort(target); err == nil {
+		if addr, err := netip.ParseAddr(host); err == nil {
+			if lc, err := srv.LocalClient(); err == nil {
+				ping := func(ctx context.Context) error {
+					_, err := lc.Ping(ctx, addr, tailcfg.PingTSMP)
+					return err
+				}
+				go keepWarm(ping, keepWarmInterval, done, logf)
+			} else {
+				logf("keepalive disabled: %v", err)
+			}
+		}
 	}
 	if err := serveLoopback(ln, dial, done, logf); err != nil {
 		return err
 	}
 	return srv.Close()
+}
+
+// keepWarm pings the reverse target every interval until done is closed, so
+// the tailnet path stays up between connections. Failures are logged and
+// retried on the next tick; they never stop the proxy.
+func keepWarm(ping func(context.Context) error, interval time.Duration, done <-chan struct{}, logf func(string, ...any)) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), interval)
+		if err := ping(ctx); err != nil {
+			logf("keepalive ping: %v", err)
+		}
+		cancel()
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 // serveLoopback accepts on ln and bridges each connection to the target

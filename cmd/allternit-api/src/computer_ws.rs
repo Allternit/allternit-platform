@@ -782,47 +782,106 @@ async fn computer_vnc_ws_handler(
 /// the mesh at `<host>:5900`; the API reaches that through desktop main's
 /// mesh bridge. This Mac (the computer running this API) is its own Screen
 /// Sharing server on localhost. Everything else comes from the VM driver.
-async fn resolve_vnc_target(state: &Arc<AppState>, computer: &ComputerResponse) -> Option<(String, Option<String>)> {
+/// What a computer needs to look up its desktop in the VM driver: `None` for
+/// this Mac and paired (Fabric) machines, which aren't driver-backed.
+fn driver_sandbox_id(computer: &ComputerResponse) -> Option<String> {
+    if crate::computer_routes::is_this_device(computer) || computer.provider == crate::mesh_bridge::FABRIC_PROVIDER {
+        return None;
+    }
+    Some(
+        computer
+            .native_id
+            .clone()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| computer.id.clone()),
+    )
+}
+
+/// Shown when a cloud computer's machine no longer exists on any host.
+pub(crate) const COMPUTER_GONE_MESSAGE: &str =
+    "This computer's machine no longer exists, so it was removed from your computers.";
+
+/// True when a driver-backed computer's machine is gone from every host (the
+/// driver says NotFound, not just "unreachable"). The row is then marked
+/// deleted, as paired machines are when unpaired, so it leaves the list and
+/// is never again picked as the account computer for bot screens.
+pub(crate) async fn reconcile_gone_computer(state: &Arc<AppState>, computer: &ComputerResponse) -> bool {
+    let Some(sandbox_id) = driver_sandbox_id(computer) else { return false };
+    let Ok(driver) = require_driver(state) else { return false };
+    if !matches!(
+        driver.get_desktop_endpoint_by_native_id(&sandbox_id).await,
+        Err(allternit_driver_interface::DriverError::NotFound { .. })
+    ) {
+        return false;
+    }
+    mark_gone(state, computer, &sandbox_id).await;
+    true
+}
+
+async fn mark_gone(state: &Arc<AppState>, computer: &ComputerResponse, sandbox_id: &str) {
+    warn!(computer_id = %computer.id, %sandbox_id, "computer's machine no longer exists; marking it deleted");
+    let db = state.db.clone();
+    let id = computer.id.clone();
+    let _ = tokio::task::spawn_blocking(move || crate::computer_routes::mark_computer_deleted(&db, &id)).await;
+}
+
+enum VncTarget {
+    Found(String, Option<String>),
+    /// The machine is gone from every host (already marked deleted).
+    Gone,
+    Unavailable,
+}
+
+async fn resolve_vnc_target(state: &Arc<AppState>, computer: &ComputerResponse) -> VncTarget {
+    match resolve_vnc_target_inner(state, computer).await {
+        Ok(Some((addr, password))) => VncTarget::Found(addr, password),
+        Ok(None) => VncTarget::Unavailable,
+        Err(sandbox_id) => {
+            mark_gone(state, computer, &sandbox_id).await;
+            VncTarget::Gone
+        }
+    }
+}
+
+/// `Err(sandbox_id)` when the driver says the machine no longer exists.
+async fn resolve_vnc_target_inner(state: &Arc<AppState>, computer: &ComputerResponse) -> Result<Option<(String, Option<String>)>, String> {
     if crate::computer_routes::is_this_device(computer) {
-        return Some((format!("127.0.0.1:{}", crate::mesh_bridge::NODE_VNC_PORT), None));
+        return Ok(Some((format!("127.0.0.1:{}", crate::mesh_bridge::NODE_VNC_PORT), None)));
     }
     if computer.provider == crate::mesh_bridge::FABRIC_PROVIDER {
-        let host = computer.host.clone().filter(|h| !h.is_empty())?;
+        let Some(host) = computer.host.clone().filter(|h| !h.is_empty()) else { return Ok(None) };
         let target = format!("{host}:{}", crate::mesh_bridge::NODE_VNC_PORT);
         return match crate::mesh_bridge::loopback_for(&target).await {
-            Ok(address) => Some((address, None)),
+            Ok(address) => Ok(Some((address, None))),
             Err(e) => {
                 warn!(computer_id = %computer.id, %target, error = %e, "couldn't reach the remote computer over the mesh");
-                None
+                Ok(None)
             }
         };
     }
-    let driver = require_driver(state).ok()?;
-    let sandbox_id = computer
-        .native_id
-        .clone()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| computer.id.clone());
+    let Ok(driver) = require_driver(state) else { return Ok(None) };
+    let Some(sandbox_id) = driver_sandbox_id(computer) else { return Ok(None) };
     let endpoint = match driver.get_desktop_endpoint_by_native_id(&sandbox_id).await {
         Ok(Some(ep)) => ep,
         Ok(None) => {
             warn!(computer_id = %computer.id, %sandbox_id, "no desktop endpoint found");
-            return None;
+            return Ok(None);
         }
+        Err(allternit_driver_interface::DriverError::NotFound { .. }) => return Err(sandbox_id),
         Err(e) => {
             error!(error = %e, computer_id = %computer.id, %sandbox_id, "failed to resolve desktop endpoint");
-            return None;
+            return Ok(None);
         }
     };
     if !matches!(endpoint.protocol, allternit_driver_interface::DesktopProtocol::Vnc) {
         warn!(protocol = ?endpoint.protocol, "only raw VNC over TCP is supported for WebSocket proxy");
-        return None;
+        return Ok(None);
     }
     let Some(tcp_addr) = crate::bot_desktop_stream::parse_tcp_addr(&endpoint.url) else {
         error!(url = %endpoint.url, "could not parse VNC URL as TCP address");
-        return None;
+        return Ok(None);
     };
-    Some((tcp_addr, endpoint.token.clone().filter(|t| !t.is_empty())))
+    Ok(Some((tcp_addr, endpoint.token.clone().filter(|t| !t.is_empty()))))
 }
 
 /// True when this user (on any device) holds the computer's control lease.
@@ -865,9 +924,16 @@ async fn handle_vnc_socket(
     computer: ComputerResponse,
     read_only: bool,
 ) {
-    let Some((tcp_addr, vnc_password)) = resolve_vnc_target(&state, &computer).await else {
-        let _ = socket.close().await;
-        return;
+    let (tcp_addr, vnc_password) = match resolve_vnc_target(&state, &computer).await {
+        VncTarget::Found(addr, password) => (addr, password),
+        VncTarget::Gone => {
+            close_with_json_reason(socket, json!({ "error": "computer_gone" })).await;
+            return;
+        }
+        VncTarget::Unavailable => {
+            close_with_json_reason(socket, json!({ "error": "desktop_unavailable" })).await;
+            return;
+        }
     };
 
     info!(computer_id = %computer.id, %tcp_addr, read_only, "Opening VNC WebSocket proxy");
@@ -2012,6 +2078,39 @@ pub(crate) mod tests {
                 feature: "guest service url".to_string(),
             })
         }
+
+        /// Sandboxes named `gone-*` no longer exist on any host.
+        async fn get_desktop_endpoint_by_native_id(
+            &self,
+            sandbox_id: &str,
+        ) -> std::result::Result<Option<allternit_driver_interface::DesktopEndpoint>, allternit_driver_interface::DriverError> {
+            if sandbox_id.starts_with("gone-") {
+                return Err(allternit_driver_interface::DriverError::NotFound { id: sandbox_id.to_string() });
+            }
+            Ok(None)
+        }
+    }
+
+    fn computer_status_of(state: &AppState, id: &str) -> String {
+        state
+            .db
+            .connect()
+            .unwrap()
+            .query_row("SELECT status FROM computers WHERE id = ?1", [id], |row| row.get(0))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn vnc_target_marks_a_computer_whose_machine_is_gone_deleted() {
+        let state = state_with_computer(Some(Arc::new(StubDriver(None)))).await;
+        let computer = crate::computer_routes::fetch_computer(&state, &auth_user("user-1"), "computer-1").await.unwrap().unwrap();
+        assert!(matches!(resolve_vnc_target(&state, &computer).await, VncTarget::Unavailable));
+        assert_eq!(computer_status_of(&state, "computer-1"), "running");
+
+        state.db.connect().unwrap().execute("UPDATE computers SET native_id = 'gone-1' WHERE id = 'computer-1'", []).unwrap();
+        let computer = crate::computer_routes::fetch_computer(&state, &auth_user("user-1"), "computer-1").await.unwrap().unwrap();
+        assert!(matches!(resolve_vnc_target(&state, &computer).await, VncTarget::Gone));
+        assert_eq!(computer_status_of(&state, "computer-1"), "deleted");
     }
 
     fn handler_test_secret() {

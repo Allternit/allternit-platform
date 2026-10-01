@@ -132,8 +132,18 @@ build_mesh_node() {
   out="$GIZZI_DIR/vendor/mesh-node/$pa/mesh-node"
 
   if [ "$FORCE" -eq 0 ] && [ -x "$out" ]; then
-    echo "skip mesh-node: $out already exists (use --force to rebuild)"
-    return 0
+    # Rebuild when the sidecar source changed since this binary was built.
+    local src_dir newer
+    src_dir="$(dirname "$SIDECAR_SCRIPT")"
+    newer=""
+    if [ -d "$src_dir" ]; then
+      newer=$(find "$src_dir" \( -name '*.go' -o -name go.mod -o -name go.sum \) -newer "$out" -print -quit)
+    fi
+    if [ -z "$newer" ]; then
+      echo "skip mesh-node: $out is current (use --force to rebuild)"
+      return 0
+    fi
+    echo "mesh-node source changed since $out was built; rebuilding"
   fi
 
   if ! command -v go >/dev/null; then

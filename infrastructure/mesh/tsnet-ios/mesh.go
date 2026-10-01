@@ -195,7 +195,9 @@ func (n *Node) bridgeToTailnet(p *nodeProxy, local net.Conn) {
 		local.Close()
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	// 45s, not 15s: a freshly started node can need longer than 15s to reach
+	// a peer the first time (mesh-node's reverse mode hit this 2026-09-30).
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	upstream, err := srv.Dial(ctx, "tcp", p.target)
 	cancel()
 	if err != nil {

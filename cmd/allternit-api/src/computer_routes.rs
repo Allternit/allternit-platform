@@ -2666,7 +2666,7 @@ fn update_computer_status(
     Ok(())
 }
 
-fn mark_computer_deleted(db: &crate::DbHandle, id: &str) -> Result<(), rusqlite::Error> {
+pub(crate) fn mark_computer_deleted(db: &crate::DbHandle, id: &str) -> Result<(), rusqlite::Error> {
     let conn = db.connect()?;
     conn.execute(
         "UPDATE computers SET status = 'deleted', updated_at = CURRENT_TIMESTAMP WHERE id = ?1",

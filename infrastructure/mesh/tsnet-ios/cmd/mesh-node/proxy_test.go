@@ -2,9 +2,12 @@ package main
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -177,5 +180,37 @@ func TestRunRejectsInvalidReverseTarget(t *testing.T) {
 	}
 	if got := err.Error(); !strings.Contains(got, "--reverse") {
 		t.Fatalf("error should mention --reverse, got %q", got)
+	}
+}
+
+func TestKeepWarmPingsUntilDone(t *testing.T) {
+	var mu sync.Mutex
+	pings := 0
+	ping := func(context.Context) error {
+		mu.Lock()
+		defer mu.Unlock()
+		pings++
+		if pings == 2 {
+			return errors.New("transient")
+		}
+		return nil
+	}
+	done := make(chan struct{})
+	finished := make(chan struct{})
+	go func() {
+		keepWarm(ping, 10*time.Millisecond, done, func(string, ...any) {})
+		close(finished)
+	}()
+	time.Sleep(55 * time.Millisecond)
+	close(done)
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("keepWarm did not stop after done")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if pings < 3 {
+		t.Fatalf("expected repeated pings despite a failure, got %d", pings)
 	}
 }

@@ -1540,7 +1540,10 @@ async fn resolve_desktop_endpoint(
                         let _ = driver
                             .register_native_sandbox(&record.sandbox_id, bot_id, &host)
                             .await;
-                        return driver.get_desktop_endpoint_by_native_id(sandbox_id).await;
+                        return match driver.get_desktop_endpoint_by_native_id(sandbox_id).await {
+                            Err(DriverError::NotFound { .. }) => Ok(None),
+                            other => other,
+                        };
                     }
                 }
             }

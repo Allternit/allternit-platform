@@ -10,7 +10,8 @@
  *
  * Acquisition order (first success wins):
  *   1. Copy from the repo vendor tree (cmd/gizzi-code/vendor/mesh-node/
- *      <platform>-<arch>/mesh-node) — same binary gizzi-code's mesh.ts uses.
+ *      <platform>-<arch>/mesh-node) — same binary gizzi-code's mesh.ts uses —
+ *      when it is at least as new as the mesh-node source.
  *   2. Build from source via infrastructure/mesh/tsnet-ios/build-sidecar.sh
  *      (darwin-arm64 / linux-x64), or an equivalent `go build` for win32-x64
  *      (mirrors the GOOS/GOARCH mapping in release-gizzi-code.yml). Requires
@@ -19,7 +20,10 @@
  *      tarballs/zips ship mesh-node next to gizzi-code) and extract just
  *      mesh-node.
  *
- * Idempotent: if resources/bin/mesh-node[.exe] already exists, does nothing.
+ * Idempotent: if resources/bin/mesh-node[.exe] already exists and is at least
+ * as new as the mesh-node source, does nothing. Older binaries (staged or
+ * vendored) are rebuilt when Go is available, so source fixes actually ship
+ * instead of a build machine reusing its first binary forever.
  */
 
 const fs = require('node:fs');
@@ -48,6 +52,26 @@ const RELEASE_ASSET = {
   'win32-x64': { pattern: /-windows-x64\.zip$/, member: 'mesh-node.exe' },
 };
 
+/** Newest mtime of the mesh-node Go sources (0 when they aren't in this checkout). */
+function newestSourceMtime(dir = SIDECAR_DIR) {
+  if (!fs.existsSync(dir)) return 0;
+  let newest = 0;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      newest = Math.max(newest, newestSourceMtime(full));
+    } else if (/\.go$|^go\.(mod|sum)$/.test(entry.name)) {
+      newest = Math.max(newest, fs.statSync(full).mtimeMs);
+    }
+  }
+  return newest;
+}
+
+/** True when `binary` exists and isn't older than the mesh-node source. */
+function isCurrent(binary, sourceMtime) {
+  return fs.existsSync(binary) && fs.statSync(binary).mtimeMs >= sourceMtime;
+}
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { stdio: 'inherit', ...options });
   return result.status === 0;
@@ -58,8 +82,8 @@ function stage(binary) {
   fs.chmodSync(OUTPUT, 0o755);
 }
 
-function stageFromVendor() {
-  if (!fs.existsSync(VENDOR_BINARY)) return false;
+function stageFromVendor(sourceMtime) {
+  if (!isCurrent(VENDOR_BINARY, sourceMtime)) return false;
   stage(VENDOR_BINARY);
   console.log(`Staged mesh-node from repo vendor tree (${path.relative(REPO_ROOT, VENDOR_BINARY)}).`);
   return true;
@@ -150,13 +174,21 @@ async function stageFromDownload() {
   return false;
 }
 
+function stageStaleVendor() {
+  if (!fs.existsSync(VENDOR_BINARY)) return false;
+  stage(VENDOR_BINARY);
+  console.warn('Staged an older vendored mesh-node: its source changed since, and Go is not available to rebuild it.');
+  return true;
+}
+
 (async () => {
-  if (fs.existsSync(OUTPUT)) {
+  const sourceMtime = newestSourceMtime();
+  if (isCurrent(OUTPUT, sourceMtime)) {
     console.log(`mesh-node already staged at ${path.relative(REPO_ROOT, OUTPUT)}; skipping.`);
     return;
   }
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-  if (stageFromVendor() || stageFromBuild() || await stageFromDownload()) return;
+  if (stageFromVendor(sourceMtime) || stageFromBuild() || stageStaleVendor() || await stageFromDownload()) return;
   console.error(
     `Unable to stage mesh-node for ${PLATFORM_ARCH}: not in the repo vendor tree, ` +
     'Go is not available to build it, and no gizzi-code release asset matched.',
