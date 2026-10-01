@@ -60,12 +60,13 @@ export class CdpGrokDriver implements GrokDriver {
       setTimeout(() => { if (this.pending.delete(id)) reject(new DriverError("unreachable", `CDP ${method} timed out`)); }, this.o.timeoutMs ?? 5000);
     });
   }
-  private async evalJs<T>(expression: string): Promise<T> {
-    const r = await this.send<{ result: { value: T }; exceptionDetails?: unknown }>("Runtime.evaluate", { expression, returnByValue: true });
+  private async evalJs<T>(expression: string, awaitPromise = false): Promise<T> {
+    const r = await this.send<{ result: { value: T }; exceptionDetails?: unknown }>("Runtime.evaluate", { expression, returnByValue: true, awaitPromise });
     if (r.exceptionDetails) throw new Error("page evaluation failed");
     return r.result.value;
   }
   async html(): Promise<string> { await this.connect(); return this.evalJs<string>("document.documentElement.outerHTML"); }
+  async avatars(): Promise<BotMark[]> { await this.connect(); return this.evalJs<BotMark[]>(AVATARS_JS, true); }
   async newChat(): Promise<boolean> { return this.clickButton("^new chat$"); }
   async typeText(text: string): Promise<boolean> {
     await this.connect();
@@ -111,3 +112,37 @@ export async function launchWithDebugPort(
   await deps.launch(input.port);
   return ok({ port: input.port });
 }
+
+/**
+ * Grok Bot draws each Bot's mascot as an <svg><use href="#sand-agent-mark-source-<id>"> whose source is styled by
+ * CSS variables. Clone the source, bake each element's resolved style in, draw it to a canvas and export PNG, so
+ * the avatar leaves the page as a plain raster image (never svg). Read-only: nothing is clicked or typed.
+ */
+export type BotMark = { name?: string; text: string; png: string };
+export const AVATARS_JS = `(async () => {
+  const PROPS = ['fill','fill-opacity','stroke','stroke-width','stroke-opacity','opacity','display','visibility','stroke-linecap','stroke-linejoin'];
+  const out = [];
+  for (const item of document.querySelectorAll('button.sand-agent-item')) {
+    const use = item.querySelector('svg use');
+    const ref = use && (use.getAttribute('href') || use.getAttribute('xlink:href'));
+    const src = ref && ref.startsWith('#sand-agent-mark-source-') && document.getElementById(ref.slice(1));
+    if (!src) continue;
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    svg.setAttribute('viewBox', item.querySelector('svg').getAttribute('viewBox') || '-15 -15 259 259');
+    svg.setAttribute('width', '128'); svg.setAttribute('height', '128');
+    const clone = src.cloneNode(true); clone.removeAttribute('id');
+    const orig = [src, ...src.querySelectorAll('*')], copy = [clone, ...clone.querySelectorAll('*')];
+    orig.forEach((o, i) => { const cs = getComputedStyle(o); copy[i].setAttribute('style', PROPS.map((p) => p + ':' + cs.getPropertyValue(p)).join(';')); });
+    svg.appendChild(clone);
+    const img = new Image();
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(svg));
+    try { await img.decode(); } catch { continue; }
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    c.getContext('2d').drawImage(img, 0, 0, 128, 128);
+    const w = document.createTreeWalker(item, NodeFilter.SHOW_TEXT);
+    let t; while ((t = w.nextNode()) && !t.textContent.trim());
+    out.push({ name: t ? t.textContent.trim() : '', text: (item.textContent || '').trim(), png: c.toDataURL('image/png') });
+  }
+  return out;
+})()`;

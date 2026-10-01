@@ -10,6 +10,7 @@
 //! * teams:    `{ securityToken, accessToken }` (outgoing-webhook HMAC + static bearer) or `{ appId, appPassword }` (Bot Framework JWT in, client-credentials token out; see `teams_auth`)
 //! * discord:  `{ publicKey, webhookUrl }`        (Ed25519 interactions key + channel webhook)
 //! * whatsapp: `{ appSecret, verifyToken, accessToken, phoneNumberId }`
+//! * telegram: `{ botToken, webhookSecret, botUsername }` (setWebhook `secret_token` in, Bot API `sendMessage` out)
 
 use std::sync::Arc;
 
@@ -34,7 +35,7 @@ use crate::AppState;
 
 type HmacSha256 = Hmac<Sha256>;
 
-pub const PROVIDERS: [&str; 4] = ["slack", "teams", "discord", "whatsapp"];
+pub const PROVIDERS: [&str; 5] = ["slack", "teams", "discord", "whatsapp", "telegram"];
 
 // ---------------------------------------------------------------- http seam
 
@@ -427,6 +428,95 @@ impl ChannelTransport for WhatsAppTransport {
     }
 }
 
+// ---------------------------------------------------------------- Telegram
+
+pub struct TelegramTransport {
+    pub http: Arc<dyn HttpSend>,
+    pub bot_token: Option<String>,
+    pub own_identity: Option<String>,
+}
+
+/// Equal-length, data-independent comparison for the webhook secret.
+fn same_secret(a: &str, b: &str) -> bool {
+    a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// Bot API `Update` objects (webhook body). One conversation per chat; forum
+/// topics ride in `thread` (`message_thread_id`) so replies land in the topic.
+pub fn telegram_normalize(u: &Value) -> Vec<Inbound> {
+    let update_id = s_of(u, "/update_id");
+    let msg = |m: &Value, kind: InboundKind| -> Option<Inbound> {
+        let chat = s_of(m, "/chat/id")?;
+        let mid = s_of(m, "/message_id")?;
+        let mut e = ev(kind, format!("telegram:{chat}"), chat.clone(), String::new(), mid.clone());
+        e.thread = s_of(m, "/message_thread_id");
+        e.text = s_of(m, "/text").or_else(|| s_of(m, "/caption"));
+        e.user = s_of(m, "/from/id").or_else(|| s_of(m, "/sender_chat/id"));
+        e.own = m.pointer("/from/is_bot").and_then(Value::as_bool).unwrap_or(false);
+        e.remote_id = match kind {
+            InboundKind::Edited => format!("edit:{chat}:{mid}:{}", s_of(m, "/edit_date").unwrap_or_default()),
+            _ => format!("{chat}:{mid}"),
+        };
+        e.cursor = update_id.clone();
+        Some(e)
+    };
+    if let Some(m) = u.get("message").or_else(|| u.get("channel_post")) {
+        return msg(m, InboundKind::Message).into_iter().collect();
+    }
+    if let Some(m) = u.get("edited_message").or_else(|| u.get("edited_channel_post")) {
+        return msg(m, InboundKind::Edited).into_iter().collect();
+    }
+    if let Some(r) = u.get("message_reaction") {
+        let (Some(chat), Some(mid)) = (s_of(r, "/chat/id"), s_of(r, "/message_id")) else { return vec![] };
+        let emoji = |k: &str| r.get(k).and_then(Value::as_array).and_then(|a| a.iter().find_map(|x| s_of(x, "/emoji")));
+        let (new, old) = (emoji("new_reaction"), emoji("old_reaction"));
+        let added = new.is_some();
+        let mut e = ev(InboundKind::ReactionUpdated, format!("telegram:{chat}"), chat.clone(), String::new(), mid.clone());
+        e.user = s_of(r, "/user/id");
+        e.remote_id = format!("react:{chat}:{mid}:{}:{}", e.user.clone().unwrap_or_default(), update_id.clone().unwrap_or_default());
+        e.reaction = new.or(old);
+        e.added = Some(added);
+        return vec![e];
+    }
+    vec![]
+}
+
+#[async_trait]
+impl ChannelTransport for TelegramTransport {
+    fn provider(&self) -> &'static str {
+        "telegram"
+    }
+    /// `setWebhook(secret_token=…)`: Telegram echoes it in `X-Telegram-Bot-Api-Secret-Token`.
+    fn verify(&self, secret: &str, headers: &HeaderMap, _body: &[u8]) -> Result<(), String> {
+        let want = pick(secret, "webhookSecret");
+        if want.is_empty() {
+            return Err("no Telegram webhookSecret configured".into());
+        }
+        let given = hdr(headers, "x-telegram-bot-api-secret-token").ok_or("missing x-telegram-bot-api-secret-token")?;
+        if same_secret(given, &want) { Ok(()) } else { Err("Telegram secret token mismatch".into()) }
+    }
+    fn normalize(&self, payload: &Value) -> Vec<Inbound> {
+        telegram_normalize(payload)
+    }
+    fn identity(&self, requested: Option<&str>) -> Identity {
+        exact(requested, self.own_identity.as_deref())
+    }
+    async fn post(&self, out: &Outbound) -> Result<Receipt, PostError> {
+        let token = self.bot_token.clone().ok_or_else(|| PostError::Rejected("no Telegram bot token configured".into()))?;
+        let relayed = !self.identity(out.identity.as_deref()).exact;
+        let url = format!("https://api.telegram.org/bot{token}/sendMessage");
+        let mut body = json!({ "chat_id": out.channel, "text": relay_text(out, relayed) });
+        if let Some(topic) = out.thread.as_deref().and_then(|t| t.parse::<i64>().ok()) {
+            body["message_thread_id"] = json!(topic);
+        }
+        let chat = out.channel.clone();
+        judge(self.http.post_json(HttpReq { url, headers: vec![], body }).await, |b| {
+            b.pointer("/result/message_id").and_then(Value::as_i64).map(|m| format!("{chat}:{m}"))
+        })
+        .map(|remote_id| Receipt { remote_id, relayed })
+    }
+}
+
 // ---------------------------------------------------------------- accounts + factory
 
 #[derive(Debug, Clone)]
@@ -465,6 +555,7 @@ pub fn build_transport(provider: &str, secret: &str, http: Arc<dyn HttpSend>) ->
             access_token: token("accessToken"), own_identity: token("botId") }),
         "discord" => Arc::new(DiscordTransport { http, webhook_url: token("webhookUrl"), own_identity: token("botId") }),
         "whatsapp" => Arc::new(WhatsAppTransport { http, access_token: token("accessToken"), own_identity: token("phoneNumberId") }),
+        "telegram" => Arc::new(TelegramTransport { http, bot_token: token("botToken"), own_identity: token("botUsername") }),
         _ => return None,
     })
 }
@@ -770,6 +861,67 @@ mod tests {
         let mut m = HmacSha256::new_from_slice(key).unwrap();
         m.update(body);
         m.finalize().into_bytes().to_vec()
+    }
+
+    // ---- Telegram (Bot API Update JSON)
+
+    #[test]
+    fn telegram_verifies_the_webhook_secret_token() {
+        let t = TelegramTransport { http: Arc::new(FakeHttp::default()), bot_token: None, own_identity: None };
+        let secret = json!({ "botToken": "123:abc", "webhookSecret": "s3cret-token" }).to_string();
+        assert!(t.verify(&secret, &headers(&[("x-telegram-bot-api-secret-token", "s3cret-token")]), b"{}").is_ok());
+        assert!(t.verify(&secret, &headers(&[("x-telegram-bot-api-secret-token", "s3cret-tokeX")]), b"{}").is_err());
+        assert!(t.verify(&secret, &headers(&[]), b"{}").is_err());
+        // No configured secret: never accept, even an empty header.
+        assert!(t.verify(&json!({ "botToken": "123:abc" }).to_string(), &headers(&[("x-telegram-bot-api-secret-token", "")]), b"{}").is_err());
+    }
+
+    #[test]
+    fn telegram_updates_normalize() {
+        let m = json!({ "update_id": 900, "message": { "message_id": 42, "message_thread_id": 7, "date": 1, "text": "hi bot",
+            "chat": { "id": -1001234, "type": "supergroup", "title": "Ops" }, "from": { "id": 55, "is_bot": false, "first_name": "Dana" } } });
+        let e = &telegram_normalize(&m)[0];
+        assert_eq!((e.kind, e.conversation.as_str(), e.channel.as_str(), e.thread.as_deref()), (InboundKind::Message, "telegram:-1001234", "-1001234", Some("7")));
+        assert_eq!((e.remote_id.as_str(), e.message_id.as_str(), e.text.as_deref(), e.user.as_deref(), e.cursor.as_deref()), ("-1001234:42", "42", Some("hi bot"), Some("55"), Some("900")));
+        assert!(!e.own);
+        let mut bot = m.clone();
+        bot["message"]["from"]["is_bot"] = json!(true);
+        assert!(telegram_normalize(&bot)[0].own);
+        let ed = json!({ "update_id": 901, "edited_message": { "message_id": 42, "edit_date": 5, "text": "hi bot!", "chat": { "id": -1001234 }, "from": { "id": 55 } } });
+        let e = &telegram_normalize(&ed)[0];
+        assert_eq!((e.kind, e.remote_id.as_str(), e.message_id.as_str()), (InboundKind::Edited, "edit:-1001234:42:5", "42"));
+        let photo = json!({ "update_id": 902, "channel_post": { "message_id": 3, "caption": "chart", "chat": { "id": -100999 }, "sender_chat": { "id": -100999 } } });
+        assert_eq!(telegram_normalize(&photo)[0].text.as_deref(), Some("chart"));
+        let r = json!({ "update_id": 903, "message_reaction": { "chat": { "id": -1001234 }, "message_id": 42, "user": { "id": 55 }, "date": 1,
+            "old_reaction": [], "new_reaction": [{ "type": "emoji", "emoji": "👍" }] } });
+        let e = &telegram_normalize(&r)[0];
+        assert_eq!((e.kind, e.message_id.as_str(), e.reaction.as_deref(), e.added), (InboundKind::ReactionUpdated, "42", Some("👍"), Some(true)));
+        let gone = json!({ "update_id": 904, "message_reaction": { "chat": { "id": -1001234 }, "message_id": 42, "user": { "id": 55 },
+            "old_reaction": [{ "type": "emoji", "emoji": "👍" }], "new_reaction": [] } });
+        assert_eq!(telegram_normalize(&gone)[0].added, Some(false));
+        assert!(telegram_normalize(&json!({ "update_id": 905, "poll": {} })).is_empty());
+    }
+
+    #[tokio::test]
+    async fn telegram_posts_with_send_message_into_the_topic() {
+        let http = Arc::new(FakeHttp::default());
+        *http.reply.lock().unwrap() = reply(200, json!({ "ok": true, "result": { "message_id": 77 } }));
+        let t = build_transport("telegram", &json!({ "botToken": "123:abc", "webhookSecret": "x", "botUsername": "scout_bot" }).to_string(), http.clone()).unwrap();
+        let out = Outbound { workspace: None, channel: "-1001234".into(), thread: Some("7".into()), text: "3 new leads".into(), identity: None };
+        let r = t.post(&out).await.unwrap();
+        assert_eq!(r, Receipt { remote_id: "-1001234:77".into(), relayed: false });
+        let sent = http.sent.lock().unwrap()[0].clone();
+        assert_eq!(sent.url, "https://api.telegram.org/bot123:abc/sendMessage");
+        assert_eq!(sent.body, json!({ "chat_id": "-1001234", "text": "3 new leads", "message_thread_id": 7 }));
+        // Posting as someone other than the bot is relayed with their name.
+        *http.reply.lock().unwrap() = reply(200, json!({ "ok": true, "result": { "message_id": 78 } }));
+        let r = t.post(&Outbound { identity: Some("Scout".into()), thread: None, ..out.clone() }).await.unwrap();
+        assert!(r.relayed);
+        assert_eq!(http.sent.lock().unwrap()[1].body["text"], "Scout: 3 new leads");
+        *http.reply.lock().unwrap() = reply(403, json!({ "ok": false, "description": "Forbidden: bot was kicked" }));
+        assert!(matches!(t.post(&out).await, Err(PostError::Rejected(_))));
+        let none = TelegramTransport { http, bot_token: None, own_identity: None };
+        assert!(matches!(none.post(&out).await, Err(PostError::Rejected(_))));
     }
 
     // ---- Teams (Bot Framework activity JSON)
