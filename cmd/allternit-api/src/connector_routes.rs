@@ -130,14 +130,45 @@ pub(crate) const DEVICE_TOKEN_PREFIX: &str = "allternit_runtime_";
 const DEVICE_TOKEN_CACHE_TTL: Duration = Duration::from_secs(300);
 
 struct CachedDeviceUser {
-    user_id: String,
-    email: Option<String>,
+    identity: DeviceIdentity,
     valid_until: Instant,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct DeviceIdentity {
     pub user_id: String,
     pub email: Option<String>,
+    /// `(organization_id, role)` pairs from the owner's Clerk memberships,
+    /// as reported by the cloud-api. Empty when the cloud-api did not (or
+    /// could not) supply them.
+    pub organizations: Vec<(String, String)>,
+}
+
+impl DeviceIdentity {
+    /// The owner's role in `organization_id`, if the cloud-api reported one.
+    pub fn role_in(&self, organization_id: &str) -> Option<&str> {
+        self.organizations
+            .iter()
+            .find(|(id, _)| id == organization_id)
+            .map(|(_, role)| role.as_str())
+    }
+}
+
+/// Parse the verify-token response's `organizations: [{id, role}]`;
+/// malformed entries are skipped.
+fn parse_device_organizations(body: &Value) -> Vec<(String, String)> {
+    body.get("organizations")
+        .and_then(|v| v.as_array())
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| {
+                    let id = row.get("id")?.as_str().filter(|s| !s.is_empty())?;
+                    let role = row.get("role")?.as_str().filter(|s| !s.is_empty())?;
+                    Some((id.to_string(), role.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn device_token_cache() -> &'static Mutex<HashMap<String, CachedDeviceUser>> {
@@ -148,10 +179,7 @@ fn device_token_cache() -> &'static Mutex<HashMap<String, CachedDeviceUser>> {
 fn cached_device_identity(token: &str) -> Option<DeviceIdentity> {
     let cache = device_token_cache().lock().ok()?;
     let entry = cache.get(token)?;
-    (Instant::now() < entry.valid_until).then(|| DeviceIdentity {
-        user_id: entry.user_id.clone(),
-        email: entry.email.clone(),
-    })
+    (Instant::now() < entry.valid_until).then(|| entry.identity.clone())
 }
 
 fn remember_device_identity(token: &str, identity: DeviceIdentity) {
@@ -161,8 +189,7 @@ fn remember_device_identity(token: &str, identity: DeviceIdentity) {
         cache.insert(
             token.to_string(),
             CachedDeviceUser {
-                user_id: identity.user_id,
-                email: identity.email,
+                identity,
                 valid_until: now + DEVICE_TOKEN_CACHE_TTL,
             },
         );
@@ -283,11 +310,12 @@ pub(crate) async fn verify_runtime_device_token(
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty() && s.contains('@'))
         .map(str::to_string);
-    let identity = DeviceIdentity { user_id, email };
-    remember_device_identity(token, DeviceIdentity {
-        user_id: identity.user_id.clone(),
-        email: identity.email.clone(),
-    });
+    let identity = DeviceIdentity {
+        user_id,
+        email,
+        organizations: parse_device_organizations(&body),
+    };
+    remember_device_identity(token, identity.clone());
     Ok(identity)
 }
 
@@ -3291,5 +3319,78 @@ mod tests {
         assert!(checks["gmail"]["configured"].is_boolean());
         assert!(checks["google_drive"]["configured"].is_boolean());
         assert!(checks["gmail"]["setup_hint"].is_string());
+    }
+}
+
+#[cfg(test)]
+mod device_org_role_tests {
+    use super::{parse_device_organizations, DeviceIdentity};
+    use serde_json::json;
+
+    #[test]
+    fn verify_token_organizations_are_parsed_and_looked_up_by_org() {
+        let body = json!({
+            "userId": "user_owner",
+            "organizations": [
+                { "id": "org_a", "role": "org:admin" },
+                { "id": "org_b", "role": "org:member" },
+                { "id": "", "role": "org:admin" },
+                { "id": "org_c" },
+                "junk"
+            ]
+        });
+        let identity = DeviceIdentity {
+            user_id: "user_owner".into(),
+            email: None,
+            organizations: parse_device_organizations(&body),
+        };
+        assert_eq!(identity.organizations.len(), 2, "malformed entries are skipped");
+        assert_eq!(identity.role_in("org_a"), Some("org:admin"));
+        assert_eq!(identity.role_in("org_b"), Some("org:member"));
+        assert_eq!(identity.role_in("org_other"), None, "no membership → role unknown");
+    }
+
+    #[test]
+    fn an_older_cloud_api_without_organizations_yields_no_roles() {
+        assert!(parse_device_organizations(&json!({ "userId": "u" })).is_empty());
+        assert!(parse_device_organizations(&json!({ "organizations": null })).is_empty());
+    }
+
+    /// End to end through the local upsert: the device path's role (from the
+    /// cloud-verified identity) promotes the owner, and an unknown org keeps
+    /// whatever role is already stored.
+    #[test]
+    fn device_path_role_reaches_the_local_membership_row() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = crate::db::DbHandle::new(temp.path().join("t.db")).unwrap();
+        let identity = DeviceIdentity {
+            user_id: "user_owner".into(),
+            email: Some("owner@test.local".into()),
+            organizations: vec![("org_a".into(), "org:admin".into())],
+        };
+        let user_for = |org: &str| crate::auth::AuthUser {
+            user_id: identity.user_id.clone(),
+            email: identity.email.clone(),
+            name: None,
+            avatar_url: None,
+            tenant_id: Some(org.into()),
+            organization_id: Some(org.into()),
+            organization_role: identity.role_in(org).map(str::to_string),
+            organization_slug: None,
+        };
+        let role_of = |org: &str| -> String {
+            db.connect()
+                .unwrap()
+                .query_row(
+                    "SELECT role FROM organization_members WHERE organization_id = ?1 AND user_id = 'user_owner'",
+                    [org],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        crate::auth::ensure_user_in_db(&db, &user_for("org_a")).unwrap();
+        assert_eq!(role_of("org_a"), "admin");
+        crate::auth::ensure_user_in_db(&db, &user_for("org_x")).unwrap();
+        assert_eq!(role_of("org_x"), "member");
     }
 }

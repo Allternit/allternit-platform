@@ -429,8 +429,14 @@ pub async fn run_turn<R: ThreadRuntime>(
         crate::gateway_routing::before_send(&corr, &s(&cx.exec, "vendor"), text, opts.consequential);
     }
 
+    let turn_started = std::time::Instant::now();
     if !already_sent {
         let sent = vcall(db, tx, &cx.owner, "agent.context.message", &cx.exec, json!({ "contextId": ctx_id, "text": text, "correlationId": corr })).await;
+        if let Err(e) = &sent {
+            if e.code != "CONTEXT_NOT_FOUND" {
+                crate::gateway_routing::record_turn(db, &cx.owner, &s(&cx.exec, "vendor"), &corr, turn_started.elapsed().as_millis() as u64, false);
+            }
+        }
         match sent {
             Ok(_) => {
                 db.connect()?.execute(
@@ -458,6 +464,7 @@ pub async fn run_turn<R: ThreadRuntime>(
             Some(rows.flatten().filter_map(|(t, p)| crate::gateway_routing::tool_name(&t, &serde_json::from_str(&p).unwrap_or_default())).collect())
         }).unwrap_or_default();
         crate::gateway_routing::after_events(&corr, tools);
+        crate::gateway_routing::record_turn(db, &cx.owner, &s(&cx.exec, "vendor"), &corr, turn_started.elapsed().as_millis() as u64, true);
     }
     Ok(Some(TurnReport { reply, events, correlation_id: corr, remote_binding_id: rid }))
 }

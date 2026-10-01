@@ -211,6 +211,92 @@ async fn fetch_verified_from_clerk(
         .unwrap_or(false))
 }
 
+/// One Clerk organization membership: the org id and the member's role as
+/// Clerk names it (`org:admin`, `org:member`, or a custom `org:*` role).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct OrgMembership {
+    pub id: String,
+    pub role: String,
+}
+
+const ORG_MEMBERSHIP_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+
+type MembershipCache =
+    std::collections::HashMap<String, (std::time::Instant, Vec<OrgMembership>)>;
+
+fn membership_cache() -> &'static std::sync::Mutex<MembershipCache> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<MembershipCache>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
+/// The user's Clerk organization memberships, for peer services that
+/// authenticate a user by runtime-device token and so never see the Clerk
+/// session's org role. Cached in-process for 5 minutes. Best effort: any
+/// Clerk failure (missing secret, network, non-2xx, bad body) returns an
+/// empty list, which callers treat as "role unknown" — never as a demotion.
+pub async fn clerk_org_memberships(clerk_user_id: &str) -> Vec<OrgMembership> {
+    org_memberships_with(&TrustConfig::from_env(), clerk_user_id).await
+}
+
+pub async fn org_memberships_with(config: &TrustConfig, clerk_user_id: &str) -> Vec<OrgMembership> {
+    let cache_key = format!("{}|{clerk_user_id}", config.clerk_api_base);
+    if let Ok(cache) = membership_cache().lock() {
+        if let Some((fetched_at, memberships)) = cache.get(&cache_key) {
+            if fetched_at.elapsed() < ORG_MEMBERSHIP_CACHE_TTL {
+                return memberships.clone();
+            }
+        }
+    }
+    let Some(memberships) = fetch_org_memberships(config, clerk_user_id).await else {
+        return Vec::new();
+    };
+    if let Ok(mut cache) = membership_cache().lock() {
+        cache.retain(|_, (fetched_at, _)| fetched_at.elapsed() < ORG_MEMBERSHIP_CACHE_TTL);
+        cache.insert(cache_key, (std::time::Instant::now(), memberships.clone()));
+    }
+    memberships
+}
+
+async fn fetch_org_memberships(
+    config: &TrustConfig,
+    clerk_user_id: &str,
+) -> Option<Vec<OrgMembership>> {
+    let secret = config.clerk_secret_key.as_deref().filter(|s| !s.is_empty())?;
+    let client = reqwest::Client::builder()
+        .timeout(CLERK_REQUEST_TIMEOUT)
+        .build()
+        .ok()?;
+    let url = format!(
+        "{}/v1/users/{}/organization_memberships?limit=100",
+        config.clerk_api_base.trim_end_matches('/'),
+        clerk_user_id
+    );
+    let response = match client.get(&url).bearer_auth(secret).send().await {
+        Ok(response) if response.status().is_success() => response,
+        Ok(response) => {
+            tracing::warn!(user_id = %clerk_user_id, status = %response.status(),
+                "org memberships: Clerk answered non-success");
+            return None;
+        }
+        Err(error) => {
+            tracing::warn!(user_id = %clerk_user_id, "org memberships: Clerk request failed: {error}");
+            return None;
+        }
+    };
+    let body: serde_json::Value = response.json().await.ok()?;
+    let rows = body.get("data")?.as_array()?;
+    Some(
+        rows.iter()
+            .filter_map(|row| {
+                let id = row.pointer("/organization/id")?.as_str()?.to_string();
+                let role = row.get("role")?.as_str()?.to_string();
+                Some(OrgMembership { id, role })
+            })
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -419,6 +505,72 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(rows, 0, "a bypassed check leaves no cache row");
+    }
+
+    /// Mock of `GET /v1/users/:id/organization_memberships`; `ok = false`
+    /// answers 500.
+    async fn spawn_mock_memberships(ok: bool) -> (String, Arc<AtomicUsize>) {
+        use axum::{extract::Path, response::IntoResponse, routing::get, Router};
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_for_handler = counter.clone();
+        let app = Router::new().route(
+            "/v1/users/:id/organization_memberships",
+            get(move |Path(_id): Path<String>| {
+                let counter = counter_for_handler.clone();
+                async move {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    if !ok {
+                        return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "boom")
+                            .into_response();
+                    }
+                    axum::Json(serde_json::json!({
+                        "data": [
+                            { "role": "org:admin", "organization": { "id": "org_a", "slug": "a" } },
+                            { "role": "org:member", "organization": { "id": "org_b" } },
+                            { "role": "org:member" }
+                        ],
+                        "total_count": 3
+                    }))
+                    .into_response()
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{addr}"), counter)
+    }
+
+    #[tokio::test]
+    async fn org_memberships_are_parsed_and_cached() {
+        let (base, counter) = spawn_mock_memberships(true).await;
+        let memberships = org_memberships_with(&config(&base), "user_orgs").await;
+        assert_eq!(
+            memberships,
+            vec![
+                OrgMembership { id: "org_a".into(), role: "org:admin".into() },
+                OrgMembership { id: "org_b".into(), role: "org:member".into() },
+            ],
+            "rows without an organization id are skipped"
+        );
+        assert_eq!(org_memberships_with(&config(&base), "user_orgs").await, memberships);
+        assert_eq!(counter.load(Ordering::SeqCst), 1, "second lookup is served from cache");
+    }
+
+    #[tokio::test]
+    async fn org_memberships_are_empty_on_clerk_failure_and_not_cached() {
+        let (base, counter) = spawn_mock_memberships(false).await;
+        assert!(org_memberships_with(&config(&base), "user_orgs_down").await.is_empty());
+        assert!(org_memberships_with(&config(&base), "user_orgs_down").await.is_empty());
+        assert_eq!(counter.load(Ordering::SeqCst), 2, "failures are retried, never cached");
+
+        let mut no_secret = config(&base);
+        no_secret.clerk_secret_key = None;
+        assert!(org_memberships_with(&no_secret, "user_orgs_nokey").await.is_empty());
+        assert_eq!(counter.load(Ordering::SeqCst), 2, "no secret means no Clerk call");
     }
 
     #[test]

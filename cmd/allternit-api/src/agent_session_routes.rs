@@ -1782,6 +1782,15 @@ async fn transform_bus_event(
             "input": props.get("input"),
             "time": props.get("time"),
         })),
+        // A run guardrail stopped the turn (step/tool-call/time cap or a stuck
+        // loop). In auto-approve modes this is the only stop signal, so the
+        // UI raises it as an attention notice on the session.
+        "session.guardrail.tripped" => Some(json!({
+            "type": "guardrail_tripped",
+            "session_id": props.get("sessionID"),
+            "message_id": props.get("messageID"),
+            "trip": props.get("trip"),
+        })),
         "message.part.updated" => Some(json!({
             "type": "part_updated",
             "session_id": props.get("sessionID"),
@@ -2841,6 +2850,21 @@ mod tests {
         // An older server without parts: content minus placeholders.
         assert_eq!(placed_turn_report(&json!({ "content": "[Tool Bash]\nDone: saved." })).unwrap(), "Done: saved.");
         assert!(placed_turn_report(&json!({ "content": "[Tool Bash]\n[Tool Bash]" })).is_err());
+    }
+
+    #[tokio::test]
+    async fn guardrail_trips_reach_clients_as_an_attention_event() {
+        let temp = std::env::temp_dir().join(format!("guardrail-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let db = crate::db::DbHandle::new(temp.join("test.db")).expect("test db");
+        let trip = json!({ "kind": "stuck_repeat", "reason": "same action and result 4 times", "limit": 4, "observed": 4, "version": "1" });
+        let event: GizziBusEvent = serde_json::from_value(json!({
+            "type": "session.guardrail.tripped",
+            "properties": { "sessionID": "ses_g", "messageID": "msg_1", "trip": trip },
+        }))
+        .unwrap();
+        let out = transform_bus_event(&Client::new(), &db, event).await.expect("guardrail event");
+        assert_eq!(out, json!({ "type": "guardrail_tripped", "session_id": "ses_g", "message_id": "msg_1", "trip": trip }));
     }
 
     #[tokio::test]

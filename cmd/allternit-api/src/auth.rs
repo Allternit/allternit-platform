@@ -620,11 +620,18 @@ pub fn ensure_user_in_db(db: &DbHandle, user: &AuthUser) -> Result<Option<String
     )
     .map_err(|e| AuthError::DbError(e.to_string()))?;
 
+    // Only a sign-in path that carries the org role (a Clerk session's
+    // `o.rol` / `org_role`) may change an existing member's role. Paths with
+    // no role (runtime-device and DP tokens) used to write "member" here on
+    // every request, downgrading the org owner to member and locking them out
+    // of owner/admin routes (e.g. metered usage) in Desktop.
+    let role_known = user.organization_role.as_deref().is_some_and(|r| !r.trim().is_empty());
     conn.execute(
         "INSERT INTO organization_members (id, organization_id, user_id, role, joined_at)
          VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
-         ON CONFLICT(organization_id, user_id) DO UPDATE SET role = excluded.role",
-        rusqlite::params![member_id, organization_id, &effective_user_id, role],
+         ON CONFLICT(organization_id, user_id) DO UPDATE SET
+            role = CASE WHEN ?5 THEN excluded.role ELSE organization_members.role END",
+        rusqlite::params![member_id, organization_id, &effective_user_id, role, role_known],
     )
     .map_err(|e| AuthError::DbError(e.to_string()))?;
 
@@ -926,6 +933,12 @@ pub async fn auth_middleware(
                         .and_then(|v| v.to_str().ok())
                         .filter(|s| !s.is_empty())
                         .map(|s| s.to_string());
+                    // The role comes only from the cloud-verified identity
+                    // (the owner's Clerk memberships), never from a header.
+                    let organization_role = header_org
+                        .as_deref()
+                        .and_then(|org| identity.role_in(org))
+                        .map(str::to_string);
                     let email = header_email
                         .filter(|value| !value.contains("@users.allternit.local"))
                         .or(identity.email);
@@ -936,7 +949,7 @@ pub async fn auth_middleware(
                         avatar_url: None,
                         tenant_id: header_org.clone(),
                         organization_id: header_org,
-                        organization_role: None,
+                        organization_role,
                         organization_slug: None,
                     };
                     match ensure_user_in_db(&state.db, &user) {
@@ -1267,5 +1280,49 @@ mod desktop_ws_token_tests {
     fn malformed_token_rejects() {
         assert!(user_from_desktop_token(TEST_SECRET, "not-a-token").is_none());
         assert!(user_from_desktop_token(TEST_SECRET, "").is_none());
+    }
+}
+
+#[cfg(test)]
+mod org_role_sync_tests {
+    use super::{ensure_user_in_db, AuthUser};
+
+    fn user(role: Option<&str>) -> AuthUser {
+        AuthUser {
+            user_id: "u-owner".into(),
+            email: Some("owner@test.local".into()),
+            name: None,
+            avatar_url: None,
+            tenant_id: Some("org-1".into()),
+            organization_id: Some("org-1".into()),
+            organization_role: role.map(str::to_string),
+            organization_slug: None,
+        }
+    }
+
+    fn role_of(db: &crate::db::DbHandle) -> String {
+        db.connect().unwrap()
+            .query_row("SELECT role FROM organization_members WHERE organization_id = 'org-1' AND user_id = 'u-owner'", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn a_path_without_a_role_never_downgrades_a_known_role() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = crate::db::DbHandle::new(temp.path().join("t.db")).unwrap();
+        // First seen through a path with no role: a plain member.
+        ensure_user_in_db(&db, &user(None)).unwrap();
+        assert_eq!(role_of(&db), "member");
+        // A Clerk session carrying the role sets it.
+        ensure_user_in_db(&db, &user(Some("org:admin"))).unwrap();
+        assert_eq!(role_of(&db), "admin");
+        // A device/DP token (no role) must not downgrade it again.
+        ensure_user_in_db(&db, &user(None)).unwrap();
+        assert_eq!(role_of(&db), "admin");
+        ensure_user_in_db(&db, &user(Some(""))).unwrap();
+        assert_eq!(role_of(&db), "admin");
+        // A real role change still applies.
+        ensure_user_in_db(&db, &user(Some("org:member"))).unwrap();
+        assert_eq!(role_of(&db), "member");
     }
 }
