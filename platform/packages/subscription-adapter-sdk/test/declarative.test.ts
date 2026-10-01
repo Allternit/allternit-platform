@@ -233,6 +233,29 @@ describe("DeclarativeChatAdapter end-to-end (§A3.3, P2 verify)", () => {
     await page.close();
   });
 
+  it("a usage-limit notice that appears after Send ends the turn as quota_exhausted, not a stall", async () => {
+    let t = 1_700_000_000_000;
+    const { events, page } = await runAdapter("idle.html", {
+      stallTimeoutS: 1,
+      banners: [{ kind: "limit_banner", pattern: /reached your usage limit/i, blocksSend: true }],
+      completion: { now: () => t, sleep: async (ms) => { t += ms; }, stabilityMs: 150, pollIntervalMs: 25, timeoutMs: 60_000 },
+    }, async (pg) => {
+      // The provider accepts the message, then shows its limit card instead of a reply.
+      await pg.evaluate(() => {
+        document.addEventListener("click", () => setTimeout(() => {
+          const d = document.createElement("div"); d.className = "fw-banner";
+          d.textContent = "You've reached your usage limit. Your limit resets at 4:30 PM."; document.body.appendChild(d);
+        }, 10), { once: true });
+      });
+    });
+    expect(types(events)).toContain("submitted");
+    const last = events[events.length - 1] as Extract<AdapterEvent, { t: "error" }>;
+    expect(last.error.class).toBe("quota_exhausted");
+    expect(last.error.detail).toMatch(/usage limit reached: .*resets at 4:30 PM/);
+    expect(last.error.detail).not.toMatch(/before sending/);
+    await page.close();
+  });
+
   it("stall watchdog gate: a heartbeating, growing fixture does NOT trip stalled", async () => {
     let t = 1_700_000_000_000;
     const page = await fixturePage(browser, "streaming.html");
