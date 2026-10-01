@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { execFileSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { RuntimePackages, type RuntimeManifest } from './runtime-package.js';
@@ -125,5 +126,78 @@ describe('RuntimePackages', () => {
     const updatedApp = store();
     expect(await updatedApp.prepareForLaunch()).toBeNull();
     expect(fs.existsSync(path.join(root, 'versions', 'r2'))).toBe(false);
+  });
+});
+
+describe('per-file delta updates (feed format 2)', () => {
+  /** Bundled runtime: resources/bin/allternit-api + resources/platform/index.html, listed in runtime.json. */
+  function bundle(api: string, index: string, listed = true) {
+    fs.mkdirSync(path.join(resources, 'platform'), { recursive: true });
+    fs.writeFileSync(path.join(resources, 'bin', 'allternit-api'), api);
+    fs.writeFileSync(path.join(resources, 'platform', 'index.html'), index);
+    const files = {
+      'bin/allternit-api': { sha256: sha(api), size: api.length },
+      'platform/index.html': { sha256: sha(index), size: index.length },
+    };
+    fs.writeFileSync(path.join(resources, 'runtime.json'), JSON.stringify({ build: 100, ...(listed ? { files } : {}) }));
+  }
+
+  /** A feed whose new version changes only allternit-api. Records which objects were fetched. */
+  function deltaFeed(version: string, build: number, api: string, index: string, opts: { corruptObject?: boolean } = {}) {
+    const files = {
+      'bin/allternit-api': { sha256: sha(api), size: api.length },
+      'platform/index.html': { sha256: sha(index), size: index.length },
+    };
+    const manifest = JSON.stringify({ version, build, platform: 'test-x', shellApi: 1, files });
+    const latest = JSON.stringify({ format: 2, version, build, shellApi: 1, manifest: `manifests/${version}.json`, manifestSha256: sha(manifest) });
+    const objects: Record<string, Buffer> = {
+      [sha(api)]: zlib.gzipSync(Buffer.from(opts.corruptObject ? 'tampered' : api)),
+      [sha(index)]: zlib.gzipSync(Buffer.from(index)),
+    };
+    const fetched: string[] = [];
+    const fetchImpl = (async (url: string | URL) => {
+      const u = String(url);
+      if (u.endsWith('/stable/test-x/latest.json')) return new Response(latest);
+      if (u.endsWith('/stable/test-x/latest.json.sig')) return new Response(sign(latest));
+      if (u.endsWith(`/manifests/${version}.json`)) return new Response(manifest);
+      if (u.endsWith(`/manifests/${version}.json.sig`)) return new Response(sign(manifest));
+      const m = u.match(/\/objects\/([0-9a-f]{64})\.gz$/);
+      if (m && objects[m[1]]) { fetched.push(m[1]); return new Response(new Uint8Array(objects[m[1]])); }
+      return new Response('nope', { status: 404 });
+    }) as typeof fetch;
+    return { fetchImpl, fetched };
+  }
+
+  it('downloads only the changed file and copies the rest from the app', async () => {
+    bundle('api v1', '<html>same</html>');
+    const { fetchImpl, fetched } = deltaFeed('r2', 200, 'api v2', '<html>same</html>');
+    expect(await store().checkForUpdate('https://feed.test', fetchImpl)).toBe('r2');
+    expect(fetched).toEqual([sha('api v2')]);
+    const next = store();
+    await next.prepareForLaunch();
+    expect(fs.readFileSync(next.file('bin', 'allternit-api'), 'utf8')).toBe('api v2');
+    expect(fs.readFileSync(next.file('platform', 'index.html'), 'utf8')).toBe('<html>same</html>');
+  });
+
+  it('still reuses files from an older app with no bundled file list', async () => {
+    bundle('api v1', '<html>same</html>', false);
+    const { fetchImpl, fetched } = deltaFeed('r2', 200, 'api v2', '<html>same</html>');
+    expect(await store().checkForUpdate('https://feed.test', fetchImpl)).toBe('r2');
+    expect(fetched).toEqual([sha('api v2')]);
+  });
+
+  it('downloads a file whose local copy no longer matches its listed hash', async () => {
+    bundle('api v1', '<html>same</html>');
+    fs.writeFileSync(path.join(resources, 'platform', 'index.html'), '<html>SAME</html>'); // same size, re-signed/altered
+    const { fetchImpl, fetched } = deltaFeed('r2', 200, 'api v2', '<html>same</html>');
+    expect(await store().checkForUpdate('https://feed.test', fetchImpl)).toBe('r2');
+    expect(fetched.sort()).toEqual([sha('api v2'), sha('<html>same</html>')].sort());
+  });
+
+  it('refuses an update whose downloaded file does not match the signed manifest', async () => {
+    bundle('api v1', '<html>same</html>');
+    const { fetchImpl } = deltaFeed('r3', 300, 'api v3', '<html>same</html>', { corruptObject: true });
+    await expect(store().checkForUpdate('https://feed.test', fetchImpl)).rejects.toThrow(/verification/);
+    expect(fs.existsSync(path.join(root, 'versions', 'r3'))).toBe(false);
   });
 });

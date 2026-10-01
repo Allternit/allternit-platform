@@ -3,9 +3,17 @@
  * Runtime packages: ship allternit-api, gizzi-code and the platform screens
  * without a new Desktop app build (see src/main/runtime-package.ts).
  *
- *   node scripts/runtime-package.cjs stamp     write resources/runtime.json (build number for this checkout)
- *   node scripts/runtime-package.cjs pack      package resources/{bin,platform} → release/runtime/stable/<platform>/
- *   node scripts/runtime-package.cjs publish   print the upload commands; add --confirm to upload to R2
+ *   node scripts/runtime-package.cjs stamp     write resources/runtime.json (build number + bundled file list)
+ *   node scripts/runtime-package.cjs pack      write the feed for resources/{bin,platform} → release/runtime/feed/
+ *   node scripts/runtime-package.cjs publish   show what would upload; add --confirm to upload to R2
+ *
+ * Feed layout (bucket allternit-runtime, served at runtime.allternit.com):
+ *   objects/<sha256>.gz                          each file once, gzip, shared by every version and platform
+ *   stable/<platform>/manifests/<version>.json   signed list of files {sha256, size} (+ .sig)
+ *   stable/<platform>/latest.json                signed pointer to the newest manifest (+ .sig)
+ * Clients copy files they already have (same hash) and download only the rest,
+ * so an update that changes allternit-api downloads allternit-api, not the
+ * whole 600 MB runtime.
  *
  * Build the parts first without packaging the app:
  *   scripts/build-desktop.sh --skip-electron && (cd surfaces/allternit-desktop &&
@@ -13,25 +21,30 @@
  *
  * Signing key: ALLTERNIT_RUNTIME_SIGNING_KEY or ~/.config/allternit/runtime-signing-ed25519.pem
  * (Ed25519, PKCS#8 PEM). Its public half is RUNTIME_PUBLIC_KEY in runtime-package.ts.
+ * Upload: Cloudflare REST API with the wrangler login (`wrangler auth token`).
  */
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const zlib = require('node:zlib');
 const { execFileSync } = require('node:child_process');
 
 const DESKTOP_DIR = path.resolve(__dirname, '..');
 const REPO_ROOT = path.resolve(DESKTOP_DIR, '..', '..');
-const RESOURCES = path.join(DESKTOP_DIR, 'resources');
+// ALLTERNIT_RUNTIME_RESOURCES packs another build's staged resources (e.g. a build worktree).
+const RESOURCES = process.env.ALLTERNIT_RUNTIME_RESOURCES ? path.resolve(process.env.ALLTERNIT_RUNTIME_RESOURCES) : path.join(DESKTOP_DIR, 'resources');
 const STAMP = path.join(RESOURCES, 'runtime.json');
 const PLATFORM = `${process.platform}-${process.arch}`;
-const OUT = path.join(DESKTOP_DIR, 'release', 'runtime', 'stable', PLATFORM);
+const FEED = path.join(DESKTOP_DIR, 'release', 'runtime', 'feed');
 const BUCKET = process.env.ALLTERNIT_RUNTIME_BUCKET || 'allternit-runtime';
+const ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID || '7cd19487307235aedc039d3a64ad7039';
 const EXE = process.platform === 'win32' ? '.exe' : '';
 const BINARIES = [`allternit-api${EXE}`, `gizzi-code${EXE}`];
 
 const die = (msg) => { console.error(`✗ ${msg}`); process.exit(1); };
-const sha256 = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
+const mb = (n) => `${(n / 1e6).toFixed(1)} MB`;
 
 function git(dir, ...args) {
   try { return execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trim(); } catch { return ''; }
@@ -44,6 +57,28 @@ function shellApi() {
   return Number(m[1]);
 }
 
+function walk(dir, base = dir, out = []) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const abs = path.join(dir, e.name);
+    if (e.isDirectory()) walk(abs, base, out);
+    else if (e.isFile()) out.push(path.relative(base, abs).split(path.sep).join('/'));
+  }
+  return out;
+}
+
+/** The runtime's files under resources/, as manifest entries. Null when not built yet. */
+function runtimeFiles() {
+  if (!BINARIES.every((b) => fs.existsSync(path.join(RESOURCES, 'bin', b)))) return null;
+  if (!fs.existsSync(path.join(RESOURCES, 'platform', 'index.html'))) return null;
+  const rels = [...BINARIES.map((b) => `bin/${b}`), ...walk(path.join(RESOURCES, 'platform')).map((r) => `platform/${r}`)];
+  const files = {};
+  for (const rel of rels.sort()) {
+    const buf = fs.readFileSync(path.join(RESOURCES, rel));
+    files[rel] = { sha256: sha256(buf), size: buf.length };
+  }
+  return files;
+}
+
 function stamp() {
   const aiDir = process.env.ALLTERNIT_AI_PATH;
   const times = [Number(git(REPO_ROOT, 'log', '-1', '--format=%ct')) || 0];
@@ -53,24 +88,19 @@ function stamp() {
   const d = new Date(Math.max(...times) * 1000 || Date.now()).toISOString();
   const sha = git(REPO_ROOT, 'rev-parse', '--short=7', 'HEAD') || 'local';
   const version = `r${d.slice(0, 10).replace(/-/g, '')}.${d.slice(11, 16).replace(':', '')}-${sha}-${build % 1000}`;
+  // The bundled file list lets a runtime update copy unchanged files from the app instead of downloading them.
+  const files = runtimeFiles();
+  if (!files) console.warn('⚠ runtime parts not staged yet — runtime.json has no file list (updates download every file)');
   const info = {
     version, build, shellApi: shellApi(),
     platformSha: git(REPO_ROOT, 'rev-parse', 'HEAD') || null,
     aiSha: aiDir ? git(aiDir, 'rev-parse', 'HEAD') || null : null,
+    ...(files ? { files } : {}),
   };
   fs.mkdirSync(RESOURCES, { recursive: true });
   fs.writeFileSync(STAMP, JSON.stringify(info, null, 2));
-  console.log(`✓ runtime stamp ${version} (build ${build}) → ${path.relative(REPO_ROOT, STAMP)}`);
+  console.log(`✓ runtime stamp ${version} (build ${build}${files ? `, ${Object.keys(files).length} files` : ''}) → ${path.relative(REPO_ROOT, STAMP)}`);
   return info;
-}
-
-function walk(dir, base = dir, out = []) {
-  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    const abs = path.join(dir, e.name);
-    if (e.isDirectory()) walk(abs, base, out);
-    else if (e.isFile()) out.push(path.relative(base, abs).split(path.sep).join('/'));
-  }
-  return out;
 }
 
 function signingKey() {
@@ -81,67 +111,107 @@ function signingKey() {
 
 function pack() {
   const info = fs.existsSync(STAMP) ? JSON.parse(fs.readFileSync(STAMP, 'utf8')) : stamp();
-  for (const b of BINARIES) {
-    if (!fs.existsSync(path.join(RESOURCES, 'bin', b))) die(`resources/bin/${b} missing — build it first`);
-  }
-  if (!fs.existsSync(path.join(RESOURCES, 'platform', 'index.html'))) die('resources/platform missing — run npm run prepare:platform-static');
-
+  const files = runtimeFiles();
+  if (!files) die('resources/bin/{allternit-api,gizzi-code} or resources/platform missing — build them first');
   const key = signingKey();
-  const staging = fs.mkdtempSync(path.join(os.tmpdir(), 'allternit-runtime-'));
-  try {
-    fs.mkdirSync(path.join(staging, 'bin'));
-    for (const b of BINARIES) fs.copyFileSync(path.join(RESOURCES, 'bin', b), path.join(staging, 'bin', b));
-    fs.cpSync(path.join(RESOURCES, 'platform'), path.join(staging, 'platform'), { recursive: true });
+  const objectsDir = path.join(FEED, 'objects');
+  const platformDir = path.join(FEED, 'stable', PLATFORM);
+  fs.mkdirSync(objectsDir, { recursive: true });
+  fs.mkdirSync(path.join(platformDir, 'manifests'), { recursive: true });
 
-    const files = {};
-    for (const rel of walk(staging)) {
-      const abs = path.join(staging, rel);
-      files[rel] = { sha256: sha256(abs), size: fs.statSync(abs).size };
-    }
-    const manifest = Buffer.from(JSON.stringify({
-      version: info.version, build: info.build, platform: PLATFORM, shellApi: info.shellApi,
-      platformSha: info.platformSha, aiSha: info.aiSha, files,
-    }, null, 2));
-    fs.writeFileSync(path.join(staging, 'manifest.json'), manifest);
-    fs.writeFileSync(path.join(staging, 'manifest.sig'), crypto.sign(null, manifest, key).toString('base64'));
+  let written = 0;
+  for (const [rel, f] of Object.entries(files)) {
+    const obj = path.join(objectsDir, `${f.sha256}.gz`);
+    if (fs.existsSync(obj)) continue;
+    fs.writeFileSync(obj, zlib.gzipSync(fs.readFileSync(path.join(RESOURCES, rel)), { level: 9 }));
+    written += 1;
+  }
+  const manifest = Buffer.from(JSON.stringify({
+    version: info.version, build: info.build, platform: PLATFORM, shellApi: info.shellApi,
+    platformSha: info.platformSha, aiSha: info.aiSha, files,
+  }, null, 2));
+  const manifestRel = `manifests/${info.version}.json`;
+  fs.writeFileSync(path.join(platformDir, manifestRel), manifest);
+  fs.writeFileSync(path.join(platformDir, `${manifestRel}.sig`), crypto.sign(null, manifest, key).toString('base64'));
+  const latest = Buffer.from(JSON.stringify({
+    format: 2, version: info.version, build: info.build, shellApi: info.shellApi,
+    manifest: manifestRel, manifestSha256: sha256(manifest),
+  }, null, 2));
+  fs.writeFileSync(path.join(platformDir, 'latest.json'), latest);
+  fs.writeFileSync(path.join(platformDir, 'latest.json.sig'), crypto.sign(null, latest, key).toString('base64'));
+  console.log(`✓ runtime ${info.version}: ${Object.keys(files).length} files, ${written} new objects → ${path.relative(REPO_ROOT, FEED)}`);
+}
 
-    fs.rmSync(OUT, { recursive: true, force: true });
-    fs.mkdirSync(OUT, { recursive: true });
-    const archive = path.join(OUT, `${info.version}.tar.gz`);
-    execFileSync('tar', ['-czf', archive, '-C', staging, '.']);
-    const latest = Buffer.from(JSON.stringify({
-      version: info.version, build: info.build, shellApi: info.shellApi,
-      url: `${info.version}.tar.gz`, sha256: sha256(archive), size: fs.statSync(archive).size,
-    }, null, 2));
-    fs.writeFileSync(path.join(OUT, 'latest.json'), latest);
-    fs.writeFileSync(path.join(OUT, 'latest.json.sig'), crypto.sign(null, latest, key).toString('base64'));
-    const mb = (fs.statSync(archive).size / 1e6).toFixed(1);
-    console.log(`✓ runtime package ${info.version} (${Object.keys(files).length} files, ${mb} MB) → ${path.relative(REPO_ROOT, OUT)}`);
-  } finally {
-    fs.rmSync(staging, { recursive: true, force: true });
+function cloudflareToken() {
+  if (process.env.CLOUDFLARE_API_TOKEN) return process.env.CLOUDFLARE_API_TOKEN;
+  const out = execFileSync('npx', ['-y', 'wrangler@4', 'auth', 'token'], { encoding: 'utf8', cwd: os.tmpdir() }).trim().split('\n');
+  return out[out.length - 1].trim();
+}
+
+async function r2(token, method, key, body, contentType, cacheControl) {
+  const url = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/r2/buckets/${BUCKET}/objects/${key}`;
+  for (let attempt = 1; ; attempt++) {
+    const res = await fetch(url, {
+      method,
+      headers: { Authorization: `Bearer ${token}`, ...(contentType ? { 'Content-Type': contentType } : {}), ...(cacheControl ? { 'Cache-Control': cacheControl } : {}) },
+      body,
+    });
+    if (res.ok) return res;
+    if (attempt >= 4 || res.status < 500) throw new Error(`${method} ${key}: ${res.status} ${await res.text()}`);
+    await new Promise((r) => setTimeout(r, attempt * 2000));
   }
 }
 
-function publish(confirm) {
-  const latestPath = path.join(OUT, 'latest.json');
+async function remoteObjects(token) {
+  const keys = new Set();
+  let cursor = '';
+  for (;;) {
+    const url = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/r2/buckets/${BUCKET}/objects?prefix=objects/&per_page=1000${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new Error(`list objects: ${res.status} ${await res.text()}`);
+    const body = await res.json();
+    for (const o of body.result ?? []) keys.add(o.key);
+    cursor = body.result_info?.cursor ?? '';
+    if (!body.result_info?.is_truncated || !cursor) return keys;
+  }
+}
+
+async function publish(confirm) {
+  const platformDir = path.join(FEED, 'stable', PLATFORM);
+  const latestPath = path.join(platformDir, 'latest.json');
   if (!fs.existsSync(latestPath)) die('nothing packed — run pack first');
   const latest = JSON.parse(fs.readFileSync(latestPath, 'utf8'));
-  // The archive goes up first and latest.json last, so clients never see a pointer to a missing file.
-  const uploads = [latest.url, 'latest.json.sig', 'latest.json'].map((name) => [
-    'npx', 'wrangler', 'r2', 'object', 'put', `${BUCKET}/stable/${PLATFORM}/${name}`,
-    '--file', path.join(OUT, name), '--remote',
-    ...(name.startsWith('latest') ? ['--cache-control', 'no-store'] : ['--cache-control', 'public, max-age=31536000, immutable']),
-  ]);
-  console.log(`Runtime ${latest.version} → r2://${BUCKET}/stable/${PLATFORM}/ (${(latest.size / 1e6).toFixed(1)} MB)`);
-  for (const cmd of uploads) {
-    console.log(`  ${cmd.join(' ')}`);
-    if (confirm) execFileSync(cmd[0], cmd.slice(1), { stdio: 'inherit', cwd: REPO_ROOT });
+  const manifest = JSON.parse(fs.readFileSync(path.join(platformDir, latest.manifest), 'utf8'));
+  const token = cloudflareToken();
+  const have = await remoteObjects(token);
+  const needed = [...new Set(Object.values(manifest.files).map((f) => `objects/${f.sha256}.gz`))].filter((k) => !have.has(k));
+  const bytes = needed.reduce((n, k) => n + fs.statSync(path.join(FEED, k)).size, 0);
+  console.log(`Runtime ${latest.version} (${PLATFORM}): ${Object.keys(manifest.files).length} files, ${needed.length} new objects to upload (${mb(bytes)}), ${have.size} already in r2://${BUCKET}`);
+  if (!confirm) {
+    console.log('Dry run. Re-run with --confirm to upload.');
+    return;
   }
-  if (!confirm) console.log('Dry run. Re-run with --confirm to upload.');
+  let done = 0;
+  const queue = [...needed];
+  const worker = async () => {
+    for (let key = queue.shift(); key; key = queue.shift()) {
+      await r2(token, 'PUT', key, fs.readFileSync(path.join(FEED, key)), 'application/gzip', 'public, max-age=31536000, immutable');
+      done += 1;
+      if (done % 500 === 0) console.log(`  ${done}/${needed.length} objects`);
+    }
+  };
+  await Promise.all(Array.from({ length: 16 }, worker));
+  // Manifest before the pointer, pointer last: a client never sees latest.json naming something missing.
+  for (const rel of [latest.manifest, `${latest.manifest}.sig`, 'latest.json.sig', 'latest.json']) {
+    const immutable = rel.startsWith('manifests/');
+    await r2(token, 'PUT', `stable/${PLATFORM}/${rel}`, fs.readFileSync(path.join(platformDir, rel)),
+      rel.endsWith('.json') ? 'application/json' : 'text/plain', immutable ? 'public, max-age=31536000, immutable' : 'no-store');
+  }
+  console.log(`✓ published ${latest.version} → https://runtime.allternit.com/stable/${PLATFORM}/latest.json`);
 }
 
 const [cmd, ...rest] = process.argv.slice(2);
 if (cmd === 'stamp') stamp();
 else if (cmd === 'pack') pack();
-else if (cmd === 'publish') publish(rest.includes('--confirm'));
+else if (cmd === 'publish') publish(rest.includes('--confirm')).catch((e) => die(e.message));
 else die('usage: runtime-package.cjs stamp | pack | publish [--confirm]');
