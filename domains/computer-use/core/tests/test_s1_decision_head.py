@@ -138,4 +138,9 @@ async def test_planning_loop_reports_executed_operations_and_episode_outcome():
     goal = [o for o in outs if o["source"] == "cu.run_completed_later"]
     goal_ids = {f"dec-{i + 1}" for i, p in enumerate(rt.decisions()) if p["request"]["question_id"] == "goal_satisfied"}
     assert goal and {o["truth"] for o in goal} == {"false"}
-    assert {o["decision_id"] for o in goal} == goal_ids
+    # WP-S1U-3: the head also ran on the planner's `done` step; that one
+    # goal_satisfied decision gets the only positive label.
+    done = [o for o in outs if o["source"] == "cu.planner_done"]
+    assert len(done) == 1 and done[0]["truth"] == "true"
+    assert {o["decision_id"] for o in goal} | {done[0]["decision_id"]} == goal_ids
+    assert done[0]["decision_id"] not in {o["decision_id"] for o in goal}

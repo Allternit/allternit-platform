@@ -237,6 +237,15 @@ candidates get no draft. Never applies anything; the scorer writes no lesson tex
 Brain root default: `$ALLTERNIT_BRAIN_ROOT`, else `~/Desktop/Allternit/Allternit Brain`.
 Events: LessonTriaged per candidate (re-runs skip triaged candidates unless `--force`).
 
+### `allternit lessons outcomes [--brain-root <dir>] [--server <url>]`
+S1 outcome labels for triage drafts a human reviewed. Applied drafts
+(`<brain-root>/.incoming/applied/`) → `true` for `reusable_pattern` and
+`supported_by_events`. Rejected drafts (`.incoming/rejected/`, written by
+`apply-brain-updates.js --reject <draft> --why not-reusable|unsupported|both|other`)
+→ `false` for the question(s) `--why` names (`other` records the rejection with no
+label). Each candidate is labelled once; if the runtime is down it is retried next run.
+Events: LessonOutcomeReported per candidate.
+
 ## Node wait-gates
 
 ### `allternit wait-gate add --node <dag_id>/<node_id> timer|github-run|github-pr|manual [--description <d>] [--until <rfc3339>] [--repo <owner/repo>] [--run-id <id>] [--pr <n>]`
@@ -324,8 +333,10 @@ level. An agent holding an open WIH in the dag cannot weaken it
 ### `allternit judge policy show --dag <dag_id> [--node <node_id>]`
 Effective policy (no events).
 
-### `allternit judge tool --wih <wih_id> --tool <tool> [--command "<cmd>"] [--paths <p>...] [--json]`
-`allow | ask | deny`. Order: Gate 2 checks (deny is final, judge not asked) → hard
+### `allternit judge tool --wih <wih_id> --tool <tool> [--command "<cmd>"] [--paths <p>...] [--tool-call-id <id>] [--json]`
+`allow | ask | deny`. `--tool-call-id` is the harness's own id for the call (e.g. Claude Code
+`tool_use_id`): the shadow S1 decisions about the call carry `x-subject_ref = cc-tool:<id>`, so
+the harness's outcome hooks label them with what the person answered (ran = true, denied = false). Order: Gate 2 checks (deny is final, judge not asked) → hard
 floor (deny is final) → judge. A judge timeout/error/invalid answer is `ask`, never
 `allow`. Required events:
 - JudgeToolDecision (source gate2 | hard_rule | judge | judge_failed)

@@ -731,6 +731,19 @@ impl Gate {
         paths_touched: &[String],
         command: Option<&str>,
     ) -> Result<GateResult> {
+        self.pre_tool_with_call(wih_id, tool, paths_touched, command, None).await
+    }
+
+    /// [`Gate::pre_tool_with`] with the harness's tool-call id, so the S1
+    /// decisions about this call can be labelled by the harness's hooks.
+    pub async fn pre_tool_with_call(
+        &self,
+        wih_id: &str,
+        tool: &str,
+        paths_touched: &[String],
+        command: Option<&str>,
+        tool_call_id: Option<&str>,
+    ) -> Result<GateResult> {
         let base = self.pre_tool_base(wih_id, tool, paths_touched).await?;
         if !base.allowed {
             return Ok(base);
@@ -743,7 +756,7 @@ impl Gate {
         if !policy.tool_judge {
             return Ok(base);
         }
-        let v = self.judge_step(&wih, tool, command, paths_touched).await?;
+        let v = self.judge_step(&wih, tool, command, paths_touched, tool_call_id).await?;
         Ok(GateResult {
             allowed: v.decision == ToolDecision::Allow,
             reason: Some(format!("{}: {}", v.decision.as_str(), v.reason)),
@@ -803,6 +816,20 @@ impl Gate {
         command: Option<&str>,
         paths: &[String],
     ) -> Result<ToolCallVerdict> {
+        self.judge_tool_call_for(wih_id, tool, command, paths, None).await
+    }
+
+    /// [`Gate::judge_tool_call`] with the harness's tool-call id. When the
+    /// answer is `ask`, the harness's hooks later label the S1 decisions with
+    /// what the person answered (ran = true; denied = false).
+    pub async fn judge_tool_call_for(
+        &self,
+        wih_id: &str,
+        tool: &str,
+        command: Option<&str>,
+        paths: &[String],
+        tool_call_id: Option<&str>,
+    ) -> Result<ToolCallVerdict> {
         let mut base = self.pre_tool_base(wih_id, tool, paths).await?;
         if base.allowed {
             if let Some(reason) = self.gate2_blocklist(wih_id, command).await? {
@@ -842,7 +869,7 @@ impl Gate {
                 .await?;
             return Ok(v);
         }
-        self.judge_step(&wih, tool, command, paths).await
+        self.judge_step(&wih, tool, command, paths, tool_call_id).await
     }
 
     async fn wih_state(&self, wih_id: &str) -> Result<WihState> {
@@ -856,6 +883,7 @@ impl Gate {
         tool: &str,
         command: Option<&str>,
         paths: &[String],
+        tool_call_id: Option<&str>,
     ) -> Result<ToolCallVerdict> {
         if let Some(reason) = hard_deny(tool, command, paths) {
             let v = ToolCallVerdict {
@@ -883,6 +911,7 @@ impl Gate {
             command: command.map(|c| preview(c, 4000)),
             paths: paths.to_vec(),
             nonce: new_nonce(),
+            tool_call_id: tool_call_id.map(str::to_string),
         };
         let h = self.judge_handle();
         let judged = judge_tool(h.judge.as_ref(), &req, h.tool_timeout).await;
@@ -909,7 +938,14 @@ impl Gate {
         // `v` is already final, and any later combination must use `s1_outcome::tighten`.
         let mut ext = serde_json::Map::new();
         ext.insert("x-incumbent_action".into(), json!(v.decision.as_str()));
-        crate::kernel::s1_outcome::OutcomeReporter::from_env().spawn_gate(
+        // Q26 (#1148): the incumbent's own may_proceed answer (ask defers to the person: none).
+        match v.decision {
+            ToolDecision::Allow => { ext.insert("x-incumbent".into(), json!("true")); }
+            ToolDecision::Deny => { ext.insert("x-incumbent".into(), json!("false")); }
+            _ => {}
+        }
+        let subject = tool_call_id.map(crate::kernel::s1_outcome::tool_call_subject_ref);
+        crate::kernel::s1_outcome::OutcomeReporter::from_env().spawn_gate_for(
             crate::kernel::s1_outcome::GateAsk {
                 producer: "commrails-judge",
                 bank: crate::kernel::s1_outcome::PERMISSION_GATE_BANK,
@@ -920,6 +956,7 @@ impl Gate {
                 subject_ref: None,
                 extensions: ext,
             },
+            subject,
             format!("tool: {tool}\ncommand: {}\npaths: {}", command.map(|c| preview(c, 2000)).unwrap_or_default(), paths.join(", ")),
         );
         Ok(v)

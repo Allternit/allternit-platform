@@ -133,6 +133,24 @@ describe("shadow ledger + harvester", () => {
     expect(readDataset(out).length).toBe(2);
   });
 
+  test("a subject_ref outcome labels the latest decision of every primitive on that subject (WP-S1U-3)", async () => {
+    const dir = tmp();
+    const ledger = new ShadowLedger(dir);
+    const base = { operation: "GATE", instructions: "i", subject_ref: "cc-tool:t1", candidates: [], options: ["true", "false"], shape: "categorical" as const, probs: [0.5, 0.5], readout_method: "fixture", scope: {} as any, mode: "shadow", state: "s" };
+    const ts = (n: number) => new Date(Date.UTC(2026, 9, 1, 0, 0, n)).toISOString();
+    const guardOld = ledger.logDecision({ ...base, primitive_id: "permission.cli_guard", question_id: "may_proceed", ts: ts(1) });
+    const guard = ledger.logDecision({ ...base, primitive_id: "permission.cli_guard", question_id: "may_proceed", ts: ts(2) });
+    const judge = ledger.logDecision({ ...base, primitive_id: "permission.commrails_judge", question_id: "may_proceed", ts: ts(2) });
+    const first = ledger.logDecision({ ...base, primitive_id: "judge.first_pass.tool", question_id: "tool_safe", ts: ts(2) });
+    await flush();
+    ledger.recordOutcome({ subject_ref: "cc-tool:t1", truth: "false", source: "cli_hook.permission_denied", ts: ts(3) });
+    const { rows } = harvest(dir);
+    const labelled = new Set(rows.map((r) => r.decision_id));
+    expect(labelled).toEqual(new Set([guard, judge, first]));
+    expect(labelled.has(guardOld)).toBe(false);
+    expect(rows.every((r) => r.label === "false")).toBe(true);
+  });
+
   test("latest outcome wins; truth outside options and independent-shape rows are skipped, not guessed", async () => {
     const dir = tmp();
     const l = new ShadowLedger(dir);

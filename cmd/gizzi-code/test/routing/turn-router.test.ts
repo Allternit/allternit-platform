@@ -168,3 +168,51 @@ describe("outcome labels", () => {
     expect(outcomes().at(-1)).toMatchObject({ truth: "gen.small", source: "turn_accepted" })
   })
 })
+
+describe("WP-S1U-3 label gaps", () => {
+  const outcomesOf = (calls: Call[]) => calls.filter((c) => c.url === "http://s1.test/v1/decision/outcome").map((c) => c.body)
+
+  test("template turns: command-template runs and template tools label ROUTE as template", async () => {
+    expect(TR.routeLabel(["run_template"])).toBe("template")
+    expect(TR.routeLabel(["read", "templates.run"])).toBe("template")
+    expect(TR.routeLabel([], { template: true })).toBe("template")
+    expect(TR.routeLabel(["list_templates"])).toBe("retrieval")
+    const { calls, f } = fake({ kernel: kernelAnswer, s1: s1Answer })
+    TR.setDeps({ fetch: f as any, pool: async () => POOL, env })
+    TR.markTemplate("s1")
+    await TR.startTurn(turn("/review src"))
+    await settle()
+    await TR.finishTurn("s1", { tools: ["read"], errored: false })
+    expect(outcomesOf(calls)[0]).toMatchObject({ decision_id: `${TR.ROUTE_BANK}#1`, truth: "template", source: "turn_template" })
+    // The mark is consumed by one turn only.
+    await TR.startTurn(turn("next"))
+    expect(TR.current("s1")?.template).toBe(false)
+  })
+
+  test("the last turn's ROUTE_MODEL is labelled at session end", async () => {
+    const { calls, f } = fake({ kernel: kernelAnswer, s1: s1Answer })
+    TR.setDeps({ fetch: f as any, pool: async () => POOL, env })
+    await TR.startTurn(turn())
+    await settle()
+    await TR.finishTurn("s1", { tools: [], errored: false })
+    await TR.endSession("s1", "session_deleted")
+    const rm = outcomesOf(calls).find((o) => o.decision_id === `${TR.ROUTE_MODEL_BANK}#1`)!
+    expect(rm).toMatchObject({ truth: "gen.small", source: "session_deleted" })
+    expect(TR.current("s1")).toBeUndefined()
+    // Labelled once only.
+    await TR.endSession("s1")
+    expect(outcomesOf(calls).filter((o) => o.decision_id === `${TR.ROUTE_MODEL_BANK}#1`)).toHaveLength(1)
+  })
+
+  test("an idle session labels its last turn; a next turn first cancels the idle label", async () => {
+    const { calls, f } = fake({ kernel: kernelAnswer, s1: s1Answer })
+    TR.setDeps({ fetch: f as any, pool: async () => POOL, env: { ...env, ALLTERNIT_TURN_ROUTE_IDLE_MS: "30" } })
+    await TR.startTurn(turn())
+    await settle()
+    await TR.finishTurn("s1", { tools: [], errored: false })
+    await new Promise((r) => setTimeout(r, 60))
+    const rm = outcomesOf(calls).filter((o) => o.decision_id === `${TR.ROUTE_MODEL_BANK}#1`)
+    expect(rm).toHaveLength(1)
+    expect(rm[0].source).toBe("session_idle")
+  })
+})

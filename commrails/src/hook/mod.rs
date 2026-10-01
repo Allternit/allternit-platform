@@ -154,6 +154,8 @@ pub struct HookRequest {
     pub tool_input: Value,
     pub cwd: Option<PathBuf>,
     pub session_id: Option<String>,
+    /// The harness's tool-call id (`tool_use_id`, or `tool_call_id`/`call_id`).
+    pub tool_call_id: Option<String>,
 }
 
 impl HookRequest {
@@ -168,6 +170,11 @@ impl HookRequest {
             tool_input: value.get("tool_input").cloned().unwrap_or(Value::Null),
             cwd: value.get("cwd").and_then(Value::as_str).map(PathBuf::from),
             session_id: value.get("session_id").and_then(Value::as_str).map(String::from),
+            tool_call_id: ["tool_use_id", "tool_call_id", "call_id"]
+                .iter()
+                .find_map(|k| value.get(*k).and_then(Value::as_str))
+                .filter(|s| !s.is_empty())
+                .map(String::from),
         })
     }
 
@@ -452,7 +459,7 @@ pub async fn decide(req: &HookRequest, root: &Path, home: Option<&Path>, wih: Op
     let command = req.command();
     match wih
         .gate
-        .pre_tool_with(wih.wih_id, &req.tool_name, &rel_paths, command.as_deref())
+        .pre_tool_with_call(wih.wih_id, &req.tool_name, &rel_paths, command.as_deref(), req.tool_call_id.as_deref())
         .await
     {
         Ok(res) if !res.allowed => {
@@ -623,6 +630,7 @@ pub async fn record_decision(ledger: &Ledger, req: Option<&HookRequest>, harness
         tool_input: Value::Null,
         cwd: None,
         session_id: None,
+        tool_call_id: None,
     };
     let event = decision_event(req.unwrap_or(&unparsed), harness, wih_id, decision);
     if let Err(err) = ledger.append(event).await {

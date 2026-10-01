@@ -831,3 +831,13 @@ async fn custom_rules_ask_deny_allow_and_reach_the_ledger() {
     assert!(rules::when_matches("src/*.env", "cat src/app.env"));
     assert!(!rules::when_matches("", "anything"));
 }
+
+#[test]
+fn hook_request_carries_the_harness_tool_call_id() {
+    let r = HookRequest::from_json(&json!({ "tool_name": "Bash", "tool_input": {}, "tool_use_id": "toolu_9" })).unwrap();
+    assert_eq!(r.tool_call_id.as_deref(), Some("toolu_9"));
+    let r = HookRequest::from_json(&json!({ "tool_name": "shell", "call_id": "call_3" })).unwrap();
+    assert_eq!(r.tool_call_id.as_deref(), Some("call_3"));
+    let r = HookRequest::from_json(&json!({ "tool_name": "Bash", "tool_use_id": "" })).unwrap();
+    assert_eq!(r.tool_call_id, None);
+}

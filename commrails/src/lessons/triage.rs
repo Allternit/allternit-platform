@@ -8,7 +8,9 @@
 //!   `x-decision_id` is recorded on the triage result, the `LessonTriaged`
 //!   event and the draft (`x_commrails.s1_decision_ids`).
 //! - Outcome labels: `report_applied_outcomes` reports `true` for drafts a human
-//!   applied (`apply-brain-updates.js` moves them to `.incoming/applied/`).
+//!   applied (`apply-brain-updates.js` moves them to `.incoming/applied/`) and
+//!   `report_rejected_outcomes` reports `false` for drafts a human rejected
+//!   (`apply-brain-updates.js --reject --why …` moves them to `.incoming/rejected/`).
 //! - Promote when `task_success >= task_min` (0.50) and the mean of the three
 //!   `>= mean_min` (0.60).
 //! - Server down / any scoring error: skip scoring and write the draft marked
@@ -267,8 +269,42 @@ pub async fn score_candidate(cfg: &TriageConfig, candidate: &MemoryCandidate) ->
 /// get a draft. Approval lives in `Allternit Brain/Ops/scripts/apply-brain-updates.js`
 /// (outside this repo).
 pub async fn report_applied_outcomes(ledger: &Ledger, brain_root: &Path, reporter: &OutcomeReporter) -> Result<usize> {
-    let applied = brain_root.join(".incoming").join("applied");
-    let Ok(rd) = std::fs::read_dir(&applied) else { return Ok(0) };
+    let dir = brain_root.join(".incoming").join("applied");
+    report_reviewed(ledger, &dir, reporter, "true", "brain.draft_applied", |_| APPROVAL_LABELLED.to_vec()).await
+}
+
+/// Which approval question a rejection (`x_rejection.why`, written by
+/// `apply-brain-updates.js --reject`) says was wrong. `other` (or anything
+/// unknown) labels nothing: a rejection alone does not say which one failed.
+pub fn rejected_questions(why: &str) -> Vec<&'static str> {
+    match why {
+        "not-reusable" => vec![Q_REUSABLE],
+        "unsupported" => vec![Q_SUPPORTED],
+        "both" => APPROVAL_LABELLED.to_vec(),
+        _ => vec![],
+    }
+}
+
+/// `false` labels for drafts a human rejected (`.incoming/rejected/`), per
+/// [`rejected_questions`]. Each candidate is recorded once; a rejection with
+/// nothing to label is still recorded, so it is not rescanned.
+pub async fn report_rejected_outcomes(ledger: &Ledger, brain_root: &Path, reporter: &OutcomeReporter) -> Result<usize> {
+    let dir = brain_root.join(".incoming").join("rejected");
+    report_reviewed(ledger, &dir, reporter, "false", "brain.draft_rejected", |d| {
+        rejected_questions(d["x_rejection"]["why"].as_str().unwrap_or(""))
+    })
+    .await
+}
+
+async fn report_reviewed(
+    ledger: &Ledger,
+    dir: &Path,
+    reporter: &OutcomeReporter,
+    truth: &str,
+    source: &str,
+    questions: impl Fn(&Value) -> Vec<&'static str>,
+) -> Result<usize> {
+    let Ok(rd) = std::fs::read_dir(dir) else { return Ok(0) };
     let done: std::collections::HashSet<String> = ledger
         .query(LedgerQuery::default())
         .await?
@@ -287,15 +323,16 @@ pub async fn report_applied_outcomes(ledger: &Ledger, brain_root: &Path, reporte
         if done.contains(cid) {
             continue;
         }
+        let wanted = questions(&d);
         let mut reported = Vec::new();
-        for q in APPROVAL_LABELLED {
-            if let Some(id) = ids.get(q).and_then(Value::as_str) {
-                if reporter.report(id, "true", "brain.draft_applied").await {
-                    reported.push(q);
+        for q in &wanted {
+            if let Some(id) = ids.get(*q).and_then(Value::as_str) {
+                if reporter.report(id, truth, source).await {
+                    reported.push(*q);
                 }
             }
         }
-        if reported.is_empty() {
+        if reported.is_empty() && !wanted.is_empty() {
             continue; // runtime down or nothing to label: retry next run
         }
         ledger
@@ -305,8 +342,8 @@ pub async fn report_applied_outcomes(ledger: &Ledger, brain_root: &Path, reporte
                 actor: Actor { r#type: ActorType::Gate, id: "lessons-triage".to_string() },
                 scope: None,
                 r#type: LESSON_OUTCOME_EVENT.to_string(),
-                payload: json!({ "candidate_id": cid, "truth": "true", "questions": reported,
-                    "source": "brain.draft_applied", "draft": f.file_name().and_then(|s| s.to_str()) }),
+                payload: json!({ "candidate_id": cid, "truth": truth, "questions": reported,
+                    "source": source, "draft": f.file_name().and_then(|s| s.to_str()) }),
                 provenance: None,
             })
             .await?;
@@ -711,6 +748,33 @@ mod tests {
         let ev = ledger.query(LedgerQuery::default()).await.unwrap();
         let e = ev.iter().find(|e| e.r#type == LESSON_OUTCOME_EVENT).unwrap();
         assert_eq!(e.payload["questions"], json!([Q_REUSABLE, Q_SUPPORTED]));
+    }
+
+    #[tokio::test]
+    async fn rejected_drafts_report_false_for_the_questions_the_reason_names() {
+        use crate::ledger::LedgerOptions;
+        let tmp = tempfile::tempdir().unwrap();
+        let ledger = Ledger::new(LedgerOptions { root_dir: Some(tmp.path().to_path_buf()), ledger_dir: None });
+        let ids: BTreeMap<String, String> = QUESTIONS.iter().map(|(q, ..)| (q.to_string(), format!("dec-{q}"))).collect();
+        let rejected = tmp.path().join(".incoming/rejected");
+        std::fs::create_dir_all(&rejected).unwrap();
+        for (cand, why) in [("mc_r1", "not-reusable"), ("mc_r2", "other")] {
+            let draft = write_brain_draft(tmp.path(), &sample_candidate(cand, "dag_r"), Verdict::Promoted, None, None, &ids).unwrap();
+            let mut d: Value = serde_json::from_str(&std::fs::read_to_string(&draft).unwrap()).unwrap();
+            d["x_rejection"] = json!({ "ts": "2026-10-01T00:00:00Z", "why": why });
+            std::fs::write(rejected.join(format!("2026-10-01_{cand}.json")), d.to_string()).unwrap();
+            std::fs::remove_file(&draft).unwrap();
+        }
+        let url = decision_mock(Default::default()).await;
+        let r = OutcomeReporter::for_url(&url, Duration::from_secs(2));
+        assert_eq!(report_rejected_outcomes(&ledger, tmp.path(), &r).await.unwrap(), 2);
+        assert_eq!(report_rejected_outcomes(&ledger, tmp.path(), &r).await.unwrap(), 0, "deduped");
+        let ev = ledger.query(LedgerQuery::default()).await.unwrap();
+        let by = |c: &str| ev.iter().find(|e| e.r#type == LESSON_OUTCOME_EVENT && e.payload["candidate_id"] == c).unwrap().payload.clone();
+        assert_eq!(by("mc_r1")["questions"], json!([Q_REUSABLE]));
+        assert_eq!(by("mc_r1")["truth"], "false");
+        assert_eq!(by("mc_r2")["questions"], json!([]));
+        assert_eq!(rejected_questions("both"), APPROVAL_LABELLED.to_vec());
     }
 
     #[test]

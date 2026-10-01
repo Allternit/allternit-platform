@@ -72,3 +72,7 @@ Cold (Vault):
    `unscored` (humans gate every draft anyway). Rejected → no draft.
 5. Every candidate gets a `LessonTriaged` event
    `{dag_id, node_id, wih_id, candidate_id, verdict promoted|rejected|unscored, scores, mean, task_min, mean_min, model, unscored_reason, draft_path}`.
+6. Human review → outcome labels (`lessons outcomes`): an applied draft labels
+   `reusable_pattern`/`supported_by_events` true; a draft rejected with
+   `apply-brain-updates.js --reject --why …` (moved to `.incoming/rejected/`, never
+   deleted) labels the named question(s) false.

@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { decide, gateRecommendation, gateRequest, reportOutcome, shadowGate, tighten, type Friction } from "../src/decision/client.ts";
-import { GUARD_GATE, reportToolRan, runGuard } from "../src/hook/guard.ts";
+import { GUARD_GATE, handleOutcomeHook, OUTCOME_SOURCES, reportToolRan, runGuard } from "../src/hook/guard.ts";
+import { existsSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as joinPath } from "node:path";
 
 const ALL: Friction[] = ["allow", "ask", "deny"];
 
@@ -81,7 +84,36 @@ describe("CLI guard hook: shadow GATE", () => {
     const calls: Call[] = [];
     expect(await reportToolRan({ tool_use_id: "toolu_1" }, { serverUrl: "http://s1", fetchImpl: fakeRuntime(1, calls) as any })).toBe(true);
     expect(calls[0].url).toBe("http://s1/v1/decision/outcome");
-    expect(calls[0].body).toEqual({ subject_ref: "cc-tool:toolu_1", question_id: GUARD_GATE.question, truth: "true", source: "cli_hook.post_tool_use" });
+    expect(calls[0].body).toEqual({ subject_ref: "cc-tool:toolu_1", truth: "true", source: "cli_hook.post_tool_use" });
     expect(await reportToolRan({}, { fetchImpl: fakeRuntime(1, calls) as any })).toBe(false);
+  });
+  test("PostToolUseFailure reports true: the call was allowed, it ran and failed", async () => {
+    const calls: Call[] = [];
+    await handleOutcomeHook({ hook_event_name: "PostToolUseFailure", tool_use_id: "toolu_2" }, { serverUrl: "http://s1", fetchImpl: fakeRuntime(1, calls) as any, pendingDir: null });
+    expect(calls[0].body).toEqual({ subject_ref: "cc-tool:toolu_2", truth: "true", source: OUTCOME_SOURCES.ranFailed });
+  });
+  test("a PermissionRequest with no run before Stop is labelled denied; one that ran is not", async () => {
+    const pendingDir = mkdtempSync(joinPath(tmpdir(), "s1-pending-"));
+    const calls: Call[] = [];
+    const deps = { serverUrl: "http://s1", fetchImpl: fakeRuntime(1, calls) as any, pendingDir };
+    const call = (cmd: string, id: string) => ({ session_id: "sess-1", tool_name: "Bash", tool_input: { command: cmd }, tool_use_id: id, cwd: "/tmp" });
+    // PreToolUse remembers input → id; PermissionRequest inputs carry no tool_use_id.
+    await runGuard(call("git push", "toolu_a"), { mode: "log", logDir: null, pendingDir, serverUrl: "http://s1", fetchImpl: fakeRuntime(0.5, []) as any });
+    await runGuard(call("npm publish", "toolu_b"), { mode: "log", logDir: null, pendingDir, serverUrl: "http://s1", fetchImpl: fakeRuntime(0.5, []) as any });
+    const { tool_use_id: _a, ...askA } = call("git push", "toolu_a");
+    const { tool_use_id: _b, ...askB } = call("npm publish", "toolu_b");
+    await handleOutcomeHook({ hook_event_name: "PermissionRequest", ...askA }, deps);
+    await handleOutcomeHook({ hook_event_name: "PermissionRequest", ...askB }, deps);
+    // The person allowed toolu_a (it ran); toolu_b never ran.
+    await handleOutcomeHook({ hook_event_name: "PostToolUse", ...call("git push", "toolu_a") }, deps);
+    await handleOutcomeHook({ hook_event_name: "Stop", session_id: "sess-1" }, deps);
+    expect(calls.map((c) => c.body)).toEqual([
+      { subject_ref: "cc-tool:toolu_a", truth: "true", source: OUTCOME_SOURCES.ran },
+      { subject_ref: "cc-tool:toolu_b", truth: "false", source: OUTCOME_SOURCES.denied },
+    ]);
+    // The session's pending files are gone; a second Stop labels nothing.
+    expect(existsSync(joinPath(pendingDir, "sess-1"))).toBe(false);
+    await handleOutcomeHook({ hook_event_name: "Stop", session_id: "sess-1" }, deps);
+    expect(calls.length).toBe(2);
   });
 });

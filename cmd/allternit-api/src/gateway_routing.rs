@@ -31,13 +31,29 @@ pub fn tighten_consequential(incumbent: bool, s1_says_consequential: Option<bool
     incumbent || s1_says_consequential == Some(true)
 }
 
+/// A tool that runs a template (`run_template`, `templates.run`, ...); the same
+/// rule as the gizzi turn router's `TEMPLATE_TOOL`.
+pub fn is_template_tool(name: &str) -> bool {
+    const VERBS: [&str; 6] = ["run", "use", "apply", "exec", "execute", "start"];
+    let n = name.to_lowercase();
+    let seps = |c: char| c == '_' || c == '.' || c == '-';
+    let parts: Vec<&str> = n.split(seps).filter(|p| !p.is_empty()).collect();
+    parts.windows(2).any(|w| {
+        let tpl = |x: &str| x == "template" || x == "templates";
+        (VERBS.contains(&w[0]) && tpl(w[1])) || (tpl(w[0]) && VERBS.contains(&w[1]))
+    }) || VERBS.iter().any(|v| parts.iter().any(|p| *p == format!("{v}template") || *p == format!("{v}templates")))
+}
+
 /// What a vendor turn needed, from the tool names in its events. Same rules as
-/// the gizzi turn router's `routeLabel` ("template" is never inferred).
+/// the gizzi turn router's `routeLabel` ("template" when a template tool ran).
 pub fn route_label(tools: &[String]) -> &'static str {
     let t: Vec<String> = tools.iter().map(|x| x.to_lowercase()).collect();
     let starts = |x: &str, ps: &[&str]| ps.iter().any(|p| x.starts_with(p));
     let has = |f: &dyn Fn(&str) -> bool| t.iter().any(|x| f(x));
     let read_like = ["read", "grep", "glob", "list", "ls", "webfetch", "websearch", "search", "memory", "codesearch"];
+    if t.iter().any(|x| is_template_tool(x)) {
+        return "template";
+    }
     if t.is_empty() {
         return "answer_from_memory";
     }
@@ -76,9 +92,15 @@ fn s1_base() -> (String, Option<String>) {
     (r.base_url, r.token)
 }
 
-fn request(bank: &str, domain: &str, op: &str, instructions: &str, candidates: Vec<Value>, state: &str, corr: &str) -> Value {
+fn request(bank: &str, domain: &str, op: &str, instructions: &str, candidates: Vec<Value>, state: &str, corr: &str, incumbent: Option<&str>) -> Value {
     let tail: String = state.chars().rev().take(2000).collect::<Vec<_>>().into_iter().rev().collect();
+    // Q26 (#1148): the incumbent's own answer, for non-inferiority.
+    let extensions = match incumbent {
+        Some(i) => json!({ "x-incumbent": i }),
+        None => json!({}),
+    };
     json!({ "state": tail, "reversible": true, "backend": "auto", "request": {
+        "extensions": extensions,
         "envelope": { "abi_version": "1.0.0", "schema_id": "allternit.kernel.DecisionRequestV1", "schema_version": "1.0.0",
                       "run_id": corr, "node_id": bank },
         "operation": op, "state_projection_ref": format!("vendor-turn:{corr}"), "instructions": instructions,
@@ -126,10 +148,10 @@ pub fn before_send(corr: &str, vendor: &str, text: &str, consequential: bool) {
         let route_cands: Vec<Value> = ROUTE_OPTIONS.iter().map(|o| json!({ "candidate_id": o, "label": o }))
             .chain(std::iter::once(json!({ "candidate_id": "unknown", "label": "unknown", "is_unknown": true }))).collect();
         let route = decide(request(ROUTE_BANK, "route.vendor", "CHOICE",
-            &format!("what kind of turn is this request to the {vendor} agent"), route_cands, &text, &corr)).await;
+            &format!("what kind of turn is this request to the {vendor} agent"), route_cands, &text, &corr, None)).await;
         let cons = decide(request(CONSEQUENTIAL_BANK, "vendor.consequential", "GATE",
             "does sending this request need the user's approval first (spends money, contacts people, changes or deletes something outside the chat)",
-            vec![], &text, &corr)).await;
+            vec![], &text, &corr, Some(if consequential { "true" } else { "false" }))).await;
         if let Some(cons_id) = &cons {
             // Shadow label: the caller's own flag. Tighten-only means a later live
             // mode may only ever add the approval, never remove it.
@@ -189,6 +211,18 @@ mod tests {
         assert_eq!(route_label(&v(&["read", "grep"])), "retrieval");
         assert_eq!(route_label(&v(&["send_email"])), "single_tool");
         assert_eq!(route_label(&v(&["a", "b", "c", "d"])), "agent_run");
+        assert_eq!(route_label(&v(&["read", "run_template"])), "template");
+        assert_eq!(route_label(&v(&["templates.run"])), "template");
+        assert_eq!(route_label(&v(&["runTemplate"])), "template");
+        assert_eq!(route_label(&v(&["list_templates"])), "retrieval");
+    }
+
+    #[test]
+    fn consequential_request_carries_the_incumbent_flag() {
+        let b = request(CONSEQUENTIAL_BANK, "d", "GATE", "i", vec![], "s", "c", Some("true"));
+        assert_eq!(b["request"]["extensions"]["x-incumbent"], "true");
+        let b = request(ROUTE_BANK, "d", "CHOICE", "i", vec![], "s", "c", None);
+        assert!(b["request"]["extensions"].get("x-incumbent").is_none());
     }
 
     #[test]

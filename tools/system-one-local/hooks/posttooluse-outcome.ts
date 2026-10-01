@@ -1,9 +1,9 @@
-// Claude Code PostToolUse hook entry: reports "the call proceeded" as the outcome label for the
-// shadow S1 permission GATE the PreToolUse guard logged. Never prints a decision; always exits 0.
-import { reportToolRan } from "../src/hook/guard.ts";
+// Legacy PostToolUse entry (kept so existing settings keep working). hooks/s1-outcome is the one
+// entry for every outcome event; this one dispatches the same way. Never prints a decision.
+import { handleOutcomeHook } from "../src/hook/guard.ts";
 
 try {
-  await reportToolRan(JSON.parse(await Bun.stdin.text()));
+  await handleOutcomeHook(JSON.parse(await Bun.stdin.text()));
 } catch {
   // outcome labels are best-effort
 }
