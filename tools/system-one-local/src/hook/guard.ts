@@ -87,7 +87,21 @@ function out(v: Verdict, reason: string): HookOutput {
   return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: v, permissionDecisionReason: reason } };
 }
 
+/**
+ * Harnesses name the tool-call id differently (Claude Code `tool_use_id`;
+ * Qwen/Gemini-family and others `tool_call_id`, `toolCallId`, `callId`).
+ * Every hook entry reads `tool_use_id`, so copy the first one present.
+ */
+export function normalizeHookInput(input: any): any {
+  if (!input || typeof input !== "object" || (typeof input.tool_use_id === "string" && input.tool_use_id)) return input;
+  for (const k of ["tool_call_id", "toolCallId", "toolUseId", "callId", "call_id"]) {
+    if (typeof input[k] === "string" && input[k]) return { ...input, tool_use_id: input[k] };
+  }
+  return input;
+}
+
 export async function runGuard(input: any, deps: GuardDeps = {}): Promise<{ output: HookOutput | null; record: GuardRecord | null }> {
+  input = normalizeHookInput(input);
   const mode = deps.mode ?? modeFromEnv();
   if (mode === "off" || !input || typeof input.tool_name !== "string") return { output: null, record: null };
   const t0 = performance.now();
@@ -365,6 +379,7 @@ export async function reportDenied(input: any, deps: OutcomeDeps = {}): Promise<
 
 /** One entry for every outcome hook event (hooks/s1-outcome). Never prints a decision. */
 export async function handleOutcomeHook(input: any, deps: OutcomeDeps = {}): Promise<void> {
+  input = normalizeHookInput(input);
   switch (input?.hook_event_name) {
     case "PermissionRequest":
       if (modeFromEnv() !== "off") recordPermissionRequest(input, deps.pendingDir);
