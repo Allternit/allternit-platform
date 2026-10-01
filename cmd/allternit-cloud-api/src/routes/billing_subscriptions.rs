@@ -21,7 +21,7 @@
 //! credit grants can resolve a Stripe subscription id back to a user and plan.
 
 use axum::{
-    extract::State,
+    extract::{Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -35,7 +35,7 @@ use crate::{
     error::ApiError,
     routes::billing_checkout::{
         billing_not_configured_response, billing_upstream_error_response, ReqwestStripeCheckout,
-        StripeCheckout, DEFAULT_CANCEL_URL, DEFAULT_SUCCESS_URL,
+        StripeCheckout,
     },
     ApiState,
 };
@@ -139,8 +139,8 @@ async fn get_current_subscription(
         r#"
         SELECT user_id, plan_id, plan_tier, status, stripe_customer_id
         FROM billing_subscriptions
-        WHERE user_id = $1 AND status IN ('active', 'trialing')
-        ORDER BY updated_at DESC
+        WHERE user_id = $1 AND status IN ('active', 'trialing', 'past_due', 'unpaid')
+        ORDER BY (status IN ('active', 'trialing')) DESC, updated_at DESC
         LIMIT 1
         "#,
     )
@@ -182,6 +182,7 @@ async fn list_plans() -> Json<PlansResponse> {
 async fn create_subscription(
     State(state): State<Arc<ApiState>>,
     headers: HeaderMap,
+    Query(return_to): Query<crate::routes::billing_checkout::ReturnTo>,
     Json(request): Json<SubscribeRequest>,
 ) -> Response {
     let user_id = match crate::auth::resolve_user_scoped(&state.db, &headers, "billing").await {
@@ -207,10 +208,11 @@ async fn create_subscription(
     let Some(price_id) = plan_price_id(plan) else {
         return billing_not_configured_response();
     };
-    let success_url = std::env::var("STRIPE_CHECKOUT_SUCCESS_URL")
-        .unwrap_or_else(|_| DEFAULT_SUCCESS_URL.to_string());
-    let cancel_url = std::env::var("STRIPE_CHECKOUT_CANCEL_URL")
-        .unwrap_or_else(|_| DEFAULT_CANCEL_URL.to_string());
+    let (success_url, cancel_url) =
+        match crate::routes::billing_checkout::checkout_return_urls(&return_to) {
+            Ok(urls) => urls,
+            Err(error) => return error.into_response(),
+        };
     let checkout = ReqwestStripeCheckout::new();
 
     match create_subscription_checkout_url(
@@ -232,6 +234,7 @@ async fn create_subscription(
 async fn create_portal_session(
     State(state): State<Arc<ApiState>>,
     headers: HeaderMap,
+    Query(return_to): Query<crate::routes::billing_checkout::ReturnTo>,
 ) -> Response {
     let user_id = match crate::auth::resolve_user_scoped(&state.db, &headers, "billing").await {
         Ok(user) => user.id,
@@ -240,8 +243,14 @@ async fn create_portal_session(
     let Ok(secret_key) = std::env::var("STRIPE_SECRET_KEY") else {
         return billing_not_configured_response();
     };
-    let return_url = std::env::var("STRIPE_PORTAL_RETURN_URL")
-        .unwrap_or_else(|_| DEFAULT_PORTAL_RETURN_URL.to_string());
+    let return_url = match crate::routes::billing_checkout::client_return_url(
+        return_to.return_url.as_deref(),
+    ) {
+        Ok(Some(url)) => url,
+        Ok(None) => std::env::var("STRIPE_PORTAL_RETURN_URL")
+            .unwrap_or_else(|_| DEFAULT_PORTAL_RETURN_URL.to_string()),
+        Err(error) => return error.into_response(),
+    };
     let checkout = ReqwestStripeCheckout::new();
 
     match portal_url_for(&checkout, &state.db, &user_id, &secret_key, &return_url).await {
@@ -439,6 +448,24 @@ pub(crate) async fn mark_billing_subscription_canceled(
         "UPDATE billing_subscriptions SET status = 'canceled', updated_at = CURRENT_TIMESTAMP WHERE stripe_subscription_id = $1",
     )
     .bind(stripe_subscription_id)
+    .execute(db)
+    .await
+    .map_err(ApiError::DatabaseError)?;
+    Ok(())
+}
+
+/// Record a failed-renewal status (`past_due` / `unpaid`) on the local mirror. A missing row
+/// is not an error; a later active/trialing grant overwrites the status.
+pub(crate) async fn set_billing_subscription_status(
+    db: &PgPool,
+    stripe_subscription_id: &str,
+    status: &str,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE billing_subscriptions SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE stripe_subscription_id = $1",
+    )
+    .bind(stripe_subscription_id)
+    .bind(status)
     .execute(db)
     .await
     .map_err(ApiError::DatabaseError)?;

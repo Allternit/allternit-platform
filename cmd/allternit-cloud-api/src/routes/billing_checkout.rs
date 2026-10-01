@@ -27,7 +27,7 @@
 //! in sync.
 
 use axum::{
-    extract::State,
+    extract::{Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -76,6 +76,65 @@ pub struct CheckoutRequest {
     pack_id: String,
 }
 
+/// Optional `?return_url=` on checkout, subscribe and portal: the page Stripe
+/// sends the buyer back to. Several surfaces sell through these routes
+/// (platform.allternit.com/billing, ai.allternit.com Settings → Billing), so
+/// each names its own page; absent, the env/default URLs apply.
+#[derive(Debug, Default, Deserialize)]
+pub struct ReturnTo {
+    #[serde(default)]
+    pub return_url: Option<String>,
+}
+
+/// Hosts a client may name in `return_url`. `ALLTERNIT_BILLING_RETURN_HOSTS`
+/// (comma-separated) replaces the list.
+const DEFAULT_RETURN_HOSTS: &[&str] = &["platform.allternit.com", "ai.allternit.com", "m.allternit.com"];
+
+/// Validate a client-supplied return page: https, an allowed host, no query
+/// or fragment (the server adds `?checkout=`). `Ok(None)` when absent.
+pub(crate) fn client_return_url(requested: Option<&str>) -> Result<Option<String>, ApiError> {
+    let Some(raw) = requested.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let invalid = || ApiError::BadRequest("return_url must be an https page on an Allternit site.".to_string());
+    let url = reqwest::Url::parse(raw).map_err(|_| invalid())?;
+    let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+    let allowed = match std::env::var("ALLTERNIT_BILLING_RETURN_HOSTS") {
+        Ok(list) if !list.trim().is_empty() => list
+            .split(',')
+            .map(|item| item.trim().to_ascii_lowercase())
+            .any(|item| !item.is_empty() && item == host),
+        _ => DEFAULT_RETURN_HOSTS.iter().any(|item| *item == host),
+    };
+    if url.scheme() != "https"
+        || !allowed
+        || url.port().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(invalid());
+    }
+    Ok(Some(url.to_string()))
+}
+
+/// `base` plus `checkout=<outcome>` for the Checkout success/cancel URLs.
+pub(crate) fn with_checkout_outcome(base: &str, outcome: &str) -> String {
+    format!("{base}?checkout={outcome}")
+}
+
+/// Success and cancel URLs: the client's validated page, else env, else default.
+pub(crate) fn checkout_return_urls(return_to: &ReturnTo) -> Result<(String, String), ApiError> {
+    if let Some(base) = client_return_url(return_to.return_url.as_deref())? {
+        return Ok((with_checkout_outcome(&base, "success"), with_checkout_outcome(&base, "cancelled")));
+    }
+    Ok((
+        std::env::var("STRIPE_CHECKOUT_SUCCESS_URL").unwrap_or_else(|_| DEFAULT_SUCCESS_URL.to_string()),
+        std::env::var("STRIPE_CHECKOUT_CANCEL_URL").unwrap_or_else(|_| DEFAULT_CANCEL_URL.to_string()),
+    ))
+}
+
 #[derive(Debug, Serialize)]
 pub struct CheckoutResponse {
     checkout_url: String,
@@ -104,6 +163,7 @@ async fn list_packs() -> Json<PacksResponse> {
 async fn create_checkout(
     State(state): State<Arc<ApiState>>,
     headers: HeaderMap,
+    Query(return_to): Query<ReturnTo>,
     Json(request): Json<CheckoutRequest>,
 ) -> Response {
     let user = match crate::auth::resolve_user_scoped(&state.db, &headers, "billing").await {
@@ -142,10 +202,10 @@ async fn create_checkout(
     let Ok(secret_key) = std::env::var("STRIPE_SECRET_KEY") else {
         return billing_not_configured_response();
     };
-    let success_url = std::env::var("STRIPE_CHECKOUT_SUCCESS_URL")
-        .unwrap_or_else(|_| DEFAULT_SUCCESS_URL.to_string());
-    let cancel_url = std::env::var("STRIPE_CHECKOUT_CANCEL_URL")
-        .unwrap_or_else(|_| DEFAULT_CANCEL_URL.to_string());
+    let (success_url, cancel_url) = match checkout_return_urls(&return_to) {
+        Ok(urls) => urls,
+        Err(error) => return error.into_response(),
+    };
     let checkout = ReqwestStripeCheckout::new();
 
     match create_checkout_url(
@@ -349,6 +409,44 @@ impl StripeCheckout for ReqwestStripeCheckout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn return_url_accepts_allternit_pages_and_rejects_everything_else() {
+        assert_eq!(client_return_url(None).unwrap(), None);
+        assert_eq!(client_return_url(Some("  ")).unwrap(), None);
+        assert_eq!(
+            client_return_url(Some("https://ai.allternit.com/settings/billing")).unwrap().as_deref(),
+            Some("https://ai.allternit.com/settings/billing")
+        );
+        assert!(client_return_url(Some("https://platform.allternit.com/billing/")).unwrap().is_some());
+        for bad in [
+            "http://ai.allternit.com/settings/billing",
+            "https://evil.example.com/settings/billing",
+            "https://ai.allternit.com.evil.example/x",
+            "https://ai.allternit.com:8443/settings/billing",
+            "https://user:pw@ai.allternit.com/settings/billing",
+            "https://ai.allternit.com/settings/billing?next=https://evil.example",
+            "https://ai.allternit.com/settings/billing#x",
+            "javascript:alert(1)",
+            "not a url",
+        ] {
+            assert!(client_return_url(Some(bad)).is_err(), "{bad} must be rejected");
+        }
+    }
+
+    #[test]
+    fn checkout_return_urls_use_the_client_page_when_given() {
+        let (success, cancel) = checkout_return_urls(&ReturnTo {
+            return_url: Some("https://ai.allternit.com/settings/billing".to_string()),
+        })
+        .unwrap();
+        assert_eq!(success, "https://ai.allternit.com/settings/billing?checkout=success");
+        assert_eq!(cancel, "https://ai.allternit.com/settings/billing?checkout=cancelled");
+        assert!(checkout_return_urls(&ReturnTo {
+            return_url: Some("https://evil.example.com/".to_string()),
+        })
+        .is_err());
+    }
 
     #[tokio::test]
     async fn pack_catalog_is_the_four_static_packs_at_1_to_1_pricing() {
