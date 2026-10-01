@@ -185,7 +185,8 @@ pub async fn curate_bot(db: &DbHandle, user_id: &str, bot_id: &str) -> Result<(u
         .map(|(i, (_, c))| format!("{}. {}", i + 1, c.trim()))
         .collect::<Vec<_>>()
         .join("\n");
-    let raw = crate::gizzi_completion::complete_ephemeral(&prompt, Some(CURATE_SYSTEM), model.as_ref())
+    let ctx = crate::usage_ledger::LedgerCtx::surface("memory").tenant(None, Some(user_id));
+    let raw = crate::usage_ledger::scope(ctx, crate::gizzi_completion::complete_ephemeral(&prompt, Some(CURATE_SYSTEM), model.as_ref()))
         .await
         .ok_or("the curation model didn't answer")?;
     let plan = parse_curation(&raw, entries.len()).ok_or("the curation reply wasn't readable")?;

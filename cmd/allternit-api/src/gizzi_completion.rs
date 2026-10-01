@@ -47,6 +47,9 @@ pub struct Usage {
     /// Output tokens (output + reasoning), as gizzi reported them.
     pub tokens_out: u64,
     pub cost_usd: f64,
+    /// Prompt-cache read / write tokens (O15 ledger + cache hit rate).
+    pub cache_read: u64,
+    pub cache_write: u64,
 }
 
 /// Usage from an assistant `message.updated` info payload (the split is kept,
@@ -55,7 +58,14 @@ pub fn usage_from_info(info: &serde_json::Value) -> Usage {
     let t = &info["tokens"];
     let n = |v: &serde_json::Value| v.as_u64().unwrap_or(0);
     let (i, o) = (n(&t["input"]), n(&t["output"]) + n(&t["reasoning"]));
-    Usage { tokens: i + o, tokens_in: i, tokens_out: o, cost_usd: info["cost"].as_f64().unwrap_or(0.0) }
+    Usage {
+        tokens: i + o,
+        tokens_in: i,
+        tokens_out: o,
+        cost_usd: info["cost"].as_f64().unwrap_or(0.0),
+        cache_read: n(&t["cache"]["read"]),
+        cache_write: n(&t["cache"]["write"]),
+    }
 }
 
 /// [`complete_ephemeral`] that also returns the reported token/cost usage
@@ -125,7 +135,9 @@ async fn run(
 
     let session_id = session.get("id")?.as_str()?.to_string();
     info!(session_id, model = %model_label, "Created Gizzi completion session");
+    let started = std::time::Instant::now();
     let text = collect(&client, &gizzi, &session_id, prompt, system).await;
+    record_ledger(&provider_id, &model_id, &session_id, text.as_ref().map(|(_, u)| *u), started.elapsed());
     if delete_after {
         if let Err(err) = client
             .delete(format!("{}/v1/session/{}", gizzi, session_id))
@@ -148,7 +160,7 @@ async fn collect(
 ) -> Option<(String, Usage)> {
     let mut usage: std::collections::HashMap<String, Usage> = std::collections::HashMap::new();
     let total = |u: &std::collections::HashMap<String, Usage>| {
-        u.values().fold(Usage::default(), |a, b| Usage { tokens: a.tokens + b.tokens, tokens_in: a.tokens_in + b.tokens_in, tokens_out: a.tokens_out + b.tokens_out, cost_usd: a.cost_usd + b.cost_usd })
+        u.values().fold(Usage::default(), |a, b| Usage { tokens: a.tokens + b.tokens, tokens_in: a.tokens_in + b.tokens_in, tokens_out: a.tokens_out + b.tokens_out, cost_usd: a.cost_usd + b.cost_usd, cache_read: a.cache_read + b.cache_read, cache_write: a.cache_write + b.cache_write })
     };
 
     // Subscribe to events before sending the message.
@@ -275,4 +287,22 @@ async fn collect(
     } else {
         Some((text_parts.concat(), total(&usage)))
     }
+}
+
+/// O15: one ledger row per internal completion, attributed by the caller's
+/// [`crate::usage_ledger::scope`]/[`crate::usage_ledger::enter`] context.
+fn record_ledger(provider_id: &str, model_id: &str, session_id: &str, usage: Option<Usage>, elapsed: Duration) {
+    let u = usage.unwrap_or_default();
+    crate::usage_ledger::record(crate::usage_ledger::internal_row(
+        provider_id,
+        model_id,
+        Some(session_id),
+        u.tokens_in,
+        u.tokens_out,
+        u.cache_read,
+        u.cache_write,
+        u.cost_usd,
+        elapsed.as_millis() as u64,
+        usage.is_some(),
+    ));
 }

@@ -1094,6 +1094,15 @@ pub(crate) fn record_usage_event(
                 if let Some(decision) = &outcome.routing_decision {
                     router::persist_decision(&conn, &row_id, decision)?;
                 }
+                // O15: ledger keys (surface/run/node/tier/lane, cache writes).
+                crate::usage_ledger::stamp_gateway_row(
+                    &conn,
+                    &row_id,
+                    outcome.tags.as_deref(),
+                    outcome.batch_id.as_deref(),
+                    outcome.usage.cache_write_tokens,
+                    outcome.gizzi_session_id.as_deref(),
+                )?;
                 return Ok(row_id);
             }
             warn!("idempotency pre-insert missing at record time; inserting fresh row");
@@ -1141,6 +1150,14 @@ pub(crate) fn record_usage_event(
         if let Some(decision) = &outcome.routing_decision {
             router::persist_decision(&conn, &row_id, decision)?;
         }
+        crate::usage_ledger::stamp_gateway_row(
+            &conn,
+            &row_id,
+            outcome.tags.as_deref(),
+            outcome.batch_id.as_deref(),
+            outcome.usage.cache_write_tokens,
+            outcome.gizzi_session_id.as_deref(),
+        )?;
         Ok(row_id)
     })();
 

@@ -264,6 +264,8 @@ async fn main() {
     let db_path = data_dir.join("allternit.db");
     let db = DbHandle::new(db_path.clone()).expect("Failed to initialize SQLite database");
     info!("Database ready at {}", db_path.display());
+    // O15: internal completion helpers write the one usage ledger.
+    allternit_api::usage_ledger::install(db.clone());
 
     // MCP connector tokens/secrets stored before sealing existed: seal them
     // once a key is configured (idempotent; no-op without a key).

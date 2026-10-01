@@ -7,7 +7,7 @@ use axum::{
     extract::{Extension, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use rusqlite::params;
@@ -20,7 +20,56 @@ use crate::billing::{self, InvoiceDraft, InvoiceLineItem};
 use crate::AppState;
 
 pub fn usage_router() -> Router<Arc<AppState>> {
-    Router::new().route("/usage/summary", get(usage_summary))
+    Router::new()
+        .route("/usage/summary", get(usage_summary))
+        .route("/usage/ledger", post(report_ledger))
+}
+
+#[derive(Debug, Deserialize)]
+struct LedgerReport {
+    calls: Vec<crate::usage_ledger::ReportedCall>,
+}
+
+/// Most calls accepted per report (gizzi sends one per model call).
+const MAX_REPORTED_CALLS: usize = 200;
+
+/// O15: gizzi-code (and S1 sidecars) report their own model calls / S1
+/// decisions into the one ledger. Existing user auth; rows are owned by the
+/// caller's user and active organization. Calls already metered by
+/// allternit-api (same gizzi session) are skipped, re-deliveries update.
+async fn report_ledger(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<LedgerReport>,
+) -> impl IntoResponse {
+    if body.calls.len() > MAX_REPORTED_CALLS {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(json!({"error": "too_many_calls", "message": format!("At most {MAX_REPORTED_CALLS} calls per report.")})),
+        )
+            .into_response();
+    }
+    let db = state.db.clone();
+    let result = tokio::task::spawn_blocking(move || -> rusqlite::Result<(usize, usize)> {
+        let conn = db.connect()?;
+        let (mut recorded, mut skipped) = (0, 0);
+        for call in &body.calls {
+            match crate::usage_ledger::reported_row(call, user.organization_id.as_deref(), &user.user_id) {
+                Some(row) => match crate::usage_ledger::insert(&conn, &row)? {
+                    Some(_) => recorded += 1,
+                    None => skipped += 1,
+                },
+                None => skipped += 1,
+            }
+        }
+        Ok((recorded, skipped))
+    })
+    .await;
+    match result {
+        Ok(Ok((recorded, skipped))) => (StatusCode::OK, Json(json!({"recorded": recorded, "skipped": skipped}))).into_response(),
+        Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "db_error", "message": e.to_string()}))).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "task_join_error"}))).into_response(),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -28,6 +77,9 @@ struct UsageSummaryQuery {
     organization_id: String,
     period_start: String,
     period_end: String,
+    /// O15: `surface`, `tier`, `model`, `lane` (comma-separated). When set,
+    /// the response adds a `ledger` object from `llm_usage_events`.
+    group_by: Option<String>,
 }
 
 async fn usage_summary(
@@ -41,8 +93,14 @@ async fn usage_summary(
     let organization_id = query.organization_id;
     let period_start = query.period_start;
     let period_end = query.period_end;
+    let group_by = match query.group_by.as_deref().map(crate::usage_ledger::parse_group_by).transpose() {
+        Ok(g) => g,
+        Err(message) => {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_group_by", "message": message}))).into_response()
+        }
+    };
 
-    let result = tokio::task::spawn_blocking(move || -> Result<InvoiceDraft, (StatusCode, serde_json::Value)> {
+    let result = tokio::task::spawn_blocking(move || -> Result<(InvoiceDraft, Option<serde_json::Value>), (StatusCode, serde_json::Value)> {
         let conn = db.connect().map_err(|e| {
             (StatusCode::INTERNAL_SERVER_ERROR, json!({"error": "db_error", "message": e.to_string()}))
         })?;
@@ -103,7 +161,16 @@ async fn usage_summary(
             });
         }
 
-        Ok(InvoiceDraft {
+        let ledger = match &group_by {
+            Some(dims) => Some(
+                crate::usage_ledger::summary(&conn, &organization_id, &period_start, &period_end, dims).map_err(|e| {
+                    (StatusCode::INTERNAL_SERVER_ERROR, json!({"error": "db_error", "message": e.to_string()}))
+                })?,
+            ),
+            None => None,
+        };
+
+        Ok((InvoiceDraft {
             organization_id,
             period_start,
             period_end,
@@ -112,12 +179,18 @@ async fn usage_summary(
             seller_legal_name: billing::SELLER_LEGAL_NAME,
             seller_address_lines: billing::SELLER_ADDRESS_LINES,
             payment_terms: billing::PAYMENT_TERMS,
-        })
+        }, ledger))
     })
     .await;
 
     match result {
-        Ok(Ok(draft)) => (StatusCode::OK, Json(json!(draft))).into_response(),
+        Ok(Ok((draft, ledger))) => {
+            let mut body = json!(draft);
+            if let Some(ledger) = ledger {
+                body["ledger"] = ledger;
+            }
+            (StatusCode::OK, Json(body)).into_response()
+        }
         Ok(Err((status, body))) => (status, Json(body)).into_response(),
         Err(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,

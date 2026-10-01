@@ -565,6 +565,7 @@ fn s1_shadow_classify(h: &Handle, reporter: &OutcomeReporter, backend: &str, run
         "candidates": candidates, "calibration_domain": bank.primitive_id } });
     let url = format!("{}/v1/decision", reporter.base_url);
     let (timeout, token) = (reporter.timeout, reporter.token.clone());
+    let asked = Instant::now();
     let result: Option<DecisionResultView> = h.block_on(async move {
         let c = reqwest::Client::builder().timeout(timeout).build().ok()?;
         let mut rq = c.post(url).json(&body);
@@ -574,6 +575,9 @@ fn s1_shadow_classify(h: &Handle, reporter: &OutcomeReporter, backend: &str, run
         r.json::<DecisionResultView>().await.ok()
     });
     let Some(result) = result else { return };
+    // O15: the decision is counted (cost 0). Shadow: S1 did not serve it.
+    let ctx = crate::usage_ledger::current().unwrap_or_else(|| crate::usage_ledger::LedgerCtx::surface("agency")).run(run_id, Some("N10"));
+    crate::usage_ledger::record(crate::usage_ledger::s1_decision_row(ctx, backend, false, asked.elapsed().as_millis() as u64, None));
     // The plan is a record of the shadow call; the verdict is deliberately unused.
     let plan: Option<ExecutionPlan> = serde_json::from_value(json!({
         "schema_id": "allternit.kernel.ExecutionPlanV1", "schema_version": "1.0.0", "plan_id": format!("s1shadow:{run_id}:N10"),
@@ -777,6 +781,9 @@ impl Exec<'_> {
     fn propose(&mut self, plan: &ExecutionPlan, attempt: u32, goal: &str, failure: &str) -> Step<(String, String)> {
         self.admit()?;
         let t0 = Instant::now();
+        // O15: every model call in this proposal lands on the run's ledger rows.
+        let _ledger = crate::usage_ledger::enter(crate::usage_ledger::LedgerCtx::surface("agency")
+            .run(&self.run_id, plan.node_id.as_deref()).tier("S2").tenant(Some(&self.org), None));
         let mut used = crate::gizzi_completion::Usage::default();
         let proposal = if scripted() {
             let f = self.ws.repo.join(".allternit/scripted-patches.json");
@@ -893,6 +900,7 @@ impl Exec<'_> {
         {
             let out = self.last_test_output.clone();
             let mut evidence = Vec::new(); // s1-verify refs; kept for the node's completion decision
+            let _ledger = crate::usage_ledger::enter(crate::usage_ledger::LedgerCtx::surface("agency").tenant(Some(&self.org), None));
             s1_shadow_classify(self.h, &OutcomeReporter::from_env(), &self.s1_backend, &self.run_id, &out, &mut evidence);
         }
         let mut passed: Option<(String, String, String)> = None; // (target receipt ref, path, content)

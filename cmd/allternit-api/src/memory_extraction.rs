@@ -251,10 +251,9 @@ pub async fn extract_and_reconcile(
     };
 
     let model = extraction_model();
-    let reply = crate::gizzi_completion::complete_ephemeral(
-        &build_prompt(&message, &shown),
-        Some(SYSTEM_PROMPT),
-        Some(&model),
+    let reply = crate::usage_ledger::scope(
+        crate::usage_ledger::LedgerCtx::surface("memory").tenant(None, Some(&user_id)),
+        crate::gizzi_completion::complete_ephemeral(&build_prompt(&message, &shown), Some(SYSTEM_PROMPT), Some(&model)),
     )
     .await;
 
