@@ -423,8 +423,16 @@ async fn generate_lesson(
     // Anthropic directly. This ensures ALabs uses the same brain/provider
     // configuration as the rest of the platform.
     let system = "You are an expert curriculum designer for the Allternit A://Labs learning platform. You create structured lesson content with slides and quizzes. Output ONLY valid JSON matching the requested schema.";
+    // O7/O9: lesson generation is a doc-type, non-personal call type (exact
+    // cache 24h; semantic cache in shadow); metered on the lessons surface.
     let ledger = crate::usage_ledger::LedgerCtx::surface("lessons");
-    let lesson = match crate::usage_ledger::scope(ledger, gizzi_completion::complete(&prompt, Some(system), None)).await {
+    let lesson = match crate::usage_ledger::scope(
+        ledger,
+        gizzi_completion::complete_for(crate::completion_cache::CallType::AlabsLesson, &prompt, Some(system), None, false),
+    )
+    .await
+    .map(|(text, _)| text)
+    {
         Some(content) if !content.is_empty() => parse_llm_lesson(&content, &body, &course_title),
         _ => {
             warn!("Gizzi completion unavailable — falling back to rule-based generation");
