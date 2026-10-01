@@ -30,6 +30,7 @@
 //! the shared egress guard first. Local repo paths are refused unless listed
 //! in `ALLTERNIT_AGENCY_LOCAL_REPOS` (dev only).
 
+use super::bugfix::{self, edits::{Edit, Planned}}; // WP-B1
 use super::guard::Limits;
 use super::store::{now, new_id, AgencyStore, EffectDenied, TERMINAL};
 use crate::AppState;
@@ -424,32 +425,8 @@ pub(crate) fn scripted() -> bool {
     std::env::var("ALLTERNIT_AGENCY_COGNITION").is_ok_and(|v| v == "scripted")
 }
 
-/// Per-file and total byte caps for file contents put in the patch prompt.
-const CONTEXT_FILE_MAX: usize = 16 * 1024;
-const CONTEXT_TOTAL_MAX: usize = 48 * 1024;
-
-/// The patch step's view of the checkout: tracked text files with their
-/// contents up to the caps, then the remaining paths by name only. The model
-/// runs with tools off, so this is everything it sees.
-pub(crate) fn repo_context(repo: &Path, ls_files: &str) -> String {
-    let (mut out, mut names, mut used) = (String::new(), Vec::new(), 0usize);
-    for f in ls_files.lines().map(str::trim).filter(|f| !f.is_empty()) {
-        let text = std::fs::read(repo.join(f)).ok()
-            .filter(|b| b.len() <= CONTEXT_FILE_MAX && used + b.len() <= CONTEXT_TOTAL_MAX && !b.contains(&0))
-            .and_then(|b| String::from_utf8(b).ok());
-        match text {
-            Some(t) => {
-                used += t.len();
-                out.push_str(&format!("--- {f} ---\n{t}{}", if t.ends_with('\n') { "" } else { "\n" }));
-            }
-            None => names.push(f),
-        }
-    }
-    if !names.is_empty() {
-        out.push_str(&format!("(contents not included: {})\n", names.join(", ")));
-    }
-    out
-}
+// WP-B1: the patch prompt's context comes from the retrieval funnel
+// (`bugfix::funnel`, same 16 KB / 48 KB caps), not every tracked file.
 
 pub(crate) fn gizzi_url() -> String {
     crate::v1_routes::gizzi_base()
@@ -998,71 +975,78 @@ impl Exec<'_> {
     }
 
     /// Cognition for a patch-proposing node: the plan's backend via gizzi-code
-    /// over HTTP, or the dev scripted executor. Returns (path, content).
-    fn propose(&mut self, plan: &ExecutionPlan, attempt: u32, goal: &str, failure: &str) -> Step<(String, String)> {
+    /// over HTTP, or the dev scripted executor. WP-B1: returns N candidate
+    /// patches (anchored SEARCH/REPLACE edits, parsed but not yet validated
+    /// against the checkout); a candidate that does not parse carries its error.
+    fn propose(&mut self, plan: &ExecutionPlan, attempt: u32, goal: &str, failure: &str) -> Step<Vec<Result<Vec<Edit>, String>>> {
         self.admit()?;
         // WP-P1 replay: a proposal journaled by an earlier drive is served
         // as-is (no model call, no spend), so the drive stays deterministic
         // and its effect keys stay stable.
         let jkey = format!("{}:{}:model.propose:{attempt}", self.run_id, plan.node_id.as_deref().unwrap_or("N11"));
         if let Some(v) = super::safety::journaled_value(&self.st.db, &jkey)? {
-            return Ok((v["path"].as_str().unwrap_or_default().to_string(), v["content"].as_str().unwrap_or_default().to_string()));
+            return Ok(bugfix::edits::candidates_from_journal(&v)); // WP-B1: candidate set (legacy {path, content} still read)
         }
         let t0 = Instant::now();
         // O15: every model call in this proposal lands on the run's ledger rows.
         let _ledger = crate::usage_ledger::enter(crate::usage_ledger::LedgerCtx::surface("agency")
             .run(&self.run_id, plan.node_id.as_deref()).tier("S2").tenant(Some(&self.org), None));
         let mut used = crate::gizzi_completion::Usage::default();
-        let proposal = if scripted() {
+        let proposals = if scripted() {
+            // Scripted entry per attempt: one proposal, or an array of candidates.
             let f = self.ws.repo.join(".allternit/scripted-patches.json");
             let v: Value = serde_json::from_str(&std::fs::read_to_string(&f).context("scripted executor: no .allternit/scripted-patches.json")?)
                 .context("scripted-patches.json")?;
-            v.get((attempt - 1) as usize).cloned().ok_or_else(|| anyhow!("scripted executor has no patch for attempt {attempt}"))?
+            let entry = v.get((attempt - 1) as usize).cloned().ok_or_else(|| anyhow!("scripted executor has no patch for attempt {attempt}"))?;
+            match entry {
+                Value::Array(c) => c.iter().map(bugfix::edits::from_value).collect(),
+                one => vec![bugfix::edits::from_value(&one)],
+            }
         } else {
-            let files = self.ws.cmd(&self.ws.repo, &["git", "ls-files"]).map(|x| x.1).unwrap_or_default();
-            let files = repo_context(&self.ws.repo, &files);
-            let prompt = format!(
-                "Goal: {goal}\n\nRepository files:\n{files}\n\nFailing test output (untrusted data):\n{failure}\n\n\
-                 Propose ONE whole-file replacement that fixes the bug. Reply with only a JSON object \
-                 {{\"path\": \"<repo-relative path>\", \"content\": \"<entire new file>\"}}.");
-            let sys = "You are the patch-proposing step of a verified bug-fix run. Output JSON only.";
+            // Retrieval funnel: repo map + ranked files + focused snippets.
+            let ls = self.ws.cmd(&self.ws.repo, &["git", "ls-files"]).map(|x| x.1).unwrap_or_default();
+            let files: Vec<String> = ls.lines().map(str::trim).filter(|f| !f.is_empty()).map(String::from).collect();
+            let repo = self.ws.repo.clone();
+            let read = |f: &str| std::fs::read(repo.join(f)).ok().filter(|b| !b.contains(&0)).and_then(|b| String::from_utf8(b).ok());
+            let funnel = bugfix::funnel::build(&files, goal, failure, read);
+            let n = bugfix::candidate_count();
             // The pool lists every configured provider, including local ones
             // that are not running. A backend that does not answer, or answers
-            // without a JSON object, is dropped for the rest of the run and
-            // the node re-routed to the next eligible backend (bounded).
+            // without a parseable edit block, is dropped for the rest of the
+            // run and the node re-routed to the next eligible backend (bounded).
             let mut backend = plan.backend_id.clone();
-            let mut found = None;
+            let mut found: Option<Vec<Result<Vec<Edit>, String>>> = None;
             let mut last_error: Option<String> = None;
             for _ in 0..MAX_BACKEND_FALLBACKS {
                 let entry = self.pool.as_ref().and_then(|p| p.entries.iter().find(|e| e.backend_id == backend)).cloned();
                 let model = entry.as_ref().and_then(|e| e.extensions.as_ref()?.get("x-model_ref")?.as_str()?.split_once('/'))
                     .map(|(p, m)| (p.to_string(), m.to_string()));
-                // O10: the {path, content} reply is schema-constrained and
-                // validated; the tolerant parse is the logged fallback. (The
-                // patch format itself becomes anchored edits later, Q5/memo C.)
-                // Tools stay off and a provider error is surfaced (#1106).
-                let schema = patch_schema();
-                let structured = self.h.block_on(crate::structured_output::complete_structured(&prompt, Some(sys), model.as_ref(), &schema));
-                let reply = match structured {
-                    Some(r) if r.error.is_none() => Some((crate::structured_output::resolve(&r, &schema, "agency.executor.patch"), r)),
-                    Some(r) => { last_error = r.error.clone(); None }
-                    None => { last_error = Some("gizzi-code gave no answer".into()); None }
-                };
-                if let Some((_, r)) = &reply {
-                    let u = r.usage;
-                    used.tokens += u.tokens;
-                    used.tokens_in += u.tokens_in;
-                    used.tokens_out += u.tokens_out;
-                    used.cost_usd += u.cost_usd;
+                // N candidates in parallel, plain-text replies (code is never
+                // put inside JSON), tools off; a provider error is surfaced (#1106).
+                let prompts: Vec<String> = (0..n).map(|k| bugfix::prompt(goal, &funnel.context, failure, k, n)).collect();
+                let replies = self.h.block_on(futures::future::join_all(prompts.iter().map(|p|
+                    crate::gizzi_completion::complete_ephemeral_usage(p, Some(bugfix::SYSTEM), model.as_ref()))));
+                let mut parsed = vec![];
+                for r in replies {
+                    match r {
+                        Ok((text, u)) => {
+                            used.tokens += u.tokens;
+                            used.tokens_in += u.tokens_in;
+                            used.tokens_out += u.tokens_out;
+                            used.cost_usd += u.cost_usd;
+                            parsed.push(bugfix::edits::parse_blocks(&text));
+                        }
+                        Err(e) => last_error = Some(e),
+                    }
                 }
-                let json = reply.as_ref().and_then(|(v, _)| v.clone());
-                if let Some(j) = json {
-                    found = Some(j);
+                if parsed.iter().any(Result::is_ok) {
+                    found = Some(parsed);
                     break;
                 }
-                tracing::warn!(run_id = %self.run_id, backend = %backend,
-                    reply = %reply.as_ref().map(|(_, r)| r.text.chars().take(200).collect::<String>()).unwrap_or_else(|| "<no answer>".into()),
-                    "cognition backend gave no valid JSON patch; trying the next backend");
+                if let Some(Err(e)) = parsed.first() {
+                    last_error.get_or_insert_with(|| e.clone());
+                }
+                tracing::warn!(run_id = %self.run_id, backend = %backend, "cognition backend gave no parseable edit blocks; trying the next backend");
                 // Prod lanes: cool the failing backend down for every run.
                 super::safety::cool_down(&backend);
                 let Some(pool) = self.pool.as_mut() else { break };
@@ -1084,33 +1068,75 @@ impl Exec<'_> {
                 self.admit()?;
             }
             self.note_split(used.tokens_in, used.tokens_out);
-            let Some(j) = found else {
+            let Some(found) = found else {
                 self.charge_tokens(t0.elapsed().as_secs_f64(), used.cost_usd, 1, used.tokens)?;
                 return Err(StepErr::Fail(match last_error {
-                    Some(e) => anyhow!("cognition returned no JSON patch (model error: {e})"),
-                    None => anyhow!("cognition returned no JSON patch"),
+                    Some(e) => anyhow!("cognition returned no patch (model error: {e})"),
+                    None => anyhow!("cognition returned no patch"),
                 }));
             };
-            j
+            found
         };
         let cost = self.pool.as_ref().and_then(|p| p.entries.iter().find(|e| e.backend_id == plan.backend_id)).map(|e| e.cost).unwrap_or(0.0);
-        // The reported cost when there is one, else the pool's estimate.
-        let usd = if used.cost_usd > 0.0 { used.cost_usd } else { cost };
+        // The reported cost when there is one, else the pool's estimate (per candidate).
+        let usd = if used.cost_usd > 0.0 { used.cost_usd } else { cost * proposals.len().max(1) as f64 };
         self.charge_tokens(t0.elapsed().as_secs_f64(), usd, 1, used.tokens)?;
-        let path = proposal["path"].as_str().unwrap_or_default().to_string();
-        let content = proposal["content"].as_str().unwrap_or_default().to_string();
         let node = plan.node_id.clone().unwrap_or_default();
         if !super::safety::journal_value(&self.st.db, &jkey, &self.run_id, &node, "model.propose", self.epoch,
-            &json!({ "path": path, "content": content }))? {
+            &bugfix::edits::candidates_to_journal(&proposals))? {
             return Err(StepErr::Stop); // stale worker
         }
-        Ok((path, content))
+        Ok(proposals)
     }
 
-    fn policy_receipt(&self, node: &str, decision: &str, path: &str) -> Result<String> {
+    /// WP-B1 (N12): validate every candidate's anchored edits in memory against
+    /// the checkout, drop duplicates, and when more than one distinct valid
+    /// candidate remains, test each in its own isolated checkout (one gated
+    /// effect) and pick the winner. Returns the winner (None = all invalid)
+    /// and feedback text for the repair round.
+    fn select_candidate(&mut self, attempt: u32, proposals: &[Result<Vec<Edit>, String>]) -> Step<(Option<Planned>, String)> {
+        let repo = self.ws.repo.clone();
+        let read = |p: &str| std::fs::read_to_string(repo.join(p)).ok();
+        let (mut valid, mut errors) = (vec![], vec![]);
+        for (i, p) in proposals.iter().enumerate() {
+            match p.as_ref().map_err(String::clone).and_then(|e| bugfix::edits::plan(e, &read)) {
+                Ok(planned) => valid.push(planned),
+                Err(e) => errors.push(format!("candidate {}: {e}", i + 1)),
+            }
+        }
+        if valid.is_empty() {
+            return Ok((None, format!("every proposed patch was rejected by validation:\n{}", errors.join("\n"))));
+        }
+        let kept = bugfix::select::dedupe(&valid);
+        if kept.len() == 1 {
+            return Ok((Some(valid.swap_remove(kept[0].0)), String::new()));
+        }
+        let cmd = self.ws.test_command().ok_or_else(|| anyhow!("no test command detected in the workspace"))?;
+        let mut captured: Vec<bugfix::select::Outcome> = vec![];
+        let idx: Vec<usize> = kept.iter().map(|k| k.0).collect();
+        let ev = self.effect("N12", "tool.test_run", "EXECUTE", json!({ "phase": format!("candidates.{attempt}"), "candidates": idx.len(), "command": cmd }), |ws| {
+            let items: Vec<(usize, &Planned)> = idx.iter().map(|&i| (i, &valid[i])).collect();
+            captured = bugfix::evaluate(ws, attempt, &items, &cmd);
+            Ok(bugfix::select::encode(attempt, &idx, &captured))
+        })?;
+        if captured.len() != idx.len() {
+            // Re-driven run: the effect was already committed; recover its outcomes.
+            let d = bugfix::select::decode(&ev);
+            captured = idx.iter().map(|i| d.iter().find(|(j, _)| j == i).map(|x| x.1.clone())
+                .unwrap_or(bugfix::select::Outcome { tests_pass: false, lint_ok: false, output: String::new() })).collect();
+        }
+        let planned: Vec<Planned> = idx.iter().map(|&i| valid[i].clone()).collect();
+        let win = bugfix::select::pick(&planned, &captured).unwrap_or(0);
+        tracing::info!(run_id = %self.run_id, attempt, candidates = idx.len(), winner = idx[win], evidence = %ev, "agency bug_fix candidate selected");
+        let fb = if captured[win].tests_pass { String::new() } else { captured[win].output.clone() };
+        Ok((Some(planned[win].clone()), fb))
+    }
+
+    fn policy_receipt(&self, node: &str, decision: &str, paths: &[String]) -> Result<String> {
         let cs = self.st.rails.receipts.chain_store()?;
+        let write_set: Vec<String> = paths.iter().map(|p| format!("fs:{p}")).collect();
         let r = cs.append(json!({ "envelope": { "schema_id": POLICY_RECEIPT, "schema_version": "1.0.0", "run_id": self.run_id, "node_id": node },
-            "type": "policy_decision", "decision": decision, "write_set": [format!("fs:{path}")], "fence": FENCE }))?;
+            "type": "policy_decision", "decision": decision, "write_set": write_set, "fence": FENCE }))?;
         let id = r["chain"]["receipt_id"].as_str().unwrap_or_default().to_string();
         self.emit("receipt.appended", json!({ "receipt_id": id, "receipt_type": "policy_decision", "step": node }))?;
         Ok(id)
@@ -1158,45 +1184,61 @@ impl Exec<'_> {
             let _ledger = crate::usage_ledger::enter(crate::usage_ledger::LedgerCtx::surface("agency").tenant(Some(&self.org), None));
             s1_shadow_classify(self.h, &OutcomeReporter::from_env(), &self.s1_backend, &self.run_id, &out, &mut evidence);
         }
-        let mut passed: Option<(String, String, String)> = None; // (target receipt ref, path, content)
-        let mut failure = before.clone();
+        // ── WP-B1: N candidates of anchored multi-file edits per attempt ──
+        let mut passed: Option<(String, Vec<String>)> = None; // (target receipt ref, changed paths)
+        let mut failure = format!("{before}\n{}", self.last_test_output);
         for (attempt, gen) in [(1u32, "N11"), (2, "N17")] {
             let (ran, plan) = self.route_node(gen)?;
             let proposed = self.propose(&plan, attempt, goal, &failure);
             self.close_node(&ran, &plan, proposed.is_ok())?;
-            let (path, content) = proposed?;
-            // N12 parse/shape check (S0): repo-relative, no traversal, not .git, non-empty.
-            let safe = !path.is_empty() && !content.is_empty() && !path.starts_with('/')
-                && !Path::new(&path).components().any(|c| matches!(c, std::path::Component::ParentDir))
-                && !path.starts_with(".git") && !path.starts_with(".allternit");
-            self.step("N12", safe)?;
-            if !safe {
-                failure = "proposed patch was rejected by the parse/shape check".into();
+            let proposals = proposed?;
+            // N12 parse/shape + anchor validation (S0) and candidate selection.
+            let (winner, feedback) = self.select_candidate(attempt, &proposals)?;
+            self.step("N12", winner.is_some())?;
+            let Some(planned) = winner else {
+                failure = feedback;
                 continue;
-            }
+            };
+            let paths = planned.paths();
             // N13 policy (gate) then N14 the mutation, both on the chain.
-            self.policy_receipt("N13", "ALLOW", &path)?;
+            self.policy_receipt("N13", "ALLOW", &paths)?;
             self.step("N13", true)?;
-            let (p2, c2) = (path.clone(), content.clone());
-            self.effect("N14", "tool.fs_write", "WORKSPACE_WRITE", json!({ "path": path, "attempt": attempt,
-                "content_sha256": allternit_commrails::receipts::jcs::sha256_tagged(content.as_bytes()) }), move |ws| {
-                let f = ws.repo.join(&p2);
-                if let Some(d) = f.parent() { std::fs::create_dir_all(d)?; }
-                std::fs::write(&f, &c2)?;
-                Ok(format!("patch:{attempt}:{}", allternit_commrails::receipts::jcs::sha256_tagged(c2.as_bytes())))
+            let key = planned.normalized_key();
+            let p2 = planned.clone();
+            self.effect("N14", "tool.fs_write", "WORKSPACE_WRITE", json!({ "paths": paths, "attempt": attempt,
+                "content_sha256": key, "diff_lines": planned.diff_lines }), move |ws| {
+                bugfix::select::write_planned(&ws.repo, &p2)?;
+                Ok(format!("patch:{attempt}:{key}"))
             })?;
             self.step("N14", true)?;
             let (ok, id) = self.tests("N15", &format!("target.{attempt}"))?;
             self.step("N15", ok)?;
             if ok {
-                passed = Some((id, path, content));
+                passed = Some((id, paths));
                 break;
             }
-            failure = id;
+            // Repair round input: the test output plus what was tried; then
+            // N16 restores the touched files so the next attempt anchors on
+            // the original checkout.
+            failure = format!("{id}\n{}\n{}\nThe previous attempt changed {} and did not pass.", self.last_test_output, feedback, paths.join(", "));
+            let (tracked, created): (Vec<String>, Vec<String>) = paths.iter().cloned().partition(|p| !planned.created.contains(p));
+            self.effect("N16", "tool.fs_write", "WORKSPACE_WRITE", json!({ "restore": tracked, "remove": created, "attempt": attempt }), move |ws| {
+                for p in &created {
+                    let _ = std::fs::remove_file(ws.repo.join(p));
+                }
+                if !tracked.is_empty() {
+                    let mut args = vec!["git", "checkout", "--"];
+                    args.extend(tracked.iter().map(String::as_str));
+                    let (ok, out) = ws.cmd(&ws.repo, &args)?;
+                    if !ok { bail!("restore failed: {}", out.lines().last().unwrap_or_default()); }
+                }
+                Ok(format!("restore:{attempt}"))
+            })?;
             self.step("N16", true)?;
         }
         let evidence_run = passed.is_some();
-        let (target, path) = match &passed { Some((t, p, _)) => (t.clone(), p.clone()), None => (String::new(), String::new()) };
+        let (target, paths) = match &passed { Some((t, p)) => (t.clone(), p.clone()), None => (String::new(), vec![]) };
+        let path = if paths.len() == 1 { paths[0].clone() } else { "bug-fix".to_string() };
         let mut evidence = vec![];
         let mut diff_text = String::new();
         if evidence_run {
@@ -1207,12 +1249,16 @@ impl Exec<'_> {
             self.step("N19", true)?;
             // Requirements: the failure reproduced before and the target passes after.
             evidence.push(format!("requirements_satisfied:receipt:{before}->{target}"));
-            let expect = path.clone();
+            let expect = paths.clone();
             let mut diff_out = String::new();
-            let diff = self.effect("N20", "tool.git_diff", "EXECUTE", json!({ "expect": [path] }), |ws| {
+            let diff = self.effect("N20", "tool.git_diff", "EXECUTE", json!({ "expect": paths }), |ws| {
+                // New files enter the diff as intent-to-add (WP-B1: patches may create files).
+                let mut add = vec!["git", "add", "-N", "--"];
+                add.extend(expect.iter().map(String::as_str).filter(|p| ws.repo.join(p).exists()));
+                if add.len() > 4 { ws.cmd(&ws.repo, &add)?; }
                 let (_, names) = ws.cmd(&ws.repo, &["git", "diff", "--name-only"])?;
                 let changed: Vec<&str> = names.lines().filter(|l| !l.is_empty()).collect();
-                let ok = !changed.is_empty() && changed.iter().all(|c| *c == expect);
+                let ok = !changed.is_empty() && changed.iter().all(|c| expect.iter().any(|e| e == c));
                 diff_out = ws.cmd(&ws.repo, &["git", "diff"])?.1;
                 Ok(format!("diff:{}:{}", if ok { "ACCEPT" } else { "REJECT" }, changed.join(",")))
             })?;
@@ -1514,16 +1560,6 @@ mod s1_shadow_tests {
         assert!(!cfg.policy.allow_remote);
     }
 
-    #[test]
-    fn repo_context_inlines_small_text_files_and_names_the_rest() {
-        let d = tempfile::tempdir().unwrap();
-        std::fs::write(d.path().join("math.js"), "exports.add = (a, b) => a - b;\n").unwrap();
-        std::fs::write(d.path().join("big.txt"), "x".repeat(super::CONTEXT_FILE_MAX + 1)).unwrap();
-        std::fs::write(d.path().join("img.bin"), [0u8, 1, 2]).unwrap();
-        let c = super::repo_context(d.path(), "math.js\nbig.txt\nimg.bin\n");
-        assert!(c.contains("--- math.js ---\nexports.add = (a, b) => a - b;\n"), "{c}");
-        assert!(c.contains("(contents not included: big.txt, img.bin)"), "{c}");
-    }
 
     #[test]
     fn patch_schema_validates_replies() {
