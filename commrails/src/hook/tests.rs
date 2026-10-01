@@ -841,3 +841,33 @@ fn hook_request_carries_the_harness_tool_call_id() {
     let r = HookRequest::from_json(&json!({ "tool_name": "Bash", "tool_use_id": "" })).unwrap();
     assert_eq!(r.tool_call_id, None);
 }
+
+#[test]
+fn claude_settings_register_the_s1_outcome_hooks_when_given() {
+    let t = HookTarget { commrails_bin: Path::new("/opt/bin/allternit-commrails"), root: Path::new("/w"), workspace: None, wih_id: None };
+    let s = claude_settings_with_outcome(t, Some("'/opt/bin/system-one' hook-outcome"));
+    for ev in ["PermissionRequest", "PostToolUse", "PostToolUseFailure"] {
+        assert_eq!(s["hooks"][ev][0]["matcher"], "*", "{ev}");
+        assert_eq!(s["hooks"][ev][0]["hooks"][0]["command"], "'/opt/bin/system-one' hook-outcome", "{ev}");
+    }
+    assert!(s["hooks"]["Stop"][0].get("matcher").is_none());
+    assert_eq!(s["hooks"]["Stop"][0]["hooks"][0]["command"], "'/opt/bin/system-one' hook-outcome");
+    // The gate itself is unchanged.
+    assert!(s["hooks"]["PreToolUse"][0]["hooks"][0]["command"].as_str().unwrap().contains("hook claude-pretool"));
+    let bare = claude_settings_with_outcome(t, None);
+    assert_eq!(bare["hooks"].as_object().unwrap().keys().collect::<Vec<_>>(), vec!["PreToolUse"]);
+}
+
+#[test]
+fn s1_outcome_hooks_have_an_env_opt_out_and_an_explicit_binary() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("system-one");
+    std::fs::write(&bin, "").unwrap();
+    std::env::set_var("ALLTERNIT_SYSTEM_ONE_BIN", &bin);
+    std::env::set_var("ALLTERNIT_S1_OUTCOME_HOOKS", "1");
+    assert_eq!(s1_outcome_hook_command(), Some(format!("'{}' hook-outcome", bin.display())));
+    std::env::set_var("ALLTERNIT_S1_OUTCOME_HOOKS", "0");
+    assert_eq!(s1_outcome_hook_command(), None);
+    std::env::remove_var("ALLTERNIT_S1_OUTCOME_HOOKS");
+    std::env::remove_var("ALLTERNIT_SYSTEM_ONE_BIN");
+}
