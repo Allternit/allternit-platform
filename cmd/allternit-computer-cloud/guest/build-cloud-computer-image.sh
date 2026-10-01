@@ -17,6 +17,8 @@
 #   TOOLS_INSTALL - optional command run inside the image after the app is
 #                   installed, e.g. the manifest installer
 #                   ("allternit-tools install --all --accept-terms ...")
+#   SUBS_LANE_IDLE_MIN - minutes before an idle subscription lane closes its
+#                   Chrome (SUBS_GATEWAY_LANE_IDLE_MIN; default 10; 0 = keep open)
 #   KEEP_BUILDER  - if set, do not delete the build container
 
 set -euo pipefail
@@ -24,6 +26,7 @@ set -euo pipefail
 DESKTOP_DEB="${DESKTOP_DEB:?set DESKTOP_DEB to the Allternit Desktop linux-x64 .deb}"
 BASE_IMAGE="${BASE_IMAGE:-allternit-desktop}"
 IMAGE_NAME="${IMAGE_NAME:-allternit-cloud-computer}"
+SUBS_LANE_IDLE_MIN="${SUBS_LANE_IDLE_MIN:-10}"
 BUILD_CONTAINER="allternit-cloud-computer-builder-$$"
 
 log() {
@@ -70,18 +73,26 @@ incus exec "${BUILD_CONTAINER}" -- sh -c '
 # a cloud computer: first-launch prompts don't block, and it pairs itself
 # from /etc/allternit/bootstrap.json when that file is present.
 log "configuring provisioned mode and autostart"
-incus exec "${BUILD_CONTAINER}" -- sh -c '
+incus exec "${BUILD_CONTAINER}" --env SUBS_LANE_IDLE_MIN="${SUBS_LANE_IDLE_MIN}" -- sh -c '
     mkdir -p /etc/allternit /root/.config/autostart
     chmod 0700 /etc/allternit
     cat > /etc/allternit/provisioned.env <<EOF
 ALLTERNIT_PROVISIONED=1
+SUBS_GATEWAY_LANE_IDLE_MIN=${SUBS_LANE_IDLE_MIN}
 EOF
+    # Close a subscription lane Chrome after N idle minutes (the next task
+    # relaunches it with the saved login), so an idle computer does not hold
+    # a browser. System-wide, so whatever launches the subscription gateway
+    # inherits it.
+    grep -v "^SUBS_GATEWAY_LANE_IDLE_MIN=" /etc/environment > /etc/environment.new || true
+    echo "SUBS_GATEWAY_LANE_IDLE_MIN=${SUBS_LANE_IDLE_MIN}" >> /etc/environment.new
+    mv /etc/environment.new /etc/environment
     cat > /root/.config/autostart/allternit.desktop <<EOF
 [Desktop Entry]
 Type=Application
 Name=Allternit
 Comment=Your Allternit cloud computer
-Exec=env ALLTERNIT_PROVISIONED=1 /usr/bin/allternit --no-sandbox
+Exec=env ALLTERNIT_PROVISIONED=1 SUBS_GATEWAY_LANE_IDLE_MIN=${SUBS_LANE_IDLE_MIN} /usr/bin/allternit --no-sandbox
 X-GNOME-Autostart-enabled=true
 Terminal=false
 EOF
