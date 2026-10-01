@@ -75,8 +75,19 @@ export function createHandler(opts: ServeOptions = {}) {
   const jev = opts.decision ?? (engine.typesafe ? routerFor(new LocalLogitReadoutProvider(engine, {
     model_ref: "typesafe/jev-latest", model_revision: "remote", tokenizer_id: "unknown", quantization: "unknown", runtime_backend: "typesafe",
   }, "backend.jev_api", "typesafe:jev-latest")) : undefined);
-  const decisionFor = (backend: unknown): DecisionRouter | undefined =>
-    backend === "laya_bundled" ? laya : backend === "jev_api" ? jev : local;
+  // "auto" (allternit-api's default when no policy names a backend): Laya while
+  // it answers its health check, else the local engine. Re-probed at most every 10 s.
+  let layaUp = { ok: false, at: 0 };
+  const layaHealthy = async () => {
+    if (Date.now() - layaUp.at < 10_000) return layaUp.ok;
+    let ok = false;
+    try { ok = (await fetch(`${engine.config.layaUrl}/health`, { signal: AbortSignal.timeout(800) })).ok; } catch { ok = false; }
+    layaUp = { ok, at: Date.now() };
+    return ok;
+  };
+  const decisionFor = async (backend: unknown): Promise<DecisionRouter | undefined> =>
+    backend === "laya_bundled" ? laya : backend === "jev_api" ? jev
+      : backend === "auto" && !opts.decision && (await layaHealthy()) ? laya : local;
 
   return async function handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
@@ -90,7 +101,7 @@ export function createHandler(opts: ServeOptions = {}) {
       let b: any;
       try { b = await req.json(); } catch { return err(422, "invalid_request_error", "body is not valid JSON"); }
       if (!b?.request?.operation || typeof b.state !== "string") return err(422, "invalid_request_error", "need {request: DecisionRequestV1, state: string}");
-      const decision = decisionFor(b.backend);
+      const decision = await decisionFor(b.backend);
       if (!decision) return err(401, "authentication_error", "jev_api backend requested but TYPESAFE_API_KEY is not set");
       try {
         return json(200, await decision.decide(b.request, b.state, { reversible: b.reversible === true }));

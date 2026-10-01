@@ -339,3 +339,33 @@ describe("shadow ledger privacy (Q28)", () => {
     expect(read(on)).toContain("secret user text");
   });
 });
+
+describe("backend auto", () => {
+  test("auto uses Laya when its health check answers, local engine otherwise", async () => {
+    const { createHandler } = await import("../src/server.ts");
+    const { SystemOne } = await import("../src/engine.ts");
+    const mk = (layaUp: boolean) => {
+      const urls: string[] = [];
+      const runtime = { name: "fake", model: "m", async complete() { urls.push("local"); return { text: "a", top: [{ token: "a", logprob: Math.log(0.9) }, { token: "b", logprob: Math.log(0.1) }], usage: { input: 1, output: 1 } }; } };
+      const fetchImpl = async (u: string, i?: RequestInit) => {
+        urls.push(u);
+        const q = JSON.parse(String(i!.body)).questions.q; const ids = Object.keys(q.criteria ?? {});
+        return new Response(JSON.stringify({ answers: { q: { type: q.type, choice: ids[0], probabilities: Object.fromEntries(ids.map((k, j) => [k, j ? 0.1 : 0.9])), noul: 0.9 } }, usage: { input_tokens: 1, output_tokens: 0 } }));
+      };
+      const engine = new SystemOne({ runtimeUrl: "x", runtimeModel: "m", concurrency: 1, samples: 2, debias: false, layaUrl: `http://127.0.0.1:${layaUp ? 1 : 2}`, layaModel: "typed-decisions", logEnabled: false }, { runtime: runtime as any, fetchImpl });
+      return { engine, urls };
+    };
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (u: any) => new Response("{}", { status: String(u).includes(":1/") ? 200 : 503 })) as any;
+    try {
+      for (const up of [true, false]) {
+        const { engine, urls } = mk(up);
+        const res = await createHandler({ engine })(new Request("http://x/v1/decision", { method: "POST", body: JSON.stringify({ request: req, state: "s", reversible: true, backend: "auto" }) }));
+        const body: any = await res.json();
+        expect(res.status).toBe(200);
+        expect(body.backend_id).toBe(up ? "backend.laya" : "backend.local_logit");
+        expect(urls.some((u) => u.includes("/v1/systemone"))).toBe(up);
+      }
+    } finally { globalThis.fetch = realFetch; }
+  });
+});

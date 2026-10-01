@@ -274,13 +274,15 @@ pub fn apply_policy(mut pool: StaticModelPool, mut cfg: RouterConfig, eff: &Valu
 
 /// S1 shadow backend for a run: the stored routing policy's `s1_backend`, or,
 /// with none stored, `ALLTERNIT_S1_BACKEND` (a server default; e.g.
-/// `laya_bundled`), else the local System One server.
+/// `laya_bundled`), else `auto`: the S1 server uses Laya while it is healthy
+/// and its local engine otherwise, so a Laya install or load that finishes
+/// after this process started is picked up without a restart.
 pub fn s1_backend_for(policy: Option<&(Value, Value)>) -> String {
     match policy {
         Some((e, src)) if src["s1_backend"] != "default" => e["s1_backend"].as_str().unwrap_or("off").to_string(),
         _ => std::env::var("ALLTERNIT_S1_BACKEND").ok()
-            .filter(|b| crate::kernel_ui::routing_policy::S1_BACKENDS.contains(&b.as_str()))
-            .unwrap_or_else(|| "system_one_local".into()),
+            .filter(|b| b == "auto" || crate::kernel_ui::routing_policy::S1_BACKENDS.contains(&b.as_str()))
+            .unwrap_or_else(|| "auto".into()),
     }
 }
 
