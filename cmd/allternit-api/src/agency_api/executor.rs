@@ -124,8 +124,23 @@ pub(crate) async fn admit_and_start(st: Arc<AppState>, run_id: String, limits: L
         return false; // kernel-UI template runs are driven by kernel_ui::templates
     }
     let org = super::guard::run_org(&rec.task_ir);
-    let limits = limits.tightened(&rec.task_ir["rules"]);
+    let limits = limits.tightened(&rec.task_ir["rules"]).with_org_policy(&super::safety::load_org(&st.db, &org).unwrap_or_default());
     if !limits.org_allowed(&org) {
+        return false;
+    }
+    // Prod lanes (WP-P1): per-org run rate. Over it, the run stays `waiting`
+    // and admission is retried in a minute (unless it starts some other way).
+    if limits.org_runs_per_hour != usize::MAX
+        && s.org_runs_started_last_hour(&org, &run_id).await.unwrap_or(0) >= limits.org_runs_per_hour
+    {
+        tracing::info!(run_id = %run_id, org = %org, "agency org run rate reached; run stays queued");
+        let (st, id) = (st.clone(), run_id.clone());
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            if enabled() {
+                admit_boxed(st, id, Limits::from_env()).await;
+            }
+        });
         return false;
     }
     {
@@ -172,6 +187,24 @@ fn admit_boxed(st: Arc<AppState>, run_id: String, limits: Limits) -> std::pin::P
 #[cfg(test)]
 pub(crate) fn active_count() -> usize {
     ACTIVE.lock().unwrap_or_else(|p| p.into_inner()).as_ref().map_or(0, HashMap::len)
+}
+
+/// Move a `waiting` run to `running` and take its fencing token (WP-P1):
+/// every earlier worker of this run is stale from here on. Also stamps the
+/// wall-time origin (`run.safety.started_at`) on the first drive.
+pub(crate) fn begin_drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str, why: &str) -> Result<Option<(super::store::RunRecord, i64)>> {
+    h.block_on(async {
+        let _g = s.lock().await;
+        match s.load_run(run_id).await? {
+            Some(mut r) if r.run["status"] == "waiting" => {
+                let holder = format!("pid{}:{}", std::process::id(), uuid::Uuid::new_v4().simple());
+                let epoch = super::safety::acquire_fence(&st.db, run_id, &holder)?;
+                super::safety::note_drive(&mut r.run, epoch);
+                Ok(Some((s.transition(r, "running", Some(why)).await?, epoch)))
+            }
+            _ => Ok(None),
+        }
+    })
 }
 
 /// After a restart: runs left `running`/`waiting` are re-queued once.
@@ -352,6 +385,10 @@ pub(crate) fn scripted_pool(g: &ComputeGraph) -> StaticModelPool {
 #[cfg(test)]
 pub mod tests_support {
     pub fn scripted_pool(g: &super::ComputeGraph) -> super::StaticModelPool { super::scripted_pool(g) }
+    /// A remote S2 entry with no capabilities (lane tests).
+    pub fn entry(id: &str) -> super::PoolEntry {
+        super::scripted_entry(id, super::Role::S2, super::Mode::M5Generative, super::Residency::Remote, &[])
+    }
 }
 
 /// gizzi-code's live pool advertises generic model capabilities
@@ -570,6 +607,16 @@ struct Exec<'a> {
     routing: Value,
     /// S1 shadow backend from the routing policy ("env" = no policy stored).
     s1_backend: String,
+    /// WP-P1 fencing token of this drive (see `safety`).
+    epoch: i64,
+    /// Occurrences of (node, tool) in this drive: the stable idempotency key suffix.
+    occ: HashMap<String, u32>,
+    stuck: super::safety::StuckDetector,
+    /// Per-run caps (server defaults tightened by org policy; a granted
+    /// `run.safety.caps` override applies on top at check time).
+    caps: super::safety::RunCaps,
+    /// Subscription-lane entries held back under `api_first`.
+    fallback: Vec<PoolEntry>,
 }
 
 /// Deterministic (S0) error code for a failing test run's output. Only a known
@@ -697,11 +744,28 @@ impl Exec<'_> {
     }
 
     fn admit(&self) -> Step<()> {
+        // WP-P1 fence: a worker whose token is no longer current is stale
+        // (another drive took the run over) and stops without touching it.
+        if !super::safety::fence_current(&self.st.db, &self.run_id, self.epoch)? {
+            tracing::warn!(run_id = %self.run_id, epoch = self.epoch, "stale agency worker; stopping");
+            return Err(StepErr::Stop);
+        }
         match self.h.block_on(self.s.admit_effect(&self.run_id)) {
             Ok(()) => Ok(()),
             Err(EffectDenied::NotFound) => Err(StepErr::Fail(anyhow!("run vanished"))),
             Err(_) => return Err(StepErr::Stop),
         }?;
+        // WP-P1 per-run caps (steps, wall time, spend): halt spend, then park
+        // with a `run_cap_reached` attention item.
+        if let Some(rec) = self.h.block_on(self.s.load_run(&self.run_id))? {
+            if let Some((dim, detail)) = self.caps.with_override(&rec.run).reached(&rec.run, &rec.attention) {
+                tracing::info!(run_id = %self.run_id, dim, "agency per-run cap reached; parking run");
+                self.h.block_on(self.s.park_halted(&self.run_id, super::safety::RUN_CAP_REASON, "run cap reached",
+                    &format!("{detail} Spend stopped. Approve with value.caps raised to continue, or reject to stop."),
+                    json!({ "dimension": dim, "consequential": true })))?;
+                return Err(StepErr::Stop);
+            }
+        }
         // Daily spending caps (global and per org), before every effect and
         // model call: reached → park with "budget cap reached", spend stops.
         let (global, org) = self.h.block_on(self.s.daily_spend(&self.org))?;
@@ -742,25 +806,98 @@ impl Exec<'_> {
         cs.read_run(&self.run_id).ok()?.last().and_then(|r| r["chain"]["receipt_id"].as_str().map(str::to_string))
     }
 
-    /// One gated effect: admitted (Q11), recorded on the signed chain through
-    /// the gate's effect path, charged. `f` returns the evidence ref.
+    /// Stable idempotency key of the next `tool` effect on `node` in this
+    /// drive: `<run>:<node>:<tool>:<n>`. Journaled model outputs make the
+    /// drive deterministic, so a re-drive derives the same keys.
+    fn next_key(&mut self, node: &str, tool: &str) -> String {
+        let n = { let c = self.occ.entry(format!("{node}:{tool}")).or_insert(0); *c += 1; *c };
+        format!("{}:{node}:{tool}:{n}", self.run_id)
+    }
+
+    /// Park the run (spend halted first) because it is stuck.
+    fn stuck_stop(&self, why: String) -> StepErr {
+        tracing::info!(run_id = %self.run_id, %why, "agency stuck detector tripped; parking run");
+        match self.h.block_on(self.s.park_halted(&self.run_id, super::safety::STUCK_REASON, "run is stuck",
+            &format!("Stopped: {why}. Approve to retry from the journal, or reject to stop."), json!({ "consequential": true }))) {
+            Ok(_) => StepErr::Stop,
+            Err(e) => StepErr::Fail(e),
+        }
+    }
+
+    /// One gated effect, two-phase (WP-P1): admitted (Q11 + fence + caps),
+    /// PREPARED in the effect journal under this drive's fencing token,
+    /// reserved and recorded on the signed chain through the gate, then
+    /// COMMITTED with a compare-and-set on the token. A committed key is
+    /// served from the journal and never re-applied; a stale worker's
+    /// prepare or commit is refused and it stops. `retry_safe`: the effect
+    /// may be re-applied when a dead worker left it unresolved. `f` returns
+    /// the evidence ref.
     fn effect(&mut self, node: &str, tool: &str, class: &str, args: Value, f: impl FnOnce(&Ws) -> Result<String>) -> Step<String> {
+        self.effect_with(node, tool, class, args, true, f)
+    }
+
+    fn effect_with(&mut self, node: &str, tool: &str, class: &str, args: Value, retry_safe: bool, f: impl FnOnce(&Ws) -> Result<String>) -> Step<String> {
+        use super::safety::{self, Prepared};
+        use allternit_commrails::receipts::store::ToolEffectAdmission;
         self.admit()?;
         self.seq += 1;
+        let key = self.next_key(node, tool);
         let mut payload = args;
         payload["effect_class"] = json!(class);
-        payload["idempotency_key"] = json!(format!("{}:{:04}", self.run_id, self.seq));
         payload["node_id"] = json!(node);
         payload["fence"] = json!(FENCE);
-        // Reserve-then-complete (review #10): the gate claims the idempotency
-        // key on the chain before the effect runs, so a re-drive after a
-        // restart or resume never repeats an effect that already happened.
-        use allternit_commrails::receipts::store::ToolEffectAdmission;
+        let args_hash = allternit_commrails::receipts::jcs::hash_value(&payload).map_err(|e| anyhow!("hash {tool} args: {e}"))?;
+        let action = format!("{node}:{tool}:{args_hash}");
+        let db = &self.st.db;
         let wih = self.run_id.strip_prefix("run_").unwrap_or(&self.run_id).to_string();
-        if let ToolEffectAdmission::AlreadyCommitted(prev) =
-            self.st.rails.gate.reserve_tool_effect(&wih, tool, &payload).map_err(|e| anyhow!("gate refused {tool}: {e}"))?
-        {
-            return Ok(prev);
+        let reserve = |p: &Value| self.st.rails.gate.reserve_tool_effect(&wih, tool, p);
+        let chain_key = match safety::prepare(db, &key, &self.run_id, node, tool, &args_hash, self.epoch, retry_safe)? {
+            Prepared::Stale => return Err(StepErr::Stop),
+            Prepared::Committed(prev) => {
+                // Replay: the effect already happened; serve its result.
+                if let Some(why) = self.stuck.observe(&action, &prev) { return Err(self.stuck_stop(why)); }
+                return Ok(prev);
+            }
+            Prepared::Diverged => return Err(StepErr::Fail(anyhow!("replay diverged: {key} was committed with different arguments (fail closed)"))),
+            Prepared::FailedPermanent(e) => return Err(StepErr::Fail(anyhow!("{tool} failed earlier with a non-retryable error: {e}"))),
+            Prepared::Unknown => {
+                self.h.block_on(self.s.park_halted(&self.run_id, safety::UNKNOWN_EFFECT_REASON, "effect outcome unknown",
+                    &format!("A previous worker started {tool} on {node} and stopped before recording the result. It is not safe to repeat automatically. Approve with value.effect_outcome = \"applied\" or \"not_applied\"."),
+                    json!({ "idempotency_key": key, "consequential": true })))?;
+                return Err(StepErr::Stop);
+            }
+            Prepared::Fresh { chain_key } => chain_key,
+            Prepared::Takeover { old_chain_key, chain_key } => {
+                // Did the dead worker get as far as committing on the chain?
+                let mut old = payload.clone();
+                old["idempotency_key"] = json!(old_chain_key);
+                match reserve(&old) {
+                    Ok(ToolEffectAdmission::AlreadyCommitted(prev)) => {
+                        if !safety::commit(db, &key, &self.run_id, self.epoch, &prev)? { return Err(StepErr::Stop); }
+                        return Ok(prev);
+                    }
+                    // We now hold the old chain claim: execute under it.
+                    Ok(ToolEffectAdmission::Reserved(_)) => old_chain_key,
+                    // Unresolved on the chain: retry-safe, so retry under a new claim.
+                    _ => chain_key,
+                }
+            }
+        };
+        payload["idempotency_key"] = json!(chain_key);
+        // Reserve-then-complete (review #10) on the signed chain; an earlier
+        // reservation of this exact claim (Takeover → Reserved) is ours.
+        match reserve(&payload) {
+            Ok(ToolEffectAdmission::AlreadyCommitted(prev)) => {
+                if !safety::commit(db, &key, &self.run_id, self.epoch, &prev)? { return Err(StepErr::Stop); }
+                return Ok(prev);
+            }
+            Ok(_) => {}
+            Err(e) if e.to_string().contains("already reserved") => {}
+            Err(e) => {
+                let msg = format!("gate refused {tool}: {e}");
+                let _ = safety::fail(db, &key, &self.run_id, self.epoch, &msg);
+                return Err(StepErr::Fail(anyhow!(msg)));
+            }
         }
         let t0 = Instant::now();
         let ws = &self.ws;
@@ -768,7 +905,18 @@ impl Exec<'_> {
         if let Some(rid) = self.last_receipt_id() {
             self.emit("receipt.appended", json!({ "receipt_id": rid, "receipt_type": "effect", "step": node }))?;
         }
+        match &res {
+            Ok(r) => {
+                if !safety::commit(db, &key, &self.run_id, self.epoch, r)? {
+                    tracing::warn!(run_id = %self.run_id, %key, "stale agency worker: commit refused by the fence");
+                    return Err(StepErr::Stop);
+                }
+            }
+            Err(e) => { let _ = safety::fail(db, &key, &self.run_id, self.epoch, &e.to_string()); }
+        }
         self.charge(t0.elapsed().as_secs_f64(), 0.0, 1)?;
+        let stuck = match &res { Ok(r) => self.stuck.observe(&action, r), Err(_) => self.stuck.observe_error(&action) };
+        if let Some(why) = stuck { return Err(self.stuck_stop(why)); }
         Ok(res?)
     }
 
@@ -820,8 +968,13 @@ impl Exec<'_> {
         closed.map_err(|e| anyhow!("{ran}: {e:?}"))?;
         let attempt = { let a = self.attempts.entry(ran.clone()).or_insert(0); *a += 1; *a };
         let primitive = self.graph.node(&ran).map(|n| n.primitive_id.clone()).unwrap_or_default();
+        let lane = super::safety::lane_for(self.pool.as_ref(), &plan.backend_id);
         self.h.block_on(self.s.append_raw(EV_PLAN, &self.run_id,
-            json!({ "run_id": self.run_id, "node_id": ran, "attempt": attempt, "plan": plan, "routing": self.routing, "outcome": if verified { "committed" } else { "failed" } })))?;
+            json!({ "run_id": self.run_id, "node_id": ran, "attempt": attempt, "plan": plan, "routing": self.routing, "lane": lane,
+                    "fence_epoch": self.epoch, "outcome": if verified { "committed" } else { "failed" } })))?;
+        if !verified {
+            if let Some(why) = self.stuck.observe_idle() { return Err(self.stuck_stop(why)); }
+        }
         let speed = self.take_speed();
         self.emit("run.progress", json!({ "step": ran, "attempt": attempt, "primitive_id": primitive,
             "cognitive_role": plan.cognitive_role, "outcome": if verified { "committed" } else { "failed" },
@@ -848,6 +1001,13 @@ impl Exec<'_> {
     /// over HTTP, or the dev scripted executor. Returns (path, content).
     fn propose(&mut self, plan: &ExecutionPlan, attempt: u32, goal: &str, failure: &str) -> Step<(String, String)> {
         self.admit()?;
+        // WP-P1 replay: a proposal journaled by an earlier drive is served
+        // as-is (no model call, no spend), so the drive stays deterministic
+        // and its effect keys stay stable.
+        let jkey = format!("{}:{}:model.propose:{attempt}", self.run_id, plan.node_id.as_deref().unwrap_or("N11"));
+        if let Some(v) = super::safety::journaled_value(&self.st.db, &jkey)? {
+            return Ok((v["path"].as_str().unwrap_or_default().to_string(), v["content"].as_str().unwrap_or_default().to_string()));
+        }
         let t0 = Instant::now();
         // O15: every model call in this proposal lands on the run's ledger rows.
         let _ledger = crate::usage_ledger::enter(crate::usage_ledger::LedgerCtx::surface("agency")
@@ -903,12 +1063,22 @@ impl Exec<'_> {
                 tracing::warn!(run_id = %self.run_id, backend = %backend,
                     reply = %reply.as_ref().map(|(_, r)| r.text.chars().take(200).collect::<String>()).unwrap_or_else(|| "<no answer>".into()),
                     "cognition backend gave no valid JSON patch; trying the next backend");
+                // Prod lanes: cool the failing backend down for every run.
+                super::safety::cool_down(&backend);
                 let Some(pool) = self.pool.as_mut() else { break };
                 pool.entries.retain(|e| e.backend_id != backend);
                 let ledger = BudgetLedger { remaining_cost_units: 1.0e9, remaining_wall_ms: None };
                 let Some(node) = plan.node_id.as_deref().and_then(|n| self.graph.node(n)) else { break };
                 match Router::new(pool, &self.cfg).route(node, &ledger) {
                     Ok(next) => backend = next.backend_id,
+                    Err(_) if !self.fallback.is_empty() => {
+                        // No API lane left: fall back to the held-back subscription lanes.
+                        pool.entries.append(&mut self.fallback);
+                        match Router::new(pool, &self.cfg).route(node, &ledger) {
+                            Ok(next) => backend = next.backend_id,
+                            Err(_) => break,
+                        }
+                    }
                     Err(_) => break,
                 }
                 self.admit()?;
@@ -929,6 +1099,11 @@ impl Exec<'_> {
         self.charge_tokens(t0.elapsed().as_secs_f64(), usd, 1, used.tokens)?;
         let path = proposal["path"].as_str().unwrap_or_default().to_string();
         let content = proposal["content"].as_str().unwrap_or_default().to_string();
+        let node = plan.node_id.clone().unwrap_or_default();
+        if !super::safety::journal_value(&self.st.db, &jkey, &self.run_id, &node, "model.propose", self.epoch,
+            &json!({ "path": path, "content": content }))? {
+            return Err(StepErr::Stop); // stale worker
+        }
         Ok((path, content))
     }
 
@@ -1112,16 +1287,7 @@ impl Exec<'_> {
 }
 
 fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str, limits: &Limits, org: &str) -> Result<()> {
-    let rec = h.block_on(async {
-        let _g = s.lock().await;
-        match s.load_run(run_id).await? {
-            Some(r) if r.run["status"] == "waiting" => s.transition(r, "running", Some("executing")).await.map(Some),
-            _ => Ok(None),
-        }
-    })?;
-    if rec.is_none() {
-        return Ok(());
-    }
+    let Some((_rec, epoch)) = begin_drive(h, st, s, run_id, "executing")? else { return Ok(()) };
     // Q11: a budget that is already exhausted halts spend before any effect.
     let rec = h.block_on(s.charge(run_id, 0.0, 0.0, 0))?;
     if rec.run["budget_usage"]["spend_halted"] == true {
@@ -1141,9 +1307,14 @@ fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str, limits: &Limi
     let policy = policy_for_run(st, &ir, org);
     let s1_backend = s1_backend_for(policy.as_ref());
     let mut routing = json!({ "policy_source": "default" });
+    let mut fallback = Vec::new();
     let (pool, cfg) = match raw_pool {
         Ok(p) => {
             let (p, c) = constrain(p, &models);
+            // Prod lanes (WP-P1): cooled-down backends out; subscription
+            // lanes held back as the fallback under `api_first`.
+            let (p, fb) = super::safety::split_lanes(p, super::safety::lane_mode());
+            fallback = fb;
             match policy.as_ref().map(|(e, src)| apply_policy(p.clone(), c.clone(), e, src)) {
                 None => (Some(p), c),
                 Some(Ok((p, c, trace))) => { routing = trace; (Some(p), c) }
@@ -1167,6 +1338,8 @@ fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str, limits: &Limi
         pending_wait_ms: std::cell::Cell::new(attention_wait_ms(&rec.attention)), routing, s1_backend,
         h, st, s, run_id: run_id.to_string(), dag_id: ir["dag_id"].as_str().unwrap_or_default().to_string(), seq: 0,
         ws: Ws::new(run_id)?, graph, pool, cfg, attempts: Default::default(), limits: limits.clone(), org: org.to_string(),
+        epoch, occ: Default::default(), stuck: super::safety::StuckDetector::default(), fallback,
+        caps: super::safety::RunCaps::from_env().tightened(&super::safety::load_org(&st.db, org).unwrap_or_default()),
     };
     let goal = ir["goal"].as_str().unwrap_or_default().to_string();
     let repo = ir["workspace"]["repo"].as_str().unwrap_or_default().to_string();
