@@ -112,6 +112,29 @@ jobs:
           CARGO_BUILD_JOBS: "2"
         run: cargo build --release --target x86_64-unknown-linux-gnu -p allternit-api
 
+      # Boot the new binary on a throwaway database BEFORE touching prod. A
+      # router panic (duplicate route, 2026-09-30 #1094) or a failing migration
+      # (duplicate V205) dies here instead of crash-looping production.
+      - name: Boot smoke test (fresh DB, before deploy)
+        run: |
+          D=$(mktemp -d)
+          ALLTERNIT_DATA_DIR=$D ALLTERNIT_API_PORT=18999 \
+            target/x86_64-unknown-linux-gnu/release/allternit-api > $D/boot.log 2>&1 &
+          PID=$!
+          ok=""
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:18999/health > /dev/null; then ok=1; break; fi
+            kill -0 $PID 2>/dev/null || break
+            sleep 1
+          done
+          kill $PID 2>/dev/null || true
+          if [ -z "$ok" ]; then
+            echo "::error::new allternit-api did not boot on a fresh database; not deploying"
+            tail -60 $D/boot.log
+            exit 1
+          fi
+          echo "boot smoke OK in ${i}s"
+
       - name: Join Tailscale network
         continue-on-error: true
         uses: tailscale/github-action@v3

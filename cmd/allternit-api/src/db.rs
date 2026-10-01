@@ -628,3 +628,26 @@ mod agent_identity_column_tests {
         assert_eq!(cols(&again.connect().unwrap()), 3);
     }
 }
+
+#[cfg(test)]
+mod migration_version_tests {
+    /// Two migrations with one version number break every fresh database (the second history row clashes) and
+    /// diverge on existing ones (2026-09-30: #1093 and #1094 both shipped a V205). Fail the build instead.
+    #[test]
+    fn every_migration_version_is_unique() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        let mut seen: std::collections::BTreeMap<u32, String> = std::collections::BTreeMap::new();
+        let mut dups = Vec::new();
+        for entry in std::fs::read_dir(&dir).expect("migrations dir") {
+            let name = entry.unwrap().file_name().to_string_lossy().to_string();
+            let Some(rest) = name.strip_prefix('V') else { continue };
+            let Some((ver, _)) = rest.split_once("__") else { continue };
+            let Ok(v) = ver.parse::<u32>() else { continue };
+            if let Some(prev) = seen.insert(v, name.clone()) {
+                dups.push(format!("V{v}: {prev} and {name}"));
+            }
+        }
+        assert!(dups.is_empty(), "duplicate migration versions: {dups:?}");
+    }
+}
+
