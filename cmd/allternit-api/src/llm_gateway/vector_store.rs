@@ -585,13 +585,64 @@ async fn search_store(
         .into_response();
     }
 
-    // In production, this would perform a vector similarity search using
-    // the embeddings API. For now, return a structured response indicating
-    // the search was performed.
-    let results: Vec<SearchResult> = Vec::new();
-
-    let _ = state; // suppress unused warning
-    let _ = store_id;
+    // Hybrid keyword + vector search over the store's files, through the
+    // shared memory-plane index (memory_index). Files not chunked yet are
+    // chunked now; their embeddings come from the background indexer, so a
+    // fresh file is found by keyword at once and by meaning shortly after.
+    let q = crate::memory_index::global()
+        .embed_or_hash(&[body.query.clone()], crate::memory_index::InputType::Query)
+        .await;
+    let db = state.db.clone();
+    let query = body.query.clone();
+    let limit = body.max_results.max(1) as usize;
+    let sid = store_id.clone();
+    let found = tokio::task::spawn_blocking(move || -> rusqlite::Result<Option<Vec<SearchResult>>> {
+        ensure_tables(&db)?;
+        let conn = db.connect()?;
+        let exists: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM vector_stores WHERE id = ?1",
+            params![sid],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Ok(None);
+        }
+        let mut stmt = conn.prepare("SELECT file_id FROM vector_store_files WHERE vector_store_id = ?1")?;
+        let file_ids: Vec<String> = stmt
+            .query_map(params![sid], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+        crate::memory_index::chunk_pending_files(&conn, Some(&file_ids), 256)?;
+        let hits = crate::memory_index::search_files(
+            &conn,
+            &file_ids,
+            &query,
+            q.vectors.first().map(|v| (q.model.as_str(), v.as_slice())),
+            limit,
+        )?;
+        Ok(Some(
+            hits.into_iter()
+                .map(|(file_id, content, score)| SearchResult { file_id, content, score })
+                .collect(),
+        ))
+    })
+    .await;
+    let results: Vec<SearchResult> = match found {
+        Ok(Ok(Some(r))) => r,
+        Ok(Ok(None)) => {
+            return OpenAiErrorResponse::new(
+                StatusCode::NOT_FOUND,
+                format!("No vector store with id '{store_id}'."),
+                "invalid_request_error",
+                Some("vector_store_id"),
+                Some(error_code::INVALID_REQUEST),
+            )
+            .into_response()
+        }
+        _ => {
+            return OpenAiErrorResponse::upstream("Vector store search failed.", "internal_error")
+                .into_response()
+        }
+    };
 
     (
         StatusCode::OK,

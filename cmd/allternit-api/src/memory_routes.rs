@@ -1016,14 +1016,17 @@ async fn recall_v2_handler(
     };
 
     let limit = payload.limit.unwrap_or(10);
-    match crate::memory_kernel_service::recall(
+    match crate::memory_kernel_service::recall_hybrid(
         &state.db,
+        crate::memory_index::global(),
         &user.user_id,
         payload.agent_id.as_deref(),
         payload.session_id.as_deref(),
         &payload.query,
         limit,
-    ) {
+    )
+    .await
+    {
         Ok(results) => (StatusCode::OK, Json(json!({"results": results, "count": results.len()}))),
         Err(e) => {
             tracing::warn!("Recall error: {}", e);
