@@ -31,6 +31,8 @@ import { spawnSidecar as lifelineSpawnSidecar } from './process-lifeline.js';
 
 export const SYSTEM_ONE_DEFAULT_PORT = 7717;
 export const LAYA_DEFAULT_PORT = 7718;
+/** Local embeddings for the memory index (serve-embed.sh, shares Laya's venv). */
+export const EMBED_DEFAULT_PORT = 7719;
 export const LAYA_VERSION = '0.3.22';
 /** Q29: convaiinnovations/laya, typed-decisions, rev 55cf4c4. */
 export const LAYA_PINNED_REVISION = '55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851';
@@ -78,6 +80,10 @@ export interface SystemOneStatus {
   apiBackend?: S1Backend;
   /** Q28 shadow ledger directory, or null when opted out (SYSTEM_ONE_SHADOW_LOG=0). */
   shadowDir: string | null;
+  /** Q28 opt-in: the ledger also keeps the raw decision state (fine-tuning text). */
+  shadowState: boolean;
+  /** Local embeddings for the memory index (serve-embed.sh). */
+  embed: { running: boolean; url: string };
   error?: string;
 }
 
@@ -126,6 +132,7 @@ export class SystemOneManager {
   private static instance: SystemOneManager | undefined;
   private s1Proc: ChildProcess | null = null;
   private layaProc: ChildProcess | null = null;
+  private embedProc: ChildProcess | null = null;
   private installProc: ChildProcess | null = null;
   private installPromise: Promise<void> | null = null;
   private layaHealthy = false;
@@ -166,6 +173,14 @@ export class SystemOneManager {
     return Number(this.deps.env.ALLTERNIT_LAYA_PORT) || LAYA_DEFAULT_PORT;
   }
 
+  get embedPort(): number {
+    return Number(this.deps.env.ALLTERNIT_EMBED_PORT) || EMBED_DEFAULT_PORT;
+  }
+
+  get embedUrl(): string {
+    return `http://127.0.0.1:${this.embedPort}`;
+  }
+
   get s1Url(): string {
     return `http://127.0.0.1:${this.s1Port}`;
   }
@@ -188,6 +203,55 @@ export class SystemOneManager {
 
   private get configPath(): string {
     return path.join(this.root, 'config.json');
+  }
+
+  /**
+   * S1's own settings, beside the shadow ledger, so removing Laya (which
+   * deletes its whole root) never drops them.
+   */
+  private get settingsPath(): string {
+    return path.join(this.deps.homedir, '.allternit', 'system-one', 'settings.json');
+  }
+
+  private readSettings(): Record<string, unknown> {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(this.settingsPath, 'utf8'));
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * Q28 opt-in: also keep the raw decision state (the fine-tuning text) in
+   * the shadow ledger. The saved setting wins; without one, the legacy
+   * SYSTEM_ONE_SHADOW_STATE=1 export still counts. Off by default.
+   */
+  get shadowState(): boolean {
+    const saved = this.readSettings().shadowState;
+    if (typeof saved === 'boolean') return saved;
+    return this.deps.env.SYSTEM_ONE_SHADOW_STATE === '1';
+  }
+
+  /** Save the raw-state opt-in and restart the S1 server this manager owns so it applies. */
+  async setShadowState(enabled: boolean): Promise<boolean> {
+    const settings = this.readSettings();
+    settings.shadowState = enabled;
+    await fs.promises.mkdir(path.dirname(this.settingsPath), { recursive: true });
+    await fs.promises.writeFile(this.settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
+    log.info(`[SystemOne] raw decision state in the shadow ledger: ${enabled ? 'on' : 'off'}`);
+    if (this.s1Proc) {
+      const proc = this.s1Proc;
+      this.s1Proc = null;
+      proc.kill('SIGTERM');
+      await new Promise<void>((resolve) => {
+        if (proc.exitCode != null || proc.signalCode != null) return resolve();
+        proc.once('exit', () => resolve());
+        setTimeout(resolve, 5000);
+      });
+      await this.startSystemOne().catch((err) => this.fail(`S1 restart failed: ${(err as Error).message}`));
+    }
+    return this.shadowState;
   }
 
   /**
@@ -333,6 +397,15 @@ export class SystemOneManager {
     }
   }
 
+  async checkEmbedHealth(): Promise<boolean> {
+    try {
+      const res = await this.deps.fetch(`${this.embedUrl}/health`, { signal: AbortSignal.timeout(1000) });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
   async checkLayaHealth(): Promise<boolean> {
     let healthy = false;
     try {
@@ -376,11 +449,22 @@ export class SystemOneManager {
       ...(explicit ? { ALLTERNIT_S1_BACKEND: explicit } : {}),
       SYSTEM_ONE_LAYA_URL: env.SYSTEM_ONE_LAYA_URL || this.layaUrl,
       ...(shadowDir ? { ALLTERNIT_S1_SHADOW_DIR: shadowDir } : {}),
+      // The memory index embeds through the local sidecar this manager runs
+      // (Laya's platforms only); an explicit export (or "off") wins.
+      ...(env.ALLTERNIT_EMBED_URL
+        ? { ALLTERNIT_EMBED_URL: env.ALLTERNIT_EMBED_URL }
+        : this.layaSupported
+          ? { ALLTERNIT_EMBED_URL: this.embedUrl }
+          : {}),
     };
   }
 
   async getStatus(): Promise<SystemOneStatus> {
-    const [s1Running, layaRunning] = await Promise.all([this.checkSystemOneHealth(), this.checkLayaHealth()]);
+    const [s1Running, layaRunning, embedRunning] = await Promise.all([
+      this.checkSystemOneHealth(),
+      this.checkLayaHealth(),
+      this.checkEmbedHealth(),
+    ]);
     if (!this.needsUv && !this.isLayaInstalled() && this.layaSupported && !this.resolveUv()) this.needsUv = true;
     return {
       layaSupported: this.layaSupported,
@@ -403,6 +487,8 @@ export class SystemOneManager {
       backend: this.backend,
       ...(this.apiBackend ? { apiBackend: this.apiBackend } : {}),
       shadowDir: this.shadowDir,
+      shadowState: this.shadowState,
+      embed: { running: embedRunning, url: this.deps.env.ALLTERNIT_EMBED_URL || this.embedUrl },
       ...(this.lastError ? { error: this.lastError } : {}),
     };
   }
@@ -503,6 +589,7 @@ export class SystemOneManager {
 
   /** Stop Laya and delete its managed files (venv, marker, config, log). Never touches the shadow ledger. */
   async remove(): Promise<void> {
+    this.stopEmbed();
     this.stopLaya();
     this.cancelInstall();
     const root = path.resolve(this.root);
@@ -534,6 +621,8 @@ export class SystemOneManager {
         await this.install();
       }
       if (!this.stopped) await this.startLaya();
+      // Embeddings ride on Laya's venv; a failure only degrades memory search.
+      if (!this.stopped) await this.startEmbed().catch((err) => this.fail(`Embedding server start failed: ${(err as Error).message}`));
     })().catch((err) => this.fail(`Laya start failed: ${(err as Error).message}`));
     return Promise.all([s1, laya]).then(() => undefined);
   }
@@ -549,6 +638,8 @@ export class SystemOneManager {
       SYSTEM_ONE_LAYA_URL: this.layaUrl,
       ...(shadowDir ? { ALLTERNIT_S1_SHADOW_DIR: shadowDir } : { SYSTEM_ONE_SHADOW_LOG: '0' }),
     };
+    if (this.shadowState) env.SYSTEM_ONE_SHADOW_STATE = '1';
+    else delete env.SYSTEM_ONE_SHADOW_STATE;
     log.info(`[SystemOne] starting S1 on ${this.s1Url}`);
     const child = this.deps.spawnSidecar(cmd.command, cmd.args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
     this.s1Proc = child;
@@ -598,6 +689,48 @@ export class SystemOneManager {
     log.info('[SystemOne] Laya healthy; S1 backend laya_bundled');
   }
 
+  /** Serve local embeddings (serve-embed.sh) from Laya's venv on 7719. */
+  async startEmbed(): Promise<void> {
+    if (!this.layaSupported) return;
+    if (this.deps.env.ALLTERNIT_EMBED_URL) return; // pointed elsewhere (or "off")
+    if (await this.checkEmbedHealth()) return;
+    if (this.embedProc) return;
+    const scriptsDir = this.resolveLayaScriptsDir();
+    if (!scriptsDir || !fs.existsSync(path.join(scriptsDir, 'serve-embed.sh'))) {
+      throw new Error('the embedding server script is not available in this build');
+    }
+    const uv = this.resolveUv();
+    const env: NodeJS.ProcessEnv = {
+      ...this.deps.env,
+      LAYA_HOME: this.root,
+      EMBED_PORT: String(this.embedPort),
+      ...(uv ? { PATH: [path.dirname(uv), this.deps.env.PATH ?? ''].filter(Boolean).join(path.delimiter) } : {}),
+    };
+    log.info(`[SystemOne] starting the embedding server on ${this.embedUrl}`);
+    const child = this.deps.spawnSidecar('bash', [path.join(scriptsDir, 'serve-embed.sh')], {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    this.embedProc = child;
+    child.stdout?.on('data', (d: Buffer) => log.info('[Embed]', d.toString().trim()));
+    child.stderr?.on('data', (d: Buffer) => log.info('[Embed]', d.toString().trim()));
+    child.on('error', (err) => this.fail(`Embedding server spawn error: ${err.message}`));
+    child.on('exit', (code) => {
+      log.warn(`[SystemOne] embedding server exited (code ${code})`);
+      if (this.embedProc === child) this.embedProc = null;
+    });
+    await this.waitFor(() => this.checkEmbedHealth(), 'Embedding server', LAYA_HEALTH_TIMEOUT_MS, () => this.embedProc);
+    log.info('[SystemOne] embedding server healthy');
+  }
+
+  stopEmbed(): void {
+    if (this.embedProc) {
+      log.info('[SystemOne] stopping the embedding server');
+      this.embedProc.kill('SIGTERM');
+      this.embedProc = null;
+    }
+  }
+
   stopLaya(): void {
     if (this.layaProc) {
       log.info('[SystemOne] stopping Laya');
@@ -611,6 +744,7 @@ export class SystemOneManager {
   stop(): void {
     this.stopped = true;
     this.cancelInstall();
+    this.stopEmbed();
     this.stopLaya();
     if (this.s1Proc) {
       log.info('[SystemOne] stopping S1');

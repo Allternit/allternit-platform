@@ -2712,6 +2712,8 @@ handleGuarded('system-one:start', () => systemOne.startWithApp());
 handleGuarded('system-one:stop', () => { systemOne.stop(); return true; });
 handleGuarded('system-one:set-checkpoint', (_event, checkpoint: { revision?: string; path?: string } | null) =>
   systemOne.setCheckpoint(checkpoint));
+handleGuarded('system-one:set-shadow-state', (_event, enabled: unknown) =>
+  systemOne.setShadowState(enabled === true));
 
 // Research backend (notebook engine) — lazy start
 ipcMain.handle('research:get-status', () => notebookManager.getStatus());

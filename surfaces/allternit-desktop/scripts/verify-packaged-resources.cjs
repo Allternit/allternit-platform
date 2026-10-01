@@ -79,6 +79,11 @@ const required = [
     buildStep: 'npm run prepare:system-one',
   },
   {
+    path: path.join(resourcesDir, 'laya', 'serve-embed.py'),
+    label: 'Local embedding server (memory index)',
+    buildStep: 'npm run prepare:system-one',
+  },
+  {
     path: path.join(resourcesDir, 'platform', 'index.html'),
     label: 'Platform static export',
     buildStep: 'npm run prepare:platform-static (or scripts/build-desktop.sh)',

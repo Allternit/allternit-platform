@@ -145,6 +145,8 @@ export interface SystemOneStatus {
   backend: 'laya_bundled' | 'system_one_local';
   apiBackend?: 'laya_bundled' | 'system_one_local' | 'auto';
   shadowDir: string | null;
+  shadowState: boolean;
+  embed: { running: boolean; url: string };
   error?: string;
 }
 
@@ -163,6 +165,7 @@ const systemOneAPI = {
   stop: (): Promise<boolean> => ipcRenderer.invoke('system-one:stop'),
   setCheckpoint: (checkpoint: { revision?: string; path?: string } | null): Promise<SystemOneStatus['laya']['checkpoint']> =>
     ipcRenderer.invoke('system-one:set-checkpoint', checkpoint),
+  setShadowState: (enabled: boolean): Promise<boolean> => ipcRenderer.invoke('system-one:set-shadow-state', enabled),
   onProgress: (handler: (progress: SystemOneProgress) => void): (() => void) => {
     const listener = (_: IpcRendererEvent, p: SystemOneProgress) => handler(p);
     ipcRenderer.on('system-one:progress', listener);

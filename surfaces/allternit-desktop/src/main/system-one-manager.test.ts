@@ -28,7 +28,7 @@ interface Harness {
   spawnSidecar: ReturnType<typeof vi.fn<any[], FakeChild>>;
   children: FakeChild[];
   progress: SystemOneProgress[];
-  healthy: { s1: boolean; laya: boolean };
+  healthy: { s1: boolean; laya: boolean; embed: boolean };
 }
 
 let tmp: string;
@@ -46,9 +46,10 @@ function harness(opts: { uv?: boolean; scripts?: boolean; binary?: boolean; env?
   if (opts.scripts !== false) {
     touch(path.join(resources, 'laya', 'serve-laya.sh'));
     touch(path.join(resources, 'laya', 'install-laya.sh'));
+    touch(path.join(resources, 'laya', 'serve-embed.sh'));
   }
   if (opts.binary !== false) touch(path.join(resources, 'bin', 'system-one'));
-  const healthy = { s1: false, laya: false };
+  const healthy = { s1: false, laya: false, embed: false };
   const children: FakeChild[] = [];
   const progress: SystemOneProgress[] = [];
   const mkChild = () => {
@@ -62,6 +63,10 @@ function harness(opts: { uv?: boolean; scripts?: boolean; binary?: boolean; env?
     if (url.endsWith('/healthz')) {
       if (!healthy.s1) throw new Error('ECONNREFUSED');
       return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }
+    if (url.endsWith(':7719/health')) {
+      if (!healthy.embed) throw new Error('ECONNREFUSED');
+      return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
     }
     if (url.endsWith('/health')) {
       if (!healthy.laya) throw new Error('ECONNREFUSED');
@@ -119,6 +124,7 @@ describe('allternit-api environment', () => {
       ALLTERNIT_S1_URL: 'http://127.0.0.1:7717',
       SYSTEM_ONE_LAYA_URL: 'http://127.0.0.1:7718',
       ALLTERNIT_S1_SHADOW_DIR: path.join(h.home, '.allternit', 'system-one', 'shadow'),
+      ALLTERNIT_EMBED_URL: 'http://127.0.0.1:7719',
     });
     h.healthy.laya = true;
     await h.manager.checkLayaHealth();
@@ -213,6 +219,99 @@ describe('checkpoint config', () => {
   });
 });
 
+describe('raw decision state opt-in (Q28)', () => {
+  const s1Calls = (h: Harness) => h.spawnSidecar.mock.calls.filter(([cmd]) => String(cmd).endsWith('system-one'));
+
+  it('is off by default and keeps SYSTEM_ONE_SHADOW_STATE out of the S1 env', async () => {
+    const h = harness();
+    expect(h.manager.shadowState).toBe(false);
+    const p = h.manager.startSystemOne();
+    await flush();
+    expect(s1Calls(h)[0][2].env).not.toHaveProperty('SYSTEM_ONE_SHADOW_STATE');
+    h.healthy.s1 = true;
+    await p;
+    expect((await h.manager.getStatus()).shadowState).toBe(false);
+  });
+
+  it('persists outside the Laya root and restarts the owned S1 server with it', async () => {
+    const h = harness();
+    const p = h.manager.startSystemOne();
+    await flush();
+    h.healthy.s1 = true;
+    await p;
+
+    h.healthy.s1 = false; // the old server is going away
+    const set = h.manager.setShadowState(true);
+    await vi.waitFor(() => expect(h.children[0].kill).toHaveBeenCalledWith('SIGTERM'));
+    h.children[0].emit('exit', 0, 'SIGTERM');
+    await vi.waitFor(() => expect(s1Calls(h)).toHaveLength(2));
+    expect(s1Calls(h)[1][2].env.SYSTEM_ONE_SHADOW_STATE).toBe('1');
+    h.healthy.s1 = true;
+    await expect(set).resolves.toBe(true);
+
+    const settings = path.join(h.home, '.allternit', 'system-one', 'settings.json');
+    expect(JSON.parse(fs.readFileSync(settings, 'utf8'))).toEqual({ shadowState: true });
+    // A new app session (fresh manager) reads it back; removing Laya keeps it.
+    fs.mkdirSync(h.root, { recursive: true });
+    await h.manager.remove();
+    expect(new SystemOneManager({ ...(h.manager as any).deps }).shadowState).toBe(true);
+  });
+
+  it('honours the legacy env export until a setting is saved, then the setting wins', async () => {
+    const h = harness({ env: { SYSTEM_ONE_SHADOW_STATE: '1' } });
+    expect(h.manager.shadowState).toBe(true);
+    await h.manager.setShadowState(false); // no owned S1 process: just saved
+    expect(h.manager.shadowState).toBe(false);
+    const p = h.manager.startSystemOne();
+    await flush();
+    expect(s1Calls(h)[0][2].env).not.toHaveProperty('SYSTEM_ONE_SHADOW_STATE');
+    h.healthy.s1 = true;
+    await p;
+  });
+});
+
+describe('embedding server', () => {
+  const embedCalls = (h: Harness) => h.spawnSidecar.mock.calls.filter(([, args]) => String(args?.[0]).endsWith('serve-embed.sh'));
+
+  it('starts after Laya from the same venv and stops with the app', async () => {
+    const h = harness();
+    installLaya(h.root);
+    h.healthy.s1 = true;
+    const started = h.manager.startWithApp();
+    await vi.waitFor(() => expect(h.spawnSidecar.mock.calls.some(([, a]) => String(a[0]).endsWith('serve-laya.sh'))).toBe(true));
+    expect(embedCalls(h)).toHaveLength(0);
+    h.healthy.laya = true;
+    await vi.waitFor(() => expect(embedCalls(h)).toHaveLength(1));
+    expect(embedCalls(h)[0][2].env).toMatchObject({ LAYA_HOME: h.root, EMBED_PORT: '7719' });
+    h.healthy.embed = true;
+    await started;
+    expect((await h.manager.getStatus()).embed).toEqual({ running: true, url: 'http://127.0.0.1:7719' });
+    h.manager.stop();
+    for (const c of h.children) expect(c.kill).toHaveBeenCalledWith('SIGTERM');
+  });
+
+  it('is skipped when ALLTERNIT_EMBED_URL points elsewhere, which also reaches the API', async () => {
+    const h = harness({ env: { ALLTERNIT_EMBED_URL: 'off' } });
+    await h.manager.startEmbed();
+    expect(embedCalls(h)).toHaveLength(0);
+    expect(h.manager.getApiEnvironment().ALLTERNIT_EMBED_URL).toBe('off');
+  });
+
+  it('a failed embedding server only degrades memory search', async () => {
+    const h = harness();
+    installLaya(h.root);
+    h.healthy.s1 = true;
+    fs.rmSync(path.join(h.resources, 'laya', 'serve-embed.sh'));
+    const started = h.manager.startWithApp();
+    await flush();
+    h.healthy.laya = true;
+    await started;
+    const status = await h.manager.getStatus();
+    expect(status.laya.running).toBe(true);
+    expect(status.error).toMatch(/Embedding server start failed/);
+  });
+});
+
 describe('lifecycle', () => {
   it('starts S1 on 7717 with the shadow ledger and Laya URL, then Laya with the pinned checkpoint', async () => {
     const h = harness();
@@ -229,6 +328,7 @@ describe('lifecycle', () => {
     expect(h.manager.getApiEnvironment()).not.toHaveProperty('ALLTERNIT_S1_BACKEND');
     h.healthy.s1 = true;
     h.healthy.laya = true;
+    h.healthy.embed = true;
     await started;
     const status = await h.manager.getStatus();
     expect(status.systemOne.running).toBe(true);
@@ -253,6 +353,7 @@ describe('lifecycle', () => {
     expect(h.spawnSidecar.mock.calls.some(([, args]) => String(args[0]).endsWith('serve-laya.sh'))).toBe(true);
     h.healthy.s1 = true;
     h.healthy.laya = true;
+    h.healthy.embed = true;
     await started;
     expect(h.manager.backend).toBe('laya_bundled');
   });
