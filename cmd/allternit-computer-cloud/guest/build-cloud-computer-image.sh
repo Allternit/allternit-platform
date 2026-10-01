@@ -39,6 +39,11 @@ DESKTOP_DEB="${DESKTOP_DEB:?set DESKTOP_DEB to the Allternit Desktop linux-x64 .
 BASE_IMAGE="${BASE_IMAGE:-allternit-desktop}"
 IMAGE_NAME="${IMAGE_NAME:-allternit-cloud-computer}"
 SUBS_LANE_IDLE_MIN="${SUBS_LANE_IDLE_MIN:-10}"
+# With the gateway on this computer, allternit-api talks to it directly on
+# 127.0.0.1:7788 (cli token from /var/lib/subs-gateway/keychain.json) instead
+# of through a Sessions binding.
+LOCAL_SUBS_GATEWAY=0
+[ -n "${GATEWAY_TARBALL:-}" ] && LOCAL_SUBS_GATEWAY=1
 BUILD_CONTAINER="allternit-cloud-computer-builder-$$"
 
 log() {
@@ -89,11 +94,13 @@ incus exec "${BUILD_CONTAINER}" -- sh -c '
 # a cloud computer: first-launch prompts don't block, and it pairs itself
 # from /etc/allternit/bootstrap.json when that file is present.
 log "configuring provisioned mode and autostart"
-incus exec "${BUILD_CONTAINER}" --env SUBS_LANE_IDLE_MIN="${SUBS_LANE_IDLE_MIN}" -- sh -c '
+incus exec "${BUILD_CONTAINER}" --env SUBS_LANE_IDLE_MIN="${SUBS_LANE_IDLE_MIN}" \
+    --env LOCAL_SUBS_GATEWAY="${LOCAL_SUBS_GATEWAY}" -- sh -c '
     mkdir -p /etc/allternit /root/.config/autostart
     chmod 0700 /etc/allternit
     cat > /etc/allternit/provisioned.env <<EOF
 ALLTERNIT_PROVISIONED=1
+ALLTERNIT_LOCAL_SUBS_GATEWAY=${LOCAL_SUBS_GATEWAY}
 SUBS_GATEWAY_LANE_IDLE_MIN=${SUBS_LANE_IDLE_MIN}
 EOF
     # Close a subscription lane Chrome after N idle minutes (the next task
@@ -108,7 +115,7 @@ EOF
 Type=Application
 Name=Allternit
 Comment=Your Allternit cloud computer
-Exec=env ALLTERNIT_PROVISIONED=1 SUBS_GATEWAY_LANE_IDLE_MIN=${SUBS_LANE_IDLE_MIN} /usr/bin/allternit --no-sandbox
+Exec=env ALLTERNIT_PROVISIONED=1 ALLTERNIT_LOCAL_SUBS_GATEWAY=${LOCAL_SUBS_GATEWAY} SUBS_GATEWAY_LANE_IDLE_MIN=${SUBS_LANE_IDLE_MIN} /usr/bin/allternit --no-sandbox
 X-GNOME-Autostart-enabled=true
 Terminal=false
 EOF
