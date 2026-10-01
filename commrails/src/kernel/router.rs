@@ -23,6 +23,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use super::classes;
 use super::graph::GraphNode;
 
 pub const PLAN_SCHEMA_ID: &str = "allternit.kernel.ExecutionPlanV1";
@@ -381,6 +382,7 @@ pub struct Router<'a, P: ModelPool> {
 struct NodeBudget {
     max_cost: Option<f64>,
     max_wall_ms: Option<u64>,
+    max_output_tokens: Option<u64>,
 }
 
 fn node_budget(node: &GraphNode) -> NodeBudget {
@@ -388,6 +390,7 @@ fn node_budget(node: &GraphNode) -> NodeBudget {
     NodeBudget {
         max_cost: b.and_then(|b| b.get("max_cost_units")).and_then(Value::as_f64),
         max_wall_ms: b.and_then(|b| b.get("max_wall_ms")).and_then(Value::as_u64),
+        max_output_tokens: b.and_then(|b| b.get("max_output_tokens")).and_then(Value::as_u64),
     }
 }
 
@@ -436,8 +439,13 @@ impl<'a, P: ModelPool> Router<'a, P> {
         };
 
         // 1. role, 2. legal modes ∩ node.allowed_modes.
-        let role = resolve_role(node)?;
-        let modes = resolve_modes(node, role)?;
+        let requested_role = resolve_role(node)?;
+        // O13 S0-first law: a primitive with an S0 implementation never goes to a model.
+        let s0_first = requested_role != Role::S0 && classes::has_s0_impl(&node.primitive_id);
+        let role = if s0_first { Role::S0 } else { requested_role };
+        let modes = if s0_first { vec![Mode::M0Deterministic] } else { resolve_modes(node, role)? };
+        let call_type: Option<String> = node.extensions.as_ref()
+            .and_then(|x| x.get("x-call_type")).and_then(Value::as_str).map(str::to_string);
 
         let req = node.capability_request.as_ref();
         let capability = req
@@ -449,7 +457,14 @@ impl<'a, P: ModelPool> Router<'a, P> {
             .and_then(|r| r.get("trust_requirement"))
             .and_then(|t| serde_json::from_value(t.clone()).ok());
 
-        let ext = Map::new();
+        let mut ext = Map::new();
+        if s0_first {
+            ext.insert("x-s0_first".into(), Value::Bool(true));
+            ext.insert("x-requested_role".into(), Value::String(format!("{requested_role:?}")));
+        }
+        if let Some(ct) = &call_type {
+            ext.insert("x-call_type".into(), Value::String(ct.clone()));
+        }
 
         // S0 → PrimitiveRegistry, not the pool.
         if role == Role::S0 {
@@ -537,21 +552,30 @@ impl<'a, P: ModelPool> Router<'a, P> {
                 .then(a.backend_id.cmp(&b.backend_id))
         });
         let prefs: Vec<String> = [format!("{capability}@{role:?}"), format!("role:{role:?}"), "*".to_string()]
-            .iter().find_map(|k| self.config.class_preference.get(k).filter(|v| !v.is_empty()).cloned()).unwrap_or_default();
+            .iter().find_map(|k| self.config.class_preference.get(k).filter(|v| !v.is_empty()).cloned())
+            // O1: with no configured preference, the call type's capability class leads.
+            .or_else(|| call_type.as_deref().map(|ct| vec![classes::call_type_class(ct).to_string()]))
+            .unwrap_or_default();
         let rank = |e: &PoolEntry| {
-            let c = model_class(e);
-            prefs.iter().position(|p| class_matches(&c, p)).unwrap_or(prefs.len())
+            let (c, g) = (model_class(e), classes::gen_class(e));
+            prefs.iter().position(|p| class_matches(&c, p) || class_matches(g, p)).unwrap_or(prefs.len())
         };
         fits.sort_by_key(|e| rank(e)); // stable: the order above breaks ties
         let chosen = fits[0];
         let chosen_rank = rank(chosen);
         let fallback: Vec<String> = fits[1..].iter().map(|e| e.backend_id.clone()).collect();
         let calibration = s1_cal.get(&chosen.backend_id).cloned();
-        let mut ext = ext;
         if !prefs.is_empty() {
             ext.insert("x-route_preference".into(), Value::from(prefs.clone()));
             ext.insert("x-route_class".into(), Value::String(model_class(chosen)));
             ext.insert("x-route_preference_hit".into(), Value::Bool(chosen_rank < prefs.len()));
+        }
+        ext.insert("x-gen_class".into(), Value::String(classes::gen_class(chosen).into()));
+        // O5: output cap by node kind / call type; a node budget `max_output_tokens` wins.
+        let cap = nb.max_output_tokens.or_else(|| classes::default_max_output_tokens(role, call_type.as_deref()));
+        if let Some(cap) = cap {
+            ext.insert("x-max_output_tokens".into(), Value::from(cap));
+            ext.insert("x-output_caps_version".into(), Value::String(classes::OUTPUT_CAPS_VERSION.into()));
         }
         if role == Role::S1 {
             // Live only when BOTH the router config and the pool entry say live.
