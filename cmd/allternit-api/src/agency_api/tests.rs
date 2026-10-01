@@ -545,6 +545,20 @@ fn limits(pairs: &[(&str, &str)]) -> guard::Limits {
     guard::Limits::from_lookup(|k| m.get(k).cloned())
 }
 
+/// Limits for tests that start a run. The executor's active-run slots are
+/// process-wide and many tests run the executor for the same test org in
+/// parallel, so default concurrency caps would refuse admission depending on
+/// test timing. Tests about those caps use [`limits`] with explicit values.
+fn run_limits(pairs: &[(&str, &str)]) -> guard::Limits {
+    let mut v: Vec<(&str, &str)> = pairs.to_vec();
+    for k in [guard::MAX_CONC_ENV, guard::ORG_MAX_CONC_ENV] {
+        if !v.iter().any(|(key, _)| *key == k) {
+            v.push((k, "1000"));
+        }
+    }
+    limits(&v)
+}
+
 #[test]
 fn agency_guard_org_allowlist_empty_means_no_org_executes() {
     let none = limits(&[]);
@@ -619,7 +633,7 @@ async fn agency_guard_org_daily_cap_parks_run_before_any_effect() {
     let run = create(&t, "guard-cap-org-0001").await;
     let id = run["id"].as_str().unwrap().to_string();
     let s = AgencyStore::new(t.st.rails.ledger.clone());
-    let l = limits(&[(guard::ORGS_ENV, "user:u1"), (guard::DAILY_ENV, "off"), (guard::ORG_DAILY_ENV, "usd=0")]);
+    let l = run_limits(&[(guard::ORGS_ENV, "user:u1"), (guard::DAILY_ENV, "off"), (guard::ORG_DAILY_ENV, "usd=0")]);
     assert!(executor::admit_and_start(t.st.clone(), id.clone(), l).await);
     let rec = wait_settled(&s, &id).await;
     assert_eq!(rec.run["status"], "needs_attention", "{}", rec.run);
@@ -650,7 +664,7 @@ async fn agency_guard_global_daily_cap_counts_other_orgs_spend() {
     let id = serde_json::from_str::<Value>(&b).unwrap()["id"].as_str().unwrap().to_string();
     let (g, o) = s.daily_spend("user:u2").await.unwrap();
     assert!(g.tokens >= 150 && o.tokens == 0);
-    let l = limits(&[(guard::ORGS_ENV, "user:u2"), (guard::DAILY_ENV, "tokens=100"), (guard::ORG_DAILY_ENV, "off")]);
+    let l = run_limits(&[(guard::ORGS_ENV, "user:u2"), (guard::DAILY_ENV, "tokens=100"), (guard::ORG_DAILY_ENV, "off")]);
     assert!(executor::admit_and_start(t.st.clone(), id.clone(), l).await);
     let rec = wait_settled(&s, &id).await;
     assert_eq!(rec.run["status"], "needs_attention", "{}", rec.run);
@@ -705,7 +719,7 @@ async fn agency_real_model_local_e2e() {
     let (s, _, b) = call(&t.app, post("/v1/agency", "u1", Some("real-model-e2e-0001"), body)).await;
     assert_eq!(s, StatusCode::ACCEPTED, "{b}");
     let id = serde_json::from_str::<Value>(&b).unwrap()["id"].as_str().unwrap().to_string();
-    let l = limits(&[(guard::ORGS_ENV, "user:u1"), (guard::DAILY_ENV, "tokens=200000,usd=0.5"), (guard::ORG_DAILY_ENV, "tokens=200000,usd=0.5")]);
+    let l = run_limits(&[(guard::ORGS_ENV, "user:u1"), (guard::DAILY_ENV, "tokens=200000,usd=0.5"), (guard::ORG_DAILY_ENV, "tokens=200000,usd=0.5")]);
     assert!(executor::admit_and_start(t.st.clone(), id.clone(), l).await);
     let mut run = Value::Null;
     for _ in 0..1800 {
@@ -840,7 +854,7 @@ async fn agency_safety_run_cap_parks_before_any_effect_and_approval_must_raise_i
     let id = create_as(&t, user("cap1"), "p1-cap-0000001").await;
     safety::save_org(&t.st.db, "user:cap1", &safety::OrgSafety { max_steps: Some(0), ..Default::default() }, "cap1").unwrap();
     let s = AgencyStore::new(t.st.rails.ledger.clone());
-    assert!(executor::admit_and_start(t.st.clone(), id.clone(), limits(&[(guard::ORGS_ENV, "user:cap1")])).await);
+    assert!(executor::admit_and_start(t.st.clone(), id.clone(), run_limits(&[(guard::ORGS_ENV, "user:cap1")])).await);
     let rec = wait_settled(&s, &id).await;
     assert_eq!(rec.run["status"], "needs_attention", "{}", rec.run);
     assert_eq!(rec.run["attention"]["reason"], safety::RUN_CAP_REASON);
