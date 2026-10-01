@@ -102,11 +102,11 @@ export async function fillComposer(
       await target.fill(text);
     } else {
       await target.click();
-      // A retry may land on an editor still holding part of the prompt.
-      if (attempt > 0) {
-        await page.keyboard.press("ControlOrMeta+A");
-        await page.keyboard.press("Backspace");
-      }
+      // Always start from an empty editor: a retry may hold part of the prompt,
+      // and a provider keeps an unsent draft across visits (live 2026-09-30:
+      // claude.ai kept an earlier draft and the prompt was appended to it).
+      await page.keyboard.press("ControlOrMeta+A");
+      await page.keyboard.press("Backspace");
       if (text.length > LONG_TEXT_THRESHOLD) {
         await page.keyboard.insertText(text);
       } else {
@@ -120,7 +120,8 @@ export async function fillComposer(
       ? await target.evaluate((el, h) => el === h && el.isConnected, handle).catch(() => false)
       : false;
     const shown = norm(await composerText(target).catch(() => ""));
-    if (same && (!expected || shown.includes(expected))) return target;
+    // The prompt must be the composer's content, not appended to leftover text.
+    if (same && (!expected || shown.startsWith(expected))) return target;
     const visible = await target.isVisible().catch(() => false);
     lastDetail = same
       ? `${kind} <${tag}> visible=${visible}, shows ${shown.length} chars`

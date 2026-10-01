@@ -20,6 +20,14 @@ describe("fillComposer (§A3.1)", () => {
     await page.close();
   });
 
+  it("replaces an unsent draft left in the contenteditable instead of appending to it", async () => {
+    const page = await fixturePage(browser, "idle.html");
+    await page.getByTestId("fw-composer").evaluate((el) => { el.textContent = "Reply with exactly: leftover draft"; });
+    await fillComposer(page, makeResolver(page), "the real prompt");
+    expect(await page.getByTestId("fw-composer").innerText()).toBe("the real prompt");
+    await page.close();
+  });
+
   it("fills the textarea composer variant", async () => {
     const page = await fixturePage(browser, "idle.html");
     await fillComposer(page, makeResolver(page), "textarea prompt text", {
