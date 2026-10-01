@@ -403,6 +403,10 @@ async fn spend_threshold_raises_attention_once() {
 #[tokio::test(flavor = "multi_thread")]
 async fn model_template_compiles_and_runs_on_the_executor_with_scripted_cognition() {
     use crate::agency_api::template_exec;
+    // Agency e2e tests share process env (cognition mode, runs dir); this one
+    // sets and later removes ALLTERNIT_AGENCY_COGNITION, so it must hold the
+    // same lock or a parallel scripted run flips to live mid-graph.
+    let _env = crate::agency_api::tests::E2E_ENV.lock().await;
     let t = setup().await;
     let u = user("u2", None);
     std::env::set_var("ALLTERNIT_AGENCY_COGNITION", "scripted");

@@ -31,7 +31,7 @@ pub mod effect_template;
 // ── end WP-C3a ──
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use crate::auth::AuthUser;
 use crate::AppState;
