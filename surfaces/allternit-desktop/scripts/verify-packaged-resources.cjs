@@ -145,6 +145,29 @@ for (const item of required) {
   );
 }
 
+// A staged file only ships if an extraResources filter lets it through:
+// resources/laya once filtered "*.sh" only, so serve-embed.py was staged,
+// passed the check above, and was silently left out of the app.
+{
+  const pkg = JSON.parse(fs.readFileSync(path.join(desktopDir, 'package.json'), 'utf8'));
+  const entries = (pkg.build && pkg.build.extraResources) || [];
+  const globToRegex = (glob) =>
+    new RegExp('^' + glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*\//g, '(?:.*/)?').replace(/\*/g, '[^/]*') + '$');
+  for (const item of required) {
+    const rel = path.relative(resourcesDir, item.path).split(path.sep).join('/');
+    if (rel.startsWith('..') || !fs.existsSync(item.path)) continue;
+    const entry = entries.find((e) => typeof e === 'object' && rel.startsWith(String(e.from).replace(/^resources\//, '')));
+    if (!entry || !Array.isArray(entry.filter)) continue;
+    const inside = rel.slice(String(entry.from).replace(/^resources\//, '').length);
+    if (!entry.filter.some((f) => globToRegex(f).test(inside))) {
+      failed = true;
+      process.stderr.write(
+        `[verify-packaged-resources] ✗ ${item.label} is staged but excluded from the app\n` +
+        `    package.json build.extraResources "${entry.from}" filter ${JSON.stringify(entry.filter)} does not match "${inside}"\n`
+      );
+    }
+  }
+}
 
 if (process.platform === 'darwin') {
   const hostArch = process.arch === 'arm64' ? 'arm64' : 'x64';

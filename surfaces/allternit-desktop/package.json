@@ -124,7 +124,8 @@
         "from": "resources/laya/",
         "to": "laya/",
         "filter": [
-          "*.sh"
+          "*.sh",
+          "*.py"
         ]
       },
       {
