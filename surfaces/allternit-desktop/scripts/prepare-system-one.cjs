@@ -2,7 +2,7 @@
  * Stage System One (S1) for packaging (Q28, Q29):
  *   - `bun build --compile tools/system-one-local/src/cli.ts` → resources/bin/system-one
  *     (ships through the existing resources/bin/ → bin/ extraResource);
- *   - tools/system-one-local/laya/*.sh → resources/laya/ (extraResource laya/).
+ *   - tools/system-one-local/laya/*.{sh,py} → resources/laya/ (extraResource laya/).
  *
  * uv and Laya itself are NOT bundled: SystemOneManager installs Laya into
  * ~/Library/Application Support/Allternit/laya on first run.
@@ -63,7 +63,8 @@ function stageLaya() {
   fs.rmSync(layaDest, { recursive: true, force: true });
   fs.mkdirSync(layaDest, { recursive: true });
   for (const name of fs.readdirSync(layaSrc)) {
-    if (!name.endsWith('.sh')) continue;
+    // serve-embed.sh runs serve-embed.py beside it.
+    if (!name.endsWith('.sh') && !name.endsWith('.py')) continue;
     fs.copyFileSync(path.join(layaSrc, name), path.join(layaDest, name));
     fs.chmodSync(path.join(layaDest, name), 0o755);
     log(`staged laya/${name}`);

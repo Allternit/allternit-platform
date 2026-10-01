@@ -97,6 +97,7 @@ export interface SystemOneStatus {
   apiBackend?: S1Backend;
   shadowDir: string | null;
   shadowState: boolean;
+  embed: { running: boolean; url: string };
   error?: string;
 }
 

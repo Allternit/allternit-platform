@@ -146,6 +146,7 @@ export interface SystemOneStatus {
   apiBackend?: 'laya_bundled' | 'system_one_local' | 'auto';
   shadowDir: string | null;
   shadowState: boolean;
+  embed: { running: boolean; url: string };
   error?: string;
 }
 
