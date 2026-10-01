@@ -83,6 +83,9 @@ export namespace Agent {
       prompt: z.string().optional(),
       options: z.record(z.string(), z.any()),
       steps: z.number().int().positive().optional(),
+      // O12: per-turn overrides of the versioned defaults (guardrail-defaults.ts), clamped to the ceiling.
+      maxToolCalls: z.number().int().positive().optional(),
+      turnTimeoutMs: z.number().int().positive().optional(),
       summaryPolicy: z
         .object({
           minChars: z.number().int().nonnegative(),
@@ -332,6 +335,8 @@ export namespace Agent {
       item.hidden = value.hidden ?? item.hidden
       item.name = value.name ?? item.name
       item.steps = value.steps ?? item.steps
+      item.maxToolCalls = value.max_tool_calls ?? item.maxToolCalls
+      item.turnTimeoutMs = value.turn_timeout_ms ?? item.turnTimeoutMs
       item.summaryPolicy = value.summary_policy
         ? {
             minChars: value.summary_policy.min_chars,

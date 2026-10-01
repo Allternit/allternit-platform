@@ -29,6 +29,8 @@ import { ContextAccounting } from "@/runtime/session/context-accounting"
 import { RuntimeTelemetry } from "@/runtime/telemetry"
 import { Bus } from "@/shared/bus"
 import { SessionContext } from "./context-event"
+import { PromptSegments } from "./prompt-segments"
+import type { OutputCallType } from "./guardrail-defaults"
 
 export namespace LLM {
   const log = Log.create({ service: "llm" })
@@ -48,6 +50,14 @@ export namespace LLM {
     toolChoice?: "auto" | "required" | "none"
     mode?: 'plan' | 'build'  // Execution mode for system prompt
     plan?: Provider.AuthPlan
+    /** O5: picks the output cap row; omitted = "answer" (the previous default). */
+    callType?: OutputCallType
+    /**
+     * O8 variable tail: step-to-step content (goal progress, validation and
+     * wrap-up reminders). Rendered after history, never in `system`, so the
+     * cached prefix stays stable. See prompt-segments.ts.
+     */
+    tail?: string[]
   }
 
   export type StreamOutput = StreamTextResult<ToolSet, any>
@@ -201,9 +211,10 @@ export namespace LLM {
     )
 
     const maxOutputTokens =
-      isCodex ? undefined : ProviderTransform.maxOutputTokens(input.model)
+      isCodex ? undefined : ProviderTransform.maxOutputTokens(input.model, input.callType)
 
-    const tools = await resolveTools(input)
+    // O8: deterministic tool order so the [tools] prefix segment is stable.
+    const tools = PromptSegments.orderTools(await resolveTools(input))
 
     // LiteLLM and some Anthropic proxies require the tools parameter to be present
     // when message history contains tool calls, even if no tools are being used.
@@ -225,9 +236,11 @@ export namespace LLM {
       })
     }
 
-    const projected = Flag.GIZZI_DISABLE_CONTEXT_PROJECTION
+    const projection = Flag.GIZZI_DISABLE_CONTEXT_PROJECTION
       ? { messages: input.messages, anomalies: [] }
       : ContextProjector.project(input.messages)
+    // O8 stable prefix: [system][tools][pinned] precede history; the variable tail goes last.
+    const projected = { ...projection, messages: PromptSegments.withTail(projection.messages, input.tail) }
     if (projected.anomalies.length) {
       const counts = (kind: string) => projected.anomalies.filter((item) => item.kind === kind).length
       RuntimeTelemetry.track("context_projection_repaired", {

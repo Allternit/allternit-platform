@@ -43,6 +43,45 @@ export namespace SessionUsage {
       }
     }
     cost: number
+    /** O5/O8: the call type this usage came from ("answer" when unspecified). Absent on pre-O8 rows. */
+    callType?: string
+  }
+
+  /**
+   * O8 cache-hit counter. `prompt` is every input token the provider saw
+   * (uncached input + cache reads + cache writes; gizzi's `tokens.input`
+   * already excludes cached tokens), `read` is the cached share, and
+   * `hitRate = read / prompt` (0 when nothing was sent).
+   */
+  export interface CacheStats {
+    read: number
+    write: number
+    prompt: number
+    hitRate: number
+  }
+
+  export function emptyCacheStats(): CacheStats {
+    return { read: 0, write: 0, prompt: 0, hitRate: 0 }
+  }
+
+  export function addCacheStats(stats: CacheStats, tokens: UsageEntry["tokens"]): CacheStats {
+    stats.read += tokens.cache.read
+    stats.write += tokens.cache.write
+    stats.prompt += tokens.input + tokens.cache.read + tokens.cache.write
+    stats.hitRate = stats.prompt > 0 ? stats.read / stats.prompt : 0
+    return stats
+  }
+
+  /** Cache hit rate over a set of usage entries, overall and per call type. */
+  export function cacheHitRate(entries: Pick<UsageEntry, "tokens" | "callType">[]) {
+    const total = emptyCacheStats()
+    const byCallType: Record<string, CacheStats> = {}
+    for (const entry of entries) {
+      addCacheStats(total, entry.tokens)
+      const key = entry.callType ?? "answer"
+      addCacheStats((byCallType[key] ??= emptyCacheStats()), entry.tokens)
+    }
+    return { total, byCallType }
   }
 
   export interface DailyUsage {
@@ -80,6 +119,8 @@ export namespace SessionUsage {
       messages: number
       sessions: number
     }
+    /** O8: prompt-cache hit rate over the filtered entries, overall and per call type. */
+    cache: ReturnType<typeof cacheHitRate>
   }
 
   // In-memory cache
@@ -118,6 +159,7 @@ export namespace SessionUsage {
         }),
       }),
       cost: z.number(),
+      callType: z.string().optional(),
     }),
     async (input) => {
       const entries = await load()
@@ -129,6 +171,7 @@ export namespace SessionUsage {
         modelID: input.modelID,
         tokens: input.tokens,
         cost: input.cost,
+        ...(input.callType ? { callType: input.callType } : {}),
       }
       entries.push(entry)
       
@@ -272,6 +315,7 @@ export namespace SessionUsage {
       daily,
       sessions,
       grandTotal,
+      cache: cacheHitRate(filtered),
     }
   }
 

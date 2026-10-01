@@ -48,6 +48,7 @@ import { SessionSummary } from "@/runtime/session/summary"
 import { NamedError } from "@allternit/gizzi-util/error.js"
 import { fn } from "@/shared/util/fn"
 import { SessionProcessor } from "@/runtime/session/processor"
+import { Guardrails } from "@/runtime/session/guardrails"
 import { TaskTool } from "@/runtime/tools/builtins/task"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
@@ -567,6 +568,21 @@ const message = await createUserMessage(input)
     let structuredOutput: unknown | undefined
 
     let step = 0
+    // O12: one guard per turn. A durable-goal continuation is its own slice:
+    // it resets the guard and the step base (goals carry their own budgets).
+    let guard: Guardrails.TurnGuard | undefined
+    let turnStepBase = 0
+    let wallClockTimer: ReturnType<typeof setTimeout> | undefined
+    using _wallClock = defer(() => clearTimeout(wallClockTimer))
+    const armWallClock = (g: Guardrails.TurnGuard) => {
+      clearTimeout(wallClockTimer)
+      wallClockTimer = setTimeout(() => {
+        const trip = g.checkWallClock()
+        if (!trip) return
+        SessionProcessor.reportTrip(sessionID, undefined, trip)
+        state()[sessionID]?.abort.abort()
+      }, g.remainingWallClockMs())
+    }
     const session = await Session.get(sessionID)
     // Usage-limit wrap-up: set once a step crosses land_at mid-turn.
     let wrapUp:
@@ -900,8 +916,21 @@ const message = await createUserMessage(input)
       if (!agent) {
         throw new Error(`Agent not found: ${lastUser.agent}`)
       }
-      const maxSteps = agent.steps ?? Infinity
-      const isLastStep = step >= maxSteps
+      if (!guard) {
+        guard = new Guardrails.TurnGuard(Guardrails.limits(agent))
+        armWallClock(guard)
+      }
+      const stepsThisTurn = step - turnStepBase
+      // Never Infinity: versioned default per agent kind, agent config within the ceiling.
+      const maxSteps = guard.limits.steps
+      const isLastStep = stepsThisTurn >= maxSteps
+      const overLimit = guard.checkSteps(stepsThisTurn) ?? guard.checkWallClock()
+      if (overLimit) {
+        SessionProcessor.reportTrip(sessionID, lastAssistant?.id, overLimit)
+        const goal = GoalEngine.getCurrentGoal(sessionID)
+        if (goal?.state === "in_progress") GoalEngine.pauseGoal(goal.id, overLimit.reason)
+        break
+      }
       msgs = await insertReminders({
         messages: msgs,
         agent,
@@ -938,6 +967,7 @@ const message = await createUserMessage(input)
         model,
         abort,
         fallbackModels: input.fallbackModels,
+        guard,
       })
       using _ = defer(() => InstructionPrompt.clear(processor.message.id))
 
@@ -1029,11 +1059,15 @@ const message = await createUserMessage(input)
       if (format.type === "json_schema") {
         system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
       }
+      // O8 variable tail: these change step to step, so they ride after
+      // history (PromptSegments.withTail) instead of busting the cached
+      // system prefix. `system` above is the stable [system][pinned] part.
+      const tail: string[] = []
       const goalReminder = GoalEngine.reminder(sessionID)
-      if (goalReminder) system.push(goalReminder)
+      if (goalReminder) tail.push(goalReminder)
       const validationReminder = ToolValidationRetry.reminder(sessionID)
-      if (validationReminder) system.push(validationReminder)
-      if (wrapUp) system.push(wrapUpReminder(wrapUp.window))
+      if (validationReminder) tail.push(validationReminder)
+      if (wrapUp) tail.push(wrapUpReminder(wrapUp.window))
       // WP9: Context Compiler, shadow mode behind GIZZI_KERNEL_COMPILERS (off by
       // default). Records a ContextProjectionV1; never changes `system`.
       if (KernelTurn.enabled())
@@ -1069,6 +1103,7 @@ const message = await createUserMessage(input)
         abort,
         sessionID,
         system,
+        tail,
         messages: [
           ...MessageV2.toModelMessages(msgs, model),
           ...(isLastStep
@@ -1094,6 +1129,14 @@ const message = await createUserMessage(input)
         processor.message.structured = structuredOutput
         processor.message.finish = processor.message.finish ?? "stop"
         await Session.updateMessage(processor.message)
+        break
+      }
+
+      // O12: a guardrail trip (tool-call cap, stuck detector) ends the turn,
+      // even when a durable goal would otherwise continue.
+      if (guard.trip) {
+        const goal = GoalEngine.getCurrentGoal(sessionID)
+        if (goal?.state === "in_progress") GoalEngine.pauseGoal(goal.id, guard.trip.reason)
         break
       }
 
@@ -1206,6 +1249,10 @@ const message = await createUserMessage(input)
             text: "Continue the active durable goal. Choose the next bounded useful slice, preserve evidence, and use update_goal only for progress accounting or an audited terminal outcome.",
             synthetic: true,
           } satisfies MessageV2.TextPart)
+          // New goal slice: fresh guardrail counters and wall clock.
+          guard.reset()
+          turnStepBase = step
+          armWallClock(guard)
           continue
         }
 
@@ -2733,6 +2780,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       abort: new AbortController().signal,
       sessionID: input.session.id,
       retries: 2,
+      callType: "title",
       messages: [
         {
           role: "user",

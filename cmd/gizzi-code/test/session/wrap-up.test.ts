@@ -18,7 +18,7 @@ Log.init({ print: false })
 
 type Step = { finish: "tool-calls" | "stop"; before?: () => void }
 let script: Step[] = []
-const calls: { system: string[] }[] = []
+const calls: { system: string[]; tail: string[] }[] = []
 
 mock.module("../../src/runtime/session/llm", () => ({
   LLM: {
@@ -27,7 +27,7 @@ mock.module("../../src/runtime/session/llm", () => ({
       if (input.agent?.name !== "build") {
         return { fullStream: (async function* () {})(), text: Promise.resolve("") }
       }
-      calls.push({ system: input.system })
+      calls.push({ system: input.system, tail: input.tail ?? [] })
       const step = script.shift() ?? { finish: "stop" }
       step.before?.()
       return {
@@ -114,7 +114,9 @@ async function send(sessionID: string) {
   })
 }
 
-const wrapUpIn = (c: { system: string[] }) => c.system.some((s) => s.includes("Usage limit reached"))
+// O8: the wrap-up notice is step-variable, so it rides in the variable tail, not the cached system prefix.
+const wrapUpIn = (c: { system: string[]; tail: string[] }) =>
+  c.tail.some((s) => s.includes("Usage limit reached")) && !c.system.some((s) => s.includes("Usage limit reached"))
 
 beforeEach(() => {
   script = []
