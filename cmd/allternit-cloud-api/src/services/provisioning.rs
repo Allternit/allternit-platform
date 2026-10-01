@@ -75,6 +75,13 @@ pub use free::{
     ProvisionedWakeOutcome, WakeReason, WakeResult,
 };
 
+/// CPU sharing on top of `limits.cpu` (free computers only; paid = default).
+#[derive(Debug, Clone, Default)]
+struct CpuShare {
+    allowance: Option<String>,
+    priority: Option<u8>,
+}
+
 /// Capacity a computer of `tier` and `size` holds on its host (see
 /// [`InstanceRow::allocation`]).
 fn allocation_for(tier: &str, size: ComputerSize) -> ComputerSize {
@@ -257,6 +264,9 @@ pub struct ProvisionSpec {
     /// `limits.cpu.allowance` (e.g. "50ms/100ms" = half a core, hard
     /// quota). `None` leaves the whole `cpu_cores` usable (paid computers).
     pub cpu_allowance: Option<String>,
+    /// `limits.cpu.priority` (0–10, Incus default 10). Free computers run
+    /// lower so paid ones win the CPU under contention. `None` = default.
+    pub cpu_priority: Option<u8>,
     pub memory_mb: i64,
     pub disk_gb: i64,
     pub profiles: Vec<String>,
@@ -610,6 +620,9 @@ impl ProvisionBackend for IncusHttpBackend {
         }
         if let Some(allowance) = &spec.cpu_allowance {
             config["limits.cpu.allowance"] = allowance.as_str().into();
+        }
+        if let Some(priority) = spec.cpu_priority {
+            config["limits.cpu.priority"] = priority.to_string().into();
         }
         let body = serde_json::json!({
             "name": spec.name,
@@ -1715,10 +1728,13 @@ impl ProvisioningService {
             None if free => self.free.image.clone(),
             None => self.defaults.image.clone(),
         };
-        let cpu_allowance = if free {
-            self.free.cpu_allowance.clone()
+        let cpu = if free {
+            CpuShare {
+                allowance: self.free.cpu_allowance.clone(),
+                priority: self.free.cpu_priority,
+            }
         } else {
-            None
+            CpuShare::default()
         };
         let bootstrap = BootstrapContract {
             api: self.defaults.api_base.clone(),
@@ -1734,7 +1750,7 @@ impl ProvisioningService {
                 &incus_name,
                 &image,
                 size,
-                cpu_allowance.as_deref(),
+                cpu,
                 &bootstrap,
             )
             .await;
@@ -1877,7 +1893,7 @@ impl ProvisioningService {
         incus_name: &str,
         image: &str,
         size: ComputerSize,
-        cpu_allowance: Option<&str>,
+        cpu: CpuShare,
         bootstrap: &BootstrapContract,
     ) -> Result<(), ApiError> {
         let row: Option<(String, Option<String>)> = sqlx::query_as(
@@ -1926,7 +1942,8 @@ impl ProvisioningService {
             name: incus_name.to_string(),
             image: format!("local:{image}"),
             cpu_cores: size.cpu_cores,
-            cpu_allowance: cpu_allowance.map(str::to_string),
+            cpu_allowance: cpu.allowance,
+            cpu_priority: cpu.priority,
             memory_mb: size.memory_mb,
             disk_gb: size.disk_gb,
             profiles: self.defaults.profiles.clone(),
@@ -2857,12 +2874,36 @@ mod tests {
             image: "local:allternit-desktop".to_string(),
             cpu_cores: 2,
             cpu_allowance: None,
+            cpu_priority: None,
             memory_mb: 2048,
             disk_gb: 20,
             profiles: vec!["default".to_string()],
             storage_pool: "default".to_string(),
             user_data: "#cloud-config\nruncmd: [init]\n".to_string(),
         }
+    }
+
+    #[tokio::test]
+    async fn incus_create_sends_free_cpu_priority_and_allowance() {
+        let mock = Arc::new(MockTransport::default());
+        mock.responses
+            .lock()
+            .unwrap()
+            .push_back(create_operation_response("allternit-free-x"));
+        let backend = IncusHttpBackend::with_transport(Box::new(SharedTransport(mock.clone())));
+        let free_spec = ProvisionSpec {
+            cpu_priority: Some(2),
+            cpu_allowance: Some("50%".to_string()),
+            ..spec("allternit-free-x")
+        };
+
+        backend.create(&free_spec).await.unwrap();
+
+        let requests = mock.requests.lock().unwrap();
+        let body = requests[0].2.as_ref().unwrap();
+        assert_eq!(body["config"]["limits.cpu"], "2");
+        assert_eq!(body["config"]["limits.cpu.priority"], "2");
+        assert_eq!(body["config"]["limits.cpu.allowance"], "50%");
     }
 
     #[tokio::test]
@@ -2888,6 +2929,9 @@ mod tests {
         assert_eq!(body["config"]["security.privileged"], "false");
         assert_eq!(body["config"]["limits.cpu"], "2");
         assert_eq!(body["config"]["limits.memory"], "2048MiB");
+        // Paid computers keep the Incus CPU defaults.
+        assert!(body["config"].get("limits.cpu.priority").is_none());
+        assert!(body["config"].get("limits.cpu.allowance").is_none());
         assert_eq!(body["config"]["user.user-data"], "#cloud-config\nruncmd: [init]\n");
         assert_eq!(body["config"]["cloud-init.user-data"], "#cloud-config\nruncmd: [init]\n");
         assert_eq!(body["devices"]["root"]["pool"], "default");
@@ -4054,8 +4098,9 @@ pub(crate) mod pg_tests {
         FreeDefaults {
             enabled: true,
             image: "allternit-cloud-computer".to_string(),
-            cpu_cores: 1,
+            cpu_cores: 2,
             cpu_allowance: None,
+            cpu_priority: Some(2),
             memory_mb: 2048,
             disk_gb: 10,
             idle: Duration::minutes(15),
@@ -4100,7 +4145,9 @@ pub(crate) mod pg_tests {
         assert_eq!(created.len(), 1, "the backend is asked to create exactly once");
         // Decision 17: the same full image as paid, at the free size.
         assert_eq!(created[0].image, "local:allternit-cloud-computer");
-        assert_eq!((created[0].cpu_cores, created[0].memory_mb, created[0].disk_gb), (1, 2048, 10));
+        assert_eq!((created[0].cpu_cores, created[0].memory_mb, created[0].disk_gb), (2, 2048, 10));
+        // Low CPU priority so paid computers win under contention.
+        assert_eq!(created[0].cpu_priority, Some(2));
         drop(created);
 
         // A free computer reserves only its disk on the host.

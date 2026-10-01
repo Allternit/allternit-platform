@@ -46,6 +46,7 @@ use super::*;
 const ENV_FREE_IMAGE: &str = "ALLTERNIT_FREE_IMAGE";
 const ENV_FREE_CPU: &str = "ALLTERNIT_FREE_CPU";
 const ENV_FREE_CPU_ALLOWANCE: &str = "ALLTERNIT_FREE_CPU_ALLOWANCE";
+const ENV_FREE_CPU_PRIORITY: &str = "ALLTERNIT_FREE_CPU_PRIORITY";
 const ENV_FREE_MEMORY_MB: &str = "ALLTERNIT_FREE_MEMORY_MB";
 const ENV_FREE_DISK_GB: &str = "ALLTERNIT_FREE_DISK_GB";
 const ENV_FREE_IDLE_MINUTES: &str = "ALLTERNIT_FREE_IDLE_MINUTES";
@@ -60,7 +61,11 @@ const ENV_FREE_ENABLED: &str = "ALLTERNIT_FREE_COMPUTERS";
 // Decision 17: the same full image as paid (Desktop app + Chrome + CLI
 // tools), with smaller limits that fit Chrome started on demand.
 const DEFAULT_FREE_IMAGE: &str = "allternit-cloud-computer";
-const DEFAULT_FREE_CPU: i64 = 1;
+/// Eoj 2026-10-01: 2 vCPU (a wake reaches /health in ~20s; 1 vCPU took
+/// ~40s) at low CPU priority, so paid computers win under contention.
+const DEFAULT_FREE_CPU: i64 = 2;
+/// Incus `limits.cpu.priority` (0–10; Incus default 10, which paid keeps).
+const DEFAULT_FREE_CPU_PRIORITY: u8 = 2;
 /// Optional Incus `limits.cpu.allowance` on top of `limits.cpu` (e.g.
 /// "50ms/100ms" = half a core, hard quota). Empty = the whole vCPU.
 const DEFAULT_FREE_CPU_ALLOWANCE: &str = "";
@@ -86,6 +91,8 @@ pub struct FreeDefaults {
     pub image: String,
     pub cpu_cores: i64,
     pub cpu_allowance: Option<String>,
+    /// `limits.cpu.priority`; `ALLTERNIT_FREE_CPU_PRIORITY` (empty = Incus default).
+    pub cpu_priority: Option<u8>,
     pub memory_mb: i64,
     pub disk_gb: i64,
     pub idle: Duration,
@@ -103,6 +110,17 @@ impl FreeDefaults {
             cpu_cores: env_i64(ENV_FREE_CPU, DEFAULT_FREE_CPU).max(1),
             cpu_allowance: Some(env_string(ENV_FREE_CPU_ALLOWANCE, DEFAULT_FREE_CPU_ALLOWANCE))
                 .filter(|value| !value.trim().is_empty()),
+            cpu_priority: match std::env::var(ENV_FREE_CPU_PRIORITY) {
+                Err(_) => Some(DEFAULT_FREE_CPU_PRIORITY),
+                Ok(value) if value.trim().is_empty() => None,
+                Ok(value) => Some(
+                    value
+                        .trim()
+                        .parse::<u8>()
+                        .map(|priority| priority.min(10))
+                        .unwrap_or(DEFAULT_FREE_CPU_PRIORITY),
+                ),
+            },
             memory_mb: env_i64(ENV_FREE_MEMORY_MB, DEFAULT_FREE_MEMORY_MB),
             disk_gb: env_i64(ENV_FREE_DISK_GB, DEFAULT_FREE_DISK_GB),
             idle: Duration::minutes(env_i64(ENV_FREE_IDLE_MINUTES, DEFAULT_FREE_IDLE_MINUTES).max(1)),
