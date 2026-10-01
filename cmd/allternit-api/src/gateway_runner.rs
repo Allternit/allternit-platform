@@ -938,6 +938,25 @@ pub async fn intercept_turn(session_id: &str, text: &str, opts: TurnOpts) -> Opt
     }
 }
 
+/// Stop on a vendor-bound session: cancel the turn running in the vendor's active remote context.
+/// `None` = not a vendor session (the caller's native abort applies); `Some(confirmed)` otherwise.
+pub(crate) async fn cancel_vendor_turn(db: &DbHandle, tx: &dyn AaiTransport, session_id: &str) -> Result<Option<bool>, RunErr> {
+    let Some(cx) = resolve(db, session_id)? else { return Ok(None) };
+    let Some(remote) = remote_for(db, &cx.thread_id, cx.generation)? else { return Ok(Some(false)) };
+    let ctx_id = s(&remote, "externalContextId");
+    if ctx_id.is_empty() {
+        return Ok(Some(false));
+    }
+    let v = vcall(db, tx, &cx.owner, "agent.context.cancel", &cx.exec, json!({ "contextId": ctx_id })).await;
+    Ok(Some(v.ok().and_then(|v| v["confirmed"].as_bool()).unwrap_or(false)))
+}
+
+/// `POST /agent-sessions/:id/abort` hook: `Some(confirmed)` when the session is vendor-bound.
+pub async fn intercept_abort(session_id: &str) -> Option<bool> {
+    let rt = RUNTIME.get()?;
+    cancel_vendor_turn(&rt.db, rt.tx.as_ref(), session_id).await.ok().flatten()
+}
+
 /// `POST /agent-sessions/:id/messages` hook: the transcript-shaped reply, or the error response.
 pub async fn intercept_message(session_id: &str, text: &str, metadata: Option<&Value>) -> Option<Response> {
     let rt = RUNTIME.get()?;
@@ -1200,6 +1219,21 @@ mod tests {
         assert!(turn(&st, &f, "s-th-native", "hi", TurnOpts::default()).await.unwrap().is_none());
         assert!(turn(&st, &f, "unknown-session", "hi", TurnOpts::default()).await.unwrap().is_none());
         assert!(f.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn stop_on_a_vendor_session_cancels_the_remote_turn() {
+        let st = setup("stop").await;
+        let f = Fake::default();
+        f.push(done("e1", "hello"));
+        turn(&st, &f, "s-th-vendor", "hi", key("k1")).await.unwrap().unwrap();
+        let r = cancel_vendor_turn(&st.db, &f, "s-th-vendor").await.unwrap();
+        assert_eq!(r, Some(false), "fake returns no confirmed flag");
+        let calls = f.calls.lock().unwrap().clone();
+        let cancel = calls.iter().find(|(op, _)| op == "agent.context.cancel").expect("cancel sent to the vendor");
+        assert_eq!(cancel.1["contextId"], "ctx-1");
+        // A session with no vendor binding is not ours: the native abort applies.
+        assert_eq!(cancel_vendor_turn(&st.db, &f, "s-not-a-thread").await.unwrap(), None);
     }
 
     #[tokio::test]
