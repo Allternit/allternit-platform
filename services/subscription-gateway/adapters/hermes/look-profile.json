@@ -1,0 +1,30 @@
+{
+  "vendorId": "hermes",
+  "avatarTreatment": "vendor_icon_rounded_square",
+  "accentTokens": {
+    "accent": "#e5484d",
+    "accentForeground": "#ffffff",
+    "surface": "#ffffff",
+    "surfaceMuted": "#f4f4f5",
+    "border": "#e4e4e7",
+    "orb": "#e5484d"
+  },
+  "iconAssets": { "app": "TODO:hermes-app-icon" },
+  "threadHeader": "agent_name_with_status",
+  "activityView": "inline_thinking_and_tool_blocks",
+  "statusVocabulary": {
+    "idle": "Ready",
+    "running": "Working",
+    "thinking": "Thinking",
+    "rate_limited": "Rate limit reached",
+    "signed_out": "Gateway token needed",
+    "unreachable": "Start Hermes"
+  },
+  "approvalCard": "none",
+  "taskCard": "none",
+  "composer": "rounded_prompt_with_send_stop",
+  "contentRenderers": ["markdown", "code"],
+  "viaBadge": "via Allternit",
+  "verifiedBadge": "Hermes",
+  "laneBadge": "Local"
+}
