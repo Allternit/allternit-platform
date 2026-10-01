@@ -29,18 +29,19 @@
     "prepare:lume": "node scripts/prepare-lume.cjs",
     "prepare:mux": "node scripts/prepare-mux.cjs",
     "config:company": "cd ../.. && pnpm run config:company:write",
-    "build:electron": "npm run config:company && npm run prepare:platform-static && npm run prepare:office-addins && npm run prepare:cua-driver && npm run prepare:acu-gateway && npm run download:lima && npm run prepare:lume && npm run prepare:mux && npm run prepare:mesh-node && npm run prepare:office-engine && npm run prepare:api-binary && npm run prepare:connector-catalog && npm run prepare:connector-sidecar && npm run build && npm run verify:packaged-resources && node scripts/build-local.cjs --mac",
-    "build:electron:dmg": "npm run config:company && npm run prepare:platform-static && npm run prepare:office-addins && npm run prepare:cua-driver && npm run prepare:acu-gateway && npm run download:lima && npm run prepare:lume && npm run prepare:mux && npm run prepare:mesh-node && npm run prepare:office-engine && npm run prepare:api-binary && npm run prepare:connector-catalog && npm run prepare:connector-sidecar && npm run build && npm run verify:packaged-resources && node scripts/build-local.cjs --mac dmg",
+    "build:electron": "npm run config:company && npm run prepare:platform-static && npm run prepare:office-addins && npm run prepare:cua-driver && npm run prepare:acu-gateway && npm run download:lima && npm run prepare:lume && npm run prepare:mux && npm run prepare:mesh-node && npm run prepare:office-engine && npm run prepare:api-binary && npm run prepare:connector-catalog && npm run prepare:connector-sidecar && npm run prepare:system-one && npm run build && npm run verify:packaged-resources && node scripts/build-local.cjs --mac",
+    "build:electron:dmg": "npm run config:company && npm run prepare:platform-static && npm run prepare:office-addins && npm run prepare:cua-driver && npm run prepare:acu-gateway && npm run download:lima && npm run prepare:lume && npm run prepare:mux && npm run prepare:mesh-node && npm run prepare:office-engine && npm run prepare:api-binary && npm run prepare:connector-catalog && npm run prepare:connector-sidecar && npm run prepare:system-one && npm run build && npm run verify:packaged-resources && node scripts/build-local.cjs --mac dmg",
     "start": "electron .",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p src/main/tsconfig.json && tsc --noEmit -p src/preload/tsconfig.json",
     "test:e2e": "pnpm run build && playwright test",
-    "pack": "npm run prepare:platform-static && npm run prepare:office-addins && npm run prepare:cua-driver && npm run prepare:acu-gateway && npm run download:lima && npm run prepare:lume && npm run prepare:mux && npm run prepare:mesh-node && npm run prepare:office-engine && npm run prepare:api-binary && npm run prepare:connector-catalog && npm run prepare:connector-sidecar && npm run verify:packaged-resources && node scripts/build-local.cjs --dir",
-    "dist": "npm run prepare:platform-static && npm run prepare:office-addins && npm run prepare:cua-driver && npm run prepare:acu-gateway && npm run download:lima && npm run prepare:lume && npm run prepare:mux && npm run prepare:mesh-node && npm run prepare:office-engine && npm run prepare:api-binary && npm run prepare:connector-catalog && npm run prepare:connector-sidecar && npm run build && npm run verify:packaged-resources && node scripts/build-local.cjs",
+    "pack": "npm run prepare:platform-static && npm run prepare:office-addins && npm run prepare:cua-driver && npm run prepare:acu-gateway && npm run download:lima && npm run prepare:lume && npm run prepare:mux && npm run prepare:mesh-node && npm run prepare:office-engine && npm run prepare:api-binary && npm run prepare:connector-catalog && npm run prepare:connector-sidecar && npm run prepare:system-one && npm run verify:packaged-resources && node scripts/build-local.cjs --dir",
+    "dist": "npm run prepare:platform-static && npm run prepare:office-addins && npm run prepare:cua-driver && npm run prepare:acu-gateway && npm run download:lima && npm run prepare:lume && npm run prepare:mux && npm run prepare:mesh-node && npm run prepare:office-engine && npm run prepare:api-binary && npm run prepare:connector-catalog && npm run prepare:connector-sidecar && npm run prepare:system-one && npm run build && npm run verify:packaged-resources && node scripts/build-local.cjs",
     "verify:packaged-resources": "node scripts/verify-packaged-resources.cjs",
     "stage:api-binary": "node scripts/stage-api-binary.cjs",
     "stage:local-engine": "node scripts/stage-local-engine-binary.cjs",
-    "prepare:connector-sidecar": "node scripts/prepare-connector-sidecar.cjs"
+    "prepare:connector-sidecar": "node scripts/prepare-connector-sidecar.cjs",
+    "prepare:system-one": "node scripts/prepare-system-one.cjs"
   },
   "dependencies": {
     "@clerk/clerk-react": "^5.30.0",
@@ -114,6 +115,13 @@
         "to": "bin/",
         "filter": [
           "**/*"
+        ]
+      },
+      {
+        "from": "resources/laya/",
+        "to": "laya/",
+        "filter": [
+          "*.sh"
         ]
       },
       {

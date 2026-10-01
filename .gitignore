@@ -96,6 +96,7 @@ services/docmost
 
 # Built desktop shell assets and temp analysis output
 surfaces/allternit-desktop/resources/platform/
+surfaces/allternit-desktop/resources/laya/
 surfaces/allternit-desktop/resources/bin/*
 !surfaces/allternit-desktop/resources/bin/*.cjs
 
