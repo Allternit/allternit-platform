@@ -113,18 +113,17 @@ afterEach(() => {
 });
 
 describe('allternit-api environment', () => {
-  it('points the API at local S1 and defaults to system_one_local until Laya is healthy', async () => {
+  it('points the API at local S1 and leaves the backend on auto (no restart when Laya turns healthy)', async () => {
     const h = harness();
     expect(h.manager.getApiEnvironment()).toEqual({
       ALLTERNIT_S1_URL: 'http://127.0.0.1:7717',
-      ALLTERNIT_S1_BACKEND: 'system_one_local',
       SYSTEM_ONE_LAYA_URL: 'http://127.0.0.1:7718',
       ALLTERNIT_S1_SHADOW_DIR: path.join(h.home, '.allternit', 'system-one', 'shadow'),
     });
     h.healthy.laya = true;
     await h.manager.checkLayaHealth();
-    expect(h.manager.getApiEnvironment().ALLTERNIT_S1_BACKEND).toBe('laya_bundled');
-    expect((await h.manager.getStatus()).apiBackend).toBe('laya_bundled');
+    expect(h.manager.getApiEnvironment()).not.toHaveProperty('ALLTERNIT_S1_BACKEND');
+    expect((await h.manager.getStatus()).apiBackend).toBe('auto');
   });
 
   it('lets explicit env exports win and honours the shadow-ledger opt-out (Q28)', () => {
@@ -227,7 +226,7 @@ describe('lifecycle', () => {
     const layaCall = h.spawnSidecar.mock.calls.find(([, args]) => String(args[0]).endsWith('serve-laya.sh'));
     expect(layaCall?.[0]).toBe('bash');
     expect(layaCall?.[2].env).toMatchObject({ LAYA_HOME: h.root, LAYA_PORT: '7718', LAYA_REVISION: LAYA_PINNED_REVISION, UV: h.uv });
-    expect(h.manager.getApiEnvironment().ALLTERNIT_S1_BACKEND).toBe('system_one_local');
+    expect(h.manager.getApiEnvironment()).not.toHaveProperty('ALLTERNIT_S1_BACKEND');
     h.healthy.s1 = true;
     h.healthy.laya = true;
     await started;

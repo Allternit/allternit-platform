@@ -1158,7 +1158,7 @@ async function initializeBundledMode(): Promise<void> {
     // System One + Laya (Q28/Q29): S1 server now, Laya once installed (first run
     // installs it in the background). Never awaited: app start never waits on
     // it; failures land in system-one:get-status. Started this early so Laya is
-    // more likely healthy when the API spawns (ALLTERNIT_S1_BACKEND=laya_bundled).
+    // ready for the first decisions (the API's "auto" S1 backend uses it once healthy).
     void systemOne.startWithApp();
     const gizziTask = (async (): Promise<string | null> => {
       try {

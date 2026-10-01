@@ -286,8 +286,8 @@ export class BackendManager {
       GIZZI_PASSWORD: config.gizziPassword ?? process.env.GIZZI_PASSWORD ?? '',
       RUST_LOG: 'info',
       NODE_ENV: 'production',
-      // Local S1 (Q28/Q29): ALLTERNIT_S1_URL, ALLTERNIT_S1_BACKEND (laya_bundled
-      // once Laya is healthy, else system_one_local), shared shadow ledger dir.
+      // Local S1 (Q28/Q29): ALLTERNIT_S1_URL, shared shadow ledger dir; the S1
+      // backend is "auto" (Laya while healthy) unless exported explicitly.
       ...systemOne.getApiEnvironment(),
       ...(config.extraEnv ?? {}),
     };

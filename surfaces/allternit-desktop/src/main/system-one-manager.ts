@@ -14,8 +14,9 @@
  * says "needs uv" with an install hint.
  *
  * Health: S1 GET /healthz, Laya GET /health. The local allternit-api gets
- * getApiEnvironment(): ALLTERNIT_S1_URL, and ALLTERNIT_S1_BACKEND=laya_bundled
- * once Laya has reported healthy (system_one_local until then).
+ * getApiEnvironment(): ALLTERNIT_S1_URL; ALLTERNIT_S1_BACKEND only when exported
+ * explicitly. Otherwise allternit-api sends "auto" and the S1 server uses Laya
+ * while it is healthy (#1113), so a Laya that turns healthy later needs no restart.
  *
  * Mirrors bonsai-companion-manager.ts; dependencies are injectable for tests.
  */
@@ -41,7 +42,7 @@ const S1_HEALTH_TIMEOUT_MS = 30_000;
 const LAYA_HEALTH_TIMEOUT_MS = 15 * 60_000;
 const NEEDS_UV_EXIT = 3;
 
-export type S1Backend = 'laya_bundled' | 'system_one_local';
+export type S1Backend = 'laya_bundled' | 'system_one_local' | 'auto';
 
 /** Which Laya checkpoint to serve. Our fine-tuned revision swaps in here (WP-L1). */
 export interface LayaCheckpoint {
@@ -362,17 +363,17 @@ export class SystemOneManager {
 
   /**
    * Env for the local allternit-api (backend-manager). Explicit env exports win.
-   * allternit-api reads it at spawn, so a Laya that turns healthy later applies at
-   * the next API start (apiBackend vs backend in getStatus()).
+   * Without an explicit ALLTERNIT_S1_BACKEND the API uses "auto": the S1 server
+   * picks Laya per decision while it is healthy, so no API restart is needed.
    */
   getApiEnvironment(): Record<string, string> {
     const env = this.deps.env;
-    const backend = (env.ALLTERNIT_S1_BACKEND as S1Backend | undefined) || this.backend;
-    this.apiBackend = backend;
+    const explicit = env.ALLTERNIT_S1_BACKEND as S1Backend | undefined;
+    this.apiBackend = explicit || 'auto';
     const shadowDir = this.shadowDir;
     return {
       ALLTERNIT_S1_URL: env.ALLTERNIT_S1_URL || this.s1Url,
-      ALLTERNIT_S1_BACKEND: backend,
+      ...(explicit ? { ALLTERNIT_S1_BACKEND: explicit } : {}),
       SYSTEM_ONE_LAYA_URL: env.SYSTEM_ONE_LAYA_URL || this.layaUrl,
       ...(shadowDir ? { ALLTERNIT_S1_SHADOW_DIR: shadowDir } : {}),
     };

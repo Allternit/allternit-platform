@@ -143,7 +143,7 @@ export interface SystemOneStatus {
     installDir: string;
   };
   backend: 'laya_bundled' | 'system_one_local';
-  apiBackend?: 'laya_bundled' | 'system_one_local';
+  apiBackend?: 'laya_bundled' | 'system_one_local' | 'auto';
   shadowDir: string | null;
   error?: string;
 }

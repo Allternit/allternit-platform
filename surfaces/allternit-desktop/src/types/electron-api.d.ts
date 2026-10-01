@@ -71,7 +71,7 @@ export interface BonsaiAPI {
   onProgress(handler: (progress: { stage: string; message: string }) => void): () => void;
 }
 
-export type S1Backend = 'laya_bundled' | 'system_one_local';
+export type S1Backend = 'laya_bundled' | 'system_one_local' | 'auto';
 
 export interface LayaCheckpoint {
   source: 'pinned' | 'revision' | 'path';
