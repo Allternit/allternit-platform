@@ -33,6 +33,13 @@ interface Ctx {
   done: Map<string, Promise<AaiResult<MessageResult>>>; lock: Promise<unknown>;
 }
 
+/** Process-wide, strictly increasing, clock-seeded (µs) event cursor: survives restarts, never repeats. */
+let lastCursor = 0;
+function nextCursor(): number {
+  lastCursor = Math.max(lastCursor + 1, Date.now() * 1000);
+  return lastCursor;
+}
+
 const TERMINAL = new Set(["completed", "partial", "failed", "cancelled", "needs_user"]);
 const NOT_READY = "Sign in to Claude in Settings → Subscriptions on your Sessions computer, then try again.";
 
@@ -117,7 +124,9 @@ export class ClaudeSubscriptionProvider extends BaseAaiProvider {
     return ok(revived);
   }
   private push(c: Ctx, type: "agent.context.opened" | "agent.activity.started" | "agent.activity.completed" | "agent.message.completed", correlationId: string, payload: Record<string, unknown>, source: "allternit" | "vendor" = "vendor") {
-    c.seq += 1;
+    // Cursors only grow, also across a gateway restart: a revived context must continue past the cursor
+    // allternit-api already holds (live: after a redeploy every new event sat below it and never synced).
+    c.seq = nextCursor();
     c.events.push({ cursor: String(c.seq), event: {
       type, botId: AGENT_ID, threadId: c.id, generationId: "1", source, vendor: VENDOR, adapter: ADAPTER_ID, lane: "ui_bridge",
       remoteContextId: c.id, remoteEventId: `${c.id}#${c.seq}`, causationId: correlationId, correlationId, guarantee: "best_effort", at: new Date().toISOString(), payload } });
