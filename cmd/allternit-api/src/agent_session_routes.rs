@@ -1348,6 +1348,10 @@ async fn abort_session(
     headers: HeaderMap,
     Path(session_id): Path<String>,
 ) -> impl IntoResponse {
+    // A vendor-bound session's turn runs on the vendor: Stop cancels it there.
+    if let Some(confirmed) = crate::gateway_runner::intercept_abort(&session_id).await {
+        return Json(json!({ "success": true, "vendor": true, "confirmed": confirmed })).into_response();
+    }
     let client = gizzi_client(&headers);
     let path = format!("/v1/session/{}/abort", urlencoding::encode(&session_id));
     match gizzi_no_content(&client, reqwest::Method::POST, &path, Some(json!({}))).await {
