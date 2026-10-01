@@ -12,6 +12,7 @@
 //! `waiting` with a reason saying so. The BUG_FIX template is WP10's kernel
 //! graph behind `compiler::RunTemplate`.
 
+pub mod bugfix; // WP-B1
 pub mod catalog;
 pub mod compiler;
 pub mod executor;
