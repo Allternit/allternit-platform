@@ -144,3 +144,26 @@ async def test_planning_loop_reports_executed_operations_and_episode_outcome():
     assert len(done) == 1 and done[0]["truth"] == "true"
     assert {o["decision_id"] for o in goal} | {done[0]["decision_id"]} == goal_ids
     assert done[0]["decision_id"] not in {o["decision_id"] for o in goal}
+    # Q26 x-incumbent: the planner's answers ride along. goal_satisfied is
+    # "true" only on the done step; operation matches the executed operation
+    # when it is an option; targets and stuck carry none.
+    sent = rt.decisions()
+    goal_inc = {p["request"]["extensions"].get("x-incumbent") for p in sent if p["request"]["question_id"] == "goal_satisfied"}
+    assert goal_inc == {"true", "false"}
+    ops = [p for p in sent if p["request"]["question_id"] == "operation"]
+    assert any("x-incumbent" in p["request"]["extensions"] for p in ops)
+    assert all("x-incumbent" not in p["request"]["extensions"] for p in sent
+               if p["request"]["question_id"].endswith("_target") or p["request"]["question_id"] == "stuck")
+
+
+def test_incumbent_is_sent_only_when_it_is_an_option_and_resets_per_step():
+    rt = FakeRuntime()
+    head = S1DecisionHead(_client(rt))
+    head.begin_step(1)
+    head.set_incumbent({"operation": "type", "goal_satisfied": "maybe"})
+    head.decide("s", [Question("operation", ["click", "type"]), Question("goal_satisfied", ["true", "false"])])
+    head.begin_step(2)
+    head.decide("s", [Question("operation", ["click", "type"])])
+    ext = [p["request"]["extensions"] for p in rt.decisions()]
+    assert ext[0]["x-incumbent"] == "type"
+    assert "x-incumbent" not in ext[1] and "x-incumbent" not in ext[2]
