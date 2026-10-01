@@ -1,0 +1,483 @@
+{
+ "graph_id": "research.doc.v1",
+ "nodes": [
+  {
+   "node_id": "R00",
+   "primitive_id": "obs.parse_task_request",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S0",
+   "inputs": [
+    "state.task"
+   ],
+   "outputs": [
+    "receipt:task_ir"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Normalize request"
+   }
+  },
+  {
+   "node_id": "R01",
+   "primitive_id": "ctx.generate_search_intent",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S2",
+   "inputs": [
+    "state.task"
+   ],
+   "outputs": [
+    "candidate:queries"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Plan queries"
+   },
+   "capability_request": {
+    "schema_id": "allternit.kernel.CapabilityRequestV1",
+    "schema_version": "1.0.0",
+    "capability": "cap.research.query",
+    "modality": "TEXT",
+    "latency_class": "NORMAL",
+    "trust_requirement": "INTERNAL",
+    "budget": {}
+   }
+  },
+  {
+   "node_id": "R02",
+   "primitive_id": "obs.search_text",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S0",
+   "inputs": [
+    "candidate:queries"
+   ],
+   "outputs": [
+    "receipt:search"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Search sources"
+   }
+  },
+  {
+   "node_id": "R03",
+   "primitive_id": "obs.read_file",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S0",
+   "inputs": [
+    "receipt:search"
+   ],
+   "outputs": [
+    "receipt:sources"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Read sources"
+   }
+  },
+  {
+   "node_id": "R04",
+   "primitive_id": "ctl.compose_final_report",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S2",
+   "inputs": [
+    "receipt:sources"
+   ],
+   "outputs": [
+    "candidate:document"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "ESCALATE",
+    "target": "R04_deep"
+   },
+   "extensions": {
+    "x-title": "Draft document candidate"
+   },
+   "capability_request": {
+    "schema_id": "allternit.kernel.CapabilityRequestV1",
+    "schema_version": "1.0.0",
+    "capability": "cap.research.draft",
+    "modality": "TEXT",
+    "latency_class": "NORMAL",
+    "trust_requirement": "INTERNAL",
+    "budget": {}
+   }
+  },
+  {
+   "node_id": "R05",
+   "primitive_id": "ver.requirement_check",
+   "node_kind": "VERIFY",
+   "cognitive_role": "S0",
+   "inputs": [
+    "candidate:document",
+    "receipt:sources"
+   ],
+   "outputs": [
+    "receipt:citations"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Citations resolve to read sources",
+    "x-evidence": "citations_resolve"
+   }
+  },
+  {
+   "node_id": "R06",
+   "primitive_id": "policy.authorize_tool_call",
+   "node_kind": "POLICY",
+   "cognitive_role": "S0",
+   "inputs": [
+    "candidate:document",
+    "state.permissions"
+   ],
+   "outputs": [
+    "receipt:policy_authorization"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Authorize document write"
+   }
+  },
+  {
+   "node_id": "R07",
+   "primitive_id": "mut.create_file",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S0",
+   "inputs": [
+    "candidate:document",
+    "receipt:policy_authorization"
+   ],
+   "outputs": [
+    "receipt:mutation"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [
+    "citations_resolve"
+   ],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Write document",
+    "x-bind_write_set": true
+   },
+   "capability_request": {
+    "schema_id": "allternit.kernel.CapabilityRequestV1",
+    "schema_version": "1.0.0",
+    "capability": "cap.research.write_doc",
+    "modality": "TEXT",
+    "latency_class": "NORMAL",
+    "trust_requirement": "INTERNAL",
+    "budget": {}
+   }
+  },
+  {
+   "node_id": "R08",
+   "primitive_id": "ver.check_artifact_existence",
+   "node_kind": "VERIFY",
+   "cognitive_role": "S0",
+   "inputs": [
+    "receipt:mutation"
+   ],
+   "outputs": [
+    "receipt:document"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Document exists",
+    "x-evidence": "document_exists"
+   }
+  },
+  {
+   "node_id": "R09",
+   "primitive_id": "ver.verify_requirements",
+   "node_kind": "VERIFY",
+   "cognitive_role": "S2",
+   "inputs": [
+    "receipt:document"
+   ],
+   "outputs": [
+    "receipt:review"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Review document against the goal",
+    "x-evidence": "requirements_satisfied"
+   },
+   "capability_request": {
+    "schema_id": "allternit.kernel.CapabilityRequestV1",
+    "schema_version": "1.0.0",
+    "capability": "cap.research.review",
+    "modality": "TEXT",
+    "latency_class": "NORMAL",
+    "trust_requirement": "INTERNAL",
+    "budget": {}
+   }
+  },
+  {
+   "node_id": "gate",
+   "primitive_id": "ver.check_acceptance_evidence",
+   "node_kind": "VERIFY",
+   "cognitive_role": "S0",
+   "inputs": [
+    "state.evidence"
+   ],
+   "outputs": [
+    "receipt:completion_check"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [
+    "citations_resolve",
+    "document_exists",
+    "requirements_satisfied"
+   ],
+   "on_failure": {
+    "strategy": "FALLBACK",
+    "target": "evidence_incomplete"
+   },
+   "extensions": {
+    "x-title": "Completion contract check (verifier-owned)"
+   }
+  },
+  {
+   "node_id": "persist",
+   "primitive_id": "state.persist_run_receipt",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S0",
+   "inputs": [
+    "receipt:completion_check"
+   ],
+   "outputs": [
+    "receipt:run"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [
+    "citations_resolve",
+    "document_exists",
+    "requirements_satisfied"
+   ],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Persist run receipt"
+   }
+  },
+  {
+   "node_id": "evidence_incomplete",
+   "primitive_id": "ctl.request_evidence",
+   "node_kind": "CONTROL",
+   "cognitive_role": "S0",
+   "inputs": [
+    "state.evidence"
+   ],
+   "outputs": [
+    "receipt:evidence_request"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Request missing evidence"
+   }
+  },
+  {
+   "node_id": "R04_deep",
+   "primitive_id": "ctl.compose_final_report",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S3",
+   "inputs": [
+    "receipt:sources"
+   ],
+   "outputs": [
+    "candidate:document"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Draft document candidate (escalated)"
+   },
+   "capability_request": {
+    "schema_id": "allternit.kernel.CapabilityRequestV1",
+    "schema_version": "1.0.0",
+    "capability": "cap.research.draft",
+    "modality": "TEXT",
+    "latency_class": "NORMAL",
+    "trust_requirement": "INTERNAL",
+    "budget": {}
+   }
+  }
+ ],
+ "edges": [
+  {
+   "from": "R00",
+   "to": "R01",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "R01",
+   "to": "R02",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "R02",
+   "to": "R03",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "R03",
+   "to": "R04",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "R04",
+   "to": "R05",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "R05",
+   "to": "R06",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "R06",
+   "to": "R07",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "R07",
+   "to": "R08",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "R08",
+   "to": "R09",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "R09",
+   "to": "gate",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "gate",
+   "to": "persist",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "gate",
+   "to": "evidence_incomplete",
+   "edge_kind": "FAILURE"
+  },
+  {
+   "from": "R04",
+   "to": "R04_deep",
+   "edge_kind": "FAILURE"
+  },
+  {
+   "from": "R04_deep",
+   "to": "R05",
+   "edge_kind": "NORMAL"
+  }
+ ],
+ "entry_nodes": [
+  "R00"
+ ],
+ "completion_nodes": [
+  "persist"
+ ]
+}

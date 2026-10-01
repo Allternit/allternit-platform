@@ -1,0 +1,66 @@
+{
+ "task_type": "TEMPLATE",
+ "version": 1,
+ "cases": [
+  {
+   "id": "runs_steps",
+   "goal": "Run the weekly report template",
+   "params": {
+    "writable_resources": [
+     "template:weekly-report"
+    ]
+   },
+   "script": {},
+   "expect": {
+    "status": "completed"
+   }
+  },
+  {
+   "id": "no_resources",
+   "goal": "Run it",
+   "params": {},
+   "script": {},
+   "expect": {
+    "status": "refused"
+   }
+  },
+  {
+   "id": "step_left_open",
+   "goal": "Run it",
+   "params": {
+    "writable_resources": [
+     "template:weekly-report"
+    ]
+   },
+   "script": {
+    "withhold": [
+     "template_steps_complete"
+    ]
+   },
+   "expect": {
+    "status": "needs_evidence",
+    "missing": [
+     "template_steps_complete"
+    ]
+   }
+  },
+  {
+   "id": "checks_fail",
+   "goal": "Run it",
+   "params": {
+    "writable_resources": [
+     "template:weekly-report"
+    ]
+   },
+   "script": {
+    "fail": [
+     "P05"
+    ]
+   },
+   "expect": {
+    "status": "failed",
+    "stopped_at": "P05"
+   }
+  }
+ ]
+}

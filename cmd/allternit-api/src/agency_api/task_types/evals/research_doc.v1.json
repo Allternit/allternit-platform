@@ -1,0 +1,69 @@
+{
+ "task_type": "RESEARCH_DOC",
+ "version": 1,
+ "cases": [
+  {
+   "id": "writes_cited_doc",
+   "goal": "Write a one-page brief on container sandboxes",
+   "params": {
+    "writable_resources": [
+     "fs:docs/brief.md"
+    ]
+   },
+   "script": {},
+   "expect": {
+    "status": "completed"
+   }
+  },
+  {
+   "id": "no_doc_path",
+   "goal": "Write a brief",
+   "params": {},
+   "script": {},
+   "expect": {
+    "status": "refused"
+   }
+  },
+  {
+   "id": "uncited_claims",
+   "goal": "Write a brief",
+   "params": {
+    "writable_resources": [
+     "fs:docs/brief.md"
+    ]
+   },
+   "script": {
+    "fail": [
+     "R05"
+    ]
+   },
+   "expect": {
+    "status": "failed",
+    "stopped_at": "R05",
+    "not_visited": [
+     "R07"
+    ]
+   }
+  },
+  {
+   "id": "escalates_draft",
+   "goal": "Write a brief",
+   "params": {
+    "writable_resources": [
+     "fs:docs/brief.md"
+    ]
+   },
+   "script": {
+    "fail": [
+     "R04"
+    ]
+   },
+   "expect": {
+    "status": "completed",
+    "visited": [
+     "R04_deep"
+    ]
+   }
+  }
+ ]
+}

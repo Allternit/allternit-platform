@@ -18,6 +18,8 @@ pub mod executor;
 pub mod guard;
 pub mod safety;
 pub mod store;
+/// WP-X1: task types beyond BUG_FIX (graphs, completion contracts, eval sets).
+pub mod task_types;
 pub mod template_exec;
 
 #[cfg(test)]

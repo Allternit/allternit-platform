@@ -1,0 +1,377 @@
+{
+ "graph_id": "general.task.v1",
+ "nodes": [
+  {
+   "node_id": "G00",
+   "primitive_id": "obs.parse_task_request",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S0",
+   "inputs": [
+    "state.task"
+   ],
+   "outputs": [
+    "receipt:task_ir"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Normalize request"
+   }
+  },
+  {
+   "node_id": "G01",
+   "primitive_id": "obs.extract_explicit_deliverables",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S0",
+   "inputs": [
+    "state.task"
+   ],
+   "outputs": [
+    "receipt:deliverables"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Extract deliverables"
+   }
+  },
+  {
+   "node_id": "G02",
+   "primitive_id": "ctx.compile_model_context",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S0",
+   "inputs": [
+    "state.task"
+   ],
+   "outputs": [
+    "receipt:context"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Compile context"
+   }
+  },
+  {
+   "node_id": "G03",
+   "primitive_id": "ctl.compose_final_report",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S2",
+   "inputs": [
+    "state.context"
+   ],
+   "outputs": [
+    "candidate:response"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "ESCALATE",
+    "target": "G03_deep"
+   },
+   "extensions": {
+    "x-title": "Draft response candidate"
+   },
+   "capability_request": {
+    "schema_id": "allternit.kernel.CapabilityRequestV1",
+    "schema_version": "1.0.0",
+    "capability": "cap.general.response",
+    "modality": "TEXT",
+    "latency_class": "NORMAL",
+    "trust_requirement": "INTERNAL",
+    "budget": {}
+   }
+  },
+  {
+   "node_id": "G04",
+   "primitive_id": "ver.check_artifact_existence",
+   "node_kind": "VERIFY",
+   "cognitive_role": "S0",
+   "inputs": [
+    "candidate:response"
+   ],
+   "outputs": [
+    "receipt:response"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Response exists",
+    "x-evidence": "response_produced"
+   }
+  },
+  {
+   "node_id": "G05",
+   "primitive_id": "ver.verify_requirements",
+   "node_kind": "VERIFY",
+   "cognitive_role": "S2",
+   "inputs": [
+    "candidate:response",
+    "receipt:deliverables"
+   ],
+   "outputs": [
+    "receipt:review"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Review against the goal",
+    "x-evidence": "requirements_satisfied"
+   },
+   "capability_request": {
+    "schema_id": "allternit.kernel.CapabilityRequestV1",
+    "schema_version": "1.0.0",
+    "capability": "cap.general.review",
+    "modality": "TEXT",
+    "latency_class": "NORMAL",
+    "trust_requirement": "INTERNAL",
+    "budget": {}
+   }
+  },
+  {
+   "node_id": "G06",
+   "primitive_id": "ctl.wait_for_dependency",
+   "node_kind": "WAIT",
+   "cognitive_role": "S0",
+   "inputs": [
+    "receipt:review"
+   ],
+   "outputs": [
+    "receipt:user_acceptance"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "User acceptance",
+    "x-evidence": "user_acceptance"
+   },
+   "wait_gate": {
+    "kind": "user_acceptance",
+    "timeout_policy": "park"
+   }
+  },
+  {
+   "node_id": "gate",
+   "primitive_id": "ver.check_acceptance_evidence",
+   "node_kind": "VERIFY",
+   "cognitive_role": "S0",
+   "inputs": [
+    "state.evidence"
+   ],
+   "outputs": [
+    "receipt:completion_check"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [
+    "response_produced",
+    "requirements_satisfied",
+    "user_acceptance"
+   ],
+   "on_failure": {
+    "strategy": "FALLBACK",
+    "target": "evidence_incomplete"
+   },
+   "extensions": {
+    "x-title": "Completion contract check (verifier-owned)"
+   }
+  },
+  {
+   "node_id": "persist",
+   "primitive_id": "state.persist_run_receipt",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S0",
+   "inputs": [
+    "receipt:completion_check"
+   ],
+   "outputs": [
+    "receipt:run"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [
+    "response_produced",
+    "requirements_satisfied",
+    "user_acceptance"
+   ],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Persist run receipt"
+   }
+  },
+  {
+   "node_id": "evidence_incomplete",
+   "primitive_id": "ctl.request_evidence",
+   "node_kind": "CONTROL",
+   "cognitive_role": "S0",
+   "inputs": [
+    "state.evidence"
+   ],
+   "outputs": [
+    "receipt:evidence_request"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Request missing evidence"
+   }
+  },
+  {
+   "node_id": "G03_deep",
+   "primitive_id": "ctl.compose_final_report",
+   "node_kind": "COMPUTE",
+   "cognitive_role": "S3",
+   "inputs": [
+    "state.context"
+   ],
+   "outputs": [
+    "candidate:response"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Draft response candidate (escalated)"
+   },
+   "capability_request": {
+    "schema_id": "allternit.kernel.CapabilityRequestV1",
+    "schema_version": "1.0.0",
+    "capability": "cap.general.response",
+    "modality": "TEXT",
+    "latency_class": "NORMAL",
+    "trust_requirement": "INTERNAL",
+    "budget": {}
+   }
+  }
+ ],
+ "edges": [
+  {
+   "from": "G00",
+   "to": "G01",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "G01",
+   "to": "G02",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "G02",
+   "to": "G03",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "G03",
+   "to": "G04",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "G04",
+   "to": "G05",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "G05",
+   "to": "G06",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "G06",
+   "to": "gate",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "gate",
+   "to": "persist",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "gate",
+   "to": "evidence_incomplete",
+   "edge_kind": "FAILURE"
+  },
+  {
+   "from": "G03",
+   "to": "G03_deep",
+   "edge_kind": "FAILURE"
+  },
+  {
+   "from": "G03_deep",
+   "to": "G04",
+   "edge_kind": "NORMAL"
+  }
+ ],
+ "entry_nodes": [
+  "G00"
+ ],
+ "completion_nodes": [
+  "persist"
+ ]
+}

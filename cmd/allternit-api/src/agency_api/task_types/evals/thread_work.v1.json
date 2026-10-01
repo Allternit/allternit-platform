@@ -1,0 +1,82 @@
+{
+ "task_type": "THREAD_WORK",
+ "version": 1,
+ "cases": [
+  {
+   "id": "posts_reply",
+   "goal": "Answer the question in the thread",
+   "params": {
+    "writable_resources": [
+     "thread:th_1"
+    ]
+   },
+   "script": {},
+   "expect": {
+    "status": "completed"
+   }
+  },
+  {
+   "id": "no_thread_declared",
+   "goal": "Answer the question",
+   "params": {},
+   "script": {},
+   "expect": {
+    "status": "refused"
+   }
+  },
+  {
+   "id": "wrong_scheme",
+   "goal": "Answer",
+   "params": {
+    "writable_resources": [
+     "fs:/etc"
+    ]
+   },
+   "script": {},
+   "expect": {
+    "status": "refused"
+   }
+  },
+  {
+   "id": "policy_denies",
+   "goal": "Post the secret",
+   "params": {
+    "writable_resources": [
+     "thread:th_1"
+    ]
+   },
+   "script": {
+    "fail": [
+     "T05"
+    ]
+   },
+   "expect": {
+    "status": "failed",
+    "stopped_at": "T05",
+    "not_visited": [
+     "T06"
+    ]
+   }
+  },
+  {
+   "id": "not_delivered",
+   "goal": "Answer",
+   "params": {
+    "writable_resources": [
+     "thread:th_1"
+    ]
+   },
+   "script": {
+    "withhold": [
+     "message_delivered"
+    ]
+   },
+   "expect": {
+    "status": "needs_evidence",
+    "missing": [
+     "message_delivered"
+    ]
+   }
+  }
+ ]
+}
