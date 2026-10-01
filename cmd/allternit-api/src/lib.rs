@@ -76,6 +76,7 @@ pub mod kernel_ui;
 pub mod teams_auth;
 pub mod discord_gateway;
 pub mod channel_gateway;
+pub mod channel_relay;
 pub mod channel_transports;
 pub mod spend_limits;
 pub mod channel_tools;
