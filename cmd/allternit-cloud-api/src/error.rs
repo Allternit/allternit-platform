@@ -84,6 +84,15 @@ pub enum ApiError {
     #[error("Service unavailable: {0}")]
     ServiceUnavailable(String),
 
+    /// A per-user limit was hit (e.g. free computer wakes per hour). 429.
+    #[error("Too many requests: {0}")]
+    TooManyRequests(String),
+
+    /// The request conflicts with the account's state (e.g. a paid account
+    /// asking for a free computer). 409.
+    #[error("Conflict: {0}")]
+    Conflict(String),
+
     #[error("Internal error: {0}")]
     Internal(String),
 
@@ -191,6 +200,12 @@ impl IntoResponse for ApiError {
             ),
             ApiError::IoError(e) => (StatusCode::INTERNAL_SERVER_ERROR, "IO_ERROR", e.to_string()),
             ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, "BAD_REQUEST", msg.clone()),
+            ApiError::TooManyRequests(msg) => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "RATE_LIMITED",
+                msg.clone(),
+            ),
+            ApiError::Conflict(msg) => (StatusCode::CONFLICT, "CONFLICT", msg.clone()),
             ApiError::PreconditionRequired(msg) => (
                 StatusCode::PRECONDITION_REQUIRED,
                 "PRECONDITION_REQUIRED",

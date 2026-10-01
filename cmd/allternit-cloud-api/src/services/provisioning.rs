@@ -68,6 +68,27 @@ use uuid::Uuid;
 
 use crate::ApiError;
 
+#[path = "provisioning_free.rs"]
+mod free;
+pub use free::{
+    note_runtime_attached, start_free_computer_task, touch_provisioned_activity, FreeDefaults,
+    ProvisionedWakeOutcome, WakeReason, WakeResult,
+};
+
+/// Capacity a computer of `tier` and `size` holds on its host (see
+/// [`InstanceRow::allocation`]).
+fn allocation_for(tier: &str, size: ComputerSize) -> ComputerSize {
+    if tier == TIER_FREE {
+        ComputerSize {
+            cpu_cores: 0,
+            memory_mb: 0,
+            disk_gb: size.disk_gb,
+        }
+    } else {
+        size
+    }
+}
+
 /// First-boot contract shipped to the container via cloud-init user-data.
 /// Path is relative to this file (cmd/allternit-cloud-api/src/services/);
 /// the crate already depends on the repo layout via path dependencies.
@@ -118,6 +139,12 @@ pub const BOOTSTRAP_PATH: &str = "/etc/allternit/bootstrap.json";
 /// Cancel lifecycle (plan B2 + round-3 answer): delete the stopped instance
 /// 30 days after cancel; keep the disk snapshot image for 6 months.
 pub const CANCEL_DELETE_AFTER_DAYS: i64 = 30;
+/// `provisioned_instances.tier` values (migration 019).
+pub const TIER_PAID: &str = "paid";
+pub const TIER_FREE: &str = "free";
+/// A `waking` row older than this whose start task is gone is converged by
+/// reconcile from the backend status.
+const WAKE_STALE_SECONDS: i64 = 120;
 pub const SNAPSHOT_RETENTION_MONTHS: u32 = 6;
 const DEFAULT_LIFECYCLE_SECONDS: u64 = 3600;
 const DEFAULT_PROFILES: &str = "default";
@@ -227,6 +254,9 @@ pub struct ProvisionSpec {
     /// Pinned image alias (`local:<image>`).
     pub image: String,
     pub cpu_cores: i64,
+    /// `limits.cpu.allowance` (e.g. "50ms/100ms" = half a core, hard
+    /// quota). `None` leaves the whole `cpu_cores` usable (paid computers).
+    pub cpu_allowance: Option<String>,
     pub memory_mb: i64,
     pub disk_gb: i64,
     pub profiles: Vec<String>,
@@ -518,6 +548,17 @@ fn error_from_status(status: u16, json: &serde_json::Value) -> ProvisionError {
 /// alphanumerics and single hyphens, starts with a letter, no trailing
 /// hyphen) and ≤ 51 chars, under Incus's 63-char limit.
 pub fn incus_name_for(user_id: &str, subscription_id: Option<&str>) -> String {
+    incus_name_with_prefix("allternit", user_id, subscription_id.unwrap_or(""))
+}
+
+/// Deterministic Incus name of an account's free computer:
+/// `allternit-free-<user slug, ≤28>-<12 hex of sha256(user:free)>` (≤ 56
+/// chars). One free computer per account, so the user id alone fixes it.
+pub fn free_incus_name_for(user_id: &str) -> String {
+    incus_name_with_prefix("allternit-free", user_id, "free")
+}
+
+fn incus_name_with_prefix(prefix: &str, user_id: &str, discriminator: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut slug = String::new();
     for ch in user_id.chars() {
@@ -532,12 +573,12 @@ pub fn incus_name_for(user_id: &str, subscription_id: Option<&str>) -> String {
         }
     }
     let slug = slug.trim_matches('-');
-    let digest = Sha256::digest(format!("{user_id}:{}", subscription_id.unwrap_or("")).as_bytes());
+    let digest = Sha256::digest(format!("{user_id}:{discriminator}").as_bytes());
     let hash = hex::encode(digest);
     if slug.is_empty() {
-        format!("allternit-{}", &hash[..12])
+        format!("{prefix}-{}", &hash[..12])
     } else {
-        format!("allternit-{slug}-{}", &hash[..12])
+        format!("{prefix}-{slug}-{}", &hash[..12])
     }
 }
 
@@ -566,6 +607,9 @@ impl ProvisionBackend for IncusHttpBackend {
             .find_map(|line| line.strip_prefix("# allternit sha256: "))
         {
             config["user.allternit.binary-sha256"] = sha256.trim().into();
+        }
+        if let Some(allowance) = &spec.cpu_allowance {
+            config["limits.cpu.allowance"] = allowance.as_str().into();
         }
         let body = serde_json::json!({
             "name": spec.name,
@@ -854,6 +898,11 @@ pub fn can_transition(from: &str, to: &str) -> bool {
         ("provisioning" | "running" | "stopped", "suspended") => true,
         ("suspended", "provisioning" | "running" | "error") => true,
         ("provisioning" | "stopped", "error") => true,
+        // Free computers (decision 16): idle sweep sleeps, a wake starts.
+        ("running", "sleeping") => true,
+        ("sleeping", "waking" | "running" | "error") => true,
+        ("waking", "running" | "sleeping" | "error") => true,
+        ("sleeping" | "waking", "deleted") => true,
         ("provisioning" | "running" | "stopped" | "suspended", "deleted") => true,
         _ => from == to,
     }
@@ -885,13 +934,19 @@ pub struct InstanceRow {
     pub delete_after: Option<DateTime<Utc>>,
     pub snapshot_image: Option<String>,
     pub snapshot_expires_at: Option<DateTime<Utc>>,
+    pub tier: String,
+    pub last_activity_at: Option<DateTime<Utc>>,
+    pub last_owner_activity_at: Option<DateTime<Utc>>,
+    pub next_wake_at: Option<DateTime<Utc>>,
+    pub replaced_by: Option<String>,
 }
 
 /// Column list matching [`InstanceRow`] (one place to keep in sync).
 const INSTANCE_COLUMNS: &str = "id, user_id, subscription_id, host_id, incus_name, status, device_id, \
      cpu_cores, memory_mb, disk_gb, error_message, last_started_at, last_stopped_at, \
      created_at, updated_at, plan_id, cancelled_at, delete_after, snapshot_image, \
-     snapshot_expires_at";
+     snapshot_expires_at, tier, last_activity_at, last_owner_activity_at, next_wake_at, \
+     replaced_by";
 
 /// Base size of one cloud computer (plan C1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -908,6 +963,18 @@ impl InstanceRow {
             memory_mb: self.memory_mb,
             disk_gb: self.disk_gb,
         }
+    }
+
+    pub fn is_free(&self) -> bool {
+        self.tier == TIER_FREE
+    }
+
+    /// What this computer holds in its host's capacity ledger. A paid
+    /// computer reserves its full size. A free one reserves only its disk:
+    /// it sleeps most of the time, and RAM/CPU for the awake ones is capped
+    /// by the per-host awake limit instead (`ALLTERNIT_FREE_MAX_AWAKE_PER_HOST`).
+    fn allocation(&self) -> ComputerSize {
+        allocation_for(&self.tier, self.size())
     }
 }
 
@@ -943,6 +1010,17 @@ pub struct InstanceView {
     pub delete_after: Option<DateTime<Utc>>,
     /// When the cancel snapshot (restorable on re-subscribe) expires.
     pub snapshot_expires_at: Option<DateTime<Utc>>,
+    /// "free" (sleeps when idle) or "paid".
+    pub tier: String,
+    /// Last user-driven traffic (the idle sweep's clock).
+    pub last_activity_at: Option<DateTime<Utc>>,
+    /// Next runtime-reported scheduled job; the computer wakes shortly before.
+    pub next_wake_at: Option<DateTime<Utc>>,
+    /// Free computer replaced by this paid computer on upgrade.
+    pub replaced_by: Option<String>,
+    /// The ready signal: the computer's runtime device holds a live relay
+    /// connection. Filled in by the routes from the relay hub; `false` here.
+    pub runtime_online: bool,
 }
 
 impl From<InstanceRow> for InstanceView {
@@ -965,6 +1043,11 @@ impl From<InstanceRow> for InstanceView {
             plan_id: row.plan_id,
             delete_after: row.delete_after,
             snapshot_expires_at: row.snapshot_expires_at,
+            tier: row.tier,
+            last_activity_at: row.last_activity_at,
+            next_wake_at: row.next_wake_at,
+            replaced_by: row.replaced_by,
+            runtime_online: false,
         }
     }
 }
@@ -1217,7 +1300,10 @@ pub async fn validate_provisioned_bootstrap(
         tracing::warn!(%instance_id, "provisioned bootstrap rejected: no matching instance row");
         return Err(ApiError::Unauthorized("Invalid provisioned instance".to_string()));
     };
-    if !matches!(status.as_str(), "provisioning" | "running" | "stopped") {
+    if !matches!(
+        status.as_str(),
+        "provisioning" | "running" | "stopped" | "sleeping" | "waking"
+    ) {
         return Err(ApiError::Unauthorized(
             "Provisioned instance is not live".to_string(),
         ));
@@ -1332,6 +1418,7 @@ pub async fn activate_registered_device(
 pub struct ProvisioningService {
     db: PgPool,
     defaults: ProvisionDefaults,
+    free: FreeDefaults,
     registry: Arc<dyn BackendRegistry>,
 }
 
@@ -1344,6 +1431,7 @@ impl ProvisioningService {
         Self {
             db,
             defaults: ProvisionDefaults::from_env(),
+            free: FreeDefaults::from_env(),
             registry,
         }
     }
@@ -1352,6 +1440,17 @@ impl ProvisioningService {
     fn with_defaults(mut self, defaults: ProvisionDefaults) -> Self {
         self.defaults = defaults;
         self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_free_defaults(mut self, free: FreeDefaults) -> Self {
+        self.free = free;
+        self
+    }
+
+    /// The free-computer settings (sizes, idle window, limits).
+    pub fn free_defaults(&self) -> &FreeDefaults {
+        &self.free
     }
 
     /// Base size for the subscription's plan (`plan_tiers.computer_base_*`,
@@ -1418,7 +1517,26 @@ impl ProvisioningService {
         user_id: &str,
         subscription_id: Option<&str>,
     ) -> Result<InstanceView, ApiError> {
-        if let Some(row) = self.live_row_for(user_id, subscription_id).await? {
+        let view = self.create_tier(user_id, subscription_id, TIER_PAID).await?;
+        // Upgrade path (decision 16): the paid computer replaces the
+        // account's free one, which is kept sleeping until it is deleted.
+        if let Err(error) = self.retire_free_on_upgrade(user_id, &view.id).await {
+            tracing::warn!(%user_id, %error, "upgrade: free computer not marked replaced; next create retries");
+        }
+        Ok(view)
+    }
+
+    /// Shared create for both tiers. `tier` is [`TIER_PAID`] (per
+    /// subscription, plan-sized, Desktop image, cancel snapshot) or
+    /// [`TIER_FREE`] (one per account, runtime image, small, no snapshots).
+    pub(crate) async fn create_tier(
+        &self,
+        user_id: &str,
+        subscription_id: Option<&str>,
+        tier: &str,
+    ) -> Result<InstanceView, ApiError> {
+        let free = tier == TIER_FREE;
+        if let Some(row) = self.live_row_for(user_id, subscription_id, tier).await? {
             if row.status == "suspended" {
                 if let Some(view) = self.resume(row, subscription_id).await? {
                     return Ok(view);
@@ -1427,12 +1545,12 @@ impl ProvisioningService {
                 return Ok(InstanceView::from(row));
             }
         }
-        self.retire_failed_attempts(user_id, subscription_id).await?;
+        self.retire_failed_attempts(user_id, subscription_id, tier).await?;
 
-        if subscription_id.is_some() {
+        if !free && subscription_id.is_some() {
             let suspended = sqlx::query_as::<_, InstanceRow>(&format!(
                 "SELECT {INSTANCE_COLUMNS} FROM provisioned_instances \
-                 WHERE user_id = $1 AND status = 'suspended' ORDER BY cancelled_at DESC NULLS LAST LIMIT 1"
+                 WHERE user_id = $1 AND tier = 'paid' AND status = 'suspended' ORDER BY cancelled_at DESC NULLS LAST LIMIT 1"
             ))
             .bind(user_id)
             .fetch_optional(&self.db)
@@ -1444,11 +1562,20 @@ impl ProvisioningService {
             }
         }
 
-        let (plan_id, size) = self.plan_size(subscription_id).await;
-        let restore: Option<(String, String, String)> = sqlx::query_as(
+        let (plan_id, size) = if free {
+            (None, self.free.size())
+        } else {
+            self.plan_size(subscription_id).await
+        };
+        let allocation = allocation_for(tier, size);
+        // Free computers never restore from (or get) a cancel snapshot.
+        let restore: Option<(String, String, String)> = if free {
+            None
+        } else {
+            sqlx::query_as(
             r#"
             SELECT id, host_id, snapshot_image FROM provisioned_instances
-            WHERE user_id = $1 AND status = 'deleted' AND host_id IS NOT NULL
+            WHERE user_id = $1 AND tier = 'paid' AND status = 'deleted' AND host_id IS NOT NULL
               AND snapshot_image IS NOT NULL AND snapshot_deleted_at IS NULL
               AND snapshot_expires_at > $2
             ORDER BY cancelled_at DESC NULLS LAST
@@ -1458,10 +1585,15 @@ impl ProvisioningService {
         .bind(user_id)
         .bind(Utc::now())
         .fetch_optional(&self.db)
-        .await?;
+        .await?
+        };
 
         let instance_id = format!("pi_{}", Uuid::new_v4().simple());
-        let incus_name = incus_name_for(user_id, subscription_id);
+        let incus_name = if free {
+            free_incus_name_for(user_id)
+        } else {
+            incus_name_for(user_id, subscription_id)
+        };
         let pairing_code = crate::routes::runtime_pairing::random_secret(24);
         let pairing_code_hash = crate::routes::runtime_pairing::sha256_hex(pairing_code.as_bytes());
         let pairing_expires_at = Utc::now() + self.defaults.pairing_ttl;
@@ -1481,6 +1613,22 @@ impl ProvisioningService {
         )
         .fetch_all(&mut *transaction)
         .await?;
+        // A new free computer starts awake: only hosts under the awake cap.
+        let full_hosts: Vec<String> = if free {
+            sqlx::query_scalar(
+                r#"
+                SELECT host_id FROM provisioned_instances
+                WHERE tier = 'free' AND host_id IS NOT NULL
+                  AND status IN ('provisioning', 'running', 'waking')
+                GROUP BY host_id HAVING COUNT(*) >= $1
+                "#,
+            )
+            .bind(self.free.max_awake_per_host)
+            .fetch_all(&mut *transaction)
+            .await?
+        } else {
+            Vec::new()
+        };
         let hosts: Vec<HostCapacity> = host_rows
             .into_iter()
             .map(HostCapacityRow::into_capacity)
@@ -1488,13 +1636,17 @@ impl ProvisioningService {
                 Some((_, snapshot_host, _)) => &host.id == snapshot_host,
                 None => true,
             })
+            .filter(|host| !full_hosts.contains(&host.id))
             .collect();
-        let Some(host_id) = select_host(&hosts, size.cpu_cores, size.memory_mb, size.disk_gb) else {
+        let Some(host_id) =
+            select_host(&hosts, allocation.cpu_cores, allocation.memory_mb, allocation.disk_gb)
+        else {
             transaction.rollback().await?;
             return Err(ApiError::ServiceUnavailable(match &restore {
                 Some((_, snapshot_host, _)) => format!(
                     "Fleet host {snapshot_host} holding this account's snapshot has no capacity"
                 ),
+                None if free => "No fleet host has room for another awake free computer; retry later".to_string(),
                 None => "No provisioned fleet host has capacity for this instance".to_string(),
             }));
         };
@@ -1508,9 +1660,9 @@ impl ProvisioningService {
             WHERE id = $4
             "#,
         )
-        .bind(size.cpu_cores as i32)
-        .bind(size.memory_mb)
-        .bind(size.disk_gb)
+        .bind(allocation.cpu_cores as i32)
+        .bind(allocation.memory_mb)
+        .bind(allocation.disk_gb)
         .bind(&host_id)
         .execute(&mut *transaction)
         .await?;
@@ -1519,8 +1671,10 @@ impl ProvisioningService {
             INSERT INTO provisioned_instances (
                 id, user_id, subscription_id, host_id, incus_name, status,
                 pairing_code_hash, pairing_expires_at,
-                cpu_cores, memory_mb, disk_gb, plan_id, restored_from
-            ) VALUES ($1, $2, $3, $4, $5, 'provisioning', $6, $7, $8, $9, $10, $11, $12)
+                cpu_cores, memory_mb, disk_gb, plan_id, restored_from, tier,
+                last_activity_at, last_owner_activity_at
+            ) VALUES ($1, $2, $3, $4, $5, 'provisioning', $6, $7, $8, $9, $10, $11, $12, $13,
+                      CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             "#,
         )
         .bind(&instance_id)
@@ -1535,6 +1689,7 @@ impl ProvisioningService {
         .bind(size.disk_gb)
         .bind(plan_id.as_deref())
         .bind(restore.as_ref().map(|(id, _, _)| id.as_str()))
+        .bind(tier)
         .execute(&mut *transaction)
         .await;
         if let Err(error) = inserted {
@@ -1546,7 +1701,7 @@ impl ProvisioningService {
                 .is_some_and(|code| code == "23505");
             transaction.rollback().await?;
             if unique_violation {
-                if let Some(row) = self.live_row_for(user_id, subscription_id).await? {
+                if let Some(row) = self.live_row_for(user_id, subscription_id, tier).await? {
                     return Ok(InstanceView::from(row));
                 }
             }
@@ -1557,7 +1712,13 @@ impl ProvisioningService {
         // 2. Drive the backend. On failure: error status + release the slot.
         let image = match &restore {
             Some((_, _, alias)) => alias.clone(),
+            None if free => self.free.image.clone(),
             None => self.defaults.image.clone(),
+        };
+        let cpu_allowance = if free {
+            self.free.cpu_allowance.clone()
+        } else {
+            None
         };
         let bootstrap = BootstrapContract {
             api: self.defaults.api_base.clone(),
@@ -1567,7 +1728,15 @@ impl ProvisioningService {
             expires_at: pairing_expires_at.to_rfc3339(),
         };
         let result = self
-            .drive_create(&instance_id, &host_id, &incus_name, &image, size, &bootstrap)
+            .drive_create(
+                &instance_id,
+                &host_id,
+                &incus_name,
+                &image,
+                size,
+                cpu_allowance.as_deref(),
+                &bootstrap,
+            )
             .await;
         if let Err(error) = result {
             tracing::warn!(%instance_id, %error, "provisioned instance create failed; marking error");
@@ -1579,27 +1748,32 @@ impl ProvisioningService {
             .bind(&instance_id)
             .execute(&self.db)
             .await?;
-            self.release_allocation(&host_id, size).await;
+            self.release_allocation(&host_id, allocation).await;
             return Err(error);
         }
 
         self.get_for_user(&instance_id, user_id).await
     }
 
-    /// The live (non-terminal, non-error) row for `(user, subscription)`.
+    /// The live (non-terminal, non-error) row for `(user, subscription)` of
+    /// the given tier. A replaced free computer (kept sleeping after an
+    /// upgrade) no longer counts as the account's live free computer.
     async fn live_row_for(
         &self,
         user_id: &str,
         subscription_id: Option<&str>,
+        tier: &str,
     ) -> Result<Option<InstanceRow>, ApiError> {
         Ok(sqlx::query_as::<_, InstanceRow>(&format!(
             "SELECT {INSTANCE_COLUMNS} FROM provisioned_instances \
-             WHERE user_id = $1 AND subscription_id IS NOT DISTINCT FROM $2 \
-               AND status IN ('provisioning', 'running', 'stopped', 'suspended') \
+             WHERE user_id = $1 AND subscription_id IS NOT DISTINCT FROM $2 AND tier = $3 \
+               AND status IN ('provisioning', 'running', 'stopped', 'sleeping', 'waking', 'suspended') \
+               AND replaced_by IS NULL \
              ORDER BY created_at DESC LIMIT 1"
         ))
         .bind(user_id)
         .bind(subscription_id)
+        .bind(tier)
         .fetch_optional(&self.db)
         .await?)
     }
@@ -1612,13 +1786,15 @@ impl ProvisioningService {
         &self,
         user_id: &str,
         subscription_id: Option<&str>,
+        tier: &str,
     ) -> Result<(), ApiError> {
         let rows = sqlx::query_as::<_, InstanceRow>(&format!(
             "SELECT {INSTANCE_COLUMNS} FROM provisioned_instances \
-             WHERE user_id = $1 AND subscription_id IS NOT DISTINCT FROM $2 AND status = 'error'"
+             WHERE user_id = $1 AND subscription_id IS NOT DISTINCT FROM $2 AND tier = $3 AND status = 'error'"
         ))
         .bind(user_id)
         .bind(subscription_id)
+        .bind(tier)
         .fetch_all(&self.db)
         .await?;
         for row in rows {
@@ -1701,6 +1877,7 @@ impl ProvisioningService {
         incus_name: &str,
         image: &str,
         size: ComputerSize,
+        cpu_allowance: Option<&str>,
         bootstrap: &BootstrapContract,
     ) -> Result<(), ApiError> {
         let row: Option<(String, Option<String>)> = sqlx::query_as(
@@ -1749,6 +1926,7 @@ impl ProvisioningService {
             name: incus_name.to_string(),
             image: format!("local:{image}"),
             cpu_cores: size.cpu_cores,
+            cpu_allowance: cpu_allowance.map(str::to_string),
             memory_mb: size.memory_mb,
             disk_gb: size.disk_gb,
             profiles: self.defaults.profiles.clone(),
@@ -1826,7 +2004,7 @@ impl ProvisioningService {
         }
         record_instance_stopped(&self.db, &row.id, "backend_removed").await?;
         if let Some(host_id) = &row.host_id {
-            self.release_allocation(host_id, row.size()).await;
+            self.release_allocation(host_id, row.allocation()).await;
         }
         if let Some(device_id) = &row.device_id {
             revoke_device(&self.db, device_id).await?;
@@ -1845,7 +2023,7 @@ impl ProvisioningService {
         user_id: &str,
         subscription_id: &str,
     ) -> Result<Option<InstanceView>, ApiError> {
-        let Some(row) = self.live_row_for(user_id, Some(subscription_id)).await? else {
+        let Some(row) = self.live_row_for(user_id, Some(subscription_id), TIER_PAID).await? else {
             return Ok(None);
         };
         if row.status != "suspended" {
@@ -1938,7 +2116,7 @@ impl ProvisioningService {
     pub async fn sweep_lifecycle(&self, now: DateTime<Utc>) -> Result<(), ApiError> {
         let pending_snapshots = sqlx::query_as::<_, InstanceRow>(&format!(
             "SELECT {INSTANCE_COLUMNS} FROM provisioned_instances \
-             WHERE status = 'suspended' AND snapshot_image IS NULL"
+             WHERE tier = 'paid' AND status = 'suspended' AND snapshot_image IS NULL"
         ))
         .fetch_all(&self.db)
         .await?;
@@ -1950,7 +2128,7 @@ impl ProvisioningService {
 
         let due = sqlx::query_as::<_, InstanceRow>(&format!(
             "SELECT {INSTANCE_COLUMNS} FROM provisioned_instances \
-             WHERE status = 'suspended' AND snapshot_image IS NOT NULL AND delete_after <= $1"
+             WHERE tier = 'paid' AND status = 'suspended' AND snapshot_image IS NOT NULL AND delete_after <= $1"
         ))
         .bind(now)
         .fetch_all(&self.db)
@@ -1977,7 +2155,7 @@ impl ProvisioningService {
             .execute(&self.db)
             .await?;
             if let Some(host_id) = &row.host_id {
-                self.release_allocation(host_id, row.size()).await;
+                self.release_allocation(host_id, row.allocation()).await;
             }
             if let Some(device_id) = &row.device_id {
                 revoke_device(&self.db, device_id).await?;
@@ -2038,6 +2216,11 @@ impl ProvisioningService {
     /// 'stopped'`) keeps racing starts idempotent.
     pub async fn start(&self, instance_id: &str, user_id: &str) -> Result<InstanceView, ApiError> {
         let row = self.fetch_row(instance_id, Some(user_id)).await?;
+        if row.is_free() {
+            return Err(ApiError::BadRequest(
+                "A free computer is started with POST /api/v1/provisioned-instances/:id/wake".to_string(),
+            ));
+        }
         if row.status != "stopped" {
             return Err(ApiError::BadRequest(format!(
                 "Instance cannot start from status '{}'",
@@ -2065,6 +2248,11 @@ impl ProvisioningService {
     /// metering interval with frozen duration.
     pub async fn stop(&self, instance_id: &str, user_id: &str) -> Result<InstanceView, ApiError> {
         let row = self.fetch_row(instance_id, Some(user_id)).await?;
+        if row.is_free() && row.status == "running" {
+            // Stopping a free computer is putting it to sleep early.
+            self.sleep_row(&row, "user_stopped").await?;
+            return self.get_for_user(instance_id, user_id).await;
+        }
         if row.status != "running" {
             return Err(ApiError::BadRequest(format!(
                 "Instance cannot stop from status '{}'",
@@ -2113,7 +2301,7 @@ impl ProvisioningService {
         .await?;
         // An `error` row already released its allocation when it failed.
         if let (Some(host_id), true) = (row.host_id.as_ref(), row.status != "error") {
-            self.release_allocation(host_id, row.size()).await;
+            self.release_allocation(host_id, row.allocation()).await;
         }
         record_instance_stopped(&self.db, instance_id, "deleted").await?;
         if let Some(device_id) = &row.device_id {
@@ -2187,12 +2375,16 @@ impl ProvisioningService {
     pub async fn reconcile_all(&self) -> Result<(), ApiError> {
         let rows = sqlx::query_as::<_, InstanceRow>(&format!(
             "SELECT {INSTANCE_COLUMNS} FROM provisioned_instances \
-             WHERE status IN ('provisioning', 'running', 'stopped', 'suspended')"
+             WHERE status IN ('provisioning', 'running', 'stopped', 'sleeping', 'waking', 'suspended')"
         ))
         .fetch_all(&self.db)
         .await?;
 
         for row in rows {
+            // A wake whose start task died with the process (restart while
+            // `waking`): converge from the backend once it is clearly stale.
+            let stale_wake = row.status == "waking"
+                && Utc::now() - row.updated_at > Duration::seconds(WAKE_STALE_SECONDS);
             let id = row.id.clone();
             let backend = match self.backend_for_row(&row).await {
                 Ok(backend) => backend,
@@ -2214,18 +2406,23 @@ impl ProvisioningService {
                     record_instance_started(&self.db, &id).await?;
                     tracing::info!(%id, "reconcile: provisioning -> running");
                 }
-                Ok(BackendStatus::Running) if status == "stopped" => {
+                Ok(BackendStatus::Running)
+                    if status == "stopped" || status == "sleeping" || stale_wake =>
+                {
+                    // A sleeping free computer found running (started outside
+                    // the wake path) gets a fresh idle window.
                     sqlx::query(
-                        "UPDATE provisioned_instances SET status = 'running', last_started_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+                        "UPDATE provisioned_instances SET status = 'running', last_started_at = CURRENT_TIMESTAMP, last_activity_at = CASE WHEN tier = 'free' THEN CURRENT_TIMESTAMP ELSE last_activity_at END, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
                     )
                     .bind(&id)
                     .execute(&self.db)
                     .await?;
                     record_instance_started(&self.db, &id).await?;
                 }
-                Ok(BackendStatus::Stopped) if status == "running" => {
+                Ok(BackendStatus::Stopped) if status == "running" || stale_wake => {
+                    // A free computer that stopped is asleep (wakeable).
                     sqlx::query(
-                        "UPDATE provisioned_instances SET status = 'stopped', last_stopped_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+                        "UPDATE provisioned_instances SET status = CASE WHEN tier = 'free' THEN 'sleeping' ELSE 'stopped' END, last_stopped_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
                     )
                     .bind(&id)
                     .execute(&self.db)
@@ -2659,6 +2856,7 @@ mod tests {
             name: name.to_string(),
             image: "local:allternit-desktop".to_string(),
             cpu_cores: 2,
+            cpu_allowance: None,
             memory_mb: 2048,
             disk_gb: 20,
             profiles: vec!["default".to_string()],
@@ -2870,6 +3068,7 @@ pub(crate) mod pg_tests {
     const MIGRATION_014: &str = include_str!("../../migrations_pg/014_provisioned_fleet.sql");
     const MIGRATION_018: &str =
         include_str!("../../migrations_pg/018_cloud_computer_provisioning.sql");
+    const MIGRATION_019: &str = include_str!("../../migrations_pg/019_free_sleeping_computer.sql");
 
     async fn test_pool() -> PgPool {
         let url = "postgres://allternit:allternit_pg_2026@localhost:5432/allternit_test";
@@ -2955,6 +3154,9 @@ pub(crate) mod pg_tests {
         apply_migration_sql(&pool, &schema, MIGRATION_014).await;
         apply_migration_sql(&pool, &schema, MIGRATION_018).await;
         apply_migration_sql(&pool, &schema, MIGRATION_018).await;
+        apply_migration_sql(&pool, &schema, MIGRATION_019).await;
+        apply_migration_sql(&pool, &schema, MIGRATION_019).await;
+        create_schedules_stub(&pool).await;
         sqlx::query("INSERT INTO users (id) VALUES ('user_1'), ('user_2')")
             .execute(&pool)
             .await
@@ -2967,6 +3169,16 @@ pub(crate) mod pg_tests {
         .await
         .unwrap();
         pool
+    }
+
+    /// The cloud `schedules` columns the free-computer sweep reads.
+    async fn create_schedules_stub(pool: &PgPool) {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS schedules (id TEXT PRIMARY KEY, owner_id TEXT, enabled BOOLEAN DEFAULT TRUE, next_run_at TIMESTAMPTZ)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
     }
 
     async fn insert_host(pool: &PgPool, id: &str, cpu: i64, mem: i64, disk: i64) {
@@ -3101,6 +3313,8 @@ pub(crate) mod pg_tests {
             sqlx::query_scalar("SELECT current_schema()").fetch_one(pool).await.unwrap();
         apply_migration_sql(pool, &schema, MIGRATION_014).await;
         apply_migration_sql(pool, &schema, MIGRATION_018).await;
+        apply_migration_sql(pool, &schema, MIGRATION_019).await;
+        create_schedules_stub(pool).await;
         insert_host(pool, "host_a", 16, 32768, 200).await;
     }
 

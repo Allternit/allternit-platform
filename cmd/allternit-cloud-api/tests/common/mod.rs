@@ -86,6 +86,7 @@ impl TestApp {
                     "https://api.allternit.com".to_string(),
                 )),
                 quota_service.clone(),
+                Arc::new(services::ProvisioningService::new(db.clone())),
             )),
             provisioning_service: Arc::new(services::ProvisioningService::new(db.clone())),
             mesh_service: None,

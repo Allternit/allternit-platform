@@ -18,6 +18,24 @@
 //!   subscription id (or be an admin). A subscription without a gate simply
 //!   omits `subscriptionId`, which only admins may do.
 //! - Host routes are admin-only; fleet hosts are operator-managed.
+//!
+//! ## Free sleeping computer (plan decision 16)
+//!
+//! - `POST /api/v1/provisioned-instances/free` (Clerk): ensure the account's
+//!   one free computer. Idempotent (201 on first create, 200 after). 409 when
+//!   the account has an active paid subscription, 403 until
+//!   `ALLTERNIT_FREE_COMPUTERS=1`.
+//! - `POST /api/v1/provisioned-instances/:id/wake` (owner): 202
+//!   `{"status":"waking","instance":{…}}` while it starts, 200
+//!   `{"status":"running",…}` when already awake; 429 over the hourly wake
+//!   limit, 503 when the host's awake cap is full.
+//! - `GET /api/v1/provisioned-instances/:id` → `instance.status` +
+//!   `instance.runtimeOnline`. Ready = `runtimeOnline: true` (the runtime's
+//!   relay connection is live).
+//! - `POST /api/v1/runtime-devices/:id/activity` (device credential, called
+//!   by the runtime inside the computer): `{"busy":true}` keeps it awake
+//!   while a job runs; `{"nextWakeAt":"<RFC3339>"|null}` sets/clears the
+//!   scheduled wake.
 
 use axum::{
     extract::{Path, Query, State},
@@ -31,6 +49,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::services::InstanceView;
 use crate::{ApiError, ApiState};
 
 const ADMIN_USER_IDS_ENV: &str = "ALLTERNIT_ADMIN_USER_IDS";
@@ -59,6 +78,9 @@ pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
         .route("/api/v1/provisioned-instances", post(create_instance))
         .route("/api/v1/provisioned-instances", get(list_instances))
+        .route("/api/v1/provisioned-instances/free", post(create_free_instance))
+        .route("/api/v1/provisioned-instances/:id/wake", post(wake_instance))
+        .route("/api/v1/runtime-devices/:id/activity", post(runtime_activity))
         .route(
             "/api/v1/provisioned-instances/:id",
             get(get_instance_status),
@@ -176,12 +198,35 @@ async fn ensure_active_subscription(
     }
 }
 
+/// Fills `runtimeOnline` (the wake ready signal) from the relay hub.
+async fn with_presence(mut view: InstanceView) -> InstanceView {
+    if let Some(device_id) = &view.device_id {
+        view.runtime_online = crate::routes::runtime_relay::connected_runtime_ids()
+            .await
+            .contains(device_id);
+    }
+    view
+}
+
 async fn list_instances(
     State(state): State<Arc<ApiState>>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let user = crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await?;
-    let instances = state.provisioning_service.list_for_user(&user.id).await?;
+    let connected = crate::routes::runtime_relay::connected_runtime_ids().await;
+    let instances: Vec<InstanceView> = state
+        .provisioning_service
+        .list_for_user(&user.id)
+        .await?
+        .into_iter()
+        .map(|mut view| {
+            view.runtime_online = view
+                .device_id
+                .as_ref()
+                .is_some_and(|device_id| connected.contains(device_id));
+            view
+        })
+        .collect();
     Ok(Json(
         serde_json::json!({ "instances": instances }),
     ))
@@ -194,7 +239,107 @@ async fn get_instance_status(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let user = crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await?;
     let instance = state.provisioning_service.get_for_user(&id, &user.id).await?;
-    Ok(Json(serde_json::json!({ "instance": instance })))
+    Ok(Json(serde_json::json!({ "instance": with_presence(instance).await })))
+}
+
+/// `POST /api/v1/provisioned-instances/free` — see the module docs.
+async fn create_free_instance(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let user = crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await?;
+    let service = &state.provisioning_service;
+    if !service.free_defaults().enabled && !is_admin(&user.id) {
+        return Err(ApiError::Forbidden(
+            "Free cloud computers are not enabled yet".to_string(),
+        ));
+    }
+    if service.has_active_subscription(&user.id).await? {
+        return Err(ApiError::Conflict(
+            "This account has a paid plan; it uses its paid cloud computer".to_string(),
+        ));
+    }
+    let existed = service
+        .list_for_user(&user.id)
+        .await?
+        .iter()
+        .any(|view| {
+            view.tier == crate::services::TIER_FREE
+                && view.replaced_by.is_none()
+                && view.status != "error"
+        });
+    let view = with_presence(service.create_free(&user.id).await?).await;
+    let status = if existed { StatusCode::OK } else { StatusCode::CREATED };
+    Ok((status, Json(serde_json::json!({ "instance": view }))).into_response())
+}
+
+/// `POST /api/v1/provisioned-instances/:id/wake` — see the module docs.
+async fn wake_instance(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    let user = crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await?;
+    let result = state
+        .provisioning_service
+        .wake(&id, Some(&user.id), crate::services::WakeReason::Owner)
+        .await?;
+    let view = with_presence(result.view).await;
+    let (code, status) = match view.status.as_str() {
+        "running" => (StatusCode::OK, "running"),
+        _ => (StatusCode::ACCEPTED, "waking"),
+    };
+    Ok((
+        code,
+        Json(serde_json::json!({
+            "status": status,
+            "instance": view,
+            "pollUrl": format!("/api/v1/provisioned-instances/{id}"),
+            "pollIntervalSeconds": 2,
+        })),
+    )
+        .into_response())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeActivityRequest {
+    #[serde(default)]
+    busy: bool,
+    /// Absent = unchanged; `null` = clear; RFC3339 = set.
+    #[serde(default, deserialize_with = "double_option")]
+    next_wake_at: Option<Option<DateTime<Utc>>>,
+}
+
+fn double_option<'de, D>(deserializer: D) -> Result<Option<Option<DateTime<Utc>>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<DateTime<Utc>>::deserialize(deserializer).map(Some)
+}
+
+/// `POST /api/v1/runtime-devices/:id/activity` — the runtime inside a
+/// provisioned computer reports activity with its device credential.
+async fn runtime_activity(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(request): Json<RuntimeActivityRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let token = crate::routes::runtime_pairing::device_token_from_headers(&headers)
+        .ok_or_else(|| ApiError::Unauthorized("Runtime credential required".to_string()))?;
+    crate::routes::runtime_pairing::authenticate_runtime_token(&state, token, &id).await?;
+    let instance = state
+        .provisioning_service
+        .record_runtime_activity(&id, request.busy, request.next_wake_at)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("No provisioned computer for this runtime".to_string()))?;
+    Ok(Json(serde_json::json!({
+        "instanceId": instance.id,
+        "status": instance.status,
+        "nextWakeAt": instance.next_wake_at,
+        "lastActivityAt": instance.last_activity_at,
+    })))
 }
 
 async fn start_instance(
@@ -459,7 +604,25 @@ mod tests {
                 snapshot_image TEXT,
                 snapshot_expires_at TIMESTAMPTZ,
                 snapshot_deleted_at TIMESTAMPTZ,
-                restored_from TEXT
+                restored_from TEXT,
+                tier TEXT NOT NULL DEFAULT 'paid',
+                last_activity_at TIMESTAMPTZ,
+                last_owner_activity_at TIMESTAMPTZ,
+                next_wake_at TIMESTAMPTZ,
+                sleep_count BIGINT NOT NULL DEFAULT 0,
+                wake_count BIGINT NOT NULL DEFAULT 0,
+                last_slept_at TIMESTAMPTZ,
+                last_woken_at TIMESTAMPTZ,
+                replaced_by TEXT
+            )
+            "#,
+            r#"
+            CREATE TABLE provisioned_instance_wakes (
+                id TEXT PRIMARY KEY,
+                instance_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
             "#,
             r#"
