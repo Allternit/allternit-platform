@@ -56,6 +56,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const projectInContext = (contextId: string) => /~p([0-9a-f-]{36})$/.exec(contextId)?.[1] ?? null;
 
 interface Ctx {
+  /** Turns queued or running in this conversation (the busy limit counts conversations with any). */
+  inFlight?: number;
   id: string; closed: boolean; turns: number; seq: number; events: CursoredEvent[]; projectId: string | null;
   /** The running turn's gateway task, so Stop can cancel it. */
   runningTask?: string; cancelled?: boolean;
@@ -198,9 +200,6 @@ export class SubscriptionAgentProvider extends BaseAaiProvider {
     }
     const r = await this.ready();
     if (!r.ok) return r;
-    if ([...this.ctxs.values()].filter((c) => !c.closed).length >= this.spec.capabilities.context.maxParallel) {
-      return fail("CONTEXT_BUSY", `At most ${this.spec.capabilities.context.maxParallel} ${this.spec.displayName} conversations can be open at once.`);
-    }
     // The context id is also the gateway thread_id: the subscription's thread mapping keeps the claude.ai conversation.
     const projectId = this.projectOf(i.agentId);
     const id = `${this.ctxPrefix}${i.threadId ?? ""}${i.threadId ? "-" : ""}${++this.n}-${Math.random().toString(36).slice(2, 8)}${projectId ? `~p${projectId}` : ""}`;
@@ -216,7 +215,14 @@ export class SubscriptionAgentProvider extends BaseAaiProvider {
     const ctx = c.value;
     const prior = ctx.done.get(i.correlationId);
     if (prior) return prior;
-    const p = ctx.lock.then(() => this.run(ctx, i));
+    // The limit is on replies running at once, not on conversations that exist: every thread keeps its
+    // conversation open, so counting open ones locked a person out after their Nth thread.
+    const running = [...this.ctxs.values()].filter((c) => c !== ctx && (c.inFlight ?? 0) > 0).length;
+    if (running >= this.spec.capabilities.context.maxParallel) {
+      return Promise.resolve(fail("CONTEXT_BUSY", `${this.spec.displayName} is already answering ${this.spec.capabilities.context.maxParallel} conversations; try again in a moment.`, { retryAfterMs: 5000 }));
+    }
+    ctx.inFlight = (ctx.inFlight ?? 0) + 1;
+    const p = ctx.lock.then(() => this.run(ctx, i)).finally(() => { ctx.inFlight = (ctx.inFlight ?? 1) - 1; });
     ctx.done.set(i.correlationId, p);
     ctx.lock = p.catch(() => undefined);
     void p.then((r) => { if (!r.ok) ctx.done.delete(i.correlationId); });

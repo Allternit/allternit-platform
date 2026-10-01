@@ -26,6 +26,8 @@ export interface OpenClawOptions {
 
 type Msg = { role: "system" | "user" | "assistant"; content: string };
 interface Ctx {
+  /** Turns queued or running in this conversation (the busy limit counts conversations with any). */
+  inFlight?: number;
   id: string; agentId: string; model: string; closed: boolean;
   history: Msg[]; events: CursoredEvent[]; seq: number; n: number;
   done: Map<string, Promise<AaiResult<MessageResult>>>; lock: Promise<unknown>; abort?: AbortController; cancelled?: boolean;
@@ -145,7 +147,6 @@ export class OpenClawProvider extends BaseAaiProvider {
     }
     const agent = await this.resolve(i.agentId); // also proves OpenClaw is reachable before a context is handed out
     if (!agent.ok) return agent;
-    if ([...this.ctxs.values()].filter((c) => !c.closed).length >= this.o.maxParallel) return fail("CONTEXT_BUSY", `At most ${this.o.maxParallel} OpenClaw conversations can be open at once.`);
     const c: Ctx = { id: `oc-${++this.n}-${Math.random().toString(36).slice(2, 8)}`, agentId: i.agentId, model: stripPrefix(i.agentId), closed: false, history: [], events: [], seq: 0, n: 0, done: new Map(), lock: Promise.resolve() };
     this.ctxs.set(c.id, c);
     this.push(c, "agent.context.opened", `open:${c.id}`, { title: i.title ?? null });
@@ -158,7 +159,14 @@ export class OpenClawProvider extends BaseAaiProvider {
     const ctx = c.value;
     const prior = ctx.done.get(i.correlationId);
     if (prior) return prior;
-    const p = ctx.lock.then(() => this.run(ctx, i));
+    // The limit is on replies running at once, not on conversations that exist: every thread keeps its
+    // conversation open, so counting open ones locked a person out after their Nth thread.
+    const running = [...this.ctxs.values()].filter((c) => c !== ctx && (c.inFlight ?? 0) > 0).length;
+    if (running >= this.o.maxParallel) {
+      return Promise.resolve(fail("CONTEXT_BUSY", `OpenClaw is already answering ${this.o.maxParallel} conversations; try again in a moment.`, { retryAfterMs: 5000 }));
+    }
+    ctx.inFlight = (ctx.inFlight ?? 0) + 1;
+    const p = ctx.lock.then(() => this.run(ctx, i)).finally(() => { ctx.inFlight = (ctx.inFlight ?? 1) - 1; });
     ctx.done.set(i.correlationId, p);
     ctx.lock = p.catch(() => undefined);
     void p.then((r) => { if (!r.ok) ctx.done.delete(i.correlationId); }); // failed sends may be retried with the same id
