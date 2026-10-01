@@ -138,6 +138,8 @@ pub fn routes(forward: Arc<AgencyForward>) -> Router<Arc<ApiState>> {
         .route("/v1/replays/*rest", any(forward_handler))
         .route("/v1/decisions", any(forward_handler))
         .route("/v1/capabilities", any(forward_handler))
+        // WP-P1 production safety: org policy, approvals queue, run journal.
+        .route("/v1/agency-safety/*rest", any(forward_handler))
         .route("/v1/agents", any(forward_handler))
         .route("/v1/authority-profiles", any(forward_handler))
         .route("/v1/completion-criteria", any(forward_handler))
