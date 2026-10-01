@@ -228,7 +228,7 @@ Lists vault memory candidates (all pending human approval). No events.
 
 ### `allternit lessons triage --dag <dag_id> [--brain-root <dir>] [--server <url>] [--model <id>] [--task-min 0.5] [--mean-min 0.6] [--timeout-secs 30] [--force]`
 Scores each untriaged candidate with three System One Nouls (`task_success`,
-`reusable_pattern`, `supported_by_events`) at `POST <server>/v1/systemone`
+`reusable_pattern`, `supported_by_events`) at `POST <server>/v1/decision` (bank `bank.lesson_worthiness`, CONFIDENCE_GATE; P(true) is the score)
 (default `http://127.0.0.1:7717`). Promotes when `task_success >= task-min` and
 the mean `>= mean-min`. Promoted candidates are written as `brain_update_draft`
 files (`auto_apply: false`) to `<brain-root>/.incoming/draft-<ms>.json`; if the

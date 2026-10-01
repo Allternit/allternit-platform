@@ -828,6 +828,19 @@ class PlanningLoop:
             model_turns=model_turns,
         )
 
+        # Episode outcome labels for the shadow head. The hook never runs on
+        # the planner's `done` step, so every shadow-decided state of a
+        # COMPLETED run came before the planner's last action: the goal was
+        # not yet satisfied there. A failed run gives no goal label, and no
+        # state ever gets a positive one (that needs the hook on `done`).
+        _shadow_report = getattr(self.config.shadow_head, "report_outcome", None)
+        if self.config.shadow_head_enabled and callable(_shadow_report) and status == "completed":
+            try:
+                for _s in steps:
+                    _shadow_report("goal_satisfied", "false", "cu.run_completed_later", step=_s.step)
+            except Exception as hook_err:
+                logger.warning("Shadow head episode outcome failed: %s", hook_err)
+
         event_type = "run.completed" if status in ("completed",) else "run.failed"
         self._emit({"type": event_type, "run_id": run_id, "status": status,
                    "summary": result.summary, "duration_ms": duration_ms})
@@ -1128,6 +1141,21 @@ class PlanningLoop:
             # decision (measured: constant answers across all states).
             "The next browser operation is:"
         )
+        # Duck-typed outcome hooks (S1DecisionHead): label the previous
+        # step's operation decision with the operation the planner actually
+        # executed, then tell the head which step this decision belongs to.
+        _report = getattr(head, "report_outcome", None)
+        if callable(_report) and prior_step is not None and prior_step.action_type:
+            try:
+                from .decision_head import canonical_operation
+                _report("operation", canonical_operation(prior_step.action_type),
+                        "cu.executed_operation", step=prior_step.step)
+            except Exception as hook_err:
+                logger.warning("Shadow head report_outcome failed at step %s: %s", step_num, hook_err)
+        _begin_step = getattr(head, "begin_step", None)
+        if callable(_begin_step):
+            _begin_step(step_num)
+
         decision = head.decide(state_text, questions)
         decision.validate()
 

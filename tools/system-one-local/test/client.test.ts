@@ -1,0 +1,87 @@
+import { describe, expect, test } from "bun:test";
+import { decide, gateRecommendation, gateRequest, reportOutcome, shadowGate, tighten, type Friction } from "../src/decision/client.ts";
+import { GUARD_GATE, reportToolRan, runGuard } from "../src/hook/guard.ts";
+
+const ALL: Friction[] = ["allow", "ask", "deny"];
+
+describe("tighten-only invariant (Q26: S1 may only tighten permission decisions)", () => {
+  test("an S1 allow can never turn ask/deny into allow", () => {
+    expect(tighten("ask", "allow")).toBe("ask");
+    expect(tighten("deny", "allow")).toBe("deny");
+  });
+  test("exhaustive: result is never looser than the incumbent, and missing S1 leaves it unchanged", () => {
+    const rank = { allow: 0, ask: 1, deny: 2 };
+    for (const inc of ALL) {
+      for (const s1 of [...ALL, null, undefined, "bogus" as any]) {
+        const out = tighten(inc, s1);
+        expect(rank[out]).toBeGreaterThanOrEqual(rank[inc]);
+        if (s1 === null || s1 === undefined || s1 === "bogus") expect(out).toBe(inc);
+      }
+    }
+    expect(tighten("allow", "ask")).toBe("ask");
+    expect(tighten("ask", "deny")).toBe("deny");
+  });
+  test("recommendation thresholds", () => {
+    expect(gateRecommendation(0.95)).toBe("allow");
+    expect(gateRecommendation(0.5)).toBe("ask");
+    expect(gateRecommendation(0.1)).toBe("deny");
+    expect(gateRecommendation(null)).toBeNull();
+  });
+});
+
+type Call = { url: string; body: any };
+const fakeRuntime = (pTrue: number, calls: Call[]) => async (url: string, init?: RequestInit) => {
+  const body = JSON.parse(String(init?.body));
+  calls.push({ url, body });
+  if (url.endsWith("/v1/decision/outcome")) return new Response("{}");
+  const r = body.request;
+  const probabilities = r.operation === "SCORE" ? Object.fromEntries(r.scale.map((_: string, i: number) => [String(i), i === 0 ? 1 : 0])) : r.operation === "GATE" ? { true: pTrue, false: 1 - pTrue } : { true: 0.05, false: 0.95 };
+  return new Response(JSON.stringify({ operation: r.operation, answer: null, probabilities, confidence: 1, threshold_action: "REVIEW", extensions: { "x-decision_id": `dec-${r.question_id}` } }));
+};
+
+describe("decision client", () => {
+  test("gateRequest carries motif, primitive and subject_ref", () => {
+    const r = gateRequest({ producer: "p", decision_bank_id: "bank.x", question_id: "q", instructions: "i", primitive_id: "prim", subject_ref: "s", motif: "CONFIDENCE_GATE" });
+    expect(r.operation).toBe("GATE");
+    expect(r.extensions).toEqual({ "x-motif": "CONFIDENCE_GATE", "x-primitive_id": "prim", "x-subject_ref": "s" });
+  });
+  test("shadowGate posts backend + returns decision id; failures are null, never throw", async () => {
+    const calls: Call[] = [];
+    const g = await shadowGate({ producer: "p", decision_bank_id: "b", question_id: "q", instructions: "i" }, "state", { url: "http://s1", fetchImpl: fakeRuntime(0.9, calls), backend: "auto", enabled: true });
+    expect(g?.decision_id).toBe("dec-q");
+    expect(g?.recommendation).toBe("allow");
+    expect(calls[0].body.backend).toBe("auto");
+    expect(await decide({}, "s", { fetchImpl: async () => { throw new TypeError("down"); }, enabled: true })).toBeNull();
+    expect(await reportOutcome({ truth: "true", source: "x" }, { enabled: true, fetchImpl: fakeRuntime(1, calls) })).toBe(false);
+  });
+});
+
+describe("CLI guard hook: shadow GATE", () => {
+  const input = (command: string) => ({ tool_name: "Bash", tool_input: { command }, cwd: "/tmp", tool_use_id: "toolu_1" });
+  test("logs a GATE with subject_ref, records it, and leaves the emitted decision unchanged", async () => {
+    for (const p of [0.99, 0.01]) {
+      const calls: Call[] = [];
+      const r = await runGuard(input("ls -la"), { mode: "advise", logDir: null, serverUrl: "http://s1", fetchImpl: fakeRuntime(0.0, calls) as any });
+      const shadow = await runGuard(input("ls -la"), { mode: "advise", logDir: null, serverUrl: "http://s1", fetchImpl: fakeRuntime(p, []) as any });
+      const gate = calls.find((c) => c.body.request.operation === "GATE")!;
+      expect(gate.body.request.decision_bank_id).toBe(GUARD_GATE.bank);
+      expect(gate.body.request.extensions["x-subject_ref"]).toBe("cc-tool:toolu_1");
+      expect(r.record!.s1_gate!.decision_id).toBe(`dec-${GUARD_GATE.question}`);
+      // incumbent unchanged regardless of what S1 says
+      expect(shadow.output).toEqual(r.output);
+    }
+  });
+  test("tightened view never emits allow over an ask, and hard-rule calls skip S1", async () => {
+    const calls: Call[] = [];
+    const hot = await runGuard(input("rm -rf ~"), { mode: "advise", logDir: null, serverUrl: "http://s1", fetchImpl: fakeRuntime(1, calls) as any });
+    expect(hot.output?.hookSpecificOutput.permissionDecision).toBe("deny");
+    expect(calls.length).toBe(0);
+  });
+  test("PostToolUse reports the 'proceeded' outcome label by subject_ref", async () => {
+    const calls: Call[] = [];
+    expect(await reportToolRan({ tool_use_id: "toolu_1" }, { serverUrl: "http://s1", fetchImpl: fakeRuntime(1, calls) as any })).toBe(true);
+    expect(calls[0].url).toBe("http://s1/v1/decision/outcome");
+    expect(calls[0].body).toEqual({ subject_ref: "cc-tool:toolu_1", question_id: GUARD_GATE.question, truth: "true", source: "cli_hook.post_tool_use" });
+    expect(await reportToolRan({}, { fetchImpl: fakeRuntime(1, calls) as any })).toBe(false);
+  });
+});

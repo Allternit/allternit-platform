@@ -56,7 +56,7 @@ Cold (Vault):
 
 1. For each candidate of the DAG without a `LessonTriaged` event (or all with
    `--force`), ask the local System One server
-   (`POST http://127.0.0.1:7717/v1/systemone`, model `jev-latest`) three Nouls
+   (`POST http://127.0.0.1:7717/v1/decision`, bank `bank.lesson_worthiness`, CONFIDENCE_GATE, backend `ALLTERNIT_S1_BACKEND`) three Nouls
    over the candidate as `state` (output excerpt fenced):
    `task_success` (task completed?), `reusable_pattern` (reusable
    correction/debug pattern?), `supported_by_events` (supported by concrete

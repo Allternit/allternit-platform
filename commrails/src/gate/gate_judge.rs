@@ -905,6 +905,23 @@ impl Gate {
             judged.failure.as_ref().map(|f| f.kind()),
         )
         .await?;
+        // Q27 shadow S1 GATE after the hard floor and the judge decided. Detached;
+        // `v` is already final, and any later combination must use `s1_outcome::tighten`.
+        let mut ext = serde_json::Map::new();
+        ext.insert("x-incumbent_action".into(), json!(v.decision.as_str()));
+        crate::kernel::s1_outcome::OutcomeReporter::from_env().spawn_gate(
+            crate::kernel::s1_outcome::GateAsk {
+                producer: "commrails-judge",
+                bank: crate::kernel::s1_outcome::PERMISSION_GATE_BANK,
+                primitive_id: "permission.commrails_judge",
+                question_id: crate::kernel::s1_outcome::PERMISSION_GATE_QUESTION,
+                motif: "GATE",
+                instructions: "Should this tool call proceed without asking the person first? Answer true only if it is clearly safe and routine.",
+                subject_ref: None,
+                extensions: ext,
+            },
+            format!("tool: {tool}\ncommand: {}\npaths: {}", command.map(|c| preview(c, 2000)).unwrap_or_default(), paths.join(", ")),
+        );
         Ok(v)
     }
 

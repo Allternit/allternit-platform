@@ -15,6 +15,7 @@ import { HookDispatcher } from "@/runtime/hooks/dispatcher"
 import { Catastrophic } from "@/runtime/tools/guard/permission/catastrophic"
 
 import { KernelTurn } from "@/runtime/kernel/compilers/turn-hook"
+import { PermissionS1 } from "@/runtime/tools/guard/permission/s1-shadow"
 export namespace PermissionNext {
   const log = Log.create({ service: "permission" })
 
@@ -197,13 +198,24 @@ export namespace PermissionNext {
       const s = await state()
       const { ruleset, mode: modeOverride, ...request } = input
       for (const pattern of request.patterns ?? []) {
+        const mode = modeOverride ?? (await getMode(request.sessionID))
         const rule = evaluatePolicy(request.permission, pattern, {
           configured: ruleset,
           approvals: s.approved,
-          mode: modeOverride ?? (await getMode(request.sessionID)),
+          mode,
         })
         log.info("evaluated", { permission: request.permission, pattern, action: rule })
         const callID = request.tool?.callID
+        // Q27 shadow S1 GATE: logged after the floor/policy decided; never awaited, never changes `rule`.
+        const askID = rule.action === "ask" ? (input.id ?? Identifier.ascending("permission")) : undefined
+        PermissionS1.shadow({
+          permission: request.permission,
+          pattern,
+          mode,
+          incumbent: rule.action,
+          sessionID: request.sessionID,
+          subject_ref: askID ? PermissionS1.subjectForRequest(askID) : PermissionS1.subjectForCall(callID, request.permission, pattern),
+        })
         if (rule.action === "deny") {
           const floor = Catastrophic.applies(request.permission) ? Catastrophic.check(pattern) : undefined
           // WP9: hand the gate's real decision to the Tool Call Compiler (no-op unless GIZZI_KERNEL_COMPILERS).
@@ -217,7 +229,7 @@ export namespace PermissionNext {
           throw new DeniedError(ruleset.filter((r) => Wildcard.match(request.permission, r.permission)))
         }
         if (rule.action === "ask") {
-          const id = input.id ?? Identifier.ascending("permission")
+          const id = askID!
           await HookDispatcher.emit({
             name: "PermissionRequest",
             timestamp: Date.now(),
@@ -284,6 +296,8 @@ export namespace PermissionNext {
       const existing = s.pending[input.requestID]
       if (!existing) return
       delete s.pending[input.requestID]
+      // The person's answer is the outcome label for this ask's shadow S1 GATE.
+      PermissionS1.outcome(input.requestID, input.reply !== "reject")
       // An always-ask class is never remembered: "always" counts as "once".
       if (input.reply === "always" && ALWAYS_ASK.has(existing.info.permission)) {
         input = { ...input, reply: "once" }
