@@ -89,12 +89,28 @@ Hosts are rows in `provisioned_hosts`, registered through the admin route
 `POST /api/v1/provisioned-hosts`; the scheduler picks the enabled host with
 the most free memory (then cpu, then id) that fits the plan size.
 
-- `mail` — the first fleet host (already registered in prod).
+- `mail` — registered in prod, but **not for user computers** (8c / 23 GB,
+  ~91 % disk, runs the Sessions container). Its prod row is wrong (says
+  16c / 64 GB / 800 GB): fix or disable it before the scheduler can pick it.
 - `allternit-standby` — Incus 6.0 at `https://100.83.199.24:8443`
-  (mesh-only), dir pool `default`, `incusbr0`, trusted client certs
-  `allternit-api` / `allternit-desktop`, image `allternit-desktop`
-  (fingerprint 86552d91…). Not registered in prod yet: Eoj registers it
-  (8 cores, 23 GB RAM, ~122 GB disk; leave failover headroom, plan G3).
+  (mesh-only), `incusbr0`, trusted client certs `allternit-api` /
+  `allternit-desktop`, image `allternit-cloud-computer`. Not registered in
+  prod yet: Eoj registers it (8 cores, 23 GB RAM; leave failover headroom,
+  plan G3).
+
+Every fleet host needs, before it takes user computers:
+
+- **A copy-on-write pool, and cloud-api pointed at it.** On standby that is
+  the btrfs pool `cow`; the pool named `default` there is a plain `dir` pool
+  (a full ~2.4 GB copy per computer). Provisioning sends the root disk's pool
+  explicitly, so set `ALLTERNIT_INCUS_STORAGE_POOL=cow`.
+- **Port isolation on the bridge NIC:**
+  `incus profile device set default eth0 security.port_isolation=true`.
+  Without it one user's container reaches another's on `incusbr0`; the
+  image's x11vnc listens on `:5900` with no password. Verified on standby
+  2026-10-01: with it on, container→container is blocked, gateway and
+  internet still work. Provisioning only overrides the root disk, so the
+  profile's `eth0` (and this setting) applies.
 
 ---
 
