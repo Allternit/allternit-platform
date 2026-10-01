@@ -1102,6 +1102,36 @@ pub(crate) async fn relay_request_to_runtime(
     runtime_id: &str,
     request: RelayRequest,
 ) -> Result<Response, ApiError> {
+    relay_request_to_runtime_with(
+        db,
+        contabo_runtime_service,
+        quota_service,
+        provisioning,
+        user_id,
+        runtime_id,
+        request,
+        &[],
+        HashMap::new(),
+    )
+    .await
+}
+
+/// [`relay_request_to_runtime`] for server-side callers that need more of the
+/// caller's headers than the browser allow-list (`extra_allowed`, e.g. a
+/// platform's webhook signature) and headers only cloud-api may set
+/// (`trusted`, added after filtering so no caller can supply them).
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn relay_request_to_runtime_with(
+    db: &sqlx::PgPool,
+    contabo_runtime_service: &std::sync::Arc<crate::services::ContaboRuntimeService>,
+    quota_service: &crate::services::SharedQuotaService,
+    provisioning: &std::sync::Arc<crate::services::ProvisioningService>,
+    user_id: &str,
+    runtime_id: &str,
+    request: RelayRequest,
+    extra_allowed: &[&str],
+    trusted: HashMap<String, String>,
+) -> Result<Response, ApiError> {
     let capabilities = runtime_capabilities(db, runtime_id, user_id).await?;
     if !capabilities
         .iter()
@@ -1167,7 +1197,18 @@ pub(crate) async fn relay_request_to_runtime(
         request_id: request_id.clone(),
         method: request.method.to_ascii_uppercase(),
         path: request.path,
-        headers: filtered_headers(request.headers),
+        headers: {
+            let extra: HashMap<String, String> = request
+                .headers
+                .iter()
+                .filter(|(name, _)| extra_allowed.contains(&name.to_ascii_lowercase().as_str()))
+                .map(|(name, value)| (name.to_ascii_lowercase(), value.clone()))
+                .collect();
+            let mut headers = filtered_headers(request.headers);
+            headers.extend(extra);
+            headers.extend(trusted);
+            headers
+        },
         body: request.body,
         body_encoding: request.body_encoding,
     };
