@@ -78,6 +78,8 @@ export interface SystemOneStatus {
   apiBackend?: S1Backend;
   /** Q28 shadow ledger directory, or null when opted out (SYSTEM_ONE_SHADOW_LOG=0). */
   shadowDir: string | null;
+  /** Q28 opt-in: the ledger also keeps the raw decision state (fine-tuning text). */
+  shadowState: boolean;
   error?: string;
 }
 
@@ -188,6 +190,55 @@ export class SystemOneManager {
 
   private get configPath(): string {
     return path.join(this.root, 'config.json');
+  }
+
+  /**
+   * S1's own settings, beside the shadow ledger, so removing Laya (which
+   * deletes its whole root) never drops them.
+   */
+  private get settingsPath(): string {
+    return path.join(this.deps.homedir, '.allternit', 'system-one', 'settings.json');
+  }
+
+  private readSettings(): Record<string, unknown> {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(this.settingsPath, 'utf8'));
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * Q28 opt-in: also keep the raw decision state (the fine-tuning text) in
+   * the shadow ledger. The saved setting wins; without one, the legacy
+   * SYSTEM_ONE_SHADOW_STATE=1 export still counts. Off by default.
+   */
+  get shadowState(): boolean {
+    const saved = this.readSettings().shadowState;
+    if (typeof saved === 'boolean') return saved;
+    return this.deps.env.SYSTEM_ONE_SHADOW_STATE === '1';
+  }
+
+  /** Save the raw-state opt-in and restart the S1 server this manager owns so it applies. */
+  async setShadowState(enabled: boolean): Promise<boolean> {
+    const settings = this.readSettings();
+    settings.shadowState = enabled;
+    await fs.promises.mkdir(path.dirname(this.settingsPath), { recursive: true });
+    await fs.promises.writeFile(this.settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
+    log.info(`[SystemOne] raw decision state in the shadow ledger: ${enabled ? 'on' : 'off'}`);
+    if (this.s1Proc) {
+      const proc = this.s1Proc;
+      this.s1Proc = null;
+      proc.kill('SIGTERM');
+      await new Promise<void>((resolve) => {
+        if (proc.exitCode != null || proc.signalCode != null) return resolve();
+        proc.once('exit', () => resolve());
+        setTimeout(resolve, 5000);
+      });
+      await this.startSystemOne().catch((err) => this.fail(`S1 restart failed: ${(err as Error).message}`));
+    }
+    return this.shadowState;
   }
 
   /**
@@ -403,6 +454,7 @@ export class SystemOneManager {
       backend: this.backend,
       ...(this.apiBackend ? { apiBackend: this.apiBackend } : {}),
       shadowDir: this.shadowDir,
+      shadowState: this.shadowState,
       ...(this.lastError ? { error: this.lastError } : {}),
     };
   }
@@ -549,6 +601,8 @@ export class SystemOneManager {
       SYSTEM_ONE_LAYA_URL: this.layaUrl,
       ...(shadowDir ? { ALLTERNIT_S1_SHADOW_DIR: shadowDir } : { SYSTEM_ONE_SHADOW_LOG: '0' }),
     };
+    if (this.shadowState) env.SYSTEM_ONE_SHADOW_STATE = '1';
+    else delete env.SYSTEM_ONE_SHADOW_STATE;
     log.info(`[SystemOne] starting S1 on ${this.s1Url}`);
     const child = this.deps.spawnSidecar(cmd.command, cmd.args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
     this.s1Proc = child;

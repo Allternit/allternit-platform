@@ -213,6 +213,57 @@ describe('checkpoint config', () => {
   });
 });
 
+describe('raw decision state opt-in (Q28)', () => {
+  const s1Calls = (h: Harness) => h.spawnSidecar.mock.calls.filter(([cmd]) => String(cmd).endsWith('system-one'));
+
+  it('is off by default and keeps SYSTEM_ONE_SHADOW_STATE out of the S1 env', async () => {
+    const h = harness();
+    expect(h.manager.shadowState).toBe(false);
+    const p = h.manager.startSystemOne();
+    await flush();
+    expect(s1Calls(h)[0][2].env).not.toHaveProperty('SYSTEM_ONE_SHADOW_STATE');
+    h.healthy.s1 = true;
+    await p;
+    expect((await h.manager.getStatus()).shadowState).toBe(false);
+  });
+
+  it('persists outside the Laya root and restarts the owned S1 server with it', async () => {
+    const h = harness();
+    const p = h.manager.startSystemOne();
+    await flush();
+    h.healthy.s1 = true;
+    await p;
+
+    h.healthy.s1 = false; // the old server is going away
+    const set = h.manager.setShadowState(true);
+    await vi.waitFor(() => expect(h.children[0].kill).toHaveBeenCalledWith('SIGTERM'));
+    h.children[0].emit('exit', 0, 'SIGTERM');
+    await vi.waitFor(() => expect(s1Calls(h)).toHaveLength(2));
+    expect(s1Calls(h)[1][2].env.SYSTEM_ONE_SHADOW_STATE).toBe('1');
+    h.healthy.s1 = true;
+    await expect(set).resolves.toBe(true);
+
+    const settings = path.join(h.home, '.allternit', 'system-one', 'settings.json');
+    expect(JSON.parse(fs.readFileSync(settings, 'utf8'))).toEqual({ shadowState: true });
+    // A new app session (fresh manager) reads it back; removing Laya keeps it.
+    fs.mkdirSync(h.root, { recursive: true });
+    await h.manager.remove();
+    expect(new SystemOneManager({ ...(h.manager as any).deps }).shadowState).toBe(true);
+  });
+
+  it('honours the legacy env export until a setting is saved, then the setting wins', async () => {
+    const h = harness({ env: { SYSTEM_ONE_SHADOW_STATE: '1' } });
+    expect(h.manager.shadowState).toBe(true);
+    await h.manager.setShadowState(false); // no owned S1 process: just saved
+    expect(h.manager.shadowState).toBe(false);
+    const p = h.manager.startSystemOne();
+    await flush();
+    expect(s1Calls(h)[0][2].env).not.toHaveProperty('SYSTEM_ONE_SHADOW_STATE');
+    h.healthy.s1 = true;
+    await p;
+  });
+});
+
 describe('lifecycle', () => {
   it('starts S1 on 7717 with the shadow ledger and Laya URL, then Laya with the pinned checkpoint', async () => {
     const h = harness();
