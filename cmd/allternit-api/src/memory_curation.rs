@@ -528,7 +528,7 @@ mod tests {
     #[test]
     fn reads_a_curation_plan_and_ignores_bad_numbers() {
         let plan = parse_curation(
-            r#"```json {"merged":[{"content":"Margin target is 35% (Eoj, Sep 27)","from":[1,3]},{"content":"x","from":[2]}],"drop":[4, 9, 1]} ```"#,
+            r#"```json {"merged":[{"content":"Margin target is 35% (Eoj, Sep 27)","from":[1,3]},{"content":"x","from":[2,1]}],"drop":[4, 9, 1]} ```"#,
             4,
         )
         .unwrap();
