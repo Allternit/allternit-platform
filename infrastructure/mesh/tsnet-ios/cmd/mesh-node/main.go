@@ -46,6 +46,9 @@ import (
 // hung viewer. A TSMP ping every 25s keeps the WireGuard session alive.
 const keepWarmInterval = 25 * time.Second
 
+// dialTimeout bounds one reverse-mode dial to the tailnet target.
+const dialTimeout = 45 * time.Second
+
 const defaultControlURL = "https://allternit-headscale.fly.dev"
 
 func defaultDataDir() string {
@@ -185,7 +188,10 @@ func serveReverse(srv *tsnet.Server, ip, target string, done <-chan struct{}, lo
 	fmt.Printf("PROXY_READY port=%d\n", ln.Addr().(*net.TCPAddr).Port)
 
 	dial := func() (net.Conn, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		// A freshly started node can need >15s to reach a peer the first time
+		// (seen 2026-09-30: the first screen after Desktop launched failed at
+		// exactly 15s, the retry took 0.5s). Waiting longer beats failing.
+		ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 		defer cancel()
 		return srv.Dial(ctx, "tcp", target)
 	}
