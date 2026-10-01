@@ -9,6 +9,7 @@ import path from "path"
 import { Filesystem } from "@/shared/util/filesystem"
 import { Log } from "@/shared/util/log"
 import { Provider } from "@/runtime/providers/provider"
+import { reportLedgerCall } from "@/runtime/services/telemetry/usageLedgerReport"
 
 export namespace SessionUsage {
   const log = Log.create({ service: "session.usage" })
@@ -144,6 +145,9 @@ export namespace SessionUsage {
         entry.tokens.cache.read + 
         entry.tokens.cache.write
       
+      // O15: the one cost ledger (allternit-api). Fire-and-forget.
+      void reportToLedger(entry)
+
       Bus.publish(Event.Updated, {
         sessionID: input.sessionID,
         usage: {
@@ -153,6 +157,15 @@ export namespace SessionUsage {
       })
     },
   )
+
+  async function reportToLedger(entry: UsageEntry) {
+    try {
+      const session = await Session.get(entry.sessionID).catch(() => undefined)
+      await reportLedgerCall({ ...entry, surface: (session as { surface?: string } | undefined)?.surface })
+    } catch (error) {
+      log.debug("usage ledger report failed", { error })
+    }
+  }
 
   export async function getSummary(options?: {
     sessionID?: string
