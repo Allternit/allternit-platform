@@ -180,6 +180,12 @@ async function r2(method, key, body, contentType, cacheControl) {
       refreshToken(token);
       continue;
     }
+    if (res.status === 429 && attempt < 12) {
+      // Cloudflare API rate limit (~1200 requests / 5 min): wait it out instead of dying.
+      const after = Number(res.headers.get('retry-after')) || 0;
+      await new Promise((r) => setTimeout(r, Math.max(after * 1000, attempt * 10_000)));
+      continue;
+    }
     if (attempt >= 4 || res.status < 500) throw new Error(`${method} ${key}: ${res.status} ${await res.text()}`);
     await new Promise((r) => setTimeout(r, attempt * 2000));
   }
