@@ -74,6 +74,8 @@ export class ShadowLedger {
   logDecision(rec: Omit<ShadowDecisionRecord, "kind" | "decision_id" | "ts" | "state_sha256"> & { state: string; decision_id?: string; ts?: string }): string {
     const { state, ...rest } = rec;
     const full: ShadowDecisionRecord = { kind: "decision", decision_id: rec.decision_id ?? randomUUID(), ts: rec.ts ?? new Date().toISOString(), ...rest, state_sha256: sha256Hex(state) };
+    // Q28: the raw state is kept only on opt-in (it is the training text for fine-tuning S1).
+    if (process.env.SYSTEM_ONE_SHADOW_STATE === "1") (full as ShadowDecisionRecord & { state?: string }).state = state;
     queueMicrotask(() => { try { this.append("decisions", full.ts, full); } catch { /* logging never breaks a decision */ } });
     return full.decision_id;
   }

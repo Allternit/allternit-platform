@@ -137,15 +137,29 @@ async fn fetch_pool() -> Result<Vec<Value>, String> {
     Ok(summarize_pool(&body))
 }
 
+async fn reachable(url: String) -> bool {
+    let Ok(c) = reqwest::Client::builder().timeout(std::time::Duration::from_millis(800)).build() else { return false };
+    c.get(url).send().await.is_ok_and(|r| r.status().is_success())
+}
+
 pub async fn backends() -> KRes {
     let (models, pool_error) = match fetch_pool().await {
         Ok(m) => (m, Value::Null),
         Err(e) => (vec![], json!(e)),
     };
+    // Decisions go through the local S1 server; Laya also needs its own server.
+    let s1_url = allternit_commrails::kernel::s1_outcome::OutcomeReporter::from_env().base_url;
+    let laya_url = std::env::var("SYSTEM_ONE_LAYA_URL").ok().filter(|u| !u.trim().is_empty())
+        .unwrap_or_else(|| "http://127.0.0.1:7718".into());
+    let (s1_up, laya_up) = tokio::join!(reachable(format!("{s1_url}/healthz")), reachable(format!("{}/health", laya_url.trim_end_matches('/'))));
     let s1: Vec<Value> = S1_BACKENDS.iter().map(|b| {
-        let available = s1_available(b);
-        json!({ "id": b, "available": available,
-                "reason": if available { Value::Null } else { json!(if *b == "jev_api" { "TYPESAFE_API_KEY is not set" } else { "not reachable on this server" }) } })
+        let reason = match *b {
+            "jev_api" if !jev_available() => Some("TYPESAFE_API_KEY is not set"),
+            "laya_bundled" | "system_one_local" | "jev_api" if !s1_up => Some("the System One server is not running (tools/system-one-local: bun src/cli.ts serve)"),
+            "laya_bundled" if !laya_up => Some("Laya is not running (tools/system-one-local/laya/serve-laya.sh)"),
+            _ => None,
+        };
+        json!({ "id": b, "available": reason.is_none(), "reason": reason })
     }).collect();
     Ok(Json(json!({ "s1": s1, "models": models, "pool_error": pool_error })))
 }

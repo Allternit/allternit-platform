@@ -95,8 +95,7 @@ pub(crate) fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str, or
     // Model pool + routing policy (same path as agency runs).
     let needs_pool = steps.iter().any(|x| matches!(x["kind"].as_str(), Some("s1_decision" | "s2_generate")));
     let policy = policy_for_run(st, &ir, org);
-    let s1_backend = policy.as_ref().map(|(e, src)| if src["s1_backend"] == "default" { "env".to_string() } else { e["s1_backend"].as_str().unwrap_or("off").to_string() })
-        .unwrap_or_else(|| "env".into());
+    let s1_backend = executor::s1_backend_for(policy.as_ref());
     let mut routing = json!({ "policy_source": "default" });
     let mut cfg = RouterConfig::default();
     let mut pool: Option<StaticModelPool> = None;
