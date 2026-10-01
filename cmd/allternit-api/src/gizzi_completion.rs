@@ -22,7 +22,7 @@ pub async fn complete(
     system: Option<&str>,
     model: Option<&(String, String)>,
 ) -> Option<String> {
-    run(prompt, system, model, false, &mut None).await.map(|(t, _)| t)
+    run(prompt, system, model, false, false, &mut None).await.map(|(t, _)| t)
 }
 
 /// Like [`complete`], but deletes the temporary Gizzi session afterwards, so
@@ -33,7 +33,7 @@ pub async fn complete_ephemeral(
     system: Option<&str>,
     model: Option<&(String, String)>,
 ) -> Option<String> {
-    run(prompt, system, model, true, &mut None).await.map(|(t, _)| t)
+    run(prompt, system, model, true, false, &mut None).await.map(|(t, _)| t)
 }
 
 /// Model usage gizzi-code reported for a completion (summed over the
@@ -62,13 +62,17 @@ pub fn usage_from_info(info: &serde_json::Value) -> Usage {
 /// (the Agency executor charges it against its daily caps). `Err` carries
 /// why there is no reply: the provider's own error (e.g. a subscription
 /// usage limit) when gizzi reported one, else that gizzi gave no answer.
+/// Tools are off for the turn: an Agency model step only proposes; every
+/// change goes through the gated, receipted mutation step. (With tools on, a
+/// CLI backend explored the filesystem from gizzi's cwd `/` and a 4 s answer
+/// took 60-90 s.)
 pub async fn complete_ephemeral_usage(
     prompt: &str,
     system: Option<&str>,
     model: Option<&(String, String)>,
 ) -> Result<(String, Usage), String> {
     let mut provider_error = None;
-    let reply = run(prompt, system, model, true, &mut provider_error).await;
+    let reply = run(prompt, system, model, true, true, &mut provider_error).await;
     match (reply, provider_error) {
         (_, Some(e)) => Err(e),
         (Some(r), None) => Ok(r),
@@ -81,6 +85,7 @@ async fn run(
     system: Option<&str>,
     model: Option<&(String, String)>,
     delete_after: bool,
+    tools_off: bool,
     provider_error: &mut Option<String>,
 ) -> Option<(String, Usage)> {
     let gizzi = crate::v1_routes::gizzi_base();
@@ -129,7 +134,7 @@ async fn run(
 
     let session_id = session.get("id")?.as_str()?.to_string();
     info!(session_id, model = %model_label, "Created Gizzi completion session");
-    let text = collect(&client, &gizzi, &session_id, prompt, system, provider_error).await;
+    let text = collect(&client, &gizzi, &session_id, prompt, system, tools_off, provider_error).await;
     if delete_after {
         if let Err(err) = client
             .delete(format!("{}/v1/session/{}", gizzi, session_id))
@@ -149,6 +154,7 @@ async fn collect(
     session_id: &str,
     prompt: &str,
     system: Option<&str>,
+    tools_off: bool,
     provider_error: &mut Option<String>,
 ) -> Option<(String, Usage)> {
     let mut usage: std::collections::HashMap<String, Usage> = std::collections::HashMap::new();
@@ -179,6 +185,9 @@ async fn collect(
     });
     if let Some(system_text) = system.map(str::trim).filter(|s| !s.is_empty()) {
         message_payload["system"] = json!(format!("+{system_text}"));
+    }
+    if tools_off {
+        message_payload["tools"] = json!({ "*": false });
     }
 
     match client

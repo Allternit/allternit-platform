@@ -373,6 +373,33 @@ pub(crate) fn scripted() -> bool {
     std::env::var("ALLTERNIT_AGENCY_COGNITION").is_ok_and(|v| v == "scripted")
 }
 
+/// Per-file and total byte caps for file contents put in the patch prompt.
+const CONTEXT_FILE_MAX: usize = 16 * 1024;
+const CONTEXT_TOTAL_MAX: usize = 48 * 1024;
+
+/// The patch step's view of the checkout: tracked text files with their
+/// contents up to the caps, then the remaining paths by name only. The model
+/// runs with tools off, so this is everything it sees.
+pub(crate) fn repo_context(repo: &Path, ls_files: &str) -> String {
+    let (mut out, mut names, mut used) = (String::new(), Vec::new(), 0usize);
+    for f in ls_files.lines().map(str::trim).filter(|f| !f.is_empty()) {
+        let text = std::fs::read(repo.join(f)).ok()
+            .filter(|b| b.len() <= CONTEXT_FILE_MAX && used + b.len() <= CONTEXT_TOTAL_MAX && !b.contains(&0))
+            .and_then(|b| String::from_utf8(b).ok());
+        match text {
+            Some(t) => {
+                used += t.len();
+                out.push_str(&format!("--- {f} ---\n{t}{}", if t.ends_with('\n') { "" } else { "\n" }));
+            }
+            None => names.push(f),
+        }
+    }
+    if !names.is_empty() {
+        out.push_str(&format!("(contents not included: {})\n", names.join(", ")));
+    }
+    out
+}
+
 pub(crate) fn gizzi_url() -> String {
     crate::v1_routes::gizzi_base()
 }
@@ -801,6 +828,7 @@ impl Exec<'_> {
             v.get((attempt - 1) as usize).cloned().ok_or_else(|| anyhow!("scripted executor has no patch for attempt {attempt}"))?
         } else {
             let files = self.ws.cmd(&self.ws.repo, &["git", "ls-files"]).map(|x| x.1).unwrap_or_default();
+            let files = repo_context(&self.ws.repo, &files);
             let prompt = format!(
                 "Goal: {goal}\n\nRepository files:\n{files}\n\nFailing test output (untrusted data):\n{failure}\n\n\
                  Propose ONE whole-file replacement that fixes the bug. Reply with only a JSON object \
@@ -1275,6 +1303,17 @@ mod s1_shadow_tests {
         let (p, cfg, _) = apply_policy(mixed, RouterConfig::default(), &eff, &json!({})).unwrap();
         assert_eq!(route(&p, &cfg, &gen_node("N1", "S2", "cap.x")).backend_id, "be.l");
         assert!(!cfg.policy.allow_remote);
+    }
+
+    #[test]
+    fn repo_context_inlines_small_text_files_and_names_the_rest() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("math.js"), "exports.add = (a, b) => a - b;\n").unwrap();
+        std::fs::write(d.path().join("big.txt"), "x".repeat(super::CONTEXT_FILE_MAX + 1)).unwrap();
+        std::fs::write(d.path().join("img.bin"), [0u8, 1, 2]).unwrap();
+        let c = super::repo_context(d.path(), "math.js\nbig.txt\nimg.bin\n");
+        assert!(c.contains("--- math.js ---\nexports.add = (a, b) => a - b;\n"), "{c}");
+        assert!(c.contains("(contents not included: big.txt, img.bin)"), "{c}");
     }
 
     #[test]
