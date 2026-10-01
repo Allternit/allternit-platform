@@ -29,6 +29,9 @@
 #                       platform/packages/browser-tools \
 #                       platform/packages/replies-contract mcp/servers
 #                   (the gateway's workspace dependency closure).
+#   SCREEN_RESOLUTION - the desktop's Xvfb size (default 1920x1080; one of
+#                   the sizes computer use is validated at). The app's window
+#                   needs at least 1024x768 of work area.
 #   SUBS_LANE_IDLE_MIN - minutes before an idle subscription lane closes its
 #                   Chrome (SUBS_GATEWAY_LANE_IDLE_MIN; default 10; 0 = keep open)
 #   KEEP_BUILDER  - if set, do not delete the build container
@@ -39,6 +42,7 @@ DESKTOP_DEB="${DESKTOP_DEB:?set DESKTOP_DEB to the Allternit Desktop linux-x64 .
 BASE_IMAGE="${BASE_IMAGE:-allternit-desktop}"
 IMAGE_NAME="${IMAGE_NAME:-allternit-cloud-computer}"
 SUBS_LANE_IDLE_MIN="${SUBS_LANE_IDLE_MIN:-10}"
+SCREEN_RESOLUTION="${SCREEN_RESOLUTION:-1920x1080}"
 # With the gateway on this computer, allternit-api talks to it directly on
 # 127.0.0.1:7788 (cli token from /var/lib/subs-gateway/keychain.json) instead
 # of through a Sessions binding.
@@ -95,7 +99,12 @@ incus exec "${BUILD_CONTAINER}" -- sh -c '
 # from /etc/allternit/bootstrap.json when that file is present.
 log "configuring provisioned mode and autostart"
 incus exec "${BUILD_CONTAINER}" --env SUBS_LANE_IDLE_MIN="${SUBS_LANE_IDLE_MIN}" \
-    --env LOCAL_SUBS_GATEWAY="${LOCAL_SUBS_GATEWAY}" -- sh -c '
+    --env LOCAL_SUBS_GATEWAY="${LOCAL_SUBS_GATEWAY}" \
+    --env SCREEN_RESOLUTION="${SCREEN_RESOLUTION}" -- sh -c '
+    # The base image starts Xvfb at 1280x720, shorter than the app window
+    # minimum (768), which put the bottom of the app off-screen.
+    sed -i -E "s/-screen 0 [0-9]+x[0-9]+x24/-screen 0 ${SCREEN_RESOLUTION}x24/" /opt/allternit-desktop/run.sh
+    grep -q -- "-screen 0 ${SCREEN_RESOLUTION}x24" /opt/allternit-desktop/run.sh || { echo "run.sh: Xvfb size not set" >&2; exit 1; }
     mkdir -p /etc/allternit /root/.config/autostart
     chmod 0700 /etc/allternit
     cat > /etc/allternit/provisioned.env <<EOF
