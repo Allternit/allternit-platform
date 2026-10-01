@@ -1016,7 +1016,7 @@ async fn recall_v2_handler(
     };
 
     let limit = payload.limit.unwrap_or(10);
-    match crate::memory_kernel_service::recall_hybrid(
+    match crate::memory_kernel_service::recall_hybrid_logged(
         &state.db,
         crate::memory_index::global(),
         &user.user_id,
@@ -1027,7 +1027,28 @@ async fn recall_v2_handler(
     )
     .await
     {
-        Ok(results) => (StatusCode::OK, Json(json!({"results": results, "count": results.len()}))),
+        Ok((results, recall_id, query_vec)) => {
+            // M1 retrieve path in SHADOW (WP-M1c): the caller gets the
+            // incumbent's set; the S1 pipeline's would-be set is logged
+            // against `recall_id` in the background.
+            let client = crate::memory_relations::S1Client::from_env();
+            if client.enabled {
+                let (db, uid, agent, rid, q, inc) = (
+                    state.db.clone(),
+                    user.user_id.clone(),
+                    payload.agent_id.clone(),
+                    recall_id.clone(),
+                    payload.query.clone(),
+                    results.clone(),
+                );
+                let mut cfg = crate::memory_retrieve::RetrieveConfig::from_env(limit);
+                cfg.include_history = payload.include_history;
+                tokio::spawn(async move {
+                    crate::memory_retrieve::shadow_recall(&client, &db, &uid, agent.as_deref(), &rid, &q, Some(&query_vec), &inc, &cfg).await;
+                });
+            }
+            (StatusCode::OK, Json(json!({"results": results, "count": results.len(), "recall_id": recall_id, "provenance": "incumbent.hybrid"})))
+        }
         Err(e) => {
             tracing::warn!("Recall error: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()})))
@@ -1080,6 +1101,21 @@ async fn retain_turn_v2_handler(
                 (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()})))
             }
         };
+    }
+
+    // The assistant's reply labels the session's last shadow recall
+    // (which shown evidence the answer used) — WP-M1c outcome labels.
+    if payload.role == "assistant" {
+        if let Some(session_id) = payload.session_id.clone() {
+            let client = crate::memory_relations::S1Client::from_env();
+            if client.enabled {
+                let (db, uid, answer) = (state.db.clone(), user.user_id.clone(), payload.content.clone());
+                tokio::spawn(async move {
+                    let r = crate::memory_retrieve::label_from_answer(&client, &db, &uid, &session_id, &answer).await;
+                    tracing::debug!(?r, "memory retrieve labels");
+                });
+            }
+        }
     }
 
     match crate::memory_kernel_service::retain_turn(
