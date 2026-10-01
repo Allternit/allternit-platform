@@ -44,6 +44,10 @@ export interface Config {
   // loopback = the Allternit-bot provider reaching allternit-api (base default `${apiBase}/api/v1`,
   // SUBS_GATEWAY_AAI_LOOPBACK_BASE / _BOTS csv; bearer via SUBS_GATEWAY_AAI_LOOPBACK_TOKEN).
   aai: { disabled: string[]; loopbackBaseUrl: string; loopbackBots: string[] };
+  // Close a subscription's Chrome after this many idle minutes (no task in
+  // flight for the account); the next task relaunches it. 0 keeps Chrome
+  // resident (the default). Env: SUBS_GATEWAY_LANE_IDLE_MIN.
+  laneIdleCloseMin: number;
 }
 
 const ENV_PREFIX = "SUBS_GATEWAY_";
@@ -123,6 +127,13 @@ function positiveInt(raw: string | undefined, fallback: number, name: string): n
   return n;
 }
 
+function nonNegativeInt(raw: string | undefined, fallback: number, name: string): number {
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) throw new Error(`${name} must be a whole number of minutes, got ${JSON.stringify(raw)}`);
+  return n;
+}
+
 function csvList(v: string | undefined): string[] {
   return (v ?? "").split(",").map((x) => x.trim()).filter(Boolean);
 }
@@ -167,5 +178,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       loopbackBaseUrl: env[`${ENV_PREFIX}AAI_LOOPBACK_BASE`] ?? `${env[`${ENV_PREFIX}API_BASE`] ?? "http://127.0.0.1:18013"}/api/v1`,
       loopbackBots: csvList(env[`${ENV_PREFIX}AAI_LOOPBACK_BOTS`]),
     },
+    laneIdleCloseMin: nonNegativeInt(env[`${ENV_PREFIX}LANE_IDLE_MIN`], 0, `${ENV_PREFIX}LANE_IDLE_MIN`),
   };
 }

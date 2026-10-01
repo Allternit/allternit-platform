@@ -8,14 +8,14 @@ import type { AdapterRegistry } from "../src/adapters/registry.js";
 import type { EventLog } from "../src/events/log.js";
 import { createScheduler } from "../src/queue/scheduler.js";
 import { openDatabase, type Db } from "../src/store/db.js";
-import { getAccount, upsertAccount } from "../src/store/queries.js";
+import { getAccount, insertTask, upsertAccount } from "../src/store/queries.js";
 import {
   healthFromProbe,
   WorkerPool,
   type LaneRuntime,
 } from "../src/worker/pool.js";
 import { WorkerSupervisor } from "../src/worker/supervisor.js";
-import { dummyResolver, fakeLease, fixtureWebConfig, scriptedAdapter } from "./helpers.js";
+import { dummyResolver, fakeLease, fixtureWebConfig, sampleTask, scriptedAdapter } from "./helpers.js";
 
 const MANIFEST = fixtureWebConfig().manifest;
 const LANE = { provider: MANIFEST.provider, account_id: "acct-fw-1" };
@@ -86,7 +86,7 @@ interface Harness {
 function makePool(
   probeImpl: () => Promise<ProbeResult>,
   extra: Partial<Pick<LaneRuntime, "readAccount" | "readPlan">> = {},
-  opts: { challengeRecheckMs?: number; challengeRecheckForMs?: number } = {}
+  opts: { challengeRecheckMs?: number; challengeRecheckForMs?: number; laneIdleCloseMs?: number; idleSweepMs?: number; now?: () => number } = {}
 ): Harness {
   const supervisor = new WorkerSupervisor({
     db,
@@ -313,5 +313,55 @@ describe("WorkerPool health states", () => {
       db = openDatabase(":memory:");
       seedAccount();
     }
+  });
+});
+
+describe("WorkerPool idle close (Chrome only while needed)", () => {
+  it("keeps Chrome resident when no idle limit is set", async () => {
+    let t = 0;
+    const h = makePool(async () => probeResult(true), {}, { now: () => t });
+    await h.pool.activate(LANE);
+    t = 10 * 60 * 60_000;
+    expect(await h.pool.closeIdleLanes()).toEqual([]);
+    expect(h.pool.runtimeFor(LANE)).not.toBeNull();
+    await h.pool.shutdown();
+  });
+
+  it("closes an idle lane's Chrome and relaunches it for the next task", async () => {
+    let t = 0;
+    const h = makePool(async () => probeResult(true), {}, { now: () => t, laneIdleCloseMs: 10 * 60_000, idleSweepMs: 3_600_000 });
+    const rt = (await h.pool.activate(LANE)) as FakeRuntime;
+    t = 9 * 60_000;
+    expect(await h.pool.closeIdleLanes()).toEqual([]);
+    t = 11 * 60_000;
+    expect(await h.pool.closeIdleLanes()).toHaveLength(1);
+    expect(rt.closeCalls).toBe(1);
+    expect(h.pool.runtimeFor(LANE)).toBeNull();
+    await h.pool.activate(LANE);
+    expect(h.launchCalls).toBe(2);
+    await h.pool.shutdown();
+  });
+
+  it("never closes Chrome while the account has a task in flight", async () => {
+    let t = 0;
+    const h = makePool(async () => probeResult(true), {}, { now: () => t, laneIdleCloseMs: 10 * 60_000, idleSweepMs: 3_600_000 });
+    await h.pool.activate(LANE);
+    const task = sampleTask({ task_id: "long-turn" });
+    insertTask(db, { ...task, status: "provider_running", routing: { ...task.routing, account_id: LANE.account_id } } as never);
+    t = 60 * 60_000;
+    expect(await h.pool.closeIdleLanes()).toEqual([]);
+    expect(h.pool.runtimeFor(LANE)).not.toBeNull();
+    await h.pool.shutdown();
+  });
+
+  it("touching the lane (a drain tick serving it) resets the idle clock", async () => {
+    let t = 0;
+    const h = makePool(async () => probeResult(true), {}, { now: () => t, laneIdleCloseMs: 10 * 60_000, idleSweepMs: 3_600_000 });
+    await h.pool.activate(LANE);
+    t = 8 * 60_000;
+    h.pool.runtimeFor(LANE);
+    t = 15 * 60_000;
+    expect(await h.pool.closeIdleLanes()).toEqual([]);
+    await h.pool.shutdown();
   });
 });

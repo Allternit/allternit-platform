@@ -32,7 +32,7 @@ import type {
 import type { AdapterRegistry, LoadedAdapter } from "../adapters/registry.js";
 import type { EventLog } from "../events/log.js";
 import type { Db } from "../store/db.js";
-import { getAccount, upsertAccount } from "../store/queries.js";
+import { accountHasActiveTasks, getAccount, upsertAccount } from "../store/queries.js";
 import { workerKeyId, type WorkerKey, type WorkerSupervisor } from "./supervisor.js";
 
 export type LaneKey = WorkerKey;
@@ -76,7 +76,14 @@ export interface WorkerPoolDeps {
   // for how long (defaults 15 s, 10 min).
   challengeRecheckMs?: number;
   challengeRecheckForMs?: number;
+  // Close a lane's Chrome after this long with no task in flight for its
+  // account (0/undefined = keep resident). The next task relaunches it, so
+  // computers that sleep or share RAM only run Chrome while it is needed.
+  laneIdleCloseMs?: number;
+  idleSweepMs?: number;
+  now?: () => number;
 }
+
 
 interface LaneEntry {
   runtime: LaneRuntime;
@@ -122,8 +129,15 @@ export class WorkerPool {
   // Lanes showing a verification check: a non-spending re-probe notices when
   // the person has cleared it, so the account turns ready by itself.
   private readonly challengeWatches = new Map<string, ReturnType<typeof setInterval>>();
+  private readonly lastUsed = new Map<string, number>();
+  private readonly laneKeys = new Map<string, LaneKey>();
+  private idleSweep: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly deps: WorkerPoolDeps) {
+    if (deps.laneIdleCloseMs && deps.laneIdleCloseMs > 0) {
+      this.idleSweep = setInterval(() => void this.closeIdleLanes(), deps.idleSweepMs ?? 60_000);
+      this.idleSweep.unref?.();
+    }
     this.launch =
       deps.launch ??
       createPlaywrightLauncher({
@@ -150,8 +164,34 @@ export class WorkerPool {
     return isAbsolute(profileRef) ? profileRef : join(this.deps.profilesDir ?? process.cwd(), profileRef);
   }
 
+  private now(): number {
+    return this.deps.now?.() ?? Date.now();
+  }
+
+  /** Close resident lanes idle past laneIdleCloseMs. Returns the closed lane ids. */
+  async closeIdleLanes(): Promise<string[]> {
+    const idleMs = this.deps.laneIdleCloseMs ?? 0;
+    if (idleMs <= 0) return [];
+    const closed: string[] = [];
+    for (const id of [...this.lanes.keys()]) {
+      const lane = this.laneKeys.get(id);
+      if (!lane || this.activations.has(id) || this.challengeWatches.has(id)) continue;
+      if (accountHasActiveTasks(this.deps.db, lane.account_id)) {
+        this.lastUsed.set(id, this.now());
+        continue;
+      }
+      if (this.now() - (this.lastUsed.get(id) ?? 0) < idleMs) continue;
+      await this.deactivate(lane);
+      this.lastUsed.delete(id);
+      closed.push(id);
+      this.deps.logger?.(`subscription-gateway: closed idle browser for ${id}`);
+    }
+    return closed;
+  }
+
   // A dead runtime is not resident: callers get null (activate relaunches it).
   runtimeFor(lane: LaneKey): LaneRuntime | null {
+    this.lastUsed.set(workerKeyId(lane), this.now());
     const runtime = this.lanes.get(workerKeyId(lane))?.runtime ?? null;
     return runtime && runtime.isAlive?.() === false ? null : runtime;
   }
@@ -204,6 +244,8 @@ export class WorkerPool {
   // calls single-flight on the same activation.
   async activate(lane: LaneKey): Promise<LaneRuntime> {
     const id = workerKeyId(lane);
+    this.lastUsed.set(id, this.now());
+    this.laneKeys.set(id, { provider: lane.provider, account_id: lane.account_id });
     const pending = this.activations.get(id);
     if (pending) return pending;
     let existing = this.lanes.get(id);
@@ -343,6 +385,7 @@ export class WorkerPool {
   }
 
   async shutdown(): Promise<void> {
+    if (this.idleSweep) clearInterval(this.idleSweep);
     for (const id of [...this.challengeWatches.keys()]) this.stopChallengeWatch(id);
     const entries = [...this.lanes.values()];
     this.lanes.clear();
