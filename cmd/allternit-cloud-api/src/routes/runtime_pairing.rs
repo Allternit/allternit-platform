@@ -757,6 +757,34 @@ async fn exchange_pairing(
     .into_response())
 }
 
+/// Device id → provisioned instance id for the user's free cloud computers
+/// the relay can wake (same states `wake_for_device` wakes from). A sleeping
+/// one reads "offline", so clients need this to keep it as a runtime and let
+/// the first relayed request wake it. Only each device's newest instance
+/// counts; a free computer replaced by a paid one is left out.
+async fn wakeable_instances_by_device(
+    db: &PgPool,
+    user_id: &str,
+) -> Result<std::collections::HashMap<String, String>, ApiError> {
+    let rows = sqlx::query_as::<_, (String, String, bool)>(
+        r#"
+        SELECT DISTINCT ON (device_id) device_id, id,
+               (tier = 'free' AND replaced_by IS NULL
+                AND status IN ('sleeping', 'waking', 'provisioning'))
+        FROM provisioned_instances
+        WHERE user_id = $1 AND device_id IS NOT NULL AND status <> 'deleted'
+        ORDER BY device_id, created_at DESC
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(device_id, instance_id, wakeable)| wakeable.then_some((device_id, instance_id)))
+        .collect())
+}
+
 async fn list_runtime_devices(
     State(state): State<Arc<ApiState>>,
     headers: HeaderMap,
@@ -775,6 +803,7 @@ async fn list_runtime_devices(
     .bind(&user.id)
     .fetch_all(&state.db)
     .await?;
+    let wakeable = wakeable_instances_by_device(&state.db, &user.id).await?;
     let mut serialized = Vec::with_capacity(devices.len());
     for device in devices {
         let effective_status = if device.status == "online"
@@ -806,6 +835,10 @@ async fn list_runtime_devices(
         });
         if !relay_connections.is_empty() {
             value["relayConnections"] = serde_json::Value::Array(relay_connections);
+        }
+        if let Some(instance_id) = wakeable.get(&device.id) {
+            value["wakeable"] = serde_json::Value::Bool(true);
+            value["provisionedInstanceId"] = serde_json::Value::String(instance_id.clone());
         }
         serialized.push(value);
     }
@@ -1532,6 +1565,63 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn wakeable_lists_only_live_unreplaced_free_computers() {
+        let pool = test_pool().await;
+        sqlx::query("DROP TABLE IF EXISTS provisioned_instances CASCADE").execute(&pool).await.unwrap();
+        sqlx::query(
+            r#"
+            CREATE TABLE provisioned_instances (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                device_id TEXT,
+                tier TEXT NOT NULL DEFAULT 'paid',
+                status TEXT NOT NULL,
+                replaced_by TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let rows = [
+            // (id, user, device, tier, status, replaced_by, age_minutes)
+            ("pi_sleep", "user_1", Some("dev_sleep"), "free", "sleeping", None, 0),
+            ("pi_waking", "user_1", Some("dev_waking"), "free", "waking", None, 0),
+            ("pi_running", "user_1", Some("dev_running"), "free", "running", None, 0),
+            ("pi_paid", "user_1", Some("dev_paid"), "paid", "stopped", None, 0),
+            ("pi_replaced", "user_1", Some("dev_replaced"), "free", "sleeping", Some("pi_paid"), 0),
+            ("pi_nodev", "user_1", None, "free", "sleeping", None, 0),
+            ("pi_other", "user_2", Some("dev_other"), "free", "sleeping", None, 0),
+            // An older deleted-then-recreated device: only the newest row counts.
+            ("pi_old", "user_1", Some("dev_reused"), "free", "sleeping", None, 60),
+            ("pi_new", "user_1", Some("dev_reused"), "paid", "running", None, 0),
+        ];
+        for (id, user, device, tier, status, replaced_by, age) in rows {
+            sqlx::query(
+                "INSERT INTO provisioned_instances (id, user_id, device_id, tier, status, replaced_by, created_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, NOW() - make_interval(mins => $7))",
+            )
+            .bind(id)
+            .bind(user)
+            .bind(device)
+            .bind(tier)
+            .bind(status)
+            .bind(replaced_by)
+            .bind(age)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let wakeable = wakeable_instances_by_device(&pool, "user_1").await.unwrap();
+        let mut got: Vec<(&str, &str)> =
+            wakeable.iter().map(|(d, i)| (d.as_str(), i.as_str())).collect();
+        got.sort();
+        assert_eq!(got, vec![("dev_sleep", "pi_sleep"), ("dev_waking", "pi_waking")]);
     }
 
     #[tokio::test]

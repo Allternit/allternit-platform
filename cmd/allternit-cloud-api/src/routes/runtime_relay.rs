@@ -13,6 +13,12 @@
 //! wait times out, the proxy answers 503 `runtime_warming` so the client can
 //! retry, and socket-ticket creation answers 503 with a warming message.
 //!
+//! The same wake-on-demand covers free provisioned computers (plan decision
+//! 16, `services::provisioning_free`): a device bound to a `sleeping` free
+//! computer is woken (`ProvisioningService::wake_for_device`, subject to the
+//! per-user wake limit and per-host awake cap, whose 429/503 surface to the
+//! client) and the request waits for its daemon exactly like a hosted one.
+//!
 //! ## Socket tunnel protocol (node-side contract)
 //!
 //! `SocketOpen` / `SocketReady` / `SocketData` / `SocketClose` tunnel a
@@ -418,6 +424,7 @@ async fn connect_or_wake_runtime(
     db: &sqlx::PgPool,
     contabo_runtime_service: &std::sync::Arc<crate::services::ContaboRuntimeService>,
     quota_service: &crate::services::SharedQuotaService,
+    provisioning: &std::sync::Arc<crate::services::ProvisioningService>,
     runtime_id: &str,
     required: &str,
     path: &str,
@@ -437,13 +444,22 @@ async fn connect_or_wake_runtime(
         runtime_id,
     )
     .await?;
-    if matches!(
-        outcome,
-        crate::services::HostedWakeOutcome::NotHosted
-            | crate::services::HostedWakeOutcome::NotWakeable
-    ) {
-        return Ok(RelayConnect::Offline);
-    }
+    // Not a hosted runtime: a provisioned (free, sleeping) computer?
+    let waking = match outcome {
+        crate::services::HostedWakeOutcome::NotWakeable => return Ok(RelayConnect::Offline),
+        crate::services::HostedWakeOutcome::NotHosted => {
+            match provisioning.wake_for_device(runtime_id).await? {
+                crate::services::ProvisionedWakeOutcome::NotProvisioned
+                | crate::services::ProvisionedWakeOutcome::NotWakeable => {
+                    return Ok(RelayConnect::Offline)
+                }
+                crate::services::ProvisionedWakeOutcome::AlreadyActive => false,
+                crate::services::ProvisionedWakeOutcome::Waking => true,
+            }
+        }
+        crate::services::HostedWakeOutcome::Waking => true,
+        crate::services::HostedWakeOutcome::AlreadyActive => false,
+    };
     // The machine is (or was already) starting: poll the hub until the daemon
     // reconnects, bounded so a wedged boot does not pin the request.
     let deadline = Instant::now() + WAKE_WAIT_TIMEOUT;
@@ -461,9 +477,10 @@ async fn connect_or_wake_runtime(
         }
         tokio::time::sleep(WAKE_POLL_INTERVAL).await;
     }
-    Ok(match outcome {
-        crate::services::HostedWakeOutcome::Waking => RelayConnect::Warming,
-        _ => RelayConnect::Offline,
+    Ok(if waking {
+        RelayConnect::Warming
+    } else {
+        RelayConnect::Offline
     })
 }
 
@@ -533,6 +550,7 @@ pub(crate) async fn issue_socket_ticket(
         &state.db,
         &state.contabo_runtime_service,
         &state.quota_service,
+        &state.provisioning_service,
         runtime_id,
         &required,
         &validation.path,
@@ -542,7 +560,7 @@ pub(crate) async fn issue_socket_ticket(
         RelayConnect::Connected(_) => {}
         RelayConnect::Warming => {
             return Err(ApiError::ServiceUnavailable(
-                "The hosted runtime is waking up; retry shortly".to_string(),
+                "The runtime is waking up; retry shortly".to_string(),
             ));
         }
         RelayConnect::Offline => {
@@ -879,6 +897,11 @@ async fn runtime_socket(socket: WebSocket, state: Arc<ApiState>, expected_id: St
         .await;
         let _ = crate::services::record_runtime_started(&state.db, &instance_id).await;
     }
+    // A free provisioned computer whose daemon just connected is awake: this
+    // is the wake ready signal (runtimeOnline) and restarts its idle clock.
+    if let Err(error) = crate::services::note_runtime_attached(&state.db, &runtime_id).await {
+        tracing::debug!(%runtime_id, "provisioned attach not recorded: {}", error);
+    }
 
     let (sender, mut outgoing) = mpsc::unbounded_channel();
     let connection = Arc::new(RuntimeConnection {
@@ -1039,6 +1062,7 @@ async fn proxy_to_runtime(
         &state.db,
         &state.contabo_runtime_service,
         &state.quota_service,
+        &state.provisioning_service,
         &user_id,
         &runtime_id,
         RelayRequest {
@@ -1073,6 +1097,7 @@ pub(crate) async fn relay_request_to_runtime(
     db: &sqlx::PgPool,
     contabo_runtime_service: &std::sync::Arc<crate::services::ContaboRuntimeService>,
     quota_service: &crate::services::SharedQuotaService,
+    provisioning: &std::sync::Arc<crate::services::ProvisioningService>,
     user_id: &str,
     runtime_id: &str,
     request: RelayRequest,
@@ -1102,8 +1127,9 @@ pub(crate) async fn relay_request_to_runtime(
         db,
         contabo_runtime_service,
         quota_service,
+        provisioning,
         runtime_id,
-        &required_capability,
+        required_capability,
         &request.path,
     )
     .await?
@@ -1112,7 +1138,7 @@ pub(crate) async fn relay_request_to_runtime(
         RelayConnect::Warming => {
             return Ok((
                 StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({ "error": "runtime_warming", "message": "The hosted runtime is waking up; retry shortly", "retryAfterSeconds": WAKE_WAIT_TIMEOUT.as_secs() })),
+                Json(serde_json::json!({ "error": "runtime_warming", "message": "The runtime is waking up; retry shortly", "retryAfterSeconds": WAKE_WAIT_TIMEOUT.as_secs() })),
             ).into_response());
         }
         RelayConnect::Offline => {

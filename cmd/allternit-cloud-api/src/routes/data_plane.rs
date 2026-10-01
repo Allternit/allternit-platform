@@ -53,6 +53,7 @@ pub struct PgDataPlaneGateway {
     db: sqlx::PgPool,
     contabo_runtime_service: Arc<ContaboRuntimeService>,
     quota_service: SharedQuotaService,
+    provisioning_service: Arc<crate::services::ProvisioningService>,
 }
 
 impl PgDataPlaneGateway {
@@ -60,11 +61,13 @@ impl PgDataPlaneGateway {
         db: sqlx::PgPool,
         contabo_runtime_service: Arc<ContaboRuntimeService>,
         quota_service: SharedQuotaService,
+        provisioning_service: Arc<crate::services::ProvisioningService>,
     ) -> Self {
         Self {
             db,
             contabo_runtime_service,
             quota_service,
+            provisioning_service,
         }
     }
 }
@@ -86,6 +89,7 @@ impl DataPlaneGateway for PgDataPlaneGateway {
             &self.db,
             &self.contabo_runtime_service,
             &self.quota_service,
+            &self.provisioning_service,
             user_id,
             device_id,
             request,
