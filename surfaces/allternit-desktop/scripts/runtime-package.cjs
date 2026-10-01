@@ -161,11 +161,19 @@ async function r2(method, key, body, contentType, cacheControl) {
   const url = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/r2/buckets/${BUCKET}/objects/${key}`;
   for (let attempt = 1, refreshed = false; ; attempt++) {
     const token = auth.token;
-    const res = await fetch(url, {
-      method,
-      headers: { Authorization: `Bearer ${token}`, ...(contentType ? { 'Content-Type': contentType } : {}), ...(cacheControl ? { 'Cache-Control': cacheControl } : {}) },
-      body,
-    });
+    let res;
+    try {
+      res = await fetch(url, {
+        method,
+        headers: { Authorization: `Bearer ${token}`, ...(contentType ? { 'Content-Type': contentType } : {}), ...(cacheControl ? { 'Cache-Control': cacheControl } : {}) },
+        body,
+      });
+    } catch (e) {
+      // A dropped connection (network blip, laptop sleep) is retried like a 5xx.
+      if (attempt >= 6) throw new Error(`${method} ${key}: ${e.cause?.code || e.message}`);
+      await new Promise((r) => setTimeout(r, attempt * 5000));
+      continue;
+    }
     if (res.ok) return res;
     if (res.status === 401 && !refreshed && !process.env.CLOUDFLARE_API_TOKEN) {
       refreshed = true;
