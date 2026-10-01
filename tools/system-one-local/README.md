@@ -89,6 +89,8 @@ Why letters for noul: on llama3.2 3B, bare `Yes`/`No` tokens leaned strongly tow
 | `SYSTEM_ONE_LOG` | off | `1` = `~/.allternit/system-one/log/<date>.jsonl` (request sha256, token counts, answers — never state or question text) |
 | `TYPESAFE_API_KEY` | unset | enables `typesafe:*` passthrough |
 | `SYSTEM_ONE_LAYA_URL` | `http://127.0.0.1:7718` | local Laya server for `laya:*` / backend `laya_bundled` |
+| `SYSTEM_ONE_SHADOW_LOG` | on when served | `0` = no shadow ledger (default dir `~/.allternit/system-one/shadow`, or `ALLTERNIT_S1_SHADOW_DIR`) |
+| `SYSTEM_ONE_SHADOW_STATE` | off | `1` = also store the raw decision state: the training text for fine-tuning S1 (Q28 opt-in) |
 | `SYSTEM_ONE_LAYA_MODEL` | `typed-decisions` | Laya checkpoint |
 | `OPENROUTER_API_KEY` | from env | only used by `route-model --allow-paid` |
 
@@ -225,7 +227,7 @@ Python side (in this repo): `domains/computer-use/core/core/{decision_head,laya_
 
 S1 stays in shadow until a primitive has a gate-passing calibration manifest built from REAL labeled outcomes. Nothing here generates data; synthetic fixtures exist only in `test/calibrate.test.ts`. Model agreement is never a metric.
 
-**1. Data accumulates in shadow.** Set `ALLTERNIT_S1_SHADOW_DIR` (or `SYSTEM_ONE_SHADOW_LOG=1` for `~/.allternit/system-one/shadow`) on the server. Every `POST /v1/decision` then appends a record to `decisions/<day>.jsonl`: raw (uncalibrated) readout, options, scope (model/revision/runtime/question/candidate hashes), a SHA-256 of the state (never the state), and `x-decision_id` in the response extensions. Set `request.extensions["x-primitive_id"]` and, for batch joins, `x-subject_ref` (a test-run or tool-call id).
+**1. Data accumulates in shadow.** `system-one serve` keeps the ledger by default in `~/.allternit/system-one/shadow` (Q28; `ALLTERNIT_S1_SHADOW_DIR` overrides, `SYSTEM_ONE_SHADOW_LOG=0` opts out). Every `POST /v1/decision` then appends a record to `decisions/<day>.jsonl`: raw (uncalibrated) readout, options, scope (model/revision/runtime/question/candidate hashes), a SHA-256 of the state (the state itself only with `SYSTEM_ONE_SHADOW_STATE=1`), and `x-decision_id` in the response extensions. Set `request.extensions["x-primitive_id"]` and, for batch joins, `x-subject_ref` (a test-run or tool-call id).
 
 **2. Deterministic code reports ground truth.** When the parser/test/verifier later settles the answer, record it (source is mandatory):
 

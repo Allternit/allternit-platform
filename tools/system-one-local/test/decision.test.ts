@@ -320,3 +320,22 @@ describe("Laya provider: menus over 16 options", () => {
     expect(r.options[r.probs.indexOf(Math.max(...r.probs))]).toBe("C12");
   });
 });
+
+describe("shadow ledger privacy (Q28)", () => {
+  test("raw state is stored only when SYSTEM_ONE_SHADOW_STATE=1", async () => {
+    const { ShadowLedger } = await import("../src/decision/shadow.ts");
+    const { mkdtempSync, readFileSync, readdirSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const read = (dir: string) => readdirSync(join(dir, "decisions")).map((f) => readFileSync(join(dir, "decisions", f), "utf8")).join("");
+    const base = { primitive_id: "p", operation: "CHOICE", question_id: "", instructions: "i", subject_ref: null, candidates: [], options: [], shape: "categorical", probs: [], readout_method: "remote", scope: {}, mode: "shadow" } as any;
+    const off = mkdtempSync(join(tmpdir(), "s1-")); delete process.env.SYSTEM_ONE_SHADOW_STATE;
+    new ShadowLedger(off).logDecision({ ...base, state: "secret user text" });
+    const on = mkdtempSync(join(tmpdir(), "s1-")); process.env.SYSTEM_ONE_SHADOW_STATE = "1";
+    new ShadowLedger(on).logDecision({ ...base, state: "secret user text" });
+    delete process.env.SYSTEM_ONE_SHADOW_STATE;
+    await new Promise((r) => setTimeout(r, 10));
+    expect(read(off)).not.toContain("secret user text");
+    expect(read(on)).toContain("secret user text");
+  });
+});

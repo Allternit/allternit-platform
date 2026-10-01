@@ -41,6 +41,12 @@ async function main() {
   const f = flags(rest);
   switch (cmd) {
     case "serve": {
+      // Q28: a running server keeps the shadow ledger by default (hashes, options,
+      // distributions, outcome labels; never raw state text). Opt out with
+      // SYSTEM_ONE_SHADOW_LOG=0. Library/test use stays off (see shadowLedger()).
+      if (!process.env.ALLTERNIT_S1_SHADOW_DIR?.trim() && process.env.SYSTEM_ONE_SHADOW_LOG !== "0") {
+        process.env.ALLTERNIT_S1_SHADOW_DIR = join(BASE_DIR, "shadow");
+      }
       const s = serve({ port: f.port ? Number(f.port) : undefined });
       console.error(`system-one listening on http://${HOST}:${s.port} (runtime model: ${new SystemOne().local.model})`);
       return;
