@@ -335,6 +335,7 @@ class PlanningLoop:
         self._shadow_prev_table = None
         self._shadow_trace_recorder = None
         self._shadow_trace_disabled = False
+        _shadow_done_step: Optional[int] = None  # step where the planner said done (WP-S1U-3)
         _shadow_head = self.config.shadow_head
         if _shadow_head is not None:
             _begin_run = getattr(_shadow_head, "begin_run", None)
@@ -493,6 +494,28 @@ class PlanningLoop:
 
                 if plan.done:
                     stop_reason = StopReason.DONE
+                    # WP-S1U-3: the shadow head also runs on the planner's
+                    # `done` step, so its goal_satisfied decision there gets
+                    # the positive label below (the only positive one).
+                    # Only heads that take outcome labels need this pass.
+                    if self.config.shadow_head_enabled and callable(
+                        getattr(self.config.shadow_head, "report_outcome", None)
+                    ):
+                        try:
+                            await self._capture_ax(_inspector, step, run_id, step_num)
+                            await self._run_shadow_head(
+                                step=step,
+                                task=augmented_task,
+                                run_id=run_id,
+                                step_num=step_num,
+                                prior_step=steps[-1] if steps else None,
+                                goal_check=True,
+                            )
+                            _shadow_done_step = step_num
+                        except Exception as shadow_err:
+                            logger.warning(
+                                "Shadow head failed at done step %s: %s", step_num, shadow_err
+                            )
                     if self.recorder:
                         await self.recorder.record_frame_from_step(step)
                     steps.append(step)
@@ -514,21 +537,7 @@ class PlanningLoop:
                     self._emit({"type": "approval.received", "run_id": run_id, "step": step_num, "approved": True})
 
                 # Refresh AX skeleton before each action
-                if _inspector:
-                    try:
-                        ax_root = await _inspector.snapshot(skeleton=True)
-                        if ax_root:
-                            from .element_refs import get_refmap
-                            _refmap = get_refmap()
-                            _refmap.apply_to_tree(ax_root)
-                            step.ax_tree_snapshot = ax_root.to_dict(compact=True)
-                            step.element_refs = _refmap.to_dict()
-                            self._emit({"type": "ax_tree.captured", "run_id": run_id, "step": step_num,
-                                       "surface": "window", "skeleton": True,
-                                       "tree": step.ax_tree_snapshot,
-                                       "ref_map": step.element_refs})
-                    except Exception:
-                        pass
+                await self._capture_ax(_inspector, step, run_id, step_num)
 
                 # SHADOW head — local non-generative policy head proposes a
                 # typed closed-set decision beside the LLM plan (logged as a
@@ -828,16 +837,19 @@ class PlanningLoop:
             model_turns=model_turns,
         )
 
-        # Episode outcome labels for the shadow head. The hook never runs on
-        # the planner's `done` step, so every shadow-decided state of a
-        # COMPLETED run came before the planner's last action: the goal was
-        # not yet satisfied there. A failed run gives no goal label, and no
-        # state ever gets a positive one (that needs the hook on `done`).
+        # Episode outcome labels for the shadow head. In a COMPLETED run the
+        # planner's `done` step is the state where the goal is satisfied
+        # (positive label, WP-S1U-3); every earlier shadow-decided state came
+        # before the planner's last action, so the goal was not yet satisfied
+        # there. A failed run gives no goal label.
         _shadow_report = getattr(self.config.shadow_head, "report_outcome", None)
         if self.config.shadow_head_enabled and callable(_shadow_report) and status == "completed":
             try:
                 for _s in steps:
-                    _shadow_report("goal_satisfied", "false", "cu.run_completed_later", step=_s.step)
+                    if _s.step == _shadow_done_step:
+                        _shadow_report("goal_satisfied", "true", "cu.planner_done", step=_s.step)
+                    else:
+                        _shadow_report("goal_satisfied", "false", "cu.run_completed_later", step=_s.step)
             except Exception as hook_err:
                 logger.warning("Shadow head episode outcome failed: %s", hook_err)
 
@@ -982,6 +994,25 @@ class PlanningLoop:
             logger.warning("Screenshot capture failed: %s", e)
             return b""
 
+    async def _capture_ax(self, inspector, step: "LoopStep", run_id: str, step_num: int) -> None:
+        """Attach a fresh AX skeleton to ``step`` (best-effort, never raises)."""
+        if not inspector:
+            return
+        try:
+            ax_root = await inspector.snapshot(skeleton=True)
+            if ax_root:
+                from .element_refs import get_refmap
+                _refmap = get_refmap()
+                _refmap.apply_to_tree(ax_root)
+                step.ax_tree_snapshot = ax_root.to_dict(compact=True)
+                step.element_refs = _refmap.to_dict()
+                self._emit({"type": "ax_tree.captured", "run_id": run_id, "step": step_num,
+                           "surface": "window", "skeleton": True,
+                           "tree": step.ax_tree_snapshot,
+                           "ref_map": step.element_refs})
+        except Exception:
+            pass
+
     async def _run_shadow_head(
         self,
         step: "LoopStep",
@@ -989,8 +1020,15 @@ class PlanningLoop:
         run_id: str,
         step_num: int,
         prior_step: Optional["LoopStep"] = None,
+        goal_check: bool = False,
     ) -> None:
         """Ask the shadow decision head for a typed closed-set proposal.
+
+        ``goal_check=True`` is the planner's `done` step (WP-S1U-3): the same
+        state and questions, so its goal_satisfied decision can take the
+        positive label, but it is logged as ``shadow.goal_check`` (not a
+        per-action ``shadow.decision``) and skips the trace and trajectory
+        hooks, since no action follows it.
 
         Builds the element table from this step's AX skeleton observation,
         computes the per-step element delta against the previous step's table
@@ -1160,7 +1198,7 @@ class PlanningLoop:
         decision.validate()
 
         self._emit({
-            "type": "shadow.decision",
+            "type": "shadow.goal_check" if goal_check else "shadow.decision",
             "run_id": run_id,
             "step": step_num,
             "head": decision.model_id,
@@ -1174,6 +1212,8 @@ class PlanningLoop:
         # record — the head's proposal plus the previously EXECUTED LLM step
         # as the reference label. Off (None path) is byte-identical; failures
         # degrade to a warning and disable recording, never a step failure.
+        if goal_check:
+            return
         if self.config.shadow_trace_path:
             self._record_shadow_trace(
                 session_id=step.session_id,
