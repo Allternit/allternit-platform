@@ -4,6 +4,7 @@ import { hostname, homedir, platform, arch } from 'node:os';
 import { dirname, join } from 'node:path';
 import WebSocket, { type RawData } from 'ws';
 import { discoverAgentClis } from './discovery';
+import { consumeProvisionedBootstrap, pairWithBootstrap, readProvisionedBootstrap } from './provisioned';
 
 const CLOUD_API_URL = (process.env.ALLTERNIT_CLOUD_API_URL || 'https://api.allternit.com').replace(/\/$/, '');
 const RUNTIME_NAME = process.env.ALLTERNIT_RUNTIME_NAME || `${hostname()} VPS`;
@@ -70,6 +71,50 @@ async function beginPairing(): Promise<RuntimeIdentity> {
   const publicDer = publicKey.export({ type: 'spki', format: 'der' });
   const publicKeyRaw = publicDer.subarray(publicDer.length - 32).toString('base64url');
   const privateKeyPem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+
+  // An Allternit cloud computer pairs itself from the bootstrap its
+  // provisioning left behind (same contract as the Desktop app).
+  const bootstrap = await readProvisionedBootstrap();
+  if (bootstrap) try {
+    console.log('[AgentDaemon] Provisioned computer: pairing with the first-boot bootstrap…');
+    const payload = await pairWithBootstrap(bootstrap, {
+      hostname: hostname(),
+      platform: `${platform()}-${arch()}`,
+      version: process.env.npm_package_version || '0.1.0',
+      publicKey: publicKeyRaw,
+      capabilities: [
+        'runtime:connect',
+        'runtime:execute',
+        'runtime:files',
+        'runtime:terminal',
+        'runtime:remote_control',
+        'providers:connect',
+        'providers:use',
+      ],
+    }, {
+      fetch,
+      sign: (message) => sign(null, Buffer.from(message), privateKeyPem).toString('base64url'),
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    });
+    const next: RuntimeIdentity = {
+      runtimeId: payload.runtimeId as string,
+      userId: payload.userId as string,
+      userEmail: payload.userEmail as string,
+      organizationId: payload.organizationId as string | undefined,
+      deviceToken: payload.deviceToken as string,
+      expiresAt: payload.expiresAt as string,
+      capabilities: (payload.capabilities as string[]) || [],
+      privateKeyPem,
+      publicKey: publicKeyRaw,
+    };
+    await saveIdentity(next);
+    await consumeProvisionedBootstrap(bootstrap);
+    console.log(`[AgentDaemon] Cloud computer paired as ${next.userEmail} (${next.runtimeId}).`);
+    return next;
+  } catch (error) {
+    // Expired or rejected token: fall back to the other pairing modes.
+    console.warn('[AgentDaemon] Bootstrap pairing failed; falling back:', (error as Error).message);
+  }
 
   if (process.env.ALLTERNIT_PAIRING_MODE === 'hosted_auto') {
     return beginHostedPairing(publicKeyRaw, privateKeyPem);
