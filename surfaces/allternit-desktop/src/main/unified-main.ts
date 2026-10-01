@@ -1590,10 +1590,18 @@ async function initializeBundledMode(): Promise<void> {
           const daemonStatus = await gizziDaemonManager.getStatus();
           if (daemonStatus.installed) return;
 
-          // An Allternit cloud computer is always on and has nobody to ask.
+          // An Allternit cloud computer autostarts this app and never closes
+          // it, so the app's own gizzi runtime already keeps schedules running.
+          // Installing the daemon there would only stop and restart gizzi.
           if (isProvisionedMode()) {
-            log.info('[Main] Provisioned computer: enabling the scheduling daemon without asking');
-            await installAlwaysOnGizziRuntime();
+            log.info('[Main] Provisioned computer: the app is the always-on runtime; no daemon needed');
+            return;
+          }
+
+          // The installer script isn't shipped with every build; don't offer
+          // a choice that can only fail.
+          if (!gizziDaemonManager.resolveInstallScript()) {
+            log.info('[Main] Daemon install script not bundled; not offering Cloud Scheduling');
             return;
           }
 
