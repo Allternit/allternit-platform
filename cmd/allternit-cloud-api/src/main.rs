@@ -314,6 +314,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!("Cost tracking disabled");
     }
 
+    // Channels hybrid relay: deliver queued inbound channel requests to runtimes.
+    allternit_cloud_api::routes::channel_inbound::start_channel_inbound_worker(state.clone());
+
     // Start stale gizzi-instance garbage collection (startup sweep + hourly)
     allternit_cloud_api::routes::gizzi_instances::start_gizzi_instance_gc_task(state.db.clone());
 
