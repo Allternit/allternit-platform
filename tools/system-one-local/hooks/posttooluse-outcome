@@ -1,0 +1,4 @@
+#!/bin/sh
+# Claude Code PostToolUse hook: outcome label for the shadow S1 permission GATE. Emits nothing.
+command -v bun >/dev/null 2>&1 || exit 0
+exec bun "$(dirname "$0")/posttooluse-outcome.ts"

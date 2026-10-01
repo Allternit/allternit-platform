@@ -162,6 +162,14 @@ Add the hook to a **project-scoped** `.claude/settings.json`. This repo doesn't 
 }
 ```
 
+**Shadow S1 permission GATE (Q27).** On every call that no hard rule settled, the hook also logs one
+`GATE` decision (bank `bank.permission_gate`, primitive `permission.cli_guard`, `x-subject_ref =
+cc-tool:<tool_use_id>`) to the shared shadow ledger through `src/decision/client.ts`. It is recorded
+in the dry-run record as `s1_gate` and never changes what the hook emits; S1 may only tighten
+(`tighten()`), never allow. To give those decisions outcome labels, add
+`hooks/posttooluse-outcome` as a `PostToolUse` hook with the same matcher: it reports
+"the call proceeded" (`truth: "true"`). Denied calls never reach PostToolUse, so they get no label.
+
 Summarise the dry run with `bun scripts/dryrun-summary.ts [--dir …] [--json]`. It reports:
 
 - calls per day
