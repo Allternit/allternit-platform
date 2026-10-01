@@ -78,7 +78,7 @@ DEFAULT_OUT_DIR = DOMAIN_CORE_ROOT / "evaluation" / "shadow-eval"
 # semif (SemIf mlx shared-state pass) is mlx-class: one prefill + one batched
 # forward per step, same budget as the mlx head — actual latencies land in
 # the report.
-_STEP_BUDGET_MS = {"mock": 15_000, "mlx": 15_000, "kimi": 60_000, "semif": 15_000}
+_STEP_BUDGET_MS = {"mock": 15_000, "mlx": 15_000, "kimi": 60_000, "semif": 15_000, "decision": 60_000}
 
 
 def build_head(
@@ -97,6 +97,12 @@ def build_head(
     """Construct the decision head for ``--head``; (head, report-stem-suffix)."""
     if name == "mock":
         return None, ""
+
+    if name == "decision":
+        # The one S1 decision runtime (POST /v1/decision); backend from
+        # ALLTERNIT_S1_BACKEND (default auto), URL from ALLTERNIT_S1_URL.
+        from core.s1_decision_head import S1DecisionHead
+        return S1DecisionHead(), "-s1-decision"
 
     if name == "kimi":
         from core.decision_head import KimiCliHead
@@ -227,11 +233,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--head",
-        choices=("mock", "mlx", "kimi", "semif"),
+        choices=("mock", "mlx", "kimi", "semif", "decision"),
         default="mock",
         help="decision head to score (default mock; mlx = real local mlx-lm "
              "weights; kimi = KimiCliHead subprocess cloud tier; semif = "
-             "SemIf community System One reproduction, mlx shared-state pass)",
+             "SemIf community System One reproduction, mlx shared-state pass; "
+             "decision = the S1 decision runtime /v1/decision, backend "
+             "ALLTERNIT_S1_BACKEND, default auto)",
     )
     parser.add_argument(
         "--tasks",
