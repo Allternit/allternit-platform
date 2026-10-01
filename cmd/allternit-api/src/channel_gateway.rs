@@ -579,7 +579,28 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
 // ---------------------------------------------------------------- HTTP
 
 pub fn channel_gateway_router() -> Router<Arc<AppState>> {
-    Router::new().route("/gateway/threads/:thread_id/channel-send", post(channel_send_h))
+    Router::new()
+        .route("/gateway/threads/:thread_id/channel-send", post(channel_send_h))
+        .route("/gateway/channel-accounts/:id/telegram-webhook", post(telegram_webhook_h))
+}
+
+#[derive(Debug, Deserialize)]
+struct WebhookBody {
+    url: String,
+}
+
+/// Settings → Channels: after cloud-api issues this connection's public
+/// address, point the Telegram bot at it (the person's own connection only).
+async fn telegram_webhook_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(id): Path<String>, Json(b): Json<WebhookBody>) -> Response {
+    let Some(acct) = crate::channel_transports::accounts(&state.db, "telegram", Some(&id)).into_iter().find(|a| a.owner == user.user_id) else {
+        return (StatusCode::NOT_FOUND, Json(json!({ "error": "Telegram connection not found" }))).into_response();
+    };
+    let token = crate::channel_transports::pick(&acct.secret, "botToken");
+    let secret = crate::channel_transports::pick(&acct.secret, "webhookSecret");
+    match crate::channel_transports::telegram_set_webhook(&crate::channel_transports::ReqwestSend, &token, &b.url, &secret).await {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Err(error) => (StatusCode::BAD_GATEWAY, Json(json!({ "error": error }))).into_response(),
+    }
 }
 
 #[derive(Debug, Deserialize)]

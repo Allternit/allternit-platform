@@ -175,6 +175,17 @@ pub(crate) fn verify_slack_signature(secret: &str, headers: &HeaderMap, body: &[
         .map_err(|e| format!("system time error: {e}"))?
         .as_secs() as i64;
     let ts: i64 = timestamp.parse().map_err(|_| "invalid x-slack-request-timestamp")?;
+    // A request held in cloud-api's channel queue (the computer was asleep or
+    // offline) is judged by when cloud-api received it, set by cloud-api after
+    // stripping any caller copy. Bounded to 24h; message ids still dedupe.
+    let now = match headers
+        .get(crate::channel_relay::QUEUED_AT_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<i64>().ok())
+    {
+        Some(queued_at) if queued_at <= now + 60 && now - queued_at <= 24 * 3600 => queued_at,
+        _ => now,
+    };
     if (now - ts).abs() > 300 {
         return Err("timestamp outside tolerance (+/-5 min)".to_string());
     }
@@ -543,5 +554,48 @@ mod binding_tests {
         let r = unbind_channel(State(state.clone()), Extension(user("u")), Path(("ledger".into(), "C01ABC".into()))).await;
         assert_eq!(r.status(), StatusCode::NO_CONTENT);
         assert!(bound_bot(&state.db, "C01ABC").is_none());
+    }
+}
+
+#[cfg(test)]
+mod queued_delivery_tests {
+    use super::*;
+    use hmac::Mac;
+
+    fn signed(secret: &str, ts: i64, body: &str, queued_at: Option<i64>) -> HeaderMap {
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(format!("v0:{ts}:{body}").as_bytes());
+        let mut h = HeaderMap::new();
+        h.insert("x-slack-request-timestamp", ts.to_string().parse().unwrap());
+        h.insert("x-slack-signature", format!("v0={}", hex::encode(mac.finalize().into_bytes())).parse().unwrap());
+        if let Some(q) = queued_at {
+            h.insert(crate::channel_relay::QUEUED_AT_HEADER, q.to_string().parse().unwrap());
+        }
+        h
+    }
+
+    fn now() -> i64 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64
+    }
+
+    #[test]
+    fn a_fresh_request_verifies() {
+        let t = now();
+        assert!(verify_slack_signature("s", &signed("s", t, "{}", None), b"{}").is_ok());
+    }
+
+    #[test]
+    fn a_request_held_in_the_queue_verifies_against_when_cloud_api_got_it() {
+        let sent = now() - 3 * 3600; // computer was asleep for three hours
+        assert!(verify_slack_signature("s", &signed("s", sent, "{}", None), b"{}").is_err());
+        assert!(verify_slack_signature("s", &signed("s", sent, "{}", Some(sent + 2)), b"{}").is_ok());
+    }
+
+    #[test]
+    fn the_queue_window_is_bounded_and_signatures_still_count() {
+        let sent = now() - 30 * 3600;
+        assert!(verify_slack_signature("s", &signed("s", sent, "{}", Some(sent)), b"{}").is_err(), "older than 24h");
+        let t = now() - 600;
+        assert!(verify_slack_signature("other", &signed("s", t, "{}", Some(t)), b"{}").is_err(), "wrong secret");
     }
 }

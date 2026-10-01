@@ -517,6 +517,32 @@ impl ChannelTransport for TelegramTransport {
     }
 }
 
+/// Point a Telegram bot at its public address (the cloud-api channel inbound
+/// URL, which queues for this runtime and wakes it). Telegram echoes `secret`
+/// back in `X-Telegram-Bot-Api-Secret-Token`, which `verify` checks.
+pub async fn telegram_set_webhook(http: &dyn HttpSend, bot_token: &str, url: &str, secret: &str) -> Result<(), String> {
+    if !url.starts_with("https://") {
+        return Err("Telegram needs an https webhook address".into());
+    }
+    if bot_token.is_empty() || secret.is_empty() {
+        return Err("this Telegram connection has no bot token or webhook secret".into());
+    }
+    let req = HttpReq {
+        url: format!("https://api.telegram.org/bot{bot_token}/setWebhook"),
+        headers: vec![],
+        body: json!({ "url": url, "secret_token": secret }),
+    };
+    let r = http.post_json(req).await?;
+    if (200..300).contains(&r.status) && r.body.get("ok").and_then(Value::as_bool) == Some(true) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Telegram setWebhook failed: {}",
+            r.body.get("description").and_then(Value::as_str).unwrap_or("unexpected reply")
+        ))
+    }
+}
+
 // ---------------------------------------------------------------- accounts + factory
 
 #[derive(Debug, Clone)]
@@ -848,6 +874,24 @@ mod tests {
     }
     fn reply(status: u16, body: Value) -> Option<Result<HttpResp, String>> {
         Some(Ok(HttpResp { status, body }))
+    }
+
+    #[tokio::test]
+    async fn telegram_webhook_points_the_bot_at_its_public_address() {
+        let http = FakeHttp { sent: Mutex::new(vec![]), reply: Mutex::new(reply(200, json!({ "ok": true, "result": true }))) };
+        telegram_set_webhook(&http, "123:abc", "https://api.allternit.com/channels/in/k", "s3cret").await.unwrap();
+        let sent = http.sent.lock().unwrap();
+        assert_eq!(sent[0].url, "https://api.telegram.org/bot123:abc/setWebhook");
+        assert_eq!(sent[0].body, json!({ "url": "https://api.allternit.com/channels/in/k", "secret_token": "s3cret" }));
+    }
+
+    #[tokio::test]
+    async fn telegram_webhook_refuses_plain_http_and_reports_telegram_errors() {
+        let http = FakeHttp { sent: Mutex::new(vec![]), reply: Mutex::new(reply(400, json!({ "ok": false, "description": "Bad Request: bad webhook" }))) };
+        assert!(telegram_set_webhook(&http, "t", "http://x", "s").await.unwrap_err().contains("https"));
+        assert!(http.sent.lock().unwrap().is_empty());
+        let err = telegram_set_webhook(&http, "t", "https://x", "s").await.unwrap_err();
+        assert!(err.contains("bad webhook"), "{err}");
     }
 
     fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
