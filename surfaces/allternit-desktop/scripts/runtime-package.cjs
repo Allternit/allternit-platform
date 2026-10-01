@@ -215,7 +215,10 @@ async function publish(confirm) {
       if (done % 500 === 0) console.log(`  ${done}/${needed.length} objects`);
     }
   };
-  await Promise.all(Array.from({ length: 16 }, worker));
+  // Each PUT is a separate Cloudflare API request, so throughput is set by latency, not bandwidth;
+  // the account allows ~1200 API requests per 5 minutes.
+  const workers = Math.max(1, Number(process.env.ALLTERNIT_RUNTIME_UPLOAD_WORKERS) || 16);
+  await Promise.all(Array.from({ length: workers }, worker));
   // Manifest before the pointer, pointer last: a client never sees latest.json naming something missing.
   for (const rel of [latest.manifest, `${latest.manifest}.sig`, 'latest.json.sig', 'latest.json']) {
     const immutable = rel.startsWith('manifests/');
