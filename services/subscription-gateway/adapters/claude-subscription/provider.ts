@@ -74,8 +74,9 @@ export class ClaudeSubscriptionProvider extends BaseAaiProvider {
     if (s.health === "account_restricted") return fail("POLICY_DENIED", "Claude reports this account as restricted.");
     if (s.health === "ui_drift") return fail("ADAPTER_DRIFT", "claude.ai changed in a way the adapter doesn't handle yet.");
     if (s.health === "provider_down" || s.health === "profile_locked") return fail("VENDOR_UNAVAILABLE", "Claude isn't reachable from the Sessions computer right now.", { retryable: true });
-    if (s.remainingPct === 0) {
-      const at = s.resetsAt ? Date.parse(s.resetsAt) : NaN;
+    const at = s.resetsAt ? Date.parse(s.resetsAt) : NaN;
+    // A 0% reading whose reset time has passed is stale (the page only reports usage sometimes): let the turn try.
+    if (s.remainingPct === 0 && !(Number.isFinite(at) && at <= Date.now())) {
       return fail("RATE_LIMITED", `Your Claude usage limit is reached${s.resetsAt ? ` until ${new Date(s.resetsAt).toLocaleTimeString()}` : ""}.`, { retryAfterMs: Number.isFinite(at) ? Math.max(60_000, at - Date.now()) : 3_600_000 });
     }
     return ok(true);
