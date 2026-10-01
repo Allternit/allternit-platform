@@ -566,8 +566,13 @@ fn s1_shadow_classify(h: &Handle, reporter: &OutcomeReporter, backend: &str, run
         return;
     }
     let bank = bug_fix::error_ontology();
-    let candidates: Vec<Value> = bank.classes.iter().map(|c| json!({ "candidate_id": c, "label": c }))
-        .chain(std::iter::once(json!({ "candidate_id": bank.unknown, "label": bank.unknown, "is_unknown": true }))).collect();
+    // The bank's classes already include its unknown class: mark it, never add a duplicate option.
+    let mut candidates: Vec<Value> = bank.classes.iter()
+        .map(|c| if *c == bank.unknown { json!({ "candidate_id": c, "label": c, "is_unknown": true }) } else { json!({ "candidate_id": c, "label": c }) })
+        .collect();
+    if !bank.classes.contains(&bank.unknown) {
+        candidates.push(json!({ "candidate_id": bank.unknown, "label": bank.unknown, "is_unknown": true }));
+    }
     let tail: String = failure.chars().rev().take(4000).collect::<Vec<_>>().into_iter().rev().collect();
     let body = json!({ "state": tail, "reversible": true, "backend": backend, "request": {
         "envelope": { "abi_version": "1.0.0", "schema_id": "allternit.kernel.DecisionRequestV1", "schema_version": "1.0.0",

@@ -294,3 +294,29 @@ describe("manifest source shared with the ModelPool", () => {
     expect(loadManifests(f)).toEqual([{ manifest_id: "m1" }]);
   });
 });
+
+describe("Laya provider: menus over 16 options", () => {
+  test("decides coarse-to-fine in two passes; probabilities sum to 1", async () => {
+    const { SystemOne } = await import("../src/engine.ts");
+    const { LocalLogitReadoutProvider } = await import("../src/decision/local-provider.ts");
+    const ids = Array.from({ length: 18 }, (_, i) => `C${i}`);
+    const sent: string[][] = [];
+    const fetchImpl = async (_u: string, i?: RequestInit) => {
+      const keys = Object.keys(JSON.parse(String(i!.body)).questions.q.criteria);
+      sent.push(keys);
+      // coarse: prefer the second group; fine: prefer C12
+      const pick = keys.includes("group_1") ? "group_1" : keys.includes("C12") ? "C12" : keys[0];
+      const probabilities = Object.fromEntries(keys.map((k) => [k, k === pick ? 0.8 : 0.2 / (keys.length - 1)]));
+      return new Response(JSON.stringify({ answers: { q: { type: "choice", choice: pick, probabilities } }, usage: { input_tokens: 1, output_tokens: 0 } }));
+    };
+    const runtime = { name: "fake", model: "m", async complete(): Promise<any> { throw new Error("no local"); } };
+    const engine = new SystemOne({ runtimeUrl: "x", runtimeModel: "m", concurrency: 1, samples: 2, debias: false, layaUrl: "http://laya", layaModel: "typed-decisions", logEnabled: false }, { runtime, fetchImpl });
+    const p = new LocalLogitReadoutProvider(engine, { model_ref: "laya", model_revision: "r", tokenizer_id: "t", quantization: "none", runtime_backend: "laya-serve" }, "backend.laya", "laya:typed-decisions");
+    const r = await p.readout({ operation: "CHOICE", instructions: "pick", candidates: ids.map((candidate_id) => ({ candidate_id })) } as any, "s");
+    expect(sent.length).toBe(2);
+    expect(sent[0]).toEqual(["group_0", "group_1"]);
+    expect(sent[1]).toEqual(ids.slice(9));
+    expect(r.probs.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 6);
+    expect(r.options[r.probs.indexOf(Math.max(...r.probs))]).toBe("C12");
+  });
+});
