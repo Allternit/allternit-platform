@@ -314,9 +314,12 @@ fn subscription_approval_content(
 }
 
 pub(crate) fn gizzi_base() -> String {
+    // Without a loaded app config (tests, tools) still honour
+    // TERMINAL_SERVER_URL, the same override the config itself applies first.
     crate::APP_CONFIG
         .get()
         .map(|c| c.terminal_server_url())
+        .or_else(|| std::env::var("TERMINAL_SERVER_URL").ok().filter(|s| !s.is_empty()))
         .unwrap_or_else(|| "http://127.0.0.1:4096".to_string())
         .trim_end_matches('/')
         .to_string()

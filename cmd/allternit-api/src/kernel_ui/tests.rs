@@ -82,6 +82,10 @@ async fn routing_policy_scopes_backends_and_s1_change_resets_to_shadow() {
     let (_, v, _) = call(&t, "GET", "/v1/kernel/routing-policy?scope=org:acme", &u, None).await;
     assert_eq!(v["s1_backend"], "off");
     assert_eq!(v["local_only"], false);
+    // No scope = the caller's organization (was a 400 that blanked Models & tiers).
+    let (s, v, _) = call(&t, "GET", "/v1/kernel/routing-policy", &u, None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["scope"], "org:acme");
     let (s, v, _) = call(&t, "PUT", "/v1/kernel/routing-policy?scope=workspace:w1", &u, Some(json!({ "s2": { "default": "fast", "overrides": { "code": "big" } }, "local_only": true }))).await;
     assert_eq!(s, 200);
     assert_eq!(v["s2"]["overrides"]["code"], "big");

@@ -387,8 +387,35 @@ pub(crate) fn scripted() -> bool {
     std::env::var("ALLTERNIT_AGENCY_COGNITION").is_ok_and(|v| v == "scripted")
 }
 
+/// Per-file and total byte caps for file contents put in the patch prompt.
+const CONTEXT_FILE_MAX: usize = 16 * 1024;
+const CONTEXT_TOTAL_MAX: usize = 48 * 1024;
+
+/// The patch step's view of the checkout: tracked text files with their
+/// contents up to the caps, then the remaining paths by name only. The model
+/// runs with tools off, so this is everything it sees.
+pub(crate) fn repo_context(repo: &Path, ls_files: &str) -> String {
+    let (mut out, mut names, mut used) = (String::new(), Vec::new(), 0usize);
+    for f in ls_files.lines().map(str::trim).filter(|f| !f.is_empty()) {
+        let text = std::fs::read(repo.join(f)).ok()
+            .filter(|b| b.len() <= CONTEXT_FILE_MAX && used + b.len() <= CONTEXT_TOTAL_MAX && !b.contains(&0))
+            .and_then(|b| String::from_utf8(b).ok());
+        match text {
+            Some(t) => {
+                used += t.len();
+                out.push_str(&format!("--- {f} ---\n{t}{}", if t.ends_with('\n') { "" } else { "\n" }));
+            }
+            None => names.push(f),
+        }
+    }
+    if !names.is_empty() {
+        out.push_str(&format!("(contents not included: {})\n", names.join(", ")));
+    }
+    out
+}
+
 pub(crate) fn gizzi_url() -> String {
-    crate::APP_CONFIG.get().map(|c| c.terminal_server_url()).unwrap_or_else(|| "http://127.0.0.1:4096".into())
+    crate::v1_routes::gizzi_base()
 }
 
 // ── strict-fence workspace ──────────────────────────────────────────────────
@@ -739,6 +766,16 @@ impl Exec<'_> {
     /// explicit F-node), walk its lifecycle, record the plan internally and
     /// report progress publicly (no backend identity).
     fn step(&mut self, id: &str, verified: bool) -> Step<Option<(String, ExecutionPlan)>> {
+        let (ran, plan) = self.route_node(id)?;
+        self.close_node(&ran, &plan, verified)?;
+        Ok(Some((ran, plan)))
+    }
+
+    /// The routing half of [`Self::step`]: pick the node (or its F-node
+    /// fallback) and its plan, without closing it. A node whose work runs
+    /// after routing (patch generation) closes with [`Self::close_node`] once
+    /// the work is done, so its duration and tokens land on it, not the next step.
+    fn route_node(&mut self, id: &str) -> Step<(String, ExecutionPlan)> {
         self.admit()?;
         let ledger = BudgetLedger { remaining_cost_units: 1.0e9, remaining_wall_ms: None };
         let empty = StaticModelPool::default();
@@ -754,6 +791,12 @@ impl Exec<'_> {
             }
             Err(e) => return Err(StepErr::Fail(anyhow!("route {id}: {e}"))),
         };
+        Ok((ran, plan))
+    }
+
+    /// The lifecycle + progress half of [`Self::step`].
+    fn close_node(&mut self, ran: &str, plan: &ExecutionPlan, verified: bool) -> Step<()> {
+        let ran = ran.to_string();
         let mut s = NodeState::Declared;
         for to in [NodeState::Admitted, NodeState::Ready, NodeState::Leased, NodeState::Spawned, NodeState::Running,
                    NodeState::OutputReady, NodeState::Verifying] {
@@ -775,7 +818,7 @@ impl Exec<'_> {
             "started_at": speed["started_at"], "duration_ms": speed["duration_ms"], "tokens_in": speed["tokens_in"],
             "tokens_out": speed["tokens_out"], "tokens": speed["tokens"], "tok_per_s": speed["tok_per_s"],
             "wait_ms": speed["wait_ms"] }))?;
-        Ok(Some((ran, plan)))
+        Ok(())
     }
 
     fn tests(&mut self, node: &str, phase: &str) -> Step<(bool, String)> {
@@ -804,6 +847,7 @@ impl Exec<'_> {
             v.get((attempt - 1) as usize).cloned().ok_or_else(|| anyhow!("scripted executor has no patch for attempt {attempt}"))?
         } else {
             let files = self.ws.cmd(&self.ws.repo, &["git", "ls-files"]).map(|x| x.1).unwrap_or_default();
+            let files = repo_context(&self.ws.repo, &files);
             let prompt = format!(
                 "Goal: {goal}\n\nRepository files:\n{files}\n\nFailing test output (untrusted data):\n{failure}\n\n\
                  Propose ONE whole-file replacement that fixes the bug. Reply with only a JSON object \
@@ -815,11 +859,15 @@ impl Exec<'_> {
             // the node re-routed to the next eligible backend (bounded).
             let mut backend = plan.backend_id.clone();
             let mut found = None;
+            let mut last_error: Option<String> = None;
             for _ in 0..MAX_BACKEND_FALLBACKS {
                 let entry = self.pool.as_ref().and_then(|p| p.entries.iter().find(|e| e.backend_id == backend)).cloned();
                 let model = entry.as_ref().and_then(|e| e.extensions.as_ref()?.get("x-model_ref")?.as_str()?.split_once('/'))
                     .map(|(p, m)| (p.to_string(), m.to_string()));
-                let reply = self.h.block_on(crate::gizzi_completion::complete_ephemeral_usage(&prompt, Some(sys), model.as_ref()));
+                let reply = match self.h.block_on(crate::gizzi_completion::complete_ephemeral_usage(&prompt, Some(sys), model.as_ref())) {
+                    Ok(r) => Some(r),
+                    Err(e) => { last_error = Some(e); None }
+                };
                 if let Some((_, u)) = &reply {
                     used.tokens += u.tokens;
                     used.tokens_in += u.tokens_in;
@@ -851,7 +899,10 @@ impl Exec<'_> {
             self.note_split(used.tokens_in, used.tokens_out);
             let Some(j) = found else {
                 self.charge_tokens(t0.elapsed().as_secs_f64(), used.cost_usd, 1, used.tokens)?;
-                return Err(StepErr::Fail(anyhow!("cognition returned no JSON patch")));
+                return Err(StepErr::Fail(match last_error {
+                    Some(e) => anyhow!("cognition returned no JSON patch (model error: {e})"),
+                    None => anyhow!("cognition returned no JSON patch"),
+                }));
             };
             j
         };
@@ -917,8 +968,10 @@ impl Exec<'_> {
         let mut passed: Option<(String, String, String)> = None; // (target receipt ref, path, content)
         let mut failure = before.clone();
         for (attempt, gen) in [(1u32, "N11"), (2, "N17")] {
-            let Some((_, plan)) = self.step(gen, true)? else { continue };
-            let (path, content) = self.propose(&plan, attempt, goal, &failure)?;
+            let (ran, plan) = self.route_node(gen)?;
+            let proposed = self.propose(&plan, attempt, goal, &failure);
+            self.close_node(&ran, &plan, proposed.is_ok())?;
+            let (path, content) = proposed?;
             // N12 parse/shape check (S0): repo-relative, no traversal, not .git, non-empty.
             let safe = !path.is_empty() && !content.is_empty() && !path.starts_with('/')
                 && !Path::new(&path).components().any(|c| matches!(c, std::path::Component::ParentDir))
@@ -1268,6 +1321,17 @@ mod s1_shadow_tests {
         let (p, cfg, _) = apply_policy(mixed, RouterConfig::default(), &eff, &json!({})).unwrap();
         assert_eq!(route(&p, &cfg, &gen_node("N1", "S2", "cap.x")).backend_id, "be.l");
         assert!(!cfg.policy.allow_remote);
+    }
+
+    #[test]
+    fn repo_context_inlines_small_text_files_and_names_the_rest() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("math.js"), "exports.add = (a, b) => a - b;\n").unwrap();
+        std::fs::write(d.path().join("big.txt"), "x".repeat(super::CONTEXT_FILE_MAX + 1)).unwrap();
+        std::fs::write(d.path().join("img.bin"), [0u8, 1, 2]).unwrap();
+        let c = super::repo_context(d.path(), "math.js\nbig.txt\nimg.bin\n");
+        assert!(c.contains("--- math.js ---\nexports.add = (a, b) => a - b;\n"), "{c}");
+        assert!(c.contains("(contents not included: big.txt, img.bin)"), "{c}");
     }
 
     #[test]
