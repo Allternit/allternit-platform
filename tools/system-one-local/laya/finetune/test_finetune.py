@@ -118,6 +118,39 @@ class FineTunePipeline(unittest.TestCase):
         self.assertEqual(ft.to_ledger_order([0.2, 0.8], [1, 0]), [0.8, 0.2])
         self.assertEqual(ft.to_ledger_order([0.1, 0.2, 0.7], [0, 1, 2]), [0.1, 0.2, 0.7])
 
+    def test_balance_weights_inverse_frequency_per_group(self):
+        import finetune_laya as ft
+
+        def row(label, bank="b1"):
+            return {"primitive_id": bank, "laya": {"question": {"type": "noul"}, "label_index": label},
+                    "options": ["true", "false"]}
+
+        rows = [row(0)] * 9 + [row(1)]
+        w = ft.balance_weights(rows)
+        self.assertAlmostEqual(w[0], 10 / (2 * 9))   # common class
+        self.assertAlmostEqual(w[-1], 10 / (2 * 1))   # rare class weighs 9x more
+        # groups are independent: a second bank's labels do not dilute the first
+        rows2 = rows + [row(0, "b2"), row(1, "b2")]
+        w2 = ft.balance_weights(rows2)
+        self.assertAlmostEqual(w2[0], w[0])    # b1 rows keep their b1-group weights
+        self.assertAlmostEqual(w2[9], w[9])    # b1's rare row (index 9) is untouched by b2
+        self.assertAlmostEqual(w2[-1], 1.0)    # b2 group: n=2, c=2 -> 2/(2*1)
+
+    def test_end_to_end_tiny_balanced(self):
+        import finetune_laya as ft
+
+        with tempfile.TemporaryDirectory() as t:
+            base, exp, out = (os.path.join(t, x) for x in ("base", "export", "out"))
+            os.makedirs(base)
+            make_fake_checkpoint(base)
+            synth_export(exp)
+            rc = ft.main(["--export-dir", exp, "--out", out, "--base", base, "--device", "cpu", "--epochs", "3",
+                          "--balance", "--lr", "2e-3", "--batch", "8", "--model-ref", "laya/typed-decisions"])
+            self.assertEqual(rc, 0)
+            meta = load(os.path.join(out, "allternit_checkpoint.json"))
+            self.assertTrue(meta["recipe"]["balanced"])
+            self.assertTrue(meta["revision"].startswith("ft-"))
+
 
 if __name__ == "__main__":
     unittest.main()
