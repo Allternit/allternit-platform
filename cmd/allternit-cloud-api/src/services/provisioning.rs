@@ -2713,6 +2713,9 @@ impl ProvisioningService {
             FROM billing_subscriptions b
             WHERE b.status IN ('active', 'trialing')
               AND b.plan_id IN ('plus', 'super', 'ultra')
+              -- Real Stripe subscriptions only: hand-made rows (e.g. an
+              -- admin's complimentary plan) never get a computer this way.
+              AND b.stripe_subscription_id LIKE 'sub\_%'
               AND NOT EXISTS (
                   SELECT 1 FROM provisioned_instances i
                   WHERE i.subscription_id = b.stripe_subscription_id
@@ -4302,6 +4305,13 @@ pub(crate) mod pg_tests {
             .execute(&pool)
             .await
             .unwrap();
+        // A hand-made comp row (not a Stripe subscription) is never picked up.
+        sqlx::query(
+            "INSERT INTO billing_subscriptions (stripe_subscription_id, user_id, status, plan_id) VALUES ('admin-comp-ultra', 'user_2', 'active', 'ultra')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         // A server too small for Plus (2 vCPU / 4 GB).
         insert_host(&pool, "host_small", 1, 1024, 10).await;
         let backend = Arc::new(MockBackend::default());
