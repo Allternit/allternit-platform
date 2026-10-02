@@ -304,6 +304,15 @@ pub trait ProvisionBackend: Send + Sync + std::fmt::Debug {
     async fn stop(&self, name: &str) -> Result<(), ProvisionError>;
     async fn status(&self, name: &str) -> Result<BackendStatus, ProvisionError>;
     async fn delete(&self, name: &str) -> Result<(), ProvisionError>;
+    /// Apply a plan change to an existing instance: CPU and memory limits
+    /// (a running container picks them up live) and the root disk size on
+    /// `storage_pool`.
+    async fn resize(
+        &self,
+        name: &str,
+        size: ComputerSize,
+        storage_pool: &str,
+    ) -> Result<(), ProvisionError>;
     /// Take a disk-only (stateless, no CRIU) snapshot of a stopped instance
     /// and publish it as a compressed local image under `alias`, then drop
     /// the instance snapshot. Images outlive their source instance, which
@@ -661,6 +670,38 @@ impl ProvisionBackend for IncusHttpBackend {
         let (status, json) = self
             .transport
             .request(reqwest::Method::POST, "/1.0/instances", Some(body))
+            .await?;
+        if !is_success(status) {
+            return Err(error_from_status(status, &json));
+        }
+        self.wait_operation(&json).await
+    }
+
+    async fn resize(
+        &self,
+        name: &str,
+        size: ComputerSize,
+        storage_pool: &str,
+    ) -> Result<(), ProvisionError> {
+        // PATCH merges: only these keys change; the rest of the config and
+        // the profile devices stay as they are.
+        let body = serde_json::json!({
+            "config": {
+                "limits.cpu": size.cpu_cores.to_string(),
+                "limits.memory": format!("{}MiB", size.memory_mb),
+            },
+            "devices": {
+                "root": {
+                    "type": "disk",
+                    "path": "/",
+                    "pool": storage_pool,
+                    "size": format!("{}GiB", size.disk_gb),
+                }
+            },
+        });
+        let (status, json) = self
+            .transport
+            .request(reqwest::Method::PATCH, &format!("/1.0/instances/{name}"), Some(body))
             .await?;
         if !is_success(status) {
             return Err(error_from_status(status, &json));
@@ -1573,6 +1614,10 @@ impl ProvisioningService {
                 if let Some(view) = self.resume(row, subscription_id).await? {
                     return Ok(view);
                 }
+            } else if !free && subscription_id.is_some() {
+                // Same subscription, maybe a new plan (changed in the Stripe
+                // billing portal): bring the computer to the plan's size.
+                return self.resize_to_plan(row, subscription_id).await;
             } else {
                 return Ok(InstanceView::from(row));
             }
@@ -1793,6 +1838,103 @@ impl ProvisioningService {
     /// The live (non-terminal, non-error) row for `(user, subscription)` of
     /// the given tier. A replaced free computer (kept sleeping after an
     /// upgrade) no longer counts as the account's live free computer.
+    /// Plan change on a live paid computer: apply the plan's CPU, memory
+    /// and disk. Growth must fit in its host's free capacity; when it does
+    /// not, the computer keeps its size and a later delivery retries. The
+    /// disk never shrinks (a root volume can't be shrunk safely), so a
+    /// downgrade keeps the larger disk. A computer still being created is
+    /// left alone.
+    async fn resize_to_plan(
+        &self,
+        row: InstanceRow,
+        subscription_id: Option<&str>,
+    ) -> Result<InstanceView, ApiError> {
+        if !matches!(row.status.as_str(), "running" | "stopped") {
+            return Ok(InstanceView::from(row));
+        }
+        let (plan_id, plan) = self.plan_size(subscription_id).await;
+        let current = row.size();
+        let target = ComputerSize {
+            disk_gb: plan.disk_gb.max(current.disk_gb),
+            ..plan
+        };
+        if target == current {
+            if plan_id.is_some() && plan_id != row.plan_id {
+                sqlx::query(
+                    "UPDATE provisioned_instances SET plan_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+                )
+                .bind(&row.id)
+                .bind(&plan_id)
+                .execute(&self.db)
+                .await?;
+            }
+            return self.get_for_user(&row.id, &row.user_id).await;
+        }
+        let Some(host_id) = row.host_id.clone() else {
+            return Ok(InstanceView::from(row));
+        };
+        let delta = ComputerSize {
+            cpu_cores: target.cpu_cores - current.cpu_cores,
+            memory_mb: target.memory_mb - current.memory_mb,
+            disk_gb: target.disk_gb - current.disk_gb,
+        };
+        let reserved = sqlx::query(
+            r#"
+            UPDATE provisioned_hosts
+            SET cpu_cores_allocated = GREATEST(0, cpu_cores_allocated + $1),
+                memory_mb_allocated = GREATEST(0, memory_mb_allocated + $2),
+                disk_gb_allocated = GREATEST(0, disk_gb_allocated + $3),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $4
+              AND ($1 <= 0 OR cpu_cores_allocated + $1 <= cpu_cores_total)
+              AND ($2 <= 0 OR memory_mb_allocated + $2 <= memory_mb_total)
+              AND ($3 <= 0 OR disk_gb_allocated + $3 <= disk_gb_total)
+            "#,
+        )
+        .bind(delta.cpu_cores as i32)
+        .bind(delta.memory_mb)
+        .bind(delta.disk_gb)
+        .bind(&host_id)
+        .execute(&self.db)
+        .await?;
+        if reserved.rows_affected() == 0 {
+            tracing::warn!(
+                instance_id = %row.id, %host_id, ?plan_id, ?current, ?target,
+                "plan change: host has no room to resize this computer; keeping its size"
+            );
+            return Ok(InstanceView::from(row));
+        }
+        let backend = self.backend_for_row(&row).await?;
+        if let Err(error) = backend
+            .resize(&row.incus_name, target, &self.defaults.storage_pool)
+            .await
+        {
+            // Undo the reservation; the computer is unchanged.
+            self.release_allocation(&host_id, delta).await;
+            return Err(error.to_api_error());
+        }
+        sqlx::query(
+            r#"
+            UPDATE provisioned_instances
+            SET cpu_cores = $2, memory_mb = $3, disk_gb = $4,
+                plan_id = COALESCE($5, plan_id), updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+            "#,
+        )
+        .bind(&row.id)
+        .bind(target.cpu_cores as i32)
+        .bind(target.memory_mb)
+        .bind(target.disk_gb)
+        .bind(&plan_id)
+        .execute(&self.db)
+        .await?;
+        tracing::info!(
+            instance_id = %row.id, ?plan_id, ?current, ?target,
+            "plan change: cloud computer resized"
+        );
+        self.get_for_user(&row.id, &row.user_id).await
+    }
+
     async fn live_row_for(
         &self,
         user_id: &str,
@@ -3341,6 +3483,19 @@ pub(crate) mod pg_tests {
                 .pop_front()
                 .unwrap_or(Ok(BackendStatus::Running))
         }
+        async fn resize(
+            &self,
+            name: &str,
+            size: ComputerSize,
+            _storage_pool: &str,
+        ) -> Result<(), ProvisionError> {
+            self.calls.lock().unwrap().push(format!(
+                "resize:{name}:{}c/{}m/{}g",
+                size.cpu_cores, size.memory_mb, size.disk_gb
+            ));
+            Ok(())
+        }
+
         async fn delete(&self, name: &str) -> Result<(), ProvisionError> {
             self.calls.lock().unwrap().push(format!("delete:{name}"));
             Ok(())
@@ -3962,6 +4117,79 @@ pub(crate) mod pg_tests {
         .await
         .unwrap();
         assert_eq!(burst, (16, 32768));
+    }
+
+    #[tokio::test]
+    async fn a_plan_change_resizes_the_live_computer() {
+        let pool = migrated_pool().await;
+        insert_host(&pool, "host_a", 16, 32768, 200).await;
+        let set_plan = |plan: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query("UPDATE billing_subscriptions SET plan_id = $1 WHERE stripe_subscription_id = 'sub_1'")
+                    .bind(plan)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+        };
+        let allocated = || {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_as::<_, (i32, i64, i64)>(
+                    "SELECT cpu_cores_allocated, memory_mb_allocated, disk_gb_allocated FROM provisioned_hosts WHERE id = 'host_a'",
+                )
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        set_plan("plus").await;
+        let backend = Arc::new(MockBackend::default());
+        let service = service(pool.clone(), backend.clone());
+        let first = service.create("user_1", Some("sub_1")).await.unwrap();
+        assert_eq!((first.cpu_cores, first.memory_mb, first.disk_gb), (2, 4096, 20));
+        // A computer still being created is left alone; by the time anyone
+        // changes plans it is running.
+        set_plan("super").await;
+        let still_creating = service.create("user_1", Some("sub_1")).await.unwrap();
+        assert_eq!(still_creating.cpu_cores, 2);
+        sqlx::query("UPDATE provisioned_instances SET status = 'running' WHERE id = $1")
+            .bind(&first.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Upgrade in the billing portal: the next delivery resizes in place.
+        set_plan("super").await;
+        let upgraded = service.create("user_1", Some("sub_1")).await.unwrap();
+        assert_eq!(upgraded.id, first.id);
+        assert_eq!((upgraded.cpu_cores, upgraded.memory_mb, upgraded.disk_gb), (4, 8192, 40));
+        assert_eq!(upgraded.plan_id.as_deref(), Some("super"));
+        assert_eq!(allocated().await, (4, 8192, 40));
+        assert!(backend
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|call| call.starts_with("resize:") && call.ends_with(":4c/8192m/40g")));
+        assert_eq!(backend.created.lock().unwrap().len(), 1, "resized, not re-created");
+
+        // Downgrade: CPU and memory shrink, the disk keeps its size.
+        set_plan("plus").await;
+        let downgraded = service.create("user_1", Some("sub_1")).await.unwrap();
+        assert_eq!((downgraded.cpu_cores, downgraded.memory_mb, downgraded.disk_gb), (2, 4096, 40));
+        assert_eq!(allocated().await, (2, 4096, 40));
+
+        // No room on the host: the computer keeps its size.
+        sqlx::query("UPDATE provisioned_hosts SET cpu_cores_total = 3 WHERE id = 'host_a'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        set_plan("ultra").await;
+        let kept = service.create("user_1", Some("sub_1")).await.unwrap();
+        assert_eq!((kept.cpu_cores, kept.memory_mb, kept.disk_gb), (2, 4096, 40));
+        assert_eq!(allocated().await, (2, 4096, 40));
     }
 
     #[tokio::test]

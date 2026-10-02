@@ -311,8 +311,8 @@ async fn apply_entitlement_and_sync_subscription(
         apply_hosted_entitlement(db, event_id, user_id, plan_tier_id, None, "stripe").await?;
     let subscription_id = subscription["id"].as_str().unwrap_or_default();
     if !subscription_id.is_empty() {
-        let plan_id = subscription["metadata"]["allternit_plan_id"]
-            .as_str()
+        let plan_id = crate::routes::billing_subscriptions::current_subscription_plan(subscription)
+            .map(|plan| plan.id)
             .unwrap_or_default();
         let status = subscription["status"].as_str().unwrap_or_default();
         let customer_id = subscription_customer_id(subscription);
@@ -805,8 +805,13 @@ fn map_stripe_event(event: &Value) -> Result<MappedStripeEvent, ApiError> {
                     "Subscription is missing clerk_user_id metadata.".to_string(),
                 )
             })?;
-            let plan_tier_id = subscription["metadata"]["allternit_plan_tier"]
-                .as_str()
+            // The current price decides the tier, so a plan switch in the
+            // billing portal grants the new plan's quotas.
+            let plan_tier_id = crate::routes::billing_subscriptions::current_subscription_plan(
+                subscription,
+            )
+            .map(|plan| plan.plan_tier)
+            .or_else(|| subscription["metadata"]["allternit_plan_tier"].as_str())
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .ok_or_else(|| {

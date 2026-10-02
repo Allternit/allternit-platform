@@ -714,6 +714,15 @@ mod tests {
             self.calls.lock().unwrap().push(format!("delete:{name}"));
             Ok(())
         }
+        async fn resize(
+            &self,
+            name: &str,
+            _size: crate::services::ComputerSize,
+            _storage_pool: &str,
+        ) -> Result<(), crate::services::ProvisionError> {
+            self.calls.lock().unwrap().push(format!("resize:{name}"));
+            Ok(())
+        }
         async fn snapshot_to_image(
             &self,
             _name: &str,
