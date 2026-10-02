@@ -57,8 +57,10 @@ export const BANKS = {
   },
   // cmd/allternit-api/src/gateway_routing.rs before_send — GATE with the caller's
   // own consequential flag as x-incumbent; labelled with that flag (tighten-only).
+  // The live request sets no x-primitive_id, so the ledger primitive IS the bank id
+  // ("vendor.consequential" in request() is the calibration domain, not the primitive).
   vendor_consequential: {
-    bank: "bank.vendor_consequential.v0", primitive_id: "vendor.consequential", operation: "GATE", question_id: null,
+    bank: "bank.vendor_consequential.v0", primitive_id: "bank.vendor_consequential.v0", operation: "GATE", question_id: null,
     instructions: "does sending this request need the user's approval first (spends money, contacts people, changes or deletes something outside the chat)",
     caller: "cmd/allternit-api/src/gateway_routing.rs:158-169 (state = turn text tail 2000; x-incumbent = caller flag)",
   },

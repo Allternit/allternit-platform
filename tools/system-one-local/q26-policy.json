@@ -29,7 +29,7 @@
   "lessons.triage.supported_by_events": {
     "incumbent": "none"
   },
-  "vendor.consequential": {
+  "bank.vendor_consequential.v0": {
     "incumbent": "required",
     "why": "the caller's own consequential flag is logged as x-incumbent; the bank is tighten-only and its name keeps it in the never-auto-act class (permission/money/client family)"
   },
