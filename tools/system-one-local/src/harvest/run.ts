@@ -36,6 +36,7 @@ export function requestFor(it: HarvestItem, decisionId: string): DecisionRequest
     ...(s.candidates ? { candidates: s.candidates } : {}),
     extensions: {
       "x-primitive_id": s.primitive_id,
+      ...(s.motif ? { "x-motif": s.motif } : {}),
       ...(s.criteria ? { "x-criteria": s.criteria } : {}),
       ...(it.incumbent ? { "x-incumbent": it.incumbent } : {}),
     },

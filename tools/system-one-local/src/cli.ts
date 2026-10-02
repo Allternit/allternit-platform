@@ -5,14 +5,15 @@
 //   system-one ask --state <file|-> --questions <file> [--model jev-latest] [--server http://127.0.0.1:7717]
 //   system-one models
 //   system-one route-model --task "..." --allow-paid       (paid OpenRouter call)
-//   system-one harvest-labels [--dir d] [--cap 2500] [--dry-run]  local history -> labelled decisions (WP-L2)
+//   system-one harvest-labels [--dir d] [--cap 2500] [--dry-run] [--sources claude-code,gizzi,agent-ledger,brain-drafts,desktop-db]  local history -> labelled decisions (WP-L2)
 //   system-one export --out <dir>                            ledger (+ harvest dir) -> fine-tuning set (WP-L1)
 //   system-one calibrate --tune <jsonl> --cert <jsonl>       Q26 gate (legacy Q22: --data ... --primitive ... --model ...)
 //   system-one canary <status|enable|grow|sync|rollback>     Q26 exposure budget + CUSUM rollback
 //
 // `ask` evaluates in-process unless --server is given. A state file ending in
 // .json is parsed as JSON (object/array/string); anything else is sent as text.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { appendManifests, calibrateAndWrite } from "./decision/calibrate.ts";
 import { CanaryController } from "./decision/canary.ts";
@@ -26,13 +27,54 @@ import { DEFAULT_PORT, HOST, layaRevision, serve } from "./server.ts";
 import { DecisionRouter } from "./decision/router.ts";
 import { LocalLogitReadoutProvider } from "./decision/local-provider.ts";
 import { runHarvest } from "./harvest/run.ts";
+import type { HarvestSource } from "./harvest/types.ts";
 import { claudeCodeSource } from "./harvest/sources/claude-code.ts";
 import { gizziSource } from "./harvest/sources/gizzi.ts";
+import { agentLedgerSource, firstPrRef, type PrVerdicts } from "./harvest/sources/agent-ledger.ts";
+import { brainDraftsSource } from "./harvest/sources/brain-drafts.ts";
+import { desktopDbSource } from "./harvest/sources/desktop-db.ts";
 import { homedir } from "node:os";
 import { SystemOneError } from "./types.ts";
 
 /** WP-L2 label-harvest ledger (shadow layout), read by `export` next to the live shadow dir. */
 const HARVEST_DIR = process.env.ALLTERNIT_S1_HARVEST_DIR?.trim() || join(BASE_DIR, "harvest");
+
+/** PR verdict cache for the agent-ledger source (24 h TTL; gh only for the unresolved remainder). */
+const PR_VERDICTS_CACHE = join(BASE_DIR, "harvest", "pr-verdicts.json");
+
+/** merged/closed PR sets: merged proven from origin/main subjects; closed-unmerged via gh. */
+export function buildPrVerdicts(gitDir: string): PrVerdicts {
+  const cached = (() => {
+    try {
+      const c = JSON.parse(readFileSync(PR_VERDICTS_CACHE, "utf8")) as { at: number; merged: string[]; closed: string[] };
+      return Date.now() - c.at < 24 * 3600_000 ? c : null;
+    } catch { return null; }
+  })();
+  if (cached) return { merged: new Set(cached.merged), closed: new Set(cached.closed) };
+  const run = (cmd: string, args: string[]) => {
+    try { return execFileSync(cmd, args, { encoding: "utf8", timeout: 120_000, stdio: ["ignore", "pipe", "ignore"] }); } catch { return ""; }
+  };
+  const subjects = run("git", ["-C", gitDir, "log", "origin/main", "--format=%s"]);
+  const merged = new Set([...subjects.matchAll(/Merge pull request #(\d+)/g)].map((m) => m[1]!));
+  for (const m of subjects.matchAll(/\(#(\d+)\)\s*$/gm)) merged.add(m[1]!);
+  const closed = new Set<string>();
+  const ledgerDir = join(gitDir, "agent-ledger", "summaries");
+  let files: string[] = [];
+  try { files = readdirSync(ledgerDir).filter((f) => f.endsWith(".md")); } catch { /* no ledger */ }
+  for (const f of files) {
+    let text: string;
+    try { text = readFileSync(join(ledgerDir, f), "utf8").slice(0, 6000); } catch { continue; }
+    const pr = firstPrRef(text);
+    if (pr && !merged.has(pr) && !closed.has(pr)) {
+      try {
+        const v = JSON.parse(run("gh", ["pr", "view", pr, "--repo", "Gizziio/allternit-platform", "--json", "state,mergedAt"])) as { state?: string; mergedAt?: string | null };
+        if (v.state === "CLOSED" && !v.mergedAt) closed.add(pr);
+      } catch { /* unknown: no label */ }
+    }
+  }
+  try { mkdirSync(dirname(PR_VERDICTS_CACHE), { recursive: true }); writeFileSync(PR_VERDICTS_CACHE, JSON.stringify({ at: Date.now(), merged: [...merged], closed: [...closed] })); } catch { /* cache is best-effort */ }
+  return { merged, closed };
+}
 
 function flags(argv: string[]) {
   const out: Record<string, string | true> = {};
@@ -133,10 +175,14 @@ async function main() {
       const provider = new LocalLogitReadoutProvider(engine, {
         model_ref: `convaiinnovations/laya/${engine.config.layaModel}`, model_revision: layaRevision(), tokenizer_id: "modernbert", quantization: "none", runtime_backend: "laya-serve",
       }, "backend.laya", `laya:${engine.config.layaModel}`);
-      const sources = [] as ReturnType<typeof claudeCodeSource>[];
-      const want = typeof f.sources === "string" ? f.sources.split(",") : ["claude-code", "gizzi"];
+      const sources = [] as HarvestSource[];
+      const repoRoot = join(new URL("..", import.meta.url).pathname, "..", "..");
+      const want = typeof f.sources === "string" ? f.sources.split(",") : ["claude-code", "gizzi", "agent-ledger", "brain-drafts", "desktop-db"];
       if (want.includes("claude-code")) sources.push(claudeCodeSource(typeof f["claude-dir"] === "string" ? f["claude-dir"] : join(homedir(), ".claude", "projects")));
       if (want.includes("gizzi")) sources.push(gizziSource(typeof f["gizzi-db"] === "string" ? f["gizzi-db"] : join(homedir(), ".local", "share", "gizzi-code", "gizzi.db")));
+      if (want.includes("agent-ledger")) sources.push(agentLedgerSource(typeof f["ledger-dir"] === "string" ? f["ledger-dir"] : join(repoRoot, "agent-ledger", "summaries"), buildPrVerdicts(typeof f["git-dir"] === "string" ? f["git-dir"] : repoRoot)));
+      if (want.includes("brain-drafts")) sources.push(brainDraftsSource(typeof f["brain-root"] === "string" ? f["brain-root"] : join(homedir(), "Desktop", "Allternit", "Allternit Brain")));
+      if (want.includes("desktop-db")) sources.push(desktopDbSource(typeof f["desktop-db"] === "string" ? f["desktop-db"] : join(homedir(), "Library", "Application Support", "@allternit", "desktop", "allternit", "allternit.db")));
       const stats = await runHarvest({
         dir, sources, router: new DecisionRouter({ provider, manifests: [], mode: "shadow", ledger: new ShadowLedger(dir) }),
         capPerBank: typeof f.cap === "string" ? Number(f.cap) : 2500, concurrency: typeof f.concurrency === "string" ? Number(f.concurrency) : 4,
@@ -154,6 +200,7 @@ async function main() {
         auditFraction: typeof f.audit === "string" ? Number(f.audit) : undefined,
         extraDirs: f["no-harvest"] === true ? [] : [typeof f["harvest-dir"] === "string" ? f["harvest-dir"] : HARVEST_DIR],
         ...(typeof f.fractions === "string" ? { fractions: (([train, tune, cert]) => ({ train, tune, cert }))(f.fractions.split(",").map(Number)) } : {}),
+        ...(typeof f["max-options"] === "string" ? { maxOptions: Number(f["max-options"]) } : {}),
       });
       writeExport(f.out, rows, summary);
       console.log(JSON.stringify({ out: f.out, ...summary }, null, 2));

@@ -16,6 +16,8 @@ export interface BankSpec {
   instructions: string;
   candidates?: Candidate[];
   criteria?: { true: string; false: string };
+  /** x-motif extension when the live caller sets one (e.g. CONFIDENCE_GATE). */
+  motif?: string;
   /** Where the live caller lives (documentation + drift checks). */
   caller: string;
 }

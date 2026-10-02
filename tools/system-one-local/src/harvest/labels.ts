@@ -53,3 +53,19 @@ export function routeModelLabel(cur: { text: string; cls: GenClass; errored: boo
   if (next.text.trim() !== "" && next.text.trim() === cur.text.trim()) return { truth: escalate(cur.cls), source: "user_retry" };
   return { truth: cur.cls, source: "turn_accepted" };
 }
+
+/**
+ * agency_api/executor.rs s0_error_code, ported VERBATIM (same precedence, same
+ * keyword set, same UNKNOWN fallback): the deterministic S0 diagnostic is the
+ * ground truth for dec.classify_error, exactly as bug_fix.s0 reports it live.
+ */
+export function s0ErrorCode(out: string): string {
+  const o = out.toLowerCase();
+  const has = (ks: string[]) => ks.some((k) => o.includes(k));
+  if (has(["syntaxerror", "syntax error"])) return "SYNTAX_ERROR";
+  if (has(["modulenotfounderror", "importerror", "cannot find module"])) return "IMPORT_ERROR";
+  if (has(["typeerror"])) return "TYPE_ERROR";
+  if (has(["assertionerror", "assertion failed", "expected"])) return "TEST_ASSERTION";
+  if (has(["timed out", "timeout"])) return "TEST_TIMEOUT";
+  return "UNKNOWN";
+}
