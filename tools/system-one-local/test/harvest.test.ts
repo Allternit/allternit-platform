@@ -332,7 +332,7 @@ describe("runner with the new banks", () => {
     const { rows } = buildExport(join(dir, "none"), { extraDirs: [dir], maxOptions: 18 });
     expect(rows.length).toBe(5);
     const prims = new Set(rows.map((r) => r.primitive_id));
-    expect(prims).toEqual(new Set(["judge.first_pass.node", "judge.first_pass.tool", "vendor.consequential", "dec.classify_error", "lessons.triage.reusable_pattern"]));
+    expect(prims).toEqual(new Set(["judge.first_pass.node", "judge.first_pass.tool", "bank.vendor_consequential.v0", "dec.classify_error", "lessons.triage.reusable_pattern"]));
     expect(rows.every((r) => typeof r.state === "string" && !r.state.includes("sk-ant-abcdefghijklmnopqrstuv") && !r.state.includes("a@b.com"))).toBe(true);
     expect(rows.every((r) => r.provenance.label_source === "observed" || r.provenance.label_source === "backfill_observed")).toBe(true);
     const b = await runHarvest({ dir, router, sources: [src] });
