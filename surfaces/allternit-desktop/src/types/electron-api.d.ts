@@ -97,6 +97,7 @@ export interface SystemOneStatus {
   apiBackend?: S1Backend;
   shadowDir: string | null;
   shadowState: boolean;
+  liveMode: boolean;
   embed: { running: boolean; url: string };
   error?: string;
 }
@@ -116,6 +117,7 @@ export interface SystemOneAPI {
   stop(): Promise<boolean>;
   setCheckpoint(checkpoint: { revision?: string; path?: string } | null): Promise<LayaCheckpoint>;
   setShadowState(enabled: boolean): Promise<boolean>;
+  setLiveMode(enabled: boolean): Promise<boolean>;
   onProgress(handler: (progress: SystemOneProgress) => void): () => void;
 }
 
