@@ -21,16 +21,16 @@ Use A2A delegation whenever an agent needs to hand work to another runtime ident
 ## Key concepts
 
 <CardGroup cols={2}>
-  <Card title="Agent Card" icon="id-card">
+  <Card title="Agent Card" icon="/icons/key.svg">
     A public metadata block on every agent that declares capabilities, trust tier, example prompts, and whether the agent can delegate to others.
   </Card>
-  <Card title="canDelegate" icon="sitemap">
+  <Card title="canDelegate" icon="/icons/team.svg">
     A boolean flag in `agent.agentCard.canDelegate`. When `true`, @mentions are routed as A2A messages so the agent can hand work to sub-agents or peers.
   </Card>
-  <Card title="Swarm-as-Agent Bridge" icon="users">
+  <Card title="Swarm-as-Agent Bridge" icon="/icons/team.svg">
     `swarmToAgent()` converts an `AgentSwarm` into an `Agent` with a `swarm_`-prefixed ID. Swarms appear in agent lists and can be @mentioned like any other agent.
   </Card>
-  <Card title="Loop Guard" icon="shield">
+  <Card title="Loop Guard" icon="/icons/shield.svg">
     The agent communication tool tracks hop counters per `correlationId` and escalates to a human after a configurable number of hops to prevent infinite delegation loops.
   </Card>
 </CardGroup>

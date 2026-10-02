@@ -1,0 +1,12 @@
+<svg viewBox="6 4 84 84" xmlns="http://www.w3.org/2000/svg" shape-rendering="geometricPrecision" role="img" aria-label="Gizzi">
+  <!-- Gizzi mark: the official mascot (gizzi-mascot.svg geometry) with the face panel cut out, coral beacon and A nose. -->
+  <mask id="p"><rect width="96" height="96" fill="#fff"/><rect x="24" y="29" width="48" height="31" rx="9" fill="#000"/></mask>
+  <rect x="44" y="8" width="8" height="5" rx="2" fill="currentColor"/>
+  <rect x="24" y="15" width="17" height="7" rx="3" fill="currentColor"/>
+  <rect x="55" y="15" width="17" height="7" rx="3" fill="currentColor"/>
+  <g mask="url(#p)" fill="currentColor"><path d="M25 23H71L78 30V56L72 63V69L64 76H32L24 69V63L18 56V30L25 23Z"/><path d="M18 40H14V44H10V48H14V52H18V56H22V40H18Z"/><path d="M78 40H82V44H86V48H82V52H78V56H74V40H78Z"/></g>
+  <rect x="33" y="36" width="8" height="10" rx="2" fill="currentColor"/>
+  <rect x="59" y="36" width="8" height="10" rx="2" fill="currentColor"/>
+  <path d="M44.5 52L48 42L51.5 52H49.6L48.8 49.5H47.2L46.4 52H44.5ZM47.75 47.7H48.25L48 46.65L47.75 47.7Z" fill="currentColor"/>
+  <rect x="46" y="47.2" width="4" height="1.4" rx="0.7" fill="currentColor"/><rect x="24" y="74" width="8" height="12" rx="1" fill="currentColor"/><rect x="36" y="74" width="8" height="12" rx="1" fill="currentColor"/><rect x="52" y="74" width="8" height="12" rx="1" fill="currentColor"/><rect x="64" y="74" width="8" height="12" rx="1" fill="currentColor"/>
+</svg>

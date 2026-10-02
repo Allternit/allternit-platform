@@ -40,13 +40,13 @@ You get:
 ## Three modes
 
 <CardGroup cols={3}>
-  <Card title="1. Local desktop" icon="desktop">
+  <Card title="1. Local desktop" icon="/icons/screen.svg">
     Allternit Desktop runs Allternit API and Gizzi on the user's machine and pairs the node to the account.
   </Card>
-  <Card title="2. User-paired VPS" icon="server">
+  <Card title="2. User-paired VPS" icon="/icons/chip.svg">
     You install the runtime on a box you own. Approve a pairing code. The node stays private.
   </Card>
-  <Card title="3. Allternit-provisioned" icon="cloud">
+  <Card title="3. Allternit-provisioned" icon="/icons/cloud.svg">
     Cloud API creates an isolated instance per subscription. Init installs Allternit API and auto-pairs. No inbound ports on the fleet host.
   </Card>
 </CardGroup>
@@ -94,13 +94,13 @@ Desktop ships its own bundled Allternit API. Do not publish port 8013.
 ## Next steps
 
 <CardGroup cols={3}>
-  <Card title="Allternit API" icon="database" href="/api/allternit-api">
+  <Card title="Allternit API" icon="/icons/stack.svg" href="/api/allternit-api">
     Data-plane binary, local :8013, SQLite
   </Card>
-  <Card title="Cloud API" icon="cloud" href="/api/cloud-api">
+  <Card title="Cloud API" icon="/icons/cloud.svg" href="/api/cloud-api">
     Pairing, relay, provisioned instances
   </Card>
-  <Card title="Hosted runtime" icon="box" href="/byoc/hosted-runtime">
+  <Card title="Hosted runtime" icon="/icons/stack.svg" href="/byoc/hosted-runtime">
     Managed Gizzi machine (Fly)
   </Card>
 </CardGroup>
