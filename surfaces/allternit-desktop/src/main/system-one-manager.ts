@@ -43,6 +43,11 @@ const S1_HEALTH_TIMEOUT_MS = 30_000;
 /** First Laya start downloads ~600 MB of weights. */
 const LAYA_HEALTH_TIMEOUT_MS = 15 * 60_000;
 const NEEDS_UV_EXIT = 3;
+/** Q26: in live mode the first canary sync goes out ~60 s after S1 starts, then every 15 min. */
+const CANARY_SYNC_FIRST_DELAY_MS = 60_000;
+const CANARY_SYNC_INTERVAL_MS = 15 * 60_000;
+/** A canary sync that hangs is killed instead of delaying the next tick. */
+const CANARY_SYNC_TIMEOUT_MS = 60_000;
 
 export type S1Backend = 'laya_bundled' | 'system_one_local' | 'auto';
 
@@ -82,6 +87,8 @@ export interface SystemOneStatus {
   shadowDir: string | null;
   /** Q28 opt-in: the ledger also keeps the raw decision state (fine-tuning text). */
   shadowState: boolean;
+  /** Q26 live mode: S1 consults the canary (ALLTERNIT_S1_MODE=live on the S1 process). */
+  liveMode: boolean;
   /** Local embeddings for the memory index (serve-embed.sh). */
   embed: { running: boolean; url: string };
   error?: string;
@@ -141,6 +148,8 @@ export class SystemOneManager {
   private apiBackend: S1Backend | undefined;
   private stopped = false;
   private depsCache: SystemOneDeps | undefined;
+  private canarySyncTimer: ReturnType<typeof setTimeout> | null = null;
+  private canarySyncRunning = false;
 
   constructor(private readonly overrides: Partial<SystemOneDeps> = {}) {}
 
@@ -240,18 +249,46 @@ export class SystemOneManager {
     await fs.promises.mkdir(path.dirname(this.settingsPath), { recursive: true });
     await fs.promises.writeFile(this.settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
     log.info(`[SystemOne] raw decision state in the shadow ledger: ${enabled ? 'on' : 'off'}`);
-    if (this.s1Proc) {
-      const proc = this.s1Proc;
-      this.s1Proc = null;
-      proc.kill('SIGTERM');
-      await new Promise<void>((resolve) => {
-        if (proc.exitCode != null || proc.signalCode != null) return resolve();
-        proc.once('exit', () => resolve());
-        setTimeout(resolve, 5000);
-      });
-      await this.startSystemOne().catch((err) => this.fail(`S1 restart failed: ${(err as Error).message}`));
-    }
+    await this.restartSystemOne();
     return this.shadowState;
+  }
+
+  /**
+   * Q26 live mode: S1 only consults the canary when its process env has
+   * ALLTERNIT_S1_MODE=live (tools/system-one-local/src/server.ts). The saved
+   * setting wins; without one, the ALLTERNIT_S1_MODE export still counts.
+   * Off by default.
+   */
+  get liveMode(): boolean {
+    const saved = this.readSettings().liveMode;
+    if (typeof saved === 'boolean') return saved;
+    return this.deps.env.ALLTERNIT_S1_MODE === 'live';
+  }
+
+  /** Save the live-mode switch and restart the S1 server this manager owns so it applies. */
+  async setLiveMode(enabled: boolean): Promise<boolean> {
+    const settings = this.readSettings();
+    settings.liveMode = enabled;
+    await fs.promises.mkdir(path.dirname(this.settingsPath), { recursive: true });
+    await fs.promises.writeFile(this.settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
+    log.info(`[SystemOne] live mode (canary consulted per decision): ${enabled ? 'on' : 'off'}`);
+    await this.restartSystemOne();
+    return this.liveMode;
+  }
+
+  /** Restart the owned S1 server so env-affecting settings apply (shared by the setters above). */
+  private async restartSystemOne(): Promise<void> {
+    if (!this.s1Proc) return;
+    const proc = this.s1Proc;
+    this.s1Proc = null;
+    this.clearCanarySyncTimer();
+    proc.kill('SIGTERM');
+    await new Promise<void>((resolve) => {
+      if (proc.exitCode != null || proc.signalCode != null) return resolve();
+      proc.once('exit', () => resolve());
+      setTimeout(resolve, 5000);
+    });
+    await this.startSystemOne().catch((err) => this.fail(`S1 restart failed: ${(err as Error).message}`));
   }
 
   /**
@@ -488,6 +525,7 @@ export class SystemOneManager {
       ...(this.apiBackend ? { apiBackend: this.apiBackend } : {}),
       shadowDir: this.shadowDir,
       shadowState: this.shadowState,
+      liveMode: this.liveMode,
       embed: { running: embedRunning, url: this.deps.env.ALLTERNIT_EMBED_URL || this.embedUrl },
       ...(this.lastError ? { error: this.lastError } : {}),
     };
@@ -640,6 +678,8 @@ export class SystemOneManager {
     };
     if (this.shadowState) env.SYSTEM_ONE_SHADOW_STATE = '1';
     else delete env.SYSTEM_ONE_SHADOW_STATE;
+    if (this.liveMode) env.ALLTERNIT_S1_MODE = 'live';
+    else delete env.ALLTERNIT_S1_MODE;
     log.info(`[SystemOne] starting S1 on ${this.s1Url}`);
     const child = this.deps.spawnSidecar(cmd.command, cmd.args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
     this.s1Proc = child;
@@ -651,6 +691,65 @@ export class SystemOneManager {
       if (this.s1Proc === child) this.s1Proc = null;
     });
     await this.waitFor(() => this.checkSystemOneHealth(), 'System One', S1_HEALTH_TIMEOUT_MS, () => this.s1Proc);
+    this.scheduleCanarySync(CANARY_SYNC_FIRST_DELAY_MS);
+  }
+
+  // ── Q26 canary sync (live mode only) ───────────────────────────────────────
+
+  private clearCanarySyncTimer(): void {
+    if (this.canarySyncTimer) {
+      clearTimeout(this.canarySyncTimer);
+      this.canarySyncTimer = null;
+    }
+  }
+
+  /** Arm the next `canary sync`; a no-op unless live mode is on and the owned S1 is running. */
+  private scheduleCanarySync(delayMs: number): void {
+    this.clearCanarySyncTimer();
+    if (this.stopped || !this.liveMode || !this.s1Proc) return;
+    this.canarySyncTimer = setTimeout(() => {
+      this.canarySyncTimer = null;
+      void this.runCanarySync().finally(() => {
+        if (!this.stopped && this.liveMode && this.s1Proc) this.scheduleCanarySync(CANARY_SYNC_INTERVAL_MS);
+      });
+    }, delayMs);
+    this.canarySyncTimer.unref?.();
+  }
+
+  /**
+   * Feed audited shadow-ledger outcomes to the canary (CUSUM auto-rollback
+   * never sees them otherwise). Same CLI `resolveSystemOneCommand()` finds for
+   * `serve`, with the serve args swapped for `canary sync`. Never throws.
+   */
+  private async runCanarySync(): Promise<void> {
+    if (this.canarySyncRunning) return; // a previous sync is still running: skip this tick
+    if (this.stopped || !this.liveMode || !this.s1Proc) return;
+    const cmd = this.resolveSystemOneCommand();
+    if (!cmd) return;
+    const serveArgs = ['serve', '--port', String(this.s1Port)];
+    const cliPrefix = cmd.args.slice(0, cmd.args.length - serveArgs.length);
+    const env: NodeJS.ProcessEnv = { ...this.deps.env };
+    const shadowDir = this.shadowDir;
+    if (shadowDir) env.ALLTERNIT_S1_SHADOW_DIR = shadowDir;
+    this.canarySyncRunning = true;
+    try {
+      log.info('[SystemOne] syncing the S1 canary with the shadow ledger');
+      await new Promise<void>((resolve) => {
+        const child = this.deps.spawnSidecar(cmd.command, [...cliPrefix, 'canary', 'sync'], {
+          env,
+          timeout: CANARY_SYNC_TIMEOUT_MS,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        child.stdout?.on('data', (d: Buffer) => log.info('[SystemOne] canary sync:', d.toString().trim()));
+        child.stderr?.on('data', (d: Buffer) => log.info('[SystemOne] canary sync:', d.toString().trim()));
+        child.once('exit', () => resolve());
+        child.once('error', () => resolve());
+      });
+    } catch (err) {
+      log.warn(`[SystemOne] canary sync failed: ${(err as Error).message}`);
+    } finally {
+      this.canarySyncRunning = false;
+    }
   }
 
   async startLaya(): Promise<void> {
@@ -746,6 +845,7 @@ export class SystemOneManager {
     this.cancelInstall();
     this.stopEmbed();
     this.stopLaya();
+    this.clearCanarySyncTimer();
     if (this.s1Proc) {
       log.info('[SystemOne] stopping S1');
       this.s1Proc.kill('SIGTERM');

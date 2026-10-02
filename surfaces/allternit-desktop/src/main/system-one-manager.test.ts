@@ -270,6 +270,141 @@ describe('raw decision state opt-in (Q28)', () => {
   });
 });
 
+describe('live mode + canary sync (Q26)', () => {
+  const s1Calls = (h: Harness) => h.spawnSidecar.mock.calls.filter(([cmd]) => String(cmd).endsWith('system-one'));
+  const syncCalls = (h: Harness) =>
+    h.spawnSidecar.mock.calls.filter(([, args]) => {
+      const a = (args ?? []) as string[];
+      return a.length >= 2 && a[a.length - 2] === 'canary' && a[a.length - 1] === 'sync';
+    });
+
+  it('is off by default and falls back to the ALLTERNIT_S1_MODE env export', () => {
+    expect(harness().manager.liveMode).toBe(false);
+    expect(harness({ env: { ALLTERNIT_S1_MODE: 'live' } }).manager.liveMode).toBe(true);
+    expect(harness({ env: { ALLTERNIT_S1_MODE: 'shadow' } }).manager.liveMode).toBe(false);
+  });
+
+  it('persists outside the Laya root and restarts the owned S1 server with ALLTERNIT_S1_MODE in its env', async () => {
+    const h = harness();
+    const p = h.manager.startSystemOne();
+    await flush();
+    expect(s1Calls(h)[0][2].env).not.toHaveProperty('ALLTERNIT_S1_MODE');
+    h.healthy.s1 = true;
+    await p;
+
+    h.healthy.s1 = false; // the old server is going away
+    const set = h.manager.setLiveMode(true);
+    await vi.waitFor(() => expect(h.children[0].kill).toHaveBeenCalledWith('SIGTERM'));
+    h.children[0].emit('exit', 0, 'SIGTERM');
+    await vi.waitFor(() => expect(s1Calls(h)).toHaveLength(2));
+    expect(s1Calls(h)[1][2].env.ALLTERNIT_S1_MODE).toBe('live');
+    h.healthy.s1 = true;
+    await expect(set).resolves.toBe(true);
+    expect((await h.manager.getStatus()).liveMode).toBe(true);
+
+    const settings = path.join(h.home, '.allternit', 'system-one', 'settings.json');
+    expect(JSON.parse(fs.readFileSync(settings, 'utf8'))).toEqual({ liveMode: true });
+    // A new app session (fresh manager) reads the setting back; the env export is not needed.
+    expect(new SystemOneManager({ ...(h.manager as any).deps }).liveMode).toBe(true);
+
+    h.healthy.s1 = false; // turning it off drops the var from the restarted S1 env
+    const unset = h.manager.setLiveMode(false);
+    await vi.waitFor(() => expect(h.children[1].kill).toHaveBeenCalledWith('SIGTERM'));
+    h.children[1].emit('exit', 0, 'SIGTERM');
+    await vi.waitFor(() => expect(s1Calls(h)).toHaveLength(3));
+    expect(s1Calls(h)[2][2].env).not.toHaveProperty('ALLTERNIT_S1_MODE');
+    h.healthy.s1 = true;
+    await expect(unset).resolves.toBe(false);
+  });
+
+  it('lets the saved setting win over the ALLTERNIT_S1_MODE env export', async () => {
+    const h = harness({ env: { ALLTERNIT_S1_MODE: 'live' } });
+    expect(h.manager.liveMode).toBe(true);
+    await h.manager.setLiveMode(false); // no owned S1 process: just saved
+    expect(h.manager.liveMode).toBe(false);
+    const p = h.manager.startSystemOne();
+    await flush();
+    expect(s1Calls(h)[0][2].env).not.toHaveProperty('ALLTERNIT_S1_MODE');
+    h.healthy.s1 = true;
+    await p;
+  });
+
+  it('runs `canary sync` ~60s after S1 starts in live mode, then every 15 minutes', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness({ env: { ALLTERNIT_S1_MODE: 'live' } });
+      const p = h.manager.startSystemOne();
+      h.healthy.s1 = true;
+      await vi.advanceTimersByTimeAsync(1);
+      await p;
+      expect(syncCalls(h)).toHaveLength(0);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(syncCalls(h)).toHaveLength(1);
+      const [cmd, args, options] = syncCalls(h)[0];
+      expect(String(cmd)).toBe(path.join(h.resources, 'bin', 'system-one'));
+      expect(args).toEqual(['canary', 'sync']);
+      expect(options.env.ALLTERNIT_S1_SHADOW_DIR).toBe(path.join(h.home, '.allternit', 'system-one', 'shadow'));
+      expect(options.timeout).toBe(60_000);
+      h.children[1].emit('exit', 0, null); // sync done → next tick in 15 min
+      await vi.advanceTimersByTimeAsync(0);
+
+      await vi.advanceTimersByTimeAsync(15 * 60_000);
+      expect(syncCalls(h)).toHaveLength(2);
+      h.children[2].emit('exit', 0, null);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not arm the canary sync timer when live mode is off', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness(); // liveMode default false
+      const p = h.manager.startSystemOne();
+      h.healthy.s1 = true;
+      await vi.advanceTimersByTimeAsync(1);
+      await p;
+      await vi.advanceTimersByTimeAsync(16 * 60_000);
+      expect(syncCalls(h)).toHaveLength(0);
+      expect((await h.manager.getStatus()).liveMode).toBe(false);
+      h.manager.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('skips a tick while a previous sync is still running and clears the timer on stop', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness({ env: { ALLTERNIT_S1_MODE: 'live' } });
+      const p = h.manager.startSystemOne();
+      h.healthy.s1 = true;
+      await vi.advanceTimersByTimeAsync(1);
+      await p;
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(syncCalls(h)).toHaveLength(1);
+      // The first sync never exits: the 15-minute tick must not overlap it.
+      await vi.advanceTimersByTimeAsync(15 * 60_000);
+      expect(syncCalls(h)).toHaveLength(1);
+      h.children[1].emit('exit', 0, null);
+      await vi.advanceTimersByTimeAsync(0);
+
+      await vi.advanceTimersByTimeAsync(15 * 60_000);
+      expect(syncCalls(h)).toHaveLength(2);
+      h.children[2].emit('exit', 0, null);
+      await vi.advanceTimersByTimeAsync(0);
+
+      h.manager.stop();
+      await vi.advanceTimersByTimeAsync(16 * 60_000);
+      expect(syncCalls(h)).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('embedding server', () => {
   const embedCalls = (h: Harness) => h.spawnSidecar.mock.calls.filter(([, args]) => String(args?.[0]).endsWith('serve-embed.sh'));
 
