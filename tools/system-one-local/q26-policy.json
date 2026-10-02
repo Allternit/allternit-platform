@@ -5,12 +5,41 @@
   "bank.judge_first_pass": {
     "incumbent": "none"
   },
+  "judge.first_pass.node": {
+    "incumbent": "none",
+    "why": "the full judge backend is not recorded on harvest rows; the label is the deterministic git verification, so there is no paired incumbent answer to compare against"
+  },
+  "judge.first_pass.tool": {
+    "incumbent": "none",
+    "why": "same join as the permission rows: the human's decision labels the call; no incumbent decider answer is recorded"
+  },
+  "dec.classify_error": {
+    "incumbent": "required",
+    "why": "the deterministic S0 diagnostic is the incumbent decider and is logged as x-incumbent on every row (it is also the labeler, so the incumbent error rate is 0 by construction)"
+  },
   "bank.lesson_worthiness": {
     "incumbent": "none"
+  },
+  "lessons.triage.task_success": {
+    "incumbent": "none"
+  },
+  "lessons.triage.reusable_pattern": {
+    "incumbent": "none"
+  },
+  "lessons.triage.supported_by_events": {
+    "incumbent": "none"
+  },
+  "vendor.consequential": {
+    "incumbent": "required",
+    "why": "the caller's own consequential flag is logged as x-incumbent; the bank is tighten-only and its name keeps it in the never-auto-act class (permission/money/client family)"
   },
   "memory.route": {
     "incumbent": "none",
     "why": "the incumbent recall always searches the fixed facts+entities+observations union; it never picks one of the ROUTE options, so there is no comparable answer (its set is kept in memory_s1_decisions.incumbent_label)"
+  },
+  "memory.relation": {
+    "incumbent": "partial",
+    "why": "the incumbent LLM op answers only some candidates (untouched candidates get the weak 'unrelated' label, source memory.incumbent.untouched); rows without an incumbent answer are skipped in non-inferiority"
   },
   "computer_use.target": {
     "questions": {

@@ -150,7 +150,8 @@ export function itemsFromTranscript(lines: string[], fileKey: string): HarvestIt
     if (!res.denial && OUTPUT_TOOL.test(c.name) && (res.isError || FAILURE_CTX.test(res.content))) {
       const code = s0ErrorCode(res.content);
       if (code !== "UNKNOWN" || res.isError) {
-        out.push({ spec: BANKS.classify_error, key: `${sid}:${c.id}:err`, source: "claude-code", ts: res.ts, state: classifyErrorState(res.content), truth: code, label_source: "backfill_observed", outcome_source: "replay:bug_fix.s0" });
+        // x-incumbent = the deterministic S0 diagnostic's own answer (Q26 non-inferiority vs S0).
+        out.push({ spec: BANKS.classify_error, key: `${sid}:${c.id}:err`, source: "claude-code", ts: res.ts, state: classifyErrorState(res.content), truth: code, label_source: "backfill_observed", outcome_source: "replay:bug_fix.s0", incumbent: code });
       }
     }
   }

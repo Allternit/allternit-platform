@@ -21,7 +21,9 @@ export function desktopDbSource(dbPath: string): HarvestSource {
     name: "desktop-db",
     *items() {
       if (!existsSync(dbPath)) return;
-      const db = new Database(dbPath, { readonly: true });
+      // Plain readonly opens fail on the Desktop's db (no write access to create
+      // sidecars): the immutable URI reads the checkpointed file; there is no WAL.
+      const db = new Database(`file:${dbPath}?mode=ro&immutable=1`, { strict: true });
       try {
         // memory.relation: one row per typed edge with its source observation + target fact.
         const rels = db.query(`SELECT r.id, r.relation_type, r.origin, r.valid_from, o.content AS obs_content, f.fact AS fact_text
@@ -41,15 +43,15 @@ export function desktopDbSource(dbPath: string): HarvestSource {
           } satisfies HarvestItem;
         }
         // ROUTE_MODEL: the class of the model that actually served each usage-ledger call.
-        const usage = db.query(`SELECT model_id, created_at FROM llm_usage_events WHERE model_id IS NOT NULL
-          UNION ALL SELECT model_id, created_at FROM gizzi_code_usage_events WHERE model_id IS NOT NULL`).all() as { model_id: string; created_at: string }[];
+        const usage = db.query(`SELECT model_id AS model, created_at FROM llm_usage_events WHERE model_id IS NOT NULL
+          UNION ALL SELECT model AS model, created_at FROM gizzi_code_usage_events WHERE model IS NOT NULL`).all() as { model: string; created_at: string }[];
         for (const [i, u] of usage.entries()) {
-          const cls = genClassOf(u.model_id);
+          const cls = genClassOf(u.model);
           if (!cls) continue; // unclassifiable provider-only ids get no label (live rule)
           yield {
-            spec: BANKS.route_model, key: `desktop-db:usage:${i}:${u.model_id}`, source: "desktop-db",
+            spec: BANKS.route_model, key: `desktop-db:usage:${i}:${u.model}`, source: "desktop-db",
             ts: /^\d{4}-\d{2}-\d{2} /.test(u.created_at) ? new Date(u.created_at.replace(" ", "T") + "Z").toISOString() : u.created_at,
-            state: `usage ledger call served by ${u.model_id}`, truth: cls,
+            state: `usage ledger call served by ${u.model}`, truth: cls,
             label_source: "backfill_observed", outcome_source: "replay:usage.served_model", incumbent: cls,
           } satisfies HarvestItem;
         }
