@@ -593,7 +593,7 @@ struct SecretBody {
 /// Seal a per-user provider key with `token_crypto` (AES-256-GCM, the same
 /// mechanism `aci_credentials` uses for user-owned secrets). STRICT: with no
 /// encryption key available nothing is stored, never a `plain:` fallback.
-fn seal_strict(plain: &str) -> Option<String> {
+pub(crate) fn seal_strict(plain: &str) -> Option<String> {
     if !crate::token_crypto::ensure_platform_key() {
         return None;
     }

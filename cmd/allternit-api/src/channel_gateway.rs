@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use axum::extract::{Extension, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use rusqlite::{params, OptionalExtension};
 use serde::Deserialize;
@@ -213,13 +213,23 @@ pub fn find_binding_by_message(db: &DbHandle, provider: &str, channel: &str, mes
 }
 
 pub fn ensure_binding(db: &DbHandle, owner: &str, thread_id: &str, provider: &str, ev: &Inbound) -> rusqlite::Result<BindingRow> {
+    ensure_binding_on(db, owner, thread_id, provider, ev, None)
+}
+
+/// [`ensure_binding`] for a message that arrived on a known connection: the
+/// binding replies through that connection, not the owner's first one of the
+/// same platform.
+pub fn ensure_binding_on(db: &DbHandle, owner: &str, thread_id: &str, provider: &str, ev: &Inbound, account: Option<&str>) -> rusqlite::Result<BindingRow> {
     if let Some(b) = find_binding(db, provider, &ev.conversation) {
         return Ok(b);
     }
     let conn = db.connect()?;
-    let account: Option<String> = conn
-        .query_row("SELECT id FROM provider_account_bindings WHERE owner = ?1 AND vendor = ?2 ORDER BY created_at LIMIT 1", params![owner, provider], |r| r.get(0))
-        .optional()?;
+    let account: Option<String> = match account {
+        Some(a) => Some(a.to_string()),
+        None => conn
+            .query_row("SELECT id FROM provider_account_bindings WHERE owner = ?1 AND vendor = ?2 ORDER BY created_at LIMIT 1", params![owner, provider], |r| r.get(0))
+            .optional()?,
+    };
     let bid = id("ccb");
     conn.execute(
         "INSERT INTO channel_conversation_bindings (id, owner, thread_id, provider, account_binding_id, external_workspace_id, external_channel_id,
@@ -582,6 +592,237 @@ pub fn channel_gateway_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/gateway/threads/:thread_id/channel-send", post(channel_send_h))
         .route("/gateway/channel-accounts/:id/telegram-webhook", post(telegram_webhook_h))
+        .route("/gateway/channel-accounts/telegram", post(telegram_connect_h))
+        .route("/gateway/channel-accounts/:id/conversations", get(conversations_h))
+        .route("/gateway/bots/:bot_id/channels", get(bot_channels_h))
+        .route("/gateway/bots/:bot_id/channels/:account_id", put(set_bot_channel_h))
+}
+
+// ---------------------------------------------------------------- messaging connectors
+
+/// Platforms connected once and switched on per bot (Slack uses the Allternit Slack app).
+const MESSAGING: [&str; 4] = ["telegram", "discord", "whatsapp", "teams"];
+
+fn api_err(status: StatusCode, msg: impl Into<String>) -> Response {
+    (status, Json(json!({ "error": msg.into() }))).into_response()
+}
+
+fn owns_bot(conn: &rusqlite::Connection, owner: &str, bot: &str) -> bool {
+    conn.query_row("SELECT 1 FROM agents WHERE id = ?1 AND user_id = ?2", params![bot, owner], |_| Ok(())).is_ok()
+}
+
+/// A connection still restricted to one bot (set up before sharing) becomes
+/// that bot's membership, so switching others on never drops it.
+fn adopt_restricted(conn: &rusqlite::Connection, owner: &str, account: &str) -> rusqlite::Result<()> {
+    let restricted: Option<String> = conn
+        .query_row("SELECT restricted_bot_id FROM provider_account_bindings WHERE id = ?1 AND owner = ?2", params![account, owner], |r| r.get(0))
+        .optional()?
+        .flatten();
+    if let Some(bot) = restricted.filter(|b| !b.is_empty()) {
+        let n: i64 = conn.query_row("SELECT COUNT(*) FROM channel_account_bots WHERE account_id = ?1", params![account], |r| r.get(0))?;
+        if n == 0 {
+            conn.execute("INSERT OR IGNORE INTO channel_account_bots (account_id, bot_id, owner, is_default) VALUES (?1, ?2, ?3, 1)", params![account, bot, owner])?;
+        }
+        conn.execute("UPDATE provider_account_bindings SET restricted_bot_id = NULL, updated_at = ?3 WHERE id = ?1 AND owner = ?2", params![account, owner, now()])?;
+    }
+    Ok(())
+}
+
+/// The owner's messaging connections, each with whether `bot` answers on it.
+fn bot_channels(conn: &rusqlite::Connection, owner: &str, bot: &str) -> rusqlite::Result<Vec<Value>> {
+    let mut q = conn.prepare(
+        "SELECT p.id, p.vendor, p.display_name, p.external_account_id, p.state, p.restricted_bot_id,
+                (SELECT is_default FROM channel_account_bots m WHERE m.account_id = p.id AND m.bot_id = ?2),
+                (SELECT COUNT(*) FROM channel_account_bots m WHERE m.account_id = p.id),
+                (SELECT COALESCE(NULLIF(a.name, ''), a.id) FROM channel_account_bots m JOIN agents a ON a.id = m.bot_id WHERE m.account_id = p.id AND m.is_default = 1 LIMIT 1)
+         FROM provider_account_bindings p
+         WHERE p.owner = ?1 AND p.auth_type = 'channel_oauth' AND p.vendor IN ('telegram', 'discord', 'whatsapp', 'teams')
+         ORDER BY p.created_at",
+    )?;
+    let rows = q.query_map(params![owner, bot], |r| {
+        let restricted: Option<String> = r.get(5)?;
+        let mine: Option<i64> = r.get(6)?;
+        let members: i64 = r.get(7)?;
+        let legacy = members == 0 && restricted.as_deref() == Some(bot);
+        Ok(json!({
+            "accountId": r.get::<_, String>(0)?,
+            "provider": r.get::<_, String>(1)?,
+            "displayName": r.get::<_, Option<String>>(2)?,
+            "handle": r.get::<_, Option<String>>(3)?,
+            "state": r.get::<_, String>(4)?,
+            "enabled": mine.is_some() || legacy,
+            "isDefault": mine == Some(1) || legacy,
+            "botCount": if legacy { 1 } else { members },
+            "defaultBotName": r.get::<_, Option<String>>(8)?,
+        }))
+    })?;
+    rows.collect()
+}
+
+async fn bot_channels_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(bot_id): Path<String>) -> Response {
+    let Ok(conn) = state.db.connect() else { return api_err(StatusCode::SERVICE_UNAVAILABLE, "database unavailable") };
+    if !owns_bot(&conn, &user.user_id, &bot_id) {
+        return api_err(StatusCode::NOT_FOUND, "bot not found");
+    }
+    match bot_channels(&conn, &user.user_id, &bot_id) {
+        Ok(channels) => Json(json!({ "channels": channels })).into_response(),
+        Err(e) => api_err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BotChannelBody {
+    enabled: bool,
+    is_default: Option<bool>,
+}
+
+/// Switch a messaging connection on or off for one bot. The first bot switched
+/// on is the default (it answers new conversations); switching the default off
+/// hands that role to the next bot.
+async fn set_bot_channel_h(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path((bot_id, account_id)): Path<(String, String)>,
+    Json(b): Json<BotChannelBody>,
+) -> Response {
+    let Ok(conn) = state.db.connect() else { return api_err(StatusCode::SERVICE_UNAVAILABLE, "database unavailable") };
+    match set_bot_channel(&conn, &user.user_id, &bot_id, &account_id, b.enabled, b.is_default == Some(true)) {
+        Ok(channels) => Json(json!({ "channels": channels })).into_response(),
+        Err((status, msg)) => api_err(status, msg),
+    }
+}
+
+pub(crate) fn set_bot_channel(conn: &rusqlite::Connection, owner: &str, bot_id: &str, account_id: &str, enabled: bool, make_default: bool) -> Result<Vec<Value>, (StatusCode, String)> {
+    if !owns_bot(conn, owner, bot_id) {
+        return Err((StatusCode::NOT_FOUND, "bot not found".into()));
+    }
+    let vendor: Option<String> = conn
+        .query_row("SELECT vendor FROM provider_account_bindings WHERE id = ?1 AND owner = ?2 AND auth_type = 'channel_oauth'", params![account_id, owner], |r| r.get(0))
+        .optional()
+        .ok()
+        .flatten();
+    if !vendor.as_deref().is_some_and(|v| MESSAGING.contains(&v)) {
+        return Err((StatusCode::NOT_FOUND, "messaging connection not found".into()));
+    }
+    let internal = |e: rusqlite::Error| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
+    adopt_restricted(conn, owner, account_id).map_err(internal)?;
+    if enabled {
+        conn.execute("INSERT OR IGNORE INTO channel_account_bots (account_id, bot_id, owner, is_default, created_at) VALUES (?1, ?2, ?3, 0, ?4)", params![account_id, bot_id, owner, now()]).map_err(internal)?;
+    } else {
+        conn.execute("DELETE FROM channel_account_bots WHERE account_id = ?1 AND bot_id = ?2", params![account_id, bot_id]).map_err(internal)?;
+    }
+    let has_default: i64 = conn.query_row("SELECT COUNT(*) FROM channel_account_bots WHERE account_id = ?1 AND is_default = 1", params![account_id], |r| r.get(0)).map_err(internal)?;
+    if enabled && make_default {
+        conn.execute("UPDATE channel_account_bots SET is_default = (bot_id = ?2) WHERE account_id = ?1", params![account_id, bot_id]).map_err(internal)?;
+    } else if has_default == 0 {
+        conn.execute(
+            "UPDATE channel_account_bots SET is_default = 1 WHERE rowid = (SELECT rowid FROM channel_account_bots WHERE account_id = ?1 ORDER BY created_at, bot_id LIMIT 1)",
+            params![account_id],
+        )
+        .map_err(internal)?;
+    }
+    bot_channels(conn, owner, bot_id).map_err(internal)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TelegramConnectBody {
+    pub(crate) bot_token: String,
+    pub(crate) display_name: Option<String>,
+}
+
+/// Customize → Connectors → Telegram: the bot token is all a person enters.
+/// Telegram confirms the token (getMe gives the bot's @username), the webhook
+/// secret is generated, and the connection is CONNECTED. Connecting the same
+/// Telegram bot again replaces its token instead of adding a second connection.
+async fn telegram_connect_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(b): Json<TelegramConnectBody>) -> Response {
+    telegram_connect(&state, &user.user_id, b, &crate::channel_transports::ReqwestSend).await
+}
+
+pub(crate) async fn telegram_connect(state: &Arc<AppState>, owner: &str, b: TelegramConnectBody, http: &dyn crate::channel_transports::HttpSend) -> Response {
+    let token = b.bot_token.trim().to_string();
+    if token.is_empty() || token.contains('/') || token.chars().any(char::is_whitespace) {
+        return api_err(StatusCode::BAD_REQUEST, "Paste the bot token from @BotFather (it looks like 123456:ABC-DEF…).");
+    }
+    let me = match http.get_json(&format!("https://api.telegram.org/bot{token}/getMe")).await {
+        Ok(r) if r.status == 200 && r.body["ok"].as_bool() == Some(true) => r.body["result"].clone(),
+        Ok(_) => return api_err(StatusCode::BAD_REQUEST, "Telegram didn't accept that token. Copy it again from @BotFather."),
+        Err(e) => return api_err(StatusCode::BAD_GATEWAY, format!("Couldn't reach Telegram: {e}")),
+    };
+    let username = me["username"].as_str().unwrap_or_default().to_string();
+    let name = b.display_name.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).or_else(|| me["first_name"].as_str().map(str::to_string)).unwrap_or_else(|| format!("@{username}"));
+    let Ok(conn) = state.db.connect() else { return api_err(StatusCode::SERVICE_UNAVAILABLE, "database unavailable") };
+    let existing: Option<(String, String)> = conn
+        .query_row(
+            "SELECT id, secret_ref FROM provider_account_bindings WHERE owner = ?1 AND vendor = 'telegram' AND auth_type = 'channel_oauth' AND external_account_id = ?2 ORDER BY created_at LIMIT 1",
+            params![owner, username],
+            |r| Ok((r.get(0)?, r.get::<_, Option<String>>(1)?.unwrap_or_default())),
+        )
+        .optional()
+        .ok()
+        .flatten();
+    // Keep the webhook secret across a token change, so the address Telegram already calls keeps working.
+    let prior_secret = existing.as_ref().map(|(_, sealed)| crate::channel_transports::pick(&crate::token_crypto::open(sealed), "webhookSecret")).filter(|s| !s.is_empty());
+    let webhook_secret = prior_secret.unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
+    let keys = json!({ "botToken": token, "botUsername": username, "webhookSecret": webhook_secret }).to_string();
+    let Some(sealed) = crate::agent_gateway_routes::seal_strict(&keys) else {
+        return api_err(StatusCode::SERVICE_UNAVAILABLE, "no encryption key is configured; the token was not stored");
+    };
+    let t = now();
+    let res = match &existing {
+        Some((aid, _)) => conn
+            .execute(
+                "UPDATE provider_account_bindings SET secret_ref = ?1, display_name = ?2, state = 'CONNECTED', verified_at = ?3, updated_at = ?3 WHERE id = ?4 AND owner = ?5",
+                params![sealed, name, t, aid, owner],
+            )
+            .map(|_| aid.clone()),
+        None => {
+            let aid = id("acct");
+            conn.execute(
+                "INSERT INTO provider_account_bindings (id, owner, vendor, auth_type, external_account_id, display_name, secret_ref, scopes_json, state, verified_at, created_at, updated_at)
+                 VALUES (?1, ?2, 'telegram', 'channel_oauth', ?3, ?4, ?5, '[\"messages\"]', 'CONNECTED', ?6, ?6, ?6)",
+                params![aid, owner, username, name, sealed, t],
+            )
+            .map(|_| aid)
+        }
+    };
+    match res {
+        Ok(aid) => Json(json!({ "account": { "id": aid, "vendor": "telegram", "displayName": name, "handle": username, "state": "CONNECTED", "replaced": existing.is_some() } })).into_response(),
+        Err(e) => api_err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+/// Conversations seen on a connection, newest first: "Link a channel" picks
+/// from these instead of asking for a raw chat id.
+async fn conversations_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(account): Path<String>) -> Response {
+    let Ok(conn) = state.db.connect() else { return api_err(StatusCode::SERVICE_UNAVAILABLE, "database unavailable") };
+    let rows = conn
+        .prepare(
+            "SELECT b.external_conversation_id, COALESCE(b.channel_name, t.title), b.thread_id, b.updated_at,
+                    (SELECT json_extract(l.detail_json, '$.text') FROM channel_message_log l WHERE l.binding_id = b.id AND l.direction = 'inbound' ORDER BY l.created_at DESC LIMIT 1)
+             FROM channel_conversation_bindings b LEFT JOIN bot_threads t ON t.id = b.thread_id
+             WHERE b.owner = ?1 AND b.account_binding_id = ?2
+             ORDER BY b.updated_at DESC LIMIT 50",
+        )
+        .and_then(|mut q| {
+            q.query_map(params![user.user_id, account], |r| {
+                let conversation: String = r.get(0)?;
+                Ok(json!({
+                    "conversationId": conversation.split_once(':').map(|(_, c)| c.to_string()).unwrap_or(conversation.clone()),
+                    "conversation": conversation,
+                    "name": r.get::<_, Option<String>>(1)?,
+                    "threadId": r.get::<_, String>(2)?,
+                    "updatedAt": r.get::<_, Option<String>>(3)?,
+                    "lastText": r.get::<_, Option<String>>(4)?,
+                }))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+        });
+    match rows {
+        Ok(conversations) => Json(json!({ "conversations": conversations })).into_response(),
+        Err(e) => api_err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
 }
 
 #[derive(Debug, Deserialize)]

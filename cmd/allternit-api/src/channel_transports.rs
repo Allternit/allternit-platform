@@ -602,6 +602,50 @@ pub struct Routed {
     pub recorded: Recorded,
     /// `(session, bot, text)` when this event should run a bot turn.
     pub turn: Option<(String, String, String)>,
+    /// The answering bot's name, put before its reply when several bots
+    /// share the connection (so the chat can tell them apart).
+    pub speaker: Option<String>,
+}
+
+/// A bot switched on for a channel connection.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemberBot {
+    pub id: String,
+    pub name: String,
+}
+
+/// The bots switched on for `acct`, default first. A connection restricted to
+/// one bot (set up before bots could share connections) has that bot.
+pub(crate) fn member_bots(db: &DbHandle, acct: &Account) -> Vec<MemberBot> {
+    let Ok(conn) = db.connect() else { return vec![] };
+    let mut out: Vec<MemberBot> = conn
+        .prepare(
+            "SELECT m.bot_id, COALESCE(NULLIF(a.name, ''), m.bot_id) FROM channel_account_bots m JOIN agents a ON a.id = m.bot_id
+             WHERE m.account_id = ?1 AND m.owner = ?2 ORDER BY m.is_default DESC, m.created_at, m.bot_id",
+        )
+        .and_then(|mut q| q.query_map(params![acct.id, acct.owner], |r| Ok(MemberBot { id: r.get(0)?, name: r.get(1)? }))?.collect())
+        .unwrap_or_default();
+    if out.is_empty() {
+        if let Some(bot) = &acct.restricted_bot {
+            let name = conn.query_row("SELECT name FROM agents WHERE id = ?1", params![bot], |r| r.get::<_, String>(0)).unwrap_or_else(|_| bot.clone());
+            out.push(MemberBot { id: bot.clone(), name });
+        }
+    }
+    out
+}
+
+fn handle(s: &str) -> String {
+    s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
+}
+
+/// The bot an "@name" in `text` addresses, among `bots`. Names compare without
+/// case, spaces or punctuation, so "@Finance-Analyst" finds "finance analyst".
+pub(crate) fn mentioned_bot<'a>(text: &str, bots: &'a [MemberBot]) -> Option<&'a MemberBot> {
+    text.split_whitespace()
+        .filter_map(|w| w.strip_prefix('@'))
+        .map(handle)
+        .filter(|h| !h.is_empty())
+        .find_map(|h| bots.iter().find(|b| handle(&b.name) == h || handle(&b.id) == h))
 }
 
 /// A bot whose vendor lane is a channel (e.g. Muse over WhatsApp): replies on
@@ -618,32 +662,36 @@ fn lane_conversation(db: &DbHandle, thread_id: &str) -> bool {
         > 0
 }
 
-/// Binding + record for one inbound event. New conversations become a bot
-/// thread only when the account is restricted to a bot (like a Slack channel
-/// bound to a bot); otherwise the event is ignored.
+/// Binding + record for one inbound event. A new conversation opens a thread
+/// on the connection's default bot; with no bot switched on, it is ignored.
+/// "@name" in a message routes it to that bot instead, in a sub-thread of the
+/// conversation's thread.
 pub async fn route_inbound<R: crate::thread_routes::ThreadRuntime>(db: &DbHandle, rt: &R, acct: &Account, provider: &str, e: &Inbound) -> Result<Routed, String> {
+    let none = |recorded| Ok(Routed { binding: None, recorded, turn: None, speaker: None });
+    let bots = member_bots(db, acct);
     let mut binding = find_binding(db, provider, &e.conversation).filter(|b| b.owner == acct.owner);
     if binding.is_none() && !e.own && e.kind == InboundKind::Message {
-        let Some(bot) = &acct.restricted_bot else { return Ok(Routed { binding: None, recorded: Recorded::Duplicate, turn: None }) };
+        let Some(default) = bots.first() else { return none(Recorded::Duplicate) };
         let text = e.text.clone().unwrap_or_default();
         if text.trim().is_empty() {
-            return Ok(Routed { binding: None, recorded: Recorded::Duplicate, turn: None });
+            return none(Recorded::Duplicate);
         }
         let title: String = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("Message").trim().chars().take(80).collect();
-        let session = crate::thread_routes::channel_thread(db, rt, bot, provider, &e.conversation, &title, &text).await?;
+        let session = crate::thread_routes::channel_thread(db, rt, &default.id, provider, &e.conversation, &title, &text).await?;
         let thread_id: String = db
             .connect()
             .map_err(|x| x.to_string())?
             .query_row("SELECT thread_id FROM bot_thread_sessions WHERE session_id = ?1", params![session], |r| r.get(0))
             .map_err(|x| x.to_string())?;
-        binding = Some(ensure_binding(db, &acct.owner, &thread_id, provider, e).map_err(|x| x.to_string())?);
+        binding = Some(ensure_binding_on(db, &acct.owner, &thread_id, provider, e, Some(&acct.id)).map_err(|x| x.to_string())?);
     }
-    let Some(b) = binding else { return Ok(Routed { binding: None, recorded: Recorded::Duplicate, turn: None }) };
+    let Some(b) = binding else { return none(Recorded::Duplicate) };
     let recorded = record_inbound(db, &b, e)?;
-    let mut turn = None;
+    let (mut turn, mut speaker) = (None, None);
     if recorded == Recorded::New && e.kind == InboundKind::Message && !e.own && !lane_conversation(db, &b.thread_id) {
-        let conn = db.connect().map_err(|x| x.to_string())?;
-        let row: Option<(String, String)> = conn
+        let row: Option<(String, String)> = db
+            .connect()
+            .map_err(|x| x.to_string())?
             .query_row(
                 "SELECT s.session_id, t.bot_id FROM bot_thread_sessions s JOIN bot_threads t ON t.id = s.thread_id WHERE s.thread_id = ?1 ORDER BY s.generation DESC LIMIT 1",
                 params![b.thread_id],
@@ -651,10 +699,22 @@ pub async fn route_inbound<R: crate::thread_routes::ThreadRuntime>(db: &DbHandle
             )
             .ok();
         if let Some((session, bot)) = row {
-            turn = Some((session, bot, format!("[{provider} from {}] {}", e.user.clone().unwrap_or_else(|| "someone".into()), e.text.clone().unwrap_or_default())));
+            let text = e.text.clone().unwrap_or_default();
+            let (session, bot) = match mentioned_bot(&text, &bots).filter(|m| m.id != bot) {
+                Some(m) => {
+                    let title: String = format!("{} on {provider}", m.name).chars().take(80).collect();
+                    let s = crate::thread_routes::channel_thread_under(db, rt, &m.id, provider, &e.conversation, &title, &text, Some(&b.thread_id)).await?;
+                    (s, m.id.clone())
+                }
+                None => (session, bot),
+            };
+            if bots.len() > 1 {
+                speaker = bots.iter().find(|m| m.id == bot).map(|m| m.name.clone());
+            }
+            turn = Some((session, bot, format!("[{provider} from {}] {text}", e.user.clone().unwrap_or_else(|| "someone".into()))));
         }
     }
-    Ok(Routed { binding: Some(b), recorded, turn })
+    Ok(Routed { binding: Some(b), recorded, turn, speaker })
 }
 
 pub fn channel_webhook_router() -> Router<Arc<AppState>> {
@@ -675,19 +735,28 @@ async fn whatsapp_challenge(State(state): State<Arc<AppState>>, Path(provider): 
 
 /// Route normalized inbound events into threads, run the resulting turns, and post replies back.
 /// Shared by the webhook and the Discord gateway websocket.
+/// The chat-facing line when a bot couldn't answer: who, and the first line of why.
+pub(crate) fn failure_notice(speaker: Option<&str>, err: &str) -> String {
+    let why: String = err.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("unknown error").chars().take(160).collect();
+    format!("{} couldn't answer this time ({why}). Try again in a moment.", speaker.unwrap_or("The bot"))
+}
+
 pub async fn dispatch_events(st: &Arc<AppState>, acct: &Account, tx: Arc<dyn ChannelTransport>, events: Vec<Inbound>) {
     let rt = crate::thread_routes::GizziRuntime { db: st.db.clone() };
     for e in events {
         match route_inbound(&st.db, &rt, acct, tx.provider(), &e).await {
-            Ok(Routed { binding: Some(b), turn: Some((session, bot, text)), .. }) => {
-                match crate::agent_session_routes::send_bot_turn(&st.db, &session, &bot, &text).await {
-                    Ok(reply) => {
-                        let thread = b.external_thread.clone().unwrap_or_default();
-                        if let Err(err) = post_reply(&st.db, tx.as_ref(), &b, &thread, &reply).await {
-                            warn!(provider = %b.provider, "channel reply failed: {err}");
-                        }
+            Ok(Routed { binding: Some(b), turn: Some((session, bot, text)), speaker, .. }) => {
+                let reply = match crate::agent_session_routes::send_bot_turn(&st.db, &session, &bot, &text).await {
+                    Ok(reply) => speaker.as_ref().map(|n| format!("{n}: {reply}")).unwrap_or(reply),
+                    // Say so in the chat: silence reads as "the bot is broken".
+                    Err(err) => {
+                        warn!("channel turn failed: {err}");
+                        failure_notice(speaker.as_deref(), &err.to_string())
                     }
-                    Err(err) => warn!("channel turn failed: {err}"),
+                };
+                let thread = b.external_thread.clone().unwrap_or_default();
+                if let Err(err) = post_reply(&st.db, tx.as_ref(), &b, &thread, &reply).await {
+                    warn!(provider = %b.provider, "channel reply failed: {err}");
                 }
             }
             Ok(_) => {}
@@ -869,6 +938,10 @@ mod tests {
     impl HttpSend for FakeHttp {
         async fn post_json(&self, req: HttpReq) -> Result<HttpResp, String> {
             self.sent.lock().unwrap().push(req);
+            self.reply.lock().unwrap().clone().unwrap_or(Ok(HttpResp { status: 200, body: json!({}) }))
+        }
+        async fn get_json(&self, url: &str) -> Result<HttpResp, String> {
+            self.sent.lock().unwrap().push(HttpReq { url: url.into(), headers: vec![], body: json!(null) });
             self.reply.lock().unwrap().clone().unwrap_or(Ok(HttpResp { status: 200, body: json!({}) }))
         }
     }
@@ -1178,6 +1251,115 @@ mod tests {
         let p: String = st.db.connect().unwrap().query_row("SELECT payload FROM bot_events WHERE thread_id=?1 AND event_type='channel.message.delivery'", params![b.thread_id], |r| r.get(0)).unwrap();
         let p: Value = serde_json::from_str(&p).unwrap();
         assert_eq!((p["messageId"].as_str(), p["state"].as_str(), p["delivery"].as_str()), (Some("wamid.OUT"), Some("confirmed"), Some("delivered")));
+    }
+
+    fn tg(update_id: i64, chat: i64, text: &str) -> Inbound {
+        telegram_normalize(&json!({ "update_id": update_id, "message": { "message_id": update_id, "chat": { "id": chat, "type": "private" }, "from": { "id": chat, "username": "eoj" }, "text": text } })).remove(0)
+    }
+
+    fn add_bot(st: &Arc<AppState>, id: &str, name: &str) {
+        st.db.connect().unwrap().execute("INSERT INTO agents (id, user_id, name, model, provider, is_bot, config) VALUES (?1,'user-a',?2,'m','p',1,'{}')", params![id, name]).unwrap();
+    }
+
+    #[test]
+    fn mentions_match_bot_names_without_case_or_punctuation() {
+        let bots = vec![MemberBot { id: "b1".into(), name: "live-check".into() }, MemberBot { id: "b2".into(), name: "Finance Analyst".into() }];
+        assert_eq!(mentioned_bot("hey @finance-analyst what's margin?", &bots).map(|b| b.id.as_str()), Some("b2"));
+        assert_eq!(mentioned_bot("@LiveCheck ping", &bots).map(|b| b.id.as_str()), Some("b1"));
+        assert!(mentioned_bot("email me@example.com", &bots).is_none());
+        assert!(mentioned_bot("@AllternitBot hi", &bots).is_none());
+    }
+
+    #[test]
+    fn a_failed_turn_tells_the_chat_who_and_why_in_one_line() {
+        let n = failure_notice(Some("engineer"), "VENDOR_UNAVAILABLE: locator.click: Timeout 30000ms exceeded.\nCall log:\n - waiting");
+        assert_eq!(n, "engineer couldn't answer this time (VENDOR_UNAVAILABLE: locator.click: Timeout 30000ms exceeded.). Try again in a moment.");
+        assert!(failure_notice(None, "").starts_with("The bot couldn't answer"));
+    }
+
+    #[tokio::test]
+    async fn several_bots_share_a_connection_default_answers_and_a_mention_gets_a_sub_thread() {
+        let (st, acct) = setup("members", "s", "telegram", None).await;
+        add_bot(&st, "bot-2", "engineer");
+        let c = st.db.connect().unwrap();
+        c.execute("UPDATE provider_account_bindings SET auth_type = 'channel_oauth'", []).unwrap();
+        // bot-1 ("b") switched on first = default; engineer second.
+        assert_eq!(crate::channel_gateway::set_bot_channel(&c, "user-a", "bot-1", "acct-1", true, false).unwrap()[0]["isDefault"], true);
+        let ch = crate::channel_gateway::set_bot_channel(&c, "user-a", "bot-2", "acct-1", true, false).unwrap();
+        assert_eq!((ch[0]["enabled"].as_bool(), ch[0]["isDefault"].as_bool(), ch[0]["botCount"].as_i64()), (Some(true), Some(false), Some(2)));
+        assert_eq!(member_bots(&st.db, &acct).iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), vec!["bot-1", "bot-2"]);
+
+        let first = route_inbound(&st.db, &Rt, &acct, "telegram", &tg(1, 77, "hello")).await.unwrap();
+        let (_, bot, _) = first.turn.expect("default bot answers");
+        assert_eq!((bot.as_str(), first.speaker.as_deref()), ("bot-1", Some("b")));
+        let main = first.binding.unwrap();
+        assert_eq!(main.account.as_deref(), Some("acct-1"), "replies go out on the connection the message came in on");
+        let main_thread = main.thread_id;
+
+        let m = route_inbound(&st.db, &Rt, &acct, "telegram", &tg(2, 77, "@engineer fix the build")).await.unwrap();
+        let (session, bot, text) = m.turn.expect("the mentioned bot answers");
+        assert_eq!((bot.as_str(), m.speaker.as_deref()), ("bot-2", Some("engineer")));
+        assert!(text.contains("@engineer fix the build"));
+        let (child_bot, parent): (String, Option<String>) = c
+            .query_row("SELECT t.bot_id, t.parent_thread_id FROM bot_threads t JOIN bot_thread_sessions s ON s.thread_id = t.id WHERE s.session_id = ?1", params![session], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!((child_bot.as_str(), parent.as_deref()), ("bot-2", Some(main_thread.as_str())));
+        // A second mention reuses the engineer's sub-thread.
+        let again = route_inbound(&st.db, &Rt, &acct, "telegram", &tg(3, 77, "@engineer and the tests")).await.unwrap();
+        assert_eq!(again.turn.unwrap().0, session);
+        let n: i64 = c.query_row("SELECT COUNT(*) FROM bot_threads", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 2);
+
+        // Switching the default off hands the role to engineer; new chats go there.
+        let ch = crate::channel_gateway::set_bot_channel(&c, "user-a", "bot-1", "acct-1", false, false).unwrap();
+        assert_eq!(ch[0]["enabled"], false);
+        let only = route_inbound(&st.db, &Rt, &acct, "telegram", &tg(4, 88, "new chat")).await.unwrap();
+        let (_, bot, _) = only.turn.unwrap();
+        assert_eq!((bot.as_str(), only.speaker), ("bot-2", None));
+    }
+
+    #[tokio::test]
+    async fn a_connection_restricted_to_one_bot_keeps_it_when_another_is_switched_on() {
+        let (st, acct) = setup("adopt", "s", "telegram", Some("bot-1")).await;
+        add_bot(&st, "bot-2", "engineer");
+        let c = st.db.connect().unwrap();
+        c.execute("UPDATE provider_account_bindings SET auth_type = 'channel_oauth'", []).unwrap();
+        let before = crate::channel_gateway::set_bot_channel(&c, "user-a", "bot-2", "acct-1", true, false).unwrap();
+        assert_eq!((before[0]["isDefault"].as_bool(), before[0]["botCount"].as_i64()), (Some(false), Some(2)));
+        let acct = Account { restricted_bot: None, ..acct };
+        assert_eq!(member_bots(&st.db, &acct).first().map(|b| b.id.as_str()), Some("bot-1"));
+        // Another person's bot can't be switched on.
+        c.execute("INSERT INTO agents (id, user_id, name, model, provider, is_bot, config) VALUES ('bot-x','user-b','x','m','p',1,'{}')", []).unwrap();
+        assert_eq!(crate::channel_gateway::set_bot_channel(&c, "user-a", "bot-x", "acct-1", true, false).unwrap_err().0, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn telegram_connects_from_the_token_alone_and_reconnecting_keeps_the_webhook_secret() {
+        let dir = std::env::temp_dir().join(format!("allternit-ct-tgc-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = crate::test_helpers::app_state(&dir).await;
+        let http = FakeHttp { sent: Mutex::new(vec![]), reply: Mutex::new(reply(200, json!({ "ok": true, "result": { "username": "AllternitBot", "first_name": "Allternit" } }))) };
+        let body = |t: &str| crate::channel_gateway::TelegramConnectBody { bot_token: t.into(), display_name: None };
+        let r = crate::channel_gateway::telegram_connect(&st, "user-a", body(" 123:abc "), &http).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(http.sent.lock().unwrap()[0].url, "https://api.telegram.org/bot123:abc/getMe");
+        let a = accounts(&st.db, "telegram", None).remove(0);
+        assert_eq!((pick(&a.secret, "botToken").as_str(), pick(&a.secret, "botUsername").as_str()), ("123:abc", "AllternitBot"));
+        let secret = pick(&a.secret, "webhookSecret");
+        assert!(secret.len() >= 32);
+        let (state, handle, name): (String, String, String) = st.db.connect().unwrap()
+            .query_row("SELECT state, external_account_id, display_name FROM provider_account_bindings", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
+        assert_eq!((state.as_str(), handle.as_str(), name.as_str()), ("CONNECTED", "AllternitBot", "Allternit"));
+        // Same bot, new token (after /revoke): one connection, same webhook secret.
+        crate::channel_gateway::telegram_connect(&st, "user-a", body("123:new"), &http).await;
+        let all = accounts(&st.db, "telegram", None);
+        assert_eq!(all.len(), 1);
+        assert_eq!((pick(&all[0].secret, "botToken").as_str(), pick(&all[0].secret, "webhookSecret")), ("123:new", secret));
+        // A token Telegram refuses stores nothing.
+        *http.reply.lock().unwrap() = reply(401, json!({ "ok": false }));
+        assert_eq!(crate::channel_gateway::telegram_connect(&st, "user-b", body("999:bad"), &http).await.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(crate::channel_gateway::telegram_connect(&st, "user-b", body("a b"), &http).await.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(accounts(&st.db, "telegram", None).len(), 1);
     }
 
     #[tokio::test]
