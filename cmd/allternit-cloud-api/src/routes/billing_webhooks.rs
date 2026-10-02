@@ -102,6 +102,16 @@ enum MappedStripeEvent {
     },
     /// Deleted subscription: fall back to the deployment's default tier.
     Revoke { event_id: String, user_id: String },
+    /// A renewal payment failed (Eoj 2026-10-01: grace, then suspend).
+    /// `past_due`: Stripe is still retrying, so access stays and the mirror
+    /// row records it for the "update your card" banner. `unpaid`: Stripe
+    /// gave up, so the user drops to the default tier and the cloud computer
+    /// is stopped (kept, not scheduled for deletion; paying resumes it).
+    PaymentFailed {
+        event_id: String,
+        user_id: String,
+        status: String,
+    },
     /// One-off credit purchase: grant prepaid credits to the user (cloud
     /// wallet) or their organization (fabric ledger, when the bridge is
     /// configured and the event names an org).
@@ -182,6 +192,14 @@ async fn stripe_webhook(
             let default_tier =
                 std::env::var("DEFAULT_PLAN_TIER").unwrap_or_else(|_| "free".to_string());
             revoke_and_respond(&state, &event["data"]["object"], &event_id, &user_id, &default_tier).await
+        }
+        MappedStripeEvent::PaymentFailed {
+            event_id,
+            user_id,
+            status,
+        } => {
+            payment_failed_and_respond(&state, &event["data"]["object"], &event_id, &user_id, &status)
+                .await
         }
         MappedStripeEvent::GrantCredits {
             event_id,
@@ -293,8 +311,8 @@ async fn apply_entitlement_and_sync_subscription(
         apply_hosted_entitlement(db, event_id, user_id, plan_tier_id, None, "stripe").await?;
     let subscription_id = subscription["id"].as_str().unwrap_or_default();
     if !subscription_id.is_empty() {
-        let plan_id = subscription["metadata"]["allternit_plan_id"]
-            .as_str()
+        let plan_id = crate::routes::billing_subscriptions::current_subscription_plan(subscription)
+            .map(|plan| plan.id)
             .unwrap_or_default();
         let status = subscription["status"].as_str().unwrap_or_default();
         let customer_id = subscription_customer_id(subscription);
@@ -374,9 +392,11 @@ async fn revoke_and_respond(
                 // Plan B2: stop the computer now, snapshot it (kept 6
                 // months), delete it 30 days out. Fire-and-forget; a no-op
                 // when the subscription never had a computer.
-                state
-                    .provisioning_service
-                    .spawn_suspend_for_subscription(user_id, subscription_id);
+                state.provisioning_service.spawn_suspend_for_subscription(
+                    user_id,
+                    subscription_id,
+                    crate::services::SuspendReason::Cancelled,
+                );
             }
             Json(json!({
                 "received": true,
@@ -389,6 +409,77 @@ async fn revoke_and_respond(
         }
         Err(error) => error.into_response(),
     }
+}
+
+/// A subscription whose renewal failed (see [`MappedStripeEvent::PaymentFailed`]).
+async fn payment_failed_and_respond(
+    state: &ApiState,
+    subscription: &Value,
+    event_id: &str,
+    user_id: &str,
+    status: &str,
+) -> Response {
+    let subscription_id = subscription["id"].as_str().unwrap_or_default();
+    let unpaid = status == "unpaid";
+    let mut idempotent_replay = false;
+    if unpaid {
+        let default_tier =
+            std::env::var("DEFAULT_PLAN_TIER").unwrap_or_else(|_| "free".to_string());
+        match apply_hosted_entitlement(&state.db, event_id, user_id, &default_tier, None, "stripe")
+            .await
+        {
+            Ok(applied) => idempotent_replay = applied.idempotent_replay,
+            Err(error) => return error.into_response(),
+        }
+    }
+    if !subscription_id.is_empty() {
+        // A missing local row (event delivered before creation) is fine.
+        if let Err(error) = billing_subscriptions::set_billing_subscription_status(
+            &state.db,
+            subscription_id,
+            status,
+        )
+        .await
+        {
+            return error.into_response();
+        }
+        if unpaid {
+            state.provisioning_service.spawn_suspend_for_subscription(
+                user_id,
+                subscription_id,
+                crate::services::SuspendReason::Unpaid,
+            );
+        }
+    }
+    crate::services::audit::write_audit_log(
+        &state.db,
+        crate::services::audit::AuditEvent {
+            action: if unpaid {
+                "billing.subscription.unpaid".to_string()
+            } else {
+                "billing.subscription.past_due".to_string()
+            },
+            resource_type: "billing_entitlement".to_string(),
+            resource_id: Some(event_id.to_string()),
+            user_id: Some(user_id.to_string()),
+            user_email: None,
+            details: Some(json!({
+                "subscriptionId": subscription_id,
+                "status": status,
+                "idempotentReplay": idempotent_replay,
+            })),
+            success: true,
+        },
+    )
+    .await;
+    Json(json!({
+        "received": true,
+        "eventId": event_id,
+        "userId": user_id,
+        "status": status,
+        "idempotentReplay": idempotent_replay,
+    }))
+    .into_response()
 }
 
 /// Grant a subscription plan's monthly credits for a paid invoice. The invoice object carries
@@ -685,6 +776,22 @@ fn map_stripe_event(event: &Value) -> Result<MappedStripeEvent, ApiError> {
     match event_type {
         "customer.subscription.created" | "customer.subscription.updated" => {
             let status = subscription["status"].as_str().unwrap_or_default();
+            if matches!(status, "past_due" | "unpaid") {
+                if event_id.is_empty() {
+                    return Err(ApiError::BadRequest(
+                        "Stripe event is missing its id.".to_string(),
+                    ));
+                }
+                // Subscriptions from outside our checkout carry no user: ack.
+                let Some(user_id) = subscription_clerk_user_id(subscription) else {
+                    return Ok(MappedStripeEvent::Ignored(event_type.to_string()));
+                };
+                return Ok(MappedStripeEvent::PaymentFailed {
+                    event_id,
+                    user_id,
+                    status: status.to_string(),
+                });
+            }
             if !matches!(status, "active" | "trialing") {
                 return Ok(MappedStripeEvent::Ignored(event_type.to_string()));
             }
@@ -698,8 +805,13 @@ fn map_stripe_event(event: &Value) -> Result<MappedStripeEvent, ApiError> {
                     "Subscription is missing clerk_user_id metadata.".to_string(),
                 )
             })?;
-            let plan_tier_id = subscription["metadata"]["allternit_plan_tier"]
-                .as_str()
+            // The current price decides the tier, so a plan switch in the
+            // billing portal grants the new plan's quotas.
+            let plan_tier_id = crate::routes::billing_subscriptions::current_subscription_plan(
+                subscription,
+            )
+            .map(|plan| plan.plan_tier)
+            .or_else(|| subscription["metadata"]["allternit_plan_tier"].as_str())
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .ok_or_else(|| {
@@ -1150,14 +1262,40 @@ mod tests {
             MappedStripeEvent::Ignored("invoice.paid".to_string())
         );
 
-        let past_due = subscription_event(
+        let incomplete = subscription_event(
             "evt_3",
             "customer.subscription.updated",
-            "past_due",
+            "incomplete",
             json!({ "clerk_user_id": "user_1", "allternit_plan_tier": "pro" }),
         );
         assert_eq!(
-            map_stripe_event(&past_due).unwrap(),
+            map_stripe_event(&incomplete).unwrap(),
+            MappedStripeEvent::Ignored("customer.subscription.updated".to_string())
+        );
+    }
+
+    #[test]
+    fn mapping_turns_failed_renewals_into_payment_failed() {
+        for status in ["past_due", "unpaid"] {
+            let event = subscription_event(
+                "evt_pf",
+                "customer.subscription.updated",
+                status,
+                json!({ "clerk_user_id": "user_1", "allternit_plan_tier": "pro" }),
+            );
+            assert_eq!(
+                map_stripe_event(&event).unwrap(),
+                MappedStripeEvent::PaymentFailed {
+                    event_id: "evt_pf".to_string(),
+                    user_id: "user_1".to_string(),
+                    status: status.to_string(),
+                }
+            );
+        }
+        // A subscription from outside our checkout has no user: acknowledged.
+        let foreign = subscription_event("evt_pf2", "customer.subscription.updated", "unpaid", json!({}));
+        assert_eq!(
+            map_stripe_event(&foreign).unwrap(),
             MappedStripeEvent::Ignored("customer.subscription.updated".to_string())
         );
     }
@@ -1871,7 +2009,7 @@ mod tests {
             panic!("deletion must revoke");
         };
         provisioner
-            .spawn_suspend_for_subscription(&user_id, "sub_123")
+            .spawn_suspend_for_subscription(&user_id, "sub_123", crate::services::SuspendReason::Cancelled)
             .await
             .unwrap();
         let (status, delete_after, snapshot): (String, Option<chrono::DateTime<chrono::Utc>>, Option<String>) =

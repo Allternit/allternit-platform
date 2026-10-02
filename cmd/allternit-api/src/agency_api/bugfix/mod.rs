@@ -7,15 +7,35 @@
 //! * [`select`]: N candidates evaluated in isolated checkouts, winner picked by
 //!   tests → lint → normalized vote → smallest diff.
 //!
+//!
+//! WP-B2 (memo C upgrades 4–8 + the rest of 3):
+//! * [`repro`]: model-generated reproduction tests, kept only when they fail
+//!   on the unpatched checkout; selection evidence, never a gate.
+//! * [`baseline`]: regression gating on the baseline failure set, with
+//!   bounded reruns; flakes recorded in the receipt.
+//! * [`judge`]: a model judge that only orders candidates still tied after tests.
+//! * [`explore`]: bounded read-only exploration on low localization
+//!   confidence, and the optional planner step.
+//! * `exec_hooks.rs`: the executor-side glue (a child module of the executor,
+//!   so every model call and effect keeps its gate, caps, budget and journal).
+//!   Prepare steps run concurrently (localization ∥ reproduction), prompts keep
+//!   a stable prefix first.
+//!
 //! The executor (`super::executor`) keeps the gate, receipts, budget and caps;
 //! this module only produces and ranks patches.
 
+pub mod baseline;
 pub mod edits;
+pub mod explore;
 pub mod funnel;
+pub mod judge;
+pub mod repro;
 pub mod select;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_b2;
 
 use super::executor::Ws;
 use edits::Planned;
@@ -45,30 +65,41 @@ pub fn prompt(goal: &str, context: &str, failure: &str, candidate: usize, of: us
              Propose the smallest correct fix as SEARCH/REPLACE blocks.{variety}")
 }
 
+/// WP-B2: what candidate evaluation needs beyond the patch: kept
+/// reproduction scripts (path, content), their runner argv prefix, and the
+/// baseline suite output.
+#[derive(Debug, Clone, Default)]
+pub struct Extras {
+    pub repros: Vec<(String, String)>,
+    pub runner: Vec<String>,
+    pub baseline: String,
+}
+
 /// Evaluate candidates in isolated checkouts, in parallel: a local clone of
 /// the run's checkout per candidate (cleaned up after), the patch written,
-/// a syntax check per changed file, then the test command. Runs inside one
-/// gated effect of the executor.
-pub(crate) fn evaluate(ws: &Ws, attempt: u32, planned: &[(usize, &Planned)], test_cmd: &[&str]) -> Vec<Outcome> {
+/// a syntax check per changed file, then the test command, then (WP-B2) the
+/// kept reproduction scripts and a baseline comparison. Runs inside one gated
+/// effect of the executor.
+pub(crate) fn evaluate(ws: &Ws, attempt: u32, planned: &[(usize, &Planned)], test_cmd: &[&str], x: &Extras) -> Vec<Outcome> {
     let base = ws.root.join("candidates");
     let _ = std::fs::create_dir_all(&base);
     let out = std::thread::scope(|s| {
         let hs: Vec<_> = planned.iter().map(|(i, p)| {
             let dir = base.join(format!("a{attempt}-c{i}"));
             s.spawn(move || {
-                let r = evaluate_one(ws, &dir, p, test_cmd);
+                let r = evaluate_one(ws, &dir, p, test_cmd, x);
                 let _ = std::fs::remove_dir_all(&dir);
                 r
             })
         }).collect();
-        hs.into_iter().map(|h| h.join().unwrap_or(Outcome { tests_pass: false, lint_ok: false, output: "candidate evaluation panicked".into() })).collect()
+        hs.into_iter().map(|h| h.join().unwrap_or(Outcome::failed("candidate evaluation panicked", false))).collect()
     });
     let _ = std::fs::remove_dir_all(&base);
     out
 }
 
-fn evaluate_one(ws: &Ws, dir: &Path, p: &Planned, test_cmd: &[&str]) -> Outcome {
-    let fail = |m: String| Outcome { tests_pass: false, lint_ok: false, output: m };
+fn evaluate_one(ws: &Ws, dir: &Path, p: &Planned, test_cmd: &[&str], x: &Extras) -> Outcome {
+    let fail = |m: String| Outcome::failed(m, false);
     let _ = std::fs::remove_dir_all(dir);
     let (src, dst) = (ws.repo.display().to_string(), dir.display().to_string());
     match ws.cmd(&ws.root, &["git", "clone", "-q", "--local", "--", &src, &dst]) {
@@ -96,8 +127,35 @@ fn evaluate_one(ws: &Ws, dir: &Path, p: &Planned, test_cmd: &[&str]) -> Outcome 
             return fail(format!("syntax check failed for {path}:\n{o}"));
         }
     }
-    match ws.cmd(dir, test_cmd) {
-        Ok((ok, o)) => Outcome { tests_pass: ok, lint_ok: true, output: o },
-        Err(e) => Outcome { tests_pass: false, lint_ok: true, output: format!("test run failed: {e}") },
+    let (ok, output) = match ws.cmd(dir, test_cmd) {
+        Ok(r) => r,
+        Err(e) => return Outcome::failed(format!("test run failed: {e}"), true),
+    };
+    let regressions = if ok { 0 } else { baseline::new_failures(&baseline::parse(&x.baseline), &baseline::parse(&output)).len() };
+    Outcome { tests_pass: ok, lint_ok: true, output, repro_pass: run_repros(ws, dir, x), regressions }
+}
+
+/// Write the kept reproduction scripts into `dir` (fresh paths only, never
+/// over an existing file) and run each; returns (passed count). Used for
+/// candidates and for the final checkout.
+pub(crate) fn run_repros(ws: &Ws, dir: &Path, x: &Extras) -> usize {
+    let mut passed = 0;
+    for (path, content) in &x.repros {
+        if !path.starts_with(repro::DIR) || x.runner.is_empty() {
+            continue;
+        }
+        let f = dir.join(path);
+        if !f.exists() {
+            let _ = f.parent().map(std::fs::create_dir_all);
+            if std::fs::write(&f, content).is_err() { continue; }
+        } else if std::fs::read_to_string(&f).ok().as_deref() != Some(content.as_str()) {
+            continue; // an existing different file: never overwrite
+        }
+        let mut args: Vec<&str> = x.runner.iter().map(String::as_str).collect();
+        args.push(path);
+        if let Ok((true, _)) = ws.cmd(dir, &args) {
+            passed += 1;
+        }
     }
+    passed
 }

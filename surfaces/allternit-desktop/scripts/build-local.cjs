@@ -54,6 +54,17 @@ if (process.env.ALLTERNIT_BUILD_SUFFIX) {
   }
 }
 
+// Windows cannot hold an empty environment variable, so the clean-name case
+// (ALLTERNIT_BUILD_SUFFIX="") reaches electron-builder as "not defined" and
+// the ${env.ALLTERNIT_BUILD_SUFFIX} artifact patterns fail to expand. Pass
+// the same patterns without the suffix instead.
+if (process.platform === 'win32' && !process.env.ALLTERNIT_BUILD_SUFFIX) {
+  extraArgs.push(
+    '-c.artifactName=Allternit-Desktop-${version}-${arch}.${ext}',
+    '-c.nsis.artifactName=Allternit-Setup-${version}.exe',
+  );
+}
+
 let command = process.execPath;
 let args;
 let shell = false;

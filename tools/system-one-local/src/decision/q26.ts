@@ -36,8 +36,32 @@ export const Q26 = {
 /** Banks that touch permission, money or client decisions never auto-act. Name-based default; a policy file can only add "never". */
 const NEVER_RE = /(permission|approval|consequential|money|payment|billing|invoice|charge|spend|refund|client|customer_comm|send_email|guard)/i;
 
-export interface BankPolicy { consequence?: Consequence; incumbent?: "required" | "none"; min_tune_n?: number; min_cert_n?: number }
+/**
+ * Incumbent coverage: "required" = every auto-act row must carry x-incumbent; "none" = no
+ * incumbent decider; "partial" = the incumbent answers only some rows (e.g. the executed
+ * operation's target, not the speculative ones), so rows without x-incumbent are skipped.
+ */
+export type IncumbentPolicy = "required" | "none" | "partial";
+export type QuestionPolicy = IncumbentPolicy | { incumbent?: IncumbentPolicy; why?: string };
+export interface BankPolicy {
+  consequence?: Consequence;
+  incumbent?: IncumbentPolicy;
+  /** Per-question overrides (question_id → incumbent policy); "*" matches any question, "*_x" any id ending in "_x". */
+  questions?: Record<string, QuestionPolicy>;
+  min_tune_n?: number;
+  min_cert_n?: number;
+  why?: string;
+}
 export type Q26Policy = Record<string, BankPolicy>;
+
+/** Incumbent policy for one question of a bank: exact question id, then suffix wildcard, then "*", then the bank. */
+export function incumbentPolicyFor(pol: BankPolicy | undefined, questionId: string | undefined): IncumbentPolicy {
+  const qs = pol?.questions ?? {};
+  const pick = (v: QuestionPolicy | undefined) => (typeof v === "string" ? v : v?.incumbent);
+  const q = questionId ?? "";
+  const suffix = Object.keys(qs).find((k) => k.startsWith("*") && k.length > 1 && q.endsWith(k.slice(1)));
+  return pick(qs[q]) ?? (suffix ? pick(qs[suffix]) : undefined) ?? pick(qs["*"]) ?? pol?.incumbent ?? "required";
+}
 
 export function consequenceFor(bank: string, policy: Q26Policy = {}): Consequence {
   if (NEVER_RE.test(bank)) return "never";
@@ -202,12 +226,17 @@ export function runQ26(tune: DatasetRow[], cert: DatasetRow[], o: Q26Options = {
     if (!(coverage >= Q26.coverage_min)) rep.failures.push(`coverage ${coverage.toFixed(3)} < ${Q26.coverage_min}`);
 
     // Non-inferiority vs the incumbent on the same auto-act rows (paired; McNemar-style normal bound).
-    if (pol.incumbent === "none") rep.noninferiority = { checked: false, n: 0, s1_only_wrong: 0, incumbent_only_wrong: 0, diff_upper: null, reason: "policy: bank has no incumbent decider" };
+    const incPol = (i: number) => incumbentPolicyFor(pol, ce[i].question?.question_id);
+    const covered = autoIdx.filter((i) => incPol(i) !== "none");
+    if (autoIdx.length && !covered.length) rep.noninferiority = { checked: false, n: 0, s1_only_wrong: 0, incumbent_only_wrong: 0, diff_upper: null, reason: "policy: bank has no incumbent decider" };
     else {
-      const withInc = autoIdx.filter((i) => ce[i].incumbent != null);
-      if (withInc.length < autoIdx.length) {
-        rep.noninferiority = { checked: false, n: withInc.length, s1_only_wrong: 0, incumbent_only_wrong: 0, diff_upper: null, reason: `incumbent answer missing on ${autoIdx.length - withInc.length} auto-act rows` };
+      const missing = covered.filter((i) => ce[i].incumbent == null && incPol(i) === "required");
+      const withInc = covered.filter((i) => ce[i].incumbent != null);
+      if (missing.length) {
+        rep.noninferiority = { checked: false, n: withInc.length, s1_only_wrong: 0, incumbent_only_wrong: 0, diff_upper: null, reason: `incumbent answer missing on ${missing.length} auto-act rows` };
         rep.failures.push("non-inferiority not provable: incumbent answers missing (log x-incumbent, or set policy incumbent=none)");
+      } else if (!withInc.length && covered.length) {
+        rep.noninferiority = { checked: false, n: 0, s1_only_wrong: 0, incumbent_only_wrong: 0, diff_upper: null, reason: "policy: partial incumbent, none on the auto-act rows" };
       } else {
         let b = 0, c = 0;
         for (const i of withInc) {

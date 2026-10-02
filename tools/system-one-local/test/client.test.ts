@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { decide, gateRecommendation, gateRequest, reportOutcome, shadowGate, tighten, type Friction } from "../src/decision/client.ts";
-import { GUARD_GATE, handleOutcomeHook, OUTCOME_SOURCES, reportToolRan, runGuard } from "../src/hook/guard.ts";
+import { GUARD_GATE, handleOutcomeHook, harnessIncumbent, OUTCOME_SOURCES, reportToolRan, runGuard } from "../src/hook/guard.ts";
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as joinPath } from "node:path";
@@ -73,6 +73,19 @@ describe("CLI guard hook: shadow GATE", () => {
       // incumbent unchanged regardless of what S1 says
       expect(shadow.output).toEqual(r.output);
     }
+  });
+  test("x-incumbent: auto-approve harness = true, other modes send none", async () => {
+    const gateOf = async (inp: any, mode: "log" | "advise") => {
+      const calls: Call[] = [];
+      await runGuard(inp, { mode, logDir: null, serverUrl: "http://s1", fetchImpl: fakeRuntime(0.0, calls) as any });
+      return calls.find((c) => c.body.request.operation === "GATE")!.body.request.extensions;
+    };
+    const yolo = { ...input("ls -la"), permission_mode: "bypassPermissions" };
+    expect((await gateOf(yolo, "log"))["x-incumbent"]).toBe("true");
+    expect((await gateOf(yolo, "advise"))["x-incumbent"]).toBe("true");
+    expect((await gateOf({ ...input("ls -la"), permission_mode: "default" }, "log"))["x-incumbent"]).toBeUndefined();
+    expect(harnessIncumbent({}, { SYSTEM_ONE_HARNESS_AUTO_APPROVE: "1" } as any)).toBe("allow");
+    expect(harnessIncumbent({ permission_mode: "default" }, { SYSTEM_ONE_HARNESS_AUTO_APPROVE: "1" } as any)).toBeNull();
   });
   test("tightened view never emits allow over an ask, and hard-rule calls skip S1", async () => {
     const calls: Call[] = [];

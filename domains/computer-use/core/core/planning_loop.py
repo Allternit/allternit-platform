@@ -1193,6 +1193,26 @@ class PlanningLoop:
         _begin_step = getattr(head, "begin_step", None)
         if callable(_begin_step):
             _begin_step(step_num)
+        # Q26 x-incumbent: the planner already chose this step, so its answers
+        # are known. `done` means goal satisfied; any other planned step means
+        # not yet. The executed operation's target is matched to an element
+        # index (table.match_target); speculative targets of operations the
+        # planner did not choose, and `stuck`, have no planner answer
+        # (q26-policy.json: computer_use.target partial, computer_use.stuck none).
+        _set_incumbent = getattr(head, "set_incumbent", None)
+        if callable(_set_incumbent):
+            try:
+                from .decision_head import canonical_operation
+                incumbent = {"goal_satisfied": "true" if goal_check else "false"}
+                if not goal_check and step.action_type:
+                    op = canonical_operation(step.action_type)
+                    incumbent["operation"] = op
+                    idx = table.match_target(step.action_target) if step.action_target else None
+                    if idx is not None:
+                        incumbent[f"{op}_target"] = str(idx)
+                _set_incumbent(incumbent)
+            except Exception as hook_err:
+                logger.warning("Shadow head set_incumbent failed at step %s: %s", step_num, hook_err)
 
         decision = head.decide(state_text, questions)
         decision.validate()

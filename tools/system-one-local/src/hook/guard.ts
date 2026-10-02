@@ -17,13 +17,26 @@ import { appendJsonl, BASE_DIR, sha256 } from "../log.ts";
 import type { SystemOneRequest, SystemOneResponse } from "../types.ts";
 import { evaluateHardRules, type HardRuleResult, type ToolCall, type Verdict } from "./hardrules.ts";
 import { buildPack, shouldEscalate, thresholdsFromEnv, type Thresholds } from "./pack.ts";
-import { reportOutcome, shadowGate, tighten, type Friction } from "../decision/client.ts";
+import { incumbentGateAnswer, reportOutcome, shadowGate, tighten, type Friction } from "../decision/client.ts";
 
 /** Shadow-ledger bank + primitive for the CLI guard's S1 permission GATE. */
 export const GUARD_GATE = { bank: "bank.permission_gate", primitive: "permission.cli_guard", question: "may_proceed" } as const;
 export const subjectRef = (toolUseId: unknown) => (typeof toolUseId === "string" && toolUseId ? `cc-tool:${toolUseId}` : undefined);
 
 export type Mode = "log" | "advise" | "off";
+
+/**
+ * Q26 (#1148): what the harness itself does with a call the hook leaves alone. Under Q24
+ * harnesses run in auto-approve mode (`permission_mode: "bypassPermissions"`), so the call
+ * proceeds ("allow"). In any other mode the harness may ask the person, so the incumbent
+ * is unknown here and no `x-incumbent` is sent. SYSTEM_ONE_HARNESS_AUTO_APPROVE=1 asserts
+ * auto-approve for harnesses that don't report a permission_mode.
+ */
+export function harnessIncumbent(input: any, env = process.env): Friction | null {
+  if (input?.permission_mode === "bypassPermissions") return "allow";
+  if (input?.permission_mode == null && env.SYSTEM_ONE_HARNESS_AUTO_APPROVE === "1") return "allow";
+  return null;
+}
 
 export interface HookOutput {
   hookSpecificOutput: {
@@ -74,7 +87,21 @@ function out(v: Verdict, reason: string): HookOutput {
   return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: v, permissionDecisionReason: reason } };
 }
 
+/**
+ * Harnesses name the tool-call id differently (Claude Code `tool_use_id`;
+ * Qwen/Gemini-family and others `tool_call_id`, `toolCallId`, `callId`).
+ * Every hook entry reads `tool_use_id`, so copy the first one present.
+ */
+export function normalizeHookInput(input: any): any {
+  if (!input || typeof input !== "object" || (typeof input.tool_use_id === "string" && input.tool_use_id)) return input;
+  for (const k of ["tool_call_id", "toolCallId", "toolUseId", "callId", "call_id"]) {
+    if (typeof input[k] === "string" && input[k]) return { ...input, tool_use_id: input[k] };
+  }
+  return input;
+}
+
 export async function runGuard(input: any, deps: GuardDeps = {}): Promise<{ output: HookOutput | null; record: GuardRecord | null }> {
+  input = normalizeHookInput(input);
   const mode = deps.mode ?? modeFromEnv();
   if (mode === "off" || !input || typeof input.tool_name !== "string") return { output: null, record: null };
   const t0 = performance.now();
@@ -120,18 +147,28 @@ export async function runGuard(input: any, deps: GuardDeps = {}): Promise<{ outp
       question_ids: Object.keys(pack.request.questions),
     };
     record.redactions = pack.flags;
-    const [res, gate] = await Promise.all([
-      callServer(pack.request, deps),
+    const runGate = (incumbent: Friction | null) =>
       shadowGate(
         {
           producer: "system-one-hook", decision_bank_id: GUARD_GATE.bank, question_id: GUARD_GATE.question, motif: "GATE",
           primitive_id: GUARD_GATE.primitive, subject_ref: subjectRef(input.tool_use_id),
           instructions: "Should this tool call proceed without asking the person first? Answer true only if it is clearly safe and routine.",
+          ...(incumbentGateAnswer(incumbent) ? { extensions: { "x-incumbent": incumbentGateAnswer(incumbent) } } : {}),
         },
         typeof pack.request.state === "string" ? pack.request.state : JSON.stringify(pack.request.state),
         { url: deps.serverUrl, fetchImpl: deps.fetchImpl, timeoutMs: deps.timeoutMs },
-      ),
-    ]);
+      );
+    const harness = harnessIncumbent(input);
+    // log mode never emits, so the incumbent is the harness's own flow and the GATE runs in
+    // parallel. advise mode may emit "ask", so the GATE waits for the server's escalation.
+    let res: Awaited<ReturnType<typeof callServer>>, gate: Awaited<ReturnType<typeof shadowGate>>;
+    if (mode === "log") {
+      [res, gate] = await Promise.all([callServer(pack.request, deps), runGate(harness)]);
+    } else {
+      res = await callServer(pack.request, deps);
+      const escalates = res.body ? shouldEscalate(res.body, deps.thresholds ?? thresholdsFromEnv()).escalate : false;
+      gate = await runGate(escalates ? "ask" : harness);
+    }
     if (gate) record.s1_gate = { decision_id: gate.decision_id, p_true: gate.p_true, recommendation: gate.recommendation, tightened: "allow" };
     record.server = res.status;
     if (res.body) {
@@ -342,6 +379,7 @@ export async function reportDenied(input: any, deps: OutcomeDeps = {}): Promise<
 
 /** One entry for every outcome hook event (hooks/s1-outcome). Never prints a decision. */
 export async function handleOutcomeHook(input: any, deps: OutcomeDeps = {}): Promise<void> {
+  input = normalizeHookInput(input);
   switch (input?.hook_event_name) {
     case "PermissionRequest":
       if (modeFromEnv() !== "off") recordPermissionRequest(input, deps.pendingDir);

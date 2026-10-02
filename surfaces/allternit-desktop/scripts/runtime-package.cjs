@@ -29,6 +29,7 @@ const os = require('node:os');
 const path = require('node:path');
 const zlib = require('node:zlib');
 const { execFileSync } = require('node:child_process');
+const https = require('node:https');
 
 const DESKTOP_DIR = path.resolve(__dirname, '..');
 const REPO_ROOT = path.resolve(DESKTOP_DIR, '..', '..');
@@ -157,19 +158,49 @@ function refreshToken(stale) {
   return auth.token;
 }
 
+// Uploads go over HTTP/1.1 keep-alive, not fetch: Node's fetch multiplexes every PUT onto one
+// HTTP/2 session, and once that session breaks (ERR_HTTP2_INVALID_SESSION) every retry reuses it.
+const agent = new https.Agent({ keepAlive: true, maxSockets: 64 });
+function put(url, method, headers, body) {
+  return new Promise((resolve, reject) => {
+    const req = https.request(url, { method, headers: { ...headers, ...(body ? { 'Content-Length': body.length } : {}) }, agent, timeout: 120_000 }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, headers: { get: (k) => res.headers[k.toLowerCase()] ?? null }, text: async () => text });
+      });
+      res.on('error', reject);
+    });
+    req.on('timeout', () => req.destroy(new Error('request timed out')));
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
 async function r2(method, key, body, contentType, cacheControl) {
   const url = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/r2/buckets/${BUCKET}/objects/${key}`;
   for (let attempt = 1, refreshed = false; ; attempt++) {
     const token = auth.token;
-    const res = await fetch(url, {
-      method,
-      headers: { Authorization: `Bearer ${token}`, ...(contentType ? { 'Content-Type': contentType } : {}), ...(cacheControl ? { 'Cache-Control': cacheControl } : {}) },
-      body,
-    });
+    let res;
+    try {
+      res = await put(url, method, { Authorization: `Bearer ${token}`, ...(contentType ? { 'Content-Type': contentType } : {}), ...(cacheControl ? { 'Cache-Control': cacheControl } : {}) }, body);
+    } catch (e) {
+      // A dropped connection (network blip, laptop sleep) is retried like a 5xx.
+      if (attempt >= 6) throw new Error(`${method} ${key}: ${e.code || e.cause?.code || e.message}`);
+      await new Promise((r) => setTimeout(r, attempt * 5000));
+      continue;
+    }
     if (res.ok) return res;
     if (res.status === 401 && !refreshed && !process.env.CLOUDFLARE_API_TOKEN) {
       refreshed = true;
       refreshToken(token);
+      continue;
+    }
+    if (res.status === 429 && attempt < 12) {
+      // Cloudflare API rate limit (~1200 requests / 5 min): wait it out instead of dying.
+      const after = Number(res.headers.get('retry-after')) || 0;
+      await new Promise((r) => setTimeout(r, Math.max(after * 1000, attempt * 10_000)));
       continue;
     }
     if (attempt >= 4 || res.status < 500) throw new Error(`${method} ${key}: ${res.status} ${await res.text()}`);

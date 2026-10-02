@@ -274,3 +274,13 @@ describe("single decision path", () => {
     expect(((await res.json()) as any).answers.q.type).toBe("noul");
   });
 });
+
+describe("hook input across harnesses", () => {
+  test("a Qwen/Gemini-style tool_call_id is read as tool_use_id", async () => {
+    const { normalizeHookInput } = await import("../src/hook/guard.ts");
+    expect(normalizeHookInput({ hook_event_name: "PostToolUse", tool_call_id: "call_1" }).tool_use_id).toBe("call_1");
+    expect(normalizeHookInput({ toolCallId: "call_2" }).tool_use_id).toBe("call_2");
+    expect(normalizeHookInput({ tool_use_id: "toolu_1", tool_call_id: "x" }).tool_use_id).toBe("toolu_1");
+    expect(normalizeHookInput({ hook_event_name: "Stop" }).tool_use_id).toBeUndefined();
+  });
+});

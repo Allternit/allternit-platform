@@ -139,7 +139,31 @@ fn s0_exec_on() -> bool {
 
 pub async fn run(State(st): State<Arc<AppState>>, Extension(u): Extension<AuthUser>, Path(id): Path<String>, body: Option<Json<Value>>) -> KRes {
     let b = body.map(|j| j.0).unwrap_or(Value::Null);
-    let uid = u.user_id.clone();
+    let org = crate::agency_api::guard::org_of(&u);
+    let (rec, steps, uses_model) = start_run(&st, &u.user_id, &org, &id, &b, None, false).await?;
+    let run_id = rec.run["id"].as_str().unwrap_or_default().to_string();
+    if uses_model && rec.run["status"] == "waiting" && rec.run["status_reason"] == QUEUED {
+        executor::spawn_template(st.clone(), run_id.clone()); // model steps: the agency executor
+    }
+    if rec.run["status"] == "running" {
+        let (s2, rid, h) = (AgencyStore::new(st.rails.ledger.clone()), run_id.clone(), tokio::runtime::Handle::current());
+        tokio::task::spawn_blocking(move || drive_s0(&h, &s2, &rid, &steps));
+    }
+    Ok(Json(json!({ "run_id": run_id, "status": rec.run["status"], "status_reason": rec.run["status_reason"] })))
+}
+
+/// Status reason of a model template run that is ready for the executor.
+pub(crate) const QUEUED: &str = "queued for execution";
+
+/// Create a template run for `owner` (owner-scoped template lookup) and move
+/// it to its first state: `waiting` (parked with a reason, or [`QUEUED`]) or
+/// `running` (S0-only, local exec on). The caller drives it. `idem` makes
+/// creation idempotent per owner; `admitted` = the caller is an agency run
+/// that already passed the execute flag and org allowlist (C3a effect path).
+pub(crate) async fn start_run(st: &AppState, owner: &str, org: &str, id: &str, b: &Value, idem: Option<String>, admitted: bool)
+    -> Result<(RunRecord, Vec<Value>, bool), KErr> {
+    let uid = owner.to_string();
+    let id = id.to_string();
     let tpl = blocking(st.db.clone(), move |c| load(c, &id, &uid)).await?;
     let uses_model = tpl["uses_model"] == json!(true);
     let steps = tpl["steps"].as_array().cloned().unwrap_or_default();
@@ -148,7 +172,6 @@ pub async fn run(State(st): State<Arc<AppState>>, Extension(u): Extension<AuthUs
             return Err(KErr::bad(format!("step kind {} is not yet executable", bad["kind"].as_str().unwrap_or_default())));
         }
     }
-    let org = crate::agency_api::guard::org_of(&u);
     let run_id = new_id("run");
     let ts = crate::agency_api::store::now();
     let thread = b["thread_id"].as_str().map(str::to_string).unwrap_or_else(|| new_id("thr"));
@@ -168,13 +191,13 @@ pub async fn run(State(st): State<Arc<AppState>>, Extension(u): Extension<AuthUs
     let s = AgencyStore::new(st.rails.ledger.clone());
     let rec = {
         let _g = s.lock().await;
-        let rec = s.save(RunRecord { owner: u.user_id.clone(), idempotency_key: None, run, task_ir, attention: vec![] }).await.map_err(KErr::internal)?;
+        let rec = s.save(RunRecord { owner: owner.to_string(), idempotency_key: idem, run, task_ir, attention: vec![] }).await.map_err(KErr::internal)?;
         s.emit(&run_id, 1, "run.status_changed", json!({ "data": { "from": null, "to": "accepted", "terminal": false, "reason": "created" } })).await.map_err(KErr::internal)?;
         let has_s0 = steps.iter().any(|x| x["kind"] == "s0_command");
         let park: Option<String> = if uses_model {
-            if !executor::enabled() {
+            if !admitted && !executor::enabled() {
                 Some(executor::PARKED_REASON.to_string())
-            } else if !crate::agency_api::guard::Limits::from_env().org_allowed(&org) {
+            } else if !admitted && !crate::agency_api::guard::Limits::from_env().org_allowed(org) {
                 Some(executor::ORG_REASON.to_string())
             } else if has_s0 && !s0_exec_on() {
                 Some(format!("local S0 execution is off on this server ({S0_EXEC_ENV} is not set)"))
@@ -190,18 +213,11 @@ pub async fn run(State(st): State<Arc<AppState>>, Extension(u): Extension<AuthUs
         };
         match park {
             Some(reason) => s.transition(rec, "waiting", Some(&reason)).await.map_err(KErr::internal)?,
-            None if uses_model => s.transition(rec, "waiting", Some("queued for execution")).await.map_err(KErr::internal)?,
+            None if uses_model => s.transition(rec, "waiting", Some(QUEUED)).await.map_err(KErr::internal)?,
             None => s.transition(rec, "running", Some("running S0 steps locally")).await.map_err(KErr::internal)?,
         }
     };
-    if uses_model && rec.run["status"] == "waiting" && rec.run["status_reason"] == "queued for execution" {
-        executor::spawn_template(st.clone(), run_id.clone()); // model steps: the agency executor
-    }
-    if rec.run["status"] == "running" {
-        let (s2, rid, h) = (AgencyStore::new(st.rails.ledger.clone()), run_id.clone(), tokio::runtime::Handle::current());
-        tokio::task::spawn_blocking(move || drive_s0(&h, &s2, &rid, &steps));
-    }
-    Ok(Json(json!({ "run_id": run_id, "status": rec.run["status"], "status_reason": rec.run["status_reason"] })))
+    Ok((rec, steps, uses_model))
 }
 
 fn run_argv(argv: &[String], dir: &std::path::Path) -> Result<(bool, String), String> {
@@ -229,7 +245,7 @@ fn run_argv(argv: &[String], dir: &std::path::Path) -> Result<(bool, String), St
 
 /// Runs the S0 steps in order; every step emits `run.progress` with the
 /// section-6 speed fields (tokens null/0: no model).
-fn drive_s0(h: &tokio::runtime::Handle, s: &AgencyStore, run_id: &str, steps: &[Value]) {
+pub(crate) fn drive_s0(h: &tokio::runtime::Handle, s: &AgencyStore, run_id: &str, steps: &[Value]) {
     let dir = std::env::temp_dir().join(format!("kernel-ui-{run_id}"));
     let _ = std::fs::create_dir_all(&dir);
     let (mut ok, mut reason) = (true, String::from("all steps passed"));

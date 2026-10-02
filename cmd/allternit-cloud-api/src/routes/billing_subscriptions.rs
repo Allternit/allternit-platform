@@ -21,7 +21,7 @@
 //! credit grants can resolve a Stripe subscription id back to a user and plan.
 
 use axum::{
-    extract::State,
+    extract::{Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -35,7 +35,7 @@ use crate::{
     error::ApiError,
     routes::billing_checkout::{
         billing_not_configured_response, billing_upstream_error_response, ReqwestStripeCheckout,
-        StripeCheckout, DEFAULT_CANCEL_URL, DEFAULT_SUCCESS_URL,
+        StripeCheckout,
     },
     ApiState,
 };
@@ -139,8 +139,8 @@ async fn get_current_subscription(
         r#"
         SELECT user_id, plan_id, plan_tier, status, stripe_customer_id
         FROM billing_subscriptions
-        WHERE user_id = $1 AND status IN ('active', 'trialing')
-        ORDER BY updated_at DESC
+        WHERE user_id = $1 AND status IN ('active', 'trialing', 'past_due', 'unpaid')
+        ORDER BY (status IN ('active', 'trialing')) DESC, updated_at DESC
         LIMIT 1
         "#,
     )
@@ -182,6 +182,7 @@ async fn list_plans() -> Json<PlansResponse> {
 async fn create_subscription(
     State(state): State<Arc<ApiState>>,
     headers: HeaderMap,
+    Query(return_to): Query<crate::routes::billing_checkout::ReturnTo>,
     Json(request): Json<SubscribeRequest>,
 ) -> Response {
     let user_id = match crate::auth::resolve_user_scoped(&state.db, &headers, "billing").await {
@@ -207,10 +208,38 @@ async fn create_subscription(
     let Some(price_id) = plan_price_id(plan) else {
         return billing_not_configured_response();
     };
-    let success_url = std::env::var("STRIPE_CHECKOUT_SUCCESS_URL")
-        .unwrap_or_else(|_| DEFAULT_SUCCESS_URL.to_string());
-    let cancel_url = std::env::var("STRIPE_CHECKOUT_CANCEL_URL")
-        .unwrap_or_else(|_| DEFAULT_CANCEL_URL.to_string());
+    let (success_url, cancel_url) =
+        match crate::routes::billing_checkout::checkout_return_urls(&return_to) {
+            Ok(urls) => urls,
+            Err(error) => return error.into_response(),
+        };
+    // One subscription per account: a second checkout would bill twice and
+    // create a second cloud computer. Plan changes go through the portal.
+    match open_subscription_plan(&state.db, &user_id).await {
+        Ok(Some(current_plan_id)) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": "already_subscribed",
+                    "current_plan_id": current_plan_id,
+                    "message": "This account already has a plan. Change or cancel it in Manage billing.",
+                })),
+            )
+                .into_response();
+        }
+        Ok(None) => {}
+        Err(error) => return error.into_response(),
+    }
+    let customer_id: Option<String> = match sqlx::query_scalar(
+        "SELECT stripe_customer_id FROM user_billing_accounts WHERE user_id = $1",
+    )
+    .bind(&user_id)
+    .fetch_optional(&state.db)
+    .await
+    {
+        Ok(customer_id) => customer_id,
+        Err(error) => return ApiError::from(error).into_response(),
+    };
     let checkout = ReqwestStripeCheckout::new();
 
     match create_subscription_checkout_url(
@@ -219,6 +248,7 @@ async fn create_subscription(
         plan,
         &price_id,
         &user_id,
+        customer_id.as_deref(),
         &success_url,
         &cancel_url,
     )
@@ -232,6 +262,7 @@ async fn create_subscription(
 async fn create_portal_session(
     State(state): State<Arc<ApiState>>,
     headers: HeaderMap,
+    Query(return_to): Query<crate::routes::billing_checkout::ReturnTo>,
 ) -> Response {
     let user_id = match crate::auth::resolve_user_scoped(&state.db, &headers, "billing").await {
         Ok(user) => user.id,
@@ -240,8 +271,14 @@ async fn create_portal_session(
     let Ok(secret_key) = std::env::var("STRIPE_SECRET_KEY") else {
         return billing_not_configured_response();
     };
-    let return_url = std::env::var("STRIPE_PORTAL_RETURN_URL")
-        .unwrap_or_else(|_| DEFAULT_PORTAL_RETURN_URL.to_string());
+    let return_url = match crate::routes::billing_checkout::client_return_url(
+        return_to.return_url.as_deref(),
+    ) {
+        Ok(Some(url)) => url,
+        Ok(None) => std::env::var("STRIPE_PORTAL_RETURN_URL")
+            .unwrap_or_else(|_| DEFAULT_PORTAL_RETURN_URL.to_string()),
+        Err(error) => return error.into_response(),
+    };
     let checkout = ReqwestStripeCheckout::new();
 
     match portal_url_for(&checkout, &state.db, &user_id, &secret_key, &return_url).await {
@@ -261,6 +298,29 @@ pub(crate) fn find_plan(plan_id: &str) -> Option<&'static SubscriptionPlan> {
     SUBSCRIPTION_PLANS.iter().find(|plan| plan.id == plan_id)
 }
 
+/// The plan a Stripe subscription is on *now*: its item's price id, mapped
+/// through the `STRIPE_PRICE_*` env, falling back to the `allternit_plan_id`
+/// metadata stamped at checkout. The price wins because a plan switch in the
+/// Stripe billing portal changes the price but leaves the metadata as it was.
+pub(crate) fn current_subscription_plan(
+    subscription: &serde_json::Value,
+) -> Option<&'static SubscriptionPlan> {
+    let price_id = subscription["items"]["data"][0]["price"]["id"]
+        .as_str()
+        .or_else(|| subscription["plan"]["id"].as_str());
+    price_id
+        .and_then(|price_id| {
+            SUBSCRIPTION_PLANS
+                .iter()
+                .find(|plan| plan_price_id(plan).as_deref() == Some(price_id))
+        })
+        .or_else(|| {
+            subscription["metadata"]["allternit_plan_id"]
+                .as_str()
+                .and_then(find_plan)
+        })
+}
+
 /// Resolve the Stripe price id for a plan from its env var. Empty values count as unset so a
 /// placeholder `STRIPE_PRICE_PLUS=` in a deployment manifest surfaces as billing_not_configured
 /// instead of a cryptic Stripe error.
@@ -272,17 +332,41 @@ fn plan_price_id(plan: &SubscriptionPlan) -> Option<String> {
 }
 
 /// Build the subscription-mode Checkout Session for a validated plan and return its hosted URL.
+#[allow(clippy::too_many_arguments)]
 async fn create_subscription_checkout_url(
     checkout: &dyn StripeCheckout,
     secret_key: &str,
     plan: &SubscriptionPlan,
     price_id: &str,
     clerk_user_id: &str,
+    customer_id: Option<&str>,
     success_url: &str,
     cancel_url: &str,
 ) -> Result<String, ApiError> {
-    let form = subscribe_form_params(plan, price_id, clerk_user_id, success_url, cancel_url);
+    let mut form = subscribe_form_params(plan, price_id, clerk_user_id, success_url, cancel_url);
+    // Reuse the account's Stripe customer (from an earlier plan or credit
+    // pack), so one person stays one customer and the portal shows it all.
+    if let Some(customer_id) = customer_id {
+        form.push(("customer".to_string(), customer_id.to_string()));
+    }
     checkout.create_checkout_session(secret_key, &form).await
+}
+
+/// The plan of the account's open subscription, if it has one. `past_due`
+/// and `unpaid` count: the subscription still exists and comes back when
+/// the card is fixed.
+async fn open_subscription_plan(db: &PgPool, user_id: &str) -> Result<Option<String>, ApiError> {
+    Ok(sqlx::query_scalar(
+        r#"
+        SELECT plan_id FROM billing_subscriptions
+        WHERE user_id = $1 AND status IN ('active', 'trialing', 'past_due', 'unpaid')
+        ORDER BY updated_at DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?)
 }
 
 /// Form fields for a subscription Checkout Session. The metadata lives under
@@ -439,6 +523,24 @@ pub(crate) async fn mark_billing_subscription_canceled(
         "UPDATE billing_subscriptions SET status = 'canceled', updated_at = CURRENT_TIMESTAMP WHERE stripe_subscription_id = $1",
     )
     .bind(stripe_subscription_id)
+    .execute(db)
+    .await
+    .map_err(ApiError::DatabaseError)?;
+    Ok(())
+}
+
+/// Record a failed-renewal status (`past_due` / `unpaid`) on the local mirror. A missing row
+/// is not an error; a later active/trialing grant overwrites the status.
+pub(crate) async fn set_billing_subscription_status(
+    db: &PgPool,
+    stripe_subscription_id: &str,
+    status: &str,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE billing_subscriptions SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE stripe_subscription_id = $1",
+    )
+    .bind(stripe_subscription_id)
+    .bind(status)
     .execute(db)
     .await
     .map_err(ApiError::DatabaseError)?;
@@ -693,12 +795,13 @@ mod tests {
         let price_id = plan_price_id(plan).expect("env price id must resolve");
         let checkout = RecordingStripe::new();
         let url = create_subscription_checkout_url(
-            &checkout, "sk_test", plan, &price_id, "user_1", "https://s.example", "https://c.example",
+            &checkout, "sk_test", plan, &price_id, "user_1", None, "https://s.example", "https://c.example",
         )
         .await
         .unwrap();
         assert_eq!(url, "https://checkout.stripe.com/c/pay/test_sub");
         let form = checkout.checkout_form.lock().unwrap().clone().unwrap();
+        assert!(form.iter().all(|(key, _)| key != "customer"));
         assert_eq!(field(&form, "mode"), "subscription");
         assert_eq!(field(&form, "line_items[0][price]"), "price_test_plus");
         assert_eq!(field(&form, "line_items[0][quantity]"), "1");
@@ -708,6 +811,43 @@ mod tests {
         assert_eq!(field(&form, "success_url"), "https://s.example");
         assert_eq!(field(&form, "cancel_url"), "https://c.example");
         std::env::remove_var("STRIPE_PRICE_PLUS");
+    }
+
+    #[tokio::test]
+    async fn subscribe_reuses_the_accounts_stripe_customer() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let plan = find_plan("plus").unwrap();
+        let checkout = RecordingStripe::new();
+        create_subscription_checkout_url(
+            &checkout, "sk_test", plan, "price_x", "user_1", Some("cus_123"), "https://s.example", "https://c.example",
+        )
+        .await
+        .unwrap();
+        let form = checkout.checkout_form.lock().unwrap().clone().unwrap();
+        assert_eq!(field(&form, "customer"), "cus_123");
+    }
+
+    #[test]
+    fn current_plan_follows_the_price_not_the_checkout_metadata() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("STRIPE_PRICE_PLUS", "price_plus");
+        std::env::set_var("STRIPE_PRICE_SUPER", "price_super");
+        // Bought Plus, switched to Super in the billing portal: the metadata
+        // still says plus, the item's price says super.
+        let switched = serde_json::json!({
+            "metadata": { "allternit_plan_id": "plus", "allternit_plan_tier": "pro" },
+            "items": { "data": [ { "price": { "id": "price_super" } } ] },
+        });
+        let plan = current_subscription_plan(&switched).unwrap();
+        assert_eq!((plan.id, plan.plan_tier), ("super", "team"));
+        // An unknown price falls back to the metadata.
+        let unknown = serde_json::json!({
+            "metadata": { "allternit_plan_id": "plus" },
+            "items": { "data": [ { "price": { "id": "price_other" } } ] },
+        });
+        assert_eq!(current_subscription_plan(&unknown).unwrap().id, "plus");
+        std::env::remove_var("STRIPE_PRICE_PLUS");
+        std::env::remove_var("STRIPE_PRICE_SUPER");
     }
 
     #[test]

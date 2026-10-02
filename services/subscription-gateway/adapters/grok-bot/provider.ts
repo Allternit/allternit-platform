@@ -31,7 +31,7 @@ interface Ctx {
   events: CursoredEvent[]; seq: number; baseline: number;
   seen: Map<number, { text: string; completed: boolean }>;
   cues: Set<string>; currentCorr?: string; msgN: number; activity: boolean;
-  done: Map<string, Promise<AaiResult<MessageResult>>>; lock: Promise<unknown>;
+  done: Map<string, Promise<AaiResult<MessageResult>>>; lock: Promise<unknown>; sending: number;
 }
 interface Stored { approval: Approval; id: string }
 
@@ -201,9 +201,15 @@ export class GrokBotProvider extends BaseAaiProvider {
     const [base, ...rest] = input.agentId.split(":");
     if (base !== AGENT_ID) return fail("CONTEXT_NOT_FOUND", `No such agent ${input.agentId}`);
     const botName = rest.join(":") || this.o.botName;
-    if ([...this.ctxs.values()].some((c) => !c.closed)) return fail("CONTEXT_BUSY", `${APP_NAME} drives one conversation at a time. Close the open one first.`);
+    // The app shows one conversation at a time. A new one replaces the open one once that is idle
+    // (no send in flight, nothing streaming); the replaced chat stays in the app, it is only no
+    // longer driven. Refusing outright locked a bot out after its first conversation.
+    const open = [...this.ctxs.values()].filter((c) => !c.closed);
+    if (open.some((c) => c.sending > 0)) return this.busy();
     const cd = this.cooldown(); if (cd) return cd;
     const g = await this.check(); if (!g.ok) return g;
+    if (open.length && g.value.streaming) return this.busy();
+    for (const o of open) o.closed = true;
     await this.pace();
     await this.o.driver.newChat();
     let after = await this.check(); if (!after.ok) return after;
@@ -216,10 +222,14 @@ export class GrokBotProvider extends BaseAaiProvider {
       after = await this.check(); if (!after.ok) return after;
     }
     const id = `gb-ctx-${++this.n}`;
-    const c: Ctx = { id, threadId: input.threadId ?? id, closed: false, events: [], seq: 0, baseline: after.value.turns.length, seen: new Map(), cues: new Set(), msgN: 0, activity: false, done: new Map(), lock: Promise.resolve() };
+    const c: Ctx = { id, threadId: input.threadId ?? id, closed: false, events: [], seq: 0, baseline: after.value.turns.length, seen: new Map(), cues: new Set(), msgN: 0, activity: false, done: new Map(), lock: Promise.resolve(), sending: 0 };
     this.ctxs.set(id, c);
     this.push(c, "agent.context.opened", "best_effort", { title: input.title ?? null }, "allternit", id);
     return ok({ contextId: id, isolation: CAPABILITIES.context.isolation, guarantee: CAPABILITIES.guarantee, resumed: false });
+  }
+
+  private busy(): AaiResult<never> {
+    return fail("CONTEXT_BUSY", `${APP_NAME} is still answering in another conversation. Try again when that reply finishes.`, { retryAfterMs: 30_000 });
   }
 
   private live(id: string): AaiResult<Ctx> {
@@ -232,7 +242,8 @@ export class GrokBotProvider extends BaseAaiProvider {
     const c = l.value;
     const prior = c.done.get(input.correlationId);
     if (prior) return prior; // idempotent: replays (sequential or concurrent) return the first result
-    const run = c.lock.then(() => this.sendOne(c, input));
+    c.sending += 1;
+    const run = c.lock.then(() => this.sendOne(c, input)).finally(() => { c.sending -= 1; });
     c.lock = run.catch(() => undefined);
     c.done.set(input.correlationId, run);
     return run;

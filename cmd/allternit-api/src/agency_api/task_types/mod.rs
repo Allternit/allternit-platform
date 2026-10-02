@@ -16,10 +16,32 @@
 //!
 //! Registration: [`template`] is reached from `compiler::TemplateRegistry::get`
 //! and [`catalog_contract`] / [`criteria`] from `catalog` (small hooks marked
-//! "WP-X1 hook"). The executor still drives BUG_FIX only; driving these graphs
-//! for real lands after the executor-core work (WP-P1).
+//! "WP-X1 hook"). WP-X2: `executor::generic` drives these graphs for real,
+//! behind the [`ENABLE_ENV`] per-type enable list.
 
 pub mod runner;
+#[cfg(test)]
+mod exec_tests;
+
+/// WP-X2: the per-type enable list. Prod only runs the types listed here
+/// (comma-separated ids); unset = BUG_FIX only. Each type is turned on after
+/// its eval set passes through the real executor.
+pub const ENABLE_ENV: &str = "ALLTERNIT_AGENCY_TASK_TYPES";
+
+pub fn enabled_from(raw: Option<&str>) -> Vec<String> {
+    match raw.map(str::trim).filter(|s| !s.is_empty()) {
+        None => vec!["BUG_FIX".into()],
+        Some(s) => s.split(',').map(|x| x.trim().to_ascii_uppercase()).filter(|x| !x.is_empty()).collect(),
+    }
+}
+
+pub fn enabled_from_env() -> Vec<String> {
+    enabled_from(std::env::var(ENABLE_ENV).ok().as_deref())
+}
+
+pub fn is_enabled(id: &str) -> bool {
+    enabled_from_env().iter().any(|e| e == id)
+}
 #[cfg(test)]
 mod tests;
 

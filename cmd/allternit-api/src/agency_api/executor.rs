@@ -31,6 +31,10 @@
 //! in `ALLTERNIT_AGENCY_LOCAL_REPOS` (dev only).
 
 use super::bugfix::{self, edits::{Edit, Planned}}; // WP-B1
+#[path = "bugfix/exec_hooks.rs"]
+mod bugfix_hooks; // WP-B2: repro tests, baseline/flakes, judge, exploration (memo C 4–8)
+pub(crate) mod generic; // WP-X2
+mod effects_c3b; // WP-C3b: computer:/campaign: connector glue
 use super::guard::Limits;
 use super::store::{now, new_id, AgencyStore, EffectDenied, TERMINAL};
 use crate::AppState;
@@ -121,8 +125,12 @@ pub(crate) fn start(st: Arc<AppState>, run_id: String) {
 pub(crate) async fn admit_and_start(st: Arc<AppState>, run_id: String, limits: Limits) -> bool {
     let s = super::store(&st);
     let Ok(Some(rec)) = s.load_run(&run_id).await else { return false };
-    if rec.run["status"] != "waiting" || rec.task_ir["task_type"] == "TEMPLATE" {
+    if rec.run["status"] != "waiting" || rec.task_ir.get("template_id").is_some() {
         return false; // kernel-UI template runs are driven by kernel_ui::templates
+    }
+    // WP-X2: only task types enabled on this server run; others stay queued.
+    if !super::task_types::is_enabled(rec.task_ir["task_type"].as_str().unwrap_or("BUG_FIX")) {
+        return false;
     }
     let org = super::guard::run_org(&rec.task_ir);
     let limits = limits.tightened(&rec.task_ir["rules"]).with_org_policy(&super::safety::load_org(&st.db, &org).unwrap_or_default());
@@ -1094,7 +1102,7 @@ impl Exec<'_> {
     /// candidate remains, test each in its own isolated checkout (one gated
     /// effect) and pick the winner. Returns the winner (None = all invalid)
     /// and feedback text for the repair round.
-    fn select_candidate(&mut self, attempt: u32, proposals: &[Result<Vec<Edit>, String>]) -> Step<(Option<Planned>, String)> {
+    fn select_candidate(&mut self, plan: &ExecutionPlan, goal: &str, failure: &str, x: &bugfix::Extras, attempt: u32, proposals: &[Result<Vec<Edit>, String>]) -> Step<(Option<Planned>, String)> {
         let repo = self.ws.repo.clone();
         let read = |p: &str| std::fs::read_to_string(repo.join(p)).ok();
         let (mut valid, mut errors) = (vec![], vec![]);
@@ -1116,17 +1124,20 @@ impl Exec<'_> {
         let idx: Vec<usize> = kept.iter().map(|k| k.0).collect();
         let ev = self.effect("N12", "tool.test_run", "EXECUTE", json!({ "phase": format!("candidates.{attempt}"), "candidates": idx.len(), "command": cmd }), |ws| {
             let items: Vec<(usize, &Planned)> = idx.iter().map(|&i| (i, &valid[i])).collect();
-            captured = bugfix::evaluate(ws, attempt, &items, &cmd);
+            captured = bugfix::evaluate(ws, attempt, &items, &cmd, x);
             Ok(bugfix::select::encode(attempt, &idx, &captured))
         })?;
         if captured.len() != idx.len() {
             // Re-driven run: the effect was already committed; recover its outcomes.
             let d = bugfix::select::decode(&ev);
             captured = idx.iter().map(|i| d.iter().find(|(j, _)| j == i).map(|x| x.1.clone())
-                .unwrap_or(bugfix::select::Outcome { tests_pass: false, lint_ok: false, output: String::new() })).collect();
+                .unwrap_or(bugfix::select::Outcome::failed("", false))).collect();
         }
         let planned: Vec<Planned> = idx.iter().map(|&i| valid[i].clone()).collect();
-        let win = bugfix::select::pick(&planned, &captured).unwrap_or(0);
+        // WP-B2: votes over the full candidate set; the judge only orders ties after tests.
+        let votes: Vec<usize> = kept.iter().map(|k| k.1).collect();
+        let judged = self.b2_judge(plan, attempt, goal, failure, &planned, &captured, &votes)?;
+        let win = bugfix::select::pick_with(&planned, &captured, &votes, judged).unwrap_or(0);
         tracing::info!(run_id = %self.run_id, attempt, candidates = idx.len(), winner = idx[win], evidence = %ev, "agency bug_fix candidate selected");
         let fb = if captured[win].tests_pass { String::new() } else { captured[win].output.clone() };
         Ok((Some(planned[win].clone()), fb))
@@ -1177,6 +1188,7 @@ impl Exec<'_> {
         if ok {
             return Err(StepErr::Fail(anyhow!("could not reproduce: the test suite already passes, so a fix cannot be verified")));
         }
+        let baseline_out = self.last_test_output.clone(); // WP-B2 regression baseline
         // S1 shadow CLASSIFY_ERROR on the reproduced failure: advisory only, never changes flow.
         {
             let out = self.last_test_output.clone();
@@ -1187,13 +1199,21 @@ impl Exec<'_> {
         // ── WP-B1: N candidates of anchored multi-file edits per attempt ──
         let mut passed: Option<(String, Vec<String>)> = None; // (target receipt ref, changed paths)
         let mut failure = format!("{before}\n{}", self.last_test_output);
+        let (mut prep, mut notes) = (bugfix::Extras::default(), String::new()); // WP-B2
         for (attempt, gen) in [(1u32, "N11"), (2, "N17")] {
             let (ran, plan) = self.route_node(gen)?;
-            let proposed = self.propose(&plan, attempt, goal, &failure);
+            if attempt == 1 {
+                // WP-B2: reproduction tests ∥ exploration ∥ planner, before the first patch.
+                match self.b2_prepare(&plan, goal, &failure, &baseline_out) {
+                    Ok(p) => (prep, notes) = p,
+                    Err(e) => { self.close_node(&ran, &plan, false)?; return Err(e); }
+                }
+            }
+            let proposed = self.propose(&plan, attempt, goal, &format!("{failure}{notes}"));
             self.close_node(&ran, &plan, proposed.is_ok())?;
             let proposals = proposed?;
             // N12 parse/shape + anchor validation (S0) and candidate selection.
-            let (winner, feedback) = self.select_candidate(attempt, &proposals)?;
+            let (winner, feedback) = self.select_candidate(&plan, goal, &failure, &prep, attempt, &proposals)?;
             self.step("N12", winner.is_some())?;
             let Some(planned) = winner else {
                 failure = feedback;
@@ -1243,9 +1263,10 @@ impl Exec<'_> {
         let mut diff_text = String::new();
         if evidence_run {
             evidence.push(format!("target_tests_pass:receipt:{target}"));
-            let (ok, affected) = self.tests("N18", "affected")?;
+            let (ok, affected) = self.b2_gate("N18", "affected", &baseline_out, &mut evidence)?; // WP-B2
             self.step("N18", ok)?;
             if ok { evidence.push(format!("affected_tests_pass:receipt:{affected}")); }
+            self.b2_label(&before, &prep, &mut evidence)?; // WP-B2
             self.step("N19", true)?;
             // Requirements: the failure reproduced before and the target passes after.
             evidence.push(format!("requirements_satisfied:receipt:{before}->{target}"));
@@ -1266,7 +1287,7 @@ impl Exec<'_> {
             let accept = diff.starts_with("diff:ACCEPT");
             self.step("N20", accept)?;
             if accept { evidence.push(format!("diff_review_accept:receipt:{diff}")); }
-            let (ok, full) = self.tests("N20", "regression")?;
+            let (ok, full) = self.b2_gate("N20", "regression", &baseline_out, &mut evidence)?; // WP-B2
             if ok { evidence.push(format!("no_new_regressions:receipt:{full}")); }
         }
         self.verify_and_close(&evidence, &path, &diff_text)
@@ -1343,7 +1364,12 @@ fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str, limits: &Limi
     let limits = &limits.tightened(&ir["rules"]);
     let task_id = ir["wih_policy"]["task_id"].as_str().unwrap_or("task.bug_fix").to_string();
     let write_set: Vec<String> = ir["wih_policy"]["write_set"].as_array().map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default();
-    let graph = bug_fix::instantiate(&task_id, &write_set)?;
+    let task_type = ir["task_type"].as_str().unwrap_or("BUG_FIX").to_string();
+    let kernel_type = if task_type == "BUG_FIX" { None } else { Some(super::task_types::require(&task_type)?) };
+    let graph = match kernel_type {
+        None => bug_fix::instantiate(&task_id, &write_set)?,
+        Some(t) => super::task_types::instantiate(t, &task_id, &write_set)?,
+    };
     let models = ir["models"].clone();
     let raw_pool = if scripted() {
         Ok(scripted_pool(&graph))
@@ -1390,7 +1416,10 @@ fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str, limits: &Limi
     let goal = ir["goal"].as_str().unwrap_or_default().to_string();
     let repo = ir["workspace"]["repo"].as_str().unwrap_or_default().to_string();
     let git_ref = ir["workspace"]["ref"].as_str().map(str::to_string);
-    let out = x.run(&goal, &repo, git_ref.as_deref());
+    let out = match kernel_type {
+        None => x.run(&goal, &repo, git_ref.as_deref()),
+        Some(t) => x.run_task_type(t, &goal, &write_set),
+    };
     let result = match out {
         Ok(()) | Err(StepErr::Stop) => Ok(()),
         Err(StepErr::Fail(e)) => {

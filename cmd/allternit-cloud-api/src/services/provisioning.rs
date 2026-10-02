@@ -75,6 +75,24 @@ pub use free::{
     ProvisionedWakeOutcome, WakeReason, WakeResult,
 };
 
+/// Why a paid computer is suspended by the billing webhook.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SuspendReason {
+    /// `customer.subscription.deleted`: stop, snapshot, delete 30 days out.
+    Cancelled,
+    /// Renewal unpaid after Stripe's retries: stop and keep; no deletion.
+    Unpaid,
+}
+
+impl SuspendReason {
+    fn stop_reason(self) -> &'static str {
+        match self {
+            SuspendReason::Cancelled => "subscription_cancelled",
+            SuspendReason::Unpaid => "subscription_unpaid",
+        }
+    }
+}
+
 /// CPU sharing on top of `limits.cpu` (free computers only; paid = default).
 #[derive(Debug, Clone, Default)]
 struct CpuShare {
@@ -128,7 +146,8 @@ const ENV_LIFECYCLE_SECONDS: &str = "PROVISIONED_LIFECYCLE_SECONDS";
 /// image (XFCE + VNC + Chrome + mux, and from plan step A1 the Linux
 /// Allternit Desktop app) imported on every fleet host (fingerprint
 /// 86552d91… on mail and allternit-standby as of 2026-09-30).
-const DEFAULT_IMAGE: &str = "allternit-desktop";
+/// Decision 17: paid and free computers boot the same full image.
+const DEFAULT_IMAGE: &str = "allternit-cloud-computer";
 /// Env fallback sizing (= the Plus base) for subscriptions whose plan has no
 /// `plan_tiers.computer_base_*` row; normally sizing comes from the plan.
 const DEFAULT_CPU: i64 = 2;
@@ -285,6 +304,15 @@ pub trait ProvisionBackend: Send + Sync + std::fmt::Debug {
     async fn stop(&self, name: &str) -> Result<(), ProvisionError>;
     async fn status(&self, name: &str) -> Result<BackendStatus, ProvisionError>;
     async fn delete(&self, name: &str) -> Result<(), ProvisionError>;
+    /// Apply a plan change to an existing instance: CPU and memory limits
+    /// (a running container picks them up live) and the root disk size on
+    /// `storage_pool`.
+    async fn resize(
+        &self,
+        name: &str,
+        size: ComputerSize,
+        storage_pool: &str,
+    ) -> Result<(), ProvisionError>;
     /// Take a disk-only (stateless, no CRIU) snapshot of a stopped instance
     /// and publish it as a compressed local image under `alias`, then drop
     /// the instance snapshot. Images outlive their source instance, which
@@ -642,6 +670,38 @@ impl ProvisionBackend for IncusHttpBackend {
         let (status, json) = self
             .transport
             .request(reqwest::Method::POST, "/1.0/instances", Some(body))
+            .await?;
+        if !is_success(status) {
+            return Err(error_from_status(status, &json));
+        }
+        self.wait_operation(&json).await
+    }
+
+    async fn resize(
+        &self,
+        name: &str,
+        size: ComputerSize,
+        storage_pool: &str,
+    ) -> Result<(), ProvisionError> {
+        // PATCH merges: only these keys change; the rest of the config and
+        // the profile devices stay as they are.
+        let body = serde_json::json!({
+            "config": {
+                "limits.cpu": size.cpu_cores.to_string(),
+                "limits.memory": format!("{}MiB", size.memory_mb),
+            },
+            "devices": {
+                "root": {
+                    "type": "disk",
+                    "path": "/",
+                    "pool": storage_pool,
+                    "size": format!("{}GiB", size.disk_gb),
+                }
+            },
+        });
+        let (status, json) = self
+            .transport
+            .request(reqwest::Method::PATCH, &format!("/1.0/instances/{name}"), Some(body))
             .await?;
         if !is_success(status) {
             return Err(error_from_status(status, &json));
@@ -1573,6 +1633,10 @@ impl ProvisioningService {
                 if let Some(view) = self.resume(row, subscription_id).await? {
                     return Ok(view);
                 }
+            } else if !free && subscription_id.is_some() {
+                // Same subscription, maybe a new plan (changed in the Stripe
+                // billing portal): bring the computer to the plan's size.
+                return self.resize_to_plan(row, subscription_id).await;
             } else {
                 return Ok(InstanceView::from(row));
             }
@@ -1793,6 +1857,103 @@ impl ProvisioningService {
     /// The live (non-terminal, non-error) row for `(user, subscription)` of
     /// the given tier. A replaced free computer (kept sleeping after an
     /// upgrade) no longer counts as the account's live free computer.
+    /// Plan change on a live paid computer: apply the plan's CPU, memory
+    /// and disk. Growth must fit in its host's free capacity; when it does
+    /// not, the computer keeps its size and a later delivery retries. The
+    /// disk never shrinks (a root volume can't be shrunk safely), so a
+    /// downgrade keeps the larger disk. A computer still being created is
+    /// left alone.
+    async fn resize_to_plan(
+        &self,
+        row: InstanceRow,
+        subscription_id: Option<&str>,
+    ) -> Result<InstanceView, ApiError> {
+        if !matches!(row.status.as_str(), "running" | "stopped") {
+            return Ok(InstanceView::from(row));
+        }
+        let (plan_id, plan) = self.plan_size(subscription_id).await;
+        let current = row.size();
+        let target = ComputerSize {
+            disk_gb: plan.disk_gb.max(current.disk_gb),
+            ..plan
+        };
+        if target == current {
+            if plan_id.is_some() && plan_id != row.plan_id {
+                sqlx::query(
+                    "UPDATE provisioned_instances SET plan_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+                )
+                .bind(&row.id)
+                .bind(&plan_id)
+                .execute(&self.db)
+                .await?;
+            }
+            return self.get_for_user(&row.id, &row.user_id).await;
+        }
+        let Some(host_id) = row.host_id.clone() else {
+            return Ok(InstanceView::from(row));
+        };
+        let delta = ComputerSize {
+            cpu_cores: target.cpu_cores - current.cpu_cores,
+            memory_mb: target.memory_mb - current.memory_mb,
+            disk_gb: target.disk_gb - current.disk_gb,
+        };
+        let reserved = sqlx::query(
+            r#"
+            UPDATE provisioned_hosts
+            SET cpu_cores_allocated = GREATEST(0, cpu_cores_allocated + $1),
+                memory_mb_allocated = GREATEST(0, memory_mb_allocated + $2),
+                disk_gb_allocated = GREATEST(0, disk_gb_allocated + $3),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $4
+              AND ($1 <= 0 OR cpu_cores_allocated + $1 <= cpu_cores_total)
+              AND ($2 <= 0 OR memory_mb_allocated + $2 <= memory_mb_total)
+              AND ($3 <= 0 OR disk_gb_allocated + $3 <= disk_gb_total)
+            "#,
+        )
+        .bind(delta.cpu_cores as i32)
+        .bind(delta.memory_mb)
+        .bind(delta.disk_gb)
+        .bind(&host_id)
+        .execute(&self.db)
+        .await?;
+        if reserved.rows_affected() == 0 {
+            tracing::warn!(
+                instance_id = %row.id, %host_id, ?plan_id, ?current, ?target,
+                "plan change: host has no room to resize this computer; keeping its size"
+            );
+            return Ok(InstanceView::from(row));
+        }
+        let backend = self.backend_for_row(&row).await?;
+        if let Err(error) = backend
+            .resize(&row.incus_name, target, &self.defaults.storage_pool)
+            .await
+        {
+            // Undo the reservation; the computer is unchanged.
+            self.release_allocation(&host_id, delta).await;
+            return Err(error.to_api_error());
+        }
+        sqlx::query(
+            r#"
+            UPDATE provisioned_instances
+            SET cpu_cores = $2, memory_mb = $3, disk_gb = $4,
+                plan_id = COALESCE($5, plan_id), updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+            "#,
+        )
+        .bind(&row.id)
+        .bind(target.cpu_cores as i32)
+        .bind(target.memory_mb)
+        .bind(target.disk_gb)
+        .bind(&plan_id)
+        .execute(&self.db)
+        .await?;
+        tracing::info!(
+            instance_id = %row.id, ?plan_id, ?current, ?target,
+            "plan change: cloud computer resized"
+        );
+        self.get_for_user(&row.id, &row.user_id).await
+    }
+
     async fn live_row_for(
         &self,
         user_id: &str,
@@ -2058,10 +2219,26 @@ impl ProvisioningService {
         &self,
         user_id: &str,
         subscription_id: &str,
+        reason: SuspendReason,
     ) -> Result<Option<InstanceView>, ApiError> {
         let Some(row) = self.live_row_for(user_id, Some(subscription_id), TIER_PAID).await? else {
             return Ok(None);
         };
+        let cancelled = reason == SuspendReason::Cancelled;
+        // Suspended for an unpaid renewal, now finally cancelled: start the
+        // deletion clock; the snapshot is taken below.
+        if row.status == "suspended" && cancelled && row.cancelled_at.is_none() {
+            let now = Utc::now();
+            sqlx::query(
+                "UPDATE provisioned_instances SET cancelled_at = $2, delete_after = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND status = 'suspended'",
+            )
+            .bind(&row.id)
+            .bind(now)
+            .bind(now + Duration::days(CANCEL_DELETE_AFTER_DAYS))
+            .execute(&self.db)
+            .await?;
+            tracing::info!(id = %row.id, "unpaid cloud computer cancelled; deletion scheduled");
+        }
         if row.status != "suspended" {
             let backend = self.backend_for_row(&row).await?;
             match backend.status(&row.incus_name).await {
@@ -2080,24 +2257,27 @@ impl ProvisioningService {
                 },
             }
             let now = Utc::now();
+            // Unpaid (Eoj 2026-10-01): stopped and kept, no deletion date and
+            // no snapshot; paying resumes it, a final cancel schedules both.
             sqlx::query(
                 r#"
                 UPDATE provisioned_instances
                 SET status = 'suspended', cancelled_at = $2, delete_after = $3,
-                    last_stopped_at = $2, updated_at = CURRENT_TIMESTAMP
+                    last_stopped_at = $4, updated_at = CURRENT_TIMESTAMP
                 WHERE id = $1 AND status IN ('provisioning', 'running', 'stopped')
                 "#,
             )
             .bind(&row.id)
+            .bind(cancelled.then_some(now))
+            .bind(cancelled.then(|| now + Duration::days(CANCEL_DELETE_AFTER_DAYS)))
             .bind(now)
-            .bind(now + Duration::days(CANCEL_DELETE_AFTER_DAYS))
             .execute(&self.db)
             .await?;
-            record_instance_stopped(&self.db, &row.id, "subscription_cancelled").await?;
-            tracing::info!(id = %row.id, "cloud computer suspended on cancel");
+            record_instance_stopped(&self.db, &row.id, reason.stop_reason()).await?;
+            tracing::info!(id = %row.id, reason = reason.stop_reason(), "cloud computer suspended");
         }
         let row = self.fetch_row(&row.id, None).await?;
-        if row.snapshot_image.is_none() {
+        if cancelled && row.snapshot_image.is_none() {
             if let Err(error) = self.take_cancel_snapshot(&row).await {
                 // Retried by the lifecycle sweep; deletion waits for it.
                 tracing::warn!(id = %row.id, %error, "cancel snapshot failed; lifecycle sweep will retry");
@@ -2152,7 +2332,8 @@ impl ProvisioningService {
     pub async fn sweep_lifecycle(&self, now: DateTime<Utc>) -> Result<(), ApiError> {
         let pending_snapshots = sqlx::query_as::<_, InstanceRow>(&format!(
             "SELECT {INSTANCE_COLUMNS} FROM provisioned_instances \
-             WHERE tier = 'paid' AND status = 'suspended' AND snapshot_image IS NULL"
+             WHERE tier = 'paid' AND status = 'suspended' AND snapshot_image IS NULL \
+               AND cancelled_at IS NOT NULL"
         ))
         .fetch_all(&self.db)
         .await?;
@@ -2501,20 +2682,23 @@ impl ProvisioningService {
         })
     }
 
-    /// Fire-and-forget cancel (plan B2) for the Stripe webhook.
+    /// Fire-and-forget suspend (plan B2 cancel, or an unpaid renewal) for
+    /// the Stripe webhook.
     pub fn spawn_suspend_for_subscription(
         self: &Arc<Self>,
         user_id: &str,
         subscription_id: &str,
+        reason: SuspendReason,
     ) -> tokio::task::JoinHandle<()> {
         let service = Arc::clone(self);
         let user_id = user_id.to_string();
         let subscription_id = subscription_id.to_string();
         tokio::spawn(async move {
-            match service.suspend_for_subscription(&user_id, &subscription_id).await {
+            match service.suspend_for_subscription(&user_id, &subscription_id, reason).await {
                 Ok(Some(view)) => tracing::info!(
                     %user_id, %subscription_id, instance_id = %view.id, status = %view.status,
-                    "cloud computer suspended for cancelled subscription"
+                    reason = reason.stop_reason(),
+                    "cloud computer suspended for subscription"
                 ),
                 Ok(None) => {}
                 Err(error) => tracing::error!(
@@ -3354,6 +3538,19 @@ pub(crate) mod pg_tests {
                 .pop_front()
                 .unwrap_or(Ok(BackendStatus::Running))
         }
+        async fn resize(
+            &self,
+            name: &str,
+            size: ComputerSize,
+            _storage_pool: &str,
+        ) -> Result<(), ProvisionError> {
+            self.calls.lock().unwrap().push(format!(
+                "resize:{name}:{}c/{}m/{}g",
+                size.cpu_cores, size.memory_mb, size.disk_gb
+            ));
+            Ok(())
+        }
+
         async fn delete(&self, name: &str) -> Result<(), ProvisionError> {
             self.calls.lock().unwrap().push(format!("delete:{name}"));
             Ok(())
@@ -3978,6 +4175,79 @@ pub(crate) mod pg_tests {
     }
 
     #[tokio::test]
+    async fn a_plan_change_resizes_the_live_computer() {
+        let pool = migrated_pool().await;
+        insert_host(&pool, "host_a", 16, 32768, 200).await;
+        let set_plan = |plan: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query("UPDATE billing_subscriptions SET plan_id = $1 WHERE stripe_subscription_id = 'sub_1'")
+                    .bind(plan)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+        };
+        let allocated = || {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_as::<_, (i32, i64, i64)>(
+                    "SELECT cpu_cores_allocated, memory_mb_allocated, disk_gb_allocated FROM provisioned_hosts WHERE id = 'host_a'",
+                )
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        set_plan("plus").await;
+        let backend = Arc::new(MockBackend::default());
+        let service = service(pool.clone(), backend.clone());
+        let first = service.create("user_1", Some("sub_1")).await.unwrap();
+        assert_eq!((first.cpu_cores, first.memory_mb, first.disk_gb), (2, 4096, 20));
+        // A computer still being created is left alone; by the time anyone
+        // changes plans it is running.
+        set_plan("super").await;
+        let still_creating = service.create("user_1", Some("sub_1")).await.unwrap();
+        assert_eq!(still_creating.cpu_cores, 2);
+        sqlx::query("UPDATE provisioned_instances SET status = 'running' WHERE id = $1")
+            .bind(&first.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Upgrade in the billing portal: the next delivery resizes in place.
+        set_plan("super").await;
+        let upgraded = service.create("user_1", Some("sub_1")).await.unwrap();
+        assert_eq!(upgraded.id, first.id);
+        assert_eq!((upgraded.cpu_cores, upgraded.memory_mb, upgraded.disk_gb), (4, 8192, 40));
+        assert_eq!(upgraded.plan_id.as_deref(), Some("super"));
+        assert_eq!(allocated().await, (4, 8192, 40));
+        assert!(backend
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|call| call.starts_with("resize:") && call.ends_with(":4c/8192m/40g")));
+        assert_eq!(backend.created.lock().unwrap().len(), 1, "resized, not re-created");
+
+        // Downgrade: CPU and memory shrink, the disk keeps its size.
+        set_plan("plus").await;
+        let downgraded = service.create("user_1", Some("sub_1")).await.unwrap();
+        assert_eq!((downgraded.cpu_cores, downgraded.memory_mb, downgraded.disk_gb), (2, 4096, 40));
+        assert_eq!(allocated().await, (2, 4096, 40));
+
+        // No room on the host: the computer keeps its size.
+        sqlx::query("UPDATE provisioned_hosts SET cpu_cores_total = 3 WHERE id = 'host_a'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        set_plan("ultra").await;
+        let kept = service.create("user_1", Some("sub_1")).await.unwrap();
+        assert_eq!((kept.cpu_cores, kept.memory_mb, kept.disk_gb), (2, 4096, 40));
+        assert_eq!(allocated().await, (2, 4096, 40));
+    }
+
+    #[tokio::test]
     async fn create_retires_a_failed_attempt_and_reuses_the_name() {
         let pool = migrated_pool().await;
         insert_host(&pool, "host_a", 8, 8192, 100).await;
@@ -4041,6 +4311,52 @@ pub(crate) mod pg_tests {
     }
 
     #[tokio::test]
+    async fn unpaid_stops_and_keeps_the_computer_until_paid_or_cancelled() {
+        let pool = migrated_pool().await;
+        insert_host(&pool, "host_a", 8, 8192, 100).await;
+        let backend = Arc::new(MockBackend::default());
+        let service = service(pool.clone(), backend.clone());
+        let view = service.create("user_1", Some("sub_1")).await.unwrap();
+        service.reconcile_all().await.unwrap(); // running
+        let name = view.incus_name.clone();
+        let alias = snapshot_alias_for(&name);
+
+        // Unpaid: stopped, kept, no deletion date, no snapshot.
+        let suspended = service
+            .suspend_for_subscription("user_1", "sub_1", SuspendReason::Unpaid)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(suspended.status, "suspended");
+        assert!(suspended.delete_after.is_none());
+        {
+            let calls = backend.calls.lock().unwrap();
+            assert!(calls.contains(&format!("stop:{name}")));
+            assert!(!calls.iter().any(|call| call.starts_with("snapshot:")), "{calls:?}");
+        }
+        // The lifecycle sweep neither snapshots nor deletes it, even much later.
+        service.sweep_lifecycle(Utc::now() + Duration::days(90)).await.unwrap();
+        assert_eq!(status_of(&pool, &view.id).await, "suspended");
+        assert!(!backend.calls.lock().unwrap().iter().any(|call| call.starts_with("snapshot:") || call.starts_with("delete:")));
+
+        // Paying again resumes it (create finds the suspended row).
+        let resumed = service.create("user_1", Some("sub_1")).await.unwrap();
+        assert_eq!(resumed.id, view.id);
+        assert_ne!(status_of(&pool, &view.id).await, "suspended");
+
+        // Unpaid again, then the final cancel: deletion scheduled + snapshot.
+        service.suspend_for_subscription("user_1", "sub_1", SuspendReason::Unpaid).await.unwrap();
+        let cancelled = service
+            .suspend_for_subscription("user_1", "sub_1", SuspendReason::Cancelled)
+            .await
+            .unwrap()
+            .unwrap();
+        let days = (cancelled.delete_after.expect("deletion scheduled on cancel") - Utc::now()).num_days();
+        assert!((29..=30).contains(&days), "{days}");
+        assert!(backend.calls.lock().unwrap().contains(&format!("snapshot:{name}->{alias}")));
+    }
+
+    #[tokio::test]
     async fn cancel_stops_snapshots_deletes_after_30_days_and_expires_snapshot_after_6_months() {
         let pool = migrated_pool().await;
         insert_host(&pool, "host_a", 8, 8192, 100).await;
@@ -4049,8 +4365,8 @@ pub(crate) mod pg_tests {
         let view = service.create("user_1", Some("sub_1")).await.unwrap();
         service.reconcile_all().await.unwrap(); // running
 
-        assert!(service.suspend_for_subscription("user_1", "sub_none").await.unwrap().is_none());
-        let suspended = service.suspend_for_subscription("user_1", "sub_1").await.unwrap().unwrap();
+        assert!(service.suspend_for_subscription("user_1", "sub_none", SuspendReason::Cancelled).await.unwrap().is_none());
+        let suspended = service.suspend_for_subscription("user_1", "sub_1", SuspendReason::Cancelled).await.unwrap().unwrap();
         assert_eq!(suspended.status, "suspended");
         let name = view.incus_name.clone();
         let alias = snapshot_alias_for(&name);
@@ -4076,7 +4392,7 @@ pub(crate) mod pg_tests {
 
         // Redelivered cancel: no second stop or snapshot.
         let calls_before = backend.calls.lock().unwrap().len();
-        service.suspend_for_subscription("user_1", "sub_1").await.unwrap();
+        service.suspend_for_subscription("user_1", "sub_1", SuspendReason::Cancelled).await.unwrap();
         assert_eq!(backend.calls.lock().unwrap().len(), calls_before);
 
         // Day 29: nothing. Day 31: instance deleted, snapshot kept.
@@ -4116,7 +4432,7 @@ pub(crate) mod pg_tests {
 
         // Within 30 days: the same computer comes back on the new subscription.
         let view = service.create("user_2", Some("sub_9")).await.unwrap();
-        service.suspend_for_subscription("user_2", "sub_9").await.unwrap();
+        service.suspend_for_subscription("user_2", "sub_9", SuspendReason::Cancelled).await.unwrap();
         let resumed = service.create("user_2", Some("sub_s")).await.unwrap();
         assert_eq!(resumed.id, view.id);
         assert_eq!(resumed.subscription_id.as_deref(), Some("sub_s"));
@@ -4126,7 +4442,7 @@ pub(crate) mod pg_tests {
         assert_eq!(backend.created.lock().unwrap().len(), 1, "no new container");
 
         // After deletion: a new container from the snapshot image, on its host.
-        service.suspend_for_subscription("user_2", "sub_s").await.unwrap();
+        service.suspend_for_subscription("user_2", "sub_s", SuspendReason::Cancelled).await.unwrap();
         service.sweep_lifecycle(Utc::now() + Duration::days(31)).await.unwrap();
         assert_eq!(status_of(&pool, &view.id).await, "deleted");
         let restored = service.create("user_2", Some("sub_9")).await.unwrap();

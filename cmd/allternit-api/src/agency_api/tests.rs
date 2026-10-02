@@ -11,27 +11,27 @@ fn user(id: &str) -> AuthUser {
     AuthUser { user_id: id.into(), email: None, name: None, avatar_url: None, tenant_id: None, organization_id: None, organization_role: None, organization_slug: None }
 }
 
-struct T {
+pub(crate) struct T {
     _dir: tempfile::TempDir,
-    st: Arc<AppState>,
-    app: Router,
+    pub(crate) st: Arc<AppState>,
+    pub(crate) app: Router,
 }
 
-async fn setup() -> T {
+pub(crate) async fn setup() -> T {
     let dir = tempfile::tempdir().unwrap();
     let st = app_state(dir.path()).await;
     let app = agency_router().merge(jwks_public_router()).with_state(st.clone());
     T { _dir: dir, st, app }
 }
 
-async fn call(app: &Router, req: Request<Body>) -> (StatusCode, HeaderMap, String) {
+pub(crate) async fn call(app: &Router, req: Request<Body>) -> (StatusCode, HeaderMap, String) {
     let resp = app.clone().oneshot(req).await.unwrap();
     let (parts, body) = resp.into_parts();
     let b = axum::body::to_bytes(body, 1 << 22).await.unwrap();
     (parts.status, parts.headers, String::from_utf8_lossy(&b).to_string())
 }
 
-fn post(uri: &str, u: &str, key: Option<&str>, body: Value) -> Request<Body> {
+pub(crate) fn post(uri: &str, u: &str, key: Option<&str>, body: Value) -> Request<Body> {
     let mut r = Request::builder().method("POST").uri(uri).header("content-type", "application/json").extension(user(u));
     if let Some(k) = key {
         r = r.header("idempotency-key", k);
@@ -39,7 +39,7 @@ fn post(uri: &str, u: &str, key: Option<&str>, body: Value) -> Request<Body> {
     r.body(Body::from(body.to_string())).unwrap()
 }
 
-fn get_req(uri: &str, u: &str) -> Request<Body> {
+pub(crate) fn get_req(uri: &str, u: &str) -> Request<Body> {
     Request::builder().uri(uri).extension(user(u)).body(Body::empty()).unwrap()
 }
 
@@ -57,9 +57,25 @@ const VENDOR_WORDS: &[&str] = &[
 
 fn assert_no_vendor(body: &str) {
     let l = body.to_lowercase();
-    for w in VENDOR_WORDS {
-        assert!(!l.contains(w), "response leaks vendor/model name `{w}`: {body}");
+    // Generated ids (`run_…`, `att_…`, uuids) are random text and can spell a
+    // vendor word by chance ("gpt" turned up once), so they are not scanned.
+    let looks_generated = |t: &str| {
+        let tail = t.rsplit('_').next().unwrap_or(t);
+        (t.contains('_') && tail.len() >= 10 && tail.chars().all(|c| c.is_ascii_alphanumeric()))
+            || (t.len() >= 32 && t.chars().all(|c| c.is_ascii_hexdigit() || c == '-'))
+    };
+    for token in l.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-')).filter(|t| !t.is_empty() && !looks_generated(t)) {
+        for w in VENDOR_WORDS {
+            assert!(!token.contains(w), "response leaks vendor/model name `{w}` in `{token}`: {body}");
+        }
     }
+}
+
+#[test]
+fn vendor_scan_ignores_generated_ids_but_not_names() {
+    assert_no_vendor(r#"{"id":"run_9xGptQz81LmN","receipt":"rcpt_abcgptdef123"}"#);
+    assert!(std::panic::catch_unwind(|| assert_no_vendor(r#"{"model":"gpt-4o"}"#)).is_err());
+    assert!(std::panic::catch_unwind(|| assert_no_vendor(r#"{"note":"via claude"}"#)).is_err());
 }
 
 #[tokio::test]
@@ -411,7 +427,7 @@ async fn agency_executor_off_by_default_parks_runs_with_a_reason() {
 }
 
 /// The scripted e2e runs share process env (runs dir, local-repo allowlist).
-static E2E_ENV: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+pub(crate) static E2E_ENV: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Offline e2e of the bridge: BUG_FIX on a disposable node repo, scripted
 /// cognition (attempt 1 imperfect, attempt 2 correct), strict fence.
@@ -549,7 +565,7 @@ fn limits(pairs: &[(&str, &str)]) -> guard::Limits {
 /// process-wide and many tests run the executor for the same test org in
 /// parallel, so default concurrency caps would refuse admission depending on
 /// test timing. Tests about those caps use [`limits`] with explicit values.
-fn run_limits(pairs: &[(&str, &str)]) -> guard::Limits {
+pub(crate) fn run_limits(pairs: &[(&str, &str)]) -> guard::Limits {
     let mut v: Vec<(&str, &str)> = pairs.to_vec();
     for k in [guard::MAX_CONC_ENV, guard::ORG_MAX_CONC_ENV] {
         if !v.iter().any(|(key, _)| *key == k) {
@@ -618,7 +634,7 @@ async fn agency_guard_admission_refuses_unlisted_org_and_full_slots() {
     let _ = executor::active_count();
 }
 
-async fn wait_settled(s: &AgencyStore, id: &str) -> store::RunRecord {
+pub(crate) async fn wait_settled(s: &AgencyStore, id: &str) -> store::RunRecord {
     for _ in 0..200 {
         let r = s.load_run(id).await.unwrap().unwrap();
         if r.run["status"] != "waiting" && r.run["status"] != "running" { return r; }
@@ -908,6 +924,70 @@ async fn agency_safety_unknown_effect_approval_resolves_journal() {
     assert_eq!(st, StatusCode::OK, "{b}");
     assert!(matches!(safety::prepare(&t.st.db, &key, &id, "N30", "tool.push", "h", e2, false).unwrap(), safety::Prepared::Committed(_)),
         "an effect the approver says happened is never re-applied");
+}
+
+/// WP-B2: generated reproduction scripts (one reproduces, one is broken and
+/// dropped) rank the candidates after the suite: a suite-passing special-case
+/// fix loses to the real fixes, and the scripted judge breaks the remaining
+/// tie (overriding the smallest-diff/first-generated default). The script
+/// never enters the patch; evidence is labelled model-generated.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn agency_executor_b2_repro_evidence_and_judge_pick_the_winner() {
+    let _env = E2E_ENV.lock().await;
+    if std::process::Command::new("npm").arg("--version").output().is_err() {
+        eprintln!("npm not available; skipping");
+        return;
+    }
+    let repo = tempfile::tempdir().unwrap();
+    let runs = tempfile::tempdir().unwrap();
+    let w = |p: &str, c: &str| { let f = repo.path().join(p); std::fs::create_dir_all(f.parent().unwrap()).unwrap(); std::fs::write(f, c).unwrap(); };
+    w("package.json", r#"{"name":"fx","private":true,"scripts":{"test":"node test.js"}}"#);
+    w("math.js", "exports.add = (a, b) => a - b;\n");
+    w("test.js", "const { add } = require('./math');\nif (add(2, 3) !== 5 || add(-2, 3) !== 1) { console.error('FAIL'); process.exit(1); }\n");
+    let edit = |r: &str| json!({ "edits": [{ "path": "math.js", "search": "exports.add = (a, b) => a - b;\n", "replace": r }] });
+    w(".allternit/scripted-patches.json", &json!([[
+        edit("exports.add = (a, b) => a + b;\n"),
+        edit("exports.add = (a, b) => b + a;\n"),
+        edit("exports.add = (a, b) => a === 10 ? 0 : a + b;\n")
+    ]]).to_string());
+    w(".allternit/scripted-repros.json", &json!([
+        "const { add } = require(process.cwd() + '/math.js');\nif (add(10, 20) !== 30) { console.error('add(10, 20) returned ' + add(10, 20)); process.exit(1); }\n",
+        "this is not js(\n"
+    ]).to_string());
+    w(".allternit/scripted-judge.json", "[2]");
+    let git = |args: &[&str]| assert!(std::process::Command::new("git").args(args).current_dir(repo.path())
+        .env("GIT_CONFIG_GLOBAL", "/dev/null").status().unwrap().success());
+    git(&["init", "-q", "-b", "main"]);
+    git(&["add", "."]);
+    git(&["-c", "user.name=f", "-c", "user.email=f@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "seeded bug"]);
+    std::env::set_var("ALLTERNIT_AGENCY_COGNITION", "scripted");
+    std::env::set_var("ALLTERNIT_AGENCY_RUNS_DIR", runs.path());
+    std::env::set_var("ALLTERNIT_AGENCY_LOCAL_REPOS", repo.path());
+
+    let t = setup().await;
+    let body = json!({ "goal": "Fix add", "workspace": { "repo": repo.path().display().to_string(), "ref": "main" },
+                       "budget": { "max_seconds": 120, "max_cost_usd": 1 } });
+    let (s, _, b) = call(&t.app, post("/v1/agency", "u1", Some("wpb2-repro-00001"), body)).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{b}");
+    let id = serde_json::from_str::<Value>(&b).unwrap()["id"].as_str().unwrap().to_string();
+    executor::start(t.st.clone(), id.clone());
+    let mut run = Value::Null;
+    for _ in 0..600 {
+        let (_, _, b) = call(&t.app, get_req(&format!("/v1/runs/{id}"), "u1")).await;
+        run = serde_json::from_str(&b).unwrap();
+        if run["terminal"] == true { break; }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(run["status"], "completed", "{run}");
+    assert_eq!(run["completion"]["status"], "verified");
+    let (_, _, b) = call(&t.app, get_req(&format!("/v1/runs/{id}/artifacts"), "u1")).await;
+    let arts: Value = serde_json::from_str(&b).unwrap();
+    let diff = arts["data"][0]["content"].as_str().unwrap();
+    assert!(diff.contains("+exports.add = (a, b) => b + a;"), "judge picked the second tied candidate: {diff}");
+    assert!(!diff.contains("repro_") && !diff.contains("test.js"), "generated scripts and gating tests stay out of the patch: {diff}");
+    let (_, _, b) = call(&t.app, get_req(&format!("/v1/runs/{id}/receipts"), "u1")).await;
+    assert!(b.contains("reproduction:human-authored:receipt:") && b.contains("reproduction:model-generated:review-required:receipt:repro:after:1/1"), "{b}");
+    assert_no_vendor(&b);
 }
 
 /// WP-B1: one attempt with three scripted candidates (a wrong fix, a correct

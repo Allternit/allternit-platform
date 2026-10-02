@@ -15,6 +15,7 @@
 pub mod bugfix; // WP-B1
 pub mod catalog;
 pub mod compiler;
+pub mod effects; // WP-C3a/C3b effect connectors
 pub mod executor;
 pub mod guard;
 pub mod safety;
@@ -22,9 +23,15 @@ pub mod store;
 /// WP-X1: task types beyond BUG_FIX (graphs, completion contracts, eval sets).
 pub mod task_types;
 pub mod template_exec;
+// ── WP-C3a effect connectors (thread:, template:) ──
+#[path = "effects/thread.rs"]
+pub mod effect_thread;
+#[path = "effects/template.rs"]
+pub mod effect_template;
+// ── end WP-C3a ──
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use crate::auth::AuthUser;
 use crate::AppState;
@@ -658,6 +665,12 @@ async fn resolve_attention(
             to = Some(("waiting", "budget cap lifted; queued for execution"));
             requeue = true;
         }
+    }
+    // WP-X2: a task WAIT gate (acceptance / explicit trigger). Either answer
+    // re-queues the run; the executor opens or closes the gate from it.
+    if reason == executor::generic::TASK_WAIT_REASON && matches!(kind.as_str(), "approval" | "rejection") {
+        to = Some(("waiting", "answered; queued for execution (committed steps replay from the journal)"));
+        requeue = true;
     }
     if matches!(reason.as_str(), safety::RUN_CAP_REASON | safety::STUCK_REASON | safety::UNKNOWN_EFFECT_REASON) {
         if kind == "rejection" {

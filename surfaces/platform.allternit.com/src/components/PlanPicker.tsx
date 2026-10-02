@@ -102,21 +102,31 @@ function planFromDisplayName(name?: string | null): PlanId {
 export function PlanPicker({
   currentPlanName,
   title = "Manage Subscription",
+  subscribedPlanId,
   onSubscribe,
   onSelect,
+  onSwitch,
   livePlans,
   busyPlanId,
 }: {
   currentPlanName?: string | null;
+  /** The account's paid plan, when it has one: its card says Current and
+   * the other paid cards switch in the billing portal instead of starting a
+   * second subscription. */
+  subscribedPlanId?: PlanId | null;
   title?: string;
   onSubscribe?: (planId: PlanId) => void;
   onSelect?: (planId: PlanId) => void;
+  onSwitch?: () => void;
   livePlans?: LiveBillingPlan[];
   busyPlanId?: PlanId | null;
 }) {
   const { resolved } = useTheme();
   const isDark = resolved === "dark";
-  const inferred = useMemo(() => planFromDisplayName(currentPlanName), [currentPlanName]);
+  const inferred = useMemo(
+    () => subscribedPlanId ?? planFromDisplayName(currentPlanName),
+    [subscribedPlanId, currentPlanName],
+  );
   const [selected, setSelected] = useState<PlanId>(inferred);
 
   useEffect(() => {
@@ -134,8 +144,8 @@ export function PlanPicker({
             {title}
           </h2>
           <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-[var(--text-secondary)]">
-            Paid tiers include monthly credits for Allternit Cloud, local + cloud models, and
-            built-in tool use. Beta.
+            Paid plans include monthly Allternit Cloud credits, local + cloud models, built-in
+            tool use and an always-on cloud computer.
           </p>
         </div>
       </div>
@@ -209,6 +219,25 @@ export function PlanPicker({
                   >
                     FREE TIER
                   </span>
+                ) : plan.id === subscribedPlanId ? (
+                  <span
+                    className="mt-5 self-start rounded-md border px-4 py-2 text-[11px] font-semibold tracking-[0.14em]"
+                    style={{ borderColor: `${text}60` }}
+                  >
+                    CURRENT PLAN
+                  </span>
+                ) : subscribedPlanId && onSwitch ? (
+                  <button
+                    type="button"
+                    onClick={onSwitch}
+                    className="mt-5 self-start rounded-md px-4 py-2 text-[11px] font-semibold tracking-[0.14em] transition-opacity hover:opacity-90"
+                    style={{
+                      backgroundColor: buttonBg,
+                      color: buttonText,
+                    }}
+                  >
+                    SWITCH IN MANAGE BILLING
+                  </button>
                 ) : (
                   <button
                     type="button"
@@ -249,10 +278,6 @@ export function PlanPicker({
         })}
       </div>
 
-      <p className="text-[11px] text-[var(--text-tertiary)]">
-        Beta picker only. Credits are not billed yet. Current selection:{" "}
-        {PLANS.find((p) => p.id === selected)?.label}.
-      </p>
     </section>
   );
 }
