@@ -1,0 +1,23 @@
+<!doctype html>
+<!-- fixture: streaming — assistant turn in flight, Send swapped for Stop -->
+<html lang="en">
+  <head><meta charset="utf-8"><title>gemini-web fixture — streaming</title></head>
+  <body data-state="streaming">
+    <header>
+      <button type="button" class="model-picker">Gemini 3</button>
+      <button type="button" class="account-avatar" aria-label="Google Account: Eoj (eoj@example.com)"><img alt="" /></button>
+    </header>
+    <main>
+      <div id="chat-history">
+        <div class="user-prompt">Summarize the migration plan.</div>
+        <div class="response-container loading">
+          <div class="model-response-text streaming"><p>The migration happens in three stages…</p></div>
+        </div>
+      </div>
+      <rich-textarea>
+        <div class="ql-editor textarea" role="textbox" aria-label="Enter a prompt here" contenteditable="true"></div>
+      </rich-textarea>
+      <button class="stop-button" type="button" aria-label="Stop response">■</button>
+    </main>
+  </body>
+</html>

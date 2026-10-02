@@ -1,0 +1,50 @@
+<!doctype html>
+<!-- fixture: complete — full assistant turn, no stop/streaming -->
+<html lang="en">
+  <head><meta charset="utf-8"><title>copilot-web fixture — complete</title></head>
+  <body data-state="complete">
+    <header>
+      <button type="button" class="mode-picker">Auto</button>
+      <img id="mectrl_headerPicture" alt="Eoj" aria-label="Account manager for Eoj" />
+    </header>
+    <main>
+      <cib-serp>
+        <div id="chat-turns">
+          <div class="turn turn-user"><div class="msg-content">Summarize the migration plan.</div></div>
+          <div class="turn turn-bot">
+            <div class="msg-content">
+              <div class="ac-textBlock">
+                <h3>Migration plan</h3>
+                <p>The migration happens in three stages, each independently reversible.</p>
+                <pre><code class="language-ts">const stages: string[] = ["freeze", "move", "cutover"];</code></pre>
+                <ul>
+                  <li>freeze writes</li>
+                  <li>move state</li>
+                  <li>cut over reads</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+        <cib-text-input>
+          <textarea data-testid="composer-input" aria-label="Ask me anything…"></textarea>
+          <button class="send-button" type="submit" aria-label="Send">➤</button>
+        </cib-text-input>
+      </cib-serp>
+    </main>
+    <script>
+      document.querySelector(".send-button").addEventListener("click", () => {
+        const input = document.querySelector("textarea");
+        const prompt = input.value;
+        document.body.dataset.submitted = "true";
+        // Like Copilot: Send clears the composer and shows the user turn.
+        input.value = "";
+        const turn = document.createElement("div");
+        turn.className = "turn turn-user";
+        turn.innerHTML = "<div class=\"msg-content\"></div>";
+        turn.firstChild.textContent = prompt;
+        document.getElementById("chat-turns").appendChild(turn);
+      });
+    </script>
+  </body>
+</html>

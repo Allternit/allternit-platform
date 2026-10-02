@@ -119,6 +119,8 @@ describe("subscriptions hub", () => {
     expect(byId[provider]).toMatchObject({ supported: true, login_supported: true });
     expect(byId.claude).toMatchObject({ name: "Claude", supported: false, login_supported: false });
     expect(byId.kimi).toMatchObject({ name: "Kimi", supported: false });
+    expect(byId.google).toMatchObject({ name: "Gemini", supported: false });
+    expect(byId.microsoft).toMatchObject({ name: "Copilot", supported: false });
   });
 
   it("add refuses a provider no adapter is loaded for; nothing is created", async () => {

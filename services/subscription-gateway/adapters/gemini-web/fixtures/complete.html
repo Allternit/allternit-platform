@@ -1,0 +1,45 @@
+<!doctype html>
+<!-- fixture: complete — full assistant turn, no stop/streaming -->
+<html lang="en">
+  <head><meta charset="utf-8"><title>gemini-web fixture — complete</title></head>
+  <body data-state="complete">
+    <header>
+      <button type="button" class="model-picker">Gemini 3</button>
+      <button type="button" class="account-avatar" aria-label="Google Account: Eoj (eoj@example.com)"><img alt="" /></button>
+    </header>
+    <main>
+      <div id="chat-history">
+        <div class="user-prompt">Summarize the migration plan.</div>
+        <div class="response-container">
+          <div class="model-response-text">
+            <h3>Migration plan</h3>
+            <p>The migration happens in three stages, each independently reversible.</p>
+            <pre><code class="language-ts">const stages: string[] = ["freeze", "move", "cutover"];</code></pre>
+            <ul>
+              <li>freeze writes</li>
+              <li>move state</li>
+              <li>cut over reads</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <rich-textarea>
+        <div class="ql-editor textarea" role="textbox" aria-label="Enter a prompt here" contenteditable="true"></div>
+      </rich-textarea>
+      <button class="send-button" type="button" aria-label="Send message">➤</button>
+    </main>
+    <script>
+      document.querySelector(".send-button").addEventListener("click", () => {
+        const input = document.querySelector(".ql-editor");
+        const prompt = input.textContent;
+        document.body.dataset.submitted = "true";
+        // Like Gemini: Send clears the composer and shows the user prompt bubble.
+        input.textContent = "";
+        const turn = document.createElement("div");
+        turn.className = "user-prompt";
+        turn.textContent = prompt;
+        document.getElementById("chat-history").appendChild(turn);
+      });
+    </script>
+  </body>
+</html>

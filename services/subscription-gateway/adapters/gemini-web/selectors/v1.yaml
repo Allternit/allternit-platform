@@ -1,0 +1,105 @@
+# gemini-web selectors v1 — §A3.2 named keys, ordered fallback list
+# (role+name and element names first, CSS last).
+# *** v1-unverified: written from public knowledge of the gemini.google.com UI
+# *** (an Angular app: custom <rich-textarea> element wrapping a Quill editor,
+# *** material buttons with aria-labels, /app/<id> conversation URLs), NOT
+# *** validated against a logged-in session. The fixtures are shaped to these
+# *** selectors, so the suite proves internal consistency, not live fidelity.
+# Every strategy below is INFERRED — nothing here is verified live.
+
+composer:
+  critical: true
+  strategies:
+    # INFERRED: the composer is a custom <rich-textarea> element wrapping a
+    # Quill editor; the editable surface is the .ql-editor contenteditable.
+    - { css: "rich-textarea .ql-editor[contenteditable=true]" }
+    - { role: textbox, name: /enter a prompt|ask gemini|prompt/i }
+    - { css: "div.textarea[contenteditable=true]" }
+    - { css: "div[contenteditable=true][role=textbox]" }
+send_button:
+  critical: true
+  strategies:
+    # INFERRED: the send control is a material button whose accessible name is
+    # "Send message"; it swaps to "Stop response" while generating.
+    - { role: button, name: /^send message$/i }
+    - { css: "button[aria-label='Send message']" }
+    - { css: "button.send-button" }
+    # Live: the control may render only once the composer has text; submit
+    # resolves it after fillComposer.
+    - { css: "button[aria-label*='Send']" }
+stop_button:
+  critical: false
+  strategies:
+    - { role: button, name: /^stop( response)?$/i }
+    - { css: "button[aria-label='Stop response']" }
+    - { css: "button.stop-button" }
+response:
+  critical: true # extraction target; idle pages legitimately lack it
+  strategies:
+    # INFERRED: assistant turns render inside .response-container, the reply
+    # markdown in .model-response-text / .markdown.
+    - { css: "div.model-response-text" }
+    - { css: ".response-container .markdown" }
+    - { css: ".response-container .model-response" }
+user_turn:
+  critical: false
+  strategies:
+    # INFERRED: the user's prompt bubble is .user-prompt.
+    - { css: "div.user-prompt" }
+    - { css: "[data-content-kind='user'] .msg-content" }
+streaming:
+  critical: false
+  strategies:
+    # INFERRED: the in-flight response carries a loading/shimmer state.
+    - { css: ".response-container.loading" }
+    - { css: ".model-response-text.streaming" }
+    - { css: "[aria-label='Loading']" }
+logged_in_probe:
+  critical: true
+  strategies:
+    # INFERRED: a signed-in Gemini header shows the Google account avatar
+    # button (accessible name "Google Account: …"); logged out shows "Sign in".
+    - { css: "button[aria-label*='Google Account']" }
+    - { css: "button.account-avatar" }
+    - { css: "header .account-avatar img" }
+logged_out_probe:
+  critical: false
+  strategies:
+    # INFERRED: only a logged-out header shows the Sign in button (lets the
+    # probe answer without waiting out its settle budget).
+    - { role: button, name: /^sign in( with google)?$/i }
+    - { css: "button.sign-in-button" }
+model_picker:
+  critical: false
+  strategies:
+    - { role: button, name: /gemini|model/i }
+    - { testid: model-picker }
+    - { css: "button.model-picker" }
+banner:
+  critical: false
+  strategies:
+    - { role: alert }
+    - { css: ".usage-limit-banner" }
+    - { css: ".limit-banner" }
+challenge:
+  critical: false
+  strategies:
+    # INFERRED: Google fronts bot checks (Cloudflare-style interstitials on
+    # the app, reCAPTCHA on accounts.google.com). Same cross-origin/hidden-
+    # iframe traps as the other vendors: the page's own heading text matches.
+    - { css: "input[name='cf-turnstile-response']" }
+    - { css: "[id^='cf-chl-widget-']" }
+    - { text: /performing security verification|verifying you are human|checking your browser|checking if the site connection is secure/i }
+    - { css: "iframe[src*='challenges.cloudflare.com']" }
+    - { css: "iframe[src*='captcha']" }
+    - { css: "#recaptcha, .g-recaptcha" }
+    - { text: /verify you are human|security check|unusual traffic/i }
+account_identity:
+  critical: false
+  strategies:
+    # INFERRED: the header avatar button's accessible name carries the
+    # signed-in Google account ("Google Account: Name (email)"); readAccount
+    # parses it, never a token.
+    - { css: "button[aria-label*='Google Account']" }
+    - { css: "button.account-avatar" }
+    - { css: "header .account-avatar img" }

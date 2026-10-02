@@ -1,0 +1,51 @@
+# copilot-web — Copilot (Microsoft) web UI adapter (ui_bridge_web), §S2 shape.
+# v1-unverified: origins/selectors/cookies written from public knowledge of the
+# copilot.microsoft.com app (consumer Copilot; cib-* custom elements, textarea
+# composer); NOT yet validated against a logged-in session. Probe the live UI
+# after the owner's first login (SURFACES_PLAN step 6), then fix
+# selectors/v1.yaml and the fixtures together. Consumer Copilot is believed to
+# keep past conversations behind the sidebar's chat list rather than per-chat
+# URLs — the /chats/<id> thread URL below is INFERRED and must be confirmed
+# live before chat.continue is trusted there.
+adapter_id: copilot-web
+adapter_version: 0.1.0
+provider: microsoft
+interface: ui_bridge_web
+origins:
+  - https://copilot.microsoft.com # app surface (chat on /, conversations in the sidebar)
+  - https://login.live.com # Microsoft account consumer sign-in
+  - https://login.microsoftonline.com # Microsoft account / Entra sign-in
+auth:
+  login_url: https://copilot.microsoft.com/
+  logged_in_probe: logged_in_probe
+  # INFERRED (unverified): Microsoft account session cookies set on .live.com /
+  # .microsoftonline.com when the account signs in; the login watcher finishes
+  # a login when one appears in the login browser. Microsoft rotates cookie
+  # names, so confirm the exact set live.
+  session_cookies: [MSPAuth, MSPProf, __Host-MSAAUTH]
+plans:
+  - plan_id: free
+    label: Free
+  - plan_id: pro
+    label: Copilot Pro
+capabilities:
+  - id: chat.create
+    min_capability_version: 1
+    plans: [free, pro]
+    pool_id: chat-msgs
+    detachable: false
+    export_formats: []
+    status: beta
+  - id: chat.continue
+    min_capability_version: 1
+    plans: [free, pro]
+    pool_id: chat-msgs
+    detachable: false
+    export_formats: []
+    status: beta
+pacing: # §A5 — same conservative defaults as chatgpt-web until real signals are observed
+  min_action_gap_ms: [1200, 3500]
+  min_task_gap_s: 8
+  max_tasks_per_hour: 30
+  max_tasks_per_day: 150
+selectors_version: v1

@@ -1,0 +1,109 @@
+# copilot-web selectors v1 — §A3.2 named keys, ordered fallback list
+# (role+name and element names first, CSS last).
+# *** v1-unverified: written from public knowledge of the copilot.microsoft.com
+# *** UI (cib-* custom elements wrapping the chat turns, a plain textarea
+# *** composer, an account picture in the header), NOT validated against a
+# *** logged-in session. The fixtures are shaped to these selectors, so the
+# *** suite proves internal consistency, not live fidelity.
+# Every strategy below is INFERRED — nothing here is verified live.
+
+composer:
+  critical: true
+  strategies:
+    # INFERRED: the composer is a plain textarea (public browser-extension
+    # guides, 2026), historically rendered inside the <cib-text-input>
+    # custom element.
+    - { css: "textarea[data-testid='composer-input']" }
+    - { css: "cib-text-input textarea" }
+    - { role: textbox, name: /ask me anything|message|prompt/i }
+    - { css: "textarea#searchbox" }
+send_button:
+  critical: true
+  strategies:
+    # INFERRED: the send control is the submit icon button next to the
+    # composer; it swaps for a Stop control while generating.
+    - { role: button, name: /^send( message)?$/i }
+    - { css: "button[aria-label='Send']" }
+    - { css: "button[data-testid='send-button']" }
+    - { css: "button.send-button" }
+    # Live: the control may render only once the composer has text; submit
+    # resolves it after fillComposer.
+    - { css: "cib-text-input button[type='submit']" }
+stop_button:
+  critical: false
+  strategies:
+    - { role: button, name: /^stop( generating| response)?$/i }
+    - { css: "button[aria-label='Stop generating']" }
+    - { css: "button.stop-button" }
+response:
+  critical: true # extraction target; idle pages legitimately lack it
+  strategies:
+    # INFERRED: Copilot renders turns in <cib-message-group>/<cib-message>;
+    # the answer text sits in .ac-textBlock inside the bot turn's .content.
+    - { css: ".turn-bot .ac-textBlock" }
+    - { css: "cib-message-group[class*='bot'] .content" }
+    - { css: ".turn-bot .msg-content" }
+user_turn:
+  critical: false
+  strategies:
+    # INFERRED: the user turn's text sits in the user turn's .content.
+    - { css: ".turn-user .msg-content" }
+    - { css: "cib-message-group[class*='user'] .content" }
+streaming:
+  critical: false
+  strategies:
+    # INFERRED: the in-flight turn carries a loading class or a typing
+    # indicator element.
+    - { css: ".turn-bot.loading" }
+    - { css: "cib-typing-indicator" }
+    - { css: ".ac-textBlock.streaming" }
+logged_in_probe:
+  critical: true
+  strategies:
+    # INFERRED: a signed-in Copilot header shows the account picture
+    # (#mectrl_headerPicture, the Microsoft consumer header); logged out shows
+    # "Sign in" instead.
+    - { css: "img#mectrl_headerPicture" }
+    - { css: "button[aria-label*='Account'] img" }
+    - { css: "header .header-picture" }
+logged_out_probe:
+  critical: false
+  strategies:
+    # INFERRED: only a logged-out header shows the Sign in button (lets the
+    # probe answer without waiting out its settle budget).
+    - { role: button, name: /^sign in( with microsoft)?$/i }
+    - { css: "button.sign-in" }
+model_picker:
+  critical: false
+  strategies:
+    # INFERRED: Copilot's conversation-style / mode picker ("Auto", "Copilot",
+    # "Think") sits beside the composer.
+    - { role: button, name: /^(auto|copilot|think)( mode)?$/i }
+    - { testid: mode-picker }
+    - { css: "button.mode-picker" }
+banner:
+  critical: false
+  strategies:
+    - { role: alert }
+    - { css: ".usage-limit-banner" }
+    - { css: ".limit-banner" }
+challenge:
+  critical: false
+  strategies:
+    # INFERRED: Microsoft fronts bot checks too (its own verification pages on
+    # login.live.com, Cloudflare-style interstitials elsewhere). Same
+    # cross-origin/hidden-iframe traps: the page's own heading text matches.
+    - { css: "input[name='cf-turnstile-response']" }
+    - { css: "[id^='cf-chl-widget-']" }
+    - { text: /performing security verification|verifying you are human|checking your browser|checking if the site connection is secure/i }
+    - { css: "iframe[src*='challenges.cloudflare.com']" }
+    - { css: "iframe[src*='captcha']" }
+    - { text: /verify you are human|security check|unusual traffic/i }
+account_identity:
+  critical: false
+  strategies:
+    # INFERRED: the header account picture (#mectrl_headerPicture) carries the
+    # signed-in name in its alt/label; readAccount parses it, never a token.
+    - { css: "img#mectrl_headerPicture" }
+    - { css: "button[aria-label*='Account'] img" }
+    - { css: "header .header-picture" }

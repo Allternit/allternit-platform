@@ -1,0 +1,19 @@
+<!doctype html>
+<!-- fixture: limit-banner — idle UI plus a usage-limit notice (quota signal) -->
+<html lang="en">
+  <head><meta charset="utf-8"><title>gemini-web fixture — limit banner</title></head>
+  <body data-state="limit-banner">
+    <header>
+      <button type="button" class="model-picker">Gemini 3</button>
+      <button type="button" class="account-avatar" aria-label="Google Account: Eoj (eoj@example.com)"><img alt="" /></button>
+    </header>
+    <main>
+      <div class="usage-limit-banner" role="alert">You've reached the Gemini limit for today. Your quota resets in 3 hours.</div>
+      <div id="chat-history"></div>
+      <rich-textarea>
+        <div class="ql-editor textarea" role="textbox" aria-label="Enter a prompt here" contenteditable="true"></div>
+      </rich-textarea>
+      <button class="send-button" type="button" aria-label="Send message">➤</button>
+    </main>
+  </body>
+</html>
