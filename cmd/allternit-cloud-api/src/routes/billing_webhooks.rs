@@ -308,9 +308,8 @@ async fn apply_entitlement_and_sync_subscription(
         apply_hosted_entitlement(db, event_id, user_id, plan_tier_id, None, "stripe").await?;
     let subscription_id = subscription["id"].as_str().unwrap_or_default();
     if !subscription_id.is_empty() {
-        let plan_id = crate::routes::billing_subscriptions::current_subscription_plan(subscription)
-            .map(|plan| plan.id)
-            .unwrap_or_default();
+        let current_plan = crate::routes::billing_subscriptions::current_subscription_plan(subscription);
+        let plan_id = current_plan.map(|plan| plan.id).unwrap_or_default();
         let status = subscription["status"].as_str().unwrap_or_default();
         let customer_id = subscription_customer_id(subscription);
         billing_subscriptions::upsert_billing_subscription(
@@ -325,6 +324,16 @@ async fn apply_entitlement_and_sync_subscription(
         .await?;
         if let Some(customer_id) = customer_id {
             billing_subscriptions::upsert_user_billing_account(db, user_id, &customer_id).await?;
+        }
+        // First active grant for this subscription: "plan is active" email
+        // and a note to the team (once; later renewals find the row).
+        if let Some(plan) = current_plan {
+            crate::services::customer_emails::spawn_plan_started(
+                db.clone(),
+                user_id.to_string(),
+                subscription_id.to_string(),
+                plan,
+            );
         }
         // Plan B1: payment cleared -> the user's cloud computer, fire-and-
         // forget after the mirror row exists (sizing reads its plan_id and

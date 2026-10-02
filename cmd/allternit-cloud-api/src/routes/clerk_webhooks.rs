@@ -1,4 +1,5 @@
-//! Clerk webhook receiver — syncs deletions into the central `users` table.
+//! Clerk webhook receiver — syncs deletions into the central `users` table,
+//! and sends the welcome email on `user.created` (services::customer_emails).
 //!
 //! Creation/update already happens via lazy per-request upsert (see
 //! `runtime_pairing.rs`, `hosted_runtimes.rs`, `wizard.rs`, `gizzi_instances.rs`),
@@ -130,6 +131,14 @@ async fn clerk_webhook(State(state): State<Arc<ApiState>>, headers: HeaderMap, b
     let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
 
     match event_type {
+        "user.created" => {
+            // Welcome email + a note to the team; answered at once so Clerk
+            // never retries on a slow mail server.
+            let db = state.db.clone();
+            let user = event.get("data").cloned().unwrap_or(Value::Null);
+            tokio::spawn(async move { services::customer_emails::on_user_created(&db, &user).await });
+            Json(json!({ "received": true })).into_response()
+        }
         "user.deleted" => handle_user_deleted(&state, &event).await,
         other => ignored_response(other),
     }

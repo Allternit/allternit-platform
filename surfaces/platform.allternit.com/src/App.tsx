@@ -20,6 +20,7 @@ import { FabricPage } from "@/pages/FabricPage";
 import { PortalLandingPage } from "@/pages/PortalLandingPage";
 import { ModelsPage } from "@/pages/ModelsPage";
 import { PlansPage } from "@/pages/PlansPage";
+import { AdminCustomersPage } from "@/pages/AdminCustomersPage";
 import { PlaygroundPage } from "@/pages/console/PlaygroundPage";
 import { FilesPage } from "@/pages/console/FilesPage";
 import { BatchesPage } from "@/pages/console/BatchesPage";
@@ -141,6 +142,14 @@ export default function App() {
       <Route path="/models/*" element={<ModelsPage />} />
       <Route path="/plans/*" element={<PlansPage />} />
       <Route path="/billing/*" element={<BillingRoute />} />
+      <Route
+        path="/admin/customers"
+        element={
+          <ConsoleRoute>
+            <AdminCustomersPage />
+          </ConsoleRoute>
+        }
+      />
       <Route
         path="/organizations/*"
         element={

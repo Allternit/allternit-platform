@@ -4,6 +4,7 @@ pub mod api_keys;
 pub mod audit;
 pub mod contabo_runtime_service;
 pub mod cost_service;
+pub mod customer_emails;
 pub mod event_store;
 pub mod fabric_ledger;
 pub mod executor_service;

@@ -737,6 +737,12 @@ async fn exchange_pairing(
         // Post-commit: consume the one-time code, flip to running, open the
         // metering interval (services::provisioning).
         crate::services::activate_registered_device(&state.db, provisioned_instance_id).await?;
+        // A paid computer's first pairing: "your cloud computer is ready".
+        crate::services::customer_emails::spawn_computer_ready(
+            state.db.clone(),
+            user_id.clone(),
+            provisioned_instance_id.to_string(),
+        );
     }
 
     let user_email = sqlx::query_scalar::<_, String>("SELECT email FROM users WHERE id = $1")
