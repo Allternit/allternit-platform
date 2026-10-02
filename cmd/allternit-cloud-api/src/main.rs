@@ -278,6 +278,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // P2: keep provisioned instance statuses honest against the Incus hosts
     // and converge their metering sessions.
     services::start_provisioning_reconcile_task(state.clone());
+    services::start_waiting_computer_task(state.clone());
     // Cancel lifecycle: delete suspended computers 30 days after cancel,
     // expire their snapshot images after 6 months.
     services::start_provisioning_lifecycle_task(state.clone());

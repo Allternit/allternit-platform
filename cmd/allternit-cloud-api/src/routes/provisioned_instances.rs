@@ -429,6 +429,15 @@ async fn register_host(
     .bind(request.disk_gb)
     .execute(&state.db)
     .await?;
+    // A new server is room for computers that were waiting for one.
+    if crate::services::provisioning::provision_on_payment_enabled() {
+        let state = state.clone();
+        tokio::spawn(async move {
+            if let Err(error) = state.provisioning_service.ensure_waiting_paid().await {
+                tracing::error!("Waiting cloud computer sweep after host registration failed: {}", error);
+            }
+        });
+    }
     Ok((
         StatusCode::CREATED,
         Json(serde_json::json!({ "id": id, "status": "registered" })),

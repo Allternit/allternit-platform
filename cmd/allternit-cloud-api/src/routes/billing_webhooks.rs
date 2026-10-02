@@ -290,10 +290,7 @@ async fn apply_and_respond(
 /// test-mode end-to-end run (B verify) has passed. Cancel handling is always
 /// on: it only acts on computers that already exist.
 fn provision_on_payment_enabled() -> bool {
-    matches!(
-        std::env::var("ALLTERNIT_PROVISION_ON_PAYMENT").as_deref(),
-        Ok("1") | Ok("true")
-    )
+    crate::services::provisioning::provision_on_payment_enabled()
 }
 
 /// Every caller of the mirror upsert below is an active/trialing grant

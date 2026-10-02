@@ -382,6 +382,11 @@ fn subscribe_form_params(
 ) -> Vec<(String, String)> {
     vec![
         ("mode".to_string(), "subscription".to_string()),
+        // Pay-now methods only (cards, incl. Apple Pay / Google Pay, and
+        // Link): no buy-now-pay-later or delayed methods for Allternit Cloud.
+        // Services Payment Links keep the account's wider method list.
+        ("payment_method_types[0]".to_string(), "card".to_string()),
+        ("payment_method_types[1]".to_string(), "link".to_string()),
         ("success_url".to_string(), success_url.to_string()),
         ("cancel_url".to_string(), cancel_url.to_string()),
         ("line_items[0][price]".to_string(), price_id.to_string()),
@@ -803,6 +808,8 @@ mod tests {
         let form = checkout.checkout_form.lock().unwrap().clone().unwrap();
         assert!(form.iter().all(|(key, _)| key != "customer"));
         assert_eq!(field(&form, "mode"), "subscription");
+        assert_eq!(field(&form, "payment_method_types[0]"), "card", "pay-now methods only");
+        assert_eq!(field(&form, "payment_method_types[1]"), "link");
         assert_eq!(field(&form, "line_items[0][price]"), "price_test_plus");
         assert_eq!(field(&form, "line_items[0][quantity]"), "1");
         assert_eq!(field(&form, "subscription_data[metadata][clerk_user_id]"), "user_1");
