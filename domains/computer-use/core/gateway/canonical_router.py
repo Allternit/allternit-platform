@@ -1203,6 +1203,39 @@ async def history_query(body: HistoryQueryRequest) -> Dict[str, Any]:
         raise _http_error(error) from error
 
 
+async def history_preflight_for_task(task: str, limit: int = 8) -> Optional[Dict[str, Any]]:
+    """Best-effort history preflight for the planning loop.
+
+    `computer_use_router` imports this as the `history_preflight` callable:
+    `PlanningLoop` awaits it with the run's task text and folds recent
+    computer-history metadata into the plan context. Returns
+    `{"status": <history_status>, "events": [<recent metadata events>]}`
+    from the first registered provider that advertises the history tools,
+    or `None` when history is unavailable (the loop then runs without
+    history context). Advisory only — it never raises and never blocks a run.
+    """
+    del task  # history events are session-scoped; the task text does not filter them
+    try:
+        await ensure_initialized()
+        manifests = service.capabilities()
+    except Exception:
+        return None
+    for manifest in manifests:
+        tools = getattr(manifest, "tools", None) or []
+        if "history_status" not in tools or "history_query" not in tools:
+            continue
+        try:
+            provider = service.provider(manifest.provider_id)
+            status = await provider.history_status()
+            query = await provider.history_query(limit=limit)
+        except Exception:
+            continue
+        if not isinstance(status, dict) or not isinstance(query, dict):
+            continue
+        return {"status": status, "events": query.get("events") or []}
+    return None
+
+
 async def shutdown_canonical_service() -> None:
     await service.close()
     _store.close()

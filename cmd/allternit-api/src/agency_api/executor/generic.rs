@@ -153,9 +153,13 @@ impl Exec<'_> {
                         Ok(r) => refs.push(r),
                         Err(e) => match e.downcast::<super::super::effect_template::NeedsPerson>() {
                             Ok(np) => {
-                                let msg = np.to_string();
+                                // A fixed message on purpose: the journaled failure
+                                // must classify `retryable` no matter what text the
+                                // child's attention item carries (step labels are
+                                // user-controlled and could trip a permanent
+                                // keyword in `safety::classify_error`).
                                 *park_slot.borrow_mut() = Some(np);
-                                bail!(msg);
+                                bail!("template child stopped for a person: parked on it, re-checks after the answer");
                             }
                             Err(e) => return Err(e),
                         },
