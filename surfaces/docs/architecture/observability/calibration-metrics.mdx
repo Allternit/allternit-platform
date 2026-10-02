@@ -30,7 +30,7 @@ Tracked metrics: accuracy, F1, Brier score, negative log-likelihood, coverage at
 
 ## Current implementation
 
-The decision runtime is on main and S1 runs shadow-only: it records what it would have decided and takes no action. No primitive has been promoted out of shadow.
+The decision runtime is on main and S1 runs shadow-only: it records what it would have decided and takes no action. One primitive, `judge.first_pass.tool`, has passed the Q26 gate and runs in a budgeted canary when live mode is on; its audits feed the CUSUM rollback. See [Calibration](/architecture/cognitive-runtime/calibration#canary).
 
 ## Availability
 

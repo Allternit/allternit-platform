@@ -17,7 +17,7 @@ Validate against the schema in `spec/Contracts/kernel/v1/schemas/` before anythi
 
 ## Current implementation
 
-The runtime is on main and runs S1 shadow-only. A backend you add will run in shadow and record decisions without acting.
+The runtime is on main and runs S1 shadow by default. A backend you add will run in shadow and record decisions without acting until a primitive passes the gate for that backend and is put in a canary (see [Calibration](/architecture/cognitive-runtime/calibration#canary)).
 
 ## Availability
 

@@ -233,7 +233,7 @@ Checked against main on 2026-09-30. Production verified: no, unless a row says s
 | Permission floor | **ENABLED** | **INTERNAL** | Hard policy before probabilistic judgment. See [Policy](/architecture/policy). |
 | Policy gate on executor paths | **IMPLEMENTED** (converging) | **INTERNAL** | Work-bound executor paths are being converged on the Allternit policy gate; direct interactive runtime behavior may differ from Agency/work-runtime execution. |
 | Fail-closed judge, verifier-owned completion | **IMPLEMENTED** (opt-in) | **INTERNAL** | Opt-in for internal flows; forced on for agency-origin work. See [Verification](/architecture/verification). |
-| Decision Runtime (S1) | **SHADOW** | **INTERNAL** | No calibration manifest has passed, so S1 acts on nothing. See [Decision runtime](/architecture/cognitive-runtime/decision-runtime). |
+| Decision Runtime (S1) | **SHADOW** | **INTERNAL** | Shadow by default. One primitive (`judge.first_pass.tool`) has passed and acts only through a budgeted canary with live mode on. See [Decision runtime](/architecture/cognitive-runtime/decision-runtime). |
 | Cognitive Router | **IMPLEMENTED** | **INTERNAL** | Library code. Nothing calls it on the normal path yet. See [Routing](/architecture/routing). |
 | ModelPool | **IMPLEMENTED** | **INTERNAL** | Registry served internally; normal execution does not select through it. |
 | Replay: cassettes, recorded-only replay, divergence, `POST /v1/replays` on the work runtime service, gate replay mode | **IMPLEMENTED** | **INTERNAL** | On demand, not part of normal execution. See [Replay](/architecture/replay). |

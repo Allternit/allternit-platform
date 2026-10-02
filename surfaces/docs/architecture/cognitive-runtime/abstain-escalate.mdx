@@ -37,7 +37,7 @@ Why: a system that must always answer will guess. Making abstention a normal, ty
 
 ## Current implementation
 
-- The decision runtime on main marks every result without a passing calibration manifest as uncalibrated and abstains. Since no manifests exist yet, every S1 result abstains today.
+- The decision runtime on main marks every result without a passing calibration manifest as uncalibrated and abstains. Only `judge.first_pass.tool` has a passing manifest, and it acts only through a canary with live mode on. Every other S1 result abstains today.
 - For agency-origin work, a judge timeout, error or invalid answer moves the node to `NEEDS_HUMAN`, never to done.
 - Escalation to a stronger mode or component needs the [router](/architecture/routing), which is on main as library code but not yet called on the normal path.
 
