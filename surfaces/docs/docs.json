@@ -8,12 +8,16 @@
   },
   "favicon": "/favicon.svg",
   "colors": {
-    "primary": "#FA7921",
-    "light": "#FA7921",
-    "dark": "#E56A17"
+    "primary": "#D97757",
+    "light": "#E08B6D",
+    "dark": "#C4633F"
   },
   "navbar": {
     "links": [
+      {
+        "label": "Courses",
+        "href": "https://labs.allternit.com"
+      },
       {
         "label": "Support",
         "href": "mailto:support@allternit.com"
@@ -36,7 +40,8 @@
               "introduction",
               "quickstart",
               "api/overview"
-            ]
+            ],
+            "icon": "/icons/play.svg"
           },
           {
             "group": "Workspace workflows",
@@ -49,7 +54,8 @@
               "guides/artifact-modes",
               "guides/computers-and-apps",
               "guides/mcp-apps-status"
-            ]
+            ],
+            "icon": "/icons/window.svg"
           },
           {
             "group": "Architecture",
@@ -72,7 +78,8 @@
               "architecture/verification",
               "architecture/receipts",
               "architecture/replay"
-            ]
+            ],
+            "icon": "/icons/stack.svg"
           },
           {
             "group": "Work Runtime",
@@ -87,7 +94,8 @@
               "architecture/work-runtime/wake",
               "architecture/work-runtime/attention",
               "architecture/work-runtime/human-in-the-loop"
-            ]
+            ],
+            "icon": "/icons/clock.svg"
           },
           {
             "group": "Cognitive Runtime",
@@ -98,7 +106,8 @@
               "architecture/cognitive-runtime/calibration",
               "architecture/cognitive-runtime/abstain-escalate",
               "architecture/cognitive-runtime/no-vendor-names"
-            ]
+            ],
+            "icon": "/icons/chip.svg"
           },
           {
             "group": "Context & Memory",
@@ -106,7 +115,8 @@
               "architecture/context-memory/overview",
               "architecture/context-memory/projections",
               "architecture/context-memory/memory"
-            ]
+            ],
+            "icon": "/icons/document.svg"
           },
           {
             "group": "Tools & Execution",
@@ -118,7 +128,8 @@
               "architecture/tools-execution/network-ssrf",
               "architecture/tools-execution/mutation-receipts",
               "architecture/tools-execution/primitive-packs"
-            ]
+            ],
+            "icon": "/icons/link.svg"
           },
           {
             "group": "Verification & Safety",
@@ -128,7 +139,8 @@
               "architecture/verification-safety/approvals",
               "architecture/verification-safety/trust-classes",
               "architecture/verification-safety/threat-model"
-            ]
+            ],
+            "icon": "/icons/shield.svg"
           },
           {
             "group": "Observability & Evaluation",
@@ -140,7 +152,8 @@
               "architecture/observability/system-lift",
               "architecture/observability/conformance",
               "architecture/observability/alpha-gate"
-            ]
+            ],
+            "icon": "/icons/bars.svg"
           },
           {
             "group": "Kernel Contracts",
@@ -168,7 +181,8 @@
               "architecture/contracts/tool",
               "architecture/contracts/verification",
               "architecture/contracts/work"
-            ]
+            ],
+            "icon": "/icons/grid.svg"
           },
           {
             "group": "Build on Allternit",
@@ -185,7 +199,8 @@
               "build-on-allternit/policy",
               "build-on-allternit/executor",
               "build-on-allternit/conformance-checklist"
-            ]
+            ],
+            "icon": "/icons/code.svg"
           },
           {
             "group": "Operations",
@@ -193,7 +208,8 @@
               "operations/overview",
               "operations/rollout",
               "operations/recovery"
-            ]
+            ],
+            "icon": "/icons/screen.svg"
           },
           {
             "group": "Reference",
@@ -204,7 +220,8 @@
               "reference/status-enums",
               "reference/glossary",
               "reference/changelog"
-            ]
+            ],
+            "icon": "/icons/book.svg"
           },
           {
             "group": "Core Concepts",
@@ -230,7 +247,8 @@
               "core/self-improve",
               "core/session-manager",
               "core/ml-services"
-            ]
+            ],
+            "icon": "/icons/chip.svg"
           },
           {
             "group": "Gizzi Code CLI",
@@ -257,7 +275,8 @@
               "cli/agent-daemon",
               "cli/allternit-mux",
               "cli/allternit-wrapper"
-            ]
+            ],
+            "icon": "/icons/gizzi.svg"
           },
           {
             "group": "Tools & ACI",
@@ -284,7 +303,8 @@
               "tools/document-generator",
               "tools/open-notebook",
               "tools/kernel-tools"
-            ]
+            ],
+            "icon": "/icons/screen.svg"
           },
           {
             "group": "Security & Enterprise",
@@ -303,7 +323,8 @@
               "security/dlp",
               "security/prompt-leak-detection",
               "security/inference-hooks"
-            ]
+            ],
+            "icon": "/icons/shield.svg"
           },
           {
             "group": "Admin API",
@@ -330,7 +351,8 @@
               "admin/eval-metrics",
               "admin/fallback-credits",
               "admin/fallback-retry-policy"
-            ]
+            ],
+            "icon": "/icons/grid.svg"
           },
           {
             "group": "BYOC Runtime",
@@ -345,7 +367,8 @@
               "byoc/hosted-runtime",
               "byoc/local-models",
               "byoc/vm-executor"
-            ]
+            ],
+            "icon": "/icons/stack.svg"
           },
           {
             "group": "Surfaces",
@@ -377,13 +400,15 @@
               "surfaces/vscode",
               "surfaces/docmost",
               "surfaces/vault"
-            ]
+            ],
+            "icon": "/icons/window.svg"
           },
           {
             "group": "CI CD",
             "pages": [
               "ci-cd/github-action"
-            ]
+            ],
+            "icon": "/icons/clock.svg"
           },
           {
             "group": "Guides",
@@ -395,7 +420,8 @@
               "guides/token-budgets",
               "guides/webhooks",
               "guides/pdf-citations"
-            ]
+            ],
+            "icon": "/icons/book.svg"
           },
           {
             "group": "Cookbooks",
@@ -405,15 +431,18 @@
               "cookbooks/browser-automation",
               "cookbooks/rag-pipeline",
               "cookbooks/ci-cd-integration"
-            ]
+            ],
+            "icon": "/icons/document.svg"
           },
           {
             "group": "Release Notes",
             "pages": [
               "release-notes"
-            ]
+            ],
+            "icon": "/icons/bubble.svg"
           }
-        ]
+        ],
+        "icon": "/icons/book.svg"
       },
       {
         "tab": "Plugins & MCP Apps",
@@ -422,13 +451,15 @@
             "group": "Concepts",
             "pages": [
               "plugins/overview"
-            ]
+            ],
+            "icon": "/icons/book.svg"
           },
           {
             "group": "Get Started",
             "pages": [
               "plugins/quickstart"
-            ]
+            ],
+            "icon": "/icons/play.svg"
           },
           {
             "group": "Apps SDK",
@@ -440,7 +471,8 @@
               "plugins/sdk/ui",
               "plugins/sdk/look-packs",
               "plugins/sdk/cli"
-            ]
+            ],
+            "icon": "/icons/code.svg"
           },
           {
             "group": "Build",
@@ -448,7 +480,8 @@
               "plugins/develop/mcp-server",
               "plugins/develop/mcp-app-ui",
               "plugins/develop/authentication"
-            ]
+            ],
+            "icon": "/icons/chip.svg"
           },
           {
             "group": "Test & Publish",
@@ -456,7 +489,8 @@
               "plugins/publish/package",
               "plugins/publish/submit-and-review",
               "plugins/publish/app-guidelines"
-            ]
+            ],
+            "icon": "/icons/stack.svg"
           },
           {
             "group": "Guides",
@@ -465,15 +499,18 @@
               "plugins/guides/vendor-packs",
               "plugins/guides/porting",
               "plugins/guides/troubleshooting"
-            ]
+            ],
+            "icon": "/icons/book.svg"
           },
           {
             "group": "Reference",
             "pages": [
               "plugins/reference/window-allternit"
-            ]
+            ],
+            "icon": "/icons/book.svg"
           }
-        ]
+        ],
+        "icon": "/icons/link.svg"
       },
       {
         "tab": "API Reference",
@@ -491,7 +528,8 @@
               "api/status",
               "api/me",
               "api/quickstart"
-            ]
+            ],
+            "icon": "/icons/play.svg"
           },
           {
             "group": "Agency API (Preview)",
@@ -512,7 +550,8 @@
               "api/agency/versioning",
               "api/agency/schemas",
               "api/agency/openapi"
-            ]
+            ],
+            "icon": "/icons/team.svg"
           },
           {
             "group": "LLM Gateway",
@@ -530,7 +569,8 @@
               "api/proxy",
               "api/translate",
               "api/local-engine"
-            ]
+            ],
+            "icon": "/icons/chip.svg"
           },
           {
             "group": "Agents & Runtime",
@@ -554,7 +594,8 @@
               "api/checkpoints",
               "api/enrollment",
               "api/team-skills"
-            ]
+            ],
+            "icon": "/icons/agent.svg"
           },
           {
             "group": "Work Queue & Deployments",
@@ -563,7 +604,8 @@
               "api/deployments",
               "api/batches",
               "api/beta"
-            ]
+            ],
+            "icon": "/icons/clock.svg"
           },
           {
             "group": "Files, Webhooks & Sandbox",
@@ -576,7 +618,8 @@
               "api/sandbox",
               "api/sandbox-templates",
               "api/uploads"
-            ]
+            ],
+            "icon": "/icons/document.svg"
           },
           {
             "group": "Tools & Connectors",
@@ -593,7 +636,8 @@
               "api/automation",
               "api/library",
               "api/marketplace"
-            ]
+            ],
+            "icon": "/icons/link.svg"
           },
           {
             "group": "Collaboration & Workflows",
@@ -611,7 +655,8 @@
               "api/tasks",
               "api/orchestrator",
               "api/swarm"
-            ]
+            ],
+            "icon": "/icons/team.svg"
           },
           {
             "group": "Infrastructure & Platform",
@@ -637,39 +682,46 @@
               "api/brain-git",
               "api/cloud-api",
               "api/udemy"
-            ]
+            ],
+            "icon": "/icons/screen.svg"
           },
           {
             "group": "Canvases",
             "pages": [
               "api/canvases"
-            ]
+            ],
+            "icon": "/icons/window.svg"
           },
           {
             "group": "Onboarding",
             "pages": [
               "api/onboarding"
-            ]
+            ],
+            "icon": "/icons/play.svg"
           },
           {
             "group": "A Labs",
             "pages": [
               "api/alabs"
-            ]
+            ],
+            "icon": "/icons/book.svg"
           },
           {
             "group": "Playground",
             "pages": [
               "api/playground"
-            ]
+            ],
+            "icon": "/icons/code.svg"
           },
           {
             "group": "Users & Profiles",
             "pages": [
               "api/user-profiles"
-            ]
+            ],
+            "icon": "/icons/agent.svg"
           }
-        ]
+        ],
+        "icon": "/icons/code.svg"
       },
       {
         "tab": "SDK",
@@ -686,9 +738,11 @@
               "sdk/computer-use-protocol",
               "sdk/capsule",
               "sdk/computer-use"
-            ]
+            ],
+            "icon": "/icons/code.svg"
           }
-        ]
+        ],
+        "icon": "/icons/chip.svg"
       }
     ],
     "global": {
@@ -696,21 +750,31 @@
         {
           "anchor": "GitHub",
           "icon": "github",
-          "href": "https://github.com/allternit"
+          "href": "https://github.com/Gizziio"
         },
         {
-          "anchor": "Community",
-          "icon": "discord",
-          "href": "https://discord.gg/allternit"
+          "anchor": "Courses",
+          "icon": "/icons/book.svg",
+          "href": "https://labs.allternit.com"
         }
       ]
     }
   },
   "footer": {
     "socials": {
-      "x": "https://twitter.com/allternit",
-      "github": "https://github.com/allternit",
-      "discord": "https://discord.gg/allternit"
+      "x": "https://x.com/allternit",
+      "github": "https://github.com/Gizziio",
+      "youtube": "https://www.youtube.com/@gizziioagi",
+      "linkedin": "https://www.linkedin.com/in/allternit-llc"
+    }
+  },
+  "fonts": {
+    "heading": {
+      "family": "Newsreader",
+      "weight": 500
+    },
+    "body": {
+      "family": "Inter"
     }
   }
 }

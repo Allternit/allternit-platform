@@ -1,39 +1,20 @@
-<svg width="32" height="32" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" shape-rendering="geometricPrecision">
-  <rect width="100" height="100" fill="transparent"/>
-
-  <g stroke="#D4B08C" stroke-width="0.5" opacity="0.2">
-    <line x1="50" y1="50" x2="50" y2="20"/>
-    <line x1="50" y1="50" x2="50" y2="80"/>
-    <line x1="50" y1="50" x2="25" y2="50"/>
-    <line x1="50" y1="50" x2="75" y2="50"/>
-    <line x1="50" y1="50" x2="30" y2="30" opacity="0.1"/>
-    <line x1="50" y1="50" x2="70" y2="30" opacity="0.1"/>
-    <line x1="50" y1="50" x2="30" y2="70" opacity="0.1"/>
-    <line x1="50" y1="50" x2="70" y2="70" opacity="0.1"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" shape-rendering="geometricPrecision">
+  <!-- Allternit favicon: A-only mark on the cream plate at 84%. Source: Brand/Allternit/app-icon (approved 2026-09-10). -->
+  <rect x="79" y="79" width="866" height="866" rx="196" fill="#FDF8F3"/>
+  <g transform="translate(283 283) scale(9.14)">
+    <g fill="#141413">
+    <rect x="20.75" y="0.75"  width="8.5" height="8.5" rx="1.5"/>
+    <rect x="10.75" y="10.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="30.75" y="10.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="0.75"  y="20.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="10.75" y="20.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="30.75" y="20.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="40.75" y="20.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="0.75"  y="30.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="40.75" y="30.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="0.75"  y="40.75" width="8.5" height="8.5" rx="1.5"/>
+    <rect x="40.75" y="40.75" width="8.5" height="8.5" rx="1.5"/>
   </g>
-
-  <g fill="#D4B08C" opacity="0.4">
-    <rect x="49" y="19" width="2" height="2"/>
-    <rect x="49" y="79" width="2" height="2"/>
-    <rect x="24" y="49" width="2" height="2"/>
-    <rect x="74" y="49" width="2" height="2"/>
+  <rect x="20.75" y="20.75" width="8.5" height="8.5" rx="1.5" fill="#D97757"/>
   </g>
-
-  <rect x="30" y="70" width="10" height="10" fill="#D4B08C" opacity="0.8"/>
-  <rect x="30" y="58" width="10" height="10" fill="#D4B08C" opacity="0.9"/>
-  <rect x="30" y="46" width="10" height="10" fill="#D4B08C"/>
-  <rect x="38" y="36" width="10" height="10" fill="#D4B08C"/>
-
-  <rect x="60" y="70" width="10" height="10" fill="#D4B08C" opacity="0.8"/>
-  <rect x="60" y="58" width="10" height="10" fill="#D4B08C" opacity="0.9"/>
-  <rect x="60" y="46" width="10" height="10" fill="#D4B08C"/>
-  <rect x="52" y="36" width="10" height="10" fill="#D4B08C"/>
-
-  <rect x="38" y="46" width="10" height="10" fill="#D4B08C" opacity="0.7"/>
-  <rect x="52" y="46" width="10" height="10" fill="#D4B08C" opacity="0.7"/>
-
-  <rect x="45" y="24" width="10" height="10" fill="#D4B08C"/>
-  <rect x="45" y="58" width="10" height="10" fill="#D97757" opacity="0.9"/>
-
-  <circle cx="50" cy="50" r="3" fill="#D4B08C"/>
 </svg>
