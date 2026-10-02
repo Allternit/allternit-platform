@@ -372,6 +372,7 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // answers 503 webhook_not_configured when STRIPE_WEBHOOK_SECRET is unset.
         .merge(routes::billing_webhooks::routes())
         .merge(routes::clerk_webhooks::routes())
+        .merge(routes::admin_customers::routes())
         // Dispatch handoff verifies the Clerk session per-request, like the
         // pairing routes (the token only ever means "this user, that
         // runtime" — it is not itself a credential).
