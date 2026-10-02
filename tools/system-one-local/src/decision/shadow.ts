@@ -51,7 +51,16 @@ export interface OutcomeRecord {
   truth: string;
   /** Who established it, e.g. "verifier:tests", "parser:tsc". Mandatory: no anonymous labels. */
   source: string;
+  /**
+   * Label provenance (WP-L2). `observed`: a real outcome or human action (the default for live
+   * outcomes). `backfill_observed`: a real outcome replayed from local history. `teacher`: a model
+   * judgement, which Q26 allows for fine-tuning only (never split A/B or the audit slice).
+   */
+  label_source?: LabelSource;
 }
+
+export type LabelSource = "observed" | "backfill_observed" | "teacher";
+export const LABEL_SOURCES: readonly LabelSource[] = ["observed", "backfill_observed", "teacher"];
 
 export interface DatasetRow {
   decision_id: string;
@@ -71,7 +80,7 @@ export interface DatasetRow {
   incumbent?: string | null;
   served_live?: boolean;
   audit?: boolean;
-  provenance: { decision_log: string; outcome_source: string; outcome_ts: string; state_sha256: string; subject_ref: string | null };
+  provenance: { decision_log: string; outcome_source: string; outcome_ts: string; state_sha256: string; subject_ref: string | null; label_source: LabelSource };
 }
 
 export const sha256Hex = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -121,9 +130,11 @@ function readJsonl<T>(dir: string): { rec: T; file: string }[] {
 
 export interface HarvestStats { decisions: number; outcomes: number; joined: number; no_outcome: number; unmatched_outcomes: number; skipped_independent: number; truth_not_in_options: number }
 
-export function harvest(dir: string, opts: { primitive?: string; model?: string } = {}): { rows: DatasetRow[]; stats: HarvestStats } {
-  const decisions = readJsonl<ShadowDecisionRecord>(join(dir, "decisions")).filter((d) => d.rec.kind === "decision");
-  const outcomes = readJsonl<OutcomeRecord>(join(dir, "outcomes")).map((o) => o.rec).filter((o) => o.kind === "outcome");
+/** `extraDirs`: more ledgers in the same layout (the WP-L2 label harvest writes its own sibling dir). */
+export function harvest(dir: string, opts: { primitive?: string; model?: string; extraDirs?: string[] } = {}): { rows: DatasetRow[]; stats: HarvestStats } {
+  const dirs = [dir, ...(opts.extraDirs ?? [])];
+  const decisions = dirs.flatMap((d) => readJsonl<ShadowDecisionRecord>(join(d, "decisions"))).filter((d) => d.rec.kind === "decision");
+  const outcomes = dirs.flatMap((d) => readJsonl<OutcomeRecord>(join(d, "outcomes"))).map((o) => o.rec).filter((o) => o.kind === "outcome");
   const stats: HarvestStats = { decisions: decisions.length, outcomes: outcomes.length, joined: 0, no_outcome: 0, unmatched_outcomes: 0, skipped_independent: 0, truth_not_in_options: 0 };
   const byId = new Map(decisions.map((d) => [d.rec.decision_id, d]));
   // Latest outcome wins per decision (deterministic re-runs supersede earlier ones).
@@ -164,7 +175,7 @@ export function harvest(dir: string, opts: { primitive?: string; model?: string 
       ...(d.criteria ? { criteria: d.criteria } : {}), ...(d.scale ? { scale: d.scale } : {}),
       ...(d.incumbent != null ? { incumbent: d.incumbent } : {}),
       ...(d.served_live ? { served_live: true } : {}), ...(d.audit ? { audit: true } : {}),
-      provenance: { decision_log: `decisions/${file}`, outcome_source: o.source, outcome_ts: o.ts, state_sha256: d.state_sha256, subject_ref: d.subject_ref },
+      provenance: { decision_log: `decisions/${file}`, outcome_source: o.source, outcome_ts: o.ts, state_sha256: d.state_sha256, subject_ref: d.subject_ref, label_source: o.label_source ?? "observed" },
     });
   }
   rows.sort((a, b) => a.ts.localeCompare(b.ts));

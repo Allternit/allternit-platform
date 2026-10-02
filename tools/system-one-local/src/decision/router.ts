@@ -16,6 +16,9 @@ export type RouterMode = "shadow" | "live";
 export interface RouteContext {
   /** Caller attests the decision is reversible / low-consequence. Default false => never AUTO. */
   reversible?: boolean;
+  /** Harvest replay only: a stable decision id and the historic event time, so a re-run never duplicates a row. */
+  decisionId?: string;
+  ts?: string;
 }
 
 export interface RouterConfig {
@@ -92,6 +95,7 @@ export class DecisionRouter {
       ...(req.scale ? { scale: req.scale as unknown[] } : {}),
       ...(typeof ext["x-incumbent"] === "string" ? { incumbent: ext["x-incumbent"] as string } : {}),
       ...(servedLive ? { served_live: true } : {}), ...(audit ? { audit: true } : {}),
+      ...(ctx.decisionId ? { decision_id: ctx.decisionId } : {}), ...(ctx.ts ? { ts: ctx.ts } : {}),
     });
     return {
       envelope: { ...req.envelope, schema_id: "allternit.kernel.DecisionResultV1" },

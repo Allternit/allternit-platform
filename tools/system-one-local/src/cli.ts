@@ -5,7 +5,8 @@
 //   system-one ask --state <file|-> --questions <file> [--model jev-latest] [--server http://127.0.0.1:7717]
 //   system-one models
 //   system-one route-model --task "..." --allow-paid       (paid OpenRouter call)
-//   system-one export --out <dir>                            ledger -> fine-tuning set (WP-L1)
+//   system-one harvest-labels [--dir d] [--cap 2500] [--dry-run]  local history -> labelled decisions (WP-L2)
+//   system-one export --out <dir>                            ledger (+ harvest dir) -> fine-tuning set (WP-L1)
 //   system-one calibrate --tune <jsonl> --cert <jsonl>       Q26 gate (legacy Q22: --data ... --primitive ... --model ...)
 //   system-one canary <status|enable|grow|sync|rollback>     Q26 exposure budget + CUSUM rollback
 //
@@ -21,8 +22,17 @@ import { harvest, readDataset, ShadowLedger, writeDataset } from "./decision/sha
 import { BASE_DIR } from "./log.ts";
 import { SystemOne } from "./engine.ts";
 import { routeModel } from "./route-model.ts";
-import { DEFAULT_PORT, HOST, serve } from "./server.ts";
+import { DEFAULT_PORT, HOST, layaRevision, serve } from "./server.ts";
+import { DecisionRouter } from "./decision/router.ts";
+import { LocalLogitReadoutProvider } from "./decision/local-provider.ts";
+import { runHarvest } from "./harvest/run.ts";
+import { claudeCodeSource } from "./harvest/sources/claude-code.ts";
+import { gizziSource } from "./harvest/sources/gizzi.ts";
+import { homedir } from "node:os";
 import { SystemOneError } from "./types.ts";
+
+/** WP-L2 label-harvest ledger (shadow layout), read by `export` next to the live shadow dir. */
+const HARVEST_DIR = process.env.ALLTERNIT_S1_HARVEST_DIR?.trim() || join(BASE_DIR, "harvest");
 
 function flags(argv: string[]) {
   const out: Record<string, string | true> = {};
@@ -115,6 +125,26 @@ async function main() {
       console.log(JSON.stringify(new ShadowLedger(dir).recordOutcome({ truth: f.truth, source: f.source, decision_id: str("decision-id"), subject_ref: str("subject-ref"), question_id: str("question-id") })));
       return;
     }
+    case "harvest-labels": {
+      // WP-L2: local history -> labelled decision records, replayed through the real Laya router.
+      // Writes <dir>/decisions + <dir>/outcomes (shadow layout); `export` reads it by default.
+      const dir = typeof f.dir === "string" ? f.dir : HARVEST_DIR;
+      const engine = new SystemOne();
+      const provider = new LocalLogitReadoutProvider(engine, {
+        model_ref: `convaiinnovations/laya/${engine.config.layaModel}`, model_revision: layaRevision(), tokenizer_id: "modernbert", quantization: "none", runtime_backend: "laya-serve",
+      }, "backend.laya", `laya:${engine.config.layaModel}`);
+      const sources = [] as ReturnType<typeof claudeCodeSource>[];
+      const want = typeof f.sources === "string" ? f.sources.split(",") : ["claude-code", "gizzi"];
+      if (want.includes("claude-code")) sources.push(claudeCodeSource(typeof f["claude-dir"] === "string" ? f["claude-dir"] : join(homedir(), ".claude", "projects")));
+      if (want.includes("gizzi")) sources.push(gizziSource(typeof f["gizzi-db"] === "string" ? f["gizzi-db"] : join(homedir(), ".local", "share", "gizzi-code", "gizzi.db")));
+      const stats = await runHarvest({
+        dir, sources, router: new DecisionRouter({ provider, manifests: [], mode: "shadow", ledger: new ShadowLedger(dir) }),
+        capPerBank: typeof f.cap === "string" ? Number(f.cap) : 2500, concurrency: typeof f.concurrency === "string" ? Number(f.concurrency) : 4,
+        dryRun: f["dry-run"] === true, log: (s) => console.error(s),
+      });
+      console.log(JSON.stringify({ dir, ...stats }, null, 2));
+      return;
+    }
     case "export": {
       // Ledger -> fine-tuning set: train/tune/cert/audit.jsonl per (bank, type, option count).
       const dir = typeof f["shadow-dir"] === "string" ? f["shadow-dir"] : (process.env.ALLTERNIT_S1_SHADOW_DIR ?? join(BASE_DIR, "shadow"));
@@ -122,6 +152,8 @@ async function main() {
       const { rows, summary } = buildExport(dir, {
         primitive: typeof f.primitive === "string" ? f.primitive : undefined, model: typeof f.model === "string" ? f.model : undefined,
         auditFraction: typeof f.audit === "string" ? Number(f.audit) : undefined,
+        extraDirs: f["no-harvest"] === true ? [] : [typeof f["harvest-dir"] === "string" ? f["harvest-dir"] : HARVEST_DIR],
+        ...(typeof f.fractions === "string" ? { fractions: (([train, tune, cert]) => ({ train, tune, cert }))(f.fractions.split(",").map(Number)) } : {}),
       });
       writeExport(f.out, rows, summary);
       console.log(JSON.stringify({ out: f.out, ...summary }, null, 2));
@@ -180,10 +212,10 @@ async function main() {
       return;
     }
     default:
-      console.error(`usage: system-one <serve|ask|models|route-model|harvest|outcome|export|calibrate|canary> (default port ${DEFAULT_PORT})`);
+      console.error(`usage: system-one <serve|ask|models|route-model|harvest|harvest-labels|outcome|export|calibrate|canary> (default port ${DEFAULT_PORT})`);
       break;
   }
-  if (!["serve", "ask", "models", "route-model", "harvest", "outcome", "export", "calibrate", "canary"].includes(cmd ?? "")) process.exitCode = 2;
+  if (!["serve", "ask", "models", "route-model", "harvest", "harvest-labels", "outcome", "export", "calibrate", "canary"].includes(cmd ?? "")) process.exitCode = 2;
 }
 
 main().catch((e) => {
