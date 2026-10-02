@@ -605,6 +605,8 @@ pub struct Routed {
     /// The answering bot's name, put before its reply when several bots
     /// share the connection (so the chat can tell them apart).
     pub speaker: Option<String>,
+    /// Said in the chat instead of a turn: why no bot answered and how to fix it.
+    pub notice: Option<String>,
 }
 
 /// A bot switched on for a channel connection.
@@ -648,6 +650,30 @@ pub(crate) fn mentioned_bot<'a>(text: &str, bots: &'a [MemberBot]) -> Option<&'a
         .find_map(|h| bots.iter().find(|b| handle(&b.name) == h || handle(&b.id) == h))
 }
 
+/// A bot of the connection's owner named by an "@name" in `text` that is not
+/// switched on for the connection (so the chat can be told how to fix it).
+pub(crate) fn mentioned_off_bot(db: &DbHandle, acct: &Account, text: &str, members: &[MemberBot]) -> Option<MemberBot> {
+    if !text.contains('@') {
+        return None;
+    }
+    let conn = db.connect().ok()?;
+    let owned: Vec<MemberBot> = conn
+        .prepare("SELECT id, COALESCE(NULLIF(name, ''), id) FROM agents WHERE user_id = ?1")
+        .and_then(|mut q| q.query_map(params![acct.owner], |r| Ok(MemberBot { id: r.get(0)?, name: r.get(1)? }))?.collect())
+        .unwrap_or_default();
+    let off: Vec<MemberBot> = owned.into_iter().filter(|b| !members.iter().any(|m| m.id == b.id)).collect();
+    mentioned_bot(text, &off).cloned()
+}
+
+pub(crate) fn off_bot_notice(name: &str, provider: &str) -> String {
+    let place = CHANNEL_NAME.iter().find(|(p, _)| *p == provider).map(|(_, n)| *n).unwrap_or(provider);
+    format!("{name} isn't switched on for this {place} chat yet. To add it, open {name} in Allternit → Agent Gateway → Messaging and switch this connection on, or tap \"Turn on\" in the thread.")
+}
+
+pub(crate) const NO_BOT_NOTICE: &str = "No Allternit bot is switched on for this chat yet. In Allternit, open a bot → Agent Gateway → Messaging and switch this connection on.";
+
+const CHANNEL_NAME: [(&str, &str); 5] = [("telegram", "Telegram"), ("discord", "Discord"), ("whatsapp", "WhatsApp"), ("teams", "Teams"), ("slack", "Slack")];
+
 /// A bot whose vendor lane is a channel (e.g. Muse over WhatsApp): replies on
 /// its conversation are the vendor's answers, pulled by the lane transport,
 /// never new user turns.
@@ -667,15 +693,19 @@ fn lane_conversation(db: &DbHandle, thread_id: &str) -> bool {
 /// "@name" in a message routes it to that bot instead, in a sub-thread of the
 /// conversation's thread.
 pub async fn route_inbound<R: crate::thread_routes::ThreadRuntime>(db: &DbHandle, rt: &R, acct: &Account, provider: &str, e: &Inbound) -> Result<Routed, String> {
-    let none = |recorded| Ok(Routed { binding: None, recorded, turn: None, speaker: None });
+    let none = |recorded| Ok(Routed { binding: None, recorded, turn: None, speaker: None, notice: None });
     let bots = member_bots(db, acct);
     let mut binding = find_binding(db, provider, &e.conversation).filter(|b| b.owner == acct.owner);
     if binding.is_none() && !e.own && e.kind == InboundKind::Message {
-        let Some(default) = bots.first() else { return none(Recorded::Duplicate) };
         let text = e.text.clone().unwrap_or_default();
         if text.trim().is_empty() {
             return none(Recorded::Duplicate);
         }
+        let Some(default) = bots.first() else {
+            // Silence reads as "broken": say once per conversation that no bot is on.
+            let first = NO_BOT_TOLD.lock().map(|mut told| told.insert(format!("{}:{}", acct.id, e.conversation))).unwrap_or(false);
+            return Ok(Routed { binding: None, recorded: Recorded::Duplicate, turn: None, speaker: None, notice: first.then(|| NO_BOT_NOTICE.to_string()) });
+        };
         let title: String = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("Message").trim().chars().take(80).collect();
         let session = crate::thread_routes::channel_thread(db, rt, &default.id, provider, &e.conversation, &title, &text).await?;
         let thread_id: String = db
@@ -687,7 +717,7 @@ pub async fn route_inbound<R: crate::thread_routes::ThreadRuntime>(db: &DbHandle
     }
     let Some(b) = binding else { return none(Recorded::Duplicate) };
     let recorded = record_inbound(db, &b, e)?;
-    let (mut turn, mut speaker) = (None, None);
+    let (mut turn, mut speaker, mut notice) = (None, None, None);
     if recorded == Recorded::New && e.kind == InboundKind::Message && !e.own && !lane_conversation(db, &b.thread_id) {
         let row: Option<(String, String)> = db
             .connect()
@@ -698,8 +728,22 @@ pub async fn route_inbound<R: crate::thread_routes::ThreadRuntime>(db: &DbHandle
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .ok();
-        if let Some((session, bot)) = row {
-            let text = e.text.clone().unwrap_or_default();
+        let text = e.text.clone().unwrap_or_default();
+        let off = if mentioned_bot(&text, &bots).is_none() { mentioned_off_bot(db, acct, &text, &bots) } else { None };
+        if let (Some(off), Some((_, current))) = (off, row.as_ref()) {
+            // Named a bot that isn't on here: tell the chat, and offer the switch in the thread.
+            crate::gateway_runner::led(
+                db,
+                current,
+                &b.thread_id,
+                None,
+                "channel.bot.unavailable",
+                ("system", "channel"),
+                json!({ "botId": off.id, "botName": off.name, "accountId": acct.id, "provider": provider, "remoteId": e.remote_id }),
+                Some(format!("chan:{}:off:{}", b.id, e.remote_id)),
+            );
+            notice = Some(off_bot_notice(&off.name, provider));
+        } else if let Some((session, bot)) = row {
             let (session, bot) = match mentioned_bot(&text, &bots).filter(|m| m.id != bot) {
                 Some(m) => {
                     let title: String = format!("{} on {provider}", m.name).chars().take(80).collect();
@@ -714,8 +758,11 @@ pub async fn route_inbound<R: crate::thread_routes::ThreadRuntime>(db: &DbHandle
             turn = Some((session, bot, format!("[{provider} from {}] {text}", e.user.clone().unwrap_or_else(|| "someone".into()))));
         }
     }
-    Ok(Routed { binding: Some(b), recorded, turn, speaker })
+    Ok(Routed { binding: Some(b), recorded, turn, speaker, notice })
 }
+
+/// Conversations already told that no bot is switched on (once per process).
+static NO_BOT_TOLD: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::LazyLock::new(Default::default);
 
 pub fn channel_webhook_router() -> Router<Arc<AppState>> {
     Router::new().route("/webhooks/channels/:provider", post(webhook_h).get(whatsapp_challenge))
@@ -757,6 +804,19 @@ pub async fn dispatch_events(st: &Arc<AppState>, acct: &Account, tx: Arc<dyn Cha
                 let thread = b.external_thread.clone().unwrap_or_default();
                 if let Err(err) = post_reply(&st.db, tx.as_ref(), &b, &thread, &reply).await {
                     warn!(provider = %b.provider, "channel reply failed: {err}");
+                }
+            }
+            Ok(Routed { notice: Some(notice), binding, .. }) => {
+                let posted = match &binding {
+                    Some(b) => post_reply(&st.db, tx.as_ref(), b, &b.external_thread.clone().unwrap_or_default(), &notice).await,
+                    None => tx
+                        .post(&Outbound { workspace: e.workspace.clone(), channel: e.channel.clone(), thread: e.thread.clone(), text: notice, identity: None })
+                        .await
+                        .map(|_| ())
+                        .map_err(|err| format!("{err:?}")),
+                };
+                if let Err(err) = posted {
+                    warn!(provider = %tx.provider(), "channel notice failed: {err}");
                 }
             }
             Ok(_) => {}
@@ -1316,6 +1376,39 @@ mod tests {
         let only = route_inbound(&st.db, &Rt, &acct, "telegram", &tg(4, 88, "new chat")).await.unwrap();
         let (_, bot, _) = only.turn.unwrap();
         assert_eq!((bot.as_str(), only.speaker), ("bot-2", None));
+    }
+
+    #[tokio::test]
+    async fn naming_a_bot_that_is_off_here_says_how_to_turn_it_on_and_runs_no_turn() {
+        let (st, acct) = setup("offbot", "s", "telegram", None).await;
+        add_bot(&st, "bot-2", "engineer");
+        let c = st.db.connect().unwrap();
+        c.execute("UPDATE provider_account_bindings SET auth_type = 'channel_oauth'", []).unwrap();
+        crate::channel_gateway::set_bot_channel(&c, "user-a", "bot-1", "acct-1", true, false).unwrap();
+        let first = route_inbound(&st.db, &Rt, &acct, "telegram", &tg(1, 77, "hello")).await.unwrap();
+        assert!(first.turn.is_some() && first.notice.is_none());
+        let thread = first.binding.unwrap().thread_id;
+
+        let m = route_inbound(&st.db, &Rt, &acct, "telegram", &tg(2, 77, "@engineer fix the build")).await.unwrap();
+        assert!(m.turn.is_none(), "the default bot does not answer a message meant for engineer");
+        let notice = m.notice.expect("the chat is told why");
+        assert!(notice.starts_with("engineer isn't switched on for this Telegram chat"), "{notice}");
+        let p: String = c.query_row("SELECT payload FROM bot_events WHERE thread_id = ?1 AND event_type = 'channel.bot.unavailable'", params![thread], |r| r.get(0)).unwrap();
+        let p: Value = serde_json::from_str(&p).unwrap();
+        assert_eq!((p["botId"].as_str(), p["accountId"].as_str()), (Some("bot-2"), Some("acct-1")));
+        // A name that is no bot of theirs (a person, an email) changes nothing.
+        let plain = route_inbound(&st.db, &Rt, &acct, "telegram", &tg(3, 77, "ask @someone or mail me@example.com")).await.unwrap();
+        assert!(plain.turn.is_some() && plain.notice.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_chat_with_no_bot_switched_on_is_told_once() {
+        let (st, acct) = setup("nobot", "s", "telegram", None).await;
+        st.db.connect().unwrap().execute("UPDATE provider_account_bindings SET auth_type = 'channel_oauth'", []).unwrap();
+        let a = route_inbound(&st.db, &Rt, &acct, "telegram", &tg(1, 91, "hi")).await.unwrap();
+        assert_eq!((a.turn.is_none(), a.binding.is_none(), a.notice.as_deref()), (true, true, Some(NO_BOT_NOTICE)));
+        let b = route_inbound(&st.db, &Rt, &acct, "telegram", &tg(2, 91, "hello?")).await.unwrap();
+        assert!(b.notice.is_none(), "said once per conversation, not on every message");
     }
 
     #[tokio::test]

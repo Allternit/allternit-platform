@@ -727,7 +727,10 @@ pub(crate) async fn pull_events(db: &DbHandle, tx: &dyn AaiTransport, cx: &Cx, r
             if bridge_event(db, cx, remote, ev)? {
                 new += 1;
                 if ev["type"] == "agent.message.completed" {
-                    reply = ev["payload"]["text"].as_str().or_else(|| ev["payload"]["content"].as_str()).map(str::to_string);
+                    // Adapters name the finished text `text` (desktop apps, managed agents) or `reply`
+                    // (subscription, Hermes, loopback); `content` is a string only on older ones.
+                    let p = &ev["payload"];
+                    reply = p["text"].as_str().or_else(|| p["reply"].as_str()).or_else(|| p["content"].as_str()).map(str::to_string);
                     if let (Some(text), false) = (reply.as_deref(), cx.session_id.is_empty()) {
                         let pick = |k: &str, fallback: Value| ev.get(k).filter(|v| !v.is_null()).cloned().unwrap_or(fallback);
                         let meta = json!({
@@ -1314,6 +1317,17 @@ mod tests {
         c.execute("UPDATE remote_thread_bindings SET sync_cursor = NULL", []).unwrap();
         assert_eq!(sync_thread(&st.db, &f, "user-a", "th-vendor").await.unwrap(), 0);
         assert_eq!(count_events(&st, "agent.message.completed"), 1);
+    }
+
+    #[tokio::test]
+    async fn a_reply_named_reply_is_the_turn_reply() {
+        // Subscription adapters (claude-subscription, Hermes) send { reply, messageId };
+        // reading only `text` turned every Telegram answer into a failure notice.
+        let st = setup("reply-field").await;
+        let f = Fake::default();
+        f.push(json!({ "type": "agent.message.completed", "remote_event_id": "e1", "guarantee": "best_effort", "payload": { "reply": "Pong!", "messageId": "m1" } }));
+        let r = turn(&st, &f, "s-th-vendor", "Ping", key("k1")).await.unwrap().unwrap();
+        assert_eq!(r.reply.as_deref(), Some("Pong!"));
     }
 
     #[tokio::test]
