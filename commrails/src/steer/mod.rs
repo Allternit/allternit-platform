@@ -196,7 +196,15 @@ impl Steer {
             return run_shell_command(&cmd, cwd, context).await;
         }
 
-        if command_exists("ao-consult") {
+        // Recursion guard: `ao-consult` is a shim that execs `allternit-rails
+        // steer consult`, which would call back into the shim without bound
+        // (2026-10-02 fork bomb). When AO_CONSULT_ACTIVE is set (we are already
+        // inside a consult, or the shim set it), skip the shim and fall
+        // through to the kimi fallback.
+        let consult_active = std::env::var("AO_CONSULT_ACTIVE")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+        if !consult_active && command_exists("ao-consult") {
             return run_shell_command("ao-consult", cwd, context).await;
         }
 
@@ -206,6 +214,7 @@ impl Steer {
                 .arg("-p")
                 .arg(context)
                 .current_dir(cwd)
+                .env("AO_CONSULT_ACTIVE", "1")
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
@@ -259,6 +268,9 @@ async fn run_shell_command(cmd: &str, cwd: &Path, stdin: &str) -> Result<String>
         .arg("-c")
         .arg(cmd)
         .current_dir(cwd)
+        // Recursion guard: nested steering consults triggered by hooks inside
+        // this child must not re-enter the ao-consult shim.
+        .env("AO_CONSULT_ACTIVE", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -288,5 +300,158 @@ fn parse_verdict(answer: &str) -> ConsultResult {
     ConsultResult {
         verdict,
         body: answer.trim().to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ledger::ledger::LedgerOptions;
+    use std::ffi::OsString;
+    use std::io::Write;
+
+    /// Serializes env mutation (PATH / STEER_CONSULT_CMD / AO_CONSULT_ACTIVE)
+    /// across the consult tests in this module.
+    fn env_lock() -> &'static tokio::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    }
+
+    /// Saves the consult-related env vars and restores them on drop (including
+    /// on panic), so a failing test cannot leak mutated env into other tests.
+    struct EnvGuard {
+        path: Option<OsString>,
+        cmd: Option<OsString>,
+        active: Option<OsString>,
+    }
+
+    impl EnvGuard {
+        fn takeover() -> Self {
+            let guard = Self {
+                path: std::env::var_os("PATH"),
+                cmd: std::env::var_os("STEER_CONSULT_CMD"),
+                active: std::env::var_os("AO_CONSULT_ACTIVE"),
+            };
+            std::env::remove_var("STEER_CONSULT_CMD");
+            guard
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.path {
+                Some(v) => std::env::set_var("PATH", v),
+                None => std::env::remove_var("PATH"),
+            }
+            match &self.cmd {
+                Some(v) => std::env::set_var("STEER_CONSULT_CMD", v),
+                None => std::env::remove_var("STEER_CONSULT_CMD"),
+            }
+            match &self.active {
+                Some(v) => std::env::set_var("AO_CONSULT_ACTIVE", v),
+                None => std::env::remove_var("AO_CONSULT_ACTIVE"),
+            }
+        }
+    }
+
+    /// Prepends `bin_dir` to PATH.
+    fn prepend_path(bin_dir: &Path) {
+        let mut v = bin_dir.as_os_str().to_os_string();
+        if let Some(old) = std::env::var_os("PATH") {
+            v.push(":");
+            v.push(old);
+        }
+        std::env::set_var("PATH", v);
+    }
+
+    fn write_script(path: &Path, body: &str) {
+        let mut f = fs::File::create(path).unwrap();
+        f.write_all(body.as_bytes()).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    fn test_steer(root: &Path) -> Steer {
+        let ledger = Arc::new(Ledger::new(LedgerOptions {
+            root_dir: Some(root.to_path_buf()),
+            ledger_dir: None,
+        }));
+        Steer::new(ledger)
+    }
+
+    /// With AO_CONSULT_ACTIVE set, consult() must not invoke an ao-consult on
+    /// PATH (even though one is present) and must fall through to the kimi
+    /// fallback. Regression test for the 2026-10-02 steer-consult fork bomb:
+    /// ao-consult execs `allternit-rails steer consult`, which called
+    /// ao-consult again without bound.
+    #[tokio::test]
+    async fn consult_skips_ao_consult_when_active() {
+        let _guard = env_lock().lock().await;
+
+        let root = tempfile::tempdir().unwrap();
+        let bin_dir = root.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        // Fake ao-consult that would fail loudly if invoked.
+        let shim = bin_dir.join("ao-consult");
+        write_script(
+            &shim,
+            "#!/usr/bin/env bash\necho AO-CONSULT-INVOKED >&2\nexit 42\n",
+        );
+        // Fake kimi that answers successfully; the expected fallback backend.
+        let kimi = bin_dir.join("kimi");
+        write_script(&kimi, "#!/usr/bin/env bash\necho KIMI-ANSWER\n");
+
+        let _env = EnvGuard::takeover();
+        prepend_path(&bin_dir);
+        std::env::set_var("AO_CONSULT_ACTIVE", "1");
+
+        let answer = test_steer(root.path())
+            .consult(root.path(), "test context")
+            .await
+            .expect("consult failed");
+
+        assert!(
+            answer.contains("KIMI-ANSWER"),
+            "expected kimi fallback answer, got: {answer:?}"
+        );
+        assert!(
+            !answer.contains("AO-CONSULT-INVOKED"),
+            "ao-consult shim was invoked despite AO_CONSULT_ACTIVE"
+        );
+    }
+
+    /// Without AO_CONSULT_ACTIVE, an ao-consult on PATH is used (guards
+    /// against accidentally disabling the primary backend).
+    #[tokio::test]
+    async fn consult_uses_ao_consult_when_not_active() {
+        let _guard = env_lock().lock().await;
+
+        let root = tempfile::tempdir().unwrap();
+        let bin_dir = root.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        let shim = bin_dir.join("ao-consult");
+        write_script(
+            &shim,
+            "#!/usr/bin/env bash\nstdin=$(cat)\necho AO-CONSULT-USED\n",
+        );
+
+        let _env = EnvGuard::takeover();
+        prepend_path(&bin_dir);
+        std::env::remove_var("AO_CONSULT_ACTIVE");
+
+        let answer = test_steer(root.path())
+            .consult(root.path(), "test context")
+            .await
+            .expect("consult failed");
+
+        assert!(
+            answer.contains("AO-CONSULT-USED"),
+            "expected ao-consult answer, got: {answer:?}"
+        );
     }
 }

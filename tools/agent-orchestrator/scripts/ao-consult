@@ -6,6 +6,12 @@
 # instead of a persistent `ao-steer` session.
 set -euo pipefail
 
+# Recursion guard: `allternit-rails steer consult` re-invokes this shim when it
+# is on PATH. commrails skips the shim (and nested children inherit this) when
+# AO_CONSULT_ACTIVE is set; setting it here as well keeps re-entry impossible
+# even for older binaries.
+export AO_CONSULT_ACTIVE=1
+
 command -v allternit-rails >/dev/null 2>&1 || {
   echo "error: allternit-rails is not on PATH" >&2
   exit 1
