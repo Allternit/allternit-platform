@@ -12,6 +12,7 @@ pub mod inference_keys;
 pub mod inference_pool;
 pub mod inference_settlement;
 pub mod node_resolution;
+pub mod ops_alert;
 pub mod provisioning;
 pub mod quota_service;
 pub mod run_service;
@@ -57,7 +58,7 @@ pub use node_resolution::{
 pub use provisioning::{
     activate_registered_device, bind_device_slot, build_user_data, can_transition,
     incus_name_for, record_instance_started, record_instance_stopped, select_host, snapshot_alias_for,
-    start_provisioning_lifecycle_task, start_provisioning_reconcile_task, BootstrapContract, ComputerSize,
+    start_provisioning_lifecycle_task, start_provisioning_reconcile_task, start_waiting_computer_task, BootstrapContract, ComputerSize,
     usage_summary, validate_provisioned_bootstrap, BackendRegistry, BackendStatus, HostCapacity,
     IncusBackendRegistry, IncusHttpBackend, InstanceRow, InstanceView, ProvisionBackend,
     ProvisionDefaults, ProvisionError, ProvisionSpec, ProvisioningService, SuspendReason, INIT_SCRIPT,

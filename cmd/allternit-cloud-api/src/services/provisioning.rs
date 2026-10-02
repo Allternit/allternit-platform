@@ -1921,6 +1921,21 @@ impl ProvisioningService {
                 instance_id = %row.id, %host_id, ?plan_id, ?current, ?target,
                 "plan change: host has no room to resize this computer; keeping its size"
             );
+            crate::services::ops_alert::send_once(
+                &format!("resize:{}:{}", row.id, plan_id.as_deref().unwrap_or("?")),
+                format!(
+                    "Cloud computer upgrade waiting for room: {} on {host_id}",
+                    plan_id.as_deref().unwrap_or("new plan")
+                ),
+                format!(
+                    "A customer changed plans but their server has no room to resize their cloud computer.\n\n\
+                     User: {}\nInstance: {} ({})\nPlan: {}\nNow: {} vCPU / {} MB / {} GB\nNeeds: {} vCPU / {} MB / {} GB\n\n\
+                     They are billed for the new plan. Free room on {host_id} or move the computer to a bigger server.",
+                    row.user_id, row.id, row.incus_name, plan_id.as_deref().unwrap_or("?"),
+                    current.cpu_cores, current.memory_mb, current.disk_gb,
+                    target.cpu_cores, target.memory_mb, target.disk_gb,
+                ),
+            );
             return Ok(InstanceView::from(row));
         }
         let backend = self.backend_for_row(&row).await?;
@@ -2656,6 +2671,75 @@ impl ProvisioningService {
         Ok(())
     }
 
+    /// Email the team that a paid computer could not be created. "No host
+    /// has capacity" means a server has to be added; anything else is a
+    /// fault to look at. The waiting-computer sweep keeps retrying either way.
+    async fn alert_create_failed(&self, user_id: &str, subscription_id: &str, error: &ApiError) {
+        let (plan_id, size) = self.plan_size(Some(subscription_id)).await;
+        let plan = plan_id.as_deref().unwrap_or("?");
+        let message = error.to_string();
+        let no_room = message.contains("capacity");
+        let subject = if no_room {
+            format!("New {plan} cloud computer is waiting for a server")
+        } else {
+            format!("New {plan} cloud computer failed to create")
+        };
+        let next = if no_room {
+            "No server has room for it. Buy a server, set it up like allternit-standby (see infrastructure/provisioned-instance/README.md), \
+             and register it in provisioned_hosts. The computer is created within 5 minutes of the server being added."
+        } else {
+            "Check the cloud-api log on mail. The computer is retried every 5 minutes."
+        };
+        crate::services::ops_alert::send_once(
+            &format!("create:{subscription_id}"),
+            subject,
+            format!(
+                "A customer paid, but their cloud computer could not be created.\n\n\
+                 User: {user_id}\nSubscription: {subscription_id}\nPlan: {plan} ({} vCPU / {} MB / {} GB)\nError: {message}\n\n{next}",
+                size.cpu_cores, size.memory_mb, size.disk_gb,
+            ),
+        );
+    }
+
+    /// Paid subscriptions (active or trialing) that have no live computer:
+    /// the create failed (usually no server had room) or never ran. Each is
+    /// created now; one that still can't be created alerts again (deduped).
+    /// Runs every few minutes while the payment trigger is on, and right
+    /// after a server is registered.
+    pub async fn ensure_waiting_paid(&self) -> Result<usize, ApiError> {
+        let waiting: Vec<(String, String)> = sqlx::query_as(
+            r#"
+            SELECT b.user_id, b.stripe_subscription_id
+            FROM billing_subscriptions b
+            WHERE b.status IN ('active', 'trialing')
+              AND b.plan_id IN ('plus', 'super', 'ultra')
+              AND NOT EXISTS (
+                  SELECT 1 FROM provisioned_instances i
+                  WHERE i.subscription_id = b.stripe_subscription_id
+                    AND i.tier = 'paid'
+                    AND i.status IN ('provisioning', 'running', 'stopped', 'suspended')
+              )
+            ORDER BY b.stripe_subscription_id
+            "#,
+        )
+        .fetch_all(&self.db)
+        .await?;
+        let count = waiting.len();
+        for (user_id, subscription_id) in waiting {
+            match self.create(&user_id, Some(&subscription_id)).await {
+                Ok(view) => tracing::info!(
+                    %user_id, %subscription_id, instance_id = %view.id,
+                    "waiting cloud computer created"
+                ),
+                Err(error) => {
+                    tracing::warn!(%user_id, %subscription_id, %error, "waiting cloud computer still not created");
+                    self.alert_create_failed(&user_id, &subscription_id, &error).await;
+                }
+            }
+        }
+        Ok(count)
+    }
+
     /// Fire-and-forget create for the Stripe webhook (plan B1). The webhook
     /// answers Stripe immediately; "already exists" is success because
     /// `create` is idempotent per subscription. The handle is returned so
@@ -2674,10 +2758,13 @@ impl ProvisioningService {
                     %user_id, %subscription_id, instance_id = %view.id, status = %view.status,
                     "cloud computer ensured for subscription"
                 ),
-                Err(error) => tracing::error!(
-                    %user_id, %subscription_id, %error,
-                    "cloud computer provisioning failed; next delivery or a manual create retries"
-                ),
+                Err(error) => {
+                    tracing::error!(
+                        %user_id, %subscription_id, %error,
+                        "cloud computer provisioning failed; the waiting-computer sweep retries"
+                    );
+                    service.alert_create_failed(&user_id, &subscription_id, &error).await;
+                }
             }
         })
     }
@@ -2757,6 +2844,39 @@ pub fn start_provisioning_lifecycle_task(state: Arc<crate::ApiState>) {
             interval.tick().await;
             if let Err(error) = state.provisioning_service.sweep_lifecycle(Utc::now()).await {
                 tracing::error!("Provisioned instance lifecycle sweep failed: {}", error);
+            }
+        }
+    });
+}
+
+/// Seconds between waiting-computer sweeps (paid subscriptions without a
+/// computer, see [`ProvisioningService::ensure_waiting_paid`]).
+const WAITING_SWEEP_SECONDS: u64 = 300;
+
+/// Whether a paid subscription creates its cloud computer
+/// (`ALLTERNIT_PROVISION_ON_PAYMENT=1`, the go-live switch).
+pub fn provision_on_payment_enabled() -> bool {
+    matches!(
+        std::env::var("ALLTERNIT_PROVISION_ON_PAYMENT").as_deref(),
+        Ok("1") | Ok("true")
+    )
+}
+
+/// Retries paid computers that are waiting (no server had room, or the
+/// create failed) every [`WAITING_SWEEP_SECONDS`], while the payment trigger
+/// is on.
+pub fn start_waiting_computer_task(state: Arc<crate::ApiState>) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(WAITING_SWEEP_SECONDS));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        tracing::info!(interval_seconds = WAITING_SWEEP_SECONDS, "Waiting cloud computer sweep started");
+        loop {
+            interval.tick().await;
+            if !provision_on_payment_enabled() {
+                continue;
+            }
+            if let Err(error) = state.provisioning_service.ensure_waiting_paid().await {
+                tracing::error!("Waiting cloud computer sweep failed: {}", error);
             }
         }
     });
@@ -4172,6 +4292,34 @@ pub(crate) mod pg_tests {
         .await
         .unwrap();
         assert_eq!(burst, (16, 32768));
+    }
+
+    #[tokio::test]
+    async fn a_paid_computer_waits_for_a_server_then_gets_created() {
+        let pool = migrated_pool().await;
+        // Only plan subscriptions count; give sub_1 a plan, leave the rest planless.
+        sqlx::query("UPDATE billing_subscriptions SET plan_id = 'plus' WHERE stripe_subscription_id = 'sub_1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // A server too small for Plus (2 vCPU / 4 GB).
+        insert_host(&pool, "host_small", 1, 1024, 10).await;
+        let backend = Arc::new(MockBackend::default());
+        let service = service(pool.clone(), backend.clone());
+
+        assert!(service.create("user_1", Some("sub_1")).await.is_err(), "no room");
+        assert_eq!(service.ensure_waiting_paid().await.unwrap(), 1, "still waiting");
+        assert!(backend.created.lock().unwrap().is_empty());
+
+        // A server is added: the next sweep creates it.
+        insert_host(&pool, "host_new", 8, 16384, 200).await;
+        assert_eq!(service.ensure_waiting_paid().await.unwrap(), 1);
+        let created = backend.created.lock().unwrap().clone();
+        assert_eq!(created.len(), 1);
+        assert_eq!((created[0].cpu_cores, created[0].memory_mb), (2, 4096));
+
+        // Nothing waits any more.
+        assert_eq!(service.ensure_waiting_paid().await.unwrap(), 0);
     }
 
     #[tokio::test]

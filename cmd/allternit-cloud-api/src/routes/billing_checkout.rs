@@ -315,6 +315,10 @@ fn checkout_form_params(
 ) -> Vec<(String, String)> {
     let mut form = vec![
         ("mode".to_string(), "payment".to_string()),
+        // Pay-now methods only, as for plans: credits are granted on payment,
+        // so no buy-now-pay-later or delayed methods.
+        ("payment_method_types[0]".to_string(), "card".to_string()),
+        ("payment_method_types[1]".to_string(), "link".to_string()),
         ("success_url".to_string(), success_url.to_string()),
         ("cancel_url".to_string(), cancel_url.to_string()),
         (
@@ -503,6 +507,8 @@ mod tests {
         assert_eq!(field("line_items[0][price_data][unit_amount]"), "2500", "credits are priced 1:1 in cents");
         assert_eq!(field("line_items[0][price_data][currency]"), "usd");
         assert_eq!(field("mode"), "payment");
+        assert_eq!(field("payment_method_types[0]"), "card", "pay-now methods only");
+        assert_eq!(field("payment_method_types[1]"), "link");
         assert_eq!(field("success_url"), "https://s.example");
         assert_eq!(field("cancel_url"), "https://c.example");
     }
