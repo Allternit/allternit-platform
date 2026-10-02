@@ -179,7 +179,25 @@ mod tests {
         }
         *ACU_URL_OVERRIDE.lock().unwrap() = Some(url.clone());
         let r = dispatch(&t.st, "u1", "local", &actions, false, "g2-live-readonly").await;
+        // The run-level contract is dispatch's; also show WHICH adapter
+        // claimed each read-only action (a "none" adapter_id means the
+        // gateway never routed the action — the regression this test pins).
+        let probe = reqwest::Client::new().post(format!("{}/v1/computer-use/execute", url.trim_end_matches('/')))
+            .json(&json!({ "mode": "direct", "actions": actions, "run_id": "g2-live-readonly-probe",
+                           "session_id": "g2-live-readonly-probe", "target_scope": "desktop" }))
+            .timeout(std::time::Duration::from_secs(120)).send().await;
         *ACU_URL_OVERRIDE.lock().unwrap() = None;
+        match probe {
+            Ok(resp) => {
+                let v: Value = resp.json().await.unwrap_or(Value::Null);
+                for a in v["result"]["actions"].as_array().cloned().unwrap_or_default() {
+                    eprintln!("LIVE COMPUTER per-action: kind={} status={} adapter_id={}",
+                        a["kind"], a["status"], a["result"]["adapter_id"]);
+                    assert_ne!(a["result"]["adapter_id"], "none", "{} was not routed to an adapter", a["kind"]);
+                }
+            }
+            Err(e) => eprintln!("LIVE COMPUTER per-action probe failed against {url}: {e}"),
+        }
         match &r {
             Ok(v) => eprintln!("LIVE COMPUTER TEST OK against {url}: {v}"),
             Err(e) => eprintln!("LIVE COMPUTER TEST FAILED against {url}: {e}"),
