@@ -3,13 +3,13 @@ title: "Calibration"
 description: "The calibration manifest, the per-primitive go-live gate, and why agreement with another model is not evidence"
 ---
 
-**Implementation: IMPLEMENTED (manifest binding, go-live gate) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
+**Implementation: IMPLEMENTED (manifest binding, go-live gate, canary) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels).
 
 | | |
 |---|---|
 | **Architecture** | S1 may act on a primitive only after its calibration manifest passes the gate. |
-| **Implemented today** | Manifest binding and the go-live gate are on main. No calibration manifest exists yet. |
-| **Active path** | No. S1 acts on nothing. |
+| **Implemented today** | Manifest binding, the go-live gate and the canary are on main. One primitive, `judge.first_pass.tool`, has passed the gate. |
+| **Active path** | Partial. S1 is shadow by default. With live mode on, a primitive that passed the gate acts within a daily budget, with audits and automatic rollback. |
 | **Public exposure** | No. Not reachable by an external developer. |
 
 A decision is only allowed to act when its confidence is **calibrated**: when a stated 0.9 is right about 90% of the time on data the component has not seen. Calibration is measured per primitive and recorded in a manifest.
@@ -40,7 +40,30 @@ Why: a decision that acts automatically is only as safe as its confidence is hon
 
 ## Current implementation
 
-On main, the decision runtime has manifests with scope fingerprints and exact-binding checks, the go-live gate as code (including minimum sample floors, bounds on the auto-act error, and the reversible-only rule), and the metrics above. The gate cannot take agreement with another model as an input. **No calibration manifests exist yet**, so no primitive has passed and every S1 result is shadow-only.
+On main, the decision runtime has manifests with scope fingerprints and exact-binding checks, the go-live gate as code (including minimum sample floors, bounds on the auto-act error, and the reversible-only rule), and the metrics above. The gate cannot take agreement with another model as an input.
+
+### Passing the gate
+
+The gate on main is Q26. Held-out data the component was not trained on is split in two: one split tunes the confidence threshold, the other certifies it. A primitive passes when the Clopper-Pearson upper bound on its auto-act error over the certification split stays under its error budget (5% at 95% confidence by default). Permission and vendor-consequential primitives are never eligible to act automatically, whatever their scores.
+
+As of 2026-10-02, one primitive has passed: `judge.first_pass.tool` (is a tool call safe to run on the first pass), with an auto-act error upper bound of 0.58% at full coverage on 2,937 held-out decisions. The route, model-routing, error-classification and node-judge primitives did not pass and stay in shadow.
+
+### Canary
+
+Passing the gate does not switch a primitive on. It makes it eligible for a canary, the only way a Q26 manifest acts:
+
+- **Exposure budget.** At most N live decisions per day per primitive (20 to start). Past the budget, decisions go back to shadow until the next day.
+- **Audits.** Every live decision is audited, plus a random 2–5% slice of shadow decisions (3% by default).
+- **Automatic rollback.** Audited outcomes feed a Bernoulli CUSUM. If the observed error drifts above the budget, the primitive rolls back to shadow on its own.
+- **Growth.** After 50 clean audits the budget can be doubled.
+
+Canary state is kept per primitive in `~/.allternit/system-one/canary.json` and managed with `system-one canary <status|enable|grow|sync|rollback>`. `enable` refuses a primitive that the Q26 report does not mark eligible.
+
+### Live mode
+
+S1 consults the canary only in live mode. In Allternit Desktop, live mode is a saved System One setting (`liveMode` in `~/.allternit/system-one/settings.json`). It is **off by default** and can also be set with `ALLTERNIT_S1_MODE=live`. Changing it restarts the System One process so it applies. While live mode is on, Desktop runs `system-one canary sync` about a minute after S1 starts and every 15 minutes after that, so audited outcomes reach the rollback check.
+
+With live mode off, everything stays shadow-only, including primitives in canary: S1 records what it would have decided and takes no action.
 
 ## Availability
 
@@ -48,12 +71,14 @@ On main, the decision runtime has manifests with scope fingerprints and exact-bi
 |------|--------|
 | Calibration manifest schema | **IMPLEMENTED** (contract) |
 | Manifest binding, go-live gate, metrics | **IMPLEMENTED** · INTERNAL |
-| Any primitive passing the gate | **DESIGN** (no manifests yet) |
+| Canary (budget, audits, CUSUM rollback) and the Desktop live-mode switch | **IMPLEMENTED** · INTERNAL (live mode off by default) |
+| `judge.first_pass.tool` | **IMPLEMENTED** · INTERNAL (passed Q26; acts only in a canary with live mode on) |
+| Other primitives | **SHADOW** (not passed) |
 | Monitoring and refit on drift | **DESIGN** |
 
 ## Developer relevance
 
-If you want a decision primitive to act, you need labelled held-out data for that exact question and component. Until then it runs in shadow and its results are recorded, not used.
+If you want a decision primitive to act, you need labelled held-out data for that exact question and component, a passing Q26 report, a canary, and live mode on. Until then it runs in shadow and its results are recorded, not used.
 
 ## Related
 

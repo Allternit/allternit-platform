@@ -9,7 +9,7 @@ description: "The four kinds of inference a graph node can use, what each may an
 |---|---|
 | **Architecture** | Every step runs at the lowest sufficient cognition level, chosen by the system. |
 | **Implemented today** | Deterministic S0 and S2 generation run today. The S1 decision runtime runs in shadow. Policy-routed S3 exists as router library code. |
-| **Active path** | Partial. S0 and S2 yes; S1 shadow only; the router is not called on the normal path. |
+| **Active path** | Partial. S0 and S2 yes; S1 shadow by default (one primitive in a live-mode canary); the router is not called on the normal path. |
 | **Public exposure** | No. Not reachable by an external developer. |
 
 Each graph node is assigned one cognition level. The levels are roles within one agent, not separate agents, and they are independent of which [execution mode](/architecture/routing) provides them.

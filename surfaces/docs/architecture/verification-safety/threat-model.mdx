@@ -24,7 +24,7 @@ Safety is a floor that holds even when a component misbehaves. This page lists t
 | Model declares itself done | Verifier-owned completion | On main for agency-origin work |
 | Prompt injection from retrieved or predecessor content | Trust classes, nonce fencing | Partly on main; compiler enforcement is design |
 | Repeated external effect on retry | Idempotency key plus durable action receipt | On main for effect receipts (internal) |
-| Unreviewed autonomous decision | S1 decision runtime is shadow-only | On main |
+| Unreviewed autonomous decision | S1 is shadow by default; a primitive acts only after passing the gate, inside a budgeted, audited canary with automatic rollback | On main |
 | Tampering with history | Signed, append-only receipt chain | On main (internal) |
 
 Assumptions: the host, the signing keys and the policy configuration are trusted. One executor is fenced by its environment only, which is a weaker guarantee than the gated ones. The kernel does not claim to stop a compromised host.

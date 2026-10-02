@@ -9,6 +9,12 @@ This log covers the kernel contracts and the architecture docs. The platform cha
 
 ## Architecture contract
 
+### 2026-10-02
+
+- `judge.first_pass.tool` passed the Q26 calibration gate (auto-act error upper bound 0.58% at full coverage, 2,937 held-out decisions) and entered a canary: 20 live decisions a day, every live decision audited, CUSUM rollback to shadow.
+- Allternit Desktop gained a System One live-mode setting, off by default, and runs `canary sync` every 15 minutes while it is on.
+- Calibration, decision runtime and related pages updated: S1 is shadow by default, not shadow-only.
+
 ### 2026-09-30
 
 - Kernel ABI 1.0.0 frozen: 21 schema files, 65 contracts, 191-ID primitive registry.
