@@ -40,6 +40,17 @@ pub fn run(h: &Handle, st: &AppState, owner: &str, org: &str, parent: &str, temp
     let id = child.run["id"].as_str().unwrap_or_default().to_string();
     let (status, reason) = (child.run["status"].as_str().unwrap_or_default(), child.run["status_reason"].as_str().unwrap_or_default());
     match (status, fresh_s0) {
+        // G2: the child stopped for a person. Still open → park the parent on
+        // it (not a failure). Answered → re-queue the child and drive it on
+        // (its journal resumes after the answered step); rejected → it fails.
+        ("needs_attention", _) => {
+            if let Some(att) = child.attention.iter().rev().find(|a| a["status"] == "open") {
+                return Err(anyhow::Error::new(NeedsPerson { child_run: id, attention: att.clone() }));
+            }
+            let rejected = child.attention.iter().rev().find(|a| a["status"] == "resolved")
+                .is_some_and(|a| a["resolution"]["outcome"] == "rejected");
+            if requeue_child(h, &s, &id, rejected)? { crate::agency_api::template_exec::drive(h, st, &s, &id, org)?; }
+        }
         ("waiting", _) if reason == QUEUED => crate::agency_api::template_exec::drive(h, st, &s, &id, org)?,
         ("running", Some(steps)) => drive_s0(h, &s, &id, &steps),
         ("running", None) => bail!("template run {id} is still running from an earlier attempt (fail closed)"),
@@ -48,8 +59,49 @@ pub fn run(h: &Handle, st: &AppState, owner: &str, org: &str, parent: &str, temp
     let done = h.block_on(s.load_run(&id))?.ok_or_else(|| anyhow!("template run {id} vanished"))?;
     match done.run["status"].as_str().unwrap_or_default() {
         "completed" => Ok(format!("template:{template_id}:run:{id}")),
+        "needs_attention" => match done.attention.iter().rev().find(|a| a["status"] == "open") {
+            Some(att) => Err(anyhow::Error::new(NeedsPerson { child_run: id, attention: att.clone() })),
+            None => bail!("template run {id} is waiting on a person with no open request (fail closed)"),
+        },
         st => bail!("template run {id} ended `{st}`: {}", done.run["status_reason"].as_str().unwrap_or_default()),
     }
+}
+
+/// G2: attention reason of a parent run parked on its child template's request.
+pub const CHILD_ATTENTION_REASON: &str = "template_child_attention";
+
+/// G2: the child template run stopped for a person (an open attention item).
+/// Not a failure: the executor parks the parent run on it (linked by the
+/// child's attention id) and leaves the effect retryable, so the answer
+/// resumes the parent, which re-checks the same child (idempotency key).
+#[derive(Debug)]
+pub struct NeedsPerson {
+    pub child_run: String,
+    pub attention: Value,
+}
+
+impl std::fmt::Display for NeedsPerson {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "template run {} needs a person: {}", self.child_run, self.attention["title"].as_str().unwrap_or("attention"))
+    }
+}
+
+impl std::error::Error for NeedsPerson {}
+
+/// The child's request was answered: queue it for its next drive, or fail it
+/// on a rejection. `false` = nothing to drive (someone else moved it on).
+fn requeue_child(h: &Handle, s: &AgencyStore, id: &str, rejected: bool) -> Result<bool> {
+    h.block_on(async {
+        let _g = s.lock().await;
+        let Some(rec) = s.load_run(id).await? else { bail!("template run {id} vanished") };
+        if rec.run["status"] != "needs_attention" { return Ok(false); }
+        if rejected {
+            s.transition(rec, "failed", Some("stopped by the approver")).await?;
+            return Ok(false);
+        }
+        s.transition(rec, "waiting", Some(QUEUED)).await?;
+        Ok(true)
+    })
 }
 
 /// Test fixture: an owner-scoped model template ending in a verifier.

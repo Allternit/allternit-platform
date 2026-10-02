@@ -121,7 +121,11 @@ impl Exec<'_> {
         let (st, h, org, run_id, nd) = (self.st, self.h, self.org.clone(), self.run_id.clone(), node.to_string());
         let owner = self.h.block_on(self.s.load_run(&self.run_id))?.map(|r| r.owner).unwrap_or_default();
         // ── end WP-C3a ──
-        self.effect_with(node, tool, "MUTATE", json!({ "write_set": write_set, "content_digest": digest }), false, move |w| {
+        // G2: a child template that stops for a person parks this run instead
+        // of failing it (the receipt chain flattens the error, so it comes back here).
+        let parked: std::cell::RefCell<Option<super::super::effect_template::NeedsPerson>> = Default::default();
+        let park_slot = &parked;
+        let res = self.effect_with(node, tool, "MUTATE", json!({ "write_set": write_set, "content_digest": digest }), false, move |w| {
             if fail { bail!("scripted: effect failed"); }
             let mut refs = vec![];
             for r in &ws {
@@ -136,8 +140,26 @@ impl Exec<'_> {
                         refs.push(format!("fs:{}:{digest}", rel.display()));
                     }
                     // ── WP-C3a connectors: stable key per (run, node, resource) ──
-                    "thread" => refs.push(super::super::effect_thread::post(&st.db, &owner, &run_id, &nd, target, &format!("{run_id}:{nd}:{r}"), &body)?),
-                    "template" => refs.push(super::super::effect_template::run(h, st, &owner, &org, &run_id, target, &format!("{run_id}:{nd}:{r}"), json!({ "goal": body }))?),
+                    "thread" => {
+                        let key = format!("{run_id}:{nd}:{r}");
+                        refs.push(super::super::effect_thread::post(&st.db, &owner, &run_id, &nd, target, &key, &body)?);
+                        // G2: the same reply, live in the thread's open session (deduped by key).
+                        // Best effort: the ledger post above is the record.
+                        if let Err(e) = h.block_on(super::super::effect_thread::deliver_live(&st.db, &owner, target, &run_id, &key, &body)) {
+                            tracing::warn!(%run_id, thread_id = %target, error = %e, "thread post is on the ledger but did not reach the live session");
+                        }
+                    }
+                    "template" => match super::super::effect_template::run(h, st, &owner, &org, &run_id, target, &format!("{run_id}:{nd}:{r}"), json!({ "goal": body })) {
+                        Ok(r) => refs.push(r),
+                        Err(e) => match e.downcast::<super::super::effect_template::NeedsPerson>() {
+                            Ok(np) => {
+                                let msg = np.to_string();
+                                *park_slot.borrow_mut() = Some(np);
+                                bail!(msg);
+                            }
+                            Err(e) => return Err(e),
+                        },
+                    },
                     // ── end WP-C3a ──
                     // ── WP-C3b ──
                     "computer" | "campaign" if c3b.is_some() => {
@@ -149,7 +171,33 @@ impl Exec<'_> {
                 }
             }
             Ok(format!("effect:{}", refs.join(",")))
-        })
+        });
+        match parked.into_inner() {
+            Some(np) if res.is_err() => Err(self.park_on_child(node, np)),
+            _ => res,
+        }
+    }
+
+    /// G2: park this run on a child template's open attention item. One
+    /// parent item per child item (a re-drive that finds the child still
+    /// waiting does not open a second one). The effect was recorded as a
+    /// retryable failure, so the drive after the answer re-checks the child.
+    fn park_on_child(&self, node: &str, np: super::super::effect_template::NeedsPerson) -> StepErr {
+        use super::super::effect_template::CHILD_ATTENTION_REASON;
+        let child_att = np.attention["id"].as_str().unwrap_or_default().to_string();
+        let r = self.h.block_on(async {
+            let rec = self.s.load_run(&self.run_id).await?.ok_or_else(|| anyhow!("run vanished"))?;
+            if rec.attention.iter().any(|a| a["status"] == "open" && a["child_attention_id"] == child_att.as_str()) {
+                return anyhow::Ok(());
+            }
+            let title = np.attention["title"].as_str().unwrap_or("A template step needs you");
+            let detail = format!("Step {node} runs a template that stopped for a person:\n{}\nAnswering here answers the template's request; the run then picks up where it left off.",
+                np.attention["detail"].as_str().unwrap_or_default());
+            self.s.park_attention(&self.run_id, CHILD_ATTENTION_REASON, title, &detail, json!({ "node_id": node, "child_run_id": np.child_run,
+                "child_attention_id": child_att, "consequential": np.attention["consequential"].as_bool().unwrap_or(false) })).await?;
+            Ok(())
+        });
+        match r { Ok(()) => StepErr::Stop, Err(e) => StepErr::Fail(e) }
     }
 
     /// Drive a task type's graph to verifier-owned completion.

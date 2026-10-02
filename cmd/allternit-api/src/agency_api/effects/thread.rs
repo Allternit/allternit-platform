@@ -60,6 +60,41 @@ pub fn post(db: &DbHandle, owner: &str, run_id: &str, node: &str, thread_id: &st
     Ok(format!("thread:{thread_id}:event:{ev}"))
 }
 
+/// The live half of a post: put the same reply into the thread's open
+/// session (the gizzi transcript the thread UI streams), as an assistant
+/// message without a model turn. `send` is the transport (production:
+/// [`deliver_live`]). Deduped end to end by `remote_event_id = agency:<key>`
+/// (gizzi keeps one message per id), so a replay after a crash between
+/// "applied" and "committed" never shows twice; a committed effect never
+/// reaches here again (P1's journal). `Ok(None)` = the thread has no open
+/// session yet (the ledger post is still there for when it opens).
+pub async fn deliver_live_with<F, Fut>(db: &DbHandle, owner: &str, thread_id: &str, run_id: &str, key: &str, text: &str, send: F) -> Result<Option<String>>
+where
+    F: FnOnce(String, String, serde_json::Value) -> Fut,
+    Fut: std::future::Future<Output = std::result::Result<(), String>>,
+{
+    let session: Option<String> = db.connect()?
+        .query_row("SELECT current_session_id FROM bot_threads WHERE id = ?1 AND user_id = ?2 AND COALESCE(incognito, 0) = 0",
+            params![thread_id, owner], |r| r.get(0))
+        .optional()?
+        .flatten()
+        .filter(|s: &String| !s.is_empty());
+    let Some(session) = session else { return Ok(None) };
+    let meta = json!({ "source": "agency", "remote_event_id": format!("agency:{key}"), "run_id": run_id, "thread_id": thread_id });
+    send(session.clone(), text.to_string(), meta).await.map_err(|e| anyhow!("live thread post: {e}"))?;
+    Ok(Some(session))
+}
+
+/// Production transport for [`deliver_live_with`]: the same session append
+/// the Agent Gateway uses for bot replies (local gizzi or the session's
+/// placement target).
+pub async fn deliver_live(db: &DbHandle, owner: &str, thread_id: &str, run_id: &str, key: &str, text: &str) -> Result<Option<String>> {
+    let d = db.clone();
+    deliver_live_with(db, owner, thread_id, run_id, key, text, |s, t, m| async move {
+        crate::agent_session_routes::append_vendor_message(&d, &s, &t, m).await
+    }).await
+}
+
 /// Test fixture: an owned thread on a bot (shared with the executor e2e).
 #[cfg(test)]
 pub(crate) fn seed(db: &DbHandle, id: &str, owner: &str, incognito: bool) {
@@ -114,6 +149,40 @@ mod tests {
         assert!(post(db, "u1", "run_3", "T06", "th_inc", "k5", "x").is_err(), "incognito");
         assert!(post(db, "u1", "run_3", "T06", "../x", "k6", "x").is_err(), "bad id");
         assert!(post(db, "u1", "run_3", "T06", "th_c3a", "k7", "  ").is_err(), "empty");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn live_post_reaches_the_open_session_once() {
+        use crate::agency_api::safety::acquire_fence;
+        use std::sync::{Arc, Mutex};
+        let t = crate::agency_api::tests::setup().await;
+        let db = &t.st.db;
+        seed(db, "th_live", "u1", false);
+        let sent: Arc<Mutex<Vec<(String, String, serde_json::Value)>>> = Arc::default();
+        let send = |s: String, x: String, m: serde_json::Value| { let sent = sent.clone(); async move { sent.lock().unwrap().push((s, x, m)); Ok(()) } };
+        // No open session yet: ledger only, nothing live.
+        assert_eq!(deliver_live_with(db, "u1", "th_live", "run_l", "k", "hi", send).await.unwrap(), None);
+        db.connect().unwrap().execute("UPDATE bot_threads SET current_session_id = 'ses_1' WHERE id = 'th_live'", []).unwrap();
+        assert!(deliver_live_with(db, "u2", "th_live", "run_l", "k", "hi", send).await.unwrap().is_none(), "not the owner");
+        // Fenced: a committed effect replays without re-delivering.
+        let key = "run_l:T06:tool.execute:1";
+        let e1 = acquire_fence(db, "run_l", "w1").unwrap();
+        let h = tokio::runtime::Handle::current();
+        let apply = || tokio::task::block_in_place(|| {
+            let r = post(db, "u1", "run_l", "T06", "th_live", key, "hello")?;
+            h.block_on(deliver_live_with(db, "u1", "th_live", "run_l", key, "hello", send))?;
+            Ok(r)
+        });
+        let a = fenced(db, "run_l", key, e1, apply).unwrap();
+        assert_eq!(fenced(db, "run_l", key, e1, apply).unwrap(), a);
+        // A crash-window replay re-sends with the same dedupe id (gizzi keeps one).
+        deliver_live_with(db, "u1", "th_live", "run_l", key, "hello", send).await.unwrap();
+        let v = sent.lock().unwrap();
+        assert_eq!(v.len(), 2, "one live delivery per apply, none for the committed replay");
+        assert_eq!((v[0].0.as_str(), v[0].1.as_str()), ("ses_1", "hello"));
+        assert_eq!(v[0].2["remote_event_id"], format!("agency:{key}"));
+        assert_eq!(v[0].2["remote_event_id"], v[1].2["remote_event_id"], "stable dedupe id on replay");
+        assert_eq!(count(db, "th_live"), 1, "ledger has one post");
     }
 
     #[tokio::test]

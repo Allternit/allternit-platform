@@ -556,9 +556,41 @@ async fn resolve_attention(
     kind: &str,
     body: &Value,
 ) -> ApiResult {
+    resolve_attention_linked(st, s, user, rid, rec, att, id, kind, body, true).await
+}
+
+/// G2: `link_parents` = also release parent runs parked on this item (a
+/// child template's request answered on the child itself). Off when the
+/// answer is being forwarded down from the parent.
+#[allow(clippy::too_many_arguments)]
+fn resolve_attention_linked<'a>(
+    st: &'a Arc<AppState>,
+    s: &'a AgencyStore,
+    user: &'a AuthUser,
+    rid: &'a RequestId,
+    rec: RunRecord,
+    att: Value,
+    id: &'a str,
+    kind: &'a str,
+    body: &'a Value,
+    link_parents: bool,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = ApiResult> + Send + 'a>> {
+    Box::pin(async move {
     let (rid, kind) = (rid, kind.to_string());
     if att["status"] != "open" {
         return Err(ApiError::new(409, "STATE", "ERR_ATTENTION_RESOLVED", "attention request already resolved", rid));
+    }
+    // G2: a parent parked on its child template's request. The answer goes to
+    // the child's item first (same validation and rules as answering it
+    // there); the parent then re-queues and re-checks the child.
+    if att["reason"] == effect_template::CHILD_ATTENTION_REASON {
+        let (child_id, child_att) = (att["child_run_id"].as_str().unwrap_or_default(), att["child_attention_id"].as_str().unwrap_or_default());
+        let child = s.load_run(child_id).await.map_err(|e| ApiError::internal(e, rid))?;
+        if let Some(child) = child.filter(|c| c.owner == rec.owner) {
+            if let Some(ca) = child.attention.iter().find(|a| a["id"] == child_att && a["status"] == "open").cloned() {
+                resolve_attention_linked(st, s, user, rid, child, ca, child_att, &kind, body, false).await?;
+            }
+        }
     }
     let mut rec = s.load_run(rec.run["id"].as_str().unwrap_or_default()).await.map_err(|e| ApiError::internal(e, rid))?
         .ok_or_else(|| ApiError::not_found("run", rid))?;
@@ -672,6 +704,10 @@ async fn resolve_attention(
         to = Some(("waiting", "answered; queued for execution (committed steps replay from the journal)"));
         requeue = true;
     }
+    if reason == effect_template::CHILD_ATTENTION_REASON {
+        to = Some(("waiting", "answered; queued to re-check the template run (committed steps replay from the journal)"));
+        requeue = true;
+    }
     if matches!(reason.as_str(), safety::RUN_CAP_REASON | safety::STUCK_REASON | safety::UNKNOWN_EFFECT_REASON) {
         if kind == "rejection" {
             to = Some(("failed", "stopped by the approver"));
@@ -691,7 +727,37 @@ async fn resolve_attention(
             executor::spawn(st.clone(), run_id.to_string());
         }
     }
+    if link_parents {
+        release_parents(st, s, &rec.owner, id, &resolution).await.map_err(|e| ApiError::internal(e, rid))?;
+    }
     Ok(Json(json!({ "object": "attention_response", "attention_id": id, "resolution": resolution, "run": public_run(&rec) })).into_response())
+    })
+}
+
+/// G2: a child template's request was answered on the child itself: resolve
+/// every parent item linked to it with the same resolution and re-queue
+/// those parents (their drive re-checks the child under the fence).
+async fn release_parents(st: &Arc<AppState>, s: &AgencyStore, owner: &str, child_att: &str, resolution: &Value) -> anyhow::Result<()> {
+    for mut p in s.list_runs(owner).await? {
+        if p.run["status"] != "needs_attention" { continue; }
+        let mut hit = None;
+        for a in p.attention.iter_mut().filter(|a| a["reason"] == effect_template::CHILD_ATTENTION_REASON && a["status"] == "open" && a["child_attention_id"] == child_att) {
+            a["status"] = json!("resolved");
+            a["resolution"] = resolution.clone();
+            hit = a["id"].as_str().map(str::to_string);
+        }
+        let Some(pid) = hit else { continue };
+        let run_id = p.run["id"].as_str().unwrap_or_default().to_string();
+        let v = p.run["version"].as_i64().unwrap_or(0);
+        s.emit(&run_id, v, "attention.resolved", json!({ "data": { "attention_id": pid, "resolution": resolution } })).await?;
+        if p.attention.iter().any(|a| a["status"] == "open") {
+            s.save(p).await?;
+            continue;
+        }
+        s.transition(p, "waiting", Some("answered; queued to re-check the template run (committed steps replay from the journal)")).await?;
+        executor::spawn(st.clone(), run_id);
+    }
+    Ok(())
 }
 
 // ── WP-P1 production safety routes ──────────────────────────────────────────
