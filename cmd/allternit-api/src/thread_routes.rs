@@ -757,6 +757,22 @@ pub async fn channel_thread<R: ThreadRuntime>(
     title: &str,
     objective: &str,
 ) -> Result<String, String> {
+    channel_thread_under(db, rt, bot_id, channel, key, title, objective, None).await
+}
+
+/// [`channel_thread`] as a sub-thread of `parent` (a bot "@mentioned" in a
+/// channel conversation that another bot's thread holds).
+#[allow(clippy::too_many_arguments)]
+pub async fn channel_thread_under<R: ThreadRuntime>(
+    db: &DbHandle,
+    rt: &R,
+    bot_id: &str,
+    channel: &str,
+    key: &str,
+    title: &str,
+    objective: &str,
+    parent: Option<&str>,
+) -> Result<String, String> {
     let (owner, open): (Option<String>, Option<(String, Option<String>)>) = {
         let conn = db.connect().map_err(|e| e.to_string())?;
         let owner = conn
@@ -785,6 +801,7 @@ pub async fn channel_thread<R: ThreadRuntime>(
         "objective": objective,
         "createdBy": channel,
         "origin": { "channel": channel, "channelKey": key },
+        "parentThreadId": parent,
     }))
     .map_err(|e| e.to_string())?;
     create(db, rt, &user_id, body)
