@@ -112,7 +112,17 @@ pub async fn dispatch(st: &crate::AppState, owner: &str, target: &str, actions: 
         let status = resp.status();
         let v: Value = resp.json().await.unwrap_or(Value::Null);
         if !status.is_success() || !matches!(v["status"].as_str(), Some("completed" | "succeeded" | "success")) {
-            bail!("computer action failed ({status}): {}", v.get("error").cloned().unwrap_or(v.clone()));
+            // The gateway answers 200 with a run-level `status` and per-action
+            // outcomes; the top-level `error` is usually null, so surface the
+            // per-action errors before falling back to the whole body.
+            let why = v["error"].as_str().map(str::to_string)
+                .or_else(|| v["result"]["actions"].as_array().and_then(|acts| {
+                    let errs: Vec<String> = acts.iter().filter_map(|a| a["error"].as_str()
+                        .map(|e| format!("{}: {e}", a["kind"].as_str().unwrap_or("action")))).collect();
+                    if errs.is_empty() { None } else { Some(errs.join("; ")) }
+                }))
+                .unwrap_or_else(|| v.to_string());
+            bail!("computer action failed ({status}): {why}");
         }
         return Ok(format!("computer:local:{run_id}:{digest}"));
     }
@@ -143,5 +153,56 @@ mod tests {
         assert!(parse_actions("[]").is_err());
         assert_eq!(action_hash("local", &a), action_hash("local", &a));
         assert_ne!(action_hash("local", &a), action_hash("cmp_2", &a));
+    }
+
+    /// G2: opt-in live test — drives `computer:local` through the REAL
+    /// computer-use gateway (`ALLTERNIT_ACU_URL`, default the Desktop's
+    /// `http://127.0.0.1:8760`) with READ-ONLY actions only. Never sends
+    /// click/type/key/shell. Run:
+    /// `ALLTERNIT_LIVE_COMPUTER_TEST=1 cargo test -p allternit-api --lib -- --ignored --exact agency_api::effects::computer::tests::live_local_read_only_against_the_real_gateway --nocapture`
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "live: drives the real computer-use gateway (ALLTERNIT_LIVE_COMPUTER_TEST=1)"]
+    async fn live_local_read_only_against_the_real_gateway() {
+        if std::env::var("ALLTERNIT_LIVE_COMPUTER_TEST").as_deref() != Ok("1") {
+            eprintln!("ALLTERNIT_LIVE_COMPUTER_TEST!=1; skipping");
+            return;
+        }
+        let t = crate::agency_api::tests::setup().await;
+        let url = std::env::var("ALLTERNIT_ACU_URL").unwrap_or_else(|_| "http://127.0.0.1:8760".into());
+        let actions = vec![
+            json!({ "kind": "screenshot" }),
+            json!({ "kind": "observe" }),
+            json!({ "kind": "cursor_position" }),
+        ];
+        for a in &actions {
+            assert!(!consequential(a), "the live test is read-only, `{a}` is not");
+        }
+        *ACU_URL_OVERRIDE.lock().unwrap() = Some(url.clone());
+        let r = dispatch(&t.st, "u1", "local", &actions, false, "g2-live-readonly").await;
+        // The run-level contract is dispatch's; also show WHICH adapter
+        // claimed each read-only action (a "none" adapter_id means the
+        // gateway never routed the action — the regression this test pins).
+        let probe = reqwest::Client::new().post(format!("{}/v1/computer-use/execute", url.trim_end_matches('/')))
+            .json(&json!({ "mode": "direct", "actions": actions, "run_id": "g2-live-readonly-probe",
+                           "session_id": "g2-live-readonly-probe", "target_scope": "desktop" }))
+            .timeout(std::time::Duration::from_secs(120)).send().await;
+        *ACU_URL_OVERRIDE.lock().unwrap() = None;
+        match probe {
+            Ok(resp) => {
+                let v: Value = resp.json().await.unwrap_or(Value::Null);
+                for a in v["result"]["actions"].as_array().cloned().unwrap_or_default() {
+                    eprintln!("LIVE COMPUTER per-action: kind={} status={} adapter_id={}",
+                        a["kind"], a["status"], a["result"]["adapter_id"]);
+                    assert_ne!(a["result"]["adapter_id"], "none", "{} was not routed to an adapter", a["kind"]);
+                }
+            }
+            Err(e) => eprintln!("LIVE COMPUTER per-action probe failed against {url}: {e}"),
+        }
+        match &r {
+            Ok(v) => eprintln!("LIVE COMPUTER TEST OK against {url}: {v}"),
+            Err(e) => eprintln!("LIVE COMPUTER TEST FAILED against {url}: {e}"),
+        }
+        let Ok(v) = r else { panic!("live computer test against {url} failed") };
+        assert!(v.starts_with("computer:local:"), "{v}");
     }
 }

@@ -60,7 +60,16 @@ BROWSER_EXTENSION_ACTIONS = frozenset({
     "tabs",
 })
 
-ALL_SUPPORTED_ACTIONS = NATIVE_CLAUDE_ACTIONS | BROWSER_EXTENSION_ACTIONS
+# Canonical inspect actions from base_adapter.ActionType that adapters
+# implement natively (browser.cdp observes the DOM: url/title/text/counts).
+# Not browser-extension actions: desktop adapters stay waterfall candidates
+# for them. Without this set the executor rejects `observe` as
+# UNSUPPORTED_ACTION before the waterfall ever runs.
+CANONICAL_INSPECT_ACTIONS = frozenset({
+    "observe",
+})
+
+ALL_SUPPORTED_ACTIONS = NATIVE_CLAUDE_ACTIONS | BROWSER_EXTENSION_ACTIONS | CANONICAL_INSPECT_ACTIONS
 
 # Plan-loop / grounding-model vocabulary → native executor vocabulary
 # (cu22 follow-up F2). Frontier models emit plan types like `click`, `select`,
