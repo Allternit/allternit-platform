@@ -76,10 +76,33 @@ def resolve_base(base: str, revision: Optional[str]) -> str:
         "rl_agent_config.json", "model.safetensors", "tokenizer/*", "encoder/*"])
 
 
-def encode_rows(agent, rows: List[Dict[str, Any]]) -> List[Tuple[Dict[str, Any], int]]:
-    """One encoded Laya item per row plus its Laya-order label index. Rows that do not fit are skipped."""
+def balance_weights(rows: List[Dict[str, Any]]) -> List[float]:
+    """Inverse-frequency class weights per (bank, type, k) group: a row with label l
+    in a group of n rows over c observed labels with n_l rows of label l weighs
+    n / (c * n_l) — every label contributes equally in expectation, so rare classes
+    (judge.first_pass.tool false, route retrieval) are actually learned."""
+    from collections import Counter, defaultdict
+
+    groups: Dict[tuple, list] = defaultdict(list)
+    for i, row in enumerate(rows):
+        key = (row.get("primitive_id"), row.get("laya", {}).get("question", {}).get("type"),
+               len(row.get("options", [])))
+        groups[key].append(i)
+    weights = [1.0] * len(rows)
+    for idxs in groups.values():
+        counts = Counter(int(rows[i]["laya"]["label_index"]) for i in idxs)
+        c = max(len(counts), 1)
+        for i in idxs:
+            weights[i] = len(idxs) / (c * counts[int(rows[i]["laya"]["label_index"])])
+    return weights
+
+
+def encode_rows(agent, rows: List[Dict[str, Any]], balance: bool = False) -> List[Tuple[Dict[str, Any], int, float]]:
+    """One encoded Laya item per row plus its Laya-order label index and loss weight.
+    Rows that do not fit are skipped."""
     out = []
-    for row in rows:
+    weights = balance_weights(rows) if balance else [1.0] * len(rows)
+    for row, w in zip(rows, weights):
         q = row_question(row)
         try:
             agent._check_question("q", q)
@@ -91,7 +114,7 @@ def encode_rows(agent, rows: List[Dict[str, Any]]) -> List[Tuple[Dict[str, Any],
         label = int(row["laya"]["label_index"])
         if label >= len(item["markers"]):
             continue
-        out.append((item, label))
+        out.append((item, label, w))
     return out
 
 
@@ -107,12 +130,13 @@ def forward_logits(agent, group, detach_encoder: bool):
     import torch
     from laya.common import collate_items
 
-    b = collate_items([[it for it, _ in group]], agent.tok.pad_token_id)
+    b = collate_items([[it for it, _, _w in group]], agent.tok.pad_token_id)
     dev = agent.device
     logits, _act = agent.model(b["input_ids"].to(dev), b["attention_mask"].to(dev), b["marker_pos"].to(dev),
                                b["marker_mask"].to(dev), b["qtype"].to(dev), detach_encoder=detach_encoder)
-    labels = torch.tensor([lab for _, lab in group], device=dev)
-    return logits, labels
+    labels = torch.tensor([lab for _, lab, _w in group], device=dev)
+    weights = torch.tensor([w for _, _l, w in group], device=dev, dtype=logits.dtype)
+    return logits, labels, weights
 
 
 def set_trainable(model, unfreeze_last: int) -> int:
@@ -137,7 +161,7 @@ def set_trainable(model, unfreeze_last: int) -> int:
 
 
 def train(agent, encoded, *, epochs: int, lr: float, batch: int, seed: int, unfreeze_last: int,
-          max_minutes: float) -> Dict[str, Any]:
+          max_minutes: float, balanced: bool = False) -> Dict[str, Any]:
     import torch
 
     torch.manual_seed(seed)
@@ -150,8 +174,10 @@ def train(agent, encoded, *, epochs: int, lr: float, batch: int, seed: int, unfr
     for ep in range(epochs):
         tot, n = 0.0, 0
         for group in batches(encoded, batch, True, rng):
-            logits, labels = forward_logits(agent, group, detach_encoder=unfreeze_last == 0)
-            loss = torch.nn.functional.cross_entropy(logits, labels)
+            logits, labels, weights = forward_logits(agent, group, detach_encoder=unfreeze_last == 0)
+            per = torch.nn.functional.cross_entropy(logits, labels, reduction="none")
+            # Class-balanced loss (--balance): weights are inverse-frequency per (bank, type, k, label).
+            loss = (per * weights).sum() / weights.sum() if balanced else per.mean()
             opt.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_([p for p in agent.model.parameters() if p.requires_grad], 1.0)
@@ -207,7 +233,7 @@ def score_split(agent, rows: List[Dict[str, Any]], revision: str, model_ref: str
             enc = encode_rows(agent, [row])
             if not enc:
                 continue
-            logits, _ = forward_logits(agent, enc, detach_encoder=True)
+            logits, _labels, _weights = forward_logits(agent, enc, detach_encoder=True)
             k = len(enc[0][0]["markers"])
             p = torch.softmax(logits[0, :k].float(), -1).cpu().tolist()
             scope = {**row["scope"], "model_revision": revision, "model_ref": model_ref}
@@ -234,6 +260,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--seed", type=int, default=1337)
     ap.add_argument("--unfreeze-last", type=int, default=0)
+    ap.add_argument("--balance", action="store_true",
+                    help="inverse-frequency class weights per (bank, type, k, label) so rare classes are learned")
     ap.add_argument("--max-minutes", type=float, default=20.0)
     ap.add_argument("--model-ref", default="convaiinnovations/laya/typed-decisions",
                     help="scope.model_ref the S1 server reports for this backend")
@@ -251,15 +279,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     revision = a.revision if a.revision is not None else (PINNED_REVISION if a.base == PINNED_BASE else None)
     base_dir = resolve_base(a.base, revision)
     agent = Agent(base_dir, device=a.device)
-    encoded = encode_rows(agent, train_rows)
+    encoded = encode_rows(agent, train_rows, balance=a.balance)
     print(f"training rows: {len(encoded)} of {len(train_rows)} on {agent.device}", file=sys.stderr)
     stats = train(agent, encoded, epochs=a.epochs, lr=a.lr, batch=a.batch, seed=a.seed,
-                  unfreeze_last=a.unfreeze_last, max_minutes=a.max_minutes)
+                  unfreeze_last=a.unfreeze_last, max_minutes=a.max_minutes, balanced=a.balance)
     meta = {
         "schema": "allternit.s1.checkpoint.v1", "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "base": a.base, "base_revision": revision, "laya_version": getattr(laya, "__version__", None),
         "recipe": {"epochs": a.epochs, "lr": a.lr, "batch": a.batch, "seed": a.seed, "unfreeze_last": a.unfreeze_last,
-                   "loss": "cross_entropy_over_options", "temperature": "reset to 1.0; S1 calibrates per (bank, type, k)"},
+                   "balanced": a.balance,
+                   "loss": "cross_entropy_over_options" + (" (inverse-frequency class-balanced)" if a.balance else ""),
+                   "temperature": "reset to 1.0; S1 calibrates per (bank, type, k)"},
         "data": {name: {"rows": len(read_jsonl(os.path.join(a.export_dir, f"{name}.jsonl"))),
                         "sha256": sha256_file(os.path.join(a.export_dir, f"{name}.jsonl"))
                         if os.path.exists(os.path.join(a.export_dir, f"{name}.jsonl")) else None}
