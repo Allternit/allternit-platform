@@ -77,11 +77,26 @@ Idempotent on `(engine, sessionId)`: retrying a report does not double count. `e
   "usedSeconds": 312,
   "includedSeconds": 6000,
   "overageRateUsdPerMin": 0.08,
-  "phone": { "usedSeconds": 120, "rateUsdPerMin": 0.08 }
+  "phone": { "usedSeconds": 120, "rateUsdPerMin": 0.08 },
+  "estimatedOverageCents": 16,
+  "estimatedCloudOverageCents": 0,
+  "billingEnabled": false
 }
 ```
 
-The month is the UTC calendar month.
+The month is the UTC calendar month. `estimatedOverageCents` is the running estimate of this month's voice charges; `billingEnabled` is false while overage billing is off, so clients should hide the estimate rather than promise a charge.
+
+## Overage billing (admin-approved)
+
+Per user and UTC month: cloud minutes over the plan allowance (100 on Plus, none on free) at $0.08, all phone minutes at $0.08, and $2 per phone number held during the month. Each engine's seconds are rounded up to whole minutes. Results are stored in `voice_billing_periods` (state `pending`, `dry_run`, `invoiced` or `failed`), one row per user and period, so re-running a period never bills twice.
+
+`ALLTERNIT_VOICE_BILLING_MODE` is `off` (default, does nothing), `dry_run` (computes rows and stores the exact Stripe request bodies, no Stripe calls) or `live`. In live mode nothing is sent until an admin approves that period. The sent charges are Stripe invoice items attached to the user's subscription, with idempotency keys, so they land on the next subscription invoice. Price ids come from `STRIPE_PRICE_VOICE_MINUTE` and `STRIPE_PRICE_PHONE_NUMBER`.
+
+| Endpoint (admin only) | Purpose |
+|-----------------------|---------|
+| `GET /api/v1/admin/voice-billing/periods?period=YYYY-MM` | List computed rows and amounts. |
+| `POST /api/v1/admin/voice-billing/periods/{period}/compute` | Compute (or refresh) the period rows for the current mode. |
+| `POST /api/v1/admin/voice-billing/periods/{period}/approve` | Approve and send the period (live mode only). |
 
 ## Environment variables
 
@@ -93,4 +108,4 @@ The month is the UTC calendar month.
 
 ## Database
 
-Migration `029_voice_usage.sql` adds `voice_usage` (one row per session or call, unique on `(engine, ref)`, indexed on `(user_id, occurred_at)`) and `voice_tickets_used` (redeemed nonces; expired rows are purged on redeem). Prod migrations are applied by hand.
+Migration `029_voice_usage.sql` adds `voice_usage` (one row per session or call, unique on `(engine, ref)`, indexed on `(user_id, occurred_at)`) and `voice_tickets_used` (redeemed nonces; expired rows are purged on redeem). Migration `031_voice_billing_periods.sql` adds `voice_billing_periods`. Prod migrations are applied by hand.
