@@ -100,7 +100,7 @@ impl Session {
     fn directing(&self) -> Result<(&str, &str), String> {
         match (&self.directing_bot_id, &self.directing_name) {
             (Some(id), Some(name)) => Ok((id, name)),
-            _ => Err("This vendor bot has no directing bot yet. Choose one in Settings › Keys › Connectors, then try again.".into()),
+            _ => Err("This vendor bot has no directing bot yet. Choose which of your bots directs it, then try again.".into()),
         }
     }
 
