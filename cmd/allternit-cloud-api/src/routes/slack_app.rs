@@ -62,7 +62,7 @@ type HmacSha256 = Hmac<Sha256>;
 pub const RUNTIME_EVENTS_PATH: &str = "/webhooks/channels/slack-app";
 /// Bot scopes the shared app requests at install (mirror of
 /// `docs/slack-app-manifest.json`).
-pub const SCOPES: &str = "chat:write,chat:write.customize,app_mentions:read,channels:history,groups:history,im:history,im:write,assistant:write,commands,users:read";
+pub const SCOPES: &str = "chat:write,chat:write.customize,app_mentions:read,channels:history,groups:history,im:history,im:write,assistant:write,commands,users:read,files:write";
 /// A signed OAuth state lives this long.
 const STATE_TTL_SECS: i64 = 600;
 /// Give up on a queued event this long after it arrived.
@@ -75,7 +75,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/api/v1/channels/slack/install/callback", get(install_callback_h))
         .route("/api/v1/channels/slack/events", post(events_h))
         .route("/api/v1/channels/slack/commands", post(commands_h))
-        .route("/api/v1/channels/slack/send", post(send_h))
+        .route("/api/v1/channels/slack/send", post(send_h).layer(axum::extract::DefaultBodyLimit::max(30 * 1024 * 1024)))
         .route("/api/v1/channels/slack/installs", get(list_installs_h))
         .route("/api/v1/channels/slack/installs/:team_id/claim", post(claim_h))
 }
@@ -112,6 +112,14 @@ pub trait SlackHttp: Send + Sync {
     /// POST `application/x-www-form-urlencoded`; `basic` is (client_id, client_secret)
     /// per Slack's recommendation to use HTTP Basic for OAuth.
     async fn post_form(&self, url: &str, basic: Option<(&str, &str)>, form: &[(String, String)]) -> Result<(u16, Value), String>;
+    /// POST a form with the bot token as bearer (`files.getUploadURLExternal`).
+    async fn post_form_bearer(&self, _url: &str, _bearer: &str, _form: &[(String, String)]) -> Result<(u16, Value), String> {
+        Err("form upload is not supported by this client".into())
+    }
+    /// POST raw file bytes to a one-time upload URL Slack handed out.
+    async fn post_bytes(&self, _url: &str, _content_type: &str, _bytes: Vec<u8>) -> Result<u16, String> {
+        Err("file upload is not supported by this client".into())
+    }
 }
 
 pub struct ReqwestSlackHttp;
@@ -144,6 +152,17 @@ impl SlackHttp for ReqwestSlackHttp {
         let status = resp.status().as_u16();
         let body = resp.json::<Value>().await.unwrap_or(Value::Null);
         Ok((status, body))
+    }
+
+    async fn post_form_bearer(&self, url: &str, bearer: &str, form: &[(String, String)]) -> Result<(u16, Value), String> {
+        let resp = reqwest::Client::new().post(url).timeout(Duration::from_secs(15)).bearer_auth(bearer).form(form).send().await.map_err(|e| e.to_string())?;
+        let status = resp.status().as_u16();
+        Ok((status, resp.json::<Value>().await.unwrap_or(Value::Null)))
+    }
+
+    async fn post_bytes(&self, url: &str, content_type: &str, bytes: Vec<u8>) -> Result<u16, String> {
+        let resp = reqwest::Client::new().post(url).timeout(Duration::from_secs(60)).header("content-type", content_type).body(bytes).send().await.map_err(|e| e.to_string())?;
+        Ok(resp.status().as_u16())
     }
 }
 
@@ -751,7 +770,7 @@ async fn claim_h(
 
 // ---------------------------------------------------------------- send
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct SendBody {
     pub channel: String,
@@ -759,7 +778,24 @@ pub struct SendBody {
     pub thread_ts: Option<String>,
     pub username: Option<String>,
     pub icon_url: Option<String>,
+    /// Files to upload into the message's thread after it posts.
+    #[serde(default)]
+    pub files: Vec<SendFile>,
 }
+
+#[derive(Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SendFile {
+    pub filename: String,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+    pub data_base64: String,
+}
+
+/// Same caps the runtime checks (`channel_files`), enforced again here: this route is reachable with any user token.
+const MAX_FILES: usize = 5;
+const MAX_FILE_BYTES: usize = 10 * 1024 * 1024;
+const MAX_TOTAL_FILE_BYTES: usize = 20 * 1024 * 1024;
 
 /// Build the `chat.postMessage` body. Per-bot name/icon ride `username` /
 /// `icon_url` (the shared app's `chat:write.customize` scope) so every bot
@@ -836,6 +872,7 @@ async fn maybe_refresh(state: &ApiState, http: &dyn SlackHttp, cfg: &SlackAppCon
 
 /// POST one message as the user's install. Shared by the route and tests.
 pub async fn send_message(state: &ApiState, http: &dyn SlackHttp, cfg: &SlackAppConfig, user_id: &str, body: &SendBody) -> Result<Value, ApiError> {
+    let files = decode_files(&body.files)?;
     let team: Option<(String,)> = sqlx::query_as(
         "SELECT team_id FROM slack_installs WHERE user_id = $1 ORDER BY installed_at DESC LIMIT 1",
     )
@@ -857,12 +894,69 @@ pub async fn send_message(state: &ApiState, http: &dyn SlackHttp, cfg: &SlackApp
         .await
         .map_err(|e| ApiError::ServiceUnavailable(format!("chat.postMessage failed: {e}")))?;
     match (status, resp.get("ok").and_then(Value::as_bool), resp.get("ts").and_then(Value::as_str)) {
-        (200..=299, Some(true), Some(ts)) => Ok(json!({ "ok": true, "ts": ts, "teamId": team_id })),
+        (200..=299, Some(true), Some(ts)) => {
+            if !files.is_empty() {
+                let root = body.thread_ts.as_deref().unwrap_or(ts);
+                let channel = resp.get("channel").and_then(Value::as_str).unwrap_or(&body.channel);
+                upload_files(http, &token.token, channel, root, &files).await.map_err(|e| ApiError::ServiceUnavailable(format!("slack_file_upload_failed: {e} (the message itself was posted, ts {ts})")))?;
+            }
+            Ok(json!({ "ok": true, "ts": ts, "teamId": team_id, "files": files.len() }))
+        }
         (429, _, _) => Err(ApiError::TooManyRequests(resp.get("error").and_then(Value::as_str).unwrap_or("ratelimited").to_string())),
         _ => Err(ApiError::ServiceUnavailable(format!(
             "chat.postMessage failed: {}",
             resp.get("error").and_then(Value::as_str).unwrap_or("unknown")
         ))),
+    }
+}
+
+/// Decode and cap the files before anything is posted.
+fn decode_files(files: &[SendFile]) -> Result<Vec<(String, String, Vec<u8>)>, ApiError> {
+    use base64::Engine as _;
+    if files.len() > MAX_FILES {
+        return Err(ApiError::BadRequest("too_many_attachments".to_string()));
+    }
+    let mut total = 0usize;
+    let mut out = Vec::with_capacity(files.len());
+    for f in files {
+        if f.data_base64.len() / 4 * 3 > MAX_FILE_BYTES + 3 {
+            return Err(ApiError::BadRequest("attachment_too_large".to_string()));
+        }
+        let compact: String = f.data_base64.chars().filter(|c| !c.is_whitespace()).collect();
+        let bytes = base64::engine::general_purpose::STANDARD.decode(compact.as_bytes()).map_err(|_| ApiError::BadRequest("invalid_attachment".to_string()))?;
+        total += bytes.len();
+        if bytes.is_empty() || bytes.len() > MAX_FILE_BYTES || total > MAX_TOTAL_FILE_BYTES {
+            return Err(ApiError::BadRequest("attachment_too_large".to_string()));
+        }
+        let name: String = f.filename.rsplit(['/', '\\']).next().unwrap_or("attachment").chars().filter(|c| !c.is_control()).take(120).collect();
+        out.push((if name.trim().is_empty() { "attachment".to_string() } else { name }, f.mime_type.clone().filter(|m| !m.is_empty()).unwrap_or_else(|| "application/octet-stream".into()), bytes));
+    }
+    Ok(out)
+}
+
+/// Slack's external upload flow: get an upload URL per file, send the bytes, then complete once
+/// for all files into the thread. https://api.slack.com/messaging/files#uploading_files
+async fn upload_files(http: &dyn SlackHttp, token: &str, channel: &str, thread_ts: &str, files: &[(String, String, Vec<u8>)]) -> Result<(), String> {
+    let mut done = vec![];
+    for (name, mime, bytes) in files {
+        let form = vec![("filename".to_string(), name.clone()), ("length".to_string(), bytes.len().to_string())];
+        let (status, resp) = http.post_form_bearer("https://slack.com/api/files.getUploadURLExternal", token, &form).await?;
+        let (Some(url), Some(file_id)) = (resp.get("upload_url").and_then(Value::as_str), resp.get("file_id").and_then(Value::as_str)) else {
+            return Err(format!("files.getUploadURLExternal {status}: {}", resp.get("error").and_then(Value::as_str).unwrap_or("no upload url")));
+        };
+        let put = http.post_bytes(url, mime, bytes.clone()).await?;
+        if !(200..300).contains(&put) {
+            return Err(format!("uploading {name} returned {put}"));
+        }
+        done.push(json!({ "id": file_id, "title": name }));
+    }
+    let (_, resp) = http
+        .post_json("https://slack.com/api/files.completeUploadExternal", Some(token), &json!({ "files": done, "channel_id": channel, "thread_ts": thread_ts }))
+        .await?;
+    if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+        Ok(())
+    } else {
+        Err(format!("files.completeUploadExternal: {}", resp.get("error").and_then(Value::as_str).unwrap_or("unknown")))
     }
 }
 
@@ -954,10 +1048,22 @@ mod tests {
         calls: Mutex<Vec<(String, Value)>>,
         reply: Mutex<Option<(u16, Value)>>,
         form: Mutex<Vec<(String, String)>>,
+        /// (url, bearer, form) of each bearer form post, and (url, content type, length) of each byte upload.
+        bearer_forms: Mutex<Vec<(String, String, Vec<(String, String)>)>>,
+        byte_uploads: Mutex<Vec<(String, String, usize)>>,
     }
 
     #[async_trait]
     impl SlackHttp for FakeHttp {
+        async fn post_form_bearer(&self, url: &str, bearer: &str, form: &[(String, String)]) -> Result<(u16, Value), String> {
+            self.bearer_forms.lock().unwrap().push((url.into(), bearer.into(), form.to_vec()));
+            let n = self.bearer_forms.lock().unwrap().len();
+            Ok((200, json!({ "ok": true, "upload_url": format!("https://files.slack.test/upload/{n}"), "file_id": format!("F{n}") })))
+        }
+        async fn post_bytes(&self, url: &str, content_type: &str, bytes: Vec<u8>) -> Result<u16, String> {
+            self.byte_uploads.lock().unwrap().push((url.into(), content_type.into(), bytes.len()));
+            Ok(200)
+        }
         async fn post_json(&self, url: &str, _bearer: Option<&str>, body: &Value) -> Result<(u16, Value), String> {
             self.calls.lock().unwrap().push((url.to_string(), body.clone()));
             Ok(self.reply.lock().unwrap().clone().unwrap_or((200, json!({ "ok": true }))))
@@ -982,6 +1088,41 @@ mod tests {
         state
     }
 
+    fn send_file(name: &str, bytes: &[u8]) -> SendFile {
+        use base64::Engine as _;
+        SendFile { filename: name.into(), mime_type: Some("application/pdf".into()), data_base64: base64::engine::general_purpose::STANDARD.encode(bytes) }
+    }
+
+    #[tokio::test]
+    async fn files_upload_through_slacks_external_flow_into_the_thread() {
+        let http = FakeHttp::default();
+        let files = decode_files(&[send_file("../r.pdf", b"%PDF-1"), send_file("b.pdf", b"%PDF-22")]).unwrap();
+        assert_eq!(files[0].0, "r.pdf", "path parts are dropped from the name");
+        upload_files(&http, "xoxb-1", "C1", "1700000001.000100", &files).await.unwrap();
+        let forms = http.bearer_forms.lock().unwrap().clone();
+        assert_eq!(forms[0].0, "https://slack.com/api/files.getUploadURLExternal");
+        assert_eq!(forms[0].1, "xoxb-1");
+        assert_eq!(forms[0].2, vec![("filename".to_string(), "r.pdf".to_string()), ("length".to_string(), "6".to_string())]);
+        assert_eq!(*http.byte_uploads.lock().unwrap(), vec![("https://files.slack.test/upload/1".to_string(), "application/pdf".to_string(), 6), ("https://files.slack.test/upload/2".to_string(), "application/pdf".to_string(), 7)]);
+        let (url, body) = http.calls.lock().unwrap().last().unwrap().clone();
+        assert_eq!(url, "https://slack.com/api/files.completeUploadExternal");
+        assert_eq!(body, json!({ "files": [{ "id": "F1", "title": "r.pdf" }, { "id": "F2", "title": "b.pdf" }], "channel_id": "C1", "thread_ts": "1700000001.000100" }));
+        // Slack refusing the completion is an error the route reports.
+        *http.reply.lock().unwrap() = Some((200, json!({ "ok": false, "error": "channel_not_found" })));
+        assert!(upload_files(&http, "xoxb-1", "C9", "1.1", &files).await.unwrap_err().contains("channel_not_found"));
+    }
+
+    #[test]
+    fn files_are_capped_and_checked_before_anything_posts() {
+        assert!(decode_files(&[]).unwrap().is_empty());
+        let six: Vec<SendFile> = (0..6).map(|i| send_file(&format!("{i}.pdf"), b"x")).collect();
+        assert!(decode_files(&six).is_err());
+        assert!(decode_files(&[SendFile { filename: "a".into(), mime_type: None, data_base64: "!!!".into() }]).is_err());
+        assert!(decode_files(&[send_file("empty", b"")]).is_err());
+        assert!(decode_files(&[send_file("big", &vec![0u8; MAX_FILE_BYTES + 1])]).is_err());
+        assert_eq!(decode_files(&[SendFile { filename: "  ".into(), mime_type: None, data_base64: "aGk=".into() }]).unwrap()[0].1, "application/octet-stream");
+    }
+
     #[test]
     fn chat_post_message_carries_the_bot_identity_and_thread() {
         let body = SendBody {
@@ -990,6 +1131,7 @@ mod tests {
             thread_ts: Some("1700000001.000100".into()),
             username: Some("Scout".into()),
             icon_url: Some("https://cdn.example/avatar.png".into()),
+            files: vec![],
         };
         assert_eq!(
             build_post_message(&body),
@@ -1060,7 +1202,7 @@ mod tests {
             &http,
             &cfg,
             "user-1",
-            &SendBody { channel: "C1".into(), text: "hi".into(), thread_ts: Some("1700000001.000100".into()), username: Some("Scout".into()), icon_url: None },
+            &SendBody { channel: "C1".into(), text: "hi".into(), thread_ts: Some("1700000001.000100".into()), username: Some("Scout".into()), icon_url: None, files: vec![] },
         )
         .await
         .unwrap();
@@ -1072,9 +1214,9 @@ mod tests {
 
         // Slack saying no is a definite rejection, surfaced as an error.
         *http.reply.lock().unwrap() = Some((200, json!({ "ok": false, "error": "channel_not_found" })));
-        let err = send_message(&state, &http, &cfg, "user-1", &SendBody { channel: "C1".into(), text: "x".into(), thread_ts: None, username: None, icon_url: None }).await.unwrap_err();
+        let err = send_message(&state, &http, &cfg, "user-1", &SendBody { channel: "C1".into(), text: "x".into(), thread_ts: None, username: None, icon_url: None, files: vec![] }).await.unwrap_err();
         assert!(err.to_string().contains("channel_not_found"), "{err}");
         // A user with no install gets a clear 400.
-        assert!(send_message(&state, &http, &cfg, "user-2", &SendBody { channel: "C1".into(), text: "x".into(), thread_ts: None, username: None, icon_url: None }).await.is_err());
+        assert!(send_message(&state, &http, &cfg, "user-2", &SendBody { channel: "C1".into(), text: "x".into(), thread_ts: None, username: None, icon_url: None, files: vec![] }).await.is_err());
     }
 }

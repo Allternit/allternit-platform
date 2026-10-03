@@ -594,6 +594,8 @@ async fn main() {
         )),
     );
     allternit_api::channel_discord_app::init(state.db.clone());
+    // Vendor bots' `post_message` start conversations through the same path as the app.
+    allternit_api::channel_start::register_vendor_starter(&state);
     allternit_api::discord_gateway::spawn_bound(state.clone());
     allternit_api::computer_idle::spawn_idle_sweeper(state.clone(), shutdown_tx.subscribe());
 

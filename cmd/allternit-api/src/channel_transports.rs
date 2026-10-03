@@ -64,6 +64,10 @@ pub trait HttpSend: Send + Sync {
     async fn post_form(&self, _url: &str, _form: Vec<(String, String)>) -> Result<HttpResp, String> {
         Err("form POST is not supported by this transport".into())
     }
+    /// POST `multipart/form-data`: the text `fields` and one file part named `file_field` (Telegram uploads).
+    async fn post_multipart(&self, _url: &str, _fields: Vec<(String, String)>, _file_field: &str, _file: &crate::channel_files::ChannelFile) -> Result<HttpResp, String> {
+        Err("file upload is not supported by this transport".into())
+    }
 }
 
 pub struct ReqwestSend;
@@ -92,7 +96,9 @@ fn guarded_client(url: &str) -> Result<reqwest::Client, String> {
 #[async_trait]
 impl HttpSend for ReqwestSend {
     async fn post_json(&self, req: HttpReq) -> Result<HttpResp, String> {
-        let mut r = guarded_client(&req.url)?.post(&req.url).timeout(std::time::Duration::from_secs(15)).json(&req.body);
+        // A post that carries files (cloud relays them to the platform) needs longer than a text one.
+        let secs = if req.body.get("files").is_some() { 60 } else { 15 };
+        let mut r = guarded_client(&req.url)?.post(&req.url).timeout(std::time::Duration::from_secs(secs)).json(&req.body);
         for (k, v) in &req.headers {
             r = r.header(k, v);
         }
@@ -108,6 +114,12 @@ impl HttpSend for ReqwestSend {
     }
     async fn post_form(&self, url: &str, form: Vec<(String, String)>) -> Result<HttpResp, String> {
         let resp = guarded_client(url)?.post(url).timeout(std::time::Duration::from_secs(15)).form(&form).send().await.map_err(|e| e.to_string())?;
+        let status = resp.status().as_u16();
+        Ok(HttpResp { status, body: resp.json::<Value>().await.unwrap_or(Value::Null) })
+    }
+    async fn post_multipart(&self, url: &str, fields: Vec<(String, String)>, file_field: &str, file: &crate::channel_files::ChannelFile) -> Result<HttpResp, String> {
+        let (content_type, body) = crate::channel_files::multipart(&fields, file_field, file);
+        let resp = guarded_client(url)?.post(url).timeout(std::time::Duration::from_secs(60)).header("content-type", content_type).body(body).send().await.map_err(|e| e.to_string())?;
         let status = resp.status().as_u16();
         Ok(HttpResp { status, body: resp.json::<Value>().await.unwrap_or(Value::Null) })
     }
@@ -514,6 +526,38 @@ impl ChannelTransport for TelegramTransport {
             b.pointer("/result/message_id").and_then(Value::as_i64).map(|m| format!("{chat}:{m}"))
         })
         .map(|remote_id| Receipt { remote_id, relayed })
+    }
+
+    /// `sendPhoto` for a JPEG/PNG, `sendDocument` for the rest (https://core.telegram.org/bots/api#senddocument).
+    /// A single file carries the text as its caption when it fits Telegram's 1024 characters; otherwise the
+    /// text goes first as its own message, then each file.
+    async fn post_files(&self, out: &Outbound, files: &[crate::channel_files::ChannelFile]) -> Result<Receipt, PostError> {
+        let token = self.bot_token.clone().ok_or_else(|| PostError::Rejected("no Telegram bot token configured".into()))?;
+        let relayed = !self.identity(out.identity.as_deref()).exact;
+        let text = relay_text(out, relayed);
+        let caption_fits = files.len() == 1 && text.chars().count() <= 1024;
+        let mut first: Option<String> = if caption_fits { None } else { Some(self.post(out).await?.remote_id) };
+        for file in files {
+            let (method, field) = if matches!(file.mime.as_str(), "image/jpeg" | "image/png") { ("sendPhoto", "photo") } else { ("sendDocument", "document") };
+            let mut fields = vec![("chat_id".to_string(), out.channel.clone())];
+            if let Some(topic) = out.thread.as_deref().and_then(|t| t.parse::<i64>().ok()) {
+                fields.push(("message_thread_id".into(), topic.to_string()));
+            }
+            if caption_fits {
+                fields.push(("caption".into(), text.clone()));
+            }
+            let url = format!("https://api.telegram.org/bot{token}/{method}");
+            let chat = out.channel.clone();
+            let sent = judge(self.http.post_multipart(&url, fields, field, file).await, |b| b.pointer("/result/message_id").and_then(Value::as_i64).map(|m| format!("{chat}:{m}")));
+            match (sent, &first) {
+                (Ok(id), None) => first = Some(id),
+                (Ok(_), Some(_)) => {}
+                // Something already went out: don't let a retry post it twice.
+                (Err(PostError::Rejected(why)), Some(_)) => return Err(PostError::Uncertain(format!("some attachments were not delivered: {why}"))),
+                (Err(e), _) => return Err(e),
+            }
+        }
+        first.map(|remote_id| Receipt { remote_id, relayed }).ok_or_else(|| PostError::Rejected("nothing to send".into()))
     }
 }
 
@@ -1118,9 +1162,15 @@ mod tests {
     struct FakeHttp {
         sent: Mutex<Vec<HttpReq>>,
         reply: Mutex<Option<Result<HttpResp, String>>>,
+        /// (url, text fields, file field, file name) of each multipart upload.
+        uploads: Mutex<Vec<(String, Vec<(String, String)>, String, String)>>,
     }
     #[async_trait]
     impl HttpSend for FakeHttp {
+        async fn post_multipart(&self, url: &str, fields: Vec<(String, String)>, file_field: &str, file: &crate::channel_files::ChannelFile) -> Result<HttpResp, String> {
+            self.uploads.lock().unwrap().push((url.into(), fields, file_field.into(), file.filename.clone()));
+            self.reply.lock().unwrap().clone().unwrap_or(Ok(HttpResp { status: 200, body: json!({}) }))
+        }
         async fn post_json(&self, req: HttpReq) -> Result<HttpResp, String> {
             self.sent.lock().unwrap().push(req);
             self.reply.lock().unwrap().clone().unwrap_or(Ok(HttpResp { status: 200, body: json!({}) }))
@@ -1136,7 +1186,7 @@ mod tests {
 
     #[tokio::test]
     async fn telegram_webhook_points_the_bot_at_its_public_address() {
-        let http = FakeHttp { sent: Mutex::new(vec![]), reply: Mutex::new(reply(200, json!({ "ok": true, "result": true }))) };
+        let http = FakeHttp { sent: Mutex::new(vec![]), reply: Mutex::new(reply(200, json!({ "ok": true, "result": true }))), uploads: Mutex::default() };
         telegram_set_webhook(&http, "123:abc", "https://api.allternit.com/channels/in/k", "s3cret").await.unwrap();
         let sent = http.sent.lock().unwrap();
         assert_eq!(sent[0].url, "https://api.telegram.org/bot123:abc/setWebhook");
@@ -1145,7 +1195,7 @@ mod tests {
 
     #[tokio::test]
     async fn telegram_webhook_refuses_plain_http_and_reports_telegram_errors() {
-        let http = FakeHttp { sent: Mutex::new(vec![]), reply: Mutex::new(reply(400, json!({ "ok": false, "description": "Bad Request: bad webhook" }))) };
+        let http = FakeHttp { sent: Mutex::new(vec![]), reply: Mutex::new(reply(400, json!({ "ok": false, "description": "Bad Request: bad webhook" }))), uploads: Mutex::default() };
         assert!(telegram_set_webhook(&http, "t", "http://x", "s").await.unwrap_err().contains("https"));
         assert!(http.sent.lock().unwrap().is_empty());
         let err = telegram_set_webhook(&http, "t", "https://x", "s").await.unwrap_err();
@@ -1224,6 +1274,75 @@ mod tests {
         assert!(matches!(t.post(&out).await, Err(PostError::Rejected(_))));
         let none = TelegramTransport { http, bot_token: None, own_identity: None };
         assert!(matches!(none.post(&out).await, Err(PostError::Rejected(_))));
+    }
+
+    fn file(name: &str, mime: &str) -> crate::channel_files::ChannelFile {
+        crate::channel_files::ChannelFile { filename: name.into(), mime: mime.into(), data: b"bytes".to_vec() }
+    }
+
+    #[tokio::test]
+    async fn telegram_sends_one_file_with_the_text_as_its_caption() {
+        let http = Arc::new(FakeHttp::default());
+        *http.reply.lock().unwrap() = reply(200, json!({ "ok": true, "result": { "message_id": 91 } }));
+        let t = TelegramTransport { http: http.clone(), bot_token: Some("123:abc".into()), own_identity: None };
+        let out = Outbound { workspace: None, channel: "-1001234".into(), thread: Some("7".into()), text: "Here is the report".into(), identity: None };
+        // A PDF goes as a document, a PNG as a photo; the text rides as the caption.
+        let r = t.post_files(&out, &[file("report.pdf", "application/pdf")]).await.unwrap();
+        assert_eq!(r.remote_id, "-1001234:91");
+        t.post_files(&out, &[file("chart.png", "image/png")]).await.unwrap();
+        let up = http.uploads.lock().unwrap().clone();
+        assert_eq!((up[0].0.as_str(), up[0].2.as_str(), up[0].3.as_str()), ("https://api.telegram.org/bot123:abc/sendDocument", "document", "report.pdf"));
+        assert_eq!((up[1].0.as_str(), up[1].2.as_str()), ("https://api.telegram.org/bot123:abc/sendPhoto", "photo"));
+        assert!(up[0].1.contains(&("caption".to_string(), "Here is the report".to_string())));
+        assert!(up[0].1.contains(&("chat_id".to_string(), "-1001234".to_string())));
+        assert!(up[0].1.contains(&("message_thread_id".to_string(), "7".to_string())));
+        assert!(http.sent.lock().unwrap().is_empty(), "no separate text message");
+    }
+
+    #[tokio::test]
+    async fn telegram_posts_the_text_first_when_there_are_several_files_or_a_long_text() {
+        let http = Arc::new(FakeHttp::default());
+        *http.reply.lock().unwrap() = reply(200, json!({ "ok": true, "result": { "message_id": 5 } }));
+        let t = TelegramTransport { http: http.clone(), bot_token: Some("123:abc".into()), own_identity: None };
+        let mut out = Outbound { workspace: None, channel: "42".into(), thread: None, text: "Two files".into(), identity: Some("Scout".into()) };
+        let r = t.post_files(&out, &[file("a.txt", "text/plain"), file("b.txt", "text/plain")]).await.unwrap();
+        assert_eq!(http.sent.lock().unwrap()[0].body["text"], "Scout: Two files", "relayed under the bot's name");
+        let up = http.uploads.lock().unwrap().clone();
+        assert_eq!(up.len(), 2);
+        assert!(up.iter().all(|u| !u.1.iter().any(|(k, _)| k == "caption")));
+        assert!(r.relayed);
+        // One file but a caption longer than Telegram allows.
+        out.text = "x".repeat(1100);
+        t.post_files(&out, &[file("c.txt", "text/plain")]).await.unwrap();
+        assert_eq!(http.sent.lock().unwrap().len(), 2);
+        assert!(!http.uploads.lock().unwrap()[2].1.iter().any(|(k, _)| k == "caption"));
+    }
+
+    #[tokio::test]
+    async fn telegram_failures_are_definite_unless_something_already_went_out() {
+        let http = Arc::new(FakeHttp::default());
+        let t = TelegramTransport { http: http.clone(), bot_token: Some("123:abc".into()), own_identity: None };
+        let out = Outbound { workspace: None, channel: "42".into(), thread: None, text: "hi".into(), identity: None };
+        *http.reply.lock().unwrap() = reply(400, json!({ "ok": false, "description": "Bad Request: file is too big" }));
+        assert!(matches!(t.post_files(&out, &[file("a.bin", "application/octet-stream")]).await, Err(PostError::Rejected(m)) if m.contains("too big")));
+        // The text went out, then the file was refused: not safe to retry as if nothing was sent.
+        let two = [file("a.txt", "text/plain"), file("b.txt", "text/plain")];
+        *http.reply.lock().unwrap() = reply(200, json!({ "ok": true, "result": { "message_id": 1 } }));
+        let ok_then_fail = Arc::new(FakeHttp::default());
+        *ok_then_fail.reply.lock().unwrap() = reply(200, json!({ "ok": true, "result": { "message_id": 1 } }));
+        let t2 = TelegramTransport { http: ok_then_fail.clone(), bot_token: Some("123:abc".into()), own_identity: None };
+        t2.post(&out).await.unwrap();
+        *ok_then_fail.reply.lock().unwrap() = Some(Err("timeout".into()));
+        assert!(matches!(t2.post_files(&out, &two).await, Err(PostError::Uncertain(_))));
+        let none = TelegramTransport { http, bot_token: None, own_identity: None };
+        assert!(matches!(none.post_files(&out, &two).await, Err(PostError::Rejected(_))));
+    }
+
+    #[tokio::test]
+    async fn platforms_without_a_bot_attachment_path_refuse_in_a_word_the_start_route_understands() {
+        let t = DiscordTransport { http: Arc::new(FakeHttp::default()), webhook_url: None, own_identity: None };
+        let out = Outbound { workspace: None, channel: "c".into(), thread: None, text: "hi".into(), identity: None };
+        assert_eq!(t.post_files(&out, &[file("a.png", "image/png")]).await, Err(PostError::Rejected("attachments_unsupported".into())));
     }
 
     // ---- Teams (Bot Framework activity JSON)
@@ -1556,7 +1675,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("allternit-ct-tgc-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let st = crate::test_helpers::app_state(&dir).await;
-        let http = FakeHttp { sent: Mutex::new(vec![]), reply: Mutex::new(reply(200, json!({ "ok": true, "result": { "username": "AllternitBot", "first_name": "Allternit" } }))) };
+        let http = FakeHttp { sent: Mutex::new(vec![]), reply: Mutex::new(reply(200, json!({ "ok": true, "result": { "username": "AllternitBot", "first_name": "Allternit" } }))), uploads: Mutex::default() };
         let body = |t: &str| crate::channel_gateway::TelegramConnectBody { bot_token: t.into(), display_name: None };
         let r = crate::channel_gateway::telegram_connect(&st, "user-a", body(" 123:abc "), &http).await;
         assert_eq!(r.status(), StatusCode::OK);

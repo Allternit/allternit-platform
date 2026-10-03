@@ -132,6 +132,18 @@ impl ChannelTransport for SlackAppTransport {
         Identity { id: requested.map(str::to_string), exact: true }
     }
     async fn post(&self, out: &Outbound) -> Result<Receipt, PostError> {
+        self.send_via_cloud(out, &[]).await
+    }
+
+    /// The cloud posts the text as the bot, then uploads the files into that message's thread
+    /// (`files.getUploadURLExternal` + `files.completeUploadExternal`, https://api.slack.com/messaging/files).
+    async fn post_files(&self, out: &Outbound, files: &[crate::channel_files::ChannelFile]) -> Result<Receipt, PostError> {
+        self.send_via_cloud(out, files).await
+    }
+}
+
+impl SlackAppTransport {
+    async fn send_via_cloud(&self, out: &Outbound, files: &[crate::channel_files::ChannelFile]) -> Result<Receipt, PostError> {
         let base = self
             .cloud
             .clone()
@@ -150,6 +162,9 @@ impl ChannelTransport for SlackAppTransport {
         }
         if let Some(i) = icon_url {
             body["iconUrl"] = json!(i);
+        }
+        if !files.is_empty() {
+            body["files"] = json!(crate::channel_files::to_json(files));
         }
         let resp = self
             .http
@@ -531,6 +546,22 @@ mod tests {
                 .clone()
                 .unwrap_or(Ok(crate::channel_transports::HttpResp { status: 200, body: json!({}) }))
         }
+    }
+
+    #[tokio::test]
+    async fn files_ride_the_cloud_send_route_as_base64() {
+        let http = Arc::new(FakeHttp { reply: std::sync::Mutex::new(Some(Ok(crate::channel_transports::HttpResp { status: 200, body: json!({ "ok": true, "ts": "1700000009.000100" }) }))), ..Default::default() });
+        let t = SlackAppTransport { http: http.clone(), cloud: Some("https://api.test/".into()), token: Some("allternit_runtime_x".into()), team_id: "T1".into(), db: None };
+        let out = Outbound { workspace: None, channel: "C1".into(), thread: Some("1700000001.000100".into()), text: "report".into(), identity: None };
+        let r = t.post_files(&out, &[crate::channel_files::ChannelFile { filename: "r.pdf".into(), mime: "application/pdf".into(), data: b"%PDF".to_vec() }]).await.unwrap();
+        assert_eq!(r.remote_id, "1700000009.000100");
+        let sent = http.sent.lock().unwrap()[0].clone();
+        assert_eq!(sent.url, "https://api.test/api/v1/channels/slack/send");
+        assert_eq!(sent.body["files"], json!([{ "filename": "r.pdf", "mimeType": "application/pdf", "dataBase64": "JVBERg==" }]));
+        assert_eq!(sent.body["threadTs"], "1700000001.000100");
+        // Without files the body carries none.
+        t.post(&out).await.unwrap();
+        assert!(http.sent.lock().unwrap()[1].body.get("files").is_none());
     }
 
     #[test]

@@ -114,6 +114,18 @@ pub struct SendEmailRequest<'a> {
     /// List-Unsubscribe); anything else fails the send with a 400.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<&'a std::collections::HashMap<String, String>>,
+    /// Files to attach (mailflare allows 10, 10 MB each, 20 MB together).
+    #[serde(skip_serializing_if = "<[MailAttachment]>::is_empty")]
+    pub attachments: &'a [MailAttachment],
+}
+
+#[derive(Debug, Serialize)]
+pub struct MailAttachment {
+    pub filename: String,
+    #[serde(rename = "type")]
+    pub mime: String,
+    #[serde(rename = "contentBase64")]
+    pub content_base64: String,
 }
 
 fn is_false(value: &bool) -> bool {

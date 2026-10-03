@@ -16,6 +16,9 @@
 //! * Gateway: one WebSocket (GUILDS, GUILD_MESSAGES, DIRECT_MESSAGES, no
 //!   MESSAGE_CONTENT). A MESSAGE_CREATE that mentions the app, replies to one of
 //!   its messages, or is a DM to an installer is queued to the owner runtime.
+//! * `POST /api/v1/channels/discord/dm` {guildId?, userId, text?, botName?} →
+//!   {channelId, messageId?}: the bot opens a DM with a Discord user who shares
+//!   one of the caller's installed servers and (with `text`) posts in it.
 //! * `PUT /api/v1/channels/discord/commands` {guildId, names[]}: guild slash
 //!   commands, one `/<name>` per bot switched on.
 //! * `POST /api/v1/channels/discord/send` {guildId, channelId, threadId?,
@@ -91,6 +94,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
         .route("/api/v1/channels/discord/install", post(install))
         .route("/api/v1/channels/discord/send", post(send))
+        .route("/api/v1/channels/discord/dm", post(dm))
         .route("/api/v1/channels/discord/commands", put(commands))
         .route("/channels/discord/oauth/callback", get(oauth_callback))
         .route("/channels/discord/interactions", post(interactions))
@@ -1008,6 +1012,12 @@ pub fn chunk_text(text: &str) -> Vec<String> {
 pub enum SendError {
     Invalid(&'static str),
     WrongGuild,
+    /// The caller has no (or not that) server with the app installed.
+    NotInstalled,
+    /// The person shares no installed server with the caller, so the bot may not DM them.
+    NotInServer,
+    /// Discord error 50007: the person's settings refuse DMs from this app.
+    DmClosed,
     Discord(u16),
     Unreachable(String),
     Db(String),
@@ -1018,6 +1028,9 @@ impl SendError {
         match self {
             SendError::Invalid(why) => json_error(StatusCode::BAD_REQUEST, why),
             SendError::WrongGuild => json_error(StatusCode::FORBIDDEN, "channel_not_in_guild"),
+            SendError::NotInstalled => json_error(StatusCode::NOT_FOUND, "discord_not_installed"),
+            SendError::NotInServer => json_error(StatusCode::FORBIDDEN, "user_not_in_server"),
+            SendError::DmClosed => json_error(StatusCode::FORBIDDEN, "dm_closed"),
             SendError::Discord(status) => {
                 (StatusCode::BAD_GATEWAY, Json(json!({ "error": "discord_error", "status": status }))).into_response()
             }
@@ -1042,6 +1055,109 @@ async fn send(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(body)
         Ok(ids) => Json(json!({ "messageId": ids[0], "messageIds": ids })).into_response(),
         Err(error) => error.into_response(),
     }
+}
+
+// ---------------------------------------------------------------- direct messages
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DmBody {
+    pub guild_id: Option<String>,
+    pub user_id: String,
+    /// Without text the DM channel is only opened (a conversation start needs its id first).
+    pub text: Option<String>,
+    pub bot_name: Option<String>,
+}
+
+async fn dm(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(body): Json<DmBody>) -> Response {
+    let Some(cfg) = DiscordConfig::from_env() else { return not_configured() };
+    let user = match user_id(&state, &headers).await {
+        Ok(user) => user,
+        Err(error) => return error.into_response(),
+    };
+    match dm_message(&state.db, default_api(&cfg).as_ref(), &user, &body).await {
+        Ok((channel, message)) => Json(json!({ "channelId": channel, "messageId": message })).into_response(),
+        Err(error) => error.into_response(),
+    }
+}
+
+async fn installed_guilds(db: &sqlx::PgPool, user: &str) -> Result<Vec<String>, SendError> {
+    let rows: Vec<(String,)> = sqlx::query_as("SELECT guild_id FROM discord_installs WHERE user_id = $1 AND revoked_at IS NULL ORDER BY installed_at DESC")
+        .bind(user)
+        .fetch_all(db)
+        .await
+        .map_err(|e| SendError::Db(e.to_string()))?;
+    Ok(rows.into_iter().map(|(g,)| g).collect())
+}
+
+/// Open a DM with `body.user_id` and, with `text`, post in it. The bot only messages people who
+/// are members of a server the caller installed the app in. Returns `(channel id, first message id)`.
+/// https://discord.com/developers/docs/resources/user#create-dm
+/// https://discord.com/developers/docs/resources/guild#get-guild-member
+/// https://discord.com/developers/docs/resources/message#create-message
+pub async fn dm_message(db: &sqlx::PgPool, api: &dyn DiscordApi, user: &str, body: &DmBody) -> Result<(String, Option<String>), SendError> {
+    let target = body.user_id.trim();
+    if !(15..=25).contains(&target.len()) || !target.chars().all(|c| c.is_ascii_digit()) {
+        return Err(SendError::Invalid("invalid_user_id"));
+    }
+    let installed = installed_guilds(db, user).await?;
+    let candidates: Vec<String> = match body.guild_id.as_deref().filter(|g| !g.is_empty()) {
+        Some(guild) if installed.iter().any(|g| g == guild) => vec![guild.to_string()],
+        _ => installed,
+    };
+    if candidates.is_empty() {
+        return Err(SendError::NotInstalled);
+    }
+    let mut member = false;
+    for guild in &candidates {
+        let r = api.call(ApiRequest { method: "GET", path: format!("/guilds/{guild}/members/{target}"), auth: Auth::Bot, body: Body::None }).await.map_err(call_error)?;
+        match r.status {
+            200..=299 => {
+                member = true;
+                break;
+            }
+            404 => {}
+            status => return Err(SendError::Discord(status)),
+        }
+    }
+    if !member {
+        return Err(SendError::NotInServer);
+    }
+    let opened = api.call(ApiRequest { method: "POST", path: "/users/@me/channels".into(), auth: Auth::Bot, body: Body::Json(json!({ "recipient_id": target })) }).await.map_err(call_error)?;
+    if !opened.ok() {
+        return Err(if is_dm_closed(&opened.body) { SendError::DmClosed } else { SendError::Discord(opened.status) });
+    }
+    let channel = str_at(&opened.body, "/id").map(String::from).ok_or(SendError::Discord(opened.status))?;
+    let Some(text) = body.text.as_deref().filter(|t| !t.trim().is_empty()) else { return Ok((channel, None)) };
+    // A DM can't wear a webhook's name and avatar, so the bot's name leads the message.
+    let text = match body.bot_name.as_deref().map(|n| n.chars().filter(|c| !"*_~`|>\\@#".contains(*c)).take(80).collect::<String>()).filter(|n| !n.trim().is_empty()) {
+        Some(name) => format!("**{}**\n{text}", name.trim()),
+        None => text.to_string(),
+    };
+    let mut first = None;
+    for chunk in chunk_text(&text) {
+        let mut waited = false;
+        let id = loop {
+            let payload = json!({ "content": chunk, "allowed_mentions": { "parse": [] } });
+            let r = api.call(ApiRequest { method: "POST", path: format!("/channels/{channel}/messages"), auth: Auth::Bot, body: Body::Json(payload) }).await.map_err(call_error)?;
+            match r.status {
+                200..=299 => break str_at(&r.body, "/id").map(String::from).ok_or(SendError::Discord(r.status))?,
+                429 if !waited => {
+                    waited = true;
+                    tokio::time::sleep(Duration::from_secs_f64(r.retry_after.unwrap_or(1.0).clamp(0.1, 5.0))).await;
+                }
+                _ if is_dm_closed(&r.body) => return Err(SendError::DmClosed),
+                status => return Err(SendError::Discord(status)),
+            }
+        };
+        first.get_or_insert(id);
+    }
+    Ok((channel, first))
+}
+
+/// 50007: Cannot send messages to this user.
+fn is_dm_closed(body: &Value) -> bool {
+    body.get("code").and_then(Value::as_u64) == Some(50007)
 }
 
 fn call_error(error: String) -> SendError {
@@ -1903,6 +2019,60 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(stored, "wh1");
+    }
+
+    fn dm_api(member: bool, closed: bool) -> Arc<FakeApi> {
+        FakeApi::new(move |method, path| match (method, path) {
+            ("GET", p) if p.starts_with("/guilds/") && p.contains("/members/") => if member { reply(200, json!({ "user": { "id": "x" } })) } else { reply(404, json!({ "code": 10007 })) },
+            ("POST", "/users/@me/channels") => reply(200, json!({ "id": "dm-1" })),
+            ("POST", "/channels/dm-1/messages") => if closed { reply(403, json!({ "code": 50007 })) } else { reply(200, json!({ "id": "dmsg-1" })) },
+            _ => reply(404, Value::Null),
+        })
+    }
+
+    fn dm_body(text: Option<&str>) -> DmBody {
+        DmBody { guild_id: None, user_id: "123456789012345678".into(), text: text.map(String::from), bot_name: Some("Finance".into()) }
+    }
+
+    #[tokio::test]
+    async fn dm_opens_a_channel_and_posts_as_the_bot() {
+        let pool = db().await;
+        install_for_test(&pool, "g-dm-1", "installer").await;
+        let api = dm_api(true, false);
+        let (channel, message) = dm_message(&pool, api.as_ref(), "user1", &dm_body(Some("hello"))).await.unwrap();
+        assert_eq!((channel.as_str(), message.as_deref()), ("dm-1", Some("dmsg-1")));
+        let calls = api.calls();
+        assert_eq!(calls[0].1, "/guilds/g-dm-1/members/123456789012345678", "membership is checked first");
+        assert_eq!(calls[1].2, json!({ "recipient_id": "123456789012345678" }));
+        assert_eq!(calls[2].2["content"], "**Finance**\nhello");
+        assert_eq!(calls[2].2["allowed_mentions"], json!({ "parse": [] }));
+        // Without text only the channel is opened.
+        let api = dm_api(true, false);
+        assert_eq!(dm_message(&pool, api.as_ref(), "user1", &dm_body(None)).await.unwrap(), ("dm-1".to_string(), None));
+        assert_eq!(api.calls().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn dm_refuses_strangers_closed_dms_and_other_peoples_servers() {
+        let pool = db().await;
+        install_for_test(&pool, "g-dm-2", "installer").await;
+        let err = |r: Result<(String, Option<String>), SendError>| r.unwrap_err();
+        // The person isn't in any of the caller's servers: nothing is opened.
+        let api = dm_api(false, false);
+        assert!(matches!(err(dm_message(&pool, api.as_ref(), "user1", &dm_body(Some("hi"))).await), SendError::NotInServer));
+        assert!(api.calls().iter().all(|c| c.1 != "/users/@me/channels"));
+        // Privacy settings refuse the DM.
+        assert!(matches!(err(dm_message(&pool, dm_api(true, true).as_ref(), "user1", &dm_body(Some("hi"))).await), SendError::DmClosed));
+        // A user with no install, or a guildId that isn't theirs, never reaches Discord for a DM.
+        assert!(matches!(err(dm_message(&pool, dm_api(true, false).as_ref(), "nobody", &dm_body(Some("hi"))).await), SendError::NotInstalled));
+        let mut other = dm_body(Some("hi"));
+        other.guild_id = Some("someone-elses".into());
+        let api = dm_api(true, false);
+        dm_message(&pool, api.as_ref(), "user1", &other).await.unwrap();
+        assert_eq!(api.calls()[0].1, "/guilds/g-dm-2/members/123456789012345678", "a guild that isn't the caller's is ignored, not trusted");
+        let mut bad = dm_body(Some("hi"));
+        bad.user_id = "not-a-snowflake".into();
+        assert!(matches!(err(dm_message(&pool, dm_api(true, false).as_ref(), "user1", &bad).await), SendError::Invalid("invalid_user_id")));
     }
 
     #[tokio::test]

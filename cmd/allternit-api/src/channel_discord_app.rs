@@ -334,8 +334,23 @@ impl ChannelTransport for DiscordAppTransport {
         let (Some(base), Some(token)) = (self.cloud_base.as_deref(), self.cloud_token.as_deref()) else {
             return Err(PostError::Rejected("discord_not_configured".into()));
         };
-        let guild = out.workspace.clone().or_else(|| self.guild_id.clone()).ok_or_else(|| PostError::Rejected("no Discord server for this conversation".into()))?;
         let (bot, avatar, text) = self.speaker(out);
+        // A direct message can't go through a channel webhook: the cloud's bot opens the DM and posts.
+        if let Some(user) = crate::channel_discord_dm::dm_user(out.workspace.as_deref()) {
+            let body = json!({ "userId": user, "text": text, "botName": bot });
+            let url = format!("{}/api/v1/channels/discord/dm", base.trim_end_matches('/'));
+            let resp = self.http.post_json(HttpReq { url, headers: vec![("Authorization".into(), format!("Bearer {token}"))], body }).await.map_err(PostError::Uncertain)?;
+            return match crate::channel_discord_dm::judge(resp.status, &resp.body) {
+                Ok(v) => {
+                    let id = v["messageId"].as_str().map(str::to_string).ok_or_else(|| PostError::Uncertain("the cloud accepted the direct message but returned no messageId".into()))?;
+                    self.remember(&id, &out.channel, &bot);
+                    Ok(Receipt { remote_id: id, relayed: true })
+                }
+                Err(crate::channel_discord_dm::DmError::Uncertain(why)) => Err(PostError::Uncertain(why)),
+                Err(e) => Err(PostError::Rejected(crate::channel_discord_dm::sentence(&e).0.into())),
+            };
+        }
+        let guild = out.workspace.clone().or_else(|| self.guild_id.clone()).ok_or_else(|| PostError::Rejected("no Discord server for this conversation".into()))?;
         let mut body = json!({ "guildId": guild, "channelId": out.channel, "botName": bot, "text": text });
         if let Some(t) = out.thread.as_ref().filter(|t| !t.is_empty()) {
             body["threadId"] = json!(t);
@@ -412,6 +427,26 @@ mod tests {
         let mut plain = acct();
         plain.secret = "{}".into();
         assert_eq!(rewrite(&d, &plain, &bots(), &msg("<@123> finance x")).text.unwrap(), "<@123> finance x");
+    }
+
+    #[tokio::test]
+    async fn a_dm_conversation_posts_through_the_cloud_dm_route_not_a_webhook() {
+        let http = Arc::new(FakeHttp::default());
+        let t = transport(http.clone(), None);
+        let out = Outbound { workspace: Some("@dm:123456789012345678".into()), channel: "dmchan".into(), thread: None, text: "hello".into(), identity: Some("Finance".into()) };
+        let r = t.post(&out).await;
+        // The fake answers {messageId} only for the webhook route's shape; the DM route needs the same field.
+        assert_eq!(r.unwrap().remote_id, "m-100");
+        let sent = http.sent.lock().unwrap()[0].clone();
+        assert_eq!(sent.url, "https://api.test/api/v1/channels/discord/dm");
+        assert_eq!(sent.body["userId"], "123456789012345678");
+        assert_eq!(sent.body["botName"], "Finance");
+        assert_eq!(sent.body["text"], "hello");
+        assert!(sent.body.get("guildId").is_none() && sent.body.get("channelId").is_none());
+        // The person's settings refuse it: a definite, plain reason.
+        *http.status.lock().unwrap() = Some(403);
+        let refused = t.post(&out).await;
+        assert!(matches!(refused, Err(PostError::Rejected(_))), "{refused:?}");
     }
 
     #[test]
