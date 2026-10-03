@@ -846,7 +846,7 @@ mod tests {
         let kinds: Vec<String> = ledger(&h, "c1").into_iter().map(|e| e.0).collect();
         let tools: Vec<_> = h.state.db.connect().unwrap().prepare("SELECT event_type FROM bot_events WHERE event_type LIKE 'agent.tool.%' ORDER BY rowid").unwrap().query_map([], |r| r.get::<_, String>(0)).unwrap().filter_map(Result::ok).collect();
         assert_eq!(tools, vec!["agent.tool.started", "agent.tool.completed"]);
-        assert!(kinds.iter().all(|k| k.starts_with("call.")));
+        assert_eq!(kinds, tools); // no call.* duplicates of the steps
     }
 
     #[tokio::test]
@@ -864,8 +864,8 @@ mod tests {
         let resp = h.app.clone().oneshot(req.body(Body::from(body)).unwrap()).await.unwrap();
         let reader = tokio::spawn(async move { String::from_utf8_lossy(&resp.into_body().collect().await.unwrap().to_bytes()).to_string() });
         tokio::time::sleep(Duration::from_millis(50)).await;
-        let t0 = std::time::Instant::now();
         assert_eq!(send(&h.app, "DELETE", &turn, Value::Null, true).await.0, StatusCode::NO_CONTENT);
+        let t0 = std::time::Instant::now();
         let body = tokio::time::timeout(Duration::from_millis(100), reader).await.expect("stream closed within 100 ms").unwrap();
         assert!(t0.elapsed() < Duration::from_millis(100));
         let ev = sse_events(&body);
@@ -903,7 +903,7 @@ mod tests {
         let turner = GizziStreamTurner { fallback: ChannelTurner };
         let reply = tokio::time::timeout(Duration::from_secs(5), turner.run(&h.state.db, "sess-placed", "bot-1", "hi", tx)).await.expect("never hangs").unwrap();
         assert_eq!(reply, TurnReply::Final("From the server.".into()));
-        assert_eq!(hits.lock().unwrap().as_slice(), ["POST /agent-sessions/sess-placed/messages"]);
+        assert_eq!(hits.lock().unwrap().as_slice(), ["POST /api/v1/agent-sessions/sess-placed/messages"]);
     }
 
     #[test]

@@ -183,8 +183,8 @@ fn emit(events: &UnboundedSender<Value>, out: &mut Vec<Value>) {
     }
 }
 
-async fn abort_session(client: &Client, session_id: &str) {
-    let url = format!("{}/v1/session/{}/abort", crate::agent_session_routes::gizzi_base(), urlencoding::encode(session_id));
+async fn abort_session(client: &Client, base: &str, session_id: &str) {
+    let url = format!("{base}/v1/session/{}/abort", urlencoding::encode(session_id));
     if let Err(e) = client.post(url).json(&json!({})).send().await {
         warn!("voice turn abort failed: {e}");
     }
@@ -196,7 +196,7 @@ pub(crate) async fn stream_gizzi_turn(client: &Client, base: &str, session_id: &
     match tokio::time::timeout(TURN_DEADLINE, drive(client, base, session_id, path, payload, events)).await {
         Ok(r) => r,
         Err(_) => {
-            abort_session(client, session_id).await;
+            abort_session(client, base, session_id).await;
             Err("That took too long, so I stopped. Could you ask again?".to_string())
         }
     }
@@ -273,7 +273,7 @@ async fn drive(client: &Client, base: &str, session_id: &str, path: &str, payloa
 
     match ended {
         Some(Flow::Approval) => {
-            abort_session(client, session_id).await;
+            abort_session(client, base, session_id).await;
             return Err(APPROVAL_SPOKEN.to_string());
         }
         Some(Flow::Failed(message)) => return Err(message),
@@ -345,7 +345,7 @@ mod tests {
     }
 
     async fn run(events: Vec<Value>, delay: Duration) -> (Result<TurnReply, String>, Vec<Value>, Arc<Mutex<Vec<String>>>) {
-        let (base, aborts) = fake_gizzi(events, json!({ "parts": [{ "type": "text", "text": "final text" }] }), delay).await;
+        let (base, aborts) = fake_gizzi(events, json!({ "info": { "id": "m2", "sessionID": "s1", "role": "assistant" }, "parts": [{ "type": "text", "text": "final text" }] }), delay).await;
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let r = stream_gizzi_turn(&Client::new(), &base, "s1", "/v1/session/s1/message", json!({}), &tx).await;
         drop(tx);
@@ -378,7 +378,8 @@ mod tests {
                 json!({ "type": "text.delta", "text": "check. " }),
                 json!({ "type": "tool", "name": "calendar", "status": "started", "toolCallId": "c1" }),
                 json!({ "type": "tool", "name": "calendar", "status": "done", "toolCallId": "c1" }),
-                json!({ "type": "text.delta", "text": "You're free" }),
+                json!({ "type": "text.delta", "text": "You're " }),
+                json!({ "type": "text.delta", "text": "free" }),
             ]
         );
     }
