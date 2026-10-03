@@ -639,6 +639,10 @@ pub(crate) fn adapter_for_auth(vendor: &str, auth_type: &str) -> Option<&'static
         ("openai", "browser_session") => Some("chatgpt-subscription"),
         ("openai", "desktop_session") => Some("chatgpt-dots"),
         ("kimi", "browser_session") => Some("kimi-subscription"),
+        // Google/Microsoft browser logins run on their web adapters (the
+        // gemini-web / copilot-web pools the accounts sign in through).
+        ("google", "browser_session") => Some("gemini-subscription"),
+        ("microsoft", "browser_session") => Some("copilot-subscription"),
         ("hermes", _) => Some("hermes"),
         _ => None,
     }
@@ -1765,6 +1769,10 @@ mod tests {
         assert_eq!(adapter_for_auth("openai", "browser_session"), Some("chatgpt-subscription"));
         assert_eq!(adapter_for_auth("openai", "desktop_session"), Some("chatgpt-dots"));
         assert_eq!(adapter_for_auth("kimi", "browser_session"), Some("kimi-subscription"));
+        assert_eq!(adapter_for_auth("google", "browser_session"), Some("gemini-subscription"));
+        assert_eq!(adapter_for_auth("google", "api_key"), None);
+        assert_eq!(adapter_for_auth("microsoft", "browser_session"), Some("copilot-subscription"));
+        assert_eq!(adapter_for_auth("microsoft", "desktop_session"), None);
         assert_eq!(adapter_for_auth("hermes", "local_endpoint"), Some("hermes"));
         assert_eq!(adapter_for_auth("grok", "desktop_session"), None);
     }

@@ -1,0 +1,23 @@
+<!doctype html>
+<!-- fixture: challenge — a bot-check interstitial shape: the check widget sits
+     in a CLOSED shadow root and its label is inside a cross-origin iframe, so
+     neither is reachable from the top frame. Only the page's own heading text
+     is. halt + needs_user, never retried -->
+<html lang="en">
+  <head><meta charset="utf-8"><title>Just a moment...</title></head>
+  <body data-state="challenge">
+    <main>
+      <h1>gemini.google.com</h1>
+      <h2>Performing security verification</h2>
+      <p>This website uses a security service to protect against malicious bots. This page is displayed while the website verifies you are not a bot.</p>
+      <div id="turnstile-host"></div>
+      <script>
+        const root = document.getElementById("turnstile-host").attachShadow({ mode: "closed" });
+        const frame = document.createElement("iframe");
+        frame.src = "about:blank";
+        frame.title = "Widget containing a Cloudflare security challenge";
+        root.appendChild(frame);
+      </script>
+    </main>
+  </body>
+</html>

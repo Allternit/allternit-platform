@@ -33,7 +33,7 @@ const connectSchema = z.object({
 });
 
 // The providers people pick from in Settings; each gains an adapter in turn.
-const KNOWN_PROVIDERS: Record<string, string> = { chatgpt: "ChatGPT", claude: "Claude", kimi: "Kimi" };
+const KNOWN_PROVIDERS: Record<string, string> = { chatgpt: "ChatGPT", claude: "Claude", kimi: "Kimi", google: "Gemini", microsoft: "Copilot" };
 
 export function providerName(provider: string): string {
   return KNOWN_PROVIDERS[provider] ?? provider.charAt(0).toUpperCase() + provider.slice(1);

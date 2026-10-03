@@ -1,0 +1,21 @@
+<!doctype html>
+<!-- fixture: limit-banner — idle UI plus a usage-limit notice (quota signal) -->
+<html lang="en">
+  <head><meta charset="utf-8"><title>copilot-web fixture — limit banner</title></head>
+  <body data-state="limit-banner">
+    <header>
+      <button type="button" class="mode-picker">Auto</button>
+      <img id="mectrl_headerPicture" alt="Eoj" aria-label="Account manager for Eoj" />
+    </header>
+    <main>
+      <div class="usage-limit-banner" role="alert">You've reached the daily limit for Copilot. It resets in 3 hours.</div>
+      <cib-serp>
+        <div id="chat-turns"></div>
+        <cib-text-input>
+          <textarea data-testid="composer-input" aria-label="Ask me anything…"></textarea>
+          <button class="send-button" type="submit" aria-label="Send">➤</button>
+        </cib-text-input>
+      </cib-serp>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,25 @@
+<!doctype html>
+<!-- fixture: streaming — assistant turn in flight, Send swapped for Stop -->
+<html lang="en">
+  <head><meta charset="utf-8"><title>copilot-web fixture — streaming</title></head>
+  <body data-state="streaming">
+    <header>
+      <button type="button" class="mode-picker">Auto</button>
+      <img id="mectrl_headerPicture" alt="Eoj" aria-label="Account manager for Eoj" />
+    </header>
+    <main>
+      <cib-serp>
+        <div id="chat-turns">
+          <div class="turn turn-user"><div class="msg-content">Summarize the migration plan.</div></div>
+          <div class="turn turn-bot loading">
+            <div class="msg-content"><div class="ac-textBlock streaming"><p>The migration happens in three stages…</p></div></div>
+          </div>
+        </div>
+        <cib-text-input>
+          <textarea data-testid="composer-input" aria-label="Ask me anything…"></textarea>
+          <button class="stop-button" type="button" aria-label="Stop generating">■</button>
+        </cib-text-input>
+      </cib-serp>
+    </main>
+  </body>
+</html>

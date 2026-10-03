@@ -1,7 +1,8 @@
-// claude-web + kimi-web (shared web-chat base): SDK conformance over the 6
-// canonical fixtures, chat.create e2e (fresh chat first), chat.continue
-// divergence policy, reconcile outcome mapping, thread-URL patterns, and the
-// registry loading both manifests. Fixtures only — no live provider contact.
+// claude-web + kimi-web + gemini-web + copilot-web (shared web-chat base): SDK
+// conformance over the 6 canonical fixtures, chat.create e2e (fresh chat
+// first), chat.continue divergence policy, reconcile outcome mapping,
+// thread-URL patterns, and the registry loading every manifest. Fixtures only
+// — no live provider contact.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,6 +28,16 @@ import {
   THREAD_URL_PATTERN as KIMI_THREAD,
   createAdapter as createKimi,
 } from "../adapters/kimi-web/adapter.js";
+import {
+  GeminiWebAdapter,
+  THREAD_URL_PATTERN as GEMINI_THREAD,
+  createAdapter as createGemini,
+} from "../adapters/gemini-web/adapter.js";
+import {
+  CopilotWebAdapter,
+  THREAD_URL_PATTERN as COPILOT_THREAD,
+  createAdapter as createCopilot,
+} from "../adapters/copilot-web/adapter.js";
 import { loadAdapterRegistry } from "../src/adapters/registry.js";
 import { launchBrowser } from "./helpers.js";
 
@@ -76,6 +87,36 @@ const CASES: Case[] = [
       ["https://kimi.ai/chat/abc-123", "abc-123"],
     ],
     badThreadUrls: ["https://www.kimi.com/", "https://www.kimi.com/kimiplus/abc"],
+  },
+  {
+    id: "gemini-web",
+    make: (opts = {}) => new GeminiWebAdapter(opts, FAST),
+    newChatUrl: "https://gemini.google.com/app",
+    threadUrl: (id) => `https://gemini.google.com/app/${id}`,
+    routeGlob: "https://gemini.google.com/**",
+    threadPattern: GEMINI_THREAD,
+    goodThreadUrls: [
+      ["https://gemini.google.com/app/7c4a9e2b1d5f38a6", "7c4a9e2b1d5f38a6"],
+      ["https://gemini.google.com/app/0123456789abcdef", "0123456789abcdef"],
+    ],
+    badThreadUrls: ["https://gemini.google.com/app", "https://gemini.google.com/"],
+  },
+  {
+    id: "copilot-web",
+    make: (opts = {}) => new CopilotWebAdapter(opts, FAST),
+    newChatUrl: "https://copilot.microsoft.com/",
+    threadUrl: (id) => `https://copilot.microsoft.com/chats/${id}`,
+    routeGlob: "https://copilot.microsoft.com/**",
+    threadPattern: COPILOT_THREAD,
+    goodThreadUrls: [
+      [
+        "https://copilot.microsoft.com/chats/a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      ],
+    ],
+    // /chats/<id> is inferred (unverified): consumer Copilot may keep
+    // conversations sidebar-only, in which case these stay non-URLs.
+    badThreadUrls: ["https://copilot.microsoft.com/", "https://copilot.microsoft.com/chats/"],
   },
 ];
 
@@ -174,18 +215,24 @@ async function drain(adapter: WebChatAdapter, task: Task, page: Page, attempt?: 
 }
 
 describe("registry", () => {
-  it("loads claude-web and kimi-web beside chatgpt-web; the shared dir is not an adapter", () => {
+  it("loads every web adapter beside chatgpt-web; the shared dir is not an adapter", () => {
     const registry = loadAdapterRegistry(fileURLToPath(new URL("../adapters/", import.meta.url)));
     const ids = registry.adapters.map((a) => a.manifest.adapter_id);
-    expect(ids).toEqual(expect.arrayContaining(["chatgpt-web", "claude-web", "kimi-web"]));
+    expect(ids).toEqual(
+      expect.arrayContaining(["chatgpt-web", "claude-web", "kimi-web", "gemini-web", "copilot-web"])
+    );
     expect(ids).not.toContain("_shared");
     expect(registry.byId("claude-web")?.manifest.provider).toBe("claude");
     expect(registry.byId("kimi-web")?.manifest.provider).toBe("kimi");
+    expect(registry.byId("gemini-web")?.manifest.provider).toBe("google");
+    expect(registry.byId("copilot-web")?.manifest.provider).toBe("microsoft");
   });
 
   it("createAdapter() builds each adapter with its own manifest", () => {
     expect(createClaude().manifest.adapter_id).toBe("claude-web");
     expect(createKimi().manifest.adapter_id).toBe("kimi-web");
+    expect(createGemini().manifest.adapter_id).toBe("gemini-web");
+    expect(createCopilot().manifest.adapter_id).toBe("copilot-web");
   });
 });
 
@@ -433,6 +480,39 @@ describe("kimi-web readAccount", () => {
     expect(read.usage).toMatchObject({ remaining_pct: 58.7, resets_at: "2026-10-19T00:00:00Z" });
     expect(auths).toEqual(["Bearer kimi-secret", "Bearer kimi-secret"]);
     expect(JSON.stringify(read)).not.toContain("kimi-secret");
+    await page.close();
+  }, 30000);
+});
+
+describe("gemini-web readAccount", () => {
+  it("reads the signed-in account from the header avatar's accessible name, never a token; usage is null", async () => {
+    const adapter = new GeminiWebAdapter({ freshChat: false }, FAST);
+    const page = await browser.newPage();
+    await page.route("https://gemini.google.com/**", (route) =>
+      route.fulfill({ contentType: "text/html", body: fixtureHtml("gemini-web", "idle") })
+    );
+    await page.goto("https://gemini.google.com/app");
+    await adapter.attach({ page } as never);
+    const read = await adapter.readAccount(new AbortController().signal);
+    // The parenthesized email wins over the display name in the label.
+    expect(read.identity).toBe("eoj@example.com");
+    expect(read.usage).toBeNull();
+    await page.close();
+  }, 30000);
+});
+
+describe("copilot-web readAccount", () => {
+  it("reads the signed-in account from the header account picture, never a token; usage is null", async () => {
+    const adapter = new CopilotWebAdapter({ freshChat: false }, FAST);
+    const page = await browser.newPage();
+    await page.route("https://copilot.microsoft.com/**", (route) =>
+      route.fulfill({ contentType: "text/html", body: fixtureHtml("copilot-web", "idle") })
+    );
+    await page.goto("https://copilot.microsoft.com/");
+    await adapter.attach({ page } as never);
+    const read = await adapter.readAccount(new AbortController().signal);
+    expect(read.identity).toBe("Eoj");
+    expect(read.usage).toBeNull();
     await page.close();
   }, 30000);
 });
