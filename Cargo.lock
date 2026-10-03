@@ -8090,10 +8090,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9528a26c807f49d3fa6d075c01db5fd77bf32454b1e700c530fb8c670892008"
 dependencies = [
  "async-trait",
+ "base64 0.21.7",
+ "bytes 1.12.0",
+ "futures-util",
  "http 1.4.2",
  "log",
  "reqwest 0.12.28",
  "rustls-native-certs 0.8.4",
+ "tokio",
  "tokio-rustls 0.26.4",
  "tokio-tungstenite 0.29.0",
  "url",
