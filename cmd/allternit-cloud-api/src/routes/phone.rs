@@ -39,14 +39,23 @@ use std::sync::Arc;
 use crate::carriers::{
     self, Carrier, CarrierError, InboundEvent, NumberType, RegState, RegistrationForm, RegistrationHandle, RegistrationKind, ReqwestHttp, SearchQuery,
 };
+use crate::services::voice_usage::plan_for_user;
 use crate::{ApiError, ApiState};
 
 /// Longest SMS the runtime may send in one call (it splits longer replies).
 pub const MAX_SMS_CHARS: usize = 1600;
 /// Outbound texts per number per rolling day before 429 (`ALLTERNIT_SMS_DAILY_CAP` overrides).
 const DEFAULT_DAILY_CAP: i64 = 1000;
-/// Numbers one user may hold (`ALLTERNIT_PHONE_MAX_PER_USER` overrides).
-const DEFAULT_MAX_NUMBERS: i64 = 3;
+/// Numbers one user may hold, by plan. A plan not listed (free) includes no
+/// phone numbers: buying or porting returns 402 `phone_requires_plan`.
+/// `ALLTERNIT_PHONE_MAX_PER_USER` overrides the limit for every paid plan.
+const PLAN_NUMBER_LIMITS: [(&str, i64); 3] = [("plus", 3), ("super", 5), ("ultra", 10)];
+
+/// Numbers a plan may hold; `None` when the plan does not include phone.
+pub fn number_limit_for_plan(plan: &str) -> Option<i64> {
+    let base = PLAN_NUMBER_LIMITS.iter().find(|(p, _)| *p == plan).map(|(_, n)| *n)?;
+    Some(env_i64("ALLTERNIT_PHONE_MAX_PER_USER", base))
+}
 /// How long a call consent stays valid for the dial.
 const CALL_CONSENT_MINUTES: i64 = 30;
 
@@ -74,6 +83,7 @@ pub enum PhoneError {
     BadRequest(String),
     NotFound(&'static str),
     Forbidden(&'static str),
+    PlanRequired,
     Conflict(&'static str),
     TooMany(&'static str),
     Carrier(CarrierError),
@@ -117,6 +127,7 @@ impl IntoResponse for PhoneError {
             Self::BadRequest(m) => err(StatusCode::BAD_REQUEST, "bad_request", Some(m)),
             Self::NotFound(code) => err(StatusCode::NOT_FOUND, code, None),
             Self::Forbidden(code) => err(StatusCode::FORBIDDEN, code, None),
+            Self::PlanRequired => err(StatusCode::PAYMENT_REQUIRED, "phone_requires_plan", Some("Phone numbers need a paid plan. Upgrade to add one.".into())),
             Self::Conflict(code) => err(StatusCode::CONFLICT, code, None),
             Self::TooMany(code) => err(StatusCode::TOO_MANY_REQUESTS, code, None),
             Self::Carrier(CarrierError::Invalid(m)) => err(StatusCode::BAD_REQUEST, "bad_request", Some(m)),
@@ -284,7 +295,8 @@ pub async fn buy_number(db: &PgPool, carrier: &dyn Carrier, user: &str, body: &B
     }
     owns_runtime(db, user, &body.runtime_id).await?;
     let held: i64 = sqlx::query_scalar("SELECT count(*) FROM phone_numbers WHERE user_id = $1 AND released_at IS NULL").bind(user).fetch_one(db).await?;
-    if held >= env_i64("ALLTERNIT_PHONE_MAX_PER_USER", DEFAULT_MAX_NUMBERS) {
+    let limit = number_limit_for_plan(&body.plan).ok_or(PhoneError::PlanRequired)?;
+    if held >= limit {
         return Err(PhoneError::Forbidden("number_limit"));
     }
     let kind = body.kind;
@@ -330,6 +342,8 @@ pub struct BuyInputs {
     pub runtime_id: String,
     pub bot_id: String,
     pub kind: NumberType,
+    /// The user's plan id (`plan_for_user`); gates phone and sets the number limit.
+    pub plan: String,
 }
 
 fn infer_type(e164: &str) -> NumberType {
@@ -344,12 +358,13 @@ fn infer_type(e164: &str) -> NumberType {
 async fn buy_number_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(body): Json<BuyBody>) -> Response {
     let run = async {
         let user = user_id(&state, &headers).await?;
+        let plan = plan_for_user(&state.db, &user).await?;
         let carrier = carrier()?;
         let kind = match body.kind.as_deref() {
             Some(k) => NumberType::parse(k).ok_or_else(|| PhoneError::BadRequest("type must be local or toll_free".into()))?,
             None => infer_type(&body.e164),
         };
-        let row = buy_number(&state.db, carrier.as_ref(), &user, &BuyInputs { e164: body.e164, runtime_id: body.runtime_id, bot_id: body.bot_id, kind }).await?;
+        let row = buy_number(&state.db, carrier.as_ref(), &user, &BuyInputs { e164: body.e164, runtime_id: body.runtime_id, bot_id: body.bot_id, kind, plan }).await?;
         Ok::<_, PhoneError>((StatusCode::CREATED, Json(json!({ "number": row.to_json() }))).into_response())
     };
     run.await.unwrap_or_else(IntoResponse::into_response)
@@ -545,7 +560,8 @@ pub async fn port_create(db: &PgPool, carrier: &dyn Carrier, user: &str, body: &
     }
     owns_runtime(db, user, &body.runtime_id).await?;
     let held: i64 = sqlx::query_scalar("SELECT count(*) FROM phone_numbers WHERE user_id = $1 AND released_at IS NULL").bind(user).fetch_one(db).await?;
-    if held >= env_i64("ALLTERNIT_PHONE_MAX_PER_USER", DEFAULT_MAX_NUMBERS) {
+    let limit = number_limit_for_plan(&body.plan).ok_or(PhoneError::PlanRequired)?;
+    if held >= limit {
         return Err(PhoneError::Forbidden("number_limit"));
     }
     let id = uuid::Uuid::new_v4().to_string();
@@ -597,12 +613,13 @@ pub async fn port_refresh(db: &PgPool, carrier: &dyn Carrier, number: &NumberRow
 async fn port_create_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(body): Json<BuyBody>) -> Response {
     let run = async {
         let user = user_id(&state, &headers).await?;
+        let plan = plan_for_user(&state.db, &user).await?;
         let carrier = carrier()?;
         let kind = match body.kind.as_deref() {
             Some(k) => NumberType::parse(k).ok_or_else(|| PhoneError::BadRequest("type must be local or toll_free".into()))?,
             None => infer_type(&body.e164),
         };
-        let row = port_create(&state.db, carrier.as_ref(), &user, &BuyInputs { e164: body.e164, runtime_id: body.runtime_id, bot_id: body.bot_id, kind }).await?;
+        let row = port_create(&state.db, carrier.as_ref(), &user, &BuyInputs { e164: body.e164, runtime_id: body.runtime_id, bot_id: body.bot_id, kind, plan }).await?;
         Ok::<_, PhoneError>((StatusCode::CREATED, Json(json!({ "number": row.to_json() }))).into_response())
     };
     run.await.unwrap_or_else(IntoResponse::into_response)
@@ -1083,7 +1100,7 @@ mod tests {
     }
 
     async fn buy(db: &PgPool, carrier: &FakeCarrier, n: &str) -> PResult<NumberRow> {
-        buy_number(db, carrier, USER, &BuyInputs { e164: n.to_string(), runtime_id: "rt1".into(), bot_id: "bot1".into(), kind: NumberType::Local }).await
+        buy_number(db, carrier, USER, &BuyInputs { e164: n.to_string(), runtime_id: "rt1".into(), bot_id: "bot1".into(), kind: NumberType::Local, plan: "plus".into() }).await
     }
 
     async fn activate(db: &PgPool, id: &str) {
@@ -1121,6 +1138,31 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
+    fn plans_set_number_limits() {
+        std::env::remove_var("ALLTERNIT_PHONE_MAX_PER_USER");
+        assert_eq!(number_limit_for_plan("free"), None);
+        assert_eq!(number_limit_for_plan("plus"), Some(3));
+        assert_eq!(number_limit_for_plan("super"), Some(5));
+        assert_eq!(number_limit_for_plan("ultra"), Some(10));
+        assert_eq!(PhoneError::PlanRequired.into_response().status(), StatusCode::PAYMENT_REQUIRED);
+    }
+
+    #[tokio::test]
+    async fn free_plan_cannot_buy_or_port() {
+        let db = pool().await;
+        let c = FakeCarrier::default();
+        let inputs = BuyInputs { e164: e164(80), runtime_id: "rt1".into(), bot_id: "bot1".into(), kind: NumberType::Local, plan: "free".into() };
+        assert!(matches!(buy_number(&db, &c, USER, &inputs).await, Err(PhoneError::PlanRequired)));
+        assert!(matches!(port_create(&db, &c, USER, &inputs).await, Err(PhoneError::PlanRequired)));
+        assert!(c.bought.lock().unwrap().is_empty(), "no carrier purchase without a plan");
+        let held: i64 = sqlx::query_scalar("SELECT count(*) FROM phone_numbers").fetch_one(&db).await.unwrap();
+        assert_eq!(held, 0);
+        let body = axum::body::to_bytes(PhoneError::PlanRequired.into_response().into_body(), 1 << 16).await.unwrap();
+        assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["error"], "phone_requires_plan");
+    }
+
+    #[test]
     fn toll_free_is_inferred() {
         assert_eq!(infer_type("+18885550101"), NumberType::TollFree);
         assert_eq!(infer_type("+14155550101"), NumberType::Local);
@@ -1152,7 +1194,7 @@ mod tests {
         let live_routes: i64 = sqlx::query_scalar("SELECT count(*) FROM channel_inbound_routes WHERE label = $1 AND revoked_at IS NULL").bind(e164(2)).fetch_one(&db).await.unwrap();
         assert_eq!((left, live_routes), (0, 0), "a refused purchase leaves nothing behind");
         assert!(matches!(
-            buy_number(&db, &c, "someone_else", &BuyInputs { e164: e164(3), runtime_id: "rt1".into(), bot_id: "b".into(), kind: NumberType::Local }).await,
+            buy_number(&db, &c, "someone_else", &BuyInputs { e164: e164(3), runtime_id: "rt1".into(), bot_id: "b".into(), kind: NumberType::Local, plan: "plus".into() }).await,
             Err(PhoneError::NotFound("runtime_not_found"))
         ));
         assert!(matches!(buy(&db, &c, "415").await, Err(PhoneError::BadRequest(_))));
@@ -1311,7 +1353,7 @@ mod tests {
     async fn port_in_and_release() {
         let db = pool().await;
         let c = FakeCarrier::default();
-        let inputs = BuyInputs { e164: e164(70), runtime_id: "rt1".into(), bot_id: "bot1".into(), kind: NumberType::Local };
+        let inputs = BuyInputs { e164: e164(70), runtime_id: "rt1".into(), bot_id: "bot1".into(), kind: NumberType::Local, plan: "plus".into() };
         let n = port_create(&db, &c, USER, &inputs).await.unwrap();
         assert_eq!((n.port_order_id.as_deref(), n.port_state.as_deref(), n.messaging_ref.as_deref()), (Some("po-1"), Some("draft"), Some("mp-2")));
         port_refresh(&db, &c, &n).await.unwrap();
