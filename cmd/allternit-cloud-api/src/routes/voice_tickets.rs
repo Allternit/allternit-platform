@@ -143,7 +143,7 @@ fn constant_time_eq(left: &str, right: &str) -> bool {
 }
 
 /// Check the voice service's bearer token. `Err` is the response to send.
-fn require_worker(headers: &HeaderMap) -> Result<(), Response> {
+pub(crate) fn require_worker(headers: &HeaderMap) -> Result<(), Response> {
     let Some(expected) = env_nonempty(ENV_WORKER_TOKEN).filter(|v| v.len() >= MIN_SECRET_LEN)
     else {
         return Err(cloud_unavailable());

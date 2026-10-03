@@ -213,7 +213,13 @@ pub enum StreamEvent {
 fn session_router(state: &VoiceServiceState) -> Router {
     use crate::session::engine_sherpa::SherpaEngine;
     use crate::session::ws::{router_with, SessionRouteState, TOKEN_ENV};
-    let engine = SherpaEngine::new(state.packs(), state.stt(), state.tts());
+    // Custom voices are enabled only where consent can be verified: this
+    // service has the cloud-api URL and worker token (the cloud voice host).
+    let checker = crate::session::ws::CloudApi::from_env()
+        .and_then(crate::custom_voice::consent::CloudConsentChecker::new)
+        .map(|c| c as Arc<dyn crate::custom_voice::consent::ConsentChecker>);
+    let engine = SherpaEngine::new(state.packs(), state.stt(), state.tts())
+        .with_custom(crate::custom_voice::CustomVoices::new(state.packs(), checker));
     router_with(
         SessionRouteState::new(Arc::new(engine), std::env::var(TOKEN_ENV).ok())
             .with_cloud_from_env(),
