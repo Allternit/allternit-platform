@@ -2,11 +2,15 @@
 //! runtime's device token. Used by `voice_calls` and any other relayed
 //! envelope (discord-app, ...).
 //!
-//! Headers: `x-allternit-runtime-sig: v1=<hex HMAC-SHA256(device_token,
+//! Headers: `x-allternit-runtime-sig: v1=<hex HMAC-SHA256(relay_key,
 //! "<ts>.<METHOD>.<path>.<hex sha256(body)>")>`, `x-allternit-runtime-ts` (unix
 //! seconds, ±300 s) and `x-allternit-owner` (must be the owner this runtime is
 //! paired as). Unsigned requests are never accepted; with no device token
 //! available the extractor answers 503.
+//!
+//! The HMAC key is `relay_key = sha256_hex(device_token)`: the ASCII bytes of
+//! the lowercase hex digest, not the raw token. cloud-api only stores that
+//! digest (`credential_hash`), so it can sign without the raw token.
 //!
 //! The secret comes from a [`RelaySecret`]. Production uses
 //! [`EnvOrFileRelaySecret`]: env `ALLTERNIT_RUNTIME_DEVICE_TOKEN` +
@@ -42,14 +46,21 @@ const ENV_IDENTITY_PATH: &str = "ALLTERNIT_RUNTIME_IDENTITY_PATH";
 
 // ---------------------------------------------------------------- relay secret
 
+/// The HMAC key for relayed requests: lowercase hex `sha256(device_token)`.
+pub fn relay_key_from_device_token(token: &str) -> String {
+    hex::encode(Sha256::digest(token.as_bytes()))
+}
+
 /// What this runtime verifies relayed requests with: the device token cloud-api
 /// issued when it paired, and the owner it paired as.
 pub trait RelaySecret: Send + Sync {
     fn device_token(&self) -> Option<String>;
     fn paired_owner(&self) -> Option<String>;
-    /// Both halves, read together so a rotating file can't be seen half-updated.
+    /// `(relay_key, owner)`, the key already derived from the device token by
+    /// [`relay_key_from_device_token`]. Read together so a rotating file can't
+    /// be seen half-updated.
     fn credentials(&self) -> Option<(String, String)> {
-        Some((self.device_token()?, self.paired_owner()?))
+        Some((relay_key_from_device_token(&self.device_token()?), self.paired_owner()?))
     }
 }
 
@@ -79,7 +90,7 @@ impl Identity {
     /// Token + owner, unless either is empty or `expiresAt` has passed (an
     /// unparseable expiry fails closed; an absent/empty one counts as fresh,
     /// as in allternit-node).
-    fn credentials(&self, now: chrono::DateTime<chrono::Utc>) -> Option<(String, String)> {
+    fn raw_credentials(&self, now: chrono::DateTime<chrono::Utc>) -> Option<(String, String)> {
         if self.device_token.is_empty() || self.user_id.is_empty() {
             return None;
         }
@@ -103,6 +114,14 @@ pub struct EnvOrFileRelaySecret {
 }
 
 impl EnvOrFileRelaySecret {
+    /// Raw `(device_token, owner)`; the HMAC key is derived from it.
+    fn raw_credentials(&self) -> Option<(String, String)> {
+        if let (Some(token), Some(owner)) = (self.env_nonempty(ENV_TOKEN), self.env_nonempty(ENV_OWNER)) {
+            return Some((token, owner));
+        }
+        self.file_identity()?.raw_credentials(chrono::Utc::now())
+    }
+
     pub fn from_process_env() -> Self {
         Self::with_env(Box::new(|k| std::env::var(k).ok()))
     }
@@ -141,16 +160,13 @@ impl EnvOrFileRelaySecret {
 
 impl RelaySecret for EnvOrFileRelaySecret {
     fn device_token(&self) -> Option<String> {
-        self.credentials().map(|c| c.0)
+        self.raw_credentials().map(|c| c.0)
     }
     fn paired_owner(&self) -> Option<String> {
-        self.credentials().map(|c| c.1)
+        self.raw_credentials().map(|c| c.1)
     }
     fn credentials(&self) -> Option<(String, String)> {
-        if let (Some(token), Some(owner)) = (self.env_nonempty(ENV_TOKEN), self.env_nonempty(ENV_OWNER)) {
-            return Some((token, owner));
-        }
-        self.file_identity()?.credentials(chrono::Utc::now())
+        self.raw_credentials().map(|(token, owner)| (relay_key_from_device_token(&token), owner))
     }
 }
 
@@ -168,9 +184,10 @@ pub fn body_sha256_hex(body: &[u8]) -> String {
     hex::encode(Sha256::digest(body))
 }
 
-/// The hex signature for `(ts, method, path, body)`. Cloud-api computes the same.
-pub fn sign_relay(device_token: &str, ts: i64, method: &str, path: &str, body: &[u8]) -> String {
-    let mut mac = Hmac::<Sha256>::new_from_slice(device_token.as_bytes()).expect("hmac takes any key length");
+/// The hex signature for `(ts, method, path, body)`, keyed with the derived
+/// `relay_key` (see [`relay_key_from_device_token`]). Cloud-api computes the same.
+pub fn sign_relay(relay_key: &str, ts: i64, method: &str, path: &str, body: &[u8]) -> String {
+    let mut mac = Hmac::<Sha256>::new_from_slice(relay_key.as_bytes()).expect("hmac takes any key length");
     mac.update(format!("{ts}.{method}.{path}.{}", body_sha256_hex(body)).as_bytes());
     hex::encode(mac.finalize().into_bytes())
 }
@@ -192,13 +209,13 @@ pub fn verify_relay(
     let sig_hex = sig.strip_prefix("v1=").ok_or(AuthError::Unauthorized("unsupported signature version"))?;
     let sig_bytes = hex::decode(sig_hex).map_err(|_| AuthError::Unauthorized("malformed signature"))?;
     let ts: i64 = ts.parse().map_err(|_| AuthError::Unauthorized("malformed timestamp"))?;
-    let Some((token, paired)) = secret.credentials() else {
+    let Some((relay_key, paired)) = secret.credentials() else {
         return Err(AuthError::NotConfigured);
     };
     if (now - ts).abs() > MAX_SKEW_SECS {
         return Err(AuthError::Unauthorized("stale timestamp"));
     }
-    let mut mac = Hmac::<Sha256>::new_from_slice(token.as_bytes()).expect("hmac takes any key length");
+    let mut mac = Hmac::<Sha256>::new_from_slice(relay_key.as_bytes()).expect("hmac takes any key length");
     mac.update(format!("{ts}.{method}.{path}.{}", body_sha256_hex(body)).as_bytes());
     mac.verify_slice(&sig_bytes).map_err(|_| AuthError::Unauthorized("bad signature"))?;
     if owner != paired {
@@ -271,8 +288,33 @@ mod tests {
         h
     }
 
+    /// Signed the way cloud-api does: keyed with `sha256_hex(token)`.
     fn signed(token: &str, ts: i64, owner: &str, method: &str, path: &str, body: &[u8]) -> HeaderMap {
+        headers(&format!("v1={}", sign_relay(&relay_key_from_device_token(token), ts, method, path, body)), ts, owner)
+    }
+
+    /// Same, but keyed with the raw token (the old scheme).
+    fn signed_raw(token: &str, ts: i64, owner: &str, method: &str, path: &str, body: &[u8]) -> HeaderMap {
         headers(&format!("v1={}", sign_relay(token, ts, method, path, body)), ts, owner)
+    }
+
+    // Pinned so cloud-api can reproduce the scheme byte for byte.
+    const KAT_KEY: &str = "c8963414bf6c4c869eeac5f8a057c3dc574d422f1b108397b66f67bab3d2f981";
+    const KAT_SIG: &str = "34edb38cb1c7839397d5993a055972d2f352b42164bcdfd935264cdcae1d1576";
+
+    #[test]
+    fn known_answer_vector_pins_the_key_and_signature() {
+        let key = relay_key_from_device_token("tok-123");
+        assert_eq!(key, KAT_KEY);
+        assert_eq!(sign_relay(&key, 1_700_000_000, "POST", "/api/v1/voice/calls", b"{}"), KAT_SIG);
+    }
+
+    #[test]
+    fn a_raw_token_signature_is_rejected() {
+        let (secret, now, body) = (Secret(Some((TOKEN, OWNER))), unix_now(), br#"{"a":1}"#);
+        let path = "/api/v1/voice/calls";
+        let h = signed_raw(TOKEN, now, OWNER, "POST", path, body);
+        assert_eq!(verify_relay(&secret, &h, "POST", path, body, now), Err(AuthError::Unauthorized("bad signature")));
     }
 
     #[test]
@@ -302,7 +344,7 @@ mod tests {
         assert!(bad(verify_relay(&secret, &h, "POST", "/api/v1/voice/calls/x/turn", body, now)));
         // missing headers, wrong version, non-hex, bad ts
         assert!(bad(verify_relay(&secret, &HeaderMap::new(), "POST", path, body, now)));
-        let sig = sign_relay(TOKEN, now, "POST", path, body);
+        let sig = sign_relay(&relay_key_from_device_token(TOKEN), now, "POST", path, body);
         assert!(bad(verify_relay(&secret, &headers(&format!("v2={sig}"), now, OWNER), "POST", path, body, now)));
         assert!(bad(verify_relay(&secret, &headers("v1=zz", now, OWNER), "POST", path, body, now)));
         let mut h = headers(&format!("v1={sig}"), now, OWNER);
@@ -344,10 +386,10 @@ mod tests {
         let path = dir.path().join("id.json");
         write_identity(&path, "file-token", "file-owner", None, 1_000);
         let s = secret_with(&[(ENV_TOKEN, "env-token"), (ENV_OWNER, "env-owner"), (ENV_IDENTITY_PATH, path.to_str().unwrap())]);
-        assert_eq!(s.credentials(), Some(("env-token".into(), "env-owner".into())));
+        assert_eq!(s.credentials(), Some((relay_key_from_device_token("env-token"), "env-owner".into())));
         // Both env vars are required; one alone falls through to the file.
         let s = secret_with(&[(ENV_TOKEN, "env-token"), (ENV_IDENTITY_PATH, path.to_str().unwrap())]);
-        assert_eq!(s.credentials(), Some(("file-token".into(), "file-owner".into())));
+        assert_eq!(s.credentials(), Some((relay_key_from_device_token("file-token"), "file-owner".into())));
     }
 
     #[test]
@@ -357,12 +399,13 @@ mod tests {
         write_identity(&path, "tok", "user-1", Some(&future()), 1_000);
         let s = secret_with(&[(ENV_IDENTITY_PATH, path.to_str().unwrap())]);
         assert_eq!((s.device_token(), s.paired_owner()), (Some("tok".into()), Some("user-1".into())));
+        assert_eq!(s.credentials(), Some((relay_key_from_device_token("tok"), "user-1".into())));
 
         let cfg = dir.path().join(".config").join("allternit");
         std::fs::create_dir_all(&cfg).unwrap();
         write_identity(&cfg.join("runtime-identity.json"), "home-tok", "home-user", Some(""), 1_000);
         let s = secret_with(&[("HOME", dir.path().to_str().unwrap())]);
-        assert_eq!(s.credentials(), Some(("home-tok".into(), "home-user".into())));
+        assert_eq!(s.credentials(), Some((relay_key_from_device_token("home-tok"), "home-user".into())));
     }
 
     #[test]
