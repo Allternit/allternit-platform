@@ -82,3 +82,7 @@ The reply is currently produced whole and then streamed sentence by sentence, an
 ## Where the device token comes from
 
 The runtime reads its own device token from env `ALLTERNIT_RUNTIME_DEVICE_TOKEN` plus `ALLTERNIT_RUNTIME_OWNER_ID`, or else from the shared `runtime-identity.json` (`$ALLTERNIT_RUNTIME_IDENTITY_PATH`, default `~/.config/allternit/runtime-identity.json`), re-reading it when allternit-node rotates the token. An expired identity counts as absent. With no source, signed requests answer 503. Provisioned cloud computers get both env vars at pairing time. The verifier is the shared `relay_auth` module, also used by other relayed envelopes. See `cmd/allternit-api/docs/VOICE_CALLS.md`.
+
+## Call controls from the app
+
+The app sends hangup, mute, hold, DTMF, transfer, listen and takeover to cloud-api, not to a local gateway: `POST /api/v1/voice/calls/{callId}/control` with the signed-in user's Clerk token (`sendCallControl` in allternit-ai `src/lib/gateway/call.ts`). `listen` and `takeover` answer `{ "token", "url", "room" }`, which the app passes to `joinCallAudio`. Desktop, ai.allternit.com and the m.allternit.com PWA use this one path.

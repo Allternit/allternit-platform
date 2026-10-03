@@ -526,18 +526,28 @@ struct ProvisionEmailResponse {
     provider: &'static str,
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProvisionEmailBody {
+    /// The part before the `@`. Defaults to a slug of the bot's name.
+    local_part: Option<String>,
+}
+
 async fn provision_email(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(agent_id): Path<String>,
+    body: Option<Json<ProvisionEmailBody>>,
 ) -> Result<Response, ApiError> {
     require_agent_owner(&state, &user, &agent_id)?;
+    let requested = body.and_then(|Json(b)| b.local_part);
 
     // When mailflare is configured, provision a real mailbox + scoped API key.
     // Otherwise fall back to the legacy mint-only behavior below.
     if let Some(client) = crate::mailflare_client::MailflareClient::from_env() {
         let address =
-            provision_email_mailflare(&state, &user.user_id, &agent_id, client).await?;
+            provision_email_mailflare(&state, &user.user_id, &agent_id, client, requested.as_deref())
+                .await?;
         return Ok(Json(ProvisionEmailResponse { address, provider: "mailflare" }).into_response());
     }
 
@@ -552,7 +562,36 @@ async fn provision_email(
             )
         })?;
 
-    let address = format!("{}@{}", sanitize_local_part(&agent_id), domain);
+    let (bot_name, existing_address) = {
+        let conn = state.db.connect().map_err(internal)?;
+        (
+            agent_display_name(&conn, &agent_id),
+            crate::agent_email_routes::lookup_email_channel(&conn, &agent_id)
+                .map_err(internal)?
+                .map(|c| c.address),
+        )
+    };
+    // The address is stable once created: re-provisioning keeps it.
+    let address = match existing_address {
+        Some(address) => address,
+        None => {
+            let mut chosen = None;
+            for local in local_part_candidates(requested.as_deref(), &bot_name, &agent_id)? {
+                let candidate = format!("{local}@{domain}");
+                if !email_address_taken(&state, &candidate, &agent_id)? {
+                    chosen = Some(candidate);
+                    break;
+                }
+            }
+            chosen.ok_or_else(|| {
+                err(
+                    StatusCode::CONFLICT,
+                    "email_local_part_taken",
+                    "That address is already taken.",
+                )
+            })?
+        }
+    };
 
     tokio::task::spawn_blocking({
         let db = state.db.clone();
@@ -595,6 +634,7 @@ pub(crate) async fn provision_email_mailflare(
     user_id: &str,
     agent_id: &str,
     client: crate::mailflare_client::MailflareClient,
+    requested_local_part: Option<&str>,
 ) -> Result<String, ApiError> {
     // Idempotent re-provision: an existing, fully-configured mailflare channel
     // is returned as-is.
@@ -616,33 +656,58 @@ pub(crate) async fn provision_email_mailflare(
         )
     })?;
 
-    let local_part = sanitize_local_part(agent_id);
-    let (mailbox_id, address, created_here) = match client
-        .create_mailbox(&domain_id, &local_part, Some(agent_id))
-        .await
-    {
-        Ok(mailbox) => (mailbox.id, mailbox.address, true),
-        Err(e) if e.status == Some(StatusCode::CONFLICT) => {
-            // The address already exists in mailflare (e.g. a previous
-            // provisioning whose channel row was lost) — adopt it.
-            let mailboxes = client.list_mailboxes().await.map_err(|e| {
-                err(StatusCode::BAD_GATEWAY, "mailflare_error", e.to_string())
-            })?;
-            let expected = format!("{}@{}", local_part, client.config().domain);
-            mailboxes
-                .into_iter()
-                .find(|m| m.address().eq_ignore_ascii_case(&expected))
-                .map(|m| (m.id.clone(), m.address(), false))
-                .ok_or_else(|| {
-                    err(
+    let bot_name = {
+        let conn = state.db.connect().map_err(internal)?;
+        agent_display_name(&conn, agent_id)
+    };
+    let mut found = None;
+    for local_part in local_part_candidates(requested_local_part, &bot_name, agent_id)? {
+        let address = format!("{}@{}", local_part, client.config().domain);
+        if email_address_taken(state, &address, agent_id)? {
+            continue;
+        }
+        match client
+            .create_mailbox(&domain_id, &local_part, Some(&bot_name))
+            .await
+        {
+            Ok(mailbox) => {
+                found = Some((mailbox.id, mailbox.address, true));
+                break;
+            }
+            Err(e) if e.status == Some(StatusCode::CONFLICT) => {
+                // Only the legacy agent-id address can be an orphan of this
+                // agent (a previous provisioning whose channel row was lost) —
+                // adopt it. Any other taken name belongs to someone else: move
+                // on to the next candidate.
+                if local_part != sanitize_local_part(agent_id) {
+                    continue;
+                }
+                let mailboxes = client.list_mailboxes().await.map_err(|e| {
+                    err(StatusCode::BAD_GATEWAY, "mailflare_error", e.to_string())
+                })?;
+                found = mailboxes
+                    .into_iter()
+                    .find(|m| m.address().eq_ignore_ascii_case(&address))
+                    .map(|m| (m.id.clone(), m.address(), false));
+                if found.is_none() {
+                    return Err(err(
                         StatusCode::CONFLICT,
                         "mailflare_mailbox_conflict",
-                        format!("Mailbox {expected} already exists but could not be resolved."),
-                    )
-                })?
+                        format!("Mailbox {address} already exists but could not be resolved."),
+                    ));
+                }
+                break;
+            }
+            Err(e) => return Err(err(StatusCode::BAD_GATEWAY, "mailflare_error", e.to_string())),
         }
-        Err(e) => return Err(err(StatusCode::BAD_GATEWAY, "mailflare_error", e.to_string())),
-    };
+    }
+    let (mailbox_id, address, created_here) = found.ok_or_else(|| {
+        err(
+            StatusCode::CONFLICT,
+            "email_local_part_taken",
+            "That address is already taken.",
+        )
+    })?;
 
     // Mint the per-agent mailbox-scoped key; on failure roll back the mailbox
     // we just created (the key itself cannot be revoked via the admin key, so
@@ -714,9 +779,270 @@ pub(crate) async fn provision_email_mailflare(
     Ok(address)
 }
 
+/// The bot's name, or the id when it has none.
+fn agent_display_name(conn: &rusqlite::Connection, agent_id: &str) -> String {
+    conn.query_row("SELECT name FROM agents WHERE id = ?1", params![agent_id], |row| {
+        row.get::<_, String>(0)
+    })
+    .ok()
+    .map(|n| n.trim().to_string())
+    .filter(|n| !n.is_empty())
+    .unwrap_or_else(|| agent_id.to_string())
+}
+
+const LOCAL_PART_MIN: usize = 3;
+const LOCAL_PART_MAX: usize = 40;
+const MAX_LOCAL_PART_ATTEMPTS: usize = 50;
+const RESERVED_LOCAL_PARTS: [&str; 10] = [
+    "abuse", "admin", "administrator", "hostmaster", "noreply", "no-reply", "postmaster",
+    "root", "support", "webmaster",
+];
+
+/// A readable local part from a bot's name: lowercase a-z, 0-9 and single
+/// hyphens, 3-40 chars.
+pub(crate) fn slugify_local_part(name: &str) -> String {
+    let mut slug = String::new();
+    for c in name.to_lowercase().chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c);
+        } else if !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    let mut slug = slug.trim_matches('-').to_string();
+    slug.truncate(LOCAL_PART_MAX);
+    let mut slug = slug.trim_end_matches('-').to_string();
+    if slug.is_empty() {
+        slug = "bot".to_string();
+    }
+    while slug.len() < LOCAL_PART_MIN {
+        slug.push('x');
+    }
+    slug
+}
+
+/// Validate a caller-chosen local part: lowercase a-z, 0-9 and hyphens, 3-40
+/// chars, no leading/trailing hyphen, not a role address.
+pub(crate) fn validate_local_part(local: &str) -> Result<(), ApiError> {
+    let ok = (LOCAL_PART_MIN..=LOCAL_PART_MAX).contains(&local.len())
+        && local
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && !local.starts_with('-')
+        && !local.ends_with('-')
+        && !local.contains("--");
+    if !ok {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "invalid_local_part",
+            "Use 3-40 lowercase letters, numbers and single hyphens.",
+        ));
+    }
+    if RESERVED_LOCAL_PARTS.contains(&local) {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "reserved_local_part",
+            "That address is reserved.",
+        ));
+    }
+    Ok(())
+}
+
+/// Local parts to try, in order. A requested one is tried alone; otherwise the
+/// bot-name slug, then `-2`, `-3`, ... on collision.
+pub(crate) fn local_part_candidates(
+    requested: Option<&str>,
+    bot_name: &str,
+    agent_id: &str,
+) -> Result<Vec<String>, ApiError> {
+    if let Some(local) = requested.map(str::trim).filter(|l| !l.is_empty()) {
+        let local = local.to_lowercase();
+        validate_local_part(&local)?;
+        return Ok(vec![local]);
+    }
+    let base = slugify_local_part(bot_name);
+    let mut out = vec![base.clone()];
+    for n in 2..(MAX_LOCAL_PART_ATTEMPTS + 2) {
+        let suffix = format!("-{n}");
+        let mut stem = base.clone();
+        stem.truncate(LOCAL_PART_MAX - suffix.len());
+        out.push(format!("{}{suffix}", stem.trim_end_matches('-')));
+    }
+    // A name that cannot be told apart from reserved words falls back to the id.
+    if RESERVED_LOCAL_PARTS.contains(&base.as_str()) {
+        out = vec![sanitize_local_part(agent_id)];
+    }
+    Ok(out)
+}
+
+/// Whether another agent already holds this address.
+fn email_address_taken(
+    state: &Arc<AppState>,
+    address: &str,
+    agent_id: &str,
+) -> Result<bool, ApiError> {
+    let conn = state.db.connect().map_err(internal)?;
+    let n: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM agent_identity_channels WHERE lower(email_address) = lower(?1) AND agent_id != ?2",
+            params![address, agent_id],
+            |row| row.get(0),
+        )
+        .map_err(internal)?;
+    Ok(n > 0)
+}
+
 fn sanitize_local_part(value: &str) -> String {
     value
         .to_lowercase()
         .replace(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_' && c != '.', "-")
         .replace("..", ".")
+}
+
+#[cfg(test)]
+mod email_local_part_tests {
+    use super::*;
+    use crate::mailflare_client::{MailflareClient, MailflareConfig};
+    use axum::routing::{get, post};
+    use std::sync::Mutex;
+
+    #[test]
+    fn slug_is_lowercase_hyphenated_and_bounded() {
+        assert_eq!(slugify_local_part("Ledger Bot"), "ledger-bot");
+        assert_eq!(slugify_local_part("  Dana's  Helper!! "), "dana-s-helper");
+        assert_eq!(slugify_local_part("Ünï"), "nxx");
+        assert_eq!(slugify_local_part("é"), "bot");
+        assert_eq!(slugify_local_part("ab"), "abx");
+        let long = slugify_local_part(&"a".repeat(80));
+        assert_eq!(long.len(), 40);
+        let hyphen_edge = slugify_local_part(&format!("{} b", "a".repeat(39)));
+        assert!(!hyphen_edge.ends_with('-') && hyphen_edge.len() <= 40);
+        for s in ["Ledger Bot", "x", "9 lives", "***"] {
+            assert!(validate_local_part(&slugify_local_part(s)).is_ok(), "{s}");
+        }
+    }
+
+    #[test]
+    fn candidates_add_numeric_suffixes_within_the_limit() {
+        let c = local_part_candidates(None, "Ledger", "agent-1").unwrap();
+        assert_eq!(&c[..3], ["ledger", "ledger-2", "ledger-3"]);
+        let long = local_part_candidates(None, &"a".repeat(60), "agent-1").unwrap();
+        assert!(long.iter().all(|l| l.len() <= 40 && validate_local_part(l).is_ok()));
+        assert_eq!(local_part_candidates(Some(" Sales-Bot "), "x", "a").unwrap(), ["sales-bot"]);
+        assert_eq!(local_part_candidates(Some("   "), "Ledger", "a").unwrap()[0], "ledger");
+        assert_eq!(local_part_candidates(None, "Admin", "agent-1").unwrap(), ["agent-1"]);
+    }
+
+    #[test]
+    fn invalid_local_parts_are_rejected() {
+        for bad in ["ab", "-abc", "abc-", "a--b", "has space", "dot.ted", "under_score", &"a".repeat(41)] {
+            assert_eq!(validate_local_part(bad).unwrap_err().0, StatusCode::BAD_REQUEST, "{bad}");
+        }
+        assert_eq!(validate_local_part("postmaster").unwrap_err().1 .0["error"], "reserved_local_part");
+    }
+
+    #[derive(Default)]
+    struct Fake {
+        /// Local parts mailflare already has (answers 409).
+        taken: Mutex<Vec<String>>,
+        created: Mutex<Vec<Value>>,
+    }
+
+    async fn fake_mailflare(fake: Arc<Fake>) -> String {
+        let f = fake.clone();
+        let app = axum::Router::new()
+            .route(
+                "/api/domains",
+                get(|| async { Json(json!({"domains": [{"id": "dom-bus", "hostname": "bus.test"}]})) }),
+            )
+            .route(
+                "/api/mailboxes",
+                post(move |Json(body): Json<Value>| {
+                    let f = f.clone();
+                    async move {
+                        let local = body["localPart"].as_str().unwrap().to_string();
+                        if f.taken.lock().unwrap().contains(&local) {
+                            return (StatusCode::CONFLICT, Json(json!({"error": "exists"})));
+                        }
+                        f.created.lock().unwrap().push(body);
+                        (StatusCode::OK, Json(json!({"id": format!("mb-{local}"), "address": format!("{local}@bus.test")})))
+                    }
+                }),
+            )
+            .route(
+                "/api/api-keys",
+                post(|| async { Json(json!({"id": "k1", "key": "ep_key"})) }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        url
+    }
+
+    fn client(url: String) -> MailflareClient {
+        MailflareClient::new(MailflareConfig {
+            base_url: url,
+            admin_key: "ep_admin".into(),
+            domain: "bus.test".into(),
+            webhook_secret: None,
+        })
+    }
+
+    fn add_agent(state: &Arc<AppState>, id: &str, name: &str) {
+        state
+            .db
+            .connect()
+            .unwrap()
+            .execute(
+                "INSERT INTO agents (id, user_id, name, model, provider, is_bot, config) VALUES (?1, 'u1', ?2, 'm', 'p', 1, '{}')",
+                params![id, name],
+            )
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn provisioning_uses_the_bot_name_and_stays_stable() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = crate::test_helpers::app_state(temp.path()).await;
+        let fake = Arc::new(Fake::default());
+        let url = fake_mailflare(fake.clone()).await;
+        add_agent(&state, "agent-a", "Ledger Bot");
+        add_agent(&state, "agent-b", "Ledger Bot");
+        add_agent(&state, "agent-c", "Casey");
+
+        let a = provision_email_mailflare(&state, "u1", "agent-a", client(url.clone()), None).await.unwrap();
+        assert_eq!(a, "ledger-bot@bus.test");
+        assert_eq!(fake.created.lock().unwrap()[0]["displayName"], "Ledger Bot");
+
+        // A second bot with the same name gets -2; the first keeps its address.
+        let b = provision_email_mailflare(&state, "u1", "agent-b", client(url.clone()), None).await.unwrap();
+        assert_eq!(b, "ledger-bot-2@bus.test");
+        let a_again = provision_email_mailflare(&state, "u1", "agent-a", client(url.clone()), Some("other-name")).await.unwrap();
+        assert_eq!(a_again, a, "address is stable once created");
+
+        // A name mailflare already has (not ours) is skipped, not adopted.
+        fake.taken.lock().unwrap().push("casey".into());
+        let c = provision_email_mailflare(&state, "u1", "agent-c", client(url.clone()), None).await.unwrap();
+        assert_eq!(c, "casey-2@bus.test");
+    }
+
+    #[tokio::test]
+    async fn requested_local_part_is_honored_or_refused() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = crate::test_helpers::app_state(temp.path()).await;
+        let fake = Arc::new(Fake::default());
+        let url = fake_mailflare(fake.clone()).await;
+        add_agent(&state, "agent-a", "Ledger");
+        add_agent(&state, "agent-b", "Other");
+
+        let bad = provision_email_mailflare(&state, "u1", "agent-a", client(url.clone()), Some("A B")).await.unwrap_err();
+        assert_eq!(bad.0, StatusCode::BAD_REQUEST);
+        let a = provision_email_mailflare(&state, "u1", "agent-a", client(url.clone()), Some("Billing-Desk")).await.unwrap();
+        assert_eq!(a, "billing-desk@bus.test");
+        // Another bot cannot take it: a requested name never gets a suffix.
+        let taken = provision_email_mailflare(&state, "u1", "agent-b", client(url.clone()), Some("billing-desk")).await.unwrap_err();
+        assert_eq!((taken.0, taken.1 .0["error"].as_str()), (StatusCode::CONFLICT, Some("email_local_part_taken")));
+        assert!(state.db.connect().unwrap()
+            .query_row("SELECT COUNT(*) FROM agent_identity_channels WHERE agent_id = 'agent-b'", [], |r| r.get::<_, i64>(0)).unwrap() == 0);
+    }
 }
