@@ -69,3 +69,20 @@ The runtime receives one normalised request at `/webhooks/channels/sms`:
 ## Outbound calls
 
 `POST /api/v1/phone/calls/outbound` with `{numberId, to, botId, purpose}` returns `{consentRef, basis, expiresAt}` when the callee texted or called the number first, or has an explicit consent record, and hasn't opted out. Otherwise `403 {"error":"no_consent"}`. The dial itself belongs to the voice service, which presents the `consentRef`.
+
+## Warm transfers
+
+A warm transfer rings a third party, so the call worker refuses it unless the control carries a `consentRef`. Cloud-api attaches one when it forwards `POST /api/v1/voice/calls/{callId}/control` with `{"action":"transfer","to":"+1…","mode":"warm"}`; cold transfers need none.
+
+| Who asked | `consentRef` basis | When |
+|---|---|---|
+| The signed-in owner (the default) | `owner_directed` | Always, unless the target replied STOP on this number. |
+| The bot (`"initiator":"bot"`) | `owner_transfer_target` | Only if `to` is in the bot's `transferTargets`. Otherwise no ref, and the worker fails the transfer cleanly (`call.transferred` with `ok:false`). |
+
+The reference lives 30 minutes in `call_consents` with `purpose: "transfer"`. STOP always wins over both bases.
+
+### Transfer targets
+
+The owner approves who a bot may transfer to: `PUT /api/v1/voice/bot-config/{botId}` with `{"transferTargets":[{"e164":"+14155550100","label":"Front desk"}]}`. The list replaces the stored one (up to 20 E.164 numbers, deduplicated; `[]` clears it; leaving the field out keeps it). The response includes `transferTargets`. Each newly approved target logs an `explicit` consent row with source `owner_transfer_target` on the bot's live numbers. Cloud-api migration 036 adds `voice_bot_config.transfer_targets`; apply it by hand to prod like 020 and 021.
+
+The bot call settings screen in allternit-ai edits this list as "Transfer targets" (a small separate change on the app side).

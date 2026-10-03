@@ -41,6 +41,7 @@ use std::time::Duration;
 use futures_util::{Stream, StreamExt};
 
 use super::channel_inbound::{backoff_secs, classify, Delivery};
+use super::phone::{clean_transfer_targets, record_transfer_targets, transfer_consent_ref, transfer_targets_for_bot, PhoneError, TransferInitiator, TransferTarget};
 use super::livekit_admin::{
     LiveKitAdminClient, LiveKitConfig, LiveKitError, LiveKitHttpAdmin, CONTROL_TOPIC,
 };
@@ -367,6 +368,9 @@ struct PutBotConfig {
     greeting: Option<String>,
     /// `"off"` / `"consented"`, or a bool (`true` = consented).
     recording: Option<Value>,
+    /// Owner-approved warm-transfer destinations `[{e164,label}]`. Absent keeps the
+    /// stored list; `[]` clears it.
+    transfer_targets: Option<Vec<TransferTarget>>,
 }
 
 async fn put_bot_config(
@@ -388,6 +392,13 @@ async fn put_bot_config(
             ))
         }
     };
+    let targets = match &body.transfer_targets {
+        Some(raw) => Some(clean_transfer_targets(raw).map_err(|e| match e {
+            PhoneError::BadRequest(message) => ApiError::BadRequest(message),
+            other => ApiError::Internal(format!("transfer targets: {other:?}")),
+        })?),
+        None => None,
+    };
     // Absent fields keep their stored value (COALESCE); first write of a
     // missing row materializes the safe defaults.
     let row: BotRow = sqlx::query_as(
@@ -400,6 +411,7 @@ async fn put_bot_config(
              voice_id = COALESCE($9, voice_bot_config.voice_id),
              greeting = COALESCE($10, voice_bot_config.greeting),
              recording = COALESCE($11, voice_bot_config.recording),
+             transfer_targets = COALESCE($12, voice_bot_config.transfer_targets),
              updated_at = now()
          RETURNING name, persona, voice_id, greeting, recording",
     )
@@ -414,9 +426,20 @@ async fn put_bot_config(
     .bind(body.voice_id.as_deref())
     .bind(body.greeting.as_deref())
     .bind(recording)
+    .bind(targets.as_ref().map(|t| json!(t)))
     .fetch_one(&state.db)
     .await?;
-    Ok(Json(bot_from_row(row)).into_response())
+    if let Some(targets) = &targets {
+        record_transfer_targets(&state.db, &user.id, &bot_id, targets)
+            .await
+            .map_err(|e| ApiError::Internal(format!("transfer targets: {e:?}")))?;
+    }
+    let stored = transfer_targets_for_bot(&state.db, &bot_id).await.unwrap_or_default();
+    let mut out = serde_json::to_value(bot_from_row(row)).unwrap_or(Value::Null);
+    if let Some(map) = out.as_object_mut() {
+        map.insert("transferTargets".into(), json!(stored));
+    }
+    Ok(Json(out).into_response())
 }
 
 // ------------------------------------------------------------------- calls
@@ -915,8 +938,8 @@ async fn control_inner(
     body: Value,
     livekit: &dyn LiveKitAdminClient,
 ) -> Result<Response, ApiError> {
-    let Some((owner_id, room)) = sqlx::query_as::<_, (String, String)>(
-        "SELECT user_id, room FROM voice_calls WHERE call_id = $1",
+    let Some((owner_id, room, number_id, bot_id)) = sqlx::query_as::<_, (String, String, String, String)>(
+        "SELECT user_id, room, number_id, bot_id FROM voice_calls WHERE call_id = $1",
     )
     .bind(call_id)
     .fetch_optional(&state.db)
@@ -968,9 +991,28 @@ async fn control_inner(
         None if matches!(action.as_str(), "mute" | "unmute") => json!("bot"),
         None => Value::Null,
     };
+    // A warm transfer dials a third party, so the worker refuses it without a consentRef.
+    // The authenticated owner pressing transfer gets `owner_directed`; a bot-initiated
+    // request (`initiator: "bot"`) only gets one for an owner-approved target. No ref =
+    // the worker fails the transfer cleanly (call.transferred ok:false).
+    let consent_ref = if action == "transfer" && body.get("mode").and_then(Value::as_str) == Some("warm") {
+        let initiator = if body.get("initiator").and_then(Value::as_str) == Some("bot") {
+            TransferInitiator::Bot
+        } else {
+            TransferInitiator::Owner
+        };
+        let to = body.get("to").and_then(Value::as_str).unwrap_or_default();
+        match transfer_consent_ref(&state.db, user_id, &number_id, &bot_id, to, initiator).await {
+            Ok(consent) => consent.map(|c| c.id),
+            Err(error) => return Err(ApiError::Internal(format!("transfer consent: {error:?}"))),
+        }
+    } else {
+        None
+    };
     let payload = json!({
         "callId": call_id,
         "action": body["action"],
+        "consentRef": consent_ref,
         "by": user_id,
         "target": target,
         "digits": body.get("digits").cloned().unwrap_or(Value::Null),
@@ -1355,6 +1397,7 @@ mod tests {
              voice_id TEXT NOT NULL DEFAULT 'allternit-default',
              greeting TEXT NOT NULL DEFAULT 'How can I help you today?',
              recording TEXT NOT NULL DEFAULT 'off' CHECK (recording IN ('off','consented')),
+             transfer_targets JSONB NOT NULL DEFAULT '[]'::jsonb,
              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
            )"#,
         r#"CREATE TABLE voice_calls (
@@ -2061,5 +2104,49 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn warm_transfer_carries_a_consent_ref_only_when_the_cloud_can_issue_one() {
+        let state = voice_test_state().await;
+        for sql in [include_str!("../../migrations_pg/024_phone_numbers.sql")] {
+            sqlx::raw_sql(&sql.replace("public.", "")).execute(&state.db).await.unwrap();
+        }
+        sqlx::query("INSERT INTO phone_numbers (id, user_id, runtime_id, bot_id, e164, carrier) VALUES ('number-9', 'user-1', 'rt-1', 'bot-1', '+14155550100', 'telnyx')")
+            .execute(&state.db)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO voice_calls (call_id, user_id, runtime_id, number_id, bot_id, room, direction, from_e164, to_e164)
+             VALUES ('call-1', 'user-1', 'rt-1', 'number-9', 'bot-1', 'room-7', 'inbound', '+1', '+2')",
+        )
+        .execute(&state.db)
+        .await
+        .unwrap();
+        let (desk, other) = ("+15550008888", "+15550009999");
+        let livekit = FakeLiveKit::default();
+        let ref_of = |i: usize| livekit.sent.lock().unwrap()[i].2.clone();
+
+        // Owner press: consentRef with owner_directed basis.
+        control_inner(&state, "user-1", "call-1", json!({ "action": "transfer", "to": other, "mode": "warm" }), &livekit).await.unwrap();
+        let sent = ref_of(0);
+        let id = sent["consentRef"].as_str().expect("owner transfer carries a consentRef").to_string();
+        let basis: String = sqlx::query_scalar("SELECT basis FROM call_consents WHERE id = $1").bind(&id).fetch_one(&state.db).await.unwrap();
+        assert_eq!(basis, "owner_directed");
+
+        // Cold transfers need no ref.
+        control_inner(&state, "user-1", "call-1", json!({ "action": "transfer", "to": other, "mode": "cold" }), &livekit).await.unwrap();
+        assert!(ref_of(1)["consentRef"].is_null());
+
+        // Bot-initiated: off-list = no ref; after the owner approves the target via the config route's helpers = ref.
+        control_inner(&state, "user-1", "call-1", json!({ "action": "transfer", "to": desk, "mode": "warm", "initiator": "bot" }), &livekit).await.unwrap();
+        assert!(ref_of(2)["consentRef"].is_null(), "bot cannot dial an unapproved target");
+        let targets = clean_transfer_targets(&[TransferTarget { e164: desk.into(), label: "Desk".into() }]).unwrap();
+        sqlx::query("INSERT INTO voice_bot_config (bot_id, user_id, transfer_targets) VALUES ('bot-1', 'user-1', $1)").bind(json!(targets)).execute(&state.db).await.unwrap();
+        record_transfer_targets(&state.db, "user-1", "bot-1", &targets).await.unwrap();
+        control_inner(&state, "user-1", "call-1", json!({ "action": "transfer", "to": desk, "mode": "warm", "initiator": "bot" }), &livekit).await.unwrap();
+        let id = ref_of(3)["consentRef"].as_str().expect("approved target gets a ref").to_string();
+        let basis: String = sqlx::query_scalar("SELECT basis FROM call_consents WHERE id = $1").bind(&id).fetch_one(&state.db).await.unwrap();
+        assert_eq!(basis, "owner_transfer_target");
     }
 }

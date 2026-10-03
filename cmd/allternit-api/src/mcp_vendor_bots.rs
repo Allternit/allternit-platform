@@ -42,9 +42,9 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::auth::AuthUser;
-use crate::channel_gateway::{ensure_binding_on, send, Inbound, InboundKind, SendOutcome, SendReq};
-use crate::channel_phone::{build_sms, is_e164, phone_key, resolve_thread_async, SMS_MAX_CHARS};
-use crate::channel_transports::{accounts, HttpReq, HttpSend, ReqwestSend};
+use crate::channel_phone::PhoneNumber;
+use crate::phone_outbound;
+use crate::channel_transports::{HttpSend, ReqwestSend};
 use crate::db::DbHandle;
 use crate::mcp_agents::{challenge_value_for, peek_claims, public_mcp_url, resource_metadata_url, McpTokenError};
 use crate::thread_routes::ThreadRuntime;
@@ -286,7 +286,12 @@ struct PhoneLine {
     number_id: String,
     e164: String,
     bot_id: String,
-    account_id: String,
+}
+
+impl PhoneLine {
+    fn number(&self, s: &Session) -> PhoneNumber {
+        PhoneNumber { number_id: self.number_id.clone(), owner: s.owner.clone(), bot_id: self.bot_id.clone(), e164: self.e164.clone() }
+    }
 }
 
 fn directing_line(db: &DbHandle, s: &Session) -> Result<PhoneLine, String> {
@@ -294,121 +299,43 @@ fn directing_line(db: &DbHandle, s: &Session) -> Result<PhoneLine, String> {
     db.connect()
         .map_err(|e| e.to_string())?
         .query_row(
-            "SELECT number_id, e164, account_id FROM channel_phone_numbers WHERE owner = ?1 AND bot_id = ?2 ORDER BY created_at LIMIT 1",
+            "SELECT number_id, e164 FROM channel_phone_numbers WHERE owner = ?1 AND bot_id = ?2 ORDER BY created_at LIMIT 1",
             params![s.owner, bot_id],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?)),
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
         )
         .optional()
         .map_err(|e| e.to_string())?
-        .and_then(|(number_id, e164, account)| Some(PhoneLine { number_id, e164, bot_id: bot_id.to_string(), account_id: account? }))
+        .map(|(number_id, e164)| PhoneLine { number_id, e164, bot_id: bot_id.to_string() })
         .ok_or_else(|| format!("{name} doesn't have a phone number connected on this computer."))
 }
 
-/// The cloud's refusal slug, as one plain sentence.
-fn refusal_sentence(slug: &str, to: &str) -> String {
-    match slug {
-        "no_consent" => format!("{to} hasn't texted or called this number and isn't one of the owner's contacts, so I can't reach out. The owner can add them as a contact."),
-        "recipient_opted_out" => format!("{to} replied STOP, so no more messages can be sent to them."),
-        "sms_not_active" => "Texts out aren't active on this number yet: it is still waiting on carrier registration.".into(),
-        "daily_limit" => "The daily limit for texts from this number has been reached. Try again tomorrow.".into(),
-        other => format!("The message wasn't sent ({other})."),
+/// A phone_outbound refusal as one plain sentence for a vendor bot, who isn't the owner.
+fn refusal_for(e: phone_outbound::OutError, to: &str) -> String {
+    match e {
+        phone_outbound::OutError::NoConsent(_) => format!("{to} hasn't texted or called this number and isn't one of the owner's contacts, so I can't reach out. The owner can add them as a contact."),
+        other => other.sentence(),
     }
-}
-
-/// The refusal slug inside the SMS transport's rejection text. The transport
-/// words a 429 as "rate limited"; the cloud's only 429 on a send is its daily cap.
-fn plain_slug(msg: &str) -> &str {
-    if msg.contains("rate limited") {
-        return "daily_limit";
-    }
-    ["no_consent", "recipient_opted_out", "sms_not_active", "daily_limit"].into_iter().find(|s| msg.contains(s)).unwrap_or("")
 }
 
 #[async_trait]
 impl<R: ThreadRuntime + 'static> Actions for LiveActions<R> {
     async fn send_text(&self, s: &Session, to: &str, text: &str) -> Result<Value, String> {
-        if !is_e164(to) {
-            return Err("The number to text must look like +14155550123.".into());
-        }
-        if text.trim().is_empty() {
-            return Err("There's nothing to send.".into());
-        }
-        let db = &self.state.db;
-        let line = directing_line(db, s)?;
-        let body = attributed(s, text);
-        if body.chars().count() > SMS_MAX_CHARS * 4 {
-            return Err("That text is too long. Shorten it and try again.".into());
-        }
-        let acct = accounts(db, "sms", Some(&line.account_id)).into_iter().next().ok_or("This phone number isn't connected here yet.")?;
-        let (thread_id, _) = resolve_thread_async(db, &self.rt, &line.number_id, to).await?;
-        // The same conversation key and reply address an inbound text from `to` produces.
-        let ev = Inbound {
-            kind: InboundKind::Message,
-            workspace: None,
-            channel: line.e164.clone(),
-            conversation: phone_key(&line.e164, to),
-            thread: Some(to.to_string()),
-            remote_id: String::new(),
-            message_id: String::new(),
-            text: None,
-            user: Some(to.to_string()),
-            reaction: None,
-            added: None,
-            cursor: None,
-            own: false,
-        };
-        ensure_binding_on(db, &s.owner, &thread_id, "sms", &ev, Some(&line.account_id)).map_err(|e| e.to_string())?;
-        let tx = build_sms(self.http.clone(), &acct.secret);
-        match send(db, &tx, &s.owner, &thread_id, &SendReq { text: body, ..Default::default() }).await {
-            Ok(SendOutcome::Sent { remote_id, .. }) => Ok(json!({ "sent": true, "threadId": thread_id, "messageId": remote_id, "from": line.e164 })),
-            Ok(SendOutcome::Rejected(m)) => Err(refusal_sentence(plain_slug(&m), to)),
-            Ok(SendOutcome::Unconfirmed { .. }) => Err("I couldn't confirm the text went out. Check the thread before sending it again.".into()),
-            Ok(SendOutcome::Denied(m)) => Err(m),
-            Ok(SendOutcome::ApprovalRequired { .. }) => Err("That text is waiting for the owner's approval in Allternit.".into()),
-            Ok(SendOutcome::ReadOnly) => Err("That conversation is read-only.".into()),
-            Ok(other) => Err(format!("The text wasn't sent ({other:?}).")),
-            Err(e) => Err(e),
-        }
+        let line = directing_line(&self.state.db, s)?;
+        // One path with the bot's own texts: same gates, same thread writes; only the
+        // "(Sent by …)" line is the vendor's.
+        let (thread_id, message_id) = phone_outbound::text_attributed(&self.state.db, &self.rt, self.http.clone(), &line.number(s), to, text, Some(&s.attribution()))
+            .await
+            .map_err(|e| refusal_for(e, to))?;
+        Ok(json!({ "sent": true, "threadId": thread_id, "messageId": message_id, "from": line.e164 }))
     }
 
     async fn start_call(&self, s: &Session, to: &str, purpose: &str) -> Result<Value, String> {
-        if !is_e164(to) {
-            return Err("The number to call must look like +14155550123.".into());
-        }
         if purpose.trim().is_empty() {
             return Err("Say what the call is for.".into());
         }
-        let db = &self.state.db;
-        let line = directing_line(db, s)?;
-        let acct = accounts(db, "sms", Some(&line.account_id)).into_iter().next().ok_or("This phone number isn't connected here yet.")?;
-        let tx = build_sms(self.http.clone(), &acct.secret);
-        let token = tx.token.clone().ok_or("This phone number has no Allternit sign-in stored.")?;
-        let (thread_id, _) = resolve_thread_async(db, &self.rt, &line.number_id, to).await?;
+        let line = directing_line(&self.state.db, s)?;
         let brief = format!("Requested by {}: {}", s.attribution(), purpose.trim());
-        let req = HttpReq {
-            url: format!("{}/api/v1/phone/calls/outbound", tx.cloud_url),
-            headers: vec![("Authorization".into(), format!("Bearer {token}"))],
-            body: json!({ "numberId": line.number_id, "to": to, "botId": line.bot_id, "purpose": brief }),
-        };
-        let r = self.http.post_json(req).await.map_err(|e| format!("Couldn't reach Allternit: {e}"))?;
-        match r.status {
-            200..=299 => {}
-            403 => return Err(refusal_sentence("no_consent", to)),
-            s => return Err(format!("The call wasn't placed (Allternit answered {s}: {}).", r.body["error"].as_str().unwrap_or("refused"))),
-        }
-        let Some(room) = r.body["room"].as_str().filter(|_| r.body["dialing"].as_bool() == Some(true)) else {
-            return Err("Outbound calling isn't switched on yet.".into());
-        };
-        crate::gateway_runner::led(
-            db,
-            &line.bot_id,
-            &thread_id,
-            None,
-            "call.started",
-            ("bot", &line.bot_id),
-            json!({ "callId": room, "direction": "outbound", "from": line.e164, "to": to, "numberId": line.number_id, "purpose": brief, "placeholder": true }),
-            Some(format!("call:{room}:call.started:0")),
-        );
+        let (thread_id, room) = phone_outbound::call(&self.state.db, &self.rt, self.http.clone(), &line.number(s), to, &brief).await.map_err(|e| refusal_for(e, to))?;
         Ok(json!({ "calling": true, "threadId": thread_id, "room": room }))
     }
 
@@ -881,7 +808,8 @@ async fn thread_unshare(State(state): State<Arc<AppState>>, Extension(user): Ext
 mod tests {
     use super::*;
     use crate::auth::{test_clerk_token_with_claims, CLERK_PROXY_ISSUER};
-    use crate::channel_transports::HttpResp;
+    use crate::channel_phone::phone_key;
+    use crate::channel_transports::{HttpReq, HttpResp};
     use std::sync::Mutex;
 
     const NUMBER: &str = "+14155550100";

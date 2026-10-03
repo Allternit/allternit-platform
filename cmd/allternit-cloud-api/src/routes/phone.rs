@@ -31,7 +31,7 @@ use axum::{
     Json, Router,
 };
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -738,6 +738,111 @@ pub async fn consent_ref_for(db: &PgPool, user: &str, number_id: &str, to_e164: 
         .execute(db)
         .await?;
     Ok(Some(ConsentRef { id, basis, expires_at }))
+}
+
+/// One owner-approved warm-transfer destination in a bot's call config.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransferTarget {
+    pub e164: String,
+    #[serde(default)]
+    pub label: String,
+}
+
+/// Source tag on the `explicit` consent row an approved transfer target logs.
+pub const TRANSFER_TARGET_SOURCE: &str = "owner_transfer_target";
+
+/// Who asked for a transfer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferInitiator {
+    /// The authenticated owner pressed transfer.
+    Owner,
+    /// The bot decided to transfer; only owner-approved targets qualify.
+    Bot,
+}
+
+/// Parse and validate a stored/submitted targets list: E.164 only, deduped, labels trimmed.
+pub fn clean_transfer_targets(raw: &[TransferTarget]) -> PResult<Vec<TransferTarget>> {
+    let mut out: Vec<TransferTarget> = Vec::new();
+    for t in raw {
+        let e164 = t.e164.trim();
+        if !carriers::is_e164(e164) {
+            return Err(PhoneError::BadRequest(format!("transfer target {e164} is not E.164")));
+        }
+        if !out.iter().any(|o| o.e164 == e164) {
+            out.push(TransferTarget { e164: e164.to_string(), label: t.label.trim().chars().take(80).collect() });
+        }
+    }
+    if out.len() > 20 {
+        return Err(PhoneError::BadRequest("at most 20 transfer targets".into()));
+    }
+    Ok(out)
+}
+
+pub async fn transfer_targets_for_bot(db: &PgPool, bot_id: &str) -> PResult<Vec<TransferTarget>> {
+    let raw: Option<serde_json::Value> = sqlx::query_scalar("SELECT transfer_targets FROM voice_bot_config WHERE bot_id = $1")
+        .bind(bot_id)
+        .fetch_optional(db)
+        .await?;
+    Ok(raw.and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default())
+}
+
+/// The owner approved these targets for a bot: log `explicit` consent (source
+/// `owner_transfer_target`) on each of the bot's live numbers for targets not already
+/// consented that way. STOP still wins at issue time, so a later opt-out is respected.
+pub async fn record_transfer_targets(db: &PgPool, user: &str, bot_id: &str, targets: &[TransferTarget]) -> PResult<()> {
+    let numbers: Vec<String> = sqlx::query_scalar("SELECT id FROM phone_numbers WHERE user_id = $1 AND bot_id = $2 AND released_at IS NULL")
+        .bind(user)
+        .bind(bot_id)
+        .fetch_all(db)
+        .await?;
+    for number_id in numbers {
+        for t in targets {
+            let already: i64 = sqlx::query_scalar("SELECT count(*) FROM sms_consent_log WHERE number_id = $1 AND e164 = $2 AND kind = 'explicit' AND source = $3 AND id > COALESCE((SELECT max(id) FROM sms_consent_log WHERE number_id = $1 AND e164 = $2 AND kind = 'opt_out'), 0)")
+                .bind(&number_id)
+                .bind(&t.e164)
+                .bind(TRANSFER_TARGET_SOURCE)
+                .fetch_one(db)
+                .await?;
+            if already == 0 {
+                log_consent(db, &number_id, &t.e164, "explicit", Some(TRANSFER_TARGET_SOURCE), Some(&format!("owner {user} approved transfer target {}", t.label))).await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Issue a short-lived consentRef for a warm transfer, or `None` (the worker then fails
+/// the transfer cleanly). Owner-initiated: basis `owner_directed`. Bot-initiated: only to
+/// a target on the bot's owner-approved list, basis `owner_transfer_target`. A number that
+/// sent STOP on this line never gets one.
+pub async fn transfer_consent_ref(db: &PgPool, user: &str, number_id: &str, bot_id: &str, to: &str, initiator: TransferInitiator) -> PResult<Option<ConsentRef>> {
+    let number = number_for_user(db, user, number_id).await?;
+    let to = to.trim();
+    if is_opted_out(db, &number.id, to).await? {
+        return Ok(None);
+    }
+    let basis = match initiator {
+        TransferInitiator::Owner => "owner_directed",
+        TransferInitiator::Bot => {
+            if !transfer_targets_for_bot(db, bot_id).await?.iter().any(|t| t.e164 == to) {
+                return Ok(None);
+            }
+            TRANSFER_TARGET_SOURCE
+        }
+    };
+    let id = format!("cc_{}", uuid::Uuid::new_v4().simple());
+    let expires_at = Utc::now() + chrono::Duration::minutes(CALL_CONSENT_MINUTES);
+    sqlx::query("INSERT INTO call_consents (id, number_id, user_id, bot_id, to_e164, purpose, basis, expires_at) VALUES ($1, $2, $3, $4, $5, 'transfer', $6, $7)")
+        .bind(&id)
+        .bind(&number.id)
+        .bind(user)
+        .bind(bot_id)
+        .bind(to)
+        .bind(basis)
+        .bind(expires_at)
+        .execute(db)
+        .await?;
+    Ok(Some(ConsentRef { id, basis: basis.to_string(), expires_at }))
 }
 
 #[derive(Deserialize)]
@@ -1621,5 +1726,57 @@ mod tests {
         for k in ["ALLTERNIT_PHONE_CARRIER", "ALLTERNIT_TELNYX_API_KEY", "ALLTERNIT_TELNYX_PUBLIC_KEY"] {
             std::env::remove_var(k);
         }
+    }
+
+    async fn bot_config_table(db: &PgPool) {
+        sqlx::query("CREATE TABLE voice_bot_config (bot_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, transfer_targets JSONB NOT NULL DEFAULT '[]'::jsonb)")
+            .execute(db)
+            .await
+            .unwrap();
+    }
+
+    fn target(e: &str, label: &str) -> TransferTarget {
+        TransferTarget { e164: e.into(), label: label.into() }
+    }
+
+    #[tokio::test]
+    async fn transfer_consent_owner_directed_bot_needs_an_approved_target_and_stop_wins() {
+        let db = pool().await;
+        bot_config_table(&db).await;
+        let c = FakeCarrier::default();
+        let n = buy(&db, &c, &e164(70)).await.unwrap();
+        let (desk, other) = ("+15550008888", "+15550009999");
+
+        // Owner pressed transfer: owner_directed, stored as a short-lived call_consents row.
+        let owner = transfer_consent_ref(&db, USER, &n.id, "bot1", other, TransferInitiator::Owner).await.unwrap().unwrap();
+        assert_eq!(owner.basis, "owner_directed");
+        let row: (String, String, String) = sqlx::query_as("SELECT basis, purpose, to_e164 FROM call_consents WHERE id = $1").bind(&owner.id).fetch_one(&db).await.unwrap();
+        assert_eq!(row, ("owner_directed".into(), "transfer".into(), other.into()));
+        assert!(owner.expires_at > Utc::now());
+
+        // Bot-initiated with no approved list: nothing, even for the number the owner could pick.
+        assert!(transfer_consent_ref(&db, USER, &n.id, "bot1", desk, TransferInitiator::Bot).await.unwrap().is_none());
+
+        // Owner approves a target: explicit consent is logged once, and the bot gets a ref for it only.
+        let targets = clean_transfer_targets(&[target(desk, " Front desk "), target(desk, "dup")]).unwrap();
+        assert_eq!(targets, vec![target(desk, "Front desk")]);
+        sqlx::query("INSERT INTO voice_bot_config (bot_id, user_id, transfer_targets) VALUES ('bot1', $1, $2)").bind(USER).bind(json!(targets)).execute(&db).await.unwrap();
+        record_transfer_targets(&db, USER, "bot1", &targets).await.unwrap();
+        record_transfer_targets(&db, USER, "bot1", &targets).await.unwrap();
+        let logged: Vec<(String, Option<String>)> = sqlx::query_as("SELECT kind, source FROM sms_consent_log WHERE number_id = $1 AND e164 = $2").bind(&n.id).bind(desk).fetch_all(&db).await.unwrap();
+        assert_eq!(logged, vec![("explicit".to_string(), Some("owner_transfer_target".to_string()))], "idempotent");
+        let bot = transfer_consent_ref(&db, USER, &n.id, "bot1", desk, TransferInitiator::Bot).await.unwrap().unwrap();
+        assert_eq!(bot.basis, "owner_transfer_target");
+        assert!(transfer_consent_ref(&db, USER, &n.id, "bot1", other, TransferInitiator::Bot).await.unwrap().is_none(), "not on the list");
+
+        // STOP wins over both bases.
+        sqlx::query("INSERT INTO sms_opt_outs (number_id, e164) VALUES ($1, $2)").bind(&n.id).bind(desk).execute(&db).await.unwrap();
+        assert!(transfer_consent_ref(&db, USER, &n.id, "bot1", desk, TransferInitiator::Bot).await.unwrap().is_none());
+        assert!(transfer_consent_ref(&db, USER, &n.id, "bot1", desk, TransferInitiator::Owner).await.unwrap().is_none());
+
+        // Someone else's number is a 404, not a ref.
+        assert!(matches!(transfer_consent_ref(&db, "someone_else", &n.id, "bot1", other, TransferInitiator::Owner).await, Err(PhoneError::NotFound(_))));
+        // Non-E.164 targets are refused.
+        assert!(matches!(clean_transfer_targets(&[target("sip:x@y", "")]), Err(PhoneError::BadRequest(_))));
     }
 }
