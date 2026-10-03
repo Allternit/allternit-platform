@@ -52,7 +52,7 @@ pub const FILLERS: &[&str] = &[
     "One moment.",
     "Let me check that.",
     "Just a second.",
-    "Let me look into that.",
+    "Hang on a second.",
 ];
 
 /// Everything stored without being registered first.

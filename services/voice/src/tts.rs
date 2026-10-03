@@ -393,10 +393,13 @@ impl TtsEngine {
     /// background so the first playback is already a cache hit.
     pub fn register_phrases(self: &Arc<Self>, texts: &[String], voice: Option<&str>) {
         let Some(cache) = &self.cache else { return };
-        // The cache is keyed by rendered chunk, so register the chunks.
+        // The session speaks sentence by sentence, and each sentence is chunked
+        // again here, so register exactly those chunks.
         for t in texts {
-            for chunk in split_for_streaming(t) {
-                cache.register(&chunk);
+            for sentence in crate::session::sentence::split_all(t) {
+                for chunk in split_for_streaming(&sentence) {
+                    cache.register(&chunk);
+                }
             }
         }
         self.prerender(texts.to_vec(), voice.map(str::to_string));
@@ -415,9 +418,12 @@ impl TtsEngine {
         }
         let me = self.clone();
         let _ = std::thread::Builder::new().name("tts-prerender".into()).spawn(move || {
-            for t in texts {
-                // Each call renders (and stores) at most the uncached chunks.
-                if let Err(e) = me.synthesize_stream(&t, voice.as_deref(), None, |_, _, _, _| true) {
+            // Sentence by sentence, as a session speaks; each call renders
+            // (and stores) only the chunks that are not cached yet.
+            for sentence in texts.iter().flat_map(|t| crate::session::sentence::split_all(t)) {
+                if let Err(e) =
+                    me.synthesize_stream(&sentence, voice.as_deref(), None, |_, _, _, _| true)
+                {
                     warn!("phrase pre-render failed: {e}");
                     break;
                 }
