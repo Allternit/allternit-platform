@@ -1,0 +1,16 @@
+{
+  "name": "@allternit/wa-personal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Unofficial WhatsApp personal-number (linked device, QR) sidecar for Allternit. Runtime-local; off unless ALLTERNIT_WA_PERSONAL=1.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/main.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "6.7.24"
+  }
+}

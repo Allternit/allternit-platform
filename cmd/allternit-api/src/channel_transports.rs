@@ -35,7 +35,7 @@ use crate::AppState;
 
 type HmacSha256 = Hmac<Sha256>;
 
-pub const PROVIDERS: [&str; 5] = ["slack", "teams", "discord", "whatsapp", "telegram"];
+pub const PROVIDERS: [&str; 6] = ["slack", "teams", "discord", "whatsapp", "telegram", "whatsapp-personal"];
 
 // ---------------------------------------------------------------- http seam
 
@@ -582,6 +582,7 @@ pub fn build_transport(provider: &str, secret: &str, http: Arc<dyn HttpSend>) ->
         "discord" => Arc::new(DiscordTransport { http, webhook_url: token("webhookUrl"), own_identity: token("botId") }),
         "whatsapp" => Arc::new(WhatsAppTransport { http, access_token: token("accessToken"), own_identity: token("phoneNumberId") }),
         "telegram" => Arc::new(TelegramTransport { http, bot_token: token("botToken"), own_identity: token("botUsername") }),
+        "whatsapp-personal" if crate::channel_whatsapp_personal::enabled() => Arc::new(crate::channel_whatsapp_personal::WhatsAppPersonalTransport::from_secret(secret, http)),
         _ => return None,
     })
 }
@@ -672,7 +673,7 @@ pub(crate) fn off_bot_notice(name: &str, provider: &str) -> String {
 
 pub(crate) const NO_BOT_NOTICE: &str = "No Allternit bot is switched on for this chat yet. In Allternit, open a bot → Agent Gateway → Messaging and switch this connection on.";
 
-const CHANNEL_NAME: [(&str, &str); 5] = [("telegram", "Telegram"), ("discord", "Discord"), ("whatsapp", "WhatsApp"), ("teams", "Teams"), ("slack", "Slack")];
+const CHANNEL_NAME: [(&str, &str); 6] = [("whatsapp-personal", "WhatsApp"), ("telegram", "Telegram"), ("discord", "Discord"), ("whatsapp", "WhatsApp"), ("teams", "Teams"), ("slack", "Slack")];
 
 /// A bot whose vendor lane is a channel (e.g. Muse over WhatsApp): replies on
 /// its conversation are the vendor's answers, pulled by the lane transport,
