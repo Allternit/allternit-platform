@@ -2,7 +2,7 @@
 //! (VAD, turn end, STT, speak, barge-in; Track B, `services/voice/src/session/`).
 //!
 //! The call logic only sees [`CoreHandle`]: commands in, events out, mirroring
-//! Voice Session protocol v1 (`docs/VOICE_SESSION_PROTOCOL.md`) one to one. Today
+//! Voice Session protocol v1 (`services/voice/spec/VOICE_SESSION.md`) one to one. Today
 //! [`connect_ws`] fills it by speaking that protocol over the core's WebSocket
 //! (`/v1/voice/session` on this same binary's service), which needs nothing from
 //! the core's internal Rust API. Swapping to an in-process core is one more
