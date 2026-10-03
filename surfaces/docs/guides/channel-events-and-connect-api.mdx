@@ -1,0 +1,71 @@
+---
+title: Channel events, connect API and phone tools (developers)
+description: The channel.* and call.* thread events, the channel-connect API client behind the wizards, and the phone device tools.
+---
+
+For developers building on Allternit's messaging channels. User docs: [Messaging channels](/guides/messaging-channels), [Calls and texts in threads](/guides/calls-and-texts).
+
+## Thread events
+
+A channel conversation is an ordinary bot thread whose event log carries `channel.*` events. The app folds them with `foldChannelEvents` (`src/lib/gateway/channel.ts`) into `ChannelMessage[]`; the thread's `ChannelConversationBinding` says which provider and whether the bot may reply.
+
+| Event | Meaning |
+| --- | --- |
+| `channel.message.received` | An inbound message from the platform. |
+| `channel.message.sent` | An outbound bot message. Includes `postingIdentity` and `relayed` when the platform cannot post as the exact bot. |
+| `channel.message.delivery` | Delivery state: `pending`, `unconfirmed`, `sent`, `delivered`, `read`, `failed`. |
+| `channel.message.edited`, `channel.message.deleted` | The platform edited or deleted a message. |
+| `channel.reaction.updated` | A reaction was added or removed. |
+| `channel.bot.unavailable` | A bot was `@mentioned` but is not switched on for this connection. Payload: `botId`, `botName`, `accountId`, `provider`, `remoteId`. The UI renders the **Turn on** card; the button calls `PUT /api/v1/gateway/bots/{botId}/channels/{accountId}` with `{ enabled: true }`. |
+
+Events carry `ts`, optional `author` (`human`, `allternit_bot`, `vendor_agent`), `replyToId`, `mentions`, `files`, and for email `subject`, `from`, `to`, `cc`.
+
+### Bot channel routes
+
+| Route | Use |
+| --- | --- |
+| `GET /api/v1/gateway/bots/{botId}/channels` | A bot's connections: `enabled`, `isDefault`, `botCount`, `defaultBotName`. |
+| `PUT /api/v1/gateway/bots/{botId}/channels/{accountId}` | Body `{ enabled, isDefault? }`. Returns the updated list. |
+
+## Call events
+
+Frozen contract between the voice engine and messaging (`HANDOFF-realtime-voice-2026-10-02.md` §4.1). Events use camelCase, a `call.*` prefix, a `callId` in every payload, and the idempotency key `call:<callId>:<type>:<n>`. `foldCallEvents` (`src/lib/gateway/call.ts`) turns them into `CallModel[]`.
+
+| Event | Payload |
+| --- | --- |
+| `call.started` | `direction`, `from`, `to`, `numberId` |
+| `call.transcript.delta` | `speaker` (`caller`, `bot`, `human`), `text`, `final`, `segmentId`. Only `final: true` is persisted; interim text is live only. |
+| `call.dtmf` | `digits`, `from` |
+| `call.state.changed` | `held`, `mutedBot`, `mutedCaller`, `speaker`. The acknowledgement of every control. |
+| `call.transferred` | `to`, `mode` (`cold`/`warm`), `ok`, `reason?` |
+| `call.takeover` | `by`, `active` |
+| `call.voicemail.detected` | `action` |
+| `call.ended` | `durationSec`, `reason`, `recordingRef?` |
+
+Tool use during a call reuses the `agent.tool.*` events.
+
+### Call controls
+
+`POST /api/v1/voice/calls/{callId}/control` with `{ action, target?, digits?, to?, mode? }`, where `action` is `hangup`, `mute`, `unmute`, `hold`, `resume`, `dtmf`, `transfer`, `takeover`, `listen` or `release`. The UI renders the state from `call.state.changed`, never from the request. `listen` and `takeover` return a LiveKit `{ token, url, room }` (receive-only and publish-capable respectively) for `joinCallAudio`.
+
+### Components
+
+`CallScreen`, `CallCard` and `SmsThread` (`src/components/gateway/phone/`) take plain data and injected callbacks so a phone connector's MCP App can mount them. Props: `src/components/gateway/phone/README.md`. In the phone shell, `phone.css` makes the call screen and connect wizards full-screen sheets, keyed on `.phone-root` and the `data-call-screen`, `data-connect-wizard`, `data-coming-soon`, `data-wizard-footer`, `data-call-card`, `data-sms-composer` and `data-off-bot` attributes; do not rename those without updating `phone.css`.
+
+## Connect API
+
+`src/lib/gateway/connect-api.ts` is the typed client for the wizards, under `/api/v1/gateway/channel-connect`. `createConnectApi(http)` takes any `HttpLike`; `connectApi` is the default instance. A 404 or 503 on a read means the provider's backend has not shipped: availability calls resolve to "not available" and the wizard shows its **Coming soon** panel.
+
+| Area | Methods |
+| --- | --- |
+| Telegram managed bots | `telegramManagedAvailability`, `createManagedTelegramBot`, `managedTelegramStatus`, `cancelManagedTelegramBot` |
+| Email | `emailStatus`, `saveEmailSettings` (`replyMode`: `approve`, `known`, `auto`; `allowlist`), `setEmailDomain`, `emailDomainStatus`, `sendEmailTest` |
+| Phone numbers | `phoneAvailability`, `searchPhoneNumbers`, `buyPhoneNumber`, `submitPhoneRegistration`, `phoneRegistrationStatus`, `portPhoneNumber` |
+| Discord, Slack, Teams, WhatsApp | `startChannelConnect(provider, { botId })`, `channelConnectStatus`, `cancelChannelConnect`, `teamsAdminLink`, `listConnectChannels`, `saveConnectChannels`, `whatsappModes`, `startWhatsAppPersonal` |
+| Health | `sendConnectTest(accountId)` |
+
+Wizards live in `src/components/gateway/connect/`. `ConnectWizard` is the shared step engine (intro, action, form, waiting, code, done); each provider supplies its steps. `ConnectWizardDialog` maps a provider to its wizard and is mounted by `MessagingConnectorsSection` and `BotMessagingToggles`.
+
+## Phone device tools
+
+Desktop-only. A paired Android phone is exposed to bots through the `allternit-phone` MCP server: `phone.screenshot`, `phone.tap`, `phone.type`, `phone.swipe`, `phone.open_app`, `phone.task`, `phone.sms.send` and `phone.call.dial`. `phone.sms.send` and `phone.call.dial` always require a confirmation on the computer. The device manager, adb handling and gateway are described in [A phone for your bot](/guides/phone-for-your-bot#for-developers). The renderer reaches Desktop through `window.allternit.phones` (`src/lib/phones-bridge.ts`); outside Desktop that bridge is absent and the Phones section shows "Connect a phone from Allternit Desktop."

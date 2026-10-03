@@ -1,0 +1,39 @@
+---
+title: Phone numbers and SMS (runtime)
+description: How a bot's phone number reaches its runtime, and how texts and calls share one thread
+---
+
+## Overview
+
+A bot can own a real phone number. People text it and the bot answers in a thread. Calls and texts from one caller land in the **same thread**.
+
+The carrier side (buying numbers, registration, STOP/HELP handling, opt-outs, consent) lives in the cloud API. This page covers the runtime (`allternit-api`) side, in `cmd/allternit-api/src/channel_phone.rs`.
+
+## Flow
+
+1. The carrier posts an inbound text to the cloud. The cloud verifies the signature, dedupes, answers STOP/HELP/START, and relays everything else to the runtime at `/webhooks/channels/sms` (provider `sms`). Opted-out senders never reach the runtime.
+2. The runtime checks Telnyx's Ed25519 signature again (`telnyx-signature-ed25519` over `<telnyx-timestamp>|<body>`) using the public key stored with the number.
+3. The text opens or continues the thread keyed `phone:<botE164>:<callerE164>`.
+4. The bot's reply goes out through the cloud: `POST /api/v1/channels/sms/send`. The carrier key never reaches the runtime.
+
+## Thread key
+
+`channel_phone::resolve_thread(db, rt, number_id, caller_e164) -> Result<(thread_id, session_id), String>` returns the thread for a caller on a number, creating it on the number's bot when new. The voice worker uses it for calls, so a caller who texts and then calls keeps one conversation.
+
+## Replies
+
+Replies are plain text. A reply over 1,600 characters is split at a paragraph, line, sentence or word break, and each part ends with `(1/3)`. If a later part is refused after an earlier one went out, the send is reported as uncertain, never as rejected, so nothing is sent twice.
+
+## Connect a number to a bot
+
+`PUT /gateway/phone-numbers/:numberId` (signed in):
+
+```json
+{ "e164": "+14155550123", "botId": "bot_...", "token": "<Allternit bearer>", "publicKey": "<Telnyx webhook public key, base64>", "cloudUrl": "optional" }
+```
+
+Returns `{ "number": { "numberId", "e164", "botId", "accountId", "state": "CONNECTED" } }`. The token and key are stored sealed. Returns 503 when the runtime has no encryption key, 400 for a bad number or a bot you don't own. `DELETE /gateway/phone-numbers/:numberId` disconnects it.
+
+## Inert until configured
+
+With no connected number there are no `sms` accounts, so `/webhooks/channels/sms` answers 401 for everything. The cloud send route answers 503 `sms_not_configured` until its carrier env is set.

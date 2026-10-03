@@ -1,0 +1,46 @@
+---
+title: "WhatsApp business number"
+description: "Connect a bot to your own WhatsApp Business number through Embedded Signup."
+---
+
+Allternit is the Tech Provider for **your own** WhatsApp Business number. Meta bans general-purpose AI assistants on a shared business number, so there is no Allternit-owned assistant number.
+
+## How it flows
+
+1. The app runs Meta's Embedded Signup and receives `code`, `wabaId` and `phoneNumberId`.
+2. `POST /api/v1/channels/whatsapp/embedded-signup/complete` exchanges the code, points the WABA's webhooks at your relay address (`override_callback_uri`) and registers the number.
+3. Meta posts to `https://api.allternit.com/channels/in/<key>`. The cloud answers the verify handshake, checks `X-Hub-Signature-256`, then relays to your runtime (a cloud computer is woken if asleep).
+4. The bot's reply goes out through `POST /api/v1/channels/whatsapp/send`. Each message starts with the speaking bot's name in bold, because one number has one display name.
+
+The Meta app secret and your business token stay in the cloud. Your runtime gets a per-address `relaySecret`, which it stores as the account's `appSecret`.
+
+## Complete signup
+
+```json
+POST /api/v1/channels/whatsapp/embedded-signup/complete
+{ "code": "...", "wabaId": "111", "phoneNumberId": "222", "runtimeId": "optional if you have one runtime" }
+```
+
+Response `201`:
+
+```json
+{ "accountId": "...", "routeId": "...", "runtimeId": "...", "wabaId": "111", "phoneNumberId": "222", "relaySecret": "<hex>" }
+```
+
+Store the runtime account secret as `{ "mode": "business", "appSecret": "<relaySecret>", "phoneNumberId": "222", "cloudToken": "<allternit_ API token, compute scope>" }`.
+
+## Send and the 24-hour window
+
+```json
+POST /api/v1/channels/whatsapp/send
+{ "phoneNumberId": "222", "to": "15551234567", "text": "hello" }
+{ "phoneNumberId": "222", "to": "15551234567", "template": { "name": "hello_world", "language": "en_US" } }
+```
+
+Free text is only allowed within 24 hours of the customer's last message. Otherwise only an approved template goes out, and a text request returns `409 {"error":"outside_24h_window"}`. Success returns `{ "messageId": "wamid...", "windowOpen": true }`.
+
+## Turning it on
+
+Set `META_APP_ID`, `META_APP_SECRET`, `META_ES_CONFIG_ID` and `META_SYSTEM_TOKEN` on cloud-api, plus `ALLTERNIT_CREDENTIALS_KEY`. While they are unset, every route above returns `503 {"error":"whatsapp_not_configured"}`. Apply cloud migration `028_whatsapp_embedded_signup.sql` by hand first.
+
+Graph API version: v25.0.

@@ -48,12 +48,17 @@
             "pages": [
               "guides/platform-workflows",
               "guides/bot-threads",
+              "guides/phone-sms-runtime",
               "guides/project-coordination",
               "guides/bot-templates",
+              "guides/whatsapp-business",
               "guides/subscriptions",
               "plugins/guides/vendor-packs",
               "guides/artifact-modes",
               "guides/computers-and-apps",
+              "guides/phone-for-your-bot",
+              "guides/messaging-channels",
+              "guides/calls-and-texts",
               "guides/mcp-apps-status"
             ],
             "icon": "/icons/window.svg"
@@ -421,6 +426,8 @@
               "guides/idempotency-and-retries",
               "guides/token-budgets",
               "guides/webhooks",
+              "guides/channel-events-and-connect-api",
+              "guides/voice-call-runtime-routes",
               "guides/pdf-citations"
             ],
             "icon": "/icons/book.svg"
@@ -522,6 +529,7 @@
             "pages": [
               "api/overview",
               "api/cloud-api",
+              "api/phone-numbers",
               "api/allternit-api",
               "api/authentication",
               "api/endpoints",
@@ -632,6 +640,7 @@
               "api/office",
               "api/office-engine",
               "api/voice",
+              "api/voice-tickets",
               "api/server-tools",
               "api/mcp-servers",
               "api/design-connector",

@@ -1,3 +1,4 @@
+import { KIND_LABELS, safeAvatar, type AccountBot } from "./account-bots.js";
 // Subscription agent AAI provider (lane browser, guarantee best_effort, mode linked): Claude, ChatGPT, Kimi…
 // Originally the Claude adapter;
 // Each AAI context is one claude.ai conversation: its first message is a gateway `chat.create` task with
@@ -25,6 +26,8 @@ export interface SubscriptionAgentSpec {
   site: string;
   /** Projects become agents ("<agentId>:project:<uuid>") when the provider reports them. */
   projects?: boolean;
+  /** All account-owned bot kinds reported by this subscription worker. */
+  accountBots?: boolean;
   capabilities: AgentCapabilityManifest;
 }
 
@@ -37,7 +40,7 @@ export interface GatewayTasks {
   /** Live task events (the worker's reply/reasoning deltas); returns unsubscribe. Optional. */
   subscribe?(taskId: string, onEvent: (event: { kind?: string; payload?: unknown }) => void): () => void;
   /** The provider's best subscription login: its session_health and usage left (null = none signed in). */
-  accountState(provider: string): Promise<{ health: string; remainingPct?: number | null; resetsAt?: string | null; agents?: { id: string; name: string; kind?: string }[] | null } | null>;
+  accountState(provider: string): Promise<{ health: string; remainingPct?: number | null; resetsAt?: string | null; agents?: { id: string; name: string; kind?: string; kindLabel?: string; avatarUrl?: string }[] | null } | null>;
 }
 
 export interface SubscriptionAgentOptions {
@@ -58,7 +61,7 @@ const projectInContext = (contextId: string) => /~p([0-9a-f-]{36})$/.exec(contex
 interface Ctx {
   /** Turns queued or running in this conversation (the busy limit counts conversations with any). */
   inFlight?: number;
-  id: string; closed: boolean; turns: number; seq: number; events: CursoredEvent[]; projectId: string | null;
+  id: string; closed: boolean; turns: number; seq: number; events: CursoredEvent[]; projectId: string | null; accountBot?: { id: string; kind: string };
   /** The running turn's gateway task, so Stop can cancel it. */
   runningTask?: string; cancelled?: boolean;
   done: Map<string, Promise<AaiResult<MessageResult>>>; lock: Promise<unknown>;
@@ -133,36 +136,56 @@ export class SubscriptionAgentProvider extends BaseAaiProvider {
     }
     return ok(true);
   }
-  /** The account's Claude Projects, as the subscription worker last read them. */
-  private async projects(): Promise<{ id: string; name: string }[]> {
-    if (!this.spec.projects) return [];
+  /** Public identity cached by the worker's non-spending account read. */
+  private async accountBots(): Promise<AccountBot[]> {
+    if (!this.spec.projects && !this.spec.accountBots) return [];
     const s = await this.o.tasks?.accountState(this.spec.provider).catch(() => null);
-    return (s?.agents ?? []).filter((a) => (a.kind ?? "project") === "project" && UUID.test(a.id));
+    const seen = new Set<string>();
+    return (s?.agents ?? []).filter((a) => {
+      const kind = a.kind ?? "project";
+      if (!a.name.trim() || !/^[\w-]+$/.test(a.id) || !Object.hasOwn(KIND_LABELS, kind)) return false;
+      if (this.spec.projects && (kind !== "project" || !UUID.test(a.id))) return false;
+      const key = `${kind}:${a.id}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).map((a) => ({ ...a, kind: a.kind ?? "project", kindLabel: KIND_LABELS[a.kind ?? "project"], avatarUrl: safeAvatar(a.avatarUrl) }));
   }
-  private known(agentId: string) { return agentId === this.spec.agentId || this.projectOf(agentId) !== null; }
+  private botOf(agentId: string): { id: string; kind: string } | undefined {
+    const prefix = `${this.spec.agentId}:`;
+    if (!agentId.startsWith(prefix)) return undefined;
+    const m = /^([a-z]+):([\w-]+)$/.exec(agentId.slice(prefix.length));
+    return m && Object.hasOwn(KIND_LABELS, m[1]) ? { kind: m[1], id: m[2] } : undefined;
+  }
+  private async known(agentId: string) {
+    if (agentId === this.spec.agentId || this.projectOf(agentId) !== null) return true;
+    const bot = this.botOf(agentId);
+    return !!bot && (await this.accountBots()).some((a) => a.id === bot.id && a.kind === bot.kind);
+  }
   async list(): Promise<AaiResult<AgentSummary[]>> {
     const r = await this.ready();
     const state = r.ok ? "READY" : "blocked";
-    const projects = await this.projects();
+    const bots = await this.accountBots();
     return ok([
       this.summary(state),
-      ...projects.map((p): AgentSummary => ({ agentId: this.projectPrefix + p.id, displayName: p.name, vendor: this.spec.vendor, state })),
+      ...bots.map((a): AgentSummary => ({ agentId: `${this.spec.agentId}:${a.kind}:${a.id}`, displayName: a.name, vendor: this.spec.vendor, state, kind: a.kind, kindLabel: a.kindLabel, ...(a.avatarUrl ? { avatarUrl: a.avatarUrl } : {}) })),
     ]);
   }
   private async nameOf(agentId: string): Promise<string> {
-    const pid = this.projectOf(agentId);
-    return pid ? (await this.projects()).find((p) => p.id === pid)?.name ?? `${this.spec.displayName} Project` : this.spec.displayName;
+    const bot = this.botOf(agentId);
+    return bot ? (await this.accountBots()).find((a) => a.id === bot.id && a.kind === bot.kind)?.name ?? `${this.spec.displayName} ${KIND_LABELS[bot.kind]}` : this.spec.displayName;
   }
   async get(agentId: string): Promise<AaiResult<AgentDetail>> {
-    if (!this.known(agentId)) return fail("CONTEXT_NOT_FOUND", `No such agent ${agentId}`);
-    const pid = this.projectOf(agentId);
-    return ok({ agentId, displayName: await this.nameOf(agentId), vendor: this.spec.vendor, state: "READY", remoteIds: pid ? { project: pid } : {}, capabilities: this.spec.capabilities });
+    if (!await this.known(agentId)) return fail("CONTEXT_NOT_FOUND", `No such agent ${agentId}`);
+    const bot = this.botOf(agentId);
+    const entry = bot && (await this.accountBots()).find((a) => a.id === bot.id && a.kind === bot.kind);
+    return ok({ agentId, displayName: await this.nameOf(agentId), vendor: this.spec.vendor, state: "READY", remoteIds: bot ? { [bot.kind]: bot.id } : {}, ...(bot ? { kind: bot.kind, kindLabel: KIND_LABELS[bot.kind] } : {}), ...(entry?.avatarUrl ? { avatarUrl: entry.avatarUrl } : {}), capabilities: this.spec.capabilities });
   }
   async capabilities(agentId: string): Promise<AaiResult<AgentCapabilityManifest>> {
-    return this.known(agentId) ? ok(this.spec.capabilities) : fail("CONTEXT_NOT_FOUND", `No such agent ${agentId}`);
+    return await this.known(agentId) ? ok(this.spec.capabilities) : fail("CONTEXT_NOT_FOUND", `No such agent ${agentId}`);
   }
   async identity(agentId: string): Promise<AaiResult<AgentIdentity>> {
-    return this.known(agentId) ? ok({ agentId, displayName: await this.nameOf(agentId), vendor: this.spec.vendor, lookPack: this.spec.lookPack }) : fail("CONTEXT_NOT_FOUND", `No such agent ${agentId}`);
+    return await this.known(agentId) ? ok({ agentId, displayName: await this.nameOf(agentId), vendor: this.spec.vendor, lookPack: this.spec.lookPack }) : fail("CONTEXT_NOT_FOUND", `No such agent ${agentId}`);
   }
   async health(_i: { agentId?: string }): Promise<AaiResult<HealthResult>> {
     const r = await this.ready();
@@ -175,11 +198,15 @@ export class SubscriptionAgentProvider extends BaseAaiProvider {
    * lives in the gateway DB. An unknown `cs-` id is rebuilt as "already started" (chat.continue; run() falls back to
    * chat.create if the gateway has no mapping for it).
    */
+  private botInContext(id: string): { id: string; kind: string } | undefined {
+    const m = /~b([a-z]+):([\w-]+)$/.exec(id);
+    return m && Object.hasOwn(KIND_LABELS, m[1]) ? { kind: m[1], id: m[2] } : undefined;
+  }
   private live(id: string): AaiResult<Ctx> {
     const c = this.ctxs.get(id);
     if (c) return c.closed ? fail("CONTEXT_NOT_FOUND", "No such conversation") : ok(c);
     if (!id.startsWith(this.ctxPrefix)) return fail("CONTEXT_NOT_FOUND", "No such conversation");
-    const revived: Ctx = { id, closed: false, turns: 1, seq: 0, events: [], done: new Map(), lock: Promise.resolve(), projectId: projectInContext(id) };
+    const revived: Ctx = { id, closed: false, turns: 1, seq: 0, events: [], done: new Map(), lock: Promise.resolve(), projectId: projectInContext(id), accountBot: this.botInContext(id) };
     this.ctxs.set(id, revived);
     return ok(revived);
   }
@@ -193,17 +220,25 @@ export class SubscriptionAgentProvider extends BaseAaiProvider {
   }
 
   async contextOpen(i: OpenContextInput): Promise<AaiResult<OpenContextResult>> {
-    if (!this.known(i.agentId)) return fail("CONTEXT_NOT_FOUND", `No such agent ${i.agentId}`);
+    if (!await this.known(i.agentId)) return fail("CONTEXT_NOT_FOUND", `No such agent ${i.agentId}`);
     if (i.adoptContextId) {
       const c = this.live(i.adoptContextId); // also revives a context from before a gateway restart
+      if (c.ok) {
+        const selected = this.botOf(i.agentId);
+        const owner = c.value.accountBot ?? (c.value.projectId ? { kind: "project", id: c.value.projectId } : undefined);
+        if (selected?.kind !== owner?.kind || selected?.id !== owner?.id) {
+          return fail("CONTEXT_NOT_FOUND", "Conversation belongs to a different agent");
+        }
+      }
       return c.ok ? ok({ contextId: c.value.id, isolation: "isolated", guarantee: "best_effort", resumed: true }) : c;
     }
     const r = await this.ready();
     if (!r.ok) return r;
     // The context id is also the gateway thread_id: the subscription's thread mapping keeps the claude.ai conversation.
     const projectId = this.projectOf(i.agentId);
-    const id = `${this.ctxPrefix}${i.threadId ?? ""}${i.threadId ? "-" : ""}${++this.n}-${Math.random().toString(36).slice(2, 8)}${projectId ? `~p${projectId}` : ""}`;
-    const c: Ctx = { id, closed: false, turns: 0, seq: 0, events: [], done: new Map(), lock: Promise.resolve(), projectId };
+    const accountBot = projectId ? undefined : this.botOf(i.agentId);
+    const id = `${this.ctxPrefix}${i.threadId ?? ""}${i.threadId ? "-" : ""}${++this.n}-${Math.random().toString(36).slice(2, 8)}${projectId ? `~p${projectId}` : accountBot ? `~b${accountBot.kind}:${accountBot.id}` : ""}`;
+    const c: Ctx = { id, closed: false, turns: 0, seq: 0, events: [], done: new Map(), lock: Promise.resolve(), projectId, accountBot };
     this.ctxs.set(id, c);
     this.push(c, "agent.context.opened", `open:${id}`, { title: i.title ?? null });
     return ok({ contextId: id, isolation: "isolated", guarantee: "best_effort", resumed: false });
@@ -241,7 +276,7 @@ export class SubscriptionAgentProvider extends BaseAaiProvider {
       requester_kind: "bot",
       routing: { provider: this.spec.provider },
       // A new chat for a Project agent starts inside that Project (claude-web opens the Project page).
-      ...(capability === "chat.create" && ctx.projectId ? { options: { project_id: ctx.projectId } } : {}),
+      ...(capability === "chat.create" && (ctx.projectId || ctx.accountBot) ? { options: ctx.projectId ? { project_id: ctx.projectId } : { account_bot: ctx.accountBot } } : {}),
       // The Allternit user sent this turn in a thread (allternit-api only forwards human-initiated turns).
       initiated_by: { kind: "human", user_id: "allternit-thread", action_id: i.correlationId },
     }).catch((e: Error) => ({ status: 0, body: { error: e.message } as Record<string, unknown> }));

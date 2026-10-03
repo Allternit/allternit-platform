@@ -125,3 +125,43 @@ Details in [CONNECTIONS_AND_CREDENTIALS.md](CONNECTIONS_AND_CREDENTIALS.md).
 | Loopback (Allternit bot) | allternit | native | n/a | n/a | HTTP to allternit-api | yes, passes every applicable area | Not a vendor. `SUBS_GATEWAY_AAI_LOOPBACK_BASE` and `_BOTS`, `_TOKEN` configure it. |
 
 Manifest values are in each `manifest.ts`. `maxParallel` is 1 with `isolation: shared` for the three UI-bridge adapters, so placement serializes threads on them. `claude-managed-agents` and `openclaw` declare `isolated` contexts with `resume: true`.
+
+## Account bots on subscription logins
+
+`agent.list` includes the default chat plus account entries, using
+`<agentId>:<kind>:<vendor-id>` IDs. Summaries carry `kind`, `kindLabel`, and
+`avatarUrl` when the vendor exposes a safe raster/HTTPS image. The account
+schema and worker cache preserve these fields. The private API
+`GET /api/v1/gateway/provider-accounts/:id/agents` maps `agentId` to
+`externalAgentId` and `displayName` to `name`, preserving kind, label and avatar.
+Discovery does not create, edit, delete, approve prompts, or clear bot checks.
+
+| Adapter | Account bots | Read / chat target | Evidence |
+| --- | --- | --- | --- |
+| `claude-web` / `claude-subscription` | Projects | Existing same-origin organization Projects read; `/project/<uuid>` | Existing path retained, offline regression tests; no new live verification |
+| `chatgpt-web` / `chatgpt-subscription` | Pinned GPTs, rendered My GPTs, Projects | Account sidebar links; My GPTs main collection only at `/gpts/mine`; `/g/<g-id>` or `/g/<g-p-id>/project` | **INFERRED**, synthetic DOM fixtures; not verified live |
+| `gemini-web` / `gemini-subscription` | Gems exposed in account navigation | Rendered `/gem/<id>` links; same URL for selected Gem | **INFERRED**, synthetic DOM fixtures; not verified live |
+| `kimi-web` / `kimi-subscription` | Saved agents/Kimi+ if exposed | Rendered account `/kimiplus/<id>` links; same URL for selected agent | **INFERRED**, synthetic fixtures; no known saved-agent endpoint. No entries when page exposes none; not a claim the vendor has no agents |
+| `copilot-web` / `copilot-subscription` | Agents/pages if exposed | Rendered account `/agents/<id>` or `/pages/<id>` links; same URL for selected entry | **INFERRED**, synthetic fixtures. No entries when consumer page exposes none; not verified live, including whether a page provides a chat composer |
+| `grok-bot` | Bot picker entries | Existing read-only picker discovery; `kind=bot`, `kindLabel=Bot` | Offline replay picker fixture; no live validation in this change |
+| `hermes` | Local gateway profiles/models | Existing `GET /v1/models`; `kind=profile`, `kindLabel=Profile` | Local fake HTTP server; no live validation in this change |
+
+The new DOM reader in `adapters/_shared/account-bots.ts` makes no network
+requests and does not navigate to list pages. It only reads already-rendered
+account navigation (or ChatGPT's already-open My GPTs collection); lazy-loaded,
+unpinned, and hidden entries may be absent. Public Explore catalogs, conversations,
+creation links, foreign-origin links and duplicate entries are excluded. Unknown
+avatar formats are dropped. A selection opens its vendor page only on a
+human-initiated first turn, just as Claude Projects do. Continuation uses the
+existing mapped conversation; the selected kind/id survives a gateway restart
+and a missing thread mapping. Adopting another agent's context is rejected.
+
+Manual live gate (human only): sign in on a consenting test account, expose its
+account sidebar (My GPTs for ChatGPT), reconnect/probe and compare discovery
+names, kinds and avatars with the visible entries. Select one GPT, Project,
+Gem or bot and send one explicitly initiated test turn; confirm the destination
+URL and vendor instructions/knowledge apply, then verify continuation and gateway
+restart. For Kimi/Copilot also inspect whether saved account entries exist and
+whether their pages have a chat composer; absent links must produce default chat
+only. Never create an entry just to pass the check, accept an approval prompt,
+or automate a challenge. See the adapter READMEs for the other live gates.

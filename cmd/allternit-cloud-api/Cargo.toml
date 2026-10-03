@@ -46,7 +46,8 @@ uuid = { workspace = true }
 sqlx = { workspace = true, features = ['chrono', 'uuid', 'postgres', 'macros', 'migrate'] }
 
 # WebSocket
-tokio-tungstenite = { workspace = true }
+# rustls so the Discord gateway can open wss:// (the workspace default has no TLS)
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 futures-util = { workspace = true }
 async-trait = { workspace = true }
 tokio-stream = { workspace = true, features = ["sync"] }
@@ -57,10 +58,12 @@ md5 = "0.7"
 base64 = { workspace = true }
 bytes = { workspace = true }
 sha2 = { workspace = true }
+sha1 = { workspace = true }
+urlencoding = { workspace = true }
 hmac = { workspace = true }
 hex = { workspace = true }
 ed25519-dalek = { workspace = true }
-jsonwebtoken = "10"
+jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }
 aws-lc-rs = "1"
 reqwest = { workspace = true, default-features = false, features = ["json", "rustls-tls"] }
 cron = "0.12"

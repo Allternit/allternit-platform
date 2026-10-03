@@ -45,7 +45,7 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn dev_token_rejected_when_gate_disabled() {
-        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var(ALLOW_DEV_TOKEN_ENV);
 
         assert!(
@@ -65,7 +65,7 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn dev_token_accepted_only_when_gate_env_set() {
-        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
         assert!(
             dev_token_allowed(),

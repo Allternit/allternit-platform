@@ -48,6 +48,10 @@ pub const MIGRATIONS: &[Migration] = &[
     migration!(9, "009_inference_pools.sql"),
     migration!(10, "010_user_inference_keys.sql"),
     migration!(15, "015_webhook_events.sql"),
+    // 016–021 were applied to production out-of-band (see module docs); 022
+    // is the first hand-written migration to also ride the startup runner.
+    migration!(22, "022_telegram_onboarding.sql"),
+    migration!(27, "027_teams_app.sql"),
 ];
 
 /// Bookkeeping table. One row per applied migration version.

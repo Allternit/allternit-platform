@@ -13,6 +13,7 @@
 		"isolatedModules": true,
 		"jsx": "react-jsx",
 		"noImplicitAny": false,
+		"allowImportingTsExtensions": true,
 		"incremental": true,
 		"plugins": [
 			{

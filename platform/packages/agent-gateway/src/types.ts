@@ -37,6 +37,8 @@ export interface AgentSummary {
   agentId: string; displayName: string; vendor: string; state: string;
   /** The agent's own avatar as the vendor shows it: an https URL or a png/jpeg/webp/gif data URI (never svg). */
   avatarUrl?: string;
+  /** Vendor account entry category and human-readable label. */
+  kind?: string; kindLabel?: string;
 }
 export interface AgentDetail extends AgentSummary { remoteIds: Record<string, string>; capabilities: AgentCapabilityManifest }
 export interface AgentIdentity { agentId: string; displayName: string; vendor: string; lookPack?: string | null }

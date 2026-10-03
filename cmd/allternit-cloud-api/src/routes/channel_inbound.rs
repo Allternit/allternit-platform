@@ -61,6 +61,11 @@ pub fn target_path(provider: &str) -> Option<&'static str> {
         "whatsapp" => Some("/webhooks/channels/whatsapp"),
         "teams" => Some("/webhooks/channels/teams"),
         "discord" => Some("/webhooks/channels/discord"),
+        "sms" => Some("/webhooks/channels/sms"),
+        // Bot email: the platform's mailflare webhook, HMAC-verified by the runtime.
+        "email" => Some("/api/v1/agent-email/inbound"),
+        // Shared Allternit Discord app: cloud-built envelopes (routes::discord_app).
+        "discord_app" => Some("/webhooks/channels/discord-app"),
         _ => None,
     }
 }
@@ -77,8 +82,14 @@ pub fn channel_headers(headers: &HeaderMap) -> HashMap<String, String> {
         "x-hub-signature-256",
         "x-signature-ed25519",
         "x-signature-timestamp",
+        // SMS (Telnyx Ed25519).
+        "telnyx-signature-ed25519",
+        "telnyx-timestamp",
         // Teams: the Bot Framework JWT or the outgoing-webhook HMAC.
         "authorization",
+        // Email: mailflare's HMAC of the webhook body (same name the runtime's
+        // verify_mailflare_signature checks).
+        "x-email-platform-signature",
     ];
     headers
         .iter()
@@ -136,17 +147,17 @@ pub fn backoff_secs(attempts: i32) -> i64 {
     }
 }
 
-fn sha256_hex(value: &str) -> String {
+pub(crate) fn sha256_hex(value: &str) -> String {
     hex::encode(Sha256::digest(value.as_bytes()))
 }
 
-fn new_key() -> String {
+pub(crate) fn new_key() -> String {
     let mut bytes = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut bytes);
     hex::encode(bytes)
 }
 
-fn public_base() -> String {
+pub(crate) fn public_base() -> String {
     std::env::var("ALLTERNIT_CLOUD_API_URL")
         .unwrap_or_else(|_| "https://api.allternit.com".to_string())
         .trim_end_matches('/')
@@ -326,6 +337,7 @@ fn channel_header_names() -> &'static [&'static str] {
         "x-hub-signature-256",
         "x-signature-ed25519",
         "x-signature-timestamp",
+        "x-email-platform-signature",
     ]
 }
 
@@ -361,7 +373,35 @@ async fn inbound_inner(
         .bind(&route.id)
         .execute(&state.db)
         .await;
-    let forwarded = channel_headers(headers);
+    let mut forwarded = channel_headers(headers);
+    let mut body = body;
+    // SMS: the cloud verifies the carrier signature, dedupes and handles STOP/HELP/START
+    // before anything is queued; the runtime gets a normalised, already-verified JSON body.
+    let mut sms_seen: Option<(String, String)> = None;
+    if route.provider == "sms" {
+        if method != Method::POST {
+            return Ok(StatusCode::METHOD_NOT_ALLOWED.into_response());
+        }
+        match super::phone::sms_edge(state, &route.id, key, headers, &body).await {
+            Ok(super::phone::Edge::Respond(response)) => return Ok(response),
+            Ok(super::phone::Edge::Deliver { body: normalised, number_id, message_id }) => {
+                body = Bytes::from(normalised);
+                forwarded = HashMap::from([("content-type".to_string(), "application/json".to_string())]);
+                sms_seen = Some((number_id, message_id));
+            }
+            Err(error) => return Ok(error.into_response()),
+        }
+    }
+    if route.provider == "whatsapp" {
+        use super::whatsapp_es::Edge;
+        match super::whatsapp_es::edge(state, &route.id, &method, &query, &forwarded, &body).await? {
+            Edge::Respond(response) => return Ok(response),
+            Edge::Resign(signature) => {
+                forwarded.insert("x-hub-signature-256".to_string(), signature);
+            }
+            Edge::Passthrough => {}
+        }
+    }
     if needs_live_answer(&route.provider, &method, &body) {
         return relay(state, &route, method.as_str(), &query, forwarded, &body, None).await;
     }
@@ -372,9 +412,12 @@ async fn inbound_inner(
     .fetch_one(&state.db)
     .await?;
     if pending >= MAX_PENDING_PER_ROUTE {
+        if let Some((number_id, message_id)) = &sms_seen {
+            super::phone::forget_inbound(&state.db, number_id, message_id).await;
+        }
         return Ok(StatusCode::TOO_MANY_REQUESTS.into_response());
     }
-    sqlx::query(
+    let queued = sqlx::query(
         "INSERT INTO channel_inbound_queue (route_id, method, query, headers, body) VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(&route.id)
@@ -383,7 +426,13 @@ async fn inbound_inner(
     .bind(serde_json::to_value(&forwarded).unwrap_or_default())
     .bind(base64_encode(&body))
     .execute(&state.db)
-    .await?;
+    .await;
+    if let Err(error) = queued {
+        if let Some((number_id, message_id)) = &sms_seen {
+            super::phone::forget_inbound(&state.db, number_id, message_id).await;
+        }
+        return Err(error.into());
+    }
     // Deliver now rather than at the next tick; the platform already has its 200.
     let state = state.clone();
     let route_id = route.id.clone();
@@ -439,7 +488,7 @@ async fn deliver_due(state: &Arc<ApiState>) -> Result<(), ApiError> {
 
 /// Deliver one address's due requests oldest first; stop at the first that
 /// must wait, so the runtime sees them in the order the platform sent them.
-async fn deliver_route(state: &Arc<ApiState>, route_id: &str) -> Result<(), ApiError> {
+pub(crate) async fn deliver_route(state: &Arc<ApiState>, route_id: &str) -> Result<(), ApiError> {
     loop {
         // Claim the oldest undelivered request for this address, if it is due and unclaimed.
         let claimed: Option<(i64, String, String, serde_json::Value, String, DateTime<Utc>, i32)> = sqlx::query_as(
@@ -521,6 +570,8 @@ mod tests {
     fn only_known_providers_have_a_runtime_path() {
         assert_eq!(target_path("slack"), Some("/webhooks/slack/events"));
         assert_eq!(target_path("telegram"), Some("/webhooks/channels/telegram"));
+        assert_eq!(target_path("sms"), Some("/webhooks/channels/sms"));
+        assert_eq!(target_path("email"), Some("/api/v1/agent-email/inbound"));
         assert_eq!(target_path("photon"), None);
         assert_eq!(relay_path("whatsapp", "hub.mode=subscribe"), Some("/webhooks/channels/whatsapp?hub.mode=subscribe".into()));
     }
@@ -529,12 +580,14 @@ mod tests {
     fn keeps_only_signature_headers() {
         let mut h = HeaderMap::new();
         h.insert("X-Telegram-Bot-Api-Secret-Token", HeaderValue::from_static("s"));
+        h.insert("X-Email-Platform-Signature", HeaderValue::from_static("sig"));
         h.insert("content-type", HeaderValue::from_static("application/json"));
         h.insert("cookie", HeaderValue::from_static("nope"));
         h.insert("x-allternit-channel-queued-at", HeaderValue::from_static("1"));
         let kept = channel_headers(&h);
-        assert_eq!(kept.len(), 2);
+        assert_eq!(kept.len(), 3);
         assert_eq!(kept.get("x-telegram-bot-api-secret-token").map(String::as_str), Some("s"));
+        assert_eq!(kept.get("x-email-platform-signature").map(String::as_str), Some("sig"));
         assert!(!kept.contains_key(QUEUED_AT_HEADER), "a public caller can't claim a queue time");
     }
 

@@ -207,7 +207,7 @@ export interface AccountObservation {
   identity: string | null;
   usage: AccountUsage | null;
   /** The account's own agents on the provider (Claude Projects…); undefined = not read. */
-  agents?: { id: string; name: string; kind?: string }[];
+  agents?: { id: string; name: string; kind?: string; kindLabel?: string; avatarUrl?: string }[];
 }
 
 export interface SubscriptionAdapter {

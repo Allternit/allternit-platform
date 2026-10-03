@@ -101,6 +101,14 @@ pub struct AgentEmailChannel {
     pub mailbox_id: Option<String>,
     /// Sealed per-agent mailflare API key (`token_crypto::seal` format).
     pub api_key_sealed: Option<String>,
+    /// How the bot answers inbound email (`approve` | `auto_known` | `auto`).
+    pub reply_mode: String,
+    /// JSON array of sender domains that may be answered without approval.
+    pub reply_allowlist: Option<String>,
+    /// Per-bot kill switch: when false, turns still run but no reply is sent.
+    pub reply_enabled: bool,
+    /// The mailbox's domain passed outbound verification; required for `auto`.
+    pub domain_verified: bool,
 }
 
 /// Look up the agent's mailflare email channel. Returns `None` when the agent
@@ -111,7 +119,9 @@ pub fn lookup_email_channel(
 ) -> rusqlite::Result<Option<AgentEmailChannel>> {
     conn.query_row(
         "SELECT email_address, email_send_enabled, email_receive_enabled,
-                email_mailbox_id, email_api_key_sealed
+                email_mailbox_id, email_api_key_sealed,
+                email_reply_mode, email_reply_allowlist, email_reply_enabled,
+                email_domain_verified
          FROM agent_identity_channels
          WHERE agent_id = ?1 AND email_provider = 'mailflare'",
         params![agent_id],
@@ -122,6 +132,10 @@ pub fn lookup_email_channel(
                 receive_enabled: row.get::<_, i32>(2)? != 0,
                 mailbox_id: row.get(3)?,
                 api_key_sealed: row.get(4)?,
+                reply_mode: row.get::<_, Option<String>>(5)?.unwrap_or_else(|| "approve".into()),
+                reply_allowlist: row.get(6)?,
+                reply_enabled: row.get::<_, Option<i32>>(7)?.unwrap_or(1) != 0,
+                domain_verified: row.get::<_, Option<i32>>(8)?.unwrap_or(0) != 0,
             })
         },
     )
@@ -169,6 +183,19 @@ async fn send_agent_email(
     Ok(Json(send_email_for_user(&state, &user.user_id, req).await?).into_response())
 }
 
+/// Reply-path extras on top of a plain outbound send. `skip_approval` delivers
+/// through the allternit-api admin key with mailflare's approval gate bypassed
+/// — only the bot-reply path may set it, and only when the reply plan says so.
+#[derive(Default)]
+struct SendEmailExtra<'a> {
+    /// Inbound row this send answers (marks the outbound row for the reply caps).
+    reply_inbound_id: Option<&'a str>,
+    /// Threading/auto-reply headers mailflare allow-lists.
+    headers: Option<&'a std::collections::HashMap<String, String>>,
+    /// Deliver without human approval (admin key only).
+    skip_approval: bool,
+}
+
 /// Approval-gated outbound send, shared by the REST route and the internal MCP
 /// `allternit_mail.send` tool. Enforces agent ownership by `user_id`, records
 /// the outbound row, and returns the same JSON payload either way.
@@ -176,6 +203,15 @@ pub(crate) async fn send_email_for_user(
     state: &Arc<AppState>,
     user_id: &str,
     req: SendAgentEmailRequest,
+) -> Result<Value, ApiError> {
+    send_email_inner(state, user_id, req, SendEmailExtra::default()).await
+}
+
+async fn send_email_inner(
+    state: &Arc<AppState>,
+    user_id: &str,
+    req: SendAgentEmailRequest,
+    extra: SendEmailExtra<'_>,
 ) -> Result<Value, ApiError> {
     require_agent_owner_id(state, user_id, &req.agent_id)?;
 
@@ -228,11 +264,21 @@ pub(crate) async fn send_email_for_user(
             "Agent email channel has no mailflare mailbox id; re-provision.",
         )
     })?;
-    let api_key = open_channel_key(&channel)?;
+    // Direct (unreviewed) replies are delivered with the allternit-api admin
+    // key, the only key mailflare honors skipApproval for; the per-mailbox key
+    // can never send without review.
+    let api_key = if extra.skip_approval {
+        client.config().admin_key.clone()
+    } else {
+        open_channel_key(&channel)?
+    };
 
     // Record first so the row exists even when the mailflare call fails.
     let outbound_id = uuid::Uuid::new_v4().to_string();
-    let idempotency_key = format!("agent-email:{outbound_id}");
+    let idempotency_key = match extra.reply_inbound_id {
+        Some(inbound_id) => format!("agent-email-reply:{inbound_id}"),
+        None => format!("agent-email:{outbound_id}"),
+    };
     let thread_id = format!("mail:email-out-{outbound_id}");
     let snippet: String = req
         .text
@@ -246,8 +292,8 @@ pub(crate) async fn send_email_for_user(
         let conn = state.db.connect().map_err(internal)?;
         conn.execute(
             "INSERT INTO agent_email_outbound
-                 (id, agent_id, user_id, thread_id, idempotency_key, to_address, subject, snippet, status, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'pending_approval', CURRENT_TIMESTAMP)",
+                 (id, agent_id, user_id, thread_id, idempotency_key, to_address, subject, snippet, status, updated_at, reply_inbound_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'pending_approval', CURRENT_TIMESTAMP, ?9)",
             params![
                 outbound_id,
                 req.agent_id,
@@ -256,14 +302,15 @@ pub(crate) async fn send_email_for_user(
                 idempotency_key,
                 req.to,
                 req.subject,
-                snippet
+                snippet,
+                extra.reply_inbound_id
             ],
         )
         .map_err(internal)?;
     }
 
     let send_result = client
-        .send(
+        .send_with_options(
             &api_key,
             &SendEmailRequest {
                 from: &channel.address,
@@ -272,8 +319,10 @@ pub(crate) async fn send_email_for_user(
                 text: req.text.as_deref(),
                 html: req.html.as_deref(),
                 mailbox_id: &mailbox_id,
+                headers: extra.headers,
             },
             &idempotency_key,
+            extra.skip_approval,
         )
         .await;
 
@@ -347,6 +396,192 @@ fn mark_outbound_failed(state: &AppState, outbound_id: &str, error: &str) {
             warn!(error = %e, "agent-email: failed to mark outbound failed");
         }
     }
+}
+
+// ============================================================================
+// Bot reply to an inbound turn (the reason this rail exists)
+// ============================================================================
+
+/// Record what the reply did on the inbound row ('sent', 'pending_approval',
+/// 'failed', 'turn_failed', 'disabled', 'skipped') so a conversation's email
+/// trail is explainable from the database alone.
+fn set_reply_status(db: &crate::db::DbHandle, inbound_id: &str, status: &str) {
+    if let Ok(conn) = db.connect() {
+        if let Err(e) = conn.execute(
+            "UPDATE agent_email_inbound SET reply_status = ?1 WHERE id = ?2",
+            params![status, inbound_id],
+        ) {
+            warn!(error = %e, inbound_id = %inbound_id, "agent-email: failed to record reply status");
+        }
+    }
+}
+
+fn env_cap(name: &str, default: i64) -> i64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(default)
+}
+
+/// Reply caps: at most N bot replies per sender per hour and M per bot per
+/// day. Counts every outbound row marked as a reply, whatever its status, so
+/// approval-pending replies also count toward the limit.
+fn over_reply_caps(conn: &rusqlite::Connection, agent_id: &str, to: &str) -> bool {
+    let max_sender_hour = env_cap("ALLTERNIT_BOT_EMAIL_MAX_PER_SENDER_HOUR", 5);
+    let max_bot_day = env_cap("ALLTERNIT_BOT_EMAIL_MAX_PER_BOT_DAY", 200);
+    let sender_count: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM agent_email_outbound
+             WHERE agent_id = ?1 AND reply_inbound_id IS NOT NULL
+               AND LOWER(to_address) = LOWER(?2)
+               AND created_at > datetime('now', '-1 hour')",
+            params![agent_id, to],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    let bot_count: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM agent_email_outbound
+             WHERE agent_id = ?1 AND reply_inbound_id IS NOT NULL
+               AND created_at > datetime('now', '-1 day')",
+            params![agent_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    sender_count >= max_sender_hour || bot_count >= max_bot_day
+}
+
+/// Whether the sender already has any email thread with this bot (the
+/// `auto_known` mode trusts these senders without approval).
+fn sender_has_thread(conn: &rusqlite::Connection, agent_id: &str, from_lower: &str) -> bool {
+    let prefix = format!("email:{from_lower}:");
+    conn.query_row(
+        "SELECT count(*) FROM bot_threads
+         WHERE bot_id = ?1 AND status NOT IN ('done', 'failed')
+           AND substr(json_extract(origin, '$.channelKey'), 1, length(?2)) = ?2",
+        params![agent_id, prefix],
+        |row| row.get::<_, i64>(0),
+    )
+    .unwrap_or(0)
+        > 0
+}
+
+/// Email the bot's turn answer back to the sender. Runs after `send_bot_turn`
+/// returns `Ok(reply)`; the thread's conversation continues by email from
+/// here. Approval policy (mode, allowlist, domain verification, caps, kill
+/// switch) is re-read here so a settings change mid-conversation applies to
+/// the next reply, not the next restart.
+async fn send_reply_for_turn(
+    state: &Arc<AppState>,
+    db: &crate::db::DbHandle,
+    agent_id: &str,
+    inbound_id: &str,
+    from: &str,
+    subject: &str,
+    turn_body: &str,
+    reply: &str,
+) -> Result<(), String> {
+    use crate::agent_email_reply::{
+        build_references, build_reply_text, decide_reply_plan, parse_allowlist, quote_excerpt,
+        reply_recipient, reply_subject, sender_domain, ReplyMode, ReplyPlan,
+    };
+
+    let (channel, owner, in_reply_to, email_references, reply_to) = {
+        let conn = db.connect().map_err(|e| e.to_string())?;
+        let channel = lookup_email_channel(&conn, agent_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "agent email channel missing".to_string())?;
+        let owner: String = conn
+            .query_row(
+                "SELECT user_id FROM agents WHERE id = ?1",
+                params![agent_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        let (in_reply_to, email_references, reply_to): (Option<String>, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT in_reply_to, email_references, reply_to FROM agent_email_inbound WHERE id = ?1",
+                params![inbound_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(|e| e.to_string())?;
+        (channel, owner, in_reply_to, email_references, reply_to)
+    };
+
+    // Per-bot kill switch: the turn ran, the reply does not go out.
+    if !channel.reply_enabled {
+        info!(agent_id = %agent_id, inbound_id = %inbound_id, "agent-email: reply disabled by kill switch");
+        set_reply_status(db, inbound_id, "disabled");
+        return Ok(());
+    }
+
+    let mode = ReplyMode::parse(&channel.reply_mode).unwrap_or(ReplyMode::Approve);
+    let domain = sender_domain(from);
+    let allowlist = parse_allowlist(channel.reply_allowlist.as_deref());
+    let domain_allowed = allowlist.iter().any(|d| d == &domain);
+    let (sender_known, over_cap) = {
+        let conn = db.connect().map_err(|e| e.to_string())?;
+        (
+            sender_has_thread(&conn, agent_id, &from.to_lowercase()),
+            over_reply_caps(&conn, agent_id, from),
+        )
+    };
+    if over_cap {
+        info!(
+            agent_id = %agent_id,
+            from = %from,
+            "agent-email: reply cap reached; reply falls back to approval"
+        );
+    }
+    let plan = decide_reply_plan(mode, channel.domain_verified, sender_known, domain_allowed, over_cap);
+    info!(
+        agent_id = %agent_id,
+        from = %from,
+        mode = mode.as_str(),
+        plan = match plan { ReplyPlan::Direct => "direct", ReplyPlan::Approval => "approval" },
+        "agent-email: sending bot reply"
+    );
+
+    // Threading: answer to the sender's Message-ID, carry their References
+    // chain, and mark the message as an automatic reply so responders and
+    // other bots' guards can tell.
+    let mut headers = std::collections::HashMap::new();
+    if let Some(message_id) = in_reply_to.as_deref() {
+        headers.insert("In-Reply-To".to_string(), message_id.to_string());
+    }
+    if let Some(references) = build_references(email_references.as_deref(), in_reply_to.as_deref()) {
+        headers.insert("References".to_string(), references);
+    }
+    headers.insert("Auto-Submitted".to_string(), "auto-replied".to_string());
+
+    let body = build_reply_text(reply, &quote_excerpt(turn_body, 500));
+    let req = SendAgentEmailRequest {
+        agent_id: agent_id.to_string(),
+        to: reply_recipient(from, reply_to.as_deref()),
+        subject: reply_subject(subject),
+        text: Some(body),
+        html: None,
+    };
+    let result = send_email_inner(
+        state,
+        &owner,
+        req,
+        SendEmailExtra {
+            reply_inbound_id: Some(inbound_id),
+            headers: Some(&headers),
+            skip_approval: plan == ReplyPlan::Direct,
+        },
+    )
+    .await
+    .map_err(|(_, Json(message))| message.to_string())?;
+    let status = result
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("sent")
+        .to_string();
+    set_reply_status(db, inbound_id, &status);
+    Ok(())
 }
 
 // ============================================================================
@@ -575,6 +810,7 @@ async fn receive_inbound_email(
     let snippet = data.get("snippet").and_then(|v| v.as_str());
     let text_body = data.get("textBody").and_then(|v| v.as_str());
     let provider_message_id = data.get("messageId").and_then(|v| v.as_str());
+    let mail_headers = crate::agent_email_reply::InboundMailHeaders::from_data(&data);
 
     // Resolve the receiving agent by the `to` address.
     let resolved = {
@@ -606,8 +842,38 @@ async fn receive_inbound_email(
             .into_response();
     }
 
-    // Persist the webhook payload, then bridge into Rails Mail so the external
-    // email appears as a typed message in the agent's inbound email thread.
+    // Loop guards run before any turn or reply: auto-responses, list traffic,
+    // daemon addresses, reference bombs, bot-to-bot mail, and DMARC failures
+    // must never reach the model or bounce back out. The sender is checked
+    // against every bot's address so two bots can't ping-pong.
+    let sender_is_bot = {
+        let conn = match state.db.connect() {
+            Ok(conn) => conn,
+            Err(e) => return internal(e).into_response(),
+        };
+        match conn.query_row(
+            "SELECT count(*) FROM agent_identity_channels
+             WHERE email_address IS NOT NULL AND LOWER(email_address) = LOWER(?1)",
+            params![from],
+            |row| row.get::<_, i64>(0),
+        ) {
+            Ok(count) => count > 0,
+            Err(e) => return internal(e).into_response(),
+        }
+    };
+    let guard = crate::agent_email_reply::guard_reason(from, &mail_headers, sender_is_bot);
+    if let Some(reason) = guard {
+        info!(
+            agent_id = %agent_id,
+            from = %from,
+            guard = reason.as_str(),
+            "agent-email: inbound skipped by loop guard"
+        );
+    }
+
+    // Persist the webhook payload (raw body and threading headers), then
+    // bridge into Rails Mail so the external email appears as a typed message
+    // in the agent's inbound email thread.
     let inbound_id = uuid::Uuid::new_v4().to_string();
     {
         let conn = match state.db.connect() {
@@ -616,8 +882,9 @@ async fn receive_inbound_email(
         };
         if let Err(e) = conn.execute(
             "INSERT INTO agent_email_inbound
-                 (id, agent_id, provider_message_id, from_address, to_address, subject, snippet, text_body, headers_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                 (id, agent_id, provider_message_id, from_address, to_address, subject, snippet, text_body, headers_json,
+                  in_reply_to, email_references, reply_to, auth_results, guard_reason, reply_status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 inbound_id,
                 agent_id,
@@ -628,6 +895,12 @@ async fn receive_inbound_email(
                 snippet,
                 text_body,
                 data.get("headers").map(|h| h.to_string()),
+                mail_headers.message_id,
+                mail_headers.references,
+                mail_headers.reply_to,
+                mail_headers.auth_results,
+                guard.map(|g| g.as_str()),
+                guard.map(|_| "skipped"),
             ],
         ) {
             return internal(e).into_response();
@@ -635,21 +908,47 @@ async fn receive_inbound_email(
     }
 
     // The email is also a thread for the bot (P6.2): one per conversation
-    // (sender + subject without Re:/Fwd:), so a reply continues it.
-    {
+    // (sender + subject without Re:/Fwd:), so a reply continues it. The bot
+    // reads the de-quoted body; the reply (when enabled and no guard fired)
+    // is emailed back to the sender after the turn.
+    if guard.is_none() {
         let db = state.db.clone();
+        let app = state.clone();
         let agent = agent_id.clone();
+        let inbound = inbound_id.clone();
         let from_s = from.to_string();
         let subject_s = subject.unwrap_or("(no subject)").to_string();
         let body_s = text_body.or(snippet).unwrap_or("(no body)").to_string();
         tokio::spawn(async move {
+            let stripped = crate::agent_email_reply::strip_quoted_history(&body_s);
+            let turn_body = if stripped.is_empty() { body_s.clone() } else { stripped };
             let rt = crate::thread_routes::GizziRuntime { db: db.clone() };
             let key = format!("email:{}:{}", from_s.to_lowercase(), crate::thread_routes::conversation_subject(&subject_s));
-            let text = format!("[email from {from_s}] Subject: {subject_s}\n\n{body_s}");
+            let text = format!("[email from {from_s}] Subject: {subject_s}\n\n{turn_body}");
             match crate::thread_routes::channel_thread(&db, &rt, &agent, "email", &key, &subject_s, &body_s).await {
                 Ok(session) => {
-                    if let Err(e) = crate::agent_session_routes::send_bot_turn(&db, &session, &agent, &text).await {
-                        warn!(error = %e, agent_id = %agent, "agent-email: the email thread's turn failed");
+                    match crate::agent_session_routes::send_bot_turn(&db, &session, &agent, &text).await {
+                        Ok(reply) => {
+                            if let Err(e) = send_reply_for_turn(
+                                &app,
+                                &db,
+                                &agent,
+                                &inbound,
+                                &from_s,
+                                &subject_s,
+                                &turn_body,
+                                &reply,
+                            )
+                            .await
+                            {
+                                warn!(error = %e, agent_id = %agent, "agent-email: reply send failed");
+                                set_reply_status(&db, &inbound, "failed");
+                            }
+                        }
+                        Err(e) => {
+                            warn!(error = %e, agent_id = %agent, "agent-email: the email thread's turn failed");
+                            set_reply_status(&db, &inbound, "turn_failed");
+                        }
                     }
                 }
                 Err(e) => warn!(error = %e, agent_id = %agent, "agent-email: couldn't start the email thread"),

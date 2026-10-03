@@ -1,3 +1,4 @@
+import { readAccountBots, accountBotUrl } from "../_shared/account-bots.js";
 // kimi-web adapter — the shared web-chat base (fresh chat, mapped-thread
 // continue with the divergence check, fingerprint reconcile) over
 // www.kimi.ai (where the session lives; www.kimi.com has separate storage). chat.create / chat.continue only; model_class is not applied
@@ -40,6 +41,7 @@ export class KimiWebAdapter extends WebChatAdapter {
     super(
       {
         newChatUrl: "https://www.kimi.ai/",
+        newChatUrlFor: (task) => accountBotUrl("kimi", task.options, "https://www.kimi.ai"),
         threadUrl: (id) => `https://www.kimi.ai/chat/${id}`,
       },
       kimiWebConfig(configOverrides),
@@ -98,7 +100,9 @@ export class KimiWebAdapter extends WebChatAdapter {
       const resetsAt = typeof bal?.expireTime === "string" ? bal.expireTime : null;
       return { identity: identity === "Log in" ? null : identity, pct, resetsAt };
     });
+    const agents = await readAccountBots(page, "kimi");
     return {
+      agents,
       identity: read.identity,
       usage:
         read.pct === null

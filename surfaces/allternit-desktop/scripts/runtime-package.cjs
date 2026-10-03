@@ -80,10 +80,27 @@ function runtimeFiles() {
   return files;
 }
 
+/**
+ * The UI commit the staged screens were built from. prepare-platform-static writes
+ * resources/platform/ui-source.json, so the stamp still knows the UI commit when
+ * ALLTERNIT_AI_PATH is only set for the screen build (2026-10-03: a stamp without it
+ * ordered by the older platform commit and came out lower than the live package).
+ */
+function stagedUiSource() {
+  try {
+    const src = JSON.parse(fs.readFileSync(path.join(RESOURCES, 'platform', 'ui-source.json'), 'utf8'));
+    return src && src.commit && src.path ? src : null;
+  } catch {
+    return null;
+  }
+}
+
 function stamp() {
-  const aiDir = process.env.ALLTERNIT_AI_PATH;
+  const staged = stagedUiSource();
+  const aiDir = process.env.ALLTERNIT_AI_PATH || staged?.path;
+  const aiRef = process.env.ALLTERNIT_AI_PATH ? 'HEAD' : staged?.commit;
   const times = [Number(git(REPO_ROOT, 'log', '-1', '--format=%ct')) || 0];
-  if (aiDir) times.push(Number(git(aiDir, 'log', '-1', '--format=%ct')) || 0);
+  if (aiDir) times.push(Number(git(aiDir, 'log', '-1', '--format=%ct', aiRef || 'HEAD')) || 0);
   // Commit time orders builds; the stamp time breaks ties so a rebuild of the same commits still wins.
   const build = Math.max(...times, 0) * 1000 + (Math.floor(Date.now() / 1000) % 1000);
   const d = new Date(Math.max(...times) * 1000 || Date.now()).toISOString();
@@ -95,7 +112,7 @@ function stamp() {
   const info = {
     version, build, shellApi: shellApi(),
     platformSha: git(REPO_ROOT, 'rev-parse', 'HEAD') || null,
-    aiSha: aiDir ? git(aiDir, 'rev-parse', 'HEAD') || null : null,
+    aiSha: aiDir ? git(aiDir, 'rev-parse', aiRef || 'HEAD') || null : null,
     ...(files ? { files } : {}),
   };
   fs.mkdirSync(RESOURCES, { recursive: true });
@@ -228,6 +245,13 @@ async function publish(confirm) {
   if (!fs.existsSync(latestPath)) die('nothing packed — run pack first');
   const latest = JSON.parse(fs.readFileSync(latestPath, 'utf8'));
   const manifest = JSON.parse(fs.readFileSync(path.join(platformDir, latest.manifest), 'utf8'));
+  // The app only takes a package with a higher build than the one it runs, so publishing a
+  // lower build moves the pointer but no client ever installs it. Refuse that unless forced.
+  const live = await fetch(`https://runtime.allternit.com/stable/${PLATFORM}/latest.json`, { cache: 'no-store' })
+    .then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  if (live && Number(live.build) >= Number(latest.build) && !process.env.ALLTERNIT_RUNTIME_ALLOW_OLDER) {
+    die(`live package ${live.version} (build ${live.build}) is not older than ${latest.version} (build ${latest.build}); clients would ignore this publish. Re-stamp from newer commits, or set ALLTERNIT_RUNTIME_ALLOW_OLDER=1 to roll the pointer back on purpose.`);
+  }
   auth.token = cloudflareToken();
   const have = await remoteObjects();
   const needed = [...new Set(Object.values(manifest.files).map((f) => `objects/${f.sha256}.gz`))].filter((k) => !have.has(k));

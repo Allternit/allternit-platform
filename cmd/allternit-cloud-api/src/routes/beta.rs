@@ -488,7 +488,7 @@ mod tests {
 
     #[tokio::test]
     async fn no_healthy_node_is_a_428_pair_a_device_error() {
-        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
         let message =
             "No data-plane node registered for this account — pair a device (or start a hosted runtime) and try again";
@@ -529,7 +529,7 @@ mod tests {
 
     #[tokio::test]
     async fn relays_to_the_resolved_default_node_with_exact_method_path_and_body() {
-        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
 
         let gateway = Arc::new(MockGateway::new(
@@ -604,7 +604,7 @@ mod tests {
 
     #[tokio::test]
     async fn session_lifecycle_routes_wire_to_the_matching_8013_paths() {
-        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
 
         let gateway = Arc::new(MockGateway::new(
@@ -670,7 +670,7 @@ mod tests {
 
     #[tokio::test]
     async fn events_ws_ticket_binds_the_node_beta_events_path() {
-        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
 
         let device_id = format!("rt_{}", uuid::Uuid::new_v4().simple());
@@ -705,7 +705,7 @@ mod tests {
 
     #[tokio::test]
     async fn events_ws_tunnel_relays_frames_to_and_from_the_node() {
-        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
 
         let device_id = format!("rt_{}", uuid::Uuid::new_v4().simple());

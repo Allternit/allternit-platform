@@ -19,12 +19,19 @@ export type SendEmailInput = {
 	html?: string;
 	text?: string;
 	mailboxId: string;
+	/** Custom headers (already allow-list validated) passed to the provider as-is. */
+	headers?: Record<string, string>;
 	attachments?: AttachmentContent[];
 };
 
 export type SendEmailOptions = {
 	/** Idempotency-Key header value; replays return the original job instead of duplicating. */
 	idempotencyKey?: string | null;
+	/**
+	 * Deliver without the approval gate. The route only sets this for
+	 * admin-scope keys; mailbox-scoped keys always go through approval.
+	 */
+	skipApproval?: boolean;
 };
 
 export type SendEmailResult = {
@@ -54,6 +61,7 @@ type DeliveryParams = {
 	subject: string;
 	html?: string;
 	text?: string;
+	headers?: Record<string, string>;
 	attachments: AttachmentContent[];
 };
 
@@ -71,6 +79,7 @@ async function deliverOutboundMessage(env: CloudflareEnv, params: DeliveryParams
 			subject: params.subject,
 			html: params.html,
 			text: params.text,
+			headers: params.headers,
 			attachments: params.attachments,
 		});
 
@@ -144,7 +153,7 @@ export async function sendEmail(
 	});
 	const messageId = newId("msg");
 	const snippet = buildSnippet(input.text ?? null, input.html ?? null);
-	const approvalRequired = isSendApprovalRequired(env);
+	const approvalRequired = isSendApprovalRequired(env) && options?.skipApproval !== true;
 
 	await db.insert(messages).values({
 		id: messageId,
@@ -209,6 +218,7 @@ export async function sendEmail(
 		subject: input.subject,
 		html: input.html,
 		text: input.text,
+		headers: input.headers,
 		attachments,
 	});
 	return { messageId, jobId, status: "sent", idempotentReplay: false };
@@ -224,6 +234,7 @@ type StoredOutboundPayload = {
 	html?: string;
 	text?: string;
 	mailboxId: string;
+	headers?: Record<string, string>;
 };
 
 /**
@@ -283,6 +294,7 @@ export async function processOutboundQueue(
 			subject: stored.subject,
 			html: stored.html,
 			text: stored.text,
+			headers: stored.headers,
 			attachments,
 		});
 	} catch (err) {

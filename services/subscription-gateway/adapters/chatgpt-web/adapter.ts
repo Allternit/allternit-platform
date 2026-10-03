@@ -1,3 +1,4 @@
+import { readAccountBots, accountBotUrl } from "../_shared/account-bots.js";
 // chatgpt-web adapter — §A3.3: DeclarativeChatAdapter base + code hooks for
 // image.generate, D5 temp-chat default, chat.continue divergence check
 // (Critical #7), fingerprint reconcile (Critical #2), SingletonLock →
@@ -159,7 +160,9 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
       const m = /(\d{1,3})\s*%\s*usage remaining/i.exec(document.body?.innerText ?? "");
       return { identity, pct: m ? Number(m[1]) : null };
     });
+    const agents = await readAccountBots(page, "chatgpt");
     return {
+      agents,
       identity: read.identity,
       usage:
         read.pct === null
@@ -184,7 +187,7 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
         // Never type into the page as left by the previous task: a chat.create
         // there would land in that task's thread (live: a stateless prompt
         // appended to a mapped fabric thread) or in its temp chat.
-        await this.openFreshChat(ctx);
+        await this.openFreshChat(ctx, task);
         await this.dismissAnnouncements(ctx);
         if (this.opts.tempChat !== false && !task.thread_id) {
           // D5: temporary chat is for STATELESS tasks only. A task on a fabric
@@ -260,9 +263,10 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
     return true;
   }
 
-  private async openFreshChat(ctx: ExecutionContext): Promise<void> {
+  private async openFreshChat(ctx: ExecutionContext, task?: Task): Promise<void> {
     if (this.opts.freshChat === false) return;
-    await sdkPage(ctx.page).goto(this.manifest.origins[0] ?? "https://chatgpt.com/", {
+    const origin = this.manifest.origins[0] ?? "https://chatgpt.com/";
+    await sdkPage(ctx.page).goto((task && accountBotUrl("chatgpt", task.options, origin)) || origin, {
       waitUntil: "domcontentloaded",
     });
   }

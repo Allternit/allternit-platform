@@ -35,7 +35,7 @@ use crate::AppState;
 
 type HmacSha256 = Hmac<Sha256>;
 
-pub const PROVIDERS: [&str; 5] = ["slack", "teams", "discord", "whatsapp", "telegram"];
+pub const PROVIDERS: [&str; 7] = ["slack", "teams", "discord", "whatsapp", "telegram", "whatsapp-personal", "sms"];
 
 // ---------------------------------------------------------------- http seam
 
@@ -571,7 +571,13 @@ pub(crate) fn accounts(db: &DbHandle, provider: &str, only: Option<&str>) -> Vec
 pub fn build_transport(provider: &str, secret: &str, http: Arc<dyn HttpSend>) -> Option<Arc<dyn ChannelTransport>> {
     let token = |k: &str| Some(pick(secret, k)).filter(|s| !s.is_empty());
     Some(match provider {
-        "slack" => Arc::new(SlackTransport::from_env()),
+        "slack" => match crate::channel_slack_app::SlackAppTransport::from_secret(secret, http, None) {
+            // A shared-app connection (team metadata in the sealed secret)
+            // sends through the cloud; anything else is a legacy env-token
+            // install.
+            Some(shared) => Arc::new(shared),
+            None => Arc::new(SlackTransport::from_env()),
+        },
         "teams" => Arc::new(TeamsTransport {
             auth: match (token("appId"), token("appPassword")) {
                 (Some(id), Some(pw)) => Some(crate::teams_auth::shared(http.clone(), &id, &pw)),
@@ -579,9 +585,13 @@ pub fn build_transport(provider: &str, secret: &str, http: Arc<dyn HttpSend>) ->
             },
             http,
             access_token: token("accessToken"), own_identity: token("botId") }),
+        "discord" if crate::channel_discord_app::is_app_secret(secret) => Arc::new(crate::channel_discord_app::DiscordAppTransport::from_secret(secret, http)),
         "discord" => Arc::new(DiscordTransport { http, webhook_url: token("webhookUrl"), own_identity: token("botId") }),
+        "whatsapp" if crate::channel_whatsapp_app::is_business(secret) => Arc::new(crate::channel_whatsapp_app::WhatsAppBusinessTransport::from_secret(secret, http)),
         "whatsapp" => Arc::new(WhatsAppTransport { http, access_token: token("accessToken"), own_identity: token("phoneNumberId") }),
         "telegram" => Arc::new(TelegramTransport { http, bot_token: token("botToken"), own_identity: token("botUsername") }),
+        "whatsapp-personal" if crate::channel_whatsapp_personal::enabled() => Arc::new(crate::channel_whatsapp_personal::WhatsAppPersonalTransport::from_secret(secret, http)),
+        "sms" => Arc::new(crate::channel_phone::build_sms(http, secret)),
         _ => return None,
     })
 }
@@ -589,6 +599,12 @@ pub fn build_transport(provider: &str, secret: &str, http: Arc<dyn HttpSend>) ->
 /// The production transport for a binding (its provider account's secrets).
 pub fn transport_for(state: &Arc<AppState>, b: &BindingRow) -> Option<Arc<dyn ChannelTransport>> {
     if b.provider == "slack" {
+        // A shared-app connection sends through the cloud (its sealed secret
+        // names the team); bindings without one keep the legacy env-token
+        // transport, like the pre-shared-app flow.
+        if let Some(acct) = b.account.as_deref().and_then(|id| accounts(&state.db, "slack", Some(id)).into_iter().next()) {
+            return build_transport("slack", &acct.secret, Arc::new(ReqwestSend));
+        }
         return build_transport("slack", "", Arc::new(ReqwestSend));
     }
     let acct = accounts(&state.db, &b.provider, b.account.as_deref()).into_iter().next()?;
@@ -672,7 +688,7 @@ pub(crate) fn off_bot_notice(name: &str, provider: &str) -> String {
 
 pub(crate) const NO_BOT_NOTICE: &str = "No Allternit bot is switched on for this chat yet. In Allternit, open a bot → Agent Gateway → Messaging and switch this connection on.";
 
-const CHANNEL_NAME: [(&str, &str); 5] = [("telegram", "Telegram"), ("discord", "Discord"), ("whatsapp", "WhatsApp"), ("teams", "Teams"), ("slack", "Slack")];
+const CHANNEL_NAME: [(&str, &str); 6] = [("whatsapp-personal", "WhatsApp"), ("telegram", "Telegram"), ("discord", "Discord"), ("whatsapp", "WhatsApp"), ("teams", "Teams"), ("slack", "Slack")];
 
 /// A bot whose vendor lane is a channel (e.g. Muse over WhatsApp): replies on
 /// its conversation are the vendor's answers, pulled by the lane transport,
@@ -695,6 +711,9 @@ fn lane_conversation(db: &DbHandle, thread_id: &str) -> bool {
 pub async fn route_inbound<R: crate::thread_routes::ThreadRuntime>(db: &DbHandle, rt: &R, acct: &Account, provider: &str, e: &Inbound) -> Result<Routed, String> {
     let none = |recorded| Ok(Routed { binding: None, recorded, turn: None, speaker: None, notice: None });
     let bots = member_bots(db, acct);
+    // Shared Discord app: "@Allternit name", "/name" and replies become "@name".
+    let hooked;
+    let e = if provider == "discord" { hooked = crate::channel_discord_app::rewrite(db, acct, &bots, e); &hooked } else { e };
     let mut binding = find_binding(db, provider, &e.conversation).filter(|b| b.owner == acct.owner);
     if binding.is_none() && !e.own && e.kind == InboundKind::Message {
         let text = e.text.clone().unwrap_or_default();
@@ -791,6 +810,28 @@ pub(crate) fn failure_notice(speaker: Option<&str>, err: &str) -> String {
 pub async fn dispatch_events(st: &Arc<AppState>, acct: &Account, tx: Arc<dyn ChannelTransport>, events: Vec<Inbound>) {
     let rt = crate::thread_routes::GizziRuntime { db: st.db.clone() };
     for e in events {
+        // Managed Bots onboarding: a /start <nonce> to a freshly delivered
+        // child bot pairs the Telegram user, answers in the chat, and never
+        // reaches the bots below.
+        if tx.provider() == "telegram" {
+            if let Some(outcome) = pair_telegram_start(&st.db, acct, &e) {
+                if let Err(err) = tx
+                    .post(&Outbound {
+                        workspace: e.workspace.clone(),
+                        channel: e.channel.clone(),
+                        thread: e.thread.clone(),
+                        text: outcome.reply,
+                        identity: None,
+                    })
+                    .await
+                {
+                    warn!(provider = "telegram", "pairing reply failed: {err:?}");
+                }
+                let st = st.clone();
+                tokio::spawn(async move { notify_cloud_paired(&st, outcome.notify).await });
+                continue;
+            }
+        }
         match route_inbound(&st.db, &rt, acct, tx.provider(), &e).await {
             Ok(Routed { binding: Some(b), turn: Some((session, bot, text)), speaker, .. }) => {
                 let reply = match crate::agent_session_routes::send_bot_turn(&st.db, &session, &bot, &text).await {
@@ -823,6 +864,90 @@ pub async fn dispatch_events(st: &Arc<AppState>, acct: &Account, tx: Arc<dyn Cha
             Err(err) => warn!("channel inbound failed: {err}"),
         }
     }
+}
+
+/// What a managed-onboarding `/start <nonce>` produced.
+pub(crate) struct PairingOutcome {
+    pub(crate) reply: String,
+    pub(crate) notify: PairingNotify,
+}
+
+/// The cloud onboarding row to report the pairing to. `pair_nonce` is echoed
+/// back as the capability (the route requires state `connected` + nonce match).
+pub(crate) struct PairingNotify {
+    pub(crate) onboarding_id: String,
+    pub(crate) pair_nonce: String,
+}
+
+/// Telegram Managed Bots pairing: the cloud wizard relayed a child bot token
+/// here with a one-time nonce; the first person who opens the child bot and
+/// sends `/start <nonce>` claims the Telegram account (their Telegram user id
+/// becomes `tg_owner_user_id`) and the nonce burns. Returns `None` for
+/// anything else — plain `/start`, a wrong nonce, our own echoes, other
+/// providers — so normal routing is untouched.
+pub(crate) fn pair_telegram_start(db: &DbHandle, acct: &Account, e: &Inbound) -> Option<PairingOutcome> {
+    use rusqlite::OptionalExtension;
+    if e.kind != InboundKind::Message || e.own {
+        return None;
+    }
+    let text = e.text.as_deref()?.trim();
+    let mut tokens = text.split_whitespace();
+    let command = tokens.next()?.split('@').next()?; // group form: /start@ChildBot
+    if command != "/start" {
+        return None;
+    }
+    let nonce = tokens.next()?; // a plain /start routes normally
+    let user = e.user.as_deref()?.to_string();
+    let conn = db.connect().ok()?;
+    let (pending, onboarding_id): (String, String) = conn
+        .query_row(
+            "SELECT COALESCE(pair_nonce, ''), COALESCE(pair_onboarding_id, '') FROM provider_account_bindings WHERE id = ?1 AND owner = ?2",
+            params![acct.id, acct.owner],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .ok()??;
+    if pending.is_empty() || pending != nonce {
+        return None;
+    }
+    // Claim atomically: a concurrent duplicate /start loses the race here.
+    let claimed = conn
+        .execute(
+            "UPDATE provider_account_bindings SET tg_owner_user_id = ?2, pair_nonce = NULL, updated_at = ?3 WHERE id = ?1 AND owner = ?4 AND pair_nonce = ?5",
+            params![acct.id, user, crate::agent_gateway_routes::now(), acct.owner, nonce],
+        )
+        .ok()?;
+    if claimed == 0 {
+        return None;
+    }
+    let name = member_bots(db, acct)
+        .into_iter()
+        .next()
+        .map(|m| m.name)
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| "your bot".to_string());
+    Some(PairingOutcome {
+        reply: format!("Connected. You're talking to {name} on Allternit."),
+        notify: PairingNotify { onboarding_id, pair_nonce: nonce.to_string() },
+    })
+}
+
+/// Report the pairing to the cloud onboarding row so its status flips to
+/// `paired`. Best-effort: the reply above already told the user; a missed
+/// call only leaves cloud status stale, and the user flow does not depend on it.
+async fn notify_cloud_paired(st: &Arc<AppState>, notify: PairingNotify) {
+    let Some(base) = st.config.cloud_api_url() else { return };
+    let url = format!(
+        "{}/api/v1/channel-onboarding/telegram/{}/paired",
+        base.trim_end_matches('/'),
+        notify.onboarding_id
+    );
+    let _ = reqwest::Client::new()
+        .post(&url)
+        .json(&json!({ "pairNonce": notify.pair_nonce }))
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await;
 }
 
 async fn webhook_h(State(state): State<Arc<AppState>>, Path(provider): Path<String>, headers: HeaderMap, body: Bytes) -> Response {
@@ -1525,5 +1650,101 @@ mod tests {
             assert!(send.get_json(url).await.unwrap_err().contains("blocked"), "{url}");
             assert!(send.post_form(url, vec![]).await.unwrap_err().contains("blocked"), "{url}");
         }
+    }
+
+    // ---- Telegram Managed Bots pairing (/start <nonce>)
+
+    #[derive(Default)]
+    struct RecordingTelegram {
+        posted: Mutex<Vec<Outbound>>,
+    }
+
+    #[async_trait]
+    impl ChannelTransport for RecordingTelegram {
+        fn provider(&self) -> &'static str {
+            "telegram"
+        }
+        fn verify(&self, _s: &str, _h: &HeaderMap, _b: &[u8]) -> Result<(), String> {
+            Ok(())
+        }
+        fn normalize(&self, _payload: &Value) -> Vec<Inbound> {
+            vec![]
+        }
+        fn identity(&self, requested: Option<&str>) -> Identity {
+            Identity { id: requested.map(str::to_string), exact: true }
+        }
+        async fn post(&self, out: &Outbound) -> Result<Receipt, PostError> {
+            self.posted.lock().unwrap().push(out.clone());
+            Ok(Receipt { remote_id: "m.1".into(), relayed: false })
+        }
+    }
+
+    fn arm_pairing(st: &Arc<AppState>, nonce: &str) {
+        st.db.connect().unwrap().execute(
+            "UPDATE provider_account_bindings SET pair_nonce = ?1, pair_onboarding_id = 'onb-1' WHERE id = 'acct-1'",
+            params![nonce],
+        ).unwrap();
+    }
+
+    #[tokio::test]
+    async fn start_nonce_pairs_the_chat_and_burns_the_nonce() {
+        let (st, acct) = setup("pair", &json!({ "botToken": "t" }).to_string(), "telegram", Some("bot-1")).await;
+        arm_pairing(&st, "nonce-1");
+
+        // Wrong nonce, plain /start, and our own echoes never pair.
+        assert!(pair_telegram_start(&st.db, &acct, &tg(1, 42, "/start nope")).is_none());
+        assert!(pair_telegram_start(&st.db, &acct, &tg(2, 42, "/start")).is_none());
+        let mut own = tg(3, 42, "/start nonce-1");
+        own.own = true;
+        assert!(pair_telegram_start(&st.db, &acct, &own).is_none());
+        // Group command form pairs too.
+        let outcome = pair_telegram_start(&st.db, &acct, &tg(4, 42, "/start@acme_support_bot nonce-1")).expect("pairs");
+        assert_eq!(outcome.reply, "Connected. You're talking to b on Allternit.");
+        assert_eq!(
+            (outcome.notify.onboarding_id.as_str(), outcome.notify.pair_nonce.as_str()),
+            ("onb-1", "nonce-1")
+        );
+        let c = st.db.connect().unwrap();
+        let (owner, pending): (String, Option<String>) = c
+            .query_row("SELECT tg_owner_user_id, pair_nonce FROM provider_account_bindings WHERE id = 'acct-1'", [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!(owner, "42");
+        assert_eq!(pending, None, "the nonce burns on first use");
+        // A second /start with the burned nonce routes normally instead.
+        assert!(pair_telegram_start(&st.db, &acct, &tg(5, 43, "/start nonce-1")).is_none());
+    }
+
+    #[tokio::test]
+    async fn start_wrong_nonce_still_routes_to_the_bots() {
+        let (st, acct) = setup("pairwrong", &json!({ "botToken": "t" }).to_string(), "telegram", Some("bot-1")).await;
+        arm_pairing(&st, "nonce-1");
+        // No pairing happened…
+        assert!(pair_telegram_start(&st.db, &acct, &tg(1, 42, "/start other")).is_none());
+        // …and the ordinary inbound path still answers: a thread is created
+        // for the default bot.
+        let routed = route_inbound(&st.db, &Rt, &acct, "telegram", &tg(2, 42, "/start other")).await.unwrap();
+        let (_, bot, _) = routed.turn.expect("routes like any /start");
+        assert_eq!(bot, "bot-1");
+        let pending: Option<String> = st
+            .db
+            .connect()
+            .unwrap()
+            .query_row("SELECT pair_nonce FROM provider_account_bindings WHERE id = 'acct-1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(pending.as_deref(), Some("nonce-1"), "a wrong /start keeps the nonce pending");
+    }
+
+    #[tokio::test]
+    async fn dispatch_answers_a_pairing_start_without_running_a_turn() {
+        let (st, acct) = setup("pairdisp", &json!({ "botToken": "t" }).to_string(), "telegram", Some("bot-1")).await;
+        arm_pairing(&st, "nonce-9");
+        let tx = Arc::new(RecordingTelegram::default());
+        dispatch_events(&st, &acct, tx.clone(), vec![tg(1, 42, "/start nonce-9")]).await;
+        let posts = tx.posted.lock().unwrap();
+        assert_eq!(posts.len(), 1);
+        assert_eq!(posts[0].text, "Connected. You're talking to b on Allternit.");
+        drop(posts);
+        let n: i64 = st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM bot_threads", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0, "pairing never runs a bot turn");
     }
 }

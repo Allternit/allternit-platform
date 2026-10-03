@@ -102,7 +102,7 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_runtime_routes_relay_with_method_path_query_and_body() {
-        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
         let gateway = Arc::new(MockGateway::new(
             Some(MockGateway::healthy_node()),
@@ -135,7 +135,7 @@ mod tests {
 
     #[tokio::test]
     async fn no_runtime_online_is_428_pair_a_device() {
-        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
         let gateway = Arc::new(MockGateway::failing("No data-plane node registered for this account — pair a device (or start a hosted runtime) and try again"));
         let app = router(test_state(gateway.clone()).await);

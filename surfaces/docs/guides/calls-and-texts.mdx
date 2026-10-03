@@ -1,0 +1,44 @@
+---
+title: Calls and texts in threads
+description: How a phone number's calls and texts appear in a thread on Desktop, ai.allternit.com and the m.allternit.com phone app.
+---
+
+When a bot has a [phone number](/guides/messaging-channels), its calls and texts show up in one thread per contact. A caller who texts and then calls lands in the same thread.
+
+## Texts
+
+A thread on a phone number looks like a text conversation: your contact's messages on the left, the bot's on the right, with a delivery state under each message you send.
+
+- The composer shows a **segment counter**. A text is 160 characters in plain GSM characters (153 per segment when it splits), or 70 (67) if it contains emoji or other non-GSM characters.
+- **Texting pending carrier approval.** Until the carrier approves your number for texting, the composer is disabled and a banner says so. Calls work during this time.
+- **STOP.** If a contact texts STOP, texts to them are blocked and the thread says so until they text START.
+
+## Calls
+
+A call appears in the thread as a **call card**: who called, a live timer or the outcome (`Ended · 2:14`), and the last line of the transcript. A live call has **Open call**.
+
+A live call also opens the **call screen** by itself. It shows the number, a call timer, the live transcript, and these controls:
+
+| Control | What it does |
+| --- | --- |
+| Mute / Unmute | Mutes the bot's voice on the call. |
+| Keypad | Sends touch-tone digits, for phone menus. |
+| Speaker | Local output for audio when you take over. |
+| Hold / Resume | Puts the caller on hold. |
+| Transfer | Sends the call to another number, **cold** (hand off now) or **warm** (introduce first). |
+| Take over | Joins the call yourself. |
+| Hang up | Ends the call. |
+
+Buttons show what the call is actually doing (confirmed by the voice service), not what you tapped a moment ago, so a button may take a second to change. When a call ends the screen becomes a summary with the reason, duration, and whether it was recorded. Every call begins with a fixed line that says the caller is speaking with an AI and whether the call is recorded.
+
+## On a phone
+
+On **ai.allternit.com** on a phone and in the **m.allternit.com** app:
+
+- The call screen takes the whole screen, with large round buttons and a bigger keypad. Close it with **✕** at the top; the call carries on and the card stays in the thread.
+- Call cards and text bubbles fit a 390 px screen: long numbers wrap and **Open call** is a full-width button under the card.
+- Text composers are sized so the phone does not zoom when you tap them.
+
+## Connect an Android phone
+
+A separate feature lets your bot operate a **spare Android phone** (see its screen, tap, type, send a text or place a call from the phone's SIM). That needs Allternit Desktop. On a phone, Settings → Computers → Phones shows "Connect a phone from Allternit Desktop." Once connected, the bot can use the phone from any of your devices. Full guide: [A phone for your bot (Android)](/guides/phone-for-your-bot).

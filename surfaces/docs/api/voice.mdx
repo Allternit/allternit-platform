@@ -26,6 +26,17 @@ The voice service binds to `127.0.0.1:8001` by default. When deployed behind the
 
 The standalone voice service does not require authentication in local development. When exposed through the platform API, standard bearer-token auth applies. See [Authentication](/api/authentication).
 
+### Desktop sidecar token
+
+Allternit Desktop starts the voice service with `ALLTERNIT_VOICE_TOKEN` set to a random secret generated for each app run. The Voice Session WebSocket (`/v1/voice/session?token=…`) accepts that token; without it, the service accepts loopback connections only. The app gets the URL and token from the Desktop preload bridge:
+
+```ts
+const endpoint = await window.allternit.voice.getSessionEndpoint();
+// { httpUrl: 'http://127.0.0.1:8001', wsUrl: 'ws://127.0.0.1:8001/v1/voice/session', port: 8001, token?: string }
+```
+
+`token` is present only when this Desktop run started the service itself; a service that was already running never received this run's token, so the app connects over loopback without one. The token never leaves the machine and is not shown in the UI.
+
 ## Resources
 
 ### VoiceModel
