@@ -1,6 +1,6 @@
 # Voice call routes (runtime side)
 
-Source: `cmd/allternit-api/src/voice_calls.rs`, migration `V215__voice_calls.sql`. Developer guide with the full contract: `surfaces/docs/guides/voice-call-runtime-routes.mdx`.
+Source: `cmd/allternit-api/src/voice_calls.rs`, migration `V216__voice_calls.sql`. Developer guide with the full contract: `surfaces/docs/guides/voice-call-runtime-routes.mdx`.
 
 cloud-api relays a phone call's start, its events and its bot turns to the runtime. The routes are public to the Clerk middleware and authenticate themselves.
 

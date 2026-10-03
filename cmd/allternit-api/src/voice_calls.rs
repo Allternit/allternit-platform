@@ -1,4 +1,4 @@
-//! Runtime side of phone calls (migration V215). Spec: the FROZEN call contract
+//! Runtime side of phone calls (migration V216). Spec: the FROZEN call contract
 //! in `HANDOFF-realtime-voice-2026-10-02.md` §4.1.
 //!
 //! The voice worker never talks to this runtime directly: cloud-api relays a
