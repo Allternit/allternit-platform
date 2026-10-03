@@ -88,3 +88,19 @@ Then run `touch docs/VOICE_ENGINE_PHASE_1_NOTES.sentinel`.
 - Use `CARGO_TARGET_DIR=$HOME/Desktop/allternit-workspace/.shared-target` as before.
 - Parallel tracks build on your engine: Track B (`ao/voice-session`, `services/voice/src/session/`, defines `StreamingStt`/`Tts`/`Vad` traits) and Track C (`ao/voice-callworker`, `services/voice/src/call_worker/`). Don't edit their dirs. Keep your public STT/TTS/model APIs simple, so B's `engine_sherpa.rs` adapter can wrap them.
 - Squash-free is fine: commit on top of the WIP, small commits. Cap: **300 tool calls** from now.
+
+## Phase 1.1: Eoj's decisions (2026-10-03 ~02:30 CDT). Do these now, same branch.
+
+1. **TTS = Kokoro full-size (fp32) everywhere.** Eoj accepts that the pack goes over the old ~150 MB budget.
+   - Bench both `kokoro-en-v0_19` fp32 and `kokoro-multi-lang-v1_0` fp32 (more and better voices) with 2 threads. Ship the one with the better RTF/quality (prefer v1.0 if its RTF ≤ ~0.7). Pin sha256s, update the pack manifest, the voice list and the size test (new budget = actual size, documented).
+   - **Cut first-audio latency:** split the first sentence at the first clause boundary (comma/semicolon/dash, or ~8 words max) so the first chunk is short. Pass sherpa's per-chunk callback (`generate_with_config` progress callback) through so audio streams while a sentence synthesises. Measure first-audio p50/p95 again.
+2. **Split TTS into its own small GPL-3.0 program `allternit-tts`.** espeak-ng is GPL-3; only the TTS program links it.
+   - Create crate `services/voice-tts/` → binary `allternit-tts`, licence **GPL-3.0-or-later**, with a `LICENSE` file (full GPL-3 text), `README.md` (what it is, how to build, that it's the GPL component of Allternit voice) and `THIRD_PARTY_NOTICES.md`.
+   - It contains only TTS: sherpa-onnx Kokoro + model loading from the same pack dir.
+   - Protocol: a local child process speaking a simple framed protocol over stdin/stdout. JSON request lines `{"id","text","voice","speed"}` → length-prefixed PCM16 chunk frames + JSON done/error lines. Keep it dead simple and document it in its README.
+   - `allternit-voice-service` spawns it as a child (lifeline: it dies with the parent; reuse the existing spawnOwnedChild pattern if the Rust side has one, otherwise kill-on-drop + stdin EOF exit), restarts it on crash, and its `tts.rs` becomes a client of it. `/v1/tts`, `/v1/tts/stream` and the session `Tts` trait keep the same API.
+   - **Verify** that `allternit-voice-service` no longer contains espeak/piper-phonemize: `nm` the release binary and grep for espeak symbols, and paste the result. If sherpa-onnx's static link still drags espeak into the main binary even without TTS symbols, find the cargo feature/linking option that prevents it (or build sherpa STT-only for the main binary) and document it.
+   - **Packaging:** `build-desktop.sh`, `prepare-platform-static.cjs`, `verify-packaged-resources.cjs`, `release-desktop.yml` (mac/win/linux) and `release-preflight.mjs` must build and ship `allternit-tts` next to `allternit-voice-service`.
+3. Re-run the bench (STT unchanged; TTS new numbers), update the notes' tables, `THIRD_PARTY_NOTICES.md` (main binary has no GPL; allternit-tts is GPL-3) and the docs (Mintlify voice pages: model, sizes, licences).
+4. Tests and clippy pass. Commit in small steps and push. Then append a "Phase 1.1 results" section to `docs/VOICE_ENGINE_PHASE_1_NOTES.md` and `touch docs/VOICE_ENGINE_PHASE_1_1.sentinel`.
+- Budget: **200 more tool calls**. Machine-wide cargo caps are on; don't set RUSTC_WRAPPER/CARGO_BUILD_JOBS.
