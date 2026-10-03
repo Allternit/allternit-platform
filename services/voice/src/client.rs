@@ -13,6 +13,12 @@ pub struct VoiceClient {
     client: Client,
 }
 
+impl Default for VoiceClient {
+    fn default() -> Self {
+        Self::new("http://localhost:8001".to_string())
+    }
+}
+
 impl VoiceClient {
     pub fn new(base_url: String) -> Self {
         let client = Client::builder()
@@ -23,10 +29,6 @@ impl VoiceClient {
             base_url,
             client,
         }
-    }
-
-    pub fn default() -> Self {
-        Self::new("http://localhost:8001".to_string())
     }
 
     pub async fn health_check(&self) -> Result<HealthResponse> {

@@ -297,6 +297,7 @@
               "tools/etrid",
               "tools/local-engine",
               "tools/voice",
+              "tools/voice-calls",
               "tools/android-bridge",
               "tools/office-cli",
               "tools/office-engine",
