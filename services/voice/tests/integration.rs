@@ -7,8 +7,8 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use serde_json::json;
-use std::sync::Arc;
 use tower::ServiceExt;
+use std::sync::Arc;
 use voice_service::models::PackManager;
 use voice_service::{create_router, VoiceServiceState};
 
@@ -588,10 +588,7 @@ async fn stt_transcribes_8k_phone_audio() {
             .as_str()
             .unwrap()
             .to_lowercase();
-        assert!(
-            text.contains("weather"),
-            "{model}: unexpected transcript: {text}"
-        );
+        assert!(text.contains("weather"), "{model}: unexpected transcript: {text}");
     }
 }
 
@@ -720,8 +717,5 @@ async fn stt_first_use_reports_voice_pack_downloading() {
     let json = json_body(response).await;
     assert_eq!(json["code"], "voice_pack_downloading");
     assert_eq!(json["pack"], "small");
-    assert!(json["error"]
-        .as_str()
-        .unwrap()
-        .starts_with("Downloading the voice pack ("));
+    assert!(json["error"].as_str().unwrap().starts_with("Downloading the voice pack ("));
 }

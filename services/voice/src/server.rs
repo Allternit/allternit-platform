@@ -3,7 +3,6 @@
 //! HTTP API service for speech-to-text and text-to-speech on sherpa-onnx.
 //! Runs on port 8001. Models download on first use (see `models.rs`).
 
-use self::base64::b64_encode;
 use axum::{
     body::Body,
     extract::{Multipart, State},
@@ -12,6 +11,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use self::base64::b64_encode;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -271,12 +271,7 @@ async fn health_check(State(state): State<VoiceServiceState>) -> Json<serde_json
 /// List available voices (the real Kokoro voices of the small pack).
 async fn list_voices(State(state): State<VoiceServiceState>) -> Json<Vec<VoiceModel>> {
     let ready = state.packs.is_installed("tts");
-    Json(
-        VOICES
-            .iter()
-            .map(|v| VoiceModel::from_def(v, ready))
-            .collect(),
-    )
+    Json(VOICES.iter().map(|v| VoiceModel::from_def(v, ready)).collect())
 }
 
 /// Get specific voice
@@ -385,8 +380,8 @@ async fn text_to_speech(
     let TtsRequest {
         text, voice, speed, ..
     } = request;
-    let result =
-        tokio::task::spawn_blocking(move || tts.synthesize(&text, voice.as_deref(), speed)).await;
+    let result = tokio::task::spawn_blocking(move || tts.synthesize(&text, voice.as_deref(), speed))
+    .await;
     let (samples, sample_rate) = match result {
         Ok(Ok(v)) => v,
         Ok(Err(e)) => return engine_error(e),
@@ -395,11 +390,7 @@ async fn text_to_speech(
 
     let duration_secs = samples.len() as f32 / sample_rate as f32;
     let (bytes, content_type, format_name) = match format {
-        AudioFormat::Pcm16 => (
-            f32_to_pcm16le(&samples),
-            "application/octet-stream",
-            "pcm16",
-        ),
+        AudioFormat::Pcm16 => (f32_to_pcm16le(&samples), "application/octet-stream", "pcm16"),
         AudioFormat::Wav => (
             crate::audio::wav_from_f32(&samples, sample_rate),
             "audio/wav",
@@ -439,20 +430,19 @@ async fn text_to_speech_stream(
         let mut total_samples = 0usize;
         let mut sample_rate = KOKORO_SAMPLE_RATE;
         let mut client_gone = false;
-        let result =
-            tts.synthesize_stream(&text, voice.as_deref(), speed, |i, chunk, samples, rate| {
-                total_samples += samples.len();
-                sample_rate = rate;
-                let event = StreamEvent::Audio {
-                    index: i,
-                    text: chunk.to_string(),
-                    sample_rate: rate,
-                    format: "pcm16".to_string(),
-                    audio_b64: b64_encode(&f32_to_pcm16le(samples)),
-                };
-                client_gone = send_event(&tx, &event).is_err();
-                !client_gone // stop synthesising when the client went away
-            });
+        let result = tts.synthesize_stream(&text, voice.as_deref(), speed, |i, chunk, samples, rate| {
+            total_samples += samples.len();
+            sample_rate = rate;
+            let event = StreamEvent::Audio {
+                index: i,
+                text: chunk.to_string(),
+                sample_rate: rate,
+                format: "pcm16".to_string(),
+                audio_b64: b64_encode(&f32_to_pcm16le(samples)),
+            };
+            client_gone = send_event(&tx, &event).is_err();
+            !client_gone // stop synthesising when the client went away
+        });
         if client_gone {
             return;
         }
@@ -594,10 +584,8 @@ async fn pack_downloading_response(state: &VoiceServiceState, pack: &str) -> Opt
         })),
     )
         .into_response();
-    resp.headers_mut().insert(
-        axum::http::header::RETRY_AFTER,
-        axum::http::HeaderValue::from_static("5"),
-    );
+    resp.headers_mut()
+        .insert(axum::http::header::RETRY_AFTER, axum::http::HeaderValue::from_static("5"));
     Some(resp)
 }
 

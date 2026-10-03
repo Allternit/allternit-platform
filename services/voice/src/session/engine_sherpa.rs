@@ -65,6 +65,7 @@ impl SherpaEngine {
             _ => SttModel::Moonshine,
         }
     }
+
 }
 
 impl EngineFactory for SherpaEngine {
@@ -86,10 +87,7 @@ impl EngineFactory for SherpaEngine {
         Ok(Box::new(SherpaStt {
             engine: self.stt.clone(),
             model,
-            stream: self
-                .stt
-                .segment_stream(model)
-                .map_err(EngineError::unavailable)?,
+            stream: self.stt.segment_stream(model).map_err(EngineError::unavailable)?,
             decoded_at: 0,
             last_interim: None,
         }))

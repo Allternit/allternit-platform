@@ -214,9 +214,7 @@ fn bench_stt(model: SttModel, packs: Arc<PackManager>, args: &Args) -> anyhow::R
 
             // Batch: RTF + the transcript scored for WER.
             let t = Instant::now();
-            let segments = engine
-                .transcribe(&samples, model)
-                .map_err(anyhow::Error::msg)?;
+            let segments = engine.transcribe(&samples, model).map_err(anyhow::Error::msg)?;
             proc_secs += t.elapsed().as_secs_f64();
             audio_secs += dur;
             let hyp = segments
@@ -321,11 +319,7 @@ fn peak_rss_children_mb() -> Option<f64> {
             return None;
         }
         let raw = usage.ru_maxrss as f64;
-        let bytes = if cfg!(target_os = "macos") {
-            raw
-        } else {
-            raw * 1024.0
-        };
+        let bytes = if cfg!(target_os = "macos") { raw } else { raw * 1024.0 };
         Some((bytes / 1_048_576.0).round())
     }
     #[cfg(not(unix))]

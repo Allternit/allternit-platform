@@ -37,46 +37,14 @@ pub enum TransferMode {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CallEvent {
-    Started {
-        direction: String,
-        from: String,
-        to: String,
-        number_id: String,
-    },
-    TranscriptDelta {
-        speaker: Speaker,
-        text: String,
-        is_final: bool,
-        segment_id: String,
-    },
-    Dtmf {
-        digits: String,
-        from: String,
-    },
-    StateChanged {
-        held: bool,
-        muted_bot: bool,
-        muted_caller: bool,
-        speaker: Option<Speaker>,
-    },
-    Transferred {
-        to: String,
-        mode: TransferMode,
-        ok: bool,
-        reason: Option<String>,
-    },
-    Takeover {
-        by: String,
-        active: bool,
-    },
-    VoicemailDetected {
-        action: String,
-    },
-    Ended {
-        duration_sec: u64,
-        reason: String,
-        recording_ref: Option<String>,
-    },
+    Started { direction: String, from: String, to: String, number_id: String },
+    TranscriptDelta { speaker: Speaker, text: String, is_final: bool, segment_id: String },
+    Dtmf { digits: String, from: String },
+    StateChanged { held: bool, muted_bot: bool, muted_caller: bool, speaker: Option<Speaker> },
+    Transferred { to: String, mode: TransferMode, ok: bool, reason: Option<String> },
+    Takeover { by: String, active: bool },
+    VoicemailDetected { action: String },
+    Ended { duration_sec: u64, reason: String, recording_ref: Option<String> },
 }
 
 impl CallEvent {
@@ -96,37 +64,17 @@ impl CallEvent {
     /// camelCase payload; always includes `callId`.
     pub fn payload(&self, call_id: &str) -> Value {
         let mut v = match self {
-            CallEvent::Started {
-                direction,
-                from,
-                to,
-                number_id,
-            } => {
+            CallEvent::Started { direction, from, to, number_id } => {
                 json!({"direction": direction, "from": from, "to": to, "numberId": number_id})
             }
-            CallEvent::TranscriptDelta {
-                speaker,
-                text,
-                is_final,
-                segment_id,
-            } => {
+            CallEvent::TranscriptDelta { speaker, text, is_final, segment_id } => {
                 json!({"speaker": speaker, "text": text, "final": is_final, "segmentId": segment_id})
             }
             CallEvent::Dtmf { digits, from } => json!({"digits": digits, "from": from}),
-            CallEvent::StateChanged {
-                held,
-                muted_bot,
-                muted_caller,
-                speaker,
-            } => json!({
+            CallEvent::StateChanged { held, muted_bot, muted_caller, speaker } => json!({
                 "held": held, "mutedBot": muted_bot, "mutedCaller": muted_caller, "speaker": speaker
             }),
-            CallEvent::Transferred {
-                to,
-                mode,
-                ok,
-                reason,
-            } => {
+            CallEvent::Transferred { to, mode, ok, reason } => {
                 let mut v = json!({"to": to, "mode": mode, "ok": ok});
                 if let Some(r) = reason {
                     v["reason"] = json!(r);
@@ -135,11 +83,7 @@ impl CallEvent {
             }
             CallEvent::Takeover { by, active } => json!({"by": by, "active": active}),
             CallEvent::VoicemailDetected { action } => json!({"action": action}),
-            CallEvent::Ended {
-                duration_sec,
-                reason,
-                recording_ref,
-            } => {
+            CallEvent::Ended { duration_sec, reason, recording_ref } => {
                 let mut v = json!({"durationSec": duration_sec, "reason": reason});
                 if let Some(r) = recording_ref {
                     v["recordingRef"] = json!(r);
@@ -162,11 +106,7 @@ pub struct Sequencer {
 
 impl Sequencer {
     pub fn new(call_id: &str) -> Self {
-        Self {
-            call_id: call_id.to_string(),
-            seq: 0,
-            per_type: HashMap::new(),
-        }
+        Self { call_id: call_id.to_string(), seq: 0, per_type: HashMap::new() }
     }
 
     pub fn envelope(&mut self, ev: &CallEvent) -> EventEnvelope {
@@ -211,10 +151,7 @@ pub struct Backoff {
 
 impl Default for Backoff {
     fn default() -> Self {
-        Self {
-            initial: Duration::from_millis(200),
-            max: Duration::from_secs(10),
-        }
+        Self { initial: Duration::from_millis(200), max: Duration::from_secs(10) }
     }
 }
 
@@ -250,11 +187,7 @@ impl EventQueue {
                 }
             }
         });
-        Self {
-            seq: Sequencer::new(call_id),
-            tx: Some(tx),
-            task: Some(task),
-        }
+        Self { seq: Sequencer::new(call_id), tx: Some(tx), task: Some(task) }
     }
 
     pub fn emit(&mut self, ev: CallEvent) {
@@ -287,11 +220,7 @@ mod tests {
     }
 
     impl EventTransport for Recorder {
-        fn post<'a>(
-            &'a self,
-            _id: &'a str,
-            ev: &'a EventEnvelope,
-        ) -> BoxFuture<'a, Result<(), CloudError>> {
+        fn post<'a>(&'a self, _id: &'a str, ev: &'a EventEnvelope) -> BoxFuture<'a, Result<(), CloudError>> {
             Box::pin(async move {
                 {
                     let mut f = self.transient_failures.lock().unwrap();
@@ -310,10 +239,7 @@ mod tests {
     }
 
     fn fast() -> Backoff {
-        Backoff {
-            initial: Duration::from_millis(1),
-            max: Duration::from_millis(4),
-        }
+        Backoff { initial: Duration::from_millis(1), max: Duration::from_millis(4) }
     }
 
     #[test]
@@ -333,10 +259,7 @@ mod tests {
         });
         let b = s.envelope(&t("hi"));
         let c = s.envelope(&t("there"));
-        let d = s.envelope(&CallEvent::Dtmf {
-            digits: "1".into(),
-            from: "+1".into(),
-        });
+        let d = s.envelope(&CallEvent::Dtmf { digits: "1".into(), from: "+1".into() });
         assert_eq!(a.idempotency_key, "call:c1:call.started:1");
         assert_eq!(b.idempotency_key, "call:c1:call.transcript.delta:1");
         assert_eq!(c.idempotency_key, "call:c1:call.transcript.delta:2");
@@ -349,57 +272,28 @@ mod tests {
 
     #[test]
     fn payload_shapes() {
-        let p = CallEvent::StateChanged {
-            held: true,
-            muted_bot: false,
-            muted_caller: true,
-            speaker: None,
-        }
-        .payload("c");
-        assert_eq!(
-            p,
-            json!({"held":true,"mutedBot":false,"mutedCaller":true,"speaker":null,"callId":"c"})
-        );
-        let p = CallEvent::Ended {
-            duration_sec: 42,
-            reason: "caller_hangup".into(),
-            recording_ref: None,
-        }
-        .payload("c");
-        assert_eq!(
-            p,
-            json!({"durationSec":42,"reason":"caller_hangup","callId":"c"})
-        );
-        let p = CallEvent::Transferred {
-            to: "+1".into(),
-            mode: TransferMode::Cold,
-            ok: false,
-            reason: Some("x".into()),
-        }
-        .payload("c");
+        let p = CallEvent::StateChanged { held: true, muted_bot: false, muted_caller: true, speaker: None }
+            .payload("c");
+        assert_eq!(p, json!({"held":true,"mutedBot":false,"mutedCaller":true,"speaker":null,"callId":"c"}));
+        let p = CallEvent::Ended { duration_sec: 42, reason: "caller_hangup".into(), recording_ref: None }
+            .payload("c");
+        assert_eq!(p, json!({"durationSec":42,"reason":"caller_hangup","callId":"c"}));
+        let p = CallEvent::Transferred { to: "+1".into(), mode: TransferMode::Cold, ok: false, reason: Some("x".into()) }
+            .payload("c");
         assert_eq!(p["mode"], "cold");
         assert_eq!(p["reason"], "x");
     }
 
     #[tokio::test]
     async fn delivers_in_order_through_transient_failures() {
-        let rec = Arc::new(Recorder {
-            transient_failures: Mutex::new(3),
-            ..Default::default()
-        });
+        let rec = Arc::new(Recorder { transient_failures: Mutex::new(3), ..Default::default() });
         let mut q = EventQueue::start("c1", rec.clone(), fast());
         for i in 0..5 {
-            q.emit(CallEvent::Dtmf {
-                digits: i.to_string(),
-                from: "+1".into(),
-            });
+            q.emit(CallEvent::Dtmf { digits: i.to_string(), from: "+1".into() });
         }
         q.close().await.unwrap();
         let got = rec.got.lock().unwrap();
-        let digits: Vec<_> = got
-            .iter()
-            .map(|e| e.payload["digits"].as_str().unwrap().to_string())
-            .collect();
+        let digits: Vec<_> = got.iter().map(|e| e.payload["digits"].as_str().unwrap().to_string()).collect();
         assert_eq!(digits, ["0", "1", "2", "3", "4"]);
         let seqs: Vec<_> = got.iter().map(|e| e.seq).collect();
         assert_eq!(seqs, [1, 2, 3, 4, 5]);
@@ -407,19 +301,10 @@ mod tests {
 
     #[tokio::test]
     async fn permanent_rejection_skips_without_wedging() {
-        let rec = Arc::new(Recorder {
-            reject_type: Some("call.dtmf"),
-            ..Default::default()
-        });
+        let rec = Arc::new(Recorder { reject_type: Some("call.dtmf"), ..Default::default() });
         let mut q = EventQueue::start("c1", rec.clone(), fast());
-        q.emit(CallEvent::Dtmf {
-            digits: "1".into(),
-            from: "+1".into(),
-        });
-        q.emit(CallEvent::Takeover {
-            by: "u".into(),
-            active: true,
-        });
+        q.emit(CallEvent::Dtmf { digits: "1".into(), from: "+1".into() });
+        q.emit(CallEvent::Takeover { by: "u".into(), active: true });
         q.close().await.unwrap();
         let got = rec.got.lock().unwrap();
         assert_eq!(got.len(), 1);

@@ -22,19 +22,12 @@ pub enum Control {
     Hold,
     Resume,
     Dtmf(String),
-    Transfer {
-        to: String,
-        mode: TransferMode,
-    },
+    Transfer { to: String, mode: TransferMode },
     /// A human joins (cloud-api minted their publish token); the bot goes quiet
     /// but keeps transcribing.
-    Takeover {
-        by: String,
-    },
+    Takeover { by: String },
     /// End the takeover; the bot resumes with the same transcript context.
-    Release {
-        by: String,
-    },
+    Release { by: String },
     /// Someone is listening in (receive-only token minted by cloud-api). No
     /// change on the worker side beyond the ack.
     Listen,
@@ -78,11 +71,7 @@ pub fn parse_control(bytes: &[u8]) -> Result<Control, ControlError> {
             Some(t) => Err(ControlError::Invalid(format!("unknown mute target `{t}`"))),
         }
     };
-    let by = || {
-        w.by.clone()
-            .filter(|b| !b.is_empty())
-            .unwrap_or_else(|| "owner".into())
-    };
+    let by = || w.by.clone().filter(|b| !b.is_empty()).unwrap_or_else(|| "owner".into());
     Ok(match w.action.as_str() {
         "hangup" => Control::Hangup,
         "mute" => Control::Mute(target()?),
@@ -99,18 +88,12 @@ pub fn parse_control(bytes: &[u8]) -> Result<Control, ControlError> {
         "transfer" => {
             let to = w.to.clone().unwrap_or_default();
             if !is_transfer_target(&to) {
-                return Err(ControlError::Invalid(format!(
-                    "invalid transfer target `{to}`"
-                )));
+                return Err(ControlError::Invalid(format!("invalid transfer target `{to}`")));
             }
             let mode = match w.mode.as_deref() {
                 None | Some("cold") => TransferMode::Cold,
                 Some("warm") => TransferMode::Warm,
-                Some(m) => {
-                    return Err(ControlError::Invalid(format!(
-                        "unknown transfer mode `{m}`"
-                    )))
-                }
+                Some(m) => return Err(ControlError::Invalid(format!("unknown transfer mode `{m}`"))),
             };
             Control::Transfer { to, mode }
         }
@@ -140,9 +123,7 @@ pub fn is_transfer_target(to: &str) -> bool {
             && d.chars().all(|c| c.is_ascii_digit())
             && !d.starts_with('0');
     }
-    (to.starts_with("sip:") || to.starts_with("tel:+"))
-        && to.len() > 6
-        && !to.contains(char::is_whitespace)
+    (to.starts_with("sip:") || to.starts_with("tel:+")) && to.len() > 6 && !to.contains(char::is_whitespace)
 }
 
 /// `tel:` URI LiveKit's TransferSIPParticipant expects for an E.164 number.
@@ -193,78 +174,34 @@ mod tests {
     fn parses_every_action() {
         assert_eq!(p(r#"{"action":"hangup"}"#), Ok(Control::Hangup));
         assert_eq!(p(r#"{"action":"mute"}"#), Ok(Control::Mute(Target::Bot)));
-        assert_eq!(
-            p(r#"{"action":"mute","target":"caller"}"#),
-            Ok(Control::Mute(Target::Caller))
-        );
-        assert_eq!(
-            p(r#"{"action":"unmute","target":"bot"}"#),
-            Ok(Control::Unmute(Target::Bot))
-        );
+        assert_eq!(p(r#"{"action":"mute","target":"caller"}"#), Ok(Control::Mute(Target::Caller)));
+        assert_eq!(p(r#"{"action":"unmute","target":"bot"}"#), Ok(Control::Unmute(Target::Bot)));
         assert_eq!(p(r#"{"action":"hold"}"#), Ok(Control::Hold));
         assert_eq!(p(r#"{"action":"resume"}"#), Ok(Control::Resume));
-        assert_eq!(
-            p(r#"{"action":"dtmf","digits":"12#*"}"#),
-            Ok(Control::Dtmf("12#*".into()))
-        );
+        assert_eq!(p(r#"{"action":"dtmf","digits":"12#*"}"#), Ok(Control::Dtmf("12#*".into())));
         assert_eq!(
             p(r#"{"action":"transfer","to":"+15105550100"}"#),
-            Ok(Control::Transfer {
-                to: "+15105550100".into(),
-                mode: TransferMode::Cold
-            })
+            Ok(Control::Transfer { to: "+15105550100".into(), mode: TransferMode::Cold })
         );
         assert_eq!(
             p(r#"{"action":"transfer","to":"sip:desk@pbx.example","mode":"warm"}"#),
-            Ok(Control::Transfer {
-                to: "sip:desk@pbx.example".into(),
-                mode: TransferMode::Warm
-            })
+            Ok(Control::Transfer { to: "sip:desk@pbx.example".into(), mode: TransferMode::Warm })
         );
-        assert_eq!(
-            p(r#"{"action":"takeover","by":"user_1"}"#),
-            Ok(Control::Takeover {
-                by: "user_1".into()
-            })
-        );
-        assert_eq!(
-            p(r#"{"action":"release"}"#),
-            Ok(Control::Release { by: "owner".into() })
-        );
+        assert_eq!(p(r#"{"action":"takeover","by":"user_1"}"#), Ok(Control::Takeover { by: "user_1".into() }));
+        assert_eq!(p(r#"{"action":"release"}"#), Ok(Control::Release { by: "owner".into() }));
         assert_eq!(p(r#"{"action":"listen","extra":1}"#), Ok(Control::Listen));
     }
 
     #[test]
     fn rejects_bad_controls() {
         assert!(matches!(p("not json"), Err(ControlError::Json(_))));
-        assert!(matches!(
-            p(r#"{"action":"explode"}"#),
-            Err(ControlError::UnknownAction(_))
-        ));
-        assert!(matches!(
-            p(r#"{"action":"dtmf"}"#),
-            Err(ControlError::Invalid(_))
-        ));
-        assert!(matches!(
-            p(r#"{"action":"dtmf","digits":"12x"}"#),
-            Err(ControlError::Invalid(_))
-        ));
-        assert!(matches!(
-            p(r#"{"action":"transfer","to":"5551234"}"#),
-            Err(ControlError::Invalid(_))
-        ));
-        assert!(matches!(
-            p(r#"{"action":"transfer","to":"+0123456789"}"#),
-            Err(ControlError::Invalid(_))
-        ));
-        assert!(matches!(
-            p(r#"{"action":"mute","target":"everyone"}"#),
-            Err(ControlError::Invalid(_))
-        ));
-        assert!(matches!(
-            p(r#"{"action":"transfer","to":"+15105550100","mode":"blind"}"#),
-            Err(ControlError::Invalid(_))
-        ));
+        assert!(matches!(p(r#"{"action":"explode"}"#), Err(ControlError::UnknownAction(_))));
+        assert!(matches!(p(r#"{"action":"dtmf"}"#), Err(ControlError::Invalid(_))));
+        assert!(matches!(p(r#"{"action":"dtmf","digits":"12x"}"#), Err(ControlError::Invalid(_))));
+        assert!(matches!(p(r#"{"action":"transfer","to":"5551234"}"#), Err(ControlError::Invalid(_))));
+        assert!(matches!(p(r#"{"action":"transfer","to":"+0123456789"}"#), Err(ControlError::Invalid(_))));
+        assert!(matches!(p(r#"{"action":"mute","target":"everyone"}"#), Err(ControlError::Invalid(_))));
+        assert!(matches!(p(r#"{"action":"transfer","to":"+15105550100","mode":"blind"}"#), Err(ControlError::Invalid(_))));
     }
 
     #[test]
@@ -290,12 +227,7 @@ mod tests {
         assert!(!s.bot_active());
         assert_eq!(
             s.state_event(),
-            CallEvent::StateChanged {
-                held: true,
-                muted_bot: false,
-                muted_caller: false,
-                speaker: None
-            }
+            CallEvent::StateChanged { held: true, muted_bot: false, muted_caller: false, speaker: None }
         );
     }
 }

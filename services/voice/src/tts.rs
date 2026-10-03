@@ -274,9 +274,7 @@ fn read_frame(r: &mut impl Read) -> std::io::Result<(u8, Vec<u8>)> {
 fn read_json(r: &mut impl Read) -> Result<serde_json::Value, String> {
     let (kind, payload) = read_frame(r).map_err(|e| format!("allternit-tts read: {e}"))?;
     if kind != b'J' {
-        return Err(format!(
-            "allternit-tts: expected a JSON frame, got {kind:#x}"
-        ));
+        return Err(format!("allternit-tts: expected a JSON frame, got {kind:#x}"));
     }
     serde_json::from_slice(&payload).map_err(|e| format!("allternit-tts sent bad JSON: {e}"))
 }
@@ -311,9 +309,7 @@ impl TtsChild {
                 ready["error"].as_str().unwrap_or("unknown error")
             ));
         }
-        let sample_rate = ready["sample_rate"]
-            .as_u64()
-            .unwrap_or(KOKORO_SAMPLE_RATE as u64) as u32;
+        let sample_rate = ready["sample_rate"].as_u64().unwrap_or(KOKORO_SAMPLE_RATE as u64) as u32;
         info!(
             "allternit-tts ready ({} speakers, {sample_rate} Hz, {threads} threads)",
             ready["num_speakers"]
@@ -363,17 +359,10 @@ impl TtsChild {
                 Some("done") => return Ok(()),
                 Some("error") => {
                     return Err(ChildError::Rejected(
-                        event["error"]
-                            .as_str()
-                            .unwrap_or("allternit-tts error")
-                            .to_string(),
+                        event["error"].as_str().unwrap_or("allternit-tts error").to_string(),
                     ))
                 }
-                _ => {
-                    return Err(ChildError::Dead(format!(
-                        "allternit-tts: unexpected {event}"
-                    )))
-                }
+                _ => return Err(ChildError::Dead(format!("allternit-tts: unexpected {event}"))),
             }
         }
     }
@@ -543,14 +532,8 @@ pub fn split_for_streaming(text: &str) -> Vec<String> {
         let target = (n / 2).clamp(3, 6) as i64;
         let hi = FIRST_CHUNK_MAX_WORDS.min(n - 2);
         cut = (3..=hi).min_by_key(|&k| {
-            let next = words[k]
-                .trim_matches(|c: char| !c.is_alphanumeric())
-                .to_lowercase();
-            let bonus = if BREAK_BEFORE.contains(&next.as_str()) {
-                2
-            } else {
-                0
-            };
+            let next = words[k].trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
+            let bonus = if BREAK_BEFORE.contains(&next.as_str()) { 2 } else { 0 };
             ((k as i64 - target).abs() - bonus, k)
         });
     }
@@ -647,11 +630,7 @@ mod tests {
         assert_eq!(VOICES[27].id, "bm_lewis");
         let mut ids: Vec<_> = VOICES.iter().map(|v| v.id).collect();
         ids.sort();
-        assert_eq!(
-            ids,
-            VOICES.iter().map(|v| v.id).collect::<Vec<_>>(),
-            "sid order is alphabetical"
-        );
+        assert_eq!(ids, VOICES.iter().map(|v| v.id).collect::<Vec<_>>(), "sid order is alphabetical");
     }
 
     #[test]
@@ -669,11 +648,7 @@ mod tests {
     fn first_chunk_cut_at_first_clause() {
         assert_eq!(
             split_for_streaming("Thank you for calling, how can I help you today? Bye."),
-            vec![
-                "Thank you for calling,",
-                "how can I help you today?",
-                "Bye."
-            ]
+            vec!["Thank you for calling,", "how can I help you today?", "Bye."]
         );
     }
 
@@ -699,6 +674,7 @@ mod tests {
         );
         assert!(split_for_streaming("  ").is_empty());
     }
+
 
     #[test]
     fn split_basic_sentences() {

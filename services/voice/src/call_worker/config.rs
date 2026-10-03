@@ -89,11 +89,7 @@ pub fn ws_base(livekit_url: &str) -> String {
 
 /// `http(s)://host[:port]` → `ws(s)://host[:port]/agent?protocol=1`.
 pub fn agent_ws_url(livekit_url: &str) -> String {
-    format!(
-        "{}/agent?protocol={}",
-        ws_base(livekit_url),
-        super::dispatch::WORKER_PROTOCOL
-    )
+    format!("{}/agent?protocol={}", ws_base(livekit_url), super::dispatch::WORKER_PROTOCOL)
 }
 
 /// `ws(s)://` → `http(s)://` for the LiveKit server API (Twirp).
@@ -114,10 +110,8 @@ mod tests {
     use std::collections::HashMap;
 
     fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
-        let m: HashMap<String, String> = pairs
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
+        let m: HashMap<String, String> =
+            pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         move |k| m.get(k).cloned()
     }
 
@@ -141,21 +135,14 @@ mod tests {
 
     #[test]
     fn missing_secret_is_an_error() {
-        let pairs: Vec<_> = BASE
-            .iter()
-            .filter(|(k, _)| *k != "LIVEKIT_API_SECRET")
-            .cloned()
-            .collect();
+        let pairs: Vec<_> = BASE.iter().filter(|(k, _)| *k != "LIVEKIT_API_SECRET").cloned().collect();
         let err = WorkerConfig::from_lookup(env(&pairs)).unwrap_err();
         assert!(err.to_string().contains("LIVEKIT_API_SECRET"));
     }
 
     #[test]
     fn agent_url_schemes() {
-        assert_eq!(
-            agent_ws_url("http://h:7880"),
-            "ws://h:7880/agent?protocol=1"
-        );
+        assert_eq!(agent_ws_url("http://h:7880"), "ws://h:7880/agent?protocol=1");
         assert_eq!(agent_ws_url("https://lk.x/"), "wss://lk.x/agent?protocol=1");
         assert_eq!(agent_ws_url("wss://lk.x"), "wss://lk.x/agent?protocol=1");
         assert_eq!(http_base("wss://lk.x/"), "https://lk.x");

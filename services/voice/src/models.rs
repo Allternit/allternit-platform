@@ -206,19 +206,21 @@ impl PackManager {
         let mut out = Vec::new();
         let statuses = self.statuses.read().await;
         for p in PACKS {
-            out.push(statuses.get(p.name).cloned().unwrap_or_else(|| {
-                if self.is_installed(p.name) {
-                    PackStatus {
-                        name: p.name.to_string(),
-                        state: PackStateKind::Ready,
-                        pct: None,
-                        error: None,
-                        size_bytes: Some(dir_size(&self.pack_dir(p.name))),
+            out.push(
+                statuses.get(p.name).cloned().unwrap_or_else(|| {
+                    if self.is_installed(p.name) {
+                        PackStatus {
+                            name: p.name.to_string(),
+                            state: PackStateKind::Ready,
+                            pct: None,
+                            error: None,
+                            size_bytes: Some(dir_size(&self.pack_dir(p.name))),
+                        }
+                    } else {
+                        PackStatus::missing(p.name)
                     }
-                } else {
-                    PackStatus::missing(p.name)
-                }
-            }));
+                }),
+            );
         }
         out
     }
@@ -644,21 +646,9 @@ mod tests {
     fn pack_downloads_fit_their_budgets() {
         // Dictation (small) stays light; TTS is Kokoro fp32 (Eoj 2026-10-03:
         // full-size Kokoro, budget = its actual size, ~350 MB).
-        assert!(
-            pack_bytes("small") <= 40_000_000,
-            "small: {}",
-            pack_bytes("small")
-        );
-        assert!(
-            pack_bytes("tts") <= 350_000_000,
-            "tts: {}",
-            pack_bytes("tts")
-        );
-        assert!(
-            pack_bytes("accurate") <= 490_000_000,
-            "accurate: {}",
-            pack_bytes("accurate")
-        );
+        assert!(pack_bytes("small") <= 40_000_000, "small: {}", pack_bytes("small"));
+        assert!(pack_bytes("tts") <= 350_000_000, "tts: {}", pack_bytes("tts"));
+        assert!(pack_bytes("accurate") <= 490_000_000, "accurate: {}", pack_bytes("accurate"));
     }
 
     #[tokio::test]
@@ -733,10 +723,7 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("sha256 mismatch"), "{err}");
-        assert!(
-            !fin.exists(),
-            "unverified file must never be moved into place"
-        );
+        assert!(!fin.exists(), "unverified file must never be moved into place");
         assert!(!part.exists(), "corrupt partial must be discarded");
     }
 

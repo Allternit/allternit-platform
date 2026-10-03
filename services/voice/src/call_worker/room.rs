@@ -11,9 +11,9 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use futures::future::BoxFuture;
 use futures::StreamExt;
-use livekit::options::TrackPublishOptions;
 use livekit::participant::ParticipantKind;
 use livekit::prelude::*;
+use livekit::options::TrackPublishOptions;
 use livekit::webrtc::audio_frame::AudioFrame;
 use livekit::webrtc::audio_source::native::NativeAudioSource;
 use livekit::webrtc::audio_source::{AudioSourceOptions, RtcAudioSource};
@@ -50,13 +50,8 @@ pub async fn run(cfg: WorkerConfig) -> Result<()> {
         cfg: cfg.clone(),
     });
     let (key, secret) = (cfg.livekit_api_key.clone(), cfg.livekit_api_secret.clone());
-    run_dispatch(
-        agent_ws_url(&cfg.livekit_url),
-        AGENT_NAME.into(),
-        move || worker_token(&key, &secret),
-        handler,
-    )
-    .await
+    run_dispatch(agent_ws_url(&cfg.livekit_url), AGENT_NAME.into(), move || worker_token(&key, &secret), handler)
+        .await
 }
 
 /// JWT for `/agent`: the `video.agent` grant (livekit-server checks `claims.Video.Agent`).
@@ -64,10 +59,7 @@ fn worker_token(key: &str, secret: &str) -> Result<String> {
     AccessToken::with_api_key(key, secret)
         .with_identity("allternit-voice-worker")
         .with_ttl(Duration::from_secs(6 * 3600))
-        .with_grants(VideoGrants {
-            agent: true,
-            ..Default::default()
-        })
+        .with_grants(VideoGrants { agent: true, ..Default::default() })
         .to_jwt()
         .context("mint agent token")
 }
@@ -81,19 +73,14 @@ struct CallJobs {
 
 impl JobHandler for CallJobs {
     fn available(&self, job: &proto::Job) -> bool {
-        job.room
-            .as_ref()
-            .is_some_and(|r| r.name.starts_with("call-"))
+        job.room.as_ref().is_some_and(|r| r.name.starts_with("call-"))
             && (self.running.load(Ordering::SeqCst) as usize) < self.cfg.max_calls
     }
 
     fn run(self: Arc<Self>, job: JobInfo) -> BoxFuture<'static, Result<(), String>> {
         self.running.fetch_add(1, Ordering::SeqCst);
         let cancel = Arc::new(Notify::new());
-        self.cancels
-            .lock()
-            .unwrap()
-            .insert(job.job_id.clone(), cancel.clone());
+        self.cancels.lock().unwrap().insert(job.job_id.clone(), cancel.clone());
         Box::pin(async move {
             let id = job.job_id.clone();
             let res = handle_job(self.cfg.clone(), self.cloud.clone(), job, cancel)
@@ -120,42 +107,23 @@ impl JobHandler for CallJobs {
     }
 }
 
-async fn handle_job(
-    cfg: WorkerConfig,
-    cloud: CloudClient,
-    job: JobInfo,
-    cancel: Arc<Notify>,
-) -> Result<()> {
+async fn handle_job(cfg: WorkerConfig, cloud: CloudClient, job: JobInfo, cancel: Arc<Notify>) -> Result<()> {
     let url = ws_base(job.url.as_deref().unwrap_or(&cfg.livekit_url));
     let room_name = job.room_name.clone();
     let api_host = http_base(&cfg.livekit_url);
     let rooms = RoomClient::with_api_key(&api_host, &cfg.livekit_api_key, &cfg.livekit_api_secret);
-    let sip = Arc::new(SIPClient::with_api_key(
-        &api_host,
-        &cfg.livekit_api_key,
-        &cfg.livekit_api_secret,
-    ));
+    let sip = Arc::new(SIPClient::with_api_key(&api_host, &cfg.livekit_api_key, &cfg.livekit_api_secret));
 
-    let (room, mut lk_events) = Room::connect(&url, &job.token, RoomOptions::default())
-        .await
-        .context("join call room")?;
+    let (room, mut lk_events) =
+        Room::connect(&url, &job.token, RoomOptions::default()).await.context("join call room")?;
     let room = Arc::new(room);
     tracing::info!(room = %room_name, job = %job.job_id, "joined call room");
 
     // Bot track first, so the opening plays the moment it's synthesized.
     let source = NativeAudioSource::new(AudioSourceOptions::default(), TRACK_RATE, 1, 100);
-    let track = LocalAudioTrack::create_audio_track(
-        "allternit-voice",
-        RtcAudioSource::Native(source.clone()),
-    );
+    let track = LocalAudioTrack::create_audio_track("allternit-voice", RtcAudioSource::Native(source.clone()));
     room.local_participant()
-        .publish_track(
-            LocalTrack::Audio(track),
-            TrackPublishOptions {
-                source: TrackSource::Microphone,
-                ..Default::default()
-            },
-        )
+        .publish_track(LocalTrack::Audio(track), TrackPublishOptions { source: TrackSource::Microphone, ..Default::default() })
         .await
         .context("publish bot track")?;
 
@@ -168,11 +136,7 @@ async fn handle_job(
     attrs.extend(caller.attributes());
     let get = |k: &str| attrs.get(k).cloned().filter(|v| !v.is_empty());
 
-    let direction = if get("direction").as_deref() == Some("outbound") {
-        Direction::Outbound
-    } else {
-        Direction::Inbound
-    };
+    let direction = if get("direction").as_deref() == Some("outbound") { Direction::Outbound } else { Direction::Inbound };
     if direction == Direction::Outbound && get("consentRef").is_none() {
         // §4.1: outbound only through the consent gate.
         tracing::error!(room = %room_name, "outbound call without consentRef; hanging up");
@@ -180,22 +144,12 @@ async fn handle_job(
         anyhow::bail!("outbound call without consentRef");
     }
     let remote = get(SIP_PHONE).unwrap_or_default();
-    let local = get("to")
-        .or_else(|| get(SIP_TRUNK_PHONE))
-        .unwrap_or_default();
+    let local = get("to").or_else(|| get(SIP_TRUNK_PHONE)).unwrap_or_default();
     let start_req = StartCallRequest {
         bot_id: get("botId").unwrap_or_default(),
         number_id: get("numberId").unwrap_or_default(),
-        from: if direction == Direction::Outbound {
-            local.clone()
-        } else {
-            remote.clone()
-        },
-        to: if direction == Direction::Outbound {
-            remote.clone()
-        } else {
-            local.clone()
-        },
+        from: if direction == Direction::Outbound { local.clone() } else { remote.clone() },
+        to: if direction == Direction::Outbound { remote.clone() } else { local.clone() },
         direction: direction.clone(),
         room: room_name.clone(),
         owner_id: get("ownerId"),
@@ -207,11 +161,7 @@ async fn handle_job(
     // opening is spoken as soon as both are back.
     let (start, core) = tokio::join!(
         cloud.start_call(&start_req, cfg.start_timeout),
-        connect_ws(
-            &cfg.voice_session_url,
-            cfg.voice_session_token.as_deref(),
-            None
-        )
+        connect_ws(&cfg.voice_session_url, cfg.voice_session_token.as_deref(), None)
     );
     let core = match core {
         Ok(c) => c,
@@ -233,12 +183,7 @@ async fn handle_job(
         rooms,
         sip,
     ));
-    let events_task = tokio::spawn(forward_room_events(
-        lk_events,
-        caller_identity.clone(),
-        input_tx.clone(),
-        cancel,
-    ));
+    let events_task = tokio::spawn(forward_room_events(lk_events, caller_identity.clone(), input_tx.clone(), cancel));
     if let Some(t) = audio_track_of(&caller) {
         tokio::spawn(read_caller_audio(t, input_tx.clone()));
     }
@@ -257,27 +202,17 @@ async fn handle_job(
                 number_id: start_req.number_id.clone(),
                 bot: resp.bot,
             };
-            let events =
-                EventQueue::start(&resp.call_id, Arc::new(cloud.clone()), Backoff::default());
+            let events = EventQueue::start(&resp.call_id, Arc::new(cloud.clone()), Backoff::default());
             let brain = Arc::new(RelayBrain::new(cloud.clone(), DEFAULT_TURN_TIMEOUT));
-            let (outcome, drain) = call::run_call(
-                ctx,
-                core,
-                brain,
-                events,
-                room_tx.clone(),
-                input_rx,
-                Box::new(NoVoicemailDetection),
-            )
-            .await;
+            let (outcome, drain) =
+                call::run_call(ctx, core, brain, events, room_tx.clone(), input_rx, Box::new(NoVoicemailDetection)).await;
             tracing::info!(room = %room_name, reason = %outcome.reason, secs = outcome.duration_sec, "call ended");
             // Events keep retrying in the background until delivered.
             tokio::spawn(drain);
         }
         Err(e) => {
             tracing::error!(room = %room_name, "call start failed, speaking fallback: {e}");
-            call::run_unconfigured_call(core, room_tx.clone(), input_rx, Duration::from_secs(20))
-                .await;
+            call::run_unconfigured_call(core, room_tx.clone(), input_rx, Duration::from_secs(20)).await;
         }
     }
 
@@ -295,11 +230,7 @@ async fn wait_for_sip(
     events: &mut mpsc::UnboundedReceiver<RoomEvent>,
     timeout: Duration,
 ) -> Option<RemoteParticipant> {
-    if let Some(p) = room
-        .remote_participants()
-        .into_values()
-        .find(|p| p.kind() == ParticipantKind::Sip)
-    {
+    if let Some(p) = room.remote_participants().into_values().find(|p| p.kind() == ParticipantKind::Sip) {
         return Some(p);
     }
     tokio::time::timeout(timeout, async {
@@ -318,12 +249,10 @@ async fn wait_for_sip(
 }
 
 fn audio_track_of(p: &RemoteParticipant) -> Option<RemoteAudioTrack> {
-    p.track_publications()
-        .into_values()
-        .find_map(|publ| match publ.track() {
-            Some(RemoteTrack::Audio(t)) => Some(t),
-            _ => None,
-        })
+    p.track_publications().into_values().find_map(|publ| match publ.track() {
+        Some(RemoteTrack::Audio(t)) => Some(t),
+        _ => None,
+    })
 }
 
 /// Caller audio → 16 kHz mono → the call.
@@ -335,9 +264,7 @@ async fn read_caller_audio(track: RemoteAudioTrack, tx: mpsc::Sender<RoomInput>)
         let samples = if frame.sample_rate == CORE_INPUT_RATE {
             mono
         } else {
-            resampler
-                .get_or_insert_with(|| Resampler::new(frame.sample_rate, CORE_INPUT_RATE))
-                .process(&mono)
+            resampler.get_or_insert_with(|| Resampler::new(frame.sample_rate, CORE_INPUT_RATE)).process(&mono)
         };
         if tx.send(RoomInput::CallerAudio(samples)).await.is_err() {
             return;
@@ -364,20 +291,13 @@ async fn forward_room_events(
             return;
         };
         let input = match ev {
-            RoomEvent::TrackSubscribed {
-                track: RemoteTrack::Audio(t),
-                participant,
-                ..
-            } if participant.identity().to_string() == caller => {
+            RoomEvent::TrackSubscribed { track: RemoteTrack::Audio(t), participant, .. }
+                if participant.identity().to_string() == caller =>
+            {
                 tokio::spawn(read_caller_audio(t, tx.clone()));
                 None
             }
-            RoomEvent::DataReceived {
-                payload,
-                topic,
-                participant,
-                ..
-            } if topic.as_deref() == Some(CONTROL_TOPIC) => {
+            RoomEvent::DataReceived { payload, topic, participant, .. } if topic.as_deref() == Some(CONTROL_TOPIC) => {
                 match participant {
                     // Controls come from cloud-api through the server API only;
                     // a participant (even a takeover human) can't send them.
@@ -388,25 +308,15 @@ async fn forward_room_events(
                     }
                 }
             }
-            RoomEvent::SipDTMFReceived {
-                code,
-                digit,
-                participant,
-            } => {
-                let from_caller = participant
-                    .as_ref()
-                    .is_none_or(|p| p.identity().to_string() == caller);
-                let d = digit
-                    .filter(|d| !d.is_empty())
-                    .or_else(|| code_to_digit(code));
+            RoomEvent::SipDTMFReceived { code, digit, participant } => {
+                let from_caller = participant.as_ref().is_none_or(|p| p.identity().to_string() == caller);
+                let d = digit.filter(|d| !d.is_empty()).or_else(|| code_to_digit(code));
                 match (from_caller, d) {
                     (true, Some(d)) => Some(RoomInput::Dtmf(d)),
                     _ => None,
                 }
             }
-            RoomEvent::ParticipantDisconnected(p) if p.identity().to_string() == caller => {
-                Some(RoomInput::CallerLeft)
-            }
+            RoomEvent::ParticipantDisconnected(p) if p.identity().to_string() == caller => Some(RoomInput::CallerLeft),
             RoomEvent::Disconnected { .. } => Some(RoomInput::Disconnected),
             _ => None,
         };
@@ -419,10 +329,7 @@ async fn forward_room_events(
 }
 
 fn code_to_digit(code: u32) -> Option<String> {
-    "0123456789*#ABCD"
-        .chars()
-        .find(|c| dtmf_code(*c) == Some(code))
-        .map(String::from)
+    "0123456789*#ABCD".chars().find(|c| dtmf_code(*c) == Some(code)).map(String::from)
 }
 
 /// Applies the call's commands. Bot audio goes through a playout queue so the
@@ -477,11 +384,7 @@ async fn pump(
             RoomCommand::SendDtmf(digits) => {
                 for c in digits.chars() {
                     let Some(code) = dtmf_code(c) else { continue };
-                    let dtmf = SipDTMF {
-                        code,
-                        digit: c.to_string(),
-                        destination_identities: vec![caller.clone().into()],
-                    };
+                    let dtmf = SipDTMF { code, digit: c.to_string(), destination_identities: vec![caller.clone().into()] };
                     if let Err(e) = room.local_participant().publish_dtmf(dtmf).await {
                         tracing::warn!("publish_dtmf: {e}");
                     }
@@ -489,31 +392,21 @@ async fn pump(
                 }
             }
             RoomCommand::Transfer { to } => {
-                let (sip, room_name, caller, input) = (
-                    sip.clone(),
-                    room_name.clone(),
-                    caller.clone(),
-                    input.clone(),
-                );
+                let (sip, room_name, caller, input) = (sip.clone(), room_name.clone(), caller.clone(), input.clone());
                 tokio::spawn(async move {
                     let res = sip
                         .transfer_sip_participant(
                             room_name,
                             caller,
                             transfer_uri(&to),
-                            TransferSIPParticipantOptions {
-                                play_dialtone: Some(false),
-                                ..Default::default()
-                            },
+                            TransferSIPParticipantOptions { play_dialtone: Some(false), ..Default::default() },
                         )
                         .await;
                     let (ok, reason) = match res {
                         Ok(()) => (true, None),
                         Err(e) => (false, Some(e.to_string())),
                     };
-                    let _ = input
-                        .send(RoomInput::TransferResult { to, ok, reason })
-                        .await;
+                    let _ = input.send(RoomInput::TransferResult { to, ok, reason }).await;
                 });
             }
             RoomCommand::Hangup => {
@@ -546,12 +439,9 @@ mod tests {
     #[test]
     fn worker_token_has_agent_grant() {
         let jwt = worker_token("APIkey", "secret-secret-secret-secret-secret").unwrap();
-        let claims = livekit_api::access_token::TokenVerifier::with_api_key(
-            "APIkey",
-            "secret-secret-secret-secret-secret",
-        )
-        .verify(&jwt)
-        .unwrap();
+        let claims = livekit_api::access_token::TokenVerifier::with_api_key("APIkey", "secret-secret-secret-secret-secret")
+            .verify(&jwt)
+            .unwrap();
         assert!(claims.video.agent);
     }
 }

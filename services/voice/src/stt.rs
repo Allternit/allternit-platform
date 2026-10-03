@@ -141,10 +141,7 @@ impl SttEngine {
 
     /// True when the recogniser for `model` is loaded.
     pub fn is_ready(&self, model: SttModel) -> bool {
-        self.slot(model)
-            .lock()
-            .map(|g| g.is_some())
-            .unwrap_or(false)
+        self.slot(model).lock().map(|g| g.is_some()).unwrap_or(false)
     }
 
     fn slot(&self, model: SttModel) -> &Mutex<Option<Arc<OfflineRecognizer>>> {
@@ -537,12 +534,8 @@ impl SttStream {
     }
 
     fn slice(&self, from: usize, to: usize) -> &[f32] {
-        let a = from
-            .saturating_sub(self.history_start)
-            .min(self.history.len());
-        let b = to
-            .saturating_sub(self.history_start)
-            .min(self.history.len());
+        let a = from.saturating_sub(self.history_start).min(self.history.len());
+        let b = to.saturating_sub(self.history_start).min(self.history.len());
         &self.history[a..b]
     }
 
@@ -576,11 +569,7 @@ fn build_moonshine(dir: &Path, threads: i32) -> Result<OfflineRecognizer, String
     let mut model_config = base_model_config(threads);
     model_config.moonshine = OfflineMoonshineModelConfig {
         encoder: Some(path_of(dir, &["encoder_model.ort"], "moonshine encoder")?),
-        merged_decoder: Some(path_of(
-            dir,
-            &["decoder_model_merged.ort"],
-            "moonshine decoder",
-        )?),
+        merged_decoder: Some(path_of(dir, &["decoder_model_merged.ort"], "moonshine decoder")?),
         ..Default::default()
     };
     model_config.tokens = Some(path_of(dir, &["tokens.txt"], "moonshine tokens.txt")?);
@@ -644,10 +633,7 @@ mod tests {
         assert_eq!(parts.iter().map(|p| p.len()).sum::<usize>(), x.len());
         // First cut lands inside the first gap.
         let first = parts[0].len();
-        assert!(
-            first > 6 * sr + sr / 2 && first < 6 * sr + sr / 2 + sr / 5,
-            "{first}"
-        );
+        assert!(first > 6 * sr + sr / 2 && first < 6 * sr + sr / 2 + sr / 5, "{first}");
         assert!(split_for_moonshine(&x[..4 * sr]).len() == 1);
     }
 
