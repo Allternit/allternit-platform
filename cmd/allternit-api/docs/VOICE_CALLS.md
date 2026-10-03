@@ -38,3 +38,5 @@ Verification lives in `src/relay_auth.rs` (shared with other relayed envelopes).
 2. the identity JSON at `$ALLTERNIT_RUNTIME_IDENTITY_PATH`, default `~/.config/allternit/runtime-identity.json` (keys `deviceToken`, `userId`, `expiresAt`; the file allternit-node and agent-daemon share). It is re-read when the file's mtime or size changes, since the token rotates. A past `expiresAt` counts as absent.
 
 With neither, signed requests answer 503 `relay not configured`. Provisioned cloud computers get both env vars from `init.sh` (written to `/etc/allternit-node/env`, loaded by the systemd unit and the restart-loop runner). The desktop `ALLTERNIT_API_TOKEN` is a Clerk session token, not the device token, and is never used.
+
+The same signature (verified with `relay_auth::RelayedAuth`) now guards every other runtime path that trusts cloud-api: `/webhooks/channels/discord-app`, `/webhooks/channels/slack-app`, `/webhooks/teams-app`, `/api/v1/agent-email/inbound` and the Telegram managed connect route. See "Other signed relays" in the developer guide.

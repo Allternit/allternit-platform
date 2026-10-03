@@ -9,7 +9,11 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use allternit_api::agent_email_routes::agent_email_webhook_router;
+use allternit_api::agent_email_routes::agent_email_webhook_router_with;
+
+const RELAY_TOKEN: &str = "runtime-device-token";
+const RELAY_OWNER: &str = "user-a";
+const INBOUND_PATH: &str = "/api/v1/agent-email/inbound";
 use allternit_api::test_helpers::app_state;
 use axum::extract::Path as AxumPath;
 use axum::routing::{get as aget, post as apost};
@@ -47,17 +51,15 @@ async fn post_inbound(state: &Arc<allternit_api::AppState>, data: Value) -> (u16
     let body = json!({"type": "message.inbound", "data": data});
     let bytes = body.to_string().into_bytes();
     let signature = sign_webhook("test-webhook-secret", &bytes);
-    let app = agent_email_webhook_router().with_state(state.clone());
-    let response = app
-        .oneshot(
-            axum::http::Request::post("/api/v1/agent-email/inbound")
-                .header("content-type", "application/json")
-                .header("x-email-platform-signature", signature)
-                .body(axum::body::Body::from(bytes))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let secret = Arc::new(allternit_api::relay_auth::StaticRelaySecret { token: RELAY_TOKEN.into(), owner: RELAY_OWNER.into() });
+    let app = agent_email_webhook_router_with(secret).with_state(state.clone());
+    let mut request = axum::http::Request::post(INBOUND_PATH)
+        .header("content-type", "application/json")
+        .header("x-email-platform-signature", signature);
+    for (k, v) in allternit_api::relay_auth::signed_headers(RELAY_TOKEN, RELAY_OWNER, "POST", INBOUND_PATH, &bytes) {
+        request = request.header(k, v);
+    }
+    let response = app.oneshot(request.body(axum::body::Body::from(bytes)).unwrap()).await.unwrap();
     let status = response.status().as_u16();
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
@@ -199,6 +201,33 @@ async fn inbound_turns_into_one_threaded_reply_and_guards_hold() {
             [],
         )
         .unwrap();
+    }
+
+    // The route only accepts cloud-api's relay: no signature is 401, a valid
+    // mailflare HMAC from a runtime owned by someone else is 403, and neither
+    // reaches the agent.
+    {
+        let body = json!({"type": "message.inbound", "data": {"to": "bot@agents.test", "from": "eve@evil.test", "textBody": "hi", "messageId": "evt-x"}});
+        let bytes = body.to_string().into_bytes();
+        let hmac = sign_webhook("test-webhook-secret", &bytes);
+        let secret = Arc::new(allternit_api::relay_auth::StaticRelaySecret { token: RELAY_TOKEN.into(), owner: "user-b".into() });
+        let post = |signed_as: Option<&str>| {
+            let app = agent_email_webhook_router_with(secret.clone()).with_state(state.clone());
+            let (bytes, hmac) = (bytes.clone(), hmac.clone());
+            let owner = signed_as.map(str::to_string);
+            async move {
+                let mut request = axum::http::Request::post(INBOUND_PATH).header("x-email-platform-signature", hmac);
+                if let Some(owner) = owner {
+                    for (k, v) in allternit_api::relay_auth::signed_headers(RELAY_TOKEN, &owner, "POST", INBOUND_PATH, &bytes) {
+                        request = request.header(k, v);
+                    }
+                }
+                app.oneshot(request.body(axum::body::Body::from(bytes)).unwrap()).await.unwrap().status().as_u16()
+            }
+        };
+        assert_eq!(post(None).await, 401, "unsigned relay");
+        assert_eq!(post(Some("user-b")).await, 403, "the agent belongs to user-a");
+        assert!(inbound_row(&state, "eve@evil.test").is_none());
     }
 
     // Scenario 1 (mode approve, the default): full pipeline.

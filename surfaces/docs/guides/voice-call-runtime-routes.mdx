@@ -7,7 +7,7 @@ For developers working on Allternit phone calls. The voice worker never calls th
 
 ## Signature scheme
 
-These four routes skip the Clerk session check. Each request carries:
+These four routes skip the Clerk session check. cloud-api signs every request it relays to them (`runtime_relay::relay_signed_request_to_runtime_with`, keyed with the runtime's stored `credential_hash`). Each request carries:
 
 | Header | Value |
 | --- | --- |
@@ -86,3 +86,38 @@ The runtime reads its own device token from env `ALLTERNIT_RUNTIME_DEVICE_TOKEN`
 ## Call controls from the app
 
 The app sends hangup, mute, hold, DTMF, transfer, listen and takeover to cloud-api, not to a local gateway: `POST /api/v1/voice/calls/{callId}/control` with the signed-in user's Clerk token (`sendCallControl` in allternit-ai `src/lib/gateway/call.ts`). `listen` and `takeover` answer `{ "token", "url", "room" }`, which the app passes to `joinCallAudio`. Desktop, ai.allternit.com and the m.allternit.com PWA use this one path.
+
+## Other signed relays
+
+The voice routes are not the only runtime paths that trust cloud-api instead of a platform signature. cloud-api has already checked Discord's, Slack's, Teams' or the mail provider's own signature, so the runtime would otherwise accept any caller who could reach the path. Those paths now require the same `x-allternit-runtime-sig` headers, verified with `RelayedAuth`, and the owner comes from the verified signature:
+
+| Runtime path | Sent by | Notes |
+| --- | --- | --- |
+| `/webhooks/channels/discord-app` | Shared Discord app events | Body is the cloud-built envelope (`source: "allternit-discord-app"`). A raw Discord payload is never accepted here. |
+| `/webhooks/channels/slack-app` | Slack shared-app events and slash commands | The workspace's connection must belong to the signed owner (403 otherwise). |
+| `/webhooks/teams-app` | Teams shared-app activities | The owner is the signed owner. The old `x-allternit-user-id` header is ignored. |
+| `/api/v1/agent-email/inbound` | Bot email (mailflare `message.inbound`) | Keeps its mailflare HMAC as well. The addressed agent must belong to the signed owner (403 otherwise). |
+| `/api/v1/gateway/channel-accounts/telegram/managed` | Telegram managed-bot token delivery | Also needs the data-plane JWT, and its `sub` must equal the signed owner. |
+| `/webhooks/channels/sms` | SMS | Signed by cloud-api. The runtime still re-checks the carrier's signature itself. |
+
+Public webhooks signed by the platform itself (Telegram, WhatsApp, raw Discord interactions) are unchanged. Responses are the same as for the voice routes: 401 for a missing or bad signature, 503 when the runtime has no device token yet.
+
+## Cloud-api routes the call worker uses
+
+The worker authenticates to cloud-api with a bearer token (`ALLTERNIT_VOICE_WORKER_TOKEN`). The wire shapes are defined by the worker's `cloud_client.rs`.
+
+| Route | Request | Answer |
+| --- | --- | --- |
+| `POST /api/v1/voice/calls` | `{botId, numberId, from, to, direction, room, ownerId?, sipCallId?, consentRef?}` | `{callId, bot: {name, persona, voiceId, greeting, recording}}` from the bot-config cache, within 900 ms. `recording` is a boolean, off unless the owner consented. A mismatched `ownerId` is 403. |
+| `POST /api/v1/voice/calls/{callId}/events` | One event: `{type, idempotencyKey, seq, atMs, payload}` plus an `Idempotency-Key` header | 202 when queued, 409 for a duplicate key (the worker counts both as delivered). Events reach the runtime in `seq` order. |
+| `POST /api/v1/voice/calls/{callId}/turns` | `{callId, turnId, text, confidence}` | Streamed `application/x-ndjson`: `{"type":"delta","text"}` … then `{"type":"done"}` or `{"type":"error","message"}`. |
+| `POST /api/v1/voice/calls/{callId}/control` | `{action, target?, digits?, to?, mode?}` from the signed-in owner | Published on the `allternit.call.control` topic with `by` set to the acting user. A `mute` or `unmute` with no `target` means the bot. |
+
+How cloud-api translates for the runtime:
+
+- `call.started` becomes the create body above (`callId`, `botId`, `ownerId`, `numberId`, `from`, `to`, `direction`, `room`, `startedAt`). The cloud queues its own copy first with `seq` 0, so the worker's own `call.started` is a duplicate.
+- Every other event becomes `{"events":[{type, n, payload, occurredAt}]}` with one entry. `n` counts that event type within the call. Delivery retries with backoff for 24 hours and wakes a sleeping cloud computer.
+- A turn is relayed to the runtime's SSE `POST …/turn`; each `text.delta` becomes a `delta` line, tool progress and keep-alives are not spoken. If the worker drops the connection before `done`, cloud-api calls the runtime's `DELETE …/turn`. If the runtime does not answer within 20 seconds, the worker gets a 504.
+
+Cloud-api migration 030 adds the columns behind this (`voice_bot_config.name`, `voice_calls.sip_call_id` and `consent_ref`, `voice_call_events.seq` and `at_ms`). The runtime saves the spoken name with `PUT /api/v1/voice/bot-config/{botId}` (`name`; `recording` accepts `"off"`, `"consented"` or a boolean).
+

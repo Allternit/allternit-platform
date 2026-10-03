@@ -171,6 +171,7 @@ pub async fn test_pool() -> sqlx::PgPool {
             capabilities TEXT NOT NULL DEFAULT '[]',
             status TEXT NOT NULL DEFAULT 'offline',
             credential_expires_at TIMESTAMPTZ,
+            credential_hash TEXT,
             revoked_at TIMESTAMPTZ,
             last_seen_at TIMESTAMPTZ,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -228,13 +229,14 @@ pub async fn test_pool() -> sqlx::PgPool {
 pub async fn seed_runtime_device(db: &sqlx::PgPool, device_id: &str, user_id: &str) {
     sqlx::query(
         r#"
-        INSERT INTO runtime_devices (id, user_id, name, capabilities, status, credential_expires_at)
-        VALUES ($1, $2, 'test node', $3, 'online', '2999-01-01')
+        INSERT INTO runtime_devices (id, user_id, name, capabilities, status, credential_expires_at, credential_hash)
+        VALUES ($1, $2, 'test node', $3, 'online', '2999-01-01', $4)
         "#,
     )
     .bind(device_id)
     .bind(user_id)
     .bind(r#"["runtime:connect","runtime:execute"]"#)
+    .bind(super::runtime_pairing::sha256_hex(format!("token-of-{device_id}").as_bytes()))
     .execute(db)
     .await
     .unwrap();

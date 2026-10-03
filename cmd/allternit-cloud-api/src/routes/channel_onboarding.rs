@@ -42,7 +42,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::runtime_relay::{relay_request_to_runtime_with, RelayRequest};
+use super::runtime_relay::{relay_signed_request_to_runtime_with, RelayRequest};
 use crate::{ApiError, ApiState};
 
 const TOKEN_ENV: &str = "ALLTERNIT_TELEGRAM_MANAGER_BOT_TOKEN";
@@ -534,7 +534,7 @@ async fn deliver_token_to_runtime(
     .map_err(|e| format!("data-plane token unavailable: {e}"))?;
     let mut trusted = HashMap::new();
     trusted.insert("authorization".to_string(), format!("Bearer {jwt}"));
-    let response = relay_request_to_runtime_with(
+    let response = relay_signed_request_to_runtime_with(
         &state.db,
         &state.contabo_runtime_service,
         &state.quota_service,

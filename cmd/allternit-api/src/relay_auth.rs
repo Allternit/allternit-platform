@@ -64,6 +64,21 @@ pub trait RelaySecret: Send + Sync {
     }
 }
 
+/// A fixed token + owner. For tests and embedders that already hold both.
+pub struct StaticRelaySecret {
+    pub token: String,
+    pub owner: String,
+}
+
+impl RelaySecret for StaticRelaySecret {
+    fn device_token(&self) -> Option<String> {
+        Some(self.token.clone())
+    }
+    fn paired_owner(&self) -> Option<String> {
+        Some(self.owner.clone())
+    }
+}
+
 /// No credentials: signed requests answer 503.
 pub struct UnconfiguredRelaySecret;
 
@@ -222,6 +237,38 @@ pub fn verify_relay(
         return Err(AuthError::Unauthorized("owner does not match this runtime"));
     }
     Ok(owner.to_string())
+}
+
+/// The three signature headers cloud-api sends for `(method, path, body)`,
+/// signed with `device_token`. For tests and embedders that act as the relay.
+pub fn signed_headers(device_token: &str, owner: &str, method: &str, path: &str, body: &[u8]) -> [(&'static str, String); 3] {
+    let ts = unix_now();
+    let sig = sign_relay(&relay_key_from_device_token(device_token), ts, method, path, body);
+    [(SIG_HEADER, format!("v1={sig}")), (TS_HEADER, ts.to_string()), (OWNER_HEADER, owner.to_string())]
+}
+
+/// A POST to `path` the way cloud-api relays it. `signed_as` is the
+/// `(device_token, owner)` to sign with; `None` sends it unsigned.
+pub fn relayed_post(path: &str, body: &[u8], signed_as: Option<(&str, &str)>) -> axum::http::Request<axum::body::Body> {
+    let mut request = axum::http::Request::builder().method("POST").uri(path).header("content-type", "application/json");
+    if let Some((token, owner)) = signed_as {
+        for (k, v) in signed_headers(token, owner, "POST", path, body) {
+            request = request.header(k, v);
+        }
+    }
+    request.body(axum::body::Body::from(body.to_vec())).unwrap()
+}
+
+/// The process-wide production secret (env, else the shared identity file).
+/// One instance, so its identity-file cache is shared by every relayed route.
+pub fn process_secret() -> Arc<dyn RelaySecret> {
+    static SECRET: std::sync::OnceLock<Arc<dyn RelaySecret>> = std::sync::OnceLock::new();
+    SECRET.get_or_init(|| Arc::new(EnvOrFileRelaySecret::from_process_env())).clone()
+}
+
+/// Layer that gives [`RelayedAuth`] handlers their secret.
+pub fn secret_layer(secret: Arc<dyn RelaySecret>) -> axum::Extension<Arc<dyn RelaySecret>> {
+    axum::Extension(secret)
 }
 
 pub fn unix_now() -> i64 {

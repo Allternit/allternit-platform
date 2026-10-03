@@ -52,7 +52,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::Sha256;
 
-use super::runtime_relay::{relay_request_to_runtime_with, RelayRequest};
+use super::runtime_relay::{relay_signed_request_to_runtime_with, RelayRequest};
 use crate::{auth::resolve_user_scoped, ApiError, ApiState};
 
 type HmacSha256 = Hmac<Sha256>;
@@ -593,7 +593,7 @@ pub async fn deliver_team(state: &ApiState, team_id: &str) -> Result<(), ApiErro
             }
             return Ok(());
         };
-        let outcome = relay_request_to_runtime_with(
+        let outcome = relay_signed_request_to_runtime_with(
             &state.db,
             &state.contabo_runtime_service,
             &state.quota_service,

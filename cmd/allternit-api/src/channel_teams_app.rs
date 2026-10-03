@@ -5,8 +5,9 @@
 //! through cloud-api: the bot's messaging endpoint lives there, and inbound
 //! activities are queued and relayed to this runtime over its relay, waking it
 //! if it sleeps. This module is the delivery address
-//! (`POST /webhooks/teams-app`): the cloud stamps the owning user in
-//! the trusted `x-allternit-user-id` header (only the relay may set it), the
+//! (`POST /webhooks/teams-app`): cloud-api signs the relayed
+//! request with the runtime's device token and the owner comes from that
+//! verified signature ([`crate::relay_auth::RelayedAuth`]), the
 //! activity is normalized with the shared [`crate::channel_transports::teams_normalize`],
 //! routed through [`crate::channel_transports::route_inbound`] exactly like
 //! every other channel, and replies go back out through
@@ -22,7 +23,6 @@
 
 use async_trait::async_trait;
 use axum::{
-    body::Bytes,
     extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
@@ -36,27 +36,26 @@ use crate::channel_gateway::{Identity, Inbound, Outbound, PostError, Receipt};
 use crate::channel_gateway::ChannelTransport;
 use crate::channel_transports::{dispatch_events, teams_normalize, Account, HttpReq, HttpSend};
 use crate::db::DbHandle;
+use crate::relay_auth::{RelaySecret, RelayedAuth};
 use crate::AppState;
 
-/// Trusted header the cloud relay stamps on queued deliveries: the Allternit
-/// user the Teams tenant belongs to. Only cloud-api may set it (same contract
-/// as `x-allternit-user-id` on agency_forward).
-const USER_HEADER: &str = "x-allternit-user-id";
 /// Bearer the runtime uses to call cloud-api's teams routes: the paired
 /// runtime device token, provided by the host app.
 const CLOUD_TOKEN_ENV: &str = "ALLTERNIT_CLOUD_TOKEN";
 
 pub fn teams_app_router() -> Router<Arc<AppState>> {
-    // Not under /webhooks/channels/:provider — a static segment sibling of
-    // that param route panics at router build on older axum/matchit.
-    Router::new().route("/webhooks/teams-app", post(teams_app_webhook))
+    teams_app_router_with(crate::relay_auth::process_secret())
 }
 
-async fn teams_app_webhook(State(state): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Response {
-    let Some(owner) = headers.get(USER_HEADER).and_then(|v| v.to_str().ok()).map(str::trim).filter(|s| !s.is_empty()) else {
-        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "missing_user_header" }))).into_response();
-    };
-    let Ok(activity) = serde_json::from_slice::<Value>(&body) else {
+pub fn teams_app_router_with(secret: Arc<dyn RelaySecret>) -> Router<Arc<AppState>> {
+    // Not under /webhooks/channels/:provider — a static segment sibling of
+    // that param route panics at router build on older axum/matchit.
+    Router::new().route("/webhooks/teams-app", post(teams_app_webhook)).layer(crate::relay_auth::secret_layer(secret))
+}
+
+async fn teams_app_webhook(State(state): State<Arc<AppState>>, auth: RelayedAuth) -> Response {
+    let owner = auth.owner.as_str();
+    let Ok(activity) = serde_json::from_slice::<Value>(&auth.body) else {
         return (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid_json" }))).into_response();
     };
     // Ack fast: bot turns can outlive any platform timeout. The queue retries.
@@ -364,5 +363,37 @@ mod tests {
         // A cloud-side refusal is a definite rejection.
         *http.reply.lock().unwrap() = Some(Ok(crate::channel_transports::HttpResp { status: 404, body: json!({ "error": "conversation reference not found" }) }));
         assert!(matches!(tx.post(&out).await, Err(PostError::Rejected(_))));
+    }
+
+    #[tokio::test]
+    async fn the_webhook_takes_its_owner_from_the_verified_signature() {
+        use tower::ServiceExt;
+        let dir = std::env::temp_dir().join(format!("allternit-ta-sig-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = crate::test_helpers::app_state(&dir).await;
+        let secret = Arc::new(crate::relay_auth::StaticRelaySecret { token: "tok".into(), owner: "user-a".into() });
+        let app = teams_app_router_with(secret).with_state(st.clone());
+        let body = br#"{"type":"conversationUpdate"}"#;
+        let status = |req: axum::http::Request<axum::body::Body>| {
+            let app = app.clone();
+            async move { app.oneshot(req).await.unwrap().status() }
+        };
+        // The old trusted header is just a header now: unsigned is refused.
+        let mut forged = crate::relay_auth::relayed_post("/webhooks/teams-app", body, None);
+        forged.headers_mut().insert("x-allternit-user-id", "user-a".parse().unwrap());
+        assert_eq!(status(forged).await, StatusCode::UNAUTHORIZED);
+        // Wrong key, and the right key for someone else's runtime, are refused.
+        assert_eq!(status(crate::relay_auth::relayed_post("/webhooks/teams-app", body, Some(("other", "user-a")))).await, StatusCode::UNAUTHORIZED);
+        assert_eq!(status(crate::relay_auth::relayed_post("/webhooks/teams-app", body, Some(("tok", "user-b")))).await, StatusCode::UNAUTHORIZED);
+        // Signed by cloud-api: accepted, and the connection is opened for the
+        // signed owner.
+        assert_eq!(status(crate::relay_auth::relayed_post("/webhooks/teams-app", body, Some(("tok", "user-a")))).await, StatusCode::OK);
+        for _ in 0..50 {
+            if ensure_account(&st.db, "user-a").is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(ensure_account(&st.db, "user-a").is_some());
     }
 }

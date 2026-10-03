@@ -604,8 +604,16 @@ pub fn channel_gateway_router() -> Router<Arc<AppState>> {
 /// relay, and the handler authenticates the cloud's data-plane JWT itself —
 /// nothing else (no Clerk session, no device token) can present one.
 pub fn telegram_managed_public_router() -> Router<Arc<AppState>> {
+    telegram_managed_public_router_with(crate::relay_auth::process_secret())
+}
+
+/// The delivery must carry cloud-api's relay signature ([`RelayedAuth`], keyed
+/// with the device token) as well as its data-plane JWT, and both must name
+/// the same owner.
+pub fn telegram_managed_public_router_with(secret: Arc<dyn crate::relay_auth::RelaySecret>) -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/v1/gateway/channel-accounts/telegram/managed", post(telegram_managed_connect_h))
+        .layer(crate::relay_auth::secret_layer(secret))
 }
 
 // ---------------------------------------------------------------- messaging connectors
@@ -837,11 +845,11 @@ pub(crate) struct ManagedConnectBody {
 /// relay's authenticated path. The pairing nonce is sealed into the account
 /// row and consumed by the first `/start <nonce>` on the child bot
 /// ([`crate::channel_transports::pair_telegram_start]).
-async fn telegram_managed_connect_h(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(b): Json<ManagedConnectBody>,
-) -> Response {
+async fn telegram_managed_connect_h(State(state): State<Arc<AppState>>, headers: HeaderMap, auth: crate::relay_auth::RelayedAuth) -> Response {
+    let b: ManagedConnectBody = match auth.json() {
+        Ok(b) => b,
+        Err(r) => return r,
+    };
     let Some(token) = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
@@ -853,6 +861,9 @@ async fn telegram_managed_connect_h(
     let Some(claims) = state.dp_jwks.authenticate(token).await else {
         return api_err(StatusCode::UNAUTHORIZED, "invalid data-plane token");
     };
+    if claims.sub != auth.owner {
+        return api_err(StatusCode::FORBIDDEN, "token owner does not match the signed owner");
+    }
     let user = AuthUser {
         user_id: claims.sub,
         email: None,
@@ -1694,12 +1705,19 @@ mod tests {
         assert_eq!(n, 0);
     }
 
+    const MANAGED_PATH: &str = "/api/v1/gateway/channel-accounts/telegram/managed";
+    const RELAY_TOKEN: &str = "runtime-device-token";
+
+    fn relay_secret() -> Arc<dyn crate::relay_auth::RelaySecret> {
+        Arc::new(crate::relay_auth::StaticRelaySecret { token: RELAY_TOKEN.into(), owner: "user_123".into() })
+    }
+
     #[tokio::test]
     async fn managed_public_route_accepts_only_valid_dp_jwts() {
         let signing = SigningKey::from_bytes(&[7u8; 32]);
         let server = dp_jwks_server(&signing);
         let st = managed_state("managed-auth", &server).await;
-        let app = telegram_managed_public_router().with_state(st);
+        let app = telegram_managed_public_router_with(relay_secret()).with_state(st);
         let body = r#"{"botToken":"555123:AAHchild","allternitBotId":"bot-1","pairNonce":"nonce-1","onboardingId":"onb-9"}"#;
 
         let send = |authz: Option<String>| {
@@ -1708,10 +1726,13 @@ mod tests {
             async move {
                 let mut builder = axum::http::Request::builder()
                     .method("POST")
-                    .uri("/api/v1/gateway/channel-accounts/telegram/managed")
+                    .uri(MANAGED_PATH)
                     .header("content-type", "application/json");
                 if let Some(authz) = authz {
                     builder = builder.header("authorization", authz);
+                }
+                for (k, v) in crate::relay_auth::signed_headers(RELAY_TOKEN, "user_123", "POST", MANAGED_PATH, body.as_bytes()) {
+                    builder = builder.header(k, v);
                 }
                 app.oneshot(builder.body(axum::body::Body::from(body)).unwrap()).await.unwrap()
             }
@@ -1725,6 +1746,45 @@ mod tests {
         // Signed by an unknown key: refused.
         let other = SigningKey::from_bytes(&[9u8; 32]);
         assert_eq!(send(Some(format!("Bearer {}", dp_mint(&other, "user_123")))).await.status(), StatusCode::UNAUTHORIZED);
+        // A valid JWT for a different user than the signed owner: refused.
+        let wrong_owner = dp_mint(&signing, "user_999");
+        assert_eq!(send(Some(format!("Bearer {wrong_owner}"))).await.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn managed_public_route_requires_the_relay_signature() {
+        let signing = SigningKey::from_bytes(&[7u8; 32]);
+        let server = dp_jwks_server(&signing);
+        let st = managed_state("managed-sig", &server).await;
+        let app = telegram_managed_public_router_with(relay_secret()).with_state(st);
+        let body: &'static str = r#"{"botToken":"555123:AAHchild","allternitBotId":"bot-1","pairNonce":"nonce-1"}"#;
+        let jwt = format!("Bearer {}", dp_mint(&signing, "user_123"));
+        let post = |sign_as: Option<(&'static str, &'static str)>, body: &'static str| {
+            let app = app.clone();
+            let (jwt, body) = (jwt.clone(), body.to_string());
+            async move {
+                let mut b = axum::http::Request::builder().method("POST").uri(MANAGED_PATH).header("authorization", jwt);
+                if let Some((token, owner)) = sign_as {
+                    for (k, v) in crate::relay_auth::signed_headers(token, owner, "POST", MANAGED_PATH, body.as_bytes()) {
+                        b = b.header(k, v);
+                    }
+                }
+                app.oneshot(b.body(axum::body::Body::from(body)).unwrap()).await.unwrap().status()
+            }
+        };
+        // A valid data-plane JWT alone is not enough: unsigned, wrong key and
+        // wrong owner are all 401 before any Telegram or DB work.
+        assert_eq!(post(None, body).await, StatusCode::UNAUTHORIZED);
+        assert_eq!(post(Some(("another-token", "user_123")), body).await, StatusCode::UNAUTHORIZED);
+        assert_eq!(post(Some((RELAY_TOKEN, "user_999")), body).await, StatusCode::UNAUTHORIZED);
+        // Unconfigured runtime: signed requests answer 503.
+        let none = telegram_managed_public_router_with(Arc::new(crate::relay_auth::UnconfiguredRelaySecret)).with_state(managed_state("managed-sig2", &server).await);
+        let (k, v) = (crate::relay_auth::signed_headers(RELAY_TOKEN, "user_123", "POST", MANAGED_PATH, body.as_bytes()), jwt.clone());
+        let mut b = axum::http::Request::builder().method("POST").uri(MANAGED_PATH).header("authorization", v);
+        for (name, value) in k {
+            b = b.header(name, value);
+        }
+        assert_eq!(none.oneshot(b.body(axum::body::Body::from(body.to_string())).unwrap()).await.unwrap().status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
     #[tokio::test]
@@ -1736,26 +1796,22 @@ mod tests {
             "INSERT INTO agents (id, user_id, name, model, provider, is_bot, config) VALUES ('bot-1','user_123','assistant','m','p',1,'{}')",
             [],
         ).unwrap();
-        let app = telegram_managed_public_router().with_state(st);
+        let app = telegram_managed_public_router_with(relay_secret()).with_state(st);
         let token = dp_mint(&signing, "user_123");
         // A syntactically invalid token fails validation BEFORE any Telegram
         // call, so this route-level test stays offline; combined with the
         // JsonHttp test above it pins the whole chain: route → DP-JWT auth →
         // user provisioning → account connect.
-        let response = app
-            .oneshot(
-                axum::http::Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/gateway/channel-accounts/telegram/managed")
-                    .header("content-type", "application/json")
-                    .header("authorization", format!("Bearer {token}"))
-                    .body(axum::body::Body::from(
-                        r#"{"botToken":"not a token","allternitBotId":"bot-1","pairNonce":"nonce-1","onboardingId":"onb-9"}"#,
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let body = r#"{"botToken":"not a token","allternitBotId":"bot-1","pairNonce":"nonce-1","onboardingId":"onb-9"}"#;
+        let mut request = axum::http::Request::builder()
+            .method("POST")
+            .uri(MANAGED_PATH)
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {token}"));
+        for (k, v) in crate::relay_auth::signed_headers(RELAY_TOKEN, "user_123", "POST", MANAGED_PATH, body.as_bytes()) {
+            request = request.header(k, v);
+        }
+        let response = app.oneshot(request.body(axum::body::Body::from(body)).unwrap()).await.unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST, "authenticated, then refused the malformed token offline");
     }
 
