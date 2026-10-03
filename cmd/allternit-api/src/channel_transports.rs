@@ -580,6 +580,7 @@ pub fn build_transport(provider: &str, secret: &str, http: Arc<dyn HttpSend>) ->
             http,
             access_token: token("accessToken"), own_identity: token("botId") }),
         "discord" => Arc::new(DiscordTransport { http, webhook_url: token("webhookUrl"), own_identity: token("botId") }),
+        "whatsapp" if crate::channel_whatsapp_app::is_business(secret) => Arc::new(crate::channel_whatsapp_app::WhatsAppBusinessTransport::from_secret(secret, http)),
         "whatsapp" => Arc::new(WhatsAppTransport { http, access_token: token("accessToken"), own_identity: token("phoneNumberId") }),
         "telegram" => Arc::new(TelegramTransport { http, bot_token: token("botToken"), own_identity: token("botUsername") }),
         "whatsapp-personal" if crate::channel_whatsapp_personal::enabled() => Arc::new(crate::channel_whatsapp_personal::WhatsAppPersonalTransport::from_secret(secret, http)),

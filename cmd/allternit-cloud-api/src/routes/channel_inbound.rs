@@ -381,6 +381,16 @@ async fn inbound_inner(
             Err(error) => return Ok(error.into_response()),
         }
     }
+    if route.provider == "whatsapp" {
+        use super::whatsapp_es::Edge;
+        match super::whatsapp_es::edge(state, &route.id, &method, &query, &forwarded, &body).await? {
+            Edge::Respond(response) => return Ok(response),
+            Edge::Resign(signature) => {
+                forwarded.insert("x-hub-signature-256".to_string(), signature);
+            }
+            Edge::Passthrough => {}
+        }
+    }
     if needs_live_answer(&route.provider, &method, &body) {
         return relay(state, &route, method.as_str(), &query, forwarded, &body, None).await;
     }

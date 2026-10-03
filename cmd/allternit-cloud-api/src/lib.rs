@@ -344,6 +344,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::channel_inbound::routes())
         // Phone numbers + SMS: Clerk-checked per request; 503 phone_not_configured when the carrier env is unset.
         .merge(routes::phone::routes())
+        // WhatsApp Embedded Signup + 24h-window send; each handler resolves the user itself.
+        .merge(routes::whatsapp_es::routes())
         // These handlers verify Clerk or billing credentials themselves. They
         // must not pass through the legacy allternit_* API-token middleware.
         .merge(routes::hosted_runtimes::routes())

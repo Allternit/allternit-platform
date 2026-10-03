@@ -47,4 +47,5 @@ pub mod schedules;
 pub mod tasks;
 #[cfg(test)]
 pub mod test_support;
+pub mod whatsapp_es;
 pub mod wizard;
