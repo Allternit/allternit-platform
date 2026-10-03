@@ -217,6 +217,7 @@ pub mod studio_apps_routes;
 pub mod mcp_routes;
 pub mod mcp_agents;
 pub mod mcp_vendor_bots;
+pub mod mcp_edge_relay;
 pub mod mcp_server_routes;
 pub mod mcp_tunnel_auth;
 pub mod commerce;

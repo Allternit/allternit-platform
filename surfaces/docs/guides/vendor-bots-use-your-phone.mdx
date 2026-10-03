@@ -24,6 +24,8 @@ Because the tools go through the same paths as your bot, the same rules hold:
 
 Under **Use the phone** you can see each app that has used the connector and when. **Revoke** cuts one off at once: its next call is refused.
 
+**The address works from anywhere.** Claude and ChatGPT reach `mcp.allternit.com`, which is hosted by Allternit, not by your computer. Your computer doesn't need to be reachable from the internet. When a call comes in, Allternit checks the sign-in, finds the computer your bot lives on (Desktop or cloud computer), wakes it if it is asleep, and passes the call through. If that takes longer than about 25 seconds, or the computer is offline, the app gets a plain message, "Your Allternit computer is offline; it will be woken — try again in a minute", and you can ask again.
+
 ## What the vendor bot can do
 
 | Tool | What it does |
@@ -42,7 +44,20 @@ Everything works the same on Desktop, the ai.allternit.com phone layout and the 
 
 ## For developers
 
-**Endpoint.** `POST /mcp/bots/:vendorBotId` (MCP Streamable HTTP, JSON-RPC, protocol `2025-06-18`), served by `cmd/allternit-api/src/mcp_vendor_bots.rs` next to the agents server in `mcp_agents.rs`. The public host `mcp.allternit.com` must pass `/mcp/bots/*` through to the API; the edge rule lives outside this repo.
+**Endpoint.** `POST /mcp/bots/:vendorBotId` (MCP Streamable HTTP, JSON-RPC, protocol `2025-06-18`) is served in two places:
+
+- **Public edge, cloud-api** (`cmd/allternit-cloud-api/src/routes/mcp_edge.rs`), at `api.allternit.com` and `mcp.allternit.com`. Both hosts use the same paths, with no prefix change. This is what Claude and ChatGPT call. It also serves the agents server (`POST /mcp/server`, `POST /mcp`) and the `.well-known` documents below. `GET` on a connector path answers `405` with `Allow: POST` after the token is checked.
+- **Runtime, allternit-api** (`cmd/allternit-api/src/mcp_vendor_bots.rs`, next to the agents server in `mcp_agents.rs`), for a signed-in session on the computer itself. The edge never sends the OAuth token here.
+
+**How the edge forwards.**
+
+1. It verifies the Clerk token: signature, issuer, expiry, `aud` equal to the connector's URL, and the scope (`bots:act` for a bot, `agents:read` for the agents server). Nothing is forwarded until all of that passes.
+2. It lists the token owner's paired runtimes (connected ones first, then most recently seen) and calls `POST /webhooks/mcp-edge/bots/:vendorBotId` on the first. The call goes over the signed runtime relay (`x-allternit-runtime-sig`, `x-allternit-runtime-ts`, `x-allternit-owner` = the verified user, `x-allternit-mcp-client` = the OAuth client), and the relay wakes a sleeping computer. The runtime accepts only that signature, and only as the owner it is paired as; its own owner checks, revoked-client check and audit run unchanged.
+3. A runtime that doesn't hold the bot answers `404 {"error":"not_found"}` and the next runtime is tried. The runtime that answered is remembered for 10 minutes. If none holds the bot the caller gets the same `404` as for someone else's bot id, so there is no way to probe for bot ids. The agents server uses only the best runtime.
+4. The whole attempt, including waking a computer, has a 25 second budget. When it is exceeded, or every candidate is offline or still waking, the answer is HTTP `200` with a JSON-RPC error carrying the caller's request id: `{"jsonrpc":"2.0","id":<id>,"error":{"code":-32000,"message":"Your Allternit computer is offline; it will be woken — try again in a minute."}}`.
+5. A revoked connection comes back `401` with the `WWW-Authenticate` challenge (the edge adds it, because the relay drops runtime headers).
+
+Until `MCP_PUBLIC_URL` is set on cloud-api, every edge route answers `503 {"error":"mcp_edge_not_configured"}`. DNS for `mcp.allternit.com` and the reverse proxy in front of cloud-api are set up outside this repo.
 
 **OAuth.** Clerk is the authorization server, as for the agents server. Protected-resource metadata is per path (RFC 9728): `GET /.well-known/oauth-protected-resource/mcp/bots/<id>` returns
 
@@ -78,4 +93,4 @@ An access token must have `aud` equal to that resource and the scope `bots:act`.
 | `GET /v1/vendor-bots/:id/connector/audit` | `{audit:[{id, client, tool, argsHash, ok, result, at}]}`, newest first. |
 | `PUT` / `DELETE /v1/vendor-bots/:id/connector/threads/:threadId` | Shares or unshares a thread. |
 
-The connector needs no environment of its own. `MCP_PUBLIC_URL` and `MCP_OAUTH_ISSUER` (see the agents server) set its address and issuer.
+The connector needs no environment of its own on the runtime. On cloud-api, `MCP_PUBLIC_URL` (for example `https://mcp.allternit.com/mcp`) turns the public edge on and sets the `aud` it expects. `MCP_OAUTH_ISSUER` (default `https://allternit.com/__clerk`) is the authorization server it advertises. The runtime's own `MCP_PUBLIC_URL` / `MCP_OAUTH_ISSUER` behave as before.

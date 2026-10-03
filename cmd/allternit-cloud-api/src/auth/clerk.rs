@@ -238,6 +238,15 @@ pub async fn user_from_headers(headers: &HeaderMap) -> Result<ClerkUser, ApiErro
     verifier().verify(token).await
 }
 
+/// Verify a Clerk JWT (signature, issuer, expiry) and return its raw claims,
+/// for callers that check `aud` / `scope` themselves (the public MCP edge).
+pub async fn verified_claims(token: &str) -> Result<serde_json::Value, ApiError> {
+    let v = verifier();
+    let kid = jwt_header_kid(token)?;
+    let jwk = v.key(&kid).await?;
+    verify_rs256(token, &jwk, &v.issuers)
+}
+
 /// Verify a raw Clerk session JWT (no header extraction). Used by the run
 /// WebSocket, where the token may arrive via a query param or the
 /// Sec-WebSocket-Protocol header rather than Authorization.
