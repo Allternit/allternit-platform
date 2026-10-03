@@ -47,6 +47,7 @@ pub mod runs;
 pub mod runtime_pairing;
 pub mod runtime_relay;
 pub mod schedules;
+pub mod slack_app;
 pub mod tasks;
 #[cfg(test)]
 pub mod test_support;
