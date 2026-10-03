@@ -7,6 +7,7 @@
 //! - [`server`]: the HTTP API (`spec/API.md`).
 
 pub mod audio;
+pub mod call_worker;
 pub mod models;
 pub mod server;
 pub mod session;

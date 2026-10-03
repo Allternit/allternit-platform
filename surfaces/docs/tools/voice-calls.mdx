@@ -1,0 +1,62 @@
+---
+title: 'Voice Calls (Call Worker)'
+description: 'How a bot answers phone calls on its own number: the LiveKit call worker inside allternit-voice-service.'
+---
+
+## Overview
+
+A bot with its own phone number answers calls through the **call worker**, a mode of the Voice Service binary: `allternit-voice-service worker`. A call reaches the bot's number, the carrier sends it to self-hosted LiveKit SIP, and LiveKit dispatches it to the worker. The worker speaks first, holds the conversation, and writes the call into the bot's thread as `call.*` events.
+
+<Warning>
+Status: the worker is built and unit tested, but it is **not live yet**. Two pieces have to land before a test call can go through: the Voice Session core (the streaming STT and TTS engine the worker drives), and the cloud-api routes for call start, events and turns. Spec: `services/voice/spec/CALL_WORKER.md`.
+</Warning>
+
+## What the caller hears
+
+Every call opens with a fixed line that bot settings can't change. The line says the caller is talking to an AI assistant and whether the call is recorded, and then the bot's greeting plays:
+
+> Hi, you've reached Acme Plumbing. I'm an AI assistant, and this call isn't recorded. How can I help?
+
+Recording is off unless the bot owner has configured recording consent. The opening is spoken from cloud-api's cached copy of the bot's settings, so it starts within about a second even if the bot's cloud computer is asleep.
+
+The caller can interrupt the bot at any time; the bot stops talking immediately. Each turn goes to the bot's own runtime, so the bot uses its normal tools, memory and thread on a call. If the runtime can't be reached, the bot says "I can't reach my tools right now; I'll have someone follow up." It never improvises an answer.
+
+## How a call flows
+
+1. **Dispatch.** The worker registers with LiveKit as agent `allternit-voice`. The phone number's SIP dispatch rule sends each call to a `call-…` room and to this agent.
+2. **Join.** The worker joins the room, publishes the bot's voice track, and reads the caller and number details from the SIP participant.
+3. **Call start.** The worker calls `POST /api/v1/voice/calls` on cloud-api. The response gives the call id and the bot's name, voice, greeting and recording setting.
+4. **Conversation.** Caller audio goes to the Voice Session core. Each finished turn goes to cloud-api, which relays it to the bot's runtime, and the reply is spoken as it streams back.
+5. **Events.** Transcript, keypad presses, state changes, transfers, takeovers and the call's end are queued per call. They are delivered to the thread in order, with retries, so none are lost while the runtime wakes.
+
+## Controls from the phone screen
+
+The thread's phone screen sends **hang up**, **mute** (bot or caller), **hold/resume**, **keypad (DTMF)**, **transfer** (cold, to a phone number), **take over**, **hand back**, and **listen**. cloud-api forwards each one to the worker over the room's data channel, and the worker confirms it with an event so the screen updates. During a takeover the bot goes quiet and keeps transcribing the caller. After hand back, the bot picks up with the same context.
+
+## Events written to the thread
+
+| Event | Meaning |
+|---|---|
+| `call.started` | The call connected (direction, numbers). |
+| `call.transcript.delta` | A line of transcript from the caller or the bot. Only final lines are stored. |
+| `call.dtmf` | A keypad press, by the caller or sent from the screen. |
+| `call.state.changed` | Hold and mute state after a control. |
+| `call.transferred` | Whether a transfer went through. |
+| `call.takeover` | A person took over or handed back. |
+| `call.ended` | Duration and reason. |
+
+## Running it
+
+```bash
+cargo build --release -p voice-service --features call-worker
+LIVEKIT_URL=… LIVEKIT_API_KEY=… LIVEKIT_API_SECRET=… \
+ALLTERNIT_CLOUD_API_URL=… ALLTERNIT_VOICE_WORKER_TOKEN=… \
+allternit-voice-service worker
+```
+
+Builds without the `call-worker` feature, such as the Desktop sidecar, don't include LiveKit or libwebrtc. In those builds, `worker` prints how to rebuild. The full list of environment variables is in the spec.
+
+## Related pages
+
+- [Voice Service](/tools/voice)
+- [Gateway](/tools/gateway)

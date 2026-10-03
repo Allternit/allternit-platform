@@ -25,10 +25,25 @@ tokio-stream = { workspace = true }
 futures-util = { workspace = true }
 # Voice Session Smart Turn: runs on sherpa-onnx's own onnxruntime (no second copy).
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "alternative-backend", "api-24"] }
+futures = { workspace = true }
+# Phone call worker (src/call_worker). The agent-worker protocol, cloud-api
+# client, events, controls and turn loop are pure Rust and always compiled so
+# `cargo test -p voice-service` covers them. Only the LiveKit media binding
+# (libwebrtc) sits behind the `call-worker` feature so the Desktop sidecar build
+# does not pull libwebrtc.
+livekit-protocol = "0.8"
+prost = "0.14"
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-native-roots"] }
+livekit = { version = "0.9.3", default-features = false, features = ["native", "rustls-tls-native-roots"], optional = true }
+livekit-api = { version = "0.8.1", default-features = false, features = ["services", "access-token", "rustls-tls-native-roots"], optional = true }
+
+[features]
+default = []
+# LiveKit media binding for `allternit-voice-service worker` (server builds only).
+call-worker = ["dep:livekit", "dep:livekit-api"]
 
 [dev-dependencies]
 tower = { workspace = true }
-tokio-tungstenite = { workspace = true }
 
 # The bench reads peak RSS via getrusage.
 [target.'cfg(unix)'.dev-dependencies]
