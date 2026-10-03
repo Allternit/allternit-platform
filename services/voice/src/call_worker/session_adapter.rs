@@ -23,6 +23,8 @@ pub enum CoreCommand {
     Audio(Vec<u8>),
     SpeakDelta { id: String, text: String },
     SpeakDone { id: String },
+    /// `speak.prepare`: pre-render the opening so it plays from the phrase cache.
+    Prepare { texts: Vec<String> },
     SpeakCancel { id: Option<String> },
     MicMute,
     MicUnmute,
@@ -65,6 +67,8 @@ pub fn session_start(voice: Option<&str>) -> Value {
         "inputSampleRate": CORE_INPUT_RATE,
         "bargeIn": true,
         "turn": {"mode": "smart"},
+        // A caller on a phone should not sit in silence while the bot thinks.
+        "fillers": true,
     });
     if let Some(voice) = voice.filter(|v| !v.is_empty()) {
         v["voice"] = json!(voice);
@@ -76,6 +80,7 @@ pub fn command_frame(cmd: &CoreCommand) -> Message {
     let j = match cmd {
         CoreCommand::Audio(b) => return Message::Binary(b.clone()),
         CoreCommand::SpeakDelta { id, text } => json!({"type": "speak.delta", "id": id, "text": text}),
+        CoreCommand::Prepare { texts } => json!({"type": "speak.prepare", "texts": texts}),
         CoreCommand::SpeakDone { id } => json!({"type": "speak.done", "id": id}),
         CoreCommand::SpeakCancel { id: Some(id) } => json!({"type": "speak.cancel", "id": id}),
         CoreCommand::SpeakCancel { id: None } => json!({"type": "speak.cancel"}),

@@ -19,6 +19,8 @@ Every call opens with a fixed line that bot settings can't change. The line says
 
 Recording is off unless the bot owner has configured recording consent. The opening is spoken from cloud-api's cached copy of the bot's settings, so it starts within about a second even if the bot's cloud computer is asleep.
 
+The disclosure and greeting are pre-rendered into the voice phrase cache when the call starts, so the caller hears them with little delay. If the bot takes more than about a second to start a reply, it says a short filler such as "One moment." (never twice in a row, and it stops if the caller speaks).
+
 The caller can interrupt the bot at any time; the bot stops talking immediately. Each turn goes to the bot's own runtime, so the bot uses its normal tools, memory and thread on a call. If the runtime can't be reached, the bot says "I can't reach my tools right now; I'll have someone follow up." It never improvises an answer.
 
 ## How a call flows

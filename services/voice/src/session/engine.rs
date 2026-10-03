@@ -118,6 +118,9 @@ pub trait EngineFactory: Send + Sync + 'static {
     fn stt(&self, opts: &SttOptions) -> Result<Box<dyn StreamingStt>, EngineError>;
     fn tts(&self) -> Result<Box<dyn Tts>, EngineError>;
     fn vad(&self) -> Result<Box<dyn Vad>, EngineError>;
+    /// Pre-render `texts` (and the built-in fixed phrases) in `voice` into the
+    /// phrase cache. Best effort, in the background; default: nothing.
+    fn prepare_phrases(&self, _texts: &[String], _voice: &str) {}
     /// `Ok(None)` when no Smart Turn model is available; `smart` mode then
     /// falls back to `vad` with a non-fatal `turn_unavailable` error.
     fn turn_detector(&self) -> Result<Option<Box<dyn TurnDetector>>, EngineError>;

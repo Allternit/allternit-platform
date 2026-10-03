@@ -197,6 +197,10 @@ impl PackManager {
         }
     }
 
+    pub fn root_dir(&self) -> PathBuf {
+        self.root.clone()
+    }
+
     pub fn pack_dir(&self, name: &str) -> PathBuf {
         self.root.join(name)
     }

@@ -23,9 +23,10 @@ One protocol on every surface (Desktop, ai.allternit.com, m.allternit.com, iOS l
 
 | type | fields | meaning |
 |---|---|---|
-| `session.start` | `voice?`, `sttModel?` (`light`\|`accurate`), `language?` (default `en`), `inputSampleRate?`, `bargeIn?` (default true), `turn?` {`mode`: `smart`\|`vad`, `silenceMs?`} | First frame. The server answers `session.ready` or `error`. |
+| `session.start` | `voice?`, `sttModel?` (`light`\|`accurate`), `language?` (default `en`), `inputSampleRate?`, `bargeIn?` (default true), `turn?` {`mode`: `smart`\|`vad`, `silenceMs?`}, `fillers?` (default false), `fillerMs?` (200–10000, default 1200) | First frame. The server answers `session.ready` or `error`. |
 | `session.update` | any `session.start` field | Change settings mid-session. |
 | `speak.delta` | `id`, `text` | Append reply text for utterance `id`. The server speaks it sentence by sentence as it arrives. |
+| `speak.prepare` | `texts` [string] | Pre-render `texts` in the session's voice into the phrase cache, so a later `speak.delta` with the same text starts at once. No reply. The phone call worker sends its disclosure and greeting with it before speaking them. Engines without a cache ignore it. |
 | `speak.done` | `id` | No more text for `id`. Flush the last sentence. |
 | `speak.cancel` | `id?` | Stop speaking (`id` or the current one) and drop queued audio. |
 | `mic.mute` / `mic.unmute` | — | While muted, the server ignores mic audio and doesn't detect turns. |
@@ -83,3 +84,10 @@ These describe how this service implements v1. They clarify the protocol; they d
 - **Error codes:** `bad_message` (unparseable or unknown frame, non-fatal), `not_started`, `already_started`, `bad_option` (fatal on `session.start`, non-fatal on `session.update`), `engine_unavailable` (fatal at start), `engine_error`, `turn_unavailable`.
 - **Smart Turn model:** `smart-turn-v3.2-cpu.onnx`, BSD-2-Clause, from `huggingface.co/pipecat-ai/smart-turn-v3` at revision `f766f81d3cfdf7737ac64aad813d91bbfd56bf93`, sha256 `2bb026316b14a660486a75b1733cd3fbab8c2fd0314dc9af7be49f8cca967e4f` (8,679,182 bytes). It runs on the onnxruntime that sherpa-onnx links, so the binary carries one runtime.
 - **Test client:** `cargo run -p voice-service --example voice_session_client -- --wav in.wav --say "text" --out reply.wav`.
+
+## Faster first speech (phrase cache and fillers)
+
+- **Phrase cache.** Fixed phrases are rendered once and replayed from disk, so they start in about a millisecond instead of 0.3–2 s of Kokoro time. The cache lives in `<model dir>/phrase-cache/`, keyed by (voice id, speed, text, model version), with an LRU cap of `ALLTERNIT_VOICE_PHRASE_CACHE_MB` (default 64; `0` turns it off). The text is matched per streamed chunk. Stored: the built-in acknowledgements ("Sure.", "Okay.", "Got it.", …), the fillers, and any text sent with `speak.prepare`. Ordinary replies are never written to disk. Starting a session pre-renders the built-in phrases for the session voice in the background (a no-op once cached).
+- **`fillers`.** With `fillers: true`, if no `speak.delta` has arrived `fillerMs` after `turn.ended`, the server speaks one short cached filler ("One moment.", "Let me check that.", …) as an utterance with id `filler-N` (`speak.started`/`speak.ended` as usual). A filler is interruptible like any speech: barge-in and `speak.cancel` stop it. A reply that arrives while it plays queues behind it. It is never played twice in a row: after a filler, the next one needs a real reply in between. Default off; the phone call worker turns it on.
+- **First chunk.** The first sentence is cut at its first clause mark, or after 2–4 words (before a phrase-starting word where possible), so the first audio is a 2–4 word render.
+- **Warm start.** `allternit-tts` renders a short sentence before it reports ready, so the first real request isn't a cold ONNX session.
