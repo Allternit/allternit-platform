@@ -10,8 +10,22 @@ When a bot has a [phone number](/guides/messaging-channels), its calls and texts
 A thread on a phone number looks like a text conversation: your contact's messages on the left, the bot's on the right, with a delivery state under each message you send.
 
 - The composer shows a **segment counter**. A text is 160 characters in plain GSM characters (153 per segment when it splits), or 70 (67) if it contains emoji or other non-GSM characters.
-- **Texting pending carrier approval.** Until the carrier approves your number for texting, the composer is disabled and a banner says so. Calls work during this time.
+- **Pending carrier registration.** New US numbers need carrier registration before texts go out. Until it's approved, a quiet banner says "Texts out are pending carrier registration — replies send once it's approved." You can still send; if the carrier refuses, the reason shows on that message. Calls work during this time.
 - **STOP.** If a contact texts STOP, texts to them are blocked and the thread says so until they text START.
+
+## Start a text or a call
+
+You don't have to wait for someone to text first. In the bot's chat, under its conversations, choose **New text** or **Have <bot> call…** (shown when the bot has a number).
+
+1. Type the number. It formats as you go: ten digits are a US number, and `+` starts an international one.
+2. For a text, write the message. For a call, say what it's about — that is the bot's brief for the call.
+3. Choose **Send text** or **Call**. A text appears in its thread at once and shows **Failed to send** with the reason if it doesn't go. A call opens the call screen showing **Dialing…**; if nothing connects in a minute it says "The call did not connect".
+
+From an existing text thread, **Call** above the thread has the bot call that contact, and the message box sends a text from the bot's number.
+
+**First contact needs permission.** The bot can only reach someone who has texted or called the number, or whom you've added as a contact. Otherwise you'll see "They haven't texted or called this number yet. Add them as a contact to allow the bot to reach them." Choose **Add contact** and Allternit adds them and tries again. Nothing is added unless you choose it.
+
+Developers: the app calls `POST /api/v1/phone/text`, `POST /api/v1/phone/call` and `POST /api/v1/phone/contacts` on the runtime, and lists numbers with the cloud's `GET /api/v1/phone/numbers`. A call the bot can't place without consent returns `403 {"error":"no_consent"}`. Client: `src/lib/gateway/phone-outbound.ts`; UI: `src/components/gateway/phone/NewPhoneConversation.tsx` in allternit-ai.
 
 ## Calls
 
@@ -38,6 +52,7 @@ On **ai.allternit.com** on a phone and in the **m.allternit.com** app:
 - The call screen takes the whole screen, with large round buttons and a bigger keypad. Close it with **✕** at the top; the call carries on and the card stays in the thread.
 - Call cards and text bubbles fit a 390 px screen: long numbers wrap and **Open call** is a full-width button under the card.
 - Text composers are sized so the phone does not zoom when you tap them.
+- **New text**, **Have <bot> call…** and the thread's **Call** button are full-height touch targets, and their fields are sized so the phone does not zoom.
 
 ## Connect an Android phone
 
