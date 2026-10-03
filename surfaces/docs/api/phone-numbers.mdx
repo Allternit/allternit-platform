@@ -35,6 +35,8 @@ US carriers require registration before a number can text at volume.
 - `POST /api/v1/phone/numbers/:id/registration` takes the business form (legal name, EIN, website, address, contact, use case, sample messages, opt-in workflow). Local numbers register for 10DLC, toll-free numbers for toll-free verification; `kind` overrides. The stored copy masks the EIN.
 - `GET /api/v1/phone/numbers/:id/registration` returns the state (`pending`, `approved`, `rejected`, with `rejectionReason`) and the number's `smsState`. It re-reads a pending registration from the carrier. A rejected registration can be submitted again.
 
+See [Phone invites](/api/phone-invites) for single-use invite links that record explicit consent.
+
 ## Texts in
 
 The carrier posts to the number's relay address. Before anything is queued the cloud verifies the carrier signature, drops duplicates, and handles keywords:
