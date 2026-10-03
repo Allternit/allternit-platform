@@ -1,17 +1,34 @@
 ---
 title: 'Voice Service'
-description: 'Local speech-to-text sidecar (whisper.cpp) with a metadata-only text-to-speech contract.'
+description: 'Local speech-to-text and text-to-speech sidecar (sherpa-onnx: Silero VAD, Moonshine/Parakeet STT, Kokoro TTS) with first-use model downloads.'
 ---
 
 ## Overview
 
-The **Allternit Voice Service** (`services/voice`, crate `voice-service`) is a Rust HTTP sidecar used by Gizzi Code and Allternit Desktop. Speech-to-text is real: it runs [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (`whisper-cli` with the `ggml-tiny.en.bin` model) on the host, with no cloud STT.
+The **Allternit Voice Service** (`services/voice`, crate `voice-service`) is a Rust HTTP sidecar used by Gizzi Code and Allternit Desktop. Both directions are real and run on [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) inside the single binary — no cloud voice APIs, no Python, no whisper.cpp:
 
-<Warning>
-Text-to-speech is **DESIGN, not implemented**. `POST /v1/tts` and `POST /v1/tts/stream` return metadata only (an `audio_url`, an estimated duration and a format); no audio is synthesized and nothing is served at that URL. Voice cloning and the Chatterbox, XTTS and Piper engines are not part of this service. The full TTS product is specified in `docs/specs/tts-product.md`.
-</Warning>
+- **STT:** Silero VAD finds speech segments; **Moonshine tiny** (English, default) or **Parakeet TDT 0.6B v3** (accurate) transcribes them. Any sample rate is accepted (resampled to 16 kHz); 8 kHz phone audio including G.711 μ-law WAV works.
+- **TTS:** **Kokoro-82M int8** (English v0.19, Apache-2.0), 11 voices, 24 kHz.
 
-Status: Implementation IMPLEMENTED (STT only) / Exposure INTERNAL.
+Voice cloning is not part of this service. The remaining product surfaces (Desktop speak button, voice picker UI, Gizzi `/speak`) are specified in `docs/specs/tts-product.md`.
+
+Status: Implementation IMPLEMENTED (STT + TTS) / Exposure INTERNAL.
+
+## Models
+
+Model packs download on first use (sha256-verified, resumable) into
+`~/.allternit/models/voice/<pack>/`; nothing model-related ships in the
+installer. Poll `GET /v1/models` for state (`missing`, `downloading` with
+`pct`, `ready`, `error`).
+
+| Pack | Contents | Size |
+|------|----------|------|
+| `small` (default) | Silero VAD + Moonshine tiny EN + Kokoro-82M int8 | ~134 MB |
+| `accurate` | Parakeet TDT 0.6B v3 int8 (CC-BY-4.0) | ~487 MB |
+
+- `ALLTERNIT_VOICE_MODEL_BASE` overrides the download base URL.
+- `ALLTERNIT_VOICE_THREADS` sets inference threads (default **2**), CPU provider — sized for a ~5-year-old 8 GB laptop.
+- Licences and attributions: `services/voice/THIRD_PARTY_NOTICES.md` (Parakeet is CC-BY-4.0 and requires attribution).
 
 ## Base URL
 
@@ -27,20 +44,23 @@ cargo run -p voice-service
 ./services/voice/start.sh
 ```
 
-Build `whisper-cli` with `services/voice/build-whisper.sh`. The ggml model downloads on the first `POST /v1/stt` into `~/.allternit/models/whisper/` unless `WHISPER_MODEL` is set. `WHISPER_CLI` points at a specific `whisper-cli` binary.
+The sherpa-onnx and onnxruntime native libraries link **statically** into the
+binary (crate `sherpa-onnx` default `static` feature), so the packaged sidecar
+has no accompanying dylib/DLL.
 
 ## REST endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/health`, `/v1/health` | Health, including `engine`, `cli_ok` and `model_ok` |
-| GET | `/v1/voices` | List TTS voice metadata |
+| GET | `/health`, `/v1/health` | Health: engine, threads, readiness, pack states |
+| GET | `/v1/models` | Pack download states |
+| GET | `/v1/voices` | List the 11 installed Kokoro voices |
 | GET | `/v1/voices/:id` | Get one voice (404 if unknown) |
-| GET | `/v1/stt/models` | List STT models |
-| POST | `/v1/tts` | Metadata-only TTS response (no audio) |
-| POST | `/v1/tts/stream` | Metadata-only streaming response (no audio) |
-| POST | `/v1/stt` | Transcribe uploaded audio (multipart) with whisper.cpp |
-| POST | `/v1/stt/stream` | Returns a WebSocket URL descriptor |
+| GET | `/v1/stt/models` | List STT models (moonshine, parakeet) |
+| POST | `/v1/tts` | Synthesise → `audio/wav` bytes (or `format: "pcm16"`) |
+| POST | `/v1/tts/stream` | Sentence-streaming TTS (NDJSON per-sentence pcm16) |
+| POST | `/v1/stt` | Transcribe uploaded audio (multipart; WAV any rate, or raw 16 kHz pcm16) |
+| POST | `/v1/stt/stream` | Streaming STT: chunked 16 kHz pcm16 in, NDJSON partial/final out |
 | GET, POST | `/v1/sessions` | List or create sessions |
 | GET, DELETE | `/v1/sessions/:id` | Get or delete a session |
 | GET | `/v1/stats` | Service metrics |
@@ -58,23 +78,51 @@ curl http://127.0.0.1:8001/v1/health
   "version": "0.1.0",
   "timestamp": 1712345678901,
   "features": ["tts", "stt", "streaming"],
-  "engine": "whisper.cpp",
-  "cli_ok": true,
-  "model_ok": true
+  "engine": "sherpa-onnx",
+  "stt_ready": true,
+  "tts_ready": true,
+  "num_threads": 2,
+  "packs": [
+    { "name": "small", "state": "ready", "pct": null, "error": null, "size_bytes": 314572800 }
+  ]
 }
 ```
 
 ## Transcribe audio
 
-Send the audio as a multipart form upload. Audio is converted to 16 kHz 16-bit mono WAV before it is passed to `whisper-cli`.
+Send the audio as a multipart form upload (`audio` field; optional
+`language`, `model=moonshine|parakeet`). WAV containers of any sample rate
+are decoded and resampled to 16 kHz; raw s16le 16 kHz PCM is also accepted.
 
 ```bash
 curl -X POST http://127.0.0.1:8001/v1/stt -F "audio=@meeting.wav"
 ```
 
-If `whisper-cli` or the model is missing the request fails; check `cli_ok` and `model_ok` on `/v1/health`.
+```json
+{
+  "text": "hello world",
+  "confidence": 0.9,
+  "language": "en",
+  "segments": [
+    { "start_time": 0.0, "end_time": 1.4, "text": "hello world", "confidence": 0.9 }
+  ]
+}
+```
+
+## Speak text
+
+```bash
+curl -X POST http://127.0.0.1:8001/v1/tts \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Hello from Allternit", "voice": "af"}' \
+  --output hello.wav
+```
+
+The first TTS/STT request downloads the `small` pack; poll `GET /v1/models`
+for progress.
 
 ## Related pages
 
+- [Voice API](/api/voice)
 - [Native Tool Belt](/tools/tool-belt)
 - [Gizzi Code](/surfaces/native-agent)

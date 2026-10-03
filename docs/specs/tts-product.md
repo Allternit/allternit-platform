@@ -1,14 +1,27 @@
 ---
 doc: spec
-updated: 2026-09-09
-status: draft
+updated: 2026-10-02
+status: in-progress
 handoff: another-agent
 implement_this_session: false
 ---
 
 # Allternit Speech — TTS product spec
 
-**This session does not implement TTS.** The next agent reads this file, runs the bake-off, gets a human pick, then ships a **full product**. Do not land a stub, a sidecar-only curl demo, or a speak button that 404s.
+**Update 2026-10-02 (voice engine Phase 1, shipped):** the engine/API half of
+this spec is done. `POST /v1/tts` returns real Kokoro audio bytes (WAV or
+`format=pcm16`), `POST /v1/tts/stream` streams per-sentence pcm16 as
+NDJSON, and `GET /v1/voices` lists the 11 installed Kokoro voices — engine
+acceptance items **7, 8, 9** below are satisfied, and **15/16** hold
+(sherpa-onnx in the Rust binary, static linking, notices in
+`services/voice/THIRD_PARTY_NOTICES.md`). The **user-visible product** items
+(1–6, 10–12: Desktop speak button, voice picker UI, Gizzi `/speak`,
+auto-play, doctor, path aliasing, first-run UX) are **not** part of Phase 1
+and remain open — Phase 2 per `HANDOFF-realtime-voice-2026-10-02.md`. STT is
+no longer whisper.cpp: it is sherpa-onnx (Silero VAD + Moonshine/Parakeet),
+same service, same `/v1/stt` shape.
+
+**This session does not implement the remaining UI product.** The next agent reads this file, gets a human pick where a choice remains, then ships the **full product**. Do not land a stub, a sidecar-only curl demo, or a speak button that 404s.
 
 ## Goal
 
@@ -24,12 +37,14 @@ The last two PRs (#192, #194) made a hard cut: dictation first, Chatterbox Pytho
 
 | Surface | What it does today |
 |---|---|
-| `services/voice` `POST /v1/tts` | Returns JSON with a made-up `/v1/audio/{uuid}.wav`. No bytes. |
-| `GET /v1/voices` | Hard-coded stub list (`default`, `en-us-female`, `en-us-male`). |
-| Desktop `VoiceService.speak()` | `POST ${base}/v1/voice/tts` — **different path** than the sidecar’s `/v1/tts`. |
-| `allternit-api` `/api/v1/voice/tts/stream` | Proxies sidecar `/v1/tts/stream`. Upstream is also a stub. |
-| Chat Speak / voice-call / auto-play | UI exists. Audio does not. |
-| Gizzi `/voice` | STT only. No read-aloud. |
+| `services/voice` `POST /v1/tts` | **Real audio** (Kokoro-82M int8 via sherpa-onnx), WAV bytes or `format=pcm16`. Shipped in Phase 1 (2026-10-02). |
+| `GET /v1/voices` | **Real** list of the 11 installed Kokoro voices. Shipped in Phase 1. |
+| `POST /v1/tts/stream` | **Real** NDJSON per-sentence pcm16 stream. Shipped in Phase 1. |
+| `POST /v1/stt` | Real STT via sherpa-onnx (Silero VAD + Moonshine default / Parakeet accurate). Whisper.cpp removed. |
+| Desktop `VoiceService.speak()` | `POST ${base}/v1/voice/tts` — **different path** than the sidecar’s `/v1/tts`. Still open (item 10). |
+| `allternit-api` `/api/v1/voice/tts/stream` | Proxies sidecar `/v1/tts/stream`. Upstream is now real. |
+| Chat Speak / voice-call / auto-play | UI exists. Wired to real audio bytes, but product polish (picker, stop, barge-in) is Phase 2. |
+| Gizzi `/voice` | STT only. No read-aloud yet (item 4). |
 | Chatterbox / FastAPI / pyinstaller | **Removed** (#194). Do not resurrect the Python tree. |
 
 `docs/public/parity/chatgpt-voice.md` still describes the Python wrapper. Update it when the product ships.

@@ -17,6 +17,17 @@ uuid = { workspace = true, features = ["v4", "serde"] }
 chrono = { workspace = true, features = ["serde"] }
 tower-http = { workspace = true, features = ["cors"] }
 tempfile = { workspace = true }
+sherpa-onnx = "1.13"
+sha2 = "0.10"
+tar = { workspace = true }
+bzip2 = "0.4"
+libc = "0.2"
+tokio-stream = { workspace = true }
+futures-util = { workspace = true }
 
 [dev-dependencies]
 tower = { workspace = true }
+
+[[example]]
+name = "voice_bench"
+path = "examples/voice_bench.rs"

@@ -11,14 +11,15 @@
  *        hard-requires must have a producing step (or an ALLOW_MISSING
  *        env opt-out) in each platform job.
  *        (Update, run 11: voice is a Rust crate since PR #194's voice-cleanup;
- *        the PyInstaller steps were replaced by `cargo build -p voice-service`
- *        plus a whisper-cli cmake build. The packaging dry-run still guards
- *        the sidecars; the toolchain check now asserts a job cargo-builds
- *        the crate.)
+ *        the PyInstaller steps were replaced by `cargo build -p voice-service`.
+ *        Phase 1 of the voice engine (2026-10-02) moved STT/TTS into the
+ *        binary via sherpa-onnx (statically linked) and deleted whisper-cli
+ *        entirely — build-whisper.sh no longer exists to check.)
  *   2. pip install services/voice failed (package is at services/voice/voice)
  *      → script existence: services/voice/voice/pyproject.toml must exist.
  *        (Update, run 11: the Python tree is gone — the check now asserts
- *        services/voice/Cargo.toml and services/voice/build-whisper.sh exist.)
+ *        services/voice/Cargo.toml exists. Phase 1 of the voice engine
+ *        removed build-whisper.sh with the rest of whisper.cpp.)
  *   3. Missing allternit-local-engine binary on macOS
  *      → packaging dry-run: macOS job must build local-engine or set
  *        ALLTERNIT_ALLOW_MISSING_LOCAL_ENGINE.
@@ -135,8 +136,7 @@ function checkScriptExistence(workflowText) {
     'surfaces/allternit-desktop/scripts/prepare-office-engine.cjs',
     'surfaces/allternit-desktop/scripts/verify-packaged-resources.cjs',
     'surfaces/allternit-desktop/scripts/stage-local-engine-binary.cjs',
-    'services/voice/Cargo.toml', // voice-service sidecar (Rust crate; bin name voice-service)
-    'services/voice/build-whisper.sh', // whisper-cli sidecar builder
+    'services/voice/Cargo.toml', // voice-service sidecar (Rust crate; bin name voice-service; sherpa-onnx statically linked)
     'services/open-connector/scripts/generate-provider-registry.ts',
     'services/local-engine/Cargo.toml',
     'cmd/allternit-api/Cargo.toml',
@@ -239,18 +239,13 @@ function checkToolchain(jobs) {
   }
 
   const macosJob = jobs['build-macos'] || '';
-  if (
-    !/build-whisper\.sh arm64/.test(macosJob) ||
-    !/build-whisper\.sh x86_64/.test(macosJob) ||
-    !/whisper-cli-arm64/.test(macosJob) ||
-    !/whisper-cli-x86_64/.test(macosJob)
-  ) {
+  if (!/cargo build[^\n]*voice-service/.test(macosJob)) {
     fail(
-      'toolchain: build-macos must cmake whisper-cli for arm64 and x86_64 and lipo them ' +
-        '(host-arch-only whisper-cli leaves the Intel app with an arm64 STT binary).'
+      'toolchain: build-macos must cargo-build the voice-service crate ' +
+        '(sherpa-onnx sidecar; whisper.cpp was removed in the voice-engine phase 1).'
     );
   } else {
-    pass('toolchain: build-macos lipos whisper-cli for arm64 and x86_64');
+    pass('toolchain: build-macos cargo-builds the voice-service sidecar');
   }
 }
 

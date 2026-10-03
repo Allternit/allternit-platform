@@ -4,7 +4,7 @@ use reqwest::Client;
 use std::path::Path;
 
 use crate::types::{
-    HealthResponse, ModelsResponse, TTSRequest, TTSResponse, VCRequest, VCResponse, UploadResponse,
+    HealthResponse, ModelsResponse, TTSRequest, TTSResponse, UploadResponse, VCRequest, VCResponse,
 };
 
 #[derive(Debug)]
@@ -19,10 +19,7 @@ impl VoiceClient {
             .no_proxy()
             .build()
             .expect("Failed to build reqwest client");
-        Self {
-            base_url,
-            client,
-        }
+        Self { base_url, client }
     }
 
     pub fn default() -> Self {
@@ -125,7 +122,7 @@ impl VoiceClient {
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("audio.wav")
-                    .to_string()
+                    .to_string(),
             )
             .mime_str("audio/wav")
             .context("Failed to set MIME type")?;

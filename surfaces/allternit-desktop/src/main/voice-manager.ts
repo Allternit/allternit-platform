@@ -30,14 +30,12 @@ class VoiceManager {
 
     this.stopping = false;
     const binDir = path.join(process.resourcesPath ?? '', 'bin');
-    const whisperCli = path.join(binDir, process.platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli');
     const env = {
       ...process.env,
       PORT: String(PORTS.VOICE),
       AUDIO_OUTPUT_DIR: path.join(app.getPath('userData'), 'voice-audio'),
       PRELOAD_MODEL: 'false',
       PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}`,
-      ...(fs.existsSync(whisperCli) ? { WHISPER_CLI: whisperCli } : {}),
     };
     fs.mkdirSync(env.AUDIO_OUTPUT_DIR, { recursive: true });
 
@@ -95,7 +93,7 @@ class VoiceManager {
       // "service not running".
       if (!this.proc) {
         throw new Error(
-          'Voice service exited before becoming ready (Rust sidecar / whisper-cli missing; Voice Mode unavailable)',
+          'Voice service exited before becoming ready (Rust sidecar missing; Voice Mode unavailable)',
         );
       }
       await new Promise((resolve) => setTimeout(resolve, 300));

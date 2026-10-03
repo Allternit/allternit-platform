@@ -5,7 +5,7 @@
 
 use std::net::SocketAddr;
 use tracing::info;
-use voice_service::server::{VoiceServiceState, create_router};
+use voice_service::server::{create_router, VoiceServiceState};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

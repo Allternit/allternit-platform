@@ -5,7 +5,14 @@ description: 'Text-to-speech, speech-to-text, and voice session management for t
 
 ## Overview
 
-The Voice API provides text-to-speech (TTS), speech-to-text (STT), voice session management, and service introspection. The Rust voice service (`services/voice`) listens on port `8001` (override with the `PORT` environment variable). Speech-to-text runs on a local whisper.cpp CLI and ggml model. Text-to-speech does not synthesize audio in this build: `POST /v1/tts` returns a `/v1/audio/<id>.wav` URL, but no `/v1/audio/*` route is registered. `POST /v1/stt/stream` returns a `websocket_url` (`/v1/stt/ws/<id>`) for which no route is registered. There is no Python voice wrapper in the repository. Implementation IMPLEMENTED for STT and sessions, DESIGN - NOT YET IMPLEMENTED for TTS audio and streaming; Exposure INTERNAL.
+The Voice API provides text-to-speech (TTS), speech-to-text (STT), voice session management, and service introspection. The Rust voice service (`services/voice`) listens on port `8001` (override with the `PORT` environment variable). Both STT and TTS are real and run on [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) inside the binary:
+
+- **STT:** Silero VAD segments the audio, then Moonshine tiny (default) or Parakeet TDT 0.6B v3 (accurate) transcribes each segment. Any sample rate is accepted and resampled to 16 kHz; 8 kHz phone audio (including G.711 μ-law WAV) works.
+- **TTS:** Kokoro-82M int8 (English v0.19), 11 voices, 24 kHz output.
+- **Models download on first use** into `~/.allternit/models/voice/<pack>/` (sha256-verified). The `small` pack (~134 MB: VAD + Moonshine + Kokoro) is the default; the `accurate` pack (~487 MB, Parakeet, CC-BY-4.0) downloads on first accurate-STT request. Poll `GET /v1/models` for `missing | downloading | ready | error` state. Override the download base with `ALLTERNIT_VOICE_MODEL_BASE`.
+- Inference uses `ALLTERNIT_VOICE_THREADS` threads (default **2**), CPU provider.
+
+Licences and attributions: `services/voice/THIRD_PARTY_NOTICES.md` (sherpa-onnx Apache-2.0; Moonshine MIT; Kokoro Apache-2.0; Silero VAD MIT; Parakeet CC-BY-4.0, attribution required; onnxruntime MIT).
 
 ## Base URL
 
@@ -13,7 +20,7 @@ The Voice API provides text-to-speech (TTS), speech-to-text (STT), voice session
 http://localhost:8001
 ```
 
-The voice service binds to `0.0.0.0:8001` by default. When deployed behind the Allternit gateway, it may be exposed under a platform path; consult your deployment's routing table.
+The voice service binds to `127.0.0.1:8001` by default. When deployed behind the Allternit gateway, it may be exposed under a platform path; consult your deployment's routing table.
 
 ## Authentication
 
@@ -25,20 +32,29 @@ The standalone voice service does not require authentication in local developmen
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | string | Voice preset identifier. |
+| `id` | string | Kokoro voice id (`af`, `af_bella`, `am_michael`, `bm_george`, …). |
 | `name` | string | Human-readable name. |
-| `language` | string | Language code. |
+| `language` | string | Language code (`en-US`, `en-GB`). |
 | `gender` | string | Gender tag. |
-| `sample_rate` | integer | Output sample rate in Hz. |
+| `sample_rate` | integer | Output sample rate in Hz (24000). |
 
 ### SttModel
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | string | Model identifier. |
+| `id` | string | `moonshine-tiny-en` or `parakeet-tdt-0.6b-v3-int8`. |
 | `name` | string | Human-readable name. |
 | `language` | string | Supported language. |
 | `supports_streaming` | boolean | Whether streaming is supported. |
+
+### PackStatus
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | `small` or `accurate`. |
+| `state` | string | `missing`, `downloading`, `ready`, or `error`. |
+| `pct` | number | Download progress 0–1 while downloading. |
+| `error` | string | Error message when `state` is `error`. |
 
 ### VoiceSession
 
@@ -54,15 +70,16 @@ The standalone voice service does not require authentication in local developmen
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/health` | Service liveness. |
+| `GET` | `/health` | Service liveness, engine readiness, pack states. |
 | `GET` | `/v1/health` | Versioned service liveness. |
-| `GET` | `/v1/voices` | List TTS voices. |
+| `GET` | `/v1/models` | Model pack download states. |
+| `GET` | `/v1/voices` | List installed TTS voices. |
 | `GET` | `/v1/voices/:id` | Get a specific voice. |
 | `GET` | `/v1/stt/models` | List STT models. |
-| `POST` | `/v1/tts` | Convert text to speech. |
-| `POST` | `/v1/tts/stream` | Streaming TTS. |
-| `POST` | `/v1/stt` | Transcribe audio (multipart). |
-| `POST` | `/v1/stt/stream` | Streaming STT WebSocket URL. |
+| `POST` | `/v1/tts` | Synthesise speech → audio bytes. |
+| `POST` | `/v1/tts/stream` | Streaming TTS (NDJSON, per-sentence audio). |
+| `POST` | `/v1/stt` | Transcribe audio (multipart, any sample rate). |
+| `POST` | `/v1/stt/stream` | Streaming STT (NDJSON, chunked 16 kHz PCM in). |
 | `GET` | `/v1/sessions` | List active sessions. |
 | `POST` | `/v1/sessions` | Create a session. |
 | `GET` | `/v1/sessions/:id` | Get a session. |
@@ -84,9 +101,13 @@ GET /v1/health
   "version": "0.1.0",
   "timestamp": 1754541600000,
   "features": ["tts", "stt", "streaming"],
-  "engine": "whisper.cpp",
-  "cli_ok": true,
-  "model_ok": true
+  "engine": "sherpa-onnx",
+  "stt_ready": true,
+  "tts_ready": true,
+  "num_threads": 2,
+  "packs": [
+    { "name": "small", "state": "ready", "pct": null, "error": null, "size_bytes": 314572800 }
+  ]
 }
 ```
 
@@ -101,17 +122,17 @@ GET /v1/voices
 ```json
 [
   {
-    "id": "default",
-    "name": "Default Voice",
-    "language": "en",
-    "gender": "neutral",
+    "id": "af",
+    "name": "Default (US Female)",
+    "language": "en-US",
+    "gender": "female",
     "sample_rate": 24000
   },
   {
-    "id": "en-us-female",
-    "name": "US English Female",
-    "language": "en-US",
-    "gender": "female",
+    "id": "bm_george",
+    "name": "George",
+    "language": "en-GB",
+    "gender": "male",
     "sample_rate": 24000
   }
 ]
@@ -123,36 +144,55 @@ GET /v1/voices
 POST /v1/tts
 ```
 
+Synthesises speech and returns audio bytes (`audio/wav` by default; pass
+`format: "pcm16"` for raw s16le mono 24 kHz). The first request downloads
+the `small` pack if it is not on disk yet.
+
 ### Request body
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `text` | string | Yes | Text to synthesize. |
-| `voice_id` | string | No | Voice preset; defaults to `default`. |
-| `language` | string | No | Language hint. |
-| `speed` | number | No | Speech speed multiplier. |
+| `voice` | string | No | Kokoro voice id; default `af`. Alias `voice_id` accepted. |
+| `language` | string | No | Language hint (reserved). |
+| `speed` | number | No | Speech speed multiplier (default 1.0). |
+| `format` | string | No | `wav` (default) or `pcm16`. |
 
 ### Example request
 
 ```bash
 curl -X POST http://localhost:8001/v1/tts \
   -H "Content-Type: application/json" \
-  -d '{
-    "text": "Hello from Allternit",
-    "voice_id": "en-us-female"
-  }'
+  -d '{"text": "Hello from Allternit", "voice": "af"}' \
+  --output hello.wav
 ```
 
-### Example response
+### Response
 
-```json
-{
-  "audio_url": "/v1/audio/550e8400.wav",
-  "duration_secs": 1.6,
-  "sample_rate": 24000,
-  "format": "wav"
-}
+`200 OK` — `audio/wav` bytes with `X-Duration-Seconds`, `X-Sample-Rate`,
+and `X-Format` headers.
+
+## Streaming text-to-speech
+
+```http
+POST /v1/tts/stream
 ```
+
+Sentence-streaming TTS: the text is split into sentences and each sentence's
+audio is emitted as soon as it is synthesised, so playback can start before
+the whole text is done.
+
+### Response
+
+`200 OK` — `application/x-ndjson` stream:
+
+```jsonl
+{"type":"audio","index":0,"sample_rate":24000,"format":"pcm16","audio_b64":"<s16le base64>"}
+{"type":"done","duration_secs":4.32}
+```
+
+Decode each `audio_b64` to raw s16le mono PCM at `sample_rate`; concatenating
+all chunks yields the full utterance.
 
 ## Speech-to-text
 
@@ -160,14 +200,18 @@ curl -X POST http://localhost:8001/v1/tts \
 POST /v1/stt
 ```
 
-Transcribes uploaded audio passed as multipart form data.
+Transcribes uploaded audio passed as multipart form data. Accepts WAV
+(PCM 8/16/24/32-bit, float32, G.711 μ-law/A-law; any sample rate; mono or
+stereo) or raw 16 kHz s16le PCM. Audio is resampled to 16 kHz and segmented
+by Silero VAD; each segment is transcribed with the selected model.
 
 ### Request body (multipart)
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `audio` | bytes | Yes | Raw audio bytes. |
-| `language` | string | No | Language hint. |
+| `audio` | bytes | Yes | Audio bytes (`.wav` or raw pcm16). |
+| `language` | string | No | Language hint (echoed back). |
+| `model` | string | No | `moonshine` (default) or `parakeet` (accurate pack). |
 
 ### Example request
 
@@ -181,16 +225,56 @@ curl -X POST http://localhost:8001/v1/stt \
 
 ```json
 {
-  "text": "This is a simulated transcription result from the voice service.",
-  "confidence": 0.95,
+  "text": "hello world",
+  "confidence": 0.9,
   "language": "en",
   "segments": [
     {
       "start_time": 0.0,
-      "end_time": 2.1,
-      "text": "Simulated transcription",
-      "confidence": 0.95
+      "end_time": 1.4,
+      "text": "hello world",
+      "confidence": 0.9
     }
+  ]
+}
+```
+
+`segments` carry VAD-derived timestamps. `confidence` is a heuristic —
+the offline recognisers do not emit per-word confidence.
+
+## Streaming speech-to-text
+
+```http
+POST /v1/stt/stream
+```
+
+Streaming STT: send raw chunked s16le mono **16 kHz** PCM
+(`Content-Type: application/octet-stream`; `?model=moonshine|parakeet`);
+receive `application/x-ndjson` events as speech is segmented:
+
+```jsonl
+{"type":"partial","text":"hello wor"}
+{"type":"final","text":"hello world","start":0.0,"end":1.4}
+{"type":"done","duration_secs":6.1}
+```
+
+One streaming STT session at a time; a concurrent request gets
+`409 Conflict`. Finish the request body (or close the connection) to flush
+trailing speech.
+
+## Model packs
+
+```http
+GET /v1/models
+```
+
+### Example response
+
+```json
+{
+  "packs": [
+    { "name": "small", "state": "downloading", "pct": 0.42, "error": null, "size_bytes": null },
+    { "name": "accurate", "state": "missing", "pct": null, "error": null, "size_bytes": null }
   ]
 }
 ```
@@ -239,8 +323,8 @@ GET /v1/stats
 ```json
 {
   "active_sessions": 0,
-  "tts_models": 3,
-  "stt_models": 1,
+  "tts_models": 11,
+  "stt_models": 2,
   "total_requests": 42,
   "timestamp": 1754541600000
 }
@@ -252,11 +336,14 @@ GET /v1/stats
 |--------|---------|
 | `200 OK` | Success. |
 | `204 No Content` | Session deleted successfully. |
-| `400 Bad Request` | Missing audio data or unknown voice id. |
+| `400 Bad Request` | Missing audio, empty text, or unknown model/voice. |
 | `404 Not Found` | Voice or session not found. |
+| `409 Conflict` | A streaming STT session is already active. |
+| `415 Unsupported Media Type` | Unsupported audio container (e.g. WebM/Opus — decode to WAV client-side). |
+| `503 Service Unavailable` | Engine failed to initialise (e.g. model download/verify failure). |
 
 ## Related pages
 
-- [Realtime Audio API](/api/realtime-audio)
+- [Voice Tool](/tools/voice)
 - [Sessions API](/api/sessions)
 - [Authentication](/api/authentication)

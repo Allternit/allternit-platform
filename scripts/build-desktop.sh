@@ -17,7 +17,6 @@ API_DIR="$WORKSPACE_ROOT/cmd/allternit-api"
 GIZZI_DIR="$WORKSPACE_ROOT/cmd/gizzi-code"
 DESKTOP_DIR="$WORKSPACE_ROOT/surfaces/allternit-desktop"
 RESOURCES_DIR="$DESKTOP_DIR/resources"
-VOICE_DIR="$WORKSPACE_ROOT/services/voice"
 PYTHON_BIN="${PYTHON_BIN:-$(command -v python3.11 || command -v python3)}"
 
 # UI Helpers
@@ -113,8 +112,8 @@ cp "$RG_SRC" "$RESOURCES_DIR/bin/vendor/ripgrep/$RG_LAYOUT/rg"
 chmod +x "$RESOURCES_DIR/bin/vendor/ripgrep/$RG_LAYOUT/rg"
 ok "ripgrep → $RESOURCES_DIR/bin/vendor/ripgrep/$RG_LAYOUT/rg"
 
-# ── 2b. Build Voice Service Sidecar (Rust + whisper.cpp) ────────────────────
-step "Building bundled voice service (whisper.cpp)…"
+# ── 2c. Build Voice Service Sidecar (Rust + sherpa-onnx) ────────────────────
+step "Building bundled voice service (sherpa-onnx)…"
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
 cd "$WORKSPACE_ROOT"
 cargo build --release -p voice-service
@@ -124,13 +123,11 @@ VOICE_BIN="$CARGO_OUT/release/voice-service"
 cp "$VOICE_BIN" "$RESOURCES_DIR/bin/allternit-voice-service"
 chmod +x "$RESOURCES_DIR/bin/allternit-voice-service"
 
-bash "$VOICE_DIR/build-whisper.sh"
-WHISPER_CLI="$VOICE_DIR/dist/whisper-cli"
-[ -x "$WHISPER_CLI" ] || die "whisper-cli build failed — binary not found at $WHISPER_CLI"
-cp "$WHISPER_CLI" "$RESOURCES_DIR/bin/whisper-cli"
-chmod +x "$RESOURCES_DIR/bin/whisper-cli"
-
-ok "voice service → $RESOURCES_DIR/bin/allternit-voice-service + whisper-cli"
+# sherpa-onnx/onnxruntime link statically into the binary (crate default
+# `static` feature): no dylib/DLL to stage next to it, unlike the old
+# whisper-cli. Voice models download on first use at runtime into
+# ~/.allternit/models/voice/ — nothing model-related ships in the app.
+ok "voice service → $RESOURCES_DIR/bin/allternit-voice-service (sherpa-onnx, static)"
 
 # ── 3. Build Rust API ────────────────────────────────────────────────────────
 if [ "$SKIP_API" = false ]; then

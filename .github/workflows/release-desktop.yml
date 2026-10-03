@@ -219,10 +219,13 @@ jobs:
         run: node scripts/prepare-mesh-node.cjs
         working-directory: surfaces/allternit-desktop
 
-      # ── Step 3c: Build voice service sidecar (Rust) + whisper-cli ─────────
+      # ── Step 3c: Build voice service sidecar (Rust, sherpa-onnx) ────────────
       - name: Build voice service sidecar
-        # Voice is a Rust crate now (services/voice, bin name voice-service;
-        # the Python/PyInstaller tree was deleted in the voice-cleanup).
+        # Voice is a Rust crate (services/voice, bin name voice-service). STT
+        # (Moonshine/Parakeet) and TTS (Kokoro) run inside the binary via
+        # sherpa-onnx with statically-linked native libs — no whisper-cli,
+        # no shared onnxruntime to ship. Model files download on first use
+        # at runtime into ~/.allternit/models/voice/.
         # prepare-platform-static hard-requires resources/bin/allternit-voice-service.
         # Both apple targets are already installed for the allternit-api build.
         run: |
@@ -235,23 +238,6 @@ jobs:
             -output surfaces/allternit-desktop/resources/bin/allternit-voice-service
           chmod +x surfaces/allternit-desktop/resources/bin/allternit-voice-service
           lipo -info surfaces/allternit-desktop/resources/bin/allternit-voice-service
-
-      - name: Build whisper-cli sidecar
-        # prepare-platform-static also hard-requires resources/bin/whisper-cli
-        # (local /voice dictation shells out to it; the model ggml-tiny.en.bin
-        # is downloaded at runtime). Cross-compile both Darwin archs and lipo
-        # so the x64 app is not stuck with an arm64 host binary.
-        run: |
-          services/voice/build-whisper.sh arm64
-          services/voice/build-whisper.sh x86_64
-          mkdir -p surfaces/allternit-desktop/resources/bin
-          lipo -create \
-            services/voice/dist/whisper-cli-arm64 \
-            services/voice/dist/whisper-cli-x86_64 \
-            -output surfaces/allternit-desktop/resources/bin/whisper-cli
-          chmod +x surfaces/allternit-desktop/resources/bin/whisper-cli
-          lipo -info surfaces/allternit-desktop/resources/bin/whisper-cli
-          ls -lh surfaces/allternit-desktop/resources/bin/whisper-cli
 
       # ── Step 3d: Build local-engine sidecar (Rust) ──────────────────────────
       - name: Build local-engine sidecar
@@ -464,8 +450,11 @@ jobs:
         working-directory: surfaces/allternit-desktop
 
       - name: Build voice service sidecar (Windows)
-        # Voice is a Rust crate now (services/voice, bin name voice-service;
-        # the Python/PyInstaller tree was deleted in the voice-cleanup).
+        # Voice is a Rust crate (services/voice, bin name voice-service).
+        # STT (Moonshine/Parakeet) and TTS (Kokoro) run inside the binary via
+        # sherpa-onnx with statically-linked native libs — no whisper-cli,
+        # no onnxruntime DLL to ship. Model files download on first use at
+        # runtime into %USERPROFILE%\.allternit\models\voice\.
         # prepare-platform-static requires resources/bin/allternit-voice-service.exe
         # on win32. The x86_64-pc-windows-msvc target is installed by the
         # dtolnay/rust-toolchain step above.
@@ -476,21 +465,6 @@ jobs:
           cp target/x86_64-pc-windows-msvc/release/voice-service.exe \
              surfaces/allternit-desktop/resources/bin/allternit-voice-service.exe
           ls -lh surfaces/allternit-desktop/resources/bin/allternit-voice-service.exe
-
-      - name: Build whisper-cli sidecar (Windows)
-        # prepare-platform-static also hard-requires resources/bin/whisper-cli.exe.
-        # cmake and the VS2022 toolset (choco, above) are both present on the
-        # windows-latest runner; ggml-org/whisper.cpp builds out of the box.
-        shell: pwsh
-        run: |
-          git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git "$env:TEMP\whisper.cpp"
-          cmake -S "$env:TEMP\whisper.cpp" -B "$env:TEMP\whisper.cpp\build" -DCMAKE_BUILD_TYPE=Release
-          cmake --build "$env:TEMP\whisper.cpp\build" --config Release --target whisper-cli
-          New-Item -ItemType Directory -Force surfaces\allternit-desktop\resources\bin | Out-Null
-          $bin = Get-ChildItem -Path "$env:TEMP\whisper.cpp\build" -Recurse -Filter whisper-cli.exe | Select-Object -First 1
-          if (-not $bin) { throw "whisper-cli.exe not found under build tree" }
-          Copy-Item $bin.FullName surfaces\allternit-desktop\resources\bin\whisper-cli.exe
-          Get-Item surfaces\allternit-desktop\resources\bin\whisper-cli.exe | Select-Object Name,Length
 
       # No allternit-mux on Windows: its API is a Unix socket (tokio UnixListener)
       # and gizzi's /pty integration dials that socket, so a Windows build would
