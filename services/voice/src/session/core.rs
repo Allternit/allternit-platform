@@ -60,6 +60,10 @@ pub struct CoreConfig {
     pub playback_lead_ms: u64,
     /// Speech audio frame size.
     pub output_frame_ms: u32,
+    /// Who the session belongs to (the ticket's user, or a bot's owner on a
+    /// call). Custom voices are only usable with an owner whose consent
+    /// record is on file.
+    pub owner: Option<String>,
 }
 
 impl Default for CoreConfig {
@@ -68,6 +72,7 @@ impl Default for CoreConfig {
             output_sample_rate: None,
             playback_lead_ms: 250,
             output_frame_ms: 20,
+            owner: None,
         }
     }
 }
@@ -600,6 +605,8 @@ fn resolve(
 ) -> Result<(Settings, Option<ServerEvent>), String> {
     let mut warning = None;
     let voice = match &o.voice {
+        // Custom voices are per owner: the engine checks consent for them.
+        Some(v) if crate::custom_voice::is_custom(v) => v.clone(),
         Some(v) if !info_voices.is_empty() && !info_voices.contains(v) => {
             return Err(format!(
                 "unknown voice '{v}' (available: {})",
@@ -717,10 +724,19 @@ async fn start(ctx: &Ctx, opts: &SessionOptions) -> Result<Running, ServerEvent>
     let _ = resolve(&info.voices, &info.default_voice, None, opts, true)
         .map_err(|m| ServerEvent::error(codes::BAD_OPTION, m, true))?;
 
+    let owner = ctx.config.owner.clone();
+    if let Some(voice) = opts.voice.clone().filter(|v| crate::custom_voice::is_custom(v)) {
+        let (f, o) = (factory.clone(), owner.clone());
+        tokio::task::spawn_blocking(move || f.check_voice(o.as_deref(), &voice))
+            .await
+            .map_err(|e| ServerEvent::error(codes::ENGINE_ERROR, format!("voice check panicked: {e}"), true))?
+            .map_err(fatal)?;
+    }
+
     let engines = tokio::task::spawn_blocking(move || -> Result<Engines, EngineError> {
         Ok(Engines {
             stt: factory.stt(&stt_opts)?,
-            tts: factory.tts()?,
+            tts: factory.tts_for(owner.as_deref())?,
             vad: factory.vad()?,
             // Loaded even in vad mode so session.update can switch to smart.
             detector: factory.turn_detector()?,
@@ -923,6 +939,20 @@ async fn update(ctx: &Ctx, s: &mut Running, opts: SessionOptions) {
     if let Some(w) = warning {
         if opts.turn.is_some() {
             ctx.emit(w).await;
+        }
+    }
+    if next.voice != s.settings.voice && crate::custom_voice::is_custom(&next.voice) {
+        let (f, o, v) = (ctx.factory.clone(), ctx.config.owner.clone(), next.voice.clone());
+        match tokio::task::spawn_blocking(move || f.check_voice(o.as_deref(), &v)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                ctx.emit(ServerEvent::error(e.code, e.message, false)).await;
+                return;
+            }
+            Err(e) => {
+                ctx.emit(ServerEvent::error(codes::ENGINE_ERROR, e.to_string(), false)).await;
+                return;
+            }
         }
     }
     if next.stt != s.settings.stt {

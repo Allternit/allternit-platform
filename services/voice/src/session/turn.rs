@@ -206,7 +206,7 @@ fn slaney_mel_filters() -> Vec<f64> {
     out
 }
 
-pub use onnx::SmartTurn;
+pub use onnx::{ensure_ort_api, SmartTurn};
 
 mod onnx {
     use super::{WhisperFeatures, N_FRAMES, N_MELS};
@@ -222,7 +222,7 @@ mod onnx {
     static API: Once = Once::new();
 
     /// Point `ort` at sherpa-onnx's onnxruntime (once per process).
-    fn ensure_api() -> Result<(), EngineError> {
+    pub fn ensure_ort_api() -> Result<(), EngineError> {
         let mut err = None;
         API.call_once(|| {
             // SAFETY: OrtGetApiBase is the stable C entry point of the linked
@@ -250,7 +250,7 @@ mod onnx {
 
     impl SmartTurn {
         pub fn load(model: &Path, threads: usize) -> Result<Self, EngineError> {
-            ensure_api()?;
+            ensure_ort_api()?;
             fn fail(e: impl std::fmt::Display) -> EngineError {
                 EngineError::unavailable(format!("smart turn model: {e}"))
             }

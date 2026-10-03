@@ -15,6 +15,9 @@ use std::sync::Arc;
 
 use sherpa_onnx::VoiceActivityDetector;
 
+use crate::custom_voice::consent::RECHECK_AFTER;
+use crate::custom_voice::{is_custom, CustomVoices, OpenVoice};
+
 use super::engine::{
     EngineError, EngineFactory, EngineInfo, StreamingStt, SttOptions, Tts, TurnDetector, Vad,
     VadEvent, ENGINE_SAMPLE_RATE,
@@ -41,6 +44,7 @@ pub struct SherpaEngine {
     packs: Arc<PackManager>,
     stt: Arc<SttEngine>,
     tts: Arc<TtsEngine>,
+    custom: Arc<CustomVoices>,
     kind: EngineKind,
 }
 
@@ -51,12 +55,21 @@ impl SherpaEngine {
             Ok("cloud") => EngineKind::Cloud,
             _ => EngineKind::Device,
         };
+        // Until `with_custom` gives it a consent checker, custom voices are refused.
+        let custom = CustomVoices::new(packs.clone(), None);
         Self {
             packs,
             stt,
             tts,
+            custom,
             kind,
         }
+    }
+
+    /// Serve custom voices through `custom` (it carries the consent checker).
+    pub fn with_custom(mut self, custom: Arc<CustomVoices>) -> Self {
+        self.custom = custom;
+        self
     }
 
     fn stt_model(opts: &SttOptions) -> SttModel {
@@ -101,10 +114,24 @@ impl EngineFactory for SherpaEngine {
     }
 
     fn tts(&self) -> Result<Box<dyn Tts>, EngineError> {
+        self.tts_for(None)
+    }
+
+    fn tts_for(&self, owner: Option<&str>) -> Result<Box<dyn Tts>, EngineError> {
         self.tts.prepare().map_err(EngineError::unavailable)?;
         Ok(Box::new(SherpaTts {
             engine: self.tts.clone(),
+            custom: self.custom.clone(),
+            owner: owner.map(str::to_string),
+            open: None,
         }))
+    }
+
+    fn check_voice(&self, owner: Option<&str>, voice: &str) -> Result<(), EngineError> {
+        if is_custom(voice) {
+            self.custom.authorize(owner, voice)?;
+        }
+        Ok(())
     }
 
     fn vad(&self) -> Result<Box<dyn Vad>, EngineError> {
@@ -219,6 +246,38 @@ impl StreamingStt for SherpaStt {
 
 struct SherpaTts {
     engine: Arc<TtsEngine>,
+    custom: Arc<CustomVoices>,
+    owner: Option<String>,
+    /// The custom voice in use and when its consent was last confirmed.
+    open: Option<(OpenVoice, std::time::Instant)>,
+}
+
+impl SherpaTts {
+    /// The custom voice `voice`, with consent confirmed within `RECHECK_AFTER`.
+    fn custom_voice(&mut self, voice: &str) -> Result<&OpenVoice, EngineError> {
+        let id = voice.strip_prefix(crate::custom_voice::CUSTOM_PREFIX).unwrap_or(voice);
+        let fresh = matches!(&self.open, Some((o, at)) if o.id == id && at.elapsed() < RECHECK_AFTER);
+        if !fresh {
+            let still = match self.custom.authorize(self.owner.as_deref(), voice) {
+                Ok(g) => g,
+                Err(e) => {
+                    self.open = None; // consent gone: drop the conditioned voice
+                    return Err(e);
+                }
+            };
+            match &mut self.open {
+                Some((o, at)) if o.id == id && o.clip_sha256 == still.clip_sha256 => {
+                    *at = std::time::Instant::now()
+                }
+                _ => {
+                    self.open = None;
+                    let opened = self.custom.open(self.owner.as_deref(), voice)?;
+                    self.open = Some((opened, std::time::Instant::now()));
+                }
+            }
+        }
+        Ok(&self.open.as_ref().expect("opened above").0)
+    }
 }
 
 impl Tts for SherpaTts {
@@ -232,6 +291,9 @@ impl Tts for SherpaTts {
         voice: &str,
         sink: &mut dyn FnMut(&[f32]) -> bool,
     ) -> Result<(), EngineError> {
+        if is_custom(voice) {
+            return self.custom_voice(voice)?.synthesize(text, sink);
+        }
         let mut result = Ok(());
         self.engine
             .synthesize_stream(text, Some(voice), None, |_, _, samples, rate| {
