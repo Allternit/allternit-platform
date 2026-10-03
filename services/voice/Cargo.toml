@@ -26,7 +26,7 @@ futures = { workspace = true }
 livekit-protocol = "0.8"
 prost = "0.14"
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-native-roots"] }
-livekit = { version = "0.9.3", default-features = false, features = ["rustls-tls-native-roots"], optional = true }
+livekit = { version = "0.9.3", default-features = false, features = ["native", "rustls-tls-native-roots"], optional = true }
 livekit-api = { version = "0.8.1", default-features = false, features = ["services", "access-token", "rustls-tls-native-roots"], optional = true }
 
 [features]

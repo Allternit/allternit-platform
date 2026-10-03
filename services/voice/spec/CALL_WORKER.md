@@ -106,6 +106,12 @@ You don't need to place a call to check registration. `livekit-cli` shows the wo
   - The `video.agent` claim check and the `protocol` query parameter are in `pkg/service/agentservice.go`.
   - Binary protobuf framing, with a JSON fallback for text frames, is in `pkg/service/wsprotocol.go`.
   - The 10 s register and availability timeouts are in `pkg/agent/worker.go`. So is the empty `JobAssignment.url`, which means the worker joins its own `LIVEKIT_URL`.
+- **Live check, 2026-10-03:** a livekit-server v1.13.7 built from the tagged source and run with `--dev` locally:
+  - The worker registered.
+  - It accepted a `call-` dispatch and declined a `meeting-` one.
+  - It joined the room over WebRTC and published the bot track.
+  - With no SIP participant, it deleted the room after 15 s.
+  - This check caught a missing `livekit/native` feature, which registers the signalling transport. It's fixed in `Cargo.toml`.
 
 ## Known gaps
 
