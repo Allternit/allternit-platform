@@ -1164,6 +1164,11 @@ async fn ensure_webhook(
                 }
                 return Ok(pair);
             }
+            // Gone, or Discord withheld the token: drop it (best effort, so webhooks don't pile
+            // up toward the 15-per-channel cap) and make a fresh one below.
+            let _ = api
+                .call(ApiRequest { method: "DELETE", path: format!("/webhooks/{webhook_id}"), auth: Auth::Bot, body: Body::None })
+                .await;
             forget_webhook(db, channel_id).await;
         }
     }
