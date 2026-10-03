@@ -273,6 +273,25 @@ curl -X POST http://localhost:8001/v1/stt \
 `segments` carry VAD-derived timestamps. `confidence` is a heuristic —
 the offline recognisers do not emit per-word confidence.
 
+### First use: voice pack downloading
+
+If the model pack is not on disk yet, the request starts the download and
+returns `503` right away (with a `Retry-After: 5` header) instead of hanging:
+
+```json
+{
+  "error": "Downloading the voice pack (39 MB)… try again in a moment.",
+  "code": "voice_pack_downloading",
+  "pack": "small",
+  "pct": 0.4,
+  "size_bytes": 39181595,
+  "retry_after_secs": 5
+}
+```
+
+Retry after a few seconds, or poll `GET /v1/models`. Desktop dictation shows
+the message to the user and a later press transcribes normally.
+
 ## Streaming speech-to-text
 
 ```http

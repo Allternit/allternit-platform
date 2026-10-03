@@ -539,6 +539,56 @@ fn segments_to_response(segments: Vec<Segment>, language: &str) -> SttResponse {
     }
 }
 
+/// `Some(503)` with `code: "voice_pack_downloading"` while `pack` is not
+/// installed (kicking off its download if none is running); `None` once it
+/// is ready (or if a previous attempt errored, so the engine surfaces the
+/// real failure on the normal path).
+async fn pack_downloading_response(state: &VoiceServiceState, pack: &str) -> Option<Response> {
+    use crate::models::PackStateKind;
+    if state.packs.is_installed(pack) {
+        return None;
+    }
+    let current = state
+        .packs
+        .statuses()
+        .await
+        .into_iter()
+        .find(|p| p.name == pack)?;
+    if current.state == PackStateKind::Error {
+        return None;
+    }
+    if current.state != PackStateKind::Downloading {
+        let packs = state.packs.clone();
+        let name = pack.to_string();
+        tokio::spawn(async move {
+            if let Err(e) = packs.ensure(&name).await {
+                warn!("pack {name} download failed: {e}");
+            }
+        });
+    }
+    let size_bytes = crate::models::pack(pack).map(|p| p.files.iter().map(|f| f.size).sum::<u64>());
+    let mb = size_bytes.map(|b| (b as f64 / 1_000_000.0).round() as u64);
+    let message = match mb {
+        Some(mb) => format!("Downloading the voice pack ({mb} MB)… try again in a moment."),
+        None => "Downloading the voice pack… try again in a moment.".to_string(),
+    };
+    let mut resp = (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({
+            "error": message,
+            "code": "voice_pack_downloading",
+            "pack": pack,
+            "pct": current.pct,
+            "size_bytes": size_bytes,
+            "retry_after_secs": 5,
+        })),
+    )
+        .into_response();
+    resp.headers_mut()
+        .insert(axum::http::header::RETRY_AFTER, axum::http::HeaderValue::from_static("5"));
+    Some(resp)
+}
+
 async fn run_stt(state: &VoiceServiceState, form: SttForm) -> Result<SttResponse, Response> {
     {
         let mut count = state.request_count.write().await;
@@ -562,6 +612,13 @@ async fn run_stt(state: &VoiceServiceState, form: SttForm) -> Result<SttResponse
     } else {
         form.sample_rate.unwrap_or(decoded_rate)
     };
+    // First use: the model pack is not on disk yet. Start the download in the
+    // background and answer right away with a structured, retryable 503 so
+    // callers (Desktop dictation) can show "Downloading the voice pack…"
+    // instead of hanging on a request that blocks for the whole download.
+    if let Some(r) = pack_downloading_response(state, model.pack()).await {
+        return Err(r);
+    }
     let engine = state.stt.clone();
     let started = Instant::now();
     let segments = tokio::task::spawn_blocking(move || {
@@ -636,6 +693,9 @@ async fn speech_to_text_stream(
             )
         }
     };
+    if let Some(r) = pack_downloading_response(&state, model.pack()).await {
+        return r;
+    }
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<String, std::convert::Infallible>>(64);
     let (pcm_tx, pcm_rx) = std::sync::mpsc::sync_channel::<Vec<f32>>(64);
 

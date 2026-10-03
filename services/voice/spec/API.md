@@ -237,7 +237,11 @@ not emit per-word confidence.
 
 **Response 400:** Missing audio or unknown `model`.
 **415:** Unsupported container (e.g. WebM/Opus — decode to WAV client-side).
-**503:** STT engine unavailable.
+**503:** STT engine unavailable. While the model pack is still downloading
+(first use) the body is
+`{"error":"Downloading the voice pack (39 MB)… try again in a moment.","code":"voice_pack_downloading","pack":"small","pct":0.4,"size_bytes":…,"retry_after_secs":5}`
+with a `Retry-After` header; the download is already running, so retry.
+`/v1/stt/stream` answers the same way before the stream starts.
 
 ### `POST /v1/stt/transcribe`
 

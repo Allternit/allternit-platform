@@ -672,3 +672,50 @@ async fn tts_stream_sends_one_audio_event_per_sentence() {
     }
     assert_eq!(events.last().unwrap()["type"], "done");
 }
+
+/// First use: the pack is missing, so `/v1/stt` starts the download and
+/// answers with a structured, retryable 503 instead of blocking.
+#[tokio::test]
+async fn stt_first_use_reports_voice_pack_downloading() {
+    // The manager reads the base URL when it is built: point it at a dead
+    // port so the background download this triggers never leaves the machine.
+    std::env::set_var("ALLTERNIT_VOICE_MODEL_BASE", "http://127.0.0.1:9");
+    let app = app();
+    std::env::remove_var("ALLTERNIT_VOICE_MODEL_BASE");
+
+    // 0.1 s of 16 kHz mono silence as a WAV.
+    let pcm = vec![0u8; 3200];
+    let mut wav = Vec::new();
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + pcm.len() as u32).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&16_000u32.to_le_bytes());
+    wav.extend_from_slice(&32_000u32.to_le_bytes());
+    wav.extend_from_slice(&2u16.to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&(pcm.len() as u32).to_le_bytes());
+    wav.extend_from_slice(&pcm);
+
+    let (content_type, body) = multipart_wav(&wav, &[]);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/stt")
+                .header("content-type", content_type)
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(response.headers().contains_key("retry-after"));
+    let json = json_body(response).await;
+    assert_eq!(json["code"], "voice_pack_downloading");
+    assert_eq!(json["pack"], "small");
+    assert!(json["error"].as_str().unwrap().starts_with("Downloading the voice pack ("));
+}
