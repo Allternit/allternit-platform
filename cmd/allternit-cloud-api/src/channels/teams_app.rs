@@ -424,11 +424,11 @@ impl TeamsTokenCache {
                 ],
             )
             .await
-            .map_err(|e| ApiError::BadGateway(format!("Teams token endpoint unreachable: {e}")))?;
+            .map_err(|e| ApiError::Internal(format!("Teams token endpoint unreachable: {e}")))?;
         if status != 200 {
-            return Err(ApiError::BadGateway(format!("Teams token endpoint returned {status}")));
+            return Err(ApiError::Internal(format!("Teams token endpoint returned {status}")));
         }
-        let t = body["access_token"].as_str().ok_or_else(|| ApiError::BadGateway("token response has no access_token".into()))?.to_string();
+        let t = body["access_token"].as_str().ok_or_else(|| ApiError::Internal("token response has no access_token".into()))?.to_string();
         let ttl = body["expires_in"].as_u64().unwrap_or(3600).saturating_sub(60);
         *self.token.lock().unwrap() = Some((t.clone(), Instant::now() + Duration::from_secs(ttl)));
         Ok(t)
@@ -661,7 +661,7 @@ async fn send_h(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(bod
          ORDER BY r.updated_at DESC LIMIT 1",
     )
     .bind(&body.conversation_id)
-    .bind(&user.id)
+    .bind(&user)
     .fetch_optional(&state.db)
     .await?;
     let (service_url, _tenant) = row.ok_or_else(|| ApiError::NotFound("conversation reference not found".to_string()))?;
@@ -672,9 +672,9 @@ async fn send_h(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(bod
     let (status, resp) = ReqwestTeamsHttp
         .post_json(&url, &[("Authorization", &format!("Bearer {token}"))], &activity)
         .await
-        .map_err(|e| ApiError::BadGateway(format!("Bot Connector unreachable: {e}")))?;
+        .map_err(|e| ApiError::Internal(format!("Bot Connector unreachable: {e}")))?;
     if !(200..300).contains(&status) {
-        return Err(ApiError::BadGateway(format!("Bot Connector returned {status}")));
+        return Err(ApiError::Internal(format!("Bot Connector returned {status}")));
     }
     Ok(Json(json!({ "id": resp["id"].as_str().unwrap_or_default(), "ok": true })).into_response())
 }
@@ -810,7 +810,7 @@ async fn register_h(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json
         "SELECT id FROM runtime_devices WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
     )
     .bind(&body.runtime_id)
-    .bind(&user.id)
+    .bind(&user)
     .fetch_optional(&state.db)
     .await?;
     if owns.is_none() {
@@ -818,7 +818,7 @@ async fn register_h(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json
     }
     let result = sqlx::query("UPDATE teams_installs SET runtime_id = $1, updated_at = now() WHERE user_id = $2")
         .bind(&body.runtime_id)
-        .bind(&user.id)
+        .bind(&user)
         .execute(&state.db)
         .await?;
     Ok(Json(json!({ "ok": true, "installs": result.rows_affected() })).into_response())
@@ -847,7 +847,7 @@ async fn catalog_upload_h(State(_state): State<Arc<ApiState>>, headers: HeaderMa
             &package,
         )
         .await
-        .map_err(|e| ApiError::BadGateway(format!("Graph unreachable: {e}")))?;
+        .map_err(|e| ApiError::Internal(format!("Graph unreachable: {e}")))?;
     let ok = (200..300).contains(&status);
     Ok((if ok { StatusCode::OK } else { StatusCode::BAD_GATEWAY }, Json(json!({ "graphStatus": status, "graphBody": resp }))).into_response())
 }
@@ -877,7 +877,7 @@ async fn install_app_h(State(state): State<Arc<ApiState>>, headers: HeaderMap, J
             &payload,
         )
         .await
-        .map_err(|e| ApiError::BadGateway(format!("Graph unreachable: {e}")))?;
+        .map_err(|e| ApiError::Internal(format!("Graph unreachable: {e}")))?;
     let ok = (200..300).contains(&status);
     Ok((if ok { StatusCode::OK } else { StatusCode::BAD_GATEWAY }, Json(json!({ "graphStatus": status, "graphBody": resp }))).into_response())
 }
@@ -965,7 +965,7 @@ async fn deliver_one(state: &Arc<ApiState>, id: i64) -> Result<(), ApiError> {
         },
         &[],
         HashMap::from([
-            (USER_HEADER.to_string(), user_id),
+            (USER_HEADER.to_string(), user_id.clone()),
             (QUEUED_AT_HEADER.to_string(), received_at.timestamp().to_string()),
         ]),
     )
