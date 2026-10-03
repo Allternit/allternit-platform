@@ -1,0 +1,73 @@
+---
+title: In-app messages and calls
+description: Free direct threads and voice calls between Allternit users who are linked through a phone invite.
+---
+
+When someone joins through a [phone invite](/api/phone-invites), the owner and that person can message and call each other inside Allternit for free. Nobody else can: every route checks that the two people are linked (an `invite_contacts` row, in either direction) and answers `403 {"error":"not_a_contact"}` otherwise.
+
+All routes are on `api.allternit.com` and take a Clerk session or a `compute`-scoped API key. `:userId` is always the *other* person. Migration `038_inapp_calls.sql` is applied by hand to the production database.
+
+Threads and call state live in the cloud, so a sleeping runtime never blocks a ring. Ringing needs the LiveKit env from [Voice](/guides/voice-call-runtime-routes); without it the ring route answers `503 {"error":"livekit_not_configured"}` and the thread routes keep working.
+
+## Threads
+
+`POST /api/v1/phone/contacts/:userId/thread` with `{"botId": "bot_1"}` returns `{"threadId": "dm_…", "created": true}`. It is one thread per owner, owner's bot and contact, and both people get the same id. `botId` is the owner's bot; a contact who is ringing or messaging the owner may leave it blank.
+
+- `GET /api/v1/phone/threads/:id/events?after=<eventId>&limit=200` returns `{"events":[{"id","threadId","kind","senderUserId","body","room","createdAt"}]}`. Both people read the same log, oldest first. Poll with the last `id` you saw as `after`.
+- `POST /api/v1/phone/threads/:id/messages` with `{"text": "…"}` (1 to 4000 characters) returns 201 `{"event": {…}}`.
+
+`kind` is `message`, `call.ring`, `call.answered`, `call.declined`, `call.cancelled` or `call.missed`. Calls carry the LiveKit `room`. Anyone who isn't one of the two people gets `404 thread_not_found`.
+
+## Ringing
+
+`POST /api/v1/phone/contacts/:userId/ring` with `{"botId": "bot_1", "mode": "voice"}`:
+
+```json
+{
+  "callId": "call-app-3f9c…",
+  "threadId": "dm_a1b2…",
+  "room": "call-app-3f9c…",
+  "token": "<LiveKit participant token, can publish>",
+  "url": "wss://livekit.allternit.com",
+  "state": "ringing",
+  "expiresAt": "2026-10-03T23:30:45Z"
+}
+```
+
+The caller joins `room` with `token` at `url` straight away. A ring lasts 45 seconds. Errors:
+
+| Status | `error` | Meaning |
+|---|---|---|
+| 403 | `not_a_contact` | The two people aren't linked |
+| 409 | `callee_offline` | Their app wasn't open in the last 60 seconds. The body has `message: "We'll let them know you called"` and `threadId`; a `call.missed` event is already in the thread |
+| 409 | `callee_busy` | They already have a ring waiting |
+| 429 | `too_many_rings` | More than 5 rings to the same person in 10 minutes |
+| 400 | `bad_request` | `mode` isn't `"voice"`, or you rang yourself |
+| 503 | `livekit_not_configured` | LiveKit env is unset |
+
+If the callee has turned on **Let my bot answer** (`PUT /api/v1/phone/call-prefs {"autoAnswerBotId": "bot_9"}`; `null` turns it off, and the bot must be theirs), nobody rings: the room is created with the `allternit-voice` agent, the call is `answered` at once and the response has `"state": "answered", "answeredBy": "agent"`. That works even when the callee is offline.
+
+### Presence
+
+A person is online when their app asked for incoming calls in the last 60 seconds, or one of their paired runtimes checked in. `GET /api/v1/phone/incoming` is the poll and the heartbeat in one; `POST /api/v1/phone/presence` is the heartbeat alone. Apps poll every 4 to 5 seconds while foregrounded.
+
+### Incoming calls
+
+`GET /api/v1/phone/incoming` returns the rings waiting for the signed-in user:
+
+```json
+{ "calls": [ { "callId": "call-app-3f9c…", "room": "call-app-3f9c…", "threadId": "dm_a1b2…", "mode": "voice",
+               "botId": "bot_1", "from": { "userId": "user_x", "label": "Sam" }, "expiresAt": "2026-10-03T23:30:45Z" } ] }
+```
+
+`from.label` is the name the owner gave the contact; a contact sees the owner's first name. The callee's join token is minted when they answer, not before.
+
+### Answer, decline, cancel
+
+| Route | Who | Result |
+|---|---|---|
+| `POST /api/v1/phone/contacts/:userId/ring/:room/answer` | callee | `{callId, threadId, room, token, url}` to join the room |
+| `POST /api/v1/phone/contacts/:userId/ring/:room/decline` | callee | `{"ok": true}` |
+| `POST /api/v1/phone/contacts/:userId/ring/:room/cancel` | caller | `{"ok": true}` |
+
+`:userId` is the other person. A ring only moves once: `ringing` goes to `answered`, `declined`, `cancelled` or `missed`. Acting on one that is over answers `410 call_over`; an unknown room, or one that isn't yours to act on, answers `404 call_not_found`. A ring nobody answers becomes `missed` within about 10 seconds and the thread gets a `call.missed` event.

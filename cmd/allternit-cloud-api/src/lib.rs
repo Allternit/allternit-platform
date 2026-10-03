@@ -351,6 +351,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Invite links for a bot's phone: owner routes check the Clerk session; /i/:code/* is
         // public, scoped by the unguessable code and rate limited per invite and number.
         .merge(routes::phone_invites::routes())
+        // Free messages + calls between invite-linked Allternit users; 503 livekit_not_configured on ring without LiveKit env.
+        .merge(routes::inapp_calls::routes())
         // WhatsApp Embedded Signup + 24h-window send; each handler resolves the user itself.
         .merge(routes::whatsapp_es::routes())
         // Voice tickets + minutes metering: user routes check the Clerk session; the
