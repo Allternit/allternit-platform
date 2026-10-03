@@ -45,3 +45,30 @@ allternit-api never holds its own device token. `connector_routes::verify_runtim
 - The spoken-style preface is prepended to each turn's text, so it also appears in the session's user messages (not in the thread's `bot_events`).
 - On abort, a vendor-bound session cancels on the vendor; otherwise `POST /v1/session/{id}/abort` on gizzi (what Stop does). Placed (remote) sessions aren't aborted remotely, same as Stop today.
 - Not deployed. A merge deploys `cmd/allternit-api`; harmless until the token is wired (routes 401/503).
+
+## E.1 results (relay secret wired, verifier shared)
+**Done.** The device-token gap above is closed.
+
+Files:
+- `cmd/allternit-api/src/relay_auth.rs` (new, `pub mod` in `lib.rs`): `RelaySecret` trait (+ `credentials()`), `EnvOrFileRelaySecret`, `UnconfiguredRelaySecret`, `RelayedAuth` extractor, `sign_relay`, `verify_relay`, header consts, `MAX_SKEW_SECS`, `unix_now`. The extractor reads an `Extension<Arc<dyn RelaySecret>>`.
+- `cmd/allternit-api/src/voice_calls.rs`: verifier/extractor removed; `VoiceDeps.secret` is `Arc<dyn RelaySecret>`, production = `EnvOrFileRelaySecret::from_process_env()`; the router layers the secret extension. 503 message is now `relay not configured`.
+- `infrastructure/provisioned-instance/init.sh`: step 3 captures `userId` from the exchange and writes `ALLTERNIT_RUNTIME_OWNER_ID` to `$ENV_FILE`.
+- `cmd/allternit-api/docs/VOICE_CALLS.md`, `surfaces/docs/guides/voice-call-runtime-routes.mdx` ("Known gap" replaced by the token-source section). `check_links`: 0 problems.
+
+Behaviour: env pair first (both required), else identity JSON (`$ALLTERNIT_RUNTIME_IDENTITY_PATH` or `~/.config/allternit/runtime-identity.json`), cached by (mtime, size); empty token/owner, past `expiresAt` or an unparseable `expiresAt` -> None (503). Empty/absent `expiresAt` counts as fresh, as in allternit-node.
+
+Tests: `cargo test -p allternit-api --lib -- relay_auth voice_calls`: `14 passed; 0 failed` (3 verifier tests moved; 4 new: env wins, file + default path, mtime rotation, expired/missing/corrupt/unparseable/no-owner).
+
+Smoke (real binary, fresh data dir, identity file with owner `user-smoke`):
+```
+right owner  -> 400 {"error":"invalid body: missing field `botId`..."}   (past auth; my probe body was incomplete)
+wrong owner  -> 401 owner does not match this runtime
+wrong token  -> 401 bad signature
+no file      -> 503 relay not configured
+file restored-> 400 (picked up again without a restart)
+panics in boot log: 0
+```
+
+init.sh finding: the pairing exchange response (`RuntimeSessionResponse` in `cmd/allternit-cloud-api/src/routes/runtime_pairing.rs`) does carry `userId`, so the owner is sourced from it. If it were ever empty, init.sh logs a WARNING and continues (routes would 503). Both the systemd unit (`EnvironmentFile=$ENV_FILE`) and the restart-loop runner (`. /etc/allternit-node/env`) already load `$ENV_FILE`, so no supervisor change was needed. Instances already paired (step 3 marker present) keep the old env file and need `ALLTERNIT_RUNTIME_OWNER_ID` added by hand or a re-pair.
+
+Not deployed. A merge deploys `cmd/allternit-api`.
