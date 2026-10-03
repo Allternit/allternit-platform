@@ -30,6 +30,7 @@ const binaryName = process.platform === 'win32' ? 'allternit-api.exe' : 'alltern
 const localEngineName = process.platform === 'win32' ? 'allternit-local-engine.exe' : 'allternit-local-engine';
 const gizziName = process.platform === 'win32' ? 'gizzi-code.exe' : 'gizzi-code';
 const voiceName = process.platform === 'win32' ? 'allternit-voice-service.exe' : 'allternit-voice-service';
+const ttsName = process.platform === 'win32' ? 'allternit-tts.exe' : 'allternit-tts';
 
 const required = [
   {
@@ -50,6 +51,11 @@ const required = [
   {
     path: path.join(resourcesDir, 'bin', voiceName),
     label: 'Voice service binary (allternit-voice-service, Rust + sherpa-onnx)',
+    buildStep: 'scripts/build-desktop.sh',
+  },
+  {
+    path: path.join(resourcesDir, 'bin', ttsName),
+    label: 'TTS program (allternit-tts, GPL-3.0, started by the voice service)',
     buildStep: 'scripts/build-desktop.sh',
   },
   // allternit-mux is Unix-only (its API is a Unix socket), so Windows ships without it.

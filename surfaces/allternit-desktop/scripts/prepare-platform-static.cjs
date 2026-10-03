@@ -185,6 +185,15 @@ function checkRequiredBinaries() {
     process.exit(1);
   }
   log(`voice service present at ${voiceBin}`);
+  // TTS runs in a separate GPL-3.0 program the voice service starts from
+  // the same directory (services/voice-tts).
+  const ttsBin = path.join(resourcesBin, process.platform === 'win32' ? 'allternit-tts.exe' : 'allternit-tts');
+  if (!fs.existsSync(ttsBin)) {
+    log('ERROR: resources/bin/allternit-tts is missing — packaged text-to-speech would not start.');
+    log('Build it first via the canonical pipeline: ../../scripts/build-desktop.sh');
+    process.exit(1);
+  }
+  log(`TTS program present at ${ttsBin}`);
 
   const apiBin = path.join(resourcesBin, process.platform === 'win32' ? 'allternit-api.exe' : 'allternit-api');
   if (!fs.existsSync(apiBin)) {

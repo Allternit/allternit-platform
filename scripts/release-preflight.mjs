@@ -137,6 +137,8 @@ function checkScriptExistence(workflowText) {
     'surfaces/allternit-desktop/scripts/verify-packaged-resources.cjs',
     'surfaces/allternit-desktop/scripts/stage-local-engine-binary.cjs',
     'services/voice/Cargo.toml', // voice-service sidecar (Rust crate; bin name voice-service; sherpa-onnx statically linked)
+    'services/voice-tts/Cargo.toml', // allternit-tts (GPL-3.0 Kokoro TTS child the voice service starts)
+    'scripts/check-voice-no-gpl.sh', // asserts no espeak-ng (GPL) in allternit-voice-service
     'services/open-connector/scripts/generate-provider-registry.ts',
     'services/local-engine/Cargo.toml',
     'cmd/allternit-api/Cargo.toml',
@@ -246,6 +248,20 @@ function checkToolchain(jobs) {
     );
   } else {
     pass('toolchain: build-macos cargo-builds the voice-service sidecar');
+  }
+
+  // Voice phase 1.1: TTS is the separate GPL-3.0 program allternit-tts; every
+  // job that ships the voice service must build and stage it too, and must
+  // check that the voice service itself contains no espeak-ng.
+  for (const [name, text] of Object.entries(jobs)) {
+    if (!/cargo build[^\n]*voice-service/.test(text)) continue;
+    if (!/cargo build[^\n]*allternit-tts/.test(text) || !/resources\/bin\/allternit-tts/.test(text)) {
+      fail(`toolchain: job \`${name}\` ships voice-service but does not build/stage allternit-tts`);
+    } else if (!/check-voice-no-gpl\.sh/.test(text)) {
+      fail(`toolchain: job \`${name}\` does not run scripts/check-voice-no-gpl.sh on the voice service`);
+    } else {
+      pass(`toolchain: job \`${name}\` builds allternit-tts and checks voice-service has no espeak-ng`);
+    }
   }
 }
 

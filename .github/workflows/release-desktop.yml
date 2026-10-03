@@ -221,23 +221,31 @@ jobs:
 
       # ── Step 3c: Build voice service sidecar (Rust, sherpa-onnx) ────────────
       - name: Build voice service sidecar
-        # Voice is a Rust crate (services/voice, bin name voice-service). STT
-        # (Moonshine/Parakeet) and TTS (Kokoro) run inside the binary via
-        # sherpa-onnx with statically-linked native libs — no whisper-cli,
-        # no shared onnxruntime to ship. Model files download on first use
-        # at runtime into ~/.allternit/models/voice/.
-        # prepare-platform-static hard-requires resources/bin/allternit-voice-service.
+        # Voice is two Rust programs on sherpa-onnx (native libs statically
+        # linked, no dylibs to ship; models download on first use into
+        # ~/.allternit/models/voice/):
+        #  - services/voice (bin voice-service -> allternit-voice-service):
+        #    STT + HTTP API. Must contain no espeak-ng (GPL-3.0); checked below.
+        #  - services/voice-tts (bin allternit-tts, GPL-3.0-or-later): Kokoro
+        #    TTS, started by the voice service as a child from the same dir.
+        # prepare-platform-static hard-requires both in resources/bin.
         # Both apple targets are already installed for the allternit-api build.
         run: |
-          cargo build --release -p voice-service --target x86_64-apple-darwin
-          cargo build --release -p voice-service --target aarch64-apple-darwin
+          cargo build --release -p voice-service -p allternit-tts --target x86_64-apple-darwin
+          cargo build --release -p voice-service -p allternit-tts --target aarch64-apple-darwin
           mkdir -p surfaces/allternit-desktop/resources/bin
           lipo -create \
             target/x86_64-apple-darwin/release/voice-service \
             target/aarch64-apple-darwin/release/voice-service \
             -output surfaces/allternit-desktop/resources/bin/allternit-voice-service
-          chmod +x surfaces/allternit-desktop/resources/bin/allternit-voice-service
+          lipo -create \
+            target/x86_64-apple-darwin/release/allternit-tts \
+            target/aarch64-apple-darwin/release/allternit-tts \
+            -output surfaces/allternit-desktop/resources/bin/allternit-tts
+          chmod +x surfaces/allternit-desktop/resources/bin/allternit-voice-service surfaces/allternit-desktop/resources/bin/allternit-tts
           lipo -info surfaces/allternit-desktop/resources/bin/allternit-voice-service
+          lipo -info surfaces/allternit-desktop/resources/bin/allternit-tts
+          bash scripts/check-voice-no-gpl.sh surfaces/allternit-desktop/resources/bin/allternit-voice-service
 
       # ── Step 3d: Build local-engine sidecar (Rust) ──────────────────────────
       - name: Build local-engine sidecar
@@ -450,10 +458,9 @@ jobs:
         working-directory: surfaces/allternit-desktop
 
       - name: Build voice service sidecar (Windows)
-        # Voice is a Rust crate (services/voice, bin name voice-service).
-        # STT (Moonshine/Parakeet) and TTS (Kokoro) run inside the binary via
-        # sherpa-onnx with statically-linked native libs — no whisper-cli,
-        # no onnxruntime DLL to ship. Model files download on first use at
+        # Voice is two Rust programs: allternit-voice-service (STT + API, no
+        # GPL code) and allternit-tts (Kokoro TTS child, GPL-3.0-or-later),
+        # sherpa-onnx statically linked — no onnxruntime DLL to ship. Model files download on first use at
         # runtime into %USERPROFILE%\.allternit\models\voice\.
         # prepare-platform-static requires resources/bin/allternit-voice-service.exe
         # on win32. The x86_64-pc-windows-msvc target is installed by the
@@ -465,11 +472,15 @@ jobs:
         env:
           CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
         run: |
-          cargo build --release -p voice-service --target x86_64-pc-windows-msvc
+          cargo build --release -p voice-service -p allternit-tts --target x86_64-pc-windows-msvc
           mkdir -p surfaces/allternit-desktop/resources/bin
           cp target/x86_64-pc-windows-msvc/release/voice-service.exe \
              surfaces/allternit-desktop/resources/bin/allternit-voice-service.exe
-          ls -lh surfaces/allternit-desktop/resources/bin/allternit-voice-service.exe
+          cp target/x86_64-pc-windows-msvc/release/allternit-tts.exe \
+             surfaces/allternit-desktop/resources/bin/allternit-tts.exe
+          ls -lh surfaces/allternit-desktop/resources/bin/allternit-voice-service.exe surfaces/allternit-desktop/resources/bin/allternit-tts.exe
+          # No espeak-ng (GPL-3.0) in the voice service: it lives in allternit-tts.
+          bash scripts/check-voice-no-gpl.sh surfaces/allternit-desktop/resources/bin/allternit-voice-service.exe
 
       # No allternit-mux on Windows: its API is a Unix socket (tokio UnixListener)
       # and gizzi's /pty integration dials that socket, so a Windows build would
@@ -610,17 +621,21 @@ jobs:
           chmod +x surfaces/allternit-desktop/resources/bin/allternit-api
 
       - name: Build voice service sidecar (Linux)
-        # Same Rust sidecar as macOS/Windows: STT + TTS on sherpa-onnx, native
-        # libs (incl. onnxruntime) statically linked, models download on first
-        # use into ~/.allternit/models/voice/. Without this step the Linux
-        # build shipped with no voice sidecar at all.
+        # Same as macOS/Windows: allternit-voice-service (STT + API, no GPL)
+        # and allternit-tts (Kokoro TTS child, GPL-3.0-or-later), sherpa-onnx
+        # linked statically, models download on first use. Without this step
+        # the Linux build shipped with no voice sidecar at all.
         run: |
-          cargo build --release -p voice-service --target x86_64-unknown-linux-gnu
+          cargo build --release -p voice-service -p allternit-tts --target x86_64-unknown-linux-gnu
           mkdir -p surfaces/allternit-desktop/resources/bin
           cp target/x86_64-unknown-linux-gnu/release/voice-service \
              surfaces/allternit-desktop/resources/bin/allternit-voice-service
-          chmod +x surfaces/allternit-desktop/resources/bin/allternit-voice-service
-          ls -lh surfaces/allternit-desktop/resources/bin/allternit-voice-service
+          cp target/x86_64-unknown-linux-gnu/release/allternit-tts \
+             surfaces/allternit-desktop/resources/bin/allternit-tts
+          chmod +x surfaces/allternit-desktop/resources/bin/allternit-voice-service surfaces/allternit-desktop/resources/bin/allternit-tts
+          ls -lh surfaces/allternit-desktop/resources/bin/allternit-voice-service surfaces/allternit-desktop/resources/bin/allternit-tts
+          # No espeak-ng (GPL-3.0) in the voice service: it lives in allternit-tts.
+          bash scripts/check-voice-no-gpl.sh surfaces/allternit-desktop/resources/bin/allternit-voice-service
 
       - name: Setup Go
         # Needed to build the mesh-node sidecar from source (the vendor tree

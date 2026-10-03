@@ -220,6 +220,10 @@
       {
         "from": "../../THIRD-PARTY-NOTICES.md",
         "to": "licenses/THIRD-PARTY-NOTICES.md"
+      },
+      {
+        "from": "../../services/voice-tts/LICENSE",
+        "to": "licenses/allternit-tts-GPL-3.0.txt"
       }
     ],
     "asarUnpack": [

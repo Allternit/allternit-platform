@@ -116,18 +116,27 @@ ok "ripgrep → $RESOURCES_DIR/bin/vendor/ripgrep/$RG_LAYOUT/rg"
 step "Building bundled voice service (sherpa-onnx)…"
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
 cd "$WORKSPACE_ROOT"
-cargo build --release -p voice-service
+cargo build --release -p voice-service -p allternit-tts
 VOICE_BIN="$CARGO_OUT/release/voice-service"
 [ -f "$VOICE_BIN" ] || VOICE_BIN="$CARGO_OUT/release/allternit-voice-service"
 [ -f "$VOICE_BIN" ] || die "Voice service build failed — binary not found at $VOICE_BIN"
 cp "$VOICE_BIN" "$RESOURCES_DIR/bin/allternit-voice-service"
 chmod +x "$RESOURCES_DIR/bin/allternit-voice-service"
 
-# sherpa-onnx/onnxruntime link statically into the binary (crate default
-# `static` feature): no dylib/DLL to stage next to it, unlike the old
-# whisper-cli. Voice models download on first use at runtime into
-# ~/.allternit/models/voice/ — nothing model-related ships in the app.
-ok "voice service → $RESOURCES_DIR/bin/allternit-voice-service (sherpa-onnx, static)"
+# The voice service must not contain espeak-ng (GPL-3.0): TTS runs in the
+# separate allternit-tts program (services/voice-tts, GPL-3.0-or-later),
+# which the voice service starts as a child from the same directory.
+bash "$WORKSPACE_ROOT/scripts/check-voice-no-gpl.sh" "$RESOURCES_DIR/bin/allternit-voice-service"
+TTS_BIN="$CARGO_OUT/release/allternit-tts"
+[ -f "$TTS_BIN" ] || die "allternit-tts build failed — binary not found at $TTS_BIN"
+cp "$TTS_BIN" "$RESOURCES_DIR/bin/allternit-tts"
+chmod +x "$RESOURCES_DIR/bin/allternit-tts"
+
+# sherpa-onnx/onnxruntime link statically into both binaries (crate default
+# `static` feature): no dylib/DLL to stage next to them. Voice models
+# download on first use at runtime into ~/.allternit/models/voice/ —
+# nothing model-related ships in the app.
+ok "voice service → $RESOURCES_DIR/bin/allternit-voice-service + allternit-tts (sherpa-onnx, static)"
 
 # ── 3. Build Rust API ────────────────────────────────────────────────────────
 if [ "$SKIP_API" = false ]; then
