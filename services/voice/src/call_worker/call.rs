@@ -1215,8 +1215,15 @@ mod tests {
         Harness { core_cmds, core_events, room_cmds, room_input, rec, task, brain }
     }
 
+    /// The next command the core hears. `Prepare` (pre-render of the opening)
+    /// is a latency hint, not part of the spoken sequence these tests assert.
     async fn next_cmd(h: &mut Harness) -> CoreCommand {
-        tokio::time::timeout(Duration::from_secs(2), h.core_cmds.recv()).await.unwrap().unwrap()
+        loop {
+            let cmd = tokio::time::timeout(Duration::from_secs(2), h.core_cmds.recv()).await.unwrap().unwrap();
+            if !matches!(cmd, CoreCommand::Prepare { .. }) {
+                return cmd;
+            }
+        }
     }
 
     async fn finish(h: Harness) -> (CallOutcome, Vec<EventEnvelope>) {

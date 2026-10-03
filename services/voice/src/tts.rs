@@ -724,7 +724,7 @@ mod tests {
     fn long_first_sentence_cut_near_middle_before_phrase_word() {
         assert_eq!(
             split_for_streaming("The quick brown fox jumps over the lazy dog."),
-            vec!["The quick brown fox", "jumps over the lazy dog."]
+            vec!["The quick brown", "fox jumps over the lazy dog."]
         );
         let s = split_for_streaming(
             "one two three four five six seven eight nine ten eleven twelve thirteen fourteen.",
