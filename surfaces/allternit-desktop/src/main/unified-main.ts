@@ -86,6 +86,8 @@ import { isLimaInstalled, installLima, startVM, stopVM, getVMStatus } from './li
 import { computerUseDriverManager } from './computer-use-driver-manager.js';
 import { acuGatewayManager } from './acu-gateway-manager.js';
 import { phoneRemoteManager } from './phone-remote-manager.js';
+import { phoneService } from './phone-service.js';
+import { registerPhoneIpc } from './phone-ipc.js';
 import {
   createCaptureSession,
   stopCaptureSession,
@@ -1085,6 +1087,9 @@ async function initializeApp(): Promise<void> {
   } else {
     log.info('[Main] Voice service disabled via ALLTERNIT_DISABLE_VOICE');
   }
+
+  // Phones paired earlier reconnect in the background; nothing starts for users who never paired one.
+  void phoneService.initIfPaired();
 
   // phone-remote server (Fabric desktop viewer proxies /frame + /hello to
   // 127.0.0.1:8477). Independent of auth — the viewer needs the server
@@ -2644,6 +2649,7 @@ async function shutdownAllServices(): Promise<void> {
   computerUseDriverManager.stop();
   acuGatewayManager.stop();
   phoneRemoteManager.stop();
+  phoneService.shutdown();
   stopVM().catch(() => {}); // best-effort Lima VM shutdown
   // Remove dev session credentials file so stale credentials don't persist across restarts
   if (isDev) {
@@ -2721,6 +2727,9 @@ handleGuarded('backend:restart', async () => {
 });
 
 ipcMain.handle('computer-use-driver:get-status', () => computerUseDriverManager.getStatus());
+
+// Phones (Lane 2a): Android over Wi-Fi, no cable — see phone-device-manager.ts
+registerPhoneIpc(handleGuarded);
 
 // Bonsai local image companion (install / lifecycle / removal)
 ipcMain.handle('bonsai:get-status', () => bonsaiCompanion.getStatus());

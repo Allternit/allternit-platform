@@ -1,0 +1,59 @@
+---
+title: A phone for your bot (Android)
+description: Connect a spare Android phone over Wi-Fi so your bot can see and operate it, send a text and place a call from its own SIM.
+---
+
+Connect a spare Android phone to Allternit Desktop, with no cable, and your bot can look at its screen, tap, type, swipe, open apps and do plain-English tasks on it. With your approval each time, it can also send a text or place a call from the phone's own SIM.
+
+## What you need
+
+- A spare Android phone on Android 11 or newer, on the **same Wi-Fi network** as your computer.
+- Allternit Desktop (macOS, Windows or Linux).
+- Optional: [scrcpy](https://github.com/Genymobile/scrcpy) to watch and control the phone from a window on your computer. The bot works without it.
+- Optional, for plain-English tasks: Python 3.12+ tooling (`git` and `uv`) and a model key for Google ARTEMIS, which Allternit installs on request.
+
+## Connect a phone
+
+Open **Settings → Computers → Phones → Connect a phone**.
+
+1. On the phone, open **Settings → About phone** and tap **Build number** seven times to turn on Developer options. Then open **Settings → System → Developer options** and turn on **Wireless debugging**.
+2. In Wireless debugging, tap **Pair device with QR code**, then scan the code Desktop shows. No QR scanner? Tap **Pair device with pairing code** instead, and type the address and six-digit code into Desktop.
+3. Desktop pairs, connects, and shows the phone with its model, Android version, battery and SIMs. Allow the "Allow USB debugging?" prompt on the phone and tick **Always allow from this computer**.
+4. Try it: choose **Open the Settings app**. The phone's Settings app opens.
+
+Paired phones are remembered and reconnect on their own when they come back on the network. Wireless debugging picks a new port whenever it is switched on; Desktop finds it again by itself.
+
+## What your bot can do
+
+| Tool | What it does |
+| --- | --- |
+| `phone.screenshot` | See the screen. |
+| `phone.tap`, `phone.type`, `phone.swipe` | Operate it. `phone.type` accepts printable ASCII. |
+| `phone.open_app` | Open an app by package name or a common name such as `settings`. |
+| `phone.task` | Do a plain-English task through Google ARTEMIS. |
+| `phone.sms.send` | Send one text from the phone's SIM. |
+| `phone.call.dial` | Place a call from the phone's SIM. |
+
+Bots reach these tools through the `allternit-phone` MCP server that Desktop runs while a phone is paired.
+
+### Texts and calls always ask you first
+
+Every `phone.sms.send` and `phone.call.dial` shows a confirmation on your computer with the exact recipient and message. The default button is **Deny**, an unanswered request expires after two minutes, and approval applies to that one action only.
+
+Texts and calls are person-to-person. Limits: a text at most every 15 seconds, 10 an hour and 30 a day; a call at most every 10 seconds, 10 an hour and 30 a day. There is no bulk sending, and emergency numbers are blocked.
+
+A text is reported as **submitted** to the phone's messaging service, not delivered. A call is **dialled** only: the bot cannot speak or listen on a carrier call (Android does not allow apps to capture call audio). Live AI voice calls use your Allternit number instead.
+
+## Limits
+
+- Same network only for now. Phone-anywhere over the Allternit mesh is planned.
+- Wireless debugging turns off when the phone reboots or leaves Wi-Fi; turn it back on and the phone reconnects.
+- Messaging works on the phone's own SIM; carriers may restrict automated texting, so keep it to real conversations.
+- Android's default messaging layout varies by maker; if a text is refused, the bot is told so rather than guessing.
+
+## For developers
+
+- Code: `surfaces/allternit-desktop/src/main/phone-*.ts` (`phone-device-manager.ts`, `phone-tools.ts`, `phone-artemis.ts`, `phone-adb.ts`, `phone-gateway.ts`).
+- adb is not bundled (Google's platform-tools licence does not permit redistribution). Desktop uses an adb you already have, or downloads the pinned official platform-tools r37.0.1 from `dl.google.com` on first use and verifies its SHA-256 before unpacking.
+- Google ARTEMIS is pinned to one commit and installed on request into the Desktop data folder; its MCP server runs as a per-phone sidecar that stops when Desktop quits.
+- The tool gateway listens on `127.0.0.1` only and needs a per-launch token written to `~/.allternit/phone-gateway.json` (mode 0600).

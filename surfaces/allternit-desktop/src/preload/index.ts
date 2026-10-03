@@ -650,6 +650,31 @@ const permissionGuideAPI = {
   },
 };
 
+// ─── Phones (Lane 2a: Android over Wi-Fi) ─────────────────────────────────────
+
+const phonesAPI = {
+  status: (): Promise<unknown> => ipcRenderer.invoke('phone:status'),
+  startQrPairing: (): Promise<{ payload: string }> => ipcRenderer.invoke('phone:pair-qr-start'),
+  pairWithCode: (hostPort: string, code: string): Promise<unknown> => ipcRenderer.invoke('phone:pair-code', hostPort, code),
+  cancelPairing: (): Promise<void> => ipcRenderer.invoke('phone:pair-cancel'),
+  forget: (id: string): Promise<void> => ipcRenderer.invoke('phone:forget', id),
+  startScrcpy: (serial: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('phone:scrcpy-start', serial),
+  stopScrcpy: (serial: string): Promise<void> => ipcRenderer.invoke('phone:scrcpy-stop', serial),
+  tryOpenApp: (serial: string, app: string): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke('phone:try-open-app', serial, app),
+  screenshot: (serial: string): Promise<{ ok: boolean; dataBase64?: string; message?: string }> => ipcRenderer.invoke('phone:screenshot', serial),
+  installArtemis: (): Promise<unknown> => ipcRenderer.invoke('phone:artemis-install'),
+  onDevices: (handler: (phones: unknown) => void): (() => void) => {
+    const listener = (_: IpcRendererEvent, phones: unknown) => handler(phones);
+    ipcRenderer.on('phone:devices', listener);
+    return () => ipcRenderer.removeListener('phone:devices', listener);
+  },
+  onPairing: (handler: (status: unknown) => void): (() => void) => {
+    const listener = (_: IpcRendererEvent, status: unknown) => handler(status);
+    ipcRenderer.on('phone:pairing', listener);
+    return () => ipcRenderer.removeListener('phone:pairing', listener);
+  },
+};
+
 // ─── Feature Flags ────────────────────────────────────────────────────────────
 
 const featureFlagsAPI = {
@@ -942,6 +967,7 @@ const allternitDesktopAPI = {
   extension: extensionAPI,
   tunnel: tunnelAPI,
   permissionGuide: permissionGuideAPI,
+  phones: phonesAPI,
   featureFlags: featureFlagsAPI,
   siwc: siwcAPI,
   findInPage: findInPageAPI,
