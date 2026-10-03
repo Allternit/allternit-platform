@@ -255,6 +255,70 @@ GET /v1/stats
 | `400 Bad Request` | Missing audio data or unknown voice id. |
 | `404 Not Found` | Voice or session not found. |
 
+## Voice Session (realtime)
+
+`GET /v1/voice/session` is a WebSocket for live voice conversations. It carries mic audio in, live transcripts and end-of-turn events out, and speaks reply text as it streams in. Barge-in stops the speech when the user talks over it. Implementation IMPLEMENTED (engine traits, state machine, WebSocket route, Smart Turn), with the speech engine wired once the sherpa-onnx engine lands; Exposure INTERNAL (Desktop sidecar). The canonical protocol is [`services/voice/spec/VOICE_SESSION.md`](https://github.com/Gizziio/allternit/blob/main/services/voice/spec/VOICE_SESSION.md).
+
+Voice is input and output only. The app sends each final user turn to the agent as a normal chat message, then streams the agent's reply text back to be spoken.
+
+### Connect
+
+| Where | URL |
+|-------|-----|
+| Desktop sidecar | `ws://127.0.0.1:<port>/v1/voice/session?token=<sidecar token>` |
+| Allternit Cloud | `wss://…/v1/voice/session?ticket=<short-lived ticket>` |
+
+`token` must match the service's `ALLTERNIT_VOICE_TOKEN`. If that variable is unset, only loopback connections are accepted. Cloud tickets are refused until a ticket verifier is configured. A failed check returns `401` before the upgrade.
+
+### Frames
+
+- **Text frames** are JSON with a `type`.
+- **Binary frames** are audio. Client → server is PCM16 LE mono mic audio at `inputSampleRate` (default 16000, 20 ms frames). Server → client is PCM16 LE mono speech at `outputSampleRate` from `session.ready`.
+
+| Client → server | Fields | Meaning |
+|-----------------|--------|---------|
+| `session.start` | `voice?`, `sttModel?` (`light`/`accurate`), `language?`, `inputSampleRate?`, `bargeIn?` (default `true`), `turn?` {`mode`: `smart`/`vad`, `silenceMs?`} | First frame. The answer is `session.ready` or `error`. |
+| `session.update` | any `session.start` field | Change settings mid-session. |
+| `speak.delta` | `id`, `text` | Append reply text. It's spoken sentence by sentence. |
+| `speak.done` | `id` | No more text for `id`. |
+| `speak.cancel` | `id?` | Stop speaking `id` (or the current one). The answer is `speak.ended`. |
+| `mic.mute` / `mic.unmute` | | Ignore mic audio while muted. |
+| `session.end` | | Close. |
+
+| Server → client | Fields | Meaning |
+|-----------------|--------|---------|
+| `session.ready` | `protocol` (1), `sessionId`, `engine` (`device`/`cloud`), `outputSampleRate`, `models` {stt, tts, vad, turn}, `voices` | Ready. |
+| `speech.started` / `speech.stopped` | `atMs` | VAD start and stop, in ms of mic audio. |
+| `transcript.delta` | `segmentId`, `text`, `final: false` | Live caption. |
+| `transcript.final` | `segmentId`, `text` | Final text for a segment. |
+| `turn.ended` | `text`, `confidence` | The user's turn is over. Send `text` to the agent now. |
+| `speak.started` / `speak.ended` | `id` | Brackets the speech audio for `id`. |
+| `speak.interrupted` | `id`, `sentMs` | Barge-in. Flush playback now and abort the agent's turn. |
+| `error` | `code`, `message`, `fatal` | `fatal: true` closes the socket. |
+
+### Turn detection
+
+- `smart` (default) runs Smart Turn v3.2 at each pause. A score of 0.5 or more ends the turn at once. Below that, the turn ends after `silenceMs` of silence (default 1500).
+- `vad` ends the turn after `silenceMs` of silence (default 700).
+
+### Example
+
+```json
+→ {"type":"session.start","inputSampleRate":48000,"turn":{"mode":"smart"}}
+← {"type":"session.ready","protocol":1,"sessionId":"…","engine":"device","outputSampleRate":24000,"models":{"stt":"moonshine-tiny-en","tts":"kokoro-en-v0_19","vad":"silero-vad","turn":"smart-turn-v3.2"},"voices":["af","…"]}
+→ (binary mic frames)
+← {"type":"speech.started","atMs":1180}
+← {"type":"transcript.delta","segmentId":"seg-1","text":"what time","final":false}
+← {"type":"turn.ended","text":"What time is it?","confidence":0.93}
+→ {"type":"speak.delta","id":"r1","text":"It's noon. "}
+→ {"type":"speak.done","id":"r1"}
+← {"type":"speak.started","id":"r1"}
+← (binary speech frames)
+← {"type":"speak.ended","id":"r1"}
+```
+
+To try it from a terminal, run `cargo run -p voice-service --example voice_session_client -- --wav question.wav --say "It is noon." --out reply.wav`.
+
 ## Related pages
 
 - [Realtime Audio API](/api/realtime-audio)
