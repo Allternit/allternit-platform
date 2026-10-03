@@ -711,7 +711,7 @@ async fn deliver_call(
                      WHERE call_id = $1 AND delivered_at IS NULL AND dead_at IS NULL
                      ORDER BY n LIMIT 1 FOR UPDATE SKIP LOCKED)
                     AND next_attempt_at <= now() AND (locked_until IS NULL OR locked_until < now())
-                  RETURNING id, event_type, n, event_key, payload, received_at, attempts",
+                  RETURNING id, event_type, n::bigint, event_key, payload, received_at, attempts",
             )
             .bind(call_id)
             .bind(LOCK_MINUTES)
@@ -1053,9 +1053,23 @@ mod tests {
         assert_eq!(posted["accepted"], 2);
         assert_eq!(posted["duplicates"], 0);
 
+        // start_call/post_events also launch a real delivery pass in the
+        // background (no runtime in tests, so it fails and backs off). Let
+        // those settle, then make every event due again so only the fake
+        // relay below decides the outcome.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let make_due = || async {
+            sqlx::query("UPDATE voice_call_events SET next_attempt_at = now(), locked_until = NULL WHERE call_id = $1")
+                .bind(&call_id)
+                .execute(&state.db)
+                .await
+                .unwrap();
+        };
+        make_due().await;
+
         // First delivery pass: runtime asleep (503) — nothing delivered.
         deliver_call(&state, &call_id, &relay).await.unwrap();
-        assert!(relay.recorded().is_empty());
+        assert_eq!(relay.recorded().len(), 1, "one attempt (call.started), refused with 503");
         let pending: (i64, i64) = sqlx::query_as(
             "SELECT count(*) FILTER (WHERE delivered_at IS NULL),
                     count(*) FILTER (WHERE delivered_at IS NOT NULL)
@@ -1067,9 +1081,12 @@ mod tests {
         .unwrap();
         assert_eq!(pending, (3, 0));
 
-        // Runtime wakes; next pass delivers everything, call.started first.
+        // Runtime wakes. The failed pass scheduled a backoff, so bring the
+        // retry time forward instead of sleeping; the next pass delivers
+        // everything, call.started first.
+        make_due().await;
         deliver_call(&state, &call_id, &relay).await.unwrap();
-        let recorded = relay.recorded();
+        let recorded: Vec<(String, Value)> = relay.recorded().into_iter().skip(1).collect();
         let paths: Vec<&str> = recorded.iter().map(|(path, _)| path.as_str()).collect();
         assert_eq!(
             paths,
@@ -1366,13 +1383,13 @@ mod tests {
         // Partial save: only the greeting changes.
         let row: (String, String, String, String) = sqlx::query_as(
             "INSERT INTO voice_bot_config (bot_id, user_id, persona, voice_id, greeting, recording)
-             VALUES ('bot-1', 'user-1', 'ignored', 'ignored', 'New greeting', 'bogus-bad')
+             VALUES ('bot-1', 'user-1', 'ignored', 'ignored', 'New greeting', 'off')
              ON CONFLICT (bot_id) DO UPDATE SET
                  user_id = EXCLUDED.user_id,
                  persona = COALESCE(NULLIF(EXCLUDED.persona,'ignored'), voice_bot_config.persona),
                  voice_id = COALESCE(NULLIF(EXCLUDED.voice_id,'ignored'), voice_bot_config.voice_id),
                  greeting = COALESCE(NULLIF(EXCLUDED.greeting,'ignored'), voice_bot_config.greeting),
-                 recording = COALESCE(NULLIF(EXCLUDED.recording,'bogus-bad'), voice_bot_config.recording),
+                 recording = COALESCE(NULLIF(EXCLUDED.recording,'off'), voice_bot_config.recording),
                  updated_at = now()
              RETURNING persona, voice_id, greeting, recording",
         )

@@ -375,6 +375,7 @@ pub struct EventEnvelope {
 /// Edge decisions for a signed Events API payload: the url_verification
 /// handshake is answered from the cloud (a runtime may be asleep); everything
 /// else is queued for the runtime.
+#[derive(Debug)]
 pub enum EventsEdge {
     BadSignature,
     BadJson,
@@ -939,7 +940,11 @@ mod tests {
         assert_eq!(verify_state(SECRET, &state, now).unwrap(), "user-1");
         assert_eq!(verify_state(SECRET, &state, now + 599).unwrap(), "user-1");
         assert!(verify_state(SECRET, &state, now + 601).is_err(), "expired");
-        assert!(verify_state(SECRET, &state.replace("user-1", "user-2"), now).is_err(), "tampered body");
+        // The body is base64 JSON, so tamper with an encoded byte, not the plain user id.
+        let mut tampered = state.clone();
+        let first = if tampered.starts_with('A') { "B" } else { "A" };
+        tampered.replace_range(0..1, first);
+        assert!(verify_state(SECRET, &tampered, now).is_err(), "tampered body");
         assert!(verify_state("other", &state, now).is_err(), "wrong secret");
         assert!(verify_state(SECRET, "nonsense", now).is_err());
     }

@@ -1060,7 +1060,7 @@ mod tests {
     }
 
     fn sign_rs256(payload: &Value) -> String {
-        let der = URL_SAFE_NO_PAD.decode(TEST_KEY_PKCS8_B64).unwrap();
+        let der = base64::engine::general_purpose::STANDARD.decode(TEST_KEY_PKCS8_B64).unwrap();
         let key_pair = aws_lc_rs::signature::RsaKeyPair::from_pkcs8(&der).unwrap();
         let rng = aws_lc_rs::rand::SystemRandom::new();
         let header = URL_SAFE_NO_PAD.encode(format!("{{\"alg\":\"RS256\",\"kid\":\"{TEST_KID}\",\"typ\":\"JWT\"}}"));

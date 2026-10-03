@@ -63,7 +63,7 @@ urlencoding = { workspace = true }
 hmac = { workspace = true }
 hex = { workspace = true }
 ed25519-dalek = { workspace = true }
-jsonwebtoken = "10"
+jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }
 aws-lc-rs = "1"
 reqwest = { workspace = true, default-features = false, features = ["json", "rustls-tls"] }
 cron = "0.12"
