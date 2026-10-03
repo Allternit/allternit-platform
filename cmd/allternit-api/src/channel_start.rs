@@ -541,6 +541,9 @@ fn out_error(e: crate::phone_outbound::OutError) -> StartError {
     match e {
         OutError::NoConsent(_) => StartError::new(StatusCode::FORBIDDEN, "no_consent", message),
         OutError::CallsUnavailable => StartError::new(StatusCode::SERVICE_UNAVAILABLE, "calls_unavailable", message),
+        OutError::OptedOut(_) => StartError::new(StatusCode::FORBIDDEN, "recipient_opted_out", message),
+        OutError::NotActive => StartError::new(StatusCode::FORBIDDEN, "sms_not_active", message),
+        OutError::DailyLimit => StartError::new(StatusCode::TOO_MANY_REQUESTS, "daily_limit", message),
         OutError::BadRequest(_) => bad("invalid_target", message),
         OutError::NotFound(_) => not_connected("sms"),
         OutError::Failed(_) => StartError::new(StatusCode::BAD_GATEWAY, "channel_rejected", message),
