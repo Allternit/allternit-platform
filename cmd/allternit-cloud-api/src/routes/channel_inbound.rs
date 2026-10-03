@@ -61,6 +61,7 @@ pub fn target_path(provider: &str) -> Option<&'static str> {
         "whatsapp" => Some("/webhooks/channels/whatsapp"),
         "teams" => Some("/webhooks/channels/teams"),
         "discord" => Some("/webhooks/channels/discord"),
+        "sms" => Some("/webhooks/channels/sms"),
         _ => None,
     }
 }
@@ -136,17 +137,17 @@ pub fn backoff_secs(attempts: i32) -> i64 {
     }
 }
 
-fn sha256_hex(value: &str) -> String {
+pub(crate) fn sha256_hex(value: &str) -> String {
     hex::encode(Sha256::digest(value.as_bytes()))
 }
 
-fn new_key() -> String {
+pub(crate) fn new_key() -> String {
     let mut bytes = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut bytes);
     hex::encode(bytes)
 }
 
-fn public_base() -> String {
+pub(crate) fn public_base() -> String {
     std::env::var("ALLTERNIT_CLOUD_API_URL")
         .unwrap_or_else(|_| "https://api.allternit.com".to_string())
         .trim_end_matches('/')
@@ -361,7 +362,25 @@ async fn inbound_inner(
         .bind(&route.id)
         .execute(&state.db)
         .await;
-    let forwarded = channel_headers(headers);
+    let mut forwarded = channel_headers(headers);
+    let mut body = body;
+    // SMS: the cloud verifies the carrier signature, dedupes and handles STOP/HELP/START
+    // before anything is queued; the runtime gets a normalised, already-verified JSON body.
+    let mut sms_seen: Option<(String, String)> = None;
+    if route.provider == "sms" {
+        if method != Method::POST {
+            return Ok(StatusCode::METHOD_NOT_ALLOWED.into_response());
+        }
+        match super::phone::sms_edge(state, &route.id, key, headers, &body).await {
+            Ok(super::phone::Edge::Respond(response)) => return Ok(response),
+            Ok(super::phone::Edge::Deliver { body: normalised, number_id, message_id }) => {
+                body = Bytes::from(normalised);
+                forwarded = HashMap::from([("content-type".to_string(), "application/json".to_string())]);
+                sms_seen = Some((number_id, message_id));
+            }
+            Err(error) => return Ok(error.into_response()),
+        }
+    }
     if needs_live_answer(&route.provider, &method, &body) {
         return relay(state, &route, method.as_str(), &query, forwarded, &body, None).await;
     }
@@ -372,9 +391,12 @@ async fn inbound_inner(
     .fetch_one(&state.db)
     .await?;
     if pending >= MAX_PENDING_PER_ROUTE {
+        if let Some((number_id, message_id)) = &sms_seen {
+            super::phone::forget_inbound(&state.db, number_id, message_id).await;
+        }
         return Ok(StatusCode::TOO_MANY_REQUESTS.into_response());
     }
-    sqlx::query(
+    let queued = sqlx::query(
         "INSERT INTO channel_inbound_queue (route_id, method, query, headers, body) VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(&route.id)
@@ -383,7 +405,13 @@ async fn inbound_inner(
     .bind(serde_json::to_value(&forwarded).unwrap_or_default())
     .bind(base64_encode(&body))
     .execute(&state.db)
-    .await?;
+    .await;
+    if let Err(error) = queued {
+        if let Some((number_id, message_id)) = &sms_seen {
+            super::phone::forget_inbound(&state.db, number_id, message_id).await;
+        }
+        return Err(error.into());
+    }
     // Deliver now rather than at the next tick; the platform already has its 200.
     let state = state.clone();
     let route_id = route.id.clone();
@@ -521,6 +549,7 @@ mod tests {
     fn only_known_providers_have_a_runtime_path() {
         assert_eq!(target_path("slack"), Some("/webhooks/slack/events"));
         assert_eq!(target_path("telegram"), Some("/webhooks/channels/telegram"));
+        assert_eq!(target_path("sms"), Some("/webhooks/channels/sms"));
         assert_eq!(target_path("photon"), None);
         assert_eq!(relay_path("whatsapp", "hub.mode=subscribe"), Some("/webhooks/channels/whatsapp?hub.mode=subscribe".into()));
     }

@@ -4,6 +4,7 @@
 //! Provides REST endpoints and WebSocket event streaming.
 
 pub mod auth;
+pub mod carriers;
 pub mod db;
 pub mod error;
 pub mod middleware;
@@ -341,6 +342,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Channels hybrid relay: management routes check the Clerk session;
         // /channels/in/:key is public, the unguessable key is the credential.
         .merge(routes::channel_inbound::routes())
+        // Phone numbers + SMS: Clerk-checked per request; 503 phone_not_configured when the carrier env is unset.
+        .merge(routes::phone::routes())
         // These handlers verify Clerk or billing credentials themselves. They
         // must not pass through the legacy allternit_* API-token middleware.
         .merge(routes::hosted_runtimes::routes())
