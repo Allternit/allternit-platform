@@ -517,7 +517,6 @@ async fn pump(
             RoomCommand::Leave => {
                 // Warm transfer connected the caller and the target in this
                 // room: leave it standing.
-                hung_up = true;
                 let _ = room.close().await;
                 break;
             }
