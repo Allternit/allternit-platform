@@ -28,6 +28,29 @@ The picker exposes the live provider catalog rather than a fixed list of every c
 
 A provider's native features are not automatically implemented in its Allternit adapter. Check the connected catalog and task result before relying on research, media, office, website, or agent-task capabilities. ChatGPT dots have an adapter on main, but their selectors and approval controls still require a consented live validation; they are not a verified general-purpose automation lane.
 
+## Pick a specific GPT, Project, Gem or bot
+
+After connecting a vendor login, use the bot connection's agent picker to choose
+its default chat or a specific account entry. Available entries carry labels such
+as **GPT**, **Project**, **Gem**, **Agent**, **Page**, **Bot**, or **Profile**, and a
+vendor avatar when one is exposed. ChatGPT Projects/GPTs and Gemini Gems start
+chat on the selected entry's vendor page; Claude Projects keep their existing
+Project routing. The selection stays with the conversation across gateway restarts.
+
+The list comes from the connected account's last probe. New web discovery is
+**inferred and not live-verified**. It reads rendered account navigation, so hidden
+or unpinned entries may not appear. To refresh, expose the account sidebar (or My
+GPTs on ChatGPT) on the Sessions computer and reconnect/check the account. Kimi
+and Copilot show saved agents/pages only if their page exposes supported links;
+otherwise the picker contains default chat only. Copilot page chat support still
+needs human validation. Hermes profiles and Grok's Bot picker use their existing
+list readers.
+
+Choosing an entry does not create or modify a vendor bot or grant extra quota.
+Send the first turn yourself, and check that the vendor opened the intended bot
+before relying on its knowledge or instructions. Complete sign-in, verification
+checks, questions and approvals yourself.
+
 ## Human initiation and limits
 
 Subscription sends require a human-initiated request and the applicable disclosure acknowledgement. Bots and schedules can prepare work; do not assume that a connected consumer subscription can execute unattended bot turns. Provider-side questions and approvals can require your intervention.

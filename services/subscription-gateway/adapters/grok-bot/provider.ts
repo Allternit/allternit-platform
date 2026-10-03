@@ -41,6 +41,7 @@ export class GrokBotProvider extends BaseAaiProvider {
   readonly adapterId = ADAPTER_ID;
   private ctxs = new Map<string, Ctx>();
   private n = 0;
+  private discovered = new Map<string, AgentSummary>();
   private halted: AAIError | undefined;
   private cooldownUntil = 0;
   private everLoggedIn = false;
@@ -80,21 +81,29 @@ export class GrokBotProvider extends BaseAaiProvider {
     // Each Bot's own mascot, when the driver can read it (never fails discovery).
     let marks: { name?: string; text: string; png: string }[] = [];
     try { marks = (await this.o.driver.avatars?.()) ?? []; } catch { marks = []; }
-    return ok([generic, ...names.map((n): AgentSummary => {
+    const bots = names.map((n): AgentSummary => {
       const avatarUrl = avatarFor(n, marks, names);
-      return { agentId: `${AGENT_ID}:${n}`, displayName: n, vendor: "grok", state: generic.state, ...(avatarUrl ? { avatarUrl } : {}) };
-    })]);
+      return { agentId: `${AGENT_ID}:${n}`, displayName: n, vendor: "grok", state: generic.state, kind: "bot", kindLabel: "Bot", ...(avatarUrl ? { avatarUrl } : {}) };
+    });
+    this.discovered = new Map(bots.map((a) => [a.agentId, a]));
+    return ok([generic, ...bots]);
+  }
+  private async resolve(agentId: string): Promise<AgentSummary | undefined> {
+    if (agentId === AGENT_ID) return this.summary();
+    if (!agentId.startsWith(`${AGENT_ID}:`)) return undefined;
+    if (!this.discovered.has(agentId)) await this.list();
+    return this.discovered.get(agentId);
   }
   async get(agentId: string): Promise<AaiResult<AgentDetail>> {
-    if (agentId !== AGENT_ID) return fail("UNKNOWN", `No such agent ${agentId}`);
-    return ok({ ...this.summary(), remoteIds: {}, capabilities: CAPABILITIES });
+    const summary = await this.resolve(agentId);
+    return summary ? ok({ ...summary, remoteIds: agentId === AGENT_ID ? {} : { bot: agentId.slice(AGENT_ID.length + 1) }, capabilities: CAPABILITIES }) : fail("CONTEXT_NOT_FOUND", `No such agent ${agentId}`);
   }
   async capabilities(agentId: string): Promise<AaiResult<AgentCapabilityManifest>> {
-    return agentId === AGENT_ID ? ok(CAPABILITIES) : fail("UNKNOWN", `No such agent ${agentId}`);
+    return await this.resolve(agentId) ? ok(CAPABILITIES) : fail("CONTEXT_NOT_FOUND", `No such agent ${agentId}`);
   }
   async identity(agentId: string): Promise<AaiResult<AgentIdentity>> {
-    if (agentId !== AGENT_ID) return fail("UNKNOWN", `No such agent ${agentId}`);
-    return ok({ agentId: AGENT_ID, displayName: APP_NAME, vendor: "grok", lookPack: "grok-bot" });
+    const summary = await this.resolve(agentId);
+    return summary ? ok({ agentId, displayName: summary.displayName, vendor: "grok", lookPack: "grok-bot" }) : fail("CONTEXT_NOT_FOUND", `No such agent ${agentId}`);
   }
 
   // ---------- page gate ----------

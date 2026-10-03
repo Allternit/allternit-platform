@@ -1,4 +1,6 @@
-Goal: Execute WP10 exactly in allternit-wt-wp10; draft PR only, never merge.
-Just did: Completed graph template (N00–N23 + explicit fallbacks, deep escalation, rollback and response acceptance), seven registered packs, 18-code domain bank, 11-step ladder. Targeted cargo wp10: 2/2 pass, including all seven static invariants and pack coverage. DAG node n_4839 closed; next n_3103 picked up.
-Next: Verify external chain append and flagged compiler transport; then disposable TS/Vitest end-to-end test and draft PR.
-Open questions: None. Receipt routes have no auth; new append must enforce peer loopback and reject missing connection identity. No production auto-deploy paths planned. Shared checkout is read-only; only allowed dependency symlinks created. Required final WP10_NOTES report/sentinel is the task's explicit reporting exception outside the worktree.
+# Vendor account bots checkpoint
+
+Goal: Execute docs/VENDOR_ACCOUNT_BOTS_TASK.md offline in this worktree only.
+Just did: Account-bot discovery, kind labels/avatars/contracts, durable context routing, API forwarding, Grok named-bot identity, and reconnect refresh implemented. Full gateway suite: 565 tests / 45 files PASS; source hygiene OK; typecheck PASS; docs 0 problems and no FAIL. Temporary two-worker test config removed. Tracking: dag:dag_76438; implementation wih:wih_5506 DONE, gateway verification wih:wih_6034 DONE.
+Next: Preserve implementation on gateway/vendor-account-bots and uncommitted notes; Rust checks and fresh-data real-binary smoke boot after disk gate clears. Completion sentinel withheld while verification is incomplete.
+Open questions: Free disk 28 GiB, below task's 40 GB Rust build gate; owner cleanup requested. Rust and successful completion DAG nodes explicitly deferred/labeled. Installed allternit-rails supplied the CommRails DAG after discovering the alternate name. No vendor traffic, push/PR/merge/deploy, branch deletion, other-checkout git, or shared-checkout landing ritual permitted.

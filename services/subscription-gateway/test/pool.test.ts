@@ -165,6 +165,20 @@ describe("WorkerPool.activate", () => {
     expect(getAccount(db, LANE.account_id)).toMatchObject({ session_health: "ready", identity: "eoj@example.com" });
   });
 
+  it("refreshes rendered bots on ready resident accounts, clears empty lists, and never launches an absent lane", async () => {
+    let agents = [{ id: "g-owned", name: "Owned GPT", kind: "gpt", kindLabel: "GPT", avatarUrl: "https://icons.invalid/owned.png" }];
+    const h = makePool(async () => probeResult(true), { readAccount: async () => ({ identity: "fixture", usage: null, agents }) });
+    await h.pool.refreshAccount(LANE);
+    expect(h.launchCalls).toBe(0);
+    await h.pool.activate(LANE);
+    expect(getAccount(db, LANE.account_id)?.agents).toEqual(agents);
+    agents = [];
+    await h.pool.refreshAccount(LANE);
+    expect(getAccount(db, LANE.account_id)?.agents).toEqual([]);
+    expect(h.launchCalls).toBe(1);
+    await h.pool.deactivate(LANE);
+  });
+
   it("an auth wall never reads the account", async () => {
     let reads = 0;
     const h = makePool(async () => probeResult(false, "auth.state"), {

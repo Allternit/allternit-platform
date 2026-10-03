@@ -669,6 +669,11 @@ pub(crate) async fn discover_agents(db: &DbHandle, tx: &dyn crate::gateway_runne
             let ext = a["agentId"].as_str().or_else(|| a["externalAgentId"].as_str()).or_else(|| a["id"].as_str())?;
             let name = a["displayName"].as_str().or_else(|| a["name"].as_str()).unwrap_or(ext);
             let mut o = json!({ "externalAgentId": ext, "name": name });
+            for field in ["kind", "kindLabel"] {
+                if let Some(label) = a[field].as_str() {
+                    o[field] = json!(label);
+                }
+            }
             if let Some(d) = a["description"].as_str() {
                 o["description"] = json!(d);
             }
@@ -1873,7 +1878,7 @@ mod tests {
     impl crate::gateway_runner::AaiTransport for HostList {
         async fn call(&self, _o: &str, _op: &str, _b: &Value, _i: Value) -> Result<Value, crate::gateway_runner::AaiError> {
             Ok(json!([
-                { "agentId": "agent_1:nova-dot", "displayName": "Nova", "vendor": "openai", "state": "ready" },
+                { "agentId": "agent_1:nova-dot", "displayName": "Nova", "vendor": "openai", "state": "ready", "kind": "gpt", "kindLabel": "GPT", "avatarUrl": "https://example.invalid/nova.png" },
                 { "agentId": "agent_1:atlas-dot", "displayName": "Atlas", "vendor": "openai", "state": "ready" }
             ]))
         }
@@ -1884,7 +1889,7 @@ mod tests {
         let st = setup("r1").await;
         let aid = account(&st).await;
         let agents = discover_agents(&st.db, &HostList, "user-a", &aid).await.unwrap();
-        assert_eq!(agents, vec![json!({ "externalAgentId": "agent_1:nova-dot", "name": "Nova" }), json!({ "externalAgentId": "agent_1:atlas-dot", "name": "Atlas" })]);
+        assert_eq!(agents, vec![json!({ "externalAgentId": "agent_1:nova-dot", "name": "Nova", "kind": "gpt", "kindLabel": "GPT", "avatarUrl": "https://example.invalid/nova.png" }), json!({ "externalAgentId": "agent_1:atlas-dot", "name": "Atlas" })]);
     }
 
     #[test]

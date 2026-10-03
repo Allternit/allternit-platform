@@ -427,6 +427,9 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
           provider: account.provider,
           account_id: account.account_id,
         });
+        // Activation is idempotent on ready lanes; an explicit reconnect still
+        // rereads rendered account bots without reopening or changing the page.
+        await deps.pool.refreshAccount?.({ provider: account.provider, account_id: account.account_id });
       } catch (err) {
         res.status(502).json({
           error: "activation_failed",
