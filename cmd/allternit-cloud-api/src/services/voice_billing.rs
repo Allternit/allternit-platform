@@ -579,9 +579,11 @@ mod tests {
         Utc.with_ymd_and_hms(2026, 10, d, h, 0, 0).unwrap()
     }
 
+    type StripeCall = (String, Vec<(String, String)>);
+
     #[derive(Default)]
     struct MockStripe {
-        calls: Mutex<Vec<(String, Vec<(String, String)>)>>,
+        calls: Mutex<Vec<StripeCall>>,
         fail_numbers: bool,
     }
 

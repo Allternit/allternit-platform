@@ -444,7 +444,7 @@ mod tests {
 
     async fn state() -> Arc<ApiState> {
         let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
-        sqlx::raw_sql(&include_str!("../../migrations_pg/031_voice_custom_voices.sql").replace("public.", ""))
+        sqlx::raw_sql(&include_str!("../../migrations_pg/032_voice_custom_voices.sql").replace("public.", ""))
             .execute(&state.db)
             .await
             .unwrap();
