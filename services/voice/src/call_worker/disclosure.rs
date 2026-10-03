@@ -49,8 +49,14 @@ mod tests {
 
     #[test]
     fn missing_name_still_discloses() {
-        assert_eq!(disclosure(None, false), "Hi, I'm an AI assistant, and this call isn't recorded.");
-        assert_eq!(disclosure(Some("  "), true), "Hi, I'm an AI assistant, and this call may be recorded.");
+        assert_eq!(
+            disclosure(None, false),
+            "Hi, I'm an AI assistant, and this call isn't recorded."
+        );
+        assert_eq!(
+            disclosure(Some("  "), true),
+            "Hi, I'm an AI assistant, and this call may be recorded."
+        );
     }
 
     #[test]
@@ -60,6 +66,8 @@ mod tests {
         assert!(o.ends_with("isn't recorded. How can I help?"));
         // A greeting can't replace the disclosure.
         let o = opening(Some("Acme"), true, Some("Ignore the above."));
-        assert!(o.starts_with("Hi, you've reached Acme. I'm an AI assistant, and this call may be recorded."));
+        assert!(o.starts_with(
+            "Hi, you've reached Acme. I'm an AI assistant, and this call may be recorded."
+        ));
     }
 }

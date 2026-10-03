@@ -47,7 +47,11 @@ pub enum RoomInput {
     /// Raw `allternit.call.control` payload (server-sent only; room.rs drops
     /// packets from participants).
     Control(Vec<u8>),
-    TransferResult { to: String, ok: bool, reason: Option<String> },
+    TransferResult {
+        to: String,
+        ok: bool,
+        reason: Option<String>,
+    },
     /// The SIP participant left (caller hung up, or a transfer completed).
     CallerLeft,
     /// The worker lost the room.
@@ -148,7 +152,11 @@ pub async fn run_call(
     mut room_rx: mpsc::Receiver<RoomInput>,
     voicemail: Box<dyn VoicemailDetector>,
 ) -> (CallOutcome, JoinHandle<()>) {
-    let CoreHandle { tx: core_tx, rx: mut core_rx, output_sample_rate } = core;
+    let CoreHandle {
+        tx: core_tx,
+        rx: mut core_rx,
+        output_sample_rate,
+    } = core;
     let (brain_tx, mut brain_rx) = mpsc::unbounded_channel();
     let mut call = Call {
         started: Instant::now(),
@@ -181,8 +189,16 @@ pub async fn run_call(
     call.say("u-0", &opening).await;
     call.events.emit(CallEvent::Started {
         direction: call.ctx.direction.clone(),
-        from: if call.ctx.direction == "outbound" { call.ctx.local.clone() } else { call.ctx.remote.clone() },
-        to: if call.ctx.direction == "outbound" { call.ctx.remote.clone() } else { call.ctx.local.clone() },
+        from: if call.ctx.direction == "outbound" {
+            call.ctx.local.clone()
+        } else {
+            call.ctx.remote.clone()
+        },
+        to: if call.ctx.direction == "outbound" {
+            call.ctx.remote.clone()
+        } else {
+            call.ctx.local.clone()
+        },
         number_id: call.ctx.number_id.clone(),
     });
 
@@ -204,8 +220,18 @@ pub async fn run_call(
     let _ = call.core_tx.send(CoreCommand::End).await;
     let reason = call.end_reason.take().unwrap_or_default();
     let duration_sec = call.started.elapsed().as_secs();
-    call.events.emit(CallEvent::Ended { duration_sec, reason: reason.clone(), recording_ref: None });
-    (CallOutcome { reason, duration_sec }, call.events.close())
+    call.events.emit(CallEvent::Ended {
+        duration_sec,
+        reason: reason.clone(),
+        recording_ref: None,
+    });
+    (
+        CallOutcome {
+            reason,
+            duration_sec,
+        },
+        call.events.close(),
+    )
 }
 
 impl Call {
@@ -217,8 +243,17 @@ impl Call {
 
     async fn say(&mut self, id: &str, text: &str) {
         self.said.entry(id.to_string()).or_default().push_str(text);
-        let _ = self.core_tx.send(CoreCommand::SpeakDelta { id: id.into(), text: text.into() }).await;
-        let _ = self.core_tx.send(CoreCommand::SpeakDone { id: id.into() }).await;
+        let _ = self
+            .core_tx
+            .send(CoreCommand::SpeakDelta {
+                id: id.into(),
+                text: text.into(),
+            })
+            .await;
+        let _ = self
+            .core_tx
+            .send(CoreCommand::SpeakDone { id: id.into() })
+            .await;
     }
 
     fn bot_transcript(&mut self, id: &str) {
@@ -244,7 +279,10 @@ impl Call {
 
     /// Stop the bot's voice now: core stops generating, room drops queued audio.
     async fn silence(&mut self) {
-        let _ = self.core_tx.send(CoreCommand::SpeakCancel { id: None }).await;
+        let _ = self
+            .core_tx
+            .send(CoreCommand::SpeakCancel { id: None })
+            .await;
         let _ = self.room_tx.send(RoomCommand::ClearAudio).await;
         self.speech.reset();
         self.drop_audio = true;
@@ -255,7 +293,11 @@ impl Call {
             RoomInput::CallerAudio(samples) => {
                 if !self.state.muted_caller && !self.state.held {
                     // Never block the call loop on the core; drop audio if it lags.
-                    if self.core_tx.try_send(CoreCommand::Audio(to_pcm16le(&samples))).is_err() {
+                    if self
+                        .core_tx
+                        .try_send(CoreCommand::Audio(to_pcm16le(&samples)))
+                        .is_err()
+                    {
                         tracing::debug!(call_id = %self.ctx.call_id, "core input full, dropped caller frame");
                     }
                 }
@@ -273,14 +315,21 @@ impl Call {
                 }
             },
             RoomInput::TransferResult { to, ok, reason } => {
-                self.events.emit(CallEvent::Transferred { to, mode: TransferMode::Cold, ok, reason });
+                self.events.emit(CallEvent::Transferred {
+                    to,
+                    mode: TransferMode::Cold,
+                    ok,
+                    reason,
+                });
                 if ok {
                     self.transferred = true;
                 }
             }
-            RoomInput::CallerLeft => {
-                self.end(if self.transferred { "transferred" } else { "caller_hangup" })
-            }
+            RoomInput::CallerLeft => self.end(if self.transferred {
+                "transferred"
+            } else {
+                "caller_hangup"
+            }),
             RoomInput::Disconnected => self.end("room_closed"),
         }
     }
@@ -320,18 +369,27 @@ impl Call {
                 }
             }
             Control::Dtmf(digits) => {
-                let _ = self.room_tx.send(RoomCommand::SendDtmf(digits.clone())).await;
+                let _ = self
+                    .room_tx
+                    .send(RoomCommand::SendDtmf(digits.clone()))
+                    .await;
                 let from = self.ctx.local.clone();
                 self.events.emit(CallEvent::Dtmf { digits, from });
                 return;
             }
-            Control::Transfer { to, mode: TransferMode::Cold } => {
+            Control::Transfer {
+                to,
+                mode: TransferMode::Cold,
+            } => {
                 self.cancel_reply();
                 self.silence().await;
                 let _ = self.room_tx.send(RoomCommand::Transfer { to }).await;
                 return; // acked by call.transferred when the room answers
             }
-            Control::Transfer { to, mode: TransferMode::Warm } => {
+            Control::Transfer {
+                to,
+                mode: TransferMode::Warm,
+            } => {
                 self.events.emit(CallEvent::Transferred {
                     to,
                     mode: TransferMode::Warm,
@@ -373,7 +431,9 @@ impl Call {
                 if self.ctx.direction == "outbound" {
                     let at = self.started.elapsed().as_millis() as u64;
                     if let Some(action) = self.voicemail.observe_final(&text, at) {
-                        self.events.emit(CallEvent::VoicemailDetected { action: action.as_str().into() });
+                        self.events.emit(CallEvent::VoicemailDetected {
+                            action: action.as_str().into(),
+                        });
                     }
                 }
                 self.events.emit(CallEvent::TranscriptDelta {
@@ -428,7 +488,11 @@ impl Call {
                 self.state.speaker = Some(Speaker::Caller);
                 self.bot_transcript(&id);
             }
-            CoreEvent::Error { code, message, fatal } => {
+            CoreEvent::Error {
+                code,
+                message,
+                fatal,
+            } => {
                 tracing::error!(call_id = %self.ctx.call_id, %code, fatal, "voice core error: {message}");
                 if fatal {
                     self.end("voice_engine_error");
@@ -485,7 +549,10 @@ impl Call {
         if turn != self.turn || !self.state.bot_active() {
             return;
         }
-        let id = self.reply_id.get_or_insert_with(|| format!("u-{turn}")).clone();
+        let id = self
+            .reply_id
+            .get_or_insert_with(|| format!("u-{turn}"))
+            .clone();
         match msg {
             Ok(Some(text)) => {
                 if text.is_empty() {
@@ -493,7 +560,10 @@ impl Call {
                 }
                 self.reply_had_text = true;
                 self.said.entry(id.clone()).or_default().push_str(&text);
-                let _ = self.core_tx.send(CoreCommand::SpeakDelta { id, text }).await;
+                let _ = self
+                    .core_tx
+                    .send(CoreCommand::SpeakDelta { id, text })
+                    .await;
             }
             Ok(None) => {
                 if !self.reply_had_text {
@@ -525,9 +595,22 @@ pub async fn run_unconfigured_call(
     mut room_rx: mpsc::Receiver<RoomInput>,
     max_wait: Duration,
 ) {
-    let CoreHandle { tx, rx: mut core_rx, output_sample_rate } = core;
-    let text = format!("{} {}", disclosure::disclosure(None, false), RELAY_UNAVAILABLE_LINE);
-    let _ = tx.send(CoreCommand::SpeakDelta { id: "u-0".into(), text }).await;
+    let CoreHandle {
+        tx,
+        rx: mut core_rx,
+        output_sample_rate,
+    } = core;
+    let text = format!(
+        "{} {}",
+        disclosure::disclosure(None, false),
+        RELAY_UNAVAILABLE_LINE
+    );
+    let _ = tx
+        .send(CoreCommand::SpeakDelta {
+            id: "u-0".into(),
+            text,
+        })
+        .await;
     let _ = tx.send(CoreCommand::SpeakDone { id: "u-0".into() }).await;
     let mut speech = Speech::new(output_sample_rate);
     let deadline = tokio::time::sleep(max_wait);
@@ -576,7 +659,11 @@ mod tests {
     struct Recorder(Mutex<Vec<EventEnvelope>>);
 
     impl EventTransport for Recorder {
-        fn post<'a>(&'a self, _id: &'a str, ev: &'a EventEnvelope) -> BoxFuture<'a, Result<(), CloudError>> {
+        fn post<'a>(
+            &'a self,
+            _id: &'a str,
+            ev: &'a EventEnvelope,
+        ) -> BoxFuture<'a, Result<(), CloudError>> {
             self.0.lock().unwrap().push(ev.clone());
             Box::pin(async { Ok(()) })
         }
@@ -616,7 +703,11 @@ mod tests {
         let rec = Arc::new(Recorder::default());
         let brain = Arc::new(ScriptedBrain::new(replies));
         let events = EventQueue::start("c1", rec.clone(), Backoff::default());
-        let core = CoreHandle { tx: core_tx, rx: core_rx, output_sample_rate: 24_000 };
+        let core = CoreHandle {
+            tx: core_tx,
+            rx: core_rx,
+            output_sample_rate: 24_000,
+        };
         let task = tokio::spawn(run_call(
             ctx(recording),
             core,
@@ -626,11 +717,22 @@ mod tests {
             room_rx,
             Box::new(NoVoicemailDetection),
         ));
-        Harness { core_cmds, core_events, room_cmds, room_input, rec, task, brain }
+        Harness {
+            core_cmds,
+            core_events,
+            room_cmds,
+            room_input,
+            rec,
+            task,
+            brain,
+        }
     }
 
     async fn next_cmd(h: &mut Harness) -> CoreCommand {
-        tokio::time::timeout(Duration::from_secs(2), h.core_cmds.recv()).await.unwrap().unwrap()
+        tokio::time::timeout(Duration::from_secs(2), h.core_cmds.recv())
+            .await
+            .unwrap()
+            .unwrap()
     }
 
     async fn finish(h: Harness) -> (CallOutcome, Vec<EventEnvelope>) {
@@ -651,27 +753,74 @@ mod tests {
                 text: "Hi, you've reached Acme Plumbing. I'm an AI assistant, and this call isn't recorded. How can I help?".into()
             }
         );
-        assert_eq!(next_cmd(&mut h).await, CoreCommand::SpeakDone { id: "u-0".into() });
+        assert_eq!(
+            next_cmd(&mut h).await,
+            CoreCommand::SpeakDone { id: "u-0".into() }
+        );
 
         // Bot audio is resampled 24k → 48k and published in 10 ms frames.
-        h.core_events.send(CoreEvent::SpeakStarted { id: "u-0".into() }).await.unwrap();
-        h.core_events.send(CoreEvent::SpeakAudio(to_pcm16le(&[100i16; 480]))).await.unwrap();
-        h.core_events.send(CoreEvent::SpeakEnded { id: "u-0".into() }).await.unwrap();
-        let RoomCommand::PublishFrame(f) = h.room_cmds.recv().await.unwrap() else { panic!() };
+        h.core_events
+            .send(CoreEvent::SpeakStarted { id: "u-0".into() })
+            .await
+            .unwrap();
+        h.core_events
+            .send(CoreEvent::SpeakAudio(to_pcm16le(&[100i16; 480])))
+            .await
+            .unwrap();
+        h.core_events
+            .send(CoreEvent::SpeakEnded { id: "u-0".into() })
+            .await
+            .unwrap();
+        let RoomCommand::PublishFrame(f) = h.room_cmds.recv().await.unwrap() else {
+            panic!()
+        };
         assert_eq!(f.len(), 480);
 
         // Caller audio reaches the core.
-        h.room_input.send(RoomInput::CallerAudio(vec![1, 2])).await.unwrap();
+        h.room_input
+            .send(RoomInput::CallerAudio(vec![1, 2]))
+            .await
+            .unwrap();
         assert_eq!(next_cmd(&mut h).await, CoreCommand::Audio(vec![1, 0, 2, 0]));
 
         // Caller turn → relay → reply streamed into the speak path.
-        h.core_events.send(CoreEvent::TranscriptFinal { segment_id: "s1".into(), text: "When do you open?".into() }).await.unwrap();
-        h.core_events.send(CoreEvent::TurnEnded { text: "When do you open?".into(), confidence: 0.9 }).await.unwrap();
-        assert_eq!(next_cmd(&mut h).await, CoreCommand::SpeakDelta { id: "u-1".into(), text: "We open ".into() });
-        assert_eq!(next_cmd(&mut h).await, CoreCommand::SpeakDelta { id: "u-1".into(), text: "at nine.".into() });
-        assert_eq!(next_cmd(&mut h).await, CoreCommand::SpeakDone { id: "u-1".into() });
+        h.core_events
+            .send(CoreEvent::TranscriptFinal {
+                segment_id: "s1".into(),
+                text: "When do you open?".into(),
+            })
+            .await
+            .unwrap();
+        h.core_events
+            .send(CoreEvent::TurnEnded {
+                text: "When do you open?".into(),
+                confidence: 0.9,
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            next_cmd(&mut h).await,
+            CoreCommand::SpeakDelta {
+                id: "u-1".into(),
+                text: "We open ".into()
+            }
+        );
+        assert_eq!(
+            next_cmd(&mut h).await,
+            CoreCommand::SpeakDelta {
+                id: "u-1".into(),
+                text: "at nine.".into()
+            }
+        );
+        assert_eq!(
+            next_cmd(&mut h).await,
+            CoreCommand::SpeakDone { id: "u-1".into() }
+        );
         assert_eq!(h.brain.seen.lock().unwrap()[0].turn_id, "turn:c1:1");
-        h.core_events.send(CoreEvent::SpeakEnded { id: "u-1".into() }).await.unwrap();
+        h.core_events
+            .send(CoreEvent::SpeakEnded { id: "u-1".into() })
+            .await
+            .unwrap();
         wait_events(&h, 4).await;
 
         h.room_input.send(RoomInput::CallerLeft).await.unwrap();
@@ -680,10 +829,19 @@ mod tests {
         let kinds: Vec<_> = evs.iter().map(|e| e.event_type.as_str()).collect();
         assert_eq!(
             kinds,
-            ["call.started", "call.transcript.delta", "call.transcript.delta", "call.transcript.delta", "call.ended"]
+            [
+                "call.started",
+                "call.transcript.delta",
+                "call.transcript.delta",
+                "call.transcript.delta",
+                "call.ended"
+            ]
         );
         assert_eq!(evs[1].payload["speaker"], "bot");
-        assert!(evs[1].payload["text"].as_str().unwrap().starts_with("Hi, you've reached"));
+        assert!(evs[1].payload["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("Hi, you've reached"));
         assert_eq!(evs[2].payload["speaker"], "caller");
         assert_eq!(evs[3].payload["text"], "We open at nine.");
         assert_eq!(evs[4].payload["reason"], "caller_hangup");
@@ -694,13 +852,24 @@ mod tests {
     #[tokio::test]
     async fn relay_failure_speaks_the_honest_line() {
         let mut h = start(true, vec![Err("relay 503")]);
-        let CoreCommand::SpeakDelta { text, .. } = next_cmd(&mut h).await else { panic!() };
+        let CoreCommand::SpeakDelta { text, .. } = next_cmd(&mut h).await else {
+            panic!()
+        };
         assert!(text.contains("this call may be recorded"));
         next_cmd(&mut h).await;
-        h.core_events.send(CoreEvent::TurnEnded { text: "hello?".into(), confidence: 1.0 }).await.unwrap();
+        h.core_events
+            .send(CoreEvent::TurnEnded {
+                text: "hello?".into(),
+                confidence: 1.0,
+            })
+            .await
+            .unwrap();
         assert_eq!(
             next_cmd(&mut h).await,
-            CoreCommand::SpeakDelta { id: "u-1".into(), text: RELAY_UNAVAILABLE_LINE.into() }
+            CoreCommand::SpeakDelta {
+                id: "u-1".into(),
+                text: RELAY_UNAVAILABLE_LINE.into()
+            }
         );
         h.room_input.send(RoomInput::CallerLeft).await.unwrap();
         finish(h).await;
@@ -711,24 +880,83 @@ mod tests {
         let mut h = start(false, vec![]);
         next_cmd(&mut h).await;
         next_cmd(&mut h).await;
-        h.core_events.send(CoreEvent::SpeakStarted { id: "u-0".into() }).await.unwrap();
-        h.core_events.send(CoreEvent::SpeakInterrupted { id: "u-0".into() }).await.unwrap();
-        assert!(matches!(h.room_cmds.recv().await.unwrap(), RoomCommand::ClearAudio));
+        h.core_events
+            .send(CoreEvent::SpeakStarted { id: "u-0".into() })
+            .await
+            .unwrap();
+        h.core_events
+            .send(CoreEvent::SpeakInterrupted { id: "u-0".into() })
+            .await
+            .unwrap();
+        assert!(matches!(
+            h.room_cmds.recv().await.unwrap(),
+            RoomCommand::ClearAudio
+        ));
 
         // Takeover: bot goes quiet, turns don't reach the brain, transcripts continue.
-        h.room_input.send(RoomInput::Control(br#"{"action":"takeover","by":"user_1"}"#.to_vec())).await.unwrap();
-        assert_eq!(next_cmd(&mut h).await, CoreCommand::SpeakCancel { id: None });
-        h.core_events.send(CoreEvent::TurnEnded { text: "are you there".into(), confidence: 1.0 }).await.unwrap();
-        h.core_events.send(CoreEvent::TranscriptDelta { segment_id: "s2".into(), text: "hel".into() }).await.unwrap();
+        h.room_input
+            .send(RoomInput::Control(
+                br#"{"action":"takeover","by":"user_1"}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            next_cmd(&mut h).await,
+            CoreCommand::SpeakCancel { id: None }
+        );
+        h.core_events
+            .send(CoreEvent::TurnEnded {
+                text: "are you there".into(),
+                confidence: 1.0,
+            })
+            .await
+            .unwrap();
+        h.core_events
+            .send(CoreEvent::TranscriptDelta {
+                segment_id: "s2".into(),
+                text: "hel".into(),
+            })
+            .await
+            .unwrap();
         // Core events and room input arrive on separate channels; wait until the
         // transcript is recorded so the expected order below is deterministic.
         wait_events(&h, 4).await;
-        h.room_input.send(RoomInput::Control(br#"{"action":"release","by":"user_1"}"#.to_vec())).await.unwrap();
-        h.room_input.send(RoomInput::Control(br#"{"action":"mute","target":"caller"}"#.to_vec())).await.unwrap();
-        h.room_input.send(RoomInput::Control(br#"{"action":"dtmf","digits":"42"}"#.to_vec())).await.unwrap();
-        h.room_input.send(RoomInput::Dtmf("9".into())).await.unwrap();
-        h.room_input.send(RoomInput::Control(br#"{"action":"transfer","to":"+15105550100"}"#.to_vec())).await.unwrap();
-        h.room_input.send(RoomInput::TransferResult { to: "+15105550100".into(), ok: true, reason: None }).await.unwrap();
+        h.room_input
+            .send(RoomInput::Control(
+                br#"{"action":"release","by":"user_1"}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
+        h.room_input
+            .send(RoomInput::Control(
+                br#"{"action":"mute","target":"caller"}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
+        h.room_input
+            .send(RoomInput::Control(
+                br#"{"action":"dtmf","digits":"42"}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
+        h.room_input
+            .send(RoomInput::Dtmf("9".into()))
+            .await
+            .unwrap();
+        h.room_input
+            .send(RoomInput::Control(
+                br#"{"action":"transfer","to":"+15105550100"}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
+        h.room_input
+            .send(RoomInput::TransferResult {
+                to: "+15105550100".into(),
+                ok: true,
+                reason: None,
+            })
+            .await
+            .unwrap();
         h.room_input.send(RoomInput::CallerLeft).await.unwrap();
         let (outcome, evs) = finish(h).await;
         assert_eq!(outcome.reason, "transferred");
@@ -772,14 +1000,18 @@ mod tests {
     }
 
     fn h_brain_unused(evs: &[EventEnvelope]) -> bool {
-        !evs.iter().any(|e| e.payload["speaker"] == "bot" && e.payload["segmentId"] != "u-0")
+        !evs.iter()
+            .any(|e| e.payload["speaker"] == "bot" && e.payload["segmentId"] != "u-0")
     }
 
     #[tokio::test]
     async fn hangup_control_ends_call() {
         let mut h = start(false, vec![]);
         next_cmd(&mut h).await;
-        h.room_input.send(RoomInput::Control(br#"{"action":"hangup"}"#.to_vec())).await.unwrap();
+        h.room_input
+            .send(RoomInput::Control(br#"{"action":"hangup"}"#.to_vec()))
+            .await
+            .unwrap();
         let mut saw_hangup = false;
         while let Some(c) = h.room_cmds.recv().await {
             if matches!(c, RoomCommand::Hangup) {
@@ -799,11 +1031,30 @@ mod tests {
         let (core_events, core_rx) = mpsc::channel(16);
         let (room_tx, mut room_cmds) = mpsc::channel(64);
         let (_room_input, room_rx) = mpsc::channel(16);
-        let core = CoreHandle { tx: core_tx, rx: core_rx, output_sample_rate: 24_000 };
-        let t = tokio::spawn(run_unconfigured_call(core, room_tx, room_rx, Duration::from_secs(5)));
-        let CoreCommand::SpeakDelta { text, .. } = core_cmds.recv().await.unwrap() else { panic!() };
-        assert_eq!(text, format!("Hi, I'm an AI assistant, and this call isn't recorded. {RELAY_UNAVAILABLE_LINE}"));
-        core_events.send(CoreEvent::SpeakEnded { id: "u-0".into() }).await.unwrap();
+        let core = CoreHandle {
+            tx: core_tx,
+            rx: core_rx,
+            output_sample_rate: 24_000,
+        };
+        let t = tokio::spawn(run_unconfigured_call(
+            core,
+            room_tx,
+            room_rx,
+            Duration::from_secs(5),
+        ));
+        let CoreCommand::SpeakDelta { text, .. } = core_cmds.recv().await.unwrap() else {
+            panic!()
+        };
+        assert_eq!(
+            text,
+            format!(
+                "Hi, I'm an AI assistant, and this call isn't recorded. {RELAY_UNAVAILABLE_LINE}"
+            )
+        );
+        core_events
+            .send(CoreEvent::SpeakEnded { id: "u-0".into() })
+            .await
+            .unwrap();
         t.await.unwrap();
         let mut last = None;
         while let Ok(c) = room_cmds.try_recv() {

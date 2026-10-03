@@ -9,7 +9,9 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio_tungstenite::tungstenite::{Error as WsError, Message};
 use voice_service::session::mock::{MockConfig, MockEngine};
-use voice_service::session::ws::{router_with, SessionRouteState, TicketVerifier};
+use voice_service::session::ws::{
+    router_with, SessionRouteState, TicketClaims, TicketVerifier, VerifyFuture,
+};
 
 async fn serve(state: SessionRouteState) -> SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -187,12 +189,18 @@ async fn auth_rules() {
     // A plugged-in verifier decides tickets.
     struct AcceptGood;
     impl TicketVerifier for AcceptGood {
-        fn verify(&self, ticket: &str) -> Result<(), String> {
-            if ticket == "good" {
-                Ok(())
-            } else {
-                Err("bad ticket".into())
-            }
+        fn verify<'a>(&'a self, ticket: &'a str) -> VerifyFuture<'a> {
+            Box::pin(async move {
+                if ticket == "good" {
+                    Ok(TicketClaims {
+                        sub: "u".into(),
+                        plan: "pro".into(),
+                        max_seconds: 60,
+                    })
+                } else {
+                    Err("bad ticket".into())
+                }
+            })
         }
     }
     let mut state = SessionRouteState::new(engine(), Some("s3cret".into()));

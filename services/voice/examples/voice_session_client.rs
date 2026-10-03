@@ -72,7 +72,9 @@ fn parse_args() -> Result<Args, String> {
             "--tail-ms" => a.tail_ms = val()?.parse().map_err(|e| format!("--tail-ms: {e}"))?,
             "--barge-wav" => a.barge_wav = Some(val()?),
             "--barge-after-ms" => {
-                a.barge_after_ms = val()?.parse().map_err(|e| format!("--barge-after-ms: {e}"))?
+                a.barge_after_ms = val()?
+                    .parse()
+                    .map_err(|e| format!("--barge-after-ms: {e}"))?
             }
             "--wait-ms" => a.wait_ms = val()?.parse().map_err(|e| format!("--wait-ms: {e}"))?,
             "-h" | "--help" => {
@@ -315,12 +317,17 @@ async fn run() -> Result<(), String> {
             Some(at) => {
                 let due = Duration::from_millis(args.barge_after_ms);
                 tokio::time::sleep(due.saturating_sub(at.elapsed())).await;
-                println!("+{:>6}ms (barge-in: speaking over the reply)", t0.elapsed().as_millis());
+                println!(
+                    "+{:>6}ms (barge-in: speaking over the reply)",
+                    t0.elapsed().as_millis()
+                );
                 let mut tick = tokio::time::interval(Duration::from_millis(20));
                 for chunk in samples.chunks((rate / 50) as usize) {
                     tick.tick().await;
                     let bytes: Vec<u8> = chunk.iter().flat_map(|s| s.to_le_bytes()).collect();
-                    tx.send(Message::Binary(bytes)).await.map_err(|e| e.to_string())?;
+                    tx.send(Message::Binary(bytes))
+                        .await
+                        .map_err(|e| e.to_string())?;
                 }
             }
             None => eprintln!("no speak.started: barge-in not sent"),

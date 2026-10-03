@@ -162,6 +162,7 @@ pub mod codes {
     pub const ENGINE_UNAVAILABLE: &str = "engine_unavailable";
     pub const ENGINE_ERROR: &str = "engine_error";
     pub const TURN_UNAVAILABLE: &str = "turn_unavailable";
+    pub const SESSION_LIMIT: &str = "session_limit";
 }
 
 #[cfg(test)]

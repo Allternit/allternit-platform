@@ -54,7 +54,11 @@ pub fn word_overlap(a: &str, b: &str) -> f32 {
     };
     let (wa, wb) = (words(a), words(b));
     if wa.is_empty() || wb.is_empty() {
-        return if wa.is_empty() && wb.is_empty() { 1.0 } else { 0.0 };
+        return if wa.is_empty() && wb.is_empty() {
+            1.0
+        } else {
+            0.0
+        };
     }
     let hit = wa.iter().filter(|w| wb.contains(w)).count();
     hit as f32 / wa.len().max(wb.len()) as f32
@@ -107,8 +111,10 @@ mod tests {
     fn overlap() {
         assert!(word_overlap("What time is it in Tokyo?", "what time is it in tokyo") > 0.99);
         assert!(
-            word_overlap("A time is at in Tokyo right now.", "What time is it in Tokyo right now?")
-                < 0.8
+            word_overlap(
+                "A time is at in Tokyo right now.",
+                "What time is it in Tokyo right now?"
+            ) < 0.8
         );
         assert_eq!(word_overlap("", ""), 1.0);
     }

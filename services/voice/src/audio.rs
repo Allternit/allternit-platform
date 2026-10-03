@@ -300,7 +300,11 @@ mod tests {
         assert_eq!(decoded.len(), 8000);
         assert!(decoded.iter().all(|s| s.abs() < 0.01));
         let resampled = resample_to_16k(&decoded, 8_000);
-        assert!((resampled.len() as i64 - 16_000).abs() <= 16, "{}", resampled.len());
+        assert!(
+            (resampled.len() as i64 - 16_000).abs() <= 16,
+            "{}",
+            resampled.len()
+        );
     }
 
     #[test]
@@ -357,7 +361,14 @@ mod tests {
     #[test]
     fn mulaw_matches_g711_table() {
         // Reference values from the ITU G.711 μ-law decode table (16-bit).
-        for (code, expect) in [(0x00u8, -32124i32), (0x7F, 0), (0x80, 32124), (0xFF, 0), (0xEF, 132), (0xDE, 428)] {
+        for (code, expect) in [
+            (0x00u8, -32124i32),
+            (0x7F, 0),
+            (0x80, 32124),
+            (0xFF, 0),
+            (0xEF, 132),
+            (0xDE, 428),
+        ] {
             let got = (decode_mulaw(code) * 32768.0).round() as i32;
             assert_eq!(got, expect, "code {code:#04x}");
         }

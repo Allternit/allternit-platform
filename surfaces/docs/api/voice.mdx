@@ -409,7 +409,20 @@ Voice is input and output only. The app sends each final user turn to the agent 
 | Desktop sidecar | `ws://127.0.0.1:<port>/v1/voice/session?token=<sidecar token>` |
 | Allternit Cloud | `wss://…/v1/voice/session?ticket=<short-lived ticket>` |
 
-`token` must match the service's `ALLTERNIT_VOICE_TOKEN`. If that variable is unset, only loopback connections are accepted. Cloud tickets are refused until a ticket verifier is configured. A failed check returns `401` before the upgrade.
+`token` must match the service's `ALLTERNIT_VOICE_TOKEN`. If that variable is unset, only loopback connections are accepted. A failed check returns `401` before the upgrade, with a message that says whether the ticket was invalid or Allternit Cloud could not be reached.
+
+### Cloud tickets and usage
+
+On Allternit Cloud the service redeems each `ticket` against cloud-api before the upgrade. Tickets are single-use. It does this only when both variables are set; otherwise every ticket is refused.
+
+| Variable | Purpose |
+| --- | --- |
+| `ALLTERNIT_CLOUD_API_URL` | Base URL of cloud-api. |
+| `ALLTERNIT_VOICE_WORKER_TOKEN` | Bearer token for `POST /api/v1/voice/tickets/redeem` and `POST /api/v1/voice/usage`. |
+
+A ticket session reports `engine: "cloud"` in `session.ready`. The ticket carries a `maxSeconds` limit. When the session reaches it, the service sends `error` with `code: "session_limit"` and `fatal: true`, then closes the socket.
+
+When the session closes for any reason, the service reports the wall-clock duration (rounded up to whole seconds) to cloud-api as Cloud Voice minutes. It retries in the background for about a minute, and cloud-api ignores duplicates for the same session. Token and loopback sessions, such as the Desktop sidecar and the call worker, report nothing.
 
 ### Frames
 

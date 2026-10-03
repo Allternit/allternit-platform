@@ -40,7 +40,10 @@ impl RelayBrain {
     /// runtime (including a sleeping cloud computer waking) before the honest
     /// fallback line plays.
     pub fn new(client: CloudClient, first_byte_timeout: Duration) -> Self {
-        Self { client, first_byte_timeout }
+        Self {
+            client,
+            first_byte_timeout,
+        }
     }
 }
 
@@ -49,7 +52,10 @@ impl CallBrain for RelayBrain {
         let client = self.client.clone();
         let timeout = self.first_byte_timeout;
         Box::pin(async move {
-            let s = client.turn(&turn, timeout).await.map_err(|e| BrainError(e.to_string()))?;
+            let s = client
+                .turn(&turn, timeout)
+                .await
+                .map_err(|e| BrainError(e.to_string()))?;
             Ok(s.map_err(|e| BrainError(e.to_string())).boxed())
         })
     }
@@ -69,7 +75,10 @@ impl ScriptedBrain {
             replies: std::sync::Mutex::new(
                 replies
                     .into_iter()
-                    .map(|r| r.map(|v| v.into_iter().map(String::from).collect()).map_err(String::from))
+                    .map(|r| {
+                        r.map(|v| v.into_iter().map(String::from).collect())
+                            .map_err(String::from)
+                    })
                     .collect(),
             ),
             seen: Default::default(),

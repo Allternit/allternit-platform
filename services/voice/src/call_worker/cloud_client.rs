@@ -99,7 +99,12 @@ impl BotConfig {
     pub fn display_name(&self) -> Option<String> {
         self.name
             .clone()
-            .or_else(|| self.persona.get("name").and_then(|v| v.as_str()).map(String::from))
+            .or_else(|| {
+                self.persona
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            })
             .filter(|n| !n.trim().is_empty())
     }
 }
@@ -188,7 +193,11 @@ impl CloudClient {
             .connect_timeout(Duration::from_secs(3))
             .build()
             .expect("reqwest client");
-        Self { base: base.trim_end_matches('/').to_string(), token: token.to_string(), http }
+        Self {
+            base: base.trim_end_matches('/').to_string(),
+            token: token.to_string(),
+            http,
+        }
     }
 
     fn url(&self, path: &str) -> String {
@@ -214,7 +223,9 @@ impl CloudClient {
             let body = resp.text().await.unwrap_or_default();
             return Err(CloudError::from_status(status, &body));
         }
-        resp.json().await.map_err(|e| CloudError::Permanent(e.to_string()))
+        resp.json()
+            .await
+            .map_err(|e| CloudError::Permanent(e.to_string()))
     }
 
     pub async fn post_event(&self, call_id: &str, ev: &EventEnvelope) -> Result<(), CloudError> {
@@ -270,8 +281,10 @@ impl CloudClient {
             struct Whole {
                 text: String,
             }
-            let whole: Whole =
-                resp.json().await.map_err(|e| CloudError::Permanent(e.to_string()))?;
+            let whole: Whole = resp
+                .json()
+                .await
+                .map_err(|e| CloudError::Permanent(e.to_string()))?;
             return Ok(futures::stream::once(async move { Ok(whole.text) }).boxed());
         }
         let bytes = resp.bytes_stream().map_err(CloudError::from_reqwest);
@@ -300,7 +313,9 @@ where
                         continue;
                     }
                     match serde_json::from_str::<TurnChunk>(&line) {
-                        Ok(TurnChunk::Delta { text }) => return Some((Ok(text), (bytes, buf, done))),
+                        Ok(TurnChunk::Delta { text }) => {
+                            return Some((Ok(text), (bytes, buf, done)))
+                        }
                         Ok(TurnChunk::Done) => return None,
                         Ok(TurnChunk::Error { message }) => {
                             done = true;
@@ -383,12 +398,20 @@ mod tests {
             Ok(b"lo.\"}\n\n{\"type\":\"future\"}\n{\"type\":\"delta\",\"text\":\" Bye\"}".to_vec()),
             Ok(b"\n{\"type\":\"done\"}\n{\"type\":\"delta\",\"text\":\"ignored\"}\n".to_vec()),
         ];
-        let out: Vec<_> = ndjson_text_stream(futures::stream::iter(chunks)).collect().await;
+        let out: Vec<_> = ndjson_text_stream(futures::stream::iter(chunks))
+            .collect()
+            .await;
         assert_eq!(out, vec![Ok("Hello.".to_string()), Ok(" Bye".to_string())]);
 
-        let chunks: Vec<Result<Vec<u8>, CloudError>> =
-            vec![Ok(b"{\"type\":\"delta\",\"text\":\"a\"}\n{\"type\":\"error\",\"message\":\"x\"}".to_vec())];
-        let out: Vec<_> = ndjson_text_stream(futures::stream::iter(chunks)).collect().await;
-        assert_eq!(out, vec![Ok("a".to_string()), Err(CloudError::Permanent("x".into()))]);
+        let chunks: Vec<Result<Vec<u8>, CloudError>> = vec![Ok(
+            b"{\"type\":\"delta\",\"text\":\"a\"}\n{\"type\":\"error\",\"message\":\"x\"}".to_vec(),
+        )];
+        let out: Vec<_> = ndjson_text_stream(futures::stream::iter(chunks))
+            .collect()
+            .await;
+        assert_eq!(
+            out,
+            vec![Ok("a".to_string()), Err(CloudError::Permanent("x".into()))]
+        );
     }
 }

@@ -85,7 +85,13 @@ pub struct Resampler {
 
 impl Resampler {
     pub fn new(from: u32, to: u32) -> Self {
-        Self { from, to, step: from as f64 / to as f64, t: 0.0, prev: None }
+        Self {
+            from,
+            to,
+            step: from as f64 / to as f64,
+            t: 0.0,
+            prev: None,
+        }
     }
 
     pub fn is_passthrough(&self) -> bool {
@@ -115,8 +121,16 @@ impl Resampler {
             let i = self.t.floor() as isize;
             let frac = self.t - i as f64;
             let a = at(i);
-            let b = if (i + 1) as f64 <= n - 1.0 { at(i + 1) } else { a };
-            out.push((a + (b - a) * frac).round().clamp(i16::MIN as f64, i16::MAX as f64) as i16);
+            let b = if (i + 1) as f64 <= n - 1.0 {
+                at(i + 1)
+            } else {
+                a
+            };
+            out.push(
+                (a + (b - a) * frac)
+                    .round()
+                    .clamp(i16::MIN as f64, i16::MAX as f64) as i16,
+            );
             self.t += self.step;
         }
         self.t -= n;
@@ -133,7 +147,10 @@ pub struct Framer {
 
 impl Framer {
     pub fn new(sample_rate: u32, frame_ms: u32) -> Self {
-        Self { frame: (sample_rate * frame_ms / 1000) as usize, buf: Vec::new() }
+        Self {
+            frame: (sample_rate * frame_ms / 1000) as usize,
+            buf: Vec::new(),
+        }
     }
 
     pub fn frame_len(&self) -> usize {
@@ -171,7 +188,10 @@ mod tests {
 
     #[test]
     fn mono_downmix() {
-        assert_eq!(interleaved_to_mono(&[100, 300, -50, -150], 2), vec![200, -100]);
+        assert_eq!(
+            interleaved_to_mono(&[100, 300, -50, -150], 2),
+            vec![200, -100]
+        );
         assert_eq!(interleaved_to_mono(&[1, 2, 3], 1), vec![1, 2, 3]);
     }
 
@@ -212,7 +232,9 @@ mod tests {
     #[test]
     fn resample_continuity_at_boundary() {
         // Same result whether fed in one chunk or two.
-        let sig: Vec<i16> = (0..480).map(|i| ((i as f64 / 7.0).sin() * 8000.0) as i16).collect();
+        let sig: Vec<i16> = (0..480)
+            .map(|i| ((i as f64 / 7.0).sin() * 8000.0) as i16)
+            .collect();
         let mut a = Resampler::new(48_000, 16_000);
         let one = a.process(&sig);
         let mut b = Resampler::new(48_000, 16_000);
