@@ -484,7 +484,7 @@ jobs:
         shell: pwsh
         run: |
           git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git "$env:TEMP\whisper.cpp"
-          cmake -S "$env:TEMP\whisper.cpp" -B "$env:TEMP\whisper.cpp\build" -DCMAKE_BUILD_TYPE=Release
+          cmake -S "$env:TEMP\whisper.cpp" -B "$env:TEMP\whisper.cpp\build" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF -DWHISPER_BUILD_TESTS=OFF
           cmake --build "$env:TEMP\whisper.cpp\build" --config Release --target whisper-cli
           New-Item -ItemType Directory -Force surfaces\allternit-desktop\resources\bin | Out-Null
           $bin = Get-ChildItem -Path "$env:TEMP\whisper.cpp\build" -Recurse -Filter whisper-cli.exe | Select-Object -First 1

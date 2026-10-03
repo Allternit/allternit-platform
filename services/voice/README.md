@@ -21,7 +21,9 @@ cargo run -p voice-service
 ```
 
 Binds `127.0.0.1:${PORT:-8001}`. Build `whisper-cli` with `./build-whisper.sh`
-(macOS deployment target 13.0). The ggml model downloads on first
+(macOS deployment target 13.0). It is linked statically (`BUILD_SHARED_LIBS=OFF`,
+`GGML_NATIVE=OFF`) because Desktop ships the binary alone in `resources/bin`; the
+script fails if the result still loads `@rpath` dylibs. The ggml model downloads on first
 `POST /v1/stt` into `~/.allternit/models/whisper/` unless `WHISPER_MODEL` is set.
 
 ```bash
