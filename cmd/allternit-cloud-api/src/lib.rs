@@ -365,6 +365,10 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // connect / register / admin Graph routes. 503 teams_not_configured
         // when APP_ID/APP_PASSWORD are unset.
         .merge(channels::teams_app::routes())
+        // Slack shared app: one Allternit app; install/OAuth, signed Events API
+        // edge (url_verification inline, everything else queued by team), and
+        // bot-identity sends. Same self-authenticating pattern as above.
+        .merge(routes::slack_app::routes())
         // These handlers verify Clerk or billing credentials themselves. They
         // must not pass through the legacy allternit_* API-token middleware.
         .merge(routes::hosted_runtimes::routes())

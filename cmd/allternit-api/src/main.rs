@@ -963,6 +963,7 @@ async fn main() {
         .merge(allternit_api::a2a_routes::a2a_router())
         .merge(allternit_api::channel_gateway::channel_gateway_router())
         .merge(allternit_api::channel_phone::phone_router())
+        .merge(allternit_api::channel_slack_app::slack_app_connect_router())
         .merge(allternit_api::spend_limits::spend_limit_router())
         .merge(allternit_api::channel_tools::channel_tools_router())
         .merge(allternit_api::templates_routes::templates_router())
@@ -1173,6 +1174,10 @@ async fn main() {
         // this is public the same way `webhook_router()` above is — no
         // Clerk session exists for a server-to-server call from Slack.
         .merge(allternit_api::slack_webhook_routes::slack_webhook_router())
+        // Slack shared app: events arrive over the authenticated cloud→runtime
+        // relay (the cloud verified Slack's signature and acked within 3s), so
+        // this is mounted on the internal surface, not the public one.
+        .merge(allternit_api::channel_slack_app::slack_app_webhook_router())
         .merge(allternit_api::channel_transports::channel_webhook_router())
         // Telegram Managed Bots token delivery: reached only through the
         // runtime relay, authenticated in the handler by cloud-api's
