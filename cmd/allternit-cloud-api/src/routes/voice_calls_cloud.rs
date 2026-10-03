@@ -834,7 +834,7 @@ mod tests {
         }
         async fn create_sip_participant(
             &self,
-            _r: super::livekit_admin::CreateSipParticipantRequest,
+            _r: crate::routes::livekit_admin::CreateSipParticipantRequest,
         ) -> Result<Value, LiveKitError> {
             unimplemented!()
         }
