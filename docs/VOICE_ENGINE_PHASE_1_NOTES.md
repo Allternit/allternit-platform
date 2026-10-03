@@ -9,7 +9,7 @@ Finished by Claude (session joe-voice-p1), working from Kimi's WIP `adf5faa0a`. 
 Branch `ao/voice-engine-p1`, pushed to origin. No PR opened.
 
 ```
-<this commit>  docs: Phase 1 notes, bench results
+8d2156f78 docs(voice): Phase 1 notes and M1 Pro CPU bench results
 b5441bee3 fix(voice): pace streaming partials by their own decode cost
 f09e4ec24 fix(voice): finish removing whisper and package the sherpa sidecar on every OS
 5cbed3348 feat(voice): engine hooks for the voice session track
