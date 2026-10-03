@@ -56,6 +56,8 @@
               "guides/artifact-modes",
               "guides/computers-and-apps",
               "guides/phone-for-your-bot",
+              "guides/messaging-channels",
+              "guides/calls-and-texts",
               "guides/mcp-apps-status"
             ],
             "icon": "/icons/window.svg"
@@ -422,6 +424,7 @@
               "guides/idempotency-and-retries",
               "guides/token-budgets",
               "guides/webhooks",
+              "guides/channel-events-and-connect-api",
               "guides/pdf-citations"
             ],
             "icon": "/icons/book.svg"
