@@ -590,8 +590,9 @@ async fn protocol_errors() {
     assert_eq!(code, "bad_message");
 
     // A bad option on session.start is fatal and closes the session.
+    // (An unknown voice is not: it falls back to the default with a warning.)
     t.send(ClientMessage::SessionStart(SessionOptions {
-        voice: Some("nobody".into()),
+        stt_model: Some("nobody".into()),
         ..Default::default()
     }))
     .await;

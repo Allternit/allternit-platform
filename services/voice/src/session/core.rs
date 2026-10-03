@@ -607,11 +607,15 @@ fn resolve(
     let voice = match &o.voice {
         // Custom voices are per owner: the engine checks consent for them.
         Some(v) if crate::custom_voice::is_custom(v) => v.clone(),
+        // An unknown voice must never mean silence (a phone caller would hear
+        // nothing): fall back to the default voice and warn, non-fatally.
         Some(v) if !info_voices.is_empty() && !info_voices.contains(v) => {
-            return Err(format!(
-                "unknown voice '{v}' (available: {})",
-                info_voices.join(", ")
-            ))
+            warning = Some(ServerEvent::error(
+                codes::VOICE_UNAVAILABLE,
+                format!("unknown voice '{v}'; using the default voice '{default_voice}'"),
+                false,
+            ));
+            default_voice.to_string()
         }
         Some(v) => v.clone(),
         None => base
@@ -684,11 +688,11 @@ fn resolve(
             mode: TurnMode::Vad,
             silence_ms,
         };
-        warning = Some(ServerEvent::error(
+        warning = warning.or(Some(ServerEvent::error(
             codes::TURN_UNAVAILABLE,
             "smart turn detection is not available on this engine; using vad",
             false,
-        ));
+        )));
     }
     Ok((
         Settings {
@@ -1214,6 +1218,26 @@ async fn pump(ctx: &Ctx, s: &mut Running) -> bool {
         retire(s, &u.id);
         if !ctx.emit(ServerEvent::SpeakEnded { id: u.id }).await {
             return false;
+        }
+    }
+}
+
+#[cfg(test)]
+mod unknown_voice_tests {
+    use super::*;
+
+    #[test]
+    fn unknown_voice_falls_back_to_default_with_a_warning() {
+        let voices = vec!["af_heart".to_string(), "am_adam".to_string()];
+        let o = SessionOptions { voice: Some("allternit-nope".into()), ..Default::default() };
+        let (settings, warning) = resolve(&voices, "af_heart", None, &o, true).expect("must not fail");
+        assert_eq!(settings.voice, "af_heart");
+        match warning {
+            Some(ServerEvent::Error { code, fatal, .. }) => {
+                assert_eq!(code, codes::VOICE_UNAVAILABLE);
+                assert!(!fatal);
+            }
+            other => panic!("expected a non-fatal voice warning, got {other:?}"),
         }
     }
 }

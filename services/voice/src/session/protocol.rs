@@ -173,6 +173,8 @@ pub mod codes {
     pub const BAD_OPTION: &str = "bad_option";
     pub const ENGINE_UNAVAILABLE: &str = "engine_unavailable";
     pub const ENGINE_ERROR: &str = "engine_error";
+    /// A requested voice isn't in this engine's catalog; the session uses the default voice instead.
+    pub const VOICE_UNAVAILABLE: &str = "voice_unavailable";
     pub const TURN_UNAVAILABLE: &str = "turn_unavailable";
     pub const SESSION_LIMIT: &str = "session_limit";
     /// A `custom:` voice without a live consent record (or revoked).

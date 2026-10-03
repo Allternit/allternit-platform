@@ -212,7 +212,7 @@ pub const DEFAULT_VOICE: &str = "af_heart";
 /// voices.
 pub fn resolve_voice(requested: Option<&str>) -> Result<&'static VoiceDef, String> {
     let id = match requested.map(str::trim).unwrap_or("") {
-        "" | "default" | "en-us-female" | "af" => DEFAULT_VOICE,
+        "" | "default" | "allternit-default" | "en-us-female" | "af" => DEFAULT_VOICE,
         "en-us-male" => "am_adam",
         other => other,
     };
@@ -707,6 +707,7 @@ mod tests {
         assert_eq!(resolve_voice(Some("default")).unwrap().id, "af_heart");
         assert_eq!(resolve_voice(Some("af")).unwrap().id, "af_heart");
         assert_eq!(resolve_voice(Some("en-us-female")).unwrap().id, "af_heart");
+        assert_eq!(resolve_voice(Some("allternit-default")).unwrap().id, "af_heart");
         assert_eq!(resolve_voice(Some("en-us-male")).unwrap().id, "am_adam");
         assert_eq!(resolve_voice(Some("bm_george")).unwrap().id, "bm_george");
         assert!(resolve_voice(Some("x")).is_err());
