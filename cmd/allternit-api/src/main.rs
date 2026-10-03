@@ -1173,6 +1173,10 @@ async fn main() {
         // Clerk session exists for a server-to-server call from Slack.
         .merge(allternit_api::slack_webhook_routes::slack_webhook_router())
         .merge(allternit_api::channel_transports::channel_webhook_router())
+        // Telegram Managed Bots token delivery: reached only through the
+        // runtime relay, authenticated in the handler by cloud-api's
+        // data-plane JWT (no Clerk session exists on this hop).
+        .merge(allternit_api::channel_gateway::telegram_managed_public_router())
         // Photon.codes inbound-message webhook is also server-to-server and
         // carries no Clerk session; route it to the recipient bot's inbox.
         .merge(allternit_bus_webhook_router())
