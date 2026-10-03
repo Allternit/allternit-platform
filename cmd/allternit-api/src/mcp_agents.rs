@@ -50,7 +50,7 @@ pub fn public_mcp_url() -> String {
         .unwrap_or_else(|| DEFAULT_MCP_PUBLIC_URL.to_string())
 }
 
-fn oauth_issuer() -> String {
+pub(crate) fn oauth_issuer() -> String {
     std::env::var("MCP_OAUTH_ISSUER")
         .ok()
         .map(|v| v.trim().trim_end_matches('/').to_string())
@@ -93,7 +93,7 @@ pub fn well_known_router() -> Router<Arc<AppState>> {
         )
         .route(
             "/.well-known/oauth-protected-resource/*rest",
-            get(protected_resource_doc),
+            get(protected_resource_doc_at),
         )
 }
 
@@ -101,8 +101,23 @@ async fn protected_resource_doc() -> Json<Value> {
     Json(protected_resource_metadata(&public_mcp_url()))
 }
 
+/// Path-suffixed variant. `/.well-known/oauth-protected-resource/mcp/bots/<id>`
+/// describes that vendor-bot connector (scope `bots:act`); every other suffix
+/// keeps describing the agents server. Nothing here says whether the bot exists.
+async fn protected_resource_doc_at(axum::extract::Path(rest): axum::extract::Path<String>) -> Json<Value> {
+    match crate::mcp_vendor_bots::bot_id_from_resource_path(&rest) {
+        Some(id) => Json(crate::mcp_vendor_bots::bot_protected_resource_metadata(id)),
+        None => protected_resource_doc().await,
+    }
+}
+
 fn challenge_value(error: Option<(&str, &str)>) -> HeaderValue {
-    let meta = resource_metadata_url(&public_mcp_url());
+    challenge_value_for(&public_mcp_url(), error)
+}
+
+/// The RFC 9728 challenge for one resource (the agents server or a vendor-bot connector).
+pub(crate) fn challenge_value_for(resource: &str, error: Option<(&str, &str)>) -> HeaderValue {
+    let meta = resource_metadata_url(resource);
     let v = match error {
         Some((code, desc)) => format!(
             "Bearer error=\"{code}\", error_description=\"{desc}\", resource_metadata=\"{meta}\""
@@ -116,15 +131,23 @@ fn challenge_value(error: Option<(&str, &str)>) -> HeaderValue {
 /// or invalid token, rejected by `auth_middleware`) gets the RFC 9728
 /// `WWW-Authenticate` challenge that starts the client's OAuth flow.
 pub async fn mcp_challenge_layer(request: Request, next: Next) -> Response {
-    let is_mcp = request.uri().path().starts_with("/mcp/server");
+    let path = request.uri().path().to_string();
+    let is_mcp = path.starts_with("/mcp/server");
+    let bot_resource = path
+        .strip_prefix("/mcp/bots/")
+        .map(|id| id.trim_end_matches('/'))
+        .filter(|id| !id.is_empty() && !id.contains('/'))
+        .map(crate::mcp_vendor_bots::bot_resource_url);
     let mut response = next.run(request).await;
-    if is_mcp
+    if (is_mcp || bot_resource.is_some())
         && response.status() == StatusCode::UNAUTHORIZED
         && !response.headers().contains_key(header::WWW_AUTHENTICATE)
     {
-        response
-            .headers_mut()
-            .insert(header::WWW_AUTHENTICATE, challenge_value(None));
+        let challenge = match &bot_resource {
+            Some(resource) => challenge_value_for(resource, None),
+            None => challenge_value(None),
+        };
+        response.headers_mut().insert(header::WWW_AUTHENTICATE, challenge);
     }
     response
 }
@@ -172,19 +195,32 @@ pub async fn verify_oauth_access_token(
     config: &AuthConfig,
     resource: &str,
 ) -> Result<AuthUser, McpTokenError> {
+    verify_oauth_claims(jwks, token, config, resource, REQUIRED_SCOPE).await.map(|(user, _)| user)
+}
+
+/// [`verify_oauth_access_token`] for any resource and scope, also returning the
+/// verified claims (the vendor-bot connector names the OAuth client from them).
+pub async fn verify_oauth_claims(
+    jwks: &JwksManager,
+    token: &str,
+    config: &AuthConfig,
+    resource: &str,
+    scope: &str,
+) -> Result<(AuthUser, Value), McpTokenError> {
     let claims = verify_token_claims(jwks, token, config)
         .await
         .map_err(|e| McpTokenError::Invalid(e.to_string()))?;
     if !claim_has_audience(&claims, resource) {
         return Err(McpTokenError::Invalid("Invalid audience".into()));
     }
-    if !claim_scopes(&claims).iter().any(|s| s == REQUIRED_SCOPE) {
+    if !claim_scopes(&claims).iter().any(|s| s == scope) {
         return Err(McpTokenError::InsufficientScope);
     }
-    user_from_claims(&claims).map_err(|e| McpTokenError::Invalid(e.to_string()))
+    let user = user_from_claims(&claims).map_err(|e| McpTokenError::Invalid(e.to_string()))?;
+    Ok((user, claims))
 }
 
-fn peek_claims(token: &str) -> Option<Value> {
+pub(crate) fn peek_claims(token: &str) -> Option<Value> {
     let payload = token.split('.').nth(1)?;
     serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).ok()?).ok()
 }
