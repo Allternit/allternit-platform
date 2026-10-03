@@ -134,8 +134,8 @@ impl SipConsult {
             .with_grants(VideoGrants {
                 room_join: true,
                 room: self.consult_room.clone(),
-                can_publish: true,
-                can_subscribe: true,
+                can_publish: Some(true),
+                can_subscribe: Some(true),
                 ..Default::default()
             })
             .to_jwt()
@@ -186,7 +186,8 @@ impl ConsultDriver for SipConsult {
                 ringing_timeout: Some(ring_timeout),
                 ..Default::default()
             };
-            let call = self.lk.sip().create_sip_participant(
+            let sip = self.lk.sip();
+            let call = sip.create_sip_participant(
                 self.trunk.clone(),
                 self.target.clone(),
                 self.consult_room.clone(),

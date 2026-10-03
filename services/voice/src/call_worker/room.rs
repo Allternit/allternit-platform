@@ -37,7 +37,7 @@ use super::controls::{dtmf_code, transfer_uri};
 use super::dispatch::{run_dispatch, JobHandler, JobInfo};
 use super::events::{Backoff, EventQueue};
 use super::session_adapter::{connect_ws, CoreCommand};
-use super::voicemail::{AnswerScreen, NoVoicemailDetection, ScreenTimings, VoicemailDetector};
+use super::voicemail::{AnswerScreen, NoScreening, ScreenTimings, VoicemailDetector};
 use super::{AGENT_NAME, CONTROL_TOPIC};
 
 /// SIP participant attribute keys set by LiveKit SIP.
@@ -220,7 +220,7 @@ async fn handle_job(cfg: WorkerConfig, cloud: CloudClient, job: JobInfo, cancel:
             let voicemail: Box<dyn VoicemailDetector> = if direction == Direction::Outbound {
                 Box::new(AnswerScreen::new(ScreenTimings::default()))
             } else {
-                Box::new(NoVoicemailDetection)
+                Box::new(NoScreening)
             };
             let recorder: Option<Arc<dyn Recorder>> = match &cfg.recording {
                 RecordingEnv::Configured(b) => Some(Arc::new(EgressRecorder::new(&lk, b.clone()))),
