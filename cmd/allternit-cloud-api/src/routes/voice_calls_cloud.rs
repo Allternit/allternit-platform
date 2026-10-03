@@ -273,7 +273,7 @@ async fn put_bot_config(
     }
     // Absent fields keep their stored value (COALESCE); first write of a
     // missing row materializes the safe defaults.
-    let row: Option<(String, String, String, String)> = sqlx::query_as(
+    let row: (String, String, String, String) = sqlx::query_as(
         "INSERT INTO voice_bot_config (bot_id, user_id, persona, voice_id, greeting, recording)
          VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (bot_id) DO UPDATE SET
@@ -366,7 +366,7 @@ async fn start_call_inner(
     let spawned = state.clone();
     let spawned_call = call_id.clone();
     tokio::spawn(async move {
-        let relay = ProdCallRelay { state: &spawned };
+        let relay = ProdCallRelay { state: spawned.as_ref() };
         if let Err(error) = deliver_call(&spawned, &spawned_call, &relay).await {
             tracing::warn!(call_id = %spawned_call, "voice call delivery pass failed: {error}");
         }
@@ -468,7 +468,7 @@ async fn post_events_inner(
     let spawned = state.clone();
     let spawned_call = call_id.to_string();
     tokio::spawn(async move {
-        let relay = ProdCallRelay { state: &spawned };
+        let relay = ProdCallRelay { state: spawned.as_ref() };
         if let Err(error) = deliver_call(&spawned, &spawned_call, &relay).await {
             tracing::warn!(call_id = %spawned_call, "voice call delivery pass failed: {error}");
         }
@@ -492,7 +492,7 @@ async fn runtime_proxy(
     Json(request): Json<RuntimeProxyRequest>,
 ) -> Result<Response, ApiError> {
     authorize_worker(&headers)?;
-    let relay = ProdCallRelay { state: &state };
+    let relay = ProdCallRelay { state: state.as_ref() };
     runtime_proxy_inner(&state, &relay, &call_id, request).await
 }
 
@@ -638,7 +638,7 @@ async fn deliver_due_calls(state: &Arc<ApiState>) -> Result<(), ApiError> {
     for (call_id,) in calls {
         let spawned = state.clone();
         tokio::spawn(async move {
-            let relay = ProdCallRelay { state: &spawned };
+            let relay = ProdCallRelay { state: spawned.as_ref() };
             if let Err(error) = deliver_call(&spawned, &call_id, &relay).await {
                 tracing::warn!(%call_id, "voice call delivery pass failed: {error}");
             }

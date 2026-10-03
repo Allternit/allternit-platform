@@ -305,7 +305,6 @@ mod tests {
         assert!(is_forbidden_literal("169.254.1.1"));
         assert!(is_forbidden_literal("0.0.0.0"));
         assert!(is_forbidden_literal("::1"));
-        assert!(is_forbidden_literal("[::1]") == false || true); // brackets don't parse as Ip; still fine
         assert!(!is_forbidden_literal("livekit.example.com"));
         assert!(!is_forbidden_literal("203.0.113.10"));
     }
