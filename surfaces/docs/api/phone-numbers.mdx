@@ -1,0 +1,71 @@
+---
+title: Phone numbers and SMS
+description: Give a bot a real phone number, receive texts as a thread, send replies, and the consent rules that apply.
+---
+
+A bot can have a real phone number. People text it, the text lands in a thread, and the bot's reply goes back as an SMS. The cloud API owns the number, the carrier, texting compliance, and the consent record. The user's runtime (a cloud computer or Desktop) owns the conversation.
+
+All routes are on `api.allternit.com` and take a Clerk session or a `compute`-scoped API key, like the channel address routes. When the carrier is not configured they answer `503 {"error":"phone_not_configured"}`.
+
+## Turn it on (operators)
+
+| Env var | What |
+|---|---|
+| `ALLTERNIT_PHONE_CARRIER` | `telnyx` (default) or `twilio` |
+| `ALLTERNIT_TELNYX_API_KEY`, `ALLTERNIT_TELNYX_PUBLIC_KEY` | Telnyx API key, and the base64 ed25519 webhook public key |
+| `ALLTERNIT_TWILIO_ACCOUNT_SID`, `ALLTERNIT_TWILIO_AUTH_TOKEN` | Twilio fallback |
+| `ALLTERNIT_PHONE_MAX_PER_USER` | Numbers per user (default 3) |
+| `ALLTERNIT_SMS_DAILY_CAP` | Texts per number per day (default 1000) |
+
+Migration `024_phone_numbers.sql` is applied by hand to the production database, like `020` and `021`.
+
+## Numbers
+
+- `GET /api/v1/phone/numbers/search?country=US&areaCode=415&locality=&type=local|toll_free&limit=10` returns `{carrier, numbers:[{e164, type, locality, monthlyCost}]}`.
+- `POST /api/v1/phone/numbers` with `{e164, runtimeId, botId}` buys the number, assigns it to the bot, and creates its relay address (provider `sms`). Returns `201 {number}`. Errors: `409 number_taken`, `403 number_limit`, `404 runtime_not_found`.
+- `POST /api/v1/phone/numbers/port` with `{e164, runtimeId, botId}` starts a port-in (Telnyx). The number starts texting through Allternit when the port completes. `GET /api/v1/phone/numbers/:id/port` returns `{port:{orderId,state}, number}`.
+- `GET /api/v1/phone/numbers` lists the caller's numbers. `DELETE /api/v1/phone/numbers/:id` releases the number and revokes its relay address.
+
+A number's `smsState` is `pending_registration`, `active`, `rejected` or `blocked`. A new US number is `pending_registration` until the carrier approves its registration.
+
+## Registration
+
+US carriers require registration before a number can text at volume.
+
+- `POST /api/v1/phone/numbers/:id/registration` takes the business form (legal name, EIN, website, address, contact, use case, sample messages, opt-in workflow). Local numbers register for 10DLC, toll-free numbers for toll-free verification; `kind` overrides. The stored copy masks the EIN.
+- `GET /api/v1/phone/numbers/:id/registration` returns the state (`pending`, `approved`, `rejected`, with `rejectionReason`) and the number's `smsState`. It re-reads a pending registration from the carrier. A rejected registration can be submitted again.
+
+## Texts in
+
+The carrier posts to the number's relay address. Before anything is queued the cloud verifies the carrier signature, drops duplicates, and handles keywords:
+
+- `STOP`, `STOPALL`, `UNSUBSCRIBE`, `CANCEL`, `END`, `QUIT`: the sender is added to the number's opt-out list, gets a confirmation, and nothing reaches the runtime.
+- `HELP`: gets a help reply.
+- `START`, `UNSTOP`: removes the opt-out and confirms.
+
+An opted-out sender never reaches the runtime. Every consent change is logged. A person who texts first has consented to the bot answering.
+
+The runtime receives one normalised request at `/webhooks/channels/sms`:
+
+```json
+{ "provider": "sms", "messageId": "…", "numberId": "…", "botId": "…",
+  "from": "+15551230000", "to": "+14155550101", "text": "…", "receivedAt": "…" }
+```
+
+## Texts out
+
+`POST /api/v1/channels/sms/send` with `{numberId, to, text}` returns `{ok:true, messageId, parts}`. It refuses with:
+
+| Status | `error` | When |
+|---|---|---|
+| 403 | `sms_not_active` | The number isn't registered yet |
+| 403 | `recipient_opted_out` | The recipient sent STOP |
+| 403 | `no_consent` | The recipient never texted first and has no consent record (no cold outreach) |
+| 429 | `daily_limit` | Over the number's daily cap |
+| 400 | `bad_request` | Not an E.164 number, empty text, or over 1,600 characters |
+
+`POST /api/v1/phone/numbers/:id/consent` with `{e164, source, evidence}` records explicit consent you hold (for example a web form). It never lifts a STOP; only the person's own START does.
+
+## Outbound calls
+
+`POST /api/v1/phone/calls/outbound` with `{numberId, to, botId, purpose}` returns `{consentRef, basis, expiresAt}` when the callee texted or called the number first, or has an explicit consent record, and hasn't opted out. Otherwise `403 {"error":"no_consent"}`. The dial itself belongs to the voice service, which presents the `consentRef`.

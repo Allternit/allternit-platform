@@ -522,6 +522,7 @@
             "pages": [
               "api/overview",
               "api/cloud-api",
+              "api/phone-numbers",
               "api/allternit-api",
               "api/authentication",
               "api/endpoints",

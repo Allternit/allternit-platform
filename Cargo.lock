@@ -449,6 +449,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serial_test",
+ "sha1 0.10.6",
  "sha2 0.10.9",
  "sqlx",
  "tempfile",
@@ -463,6 +464,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "urlencoding",
  "uuid",
 ]
 
