@@ -79,3 +79,12 @@ Voice Session WebSocket protocol, Smart Turn, barge-in, LiveKit, SIP, cloud depl
 - anything you could not do, with the exact error
 
 Then run `touch docs/VOICE_ENGINE_PHASE_1_NOTES.sentinel`.
+
+## HANDOVER (2026-10-02 ~23:25 CDT): Kimi retired, you (Claude) finish this phase
+
+- Kimi's unfinished work is in WIP commit `adf5faa0a` (30 files, ~3.8k lines). Nobody has reviewed it, and it may not compile (Kimi was mid `cargo check` + fixes). Treat it as a draft: read `git show adf5faa0a --stat`, then the new files (`src/models.rs`, `stt.rs`, `tts.rs`, `audio.rs`, `examples/`), and keep, fix or rewrite them as needed.
+- Kimi also touched `docs/public/parity/chatgpt-voice.md`, `.github/workflows/release-desktop.yml`, `scripts/release-preflight.mjs` and the desktop packaging scripts. Keep these only if they're needed for this phase (packaging the onnxruntime/sherpa libs, removing whisper); revert anything unrelated.
+- Model files Kimi already downloaded (with sha256s computed): `~/.allternit/voice-models-dl/`. Kokoro v0.19 speakers: sid 0..10 = af, af_bella, af_nicole, af_sarah, af_sky, am_adam, am_michael, bf_emma, bf_isabella, bm_george, bm_lewis (sherpa-onnx docs).
+- Use `CARGO_TARGET_DIR=$HOME/Desktop/allternit-workspace/.shared-target` as before.
+- Parallel tracks build on your engine: Track B (`ao/voice-session`, `services/voice/src/session/`, defines `StreamingStt`/`Tts`/`Vad` traits) and Track C (`ao/voice-callworker`, `services/voice/src/call_worker/`). Don't edit their dirs. Keep your public STT/TTS/model APIs simple, so B's `engine_sherpa.rs` adapter can wrap them.
+- Squash-free is fine: commit on top of the WIP, small commits. Cap: **300 tool calls** from now.
