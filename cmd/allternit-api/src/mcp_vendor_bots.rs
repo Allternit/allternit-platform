@@ -704,16 +704,24 @@ async fn handle_bot_rpc(
         Ok(c) => c,
         Err(resp) => return resp,
     };
-    let Some(mut session) = load_session(&state.db, &user.user_id, &vendor_bot_id) else {
+    serve_bot_rpc(&state, &user.user_id, &vendor_bot_id, client, &req).await
+}
+
+/// One connector call for an already-authorized `owner`: the session, the
+/// revoked-client check, then the JSON-RPC dispatch. Shared by the direct route
+/// above and the cloud edge relay ([`crate::mcp_edge_relay`]), which verified
+/// the OAuth token itself.
+pub async fn serve_bot_rpc(state: &Arc<AppState>, owner: &str, vendor_bot_id: &str, client: Option<String>, req: &Value) -> Response {
+    let Some(mut session) = load_session(&state.db, owner, vendor_bot_id) else {
         return (StatusCode::NOT_FOUND, Json(json!({ "error": "not_found" }))).into_response();
     };
     if let Some(client) = client {
-        if !touch_client(&state.db, &user.user_id, &vendor_bot_id, &client) {
-            return challenge_response(&vendor_bot_id, StatusCode::UNAUTHORIZED, json!({ "error": "invalid_token", "message": "This connection was revoked" }), ("invalid_token", "This connection was revoked"));
+        if !touch_client(&state.db, owner, vendor_bot_id, &client) {
+            return challenge_response(vendor_bot_id, StatusCode::UNAUTHORIZED, json!({ "error": "invalid_token", "message": "This connection was revoked" }), ("invalid_token", "This connection was revoked"));
         }
         session.client = Some(client);
     }
-    match handle_rpc(&state.db, &LiveActions::production(&state), &session, &req).await {
+    match handle_rpc(&state.db, &LiveActions::production(state), &session, req).await {
         Some(body) => Json(body).into_response(),
         None => StatusCode::ACCEPTED.into_response(),
     }

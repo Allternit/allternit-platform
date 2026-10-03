@@ -343,6 +343,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Channels hybrid relay: management routes check the Clerk session;
         // /channels/in/:key is public, the unguessable key is the credential.
         .merge(routes::channel_inbound::routes())
+        // Public MCP edge (Clerk OAuth checked in the handler, then relayed to the
+        // owner's runtime). Inert (503) until MCP_PUBLIC_URL is set.
+        .merge(routes::mcp_edge::routes())
         // Phone numbers + SMS: Clerk-checked per request; 503 phone_not_configured when the carrier env is unset.
         .merge(routes::phone::routes())
         // WhatsApp Embedded Signup + 24h-window send; each handler resolves the user itself.

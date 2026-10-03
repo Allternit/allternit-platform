@@ -31,6 +31,7 @@ pub mod inference_keys;
 pub mod jobs;
 pub mod livekit_admin;
 pub mod me_usage;
+pub mod mcp_edge;
 pub mod mesh;
 pub mod channel_inbound;
 pub mod phone;
