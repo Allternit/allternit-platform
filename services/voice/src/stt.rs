@@ -277,6 +277,7 @@ impl SttEngine {
             prev_end: 0,
             last_partial_at: 0,
             last_partial: String::new(),
+            partial_cost_samples: 0,
         })
     }
 }
@@ -386,7 +387,8 @@ impl SegmentStream {
     }
 
     /// Interim transcript of everything fed so far (the last 15 s at most).
-    /// Blocking; `None` before 0.3 s of audio.
+    /// Blocking; `None` before 0.3 s of audio. Each call re-decodes, so pace
+    /// calls by their cost (see `SttStream::feed` for the rule it uses).
     pub fn partial(&self) -> Option<String> {
         if self.samples.len() < SAMPLE_RATE as usize * 3 / 10 {
             return None;
@@ -434,6 +436,8 @@ pub struct SttStream {
     prev_end: usize,
     last_partial_at: usize,
     last_partial: String,
+    /// Wall time of the last partial decode, in samples of audio.
+    partial_cost_samples: usize,
 }
 
 impl SttStream {
@@ -455,14 +459,21 @@ impl SttStream {
             self.last_partial_at = self.fed;
             self.last_partial.clear();
         }
-        if self.in_speech && self.fed - self.last_partial_at >= PARTIAL_EVERY {
+        // Partials re-decode the whole utterance so far, so space them out
+        // by their own cost: at most ~50% of real time goes to partials
+        // (matters for Parakeet; Moonshine stays at the 0.6 s floor).
+        let due = PARTIAL_EVERY.max(self.partial_cost_samples * 2);
+        if self.in_speech && self.fed - self.last_partial_at >= due {
             self.last_partial_at = self.fed;
+            let started = std::time::Instant::now();
             let from = self
                 .speech_start
                 .saturating_sub(PRE_ROLL)
                 .max(self.prev_end)
                 .max(self.fed.saturating_sub(PARTIAL_MAX));
             let text = decode_with(&self.rec, self.model, self.slice(from, self.fed));
+            self.partial_cost_samples =
+                (started.elapsed().as_secs_f32() * SAMPLE_RATE as f32) as usize;
             if !text.is_empty() && text != self.last_partial {
                 self.last_partial = text.clone();
                 events.push(SttEvent::Partial(text));

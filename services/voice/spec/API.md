@@ -259,8 +259,10 @@ ignored). Query: `?sample_rate=` (default 16000, 4000–192000; resampled to
 {"type":"done","duration_secs":6.1}
 ```
 
-- `partial`: interim transcript of the speech in progress, re-decoded about
-  every 0.6 s of audio while the VAD hears speech. Each replaces the last.
+- `partial`: interim transcript of the speech in progress, re-decoded every
+  0.6 s of audio while the VAD hears speech, or less often when decoding is
+  slow (partials never take more than ~50% of real time; with Parakeet on a
+  slow CPU they become sparse). Each replaces the last.
 - `final`: a finished speech segment (the VAD heard 0.3 s of silence), with
   start/end in seconds from the start of the stream.
 - `done`: the client closed the request body and all audio is transcribed.
