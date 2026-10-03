@@ -196,6 +196,20 @@ fn main() {
             std::process::exit(1);
         }
     };
+    // Warm the model so the first real request is not a cold session (the
+    // first run builds ORT's graph and allocates its arena: ~3 s on a weak
+    // server CPU). Output is discarded; failure is harmless.
+    let t0 = std::time::Instant::now();
+    let _ = tts.generate_with_config(
+        "Hello there.",
+        &GenerationConfig {
+            sid: 0,
+            speed: 1.0,
+            ..Default::default()
+        },
+        None::<fn(&[f32], f32) -> bool>,
+    );
+    eprintln!("allternit-tts: warm-up synthesis took {} ms", t0.elapsed().as_millis());
     eprintln!(
         "allternit-tts: Kokoro ready ({} speakers, {} Hz, {} threads)",
         tts.num_speakers(),

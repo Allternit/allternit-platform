@@ -178,6 +178,7 @@ pub async fn run_call(
         call.ctx.bot.recording,
         call.ctx.bot.greeting.as_deref(),
     );
+    let _ = call.core_tx.send(CoreCommand::Prepare { texts: vec![opening.clone()] }).await;
     call.say("u-0", &opening).await;
     call.events.emit(CallEvent::Started {
         direction: call.ctx.direction.clone(),
