@@ -206,6 +206,9 @@ describe("Bot discovery (New-chat picker)", () => {
     expect(r.ok && r.value.map((a) => a.agentId)).toEqual(["grok-bot", "grok-bot:Research Bot", "grok-bot:Ops Bot"]);
     expect(driver.pickerOpen).toBe(false);
     expect(driver.sends).toBe(0);
+    expect(await p.get("grok-bot:Ops Bot")).toMatchObject({ ok: true, value: { kind: "bot", kindLabel: "Bot", remoteIds: { bot: "Ops Bot" } } });
+    expect(await p.identity("grok-bot:Ops Bot")).toMatchObject({ ok: true, value: { displayName: "Ops Bot" } });
+    expect((await p.capabilities("grok-bot:Ops Bot")).ok).toBe(true);
     // discovered agent ids open directly
     const c = await p.contextOpen({ agentId: "grok-bot:Ops Bot" });
     expect(c.ok).toBe(true);

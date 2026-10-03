@@ -1,3 +1,4 @@
+import { readAccountBots, accountBotUrl } from "../_shared/account-bots.js";
 // gemini-web adapter — the shared web-chat base (fresh chat, mapped-thread
 // continue with the divergence check, fingerprint reconcile) over
 // gemini.google.com. chat.create / chat.continue only; model_class is not
@@ -44,6 +45,7 @@ export class GeminiWebAdapter extends WebChatAdapter {
     super(
       {
         newChatUrl: "https://gemini.google.com/app",
+        newChatUrlFor: (task) => accountBotUrl("google", task.options, "https://gemini.google.com"),
         threadUrl: (id) => `https://gemini.google.com/app/${id}`,
       },
       geminiWebConfig(configOverrides),
@@ -73,7 +75,8 @@ export class GeminiWebAdapter extends WebChatAdapter {
       const identity = (m?.[2] ?? m?.[1] ?? "").trim() || null;
       return { identity };
     });
-    return { identity: read.identity, usage: null };
+    const agents = await readAccountBots(page, "google");
+    return { identity: read.identity, usage: null, agents };
   }
 }
 

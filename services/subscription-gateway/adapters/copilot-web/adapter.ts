@@ -1,3 +1,4 @@
+import { readAccountBots, accountBotUrl } from "../_shared/account-bots.js";
 // copilot-web adapter — the shared web-chat base (fresh chat, mapped-thread
 // continue with the divergence check, fingerprint reconcile) over
 // copilot.microsoft.com. chat.create / chat.continue only; model_class is not
@@ -47,6 +48,7 @@ export class CopilotWebAdapter extends WebChatAdapter {
     super(
       {
         newChatUrl: "https://copilot.microsoft.com/",
+        newChatUrlFor: (task) => accountBotUrl("microsoft", task.options, "https://copilot.microsoft.com"),
         threadUrl: (id) => `https://copilot.microsoft.com/chats/${id}`,
       },
       copilotWebConfig(configOverrides),
@@ -76,7 +78,8 @@ export class CopilotWebAdapter extends WebChatAdapter {
       const identity = (m?.[1] ?? pic?.getAttribute("alt") ?? "").trim() || null;
       return { identity };
     });
-    return { identity: read.identity, usage: null };
+    const agents = await readAccountBots(page, "microsoft");
+    return { identity: read.identity, usage: null, agents };
   }
 }
 

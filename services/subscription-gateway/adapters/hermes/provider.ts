@@ -101,7 +101,7 @@ export class HermesProvider extends BaseAaiProvider {
       return ok(ids.length ? ids : [this.o.defaultAgent]);
     } catch { return ok([this.o.defaultAgent]); }
   }
-  private summary(model: string): AgentSummary { return { agentId: AGENT_PREFIX + model, displayName: model === "hermes-agent" ? "Hermes" : `Hermes · ${model}`, vendor: "hermes", state: "READY" }; }
+  private summary(model: string): AgentSummary { return { agentId: AGENT_PREFIX + model, displayName: model === "hermes-agent" ? "Hermes" : `Hermes · ${model}`, vendor: "hermes", state: "READY", kind: "profile", kindLabel: "Profile" }; }
   private async resolve(agentId: string): Promise<AaiResult<AgentSummary>> {
     if (!agentId.startsWith(AGENT_PREFIX)) return fail("CONTEXT_NOT_FOUND", `No such agent ${agentId}`);
     const m = await this.models();

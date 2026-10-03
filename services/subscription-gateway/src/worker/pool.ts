@@ -330,6 +330,12 @@ export class WorkerPool {
     return runtime;
   }
 
+  /** Refresh public account identity on a resident ready page; no navigation or send. */
+  async refreshAccount(lane: LaneKey): Promise<void> {
+    const resident = this.lanes.get(workerKeyId(lane));
+    if (resident?.health === "ready") await this.observeAccount(lane, resident.runtime);
+  }
+
   // Best effort: a failed read never changes health or blocks the lane.
   private async observeAccount(lane: LaneKey, runtime: LaneRuntime): Promise<void> {
     const observed = runtime.readAccount ? await runtime.readAccount().catch(() => null) : null;

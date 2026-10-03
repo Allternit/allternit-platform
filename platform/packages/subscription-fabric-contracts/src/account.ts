@@ -36,8 +36,8 @@ export const accountSchema = z.object({
   identity: z.string().nullable().optional(),
   usage: accountUsageSchema.nullable().optional(),
   // Agents the account has on the provider (e.g. Claude Projects), as read from
-  // the provider after sign-in. Ids and names only.
-  agents: z.array(z.object({ id: z.string(), name: z.string(), kind: z.string().optional() })).nullable().optional(),
+  // the provider after sign-in. Public identity only; never credentials.
+  agents: z.array(z.object({ id: z.string(), name: z.string(), kind: z.string().optional(), kindLabel: z.string().optional(), avatarUrl: z.string().optional() })).nullable().optional(),
   // The account the router tries first for its provider (one per provider).
   preferred: z.boolean().optional(),
 });

@@ -232,7 +232,7 @@ export interface VendorContext {
     get(taskId: string): Promise<{ status: number; body: Record<string, unknown> }>;
     cancel?(taskId: string): Promise<{ status: number; body: Record<string, unknown> }>;
     subscribe?(taskId: string, onEvent: (event: { kind?: string; payload?: unknown }) => void): () => void;
-    accountState(provider: string): Promise<{ health: string; remainingPct?: number | null; resetsAt?: string | null; agents?: { id: string; name: string; kind?: string }[] | null } | null>;
+    accountState(provider: string): Promise<{ health: string; remainingPct?: number | null; resetsAt?: string | null; agents?: { id: string; name: string; kind?: string; kindLabel?: string; avatarUrl?: string }[] | null } | null>;
   };
 }
 
