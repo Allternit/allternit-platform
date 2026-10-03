@@ -3,6 +3,7 @@ import { getEnv } from "@/lib/cloudflare";
 import { apiKeyAllowsMailbox, authenticateApiKey, requireScope } from "@/lib/api/auth";
 import { sendEmailSchema } from "@/lib/validators";
 import { sendEmail } from "@/lib/email/send";
+import { compactOutboundHeaders } from "@/lib/email/custom-headers";
 import { decodeBase64Content } from "@/lib/email/attachments";
 import { readJsonBody } from "@/lib/http/request";
 import { RequestBodyTooLargeError } from "@/lib/http/errors";
@@ -55,12 +56,16 @@ export async function POST(request: Request) {
 			: null;
 
 	try {
-		const { attachments, ...fields } = parsed.data;
+		const { attachments, skipApproval, headers, ...fields } = parsed.data;
+		// Only an admin-scope key may bypass the approval gate. A mailbox-scoped
+		// key saying skipApproval is ignored — it must never send unreviewed.
+		const adminSkipApproval = skipApproval === true && requireScope(auth.scopes, "admin");
 		const result = await sendEmail(
 			env,
 			{
 				userId: auth.userId,
 				...fields,
+				headers: compactOutboundHeaders(headers),
 				attachments: attachments?.map((attachment) => ({
 					filename: attachment.filename,
 					type: attachment.type,
@@ -68,7 +73,7 @@ export async function POST(request: Request) {
 					disposition: "attachment",
 				})),
 			},
-			{ idempotencyKey },
+			{ idempotencyKey, skipApproval: adminSkipApproval },
 		);
 		return NextResponse.json(result);
 	} catch (err) {

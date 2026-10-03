@@ -3,6 +3,7 @@ import { getEnv } from "@/lib/cloudflare";
 import { requireUser } from "@/lib/auth/cookies";
 import { sendEmailSchema } from "@/lib/validators";
 import { sendEmail } from "@/lib/email/send";
+import { compactOutboundHeaders } from "@/lib/email/custom-headers";
 import { parseSendRequest } from "./utils";
 import { RequestBodyTooLargeError } from "@/lib/http/errors";
 import { getSendErrorStatus } from "./error-utils";
@@ -24,9 +25,13 @@ export async function POST(request: Request) {
 	}
 
 	try {
+		// Session sends always go through the approval gate; a crafted
+		// skipApproval field is dropped here (that escape is admin-key-only).
+		const { skipApproval: _skipApproval, headers, ...rest } = parsed.data;
 		const result = await sendEmail(env, {
 			userId: user.id,
-			...parsed.data,
+			...rest,
+			headers: compactOutboundHeaders(headers),
 			attachments,
 		});
 		return NextResponse.json(result);

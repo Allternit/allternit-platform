@@ -1,23 +1,49 @@
 import { z } from "zod";
+import { ALLOWED_OUTBOUND_HEADERS, normalizeOutboundHeaders } from "@/lib/email/custom-headers";
 
-export const sendEmailSchema = z.object({
-	from: z.string().min(3).max(500),
-	to: z.string().min(3).max(500),
-	subject: z.string().min(1).max(500),
-	html: z.string().max(2 * 1024 * 1024).optional(),
-	text: z.string().max(2 * 1024 * 1024).optional(),
-	mailboxId: z.string().min(1).max(200),
-	attachments: z
-		.array(
-			z.object({
-					filename: z.string().min(1).max(255),
-					type: z.string().min(1).max(255).default("application/octet-stream"),
-					contentBase64: z.string().min(1).max(14 * 1024 * 1024),
-			}),
-		)
-		.max(10)
-		.optional(),
-});
+// The only custom headers a caller may set on an outbound message. The allow-list
+// lives in custom-headers.ts so the node:test suite can pin it without a build step.
+const outboundHeaderSchemas = Object.fromEntries(
+	ALLOWED_OUTBOUND_HEADERS.map((name) => [name, z.string().max(1000).optional()]),
+) as Record<string, z.ZodOptional<z.ZodString>>;
+
+export const sendEmailSchema = z
+	.object({
+		from: z.string().min(3).max(500),
+		to: z.string().min(3).max(500),
+		subject: z.string().min(1).max(500),
+		html: z.string().max(2 * 1024 * 1024).optional(),
+		text: z.string().max(2 * 1024 * 1024).optional(),
+		mailboxId: z.string().min(1).max(200),
+		// Reply threading / auto-reply markers. Only the four sanctioned headers;
+		// anything else fails the strict parse below with a 400.
+		headers: z.object(outboundHeaderSchemas).strict().optional(),
+		// Admin-scope keys only: deliver one message without the approval gate.
+		// Mailbox-scoped keys are ignored here (never rejected, so older callers
+		// keep working) and always go through approval.
+		skipApproval: z.boolean().optional(),
+		attachments: z
+			.array(
+				z.object({
+						filename: z.string().min(1).max(255),
+						type: z.string().min(1).max(255).default("application/octet-stream"),
+						contentBase64: z.string().min(1).max(14 * 1024 * 1024),
+				}),
+			)
+			.max(10)
+			.optional(),
+	})
+	.superRefine((value, ctx) => {
+		if (value.headers === undefined) return;
+		const normalized = normalizeOutboundHeaders(value.headers);
+		if (!normalized.ok) {
+			ctx.addIssue({
+				code: "custom",
+				path: ["headers"],
+				message: `Disallowed outbound header(s): ${normalized.rejected.join(", ")}`,
+			});
+		}
+	});
 
 export const registerSchema = z.object({
 	email: z.string().email(),
