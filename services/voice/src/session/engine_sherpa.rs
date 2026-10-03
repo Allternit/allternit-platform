@@ -106,6 +106,13 @@ impl EngineFactory for SherpaEngine {
         }))
     }
 
+    fn prepare_phrases(&self, texts: &[String], voice: &str) {
+        self.tts.prewarm_fixed_phrases(Some(voice));
+        if !texts.is_empty() {
+            self.tts.register_phrases(texts, Some(voice));
+        }
+    }
+
     fn tts(&self) -> Result<Box<dyn Tts>, EngineError> {
         self.tts_for(None)
     }

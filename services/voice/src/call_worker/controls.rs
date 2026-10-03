@@ -22,7 +22,9 @@ pub enum Control {
     Hold,
     Resume,
     Dtmf(String),
-    Transfer { to: String, mode: TransferMode },
+    /// `consent_ref` is the consent gate's reference for dialing `to`; only a
+    /// warm transfer (which dials out) needs it.
+    Transfer { to: String, mode: TransferMode, consent_ref: Option<String> },
     /// A human joins (cloud-api minted their publish token); the bot goes quiet
     /// but keeps transcribing.
     Takeover { by: String },
@@ -57,6 +59,10 @@ struct Wire {
     /// Who sent it (owner user id), filled by cloud-api. Proposed field.
     #[serde(default)]
     by: Option<String>,
+    /// The consent gate's reference for dialing `to` (warm transfer). Filled by
+    /// cloud-api from `consent_ref_for`.
+    #[serde(default, rename = "consentRef")]
+    consent_ref: Option<String>,
 }
 
 const MAX_DTMF: usize = 32;
@@ -95,7 +101,7 @@ pub fn parse_control(bytes: &[u8]) -> Result<Control, ControlError> {
                 Some("warm") => TransferMode::Warm,
                 Some(m) => return Err(ControlError::Invalid(format!("unknown transfer mode `{m}`"))),
             };
-            Control::Transfer { to, mode }
+            Control::Transfer { to, mode, consent_ref: w.consent_ref.clone().filter(|c| !c.trim().is_empty()) }
         }
         "takeover" => Control::Takeover { by: by() },
         "release" => Control::Release { by: by() },
@@ -144,6 +150,8 @@ pub struct CallState {
     /// Who took over, while a human is on the call.
     pub takeover_by: Option<String>,
     pub speaker: Option<Speaker>,
+    /// The call is actually being recorded (not just configured to be).
+    pub recording: bool,
 }
 
 impl CallState {
@@ -158,6 +166,7 @@ impl CallState {
             muted_bot: self.muted_bot,
             muted_caller: self.muted_caller,
             speaker: self.speaker,
+            recording: self.recording,
         }
     }
 }
@@ -181,11 +190,19 @@ mod tests {
         assert_eq!(p(r#"{"action":"dtmf","digits":"12#*"}"#), Ok(Control::Dtmf("12#*".into())));
         assert_eq!(
             p(r#"{"action":"transfer","to":"+15105550100"}"#),
-            Ok(Control::Transfer { to: "+15105550100".into(), mode: TransferMode::Cold })
+            Ok(Control::Transfer { to: "+15105550100".into(), mode: TransferMode::Cold, consent_ref: None })
         );
         assert_eq!(
             p(r#"{"action":"transfer","to":"sip:desk@pbx.example","mode":"warm"}"#),
-            Ok(Control::Transfer { to: "sip:desk@pbx.example".into(), mode: TransferMode::Warm })
+            Ok(Control::Transfer {
+                to: "sip:desk@pbx.example".into(),
+                mode: TransferMode::Warm,
+                consent_ref: None
+            })
+        );
+        assert_eq!(
+            p(r#"{"action":"transfer","to":"+15105550100","mode":"warm","consentRef":"cc_1"}"#),
+            Ok(Control::Transfer { to: "+15105550100".into(), mode: TransferMode::Warm, consent_ref: Some("cc_1".into()) })
         );
         assert_eq!(p(r#"{"action":"takeover","by":"user_1"}"#), Ok(Control::Takeover { by: "user_1".into() }));
         assert_eq!(p(r#"{"action":"release"}"#), Ok(Control::Release { by: "owner".into() }));
@@ -227,7 +244,7 @@ mod tests {
         assert!(!s.bot_active());
         assert_eq!(
             s.state_event(),
-            CallEvent::StateChanged { held: true, muted_bot: false, muted_caller: false, speaker: None }
+            CallEvent::StateChanged { held: true, muted_bot: false, muted_caller: false, speaker: None, recording: false }
         );
     }
 }

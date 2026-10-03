@@ -449,7 +449,11 @@ struct Settings {
     input_rate: u32,
     barge_in: bool,
     turn: TurnConfig,
+    fillers: bool,
+    filler_ms: u64,
 }
+
+const DEFAULT_FILLER_MS: u64 = 1200;
 
 struct Utterance {
     id: String,
@@ -489,6 +493,11 @@ struct Running {
     retired_set: HashSet<String>,
     /// When the client will have played everything sent so far.
     play_end: Option<Instant>,
+    /// When to play a filler if no reply text has arrived by then.
+    filler_at: Option<Instant>,
+    /// The last utterance played was a filler (never two in a row).
+    last_was_filler: bool,
+    filler_count: usize,
 }
 
 struct Ctx {
@@ -521,7 +530,12 @@ async fn run(
     let mut warned_not_started = false;
 
     loop {
-        let deadline = state.as_ref().and_then(|s| next_pump_at(s, &ctx.config));
+        let deadline = state.as_ref().and_then(|s| {
+            [next_pump_at(s, &ctx.config), s.filler_at]
+                .into_iter()
+                .flatten()
+                .min()
+        });
         let sleep = tokio::time::sleep_until(
             deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(3600)),
         );
@@ -572,6 +586,7 @@ async fn run(
         }
 
         if let Some(s) = state.as_mut() {
+            maybe_play_filler(s);
             if !pump(&ctx, s).await {
                 break;
             }
@@ -627,6 +642,14 @@ fn resolve(
         None => base.map(|b| b.input_rate).unwrap_or(16_000),
     };
     let barge_in = o.barge_in.or(base.map(|b| b.barge_in)).unwrap_or(true);
+    let fillers = o.fillers.or(base.map(|b| b.fillers)).unwrap_or(false);
+    let filler_ms = match o.filler_ms {
+        Some(ms) if !(200..=10_000).contains(&ms) => {
+            return Err(format!("fillerMs {ms} out of range 200..10000"))
+        }
+        Some(ms) => ms,
+        None => base.map(|b| b.filler_ms).unwrap_or(DEFAULT_FILLER_MS),
+    };
     let mut turn = base.map(|b| b.turn).unwrap_or(TurnConfig {
         mode: TurnMode::Smart,
         silence_ms: DEFAULT_SILENCE_MS_SMART,
@@ -674,6 +697,8 @@ fn resolve(
             input_rate,
             barge_in,
             turn,
+            fillers,
+            filler_ms,
         },
         warning,
     ))
@@ -810,6 +835,9 @@ async fn start(ctx: &Ctx, opts: &SessionOptions) -> Result<Running, ServerEvent>
         retired: VecDeque::new(),
         retired_set: HashSet::new(),
         play_end: None,
+        filler_at: None,
+        last_was_filler: false,
+        filler_count: 0,
     })
 }
 
@@ -837,9 +865,16 @@ async fn control(ctx: &Ctx, s: &mut Running, msg: ClientMessage) -> bool {
     match msg {
         ClientMessage::SessionStart(_) | ClientMessage::SessionEnd => {}
         ClientMessage::SessionUpdate(opts) => update(ctx, s, opts).await,
+        ClientMessage::SpeakPrepare { texts } => {
+            ctx.factory.prepare_phrases(&texts, &s.settings.voice);
+        }
         ClientMessage::SpeakDelta { id, text } => {
             if s.retired_set.contains(&id) {
                 return true;
+            }
+            s.filler_at = None; // the reply has started
+            if !id.starts_with("filler-") {
+                s.last_was_filler = false;
             }
             let idx = utterance_index(s, &id);
             let u = &mut s.utterances[idx];
@@ -850,6 +885,7 @@ async fn control(ctx: &Ctx, s: &mut Running, msg: ClientMessage) -> bool {
             if s.retired_set.contains(&id) {
                 return true;
             }
+            s.filler_at = None;
             let Some(idx) = s.utterances.iter().position(|u| u.id == id) else {
                 return true; // done for an id that never had text
             };
@@ -972,6 +1008,27 @@ fn utterance_index(s: &mut Running, id: &str) -> usize {
     s.utterances.len() - 1
 }
 
+/// If the filler timer has run out and nothing is being said, speak a short
+/// cached filler. It is an ordinary utterance (id `filler-N`), so barge-in
+/// and `speak.cancel` stop it; a reply that arrives meanwhile queues behind it.
+fn maybe_play_filler(s: &mut Running) {
+    let Some(at) = s.filler_at else { return };
+    if Instant::now() < at {
+        return;
+    }
+    s.filler_at = None;
+    if !s.settings.fillers || s.last_was_filler || !s.utterances.is_empty() {
+        return;
+    }
+    let phrase = crate::phrase_cache::FILLERS[s.filler_count % crate::phrase_cache::FILLERS.len()];
+    s.filler_count += 1;
+    s.last_was_filler = true;
+    let id = format!("filler-{}", s.filler_count);
+    let idx = utterance_index(s, &id);
+    s.utterances[idx].done = true;
+    queue_sentences(s, idx, vec![phrase.to_string()]);
+}
+
 fn queue_sentences(s: &mut Running, idx: usize, sentences: Vec<String>) {
     let u = &mut s.utterances[idx];
     for text in sentences {
@@ -1022,6 +1079,9 @@ async fn internal(ctx: &Ctx, s: &mut Running, msg: Internal) -> bool {
                 .await
         }
         Internal::TurnEnded { text, confidence } => {
+            if s.settings.fillers {
+                s.filler_at = Some(Instant::now() + Duration::from_millis(s.settings.filler_ms));
+            }
             ctx.emit(ServerEvent::TurnEnded { text, confidence }).await
         }
         Internal::TtsAudio { seq, samples } => {
@@ -1049,6 +1109,7 @@ async fn internal(ctx: &Ctx, s: &mut Running, msg: Internal) -> bool {
 
 /// The user spoke over the bot: stop at once and drop everything queued.
 async fn barge_in(ctx: &Ctx, s: &mut Running) -> bool {
+    s.filler_at = None;
     let dropped: Vec<Utterance> = s.utterances.drain(..).collect();
     s.play_end = None;
     for u in dropped {

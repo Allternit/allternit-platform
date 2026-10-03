@@ -108,7 +108,7 @@ impl Host {
     }
 
     fn from_value(v: &DynValue, dtype: &str) -> Result<Host, EngineError> {
-        let dims = |s: &ort::tensor::Shape| s.iter().map(|d| (*d).max(0) as usize).collect::<Vec<_>>();
+        let dims = |s: &ort::value::Shape| s.iter().map(|d| (*d).max(0) as usize).collect::<Vec<_>>();
         Ok(match dtype {
             "float32" => {
                 let (s, d) = v.try_extract_tensor::<f32>().map_err(|e| fail("state", e))?;

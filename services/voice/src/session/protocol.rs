@@ -42,6 +42,13 @@ pub struct SessionOptions {
     pub barge_in: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn: Option<TurnOptions>,
+    /// Play a short cached filler ("One moment.") when no reply text has
+    /// arrived `fillerMs` after `turn.ended`. Default off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fillers: Option<bool>,
+    /// Wait before a filler, 200..10000 ms (default 1200).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filler_ms: Option<u64>,
 }
 
 /// Client → server control messages.
@@ -54,6 +61,11 @@ pub enum ClientMessage {
     SessionUpdate(SessionOptions),
     #[serde(rename = "speak.delta")]
     SpeakDelta { id: String, text: String },
+    /// Pre-render these texts in the session's voice so a later `speak.delta`
+    /// with the same text starts at once (phrase cache; a call's opening).
+    /// No reply; engines without a cache ignore it.
+    #[serde(rename = "speak.prepare")]
+    SpeakPrepare { texts: Vec<String> },
     #[serde(rename = "speak.done")]
     SpeakDone { id: String },
     #[serde(rename = "speak.cancel")]

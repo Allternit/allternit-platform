@@ -649,3 +649,79 @@ async fn unavailable_engine_refuses_clearly() {
     assert!(message.contains("no speech engine"));
     assert_eq!(rx.recv().await, Some(SessionOutput::Close));
 }
+
+fn filler_engine() -> MockEngine {
+    MockEngine::new(MockConfig {
+        transcripts: vec!["one".into(), "two".into()],
+        turn_probability: None,
+        ..Default::default()
+    })
+}
+
+async fn one_turn(t: &mut Harness) {
+    t.audio(200, false).await;
+    t.audio(600, true).await;
+    t.audio(600, false).await;
+    t.expect("turn.ended").await;
+}
+
+#[tokio::test]
+async fn filler_plays_once_when_no_reply_arrives_and_never_twice_in_a_row() {
+    let mut t = Harness::new(filler_engine(), CoreConfig::default());
+    t.start(SessionOptions {
+        turn: vad_turn(300),
+        fillers: Some(true),
+        filler_ms: Some(300),
+        ..Default::default()
+    })
+    .await;
+    one_turn(&mut t).await;
+    let ServerEvent::SpeakStarted { id } = t.expect("speak.started").await else {
+        unreachable!()
+    };
+    assert!(id.starts_with("filler-"), "{id}");
+    t.expect("speak.ended").await;
+    // A second silent turn: the previous utterance was a filler, so no more.
+    one_turn(&mut t).await;
+    let evs = t.drain(Duration::from_millis(900)).await;
+    assert!(!kinds(&evs).contains(&"speak.started"), "{:?}", kinds(&evs));
+}
+
+#[tokio::test]
+async fn no_filler_when_reply_text_arrives_in_time_or_fillers_are_off() {
+    // Off by default.
+    let mut t = Harness::new(filler_engine(), CoreConfig::default());
+    t.start(SessionOptions {
+        turn: vad_turn(300),
+        ..Default::default()
+    })
+    .await;
+    one_turn(&mut t).await;
+    let evs = t.drain(Duration::from_millis(1500)).await;
+    assert!(!kinds(&evs).contains(&"speak.started"));
+
+    // On, but the reply starts before the timer.
+    let mut t = Harness::new(filler_engine(), CoreConfig::default());
+    t.start(SessionOptions {
+        turn: vad_turn(300),
+        fillers: Some(true),
+        filler_ms: Some(1000),
+        ..Default::default()
+    })
+    .await;
+    one_turn(&mut t).await;
+    t.send(ClientMessage::SpeakDelta {
+        id: "r1".into(),
+        text: "Hi there. ".into(),
+    })
+    .await;
+    t.send(ClientMessage::SpeakDone { id: "r1".into() }).await;
+    let ServerEvent::SpeakStarted { id } = t.expect("speak.started").await else {
+        unreachable!()
+    };
+    assert_eq!(id, "r1");
+    let evs = t.drain(Duration::from_millis(1500)).await;
+    assert!(!evs
+        .iter()
+        .any(|e| matches!(e, ServerEvent::SpeakStarted { id } if id.starts_with("filler-"))));
+}

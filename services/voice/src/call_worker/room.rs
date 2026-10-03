@@ -4,7 +4,7 @@
 
 use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -26,14 +26,18 @@ use tokio::sync::{mpsc, Notify};
 
 use super::audio::{interleaved_to_mono, Resampler, CORE_INPUT_RATE, TRACK_RATE};
 use super::brain::RelayBrain;
-use super::call::{self, CallContext, RoomCommand, RoomInput, DEFAULT_TURN_TIMEOUT};
+use super::call::{self, CallContext, CallDeps, HumanCoreFactory, RoomCommand, RoomInput, WarmTransfer, DEFAULT_TURN_TIMEOUT};
+use super::consult::{ConsultBus, EgressRecorder, LiveKitAccess, SipConsult};
+use super::hold_music::HoldMusic;
+use super::transfer::ConsultDriver;
+use super::recording::{Recorder, Recording, RecordingEnv, START_TIMEOUT};
 use super::cloud_client::{CloudClient, Direction, StartCallRequest};
 use super::config::{agent_ws_url, http_base, ws_base, WorkerConfig};
 use super::controls::{dtmf_code, transfer_uri};
 use super::dispatch::{run_dispatch, JobHandler, JobInfo};
 use super::events::{Backoff, EventQueue};
 use super::session_adapter::{connect_ws, CoreCommand};
-use super::voicemail::NoVoicemailDetection;
+use super::voicemail::{AnswerScreen, NoScreening, ScreenTimings, VoicemailDetector};
 use super::{AGENT_NAME, CONTROL_TOPIC};
 
 /// SIP participant attribute keys set by LiveKit SIP.
@@ -172,6 +176,7 @@ async fn handle_job(cfg: WorkerConfig, cloud: CloudClient, job: JobInfo, cancel:
         }
     };
 
+    let consult_bus = Arc::new(ConsultBus::default());
     let (room_tx, room_cmds) = mpsc::channel::<RoomCommand>(8192);
     let (input_tx, input_rx) = mpsc::channel::<RoomInput>(1024);
     let pump = tokio::spawn(pump(
@@ -182,12 +187,14 @@ async fn handle_job(cfg: WorkerConfig, cloud: CloudClient, job: JobInfo, cancel:
         input_tx.clone(),
         rooms,
         sip,
+        consult_bus.clone(),
     ));
     let events_task = tokio::spawn(forward_room_events(lk_events, caller_identity.clone(), input_tx.clone(), cancel));
     if let Some(t) = audio_track_of(&caller) {
-        tokio::spawn(read_caller_audio(t, input_tx.clone()));
+        tokio::spawn(read_audio(t, input_tx.clone(), RoomInput::CallerAudio));
     }
 
+    let mut keep_room = false;
     match start {
         Ok(resp) => {
             tracing::info!(room = %room_name, call_id = %resp.call_id, "call started");
@@ -204,8 +211,53 @@ async fn handle_job(cfg: WorkerConfig, cloud: CloudClient, job: JobInfo, cancel:
             };
             let events = EventQueue::start(&resp.call_id, Arc::new(cloud.clone()), Backoff::default());
             let brain = Arc::new(RelayBrain::new(cloud.clone(), DEFAULT_TURN_TIMEOUT));
-            let (outcome, drain) =
-                call::run_call(ctx, core, brain, events, room_tx.clone(), input_rx, Box::new(NoVoicemailDetection)).await;
+            let lk = LiveKitAccess {
+                ws_url: url.clone(),
+                api_host: api_host.clone(),
+                key: cfg.livekit_api_key.clone(),
+                secret: cfg.livekit_api_secret.clone(),
+            };
+            let voicemail: Box<dyn VoicemailDetector> = if direction == Direction::Outbound {
+                Box::new(AnswerScreen::new(ScreenTimings::default()))
+            } else {
+                Box::new(NoScreening)
+            };
+            let recorder: Option<Arc<dyn Recorder>> = match &cfg.recording {
+                RecordingEnv::Configured(b) => Some(Arc::new(EgressRecorder::new(&lk, b.clone()))),
+                RecordingEnv::Missing(_) => None,
+            };
+            let recording =
+                Recording::begin(recorder, ctx.bot.recording, &cfg.recording, &room_name, &ctx.call_id, START_TIMEOUT).await;
+            let human_core: HumanCoreFactory = {
+                let (url, token) = (cfg.voice_session_url.clone(), cfg.voice_session_token.clone());
+                Arc::new(move || {
+                    let (url, token) = (url.clone(), token.clone());
+                    Box::pin(async move { connect_ws(&url, token.as_deref(), None).await })
+                })
+            };
+            let warm = cfg.outbound_trunk_id.clone().map(|trunk| {
+                let (lk, bus, call_room, caller) = (lk.clone(), consult_bus.clone(), room_name.clone(), caller_identity.clone());
+                let launch_trunk = trunk.clone();
+                WarmTransfer {
+                    outbound_trunk: Some(trunk),
+                    ring_timeout: cfg.transfer_ring_timeout,
+                    accept_timeout: cfg.transfer_accept_timeout,
+                    launch: Arc::new(move |to: &str, consent: &str| -> Arc<dyn ConsultDriver> {
+                        Arc::new(SipConsult::new(
+                            lk.clone(),
+                            launch_trunk.clone(),
+                            to.to_string(),
+                            consent.to_string(),
+                            call_room.clone(),
+                            caller.clone(),
+                            bus.clone(),
+                        ))
+                    }),
+                }
+            });
+            let deps = CallDeps { voicemail, recording, human_core: Some(human_core), warm };
+            let (outcome, drain) = call::run_call(ctx, core, brain, events, room_tx.clone(), input_rx, deps).await;
+            keep_room = outcome.keep_room;
             tracing::info!(room = %room_name, reason = %outcome.reason, secs = outcome.duration_sec, "call ended");
             // Events keep retrying in the background until delivered.
             tokio::spawn(drain);
@@ -217,7 +269,9 @@ async fn handle_job(cfg: WorkerConfig, cloud: CloudClient, job: JobInfo, cancel:
     }
 
     // Tear down: the room (and with it the SIP leg) goes away with the call.
-    let _ = room_tx.send(RoomCommand::Hangup).await;
+    if !keep_room {
+        let _ = room_tx.send(RoomCommand::Hangup).await;
+    }
     drop(room_tx);
     let _ = pump.await;
     events_task.abort();
@@ -255,8 +309,9 @@ fn audio_track_of(p: &RemoteParticipant) -> Option<RemoteAudioTrack> {
     })
 }
 
-/// Caller audio → 16 kHz mono → the call.
-async fn read_caller_audio(track: RemoteAudioTrack, tx: mpsc::Sender<RoomInput>) {
+/// A participant's audio → 16 kHz mono → the call, wrapped by `wrap`
+/// (`CallerAudio` for the SIP caller, `HumanAudio` for a takeover human).
+async fn read_audio(track: RemoteAudioTrack, tx: mpsc::Sender<RoomInput>, wrap: fn(Vec<i16>) -> RoomInput) {
     let mut stream = NativeAudioStream::new(track.rtc_track(), CORE_INPUT_RATE as i32, 1);
     let mut resampler: Option<Resampler> = None;
     while let Some(frame) = stream.next().await {
@@ -266,7 +321,7 @@ async fn read_caller_audio(track: RemoteAudioTrack, tx: mpsc::Sender<RoomInput>)
         } else {
             resampler.get_or_insert_with(|| Resampler::new(frame.sample_rate, CORE_INPUT_RATE)).process(&mono)
         };
-        if tx.send(RoomInput::CallerAudio(samples)).await.is_err() {
+        if tx.send(wrap(samples)).await.is_err() {
             return;
         }
     }
@@ -294,7 +349,15 @@ async fn forward_room_events(
             RoomEvent::TrackSubscribed { track: RemoteTrack::Audio(t), participant, .. }
                 if participant.identity().to_string() == caller =>
             {
-                tokio::spawn(read_caller_audio(t, tx.clone()));
+                tokio::spawn(read_audio(t, tx.clone(), RoomInput::CallerAudio));
+                None
+            }
+            // A person who joined to take over: their speech is transcribed
+            // (the call decides whether a takeover is active).
+            RoomEvent::TrackSubscribed { track: RemoteTrack::Audio(t), participant, .. }
+                if participant.kind() == ParticipantKind::Standard =>
+            {
+                tokio::spawn(read_audio(t, tx.clone(), RoomInput::HumanAudio));
                 None
             }
             RoomEvent::DataReceived { payload, topic, participant, .. } if topic.as_deref() == Some(CONTROL_TOPIC) => {
@@ -334,7 +397,10 @@ fn code_to_digit(code: u32) -> Option<String> {
 
 /// Applies the call's commands. Bot audio goes through a playout queue so the
 /// call loop never waits on real-time pacing (barge-in stays instant), and
-/// `ClearAudio` drops both the queue and the source's internal buffer.
+/// `ClearAudio` drops both the queue and the source's internal buffer. While
+/// the call is on hold the playout loop fills the gaps with hold music; bot
+/// speech still has priority.
+#[allow(clippy::too_many_arguments)]
 async fn pump(
     room: Arc<Room>,
     source: NativeAudioSource,
@@ -343,28 +409,36 @@ async fn pump(
     input: mpsc::Sender<RoomInput>,
     rooms: RoomClient,
     sip: Arc<SIPClient>,
+    consult: Arc<ConsultBus>,
 ) {
     let queue: Arc<Mutex<VecDeque<Vec<i16>>>> = Arc::default();
     let wake = Arc::new(Notify::new());
+    let holding = Arc::new(AtomicBool::new(false));
     let playout = {
-        let (queue, wake, source) = (queue.clone(), wake.clone(), source.clone());
+        let (queue, wake, source, holding) = (queue.clone(), wake.clone(), source.clone(), holding.clone());
         tokio::spawn(async move {
+            let mut music = HoldMusic::new();
             loop {
                 let next = queue.lock().unwrap().pop_front();
-                match next {
-                    Some(f) => {
-                        let frame = AudioFrame {
-                            samples_per_channel: f.len() as u32,
-                            data: Cow::Owned(f),
-                            sample_rate: TRACK_RATE,
-                            num_channels: 1,
-                        };
-                        // Paces to real time once the source's 100 ms buffer is full.
-                        if let Err(e) = source.capture_frame(&frame).await {
-                            tracing::warn!("capture_frame: {e}");
-                        }
+                let samples = match next {
+                    Some(f) => f,
+                    None if holding.load(Ordering::SeqCst) => music.next_frame(),
+                    None => {
+                        music.rewind();
+                        // Re-check on a timer too: `HoldMusic(true)` may race the wait.
+                        let _ = tokio::time::timeout(Duration::from_millis(100), wake.notified()).await;
+                        continue;
                     }
-                    None => wake.notified().await,
+                };
+                let frame = AudioFrame {
+                    samples_per_channel: samples.len() as u32,
+                    data: Cow::Owned(samples),
+                    sample_rate: TRACK_RATE,
+                    num_channels: 1,
+                };
+                // Paces to real time once the source's 100 ms buffer is full.
+                if let Err(e) = source.capture_frame(&frame).await {
+                    tracing::warn!("capture_frame: {e}");
                 }
             }
         })
@@ -381,6 +455,17 @@ async fn pump(
                 queue.lock().unwrap().clear();
                 source.clear_buffer();
             }
+            RoomCommand::HoldMusic(on) => {
+                holding.store(on, Ordering::SeqCst);
+                if !on {
+                    // Stop the music now, not when the 100 ms buffer drains.
+                    queue.lock().unwrap().clear();
+                    source.clear_buffer();
+                }
+                wake.notify_one();
+            }
+            RoomCommand::ConsultFrame(f) => consult.push(f),
+            RoomCommand::ConsultClear => consult.clear(),
             RoomCommand::SendDtmf(digits) => {
                 for c in digits.chars() {
                     let Some(code) = dtmf_code(c) else { continue };
@@ -412,16 +497,40 @@ async fn pump(
             RoomCommand::Hangup => {
                 if !hung_up {
                     hung_up = true;
-                    // Deleting the room removes the SIP participant (BYE to the carrier).
-                    if let Err(e) = rooms.delete_room(&room_name).await {
-                        tracing::warn!(room = %room_name, "delete_room failed, removing caller: {e}");
-                        let _ = rooms.remove_participant(&room_name, &caller).await;
-                    }
+                    hangup(&rooms, &room_name, &caller).await;
                 }
+            }
+            RoomCommand::HangupAfterPlayout => {
+                if !hung_up {
+                    hung_up = true;
+                    // Let the closing line play out (queue, then the source's buffer).
+                    for _ in 0..750 {
+                        if queue.lock().unwrap().is_empty() {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
+                    tokio::time::sleep(Duration::from_millis(400)).await;
+                    hangup(&rooms, &room_name, &caller).await;
+                }
+            }
+            RoomCommand::Leave => {
+                // Warm transfer connected the caller and the target in this
+                // room: leave it standing.
+                let _ = room.close().await;
+                break;
             }
         }
     }
     playout.abort();
+}
+
+/// Deleting the room removes the SIP participant (BYE to the carrier).
+async fn hangup(rooms: &RoomClient, room_name: &str, caller: &str) {
+    if let Err(e) = rooms.delete_room(room_name).await {
+        tracing::warn!(room = %room_name, "delete_room failed, removing caller: {e}");
+        let _ = rooms.remove_participant(room_name, caller).await;
+    }
 }
 
 #[cfg(test)]
