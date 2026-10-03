@@ -25,6 +25,9 @@ pub const SIP_AGENT_NAME: &str = "allternit-voice";
 pub const CONTROL_TOPIC: &str = "allternit.call.control";
 
 pub const LIVEKIT_URL_ENV: &str = "ALLTERNIT_LIVEKIT_URL";
+/// Twirp service name of LiveKit's SIP API: the path is `/twirp/livekit.SIP/<Method>`
+/// (protocol `livekit_sip.proto`, `service SIP`). `SIPService` 404s.
+const SIP_SERVICE: &str = "SIP";
 pub const LIVEKIT_KEY_ENV: &str = "ALLTERNIT_LIVEKIT_KEY";
 pub const LIVEKIT_SECRET_ENV: &str = "ALLTERNIT_LIVEKIT_SECRET";
 /// Browser/app-facing LiveKit URL (wss://livekit.allternit.com). Distinct from
@@ -301,15 +304,15 @@ impl LiveKitAdminClient for LiveKitHttpAdmin {
                 "numbers": [e164],
             }
         });
-        let created = self.post("SIPService", "CreateSIPInboundTrunk", body).await?;
-        if let Some(id) = created.pointer("/sipTrunkId").and_then(Value::as_str) {
+        let created = self.post(SIP_SERVICE, "CreateSIPInboundTrunk", body).await?;
+        if let Some(id) = created.pointer("/sipTrunkId").or_else(|| created.pointer("/sip_trunk_id")).and_then(Value::as_str) {
             return Ok(id.to_string());
         }
         Err(LiveKitError::Http("CreateSIPInboundTrunk returned no sipTrunkId".into()))
     }
 
     async fn delete_inbound_trunk(&self, trunk_id: &str) -> Result<(), LiveKitError> {
-        self.post("SIPService", "DeleteSIPInboundTrunk", json!({ "sipTrunkId": trunk_id })).await?;
+        self.post(SIP_SERVICE, "DeleteSIPInboundTrunk", json!({ "sipTrunkId": trunk_id })).await?;
         Ok(())
     }
 
@@ -335,15 +338,15 @@ impl LiveKitAdminClient for LiveKitHttpAdmin {
                 "roomConfig": { "agents": [{ "agentName": SIP_AGENT_NAME }] },
             }
         });
-        let created = self.post("SIPService", "CreateSIPDispatchRule", body).await?;
-        if let Some(id) = created.pointer("/sipDispatchRuleId").and_then(Value::as_str) {
+        let created = self.post(SIP_SERVICE, "CreateSIPDispatchRule", body).await?;
+        if let Some(id) = created.pointer("/sipDispatchRuleId").or_else(|| created.pointer("/sip_dispatch_rule_id")).and_then(Value::as_str) {
             return Ok(id.to_string());
         }
         Err(LiveKitError::Http("CreateSIPDispatchRule returned no sipDispatchRuleId".into()))
     }
 
     async fn delete_dispatch_rule(&self, rule_id: &str) -> Result<(), LiveKitError> {
-        self.post("SIPService", "DeleteSIPDispatchRule", json!({ "sipDispatchRuleId": rule_id })).await?;
+        self.post(SIP_SERVICE, "DeleteSIPDispatchRule", json!({ "sipDispatchRuleId": rule_id })).await?;
         Ok(())
     }
 
@@ -369,7 +372,7 @@ impl LiveKitAdminClient for LiveKitHttpAdmin {
             // https://docs.livekit.io/reference/telephony/sip-api/#createsipparticipant : sip_number = SIP From number
             body["sipNumber"] = json!(from);
         }
-        self.post("SIPService", "CreateSIPParticipant", body).await
+        self.post(SIP_SERVICE, "CreateSIPParticipant", body).await
     }
 
     async fn create_room_with_agent(&self, room: &str, agent_name: &str, metadata: &str) -> Result<(), LiveKitError> {
@@ -501,6 +504,20 @@ mod tests {
         assert_eq!(claims["sip"]["call"], true, "CreateSIPParticipant needs sip.call");
         let ttl = claims["exp"].as_i64().unwrap() - claims["iat"].as_i64().unwrap();
         assert!((250..=300).contains(&ttl), "ttl ~5m, got {ttl}");
+    }
+
+    #[test]
+    fn sip_calls_use_the_twirp_sip_service_path() {
+        let admin = LiveKitHttpAdmin::new(LiveKitConfig {
+            url: "https://livekit.example.com".to_string(),
+            api_key: "k".to_string(),
+            api_secret: "s".to_string(),
+            public_url: None,
+        });
+        assert_eq!(
+            admin.guarded_url(SIP_SERVICE, "CreateSIPParticipant").unwrap(),
+            "https://livekit.example.com/twirp/livekit.SIP/CreateSIPParticipant"
+        );
     }
 
     fn decode_claims(token: &str) -> Value {
