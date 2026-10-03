@@ -1,0 +1,93 @@
+---
+title: "Voice in the app"
+description: "Developer guide to the app-side Voice Session client: modules, endpoints, the Desktop bridge, cloud tickets and joinCallAudio."
+---
+
+## The rule
+
+Voice is input/output only. The agent loop doesn't move.
+
+- A finished spoken turn (`turn.ended`) is sent through the **same function the composer's Send button calls**. Tools, approvals, steering and the thread behave as if it were typed.
+- The assistant reply the thread already renders is streamed to the engine as `speak.delta` / `speak.done`.
+- Barge-in (`speak.interrupted`) calls the composer's **Stop**.
+
+There is no separate voice path to the model.
+
+## Modules (`src/lib/voice/`)
+
+| File | What it does |
+| --- | --- |
+| `protocol.ts` | Types for protocol v1 and `parseServerEvent` (unknown types/fields are ignored, per the protocol). |
+| `pcm.ts` | PCM16 LE conversion, `MicFramer` (any context rate → 16 kHz, 20 ms frames), linear resampling for playback. |
+| `audio-io.ts` | Browser audio: one `AudioContext`, a mic-tap `AudioWorklet` and a jitter-buffered playback `AudioWorklet` (60 ms prime, silence + re-prime on underrun, immediate `flush`). Worklet sources are strings so tests evaluate the shipped code. |
+| `endpoint.ts` | Where a session connects (see below), `fetchVoiceTicket()`, `VoiceUnavailableError` codes. |
+| `session-client.ts` | `VoiceSessionClient`: the WebSocket, `session.start` first, mic starts after `session.ready`, speech audio routed to the utterance named by the latest `speak.started`, local flush on `speak.interrupted` and on `speakCancel()`, mute that survives reconnects, reconnect with exponential backoff (500 ms doubling to 8 s, 6 tries; a fresh endpoint each try because cloud tickets are single-use), and a device speed (RTF) sample per utterance. |
+| `conversation.ts` | `VoiceConversation`: turn → send/steer/stop+queue, reply → `speak.delta` sentence by sentence (markdown flattened, code left on screen), barge-in → Stop, phase/caption/tool-step state for the UI. |
+| `replies.ts` | Reply adapters: `replyFromTranscript` (bot-chat transcript fold, used by threads and the phone's bots) and `useStoreReply` (the session store, used by Chat). |
+| `useVoiceConversation.ts` | React glue; `resolveVoiceEndpoint()` applies Settings › Voice. |
+| `settings.ts` | `useVoiceSettings` (persisted per device under `allternit-voice-settings`) and `chooseEngine` (Automatic mode). |
+| `engine-status.ts` | Device packs/voices from `GET /v1/models` and `GET /v1/voices`; pack download. |
+| `spoken.ts` | Marks spoken user messages so bubbles show "Spoken". |
+| `call-audio.ts` | LiveKit join behind `joinCallAudio` (phone calls). |
+
+UI lives in `src/components/voice/` (`VoiceSession` hosts `VoiceBar` and `VoiceFullScreen`; `VoiceOrb` wraps the brand `AllternitOrb`; `SpokenLabel`) and `src/components/settings/VoiceSettingsPanel.tsx`.
+
+## Surfaces
+
+All three surfaces build from the same components:
+
+| Surface | Where voice is hosted |
+| --- | --- |
+| Desktop threads, phone Bots | `ThreadComposer` (`voice` prop from `BotChatSessionView`: transcript reply, session key, bot picker) |
+| Desktop Chat / Cowork, phone Chats | `ChatComposer` (`useStoreReply` on the active session; the bot **Talk** button above the composer dispatches `allternit:voice-start` with `{fullScreen: true}`) |
+| Settings | `settings.config.ts` section `voice` → `VoiceSettingsPanel`; the phone settings list mirrors the config, so it appears there too. `allternit:open-settings` with `{section: 'voice'}` opens it. |
+
+Phone sizing comes from `useIsPhoneViewport()`: full-screen controls are 60 px round, padding respects `env(safe-area-inset-*)`, and the PWA's `interactive-widget=resizes-content` viewport keeps the bar above the keyboard. Under `prefers-reduced-motion` the orb is still (its own CSS) and the level ring is off; every state is also text (`role="status"`).
+
+## Endpoint resolution
+
+- **Device (Desktop only):** `window.allternit.voice.getSessionEndpoint()` → `{ wsUrl?, httpUrl?, port?, token? }` from the preload bridge. Desktop builds without that bridge fall back to `http://127.0.0.1:8001` (platform `PORTS.VOICE`) and no token. `isAvailable()` false → `engine-not-installed`. Web and the PWA never connect to loopback.
+- **Cloud:** `POST /api/v1/voice/tickets` (allternit-api via `runtimeApiUrl`, bearer auth) → `{ ticket, url?, expiresAt? }`. The session URL is `url` or `VITE_VOICE_CLOUD_URL`; it must be `wss://` or the client refuses. Status mapping: no token or 401 → `signed-out`; 402 → `no-cloud-minutes`; other errors → `cloud-unavailable` (retried with backoff).
+- **Automatic** (`chooseEngine`): device when packs report ready and the measured RTF ≤ 0.9 (averaged over the first 3 utterances; unmeasured counts as fine); else cloud when signed in; else a message naming what's missing.
+
+RTF is measured only on audio received after the client sent `speak.done`, so waiting for model text doesn't count against the device.
+
+## Engine HTTP contract assumed by the UI (Phase 1 engine)
+
+Parsed defensively; confirm or adjust with the engine owner.
+
+- `GET /v1/models` → `{ ready?: boolean, packs: [{ id, name, sizeBytes, state: "installed"|"downloading"|"available", progress?: 0–1 or 0–100 }] }`. A missing endpoint is shown as "Voice engine not installed".
+- `POST /v1/models/{id}/download` starts a pack download. The "Get Accurate pack" button looks for a pack whose id is `accurate`.
+- `GET /v1/voices` → `["af_heart", …]` or `{ voices: [{ id, name?, language?, sampleUrl? }] }`. Samples default to `GET /v1/voices/{id}/sample` (any browser-playable audio).
+
+## Errors and states
+
+| State | Code / source | UI |
+| --- | --- | --- |
+| Signed out (cloud) | `signed-out` | "Sign in" action |
+| No mic permission | `mic-denied` | How to allow it, plus **Try again** |
+| No mic / in use | `mic-unavailable` | **Try again** |
+| Engine not installed | `engine-not-installed`, `device-unsupported` | Link to Settings › Voice |
+| Pack downloading | `chooseEngine` reason | Settings shows progress |
+| Cloud down | `cloud-unavailable` | Retries with backoff, then stops with a message |
+| No minutes | `no-cloud-minutes` | Link to Settings › Voice |
+| Socket drop mid-turn | `connection-lost` (non-fatal) | "Reconnecting…"; current speech is dropped, the reply keeps streaming as text, mic and mute carry over |
+| Fatal server error | `error {fatal:true}` | Stops, shows the message |
+
+## Phone calls: `joinCallAudio`
+
+`joinCallAudio(callId, { mode: 'listen' | 'talk', token, url, room })` in `src/lib/gateway/call-webrtc.ts`. The caller (CallScreen) gets `{token, url, room}` from the `listen` or `takeover` call control and passes them in; the function doesn't fetch tokens. It lazy-loads `livekit-client` (Apache-2.0), connects to `url` (production: `wss://livekit.allternit.com`), plays every remote audio track through hidden `<audio data-call-audio>` elements, unlocks playback with `startAudio()` (the call runs from a click), publishes the mic only in `talk`, and returns `{ callId, leave }`. It resolves `null` (and disconnects) when credentials are missing, the connect fails, or the mic is refused in `talk`, so the UI never claims a person is on the call when they aren't.
+
+## Tests
+
+`src/lib/voice/__tests__/`: an in-memory mock Voice Session server (`mock-voice-server.ts`) drives `session-client.test.ts`; `conversation.test.ts`, `voice-lib.test.ts` (PCM, the shipped playback worklet, endpoints, Automatic mode, engine parsing) and `call-audio.test.ts` (fake LiveKit room). UI: `src/components/voice/__tests__/`.
+
+## What replaced what
+
+The quick voice bar and full-screen voice replace `components/chat/VoiceModeOverlay.tsx` and `components/ai-elements/voice-call-mode.tsx`. The orphaned `ai-elements/voice-{presence,overlay,session,toolbar,controls,selector,visualizer,provider}.tsx` were removed with the ShellApp `VoicePresence` mount. Dictation (`useComposerVoice`) keeps Desktop's IPC transcription and uses a Voice Session elsewhere instead of a loopback `/v1/stt`. The legacy `providers/voice-provider` + `services/voice` (bot voice previews/TTS on Desktop) remain for the bot voice settings panel.
+
+## Related
+
+- [Talk to your bots](/guides/voice)
+- [Voice engine (local)](/tools/voice)
+- [Voice API](/api/voice)
