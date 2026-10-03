@@ -588,7 +588,10 @@ async fn main() {
     });
     allternit_api::gateway_runner::install(
         state.db.clone(),
-        Arc::new(allternit_api::channel_transports::ChannelLaneTransport::new(state.clone(), Arc::new(allternit_api::gateway_runner::SubsTransport(state.clone())))),
+        Arc::new(allternit_api::gateway_vendor_host::HostRoutedTransport::new(
+            state.db.clone(),
+            Arc::new(allternit_api::channel_transports::ChannelLaneTransport::new(state.clone(), Arc::new(allternit_api::gateway_runner::SubsTransport(state.clone())))),
+        )),
     );
     allternit_api::channel_discord_app::init(state.db.clone());
     allternit_api::discord_gateway::spawn_bound(state.clone());

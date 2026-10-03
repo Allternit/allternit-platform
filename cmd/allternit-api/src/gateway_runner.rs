@@ -179,7 +179,10 @@ static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 pub(crate) fn transport(state: &Arc<AppState>) -> Arc<dyn AaiTransport> {
     match RUNTIME.get() {
         Some(r) => r.tx.clone(),
-        None => Arc::new(crate::channel_transports::ChannelLaneTransport::new(state.clone(), Arc::new(SubsTransport(state.clone())))),
+        None => Arc::new(crate::gateway_vendor_host::HostRoutedTransport::new(
+            state.db.clone(),
+            Arc::new(crate::channel_transports::ChannelLaneTransport::new(state.clone(), Arc::new(SubsTransport(state.clone())))),
+        )),
     }
 }
 

@@ -132,13 +132,16 @@ pub fn parity_of(gaps: &[(String, String)]) -> &'static str {
 pub struct ApiErr(StatusCode, Value);
 
 impl ApiErr {
-    fn new(s: StatusCode, m: impl Into<String>) -> Self {
+    pub(crate) fn new(s: StatusCode, m: impl Into<String>) -> Self {
         ApiErr(s, json!({ "error": m.into() }))
     }
-    fn bad(m: impl Into<String>) -> Self {
+    pub(crate) fn response(self) -> Response {
+        (self.0, Json(self.1)).into_response()
+    }
+    pub(crate) fn bad(m: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, m)
     }
-    fn nf(m: impl Into<String>) -> Self {
+    pub(crate) fn nf(m: impl Into<String>) -> Self {
         Self::new(StatusCode::NOT_FOUND, m)
     }
 }
@@ -150,14 +153,14 @@ impl From<rusqlite::Error> for ApiErr {
     }
 }
 
-type Api<T> = Result<T, ApiErr>;
-type Reply = Api<(StatusCode, Value)>;
+pub(crate) type Api<T> = Result<T, ApiErr>;
+pub(crate) type Reply = Api<(StatusCode, Value)>;
 
-fn ok(v: Value) -> Reply {
+pub(crate) fn ok(v: Value) -> Reply {
     Ok((StatusCode::OK, v))
 }
 
-async fn run<F>(state: &Arc<AppState>, f: F) -> Response
+pub(crate) async fn run<F>(state: &Arc<AppState>, f: F) -> Response
 where
     F: FnOnce(&DbHandle) -> Reply + Send + 'static,
 {
@@ -239,7 +242,8 @@ pub(crate) fn s(v: &Value, k: &str) -> String {
 
 const ACCT_COLS: &str = "id, owner, vendor, auth_type, external_account_id, display_name, workspace, \
     (secret_ref IS NOT NULL) AS has_secret_ref, (session_ref IS NOT NULL) AS has_session_ref, scopes_json, \
-    restricted_bot_id, state, verified_at, expires_at, created_at, updated_at";
+    restricted_bot_id, state, verified_at, expires_at, created_at, updated_at, \
+    host_kind, host_runtime_id, host_state, host_remote_account_id, host_last_seen_at, host_changed_at";
 pub(crate) const EXEC_COLS: &str = "id, owner, bot_id, type, mode, vendor, adapter_id, account_binding_id, preferred_lane, \
     external_agent_id, external_agent_name, external_agent_avatar, capabilities_json, health_json, state, created_at, updated_at";
 pub(crate) const REMOTE_COLS: &str = "id, owner, thread_id, generation, bot_id, execution_binding_id, external_context_id, \
@@ -251,7 +255,7 @@ const CHAN_COLS: &str = "id, owner, thread_id, provider, account_binding_id, ext
 const GAP_COLS: &str = "id, owner, vendor, capability, surface, fallback_used, severity, status, first_seen_at, \
     last_seen_at, occurrences, sample_ref";
 
-fn get_account(conn: &Connection, owner: &str, aid: &str) -> Api<Value> {
+pub(crate) fn get_account(conn: &Connection, owner: &str, aid: &str) -> Api<Value> {
     one(conn, &format!("SELECT {ACCT_COLS} FROM provider_account_bindings WHERE id = ?1 AND owner = ?2"), &[&aid, &owner])?
         .ok_or_else(|| ApiErr::nf("account not found"))
 }
@@ -270,7 +274,7 @@ fn require_account(conn: &Connection, owner: &str, account_id: &Option<String>) 
     }
 }
 
-fn audit(conn: &Connection, owner: &str, account_id: &str, event: &str, from: Option<&str>, to: Option<&str>, detail: Value) {
+pub(crate) fn audit(conn: &Connection, owner: &str, account_id: &str, event: &str, from: Option<&str>, to: Option<&str>, detail: Value) {
     let r = conn.execute(
         "INSERT INTO connection_audit (id, owner, account_binding_id, event, from_state, to_state, actor, detail_json, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -332,7 +336,7 @@ pub fn agent_gateway_router() -> Router<Arc<AppState>> {
         .route("/provider-accounts/:id/secret", post(set_secret).delete(clear_secret))
         .route("/provider-accounts/:id/agents", get(list_agents))
         .route("/execution-bindings", get(list_exec))
-        .route("/provider-accounts/:id", get(get_account_h).patch(patch_account).delete(delete_account))
+        .route("/provider-accounts/:id", get(crate::gateway_vendor_host::get_account_with_host).patch(patch_account).delete(delete_account))
         .route("/provider-accounts/sync-subscriptions", post(crate::subscription_sync::sync_route))
         .route("/bots/:bot_id/execution-binding", put(put_exec).get(get_exec).patch(patch_exec))
         .route("/threads/:thread_id/remote-bindings", post(create_remote).get(list_remote))
@@ -343,7 +347,9 @@ pub fn agent_gateway_router() -> Router<Arc<AppState>> {
         .route("/vendor-packs/:vendor/parity", get(parity))
         .route("/vendor-pack-gaps/:id", patch(patch_gap))
         .route("/bots/:bot_id/vendor-memory", get(vendor_memory_h))
-        .route("/bots/:bot_id/vendor-memory/:record_id/promote", post(promote_memory_h));
+        .route("/bots/:bot_id/vendor-memory/:record_id/promote", post(promote_memory_h))
+        // Vendor accounts on a cloud computer (V221): move host, sign in there, check.
+        .merge(crate::gateway_vendor_host::routes());
     Router::new().nest("/gateway", g)
 }
 
@@ -414,16 +420,6 @@ async fn list_accounts(State(state): State<Arc<AppState>>, Extension(user): Exte
     .await
 }
 
-async fn get_account_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(aid): Path<String>) -> Response {
-    run(&state, move |db| {
-        let conn = db.connect()?;
-        let account = get_account(&conn, &user.user_id, &aid)?;
-        let deps = rows(&conn, "SELECT bot_id, state FROM bot_execution_bindings WHERE account_binding_id = ?1 AND owner = ?2", &[&aid, &user.user_id])?;
-        ok(json!({ "account": account, "dependentBots": deps }))
-    })
-    .await
-}
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PatchAccount {
@@ -484,6 +480,10 @@ pub(crate) fn apply_account_state(
         conn.execute("UPDATE provider_account_bindings SET verified_at = ?1 WHERE id = ?2", params![t, aid])?;
     }
     audit(conn, owner, aid, "state.changed", Some(from), Some(to), detail);
+    if to == "CONNECTED" {
+        // A verified session means no sign-in is owed on whichever host runs it.
+        conn.execute("UPDATE provider_account_bindings SET host_state = 'ready' WHERE id = ?1 AND owner = ?2", params![aid, owner])?;
+    }
     if to == "REVOKED" || to == "EXPIRED" {
         cascade_needs_auth(db, conn, owner, aid, &format!("account {}", to.to_lowercase()))?;
     }
