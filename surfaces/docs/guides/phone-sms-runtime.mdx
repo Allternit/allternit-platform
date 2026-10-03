@@ -34,6 +34,26 @@ Replies are plain text. A reply over 1,600 characters is split at a paragraph, l
 
 Returns `{ "number": { "numberId", "e164", "botId", "accountId", "state": "CONNECTED" } }`. The token and key are stored sealed. Returns 503 when the runtime has no encryption key, 400 for a bad number or a bot you don't own. `DELETE /gateway/phone-numbers/:numberId` disconnects it.
 
+## Texting and calling out (runtime)
+
+Code: `cmd/allternit-api/src/phone_outbound.rs`. The runtime asks the cloud, which holds the carrier keys and the consent gate; it never talks to the carrier or LiveKit itself.
+
+| Local route (signed in, under `/api/v1`) | Body | Returns |
+| --- | --- | --- |
+| `POST /phone/text` | `{ botId?, numberId?, to, text }` | `{ threadId, messageId }` |
+| `POST /phone/call` | `{ botId?, numberId?, to, purpose }` | `{ threadId, room }` |
+| `POST /phone/contacts` | `{ numberId, e164, label }` | `201 { ok: true }` |
+
+`numberId` defaults to the bot's only number (or the owner's only number). A text goes through `POST <cloud>/api/v1/channels/sms/send` and is written into the `phone:<botE164>:<toE164>` thread as a `channel.message.sent` bot message, so it shows on every surface. A call goes through `POST <cloud>/api/v1/phone/calls/outbound`; on success the runtime writes a `call.started` placeholder (`callId` = the room, `placeholder: true`). A contact is `POST <cloud>/api/v1/phone/numbers/:id/consent` with source `owner_contacts`.
+
+A cloud `403 no_consent` becomes `403 { "error": "no_consent", "message": "..." }`. If the cloud has not enabled dialing, `/phone/call` answers `503 { "error": "calls_unavailable" }`.
+
+**Bot tools.** `phone_text { to, text }` and `phone_call { to, purpose }` (optional `agent_id`) are served on the internal connectors MCP endpoint next to `allternit_mail.*`, and listed only for an owner who has a number. A refusal is returned as `{ "ok": false, "error": "no_consent", "message": "<sentence the bot can say>" }`, not a tool error.
+
+### Cloud: the dial
+
+`POST /api/v1/phone/calls/outbound` `{ numberId, to, botId, purpose }` (Clerk session or an `allternit_*` bearer, the same as `/channels/sms/send`) issues a `consentRef`. If LiveKit is configured and `ALLTERNIT_LIVEKIT_OUTBOUND_TRUNK_ID` is set, it also creates the room `call-out-<uuid>` with an `allternit-voice` agent dispatch (metadata `{ direction: "outbound", consentRef, botId, ownerId, numberId, to, from, purpose }`), then creates the SIP participant on the trunk with the number's E.164 as caller ID, and answers `{ consentRef, basis, expiresAt, room, dialing: true }`. With the trunk variable unset it answers `{ consentRef, basis, expiresAt }` and dials nothing. A LiveKit failure is `502 { "error": "livekit_dial_failed" }`. The voice worker hangs up any outbound call without a `consentRef`.
+
 ## Inert until configured
 
 With no connected number there are no `sms` accounts, so `/webhooks/channels/sms` answers 401 for everything. The cloud send route answers 503 `sms_not_configured` until its carrier env is set.

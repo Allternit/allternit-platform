@@ -15,7 +15,8 @@
 //! - `POST|GET /api/v1/phone/numbers/:id/registration`                     10DLC / toll-free verification
 //! - `GET    /api/v1/phone/numbers/:id/port`                               port-in status
 //! - `POST   /api/v1/phone/numbers/:id/consent` {e164, source, evidence}   explicit consent record
-//! - `POST   /api/v1/phone/calls/outbound` {numberId, to, botId, purpose}  consent gate for calls
+//! - `POST   /api/v1/phone/calls/outbound` {numberId, to, botId, purpose}  consent gate for calls; with
+//!   `ALLTERNIT_LIVEKIT_OUTBOUND_TRUNK_ID` + LiveKit env it also dials and returns `{room, dialing:true}`
 //! - `POST   /api/v1/channels/sms/send` {numberId, to, text}               SMS out
 //! - `POST   /api/v1/phone/webhooks/:carrier`                              carrier status events (signed)
 //!
@@ -39,6 +40,7 @@ use std::sync::Arc;
 use crate::carriers::{
     self, Carrier, CarrierError, InboundEvent, NumberType, RegState, RegistrationForm, RegistrationHandle, RegistrationKind, ReqwestHttp, SearchQuery,
 };
+use super::livekit_admin::{CreateSipParticipantRequest, LiveKitAdminClient, LiveKitConfig, LiveKitError, LiveKitHttpAdmin, CALL_ROOM_PREFIX, SIP_AGENT_NAME};
 use crate::services::voice_usage::plan_for_user;
 use crate::{ApiError, ApiState};
 
@@ -747,19 +749,89 @@ struct CallBody {
     purpose: String,
 }
 
+/// Env var holding the LiveKit outbound SIP trunk id (`ST_…`). Unset keeps
+/// `/calls/outbound` consent-only (nothing dials).
+pub const OUTBOUND_TRUNK_ENV: &str = "ALLTERNIT_LIVEKIT_OUTBOUND_TRUNK_ID";
+
+fn livekit_error_response(e: LiveKitError) -> Response {
+    let code = match &e {
+        LiveKitError::NotConfigured => "livekit_not_configured",
+        LiveKitError::Blocked(_) => "livekit_blocked",
+        LiveKitError::Http(_) | LiveKitError::Server(..) => "livekit_dial_failed",
+        LiveKitError::ConsentRequired => "consent_ref_required",
+        LiveKitError::PublicUrlMissing => "livekit_public_url_not_configured",
+    };
+    tracing::warn!("outbound dial failed: {e}");
+    err(StatusCode::BAD_GATEWAY, code, None)
+}
+
+/// Create the call room (dispatching `allternit-voice`) and dial the callee on the
+/// outbound trunk. Only reached with a consentRef in hand.
+async fn dial_outbound(livekit: &dyn LiveKitAdminClient, trunk_id: &str, from_e164: &str, user: &str, body: &CallBody, consent: &ConsentRef) -> Result<String, LiveKitError> {
+    let room = format!("{CALL_ROOM_PREFIX}out-{}", uuid::Uuid::new_v4().simple());
+    let attrs: HashMap<String, String> = [
+        ("direction", "outbound"),
+        ("consentRef", consent.id.as_str()),
+        ("botId", body.bot_id.as_str()),
+        ("ownerId", user),
+        ("numberId", body.number_id.as_str()),
+        ("to", body.to.as_str()),
+        ("from", from_e164),
+        ("purpose", body.purpose.as_str()),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
+    livekit.create_room_with_agent(&room, SIP_AGENT_NAME, &json!(attrs).to_string()).await?;
+    livekit
+        .create_sip_participant(CreateSipParticipantRequest {
+            trunk_id: trunk_id.to_string(),
+            call_to: body.to.clone(),
+            room_name: room.clone(),
+            participant_identity: format!("sip-out-{}", uuid::Uuid::new_v4().simple()),
+            participant_attributes: attrs,
+            consent_ref: Some(consent.id.clone()),
+            from_number: Some(from_e164.to_string()),
+        })
+        .await?;
+    Ok(room)
+}
+
+/// `livekit` is `Some((client, trunkId))` only when LiveKit and the outbound trunk are configured.
+async fn call_outbound_inner(db: &PgPool, user: &str, body: &CallBody, livekit: Option<(&dyn LiveKitAdminClient, &str)>) -> PResult<Response> {
+    if !carriers::is_e164(&body.to) {
+        return Err(PhoneError::BadRequest("to must be an E.164 number".into()));
+    }
+    if body.purpose.trim().is_empty() || body.bot_id.trim().is_empty() {
+        return Err(PhoneError::BadRequest("purpose and botId are required".into()));
+    }
+    let Some(consent) = consent_ref_for(db, user, &body.number_id, &body.to, &body.bot_id, &body.purpose).await? else {
+        return Ok(err(StatusCode::FORBIDDEN, "no_consent", None));
+    };
+    let mut out = json!({ "consentRef": consent.id, "basis": consent.basis, "expiresAt": consent.expires_at });
+    if let Some((lk, trunk)) = livekit {
+        let number = number_for_user(db, user, &body.number_id).await?;
+        match dial_outbound(lk, trunk, &number.e164, user, body, &consent).await {
+            Ok(room) => {
+                out["room"] = json!(room);
+                out["dialing"] = json!(true);
+            }
+            Err(e) => return Ok(livekit_error_response(e)),
+        }
+    }
+    Ok(Json(out).into_response())
+}
+
 async fn call_outbound_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(body): Json<CallBody>) -> Response {
     let run = async {
         let user = user_id(&state, &headers).await?;
-        if !carriers::is_e164(&body.to) {
-            return Err(PhoneError::BadRequest("to must be an E.164 number".into()));
-        }
-        if body.purpose.trim().is_empty() || body.bot_id.trim().is_empty() {
-            return Err(PhoneError::BadRequest("purpose and botId are required".into()));
-        }
-        match consent_ref_for(&state.db, &user, &body.number_id, &body.to, &body.bot_id, &body.purpose).await? {
-            Some(c) => Ok(Json(json!({ "consentRef": c.id, "basis": c.basis, "expiresAt": c.expires_at })).into_response()),
-            None => Ok(err(StatusCode::FORBIDDEN, "no_consent", None)),
-        }
+        let trunk = std::env::var(OUTBOUND_TRUNK_ENV).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+        let admin = match (trunk, LiveKitConfig::from_env()) {
+            (Some(t), Some(c)) => Some((LiveKitHttpAdmin::new(c), t)),
+            _ => None,
+        };
+        let livekit = admin.as_ref().map(|(a, t)| (a as &dyn LiveKitAdminClient, t.as_str()));
+        call_outbound_inner(&state.db, &user, &body, livekit).await
     };
     run.await.unwrap_or_else(IntoResponse::into_response)
 }
@@ -1347,6 +1419,126 @@ mod tests {
         deliver(&db, &c, &n, "k2", a, "STOP").await;
         assert!(consent_ref_for(&db, USER, &n.id, a, "bot1", "reminder").await.unwrap().is_none(), "STOP withdraws call consent too");
         assert!(matches!(consent_ref_for(&db, "someone_else", &n.id, d, "bot1", "x").await, Err(PhoneError::NotFound(_))));
+    }
+
+    #[derive(Default)]
+    struct FakeLiveKit {
+        calls: Mutex<Vec<String>>,
+        rooms: Mutex<Vec<(String, String, Value)>>,
+        dials: Mutex<Vec<CreateSipParticipantRequest>>,
+        fail_dial: bool,
+    }
+
+    #[async_trait]
+    impl LiveKitAdminClient for FakeLiveKit {
+        async fn ensure_inbound_trunk(&self, _n: &str, _e: &str) -> Result<String, LiveKitError> {
+            unimplemented!()
+        }
+        async fn delete_inbound_trunk(&self, _t: &str) -> Result<(), LiveKitError> {
+            unimplemented!()
+        }
+        async fn ensure_dispatch_rule(&self, _t: &str, _n: &str, _b: &str, _o: &str, _to: &str) -> Result<String, LiveKitError> {
+            unimplemented!()
+        }
+        async fn delete_dispatch_rule(&self, _r: &str) -> Result<(), LiveKitError> {
+            unimplemented!()
+        }
+        async fn create_room_with_agent(&self, room: &str, agent: &str, metadata: &str) -> Result<(), LiveKitError> {
+            self.calls.lock().unwrap().push("CreateRoom".into());
+            self.rooms.lock().unwrap().push((room.to_string(), agent.to_string(), serde_json::from_str(metadata).unwrap()));
+            Ok(())
+        }
+        async fn create_sip_participant(&self, r: CreateSipParticipantRequest) -> Result<Value, LiveKitError> {
+            self.calls.lock().unwrap().push("CreateSIPParticipant".into());
+            if self.fail_dial {
+                return Err(LiveKitError::Server(500, "boom".into()));
+            }
+            self.dials.lock().unwrap().push(r);
+            Ok(json!({}))
+        }
+        async fn send_data(&self, _r: &str, _t: &str, _p: &[u8]) -> Result<(), LiveKitError> {
+            unimplemented!()
+        }
+        fn participant_access(&self, _r: &str, _i: &str, _p: bool) -> Result<super::super::livekit_admin::ParticipantAccess, LiveKitError> {
+            unimplemented!()
+        }
+    }
+
+    async fn body_json(resp: Response) -> (StatusCode, Value) {
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    }
+
+    fn call_body(number_id: &str, to: &str) -> CallBody {
+        CallBody { number_id: number_id.into(), to: to.into(), bot_id: "bot1".into(), purpose: "confirm the appointment".into() }
+    }
+
+    #[tokio::test]
+    async fn outbound_call_dials_with_the_consent_ref_when_the_trunk_is_set() {
+        let db = pool().await;
+        let c = FakeCarrier::default();
+        let n = buy(&db, &c, &e164(80)).await.unwrap();
+        let to = "+15550008888";
+        let lk = FakeLiveKit::default();
+
+        // No consent: 403, and nothing dials.
+        let (status, body) = body_json(call_outbound_inner(&db, USER, &call_body(&n.id, to), Some((&lk, "ST_out"))).await.unwrap()).await;
+        assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("no_consent")));
+        assert!(lk.calls.lock().unwrap().is_empty(), "a refused call never reaches LiveKit");
+
+        // They texted first: the room opens with the voice agent, then the callee is dialed.
+        deliver(&db, &c, &n, "k1", to, "hello").await;
+        let (status, body) = body_json(call_outbound_inner(&db, USER, &call_body(&n.id, to), Some((&lk, "ST_out"))).await.unwrap()).await;
+        assert_eq!(status, StatusCode::OK);
+        let (consent, room) = (body["consentRef"].as_str().unwrap().to_string(), body["room"].as_str().unwrap().to_string());
+        assert_eq!((body["dialing"].clone(), body["basis"].as_str()), (json!(true), Some("inbound_text")));
+        assert!(room.starts_with("call-out-"));
+        assert_eq!(*lk.calls.lock().unwrap(), vec!["CreateRoom", "CreateSIPParticipant"]);
+        let rooms = lk.rooms.lock().unwrap();
+        assert_eq!((rooms[0].0.as_str(), rooms[0].1.as_str()), (room.as_str(), "allternit-voice"));
+        let meta = &rooms[0].2;
+        assert_eq!((meta["direction"].as_str(), meta["consentRef"].as_str(), meta["botId"].as_str(), meta["ownerId"].as_str(), meta["numberId"].as_str(), meta["to"].as_str(), meta["purpose"].as_str()),
+            (Some("outbound"), Some(consent.as_str()), Some("bot1"), Some(USER), Some(n.id.as_str()), Some(to), Some("confirm the appointment")));
+        let dials = lk.dials.lock().unwrap();
+        assert_eq!((dials[0].trunk_id.as_str(), dials[0].call_to.as_str(), dials[0].room_name.as_str()), ("ST_out", to, room.as_str()));
+        assert_eq!((dials[0].consent_ref.as_deref(), dials[0].from_number.as_deref()), (Some(consent.as_str()), Some(n.e164.as_str())));
+        assert_eq!(dials[0].participant_attributes.get("consentRef"), Some(&consent));
+    }
+
+    #[tokio::test]
+    async fn outbound_call_is_inert_without_the_trunk_and_maps_livekit_failures_to_502() {
+        let db = pool().await;
+        let c = FakeCarrier::default();
+        let n = buy(&db, &c, &e164(81)).await.unwrap();
+        let to = "+15550009999";
+        deliver(&db, &c, &n, "k1", to, "hello").await;
+        // Trunk env unset: today's consent-only answer, no room, no dialing flag.
+        let (status, body) = body_json(call_outbound_inner(&db, USER, &call_body(&n.id, to), None).await.unwrap()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["consentRef"].is_string() && body.get("room").is_none() && body.get("dialing").is_none());
+        // LiveKit failing is a clear 502, not a silent success.
+        let lk = FakeLiveKit { fail_dial: true, ..Default::default() };
+        let (status, body) = body_json(call_outbound_inner(&db, USER, &call_body(&n.id, to), Some((&lk, "ST_out"))).await.unwrap()).await;
+        assert_eq!((status, body["error"].as_str()), (StatusCode::BAD_GATEWAY, Some("livekit_dial_failed")));
+        // An opted-out callee is never dialed.
+        deliver(&db, &c, &n, "k2", to, "STOP").await;
+        let lk = FakeLiveKit::default();
+        let (status, _) = body_json(call_outbound_inner(&db, USER, &call_body(&n.id, to), Some((&lk, "ST_out"))).await.unwrap()).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(lk.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn runtime_bearer_callers_use_the_same_auth_as_sms_send() {
+        // The route resolves the caller with `user_id` (Clerk session or an `allternit_*` Bearer the
+        // runtime stores), exactly like `/channels/sms/send` and the consent route. An anonymous
+        // caller is refused before any consent row or dial.
+        let state = test_state(Arc::new(MockGateway::new(Some(MockGateway::healthy_node()), vec![]))).await;
+        let resp = call_outbound_route(State(state.clone()), HeaderMap::new(), Json(call_body("n1", "+15550001111"))).await;
+        assert!(resp.status() == StatusCode::UNAUTHORIZED || resp.status() == StatusCode::FORBIDDEN, "got {}", resp.status());
+        let resp = sms_send_route(State(state), HeaderMap::new(), Json(SendBody { number_id: "n1".into(), to: "+15550001111".into(), text: "x".into() })).await;
+        assert!(resp.status() == StatusCode::UNAUTHORIZED || resp.status() == StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
