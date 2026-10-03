@@ -28,4 +28,15 @@ Confirming the code is the consent record. Replying STOP later turns texts and c
 
 **Contacts** shows each person with how the bot can reach them (Allternit, Text, Call, Email), the consent on file and where an invite stands. Someone who joined through an invite shows **Allternit**: **Message** opens your direct thread and **Call** rings them in the app.
 
-Developers: see [Phone invites](/api/phone-invites).
+## Calling and messaging in the app
+
+Between you and someone who joined Allternit, messages and calls are free.
+
+- **Message** opens one direct thread that you and they both see; what either of you writes shows up for the other.
+- **Call** rings their Allternit app. They get a full-screen incoming call on a phone, or a notification and the floating phone on Desktop, with **Answer** and **Decline**. You can hang up before they answer.
+- If their app isn't open, the call doesn't go through. The phone says "We'll let them know you called" and a missed call appears in your thread, and in theirs the next time they open Allternit.
+- If they have turned on **Let my bot answer**, their bot picks up instead, even when they're away.
+
+Only people who joined through your invite can be reached this way. Ringing the same person more than five times in ten minutes is paused for a while.
+
+Developers: see [Phone invites](/api/phone-invites) and [In-app messages and calls](/api/inapp-calls).

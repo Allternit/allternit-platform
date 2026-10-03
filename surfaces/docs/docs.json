@@ -542,6 +542,7 @@
               "api/cloud-api",
               "api/phone-numbers",
               "api/phone-invites",
+              "api/inapp-calls",
               "api/allternit-api",
               "api/authentication",
               "api/endpoints",
