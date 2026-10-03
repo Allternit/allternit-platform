@@ -172,9 +172,7 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let resolved = await MainActor.run {
-                        InstanceConnection.resolve()
-                    }
+                    let resolved = await InstanceConnection.resolve()
                     guard let baseURL = resolved?.baseURL else {
                         throw AgentChatClientError.noReachableNode
                     }

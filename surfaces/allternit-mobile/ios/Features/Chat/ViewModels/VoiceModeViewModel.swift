@@ -34,6 +34,14 @@ final class VoiceModeViewModel: ObservableObject {
     @Published private(set) var isMuted: Bool = false
     /// Small in-place error/status line (permission, engine, stream).
     @Published private(set) var statusLine: String? = nil
+    /// "Cloud voice" / "On this device" once a session engine is running;
+    /// nil on the system-recognizer path. Shown under the orb.
+    @Published private(set) var engineLabel: String? = nil
+    /// True while an engine is being chosen/connected (or its model is
+    /// downloading) — the view shows "Connecting…" instead of "Tap to talk".
+    @Published private(set) var isConnecting: Bool = false
+    /// 0…1 while the on-device voice model downloads.
+    @Published private(set) var modelProgress: Double? = nil
 
     private let chatViewModel: ChatViewModel
     private let runtimeModelId: String?
@@ -46,6 +54,14 @@ final class VoiceModeViewModel: ObservableObject {
     /// The in-flight assistant reply's message id (captured right after
     /// sendMessage appends its placeholder).
     private var replyMessageId: String? = nil
+
+    // Voice Session path (cloud or on-device engine). nil = system path.
+    private var sessionClient: VoiceSessionClient?
+    private var startTask: Task<Void, Never>?
+    private var utteranceId = ""
+    private var spokenLength = 0
+    private var currentSpeakId: String?
+    private var inSession: Bool { sessionClient != nil }
     private var startedAt: Date = Date()
     /// False once `endSession()` runs — late dictation/speech callbacks are
     /// dropped after the cover is gone.
@@ -95,10 +111,54 @@ final class VoiceModeViewModel: ObservableObject {
         if applyForcedStateIfAny() { return }
         #endif
 
+        statusLine = nil
+        startTask = Task { [weak self] in await self?.startBestRoute() }
+    }
+
+    /// Tries each engine `VoiceRouter` lists for the user's "Where voice
+    /// runs" setting; the system recognizer path is the last resort.
+    private func startBestRoute() async {
+        let preference = SettingsStore.shared.voiceRoute
+        let routes = VoiceRouter.candidates(preference: preference, pushToTalk: isPushToTalk)
+        isConnecting = true
+        defer { isConnecting = false; modelProgress = nil }
+        var notice: String?
+        for route in routes {
+            guard isActive, !Task.isCancelled else { return }
+            switch route {
+            case .legacy:
+                if let notice { statusLine = notice }
+                startLegacy()
+                return
+            case .cloud:
+                do {
+                    try await startSession(route: .cloud)
+                    return
+                } catch {
+                    guard isActive else { return }
+                    if preference == .cloud {
+                        statusLine = error.localizedDescription
+                        state = .idle
+                        return
+                    }
+                    notice = VoiceRouter.fallbackNotice(for: error)
+                }
+            case .device:
+                do {
+                    try await startSession(route: .device)
+                    if let notice { statusLine = notice }
+                    return
+                } catch {
+                    guard isActive else { return }
+                    notice = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func startLegacy() {
         configurePlaybackSession()
         installInterruptionObserver()
-
-        statusLine = nil
         switch interactionMode {
         case .handsFree:
             startListening()
@@ -108,10 +168,81 @@ final class VoiceModeViewModel: ObservableObject {
         }
     }
 
+    /// Starts a Voice Session on `route` (.cloud or .device). Throws when it
+    /// can't (the caller falls back or surfaces the error).
+    private func startSession(route: VoiceRoute) async throws {
+        guard await Self.ensureMicPermission() else {
+            throw VoiceClientError.server(code: "mic_denied",
+                message: "Microphone access is off. Turn it on in Settings › Allternit.")
+        }
+        let factory: VoiceTransportFactory
+        var options = VoiceSessionOptions()
+        options.language = SettingsStore.shared.speechLanguage?.rawValue
+            ?? Locale.current.language.languageCode?.identifier ?? "en"
+        switch route {
+        case .cloud:
+            options.voice = SettingsStore.shared.cloudVoiceId
+            options.sttModel = "light"
+            factory = {
+                let ticket = try await VoiceCloudClient.shared.mintTicket()
+                return WebSocketVoiceTransport(url: ticket.connectURL)
+            }
+            engineLabel = "Cloud voice"
+        case .device:
+            let packs = VoicePackManager.shared
+            if !packs.isReady {
+                statusLine = "Downloading the voice model…"
+                let progressTask = Task { @MainActor [weak self] in
+                    while !Task.isCancelled {
+                        if case .downloading(let p) = packs.state { self?.modelProgress = p }
+                        try? await Task.sleep(nanoseconds: 250_000_000)
+                    }
+                }
+                await packs.install()
+                progressTask.cancel()
+                statusLine = nil
+            }
+            guard let paths = packs.paths else {
+                if case .failed(let message) = packs.state { throw VoiceClientError.server(code: "pack", message: message) }
+                throw VoiceClientError.server(code: "pack", message: "The on-device voice model isn't installed.")
+            }
+            options.voice = SettingsStore.shared.voiceIdentifier
+            let engine = LocalVoiceEngineFactory.make(paths: paths)
+            factory = { engine }
+            engineLabel = "On this device"
+        case .legacy:
+            return
+        }
+        let client = VoiceSessionClient(factory: factory)
+        client.onEvent = { [weak self] event in self?.handleSession(event) }
+        sessionClient = client
+        do {
+            try await client.start(options: options)
+        } catch {
+            sessionClient = nil
+            engineLabel = nil
+            throw error
+        }
+        guard isActive else { client.end(); return }
+        statusLine = nil
+        state = .listening
+    }
+
+    private static func ensureMicPermission() async -> Bool {
+        switch AVAudioApplication.shared.recordPermission {
+        case .granted: return true
+        case .denied: return false
+        default: return await AVAudioApplication.requestRecordPermission()
+        }
+    }
+
     /// X button: tears down audio and returns the session length in seconds
     /// for the feed's "Voice chat ended · Ns" card.
     func endSession() -> Int {
         isActive = false
+        startTask?.cancel()
+        sessionClient?.end()
+        sessionClient = nil
         suppressNextDictationEnd = true
         dictation?.stop()
         speaker?.stop()
@@ -131,6 +262,17 @@ final class VoiceModeViewModel: ObservableObject {
         let generator = UIImpactFeedbackGenerator(style: .light)
         generator.impactOccurred()
         isMuted.toggle()
+        if inSession {
+            sessionClient?.setMuted(isMuted)
+            if isMuted {
+                liveTranscript = ""
+                sessionClient?.cancelSpeech(id: currentSpeakId)
+                if state == .listening { state = .idle }
+            } else if state == .idle {
+                state = .listening
+            }
+            return
+        }
         if isMuted {
             suppressNextDictationEnd = true
             liveTranscript = ""
@@ -155,6 +297,13 @@ final class VoiceModeViewModel: ObservableObject {
     /// either way the next turn starts (hands-free re-listens, PTT idles).
     func interrupt() {
         guard isActive else { return }
+        if inSession {
+            guard state == .thinking || state == .speaking else { return }
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            sessionClient?.cancelSpeech(id: currentSpeakId)
+            abortTurn()
+            return
+        }
         switch state {
         case .speaking:
             let generator = UIImpactFeedbackGenerator(style: .medium)
@@ -192,7 +341,7 @@ final class VoiceModeViewModel: ObservableObject {
     /// DictationController stopped recording (silence, end tap, PTT release,
     /// error). A non-empty transcript becomes the next turn.
     func dictationEnded() {
-        guard isActive else { return }
+        guard isActive, !inSession else { return }
         if suppressNextDictationEnd {
             suppressNextDictationEnd = false
             return
@@ -211,7 +360,7 @@ final class VoiceModeViewModel: ObservableObject {
     }
 
     func dictationFailed(_ message: String) {
-        guard isActive else { return }
+        guard isActive, !inSession else { return }
         statusLine = message
         state = .idle
     }
@@ -226,6 +375,11 @@ final class VoiceModeViewModel: ObservableObject {
         guard state == .thinking || state == .speaking else { return }
 
         replyText = reply.content
+
+        if inSession {
+            sessionReplyUpdated(reply)
+            return
+        }
 
         if let error = reply.error {
             statusLine = error.title
@@ -258,8 +412,100 @@ final class VoiceModeViewModel: ObservableObject {
 
     /// SpeechSpeaker drained its queue (wired from `speaker.isSpeaking`).
     func speakerFinished() {
-        guard isActive, state == .speaking else { return }
+        guard isActive, !inSession, state == .speaking else { return }
         advanceAfterSpeech()
+    }
+
+    // MARK: - Voice Session events
+
+    private func handleSession(_ event: VoiceSessionClientEvent) {
+        guard isActive else { return }
+        switch event {
+        case .state(let connection):
+            switch connection {
+            case .reconnecting(let attempt):
+                statusLine = "Reconnecting… (\(attempt)/\(VoiceSessionClient.maxReconnectAttempts))"
+            case .ready:
+                if statusLine?.hasPrefix("Reconnecting") == true { statusLine = nil }
+            case .failed(let message):
+                sessionClient = nil
+                statusLine = message
+                state = .idle
+            case .idle, .connecting, .ended:
+                break
+            }
+        case .reconnected:
+            // Speech in flight was lost with the old connection.
+            currentSpeakId = nil
+            if state == .speaking { state = .listening }
+        case .server(let server):
+            handleServer(server)
+        }
+    }
+
+    private func handleServer(_ event: VoiceServerEvent) {
+        switch event {
+        case .speechStarted:
+            if state == .idle || state == .listening { state = .listening }
+        case .transcriptDelta(_, let text), .transcriptFinal(_, let text):
+            liveTranscript = text
+        case .turnEnded(let text, _):
+            let transcript = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !transcript.isEmpty, !isMuted else { return }
+            sendTurn(transcript)
+        case .speakStarted(let id):
+            currentSpeakId = id
+            if replyMessageId != nil || state == .thinking { state = .speaking }
+        case .speakEnded(let id):
+            guard id == currentSpeakId || currentSpeakId == nil else { return }
+            currentSpeakId = nil
+            // The reply may still be streaming more sentences; only go back
+            // to listening once it is complete.
+            if replyMessageId == nil, state == .speaking { state = .listening }
+        case .speakInterrupted:
+            // Barge-in: the engine stopped; stop the agent's turn too.
+            abortTurn()
+        case .error(let code, let message, let fatal):
+            if code == "turn_unavailable" { return }
+            if fatal { statusLine = message } else if code != "bad_message" { statusLine = message }
+        case .ready, .speechStopped:
+            break
+        }
+    }
+
+    /// Ends the current reply (tap-to-interrupt or barge-in): aborts the
+    /// agent stream, keeps the partial reply in the thread, back to listening.
+    private func abortTurn() {
+        chatViewModel.stopStreaming()
+        replyMessageId = nil
+        currentSpeakId = nil
+        state = isMuted ? .idle : .listening
+    }
+
+    /// Streams the reply's new text to the engine as it arrives.
+    private func sessionReplyUpdated(_ reply: MessageRecord) {
+        if let error = reply.error {
+            statusLine = error.title
+            sessionClient?.cancelSpeech(id: currentSpeakId)
+            replyMessageId = nil
+            state = isMuted ? .idle : .listening
+            return
+        }
+        let content = reply.content
+        if !isMuted, content.count > spokenLength {
+            let delta = String(content.dropFirst(spokenLength))
+            spokenLength = content.count
+            sessionClient?.speakDelta(id: utteranceId, text: delta)
+        }
+        guard !reply.isStreaming else { return }
+        replyMessageId = nil
+        if isMuted || content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            state = isMuted ? .idle : .listening
+            return
+        }
+        sessionClient?.speakDone(id: utteranceId)
+        // speak.ended returns the state to listening; if nothing is playing
+        // (engine had no speakable text) it still sends started+ended.
     }
 
     // MARK: - Turns
@@ -277,6 +523,9 @@ final class VoiceModeViewModel: ObservableObject {
         replyText = ""
         statusLine = nil
         state = .thinking
+        utteranceId = UUID().uuidString
+        spokenLength = 0
+        currentSpeakId = nil
         chatViewModel.sendMessage(transcript, runtimeModelId: runtimeModelId, effort: effort)
         // sendMessage appends the user bubble + streaming assistant
         // placeholder synchronously — the placeholder is the reply.

@@ -135,6 +135,8 @@ surfaces/allternit-mobile/ios/Frameworks/Mesh.xcframework/
 infrastructure/mesh/tsnet-ios/Mesh.xcframework/
 # D3 spike: prebuilt libgit2.xcframework — fetch via Frameworks/fetch-libgit2.sh
 surfaces/allternit-mobile/ios/Frameworks/libgit2.xcframework/
+# Voice: sherpa-onnx iOS xcframework — fetch via Frameworks/fetch-sherpa-onnx.sh
+surfaces/allternit-mobile/ios/Frameworks/SherpaOnnxC.xcframework/
 infrastructure/mesh/tsnet-ios/Harness/harness
 
 # Publication edition photos are pipeline artifacts and deploy with the site
