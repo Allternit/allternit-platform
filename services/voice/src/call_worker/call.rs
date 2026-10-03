@@ -30,6 +30,7 @@ use super::brain::{CallBrain, RELAY_UNAVAILABLE_LINE};
 use super::cloud_client::{BotConfig, TurnRequest};
 use super::controls::{parse_control, CallState, Control, Target};
 use super::disclosure;
+use super::invite_code::{self, InviteCall};
 use super::events::{CallEvent, EventQueue, Speaker, TransferMode};
 use super::recording::Recording;
 use super::session_adapter::{CoreCommand, CoreEvent, CoreHandle};
@@ -131,12 +132,15 @@ pub struct CallDeps {
     pub human_core: Option<HumanCoreFactory>,
     /// `None`: warm transfer answers `ok:false`.
     pub warm: Option<WarmTransfer>,
+    /// `Some`: an invite-code call. No conversation and no brain; it speaks the
+    /// code script once and hangs up.
+    pub invite: Option<InviteCall>,
 }
 
 impl CallDeps {
     /// Inbound call with no recording, takeover transcription or warm transfer.
     pub fn bare(voicemail: Box<dyn VoicemailDetector>) -> Self {
-        Self { voicemail, recording: Recording::none(), human_core: None, warm: None }
+        Self { voicemail, recording: Recording::none(), human_core: None, warm: None, invite: None }
     }
 }
 
@@ -222,6 +226,8 @@ struct Xfer {
 
 /// Voicemail utterance id.
 const VM_ID: &str = "vm-0";
+/// An invite-code call that hasn't finished by now hangs up.
+const INVITE_MAX_MS: u64 = 120_000;
 /// Most final transcript lines kept for the transfer briefing.
 const TRANSCRIPT_KEEP: usize = 200;
 /// Human audio buffered while the transcription core is still opening
@@ -273,6 +279,7 @@ struct Call {
     /// Final lines, for the transfer briefing.
     transcript: Vec<(Speaker, String)>,
     recording: Option<Recording>,
+    invite: Option<InviteCall>,
 }
 
 /// Run a configured call to its end. Returns the outcome and a handle that
@@ -290,7 +297,7 @@ pub async fn run_call(
     let (brain_tx, mut brain_rx) = mpsc::unbounded_channel();
     let (human_tx, mut human_rx) = mpsc::unbounded_channel();
     let (xfer_tx, mut xfer_rx) = mpsc::unbounded_channel();
-    let CallDeps { voicemail, recording, human_core, warm } = deps;
+    let CallDeps { voicemail, recording, human_core, warm, invite } = deps;
     let screening = voicemail.active();
     let mut call = Call {
         started: Instant::now(),
@@ -326,19 +333,27 @@ pub async fn run_call(
         xfer_count: 0,
         transcript: Vec::new(),
         recording: None,
+        invite,
         ctx,
     };
 
     // Speak first. The opening comes from the cached bot config only; nothing
     // here waits on the user's runtime. Whether it says "recorded" follows what
     // the recording setup actually did (decided before the call got here).
-    let opening = disclosure::opening(
-        call.ctx.bot.display_name().as_deref(),
-        recording.active,
-        call.ctx.bot.greeting.as_deref(),
-    );
-    // Pre-render the opening (X1 phrase cache) so the disclosure plays fast.
-    let _ = call.core_tx.send(CoreCommand::Prepare { texts: vec![opening.clone()] }).await;
+    let opening = match &call.invite {
+        // The code never goes through the phrase cache, so no `Prepare`.
+        Some(inv) => inv.script(call.ctx.bot.display_name().as_deref()),
+        None => {
+            let opening = disclosure::opening(
+                call.ctx.bot.display_name().as_deref(),
+                recording.active,
+                call.ctx.bot.greeting.as_deref(),
+            );
+            // Pre-render the opening (X1 phrase cache) so the disclosure plays fast.
+            let _ = call.core_tx.send(CoreCommand::Prepare { texts: vec![opening.clone()] }).await;
+            opening
+        }
+    };
     if screening {
         // Outbound: a machine would hear us talk over its greeting. Wait until
         // a person is confirmed.
@@ -418,7 +433,10 @@ impl Call {
     }
 
     async fn say(&mut self, id: &str, text: &str) {
-        self.said.entry(id.to_string()).or_default().push_str(text);
+        // An invite-code call keeps no text of what it said: it holds the code.
+        if self.invite.is_none() {
+            self.said.entry(id.to_string()).or_default().push_str(text);
+        }
         let _ = self.core_tx.send(CoreCommand::SpeakDelta { id: id.into(), text: text.into() }).await;
         let _ = self.core_tx.send(CoreCommand::SpeakDone { id: id.into() }).await;
     }
@@ -454,6 +472,12 @@ impl Call {
     }
 
     async fn on_tick(&mut self) {
+        if self.invite.is_some() && self.at_ms() > INVITE_MAX_MS {
+            // Nobody to read to (or the voice stalled): don't hold the line.
+            let _ = self.room_tx.send(RoomCommand::Hangup).await;
+            self.end(invite_code::END_FAILED);
+            return;
+        }
         if matches!(self.answer, Answer::Screening | Answer::Machine) {
             let at = self.at_ms();
             if let Some(sig) = self.voicemail.on_tick(at) {
@@ -486,11 +510,16 @@ impl Call {
             Signal::LeaveMessage => {
                 if self.answer == Answer::Machine {
                     self.answer = Answer::LeavingMessage;
-                    let text = voicemail::message(
-                        self.ctx.bot.display_name().as_deref(),
-                        &self.ctx.local,
-                        self.ctx.bot.voicemail_message.as_deref(),
-                    );
+                    // On an invite-code call the message is the code itself: it's
+                    // what the invitee asked to hear.
+                    let text = match &self.invite {
+                        Some(inv) => inv.script(self.ctx.bot.display_name().as_deref()),
+                        None => voicemail::message(
+                            self.ctx.bot.display_name().as_deref(),
+                            &self.ctx.local,
+                            self.ctx.bot.voicemail_message.as_deref(),
+                        ),
+                    };
                     self.say(VM_ID, &text).await;
                 }
             }
@@ -524,6 +553,10 @@ impl Call {
             RoomInput::Dtmf(digits) => {
                 let from = self.ctx.remote.clone();
                 self.events.emit(CallEvent::Dtmf { digits, from });
+            }
+            RoomInput::Control(_) if self.invite.is_some() => {
+                // Nobody drives an invite-code call; settle the UI's pending action.
+                self.events.emit(self.state.state_event());
             }
             RoomInput::Control(bytes) => match parse_control(&bytes) {
                 Ok(c) => self.apply(c).await,
@@ -941,6 +974,9 @@ impl Call {
             }
             CoreEvent::TurnEnded { text, confidence } => {
                 self.state.speaker = None;
+                if self.invite.is_some() {
+                    return; // no conversation, no brain
+                }
                 if self.skip_turn {
                     self.skip_turn = false; // the pickup greeting, already answered
                     return;
@@ -992,11 +1028,33 @@ impl Call {
                     self.state.speaker = None;
                 }
                 self.bot_transcript(&id);
+                if let Some(inv) = &self.invite {
+                    if id == "u-0" || id == VM_ID {
+                        let reason = inv.end_reason();
+                        if inv.is_valid() {
+                            self.events.emit(CallEvent::TranscriptDelta {
+                                speaker: Speaker::Bot,
+                                text: invite_code::REDACTED_TRANSCRIPT.into(),
+                                is_final: true,
+                                segment_id: id.clone(),
+                            });
+                        }
+                        if id == VM_ID {
+                            self.events.emit(CallEvent::VoicemailDetected { action: VoicemailAction::LeftMessage.as_str().into() });
+                        }
+                        let _ = self.room_tx.send(RoomCommand::HangupAfterPlayout).await;
+                        self.end(reason);
+                    }
+                    return;
+                }
                 if id == VM_ID && self.answer == Answer::LeavingMessage {
                     self.events.emit(CallEvent::VoicemailDetected { action: VoicemailAction::LeftMessage.as_str().into() });
                     let _ = self.room_tx.send(RoomCommand::HangupAfterPlayout).await;
                     self.end("voicemail");
                 }
+            }
+            CoreEvent::SpeakInterrupted { .. } if self.invite.is_some() => {
+                // A "Hello?" over the code must not cut it off.
             }
             CoreEvent::SpeakInterrupted { id } => {
                 if self.consult_brief_id() == Some(id.as_str()) {
@@ -1403,5 +1461,67 @@ mod tests {
             last = Some(c);
         }
         assert!(matches!(last, Some(RoomCommand::HangupAfterPlayout)));
+    }
+
+    fn invite_harness(otp: Option<&str>) -> Harness {
+        let deps = CallDeps { invite: Some(InviteCall::from_attr(otp)), ..CallDeps::bare(Box::new(NoScreening)) };
+        let mut c = ctx(false);
+        c.direction = "outbound".into();
+        start_with(deps, c, vec![Ok(vec!["brain must not run"])])
+    }
+
+    #[tokio::test]
+    async fn invite_call_reads_the_code_once_redacted_and_hangs_up() {
+        let mut h = invite_harness(Some("427193"));
+        let CoreCommand::SpeakDelta { id, text } = next_cmd(&mut h).await else { panic!() };
+        assert_eq!(id, "u-0");
+        assert_eq!(
+            text,
+            "Hi, this is an automated call from Acme Plumbing, an AI assistant. This is Acme Plumbing's verification code: \
+             4. 2. 7. 1. 9. 3. ... Again, your code is 4. 2. 7. 1. 9. 3. Goodbye."
+        );
+        assert_eq!(next_cmd(&mut h).await, CoreCommand::SpeakDone { id: "u-0".into() });
+        // A "Hello?" does not start a turn and does not cut the code off.
+        h.core_events.send(CoreEvent::TurnEnded { text: "hello?".into(), confidence: 1.0 }).await.unwrap();
+        h.core_events.send(CoreEvent::SpeakInterrupted { id: "u-0".into() }).await.unwrap();
+        h.core_events.send(CoreEvent::SpeakEnded { id: "u-0".into() }).await.unwrap();
+        let (outcome, evs) = finish_ref(h).await;
+        assert_eq!(outcome.reason, "bot_hangup");
+        let kinds: Vec<_> = evs.iter().map(|e| e.event_type.as_str()).collect();
+        assert_eq!(kinds, ["call.started", "call.transcript.delta", "call.ended"]);
+        assert_eq!(evs[1].payload["text"], "verification code read");
+        assert_eq!(evs[2].payload["reason"], "bot_hangup");
+        let all = serde_json::to_string(&evs).unwrap();
+        assert!(!all.contains("427193") && !all.contains("4. 2. 7"));
+    }
+
+    #[tokio::test]
+    async fn invite_call_never_calls_the_brain() {
+        let mut h = invite_harness(Some("427193"));
+        next_cmd(&mut h).await;
+        next_cmd(&mut h).await;
+        h.core_events.send(CoreEvent::TurnEnded { text: "who is this".into(), confidence: 1.0 }).await.unwrap();
+        h.core_events.send(CoreEvent::SpeakEnded { id: "u-0".into() }).await.unwrap();
+        let brain = h.brain.clone();
+        finish(h).await;
+        assert!(brain.seen.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn invite_call_with_a_bad_otp_apologizes_and_fails() {
+        let mut h = invite_harness(Some("12ab"));
+        let CoreCommand::SpeakDelta { text, .. } = next_cmd(&mut h).await else { panic!() };
+        assert!(text.contains("Sorry, I can't read your verification code"));
+        assert!(!text.contains("12ab"));
+        next_cmd(&mut h).await;
+        h.core_events.send(CoreEvent::SpeakEnded { id: "u-0".into() }).await.unwrap();
+        let (outcome, evs) = finish_ref(h).await;
+        assert_eq!(outcome.reason, "failed");
+        assert_eq!(evs.last().unwrap().payload["reason"], "failed");
+        assert!(!evs.iter().any(|e| e.event_type == "call.transcript.delta"));
+    }
+
+    async fn finish_ref(h: Harness) -> (CallOutcome, Vec<EventEnvelope>) {
+        finish(h).await
     }
 }

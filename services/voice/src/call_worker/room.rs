@@ -37,6 +37,7 @@ use super::controls::{dtmf_code, transfer_uri};
 use super::dispatch::{run_dispatch, JobHandler, JobInfo};
 use super::events::{Backoff, EventQueue};
 use super::session_adapter::{connect_ws, CoreCommand};
+use super::invite_code::{self, InviteCall};
 use super::voicemail::{AnswerScreen, NoScreening, ScreenTimings, VoicemailDetector};
 use super::{AGENT_NAME, CONTROL_TOPIC};
 
@@ -226,8 +227,14 @@ async fn handle_job(cfg: WorkerConfig, cloud: CloudClient, job: JobInfo, cancel:
                 RecordingEnv::Configured(b) => Some(Arc::new(EgressRecorder::new(&lk, b.clone()))),
                 RecordingEnv::Missing(_) => None,
             };
-            let recording =
-                Recording::begin(recorder, ctx.bot.recording, &cfg.recording, &room_name, &ctx.call_id, START_TIMEOUT).await;
+            // A verification-code call is never recorded: the recording would hold the code.
+            let invite = (direction == Direction::Outbound && get("purpose").as_deref() == Some(invite_code::PURPOSE))
+                .then(|| InviteCall::from_attr(get(invite_code::OTP_ATTR).as_deref()));
+            let recording = if invite.is_some() {
+                Recording::none()
+            } else {
+                Recording::begin(recorder, ctx.bot.recording, &cfg.recording, &room_name, &ctx.call_id, START_TIMEOUT).await
+            };
             let human_core: HumanCoreFactory = {
                 let (url, token) = (cfg.voice_session_url.clone(), cfg.voice_session_token.clone());
                 Arc::new(move || {
@@ -255,7 +262,7 @@ async fn handle_job(cfg: WorkerConfig, cloud: CloudClient, job: JobInfo, cancel:
                     }),
                 }
             });
-            let deps = CallDeps { voicemail, recording, human_core: Some(human_core), warm };
+            let deps = CallDeps { voicemail, recording, human_core: Some(human_core), warm, invite };
             let (outcome, drain) = call::run_call(ctx, core, brain, events, room_tx.clone(), input_rx, deps).await;
             keep_room = outcome.keep_room;
             tracing::info!(room = %room_name, reason = %outcome.reason, secs = outcome.duration_sec, "call ended");
