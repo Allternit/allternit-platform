@@ -11,7 +11,7 @@
 //! * `POST   /api/v1/voice/calls/{callId}/turn`    one bot turn, streamed as SSE
 //! * `DELETE /api/v1/voice/calls/{callId}/turn`    barge-in: abort the turn
 //!
-//! Auth: `x-allternit-runtime-sig: v1=<hex HMAC-SHA256(device_token,
+//! Auth: `x-allternit-runtime-sig: v1=<hex HMAC-SHA256(sha256_hex(device_token),
 //! "<ts>.<METHOD>.<path>.<hex sha256(body)>")>`, `x-allternit-runtime-ts` (unix
 //! seconds, ±300 s) and `x-allternit-owner`. Unsigned requests are never
 //! accepted. The verifier and the device-token source live in
@@ -456,7 +456,7 @@ pub fn voice_calls_router_with(deps: Arc<VoiceDeps>) -> Router<Arc<AppState>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::relay_auth::{sign_relay, OWNER_HEADER, SIG_HEADER, TS_HEADER};
+    use crate::relay_auth::{relay_key_from_device_token, sign_relay, OWNER_HEADER, SIG_HEADER, TS_HEADER};
     use axum::body::Body;
     use axum::http::{HeaderMap, Request};
     use http_body_util::BodyExt;
@@ -520,7 +520,7 @@ mod tests {
     }
 
     fn signed(token: &str, ts: i64, owner: &str, method: &str, path: &str, body: &[u8]) -> HeaderMap {
-        headers(&format!("v1={}", sign_relay(token, ts, method, path, body)), ts, owner)
+        headers(&format!("v1={}", sign_relay(&relay_key_from_device_token(token), ts, method, path, body)), ts, owner)
     }
 
     // ---------------------------------------------------------- routes

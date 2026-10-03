@@ -14,12 +14,21 @@ cloud-api relays a phone call's start, its events and its bot turns to the runti
 ## Signature
 
 ```
-x-allternit-runtime-sig: v1=<hex HMAC-SHA256(device_token, "<ts>.<METHOD>.<path>.<hex sha256(body)>")>
+x-allternit-runtime-sig: v1=<hex HMAC-SHA256(relay_key, "<ts>.<METHOD>.<path>.<hex sha256(body)>")>
 x-allternit-runtime-ts:  <unix seconds, within ±300 s>
 x-allternit-owner:       <userId, must equal the runtime's paired owner>
 ```
 
 `path` is the request path without the query string. The body is hashed as received (empty for `DELETE`). Missing or bad headers: 401. A signed request on a runtime that cannot read its device token: 503 `relay not configured`. Unsigned requests are never accepted.
+
+The HMAC key is `relay_key = sha256_hex(device_token)`: the ASCII bytes of the lowercase hex digest, not the raw token. cloud-api only stores that digest as `credential_hash`, so it can sign without the raw token. The message format is unchanged. A signature made with the raw token is rejected.
+
+Known-answer vector (device token `tok-123`, ts `1700000000`, `POST`, path `/api/v1/voice/calls`, body `{}`):
+
+- `relay_key` = `c8963414bf6c4c869eeac5f8a057c3dc574d422f1b108397b66f67bab3d2f981`
+- signature = `34edb38cb1c7839397d5993a055972d2f352b42164bcdfd935264cdcae1d1576` (send as `v1=34edb38cb1c7839397d5993a055972d2f352b42164bcdfd935264cdcae1d1576`)
+
+The credential hash is now a signing secret for relays: treat `runtime_devices.credential_hash` as secret. Anyone with database access can forge relayed requests; runtimes are only reachable through the cloud relay.
 
 ## Device token source
 
