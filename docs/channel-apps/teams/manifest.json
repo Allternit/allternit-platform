@@ -1,0 +1,29 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "1.0.0",
+  "id": "00000000-0000-0000-0000-000000000000",
+  "developer": {
+    "name": "Allternit LLC",
+    "websiteUrl": "https://allternit.com",
+    "privacyUrl": "https://allternit.com/privacy",
+    "termsOfUseUrl": "https://allternit.com/terms"
+  },
+  "icons": { "color": "color.png", "outline": "outline.png" },
+  "name": { "short": "Allternit", "full": "Allternit - your AI team" },
+  "description": {
+    "short": "Your Allternit AI team, in Teams.",
+    "full": "Chat with your Allternit bots in Teams. Every bot answers in a personal chat, group chat or channel under its own name."
+  },
+  "accentColor": "#0B0B0C",
+  "bots": [
+    {
+      "botId": "00000000-0000-0000-0000-000000000000",
+      "scopes": ["personal", "team", "groupChat"],
+      "supportsFiles": false,
+      "isNotificationOnly": false
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": ["api.allternit.com"]
+}

@@ -67,12 +67,12 @@ pub struct MetaConfig {
 
 impl MetaConfig {
     pub fn from_env() -> Option<Self> {
-        let get = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+        use crate::channels::app_env as env;
         Some(Self {
-            app_id: get("META_APP_ID")?,
-            app_secret: get("META_APP_SECRET")?,
-            config_id: get("META_ES_CONFIG_ID")?,
-            system_token: get("META_SYSTEM_TOKEN"),
+            app_id: env::first(env::META_APP_ID)?,
+            app_secret: env::first(env::META_APP_SECRET)?,
+            config_id: env::first(env::META_ES_CONFIG_ID)?,
+            system_token: env::first(env::META_SYSTEM_TOKEN),
         })
     }
 }

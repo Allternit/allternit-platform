@@ -222,7 +222,8 @@
             "pages": [
               "operations/overview",
               "operations/rollout",
-              "operations/recovery"
+              "operations/recovery",
+              "internal/channel-apps-owner-setup"
             ],
             "icon": "/icons/screen.svg"
           },

@@ -84,12 +84,12 @@ pub(crate) struct TeamsConfig {
 
 impl TeamsConfig {
     fn from_env() -> Option<Self> {
-        let app_id = std::env::var("APP_ID").ok().filter(|s| !s.is_empty())?;
-        let app_password = std::env::var("APP_PASSWORD").ok().filter(|s| !s.is_empty())?;
+        let app_id = super::app_env::first(super::app_env::TEAMS_APP_ID)?;
+        let app_password = super::app_env::first(super::app_env::TEAMS_APP_PASSWORD)?;
         Some(TeamsConfig {
             app_id,
             app_password,
-            tenant_id: std::env::var("TENANT_ID").ok().filter(|s| !s.is_empty()),
+            tenant_id: super::app_env::first(super::app_env::TEAMS_TENANT_ID),
             proactive: matches!(
                 std::env::var("TEAMS_PROACTIVE_SEND").unwrap_or_default().to_ascii_lowercase().as_str(),
                 "1" | "true" | "yes" | "on"
