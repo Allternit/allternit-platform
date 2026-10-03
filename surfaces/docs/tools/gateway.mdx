@@ -286,3 +286,9 @@ Common `TOOL_EXECUTION_FAILED` messages:
 - [Build a Custom Tool](/tools/build-a-tool)
 - [Server Tools](/tools/server-tools)
 - [Cloud Sandboxes](/tools/sandbox)
+
+## Vendor connection gateway and thread UI
+
+The vendor connection gateway used by bot threads is a different surface from this Tools Gateway / IO Service. Its provenance chip shows the connected vendor, account verification, lane, and health; it does not bypass tool policy or certify a reply. Browser-backed Gemini and Copilot connections use `ui_bridge`, are best effort, and are new and not yet verified against the live services. Sign in and acknowledge the terms warning in [Subscriptions](/guides/subscriptions).
+
+A bot thread's pane switches **Thread · Browser · Computer**; projects expose their own thread and output panes. On the phone these panes open full screen with a view bar and Back. See [Threads](/guides/bot-threads) and [Projects](/guides/project-coordination). Vendor looks affect presentation; [composer skinning](/plugins/guides/vendor-packs) is opt-in and does not alter tool execution or approvals.

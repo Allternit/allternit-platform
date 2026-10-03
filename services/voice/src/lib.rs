@@ -9,6 +9,7 @@
 pub mod audio;
 pub mod models;
 pub mod server;
+pub mod session;
 pub mod stt;
 pub mod tts;
 

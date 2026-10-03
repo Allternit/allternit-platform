@@ -302,3 +302,9 @@ DLP rules are documented on the [Security: DLP](/security/dlp) page. Admin endpo
 - [Proxy](/api/proxy) — gateway middleware and routing
 - [Security: DLP](/security/dlp) — secret scanning and injection detection
 - [Security: Inference Hooks](/security/inference-hooks) — pre/post-inference hooks
+
+## Workspace vendor provenance
+
+The workspace's vendor connection gateway is separate from the LLM Gateway Admin routes above. A bot thread shows a **via Vendor** chip with verified identity and connection health. Its popover reports agent, mode, lane, guarantee level, and channel when present. A verified account does not make a `ui_bridge` lane reliable or approve its output.
+
+Gemini and Copilot are new carried vendors using `ui_bridge` with best-effort status; neither has been verified against the live services. Account sign-in and the provider-terms warning are under [Settings → Subscriptions](/surfaces/subscriptions). Thread looks and the opt-in composer flag are described in [Vendor packs](/plugins/guides/vendor-packs).

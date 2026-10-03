@@ -236,6 +236,7 @@ pub fn create_router(state: VoiceServiceState) -> Router {
         // Stats
         .route("/v1/stats", get(get_stats))
         .with_state(state)
+        .merge(crate::session::ws::router())
 }
 
 /// Health check endpoint

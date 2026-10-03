@@ -1,11 +1,11 @@
 ---
 title: Subscriptions
-description: Use the ChatGPT, Claude and Kimi plans you already pay for as models in Allternit, and connect them to bots. Sign-in happens on your Sessions computer.
+description: Use the ChatGPT, Claude, Kimi, Gemini and Copilot plans you already pay for as models in Allternit, and connect them to bots. Sign-in happens on your Sessions computer.
 ---
 
 ## Overview
 
-**Subscriptions** let you use AI plans you already pay for (ChatGPT, Claude and Kimi) from inside Allternit. You pick one in the model picker like any other model, and bots can use the same logins.
+**Subscriptions** let you use AI plans you already pay for (ChatGPT, Claude, Kimi, Gemini and Copilot) from inside Allternit. You pick one in the model picker like any other model, and bots can use the same logins.
 
 Each subscription runs in its own browser on your **Sessions computer**: a cloud computer you choose for this job, never the computer you work on. Allternit drives that browser for you, and you stay in the loop: nothing is sent unless you start it or approve it.
 
@@ -13,7 +13,7 @@ You manage all of it in one place: **Settings → Subscriptions**.
 
 <CardGroup cols={2}>
   <Card title="Your plan, as a model" icon="/icons/bubble.svg">
-    Chat with ChatGPT, Claude or Kimi through your own account. Usage counts against your plan, the same as using their sites.
+    Chat with ChatGPT, Claude, Kimi, Gemini or Copilot through your own account. Usage counts against your plan, the same as using their sites.
   </Card>
   <Card title="Sign in on the provider's site" icon="/icons/shield.svg">
     You sign in on the provider's own page, on your Sessions computer. Allternit never sees or stores your password.
@@ -33,6 +33,8 @@ You manage all of it in one place: **Settings → Subscriptions**.
 | ChatGPT | Your ChatGPT login, on the Sessions computer | Chat, bots (OpenAI dots) | Available |
 | Claude | Your Claude login, on the Sessions computer | Chat | Available |
 | Kimi | Your Kimi login, on the Sessions computer | Chat | Available |
+| Gemini | Your Google sign-in, on the Sessions computer | Vendor threads via `ui_bridge` | New; not verified against live service |
+| Copilot | Your Microsoft sign-in, on the Sessions computer | Vendor threads via `ui_bridge` | New; not verified against live service |
 | OpenAI dots | Uses your ChatGPT subscription login. Needs a ChatGPT plan that includes dots. | Bots | Preview |
 | Grok Bot | Browser sign-in | Bots | Preview |
 | Claude desktop app, ChatGPT desktop app | The app already signed in on your computer | Bots | Preview |
@@ -48,7 +50,7 @@ Preview connections work through the provider's own interface. They are best eff
     In **Settings → Subscriptions**, under **Runs on**, pick the cloud computer that will hold your subscription browsers. It can't be the computer you're working on or a bot's computer.
   </Step>
   <Step title="Add a subscription">
-    Choose **Add account** and pick ChatGPT, Claude or Kimi. Read the provider notice, then choose **Continue to** the provider.
+    Choose **Add account** and pick ChatGPT, Claude, Kimi, Gemini or Copilot. Read the provider notice, then choose **Continue to** the provider.
   </Step>
   <Step title="Sign in">
     A sign-in window opens on your Sessions computer, and you see it in Allternit. Sign in the way you normally do. Use **Full screen** or **Actual size** on the screen if something is hard to reach.
@@ -105,3 +107,9 @@ Allternit checks your subscription logins about once a minute. If a login needs 
 ## Workflow reference
 
 See [Connected subscriptions](/guides/subscriptions) for capability availability, human initiation, Sessions-computer placement, and troubleshooting.
+
+## Gemini and Copilot preview
+
+Gemini and Copilot are carried vendors with thread looks and connection setup in **Settings → Subscriptions**. Choose Add account, select the provider, read the provider-terms warning, and sign in yourself on the Sessions computer. On the phone, open Settings → Subscriptions and use the live computer sign-in view.
+
+These connections use the `ui_bridge` lane and are **best effort**. Gemini and Copilot are new and **not yet verified against the live services**. A look, seeded vendor entry, or signed-in account does not prove that every provider capability works. Provider page changes can interrupt a connection. The terms warning describes account and provider-terms risk; acknowledging it does not grant permission from the provider or remove the human-initiation requirement.

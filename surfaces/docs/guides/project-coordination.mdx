@@ -44,3 +44,21 @@ These are authenticated private data-plane routes, not a promise of public Cloud
 The start request takes `threads`, each with `threadId` and `text`. It returns `accepted` and `skipped` thread ids after accepting background execution; an accepted request is not a finished deliverable.
 
 See [threads](/guides/bot-threads), [templates](/guides/bot-templates), and [CommRails](/core/commrails).
+
+## One bot project list
+
+The **Bot** filter in **Projects** and the project list in Bot Mode read the same server team projects. Cards show the project's description, team, and thread counts. Choose **New** with the Bot filter selected to create a project and open its page in place. Pin a project from its page or card; use the project options menu to archive it. Show archived projects to return to them.
+
+## Project context and settings
+
+**Context** files are stored with the server project and sync across devices. Add or remove them from the project's details card. The **Folder** is a per-device working directory: a path chosen on one device is not a shared folder on another. Folder picking is offered only where that device supports it.
+
+Project settings include icon, colour, and coordinator instructions. Coordinator instructions save to the server project; icon, colour, and folder are per-device workspace settings. A bot project does not have project model or permission selectors. Each thread gets its model and permissions from its bot. Change the bot configuration for that worker rather than expecting a project setting to override it. Other project modes can expose their own coordinator and thread model settings.
+
+## Inspect project work
+
+The bot project page has one docked pane with **Threads · Library · Routines · Browser** in its view menu. Opening the pane collapses the details card to leave room for the work. Threads are grouped by work status. Open the graph to inspect dependencies, or open a thread card to see its conversation. Library collects project outputs; Routines exposes project schedules; Browser opens the project browser.
+
+Projects-tab workspaces also show grouped threads, a dependency graph, coordinator receipts, thread chips and pills, wrap-up reports, decision cards for work that needs you, and a Library of outputs. Receipts report routing and execution state; review the underlying thread and deliverable before accepting the result.
+
+On the phone, a thread tap opens the pane full screen. Its slim bar keeps the view menu and available actions reachable, and **Back** returns to the project conversation. On a bot project, use the details toggle to reach Context, Folder, team, Library, and Routines; Browser is also available from the pane menu. Pin, archive, and project settings remain available. These paths are shared by the web phone layout and PWA.

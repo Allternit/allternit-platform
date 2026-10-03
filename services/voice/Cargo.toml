@@ -23,9 +23,12 @@ tar = { workspace = true }
 bzip2 = { version = "0.4", features = ["static"] }
 tokio-stream = { workspace = true }
 futures-util = { workspace = true }
+# Voice Session Smart Turn: runs on sherpa-onnx's own onnxruntime (no second copy).
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "alternative-backend", "api-24"] }
 
 [dev-dependencies]
 tower = { workspace = true }
+tokio-tungstenite = { workspace = true }
 
 # The bench reads peak RSS via getrusage.
 [target.'cfg(unix)'.dev-dependencies]

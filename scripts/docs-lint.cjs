@@ -75,7 +75,12 @@ const referenced = new Set(
 );
 
 // 2. Navigation references map to existing .mdx files.
-const orphanPages = [...referenced].filter((page) => page.includes('/') && !existingMdx.has(page));
+// Nav icons are asset paths (e.g. /icons/play.svg), not pages: check the file exists instead.
+const isAsset = (s) => /\.(svg|png|jpe?g|webp|gif)$/i.test(s);
+for (const asset of [...referenced].filter(isAsset)) {
+  if (!fs.existsSync(path.join(DOCS_DIR, asset.replace(/^\//, '')))) fail(`docs.json references missing asset: ${asset}`);
+}
+const orphanPages = [...referenced].filter((page) => page.includes('/') && !isAsset(page) && !existingMdx.has(page));
 for (const page of orphanPages) {
   fail(`docs.json references missing page: ${page}`);
 }
