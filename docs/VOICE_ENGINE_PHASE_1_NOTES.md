@@ -159,7 +159,7 @@ $ bun test test/commands/doctor.test.ts   (cmd/gizzi-code)
 ## Commits (on `ao/voice-engine-p1`, pushed)
 
 ```
-<docs commit>  docs(voice): Phase 1.1 results
+0e64c0196 docs(voice): Phase 1.1 results
 96e3c6616 docs(voice): Kokoro v1.0 fp32, the tts pack and the GPL allternit-tts split
 fc17cf868 build(voice): ship allternit-tts next to the voice service on mac/win/linux
 377ef7765 feat(voice): Kokoro v1.0 fp32 in a GPL-3.0 allternit-tts child; no espeak in the voice service
