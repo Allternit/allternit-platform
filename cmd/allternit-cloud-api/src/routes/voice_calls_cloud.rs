@@ -564,6 +564,38 @@ async fn control_inner(
         return Err(ApiError::NotFound("call not found".to_string()));
     }
     validate_control(&body)?;
+    let action = body["action"].as_str().unwrap_or_default().to_string();
+    let livekit_err = |error: LiveKitError| match error {
+        LiveKitError::NotConfigured => ApiError::ServiceUnavailable("livekit_not_configured".into()),
+        LiveKitError::PublicUrlMissing => {
+            ApiError::ServiceUnavailable("livekit_public_url_not_configured".into())
+        }
+        other => ApiError::Internal(format!("livekit: {other}")),
+    };
+    // listen / takeover hand the requesting owner a room token. Listen is
+    // receive-only and touches nothing in the call; takeover also tells the
+    // worker (it emits call.takeover) and returns a publish-capable token.
+    let access = match action.as_str() {
+        "listen" => Some(
+            livekit
+                .participant_access(&room, &format!("listener-{user_id}-{}", uuid::Uuid::new_v4().simple()), false)
+                .map_err(livekit_err)?,
+        ),
+        "takeover" => Some(
+            livekit
+                .participant_access(&room, &format!("human-{user_id}"), true)
+                .map_err(livekit_err)?,
+        ),
+        _ => None,
+    };
+    if action == "listen" {
+        let access = access.expect("listen mints a token");
+        return Ok((
+            StatusCode::OK,
+            Json(json!({ "token": access.token, "url": access.url, "room": room })),
+        )
+            .into_response());
+    }
     let payload = json!({
         "callId": call_id,
         "action": body["action"],
@@ -579,6 +611,13 @@ async fn control_inner(
             LiveKitError::NotConfigured => ApiError::ServiceUnavailable("livekit_not_configured".into()),
             other => ApiError::Internal(format!("publishing control: {other}")),
         })?;
+    if let Some(access) = access {
+        return Ok((
+            StatusCode::ACCEPTED,
+            Json(json!({ "ok": true, "token": access.token, "url": access.url, "room": room })),
+        )
+            .into_response());
+    }
     Ok((StatusCode::ACCEPTED, Json(json!({ "ok": true }))).into_response())
 }
 
@@ -589,7 +628,16 @@ fn validate_control(body: &Value) -> Result<(), ApiError> {
         .ok_or_else(|| ApiError::BadRequest("action is required".to_string()))?;
     if !matches!(
         action,
-        "hangup" | "mute" | "unmute" | "hold" | "resume" | "dtmf" | "transfer" | "takeover"
+        "hangup"
+            | "mute"
+            | "unmute"
+            | "hold"
+            | "resume"
+            | "dtmf"
+            | "transfer"
+            | "takeover"
+            | "listen"
+            | "release"
     ) {
         return Err(ApiError::BadRequest(format!("unknown action: {action}")));
     }
@@ -846,6 +894,21 @@ mod tests {
             ));
             Ok(())
         }
+        fn participant_access(
+            &self,
+            room: &str,
+            identity: &str,
+            can_publish: bool,
+        ) -> Result<crate::routes::livekit_admin::ParticipantAccess, LiveKitError> {
+            Ok(crate::routes::livekit_admin::ParticipantAccess {
+                token: format!("tok:{room}:{identity}:{can_publish}"),
+                url: Self::PUBLIC.to_string(),
+            })
+        }
+    }
+
+    impl FakeLiveKit {
+        const PUBLIC: &'static str = "wss://livekit.test";
     }
 
     // ---- scaffolding: schema-per-test pool with the 023 tables, on top of
@@ -1123,6 +1186,64 @@ mod tests {
         assert_eq!(sent[0].2["callId"], "call-1");
         assert_eq!(sent[0].2["action"], "dtmf");
         assert_eq!(sent[0].2["digits"], "42");
+    }
+
+    async fn seed_call(state: &ApiState) {
+        sqlx::query(
+            "INSERT INTO voice_calls (call_id, user_id, runtime_id, number_id, bot_id, room, direction, from_e164, to_e164)
+             VALUES ('call-1', 'user-1', 'rt-1', 'number-9', 'bot-1', 'room-7', 'inbound', '+1', '+2')",
+        )
+        .execute(&state.db)
+        .await
+        .unwrap();
+    }
+
+    async fn body_json(response: Response) -> Value {
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn listen_returns_receive_only_token_and_publishes_nothing() {
+        let state = voice_test_state().await;
+        seed_call(&state).await;
+        let livekit = FakeLiveKit::default();
+        let response = control_inner(&state, "user-1", "call-1", json!({ "action": "listen" }), &livekit)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["room"], "room-7");
+        assert_eq!(body["url"], FakeLiveKit::PUBLIC);
+        assert!(body["token"].as_str().unwrap().ends_with(":false"), "receive-only");
+        assert!(livekit.sent.lock().unwrap().is_empty());
+        // another user cannot listen in
+        assert!(control_inner(&state, "user-2", "call-1", json!({ "action": "listen" }), &livekit)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn takeover_returns_publish_token_and_forwards_release() {
+        let state = voice_test_state().await;
+        seed_call(&state).await;
+        let livekit = FakeLiveKit::default();
+        let response = control_inner(&state, "user-1", "call-1", json!({ "action": "takeover" }), &livekit)
+            .await
+            .unwrap();
+        let body = body_json(response).await;
+        assert!(body["token"].as_str().unwrap().ends_with(":true"));
+        assert_eq!(body["url"], FakeLiveKit::PUBLIC);
+        assert_eq!(body["room"], "room-7");
+        let response = control_inner(&state, "user-1", "call-1", json!({ "action": "release" }), &livekit)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let sent = livekit.sent.lock().unwrap().clone();
+        assert_eq!(sent.len(), 2);
+        assert!(sent.iter().all(|s| s.1 == "allternit.call.control"));
+        assert_eq!(sent[0].2["action"], "takeover");
+        assert_eq!(sent[1].2["action"], "release");
     }
 
     #[tokio::test]

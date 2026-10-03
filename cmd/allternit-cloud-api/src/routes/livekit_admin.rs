@@ -27,6 +27,11 @@ pub const CONTROL_TOPIC: &str = "allternit.call.control";
 pub const LIVEKIT_URL_ENV: &str = "ALLTERNIT_LIVEKIT_URL";
 pub const LIVEKIT_KEY_ENV: &str = "ALLTERNIT_LIVEKIT_KEY";
 pub const LIVEKIT_SECRET_ENV: &str = "ALLTERNIT_LIVEKIT_SECRET";
+/// Browser/app-facing LiveKit URL (wss://livekit.allternit.com). Distinct from
+/// ALLTERNIT_LIVEKIT_URL, which is the server API endpoint.
+pub const LIVEKIT_PUBLIC_URL_ENV: &str = "ALLTERNIT_LIVEKIT_PUBLIC_URL";
+/// Participant tokens for Listen / Take over live one hour.
+const PARTICIPANT_TOKEN_TTL_SECS: i64 = 3600;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 /// Minted server JWTs live five minutes; each request mints a fresh one.
@@ -37,6 +42,15 @@ pub struct LiveKitConfig {
     pub url: String,
     pub api_key: String,
     pub api_secret: String,
+    /// Public URL handed to clients with a participant token.
+    pub public_url: Option<String>,
+}
+
+/// A room-scoped participant token plus the URL the client connects to.
+#[derive(Debug, Clone)]
+pub struct ParticipantAccess {
+    pub token: String,
+    pub url: String,
 }
 
 impl LiveKitConfig {
@@ -47,7 +61,11 @@ impl LiveKitConfig {
         if url.is_empty() || api_key.is_empty() || api_secret.is_empty() {
             return None;
         }
-        Some(Self { url: url.trim_end_matches('/').to_string(), api_key, api_secret })
+        let public_url = std::env::var(LIVEKIT_PUBLIC_URL_ENV)
+            .ok()
+            .map(|v| v.trim().trim_end_matches('/').to_string())
+            .filter(|v| !v.is_empty());
+        Some(Self { url: url.trim_end_matches('/').to_string(), api_key, api_secret, public_url })
     }
 }
 
@@ -59,6 +77,8 @@ pub enum LiveKitError {
     /// the phone/SMS consent gate (frozen HANDOFF §4.1).
     #[error("consent_ref_required")]
     ConsentRequired,
+    #[error("livekit_public_url_not_configured")]
+    PublicUrlMissing,
     #[error("livekit URL blocked: {0}")]
     Blocked(String),
     #[error("livekit request failed: {0}")]
@@ -107,6 +127,15 @@ pub trait LiveKitAdminClient: Send + Sync {
     ) -> Result<Value, LiveKitError>;
     /// Publish a data packet on a room's data channel (call controls).
     async fn send_data(&self, room: &str, topic: &str, payload: &[u8]) -> Result<(), LiveKitError>;
+    /// Mint a client token for one room. Listen is receive-only
+    /// (`can_publish` false → canSubscribe true, canPublish false,
+    /// canPublishData false); takeover can publish audio and data.
+    fn participant_access(
+        &self,
+        room: &str,
+        identity: &str,
+        can_publish: bool,
+    ) -> Result<ParticipantAccess, LiveKitError>;
 }
 
 pub struct LiveKitHttpAdmin {
@@ -147,6 +176,7 @@ impl LiveKitHttpAdmin {
             video: VideoGrant<'a>,
         }
         #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
         struct VideoGrant<'a> {
             room_admin: bool,
             room: &'a str,
@@ -163,6 +193,45 @@ impl LiveKitHttpAdmin {
         let header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256);
         jsonwebtoken::encode(&header, &claims, &jsonwebtoken::EncodingKey::from_secret(self.config.api_secret.as_bytes()))
             .map_err(|e| LiveKitError::Http(format!("minting server JWT: {e}")))
+    }
+
+    fn participant_jwt(&self, room: &str, identity: &str, can_publish: bool) -> Result<String, LiveKitError> {
+        #[derive(Serialize)]
+        struct Claims<'a> {
+            iss: &'a str,
+            sub: &'a str,
+            iat: i64,
+            nbf: i64,
+            exp: i64,
+            video: Grant<'a>,
+        }
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Grant<'a> {
+            room_join: bool,
+            room: &'a str,
+            can_subscribe: bool,
+            can_publish: bool,
+            can_publish_data: bool,
+        }
+        let now = chrono::Utc::now().timestamp();
+        let claims = Claims {
+            iss: &self.config.api_key,
+            sub: identity,
+            iat: now,
+            nbf: now - 10,
+            exp: now + PARTICIPANT_TOKEN_TTL_SECS,
+            video: Grant {
+                room_join: true,
+                room,
+                can_subscribe: true,
+                can_publish,
+                can_publish_data: can_publish,
+            },
+        };
+        let header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256);
+        jsonwebtoken::encode(&header, &claims, &jsonwebtoken::EncodingKey::from_secret(self.config.api_secret.as_bytes()))
+            .map_err(|e| LiveKitError::Http(format!("minting participant JWT: {e}")))
     }
 
     async fn post(&self, service: &str, method: &str, body: Value) -> Result<Value, LiveKitError> {
@@ -290,6 +359,16 @@ impl LiveKitAdminClient for LiveKitHttpAdmin {
         self.post("RoomService", "SendData", body).await?;
         Ok(())
     }
+
+    fn participant_access(
+        &self,
+        room: &str,
+        identity: &str,
+        can_publish: bool,
+    ) -> Result<ParticipantAccess, LiveKitError> {
+        let url = self.config.public_url.clone().ok_or(LiveKitError::PublicUrlMissing)?;
+        Ok(ParticipantAccess { token: self.participant_jwt(room, identity, can_publish)?, url })
+    }
 }
 
 #[cfg(test)]
@@ -347,6 +426,7 @@ mod tests {
             url: "https://livekit.example.com".to_string(),
             api_key: "key".to_string(),
             api_secret: "secret".to_string(),
+            public_url: None,
         });
         let result = admin
             .create_sip_participant(CreateSipParticipantRequest {
@@ -367,6 +447,7 @@ mod tests {
             url: "https://livekit.example.com".to_string(),
             api_key: "testkey".to_string(),
             api_secret: "testsecret".to_string(),
+            public_url: Some("wss://livekit.example.com".to_string()),
         });
         let token = admin.jwt().expect("jwt mints");
         let mut parts = token.split('.');
@@ -381,5 +462,46 @@ mod tests {
         assert_eq!(claims["video"]["room"], "*");
         let ttl = claims["exp"].as_i64().unwrap() - claims["iat"].as_i64().unwrap();
         assert!((250..=300).contains(&ttl), "ttl ~5m, got {ttl}");
+    }
+
+    fn decode_claims(token: &str) -> Value {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+        let payload = token.split('.').nth(1).unwrap();
+        serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap()
+    }
+
+    fn test_admin(public_url: Option<&str>) -> LiveKitHttpAdmin {
+        LiveKitHttpAdmin::new(LiveKitConfig {
+            url: "https://livekit.example.com".to_string(),
+            api_key: "k".to_string(),
+            api_secret: "s".to_string(),
+            public_url: public_url.map(str::to_string),
+        })
+    }
+
+    #[test]
+    fn listen_token_is_receive_only_and_takeover_can_publish() {
+        let admin = test_admin(Some("wss://livekit.allternit.com"));
+        let listen = admin.participant_access("call-1", "listener-u", false).unwrap();
+        assert_eq!(listen.url, "wss://livekit.allternit.com");
+        let g = &decode_claims(&listen.token)["video"];
+        assert_eq!(g["room"], "call-1");
+        assert_eq!(g["roomJoin"], true);
+        assert_eq!(g["canSubscribe"], true);
+        assert_eq!(g["canPublish"], false);
+        assert_eq!(g["canPublishData"], false);
+        let talk = admin.participant_access("call-1", "human-u", true).unwrap();
+        let g = &decode_claims(&talk.token)["video"];
+        assert_eq!(g["canPublish"], true);
+        assert_eq!(g["canPublishData"], true);
+    }
+
+    #[test]
+    fn participant_access_needs_the_public_url() {
+        let admin = test_admin(None);
+        assert!(matches!(
+            admin.participant_access("call-1", "x", false),
+            Err(LiveKitError::PublicUrlMissing)
+        ));
     }
 }
