@@ -318,6 +318,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Channels hybrid relay: deliver queued inbound channel requests to runtimes.
     allternit_cloud_api::routes::channel_inbound::start_channel_inbound_worker(state.clone());
+    // Discord shared app gateway (a no-op until the ALLTERNIT_DISCORD_* env is set).
+    allternit_cloud_api::routes::discord_app::start_discord_gateway(state.clone());
 
     // Start stale gizzi-instance garbage collection (startup sweep + hourly)
     allternit_cloud_api::routes::gizzi_instances::start_gizzi_instance_gc_task(state.db.clone());

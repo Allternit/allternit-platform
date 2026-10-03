@@ -20,6 +20,7 @@ pub mod costs;
 pub mod data_plane;
 pub mod data_plane_fallback;
 pub mod deployments;
+pub mod discord_app;
 pub mod dispatch_handoff;
 pub mod gizzi_instances;
 pub mod health;

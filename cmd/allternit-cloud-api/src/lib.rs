@@ -346,6 +346,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::phone::routes())
         // WhatsApp Embedded Signup + 24h-window send; each handler resolves the user itself.
         .merge(routes::whatsapp_es::routes())
+        // Discord shared app: install/send/commands check the Clerk session; the OAuth
+        // callback and interactions are public (state / Ed25519 signature).
+        .merge(routes::discord_app::routes())
         // These handlers verify Clerk or billing credentials themselves. They
         // must not pass through the legacy allternit_* API-token middleware.
         .merge(routes::hosted_runtimes::routes())
