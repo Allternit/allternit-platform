@@ -70,7 +70,7 @@ A single task per call delivers events in order:
 | `call.transferred` | `to, mode, ok, reason?` | Transfer result. `mode:"warm"` is the consult-and-connect transfer below; `ok:false` carries an honest `reason`. |
 | `call.takeover` | `by, active` | Takeover (`active:true`) and release (`active:false`). |
 | `call.voicemail.detected` | `action` | Outbound only. `left_message` or `hung_up`. |
-| `call.ended` | `durationSec, reason, recordingRef?` | Always last. `reason` is one of `caller_hangup`, `hangup_control`, `transferred`, `room_closed`, `voice_engine_error`. |
+| `call.ended` | `durationSec, reason, recordingRef?` | Always last. `reason` is one of `caller_hangup`, `hangup_control`, `transferred`, `room_closed`, `voice_engine_error`, `bot_hangup` (invite-code call finished), `failed` (invite-code call with a bad `otp`). |
 
 ## Controls
 
@@ -114,6 +114,18 @@ You don't need to place a call to check registration. `livekit-cli` shows the wo
   - It joined the room over WebRTC and published the bot track.
   - With no SIP participant, it deleted the room after 15 s.
   - This check caught a missing `livekit/native` feature, which registers the signalling transport. It's fixed in `Cargo.toml`.
+
+## Invite verification-code call
+
+When a carrier blocks a texted phone-invite code, cloud-api (`routes/phone_invites.rs`, `send_otp_call`) dials the invitee from the bot's number with room metadata and SIP participant attribute `purpose: "invite_code"` and `otp: "<code>"`; `consentRef` is the invitee's own consent row (basis `invite_otp`). The worker (`invite_code.rs`, wired in `room.rs` for outbound calls only) runs a different call:
+
+- **No conversation.** No brain relay, no turns, no controls. A "Hello?" does not interrupt the code.
+- **Script** (one utterance, bot name from the call-start config, fallback "Allternit"): "Hi, this is an automated call from {bot}, an AI assistant. This is {bot}'s verification code: 4. 2. 7. 1. 9. 3. ... Again, your code is 4. 2. 7. 1. 9. 3. Goodbye." Then it hangs up once the audio has played out. A call that has not finished after two minutes hangs up.
+- **Answer screening still applies.** A person gets the script when they answer; on a machine the worker waits for the beep and leaves the same script (the invitee asked for the code).
+- **The code is never logged or stored.** The transcript carries one bot line, "verification code read". The call is not recorded, so the recording cannot hold the code. `call.ended` reason is `bot_hangup`.
+- **Bad `otp`** (not 4 to 10 digits): the disclosure and an apology, then hang up with `call.ended` reason `failed`.
+
+The worker does not know which voice backend reads the digits; the full stops between digits are what make the voice pause on each one.
 
 ## Known gaps
 
