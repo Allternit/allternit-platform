@@ -123,7 +123,7 @@ fn rules(provider: &str) -> (&'static [&'static str], &'static str) {
         "teams" => (&["user", "group", "channel"], "Teams only lets a bot message a conversation it already has a reference for (someone installed or messaged it). Proactive sending to anyone else is switched off on the shared app."),
         "whatsapp" => (&["user", "phone"], "WhatsApp only allows free-form messages within 24 hours of the person's last message. Template messages are not supported yet."),
         "whatsapp-personal" => (&["user", "group", "phone"], "Unofficial linked-device number. There is no 24-hour window, but WhatsApp can ban a number that messages people who did not ask for it."),
-        "sms" => (&["user", "phone"], "Texts any E.164 number from the bot's number. Carrier opt-outs (STOP) are enforced in the cloud."),
+        "sms" => (&["user", "phone"], "Texts an E.164 number from the bot's number. The cloud enforces consent: the person must have texted or called the number first (or be an allowed contact), and anyone who replied STOP is never texted."),
         "email" => (&["user", "email"], "Composes a new email from the bot's mailbox. It waits for your approval before it is sent."),
         _ => (&[], ""),
     }
@@ -226,8 +226,6 @@ struct Dest {
     user: Option<String>,
     /// Slack: the conversation key is `slack:<channel>:<root ts>`; the ts is only known after the post.
     rekey_to_ts: bool,
-    /// SMS: the bot's phone number id (texts and calls share one thread).
-    number_id: Option<String>,
 }
 
 fn nonempty(s: &Option<String>) -> Option<String> {
@@ -308,7 +306,7 @@ async fn telegram_dest(db: &DbHandle, http: &dyn HttpSend, owner: &str, acct: &A
             return Err(conflict("bot_not_in_group", "The bot isn't a member of that Telegram group or channel. Add it there first."));
         }
     }
-    Ok(Dest { key: format!("telegram:{chat}"), channel: chat.clone(), workspace: None, thread: None, name: known.and_then(|k| k.name).unwrap_or(chat.clone()), user: None, rekey_to_ts: false, number_id: None })
+    Ok(Dest { key: format!("telegram:{chat}"), channel: chat.clone(), workspace: None, thread: None, name: known.and_then(|k| k.name).unwrap_or(chat.clone()), user: None, rekey_to_ts: false })
 }
 
 fn slack_dest(db: &DbHandle, owner: &str, acct: &Account, t: &Target) -> Result<Dest, StartError> {
@@ -329,7 +327,6 @@ fn slack_dest(db: &DbHandle, owner: &str, acct: &Account, t: &Target) -> Result<
         name: known.and_then(|k| k.name).unwrap_or(target),
         user: None,
         rekey_to_ts: true,
-        number_id: None,
     })
 }
 
@@ -342,7 +339,7 @@ fn discord_dest(db: &DbHandle, owner: &str, acct: &Account, t: &Target) -> Resul
     if !crate::channel_discord_app::is_app_secret(&acct.secret) && known.is_none() {
         return Err(conflict("discord_webhook_fixed_channel", "This Discord connection posts through one channel webhook, so it can only continue conversations Allternit has already seen. Connect the Allternit Discord app to start new ones."));
     }
-    Ok(Dest { key: format!("discord:{channel}"), channel: channel.clone(), workspace: known.as_ref().and_then(|k| k.workspace.clone()), thread: None, name: known.and_then(|k| k.name).unwrap_or(channel), user: None, rekey_to_ts: false, number_id: None })
+    Ok(Dest { key: format!("discord:{channel}"), channel: channel.clone(), workspace: known.as_ref().and_then(|k| k.workspace.clone()), thread: None, name: known.and_then(|k| k.name).unwrap_or(channel), user: None, rekey_to_ts: false })
 }
 
 fn teams_dest(db: &DbHandle, owner: &str, acct: &Account, t: &Target) -> Result<Dest, StartError> {
@@ -350,7 +347,7 @@ fn teams_dest(db: &DbHandle, owner: &str, acct: &Account, t: &Target) -> Result<
     let Some(known) = seen(db, owner, "teams", &acct.id, &conv) else {
         return Err(conflict("no_conversation_reference", "Teams only lets the bot message a conversation it already has a reference for. Have the person install or message the bot in Teams first."));
     };
-    Ok(Dest { key: format!("teams:{conv}"), channel: conv.clone(), workspace: known.workspace.clone(), thread: None, name: known.name.unwrap_or(conv), user: None, rekey_to_ts: false, number_id: None })
+    Ok(Dest { key: format!("teams:{conv}"), channel: conv.clone(), workspace: known.workspace.clone(), thread: None, name: known.name.unwrap_or(conv), user: None, rekey_to_ts: false })
 }
 
 /// Newest inbound message from `key`'s conversation, if any.
@@ -382,7 +379,7 @@ fn whatsapp_dest(db: &DbHandle, owner: &str, acct: &Account, t: &Target) -> Resu
             "WhatsApp only allows free-form messages within 24 hours of the person's last message to this number. Starting with a template message isn't supported yet.",
         ));
     }
-    Ok(Dest { key, channel: pnid, workspace: None, thread: Some(wa.clone()), name: format!("+{wa}"), user: Some(wa), rekey_to_ts: false, number_id: None })
+    Ok(Dest { key, channel: pnid, workspace: None, thread: Some(wa.clone()), name: format!("+{wa}"), user: Some(wa), rekey_to_ts: false })
 }
 
 fn whatsapp_personal_dest(t: &Target) -> Result<Dest, StartError> {
@@ -399,20 +396,10 @@ fn whatsapp_personal_dest(t: &Target) -> Result<Dest, StartError> {
             format!("{d}@s.whatsapp.net")
         }
     };
-    Ok(Dest { key: format!("whatsapp-personal:{jid}"), channel: jid.clone(), workspace: None, thread: None, name: jid, user: None, rekey_to_ts: false, number_id: None })
+    Ok(Dest { key: format!("whatsapp-personal:{jid}"), channel: jid.clone(), workspace: None, thread: None, name: jid, user: None, rekey_to_ts: false })
 }
 
-fn sms_dest(db: &DbHandle, owner: &str, bot: &str, acct: &Account, t: &Target) -> Result<Dest, StartError> {
-    let to = nonempty(&t.phone).or_else(|| nonempty(&t.id)).unwrap_or_default().replace([' ', '-', '(', ')'], "");
-    if !crate::channel_phone::is_e164(&to) {
-        return Err(bad("invalid_target", "Give the number in E.164 form, like +14155550123."));
-    }
-    let number_id = Some(pick(&acct.secret, "numberId")).filter(|s| !s.is_empty()).ok_or_else(|| not_configured("sms", "This SMS connection has no phone number id."))?;
-    let n = crate::channel_phone::number(db, &number_id).filter(|n| n.owner == owner && n.bot_id == bot).ok_or_else(|| not_connected("sms"))?;
-    Ok(Dest { key: crate::channel_phone::phone_key(&n.e164, &to), channel: n.e164, workspace: None, thread: Some(to.clone()), name: to.clone(), user: Some(to), rekey_to_ts: false, number_id: Some(number_id) })
-}
-
-async fn resolve(deps_http: &dyn HttpSend, db: &DbHandle, owner: &str, bot: &str, provider: &str, acct: &Account, t: &Target) -> Result<Dest, StartError> {
+async fn resolve(deps_http: &dyn HttpSend, db: &DbHandle, owner: &str, provider: &str, acct: &Account, t: &Target) -> Result<Dest, StartError> {
     match provider {
         "telegram" => telegram_dest(db, deps_http, owner, acct, t).await,
         "slack" => slack_dest(db, owner, acct, t),
@@ -420,7 +407,6 @@ async fn resolve(deps_http: &dyn HttpSend, db: &DbHandle, owner: &str, bot: &str
         "teams" => teams_dest(db, owner, acct, t),
         "whatsapp" => whatsapp_dest(db, owner, acct, t),
         "whatsapp-personal" => whatsapp_personal_dest(t),
-        "sms" => sms_dest(db, owner, bot, acct, t),
         _ => Err(StartError::new(StatusCode::NOT_FOUND, "unknown_provider", format!("No channel called {provider}."))),
     }
 }
@@ -464,13 +450,9 @@ async fn thread_for<R: ThreadRuntime>(deps: &Deps<'_, R>, owner: &str, bot: &str
         }
         return Ok((b, true));
     }
-    let session = if let Some(number_id) = &d.number_id {
-        crate::channel_phone::resolve_thread_async(deps.db, deps.rt, number_id, d.user.as_deref().unwrap_or_default()).await.map_err(|e| bad("invalid_target", e))?.1
-    } else {
-        let title: String = format!("{} · {}", place(provider), d.name).chars().take(80).collect();
-        let objective = format!("You started this {} conversation with {}. Your first message to them: {text}", place(provider), d.name);
-        crate::thread_routes::channel_thread(deps.db, deps.rt, bot, provider, &d.key, &title, &objective).await.map_err(internal)?
-    };
+    let title: String = format!("{} · {}", place(provider), d.name).chars().take(80).collect();
+    let objective = format!("You started this {} conversation with {}. Your first message to them: {text}", place(provider), d.name);
+    let session = crate::thread_routes::channel_thread(deps.db, deps.rt, bot, provider, &d.key, &title, &objective).await.map_err(internal)?;
     let thread_id = thread_of_session(deps.db, &session)?;
     let ev = Inbound {
         kind: InboundKind::Message,
@@ -516,8 +498,11 @@ pub async fn start_conversation<R: ThreadRuntime>(deps: &Deps<'_, R>, owner: &st
     if provider == "email" {
         return start_email(deps, owner, &bot, &body.target, &text, body.subject.as_deref()).await;
     }
+    if provider == "sms" {
+        return start_sms(deps, owner, &bot, &body.target, &text).await;
+    }
     let acct = bot_accounts(deps.db, owner, provider, &bot).into_iter().next().ok_or_else(|| not_connected(provider))?;
-    let dest = resolve(deps.http.as_ref(), deps.db, owner, &bot, provider, &acct, &body.target).await?;
+    let dest = resolve(deps.http.as_ref(), deps.db, owner, provider, &acct, &body.target).await?;
     let tx = (deps.transport)(provider, &acct).ok_or_else(|| not_configured(provider, format!("{} isn't set up on this runtime.", place(provider))))?;
     let (binding, existing) = thread_for(deps, owner, &bot, provider, &acct, &dest, &text).await?;
     let req = SendReq { text: text.clone(), correlation_id: Some(id("start")), ..Default::default() };
@@ -548,6 +533,33 @@ pub async fn start_conversation<R: ThreadRuntime>(deps: &Deps<'_, R>, owner: &st
         SendOutcome::NoBinding => Err(internal("the new conversation has no binding")),
         SendOutcome::Rejected(why) => Err(refusal(provider, &why).with(json!({ "threadId": binding.thread_id }))),
     }
+}
+
+fn out_error(e: crate::phone_outbound::OutError) -> StartError {
+    use crate::phone_outbound::OutError;
+    let message = e.sentence();
+    match e {
+        OutError::NoConsent(_) => StartError::new(StatusCode::FORBIDDEN, "no_consent", message),
+        OutError::CallsUnavailable => StartError::new(StatusCode::SERVICE_UNAVAILABLE, "calls_unavailable", message),
+        OutError::BadRequest(_) => bad("invalid_target", message),
+        OutError::NotFound(_) => not_connected("sms"),
+        OutError::Failed(_) => StartError::new(StatusCode::BAD_GATEWAY, "channel_rejected", message),
+    }
+}
+
+/// Texts go through the outbound-phone path (`POST /phone/text`'s code): the bot's number, the
+/// cloud's consent gate and STOP list, and the `phone:<number>:<caller>` thread that calls share.
+async fn start_sms<R: ThreadRuntime>(deps: &Deps<'_, R>, owner: &str, bot: &str, t: &Target, text: &str) -> Result<(StatusCode, Value), StartError> {
+    let to = nonempty(&t.phone).or_else(|| nonempty(&t.id)).unwrap_or_default().replace([' ', '-', '(', ')'], "");
+    if !crate::channel_phone::is_e164(&to) {
+        return Err(bad("invalid_target", "Give the number in E.164 form, like +14155550123."));
+    }
+    let n = crate::phone_outbound::pick_number(deps.db, owner, Some(bot), None).map_err(out_error)?;
+    let key = crate::channel_phone::phone_key(&n.e164, &to);
+    let existing = find_binding(deps.db, "sms", &key).is_some_and(|b| b.owner == owner);
+    let (thread_id, message_id) = crate::phone_outbound::text(deps.db, deps.rt, deps.http.clone(), &n, &to, text).await.map_err(out_error)?;
+    let binding = binding_for_thread(deps.db, owner, &thread_id).map(|b| b.id);
+    Ok((StatusCode::OK, json!({ "threadId": thread_id, "conversationId": conversation_id(&key), "bindingId": binding, "provider": "sms", "state": "sent", "remoteId": message_id, "existing": existing })))
 }
 
 fn valid_email(s: &str) -> bool {
@@ -915,11 +927,15 @@ mod tests {
         gets: Mutex<Vec<String>>,
         get_replies: Mutex<Vec<(String, u16, Value)>>,
         form: Mutex<Option<Value>>,
+        posts: Mutex<Vec<HttpReq>>,
+        post_reply: Mutex<Option<(u16, Value)>>,
     }
     #[async_trait]
     impl HttpSend for FakeHttp {
-        async fn post_json(&self, _req: HttpReq) -> Result<HttpResp, String> {
-            Err("unexpected post".into())
+        async fn post_json(&self, req: HttpReq) -> Result<HttpResp, String> {
+            self.posts.lock().unwrap().push(req);
+            let (status, body) = self.post_reply.lock().unwrap().clone().unwrap_or((200, json!({ "messageId": "sms-1", "status": "queued" })));
+            Ok(HttpResp { status, body })
         }
         async fn get_json(&self, url: &str) -> Result<HttpResp, String> {
             self.gets.lock().unwrap().push(url.to_string());
@@ -1197,24 +1213,44 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn sms_texts_from_the_bots_number_and_shares_the_phone_thread() {
+    async fn sms_goes_through_the_outbound_phone_path_and_shares_the_phone_thread() {
         let st = state("sms1").await;
         crate::channel_phone::upsert_number(&st.db, "num-1", "user-a", "bot-1", "+14155550100", Some("acct-sms")).unwrap();
-        account(&st, "acct-sms", "sms", json!({ "numberId": "num-1", "token": "tok" }));
+        account(&st, "acct-sms", "sms", json!({ "numberId": "num-1", "token": "tok", "cloudUrl": "https://cloud.test" }));
         let http = Arc::new(FakeHttp::default());
         let tx = FakeTx::new("sms");
         let mail = FakeMail::new();
         let (_, v) = run_start(&st, &http, &tx, &mail, "phone", body("bot-1", json!({ "kind": "user", "phone": "+1 (415) 555-0199" }), "Running 10 min late")).unwrap();
+        assert_eq!((v["state"].as_str(), v["existing"].clone(), v["conversationId"].as_str()), (Some("sent"), json!(false), Some("+14155550100:+14155550199")));
         let b = binding_for_thread(&st.db, "user-a", v["threadId"].as_str().unwrap()).unwrap();
         assert_eq!(b.conversation, "phone:+14155550100:+14155550199");
-        let out = tx.sent.lock().unwrap()[0].clone();
-        assert_eq!((out.channel.as_str(), out.thread.as_deref()), ("+14155550100", Some("+14155550199")));
+        // The cloud send route got the text; the transport fake wasn't involved (existing outbound path).
+        let posts = http.posts.lock().unwrap();
+        assert_eq!(posts[0].url, "https://cloud.test/api/v1/channels/sms/send");
+        assert_eq!(posts[0].body, json!({ "numberId": "num-1", "to": "+14155550199", "text": "Running 10 min late" }));
+        drop(posts);
+        assert_eq!(tx.count(), 0);
+        assert_eq!(first_outbound(&st, &b.thread_id), ("outbound".into(), "Running 10 min late".into()));
         // A call from the same person later resolves to this thread.
         let (thread, _) = crate::channel_phone::resolve_thread_async(&st.db, &Rt, "num-1", "+14155550199").await.unwrap();
         assert_eq!(thread, b.thread_id);
+        // Texting them again continues it.
+        let (_, again) = run_start(&st, &http, &tx, &mail, "sms", body("bot-1", json!({ "kind": "user", "id": "+14155550199" }), "Here now")).unwrap();
+        assert_eq!((again["threadId"].as_str(), again["existing"].clone()), (Some(b.thread_id.as_str()), json!(true)));
         assert_eq!(err_code(run_start(&st, &http, &tx, &mail, "sms", body("bot-1", json!({ "kind": "user", "phone": "5550199" }), "x"))).1, "invalid_target");
-        tx.answer(Err(PostError::Rejected("cloud returned 403: opted_out".into())));
-        assert_eq!(err_code(run_start(&st, &http, &tx, &mail, "sms", body("bot-1", json!({ "kind": "user", "phone": "+14155550177" }), "x"))).1, "channel_rejected");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sms_to_someone_who_never_contacted_the_number_is_a_no_consent_refusal() {
+        let st = state("sms2").await;
+        crate::channel_phone::upsert_number(&st.db, "num-1", "user-a", "bot-1", "+14155550100", Some("acct-sms")).unwrap();
+        account(&st, "acct-sms", "sms", json!({ "numberId": "num-1", "token": "tok", "cloudUrl": "https://cloud.test" }));
+        let http = Arc::new(FakeHttp::default());
+        *http.post_reply.lock().unwrap() = Some((403, json!({ "error": "no_consent" })));
+        let (tx, mail) = (FakeTx::new("sms"), FakeMail::new());
+        assert_eq!(err_code(run_start(&st, &http, &tx, &mail, "sms", body("bot-1", json!({ "kind": "user", "phone": "+14155550177" }), "hi"))), (403, "no_consent".into()));
+        // A bot with no number of its own.
+        assert_eq!(err_code(run_start(&st, &http, &tx, &mail, "sms", body("bot-9", json!({ "kind": "user", "phone": "+14155550177" }), "hi"))).1, "bot_not_found");
     }
 
     fn email_channel(st: &Arc<AppState>, send_enabled: bool) {

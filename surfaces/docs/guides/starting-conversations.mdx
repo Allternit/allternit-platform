@@ -64,10 +64,10 @@ A refused start never leaves an empty thread when the platform's rule can be che
 | Teams | a conversation id | Needs a stored conversation reference: someone installed or messaged the bot. Proactive sending to anyone else is off on the shared app. | `no_conversation_reference` |
 | WhatsApp (Business) | a phone number | Free-form text only within 24 hours of the person's last message. Template messages are not supported yet. | `outside_24h_window` |
 | WhatsApp (personal number) | a phone number or chat id | Unofficial linked device: no window, but WhatsApp can ban numbers that message people who didn't ask. Only when `ALLTERNIT_WA_PERSONAL=1`. | `whatsapp_personal_disabled` (503) |
-| SMS / phone | an E.164 number | Texts from the bot's number through the cloud send route (`/api/v1/channels/sms/send`); opt-outs (STOP) are enforced there. A text and a later call share one thread. | `invalid_target`, `channel_rejected` |
+| SMS / phone | an E.164 number | Uses the same path as `POST /api/v1/phone/text`: texts from the bot's number through the cloud, which enforces consent (the person must have texted or called first, or be an allowed contact) and the STOP list. A text and a later call share one thread. | `no_consent` (403), `invalid_target`, `not_connected` |
 | Email | an address | Composes a new message from the bot's mailbox through mailflare. The approval gate stays on: the response is `202 pending_approval` with an `approvalThread` you approve from Mail → Needs OK. The thread uses the same key as an inbound reply, so an answer continues it. | `email_send_disabled`, `not_connected` |
 
-Other codes: `unknown_provider` (404), `bot_not_found` (404), `not_connected` (409), `text_required` (400), `invalid_target` (400), `conversation_belongs_to_other_bot` (409), `channel_policy` (403), `read_only` (403), `channel_rejected` (502, the platform said no; the message says why).
+Other codes: `unknown_provider` (404), `bot_not_found` (404), `not_connected` (409), `text_required` (400), `invalid_target` (400), `no_consent` (403), `conversation_belongs_to_other_bot` (409), `channel_policy` (403), `read_only` (403), `channel_rejected` (502, the platform said no; the message says why).
 
 ## Mail threads
 
