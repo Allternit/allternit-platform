@@ -20,6 +20,7 @@ use super::engine::{
     VadEvent, ENGINE_SAMPLE_RATE,
 };
 use super::protocol::EngineKind;
+use super::trim::{trim_silence, word_overlap, PAD_SAMPLES};
 use super::turn::{SmartTurn, SMART_TURN_MODEL_ID};
 use crate::models::{find_file, PackManager, KOKORO_DIR, SMART_TURN_FILE};
 use crate::stt::{SegmentStream, SttEngine, SttModel, VadConfig, VAD_WINDOW_SAMPLES};
@@ -88,6 +89,7 @@ impl EngineFactory for SherpaEngine {
             model,
             stream: self.stt.segment_stream(model).map_err(EngineError::unavailable)?,
             decoded_at: 0,
+            last_interim: None,
         }))
     }
 
@@ -131,7 +133,16 @@ struct SherpaStt {
     stream: SegmentStream,
     /// Samples fed when the last interim was decoded.
     decoded_at: usize,
+    /// Last interim text and the segment length (samples) it was decoded from.
+    last_interim: Option<(String, usize)>,
 }
+
+/// A final below this word overlap with a near-complete interim is re-decoded.
+const MIN_INTERIM_OVERLAP: f32 = 0.8;
+/// The interim must cover this share of the segment to be trusted.
+const INTERIM_TRUST: f32 = 0.9;
+/// Tighter pad for the re-decode.
+const TIGHT_PAD: usize = PAD_SAMPLES / 2;
 
 impl SherpaStt {
     fn samples(&self) -> usize {
@@ -143,6 +154,7 @@ impl StreamingStt for SherpaStt {
     fn begin(&mut self) {
         self.stream.reset();
         self.decoded_at = 0;
+        self.last_interim = None;
     }
 
     fn accept(&mut self, samples: &[f32]) -> Result<Option<String>, EngineError> {
@@ -152,24 +164,49 @@ impl StreamingStt for SherpaStt {
             return Ok(None);
         }
         self.decoded_at = len;
-        Ok(self.stream.partial())
+        let interim = self.stream.partial();
+        if let Some(text) = &interim {
+            self.last_interim = Some((text.clone(), len));
+        }
+        Ok(interim)
     }
 
     fn finish(&mut self) -> Result<String, EngineError> {
         self.decoded_at = 0;
-        if self.stream.duration_secs() == 0.0 {
+        let interim = self.last_interim.take();
+        let total = self.samples();
+        if total == 0 {
+            self.stream.reset();
             return Ok(String::new());
         }
-        let fresh = self
-            .engine
-            .segment_stream(self.model)
-            .map_err(EngineError::failed)?;
-        Ok(std::mem::replace(&mut self.stream, fresh).finish())
+        let audio = self.stream.samples().to_vec();
+        self.stream.reset();
+        let decode = |pad: usize| {
+            self.engine
+                .decode(self.model, trim_silence(&audio, pad))
+                .map_err(EngineError::failed)
+        };
+        let text = decode(PAD_SAMPLES)?;
+        // Guard: a near-complete interim that the final disagrees with means
+        // the final decode went wrong. Re-decode tighter; keep the re-decode
+        // only if it agrees better with the interim (never swap in the
+        // interim text itself).
+        if let Some((interim_text, at)) = interim {
+            let trusted = at as f32 >= INTERIM_TRUST * total as f32;
+            if trusted && word_overlap(&text, &interim_text) < MIN_INTERIM_OVERLAP {
+                let again = decode(TIGHT_PAD)?;
+                if word_overlap(&again, &interim_text) > word_overlap(&text, &interim_text) {
+                    return Ok(again);
+                }
+            }
+        }
+        Ok(text)
     }
 
     fn abort(&mut self) {
         self.stream.reset();
         self.decoded_at = 0;
+        self.last_interim = None;
     }
 }
 

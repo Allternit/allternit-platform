@@ -407,6 +407,11 @@ impl SegmentStream {
         self.samples.len() as f32 / SAMPLE_RATE as f32
     }
 
+    /// The audio fed so far.
+    pub fn samples(&self) -> &[f32] {
+        &self.samples
+    }
+
     /// Drop the audio and start a new utterance.
     pub fn reset(&mut self) {
         self.samples.clear();

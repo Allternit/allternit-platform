@@ -4,6 +4,7 @@
 //! - [`core`]: the transport-agnostic state machine ([`VoiceSession`]).
 //! - [`ws`]: the `GET /v1/voice/session` WebSocket route.
 //! - [`engine`]: the traits an engine implements; `engine_sherpa` is the sherpa-onnx engine, [`mock`] the scripted test engine.
+//! - [`trim`]: trailing/leading silence trim for the final decode.
 //! - [`turn`]: Smart Turn v3.2 (features + ONNX session).
 
 pub mod core;
@@ -13,6 +14,7 @@ pub mod mock;
 pub mod protocol;
 pub mod resample;
 pub mod sentence;
+pub mod trim;
 pub mod turn;
 pub mod ws;
 

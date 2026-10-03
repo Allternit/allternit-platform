@@ -45,8 +45,9 @@ pub const TURN_THRESHOLD: f32 = 0.5;
 pub const DEFAULT_SILENCE_MS_VAD: u32 = 700;
 pub const DEFAULT_SILENCE_MS_SMART: u32 = 1500;
 /// Mic audio before the VAD's speech start that is still sent to STT
-/// (Silero fires a little after the first phoneme).
-const PRE_ROLL_MS: usize = 300;
+/// (Silero fires 0.2-0.4 s after speech onset; 300 ms clipped the first word.
+/// The final decode trims the excess silence, see `trim`).
+const PRE_ROLL_MS: usize = 600;
 const MAX_REMEMBERED_IDS: usize = 256;
 
 /// Settings that are not part of the wire protocol (the transport decides).
