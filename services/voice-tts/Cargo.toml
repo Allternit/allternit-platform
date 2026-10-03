@@ -8,6 +8,7 @@ edition = "2021"
 license = "GPL-3.0-or-later"
 description = "Kokoro text-to-speech child process for the Allternit voice service (GPL-3.0-or-later)"
 publish = false
+repository = "https://github.com/Gizziio/allternit-tts"
 
 [[bin]]
 name = "allternit-tts"
