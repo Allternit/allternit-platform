@@ -29,6 +29,7 @@ use super::brain::RelayBrain;
 use super::call::{self, CallContext, CallDeps, HumanCoreFactory, RoomCommand, RoomInput, WarmTransfer, DEFAULT_TURN_TIMEOUT};
 use super::consult::{ConsultBus, EgressRecorder, LiveKitAccess, SipConsult};
 use super::hold_music::HoldMusic;
+use super::transfer::ConsultDriver;
 use super::recording::{Recorder, Recording, RecordingEnv, START_TIMEOUT};
 use super::cloud_client::{CloudClient, Direction, StartCallRequest};
 use super::config::{agent_ws_url, http_base, ws_base, WorkerConfig};
@@ -241,7 +242,7 @@ async fn handle_job(cfg: WorkerConfig, cloud: CloudClient, job: JobInfo, cancel:
                     outbound_trunk: Some(trunk),
                     ring_timeout: cfg.transfer_ring_timeout,
                     accept_timeout: cfg.transfer_accept_timeout,
-                    launch: Arc::new(move |to, consent| {
+                    launch: Arc::new(move |to: &str, consent: &str| -> Arc<dyn ConsultDriver> {
                         Arc::new(SipConsult::new(
                             lk.clone(),
                             launch_trunk.clone(),
