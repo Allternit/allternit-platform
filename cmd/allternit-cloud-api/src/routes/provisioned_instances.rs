@@ -872,7 +872,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_is_subscription_gated() {
-        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
         let pool = test_pool().await;
         insert_host(&pool, "host_a").await;
@@ -953,7 +953,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_without_fleet_capacity_is_a_clean_503() {
-        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
         let pool = test_pool().await;
         insert_subscription(&pool, "sub_ok", DEV_USER, "active").await;
@@ -975,7 +975,7 @@ mod tests {
 
     #[tokio::test]
     async fn wake_endpoint_answers_202_with_the_poll_contract() {
-        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
         let pool = test_pool().await;
         insert_host(&pool, "host_a").await;
@@ -1026,7 +1026,7 @@ mod tests {
 
     #[tokio::test]
     async fn lifecycle_status_usage_and_ownership_are_owner_scoped() {
-        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
         let pool = test_pool().await;
         insert_host(&pool, "host_a").await;
@@ -1203,7 +1203,7 @@ mod tests {
 
     #[tokio::test]
     async fn host_routes_are_admin_only() {
-        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
         let pool = test_pool().await;
         let state = test_state(pool, Arc::new(MockBackend::default())).await;

@@ -410,6 +410,7 @@ async fn status_h(
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PairedBody {
     pair_nonce: String,
 }
