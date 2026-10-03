@@ -209,6 +209,7 @@
 		9FC9731FA3314FB5FF3050E8 /* BrainTemplates.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7640CFD6314328B32B5E74B /* BrainTemplates.swift */; };
 		9FED2141772D7016D1172DD7 /* ConnectorsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2799419D39E60F569C3CAC31 /* ConnectorsListView.swift */; };
 		A04A4796644F30C94952A26A /* VoiceModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D55AE23DF47255312BD3B49 /* VoiceModeView.swift */; };
+		A06384AC4D74A5073384FC5A /* VoiceSessionProtocolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE0D69148A6704E388F4890 /* VoiceSessionProtocolTests.swift */; };
 		A076803F5886FF12CF36A054 /* BrowserChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15E60D739E1ED3BAF445214F /* BrowserChatView.swift */; };
 		A090D4B8B38519F6EDE6E4A7 /* BotBrainPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA43476B92F337EA35B155C9 /* BotBrainPickerSheet.swift */; };
 		A0E902A0BCA9A816AB835DAE /* RFBProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87F3B251D17F9A362A634A44 /* RFBProtocol.swift */; };
@@ -477,6 +478,7 @@
 		59F0F883C961CE5C29AD0B21 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		5B0065E7EBFC9CF076C7C77C /* AttachmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentStore.swift; sourceTree = "<group>"; };
 		5B425580E480D60109FCC8F9 /* CodeLanguage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeLanguage.swift; sourceTree = "<group>"; };
+		5BE0D69148A6704E388F4890 /* VoiceSessionProtocolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSessionProtocolTests.swift; sourceTree = "<group>"; };
 		5D1BB41C9486743599A146A5 /* ChatErrorCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatErrorCardView.swift; sourceTree = "<group>"; };
 		6073B8B9BAD568B603F34A49 /* SherpaOnnxC.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = SherpaOnnxC.xcframework; path = Frameworks/SherpaOnnxC.xcframework; sourceTree = "<group>"; };
 		6095FF2DECF5CAC8781DB099 /* RoutineStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoutineStore.swift; sourceTree = "<group>"; };
@@ -1015,6 +1017,7 @@
 			isa = PBXGroup;
 			children = (
 				4D3988B903632B3ADBE8074A /* LiveActivityManagerTests.swift */,
+				5BE0D69148A6704E388F4890 /* VoiceSessionProtocolTests.swift */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -1627,6 +1630,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D3F8D1E73F813E13DAAFF1D2 /* LiveActivityManagerTests.swift in Sources */,
+				A06384AC4D74A5073384FC5A /* VoiceSessionProtocolTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
