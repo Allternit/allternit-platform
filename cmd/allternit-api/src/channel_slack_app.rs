@@ -505,7 +505,7 @@ async fn slack_connect_h(
     };
     // Tell the cloud which runtime delivers this team's events, when the
     // caller (Desktop wizard) knows its runtime device id.
-    if let (Some(runtime_id), Some(auth)) = (body.runtime_id.as_deref(), headers.get("authorization").and_then(|v| v.to_str().ok())) {
+    if let (Some(runtime_id), Some(auth)) = (body.runtime_id.clone(), headers.get("authorization").and_then(|v| v.to_str().ok()).map(str::to_string)) {
         let base = base.clone();
         let team_id2 = team_id.clone();
         tokio::spawn(async move {

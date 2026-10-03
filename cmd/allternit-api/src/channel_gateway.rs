@@ -611,8 +611,7 @@ pub fn telegram_managed_public_router() -> Router<Arc<AppState>> {
 // ---------------------------------------------------------------- messaging connectors
 
 /// Platforms connected once and switched on per bot (Slack uses the Allternit Slack app).
-const MESSAGING: [&str; 5] = ["telegram", "discord", "whatsapp", "teams", "whatsapp-personal"];
-const MESSAGING: [&str; 5] = ["slack", "telegram", "discord", "whatsapp", "teams"];
+const MESSAGING: [&str; 6] = ["slack", "telegram", "discord", "whatsapp", "teams", "whatsapp-personal"];
 
 fn api_err(status: StatusCode, msg: impl Into<String>) -> Response {
     (status, Json(json!({ "error": msg.into() }))).into_response()
