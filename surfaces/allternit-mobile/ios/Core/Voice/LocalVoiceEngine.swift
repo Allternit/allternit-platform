@@ -230,15 +230,15 @@ final class LocalVoiceEngine: VoiceTransport, @unchecked Sendable {
 
     private func runWorker(epoch myEpoch: Int) async {
         while true {
-            speakLock.lock()
-            guard epoch == myEpoch, !speakQueue.isEmpty else {
-                // A newer epoch owns the worker flag (cancel restarts it).
-                if epoch == myEpoch { workerRunning = false }
-                speakLock.unlock()
-                return
+            let next: SpeakItem? = speakLock.withLock {
+                guard epoch == myEpoch, !speakQueue.isEmpty else {
+                    // A newer epoch owns the worker flag (cancel restarts it).
+                    if epoch == myEpoch { workerRunning = false }
+                    return nil
+                }
+                return speakQueue.removeFirst()
             }
-            let item = speakQueue.removeFirst()
-            speakLock.unlock()
+            guard let item = next else { return }
 
             switch item {
             case .sentence(let id, let text):

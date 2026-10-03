@@ -450,4 +450,6 @@ extension Notification.Name {
     /// Posted by bulk data-control operations (archive/delete all chats) so
     /// the history sidebar refreshes instead of showing stale rows.
     static let historyMutated = Notification.Name("com.allternit.historyMutated")
+    /// Posted by Bot Home to open a chat session (userInfo: sessionId, agentId).
+    static let openChatSession = Notification.Name("com.allternit.openChatSession")
 }

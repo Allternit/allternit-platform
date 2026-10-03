@@ -145,10 +145,7 @@ enum Bz2Tar {
         var finished = false
         while !finished {
             guard let chunk = try input.read(upToCount: 1 << 16), !chunk.isEmpty else { break }
-            var inBytes = [CChar](repeating: 0, count: chunk.count)
-            chunk.withUnsafeBytes { raw in
-                for index in 0..<chunk.count { inBytes[index] = CChar(bitPattern: raw[index]) }
-            }
+            var inBytes = chunk.map { CChar(bitPattern: $0) }
             try inBytes.withUnsafeMutableBufferPointer { inPtr in
                 stream.next_in = inPtr.baseAddress
                 stream.avail_in = UInt32(inPtr.count)

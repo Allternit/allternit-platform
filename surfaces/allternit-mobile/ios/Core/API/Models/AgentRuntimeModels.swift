@@ -1,35 +1,5 @@
 import Foundation
 
-// MARK: - Bot Profile
-
-struct BotProfile: Decodable, Sendable, Equatable {
-    let displayName: String?
-    let tagline: String?
-    let botCategory: String?
-    let welcomeMessage: String?
-    let starterPrompts: [String]
-    let accentColor: String?
-
-    enum CodingKeys: String, CodingKey {
-        case displayName = "display_name"
-        case tagline
-        case botCategory = "bot_category"
-        case welcomeMessage = "welcome_message"
-        case starterPrompts = "starter_prompts"
-        case accentColor = "accent_color"
-    }
-
-    init(displayName: String? = nil, tagline: String? = nil, botCategory: String? = nil,
-         welcomeMessage: String? = nil, starterPrompts: [String] = [], accentColor: String? = nil) {
-        self.displayName = displayName
-        self.tagline = tagline
-        self.botCategory = botCategory
-        self.welcomeMessage = welcomeMessage
-        self.starterPrompts = starterPrompts
-        self.accentColor = accentColor
-    }
-}
-
 // MARK: - Connector Binding
 
 struct ConnectorBinding: Decodable, Sendable, Identifiable, Equatable {

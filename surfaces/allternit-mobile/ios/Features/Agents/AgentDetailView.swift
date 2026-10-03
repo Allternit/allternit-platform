@@ -942,7 +942,7 @@ struct AgentDetailView: View {
 /// System-prompt editor sheet (Identity section) — a plain TextEditor whose
 /// Save PUTs `system_prompt` through the hub store (which re-fetches the
 /// row so the detail reflects the saved value).
-private struct SystemPromptEditorSheet: View {
+struct SystemPromptEditorSheet: View {
     let agentId: String
     let initialPrompt: String
 
@@ -1020,7 +1020,7 @@ private struct SystemPromptEditorSheet: View {
 /// schema). Save sends the FULL merged config
 /// (`AgentRecord.configReplacing`) since the backend replaces `config`
 /// wholesale rather than merging it.
-private struct GreetingEditorSheet: View {
+struct GreetingEditorSheet: View {
     let agent: AgentRecord
 
     @StateObject private var hubStore = AgentHubStore.shared
@@ -1132,7 +1132,7 @@ private struct GreetingEditorSheet: View {
 /// glyph of your own, or Reset to the deterministic default. Save PUTs
 /// through the hub store, which re-fetches the row so every surface (hub,
 /// deck sheet, detail hero) repaints.
-private struct AgentAvatarEditorSheet: View {
+struct AgentAvatarEditorSheet: View {
     let agent: AgentRecord
 
     @StateObject private var hubStore = AgentHubStore.shared

@@ -54,7 +54,7 @@ final class NodeDirectory: ObservableObject {
     /// Fetches the local peer identity from the resolved connection target.
     func localPeer() async -> NodeIdentity? {
         guard await refreshNeeded() else { return nil }
-        try? await client?.fetchLocalPeer()
+        return (try? await client?.fetchLocalPeer()) ?? nil
     }
 
     /// Peer matching `nodeId`, nil if not currently known.

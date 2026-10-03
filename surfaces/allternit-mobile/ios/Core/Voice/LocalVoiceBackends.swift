@@ -52,6 +52,15 @@ final class SherpaMoonshineRecognizer: LocalRecognizer {
 /// Voice only. Audio is captured with `write(_:toBufferCallback:)` and played
 /// through the session's own engine so the OS echo canceller hears it
 /// (barge-in works on the speaker).
+/// Per-utterance state handed to AVSpeechSynthesizer's callback queue; only
+/// that callback touches `converter` after construction.
+private final class SynthState: @unchecked Sendable {
+    let utterance: AVSpeechUtterance
+    let target: AVAudioFormat
+    var converter: AVAudioConverter?
+    init(utterance: AVSpeechUtterance, target: AVAudioFormat) { self.utterance = utterance; self.target = target }
+}
+
 final class SystemSpeechSynthesizer: LocalSynthesizer, @unchecked Sendable {
     let outputSampleRate = 24_000
     private let synthesizer = AVSpeechSynthesizer()
@@ -60,28 +69,29 @@ final class SystemSpeechSynthesizer: LocalSynthesizer, @unchecked Sendable {
     private var resume: CheckedContinuation<Void, Never>?
 
     func synthesize(_ text: String, voice: String?, onChunk: @escaping @Sendable (Data) -> Void) async {
-        lock.lock(); cancelled = false; lock.unlock()
+        lock.withLock { cancelled = false }
         let utterance = AVSpeechUtterance(string: text)
         if let voice, let v = AVSpeechSynthesisVoice(identifier: voice) { utterance.voice = v }
         else { utterance.voice = AVSpeechSynthesisVoice(language: Locale.current.identifier) ?? AVSpeechSynthesisVoice(language: "en-US") }
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         let target = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Double(outputSampleRate),
                                    channels: 1, interleaved: false)!
-        nonisolated(unsafe) var converter: AVAudioConverter?
+        let state = SynthState(utterance: utterance, target: target)
 
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             lock.lock(); resume = continuation; lock.unlock()
             DispatchQueue.main.async { [self] in
-                synthesizer.write(utterance) { [weak self] buffer in
+                synthesizer.write(state.utterance) { [weak self] buffer in
                     guard let self, let pcm = buffer as? AVAudioPCMBuffer else { return }
                     // An empty buffer marks the end of the utterance.
                     if pcm.frameLength == 0 { self.complete(); return }
                     self.lock.lock(); let stop = self.cancelled; self.lock.unlock()
                     if stop { return }
-                    if converter == nil || converter?.inputFormat != pcm.format {
-                        converter = AVAudioConverter(from: pcm.format, to: target)
+                    if state.converter == nil || state.converter?.inputFormat != pcm.format {
+                        state.converter = AVAudioConverter(from: pcm.format, to: state.target)
                     }
-                    guard let converter else { return }
+                    guard let converter = state.converter else { return }
+                    let target = state.target
                     let capacity = AVAudioFrameCount(Double(pcm.frameLength) * target.sampleRate / pcm.format.sampleRate) + 16
                     guard let out = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return }
                     nonisolated(unsafe) var supplied = false

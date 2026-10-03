@@ -132,7 +132,7 @@ struct AgentRecord: Decodable, Sendable, Identifiable, Equatable, Hashable {
     }
 
     var botDisplayName: String {
-        botProfile?.displayName?.isEmpty == false ? botProfile!.displayName! : name
+        botProfile?.displayName.isEmpty == false ? botProfile!.displayName : name
     }
 
     var botTagline: String {
@@ -343,7 +343,6 @@ struct AgentRecord: Decodable, Sendable, Identifiable, Equatable, Hashable {
             botProfile: BotProfile(
                 displayName: "OpenMausBot",
                 tagline: "Autonomous execution, one tap away.",
-                botCategory: "assistant",
                 welcomeMessage: "Hello! I'm OpenMausBot. Pick a starter prompt or run a task.",
                 starterPrompts: [
                     "Summarize my latest run",

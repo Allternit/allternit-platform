@@ -36,7 +36,7 @@ final class WebSocketVoiceTransport: NSObject, VoiceTransport, @unchecked Sendab
 
     func connect(onEvent: @escaping @Sendable (VoiceTransportEvent) -> Void) async throws {
         let task = session.webSocketTask(with: url)
-        lock.lock(); self.task = task; closedByUs = false; lock.unlock()
+        lock.withLock { self.task = task; closedByUs = false }
         task.resume()
         receiveLoop(task: task, onEvent: onEvent)
     }

@@ -98,9 +98,10 @@ final class VoicePackManager: ObservableObject {
             state = .downloading(progress: 0)
             let root = self.root
             downloadTask = Task { [weak self] in
+                let weakSelf = self
                 do {
                     try await Self.download(into: root) { progress in
-                        Task { @MainActor [weak self] in self?.state = .downloading(progress: progress) }
+                        Task { @MainActor in weakSelf?.state = .downloading(progress: progress) }
                     }
                     self?.state = .ready
                 } catch is CancellationError {
