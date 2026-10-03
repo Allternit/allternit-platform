@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Start the Rust voice sidecar (whisper.cpp STT) on PORT (default 8001).
+# Start the Rust voice sidecar (sherpa-onnx STT + TTS) on PORT (default 8001).
+# Model packs download on first use into ~/.allternit/models/voice/.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"

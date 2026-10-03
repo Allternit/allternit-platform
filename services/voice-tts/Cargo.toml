@@ -1,0 +1,19 @@
+[package]
+name = "allternit-tts"
+version = "0.1.0"
+edition = "2021"
+# This program links espeak-ng (GPL-3.0-or-later) through sherpa-onnx's
+# Kokoro frontend, so it is GPL-3.0-or-later. It is a separate program that
+# allternit-voice-service runs as a child process; see README.md.
+license = "GPL-3.0-or-later"
+description = "Kokoro text-to-speech child process for the Allternit voice service (GPL-3.0-or-later)"
+publish = false
+
+[[bin]]
+name = "allternit-tts"
+path = "src/main.rs"
+
+[dependencies]
+sherpa-onnx = "1.13"
+serde = { workspace = true }
+serde_json = { workspace = true }

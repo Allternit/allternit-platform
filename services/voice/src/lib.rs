@@ -1,11 +1,17 @@
-pub mod client;
-pub mod server;
-pub mod types;
-pub mod whisper;
+//! Allternit voice service: local STT + TTS on sherpa-onnx.
+//!
+//! - [`models`]: model packs (first-use download, pinned sha256).
+//! - [`stt`]: Silero VAD + Moonshine / Parakeet recognisers.
+//! - [`tts`]: Kokoro TTS and sentence splitting.
+//! - [`audio`]: WAV/G.711 decoding, resampling, WAV encoding.
+//! - [`server`]: the HTTP API (`spec/API.md`).
 
-pub use client::VoiceClient;
-pub use server::{VoiceServiceState, create_router};
-pub use types::{
-    HealthResponse, ModelsResponse, TTSRequest, TTSResponse, UploadResponse, VCRequest, VCResponse,
-};
-pub use whisper::{WhisperEngine, ensure_wav, pcm16le_to_wav};
+pub mod audio;
+pub mod call_worker;
+pub mod models;
+pub mod server;
+pub mod session;
+pub mod stt;
+pub mod tts;
+
+pub use server::{create_router, VoiceServiceState};

@@ -12,8 +12,8 @@ Log evidence lives in `~/Library/Application Support/@allternit/desktop/main.log
 ## 1. Voice service binary crashes at startup — **replaced**
 
 - **Was:** The pyinstaller-bundled `allternit-voice-service` crashed on import (`pyexpat` built for macOS 26.0, host 23.6); Voice Mode unavailable.
-- **Now:** Desktop spawns the Rust `voice-service` sidecar, which shells out to `whisper-cli` (whisper.cpp, MIT) for local STT. Python/pyinstaller is no longer the primary path. Gizzi Code and the desktop composer expose `/voice` (Ctrl+Space / F8 hold-to-talk). The ggml-tiny.en model downloads on first use into `~/.allternit/models/whisper/` (not git-vendored).
-- **Remaining:** TTS/Chatterbox is out of scope. First-run needs network once to fetch `ggml-tiny.en.bin` unless the model is already on disk.
+- **Now:** Desktop spawns the Rust `voice-service` sidecar, which runs STT (Moonshine/Parakeet via sherpa-onnx) and TTS (Kokoro) in-process. Python/pyinstaller and whisper.cpp are gone. Gizzi Code and the desktop composer expose `/voice` (Ctrl+Space / F8 hold-to-talk). Voice model packs download on first use into `~/.allternit/models/voice/` (not git-vendored).
+- **Remaining:** First-run needs network once to fetch the `small` pack (~39 MB: Silero VAD + Moonshine tiny + Smart Turn) for dictation and the `tts` pack (~350 MB, Kokoro v1.0) on first read-aloud; previously: (Silero VAD + Moonshine tiny + Kokoro int8) unless already on disk. The `accurate` pack (Parakeet, ~487 MB) downloads on first accurate-STT request.
 
 ## 2. ACU computer-use gateway exits immediately — **FIXED (2026-09-19 audit)**
 

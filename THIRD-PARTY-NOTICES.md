@@ -233,3 +233,27 @@ The following were written from scratch for this product:
 - `domains/cowork/connectors/notion/`
 - All platform API routes under `surfaces/allternit-platform/src/app/api/v1/cowork/`
 - `platform/packages/cowork-engine/src/memory/service.ts`
+
+---
+
+## Allternit voice (services/voice, services/voice-tts)
+
+**allternit-voice-service** (speech-to-text and the voice HTTP API) links
+[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache-2.0) and
+onnxruntime (MIT) statically. It contains no GPL code; this is checked at
+build time by `scripts/check-voice-no-gpl.sh`.
+
+**allternit-tts** (text-to-speech, a separate program that
+allternit-voice-service starts as a child process) is licensed
+**GPL-3.0-or-later**, because it links
+[espeak-ng](https://github.com/espeak-ng/espeak-ng) (GPL-3.0-or-later)
+through sherpa-onnx's Kokoro frontend. The full licence text ships as
+`licenses/allternit-tts-GPL-3.0.txt`. Its complete corresponding source is
+`services/voice-tts/` in the Allternit platform repository, built against
+sherpa-onnx 1.13.8 (https://github.com/k2-fsa/sherpa-onnx/releases/tag/v1.13.8,
+which carries the espeak-ng and piper-phonemize sources it builds).
+
+Voice models download on first use and are not part of the installer:
+Silero VAD (MIT), Moonshine (MIT), Smart Turn v3.2 (BSD-2-Clause),
+Kokoro-82M (Apache-2.0) and, optionally, Parakeet TDT 0.6B v3 by NVIDIA
+(CC-BY-4.0). Full list: `services/voice/THIRD_PARTY_NOTICES.md`.

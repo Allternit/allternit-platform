@@ -5,7 +5,14 @@ description: 'Text-to-speech, speech-to-text, and voice session management for t
 
 ## Overview
 
-The Voice API provides text-to-speech (TTS), speech-to-text (STT), voice session management, and service introspection. The Rust voice service (`services/voice`) listens on port `8001` (override with the `PORT` environment variable). Speech-to-text runs on a local whisper.cpp CLI and ggml model. Text-to-speech does not synthesize audio in this build: `POST /v1/tts` returns a `/v1/audio/<id>.wav` URL, but no `/v1/audio/*` route is registered. `POST /v1/stt/stream` returns a `websocket_url` (`/v1/stt/ws/<id>`) for which no route is registered. There is no Python voice wrapper in the repository. Implementation IMPLEMENTED for STT and sessions, DESIGN - NOT YET IMPLEMENTED for TTS audio and streaming; Exposure INTERNAL.
+The Voice API provides text-to-speech (TTS), speech-to-text (STT), voice session management, and service introspection. The Rust voice service (`services/voice`) listens on port `8001` (override with the `PORT` environment variable). Both STT and TTS are real and run on [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) inside the binary:
+
+- **STT:** Silero VAD segments the audio, then Moonshine tiny (default) or Parakeet TDT 0.6B v3 (accurate) transcribes each segment. Any sample rate is accepted and resampled to 16 kHz; 8 kHz phone audio (including G.711 μ-law WAV) works.
+- **TTS:** Kokoro-82M v1.0 (fp32), 28 English voices (default `af_heart`), 24 kHz output. Kokoro runs in `allternit-tts`, a separate GPL-3.0 program the service starts as a child process.
+- **Models download on first use** into `~/.allternit/models/voice/<pack>/` (sha256-verified). The `small` pack (~39 MB: VAD + Moonshine + Smart Turn) downloads on first speech-to-text use, the `tts` pack (~350 MB: Kokoro v1.0) on first text-to-speech use; the `accurate` pack (~487 MB, Parakeet, CC-BY-4.0) downloads on first accurate-STT request. Poll `GET /v1/models` for `missing | downloading | ready | error` state. Override the download base with `ALLTERNIT_VOICE_MODEL_BASE`.
+- Inference uses `ALLTERNIT_VOICE_THREADS` threads (default **2**), CPU provider, one model at a time, so voice stays light on a 4-core laptop.
+
+Licences and attributions: `services/voice/THIRD_PARTY_NOTICES.md` (sherpa-onnx Apache-2.0; Moonshine MIT; Kokoro Apache-2.0; Silero VAD MIT; Smart Turn BSD-2-Clause; Parakeet CC-BY-4.0, attribution required; onnxruntime MIT). The voice service contains no GPL code; `allternit-tts` is GPL-3.0-or-later because it links espeak-ng (`services/voice-tts/LICENSE`).
 
 ## Base URL
 
@@ -13,7 +20,7 @@ The Voice API provides text-to-speech (TTS), speech-to-text (STT), voice session
 http://localhost:8001
 ```
 
-The voice service binds to `0.0.0.0:8001` by default. When deployed behind the Allternit gateway, it may be exposed under a platform path; consult your deployment's routing table.
+The voice service binds to `127.0.0.1:8001` by default. When deployed behind the Allternit gateway, it may be exposed under a platform path; consult your deployment's routing table.
 
 ## Authentication
 
@@ -36,20 +43,32 @@ const endpoint = await window.allternit.voice.getSessionEndpoint();
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | string | Voice preset identifier. |
+| `id` | string | Kokoro voice id (`af`, `af_bella`, `am_michael`, `bm_george`, …). |
 | `name` | string | Human-readable name. |
-| `language` | string | Language code. |
+| `language` | string | Language code (`en-US`, `en-GB`). |
 | `gender` | string | Gender tag. |
-| `sample_rate` | integer | Output sample rate in Hz. |
+| `sample_rate` | integer | Output sample rate in Hz (24000). |
+| `label` | string | Same as `name`. |
+| `engine` | string | `kokoro`. |
+| `assetReady` | boolean | `true` once the `small` pack is installed. |
 
 ### SttModel
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | string | Model identifier. |
+| `id` | string | `moonshine-tiny-en` or `parakeet-tdt-0.6b-v3-int8`. |
 | `name` | string | Human-readable name. |
 | `language` | string | Supported language. |
 | `supports_streaming` | boolean | Whether streaming is supported. |
+
+### PackStatus
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | `small` or `accurate`. |
+| `state` | string | `missing`, `downloading`, `ready`, or `error`. |
+| `pct` | number | Progress 0–1 across the whole pack while downloading. |
+| `error` | string | Error message when `state` is `error`. |
 
 ### VoiceSession
 
@@ -65,15 +84,17 @@ const endpoint = await window.allternit.voice.getSessionEndpoint();
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/health` | Service liveness. |
+| `GET` | `/health` | Service liveness, engine readiness, pack states. |
 | `GET` | `/v1/health` | Versioned service liveness. |
-| `GET` | `/v1/voices` | List TTS voices. |
+| `GET` | `/v1/models` | Model pack download states. |
+| `POST` | `/v1/models/:pack` | Start a pack download in the background. |
+| `GET` | `/v1/voices` | List installed TTS voices. |
 | `GET` | `/v1/voices/:id` | Get a specific voice. |
 | `GET` | `/v1/stt/models` | List STT models. |
-| `POST` | `/v1/tts` | Convert text to speech. |
-| `POST` | `/v1/tts/stream` | Streaming TTS. |
-| `POST` | `/v1/stt` | Transcribe audio (multipart). |
-| `POST` | `/v1/stt/stream` | Streaming STT WebSocket URL. |
+| `POST` | `/v1/tts` | Synthesise speech → audio bytes. |
+| `POST` | `/v1/tts/stream` | Streaming TTS (NDJSON, per-sentence audio). |
+| `POST` | `/v1/stt` | Transcribe audio (multipart, any sample rate). |
+| `POST` | `/v1/stt/stream` | Streaming STT (NDJSON, chunked PCM in). |
 | `GET` | `/v1/sessions` | List active sessions. |
 | `POST` | `/v1/sessions` | Create a session. |
 | `GET` | `/v1/sessions/:id` | Get a session. |
@@ -95,9 +116,15 @@ GET /v1/health
   "version": "0.1.0",
   "timestamp": 1754541600000,
   "features": ["tts", "stt", "streaming"],
-  "engine": "whisper.cpp",
-  "cli_ok": true,
-  "model_ok": true
+  "engine": "sherpa-onnx",
+  "stt_ready": true,
+  "stt_accurate_ready": false,
+  "tts_ready": true,
+  "num_threads": 2,
+  "packs": [
+    { "name": "small", "state": "ready", "pct": null, "error": null, "size_bytes": 203032121 },
+    { "name": "accurate", "state": "missing", "pct": null, "error": null, "size_bytes": null }
+  ]
 }
 ```
 
@@ -112,18 +139,24 @@ GET /v1/voices
 ```json
 [
   {
-    "id": "default",
-    "name": "Default Voice",
-    "language": "en",
-    "gender": "neutral",
-    "sample_rate": 24000
-  },
-  {
-    "id": "en-us-female",
-    "name": "US English Female",
+    "id": "af_heart",
+    "name": "Heart",
     "language": "en-US",
     "gender": "female",
-    "sample_rate": 24000
+    "sample_rate": 24000,
+    "label": "Heart",
+    "engine": "kokoro",
+    "assetReady": true
+  },
+  {
+    "id": "bm_george",
+    "name": "George",
+    "language": "en-GB",
+    "gender": "male",
+    "sample_rate": 24000,
+    "label": "George",
+    "engine": "kokoro",
+    "assetReady": true
   }
 ]
 ```
@@ -134,36 +167,62 @@ GET /v1/voices
 POST /v1/tts
 ```
 
+Synthesises speech and returns audio bytes (`audio/wav` by default; pass
+`format: "pcm16"` for raw s16le mono 24 kHz). The first request downloads
+the `small` pack if it is not on disk yet.
+
 ### Request body
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `text` | string | Yes | Text to synthesize. |
-| `voice_id` | string | No | Voice preset; defaults to `default`. |
-| `language` | string | No | Language hint. |
-| `speed` | number | No | Speech speed multiplier. |
+| `voice` | string | No | Kokoro voice id; default `af_heart`. Alias `voice_id` accepted. |
+| `language` | string | No | Language hint (reserved). |
+| `speed` | number | No | Speech speed multiplier (default 1.0). |
+| `format` | string | No | `wav` (default) or `pcm16`. |
 
 ### Example request
 
 ```bash
 curl -X POST http://localhost:8001/v1/tts \
   -H "Content-Type: application/json" \
-  -d '{
-    "text": "Hello from Allternit",
-    "voice_id": "en-us-female"
-  }'
+  -d '{"text": "Hello from Allternit", "voice": "af_heart"}' \
+  --output hello.wav
 ```
 
-### Example response
+### Response
 
-```json
-{
-  "audio_url": "/v1/audio/550e8400.wav",
-  "duration_secs": 1.6,
-  "sample_rate": 24000,
-  "format": "wav"
-}
+`200 OK`: `audio/wav` bytes (or raw pcm16 with `format: "pcm16"`) with
+`X-Duration-Seconds`, `X-Sample-Rate`, and `X-Format` headers. `400` for
+empty text, an unknown voice or an unsupported format; `503` if the model
+could not be downloaded or loaded. Errors are JSON: `{ "error": "..." }`.
+
+## Streaming text-to-speech
+
+```http
+POST /v1/tts/stream
 ```
+
+Streaming TTS: the text is split into sentences, the first one cut at its
+first clause (or about halfway) so the first audio is short, and each piece
+is emitted as soon as it is synthesised, so playback starts before the
+whole text is done.
+
+### Response
+
+`200 OK` — `application/x-ndjson` stream:
+
+```jsonl
+{"type":"audio","index":0,"text":"Hello there.","sample_rate":24000,"format":"pcm16","audio_b64":"<s16le base64>"}
+{"type":"audio","index":1,"text":"How can I help?","sample_rate":24000,"format":"pcm16","audio_b64":"<s16le base64>"}
+{"type":"done","duration_secs":4.32}
+```
+
+A failure mid-stream sends `{"type":"error","error":"..."}` and ends the
+stream.
+
+Decode each `audio_b64` to raw s16le mono PCM at `sample_rate`; concatenating
+all chunks yields the full utterance.
 
 ## Speech-to-text
 
@@ -171,14 +230,19 @@ curl -X POST http://localhost:8001/v1/tts \
 POST /v1/stt
 ```
 
-Transcribes uploaded audio passed as multipart form data.
+Transcribes uploaded audio passed as multipart form data. Accepts WAV
+(PCM 8/16/24/32-bit, float32, G.711 μ-law/A-law; any sample rate; mono or
+stereo) or raw 16 kHz s16le PCM. Audio is resampled to 16 kHz and segmented
+by Silero VAD; each segment is transcribed with the selected model.
 
 ### Request body (multipart)
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `audio` | bytes | Yes | Raw audio bytes. |
-| `language` | string | No | Language hint. |
+| `audio` | bytes | Yes | Audio bytes (`.wav` or raw pcm16). |
+| `language` | string | No | Language hint (echoed back). |
+| `model` | string | No | `moonshine` (default) or `parakeet` (accurate pack). |
+| `sample_rate` | integer | No | Only for raw PCM without a WAV header; default 16000. |
 
 ### Example request
 
@@ -192,19 +256,82 @@ curl -X POST http://localhost:8001/v1/stt \
 
 ```json
 {
-  "text": "This is a simulated transcription result from the voice service.",
-  "confidence": 0.95,
+  "text": "hello world",
+  "confidence": 0.9,
   "language": "en",
   "segments": [
     {
       "start_time": 0.0,
-      "end_time": 2.1,
-      "text": "Simulated transcription",
-      "confidence": 0.95
+      "end_time": 1.4,
+      "text": "hello world",
+      "confidence": 0.9
     }
   ]
 }
 ```
+
+`segments` carry VAD-derived timestamps. `confidence` is a heuristic —
+the offline recognisers do not emit per-word confidence.
+
+### First use: voice pack downloading
+
+If the model pack is not on disk yet, the request starts the download and
+returns `503` right away (with a `Retry-After: 5` header) instead of hanging:
+
+```json
+{
+  "error": "Downloading the voice pack (39 MB)… try again in a moment.",
+  "code": "voice_pack_downloading",
+  "pack": "small",
+  "pct": 0.4,
+  "size_bytes": 39181595,
+  "retry_after_secs": 5
+}
+```
+
+Retry after a few seconds, or poll `GET /v1/models`. Desktop dictation shows
+the message to the user and a later press transcribes normally.
+
+## Streaming speech-to-text
+
+```http
+POST /v1/stt/stream
+```
+
+Streaming STT: send raw s16le mono PCM in chunks as you capture it
+(`?sample_rate=`, default 16000; `?model=moonshine|parakeet`) and read
+`application/x-ndjson` events as speech is segmented:
+
+```jsonl
+{"type":"partial","text":"hello wor"}
+{"type":"final","text":"hello world","start":0.0,"end":1.4}
+{"type":"done","duration_secs":6.1}
+```
+
+`partial` is an interim transcript of the speech in progress (each replaces
+the last); `final` is a finished segment, sent after 0.3 s of silence, with
+times in seconds from the start of the stream. Finish the request body to
+flush trailing speech and get `done`. Several streams can run at once.
+
+## Model packs
+
+```http
+GET /v1/models
+```
+
+### Example response
+
+```json
+{
+  "packs": [
+    { "name": "small", "state": "downloading", "pct": 0.42, "error": null, "size_bytes": null },
+    { "name": "accurate", "state": "missing", "pct": null, "error": null, "size_bytes": null }
+  ]
+}
+```
+
+`POST /v1/models/small` or `POST /v1/models/accurate` starts that download
+in the background and returns `202` with the pack's status.
 
 ## Create a session
 
@@ -250,8 +377,8 @@ GET /v1/stats
 ```json
 {
   "active_sessions": 0,
-  "tts_models": 3,
-  "stt_models": 1,
+  "tts_models": 11,
+  "stt_models": 2,
   "total_requests": 42,
   "timestamp": 1754541600000
 }
@@ -263,11 +390,91 @@ GET /v1/stats
 |--------|---------|
 | `200 OK` | Success. |
 | `204 No Content` | Session deleted successfully. |
-| `400 Bad Request` | Missing audio data or unknown voice id. |
+| `202 Accepted` | Pack download started. |
+| `400 Bad Request` | Missing audio, empty text, unknown model/voice/format, or bad `sample_rate`. |
 | `404 Not Found` | Voice or session not found. |
+| `415 Unsupported Media Type` | Unsupported audio container (e.g. WebM/Opus — decode to WAV client-side). |
+| `503 Service Unavailable` | Engine failed to initialise (e.g. model download/verify failure). |
+
+## Voice Session (realtime)
+
+`GET /v1/voice/session` is a WebSocket for live voice conversations. It carries mic audio in, live transcripts and end-of-turn events out, and speaks reply text as it streams in. Barge-in stops the speech when the user talks over it. Implementation IMPLEMENTED (engine traits, state machine, WebSocket route, Smart Turn), with the speech engine wired once the sherpa-onnx engine lands; Exposure INTERNAL (Desktop sidecar). The canonical protocol is [`services/voice/spec/VOICE_SESSION.md`](https://github.com/Gizziio/allternit/blob/main/services/voice/spec/VOICE_SESSION.md).
+
+Voice is input and output only. The app sends each final user turn to the agent as a normal chat message, then streams the agent's reply text back to be spoken.
+
+### Connect
+
+| Where | URL |
+|-------|-----|
+| Desktop sidecar | `ws://127.0.0.1:<port>/v1/voice/session?token=<sidecar token>` |
+| Allternit Cloud | `wss://…/v1/voice/session?ticket=<short-lived ticket>` |
+
+`token` must match the service's `ALLTERNIT_VOICE_TOKEN`. If that variable is unset, only loopback connections are accepted. A failed check returns `401` before the upgrade, with a message that says whether the ticket was invalid or Allternit Cloud could not be reached.
+
+### Cloud tickets and usage
+
+On Allternit Cloud the service redeems each `ticket` against cloud-api before the upgrade. Tickets are single-use. It does this only when both variables are set; otherwise every ticket is refused.
+
+| Variable | Purpose |
+| --- | --- |
+| `ALLTERNIT_CLOUD_API_URL` | Base URL of cloud-api. |
+| `ALLTERNIT_VOICE_WORKER_TOKEN` | Bearer token for `POST /api/v1/voice/tickets/redeem` and `POST /api/v1/voice/usage`. |
+
+A ticket session reports `engine: "cloud"` in `session.ready`. The ticket carries a `maxSeconds` limit. When the session reaches it, the service sends `error` with `code: "session_limit"` and `fatal: true`, then closes the socket.
+
+When the session closes for any reason, the service reports the wall-clock duration (rounded up to whole seconds) to cloud-api as Cloud Voice minutes. It retries in the background for about a minute, and cloud-api ignores duplicates for the same session. Token and loopback sessions, such as the Desktop sidecar and the call worker, report nothing.
+
+### Frames
+
+- **Text frames** are JSON with a `type`.
+- **Binary frames** are audio. Client → server is PCM16 LE mono mic audio at `inputSampleRate` (default 16000, 20 ms frames). Server → client is PCM16 LE mono speech at `outputSampleRate` from `session.ready`.
+
+| Client → server | Fields | Meaning |
+|-----------------|--------|---------|
+| `session.start` | `voice?`, `sttModel?` (`light`/`accurate`), `language?`, `inputSampleRate?`, `bargeIn?` (default `true`), `turn?` {`mode`: `smart`/`vad`, `silenceMs?`} | First frame. The answer is `session.ready` or `error`. |
+| `session.update` | any `session.start` field | Change settings mid-session. |
+| `speak.delta` | `id`, `text` | Append reply text. It's spoken sentence by sentence. |
+| `speak.done` | `id` | No more text for `id`. |
+| `speak.cancel` | `id?` | Stop speaking `id` (or the current one). The answer is `speak.ended`. |
+| `mic.mute` / `mic.unmute` | | Ignore mic audio while muted. |
+| `session.end` | | Close. |
+
+| Server → client | Fields | Meaning |
+|-----------------|--------|---------|
+| `session.ready` | `protocol` (1), `sessionId`, `engine` (`device`/`cloud`), `outputSampleRate`, `models` {stt, tts, vad, turn}, `voices` | Ready. |
+| `speech.started` / `speech.stopped` | `atMs` | VAD start and stop, in ms of mic audio. |
+| `transcript.delta` | `segmentId`, `text`, `final: false` | Live caption. |
+| `transcript.final` | `segmentId`, `text` | Final text for a segment. |
+| `turn.ended` | `text`, `confidence` | The user's turn is over. Send `text` to the agent now. |
+| `speak.started` / `speak.ended` | `id` | Brackets the speech audio for `id`. |
+| `speak.interrupted` | `id`, `sentMs` | Barge-in. Flush playback now and abort the agent's turn. |
+| `error` | `code`, `message`, `fatal` | `fatal: true` closes the socket. |
+
+### Turn detection
+
+- `smart` (default) runs Smart Turn v3.2 at each pause. A score of 0.5 or more ends the turn at once. Below that, the turn ends after `silenceMs` of silence (default 1500).
+- `vad` ends the turn after `silenceMs` of silence (default 700).
+
+### Example
+
+```json
+→ {"type":"session.start","inputSampleRate":48000,"turn":{"mode":"smart"}}
+← {"type":"session.ready","protocol":1,"sessionId":"…","engine":"device","outputSampleRate":24000,"models":{"stt":"moonshine-tiny-en","tts":"kokoro-en-v0_19","vad":"silero-vad","turn":"smart-turn-v3.2"},"voices":["af","…"]}
+→ (binary mic frames)
+← {"type":"speech.started","atMs":1180}
+← {"type":"transcript.delta","segmentId":"seg-1","text":"what time","final":false}
+← {"type":"turn.ended","text":"What time is it?","confidence":0.93}
+→ {"type":"speak.delta","id":"r1","text":"It's noon. "}
+→ {"type":"speak.done","id":"r1"}
+← {"type":"speak.started","id":"r1"}
+← (binary speech frames)
+← {"type":"speak.ended","id":"r1"}
+```
+
+To try it from a terminal, run `cargo run -p voice-service --example voice_session_client -- --wav question.wav --say "It is noon." --out reply.wav`.
 
 ## Related pages
 
-- [Realtime Audio API](/api/realtime-audio)
+- [Voice Tool](/tools/voice)
 - [Sessions API](/api/sessions)
 - [Authentication](/api/authentication)

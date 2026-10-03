@@ -17,7 +17,6 @@ API_DIR="$WORKSPACE_ROOT/cmd/allternit-api"
 GIZZI_DIR="$WORKSPACE_ROOT/cmd/gizzi-code"
 DESKTOP_DIR="$WORKSPACE_ROOT/surfaces/allternit-desktop"
 RESOURCES_DIR="$DESKTOP_DIR/resources"
-VOICE_DIR="$WORKSPACE_ROOT/services/voice"
 PYTHON_BIN="${PYTHON_BIN:-$(command -v python3.11 || command -v python3)}"
 
 # UI Helpers
@@ -113,24 +112,31 @@ cp "$RG_SRC" "$RESOURCES_DIR/bin/vendor/ripgrep/$RG_LAYOUT/rg"
 chmod +x "$RESOURCES_DIR/bin/vendor/ripgrep/$RG_LAYOUT/rg"
 ok "ripgrep → $RESOURCES_DIR/bin/vendor/ripgrep/$RG_LAYOUT/rg"
 
-# ── 2b. Build Voice Service Sidecar (Rust + whisper.cpp) ────────────────────
-step "Building bundled voice service (whisper.cpp)…"
+# ── 2c. Build Voice Service Sidecar (Rust + sherpa-onnx) ────────────────────
+step "Building bundled voice service (sherpa-onnx)…"
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
 cd "$WORKSPACE_ROOT"
-cargo build --release -p voice-service
+cargo build --release -p voice-service -p allternit-tts
 VOICE_BIN="$CARGO_OUT/release/voice-service"
 [ -f "$VOICE_BIN" ] || VOICE_BIN="$CARGO_OUT/release/allternit-voice-service"
 [ -f "$VOICE_BIN" ] || die "Voice service build failed — binary not found at $VOICE_BIN"
 cp "$VOICE_BIN" "$RESOURCES_DIR/bin/allternit-voice-service"
 chmod +x "$RESOURCES_DIR/bin/allternit-voice-service"
 
-bash "$VOICE_DIR/build-whisper.sh"
-WHISPER_CLI="$VOICE_DIR/dist/whisper-cli"
-[ -x "$WHISPER_CLI" ] || die "whisper-cli build failed — binary not found at $WHISPER_CLI"
-cp "$WHISPER_CLI" "$RESOURCES_DIR/bin/whisper-cli"
-chmod +x "$RESOURCES_DIR/bin/whisper-cli"
+# The voice service must not contain espeak-ng (GPL-3.0): TTS runs in the
+# separate allternit-tts program (services/voice-tts, GPL-3.0-or-later),
+# which the voice service starts as a child from the same directory.
+bash "$WORKSPACE_ROOT/scripts/check-voice-no-gpl.sh" "$RESOURCES_DIR/bin/allternit-voice-service"
+TTS_BIN="$CARGO_OUT/release/allternit-tts"
+[ -f "$TTS_BIN" ] || die "allternit-tts build failed — binary not found at $TTS_BIN"
+cp "$TTS_BIN" "$RESOURCES_DIR/bin/allternit-tts"
+chmod +x "$RESOURCES_DIR/bin/allternit-tts"
 
-ok "voice service → $RESOURCES_DIR/bin/allternit-voice-service + whisper-cli"
+# sherpa-onnx/onnxruntime link statically into both binaries (crate default
+# `static` feature): no dylib/DLL to stage next to them. Voice models
+# download on first use at runtime into ~/.allternit/models/voice/ —
+# nothing model-related ships in the app.
+ok "voice service → $RESOURCES_DIR/bin/allternit-voice-service + allternit-tts (sherpa-onnx, static)"
 
 # ── 3. Build Rust API ────────────────────────────────────────────────────────
 if [ "$SKIP_API" = false ]; then

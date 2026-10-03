@@ -47,17 +47,12 @@ class VoiceManager {
 
     this.stopping = false;
     const binDir = path.join(process.resourcesPath ?? '', 'bin');
-    const whisperCli = path.join(binDir, process.platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli');
     const env = {
       ...process.env,
       PORT: String(PORTS.VOICE),
       ALLTERNIT_VOICE_TOKEN: this.sessionToken,
-      AUDIO_OUTPUT_DIR: path.join(app.getPath('userData'), 'voice-audio'),
-      PRELOAD_MODEL: 'false',
       PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}`,
-      ...(fs.existsSync(whisperCli) ? { WHISPER_CLI: whisperCli } : {}),
     };
-    fs.mkdirSync(env.AUDIO_OUTPUT_DIR, { recursive: true });
 
     log.info(`[VoiceManager] Starting voice service: ${command.file} ${command.args.join(' ')}`);
     this.proc = spawnSidecar(command.file, command.args, {
@@ -113,7 +108,7 @@ class VoiceManager {
       // "service not running".
       if (!this.proc) {
         throw new Error(
-          'Voice service exited before becoming ready (Rust sidecar / whisper-cli missing; Voice Mode unavailable)',
+          'Voice service exited before becoming ready (Rust sidecar missing; Voice Mode unavailable)',
         );
       }
       await new Promise((resolve) => setTimeout(resolve, 300));
@@ -149,7 +144,9 @@ class VoiceManager {
    * app's userData directory. In packaged builds a prebuilt binary is expected
    * under `Resources/native/dictation-helper/DictationHelper`.
    */
-  async transcribe(wav: Buffer | ArrayBuffer | Uint8Array): Promise<{ text?: string; error?: string }> {
+  async transcribe(
+    wav: Buffer | ArrayBuffer | Uint8Array,
+  ): Promise<{ text?: string; error?: string; status?: 'downloading' }> {
     const bytes = Buffer.isBuffer(wav)
       ? wav
       : Buffer.from(wav instanceof ArrayBuffer ? new Uint8Array(wav) : wav);
@@ -163,10 +160,22 @@ class VoiceManager {
       const response = await fetch(`${URLS.VOICE}/v1/stt`, {
         method: 'POST',
         body,
-        signal: AbortSignal.timeout(60_000),
+        // The first request downloads the small voice pack (~39 MB) into
+        // ~/.allternit/models/voice/, so allow well over a minute.
+        signal: AbortSignal.timeout(300_000),
       });
       if (!response.ok) {
-        return { error: `Voice sidecar HTTP ${response.status}` };
+        const detail = (await response.json().catch(() => ({}))) as { error?: string; code?: string };
+        // First use: the sidecar started the pack download and answered with a
+        // retryable 503. Hand its message to the UI verbatim ("Downloading the
+        // voice pack (39 MB)…") instead of a generic failure.
+        if (detail.code === 'voice_pack_downloading') {
+          return {
+            error: detail.error || 'Downloading the voice pack (39 MB)… try again in a moment.',
+            status: 'downloading',
+          };
+        }
+        return { error: `Voice sidecar HTTP ${response.status}${detail.error ? `: ${detail.error}` : ''}` };
       }
       const json = (await response.json()) as { text?: string };
       return { text: (json.text ?? '').trim() };

@@ -1,20 +1,37 @@
 ---
 doc: spec
-updated: 2026-09-09
-status: draft
+updated: 2026-10-02
+status: in-progress
 handoff: another-agent
 implement_this_session: false
 ---
 
 # Allternit Speech — TTS product spec
 
-**This session does not implement TTS.** The next agent reads this file, runs the bake-off, gets a human pick, then ships a **full product**. Do not land a stub, a sidecar-only curl demo, or a speak button that 404s.
+**Update 2026-10-02 (voice engine Phase 1, shipped):** the engine/API half of
+this spec is done. `POST /v1/tts` returns real Kokoro audio bytes (WAV or
+`format=pcm16`), `POST /v1/tts/stream` streams per-sentence pcm16 as
+NDJSON, and `GET /v1/voices` lists the Kokoro voices (Phase 1.1: Kokoro v1.0 fp32, 28 English voices) — engine
+acceptance items **7, 8, 9** below are satisfied, and **15/16** hold
+(sherpa-onnx in the Rust binary, static linking, notices in
+`services/voice/THIRD_PARTY_NOTICES.md`). Phase 1.1 (Eoj, 2026-10-03):
+Kokoro runs in the separate GPL-3.0-or-later program `allternit-tts`
+(`services/voice-tts`) because its phonemiser espeak-ng is GPL-3.0; the voice
+service contains no GPL code (checked in CI by
+`scripts/check-voice-no-gpl.sh`). The **user-visible product** items
+(1–6, 10–12: Desktop speak button, voice picker UI, Gizzi `/speak`,
+auto-play, doctor, path aliasing, first-run UX) are **not** part of Phase 1
+and remain open — Phase 2 per `HANDOFF-realtime-voice-2026-10-02.md`. STT is
+no longer whisper.cpp: it is sherpa-onnx (Silero VAD + Moonshine/Parakeet),
+same service, same `/v1/stt` shape.
+
+**This session does not implement the remaining UI product.** The next agent reads this file, gets a human pick where a choice remains, then ships the **full product**. Do not land a stub, a sidecar-only curl demo, or a speak button that 404s.
 
 ## Goal
 
 When this lands, Allternit **speaks**. Assistant replies can be read aloud on Desktop. Voice call mode is STT in and TTS out. Gizzi can read the last answer. The sidecar returns **real audio**, not a fake `audio_url`. Packaging ships a local engine. Users do not create a third-party account, pay a metered TTS API, or run Docker to hear a sentence.
 
-STT (whisper.cpp, `/voice`, Ctrl+Space / F8) already exists. TTS is the missing half of the same product.
+STT (`/voice`, Ctrl+Space / F8; whisper.cpp until 2026-10-02, now sherpa-onnx Moonshine/Parakeet) already exists. TTS is the missing half of the same product.
 
 ## Why this is not “add Piper”
 
@@ -24,12 +41,14 @@ The last two PRs (#192, #194) made a hard cut: dictation first, Chatterbox Pytho
 
 | Surface | What it does today |
 |---|---|
-| `services/voice` `POST /v1/tts` | Returns JSON with a made-up `/v1/audio/{uuid}.wav`. No bytes. |
-| `GET /v1/voices` | Hard-coded stub list (`default`, `en-us-female`, `en-us-male`). |
-| Desktop `VoiceService.speak()` | `POST ${base}/v1/voice/tts` — **different path** than the sidecar’s `/v1/tts`. |
-| `allternit-api` `/api/v1/voice/tts/stream` | Proxies sidecar `/v1/tts/stream`. Upstream is also a stub. |
-| Chat Speak / voice-call / auto-play | UI exists. Audio does not. |
-| Gizzi `/voice` | STT only. No read-aloud. |
+| `services/voice` `POST /v1/tts` | **Real audio** (Kokoro-82M v1.0 fp32 via sherpa-onnx, in the `allternit-tts` child), WAV bytes or `format=pcm16`. Shipped in Phase 1 (2026-10-02). |
+| `GET /v1/voices` | **Real** list of the 28 Kokoro v1.0 English voices. Shipped in Phase 1 / 1.1. |
+| `POST /v1/tts/stream` | **Real** NDJSON per-sentence pcm16 stream. Shipped in Phase 1. |
+| `POST /v1/stt` | Real STT via sherpa-onnx (Silero VAD + Moonshine default / Parakeet accurate). Whisper.cpp removed. |
+| Desktop `VoiceService.speak()` | `POST ${base}/v1/voice/tts` — **different path** than the sidecar’s `/v1/tts`. Still open (item 10). |
+| `allternit-api` `/api/v1/voice/tts/stream` | Proxies sidecar `/v1/tts/stream`. Upstream is now real. |
+| Chat Speak / voice-call / auto-play | UI exists but is **not** wired to real audio yet: allternit-ai `VoiceService.speak()` and `voice.service.ts previewVoice()` call `/v1/voice/tts` / `/api/v1/voice/tts` (paths that do not exist) and parse a JSON `audio_url`; they must switch to `/v1/tts` (or `/v1/tts/stream`) and read audio bytes. Phase 2. |
+| Gizzi `/voice` | STT only. No read-aloud yet (item 4). |
 | Chatterbox / FastAPI / pyinstaller | **Removed** (#194). Do not resurrect the Python tree. |
 
 `docs/public/parity/chatgpt-voice.md` still describes the Python wrapper. Update it when the product ships.
@@ -134,7 +153,7 @@ Voice call   ─┘         POST /v1/tts
 - **Runtime** (one binary we own the spawn of): e.g. sherpa-onnx, piper-cli, kokoro-onnx C ABI, or a thin Rust crate that dlopens ONNX. Chosen by bake-off.
 - **Default model** (one file we download): English, preset speaker, CPU-real-time on M-series and x86_64.
 - **Catalog** (optional extra voices): same runtime, more files. Never require a second engine for v1 extras.
-- STT stays whisper.cpp. Do not merge STT and TTS models. Do share the **process** (`voice-service`) and port 8001.
+- ~~STT stays whisper.cpp.~~ Superseded 2026-10-02: STT and TTS both run on sherpa-onnx (separate models) in the one `voice-service` process on port 8001.
 
 ## Bake-off (mandatory before writing product code)
 
@@ -152,7 +171,7 @@ Do not skip step 4. MOS from blogs is not a product decision.
 After the pick:
 
 - `services/voice/src/server.rs` — real TTS, real audio GET, health `tts_ok`
-- `services/voice/src/whisper.rs` pattern — a `tts.rs` sibling (resolve binary, resolve model, temp wav)
+- ~~`services/voice/src/whisper.rs` pattern~~ (removed): `src/tts.rs` runs Kokoro in-process via sherpa-onnx; models come from `src/models.rs` packs
 - `services/voice/build-*.sh` — build the TTS binary with `MACOSX_DEPLOYMENT_TARGET=13.0`
 - `scripts/build-desktop.sh` + `verify-packaged-resources.cjs` — stage TTS binary + default voice
 - `surfaces/allternit-desktop/src/main/voice-manager.ts` — already spawns the sidecar; pass `TTS_BIN` / `TTS_MODEL` env

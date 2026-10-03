@@ -883,7 +883,7 @@ const voiceAPI = {
   startDictation: (): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('voice:start-dictation'),
   stopDictation: (): Promise<void> => ipcRenderer.invoke('voice:stop-dictation'),
-  transcribe: (wav: ArrayBuffer): Promise<{ text?: string; error?: string }> =>
+  transcribe: (wav: ArrayBuffer): Promise<{ text?: string; error?: string; status?: 'downloading' }> =>
     ipcRenderer.invoke('voice:transcribe', wav),
   onTranscript: (callback: (event: { text: string; isFinal: boolean }) => void): (() => void) => {
     const handler = (_: IpcRendererEvent, event: { text: string; isFinal: boolean }) => callback(event);
