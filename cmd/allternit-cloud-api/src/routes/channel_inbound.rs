@@ -64,6 +64,8 @@ pub fn target_path(provider: &str) -> Option<&'static str> {
         "sms" => Some("/webhooks/channels/sms"),
         // Bot email: the platform's mailflare webhook, HMAC-verified by the runtime.
         "email" => Some("/api/v1/agent-email/inbound"),
+        // Shared Allternit Discord app: cloud-built envelopes (routes::discord_app).
+        "discord_app" => Some("/webhooks/channels/discord-app"),
         _ => None,
     }
 }
@@ -486,7 +488,7 @@ async fn deliver_due(state: &Arc<ApiState>) -> Result<(), ApiError> {
 
 /// Deliver one address's due requests oldest first; stop at the first that
 /// must wait, so the runtime sees them in the order the platform sent them.
-async fn deliver_route(state: &Arc<ApiState>, route_id: &str) -> Result<(), ApiError> {
+pub(crate) async fn deliver_route(state: &Arc<ApiState>, route_id: &str) -> Result<(), ApiError> {
     loop {
         // Claim the oldest undelivered request for this address, if it is due and unclaimed.
         let claimed: Option<(i64, String, String, serde_json::Value, String, DateTime<Utc>, i32)> = sqlx::query_as(
