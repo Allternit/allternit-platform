@@ -1527,7 +1527,7 @@ mod tests {
 
     /// Answers every HTTP call with a canned body — the managed delivery only
     /// makes the getMe confirmation call through this seam.
-    struct JsonHttp(HttpResp);
+    struct JsonHttp(crate::channel_transports::HttpResp);
 
     #[async_trait]
     impl crate::channel_transports::HttpSend for JsonHttp {

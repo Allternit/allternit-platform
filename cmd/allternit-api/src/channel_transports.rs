@@ -809,7 +809,7 @@ pub async fn dispatch_events(st: &Arc<AppState>, acct: &Account, tx: Arc<dyn Cha
                     })
                     .await
                 {
-                    warn!(provider = "telegram", "pairing reply failed: {err}");
+                    warn!(provider = "telegram", "pairing reply failed: {err:?}");
                 }
                 let st = st.clone();
                 tokio::spawn(async move { notify_cloud_paired(&st, outcome.notify).await });
