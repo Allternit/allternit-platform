@@ -52,3 +52,17 @@ These authenticated routes belong to the private Allternit API data plane, norma
 | GET | `/api/v1/threads/:id/events` | Read lifecycle events. |
 
 Continue with [project coordination](/guides/project-coordination) or [artifact modes](/guides/artifact-modes).
+
+## Thread top and reading the history
+
+The thread top uses one row: the bot pill, the vendor provenance chip when connected, and thread controls. Tap the avatar to open the bot. Tap the rest of the pill to open the Thread pane. Task threads also offer **Resolve**.
+
+The **via Vendor ✓** chip identifies the connected vendor. The check indicates verified connection identity; it does not verify the answer. Open the chip to see the agent, connection mode, lane, guarantee level, connection health, and channel when present. A browser lane can be best effort even when the account is verified.
+
+A ripped-page divider marks a new context generation. It shows what was carried forward and the checkpoint when available. A plan card shows the task objective and checklist. The wavy rule marks work picked back up after a time gap; project conversations also use a wavy day separator. These markers describe history, not task completion.
+
+## Thread, Browser, and Computer pane
+
+Open the thread pane from the pill or pane control, or open the computer from its control. The pane's title menu switches between **Thread**, **Browser**, and **Computer**. Thread contains activity, subagents, artifacts, memory, and details. Browser and Computer show this thread's browser and computer surfaces. On Desktop, the pane can dock, resize, and expand. While it is open, notifications and Edit bot fold into **⋯** beside Resolve; the pane supplies its own view menu and close control.
+
+On the phone, the avatar and provenance chip stay in the top row. Use the pill for Thread, or **⋯ → Computer** for the computer. The pane opens full screen. Its slim view bar switches Thread / Browser / Computer; **Back** returns to chat. The same controls are used by the `ai.allternit.com` phone layout and the `m.allternit.com` PWA. The computer status row wraps to fit the screen.
