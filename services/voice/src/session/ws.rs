@@ -65,27 +65,6 @@ impl SessionRouteState {
             config: CoreConfig::default(),
         }
     }
-
-    /// The engine compiled into this build and the token from the environment.
-    pub fn from_env() -> Self {
-        Self::new(default_factory(), std::env::var(TOKEN_ENV).ok())
-    }
-}
-
-fn default_factory() -> Arc<dyn EngineFactory> {
-    #[cfg(feature = "sherpa")]
-    {
-        Arc::new(super::engine_sherpa::SherpaEngine::from_env())
-    }
-    #[cfg(not(feature = "sherpa"))]
-    {
-        Arc::new(super::engine::UnavailableEngine)
-    }
-}
-
-/// The route with the build's engine, for `server::create_router`.
-pub fn router() -> Router {
-    router_with(SessionRouteState::from_env())
 }
 
 pub fn router_with(state: SessionRouteState) -> Router {

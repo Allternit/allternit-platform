@@ -10,26 +10,10 @@
 //! The `ort` crate is built with `alternative-backend` (it links nothing)
 //! and is pointed at that runtime's `OrtGetApiBase`, so the binary carries
 //! exactly one onnxruntime. Feature extraction is plain Rust and always
-//! compiled (and tested); only the ONNX session needs the `sherpa` feature.
+//! compiled (and tested). The model file is the Smart Turn `PackFile` of the
+//! engine's `small` pack (`crate::models::SMART_TURN_FILE`).
 
 use std::f64::consts::PI;
-
-/// Pinned Smart Turn model.
-pub struct ModelPin {
-    pub file_name: &'static str,
-    pub url: &'static str,
-    pub sha256: &'static str,
-    pub size: u64,
-    pub license: &'static str,
-}
-
-pub const SMART_TURN_V3_2: ModelPin = ModelPin {
-    file_name: "smart-turn-v3.2-cpu.onnx",
-    url: "https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/f766f81d3cfdf7737ac64aad813d91bbfd56bf93/smart-turn-v3.2-cpu.onnx",
-    sha256: "2bb026316b14a660486a75b1733cd3fbab8c2fd0314dc9af7be49f8cca967e4f",
-    size: 8_679_182,
-    license: "BSD-2-Clause",
-};
 
 /// Model id reported in `session.ready`.
 pub const SMART_TURN_MODEL_ID: &str = "smart-turn-v3.2";
@@ -222,14 +206,12 @@ fn slaney_mel_filters() -> Vec<f64> {
     out
 }
 
-#[cfg(feature = "sherpa")]
 pub use onnx::SmartTurn;
 
-#[cfg(feature = "sherpa")]
 mod onnx {
-    use super::{WhisperFeatures, N_FRAMES, N_MELS, SMART_TURN_V3_2};
+    use super::{WhisperFeatures, N_FRAMES, N_MELS};
     use crate::session::engine::{EngineError, TurnDetector};
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
     use std::sync::Once;
 
     unsafe extern "C" {
@@ -287,56 +269,6 @@ mod onnx {
             detector.predict(&[0.0; 16_000])?;
             Ok(detector)
         }
-
-        /// Download (if missing) and verify the pinned model under `dir`.
-        /// Blocking; call from a blocking context inside a tokio runtime.
-        pub fn ensure_model(dir: &Path) -> Result<PathBuf, EngineError> {
-            let pin = &SMART_TURN_V3_2;
-            let path = dir.join(pin.file_name);
-            if path.is_file() && sha256_file(&path)? == pin.sha256 {
-                return Ok(path);
-            }
-            std::fs::create_dir_all(dir)
-                .map_err(|e| EngineError::unavailable(format!("create {}: {e}", dir.display())))?;
-            let handle = tokio::runtime::Handle::try_current().map_err(|_| {
-                EngineError::unavailable("smart turn download needs a tokio runtime")
-            })?;
-            let bytes = handle.block_on(async {
-                let resp = reqwest::get(pin.url).await.map_err(|e| e.to_string())?;
-                if !resp.status().is_success() {
-                    return Err(format!("GET {}: HTTP {}", pin.url, resp.status()));
-                }
-                resp.bytes().await.map_err(|e| e.to_string())
-            });
-            let bytes =
-                bytes.map_err(|e| EngineError::unavailable(format!("smart turn download: {e}")))?;
-            let got = sha256_hex(&bytes);
-            if got != pin.sha256 {
-                return Err(EngineError::unavailable(format!(
-                    "smart turn sha256 mismatch: expected {}, got {got}",
-                    pin.sha256
-                )));
-            }
-            let tmp = path.with_extension("onnx.part");
-            std::fs::write(&tmp, &bytes)
-                .and_then(|_| std::fs::rename(&tmp, &path))
-                .map_err(|e| EngineError::unavailable(format!("write {}: {e}", path.display())))?;
-            Ok(path)
-        }
-    }
-
-    fn sha256_hex(bytes: &[u8]) -> String {
-        use sha2::Digest;
-        sha2::Sha256::digest(bytes)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect()
-    }
-
-    fn sha256_file(path: &Path) -> Result<String, EngineError> {
-        let bytes = std::fs::read(path)
-            .map_err(|e| EngineError::unavailable(format!("read {}: {e}", path.display())))?;
-        Ok(sha256_hex(&bytes))
     }
 
     impl TurnDetector for SmartTurn {

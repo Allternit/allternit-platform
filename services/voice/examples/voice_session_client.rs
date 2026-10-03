@@ -16,6 +16,8 @@
 //!   --turn MODE      smart | vad
 //!   --voice ID       TTS voice
 //!   --tail-ms N      silence streamed after the WAV (default 2000)
+//!   --barge-wav FILE speak this WAV (same rate as --wav) over the reply, to test
+//!                    barge-in; --barge-after-ms N after speak.started (default 800)
 //!   --wait-ms N      max wait for the reply to finish (default 20000)
 
 use std::time::{Duration, Instant};
@@ -36,6 +38,8 @@ struct Args {
     voice: Option<String>,
     tail_ms: u64,
     wait_ms: u64,
+    barge_wav: Option<String>,
+    barge_after_ms: u64,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -51,6 +55,8 @@ fn parse_args() -> Result<Args, String> {
         voice: None,
         tail_ms: 2000,
         wait_ms: 20_000,
+        barge_wav: None,
+        barge_after_ms: 800,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -64,6 +70,10 @@ fn parse_args() -> Result<Args, String> {
             "--turn" => a.turn = Some(val()?),
             "--voice" => a.voice = Some(val()?),
             "--tail-ms" => a.tail_ms = val()?.parse().map_err(|e| format!("--tail-ms: {e}"))?,
+            "--barge-wav" => a.barge_wav = Some(val()?),
+            "--barge-after-ms" => {
+                a.barge_after_ms = val()?.parse().map_err(|e| format!("--barge-after-ms: {e}"))?
+            }
             "--wait-ms" => a.wait_ms = val()?.parse().map_err(|e| format!("--wait-ms: {e}"))?,
             "-h" | "--help" => {
                 println!("see the header of examples/voice_session_client.rs for usage");
@@ -239,7 +249,12 @@ async fn run() -> Result<(), String> {
                     }
                     let _ = ev_tx.send(ev);
                 }
-                Message::Binary(b) => speech.extend_from_slice(&b),
+                Message::Binary(b) => {
+                    if speech.is_empty() {
+                        println!("+{:>6}ms (first speech audio)", t0.elapsed().as_millis());
+                    }
+                    speech.extend_from_slice(&b)
+                }
                 Message::Close(_) => break,
                 _ => {}
             }
@@ -251,6 +266,7 @@ async fn run() -> Result<(), String> {
         .await
         .map_err(|_| "no session.ready within 120 s".to_string())??;
 
+    let mut started: Option<Instant> = None;
     if let Some((samples, rate)) = wav {
         // Stream the file then trailing silence, 20 ms per frame, in real time.
         let frame = (rate / 50) as usize;
@@ -265,6 +281,9 @@ async fn run() -> Result<(), String> {
                 .await
                 .map_err(|e| e.to_string())?;
             while let Ok(ev) = ev_rx.try_recv() {
+                if ev["type"] == "speak.started" {
+                    started = Some(Instant::now());
+                }
                 if ev["type"] == "turn.ended" && !replied {
                     if let Some(text) = args.say.clone() {
                         replied = true;
@@ -281,6 +300,31 @@ async fn run() -> Result<(), String> {
         }
     } else if let Some(text) = args.say.clone() {
         say(&mut tx, text).await?;
+    }
+
+    if let (Some(p), true) = (&args.barge_wav, args.say.is_some()) {
+        let (samples, rate) = read_wav(p)?;
+        let seen = match started {
+            Some(at) => Some(at),
+            None => match wait(&["speak.started"], &mut ev_rx, args.wait_ms).await {
+                Ok(Ok(_)) => Some(Instant::now()),
+                _ => None,
+            },
+        };
+        match seen {
+            Some(at) => {
+                let due = Duration::from_millis(args.barge_after_ms);
+                tokio::time::sleep(due.saturating_sub(at.elapsed())).await;
+                println!("+{:>6}ms (barge-in: speaking over the reply)", t0.elapsed().as_millis());
+                let mut tick = tokio::time::interval(Duration::from_millis(20));
+                for chunk in samples.chunks((rate / 50) as usize) {
+                    tick.tick().await;
+                    let bytes: Vec<u8> = chunk.iter().flat_map(|s| s.to_le_bytes()).collect();
+                    tx.send(Message::Binary(bytes)).await.map_err(|e| e.to_string())?;
+                }
+            }
+            None => eprintln!("no speak.started: barge-in not sent"),
+        }
     }
 
     if args.say.is_some() {

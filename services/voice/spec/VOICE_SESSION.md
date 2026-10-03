@@ -67,7 +67,7 @@ One protocol on every surface (Desktop, ai.allternit.com, m.allternit.com, iOS l
 
 These describe how this service implements v1. They clarify the protocol; they don't change it.
 
-- **Code map.** `core.rs` is the transport-agnostic `VoiceSession` (channels in, channels out). `ws.rs` is the WebSocket route. `engine.rs` holds the engine traits (`StreamingStt`, `Tts`, `Vad`, `TurnDetector`, `EngineFactory`), `engine_sherpa.rs` (feature `sherpa`) implements them on sherpa-onnx, and `mock.rs` is the scripted test engine. `turn.rs` is Smart Turn v3.2. The phone call worker drives `core.rs` directly with 8 kHz or 48 kHz audio and can force the speech output rate (`CoreConfig.output_sample_rate`).
+- **Code map.** `core.rs` is the transport-agnostic `VoiceSession` (channels in, channels out). `ws.rs` is the WebSocket route. `engine.rs` holds the engine traits (`StreamingStt`, `Tts`, `Vad`, `TurnDetector`, `EngineFactory`), `engine_sherpa.rs` implements them on the Phase 1 sherpa-onnx engine (always compiled, sharing the server's loaded engines), and `mock.rs` is the scripted test engine. `turn.rs` is Smart Turn v3.2. The phone call worker drives `core.rs` directly with 8 kHz or 48 kHz audio and can force the speech output rate (`CoreConfig.output_sample_rate`).
 - **Auth.** A `ticket` is checked by the configured `TicketVerifier`, and the default rejects every ticket. A `token` must equal env `ALLTERNIT_VOICE_TOKEN`. With neither, and `ALLTERNIT_VOICE_TOKEN` unset, only loopback peers are accepted. A failure is HTTP 401 before the upgrade.
 - **`atMs`** is mic-audio time: ms of mic audio received since `session.start`, including audio sent while muted.
 - **`sentMs`** is ms of speech audio sent for that utterance before the interrupt.

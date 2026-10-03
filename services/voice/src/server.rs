@@ -209,6 +209,17 @@ pub enum StreamEvent {
     Error { error: String },
 }
 
+/// The Voice Session WebSocket route over the server's already-loaded engines.
+fn session_router(state: &VoiceServiceState) -> Router {
+    use crate::session::engine_sherpa::SherpaEngine;
+    use crate::session::ws::{router_with, SessionRouteState, TOKEN_ENV};
+    let engine = SherpaEngine::new(state.packs(), state.stt(), state.tts());
+    router_with(SessionRouteState::new(
+        Arc::new(engine),
+        std::env::var(TOKEN_ENV).ok(),
+    ))
+}
+
 /// Create the router with all routes
 pub fn create_router(state: VoiceServiceState) -> Router {
     Router::new()
@@ -235,8 +246,8 @@ pub fn create_router(state: VoiceServiceState) -> Router {
         .route("/v1/sessions/:id", get(get_session).delete(delete_session))
         // Stats
         .route("/v1/stats", get(get_stats))
-        .with_state(state)
-        .merge(crate::session::ws::router())
+        .with_state(state.clone())
+        .merge(session_router(&state))
 }
 
 /// Health check endpoint

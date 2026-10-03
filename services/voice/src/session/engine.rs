@@ -129,7 +129,7 @@ pub struct UnavailableEngine;
 
 impl UnavailableEngine {
     const WHY: &'static str =
-        "this voice service build has no speech engine (built without the `sherpa` feature)";
+        "this voice service build has no speech engine (test-only placeholder engine)";
 }
 
 impl EngineFactory for UnavailableEngine {
