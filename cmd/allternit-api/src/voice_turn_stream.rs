@@ -87,7 +87,7 @@ impl TurnFold {
 
     fn kind_of(&self, part_id: &str) -> Option<PartKind> {
         let kind = *self.parts.get(part_id)?;
-        let from_user = self.part_message.get(part_id).map_or(false, |m| self.user_messages.contains(m));
+        let from_user = self.part_message.get(part_id).is_some_and(|m| self.user_messages.contains(m));
         Some(if from_user { PartKind::Other } else { kind })
     }
 
@@ -264,7 +264,7 @@ async fn drive(client: &Client, base: &str, session_id: &str, path: &str, payloa
                 _ => { stream = None; if posted.is_some() { break; } }
             },
         }
-        if posted.is_some() && trailing_until.map_or(false, |t| tokio::time::Instant::now() >= t) {
+        if posted.is_some() && trailing_until.is_some_and(|t| tokio::time::Instant::now() >= t) {
             break;
         }
     }
