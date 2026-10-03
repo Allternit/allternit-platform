@@ -1,0 +1,75 @@
+---
+title: Voice call runtime routes (developers)
+description: The signed /api/v1/voice/calls routes cloud-api relays phone calls to, the signature scheme, and the turn stream.
+---
+
+For developers working on Allternit phone calls. The voice worker never calls the runtime directly: cloud-api queues and relays every call request to the runtime's allternit-api, waking a sleeping cloud computer if needed. Events and thread rendering are described in [Channel events, connect API and phone tools](/guides/channel-events-and-connect-api). User docs: [Calls and texts in threads](/guides/calls-and-texts).
+
+## Signature scheme
+
+These four routes skip the Clerk session check. Each request carries:
+
+| Header | Value |
+| --- | --- |
+| `x-allternit-runtime-sig` | `v1=<hex HMAC-SHA256(device_token, "<ts>.<METHOD>.<path>.<hex sha256(body)>")>` |
+| `x-allternit-runtime-ts` | Unix seconds. Requests more than 300 seconds away from the runtime's clock, in either direction, are refused. |
+| `x-allternit-owner` | The user id the call acts for. It must equal the runtime's paired owner. |
+
+`path` is the request path without the query string, for example `/api/v1/voice/calls/call_1/events`. The body is hashed exactly as sent; a `DELETE` hashes the empty string. The runtime compares signatures in constant time.
+
+| Status | Meaning |
+| --- | --- |
+| 401 | Missing or malformed headers, bad signature, stale timestamp, or wrong owner. |
+| 503 | `voice relay not configured`: a signed request arrived but this runtime cannot read its own device token yet. |
+
+## Routes
+
+### Start a call
+
+`POST /api/v1/voice/calls`
+
+```json
+{ "callId": "call_1", "botId": "bot-1", "ownerId": "user_a", "numberId": "num_1",
+  "from": "+14155550123", "to": "+14155550100", "direction": "inbound",
+  "room": "call-abc", "startedAt": "2026-10-03T10:00:00Z" }
+```
+
+The runtime resolves the thread with the caller's number (`from` for inbound, `to` for outbound), so calls and texts from one person share a thread, stores a `voice_calls` row and returns `{ "threadId": "…", "sessionId": "…" }`. Repeating a `callId` returns the same ids. `ownerId` must match the signed owner, and the number must belong to that owner and bot (403 otherwise; 404 for an unknown number).
+
+### Write call events
+
+`POST /api/v1/voice/calls/{callId}/events` with `{ "events": [{ "type", "n", "payload", "occurredAt" }] }`.
+
+- Each event becomes a `bot_events` row on the call's thread with the idempotency key `call:<callId>:<type>:<n>`. Replays are counted as `duplicates`.
+- Event types must start with `call.`. Every payload gets `callId`.
+- The actor comes from `payload.speaker`: `caller` is the caller's number, `human` is `payload.by` (or the owner), anything else is the bot.
+- `call.transcript.delta` with `final: false` is ignored (counted in `ignored`); interim text belongs to the live stream.
+- `call.ended` marks the call ended and stops any turn still running.
+- Response: `{ "written": 4, "duplicates": 0, "ignored": 1 }`. An unknown `callId` is a 404.
+
+### Run a turn
+
+`POST /api/v1/voice/calls/{callId}/turn` with `{ "text": "…", "segmentId": "…" }` answers `text/event-stream`. Each `data:` line is JSON:
+
+| Event | Meaning |
+| --- | --- |
+| `{"type":"text.delta","text":"…"}` | A sentence-sized piece of the reply, ready to speak. |
+| `{"type":"tool","name":"…","status":"started\|done\|error"}` | A tool call during the turn. |
+| `{"type":"done"}` | The reply is complete. `{"type":"done","aborted":true}` means the turn was aborted. |
+| `{"type":"error","message":"…"}` | The turn failed. |
+
+The turn runs through the same path channel messages use (`send_bot_turn`, which goes through the Agent Gateway for vendor bots), so tools, memory and approvals behave as they do in Slack or texts. The runtime adds a short spoken-style instruction server-side so replies stay brief. A call that has ended answers 409.
+
+Only one turn runs per call. A new turn aborts the running one first, and closing the stream aborts it too.
+
+<Note>
+The reply is currently produced whole and then streamed sentence by sentence, and `tool` events are not emitted yet, because the channel turn path reports only the final reply. The stream shape will not change when true token streaming lands.
+</Note>
+
+### Abort (barge-in)
+
+`DELETE /api/v1/voice/calls/{callId}/turn` aborts the running turn the way the Stop button does and always returns 204, even when nothing was running.
+
+## Not configured yet
+
+allternit-api does not hold its own device token (gizzi holds it as `ALLTERNIT_API_TOKEN`; the registry is in cloud-api). Until a pairing step hands the token and paired owner to this process, every signed request answers 503. See `cmd/allternit-api/docs/VOICE_CALLS.md`.
