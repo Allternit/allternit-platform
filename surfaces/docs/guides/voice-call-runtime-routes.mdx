@@ -121,5 +121,5 @@ How cloud-api translates for the runtime:
 - Every other event becomes `{"events":[{type, n, payload, occurredAt}]}` with one entry. `n` counts that event type within the call. Delivery retries with backoff for 24 hours and wakes a sleeping cloud computer.
 - A turn is relayed to the runtime's SSE `POST …/turn`; each `text.delta` becomes a `delta` line, tool progress and keep-alives are not spoken. If the worker drops the connection before `done`, cloud-api calls the runtime's `DELETE …/turn`. If the runtime does not answer within 20 seconds, the worker gets a 504.
 
-Cloud-api migration 030 adds the columns behind this (`voice_bot_config.name`, `voice_calls.sip_call_id` and `consent_ref`, `voice_call_events.seq` and `at_ms`). The runtime saves the spoken name with `PUT /api/v1/voice/bot-config/{botId}` (`name`; `recording` accepts `"off"`, `"consented"` or a boolean).
+Cloud-api migration 030 adds the columns behind this (`voice_bot_config.name`, `voice_calls.sip_call_id` and `consent_ref`, `voice_call_events.seq` and `at_ms`). The runtime saves the spoken name with `PUT /api/v1/voice/bot-config/{botId}` (`name`; `recording` accepts `"off"`, `"consented"` or a boolean; `transferTargets` is the owner-approved warm-transfer list, see [Phone numbers](/api/phone-numbers#warm-transfers)).
 

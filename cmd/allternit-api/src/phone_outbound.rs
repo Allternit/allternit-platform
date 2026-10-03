@@ -34,7 +34,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::channel_gateway::{ensure_binding_on, send, Inbound, InboundKind, SendOutcome, SendReq};
-use crate::channel_phone::{build_sms, is_e164, phone_key, resolve_thread_async, PhoneNumber};
+use crate::channel_phone::{build_sms, is_e164, phone_key, resolve_thread_async, PhoneNumber, SMS_MAX_CHARS};
 use crate::channel_transports::{HttpReq, HttpSend, ReqwestSend};
 use crate::db::DbHandle;
 use crate::thread_routes::ThreadRuntime;
@@ -46,6 +46,12 @@ pub enum OutError {
     NoConsent(String),
     /// The cloud can't dial yet (outbound trunk not set up).
     CallsUnavailable,
+    /// Cloud `recipient_opted_out`: the person replied STOP.
+    OptedOut(String),
+    /// Cloud `sms_not_active`: the number is still waiting on carrier registration.
+    NotActive,
+    /// The cloud's daily text cap for this number.
+    DailyLimit,
     BadRequest(String),
     NotFound(String),
     Failed(String),
@@ -57,6 +63,9 @@ impl OutError {
         match self {
             OutError::NoConsent(to) => format!("{to} hasn't texted or called this number and isn't on your allowed contacts, so I can't reach out. Add them as a contact first."),
             OutError::CallsUnavailable => "Outbound calling isn't switched on yet.".into(),
+            OutError::OptedOut(to) => format!("{to} replied STOP, so no more messages can be sent to them."),
+            OutError::NotActive => "Texts out aren't active on this number yet: it is still waiting on carrier registration.".into(),
+            OutError::DailyLimit => "The daily limit for texts from this number has been reached. Try again tomorrow.".into(),
             OutError::BadRequest(m) | OutError::NotFound(m) | OutError::Failed(m) => m.clone(),
         }
     }
@@ -64,6 +73,8 @@ impl OutError {
         match self {
             OutError::NoConsent(_) => StatusCode::FORBIDDEN,
             OutError::CallsUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+            OutError::OptedOut(_) | OutError::NotActive => StatusCode::FORBIDDEN,
+            OutError::DailyLimit => StatusCode::TOO_MANY_REQUESTS,
             OutError::BadRequest(_) => StatusCode::BAD_REQUEST,
             OutError::NotFound(_) => StatusCode::NOT_FOUND,
             OutError::Failed(_) => StatusCode::BAD_GATEWAY,
@@ -73,6 +84,9 @@ impl OutError {
         match self {
             OutError::NoConsent(_) => "no_consent",
             OutError::CallsUnavailable => "calls_unavailable",
+            OutError::OptedOut(_) => "recipient_opted_out",
+            OutError::NotActive => "sms_not_active",
+            OutError::DailyLimit => "daily_limit",
             OutError::BadRequest(_) => "bad_request",
             OutError::NotFound(_) => "not_found",
             OutError::Failed(_) => "send_failed",
@@ -130,13 +144,35 @@ async fn cloud_post(http: &dyn HttpSend, url: String, token: &str, body: Value) 
     Ok((r.status, r.body))
 }
 
+/// The refusal slug inside the SMS transport's rejection text. The transport
+/// words a 429 as "rate limited"; the cloud's only 429 on a send is its daily cap.
+pub fn plain_slug(msg: &str) -> &str {
+    if msg.contains("rate limited") {
+        return "daily_limit";
+    }
+    ["no_consent", "recipient_opted_out", "sms_not_active", "daily_limit"].into_iter().find(|s| msg.contains(s)).unwrap_or("")
+}
+
 /// Text `to` from the bot's number; the text lands in the phone thread as a bot message.
 pub async fn text<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<dyn HttpSend>, n: &PhoneNumber, to: &str, text: &str) -> Result<(String, String), OutError> {
+    text_attributed(db, rt, http, n, to, text, None).await
+}
+
+/// [`text`] with an optional attribution line appended ("(Sent by …)"), for a vendor bot
+/// acting through its directing bot's number. Same gates, same thread writes.
+pub async fn text_attributed<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<dyn HttpSend>, n: &PhoneNumber, to: &str, text: &str, attribution: Option<&str>) -> Result<(String, String), OutError> {
     if !is_e164(to) {
         return Err(OutError::BadRequest("The number to text must look like +14155550123.".into()));
     }
     if text.trim().is_empty() {
         return Err(OutError::BadRequest("There's nothing to send.".into()));
+    }
+    let body = match attribution {
+        Some(who) => format!("{}\n\n(Sent by {who}.)", text.trim()),
+        None => text.to_string(),
+    };
+    if body.chars().count() > SMS_MAX_CHARS * 4 {
+        return Err(OutError::BadRequest("That text is too long. Shorten it and try again.".into()));
     }
     let (_, _, secret) = cloud_for(db, n)?;
     let (thread_id, _) = resolve_thread_async(db, rt, &n.number_id, to).await.map_err(OutError::Failed)?;
@@ -159,10 +195,16 @@ pub async fn text<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<dyn HttpSen
     };
     ensure_binding_on(db, &n.owner, &thread_id, "sms", &ev, account.as_deref()).map_err(|e| OutError::Failed(e.to_string()))?;
     let tx = build_sms(http, &secret);
-    match send(db, &tx, &n.owner, &thread_id, &SendReq { text: text.to_string(), ..Default::default() }).await {
+    match send(db, &tx, &n.owner, &thread_id, &SendReq { text: body, ..Default::default() }).await {
         Ok(SendOutcome::Sent { remote_id, .. }) => Ok((thread_id, remote_id)),
-        Ok(SendOutcome::Rejected(m)) if m.contains("no_consent") => Err(OutError::NoConsent(to.to_string())),
-        Ok(SendOutcome::Rejected(m)) => Err(OutError::Failed(format!("The text wasn't sent: {m}"))),
+        Ok(SendOutcome::Rejected(m)) => Err(match plain_slug(&m) {
+            "no_consent" => OutError::NoConsent(to.to_string()),
+            "recipient_opted_out" => OutError::OptedOut(to.to_string()),
+            "sms_not_active" => OutError::NotActive,
+            "daily_limit" => OutError::DailyLimit,
+            _ => OutError::Failed(format!("The text wasn't sent: {m}")),
+        }),
+        Ok(SendOutcome::ReadOnly) => Err(OutError::Failed("That conversation is read-only.".into())),
         Ok(SendOutcome::Unconfirmed { .. }) => Err(OutError::Failed("I couldn't confirm the text went out; check the thread before resending.".into())),
         Ok(SendOutcome::Denied(m)) => Err(OutError::Failed(m)),
         Ok(SendOutcome::ApprovalRequired { .. }) => Err(OutError::Failed("That text is waiting for your approval.".into())),
@@ -435,6 +477,30 @@ mod tests {
         let http = fake(vec![(403, json!({ "error": "no_consent" }))]);
         let out = call_mcp_tool_with(&st.db, &Rt, http, "user-a", "phone_call", json!({ "to": "+14155550123", "purpose": "remind" })).await.unwrap();
         assert_eq!((out["ok"].clone(), out["error"].clone()), (json!(false), json!("no_consent")));
+    }
+
+    #[tokio::test]
+    async fn attributed_text_shares_the_gates_and_every_cloud_refusal_has_its_own_error() {
+        let st = setup("attr").await;
+        let n = pick_number(&st.db, "user-a", None, None).unwrap();
+        let http = fake(vec![(200, json!({ "messageId": "m1" }))]);
+        text_attributed(&st.db, &Rt, http.clone(), &n, "+14155550123", "Table is ready", Some("Vendor via Bot")).await.unwrap();
+        let sent = http.sent.lock().unwrap()[0].clone();
+        assert_eq!(sent.0, "https://cloud.test/api/v1/channels/sms/send");
+        assert_eq!(sent.1["text"], "Table is ready\n\n(Sent by Vendor via Bot.)");
+        for (status, slug, want) in [
+            (403, "recipient_opted_out", OutError::OptedOut("+14155550123".into())),
+            (403, "sms_not_active", OutError::NotActive),
+            (429, "daily_limit", OutError::DailyLimit),
+            (403, "no_consent", OutError::NoConsent("+14155550123".into())),
+        ] {
+            let http = fake(vec![(status, json!({ "error": slug }))]);
+            assert_eq!(text(&st.db, &Rt, http.clone(), &n, "+14155550123", "hi").await.unwrap_err(), want, "{slug}");
+        }
+        let http = fake(vec![]);
+        let long = "x".repeat(crate::channel_phone::SMS_MAX_CHARS * 4 + 1);
+        assert!(matches!(text(&st.db, &Rt, http.clone(), &n, "+14155550123", &long).await, Err(OutError::BadRequest(_))));
+        assert!(http.sent.lock().unwrap().is_empty(), "too-long text never reaches the cloud");
     }
 
     #[tokio::test]
