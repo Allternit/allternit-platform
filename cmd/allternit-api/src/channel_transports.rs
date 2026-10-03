@@ -571,7 +571,13 @@ pub(crate) fn accounts(db: &DbHandle, provider: &str, only: Option<&str>) -> Vec
 pub fn build_transport(provider: &str, secret: &str, http: Arc<dyn HttpSend>) -> Option<Arc<dyn ChannelTransport>> {
     let token = |k: &str| Some(pick(secret, k)).filter(|s| !s.is_empty());
     Some(match provider {
-        "slack" => Arc::new(SlackTransport::from_env()),
+        "slack" => match crate::channel_slack_app::SlackAppTransport::from_secret(secret, http, None) {
+            // A shared-app connection (team metadata in the sealed secret)
+            // sends through the cloud; anything else is a legacy env-token
+            // install.
+            Some(shared) => Arc::new(shared),
+            None => Arc::new(SlackTransport::from_env()),
+        },
         "teams" => Arc::new(TeamsTransport {
             auth: match (token("appId"), token("appPassword")) {
                 (Some(id), Some(pw)) => Some(crate::teams_auth::shared(http.clone(), &id, &pw)),
@@ -593,6 +599,12 @@ pub fn build_transport(provider: &str, secret: &str, http: Arc<dyn HttpSend>) ->
 /// The production transport for a binding (its provider account's secrets).
 pub fn transport_for(state: &Arc<AppState>, b: &BindingRow) -> Option<Arc<dyn ChannelTransport>> {
     if b.provider == "slack" {
+        // A shared-app connection sends through the cloud (its sealed secret
+        // names the team); bindings without one keep the legacy env-token
+        // transport, like the pre-shared-app flow.
+        if let Some(acct) = b.account.as_deref().and_then(|id| accounts(&state.db, "slack", Some(id)).into_iter().next()) {
+            return build_transport("slack", &acct.secret, Arc::new(ReqwestSend));
+        }
         return build_transport("slack", "", Arc::new(ReqwestSend));
     }
     let acct = accounts(&state.db, &b.provider, b.account.as_deref()).into_iter().next()?;
