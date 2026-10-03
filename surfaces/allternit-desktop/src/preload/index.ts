@@ -877,6 +877,9 @@ const hermesRoutingAPI = {
 
 const voiceAPI = {
   isAvailable: (): Promise<boolean> => ipcRenderer.invoke('voice:is-available'),
+  /** Local Voice Session endpoint (ws URL + per-run token) for allternit-ai's voice client. */
+  getSessionEndpoint: (): Promise<{ httpUrl: string; wsUrl: string; port: number; token?: string } | null> =>
+    ipcRenderer.invoke('voice:session-endpoint'),
   startDictation: (): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('voice:start-dictation'),
   stopDictation: (): Promise<void> => ipcRenderer.invoke('voice:stop-dictation'),

@@ -1,0 +1,56 @@
+{
+  "_comment": "Allternit shared Slack app — create at https://api.slack.com/apps with 'Create from manifest', then copy the Client ID/Secret (OAuth & Permissions) and Signing Secret (Basic Information) into the cloud-api env: SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, SLACK_SIGNING_SECRET. Field reference: https://docs.slack.dev/app-manifests/ and https://docs.slack.dev/reference/app-manifest/. Request URL / command URL point at the cloud (allternit-cloud-api routes::slack_app): POST https://api.allternit.com/api/v1/channels/slack/events and .../commands.",
+  "display_information": {
+    "name": "Allternit",
+    "description": "Your AI team, in Slack. Every Allternit bot answers @mentions and DMs under its own name.",
+    "background_color": "#0b0b0c"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Allternit",
+      "always_online": true
+    },
+    "slash_commands": [
+      {
+        "command": "/allternit",
+        "url": "https://api.allternit.com/api/v1/channels/slack/commands",
+        "description": "Talk to an Allternit bot: /allternit [bot] <message>",
+        "usage_hint": "[bot] what you need",
+        "should_escape": false
+      }
+    ]
+  },
+  "oauth_config": {
+    "redirect_urls": [
+      "https://api.allternit.com/api/v1/channels/slack/install/callback"
+    ],
+    "scopes": {
+      "bot": [
+        "chat:write",
+        "chat:write.customize",
+        "app_mentions:read",
+        "channels:history",
+        "groups:history",
+        "im:history",
+        "im:write",
+        "assistant:write",
+        "commands",
+        "users:read"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "request_url": "https://api.allternit.com/api/v1/channels/slack/events",
+      "bot_events": [
+        "app_mention",
+        "message.im",
+        "message.channels",
+        "assistant_thread_started"
+      ]
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": true
+  }
+}

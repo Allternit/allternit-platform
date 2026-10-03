@@ -5,6 +5,7 @@
 
 pub mod auth;
 pub mod carriers;
+pub mod channels;
 pub mod db;
 pub mod error;
 pub mod middleware;
@@ -346,6 +347,10 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::phone::routes())
         // WhatsApp Embedded Signup + 24h-window send; each handler resolves the user itself.
         .merge(routes::whatsapp_es::routes())
+        // Voice tickets + minutes metering: user routes check the Clerk session; the
+        // redeem/usage routes take the voice service's bearer token. 503 cloud-unavailable
+        // when the voice env is unset.
+        .merge(routes::voice_tickets::routes())
         // Discord shared app: install/send/commands check the Clerk session; the OAuth
         // callback and interactions are public (state / Ed25519 signature).
         .merge(routes::discord_app::routes())
@@ -355,6 +360,19 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // echo, and every route 503s telegram_managed_not_configured when the
         // manager bot env is unset.
         .merge(routes::channel_onboarding::routes())
+        // Cloud side of phone calls (worker service token + user-auth
+        // bot-config/control routes), per HANDOFF-realtime-voice
+        // -2026-10-02.md §4.1.
+        .merge(routes::voice_calls_cloud::routes())
+        // Teams shared app: the Azure Bot's messaging endpoint (edge JWT
+        // check, then queued to the user's runtime) plus the cloud send /
+        // connect / register / admin Graph routes. 503 teams_not_configured
+        // when APP_ID/APP_PASSWORD are unset.
+        .merge(channels::teams_app::routes())
+        // Slack shared app: one Allternit app; install/OAuth, signed Events API
+        // edge (url_verification inline, everything else queued by team), and
+        // bot-identity sends. Same self-authenticating pattern as above.
+        .merge(routes::slack_app::routes())
         // These handlers verify Clerk or billing credentials themselves. They
         // must not pass through the legacy allternit_* API-token middleware.
         .merge(routes::hosted_runtimes::routes())

@@ -52,10 +52,14 @@ fi
 
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
 BUILD_DIR="$SRC/build"
-CMAKE_ARGS=(-S "$SRC" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET}")
+# Static link: the binary ships alone in resources/bin, so it must not depend on libwhisper/libggml
+# dylibs (a shared build bakes an rpath to the build machine's tree and crashes on every other Mac).
+# GGML_NATIVE=OFF keeps it off build-host-only CPU instructions.
+STATIC_ARGS=(-DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF -DWHISPER_BUILD_TESTS=OFF)
+CMAKE_ARGS=(-S "$SRC" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release "${STATIC_ARGS[@]}" -DCMAKE_OSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET}")
 if [[ -n "$ARCH" ]]; then
   BUILD_DIR="$SRC/build-$ARCH"
-  CMAKE_ARGS=(-S "$SRC" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
+  CMAKE_ARGS=(-S "$SRC" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release "${STATIC_ARGS[@]}"
     -DCMAKE_OSX_ARCHITECTURES="$ARCH"
     -DCMAKE_OSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET}")
 fi
@@ -76,6 +80,9 @@ do
 done
 [[ -n "$BIN" ]] || { echo "whisper-cli build produced no binary" >&2; exit 1; }
 
+if [[ "$(uname -s)" == "Darwin" ]] && otool -L "$BIN" | grep -q '@rpath'; then
+  echo "whisper-cli still links @rpath libraries (not static):" >&2; otool -L "$BIN" >&2; exit 1
+fi
 cp "$BIN" "$OUT"
 chmod +x "$OUT"
 echo "whisper-cli → $OUT"

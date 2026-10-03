@@ -611,7 +611,7 @@ pub fn telegram_managed_public_router() -> Router<Arc<AppState>> {
 // ---------------------------------------------------------------- messaging connectors
 
 /// Platforms connected once and switched on per bot (Slack uses the Allternit Slack app).
-const MESSAGING: [&str; 5] = ["telegram", "discord", "whatsapp", "teams", "whatsapp-personal"];
+const MESSAGING: [&str; 6] = ["slack", "telegram", "discord", "whatsapp", "teams", "whatsapp-personal"];
 
 fn api_err(status: StatusCode, msg: impl Into<String>) -> Response {
     (status, Json(json!({ "error": msg.into() }))).into_response()
@@ -646,7 +646,7 @@ fn bot_channels(conn: &rusqlite::Connection, owner: &str, bot: &str) -> rusqlite
                 (SELECT COUNT(*) FROM channel_account_bots m WHERE m.account_id = p.id),
                 (SELECT COALESCE(NULLIF(a.name, ''), a.id) FROM channel_account_bots m JOIN agents a ON a.id = m.bot_id WHERE m.account_id = p.id AND m.is_default = 1 LIMIT 1)
          FROM provider_account_bindings p
-         WHERE p.owner = ?1 AND p.auth_type = 'channel_oauth' AND p.vendor IN ('telegram', 'discord', 'whatsapp', 'teams')
+         WHERE p.owner = ?1 AND p.auth_type = 'channel_oauth' AND p.vendor IN ('slack', 'telegram', 'discord', 'whatsapp', 'teams')
          ORDER BY p.created_at",
     )?;
     let rows = q.query_map(params![owner, bot], |r| {

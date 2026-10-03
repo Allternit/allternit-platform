@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +12,16 @@ import { spawnSidecar } from './process-lifeline.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HEALTH_TIMEOUT_MS = 90_000;
 const DICTATION_HELPER_NAME = 'DictationHelper';
+const SESSION_PATH = '/v1/voice/session';
+
+/** What the renderer needs to open a Voice Session on the local sidecar. */
+export interface VoiceSessionEndpoint {
+  httpUrl: string;
+  wsUrl: string;
+  port: number;
+  /** Set only when this app run spawned the sidecar (it was started with it). */
+  token?: string;
+}
 
 class VoiceManager {
   private proc: ChildProcess | null = null;
@@ -18,6 +29,12 @@ class VoiceManager {
   private dictationProc: ChildProcess | null = null;
   private restartAttempts = 0;
   private static readonly MAX_RESTARTS = 1;
+  /**
+   * Per-run secret for the sidecar's Voice Session WebSocket
+   * (ALLTERNIT_VOICE_TOKEN). Only the renderer gets it, over IPC; without it
+   * the sidecar accepts loopback connections only.
+   */
+  private readonly sessionToken = randomBytes(32).toString('base64url');
 
   async start(): Promise<string> {
     if (this.proc) return URLS.VOICE;
@@ -34,6 +51,7 @@ class VoiceManager {
     const env = {
       ...process.env,
       PORT: String(PORTS.VOICE),
+      ALLTERNIT_VOICE_TOKEN: this.sessionToken,
       AUDIO_OUTPUT_DIR: path.join(app.getPath('userData'), 'voice-audio'),
       PRELOAD_MODEL: 'false',
       PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}`,
@@ -378,8 +396,23 @@ class VoiceManager {
     return null;
   }
 
+  /**
+   * The Voice Session endpoint for the renderer. A sidecar this run didn't
+   * spawn (already running from elsewhere) never got our token, so none is
+   * returned and the app relies on the loopback rule.
+   */
+  getSessionEndpoint(): VoiceSessionEndpoint {
+    return {
+      httpUrl: URLS.VOICE,
+      wsUrl: `${URLS.VOICE.replace(/^http/, 'ws')}${SESSION_PATH}`,
+      port: PORTS.VOICE,
+      ...(this.proc ? { token: this.sessionToken } : {}),
+    };
+  }
+
   registerIpcHandlers(): void {
     ipcMain.handle('voice:is-available', () => this.isHealthy());
+    ipcMain.handle('voice:session-endpoint', () => this.getSessionEndpoint());
     ipcMain.handle('voice:start-dictation', () => this.startNativeDictation());
     ipcMain.handle('voice:stop-dictation', () => this.stopNativeDictation());
     ipcMain.handle('voice:transcribe', (_event, wav: ArrayBuffer | Uint8Array | Buffer) =>

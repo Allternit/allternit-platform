@@ -571,7 +571,13 @@ pub(crate) fn accounts(db: &DbHandle, provider: &str, only: Option<&str>) -> Vec
 pub fn build_transport(provider: &str, secret: &str, http: Arc<dyn HttpSend>) -> Option<Arc<dyn ChannelTransport>> {
     let token = |k: &str| Some(pick(secret, k)).filter(|s| !s.is_empty());
     Some(match provider {
-        "slack" => Arc::new(SlackTransport::from_env()),
+        "slack" => match crate::channel_slack_app::SlackAppTransport::from_secret(secret, http, None) {
+            // A shared-app connection (team metadata in the sealed secret)
+            // sends through the cloud; anything else is a legacy env-token
+            // install.
+            Some(shared) => Arc::new(shared),
+            None => Arc::new(SlackTransport::from_env()),
+        },
         "teams" => Arc::new(TeamsTransport {
             auth: match (token("appId"), token("appPassword")) {
                 (Some(id), Some(pw)) => Some(crate::teams_auth::shared(http.clone(), &id, &pw)),
@@ -579,6 +585,7 @@ pub fn build_transport(provider: &str, secret: &str, http: Arc<dyn HttpSend>) ->
             },
             http,
             access_token: token("accessToken"), own_identity: token("botId") }),
+        "discord" if crate::channel_discord_app::is_app_secret(secret) => Arc::new(crate::channel_discord_app::DiscordAppTransport::from_secret(secret, http)),
         "discord" => Arc::new(DiscordTransport { http, webhook_url: token("webhookUrl"), own_identity: token("botId") }),
         "whatsapp" if crate::channel_whatsapp_app::is_business(secret) => Arc::new(crate::channel_whatsapp_app::WhatsAppBusinessTransport::from_secret(secret, http)),
         "whatsapp" => Arc::new(WhatsAppTransport { http, access_token: token("accessToken"), own_identity: token("phoneNumberId") }),
@@ -592,6 +599,12 @@ pub fn build_transport(provider: &str, secret: &str, http: Arc<dyn HttpSend>) ->
 /// The production transport for a binding (its provider account's secrets).
 pub fn transport_for(state: &Arc<AppState>, b: &BindingRow) -> Option<Arc<dyn ChannelTransport>> {
     if b.provider == "slack" {
+        // A shared-app connection sends through the cloud (its sealed secret
+        // names the team); bindings without one keep the legacy env-token
+        // transport, like the pre-shared-app flow.
+        if let Some(acct) = b.account.as_deref().and_then(|id| accounts(&state.db, "slack", Some(id)).into_iter().next()) {
+            return build_transport("slack", &acct.secret, Arc::new(ReqwestSend));
+        }
         return build_transport("slack", "", Arc::new(ReqwestSend));
     }
     let acct = accounts(&state.db, &b.provider, b.account.as_deref()).into_iter().next()?;
@@ -698,6 +711,9 @@ fn lane_conversation(db: &DbHandle, thread_id: &str) -> bool {
 pub async fn route_inbound<R: crate::thread_routes::ThreadRuntime>(db: &DbHandle, rt: &R, acct: &Account, provider: &str, e: &Inbound) -> Result<Routed, String> {
     let none = |recorded| Ok(Routed { binding: None, recorded, turn: None, speaker: None, notice: None });
     let bots = member_bots(db, acct);
+    // Shared Discord app: "@Allternit name", "/name" and replies become "@name".
+    let hooked;
+    let e = if provider == "discord" { hooked = crate::channel_discord_app::rewrite(db, acct, &bots, e); &hooked } else { e };
     let mut binding = find_binding(db, provider, &e.conversation).filter(|b| b.owner == acct.owner);
     if binding.is_none() && !e.own && e.kind == InboundKind::Message {
         let text = e.text.clone().unwrap_or_default();
