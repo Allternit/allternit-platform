@@ -11,14 +11,13 @@ import SwiftUI
 /// (X) the caller files a "Voice chat ended · Ns" card into the feed and
 /// dismisses the cover.
 struct VoiceModeView: View {
-    @ObservedObject var chatViewModel: ChatViewModel
+    /// The live session, owned by `VoiceHost` (so the quick bar and this
+    /// full-screen view are the same conversation).
+    @ObservedObject var host: VoiceHost
+    @ObservedObject var viewModel: VoiceModeViewModel
     /// Called with the session length in seconds when the user ends voice
     /// mode — the host files the VoiceSummary feed card.
     let onEnd: (Int) -> Void
-
-    @StateObject private var viewModel: VoiceModeViewModel
-    @StateObject private var dictation = DictationController()
-    @StateObject private var speaker = SpeechSpeaker.shared
 
     @State private var isSettingsPresented = false
     /// Slow breathing pulse for the gradient while listening/speaking.
@@ -26,19 +25,10 @@ struct VoiceModeView: View {
     /// PTT/tap disambiguation on the mic button (tap = mute, hold = talk).
     @State private var pressStartedAt: Date? = nil
 
-    @Environment(\.dismiss) private var dismiss
-
-    init(chatViewModel: ChatViewModel,
-         runtimeModelId: String? = nil,
-         effort: String? = nil,
-         onEnd: @escaping (Int) -> Void) {
-        self.chatViewModel = chatViewModel
+    init(host: VoiceHost, viewModel: VoiceModeViewModel, onEnd: @escaping (Int) -> Void) {
+        self.host = host
+        self.viewModel = viewModel
         self.onEnd = onEnd
-        _viewModel = StateObject(wrappedValue: VoiceModeViewModel(
-            chatViewModel: chatViewModel,
-            runtimeModelId: runtimeModelId,
-            effort: effort
-        ))
     }
 
     var body: some View {
@@ -60,6 +50,13 @@ struct VoiceModeView: View {
                     .padding(.bottom, 6)
                     .animation(.easeOut(duration: 0.15), value: viewModel.liveTranscript)
 
+                if let engine = viewModel.engineLabel {
+                    Text(engine)
+                        .font(.caption2)
+                        .foregroundColor(Color("TextSecondary"))
+                        .padding(.bottom, 4)
+                }
+
                 // In-place error/status line — no alerts, no crashes.
                 if let statusLine = viewModel.statusLine {
                     Text(statusLine)
@@ -79,7 +76,6 @@ struct VoiceModeView: View {
         }
         .onAppear {
             pulse = true
-            viewModel.begin(dictation: dictation, speaker: speaker)
             #if DEBUG
             // `-open-voice-settings` (DEBUG only): opens the voice settings
             // sheet straight away for screenshot verification.
@@ -87,23 +83,6 @@ struct VoiceModeView: View {
                 isSettingsPresented = true
             }
             #endif
-        }
-        // DictationController / SpeechSpeaker / chat stream changes drive
-        // the turn machine (ComposerView's onChange wiring pattern).
-        .onChange(of: dictation.transcript) { _, transcript in
-            viewModel.liveTranscript = transcript
-        }
-        .onChange(of: dictation.isRecording) { _, isRecording in
-            if !isRecording { viewModel.dictationEnded() }
-        }
-        .onChange(of: dictation.errorMessage) { _, message in
-            if let message { viewModel.dictationFailed(message) }
-        }
-        .onChange(of: chatViewModel.messages) { _, messages in
-            viewModel.replyUpdated(messages)
-        }
-        .onChange(of: speaker.isSpeaking) { _, isSpeaking in
-            if !isSpeaking { viewModel.speakerFinished() }
         }
     }
 
@@ -200,6 +179,12 @@ struct VoiceModeView: View {
     private var statusLabel: String {
         switch viewModel.state {
         case .idle:
+            if viewModel.isConnecting {
+                if let progress = viewModel.modelProgress {
+                    return "Downloading voice model \(Int(progress * 100))%"
+                }
+                return "Connecting…"
+            }
             if viewModel.isMuted { return "Muted" }
             return viewModel.isPushToTalk ? "Hold to talk" : "Tap to talk"
         case .listening:
@@ -219,6 +204,10 @@ struct VoiceModeView: View {
                 isSettingsPresented = true
             }
 
+            controlButton(systemName: "arrow.down.right.and.arrow.up.left", label: "Minimize to voice bar") {
+                host.presentation = .bar
+            }
+
             Spacer()
 
             micButton
@@ -226,9 +215,7 @@ struct VoiceModeView: View {
             Spacer()
 
             controlButton(systemName: "xmark", label: "End voice chat") {
-                let durationSeconds = viewModel.endSession()
-                onEnd(durationSeconds)
-                dismiss()
+                if let durationSeconds = host.end() { onEnd(durationSeconds) }
             }
         }
         .padding(.horizontal, 36)

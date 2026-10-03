@@ -45,7 +45,7 @@
 	</dict>
 	<!-- Composer dictation mic: system permission prompts. -->
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Allternit uses the microphone so you can dictate messages in chat.</string>
+	<string>Allternit uses the microphone so you can talk to your agent (voice chat) and dictate messages in chat. Audio is sent to Allternit Cloud Voice only when you choose it; "This device" keeps your speech on the phone.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Allternit uses speech recognition to transcribe your dictation into chat text.</string>
 	<!-- Composer "+" sheet: camera capture + photo library attach/recents. -->

@@ -78,6 +78,7 @@ targets:
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
         CODE_SIGN_ENTITLEMENTS: Allternit.entitlements
+        SWIFT_OBJC_BRIDGING_HEADER: Core/Voice/Voice-Bridging-Header.h
         # Clerk publishable key (client-public by design) — the production
         # instance, same value the web ships in .env.production.
         CLERK_PUBLISHABLE_KEY: pk_live_Y2xlcmsuYWxsdGVybml0LmNvbSQ
@@ -122,6 +123,14 @@ targets:
       # `Clibgit2` via the injected module map.
       - framework: Frameworks/libgit2.xcframework
         embed: false
+      # Voice: sherpa-onnx 1.13.8 (same version as the native engine,
+      # services/voice) — Silero VAD + Moonshine STT run on-device. Dynamic
+      # framework with onnxruntime statically inside; fetch via
+      # Frameworks/fetch-sherpa-onnx.sh. No espeak-ng/Kokoro on iOS (GPL-3).
+      - framework: Frameworks/SherpaOnnxC.xcframework
+        embed: true
+      # bzip2 for unpacking `.tar.bz2` voice model packs (Core/Voice/Bz2Tar).
+      - sdk: libbz2.tbd
       # libgit2 was built against system zlib (crc32/inflateReset …).
       - sdk: libz.tbd
       # … and system iconv (git_path_iconv for unicode path handling).

@@ -392,7 +392,7 @@ struct ChatContentView: View {
     @State private var inputText: String = ""
     /// Full voice-mode takeover (Phase 7b), presented from the composer's
     /// waveform button (or the `-open-voice-mode` DEBUG arg).
-    @State private var isVoiceModePresented = false
+    @StateObject private var voiceHost = VoiceHost()
     /// Phase 8 edit-resend: id of the last user bubble whose "Edit" filled
     /// the composer; non-nil routes the next send through
     /// `ChatViewModel.resendEditedMessage` (truncate + re-send).
@@ -682,6 +682,21 @@ struct ChatContentView: View {
                 editingBanner
             }
 
+            // Quick voice bar: orb + status + mute / expand / end while a
+            // voice conversation runs (full-screen mode is the expand button).
+            if voiceHost.presentation == .bar, let voiceModel = voiceHost.viewModel {
+                VoiceQuickBar(
+                    viewModel: voiceModel,
+                    onExpand: { voiceHost.presentation = .full },
+                    onEnd: {
+                        if let seconds = voiceHost.end() {
+                            viewModel.appendVoiceSummary(durationSeconds: seconds)
+                        }
+                    }
+                )
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
             // Composer card + decks (top deck in cowork, bottom deck when
             // the agent pill is on) — floating over the feed background,
             // no separator; the card's own border defines its edge.
@@ -711,7 +726,8 @@ struct ChatContentView: View {
                     viewModel.transientError = message
                 },
                 onVoiceMode: {
-                    isVoiceModePresented = true
+                    voiceHost.start(chat: viewModel, runtimeModelId: modelStore.selectedModelId,
+                                    effort: modelStore.effortForSend, presentation: .bar)
                 },
                 onAgentModeChanged: { isOn in
                     if isOn, viewModel.currentSessionId == nil, viewModel.messages.isEmpty {
@@ -724,22 +740,25 @@ struct ChatContentView: View {
             )
             .background(Color("BgSecondary"))
         }
-        .fullScreenCover(isPresented: $isVoiceModePresented, onDismiss: {
-            // Pull-to-dismiss (or any other teardown) must stop speech so the
-            // shared SpeechSpeaker singleton doesn't keep talking.
-            SpeechSpeaker.shared.stop()
-        }) {
-            VoiceModeView(
-                chatViewModel: viewModel,
-                runtimeModelId: modelStore.selectedModelId,
-                effort: modelStore.effortForSend,
-                onEnd: { durationSeconds in
+        .animation(.easeOut(duration: 0.2), value: voiceHost.presentation)
+        .voiceHostWiring(voiceHost, chat: viewModel)
+        .fullScreenCover(isPresented: Binding(
+            get: { voiceHost.presentation == .full && voiceHost.viewModel != nil },
+            set: { if !$0, voiceHost.presentation == .full { voiceHost.presentation = voiceHost.isActive ? .bar : .none } }
+        )) {
+            if let voiceModel = voiceHost.viewModel {
+                VoiceModeView(host: voiceHost, viewModel: voiceModel, onEnd: { durationSeconds in
                     // Files the "Voice chat ended · Ns" card into the feed; the
                     // conversation itself is already in the thread (it went
                     // through sendMessage).
                     viewModel.appendVoiceSummary(durationSeconds: durationSeconds)
-                }
-            )
+                })
+            }
+        }
+        .onDisappear {
+            // Leaving the thread ends the call (the engine owns the mic) — but
+            // not when the full-screen cover is what covered this view.
+            if voiceHost.presentation != .full { voiceHost.end() }
         }
         .sheet(item: $activeArtifact) { artifact in
             ArtifactDetailsView(artifact: artifact)
@@ -787,7 +806,8 @@ struct ChatContentView: View {
             // gradient state for screenshots.
             if launchArgumentEnabled("open-voice-mode")
                 || launchArgumentEnabled("open-voice-settings") {
-                isVoiceModePresented = true
+                voiceHost.start(chat: viewModel, runtimeModelId: modelStore.selectedModelId,
+                                effort: modelStore.effortForSend, presentation: .full)
             }
             // `-voice-summary <seconds>` (DEBUG only): files a "Voice chat
             // ended · Ns" card into the feed for screenshot verification.
