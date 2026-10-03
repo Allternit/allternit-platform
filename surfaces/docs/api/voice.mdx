@@ -431,7 +431,7 @@ When the session closes for any reason, the service reports the wall-clock durat
 
 | Client → server | Fields | Meaning |
 |-----------------|--------|---------|
-| `session.start` | `voice?`, `sttModel?` (`light`/`accurate`), `language?`, `inputSampleRate?`, `bargeIn?` (default `true`), `turn?` {`mode`: `smart`/`vad`, `silenceMs?`} | First frame. The answer is `session.ready` or `error`. |
+| `session.start` | `voice?`, `sttModel?` (`light`/`accurate`), `language?`, `inputSampleRate?`, `bargeIn?` (default `true`), `turn?` `{mode: smart or vad, silenceMs?}` | First frame. The answer is `session.ready` or `error`. |
 | `session.update` | any `session.start` field | Change settings mid-session. |
 | `speak.delta` | `id`, `text` | Append reply text. It's spoken sentence by sentence. |
 | `speak.done` | `id` | No more text for `id`. |
