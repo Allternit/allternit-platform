@@ -6,7 +6,7 @@
 
 - `fbf883e7c` merge: voice-session into voice-integrate
 - `802d0e82d` merge: voice-callworker into voice-integrate
-- the wiring commit follows these two (see `git log`).
+- `3b27b93d3` voice: wire the Voice Session onto the real engine (+ these notes)
 
 ## Conflicts and how they were resolved
 
