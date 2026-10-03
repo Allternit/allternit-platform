@@ -93,9 +93,9 @@ async fn health_reports_sherpa_engine_and_packs() {
     assert_eq!(json["num_threads"], 2);
     assert!(json["stt_ready"].is_boolean());
     assert!(json["tts_ready"].is_boolean());
-    // Pack list must be present with both packs, no downloads triggered.
+    // Pack list must be present with every pack, no downloads triggered.
     let packs = json["packs"].as_array().expect("packs array");
-    assert_eq!(packs.len(), 3);
+    assert_eq!(packs.len(), 4);
     assert!(packs.iter().all(|p| p["state"] == "missing"));
 }
 
@@ -210,7 +210,7 @@ async fn list_packs_reports_state_without_downloading() {
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let packs = json["packs"].as_array().unwrap();
-    assert_eq!(packs.len(), 3);
+    assert_eq!(packs.len(), 4);
     for p in packs {
         assert!(p["state"].is_string());
         assert!(!p["state"].as_str().unwrap().is_empty());

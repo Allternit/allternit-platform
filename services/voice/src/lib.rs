@@ -8,7 +8,9 @@
 
 pub mod audio;
 pub mod call_worker;
+pub mod custom_voice;
 pub mod models;
+pub mod phrase_cache;
 pub mod server;
 pub mod session;
 pub mod stt;

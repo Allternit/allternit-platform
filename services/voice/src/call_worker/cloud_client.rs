@@ -93,6 +93,10 @@ pub struct BotConfig {
     /// Recording consent configured for this bot. Off unless set.
     #[serde(default)]
     pub recording: bool,
+    /// What the bot says on an answering machine (outbound). Optional; without
+    /// it the default honest message is used. cloud-api doesn't send it yet.
+    #[serde(default)]
+    pub voicemail_message: Option<String>,
 }
 
 impl BotConfig {

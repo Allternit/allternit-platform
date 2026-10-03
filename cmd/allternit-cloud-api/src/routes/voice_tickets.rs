@@ -28,6 +28,7 @@ use std::sync::Arc;
 use crate::{
     auth,
     error::ApiError,
+    services::voice_billing,
     services::voice_usage::{
         self, included_cloud_voice_seconds, plan_allows_overage, plan_for_user,
         CLOUD_VOICE_RATE_USD_PER_MIN, ENGINE_CLOUD, ENGINE_PHONE, PHONE_RATE_USD_PER_MIN,
@@ -142,7 +143,7 @@ fn constant_time_eq(left: &str, right: &str) -> bool {
 }
 
 /// Check the voice service's bearer token. `Err` is the response to send.
-fn require_worker(headers: &HeaderMap) -> Result<(), Response> {
+pub(crate) fn require_worker(headers: &HeaderMap) -> Result<(), Response> {
     let Some(expected) = env_nonempty(ENV_WORKER_TOKEN).filter(|v| v.len() >= MIN_SECRET_LEN)
     else {
         return Err(cloud_unavailable());
@@ -311,12 +312,23 @@ pub(crate) async fn month_for_user(
     let plan = plan_for_user(&state.db, user_id).await?;
     let cloud = voice_usage::month_usage_at(&state.db, user_id, ENGINE_CLOUD, now).await?;
     let phone = voice_usage::month_usage_at(&state.db, user_id, ENGINE_PHONE, now).await?;
+    // Estimate of this month's voice charges (cloud minutes over the allowance,
+    // phone minutes, phone numbers). `billingEnabled` is false while overage
+    // billing is off, so clients can hide the line instead of promising a charge.
+    // A display-only figure must not take the usage endpoint down with it.
+    let est = voice_billing::estimate_month(&state.db, user_id, now).await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "voice overage estimate unavailable");
+        voice_billing::compute_amounts("free", 0, 0, 0)
+    });
     Ok(json!({
         "engine": ENGINE_CLOUD,
         "usedSeconds": cloud,
         "includedSeconds": included_cloud_voice_seconds(&plan),
         "overageRateUsdPerMin": CLOUD_VOICE_RATE_USD_PER_MIN,
         "phone": { "usedSeconds": phone, "rateUsdPerMin": PHONE_RATE_USD_PER_MIN },
+        "estimatedOverageCents": est.amount_cents,
+        "estimatedCloudOverageCents": est.cloud_cents,
+        "billingEnabled": voice_billing::Mode::from_env() != voice_billing::Mode::Off,
     }))
 }
 
@@ -364,6 +376,12 @@ mod tests {
         let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
         sqlx::raw_sql(
             &include_str!("../../migrations_pg/029_voice_usage.sql").replace("public.", ""),
+        )
+        .execute(&state.db)
+        .await
+        .unwrap();
+        sqlx::raw_sql(
+            &include_str!("../../migrations_pg/024_phone_numbers.sql").replace("public.", ""),
         )
         .execute(&state.db)
         .await
@@ -543,6 +561,10 @@ mod tests {
         assert_eq!(body["includedSeconds"], 6000);
         assert_eq!(body["overageRateUsdPerMin"], 0.08);
         assert_eq!(body["phone"], json!({"usedSeconds": 30, "rateUsdPerMin": 0.08}));
+        // 90 s of cloud is inside the allowance; 30 s of phone rounds up to 1 min.
+        assert_eq!(body["estimatedCloudOverageCents"], 0);
+        assert_eq!(body["estimatedOverageCents"], 8);
+        assert!(body["billingEnabled"].is_boolean());
         let free = month_for_user(&state, "nobody", now).await.unwrap();
         assert_eq!(free["includedSeconds"], 0);
     }

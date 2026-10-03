@@ -117,7 +117,22 @@ pub trait EngineFactory: Send + Sync + 'static {
     fn info(&self, stt: &SttOptions) -> EngineInfo;
     fn stt(&self, opts: &SttOptions) -> Result<Box<dyn StreamingStt>, EngineError>;
     fn tts(&self) -> Result<Box<dyn Tts>, EngineError>;
+    /// The TTS for a session owned by `owner` (a signed-in Cloud Voice user,
+    /// or a bot's owner on a phone call). Engines with per-owner voices
+    /// (custom voices) override this; the default ignores the owner.
+    fn tts_for(&self, _owner: Option<&str>) -> Result<Box<dyn Tts>, EngineError> {
+        self.tts()
+    }
+    /// Is `voice` usable by `owner` right now? Blocking (may ask the cloud).
+    /// Called before a session starts and when it switches voice. The default
+    /// accepts; the sherpa engine uses it to enforce custom-voice consent.
+    fn check_voice(&self, _owner: Option<&str>, _voice: &str) -> Result<(), EngineError> {
+        Ok(())
+    }
     fn vad(&self) -> Result<Box<dyn Vad>, EngineError>;
+    /// Pre-render `texts` (and the built-in fixed phrases) in `voice` into the
+    /// phrase cache. Best effort, in the background; default: nothing.
+    fn prepare_phrases(&self, _texts: &[String], _voice: &str) {}
     /// `Ok(None)` when no Smart Turn model is available; `smart` mode then
     /// falls back to `vad` with a non-fatal `turn_unavailable` error.
     fn turn_detector(&self) -> Result<Option<Box<dyn TurnDetector>>, EngineError>;

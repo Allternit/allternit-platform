@@ -431,7 +431,7 @@ When the session closes for any reason, the service reports the wall-clock durat
 
 | Client → server | Fields | Meaning |
 |-----------------|--------|---------|
-| `session.start` | `voice?`, `sttModel?` (`light`/`accurate`), `language?`, `inputSampleRate?`, `bargeIn?` (default `true`), `turn?` {`mode`: `smart`/`vad`, `silenceMs?`} | First frame. The answer is `session.ready` or `error`. |
+| `session.start` | `voice?`, `sttModel?` (`light`/`accurate`), `language?`, `inputSampleRate?`, `bargeIn?` (default `true`), `turn?` `{mode: smart or vad, silenceMs?}` | First frame. The answer is `session.ready` or `error`. |
 | `session.update` | any `session.start` field | Change settings mid-session. |
 | `speak.delta` | `id`, `text` | Append reply text. It's spoken sentence by sentence. |
 | `speak.done` | `id` | No more text for `id`. |
@@ -472,6 +472,23 @@ When the session closes for any reason, the service reports the wall-clock durat
 ```
 
 To try it from a terminal, run `cargo run -p voice-service --example voice_session_client -- --wav question.wav --say "It is noon." --out reply.wav`.
+
+## Custom voices (cloud-api)
+
+Custom voices live in the Allternit Cloud API, not the voice service. All routes need a signed-in user, except the two worker routes, which need the voice worker token. See the [Custom voices guide](/guides/custom-voices).
+
+| Method and path | Purpose |
+|---|---|
+| `GET /api/v1/voice/custom-voices/consent-text` | The current consent statement, its `version`, and the allowed clip length (`minSeconds`, `maxSeconds`). |
+| `POST /api/v1/voice/custom-voices` | Record consent and create a voice. Body: `name`, `speakerName`, `relationship` (`self` or `authorized`), `consentVersion`, `consentAccepted` (must be `true`), `clipBase64` (a 16-bit mono PCM WAV, 8–24 s, under 1.6 MB). Returns `201` with `id`, `voiceId` (`custom:<id>`) and `clipSha256`. |
+| `GET /api/v1/voice/custom-voices` | List your active voices. |
+| `DELETE /api/v1/voice/custom-voices/{id}` | Revoke: deletes the clip, ends consent, resets bots using the voice to `allternit-default`. Idempotent (`204`). |
+| `GET /api/v1/voice/custom-voices/{id}/consent` | Worker only: whether consent is on file, with the clip hash. |
+| `GET /api/v1/voice/custom-voices/{id}/clip` | Worker only: the reference clip. |
+
+Errors carry `{ "code", "message" }`: `consent-required` (422), `consent-text-changed` (409), `bad-clip` (422), `clip-too-large` (413), `too-many-voices` (409).
+
+The voice service checks consent through the worker routes before it speaks a `custom:` voice, and refuses with the realtime error code `custom_voice_refused` if consent is missing or revoked. If it can't reach the cloud to check, it reports the voice as unavailable rather than speaking. The voice's engine is Pocket TTS, from the `voices` model pack.
 
 ## Related pages
 

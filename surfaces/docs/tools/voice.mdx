@@ -157,9 +157,20 @@ Measured with `examples/voice_bench.rs` (CPU only, 2 threads, 40
 LibriSpeech test-clean utterances; clean 16 kHz, phone line, and raw 8 kHz
 μ-law). Per-host results: `services/voice/bench/results-<host>.jsonl`.
 
+## Faster first speech
+
+Kokoro takes a fraction of a second to a couple of seconds to render the first words on a weak CPU. The voice service shortens that wait four ways:
+
+- **Short first chunk.** The first sentence is cut after 2–4 words, so the first audio is a very small render.
+- **Phrase cache.** Common acknowledgements ("Sure.", "Okay.", "Got it.") and the lines a call opens with are rendered once per voice and kept in `phrase-cache/` inside the model directory. A cached phrase plays in about a millisecond. The cache is capped by `ALLTERNIT_VOICE_PHRASE_CACHE_MB` (default 64, `0` turns it off), and only fixed phrases are stored; ordinary replies are never written to disk.
+- **Warm start.** The speech engine renders a short sentence at startup, so your first reply isn't a cold start.
+- **Fillers.** A Voice Session started with `fillers: true` says a short phrase such as "One moment." if the reply hasn't started 1.2 seconds after you stop talking. Phone calls turn this on; the in-app voice session leaves it off. See `services/voice/spec/VOICE_SESSION.md` for the protocol.
+
 ## Related pages
 
 - [Voice API](/api/voice)
 - [Voice Calls (Call Worker)](/tools/voice-calls)
 - [Native Tool Belt](/tools/tool-belt)
 - [Gizzi Code](/surfaces/native-agent)
+- [Talk to your bots](/guides/voice)
+- [Voice in the app (developer guide)](/surfaces/voice)

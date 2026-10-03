@@ -179,7 +179,10 @@ static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 pub(crate) fn transport(state: &Arc<AppState>) -> Arc<dyn AaiTransport> {
     match RUNTIME.get() {
         Some(r) => r.tx.clone(),
-        None => Arc::new(crate::channel_transports::ChannelLaneTransport::new(state.clone(), Arc::new(SubsTransport(state.clone())))),
+        None => Arc::new(crate::gateway_vendor_host::HostRoutedTransport::new(
+            state.db.clone(),
+            Arc::new(crate::channel_transports::ChannelLaneTransport::new(state.clone(), Arc::new(SubsTransport(state.clone())))),
+        )),
     }
 }
 
@@ -979,6 +982,12 @@ pub async fn intercept_turn(session_id: &str, text: &str, opts: TurnOpts) -> Opt
         Ok(Some(r)) => Some(r.reply.ok_or_else(|| "the vendor accepted the turn and has not replied yet".to_string())),
         Err(e) => Some(Err(e.message)),
     }
+}
+
+/// Whether the session's thread runs on a vendor (Agent Gateway) binding, so a
+/// turn there goes through [`intercept_turn`] and has no gizzi event stream.
+pub(crate) fn is_vendor_session(db: &DbHandle, session_id: &str) -> bool {
+    matches!(resolve(db, session_id), Ok(Some(_)))
 }
 
 /// Stop on a vendor-bound session: cancel the turn running in the vendor's active remote context.

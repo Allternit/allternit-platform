@@ -4,13 +4,25 @@
 //! The room side is two channels ([`RoomCommand`] out, [`RoomInput`] in) so this
 //! file has no LiveKit types and is tested end to end with fakes; `room.rs`
 //! fills them from the real room.
+//!
+//! Beyond the turn loop the call handles:
+//! - **takeover**: a second, transcription-only core listens to the human who
+//!   joined the room ([`Call::start_human_pipeline`]);
+//! - **hold**: hold music instead of silence ([`RoomCommand::HoldMusic`]);
+//! - **warm transfer**: hold, consult the target in another room, brief them,
+//!   then connect ([`transfer`]);
+//! - **outbound answer screening**: don't speak until it's clear a person
+//!   answered; leave a short message on a machine ([`voicemail`]);
+//! - **recording**: the opening states whether the call is recorded, from what
+//!   is really happening ([`recording`]).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use futures::future::BoxFuture;
 use futures::StreamExt;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use super::audio::{to_pcm16le, Framer, Pcm16Decoder, Resampler, TRACK_RATE};
@@ -19,8 +31,10 @@ use super::cloud_client::{BotConfig, TurnRequest};
 use super::controls::{parse_control, CallState, Control, Target};
 use super::disclosure;
 use super::events::{CallEvent, EventQueue, Speaker, TransferMode};
+use super::recording::Recording;
 use super::session_adapter::{CoreCommand, CoreEvent, CoreHandle};
-use super::voicemail::VoicemailDetector;
+use super::transfer::{self, ConsultDriver, TransferOutcome, TransferPlan};
+use super::voicemail::{self, Signal, VoicemailAction, VoicemailDetector};
 
 /// What the call asks the room to do.
 #[derive(Debug)]
@@ -29,12 +43,24 @@ pub enum RoomCommand {
     PublishFrame(Vec<i16>),
     /// Drop bot audio already queued in the track source (barge-in, mute, hold).
     ClearAudio,
+    /// Start or stop the hold music on the bot's track.
+    HoldMusic(bool),
+    /// One 10 ms frame of the warm-transfer briefing, for the consult room.
+    ConsultFrame(Vec<i16>),
+    /// Drop briefing audio already queued for the consult room.
+    ConsultClear,
     /// Send DTMF to the caller.
     SendDtmf(String),
     /// Cold transfer via SIP REFER; the room answers with [`RoomInput::TransferResult`].
     Transfer { to: String },
-    /// End the call (remove the SIP participant, delete the room).
+    /// End the call now (delete the room, which drops the SIP leg).
     Hangup,
+    /// End the call once the queued bot audio has played out (a closing line
+    /// must not be cut off).
+    HangupAfterPlayout,
+    /// The bot leaves; the room and everyone else in it stay (warm transfer
+    /// connected the caller and the target).
+    Leave,
 }
 
 /// What the room tells the call.
@@ -42,6 +68,8 @@ pub enum RoomCommand {
 pub enum RoomInput {
     /// Caller audio, mono PCM16 at 16 kHz.
     CallerAudio(Vec<i16>),
+    /// Audio of the human who took over, mono PCM16 at 16 kHz.
+    HumanAudio(Vec<i16>),
     /// DTMF the caller pressed.
     Dtmf(String),
     /// Raw `allternit.call.control` payload (server-sent only; room.rs drops
@@ -70,15 +98,66 @@ pub struct CallContext {
 pub struct CallOutcome {
     pub reason: String,
     pub duration_sec: u64,
+    /// The bot should leave the room without deleting it (a warm transfer
+    /// connected the caller and the target there).
+    pub keep_room: bool,
 }
 
 /// How long a turn waits for the first reply byte before the fallback line.
 pub const DEFAULT_TURN_TIMEOUT: Duration = Duration::from_secs(20);
 
+/// Opens a transcription-only Voice Session for a human who took over.
+pub type HumanCoreFactory = Arc<dyn Fn() -> BoxFuture<'static, anyhow::Result<CoreHandle>> + Send + Sync>;
+
+/// Builds the consult leg for a warm transfer: `(target, consentRef)`.
+pub type ConsultLauncher = Arc<dyn Fn(&str, &str) -> Arc<dyn ConsultDriver> + Send + Sync>;
+
+/// Everything a warm transfer needs from the worker.
+#[derive(Clone)]
+pub struct WarmTransfer {
+    /// LiveKit outbound SIP trunk; `None` fails the transfer with the reason.
+    pub outbound_trunk: Option<String>,
+    pub ring_timeout: Duration,
+    pub accept_timeout: Duration,
+    pub launch: ConsultLauncher,
+}
+
+/// What a call gets besides its room, core, brain and events.
+pub struct CallDeps {
+    /// Answer screening: `NoScreening` on inbound, `AnswerScreen` on outbound.
+    pub voicemail: Box<dyn VoicemailDetector>,
+    pub recording: Recording,
+    /// `None`: a takeover is not transcribed (logged, never silently).
+    pub human_core: Option<HumanCoreFactory>,
+    /// `None`: warm transfer answers `ok:false`.
+    pub warm: Option<WarmTransfer>,
+}
+
+impl CallDeps {
+    /// Inbound call with no recording, takeover transcription or warm transfer.
+    pub fn bare(voicemail: Box<dyn VoicemailDetector>) -> Self {
+        Self { voicemail, recording: Recording::none(), human_core: None, warm: None }
+    }
+}
+
 enum BrainMsg {
     Delta(u64, String),
     Done(u64),
     Failed(u64, String),
+}
+
+/// Messages from the takeover transcription pipeline.
+enum HumanMsg {
+    Opened(u64, mpsc::Sender<CoreCommand>),
+    Event(u64, CoreEvent),
+    Failed(u64, String),
+}
+
+/// Messages from a running warm transfer.
+enum XferMsg {
+    /// Speak this to the target in the consult room; answer `true` once said.
+    Brief { text: String, done: oneshot::Sender<bool> },
+    Done(TransferOutcome),
 }
 
 struct Speech {
@@ -111,6 +190,44 @@ impl Speech {
     }
 }
 
+/// Where the bot's current speech goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Dest {
+    Caller,
+    /// The warm-transfer briefing, into the consult room.
+    Consult,
+}
+
+/// Who answered an outbound call. Inbound calls are `Person` from the start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Answer {
+    /// Waiting to find out; the bot hasn't spoken.
+    Screening,
+    /// A person (or an inbound call): normal conversation.
+    Person,
+    /// An answering machine: waiting for the beep.
+    Machine,
+    /// Speaking the voicemail message; hang up when it ends.
+    LeavingMessage,
+}
+
+struct Xfer {
+    to: String,
+    driver: Arc<dyn ConsultDriver>,
+    task: JoinHandle<()>,
+    /// Briefing in flight: resolves the pipeline's `brief` call when spoken.
+    brief_done: Option<oneshot::Sender<bool>>,
+    brief_id: Option<String>,
+}
+
+/// Voicemail utterance id.
+const VM_ID: &str = "vm-0";
+/// Most final transcript lines kept for the transfer briefing.
+const TRANSCRIPT_KEEP: usize = 200;
+/// Human audio buffered while the transcription core is still opening
+/// (10 ms-ish frames from the room; about 2 s).
+const HUMAN_BUFFER_FRAMES: usize = 200;
+
 struct Call {
     ctx: CallContext,
     started: Instant,
@@ -132,9 +249,30 @@ struct Call {
     /// After a cancel, audio the core already had in flight is dropped until
     /// the next `speak.started`.
     drop_audio: bool,
+    dest: Dest,
+    answer: Answer,
     voicemail: Box<dyn VoicemailDetector>,
+    /// The opening, held back on outbound calls until a person is confirmed.
+    pending_opening: Option<String>,
+    /// The pickup's own turn ("Hello?") must not reach the brain.
+    skip_turn: bool,
     transferred: bool,
+    keep_room: bool,
     end_reason: Option<String>,
+    // takeover transcription
+    human_core: Option<HumanCoreFactory>,
+    human_tx: mpsc::UnboundedSender<HumanMsg>,
+    human_gen: u64,
+    human_core_tx: Option<mpsc::Sender<CoreCommand>>,
+    human_buffer: VecDeque<Vec<u8>>,
+    // warm transfer
+    warm: Option<WarmTransfer>,
+    xfer: Option<Xfer>,
+    xfer_tx: mpsc::UnboundedSender<XferMsg>,
+    xfer_count: u64,
+    /// Final lines, for the transfer briefing.
+    transcript: Vec<(Speaker, String)>,
+    recording: Option<Recording>,
 }
 
 /// Run a configured call to its end. Returns the outcome and a handle that
@@ -146,13 +284,17 @@ pub async fn run_call(
     events: EventQueue,
     room_tx: mpsc::Sender<RoomCommand>,
     mut room_rx: mpsc::Receiver<RoomInput>,
-    voicemail: Box<dyn VoicemailDetector>,
+    deps: CallDeps,
 ) -> (CallOutcome, JoinHandle<()>) {
     let CoreHandle { tx: core_tx, rx: mut core_rx, output_sample_rate } = core;
     let (brain_tx, mut brain_rx) = mpsc::unbounded_channel();
+    let (human_tx, mut human_rx) = mpsc::unbounded_channel();
+    let (xfer_tx, mut xfer_rx) = mpsc::unbounded_channel();
+    let CallDeps { voicemail, recording, human_core, warm } = deps;
+    let screening = voicemail.active();
     let mut call = Call {
         started: Instant::now(),
-        state: CallState::default(),
+        state: CallState { recording: recording.active, ..Default::default() },
         events,
         core_tx,
         room_tx,
@@ -165,27 +307,61 @@ pub async fn run_call(
         reply_had_text: false,
         speech: Speech::new(output_sample_rate),
         drop_audio: false,
+        dest: Dest::Caller,
+        answer: if screening { Answer::Screening } else { Answer::Person },
         voicemail,
+        pending_opening: None,
+        skip_turn: false,
         transferred: false,
+        keep_room: false,
         end_reason: None,
+        human_core,
+        human_tx,
+        human_gen: 0,
+        human_core_tx: None,
+        human_buffer: VecDeque::new(),
+        warm,
+        xfer: None,
+        xfer_tx,
+        xfer_count: 0,
+        transcript: Vec::new(),
+        recording: None,
         ctx,
     };
 
     // Speak first. The opening comes from the cached bot config only; nothing
-    // here waits on the user's runtime.
+    // here waits on the user's runtime. Whether it says "recorded" follows what
+    // the recording setup actually did (decided before the call got here).
     let opening = disclosure::opening(
         call.ctx.bot.display_name().as_deref(),
-        call.ctx.bot.recording,
+        recording.active,
         call.ctx.bot.greeting.as_deref(),
     );
-    call.say("u-0", &opening).await;
+    // Pre-render the opening (X1 phrase cache) so the disclosure plays fast.
+    let _ = call.core_tx.send(CoreCommand::Prepare { texts: vec![opening.clone()] }).await;
+    if screening {
+        // Outbound: a machine would hear us talk over its greeting. Wait until
+        // a person is confirmed.
+        call.pending_opening = Some(opening);
+    } else {
+        call.say("u-0", &opening).await;
+    }
     call.events.emit(CallEvent::Started {
         direction: call.ctx.direction.clone(),
         from: if call.ctx.direction == "outbound" { call.ctx.local.clone() } else { call.ctx.remote.clone() },
         to: if call.ctx.direction == "outbound" { call.ctx.remote.clone() } else { call.ctx.local.clone() },
         number_id: call.ctx.number_id.clone(),
     });
+    if let Some(why) = &recording.unavailable {
+        // Recording was requested and isn't happening: say so in the state the
+        // UI shows. The opening already told the caller "isn't recorded".
+        tracing::error!(call_id = %call.ctx.call_id, "{why}");
+        call.events.emit(call.state.state_event());
+    }
+    call.recording = Some(recording);
 
+    let mut tick = tokio::time::interval(Duration::from_millis(200));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     while call.end_reason.is_none() {
         tokio::select! {
             input = room_rx.recv() => match input {
@@ -197,21 +373,47 @@ pub async fn run_call(
                 None => call.on_core(CoreEvent::Closed).await,
             },
             Some(m) = brain_rx.recv() => call.on_brain(m).await,
+            Some(m) = human_rx.recv() => call.on_human(m).await,
+            Some(m) = xfer_rx.recv() => call.on_xfer(m).await,
+            _ = tick.tick() => call.on_tick().await,
         }
     }
 
     call.cancel_reply();
+    call.cancel_transfer("the call ended").await;
+    call.end_human_pipeline().await;
     let _ = call.core_tx.send(CoreCommand::End).await;
     let reason = call.end_reason.take().unwrap_or_default();
     let duration_sec = call.started.elapsed().as_secs();
-    call.events.emit(CallEvent::Ended { duration_sec, reason: reason.clone(), recording_ref: None });
-    (CallOutcome { reason, duration_sec }, call.events.close())
+    let recording_ref = match call.recording.take() {
+        Some(r) => tokio::time::timeout(Duration::from_secs(5), r.finish(&call.ctx.call_id)).await.unwrap_or_else(|_| {
+            tracing::error!(call_id = %call.ctx.call_id, "stopping the recording timed out, no recordingRef");
+            None
+        }),
+        None => None,
+    };
+    call.events.emit(CallEvent::Ended { duration_sec, reason: reason.clone(), recording_ref });
+    let keep_room = call.keep_room;
+    (CallOutcome { reason, duration_sec, keep_room }, call.events.close())
 }
 
 impl Call {
     fn end(&mut self, reason: &str) {
         if self.end_reason.is_none() {
             self.end_reason = Some(reason.to_string());
+        }
+    }
+
+    fn at_ms(&self) -> u64 {
+        self.started.elapsed().as_millis() as u64
+    }
+
+    fn remember(&mut self, speaker: Speaker, text: &str) {
+        if !text.trim().is_empty() {
+            self.transcript.push((speaker, text.trim().to_string()));
+            if self.transcript.len() > TRANSCRIPT_KEEP {
+                self.transcript.remove(0);
+            }
         }
     }
 
@@ -223,6 +425,7 @@ impl Call {
 
     fn bot_transcript(&mut self, id: &str) {
         if let Some(text) = self.said.remove(id).filter(|t| !t.trim().is_empty()) {
+            self.remember(Speaker::Bot, &text);
             self.events.emit(CallEvent::TranscriptDelta {
                 speaker: Speaker::Bot,
                 text,
@@ -250,9 +453,66 @@ impl Call {
         self.drop_audio = true;
     }
 
+    async fn on_tick(&mut self) {
+        if matches!(self.answer, Answer::Screening | Answer::Machine) {
+            let at = self.at_ms();
+            if let Some(sig) = self.voicemail.on_tick(at) {
+                self.on_signal(sig, false).await;
+            }
+        }
+    }
+
+    /// Outbound answer screening result.
+    async fn on_signal(&mut self, sig: Signal, from_text: bool) {
+        match sig {
+            Signal::Human => {
+                if self.answer != Answer::Screening {
+                    return;
+                }
+                self.answer = Answer::Person;
+                // The pickup's own turn ("Hello?") already has our answer: the opening.
+                self.skip_turn = from_text;
+                if let Some(opening) = self.pending_opening.take() {
+                    self.say("u-0", &opening).await;
+                }
+            }
+            Signal::Machine => {
+                if self.answer == Answer::Screening {
+                    tracing::info!(call_id = %self.ctx.call_id, "answering machine detected, waiting for the beep");
+                    self.answer = Answer::Machine;
+                    self.pending_opening = None;
+                }
+            }
+            Signal::LeaveMessage => {
+                if self.answer == Answer::Machine {
+                    self.answer = Answer::LeavingMessage;
+                    let text = voicemail::message(
+                        self.ctx.bot.display_name().as_deref(),
+                        &self.ctx.local,
+                        self.ctx.bot.voicemail_message.as_deref(),
+                    );
+                    self.say(VM_ID, &text).await;
+                }
+            }
+            Signal::HangUp { reason } => {
+                tracing::info!(call_id = %self.ctx.call_id, %reason, "voicemail: hanging up without a message");
+                self.pending_opening = None;
+                self.events.emit(CallEvent::VoicemailDetected { action: VoicemailAction::HungUp.as_str().into() });
+                let _ = self.room_tx.send(RoomCommand::Hangup).await;
+                self.end("voicemail");
+            }
+        }
+    }
+
     async fn on_room(&mut self, input: RoomInput) {
         match input {
             RoomInput::CallerAudio(samples) => {
+                if matches!(self.answer, Answer::Screening | Answer::Machine) {
+                    let at = self.at_ms();
+                    if let Some(sig) = self.voicemail.on_audio(&samples, at) {
+                        self.on_signal(sig, false).await;
+                    }
+                }
                 if !self.state.muted_caller && !self.state.held {
                     // Never block the call loop on the core; drop audio if it lags.
                     if self.core_tx.try_send(CoreCommand::Audio(to_pcm16le(&samples))).is_err() {
@@ -260,6 +520,7 @@ impl Call {
                     }
                 }
             }
+            RoomInput::HumanAudio(samples) => self.on_human_audio(&samples),
             RoomInput::Dtmf(digits) => {
                 let from = self.ctx.remote.clone();
                 self.events.emit(CallEvent::Dtmf { digits, from });
@@ -279,6 +540,7 @@ impl Call {
                 }
             }
             RoomInput::CallerLeft => {
+                self.cancel_transfer("the caller hung up").await;
                 self.end(if self.transferred { "transferred" } else { "caller_hangup" })
             }
             RoomInput::Disconnected => self.end("room_closed"),
@@ -308,16 +570,14 @@ impl Call {
                 }
             }
             Control::Hold => {
-                self.state.held = true;
-                self.cancel_reply();
-                self.silence().await;
-                let _ = self.core_tx.send(CoreCommand::MicMute).await;
+                if self.xfer.is_none() {
+                    self.begin_hold().await;
+                }
             }
             Control::Resume => {
-                self.state.held = false;
-                if !self.state.muted_caller {
-                    let _ = self.core_tx.send(CoreCommand::MicUnmute).await;
-                }
+                // Taking the caller back during a warm transfer cancels it.
+                self.cancel_transfer("the transfer was cancelled").await;
+                self.end_hold().await;
             }
             Control::Dtmf(digits) => {
                 let _ = self.room_tx.send(RoomCommand::SendDtmf(digits.clone())).await;
@@ -325,30 +585,27 @@ impl Call {
                 self.events.emit(CallEvent::Dtmf { digits, from });
                 return;
             }
-            Control::Transfer { to, mode: TransferMode::Cold } => {
+            Control::Transfer { to, mode: TransferMode::Cold, .. } => {
                 self.cancel_reply();
                 self.silence().await;
                 let _ = self.room_tx.send(RoomCommand::Transfer { to }).await;
                 return; // acked by call.transferred when the room answers
             }
-            Control::Transfer { to, mode: TransferMode::Warm } => {
-                self.events.emit(CallEvent::Transferred {
-                    to,
-                    mode: TransferMode::Warm,
-                    ok: false,
-                    reason: Some("warm transfer is not supported yet".into()),
-                });
+            Control::Transfer { to, mode: TransferMode::Warm, consent_ref } => {
+                self.start_warm_transfer(to, consent_ref).await;
                 return;
             }
             Control::Takeover { by } => {
                 self.state.takeover_by = Some(by.clone());
                 self.cancel_reply();
                 self.silence().await;
+                self.start_human_pipeline();
                 self.events.emit(CallEvent::Takeover { by, active: true });
                 return;
             }
             Control::Release { by } => {
                 self.state.takeover_by = None;
+                self.end_human_pipeline().await;
                 self.events.emit(CallEvent::Takeover { by, active: false });
                 return;
             }
@@ -357,11 +614,309 @@ impl Call {
         self.events.emit(self.state.state_event());
     }
 
+    /// Hold: the bot goes quiet, the caller hears the hold music.
+    async fn begin_hold(&mut self) {
+        self.state.held = true;
+        self.cancel_reply();
+        self.silence().await;
+        let _ = self.core_tx.send(CoreCommand::MicMute).await;
+        let _ = self.room_tx.send(RoomCommand::HoldMusic(true)).await;
+    }
+
+    async fn end_hold(&mut self) {
+        let was_held = self.state.held;
+        self.state.held = false;
+        if was_held {
+            let _ = self.room_tx.send(RoomCommand::HoldMusic(false)).await;
+        }
+        if !self.state.muted_caller {
+            let _ = self.core_tx.send(CoreCommand::MicUnmute).await;
+        }
+    }
+
+    // ---- takeover: transcribe the human ---------------------------------
+
+    /// Open a second, transcription-only Voice Session for the human who took
+    /// over: VAD and STT, no turn-taking, no brain, no speech. The caller's own
+    /// pipeline keeps running.
+    fn start_human_pipeline(&mut self) {
+        self.human_gen += 1;
+        self.human_core_tx = None;
+        self.human_buffer.clear();
+        let Some(factory) = self.human_core.clone() else {
+            tracing::error!(
+                call_id = %self.ctx.call_id,
+                "takeover: this worker has no transcription core for the human; their speech is not transcribed"
+            );
+            return;
+        };
+        let (gen, tx) = (self.human_gen, self.human_tx.clone());
+        tokio::spawn(async move {
+            match factory().await {
+                Ok(CoreHandle { tx: cmd_tx, mut rx, .. }) => {
+                    let _ = tx.send(HumanMsg::Opened(gen, cmd_tx));
+                    while let Some(ev) = rx.recv().await {
+                        if tx.send(HumanMsg::Event(gen, ev)).is_err() {
+                            return;
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(HumanMsg::Failed(gen, format!("{e:#}")));
+                }
+            }
+        });
+    }
+
+    async fn end_human_pipeline(&mut self) {
+        self.human_gen += 1; // events of the old pipeline are now stale
+        self.human_buffer.clear();
+        if let Some(tx) = self.human_core_tx.take() {
+            let _ = tx.send(CoreCommand::End).await;
+        }
+        if self.state.speaker == Some(Speaker::Human) {
+            self.state.speaker = None;
+        }
+    }
+
+    fn on_human_audio(&mut self, samples: &[i16]) {
+        if self.state.takeover_by.is_none() || self.human_core.is_none() {
+            return; // nobody has taken over: not ours to transcribe
+        }
+        let bytes = to_pcm16le(samples);
+        match &self.human_core_tx {
+            Some(tx) => {
+                if tx.try_send(CoreCommand::Audio(bytes)).is_err() {
+                    tracing::debug!(call_id = %self.ctx.call_id, "human core input full, dropped frame");
+                }
+            }
+            None => {
+                // The core is still opening: keep the first couple of seconds.
+                if self.human_buffer.len() < HUMAN_BUFFER_FRAMES {
+                    self.human_buffer.push_back(bytes);
+                }
+            }
+        }
+    }
+
+    async fn on_human(&mut self, m: HumanMsg) {
+        match m {
+            HumanMsg::Opened(gen, tx) => {
+                if gen != self.human_gen {
+                    let _ = tx.send(CoreCommand::End).await; // released before it opened
+                    return;
+                }
+                for b in self.human_buffer.drain(..) {
+                    let _ = tx.try_send(CoreCommand::Audio(b));
+                }
+                self.human_core_tx = Some(tx);
+            }
+            HumanMsg::Failed(gen, e) => {
+                if gen == self.human_gen {
+                    tracing::error!(call_id = %self.ctx.call_id, "takeover: couldn't open the human transcription core: {e}");
+                }
+            }
+            HumanMsg::Event(gen, ev) => {
+                if gen != self.human_gen {
+                    return;
+                }
+                match ev {
+                    CoreEvent::SpeechStarted => self.state.speaker = Some(Speaker::Human),
+                    CoreEvent::SpeechStopped => {
+                        if self.state.speaker == Some(Speaker::Human) {
+                            self.state.speaker = None;
+                        }
+                    }
+                    CoreEvent::TranscriptDelta { segment_id, text } => {
+                        self.events.emit(CallEvent::TranscriptDelta {
+                            speaker: Speaker::Human,
+                            text,
+                            is_final: false,
+                            segment_id: format!("h-{segment_id}"),
+                        });
+                    }
+                    CoreEvent::TranscriptFinal { segment_id, text } => {
+                        self.remember(Speaker::Human, &text);
+                        self.events.emit(CallEvent::TranscriptDelta {
+                            speaker: Speaker::Human,
+                            text,
+                            is_final: true,
+                            segment_id: format!("h-{segment_id}"),
+                        });
+                    }
+                    CoreEvent::Error { code, message, fatal } => {
+                        tracing::error!(call_id = %self.ctx.call_id, %code, fatal, "human transcription core error: {message}");
+                    }
+                    CoreEvent::Closed => {
+                        if self.human_core_tx.take().is_some() {
+                            tracing::error!(call_id = %self.ctx.call_id, "human transcription core closed mid-takeover");
+                        }
+                    }
+                    // Transcription only: never a turn, never speech.
+                    CoreEvent::TurnEnded { .. }
+                    | CoreEvent::SpeakStarted { .. }
+                    | CoreEvent::SpeakAudio(_)
+                    | CoreEvent::SpeakEnded { .. }
+                    | CoreEvent::SpeakInterrupted { .. } => {}
+                }
+            }
+        }
+    }
+
+    // ---- warm transfer ---------------------------------------------------
+
+    async fn start_warm_transfer(&mut self, to: String, consent_ref: Option<String>) {
+        let fail = |this: &mut Self, to: String, reason: String| {
+            tracing::warn!(call_id = %this.ctx.call_id, %reason, "warm transfer refused");
+            this.events.emit(CallEvent::Transferred { to, mode: TransferMode::Warm, ok: false, reason: Some(reason) });
+        };
+        if self.xfer.is_some() {
+            return fail(self, to, "a transfer is already in progress".into());
+        }
+        if self.state.takeover_by.is_some() {
+            return fail(self, to, "a person has taken over this call; they can transfer it themselves".into());
+        }
+        let Some(warm) = self.warm.clone() else {
+            return fail(self, to, "warm transfer isn't available on this worker".into());
+        };
+        if let Err(reason) = transfer::check_prerequisites(warm.outbound_trunk.as_deref(), consent_ref.as_deref()) {
+            return fail(self, to, reason);
+        }
+        let consent = consent_ref.unwrap_or_default();
+
+        // 1. Hold the caller, with music.
+        self.begin_hold().await;
+        self.events.emit(self.state.state_event());
+
+        // 2-4. Dial, brief, connect: run off the call loop, which keeps
+        // serving the room while the target's phone rings.
+        let driver = (warm.launch)(&to, &consent);
+        let plan = TransferPlan {
+            briefing: transfer::briefing(self.ctx.bot.display_name().as_deref(), &self.ctx.remote, &self.transcript),
+            ring_timeout: warm.ring_timeout,
+            accept_timeout: warm.accept_timeout,
+        };
+        let msg_tx = self.xfer_tx.clone();
+        let brief: transfer::BriefFn = {
+            let msg_tx = msg_tx.clone();
+            Arc::new(move |text| {
+                let (done, rx) = oneshot::channel();
+                let sent = msg_tx.send(XferMsg::Brief { text, done }).is_ok();
+                Box::pin(async move { sent && rx.await.unwrap_or(false) })
+            })
+        };
+        let task = {
+            let driver = driver.clone();
+            tokio::spawn(async move {
+                let outcome = transfer::run_warm_transfer(driver, plan, brief).await;
+                let _ = msg_tx.send(XferMsg::Done(outcome));
+            })
+        };
+        self.xfer = Some(Xfer { to, driver, task, brief_done: None, brief_id: None });
+    }
+
+    async fn on_xfer(&mut self, m: XferMsg) {
+        match m {
+            XferMsg::Brief { text, done } => {
+                let Some(x) = self.xfer.as_mut() else {
+                    let _ = done.send(false);
+                    return;
+                };
+                self.xfer_count += 1;
+                let id = format!("brief-{}", self.xfer_count);
+                x.brief_done = Some(done);
+                x.brief_id = Some(id.clone());
+                // Not `say`: the briefing is for the target, not part of the
+                // caller's transcript.
+                let _ = self.core_tx.send(CoreCommand::SpeakDelta { id: id.clone(), text }).await;
+                let _ = self.core_tx.send(CoreCommand::SpeakDone { id }).await;
+            }
+            XferMsg::Done(outcome) => {
+                let Some(x) = self.xfer.take() else { return };
+                let _ = self.room_tx.send(RoomCommand::ConsultClear).await;
+                self.dest = Dest::Caller;
+                self.events.emit(CallEvent::Transferred {
+                    to: x.to.clone(),
+                    mode: TransferMode::Warm,
+                    ok: outcome.ok(),
+                    reason: outcome.reason(),
+                });
+                match outcome.caller_line(None) {
+                    None => {
+                        // Connected: the bot leaves, the room stays.
+                        let _ = self.room_tx.send(RoomCommand::HoldMusic(false)).await;
+                        self.state.held = false;
+                        self.transferred = true;
+                        self.keep_room = true;
+                        let _ = self.room_tx.send(RoomCommand::Leave).await;
+                        self.end("transferred");
+                    }
+                    Some(line) => {
+                        // Not connected: take the caller off hold and say so.
+                        self.end_hold().await;
+                        self.events.emit(self.state.state_event());
+                        let id = format!("u-x{}", self.xfer_count);
+                        self.say(&id, &line).await;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Stop a warm transfer in flight (caller hung up, owner resumed, call
+    /// ending) and tear down its consult leg.
+    async fn cancel_transfer(&mut self, why: &str) {
+        let Some(x) = self.xfer.take() else { return };
+        x.task.abort();
+        if let Some(done) = x.brief_done {
+            let _ = done.send(false);
+        }
+        if x.brief_id.is_some() {
+            let _ = self.core_tx.send(CoreCommand::SpeakCancel { id: None }).await;
+        }
+        let _ = self.room_tx.send(RoomCommand::ConsultClear).await;
+        x.driver.cleanup().await;
+        self.dest = Dest::Caller;
+        self.events.emit(CallEvent::Transferred {
+            to: x.to,
+            mode: TransferMode::Warm,
+            ok: false,
+            reason: Some(why.to_string()),
+        });
+    }
+
+    fn consult_brief_id(&self) -> Option<&str> {
+        self.xfer.as_ref().and_then(|x| x.brief_id.as_deref())
+    }
+
+    // ---- core events -----------------------------------------------------
+
     async fn on_core(&mut self, ev: CoreEvent) {
         match ev {
-            CoreEvent::SpeechStarted => self.state.speaker = Some(Speaker::Caller),
-            CoreEvent::SpeechStopped => {}
+            CoreEvent::SpeechStarted => {
+                self.state.speaker = Some(Speaker::Caller);
+                if matches!(self.answer, Answer::Screening | Answer::Machine) {
+                    let at = self.at_ms();
+                    if let Some(sig) = self.voicemail.on_speech(true, at) {
+                        self.on_signal(sig, false).await;
+                    }
+                }
+            }
+            CoreEvent::SpeechStopped => {
+                if matches!(self.answer, Answer::Screening | Answer::Machine) {
+                    let at = self.at_ms();
+                    if let Some(sig) = self.voicemail.on_speech(false, at) {
+                        self.on_signal(sig, false).await;
+                    }
+                }
+            }
             CoreEvent::TranscriptDelta { segment_id, text } => {
+                if matches!(self.answer, Answer::Screening | Answer::Machine) {
+                    let at = self.at_ms();
+                    if let Some(sig) = self.voicemail.on_text(&text, false, at) {
+                        self.on_signal(sig, false).await;
+                    }
+                }
                 self.events.emit(CallEvent::TranscriptDelta {
                     speaker: Speaker::Caller,
                     text,
@@ -370,12 +925,13 @@ impl Call {
                 });
             }
             CoreEvent::TranscriptFinal { segment_id, text } => {
-                if self.ctx.direction == "outbound" {
-                    let at = self.started.elapsed().as_millis() as u64;
-                    if let Some(action) = self.voicemail.observe_final(&text, at) {
-                        self.events.emit(CallEvent::VoicemailDetected { action: action.as_str().into() });
+                if matches!(self.answer, Answer::Screening | Answer::Machine) {
+                    let at = self.at_ms();
+                    if let Some(sig) = self.voicemail.on_text(&text, true, at) {
+                        self.on_signal(sig, true).await;
                     }
                 }
+                self.remember(Speaker::Caller, &text);
                 self.events.emit(CallEvent::TranscriptDelta {
                     speaker: Speaker::Caller,
                     text,
@@ -385,19 +941,30 @@ impl Call {
             }
             CoreEvent::TurnEnded { text, confidence } => {
                 self.state.speaker = None;
-                if text.trim().is_empty() || !self.state.bot_active() {
-                    return; // during takeover/hold the bot only transcribes
+                if self.skip_turn {
+                    self.skip_turn = false; // the pickup greeting, already answered
+                    return;
+                }
+                if text.trim().is_empty() || !self.state.bot_active() || self.answer != Answer::Person {
+                    return; // during takeover/hold/screening the bot only transcribes
                 }
                 self.start_turn(text, confidence);
             }
-            CoreEvent::SpeakStarted { id: _ } => {
+            CoreEvent::SpeakStarted { id } => {
                 self.speech.reset();
                 self.drop_audio = false;
-                if self.state.bot_active() && !self.state.muted_bot {
+                self.dest = if self.consult_brief_id() == Some(id.as_str()) { Dest::Consult } else { Dest::Caller };
+                if self.dest == Dest::Caller && self.state.bot_active() && !self.state.muted_bot {
                     self.state.speaker = Some(Speaker::Bot);
                 }
             }
             CoreEvent::SpeakAudio(bytes) => {
+                if self.dest == Dest::Consult {
+                    for f in self.speech.frames(&bytes) {
+                        let _ = self.room_tx.send(RoomCommand::ConsultFrame(f)).await;
+                    }
+                    return;
+                }
                 if self.drop_audio || self.state.muted_bot || !self.state.bot_active() {
                     return;
                 }
@@ -406,6 +973,16 @@ impl Call {
                 }
             }
             CoreEvent::SpeakEnded { id } => {
+                if self.dest == Dest::Consult && self.consult_brief_id() == Some(id.as_str()) {
+                    if let Some(f) = self.speech.framer.flush() {
+                        let _ = self.room_tx.send(RoomCommand::ConsultFrame(f)).await;
+                    }
+                    if let Some(done) = self.xfer.as_mut().and_then(|x| x.brief_done.take()) {
+                        let _ = done.send(true);
+                    }
+                    self.dest = Dest::Caller;
+                    return;
+                }
                 if let Some(f) = self.speech.framer.flush() {
                     if !self.drop_audio && !self.state.muted_bot && self.state.bot_active() {
                         let _ = self.room_tx.send(RoomCommand::PublishFrame(f)).await;
@@ -415,8 +992,16 @@ impl Call {
                     self.state.speaker = None;
                 }
                 self.bot_transcript(&id);
+                if id == VM_ID && self.answer == Answer::LeavingMessage {
+                    self.events.emit(CallEvent::VoicemailDetected { action: VoicemailAction::LeftMessage.as_str().into() });
+                    let _ = self.room_tx.send(RoomCommand::HangupAfterPlayout).await;
+                    self.end("voicemail");
+                }
             }
             CoreEvent::SpeakInterrupted { id } => {
+                if self.consult_brief_id() == Some(id.as_str()) {
+                    return; // nobody talks over the briefing; the target's line isn't the caller's mic
+                }
                 // Barge-in: the caller talked over the bot. Stop publishing at
                 // once and abort the in-flight reply.
                 let _ = self.room_tx.send(RoomCommand::ClearAudio).await;
@@ -545,9 +1130,10 @@ pub async fn run_unconfigured_call(
                     if let Some(f) = speech.framer.flush() {
                         let _ = room_tx.send(RoomCommand::PublishFrame(f)).await;
                     }
-                    // Let the last frames play out before hanging up.
-                    tokio::time::sleep(Duration::from_millis(600)).await;
-                    break;
+                    // Let the queued audio play out before hanging up.
+                    let _ = tx.send(CoreCommand::End).await;
+                    let _ = room_tx.send(RoomCommand::HangupAfterPlayout).await;
+                    return;
                 }
                 Some(CoreEvent::Closed) | None => break,
                 Some(_) => {}
@@ -568,7 +1154,7 @@ mod tests {
     use crate::call_worker::brain::ScriptedBrain;
     use crate::call_worker::cloud_client::{CloudError, EventEnvelope};
     use crate::call_worker::events::{Backoff, EventTransport};
-    use crate::call_worker::voicemail::NoVoicemailDetection;
+    use crate::call_worker::voicemail::NoScreening;
     use futures::future::BoxFuture;
     use std::sync::Mutex;
 
@@ -609,6 +1195,14 @@ mod tests {
     }
 
     fn start(recording: bool, replies: Vec<Result<Vec<&str>, &str>>) -> Harness {
+        let deps = CallDeps {
+            recording: Recording::assumed(recording),
+            ..CallDeps::bare(Box::new(NoScreening))
+        };
+        start_with(deps, ctx(recording), replies)
+    }
+
+    fn start_with(deps: CallDeps, ctx: CallContext, replies: Vec<Result<Vec<&str>, &str>>) -> Harness {
         let (core_tx, core_cmds) = mpsc::channel(256);
         let (core_events, core_rx) = mpsc::channel(256);
         let (room_tx, room_cmds) = mpsc::channel(4096);
@@ -617,20 +1211,19 @@ mod tests {
         let brain = Arc::new(ScriptedBrain::new(replies));
         let events = EventQueue::start("c1", rec.clone(), Backoff::default());
         let core = CoreHandle { tx: core_tx, rx: core_rx, output_sample_rate: 24_000 };
-        let task = tokio::spawn(run_call(
-            ctx(recording),
-            core,
-            brain.clone(),
-            events,
-            room_tx,
-            room_rx,
-            Box::new(NoVoicemailDetection),
-        ));
+        let task = tokio::spawn(run_call(ctx, core, brain.clone(), events, room_tx, room_rx, deps));
         Harness { core_cmds, core_events, room_cmds, room_input, rec, task, brain }
     }
 
+    /// The next command the core hears. `Prepare` (pre-render of the opening)
+    /// is a latency hint, not part of the spoken sequence these tests assert.
     async fn next_cmd(h: &mut Harness) -> CoreCommand {
-        tokio::time::timeout(Duration::from_secs(2), h.core_cmds.recv()).await.unwrap().unwrap()
+        loop {
+            let cmd = tokio::time::timeout(Duration::from_secs(2), h.core_cmds.recv()).await.unwrap().unwrap();
+            if !matches!(cmd, CoreCommand::Prepare { .. }) {
+                return cmd;
+            }
+        }
     }
 
     async fn finish(h: Harness) -> (CallOutcome, Vec<EventEnvelope>) {
@@ -809,6 +1402,6 @@ mod tests {
         while let Ok(c) = room_cmds.try_recv() {
             last = Some(c);
         }
-        assert!(matches!(last, Some(RoomCommand::Hangup)));
+        assert!(matches!(last, Some(RoomCommand::HangupAfterPlayout)));
     }
 }

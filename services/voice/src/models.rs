@@ -79,6 +79,60 @@ pub const PACKS: &[Pack] = &[
         }],
     },
     Pack {
+        name: "voices",
+        description: "Pocket TTS (Kyutai, CC-BY-4.0) ONNX int8 for custom voices with consent on file",
+        files: &[
+            PackFile {
+                asset: "pocket-tts/bundle.json",
+                sha256: "bab643150f437f37df080a710520ff39ed9ebd9a339f8ebdc739f7eddfc28b3f",
+                size: 24_381,
+                upstream: Some("https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/english_2026-04/bundle.json"),
+            },
+            PackFile {
+                asset: "pocket-tts/tokenizer.model",
+                sha256: "d461765ae179566678c93091c5fa6f2984c31bbe990bf1aa62d92c64d91bc3f6",
+                size: 59_339,
+                upstream: Some("https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/english_2026-04/tokenizer.model"),
+            },
+            PackFile {
+                asset: "pocket-tts/bos_before_voice.npy",
+                sha256: "f46edf4f7007b7ba4ea58831f49d003e59e167b4641c44bb3addfe9231a780b1",
+                size: 4_224,
+                upstream: Some("https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/english_2026-04/bos_before_voice.npy"),
+            },
+            PackFile {
+                asset: "pocket-tts/mimi_encoder.onnx",
+                sha256: "853e2ca623b8782d94c3745ec6133bfdff7ce33d9b11128bd29ea03f28d76e3d",
+                size: 39_768_446,
+                upstream: Some("https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/english_2026-04/mimi_encoder.onnx"),
+            },
+            PackFile {
+                asset: "pocket-tts/text_conditioner.onnx",
+                sha256: "4ecee995fb69f85c7a7493d11f7b5ee15d9950facc7ab3f5c9c49ef1e03847bb",
+                size: 16_388_344,
+                upstream: Some("https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/english_2026-04/text_conditioner.onnx"),
+            },
+            PackFile {
+                asset: "pocket-tts/flow_lm_main_int8.onnx",
+                sha256: "f9bd8106b79a0192c1c43399ab938fb24900a95c1c599870d75a884e99000116",
+                size: 76_341_079,
+                upstream: Some("https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/english_2026-04/flow_lm_main_int8.onnx"),
+            },
+            PackFile {
+                asset: "pocket-tts/flow_lm_flow_int8.onnx",
+                sha256: "3dd781ee5abee9e195320bf0106bebd6372a852b3b36352524ee78b40554635d",
+                size: 9_962_530,
+                upstream: Some("https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/english_2026-04/flow_lm_flow_int8.onnx"),
+            },
+            PackFile {
+                asset: "pocket-tts/mimi_decoder_int8.onnx",
+                sha256: "3630450a3297a101792a6ac66619ebc70ab916b265e6220c2afaef8b1673f925",
+                size: 22_684_077,
+                upstream: Some("https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/english_2026-04/mimi_decoder_int8.onnx"),
+            },
+        ],
+    },
+    Pack {
         name: "accurate",
         description: "Parakeet TDT 0.6B v3 int8 (NVIDIA NeMo transducer, CC-BY-4.0)",
         files: &[PackFile {
@@ -195,6 +249,10 @@ impl PackManager {
             statuses: Arc::new(RwLock::new(BTreeMap::new())),
             locks: Arc::new(Mutex::new(BTreeMap::new())),
         }
+    }
+
+    pub fn root_dir(&self) -> PathBuf {
+        self.root.clone()
     }
 
     pub fn pack_dir(&self, name: &str) -> PathBuf {

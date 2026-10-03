@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
 
 use crate::models::{inference_lock, inference_threads, PackManager, KOKORO_DIR};
+use crate::phrase_cache::PhraseCache;
 
 /// One Kokoro voice (sid == index in [`VOICES`]).
 #[derive(Debug, Clone, Copy)]
@@ -372,15 +373,62 @@ pub struct TtsEngine {
     packs: Arc<PackManager>,
     threads: i32,
     child: Mutex<Option<TtsChild>>,
+    /// Pre-rendered fixed phrases (acks, fillers, call disclosures).
+    cache: Option<Arc<PhraseCache>>,
 }
 
 impl TtsEngine {
     pub fn new(packs: Arc<PackManager>) -> Self {
+        let cache = PhraseCache::from_env(&packs.root_dir()).map(Arc::new);
         Self {
             packs,
             threads: inference_threads(),
             child: Mutex::new(None),
+            cache,
         }
+    }
+
+    /// Mark texts (a call's disclosure and greeting) to be stored in the
+    /// phrase cache when first rendered, and render them now in the
+    /// background so the first playback is already a cache hit.
+    pub fn register_phrases(self: &Arc<Self>, texts: &[String], voice: Option<&str>) {
+        let Some(cache) = &self.cache else { return };
+        // The session speaks sentence by sentence, and each sentence is chunked
+        // again here, so register exactly those chunks.
+        for t in texts {
+            for sentence in crate::session::sentence::split_all(t) {
+                for chunk in split_for_streaming(&sentence) {
+                    cache.register(&chunk);
+                }
+            }
+        }
+        self.prerender(texts.to_vec(), voice.map(str::to_string));
+    }
+
+    /// Render the built-in acknowledgements and fillers for `voice` in the
+    /// background (idempotent; already cached phrases are skipped).
+    pub fn prewarm_fixed_phrases(self: &Arc<Self>, voice: Option<&str>) {
+        let texts = crate::phrase_cache::fixed_phrases().map(String::from).collect();
+        self.prerender(texts, voice.map(str::to_string));
+    }
+
+    fn prerender(self: &Arc<Self>, texts: Vec<String>, voice: Option<String>) {
+        if self.cache.is_none() {
+            return;
+        }
+        let me = self.clone();
+        let _ = std::thread::Builder::new().name("tts-prerender".into()).spawn(move || {
+            // Sentence by sentence, as a session speaks; each call renders
+            // (and stores) only the chunks that are not cached yet.
+            for sentence in texts.iter().flat_map(|t| crate::session::sentence::split_all(t)) {
+                if let Err(e) =
+                    me.synthesize_stream(&sentence, voice.as_deref(), None, |_, _, _, _| true)
+                {
+                    warn!("phrase pre-render failed: {e}");
+                    break;
+                }
+            }
+        });
     }
 
     pub fn num_threads(&self) -> i32 {
@@ -461,6 +509,14 @@ impl TtsEngine {
             if !keep_going {
                 break;
             }
+            let voice_id = resolve_voice(voice)?.id;
+            if let Some(hit) = self.cache.as_ref().and_then(|c| c.get(voice_id, speed, &chunk)) {
+                keep_going = on_chunk(index, &chunk, &hit.samples, hit.sample_rate);
+                index += 1;
+                continue;
+            }
+            let store = self.cache.as_ref().filter(|c| c.wants(&chunk));
+            let mut rendered: Vec<f32> = Vec::new();
             // One chunk at a time under the service-wide inference lock, so
             // TTS and STT never run their models at the same moment.
             let _infer = inference_lock();
@@ -471,14 +527,24 @@ impl TtsEngine {
                 let child = self.ensure_child(&mut guard)?;
                 let rate = child.sample_rate;
                 let mut streamed = false;
+                rendered.clear();
                 let mut on_audio = |samples: &[f32]| {
+                    if store.is_some() {
+                        rendered.extend_from_slice(samples);
+                    }
                     if keep_going {
                         keep_going = on_chunk(index, &chunk, samples, rate);
                     }
                     index += 1;
                 };
                 match child.request(&chunk, sid, speed, &mut streamed, &mut on_audio) {
-                    Ok(()) => break,
+                    Ok(()) => {
+                        // Only a chunk that played to the end is stored.
+                        if let (Some(c), true) = (store, keep_going) {
+                            c.put(voice_id, speed, &chunk, &rendered, rate);
+                        }
+                        break;
+                    }
                     Err(ChildError::Rejected(e)) => return Err(e),
                     Err(ChildError::Dead(e)) => {
                         warn!("allternit-tts died: {e}; restarting");
@@ -494,8 +560,11 @@ impl TtsEngine {
     }
 }
 
-/// Words allowed in the first streamed chunk.
-const FIRST_CHUNK_MAX_WORDS: usize = 8;
+/// Most words in the first streamed chunk. Kokoro's cost grows with the
+/// chunk, so the first audio comes from a very short one.
+const FIRST_CHUNK_MAX_WORDS: usize = 4;
+/// Fewest words in a first chunk cut from a longer sentence.
+const FIRST_CHUNK_MIN_WORDS: usize = 2;
 
 /// Words a phrase naturally starts with; cutting just before one keeps the
 /// prosody of both halves natural.
@@ -506,11 +575,11 @@ const BREAK_BEFORE: &[&str] = &[
 ];
 
 /// Split text for streaming TTS: sentences (see [`split_sentences`]), with
-/// the first sentence cut short so first audio arrives early. Kokoro's cost
-/// grows with the chunk, so the first chunk is: up to the first clause mark
-/// (`,` `;` `:` or a dash, at least 2 words in, within 8 words); otherwise,
-/// for a first sentence over 8 words, about half of it (3–8 words), cut
-/// before a phrase-starting word where possible.
+/// the first sentence cut short so first audio arrives early. The first
+/// chunk is: up to the first clause mark (`,` `;` `:` or a dash, at least 2
+/// words in, within 4 words); otherwise, for a first sentence of more than 4
+/// words, 2-4 words, cut just before a phrase-starting word where possible
+/// (else at 3). Sentences of up to 4 words are not cut.
 pub fn split_for_streaming(text: &str) -> Vec<String> {
     let mut sentences = split_sentences(text);
     if sentences.is_empty() {
@@ -523,18 +592,17 @@ pub fn split_for_streaming(text: &str) -> Vec<String> {
     for (i, w) in words.iter().enumerate().take(FIRST_CHUNK_MAX_WORDS) {
         let clause_end = w.ends_with([',', ';', ':']) || w.ends_with('—') || w.ends_with('–');
         let dash = matches!(*w, "-" | "—" | "–");
-        if i + 1 >= 2 && i + 1 < n && (clause_end || dash) {
+        if i + 1 >= FIRST_CHUNK_MIN_WORDS && i + 1 < n && (clause_end || dash) {
             cut = Some(i + 1);
             break;
         }
     }
     if cut.is_none() && n > FIRST_CHUNK_MAX_WORDS {
-        let target = (n / 2).clamp(3, 6) as i64;
-        let hi = FIRST_CHUNK_MAX_WORDS.min(n - 2);
-        cut = (3..=hi).min_by_key(|&k| {
+        let hi = FIRST_CHUNK_MAX_WORDS.min(n - 1);
+        cut = (FIRST_CHUNK_MIN_WORDS..=hi).min_by_key(|&k| {
             let next = words[k].trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
             let bonus = if BREAK_BEFORE.contains(&next.as_str()) { 2 } else { 0 };
-            ((k as i64 - target).abs() - bonus, k)
+            ((k as i64 - 3).abs() - bonus, k)
         });
     }
     let mut out = match cut {
@@ -656,12 +724,12 @@ mod tests {
     fn long_first_sentence_cut_near_middle_before_phrase_word() {
         assert_eq!(
             split_for_streaming("The quick brown fox jumps over the lazy dog."),
-            vec!["The quick brown fox jumps", "over the lazy dog."]
+            vec!["The quick brown", "fox jumps over the lazy dog."]
         );
         let s = split_for_streaming(
             "one two three four five six seven eight nine ten eleven twelve thirteen fourteen.",
         );
-        assert!(s[0].split_whitespace().count() <= 8 && s[0].split_whitespace().count() >= 3);
+        assert!(s[0].split_whitespace().count() <= 4 && s[0].split_whitespace().count() >= 2);
         assert_eq!(s.join(" ").split_whitespace().count(), 14);
     }
 

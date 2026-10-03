@@ -97,6 +97,8 @@ pub struct CreateSipParticipantRequest {
     pub participant_identity: String,
     pub participant_attributes: std::collections::HashMap<String, String>,
     pub consent_ref: Option<String>,
+    /// Caller ID: the bot's own E.164 (`sipNumber`). Unset → the trunk's number.
+    pub from_number: Option<String>,
 }
 
 /// Seam for the LiveKit server API. The production impl posts twirp JSON;
@@ -125,6 +127,12 @@ pub trait LiveKitAdminClient: Send + Sync {
         &self,
         request: CreateSipParticipantRequest,
     ) -> Result<Value, LiveKitError>;
+    /// Create a room that dispatches the named agent when it opens (outbound
+    /// calls: the room and the agent exist before the SIP leg dials).
+    /// `metadata` is the JSON string the agent receives as its job metadata.
+    async fn create_room_with_agent(&self, _room: &str, _agent_name: &str, _metadata: &str) -> Result<(), LiveKitError> {
+        Err(LiveKitError::NotConfigured)
+    }
     /// Publish a data packet on a room's data channel (call controls).
     async fn send_data(&self, room: &str, topic: &str, payload: &[u8]) -> Result<(), LiveKitError>;
     /// Mint a client token for one room. Listen is receive-only
@@ -338,14 +346,29 @@ impl LiveKitAdminClient for LiveKitHttpAdmin {
         let mut attributes = request.participant_attributes;
         attributes.insert("direction".to_string(), "outbound".to_string());
         attributes.insert("consentRef".to_string(), consent_ref);
-        let body = json!({
+        let mut body = json!({
             "sipTrunkId": request.trunk_id,
             "sipCallTo": request.call_to,
             "roomName": request.room_name,
             "participantIdentity": request.participant_identity,
             "participantAttributes": attributes,
         });
+        if let Some(from) = request.from_number.filter(|f| !f.is_empty()) {
+            // https://docs.livekit.io/reference/telephony/sip-api/#createsipparticipant : sip_number = SIP From number
+            body["sipNumber"] = json!(from);
+        }
         self.post("SIPService", "CreateSIPParticipant", body).await
+    }
+
+    async fn create_room_with_agent(&self, room: &str, agent_name: &str, metadata: &str) -> Result<(), LiveKitError> {
+        // https://docs.livekit.io/reference/server/server-apis/#createroom : CreateRoomRequest.agents[] {agentName, metadata}
+        let body = json!({
+            "name": room,
+            "emptyTimeout": 120,
+            "agents": [{ "agentName": agent_name, "metadata": metadata }],
+        });
+        self.post("RoomService", "CreateRoom", body).await?;
+        Ok(())
     }
 
     async fn send_data(&self, room: &str, topic: &str, payload: &[u8]) -> Result<(), LiveKitError> {
@@ -436,6 +459,7 @@ mod tests {
                 participant_identity: "sip-out".to_string(),
                 participant_attributes: std::collections::HashMap::new(),
                 consent_ref: None,
+                from_number: None,
             })
             .await;
         assert!(matches!(result, Err(LiveKitError::ConsentRequired)));

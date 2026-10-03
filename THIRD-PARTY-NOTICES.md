@@ -249,7 +249,8 @@ allternit-voice-service starts as a child process) is licensed
 [espeak-ng](https://github.com/espeak-ng/espeak-ng) (GPL-3.0-or-later)
 through sherpa-onnx's Kokoro frontend. The full licence text ships as
 `licenses/allternit-tts-GPL-3.0.txt`. Its complete corresponding source is
-`services/voice-tts/` in the Allternit platform repository, built against
+public at https://github.com/Gizziio/allternit-tts (mirrored from
+`services/voice-tts/` in the Allternit platform repository), built against
 sherpa-onnx 1.13.8 (https://github.com/k2-fsa/sherpa-onnx/releases/tag/v1.13.8,
 which carries the espeak-ng and piper-phonemize sources it builds).
 

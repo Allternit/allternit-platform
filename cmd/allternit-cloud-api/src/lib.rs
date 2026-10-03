@@ -343,6 +343,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Channels hybrid relay: management routes check the Clerk session;
         // /channels/in/:key is public, the unguessable key is the credential.
         .merge(routes::channel_inbound::routes())
+        // Public MCP edge (Clerk OAuth checked in the handler, then relayed to the
+        // owner's runtime). Inert (503) until MCP_PUBLIC_URL is set.
+        .merge(routes::mcp_edge::routes())
         // Phone numbers + SMS: Clerk-checked per request; 503 phone_not_configured when the carrier env is unset.
         .merge(routes::phone::routes())
         // WhatsApp Embedded Signup + 24h-window send; each handler resolves the user itself.
@@ -351,6 +354,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // redeem/usage routes take the voice service's bearer token. 503 cloud-unavailable
         // when the voice env is unset.
         .merge(routes::voice_tickets::routes())
+        // Custom voices with consent on file: user routes check the Clerk session; the
+        // consent/clip routes take the voice service's bearer token.
+        .merge(routes::voice_consent::routes())
         // Discord shared app: install/send/commands check the Clerk session; the OAuth
         // callback and interactions are public (state / Ed25519 signature).
         .merge(routes::discord_app::routes())
@@ -405,6 +411,7 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::billing_webhooks::routes())
         .merge(routes::clerk_webhooks::routes())
         .merge(routes::admin_customers::routes())
+        .merge(routes::admin_voice_billing::routes())
         // Dispatch handoff verifies the Clerk session per-request, like the
         // pairing routes (the token only ever means "this user, that
         // runtime" — it is not itself a credential).

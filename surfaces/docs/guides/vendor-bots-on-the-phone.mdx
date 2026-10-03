@@ -1,0 +1,44 @@
+---
+title: Vendor bots on your bot's phone
+description: Deploy the bots on your Grok, Claude, ChatGPT, Gemini, Copilot or Hermes account, see their threads, let them use the phone, and choose where the account runs.
+---
+
+Each vendor account you connect gets an app on your bot's phone, next to Messages and Phone. Vendor bots live inside the bot that directs them and share its phone, so you don't set up a second number or inbox for them. The app is the same on Allternit Desktop, ai.allternit.com and the m.allternit.com phone app.
+
+## Tabs
+
+- **Bots**: *Working for* your bot lists the vendor bots you have deployed. *Found on your account, not deployed* lists the rest. Your personal vendor bots stay personal until you deploy them.
+- **Threads**: each deployed vendor bot's threads on the phone.
+- **Memory**: the vendor memory kept for that bot. It stays separate from Allternit memory until you promote a record.
+- **Account**: which account this is, whether it is signed in, and where it runs.
+
+## Deploy a bot
+
+Tap **Deploy** on a found bot and pick how:
+
+- **Linked**: the bot keeps running on the vendor and your bot directs it.
+- **Mirror**: Allternit copies it into an Allternit bot.
+
+The bot keeps its own name and memory. **Add to a group thread** deploys it and adds it to a group thread in one step. To stop, open the bot and choose **Undeploy**. The bot stays on your vendor account; your bot loses access to it and to its Allternit threads.
+
+## See what a bot is doing
+
+Tap a deployed bot to see the threads it is attached to on the shared number and its latest tool activity.
+
+## Use the phone from the vendor
+
+Open a deployed bot and look under **Use the phone** for its connector URL, the steps for that vendor, and the clients connected to it.
+
+| Vendor | Steps |
+| --- | --- |
+| Claude | Settings › Connectors › Add custom connector, then paste the URL. |
+| ChatGPT | Turn on developer mode, add a connector, paste the URL. |
+| Grok | Your bot relays for Grok bots, so there is no URL to paste. |
+
+**Revoke** next to a connected client cuts it off immediately. If the panel says the connector isn't available yet, your workspace hasn't been updated; nothing is wrong with the bot.
+
+## Where the account runs
+
+The Account tab shows **Runs on: This Mac** or **Cloud computer**, with whether it is online and when it was last seen. **Move** switches it. For a cloud computer, **Sign in on the cloud computer** opens its screen so you can finish signing in to the vendor. If Move doesn't appear, your workspace doesn't support moving accounts yet.
+
+Related: [A phone for your bot](/guides/phone-for-your-bot), [Subscriptions](/guides/subscriptions).
