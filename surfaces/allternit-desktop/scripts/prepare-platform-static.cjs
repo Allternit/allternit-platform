@@ -73,7 +73,17 @@ function checkUiSource(uiDir) {
     log(`note: ${uiDir} is not a git checkout (${e.message.split('\n')[0]}); cannot verify it is current`);
   }
   const problems = [];
-  if (behind) problems.push(`${behind} commit(s) behind origin/main`);
+  // CI checks the UI out fresh from origin/main at the start of the job. Being
+  // "behind" there only means someone merged to allternit-ai main while the
+  // release was building (the release took ~1 h and failed on exactly this), so
+  // it is a warning in CI. Local builds keep failing: a stale local checkout is
+  // the bug this guard exists for. A dirty tree still fails everywhere.
+  const inCi = process.env.GITHUB_ACTIONS === 'true' || process.env.CI === 'true';
+  if (behind && inCi && !dirty) {
+    log(`note (CI): Workspace UI ${head.slice(0, 9)} is ${behind} commit(s) behind origin/main because main moved during this run; packaging the commit checked out at job start.`);
+  } else if (behind) {
+    problems.push(`${behind} commit(s) behind origin/main`);
+  }
   if (dirty) problems.push(`${dirty} uncommitted change(s)`);
   if (problems.length) {
     const msg = `Workspace UI at ${uiDir} (${branch} ${head.slice(0, 9)}) is ${problems.join(' and ')}.`;
