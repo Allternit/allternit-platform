@@ -579,6 +579,7 @@ pub fn build_transport(provider: &str, secret: &str, http: Arc<dyn HttpSend>) ->
             },
             http,
             access_token: token("accessToken"), own_identity: token("botId") }),
+        "discord" if crate::channel_discord_app::is_app_secret(secret) => Arc::new(crate::channel_discord_app::DiscordAppTransport::from_secret(secret, http)),
         "discord" => Arc::new(DiscordTransport { http, webhook_url: token("webhookUrl"), own_identity: token("botId") }),
         "whatsapp" if crate::channel_whatsapp_app::is_business(secret) => Arc::new(crate::channel_whatsapp_app::WhatsAppBusinessTransport::from_secret(secret, http)),
         "whatsapp" => Arc::new(WhatsAppTransport { http, access_token: token("accessToken"), own_identity: token("phoneNumberId") }),
@@ -698,6 +699,9 @@ fn lane_conversation(db: &DbHandle, thread_id: &str) -> bool {
 pub async fn route_inbound<R: crate::thread_routes::ThreadRuntime>(db: &DbHandle, rt: &R, acct: &Account, provider: &str, e: &Inbound) -> Result<Routed, String> {
     let none = |recorded| Ok(Routed { binding: None, recorded, turn: None, speaker: None, notice: None });
     let bots = member_bots(db, acct);
+    // Shared Discord app: "@Allternit name", "/name" and replies become "@name".
+    let hooked;
+    let e = if provider == "discord" { hooked = crate::channel_discord_app::rewrite(db, acct, &bots, e); &hooked } else { e };
     let mut binding = find_binding(db, provider, &e.conversation).filter(|b| b.owner == acct.owner);
     if binding.is_none() && !e.own && e.kind == InboundKind::Message {
         let text = e.text.clone().unwrap_or_default();
