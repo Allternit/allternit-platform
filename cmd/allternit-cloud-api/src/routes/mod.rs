@@ -29,6 +29,7 @@ pub mod hosted_runtimes;
 pub mod instances;
 pub mod inference_keys;
 pub mod jobs;
+pub mod livekit_admin;
 pub mod me_usage;
 pub mod mesh;
 pub mod channel_inbound;
@@ -50,4 +51,5 @@ pub mod tasks;
 #[cfg(test)]
 pub mod test_support;
 pub mod whatsapp_es;
+pub mod voice_calls_cloud;
 pub mod wizard;
