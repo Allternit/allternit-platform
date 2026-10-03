@@ -55,6 +55,10 @@ A channel app lists that channel's conversations for this bot, with **All**, **G
 - Email you start waits under **Needs OK** until you approve it. A text goes out from the bot's number, but only to someone who has texted or called that number first or is one of your allowed contacts.
 - If your Allternit runtime doesn't support starting conversations on a channel yet, the sheet says so.
 
+### Attachments
+
+Choose **Attach**, drag files onto the sheet, or paste a screenshot to add files to a first message in **Start new**, or to a reply in a Telegram, Slack or email conversation. Each file shows as a chip you can remove before sending. Limits: 10 MB per file and 20 MB per message, with up to 5 files on Telegram and Slack and 10 on email. Text messages, WhatsApp, Discord and Teams don't take attachments from a bot yet, so **Attach** is greyed out there and its tooltip says why. If a send fails, the chips stay so you can try again. Files you send show under the message in the conversation.
+
 Nothing is sent without you tapping **Send**. Developers: see [Starting conversations on a channel](/guides/starting-conversations).
 
 ## Unread
