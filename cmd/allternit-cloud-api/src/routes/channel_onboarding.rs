@@ -652,7 +652,7 @@ mod tests {
     use super::*;
     use crate::auth::dataplane_jwt::SEED_ENV as DP_SEED_ENV;
     use crate::auth::dev_token::{ALLOW_DEV_TOKEN_ENV, DEV_TOKEN_ENV_LOCK};
-    use crate::routes::test_support::{authed_request, seed_runtime_device, test_state, MockGateway};
+    use crate::routes::test_support::{authed_request, seed_runtime_device, test_state, MockGateway, DEV_USER};
     use axum::body::Body;
     use axum::http::Request;
     use http_body_util::BodyExt;
@@ -826,7 +826,7 @@ mod tests {
         set_managed_env(&tg.base_url);
         let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
         create_onboarding_table(&state.db).await;
-        seed_runtime_device(&state.db, "tg-managed-rt-1", "user_dev").await;
+        seed_runtime_device(&state.db, "tg-managed-rt-1", DEV_USER).await;
         let app = routes().with_state(state.clone());
         let (connection, mut outgoing) = register_test_connection("tg-managed-rt-1").await;
 
@@ -906,7 +906,7 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        assert_eq!(claims["sub"], "user_dev");
+        assert_eq!(claims["sub"], DEV_USER);
         assert_eq!(claims["aud"], "tg-managed-rt-1");
         assert_eq!(claims["scope"], "runtime:execute");
 
@@ -978,7 +978,7 @@ mod tests {
         set_managed_env(&tg.base_url);
         let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
         create_onboarding_table(&state.db).await;
-        seed_runtime_device(&state.db, "tg-managed-rt-2", "user_dev").await;
+        seed_runtime_device(&state.db, "tg-managed-rt-2", DEV_USER).await;
         let app = routes().with_state(state.clone());
         // No relay connection registered: any token delivery attempt would
         // flip the row to failed, so `waiting` also proves nothing relayed.
@@ -1064,7 +1064,7 @@ mod tests {
         set_managed_env(&tg.base_url);
         let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
         create_onboarding_table(&state.db).await;
-        seed_runtime_device(&state.db, "tg-managed-rt-4", "user_dev").await;
+        seed_runtime_device(&state.db, "tg-managed-rt-4", DEV_USER).await;
         let app = routes().with_state(state.clone());
         let response = app
             .clone()
@@ -1158,22 +1158,24 @@ mod tests {
         set_managed_env(&tg.base_url);
         let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
         create_onboarding_table(&state.db).await;
-        sqlx::query(
+        let right = sqlx::query(
             "INSERT INTO telegram_onboarding
                  (user_id, runtime_id, allternit_bot_id, bot_name, suggested_username, nonce, state)
-             VALUES ('user_dev', 'tg-managed-rt-5', 'bot-1', 'B', 'b_x_bot', 'nonce-right', 'connected')",
+             VALUES ('user_dev', 'tg-managed-rt-5', 'bot-1', 'B', 'b_x_bot', 'nonce-right', 'connected') RETURNING id",
         )
-        .execute(&state.db)
+        .fetch_one(&state.db)
         .await
         .unwrap();
-        sqlx::query(
+        let right_id: i64 = sqlx::Row::get(&right, "id");
+        let other = sqlx::query(
             "INSERT INTO telegram_onboarding
                  (user_id, runtime_id, allternit_bot_id, bot_name, suggested_username, nonce, state)
-             VALUES ('user_dev', 'tg-managed-rt-5', 'bot-2', 'B', 'b2_x_bot', 'nonce-other', 'connected')",
+             VALUES ('user_dev', 'tg-managed-rt-5', 'bot-2', 'B', 'b2_x_bot', 'nonce-other', 'connected') RETURNING id",
         )
-        .execute(&state.db)
+        .fetch_one(&state.db)
         .await
         .unwrap();
+        let other_id: i64 = sqlx::Row::get(&other, "id");
         let app = routes().with_state(state);
         let pair = |id: &str, nonce: &str| {
             let app = app.clone();
@@ -1191,18 +1193,18 @@ mod tests {
             }
         };
 
-        // Which row is which: ids 1 and 2 in insertion order.
-        let response = pair("1", "nonce-right").await;
+        // Use the ids the inserts returned: the shared CI database has advanced the sequence.
+        let response = pair(&right_id.to_string(), "nonce-right").await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(body_json(response).await, json!({ "ok": true, "state": "paired" }));
 
         // Second call: pairing is single-use.
-        let response = pair("1", "nonce-right").await;
+        let response = pair(&right_id.to_string(), "nonce-right").await;
         assert_eq!(response.status(), StatusCode::CONFLICT);
         assert_eq!(body_json(response).await["error"], "pairing_not_pending");
 
         // Wrong nonce against a still-connected row: conflict, not paired.
-        let response = pair("2", "nonce-right").await;
+        let response = pair(&other_id.to_string(), "nonce-right").await;
         assert_eq!(response.status(), StatusCode::CONFLICT);
         assert_eq!(body_json(response).await["error"], "pairing_not_pending");
 
