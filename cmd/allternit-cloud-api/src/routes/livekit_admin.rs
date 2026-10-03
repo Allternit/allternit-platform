@@ -182,12 +182,23 @@ impl LiveKitHttpAdmin {
             nbf: i64,
             exp: i64,
             video: VideoGrant<'a>,
+            sip: SipGrant,
         }
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct VideoGrant<'a> {
             room_admin: bool,
+            room_create: bool,
+            room_list: bool,
             room: &'a str,
+        }
+        // https://docs.livekit.io/home/get-started/authentication/#sip-grant
+        // SIP admin manages trunks and dispatch rules; SIP call places
+        // outbound calls (CreateSIPParticipant).
+        #[derive(Serialize)]
+        struct SipGrant {
+            admin: bool,
+            call: bool,
         }
         let now = chrono::Utc::now().timestamp();
         let claims = Claims {
@@ -196,7 +207,8 @@ impl LiveKitHttpAdmin {
             iat: now,
             nbf: now - 10,
             exp: now + JWT_TTL_SECS,
-            video: VideoGrant { room_admin: true, room: "*" },
+            video: VideoGrant { room_admin: true, room_create: true, room_list: true, room: "*" },
+            sip: SipGrant { admin: true, call: true },
         };
         let header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256);
         jsonwebtoken::encode(&header, &claims, &jsonwebtoken::EncodingKey::from_secret(self.config.api_secret.as_bytes()))
@@ -484,6 +496,9 @@ mod tests {
         assert_eq!(claims["sub"], "allternit-cloud-api");
         assert_eq!(claims["video"]["roomAdmin"], true);
         assert_eq!(claims["video"]["room"], "*");
+        assert_eq!(claims["video"]["roomCreate"], true, "CreateRoom needs roomCreate");
+        assert_eq!(claims["sip"]["admin"], true, "trunks and dispatch rules need sip.admin");
+        assert_eq!(claims["sip"]["call"], true, "CreateSIPParticipant needs sip.call");
         let ttl = claims["exp"].as_i64().unwrap() - claims["iat"].as_i64().unwrap();
         assert!((250..=300).contains(&ttl), "ttl ~5m, got {ttl}");
     }
