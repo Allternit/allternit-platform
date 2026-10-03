@@ -1178,6 +1178,9 @@ async fn main() {
         // runtime relay, authenticated in the handler by cloud-api's
         // data-plane JWT (no Clerk session exists on this hop).
         .merge(allternit_api::channel_gateway::telegram_managed_public_router())
+        // Teams shared app deliveries arrive only from cloud-api's relay
+        // (which stamps x-allternit-user-id); never from the public internet.
+        .merge(allternit_api::channel_teams_app::teams_app_router())
         // Photon.codes inbound-message webhook is also server-to-server and
         // carries no Clerk session; route it to the recipient bot's inbox.
         .merge(allternit_bus_webhook_router())

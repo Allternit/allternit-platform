@@ -5,6 +5,7 @@
 
 pub mod auth;
 pub mod carriers;
+pub mod channels;
 pub mod db;
 pub mod error;
 pub mod middleware;
@@ -359,6 +360,11 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // bot-config/control routes), per HANDOFF-realtime-voice
         // -2026-10-02.md §4.1.
         .merge(routes::voice_calls_cloud::routes())
+        // Teams shared app: the Azure Bot's messaging endpoint (edge JWT
+        // check, then queued to the user's runtime) plus the cloud send /
+        // connect / register / admin Graph routes. 503 teams_not_configured
+        // when APP_ID/APP_PASSWORD are unset.
+        .merge(channels::teams_app::routes())
         // These handlers verify Clerk or billing credentials themselves. They
         // must not pass through the legacy allternit_* API-token middleware.
         .merge(routes::hosted_runtimes::routes())
