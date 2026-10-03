@@ -654,6 +654,27 @@ pub(crate) async fn register_test_connection(
     register_test_connection_with(runtime_id, "desktop", None, false).await
 }
 
+/// Test seam for the request/response relay (not socket tunnels): answer one
+/// relayed request on a [`register_test_connection`] connection with a
+/// buffered response, the way a real runtime's WS pump answers a
+/// `RuntimeMessage::Response`. Lets cross-module tests complete a relay
+/// round-trip without touching the private `pending` map.
+#[cfg(test)]
+pub(crate) async fn answer_test_request(
+    connection: &Arc<RuntimeConnection>,
+    request_id: &str,
+    status: u16,
+    body: &str,
+) {
+    let mut pending = connection.pending.lock().await;
+    if let Some(mut waiter) = pending.remove(request_id) {
+        if let Some(head) = waiter.head.take() {
+            let _ = head.send(RelayHead { status, headers: HashMap::new() });
+        }
+        let _ = waiter.chunks.send(Ok(decode_relay_body(body, "utf8"))).await;
+    }
+}
+
 /// Like [`register_test_connection`] but with an explicit client identity and
 /// capability scope. `multi = true` keeps existing connections for the
 /// runtime (flag-on behavior); `multi = false` replaces them.
