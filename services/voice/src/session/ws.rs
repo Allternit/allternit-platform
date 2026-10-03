@@ -89,6 +89,11 @@ pub struct CloudApi {
 }
 
 impl CloudApi {
+    /// An authenticated GET to a worker endpoint.
+    pub(crate) fn get(&self, path: &str) -> reqwest::RequestBuilder {
+        self.http.get(format!("{}{}", self.base, path)).bearer_auth(&self.token)
+    }
+
     pub fn new(base_url: &str, worker_token: &str) -> Self {
         let http = reqwest::Client::builder()
             .timeout(CLOUD_TIMEOUT)
@@ -258,6 +263,9 @@ pub fn router_with(state: SessionRouteState) -> Router {
 struct AuthParams {
     token: Option<String>,
     ticket: Option<String>,
+    /// The user a token-authenticated session speaks for (the call worker
+    /// sets it to the bot's owner). Ignored for tickets, whose claims say.
+    owner: Option<String>,
 }
 
 async fn upgrade(
@@ -277,8 +285,15 @@ async fn upgrade(
                 .into_response();
         }
     };
+    // Who the session is for: the redeemed ticket's user; or, only for a
+    // session that proved the server token, the `owner` it asked for.
+    let owner = match (&claims, &state.token) {
+        (Some(c), _) => Some(c.sub.clone()),
+        (None, Some(_)) => params.owner.clone().filter(|o| !o.is_empty()),
+        (None, None) => None,
+    };
     ws.max_message_size(MAX_MESSAGE_BYTES)
-        .on_upgrade(move |socket| serve(socket, state, claims))
+        .on_upgrade(move |socket| serve(socket, state, claims, owner))
 }
 
 /// `Ok(Some(claims))` for a cloud ticket, `Ok(None)` for token/loopback.
@@ -325,9 +340,15 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-async fn serve(socket: WebSocket, state: SessionRouteState, claims: Option<TicketClaims>) {
+async fn serve(
+    socket: WebSocket,
+    state: SessionRouteState,
+    claims: Option<TicketClaims>,
+    owner: Option<String>,
+) {
     let started = Instant::now();
-    let handle = VoiceSession::spawn(state.factory.clone(), state.config.clone());
+    let config = CoreConfig { owner, ..state.config.clone() };
+    let handle = VoiceSession::spawn(state.factory.clone(), config);
     let input = handle.input;
     let mut output = handle.output;
     let (mut sink, mut stream) = socket.split();

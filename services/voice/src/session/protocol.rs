@@ -163,6 +163,8 @@ pub mod codes {
     pub const ENGINE_ERROR: &str = "engine_error";
     pub const TURN_UNAVAILABLE: &str = "turn_unavailable";
     pub const SESSION_LIMIT: &str = "session_limit";
+    /// A `custom:` voice without a live consent record (or revoked).
+    pub const CUSTOM_VOICE_REFUSED: &str = "custom_voice_refused";
 }
 
 #[cfg(test)]

@@ -8,6 +8,7 @@ pub mod auth;
 pub mod billing_credits;
 pub mod billing_checkout;
 pub mod admin_customers;
+pub mod admin_voice_billing;
 pub mod billing_subscriptions;
 pub mod billing_transfer;
 pub mod billing_webhooks;
@@ -52,6 +53,7 @@ pub mod slack_app;
 pub mod tasks;
 #[cfg(test)]
 pub mod test_support;
+pub mod voice_consent;
 pub mod voice_tickets;
 pub mod whatsapp_es;
 pub mod voice_calls_cloud;

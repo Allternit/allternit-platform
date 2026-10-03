@@ -1,0 +1,32 @@
+---
+title: 'Custom voices'
+description: 'Give your bots a voice made from a recording, with the speaker’s consent on file. How consent, revoking and privacy work.'
+---
+
+A custom voice is a copy of one person's voice that your account's bots can speak with. Allternit only makes one when the speaker's permission is recorded first: there is no way to create a voice without it.
+
+## Add a custom voice
+
+Open **Settings › Voice** and choose **Add voice** on the *Custom voice · consent on file* card. This works the same in the desktop app, on ai.allternit.com (including the phone layout) and in the m.allternit.com app. You need to be signed in.
+
+1. Name the voice, and say whether it is your own voice or someone else's who has agreed. For someone else, enter their name.
+2. Read the consent statement. It says that the speaker agrees Allternit may copy the voice for your account's bots, that they can revoke at any time, and that the voice won't be used to impersonate or deceive anyone.
+3. Record 8–24 seconds in a quiet room while reading the prompt shown, or upload a recording.
+4. Tick the confirmation box and choose **Save voice**.
+
+Allternit stores the statement version you accepted, your account, the time, your IP address and browser, and a SHA-256 fingerprint of the recording. A recording that is too short, too long or silent is refused with a reason.
+
+## Use it
+
+Saved voices appear in **Settings › Voice** and in a bot's voice settings, marked **Custom**. Custom voices run on Allternit Cloud, so they use Cloud Voice minutes; a device-only voice engine can't speak them and says so instead of falling back silently. You can keep up to 10 voices.
+
+## Revoke
+
+Choose **Revoke** next to a voice. The recording is deleted in the same step, the voice stops working immediately in live sessions and calls, and any bot that used it goes back to the default voice. Revoking is permanent: to use the voice again, record it again with fresh consent.
+
+## Privacy
+
+- The recording is kept in Allternit Cloud only for as long as the voice exists. The voice service holds the derived voice in memory, never on disk, and drops it when consent is revoked.
+- Every time a custom voice is used, the voice service asks Allternit Cloud whether consent is still on file and refuses if it isn't.
+- Only the voice's owner can add, list or revoke it.
+- Don't clone a voice without the speaker's permission. If you attest to consent you don't have, the voice can be removed and your account closed.

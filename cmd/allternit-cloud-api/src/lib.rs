@@ -354,6 +354,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // redeem/usage routes take the voice service's bearer token. 503 cloud-unavailable
         // when the voice env is unset.
         .merge(routes::voice_tickets::routes())
+        // Custom voices with consent on file: user routes check the Clerk session; the
+        // consent/clip routes take the voice service's bearer token.
+        .merge(routes::voice_consent::routes())
         // Discord shared app: install/send/commands check the Clerk session; the OAuth
         // callback and interactions are public (state / Ed25519 signature).
         .merge(routes::discord_app::routes())
@@ -408,6 +411,7 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::billing_webhooks::routes())
         .merge(routes::clerk_webhooks::routes())
         .merge(routes::admin_customers::routes())
+        .merge(routes::admin_voice_billing::routes())
         // Dispatch handoff verifies the Clerk session per-request, like the
         // pairing routes (the token only ever means "this user, that
         // runtime" — it is not itself a credential).
