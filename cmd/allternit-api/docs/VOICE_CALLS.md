@@ -8,7 +8,7 @@ cloud-api relays a phone call's start, its events and its bot turns to the runti
 | --- | --- |
 | `POST /api/v1/voice/calls` | Start. Body `{callId, botId, ownerId, numberId, from, to, direction, room, startedAt}`. Returns `{threadId, sessionId}`. Idempotent per `callId`. |
 | `POST /api/v1/voice/calls/{callId}/events` | Body `{events:[{type, n, payload, occurredAt}]}`. Writes `call.*` events to the call's thread. |
-| `POST /api/v1/voice/calls/{callId}/turn` | Body `{text, segmentId}`. Runs a bot turn, streams SSE. |
+| `POST /api/v1/voice/calls/{callId}/turn` | Body `{text, segmentId}`. Runs a bot turn, streams SSE (`text.delta`, `tool`, `done`, `error`). |
 | `DELETE /api/v1/voice/calls/{callId}/turn` | Barge-in. Always 204. |
 
 ## Signature
@@ -40,3 +40,7 @@ Verification lives in `src/relay_auth.rs` (shared with other relayed envelopes).
 With neither, signed requests answer 503 `relay not configured`. Provisioned cloud computers get both env vars from `init.sh` (written to `/etc/allternit-node/env`, loaded by the systemd unit and the restart-loop runner). The desktop `ALLTERNIT_API_TOKEN` is a Clerk session token, not the device token, and is never used.
 
 The same signature (verified with `relay_auth::RelayedAuth`) now guards every other runtime path that trusts cloud-api: `/webhooks/channels/discord-app`, `/webhooks/channels/slack-app`, `/webhooks/teams-app`, `/api/v1/agent-email/inbound` and the Telegram managed connect route. See "Other signed relays" in the developer guide.
+
+## Streaming turns
+
+`voice_turn_stream.rs` streams a native Gizzi session: it subscribes to `/event` before sending the same message the channel path sends (`native_turn_request`), then folds `message.part.delta` and `message.part.updated` (`part.type == "tool"`) events for that session into `text.delta` (whole words) and `tool` (`started|done|error`) events. Tool steps are written to the thread as `agent.tool.*` by the call route (the native channel path writes none, so nothing is doubled). A `permission.asked` event aborts the turn and answers a spoken error, because nobody can approve on a call. Turns are capped at 120 s. `DELETE /turn` cancels the turn task and aborts the Gizzi session. Vendor-bound and placed sessions fall back to the channel path (final reply, no tool events) with an info log line `voice turn: session is ...`.

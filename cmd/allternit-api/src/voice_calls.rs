@@ -71,24 +71,35 @@ impl ThreadResolver for GizziResolver {
     }
 }
 
-/// Runs one bot turn in a call's session. `events` receives `tool` events as
-/// they happen; the returned reply becomes the `text.delta`s.
+/// How a turn's reply reaches the caller.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TurnReply {
+    /// The turner already sent the `text.delta`s on `events`.
+    Streamed,
+    /// The finished reply; the call chunks it into sentences.
+    Final(String),
+}
+
+/// Runs one bot turn in a call's session. `events` receives `text.delta` and
+/// `tool` events as they happen (a turner that cannot stream returns
+/// [`TurnReply::Final`] instead).
 #[async_trait]
 pub trait VoiceTurner: Send + Sync {
-    async fn run(&self, db: &DbHandle, session_id: &str, bot_id: &str, text: &str, events: mpsc::UnboundedSender<Value>) -> Result<String, String>;
+    async fn run(&self, db: &DbHandle, session_id: &str, bot_id: &str, text: &str, events: mpsc::UnboundedSender<Value>) -> Result<TurnReply, String>;
     async fn abort(&self, session_id: &str);
 }
 
 /// The channel path: `send_bot_turn` goes through `gateway_runner::run_turn`
 /// for vendor bots and gizzi otherwise, so tools, memory and approvals behave
 /// exactly as they do for a Slack or SMS message. It reports only the final
-/// reply, so no `tool` events are produced yet.
+/// reply, so it produces no `tool` events: it is the fallback for sessions
+/// that cannot be streamed.
 struct ChannelTurner;
 
 #[async_trait]
 impl VoiceTurner for ChannelTurner {
-    async fn run(&self, db: &DbHandle, session_id: &str, bot_id: &str, text: &str, _events: mpsc::UnboundedSender<Value>) -> Result<String, String> {
-        crate::agent_session_routes::send_bot_turn(db, session_id, bot_id, text).await
+    async fn run(&self, db: &DbHandle, session_id: &str, bot_id: &str, text: &str, _events: mpsc::UnboundedSender<Value>) -> Result<TurnReply, String> {
+        crate::agent_session_routes::send_bot_turn(db, session_id, bot_id, text).await.map(TurnReply::Final)
     }
 
     /// What the Stop button does: a vendor-bound session cancels on the vendor,
@@ -102,6 +113,41 @@ impl VoiceTurner for ChannelTurner {
         if let Err(e) = client.post(url).json(&json!({})).send().await {
             warn!("voice turn abort failed: {e}");
         }
+    }
+}
+
+/// The production turner: a native gizzi session is streamed (deltas and tool
+/// steps as they happen, see [`crate::voice_turn_stream`]); a vendor-bound or
+/// placed (remote) session has no local event stream, so it runs the channel
+/// path and answers once it is done. That fallback is logged, never silent.
+struct GizziStreamTurner {
+    fallback: ChannelTurner,
+}
+
+/// Why a session cannot be streamed locally, if it cannot.
+fn no_stream_reason(db: &DbHandle, session_id: &str) -> Option<&'static str> {
+    if crate::gateway_runner::is_vendor_session(db, session_id) {
+        Some("vendor-bound")
+    } else if crate::placement::session_target(db, session_id).is_some() {
+        Some("placed on another Allternit")
+    } else {
+        None
+    }
+}
+
+#[async_trait]
+impl VoiceTurner for GizziStreamTurner {
+    async fn run(&self, db: &DbHandle, session_id: &str, bot_id: &str, text: &str, events: mpsc::UnboundedSender<Value>) -> Result<TurnReply, String> {
+        if let Some(why) = no_stream_reason(db, session_id) {
+            tracing::info!(session_id, "voice turn: session is {why}; answering with the final reply instead of streaming");
+            return self.fallback.run(db, session_id, bot_id, text, events).await;
+        }
+        let (client, path, payload) = crate::agent_session_routes::native_turn_request(db, session_id, bot_id, text).await?;
+        crate::voice_turn_stream::stream_gizzi_turn(&client, &crate::agent_session_routes::gizzi_base(), session_id, &path, payload, &events).await
+    }
+
+    async fn abort(&self, session_id: &str) {
+        self.fallback.abort(session_id).await
     }
 }
 
@@ -126,7 +172,7 @@ impl VoiceDeps {
     }
 
     pub fn production() -> Self {
-        Self::new(Arc::new(EnvOrFileRelaySecret::from_process_env()), Box::new(GizziResolver), Arc::new(ChannelTurner))
+        Self::new(Arc::new(EnvOrFileRelaySecret::from_process_env()), Box::new(GizziResolver), Arc::new(GizziStreamTurner { fallback: ChannelTurner }))
     }
 
     /// Stop the call's running turn, if any (optionally only a given generation).
@@ -354,6 +400,25 @@ fn speakable_chunks(reply: &str) -> Vec<String> {
     out
 }
 
+/// Sends a turner's event to the call stream. A `tool` step is also written to
+/// the thread as `agent.tool.started` / `.completed` / `.failed` (the native
+/// channel path writes none, so nothing is written twice); the internal
+/// `toolCallId` is not part of the stream's event shape.
+fn forward_turn_event(db: &DbHandle, call: &CallRow, call_id: &str, mut ev: Value, out: &mpsc::UnboundedSender<Value>) {
+    if ev["type"] == "tool" {
+        let id = ev.as_object_mut().and_then(|o| o.remove("toolCallId")).and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+        let (status, name) = (ev["status"].as_str().unwrap_or(""), ev["name"].as_str().unwrap_or("tool").to_string());
+        let kind = match status {
+            "started" => "agent.tool.started",
+            "done" => "agent.tool.completed",
+            _ => "agent.tool.failed",
+        };
+        let payload = json!({ "data": { "name": name, "callId": id }, "envelope": { "source": "voice.call", "callId": call_id } });
+        led(db, &call.bot_id, &call.thread_id, Some(&call.session_id), kind, ("bot", &call.bot_id), payload, Some(format!("call:{call_id}:tool:{id}:{status}")));
+    }
+    let _ = out.send(ev);
+}
+
 /// Aborts the turn when the SSE response is dropped (the relay hung up) while
 /// that turn is still the call's current one.
 struct StreamGuard {
@@ -398,11 +463,26 @@ async fn turn_h(State(state): State<Arc<AppState>>, Extension(deps): Extension<A
         let (deps, db, tx, call, call_id) = (deps.clone(), state.db.clone(), tx.clone(), call.clone(), call_id.clone());
         let prompt = format!("{SPOKEN_PREFACE}\n\n{text}");
         tokio::spawn(async move {
-            let result = deps.turner.run(&db, &call.session_id, &call.bot_id, &prompt, tx.clone()).await;
+            let (itx, mut irx) = mpsc::unbounded_channel::<Value>();
+            let result = {
+                let run = deps.turner.run(&db, &call.session_id, &call.bot_id, &prompt, itx);
+                tokio::pin!(run);
+                loop {
+                    tokio::select! {
+                        r = &mut run => break r,
+                        Some(ev) = irx.recv() => forward_turn_event(&db, &call, &call_id, ev, &tx),
+                    }
+                }
+            };
+            while let Ok(ev) = irx.try_recv() {
+                forward_turn_event(&db, &call, &call_id, ev, &tx);
+            }
             match result {
                 Ok(reply) => {
-                    for chunk in speakable_chunks(&reply) {
-                        let _ = tx.send(json!({ "type": "text.delta", "text": chunk }));
+                    if let TurnReply::Final(reply) = reply {
+                        for chunk in speakable_chunks(&reply) {
+                            let _ = tx.send(json!({ "type": "text.delta", "text": chunk }));
+                        }
                     }
                     let _ = tx.send(json!({ "type": "done" }));
                 }
@@ -486,6 +566,8 @@ mod tests {
     #[derive(Default)]
     struct FakeTurner {
         reply: Mutex<Option<Result<String, String>>>,
+        /// When set, the turner streams these deltas itself (and returns `Streamed`).
+        streamed: Mutex<Vec<&'static str>>,
         /// Block until aborted (task cancelled).
         hang: Mutex<bool>,
         prompts: Mutex<Vec<(String, String)>>,
@@ -493,14 +575,21 @@ mod tests {
     }
     #[async_trait]
     impl VoiceTurner for FakeTurner {
-        async fn run(&self, _db: &DbHandle, session_id: &str, _bot: &str, text: &str, events: mpsc::UnboundedSender<Value>) -> Result<String, String> {
+        async fn run(&self, _db: &DbHandle, session_id: &str, _bot: &str, text: &str, events: mpsc::UnboundedSender<Value>) -> Result<TurnReply, String> {
             self.prompts.lock().unwrap().push((session_id.into(), text.into()));
-            let _ = events.send(json!({ "type": "tool", "name": "calendar", "status": "started" }));
+            let streamed = self.streamed.lock().unwrap().clone();
+            let _ = events.send(json!({ "type": "tool", "name": "calendar", "status": "started", "toolCallId": "tc1" }));
+            for d in &streamed {
+                let _ = events.send(json!({ "type": "text.delta", "text": d }));
+            }
             if *self.hang.lock().unwrap() {
                 futures::future::pending::<()>().await;
             }
-            let _ = events.send(json!({ "type": "tool", "name": "calendar", "status": "done" }));
-            self.reply.lock().unwrap().clone().unwrap_or_else(|| Ok("Sure. I can do that. Anything else?".into()))
+            let _ = events.send(json!({ "type": "tool", "name": "calendar", "status": "done", "toolCallId": "tc1" }));
+            if !streamed.is_empty() {
+                return Ok(TurnReply::Streamed);
+            }
+            self.reply.lock().unwrap().clone().unwrap_or_else(|| Ok("Sure. I can do that. Anything else?".into())).map(TurnReply::Final)
         }
         async fn abort(&self, session_id: &str) {
             self.aborted.lock().unwrap().push(session_id.into());
@@ -732,6 +821,89 @@ mod tests {
         let third_body = String::from_utf8_lossy(&third.into_body().collect().await.unwrap().to_bytes()).to_string();
         assert_eq!(sse_events(&third_body).last().unwrap(), &json!({ "type": "done", "aborted": true }));
         assert_eq!(h.turner.aborted.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_streaming_turner_forwards_deltas_in_order_and_tools_reach_the_thread() {
+        let h = setup("stream", Some((TOKEN, OWNER))).await;
+        send(&h.app, "POST", CALLS, call_body("c1"), true).await;
+        *h.turner.streamed.lock().unwrap() = vec!["Your ", "day is ", "clear."];
+        let (st, body) = send(&h.app, "POST", &format!("{CALLS}/c1/turn"), json!({ "text": "today?" }), true).await;
+        assert_eq!(st, StatusCode::OK);
+        let ev = sse_events(&body);
+        assert_eq!(
+            ev,
+            vec![
+                json!({ "type": "tool", "name": "calendar", "status": "started" }),
+                json!({ "type": "text.delta", "text": "Your " }),
+                json!({ "type": "text.delta", "text": "day is " }),
+                json!({ "type": "text.delta", "text": "clear." }),
+                json!({ "type": "tool", "name": "calendar", "status": "done" }),
+                json!({ "type": "done" }),
+            ]
+        );
+        // The steps are in the thread once each, as the existing agent.tool.* events.
+        let kinds: Vec<String> = ledger(&h, "c1").into_iter().map(|e| e.0).collect();
+        let tools: Vec<_> = h.state.db.connect().unwrap().prepare("SELECT event_type FROM bot_events WHERE event_type LIKE 'agent.tool.%' ORDER BY rowid").unwrap().query_map([], |r| r.get::<_, String>(0)).unwrap().filter_map(Result::ok).collect();
+        assert_eq!(tools, vec!["agent.tool.started", "agent.tool.completed"]);
+        assert!(kinds.iter().all(|k| k.starts_with("call.")));
+    }
+
+    #[tokio::test]
+    async fn delete_stops_a_streaming_turn_within_the_deadline() {
+        let h = setup("stream-abort", Some((TOKEN, OWNER))).await;
+        send(&h.app, "POST", CALLS, call_body("c1"), true).await;
+        *h.turner.streamed.lock().unwrap() = vec!["Let me "];
+        *h.turner.hang.lock().unwrap() = true;
+        let turn = format!("{CALLS}/c1/turn");
+        let mut req = Request::builder().method("POST").uri(&turn);
+        let body = serde_json::to_vec(&json!({ "text": "go" })).unwrap();
+        for (k, v) in signed(TOKEN, now_ts(), OWNER, "POST", &turn, &body).iter() {
+            req = req.header(k, v);
+        }
+        let resp = h.app.clone().oneshot(req.body(Body::from(body)).unwrap()).await.unwrap();
+        let reader = tokio::spawn(async move { String::from_utf8_lossy(&resp.into_body().collect().await.unwrap().to_bytes()).to_string() });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let t0 = std::time::Instant::now();
+        assert_eq!(send(&h.app, "DELETE", &turn, Value::Null, true).await.0, StatusCode::NO_CONTENT);
+        let body = tokio::time::timeout(Duration::from_millis(100), reader).await.expect("stream closed within 100 ms").unwrap();
+        assert!(t0.elapsed() < Duration::from_millis(100));
+        let ev = sse_events(&body);
+        assert!(ev.iter().any(|e| e["text"] == "Let me "));
+        assert_eq!(ev.last().unwrap(), &json!({ "type": "done", "aborted": true }));
+        assert_eq!(h.turner.aborted.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_placed_session_answers_with_the_final_reply_instead_of_streaming() {
+        let h = setup("fallback", Some((TOKEN, OWNER))).await;
+        let hits = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = hits.clone();
+        let remote = Router::new().fallback(move |req: Request<Body>| {
+            let seen = seen.clone();
+            async move {
+                seen.lock().unwrap().push(format!("{} {}", req.method(), req.uri().path()));
+                Json(json!({ "metadata": { "parts": [{ "type": "text", "text": "From the server." }] } }))
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, remote).await.unwrap() });
+        let conn = h.state.db.connect().unwrap();
+        conn.execute(
+            "INSERT INTO remote_backend_targets (id, user_id, name, status, gateway_url, encrypted_gateway_token) VALUES ('tgt1','user-a','Server','ready',?1,?2)",
+            params![format!("http://{addr}"), crate::token_crypto::seal("atok_1")],
+        )
+        .unwrap();
+        crate::placement::record(&h.state.db, "sess-placed", "tgt1");
+        assert_eq!(no_stream_reason(&h.state.db, "sess-placed"), Some("placed on another Allternit"));
+        assert_eq!(no_stream_reason(&h.state.db, "sess-native"), None);
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let turner = GizziStreamTurner { fallback: ChannelTurner };
+        let reply = tokio::time::timeout(Duration::from_secs(5), turner.run(&h.state.db, "sess-placed", "bot-1", "hi", tx)).await.expect("never hangs").unwrap();
+        assert_eq!(reply, TurnReply::Final("From the server.".into()));
+        assert_eq!(hits.lock().unwrap().as_slice(), ["POST /agent-sessions/sess-placed/messages"]);
     }
 
     #[test]
