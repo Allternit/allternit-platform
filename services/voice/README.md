@@ -10,7 +10,9 @@ No Python, no whisper.cpp, no cloud APIs.
   int8 (CC-BY-4.0, attribution in THIRD_PARTY_NOTICES.md) is the accurate
   option. Any sample rate is accepted (resampled to 16 kHz); 8 kHz phone
   audio incl. G.711 μ-law WAV works.
-- **TTS:** Kokoro-82M int8 English (v0.19, Apache-2.0), 11 voices, 24 kHz.
+- **TTS:** Kokoro-82M v1.0 fp32 (Apache-2.0), 28 English voices (US and UK; default `af_heart`), 24 kHz, run by the
+  separate GPL-3.0 program `allternit-tts` (`services/voice-tts`), which this
+  service starts as a child process. This binary contains no GPL code.
 - **Models download on first use** into `~/.allternit/models/voice/<pack>/`
   (sha256-verified, resumable). Nothing model-related ships in the installer.
   Base URL override: `ALLTERNIT_VOICE_MODEL_BASE` (Phase 2: runtime.allternit.com).
@@ -21,13 +23,13 @@ No Python, no whisper.cpp, no cloud APIs.
 
 | Pack | Contents | Download |
 |------|----------|----------|
-| `small` (default) | Silero VAD + Moonshine tiny EN (quantized) + Kokoro-82M int8 EN + Smart Turn v3.2 (end-of-turn model for the voice session layer) | ~142 MB |
+| `small` (default) | Silero VAD + Moonshine tiny EN (quantized) + Smart Turn v3.2 (end-of-turn model for the voice session layer) | ~39 MB |
+| `tts` | Kokoro-82M v1.0 fp32 (`kokoro-multi-lang-v1_0`; downloads on first TTS use) | ~350 MB |
 | `accurate` | Parakeet TDT 0.6B v3 int8 (25 European languages) | ~487 MB |
 
 `GET /v1/models` reports per-pack state:
 `missing | downloading{pct} | ready | error`; `POST /v1/models/<pack>`
-starts a download in the background. Unpacked on disk: small ≈ 203 MB,
-accurate ≈ 671 MB.
+starts a download in the background. Unpacked on disk: small ≈ 45 MB, tts ≈ 396 MB, accurate ≈ 671 MB.
 
 | Env var | Default | Meaning |
 |---------|---------|---------|
@@ -64,8 +66,8 @@ downloads the upstream per-platform static archive at build time:
 binary depends only on OS libraries (macOS: libc++, system frameworks;
 Linux: libstdc++/libm/libpthread/libdl; Windows: none beyond the OS, built
 with `+crt-static` because the sherpa-onnx Windows libs use the static CRT).
-There is no dylib/DLL to stage next to the binary: Desktop packaging copies
-the one `allternit-voice-service` binary into `resources/bin`
+There is no dylib/DLL to stage: Desktop packaging copies
+`allternit-voice-service` and `allternit-tts` into `resources/bin`
 (`scripts/build-desktop.sh`, `.github/workflows/release-desktop.yml` for
 macOS universal, Windows and Linux).
 
@@ -82,6 +84,25 @@ POST /v1/stt/stream          chunked pcm16 (?sample_rate=) -> NDJSON partial/fin
 POST /v1/tts                 JSON text -> audio bytes (wav | pcm16)
 POST /v1/tts/stream          JSON text -> NDJSON per-sentence audio
 ```
+
+## TTS child process and GPL
+
+sherpa-onnx's Kokoro frontend links espeak-ng (GPL-3.0-or-later), so Kokoro runs
+in `allternit-tts` (`services/voice-tts`, GPL-3.0-or-later; protocol in its
+README). `TtsEngine` starts it from this binary's directory (override:
+`ALLTERNIT_TTS_BIN`), kills it on drop, restarts it if it crashes, and the child
+exits on its own when its stdin closes (so it dies with this process). Text is
+split so the first chunk is short (first clause, or about half of a long first
+sentence), and audio streams per chunk.
+
+This binary must contain no espeak-ng. sherpa-onnx's prebuilt C API keeps the TTS
+and recogniser entry points in one `.text` section on Linux, so dead-stripping
+alone cannot remove the TTS path; `src/main.rs` (`no_espeak`) defines the only
+three espeak functions it references, so the linker never pulls an espeak-ng
+archive member (if a new one were needed, the link fails on the duplicate).
+`scripts/check-voice-no-gpl.sh` checks the release binary in every build.
+macOS arm64, unstripped: `nm voice-service | grep -ci espeak` = 0
+(`allternit-tts`: 29).
 
 ## Using the engine from Rust
 

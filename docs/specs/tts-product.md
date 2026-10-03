@@ -11,12 +11,14 @@ implement_this_session: false
 **Update 2026-10-02 (voice engine Phase 1, shipped):** the engine/API half of
 this spec is done. `POST /v1/tts` returns real Kokoro audio bytes (WAV or
 `format=pcm16`), `POST /v1/tts/stream` streams per-sentence pcm16 as
-NDJSON, and `GET /v1/voices` lists the 11 installed Kokoro voices — engine
+NDJSON, and `GET /v1/voices` lists the Kokoro voices (Phase 1.1: Kokoro v1.0 fp32, 28 English voices) — engine
 acceptance items **7, 8, 9** below are satisfied, and **15/16** hold
 (sherpa-onnx in the Rust binary, static linking, notices in
-`services/voice/THIRD_PARTY_NOTICES.md`; note espeak-ng, Kokoro's
-phonemiser, is GPL-3.0-or-later and statically linked, an open licensing
-decision). The **user-visible product** items
+`services/voice/THIRD_PARTY_NOTICES.md`). Phase 1.1 (Eoj, 2026-10-03):
+Kokoro runs in the separate GPL-3.0-or-later program `allternit-tts`
+(`services/voice-tts`) because its phonemiser espeak-ng is GPL-3.0; the voice
+service contains no GPL code (checked in CI by
+`scripts/check-voice-no-gpl.sh`). The **user-visible product** items
 (1–6, 10–12: Desktop speak button, voice picker UI, Gizzi `/speak`,
 auto-play, doctor, path aliasing, first-run UX) are **not** part of Phase 1
 and remain open — Phase 2 per `HANDOFF-realtime-voice-2026-10-02.md`. STT is
@@ -39,8 +41,8 @@ The last two PRs (#192, #194) made a hard cut: dictation first, Chatterbox Pytho
 
 | Surface | What it does today |
 |---|---|
-| `services/voice` `POST /v1/tts` | **Real audio** (Kokoro-82M int8 via sherpa-onnx), WAV bytes or `format=pcm16`. Shipped in Phase 1 (2026-10-02). |
-| `GET /v1/voices` | **Real** list of the 11 installed Kokoro voices. Shipped in Phase 1. |
+| `services/voice` `POST /v1/tts` | **Real audio** (Kokoro-82M v1.0 fp32 via sherpa-onnx, in the `allternit-tts` child), WAV bytes or `format=pcm16`. Shipped in Phase 1 (2026-10-02). |
+| `GET /v1/voices` | **Real** list of the 28 Kokoro v1.0 English voices. Shipped in Phase 1 / 1.1. |
 | `POST /v1/tts/stream` | **Real** NDJSON per-sentence pcm16 stream. Shipped in Phase 1. |
 | `POST /v1/stt` | Real STT via sherpa-onnx (Silero VAD + Moonshine default / Parakeet accurate). Whisper.cpp removed. |
 | Desktop `VoiceService.speak()` | `POST ${base}/v1/voice/tts` — **different path** than the sidecar’s `/v1/tts`. Still open (item 10). |

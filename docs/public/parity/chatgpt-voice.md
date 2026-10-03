@@ -19,7 +19,7 @@ curl -s -F 'audio=@question.wav' -F 'language=en' \
 # TTS returns audio/wav bytes
 curl -s http://127.0.0.1:8001/v1/tts \
   -H 'Content-Type: application/json' \
-  -d '{"text":"Here is the result.","voice":"af"}' \
+  -d '{"text":"Here is the result.","voice":"af_heart"}' \
   --output result.wav
 ```
 

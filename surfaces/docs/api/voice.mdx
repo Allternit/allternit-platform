@@ -8,11 +8,11 @@ description: 'Text-to-speech, speech-to-text, and voice session management for t
 The Voice API provides text-to-speech (TTS), speech-to-text (STT), voice session management, and service introspection. The Rust voice service (`services/voice`) listens on port `8001` (override with the `PORT` environment variable). Both STT and TTS are real and run on [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) inside the binary:
 
 - **STT:** Silero VAD segments the audio, then Moonshine tiny (default) or Parakeet TDT 0.6B v3 (accurate) transcribes each segment. Any sample rate is accepted and resampled to 16 kHz; 8 kHz phone audio (including G.711 μ-law WAV) works.
-- **TTS:** Kokoro-82M int8 (English v0.19), 11 voices, 24 kHz output.
-- **Models download on first use** into `~/.allternit/models/voice/<pack>/` (sha256-verified). The `small` pack (~142 MB: VAD + Moonshine + Kokoro) is the default; the `accurate` pack (~487 MB, Parakeet, CC-BY-4.0) downloads on first accurate-STT request. Poll `GET /v1/models` for `missing | downloading | ready | error` state. Override the download base with `ALLTERNIT_VOICE_MODEL_BASE`.
+- **TTS:** Kokoro-82M v1.0 (fp32), 28 English voices (default `af_heart`), 24 kHz output. Kokoro runs in `allternit-tts`, a separate GPL-3.0 program the service starts as a child process.
+- **Models download on first use** into `~/.allternit/models/voice/<pack>/` (sha256-verified). The `small` pack (~39 MB: VAD + Moonshine + Smart Turn) downloads on first speech-to-text use, the `tts` pack (~350 MB: Kokoro v1.0) on first text-to-speech use; the `accurate` pack (~487 MB, Parakeet, CC-BY-4.0) downloads on first accurate-STT request. Poll `GET /v1/models` for `missing | downloading | ready | error` state. Override the download base with `ALLTERNIT_VOICE_MODEL_BASE`.
 - Inference uses `ALLTERNIT_VOICE_THREADS` threads (default **2**), CPU provider, one model at a time, so voice stays light on a 4-core laptop.
 
-Licences and attributions: `services/voice/THIRD_PARTY_NOTICES.md` (sherpa-onnx Apache-2.0; Moonshine MIT; Kokoro Apache-2.0; Silero VAD MIT; Parakeet CC-BY-4.0, attribution required; onnxruntime MIT).
+Licences and attributions: `services/voice/THIRD_PARTY_NOTICES.md` (sherpa-onnx Apache-2.0; Moonshine MIT; Kokoro Apache-2.0; Silero VAD MIT; Smart Turn BSD-2-Clause; Parakeet CC-BY-4.0, attribution required; onnxruntime MIT). The voice service contains no GPL code; `allternit-tts` is GPL-3.0-or-later because it links espeak-ng (`services/voice-tts/LICENSE`).
 
 ## Base URL
 
@@ -128,12 +128,12 @@ GET /v1/voices
 ```json
 [
   {
-    "id": "af",
-    "name": "Default (US Female)",
+    "id": "af_heart",
+    "name": "Heart",
     "language": "en-US",
     "gender": "female",
     "sample_rate": 24000,
-    "label": "Default (US Female)",
+    "label": "Heart",
     "engine": "kokoro",
     "assetReady": true
   },
@@ -165,7 +165,7 @@ the `small` pack if it is not on disk yet.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `text` | string | Yes | Text to synthesize. |
-| `voice` | string | No | Kokoro voice id; default `af`. Alias `voice_id` accepted. |
+| `voice` | string | No | Kokoro voice id; default `af_heart`. Alias `voice_id` accepted. |
 | `language` | string | No | Language hint (reserved). |
 | `speed` | number | No | Speech speed multiplier (default 1.0). |
 | `format` | string | No | `wav` (default) or `pcm16`. |
@@ -175,7 +175,7 @@ the `small` pack if it is not on disk yet.
 ```bash
 curl -X POST http://localhost:8001/v1/tts \
   -H "Content-Type: application/json" \
-  -d '{"text": "Hello from Allternit", "voice": "af"}' \
+  -d '{"text": "Hello from Allternit", "voice": "af_heart"}' \
   --output hello.wav
 ```
 
@@ -192,9 +192,10 @@ could not be downloaded or loaded. Errors are JSON: `{ "error": "..." }`.
 POST /v1/tts/stream
 ```
 
-Sentence-streaming TTS: the text is split into sentences and each sentence's
-audio is emitted as soon as it is synthesised, so playback can start before
-the whole text is done.
+Streaming TTS: the text is split into sentences, the first one cut at its
+first clause (or about halfway) so the first audio is short, and each piece
+is emitted as soon as it is synthesised, so playback starts before the
+whole text is done.
 
 ### Response
 

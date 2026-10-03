@@ -69,7 +69,7 @@ export async function transcribePcm(
   body.append('language', language)
   let response: Response
   try {
-    // First use downloads the small voice pack (~142 MB), so allow time.
+    // First use downloads the small voice pack (~39 MB), so allow time.
     response = await fetch(`${sidecarBaseUrl()}/v1/stt`, {
       method: 'POST',
       body,

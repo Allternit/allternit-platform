@@ -8,7 +8,7 @@ description: 'Local speech-to-text and text-to-speech sidecar (sherpa-onnx: Sile
 The **Allternit Voice Service** (`services/voice`, crate `voice-service`) is a Rust HTTP sidecar used by Gizzi Code and Allternit Desktop. Both directions are real and run on [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) inside the single binary — no cloud voice APIs, no Python, no whisper.cpp:
 
 - **STT:** Silero VAD finds speech segments; **Moonshine tiny** (English, default) or **Parakeet TDT 0.6B v3** (accurate) transcribes them. Any sample rate is accepted (resampled to 16 kHz); 8 kHz phone audio including G.711 μ-law WAV works.
-- **TTS:** **Kokoro-82M int8** (English v0.19, Apache-2.0), 11 voices, 24 kHz.
+- **TTS:** **Kokoro-82M v1.0** (fp32, Apache-2.0), 28 English voices (default `af_heart`), 24 kHz, run by the separate program `allternit-tts` (GPL-3.0-or-later, `services/voice-tts`), which the service starts as a child process.
 
 Voice cloning is not part of this service. The remaining product surfaces (Desktop speak button, voice picker UI, Gizzi `/speak`) are specified in `docs/specs/tts-product.md`.
 
@@ -23,7 +23,8 @@ installer. Poll `GET /v1/models` for state (`missing`, `downloading` with
 
 | Pack | Contents | Size |
 |------|----------|------|
-| `small` (default) | Silero VAD + Moonshine tiny EN + Kokoro-82M int8 + Smart Turn v3.2 | ~142 MB |
+| `small` (default) | Silero VAD + Moonshine tiny EN + Smart Turn v3.2 | ~39 MB |
+| `tts` | Kokoro-82M v1.0 fp32 (first text-to-speech use) | ~350 MB |
 | `accurate` | Parakeet TDT 0.6B v3 int8 (CC-BY-4.0) | ~487 MB |
 
 - `ALLTERNIT_VOICE_MODEL_BASE` overrides the download base URL.
@@ -42,7 +43,8 @@ installer. Poll `GET /v1/models` for state (`missing`, `downloading` with
 | Kokoro-82M | Apache-2.0 |
 | Smart Turn v3.2 | BSD-2-Clause |
 | Parakeet TDT 0.6B v3 | CC-BY-4.0, attribution required |
-| espeak-ng (Kokoro phonemiser, linked into the binary) | GPL-3.0-or-later |
+| espeak-ng (Kokoro phonemiser, only in `allternit-tts`) | GPL-3.0-or-later |
+| allternit-tts (the TTS program) | GPL-3.0-or-later |
 
 Parakeet attribution: *Speech recognition by Parakeet TDT 0.6B v3 by
 NVIDIA, licensed under CC-BY-4.0.* Show it wherever the accurate option is
@@ -62,10 +64,13 @@ cargo run -p voice-service
 ./services/voice/start.sh
 ```
 
-The sherpa-onnx and onnxruntime native libraries link **statically** into the
-binary (crate `sherpa-onnx` default `static` feature) on macOS, Windows
-(static CRT) and Linux, so the packaged sidecar is one file with no
-accompanying dylib/DLL.
+The sherpa-onnx and onnxruntime native libraries link **statically**
+(crate `sherpa-onnx` default `static` feature) on macOS, Windows (static
+CRT) and Linux. Desktop ships two files in `resources/bin`:
+`allternit-voice-service` (STT and the API, no GPL code, checked by
+`scripts/check-voice-no-gpl.sh`) and `allternit-tts` (Kokoro TTS,
+GPL-3.0-or-later, started by the service as a child process that exits with
+it). No dylib/DLL accompanies them.
 
 ## REST endpoints
 
@@ -74,7 +79,7 @@ accompanying dylib/DLL.
 | GET | `/health`, `/v1/health` | Health: engine, threads, readiness, pack states |
 | GET | `/v1/models` | Pack download states |
 | POST | `/v1/models/:pack` | Start a pack download in the background |
-| GET | `/v1/voices` | List the 11 installed Kokoro voices |
+| GET | `/v1/voices` | List the 28 Kokoro English voices |
 | GET | `/v1/voices/:id` | Get one voice (404 if unknown) |
 | GET | `/v1/stt/models` | List STT models (moonshine, parakeet) |
 | POST | `/v1/tts` | Synthesise → `audio/wav` bytes (or `format: "pcm16"`) |
@@ -136,13 +141,14 @@ curl -X POST http://127.0.0.1:8001/v1/stt -F "audio=@meeting.wav"
 ```bash
 curl -X POST http://127.0.0.1:8001/v1/tts \
   -H "Content-Type: application/json" \
-  -d '{"text": "Hello from Allternit", "voice": "af"}' \
+  -d '{"text": "Hello from Allternit", "voice": "af_heart"}' \
   --output hello.wav
 ```
 
-The first TTS/STT request downloads the `small` pack (about a minute on a
-typical connection, including unpacking); poll `GET /v1/models` for
-progress. Gizzi Code's `/voice` and Desktop dictation wait up to 5 minutes
+The first STT request downloads the `small` pack (~39 MB) and the first TTS
+request the `tts` pack (~350 MB, a few minutes on a typical connection,
+including unpacking); poll `GET /v1/models` for progress, or start them
+early with `POST /v1/models/<pack>`. Gizzi Code's `/voice` and Desktop dictation wait up to 5 minutes
 for that first request.
 
 ## Performance

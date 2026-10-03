@@ -101,10 +101,12 @@ Model pack download states (see PackStatus). Never triggers downloads.
 
 **Response 200:** `{ "packs": [ /* PackStatus */ ] }`
 
-Packs: `small` (default, ~142 MB download: Silero VAD + Moonshine tiny EN +
-Kokoro-82M int8 EN + Smart Turn v3.2, the end-of-turn model the voice
+Packs: `small` (default, ~39 MB download: Silero VAD + Moonshine tiny EN +
+Smart Turn v3.2, the end-of-turn model the voice
 session layer uses; fetched from its pinned Hugging Face revision unless
-`ALLTERNIT_VOICE_MODEL_BASE` points at a mirror) and `accurate` (~487 MB: Parakeet TDT 0.6B v3 int8).
+`ALLTERNIT_VOICE_MODEL_BASE` points at a mirror), `tts` (~350 MB: Kokoro-82M
+v1.0 fp32, downloaded on the first TTS request) and `accurate` (~487 MB:
+Parakeet TDT 0.6B v3 int8).
 Files are sha256-checked against hashes pinned in `src/models.rs`, downloaded
 to `<file>.part` (resumed with HTTP Range after an interruption) and only
 moved/extracted into place after the hash matches. Base URL:
@@ -122,9 +124,9 @@ requests download on first use.
 
 ### `GET /v1/voices`
 
-List installed Kokoro voices (11 English voices: `af`, `af_bella`,
-`af_nicole`, `af_sarah`, `af_sky`, `am_adam`, `am_michael`, `bf_emma`,
-`bf_isabella`, `bm_george`, `bm_lewis`).
+List the Kokoro v1.0 English voices (28: `af_*`/`am_*` US, `bf_*`/`bm_*` UK;
+default `af_heart`). The old ids `af`, `default`, `en-us-female` map to
+`af_heart`, `en-us-male` to `am_adam`.
 
 **Response 200:** `[ /* VoiceModel */ ]`
 
@@ -150,7 +152,7 @@ Synthesise speech. Returns real audio bytes.
 ```json
 {
   "text": "string",
-  "voice": "af",              // optional; aliases: voice_id, "default"
+  "voice": "af_heart",        // optional; aliases: voice_id, "default"
   "language": "en",           // optional (reserved)
   "speed": 1.0,               // optional
   "format": "wav"             // "wav" (default) | "pcm16"
@@ -172,9 +174,12 @@ The first request triggers the `small` pack download if not present; poll
 
 ### `POST /v1/tts/stream`
 
-Sentence-streaming TTS. The text is split into sentences (abbreviation- and
-initialism-aware); each sentence is synthesised and emitted as soon as it is
-ready.
+Streaming TTS. The text is split into sentences (abbreviation- and
+initialism-aware), and the first sentence is cut short (at its first clause,
+or about half of it) so first audio arrives early. Each piece is emitted as
+soon as Kokoro renders it. Kokoro runs in the `allternit-tts` child process
+(GPL-3.0, `services/voice-tts`); the first TTS request downloads the `tts`
+pack and starts it (a few seconds to load the model).
 
 **Request body:** same as `POST /v1/tts` (`format` ignored; chunks are pcm16).
 

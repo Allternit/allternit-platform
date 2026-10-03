@@ -140,7 +140,7 @@ class VoiceManager {
       const response = await fetch(`${URLS.VOICE}/v1/stt`, {
         method: 'POST',
         body,
-        // The first request downloads the small voice pack (~142 MB) into
+        // The first request downloads the small voice pack (~39 MB) into
         // ~/.allternit/models/voice/, so allow well over a minute.
         signal: AbortSignal.timeout(300_000),
       });
