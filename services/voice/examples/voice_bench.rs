@@ -1,392 +1,393 @@
-//! Voice bench harness (Phase 1 acceptance gate).
+//! Voice bench (Phase 1 acceptance gate): STT accuracy/latency and TTS
+//! latency on the target-machine settings (CPU only, 2 inference threads).
 //!
-//! Usage:
-//!   cargo run --release -p voice-service --example voice_bench -- \
-//!     --data ~/.allternit/voice-bench [--threads 2] [--limit 40]
+//! ```text
+//! cargo run --release -p voice-service --example voice_bench -- \
+//!     --data ~/.allternit/voice-bench [--threads 2] [--limit N] [--out FILE]
+//! ```
 //!
-//! Expects `wb/*.wav` (clean 16 kHz), `pstn/*.wav` (phone-line 8 kHz μ-law
-//! re-wrapped at 16 kHz), `pstn/*.8k.wav` (raw 8 kHz), and `refs.json`
-//! (utterance key -> reference text, LibriSpeech test-clean).
+//! `--data` holds `wb/*.wav` (clean 16 kHz), `pstn/*.wav` (phone line:
+//! 300–3400 Hz, 8 kHz μ-law, back to 16 kHz), `pstn/*.8k.wav` (raw 8 kHz
+//! μ-law) and `refs.json` (key -> LibriSpeech test-clean reference).
 //!
-//! Writes JSONL lines to `services/voice/bench/results-<host>.jsonl`:
-//! per-utterance STT rows, per-model/condition STT summaries (WER mean,
-//! p50/p95 finalisation latency, RTF, peak RSS), and per-sentence TTS rows
-//! (time-to-first-chunk, RTF, peak RSS).
+//! Every model runs in its own child process (`--only <job>`), so the peak
+//! RSS reported for a model is that model's alone. Output is JSONL, default
+//! `services/voice/bench/results-<host>.jsonl`:
+//! - `{"kind":"stt", model, cond, n, wer, fin_p50_ms, fin_p95_ms, rtf, peak_rss_mb, threads}`
+//! - `{"kind":"tts", model, n, ttfa_p50_ms, ttfa_p95_ms, ttfa_max_ms, rtf, peak_rss_mb, threads}`
+//!
+//! Definitions:
+//! - WER: corpus WER (total edits / total reference words) after lowercase,
+//!   hyphens -> spaces, punctuation stripped.
+//! - Finalisation latency: the utterance is streamed through `SttStream` in
+//!   100 ms chunks as fast as possible; latency is the wall time of feeding
+//!   the last chunk plus `finish()`, i.e. from the last audio sample arriving
+//!   to the final transcript being available. Excludes the VAD's 0.3 s
+//!   end-of-speech hangover (end-of-turn detection is Phase 1b's job).
+//! - STT RTF: batch `transcribe()` wall time / audio duration.
+//! - TTS time to first audio (ttfa): wall time of synthesising the first
+//!   sentence of each of 10 fixed sentences, as `/v1/tts/stream` does.
+//! - TTS RTF: synthesis wall time / audio duration.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use voice_service::audio::{decode_any, resample_to_16k};
+use voice_service::audio::{decode_wav, resample_to_16k};
 use voice_service::models::PackManager;
-use voice_service::stt::{SttEngine, SttModel};
+use voice_service::stt::{SttEngine, SttEvent, SttModel};
 use voice_service::tts::{split_sentences, TtsEngine};
 
-/// Fixed TTS benchmark sentences (kept stable across runs).
 const TTS_SENTENCES: &[&str] = &[
     "The quick brown fox jumps over the lazy dog.",
     "Allternit turns your computer into an AI workspace.",
-    "Voice input should feel instant, even on old hardware.",
+    "Voice input should feel instant, even on older hardware.",
     "She sells seashells by the seashore every Sunday morning.",
     "The committee approved the budget after a short recess.",
     "Please confirm your appointment by replying to this message.",
-    "In 1969, Apollo eleven carried the first humans to the Moon.",
+    "In nineteen sixty nine, Apollo eleven carried the first people to the Moon.",
     "The recipe calls for two cups of flour and a pinch of salt.",
     "Reliable software is built in small, verifiable steps.",
     "Thank you for calling; how may I direct your call today?",
 ];
 
-fn main() -> anyhow::Result<()> {
+const CONDITIONS: &[(&str, &str, bool)] = &[
+    // (cond, dir, raw 8 kHz files only)
+    ("wb", "wb", false),
+    ("pstn", "pstn", false),
+    ("pstn8k", "pstn", true),
+];
+
+struct Args {
+    data: PathBuf,
+    threads: usize,
+    limit: Option<usize>,
+    out: Option<PathBuf>,
+    only: Option<String>,
+}
+
+fn parse_args() -> Args {
     let mut args = std::env::args().skip(1);
-    let mut data: Option<PathBuf> = None;
-    let mut threads = 2usize;
-    let mut limit: Option<usize> = None;
-    let mut out: Option<PathBuf> = None;
+    let mut a = Args {
+        data: PathBuf::new(),
+        threads: 2,
+        limit: None,
+        out: None,
+        only: None,
+    };
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--data" => data = args.next().map(PathBuf::from),
-            "--threads" => threads = args.next().and_then(|v| v.parse().ok()).unwrap_or(2),
-            "--limit" => limit = args.next().and_then(|v| v.parse().ok()),
-            "--out" => out = args.next().map(PathBuf::from),
+            "--data" => a.data = args.next().map(expand_home).unwrap_or_default(),
+            "--threads" => a.threads = args.next().and_then(|v| v.parse().ok()).unwrap_or(2),
+            "--limit" => a.limit = args.next().and_then(|v| v.parse().ok()),
+            "--out" => a.out = args.next().map(PathBuf::from),
+            "--only" => a.only = args.next(),
             other => {
                 eprintln!("unknown arg: {other}");
                 std::process::exit(2);
             }
         }
     }
-    let data = match data {
-        Some(d) => d,
-        None => {
-            eprintln!("--data <dir> is required");
-            std::process::exit(2);
-        }
-    };
-    std::env::set_var("ALLTERNIT_VOICE_THREADS", threads.to_string());
-
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()?;
-
-    rt.block_on(async_main(data, threads, limit, out))
+    if a.data.as_os_str().is_empty() {
+        eprintln!("--data <dir> is required");
+        std::process::exit(2);
+    }
+    a
 }
 
-async fn async_main(
-    data: PathBuf,
-    threads: usize,
-    limit: Option<usize>,
-    out_override: Option<PathBuf>,
-) -> anyhow::Result<()> {
-    let refs: BTreeMap<String, String> =
-        serde_json::from_slice(&tokio::fs::read(data.join("refs.json")).await?)?;
+fn expand_home(p: String) -> PathBuf {
+    match p.strip_prefix("~/") {
+        Some(rest) => std::env::var_os("HOME")
+            .map(|h| PathBuf::from(h).join(rest))
+            .unwrap_or_else(|| PathBuf::from(&p)),
+        None => PathBuf::from(p),
+    }
+}
 
-    let manager = PackManager::new();
-    let stt = Arc::new(SttEngine::new(manager.clone()));
-    let tts = Arc::new(TtsEngine::new(manager));
+fn main() -> anyhow::Result<()> {
+    let args = parse_args();
+    std::env::set_var("ALLTERNIT_VOICE_THREADS", args.threads.to_string());
+    match args.only.as_deref() {
+        Some(job) => run_job(job, &args),
+        None => run_all(&args),
+    }
+}
 
-    // ── STT ────────────────────────────────────────────────────────────────
-    let mut rows: Vec<serde_json::Value> = Vec::new();
-    for (model, model_id) in [
-        (SttModel::Moonshine, "moonshine-tiny-en"),
-        (SttModel::Parakeet, "parakeet-tdt-0.6b-v3-int8"),
-    ] {
-        for (condition, dir_name, only_8k) in [
-            ("wb", "wb", false),
-            ("pstn", "pstn", false),
-            ("pstn8k", "pstn", true),
-        ] {
-            let dir = data.join(dir_name);
-            let mut wavs: Vec<PathBuf> = Vec::new();
-            for entry in std::fs::read_dir(&dir)? {
-                let path = entry?.path();
-                if path.extension().and_then(|e| e.to_str()) != Some("wav") {
-                    continue;
-                }
-                let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-                let is_8k = name.ends_with(".8k.wav");
-                if is_8k != only_8k {
-                    continue;
-                }
-                wavs.push(path);
+/// Parent: run each job in a child process and collect its JSONL.
+fn run_all(args: &Args) -> anyhow::Result<()> {
+    let exe = std::env::current_exe()?;
+    let mut lines = Vec::new();
+    for job in ["moonshine", "parakeet", "tts"] {
+        eprintln!("== {job}");
+        let mut cmd = std::process::Command::new(&exe);
+        cmd.arg("--data")
+            .arg(&args.data)
+            .arg("--threads")
+            .arg(args.threads.to_string())
+            .arg("--only")
+            .arg(job)
+            .stderr(std::process::Stdio::inherit());
+        if let Some(l) = args.limit {
+            cmd.arg("--limit").arg(l.to_string());
+        }
+        let out = cmd.output()?;
+        if !out.status.success() {
+            anyhow::bail!("job {job} failed: {}", out.status);
+        }
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            if line.starts_with('{') {
+                println!("{line}");
+                lines.push(line.to_string());
             }
-            wavs.sort();
-            if let Some(limit) = limit {
-                wavs.truncate(limit);
-            }
-
-            let mut wers = Vec::new();
-            let mut latencies = Vec::new();
-            let mut rtfs = Vec::new();
-            for wav in &wavs {
-                let key = wav
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("")
-                    .trim_end_matches(".8k")
-                    .to_string();
-                let reference = refs.get(&key).cloned().unwrap_or_default();
-                let bytes = std::fs::read(wav)?;
-                let (raw, rate) = decode_any(&bytes)?;
-                let samples = resample_to_16k(&raw, rate);
-                let audio_secs = samples.len() as f32 / 16_000.0;
-
-                let engine = stt.clone();
-                let start = Instant::now();
-                let segments =
-                    tokio::task::spawn_blocking(move || engine.transcribe(&samples, model))
-                        .await??;
-                let elapsed = start.elapsed();
-                // Finalisation latency: end-of-speech → final text. With a
-                // whole-utterance request that is the decode time itself.
-                let latency_ms = elapsed.as_secs_f32() * 1000.0;
-                let rtf = elapsed.as_secs_f32() / audio_secs.max(1e-3);
-                let hypothesis: String = segments
-                    .iter()
-                    .map(|s| s.text.as_str())
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                let wer = word_error_rate(&reference, &hypothesis);
-                wers.push(wer);
-                latencies.push(latency_ms);
-                rtfs.push(rtf);
-                rows.push(serde_json::json!({
-                    "kind": "stt",
-                    "model": model_id,
-                    "condition": condition,
-                    "utt": key,
-                    "audio_secs": round3(audio_secs),
-                    "wer": round4(wer),
-                    "finalization_ms": round1(latency_ms),
-                    "rtf": round4(rtf),
-                }));
-                println!(
-                    "[stt] {model_id:24} {condition:6} {key:6} wer={:5.2}% lat={:6.0}ms rtf={:.3}",
-                    wer * 100.0,
-                    latency_ms,
-                    rtf
-                );
-            }
-
-            let peak_rss_mb = peak_rss_mb();
-            rows.push(serde_json::json!({
-                "kind": "stt_summary",
-                "model": model_id,
-                "condition": condition,
-                "n": wers.len(),
-                "wer_mean": round4(mean(&wers)),
-                "wer_median": round4(median(&wers)),
-                "finalization_p50_ms": round1(percentile(&latencies, 50.0)),
-                "finalization_p95_ms": round1(percentile(&latencies, 95.0)),
-                "rtf_mean": round4(mean(&rtfs)),
-                "peak_rss_mb": round1(peak_rss_mb),
-                "threads": threads,
-            }));
-            println!(
-                "[sum] {model_id:24} {condition:6} WER {:5.2}% (med {:5.2}%)  p50 {:6.0}ms  p95 {:6.0}ms  rtf {:.3}  rss {}MB",
-                mean(&wers) * 100.0,
-                median(&wers) * 100.0,
-                percentile(&latencies, 50.0),
-                percentile(&latencies, 95.0),
-                mean(&rtfs),
-                peak_rss_mb
-            );
         }
     }
-
-    // ── TTS ────────────────────────────────────────────────────────────────
-    {
-        let engine = tts.clone();
-        // Warm up (loads Kokoro) before timing.
-        tokio::task::spawn_blocking(move || engine.synthesize("Warm up.", Some("af"), None))
-            .await??;
-        let mut ttfcs = Vec::new();
-        let mut rtfs = Vec::new();
-        for (i, sentence) in TTS_SENTENCES.iter().enumerate() {
-            let engine = tts.clone();
-            let text = sentence.to_string();
-            let (samples, sample_rate, first, total) = tokio::task::spawn_blocking(move || {
-                // Stream-shaped synthesis: sentence-at-a-time, timing the
-                // first sentence's audio (TTFC) and the whole batch.
-                let sentences = split_sentences(&text);
-                let t0 = Instant::now();
-                let mut all = Vec::new();
-                let mut rate = 0;
-                let mut first: Option<std::time::Duration> = None;
-                for s in &sentences {
-                    let (chunk, r) = engine.synthesize(s, Some("af"), None)?;
-                    if rate == 0 {
-                        rate = r;
-                    }
-                    if first.is_none() {
-                        first = Some(t0.elapsed());
-                    }
-                    all.extend_from_slice(&chunk);
-                }
-                Ok::<_, String>((all, rate, first.unwrap_or_default(), t0.elapsed()))
-            })
-            .await??;
-            let audio_secs = samples.len() as f32 / sample_rate as f32;
-            let rtf = total.as_secs_f32() / audio_secs.max(1e-3);
-            ttfcs.push(first.as_secs_f32() * 1000.0);
-            rtfs.push(rtf);
-            rows.push(serde_json::json!({
-                "kind": "tts",
-                "voice": "af",
-                "sentence": i,
-                "audio_secs": round3(audio_secs),
-                "ttfc_ms": round1(first.as_secs_f32() * 1000.0),
-                "rtf": round4(rtf),
-            }));
-            println!(
-                "[tts] sentence {:2} ttfc={:6.0}ms rtf={:.3}",
-                i,
-                first.as_secs_f32() * 1000.0,
-                rtf
-            );
-        }
-        let peak_rss_mb = peak_rss_mb();
-        rows.push(serde_json::json!({
-            "kind": "tts_summary",
-            "voice": "af",
-            "n": ttfcs.len(),
-            "ttfc_mean_ms": round1(mean(&ttfcs)),
-            "ttfc_max_ms": round1(ttfcs.iter().fold(0.0f32, |m, v| m.max(*v))),
-            "rtf_mean": round4(mean(&rtfs)),
-            "peak_rss_mb": round1(peak_rss_mb),
-            "threads": threads,
-        }));
-        println!(
-            "[sum] tts ttfc mean {:5.0}ms max {:5.0}ms  rtf {:.3}  rss {}MB",
-            mean(&ttfcs),
-            ttfcs.iter().fold(0.0f32, |m, v| m.max(*v)),
-            mean(&rtfs),
-            peak_rss_mb
-        );
+    let path = args.out.clone().unwrap_or_else(default_out);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
     }
-
-    let host = hostname();
-    let out = out_override.unwrap_or_else(|| {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("bench")
-            .join(format!("results-{host}.jsonl"))
-    });
-    if let Some(parent) = out.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let mut file = std::fs::File::create(&out)?;
-    use std::io::Write;
-    for row in &rows {
-        writeln!(file, "{}", serde_json::to_string(row)?)?;
-    }
-    println!("wrote {} rows to {}", rows.len(), out.display());
+    std::fs::write(&path, lines.join("\n") + "\n")?;
+    eprintln!("wrote {}", path.display());
     Ok(())
 }
 
+fn default_out() -> PathBuf {
+    let host = hostname();
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("bench")
+        .join(format!("results-{host}.jsonl"))
+}
+
 fn hostname() -> String {
-    let mut buf = [0u8; 256];
-    unsafe {
-        if libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) == 0 {
-            let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-            return String::from_utf8_lossy(&buf[..end]).replace('.', "-");
-        }
-    }
-    "unknown".to_string()
+    std::process::Command::new("hostname")
+        .arg("-s")
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
-/// Peak resident set size of this process, MB (ru_maxrss: bytes on macOS,
-/// KiB on Linux).
-fn peak_rss_mb() -> f32 {
-    unsafe {
-        let mut usage: libc::rusage = std::mem::zeroed();
-        if libc::getrusage(libc::RUSAGE_SELF, &mut usage) == 0 {
-            #[cfg(target_os = "linux")]
-            return usage.ru_maxrss as f32 / 1024.0;
-            #[cfg(target_os = "macos")]
-            return usage.ru_maxrss as f32 / (1024.0 * 1024.0);
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-            return usage.ru_maxrss as f32 / 1024.0;
-        }
+/// Child: one model, all conditions. JSONL on stdout, progress on stderr.
+fn run_job(job: &str, args: &Args) -> anyhow::Result<()> {
+    // The pack manager needs a runtime context only to download missing
+    // packs; enter one for the whole job.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()?;
+    let _enter = rt.enter();
+    let packs = Arc::new(PackManager::new());
+    match job {
+        "moonshine" => bench_stt(SttModel::Moonshine, packs, args),
+        "parakeet" => bench_stt(SttModel::Parakeet, packs, args),
+        "tts" => bench_tts(packs, args),
+        other => anyhow::bail!("unknown job {other}"),
     }
-    0.0
 }
 
-/// Word error rate over normalised tokens: lowercase, punctuation stripped,
-/// hyphens become spaces.
-fn word_error_rate(reference: &str, hypothesis: &str) -> f32 {
-    let norm = |s: &str| -> Vec<String> {
-        s.chars()
-            .map(|c| {
-                if c == '-' || c.is_whitespace() {
-                    ' '
-                } else {
-                    c
-                }
-            })
-            .collect::<String>()
-            .chars()
-            .map(|c| {
-                if c.is_ascii_punctuation() {
-                    ' '
-                } else {
-                    c.to_ascii_lowercase()
-                }
-            })
-            .collect::<String>()
-            .split_whitespace()
-            .map(|w| w.to_string())
-            .collect()
-    };
-    let r = norm(reference);
-    let h = norm(hypothesis);
-    if r.is_empty() {
-        return if h.is_empty() { 0.0 } else { 1.0 };
-    }
-    let n = r.len();
-    let m = h.len();
-    // Levenshtein over words with standard DP.
-    let mut prev: Vec<u32> = (0..=m as u32).collect();
-    let mut cur = vec![0u32; m + 1];
-    for i in 1..=n {
-        cur[0] = i as u32;
-        for j in 1..=m {
-            let cost = if r[i - 1] == h[j - 1] { 0 } else { 1 };
-            cur[j] = (prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + cost);
+fn bench_stt(model: SttModel, packs: Arc<PackManager>, args: &Args) -> anyhow::Result<()> {
+    let refs: BTreeMap<String, String> =
+        serde_json::from_slice(&std::fs::read(args.data.join("refs.json"))?)?;
+    let engine = Arc::new(SttEngine::new(packs));
+    let load = Instant::now();
+    engine.prepare(model).map_err(anyhow::Error::msg)?;
+    eprintln!("{} loaded in {:?}", model.id(), load.elapsed());
+
+    for &(cond, dir, raw8k) in CONDITIONS {
+        let files = list_wavs(&args.data.join(dir), raw8k, args.limit)?;
+        let (mut edits, mut ref_words) = (0usize, 0usize);
+        let mut fin_ms = Vec::new();
+        let (mut proc_secs, mut audio_secs) = (0f64, 0f64);
+        for path in &files {
+            let key = utt_key(path);
+            let Some(reference) = refs.get(&key) else {
+                continue;
+            };
+            let (raw, rate) = decode_wav(&std::fs::read(path)?)?;
+            let samples = resample_to_16k(&raw, rate);
+            let dur = samples.len() as f64 / 16_000.0;
+
+            // Batch: RTF + the transcript scored for WER.
+            let t = Instant::now();
+            let segments = engine.transcribe(&samples, model).map_err(anyhow::Error::msg)?;
+            proc_secs += t.elapsed().as_secs_f64();
+            audio_secs += dur;
+            let hyp = segments
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let (e, n) = word_edits(reference, &hyp);
+            edits += e;
+            ref_words += n;
+
+            // Streaming: finalisation latency after the last sample.
+            let mut stream = engine.stream(model).map_err(anyhow::Error::msg)?;
+            let chunks: Vec<&[f32]> = samples.chunks(1_600).collect();
+            let (last, rest) = chunks.split_last().expect("non-empty audio");
+            for c in rest {
+                let _ = stream.feed(c);
+            }
+            let t = Instant::now();
+            let mut events = stream.feed(last);
+            events.extend(stream.finish());
+            fin_ms.push(t.elapsed().as_secs_f64() * 1000.0);
+            let _finals = events
+                .iter()
+                .filter(|e| matches!(e, SttEvent::Final(_)))
+                .count();
+            if e > 0 && std::env::var_os("BENCH_VERBOSE").is_some() {
+                eprintln!("  {cond}/{key} edits={e}/{n}\n    ref: {reference}\n    hyp: {hyp}");
+            }
         }
-        std::mem::swap(&mut prev, &mut cur);
+        let row = serde_json::json!({
+            "kind": "stt",
+            "model": model.id(),
+            "cond": cond,
+            "n": fin_ms.len(),
+            "wer": round2(100.0 * edits as f64 / ref_words.max(1) as f64),
+            "fin_p50_ms": percentile(&mut fin_ms, 50.0).round(),
+            "fin_p95_ms": percentile(&mut fin_ms, 95.0).round(),
+            "rtf": round3(proc_secs / audio_secs.max(1e-9)),
+            "peak_rss_mb": peak_rss_mb(),
+            "threads": args.threads,
+        });
+        eprintln!("{row}");
+        println!("{row}");
     }
-    prev[m] as f32 / n as f32
+    Ok(())
 }
 
-fn mean(v: &[f32]) -> f32 {
+fn bench_tts(packs: Arc<PackManager>, args: &Args) -> anyhow::Result<()> {
+    let engine = TtsEngine::new(packs);
+    let load = Instant::now();
+    engine.prepare().map_err(anyhow::Error::msg)?;
+    eprintln!("kokoro loaded in {:?}", load.elapsed());
+    // Warm-up (first inference allocates arenas); not counted.
+    engine
+        .synthesize("Warm up.", None, None)
+        .map_err(anyhow::Error::msg)?;
+
+    let mut ttfa = Vec::new();
+    let (mut proc_secs, mut audio_secs) = (0f64, 0f64);
+    for text in TTS_SENTENCES {
+        let sentences = split_sentences(text);
+        let t = Instant::now();
+        let mut first = None;
+        for s in &sentences {
+            let (samples, rate) = engine
+                .synthesize(s, None, None)
+                .map_err(anyhow::Error::msg)?;
+            first.get_or_insert(t.elapsed().as_secs_f64() * 1000.0);
+            audio_secs += samples.len() as f64 / rate as f64;
+        }
+        proc_secs += t.elapsed().as_secs_f64();
+        ttfa.push(first.unwrap_or(0.0));
+    }
+    let max = ttfa.iter().cloned().fold(0.0, f64::max);
+    let row = serde_json::json!({
+        "kind": "tts",
+        "model": "kokoro-int8-en-v0_19",
+        "n": ttfa.len(),
+        "ttfa_p50_ms": percentile(&mut ttfa, 50.0).round(),
+        "ttfa_p95_ms": percentile(&mut ttfa, 95.0).round(),
+        "ttfa_max_ms": max.round(),
+        "rtf": round3(proc_secs / audio_secs.max(1e-9)),
+        "peak_rss_mb": peak_rss_mb(),
+        "threads": args.threads,
+    });
+    eprintln!("{row}");
+    println!("{row}");
+    Ok(())
+}
+
+fn list_wavs(dir: &Path, raw8k: bool, limit: Option<usize>) -> anyhow::Result<Vec<PathBuf>> {
+    let mut out: Vec<PathBuf> = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            name.ends_with(".wav") && name.ends_with(".8k.wav") == raw8k
+        })
+        .collect();
+    out.sort();
+    if let Some(l) = limit {
+        out.truncate(l);
+    }
+    Ok(out)
+}
+
+/// `u07.8k.wav` / `u07.wav` -> `u07`.
+fn utt_key(path: &Path) -> String {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    name.split('.').next().unwrap_or("").to_string()
+}
+
+fn normalize(text: &str) -> Vec<String> {
+    text.to_lowercase()
+        .replace('-', " ")
+        .chars()
+        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+        .collect::<String>()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect()
+}
+
+/// (word edit distance, reference word count).
+fn word_edits(reference: &str, hypothesis: &str) -> (usize, usize) {
+    let r = normalize(reference);
+    let h = normalize(hypothesis);
+    let mut prev: Vec<usize> = (0..=h.len()).collect();
+    for i in 1..=r.len() {
+        let mut cur = vec![i; h.len() + 1];
+        for j in 1..=h.len() {
+            let sub = prev[j - 1] + usize::from(r[i - 1] != h[j - 1]);
+            cur[j] = sub.min(prev[j] + 1).min(cur[j - 1] + 1);
+        }
+        prev = cur;
+    }
+    (prev[h.len()], r.len())
+}
+
+fn percentile(v: &mut [f64], p: f64) -> f64 {
     if v.is_empty() {
         return 0.0;
     }
-    v.iter().sum::<f32>() / v.len() as f32
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let idx = ((p / 100.0) * (v.len() - 1) as f64).round() as usize;
+    v[idx.min(v.len() - 1)]
 }
 
-fn median(v: &[f32]) -> f32 {
-    percentile(v, 50.0)
+fn round2(x: f64) -> f64 {
+    (x * 100.0).round() / 100.0
 }
 
-fn percentile(v: &[f32], p: f32) -> f32 {
-    if v.is_empty() {
-        return 0.0;
+fn round3(x: f64) -> f64 {
+    (x * 1000.0).round() / 1000.0
+}
+
+/// Peak resident set size of this process in MB (None on Windows).
+fn peak_rss_mb() -> Option<f64> {
+    #[cfg(unix)]
+    {
+        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+        if unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) } != 0 {
+            return None;
+        }
+        let raw = usage.ru_maxrss as f64;
+        // macOS reports bytes, Linux kilobytes.
+        let bytes = if cfg!(target_os = "macos") {
+            raw
+        } else {
+            raw * 1024.0
+        };
+        Some((bytes / 1_048_576.0).round())
     }
-    let mut sorted = v.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let idx = ((p / 100.0) * (sorted.len() - 1) as f32).round() as usize;
-    sorted[idx.min(sorted.len() - 1)]
-}
-
-fn round1(v: f32) -> f32 {
-    (v * 10.0).round() / 10.0
-}
-fn round3(v: f32) -> f32 {
-    (v * 1000.0).round() / 1000.0
-}
-fn round4(v: f32) -> f32 {
-    (v * 10000.0).round() / 10000.0
+    #[cfg(not(unix))]
+    {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -394,13 +395,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wer_exact_and_normalised() {
-        assert_eq!(word_error_rate("Hello world", "hello world"), 0.0);
-        assert_eq!(word_error_rate("well-known fact", "well known fact"), 0.0);
-        assert_eq!(word_error_rate("One, two! Three?", "one two three"), 0.0);
-        let wer = word_error_rate("the cat sat", "the dog sat fast");
-        assert!((wer - 0.6666667).abs() < 1e-4);
-        assert_eq!(word_error_rate("", ""), 0.0);
-        assert_eq!(word_error_rate("a b", ""), 1.0);
+    fn wer_normalisation() {
+        assert_eq!(word_edits("Hello, world!", "hello world"), (0, 2));
+        assert_eq!(word_edits("well-known fact", "well known fact"), (0, 3));
+        assert_eq!(word_edits("a b c", "a x c d"), (2, 3));
     }
 }

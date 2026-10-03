@@ -1,29 +1,46 @@
-//! Speech-to-text: Silero VAD segmentation + offline recogniser
-//! (Moonshine tiny for the `small` pack, Parakeet 0.6B for `accurate`).
+//! Speech-to-text: Silero VAD segments the audio, then an offline recogniser
+//! transcribes each segment (Moonshine tiny from the `small` pack, Parakeet
+//! TDT 0.6B v3 from the `accurate` pack).
+//!
+//! All audio here is 16 kHz mono f32; callers resample first
+//! (`audio::resample_to_16k` / `audio::StreamResampler`).
+//!
+//! Recognisers are loaded once and shared. Every VAD instance is per request
+//! (or per stream), so concurrent requests never share VAD state. Recogniser
+//! inference is serialised through [`crate::models::inference_lock`] so the
+//! service never runs more than `ALLTERNIT_VOICE_THREADS` (default 2)
+//! inference threads at once.
 
 use sherpa_onnx::{
     OfflineModelConfig, OfflineMoonshineModelConfig, OfflineRecognizer, OfflineRecognizerConfig,
     OfflineTransducerModelConfig, SileroVadModelConfig, VadModelConfig, VoiceActivityDetector,
 };
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tracing::info;
 
-use crate::models::{find_file, PackManager};
+use crate::models::{
+    find_file, inference_lock, inference_threads, PackManager, MOONSHINE_DIR, PARAKEET_DIR,
+    VAD_FILE,
+};
+
+pub const SAMPLE_RATE: i32 = 16_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SttModel {
-    /// Moonshine tiny (small pack) — default.
+    /// Moonshine tiny EN (small pack), the default.
     Moonshine,
     /// Parakeet TDT 0.6B v3 int8 (accurate pack).
     Parakeet,
 }
 
 impl SttModel {
+    /// Parse a request `model` value. Accepts model names, pack names and
+    /// the ids listed by `GET /v1/stt/models`.
     pub fn parse(s: Option<&str>) -> Result<Self, String> {
         match s.map(str::trim).unwrap_or("") {
-            "" | "moonshine" | "small" | "default" => Ok(SttModel::Moonshine),
-            "parakeet" | "accurate" => Ok(SttModel::Parakeet),
+            "" | "default" | "small" | "moonshine" | "moonshine-tiny-en" => Ok(SttModel::Moonshine),
+            "accurate" | "parakeet" | "parakeet-tdt-0.6b-v3-int8" => Ok(SttModel::Parakeet),
             other => Err(format!(
                 "unknown STT model '{other}' (expected 'moonshine' or 'parakeet')"
             )),
@@ -36,45 +53,59 @@ impl SttModel {
             SttModel::Parakeet => "parakeet-tdt-0.6b-v3-int8",
         }
     }
+
+    pub fn pack(&self) -> &'static str {
+        match self {
+            SttModel::Moonshine => "small",
+            SttModel::Parakeet => "accurate",
+        }
+    }
 }
 
-#[derive(Debug, Clone)]
+/// A transcribed speech segment. Times are seconds from the start of the
+/// audio (or of the stream).
+#[derive(Debug, Clone, PartialEq)]
 pub struct Segment {
     pub start: f32,
     pub end: f32,
     pub text: String,
 }
 
-/// Lazily-initialised engines. Built on first use so server startup (and the
-/// test suite) never touches the network or loads models.
-pub struct SttEngine {
-    pub manager: PackManager,
-    threads: i32,
-    inner: Mutex<Option<SttInner>>,
-    /// Dedicated VAD + recogniser for the streaming endpoint (single
-    /// concurrent stream; a second stream gets 409 until the first ends).
-    stream: Mutex<Option<SttInner>>,
-    stream_busy: std::sync::atomic::AtomicBool,
+/// Event from a streaming session.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SttEvent {
+    /// Interim transcript of the speech in progress (replaces the previous
+    /// partial).
+    Partial(String),
+    /// A finished speech segment.
+    Final(Segment),
 }
 
-struct SttInner {
-    vad: VoiceActivityDetector,
-    moonshine: OfflineRecognizer,
-    parakeet: Option<OfflineRecognizer>,
+/// VAD tuning. 0.3 s of silence ends a segment: short enough to keep
+/// finalisation inside the latency budget, long enough not to split words.
+const VAD_THRESHOLD: f32 = 0.5;
+const VAD_MIN_SILENCE: f32 = 0.3;
+const VAD_MIN_SPEECH: f32 = 0.25;
+const VAD_MAX_SPEECH: f32 = 20.0;
+const VAD_WINDOW: i32 = 512;
+/// Audio added before the VAD's reported onset so soft word starts are not
+/// clipped. Never reaches back past the previous segment's end.
+const PRE_ROLL: usize = 16_000 * 3 / 10;
+
+pub struct SttEngine {
+    packs: Arc<PackManager>,
+    threads: i32,
+    moonshine: Mutex<Option<Arc<OfflineRecognizer>>>,
+    parakeet: Mutex<Option<Arc<OfflineRecognizer>>>,
 }
 
 impl SttEngine {
-    pub fn new(manager: PackManager) -> Self {
-        let threads = std::env::var("ALLTERNIT_VOICE_THREADS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(2);
+    pub fn new(packs: Arc<PackManager>) -> Self {
         Self {
-            manager,
-            threads,
-            inner: Mutex::new(None),
-            stream: Mutex::new(None),
-            stream_busy: std::sync::atomic::AtomicBool::new(false),
+            packs,
+            threads: inference_threads(),
+            moonshine: Mutex::new(None),
+            parakeet: Mutex::new(None),
         }
     }
 
@@ -82,196 +113,333 @@ impl SttEngine {
         self.threads
     }
 
-    fn get_inner(&self) -> Result<std::sync::MutexGuard<'_, Option<SttInner>>, String> {
-        self.inner
-            .lock()
-            .map_err(|e| format!("STT engine lock poisoned: {e}"))
+    /// True when the recogniser for `model` is loaded.
+    pub fn is_ready(&self, model: SttModel) -> bool {
+        self.slot(model).lock().map(|g| g.is_some()).unwrap_or(false)
     }
 
-    /// Build (or reuse) the VAD + recognisers. Blocking; call from
-    /// `spawn_blocking`.
+    fn slot(&self, model: SttModel) -> &Mutex<Option<Arc<OfflineRecognizer>>> {
+        match model {
+            SttModel::Moonshine => &self.moonshine,
+            SttModel::Parakeet => &self.parakeet,
+        }
+    }
+
+    /// Download (first use) and load the VAD + recogniser for `model`.
+    /// Blocking: call from `spawn_blocking` or a plain thread inside a tokio
+    /// runtime.
     pub fn prepare(&self, model: SttModel) -> Result<(), String> {
-        let mut guard = self.get_inner()?;
-        if guard.is_some() {
-            // Ensure the requested recogniser specifically is ready.
-            if model == SttModel::Parakeet && guard.as_ref().unwrap().parakeet.is_none() {
-                let dir = self
-                    .manager
-                    .ensure_blocking("accurate")
-                    .map_err(|e| format!("accurate pack: {e}"))?;
-                let rec = build_parakeet(&dir, self.threads)?;
-                guard.as_mut().unwrap().parakeet = Some(rec);
-            }
-            return Ok(());
-        }
-        let fresh = self.build_inner(model)?;
-        info!(
-            "STT ready: VAD + moonshine{}",
-            if fresh.parakeet.is_some() {
-                " + parakeet"
-            } else {
-                ""
-            }
-        );
-        *guard = Some(fresh);
-        Ok(())
+        self.vad_model_path()?;
+        self.recognizer(model).map(|_| ())
     }
 
-    fn build_inner(&self, model: SttModel) -> Result<SttInner, String> {
-        let small_dir = self
-            .manager
-            .ensure_blocking("small")
-            .map_err(|e| format!("small pack: {e}"))?;
-        let vad = build_vad(&small_dir, self.threads)?;
-        let moonshine = build_moonshine(&small_dir, self.threads)?;
-        let parakeet = if model == SttModel::Parakeet {
-            let dir = self
-                .manager
-                .ensure_blocking("accurate")
-                .map_err(|e| format!("accurate pack: {e}"))?;
-            Some(build_parakeet(&dir, self.threads)?)
+    fn vad_model_path(&self) -> Result<PathBuf, String> {
+        let dir = self.packs.ensure_blocking("small")?;
+        let path = dir.join(VAD_FILE);
+        if path.is_file() {
+            Ok(path)
         } else {
-            None
+            Err(format!("{VAD_FILE} missing in {}", dir.display()))
+        }
+    }
+
+    fn recognizer(&self, model: SttModel) -> Result<Arc<OfflineRecognizer>, String> {
+        let mut slot = self
+            .slot(model)
+            .lock()
+            .map_err(|e| format!("STT engine lock poisoned: {e}"))?;
+        if let Some(rec) = slot.as_ref() {
+            return Ok(rec.clone());
+        }
+        let dir = self.packs.ensure_blocking(model.pack())?;
+        let rec = match model {
+            SttModel::Moonshine => build_moonshine(&dir.join(MOONSHINE_DIR), self.threads)?,
+            SttModel::Parakeet => build_parakeet(&dir.join(PARAKEET_DIR), self.threads)?,
         };
-        Ok(SttInner {
-            vad,
-            moonshine,
-            parakeet,
-        })
+        info!("STT ready: {} ({} threads)", model.id(), self.threads);
+        let rec = Arc::new(rec);
+        *slot = Some(rec.clone());
+        Ok(rec)
     }
 
-    /// Try to begin a streaming STT session. Only one stream may be active
-    /// at a time (single dedicated VAD/recogniser); a second attempt gets
-    /// `None` and the caller should answer 409.
-    pub fn begin_stream(self: &Arc<Self>, model: SttModel) -> Option<SttStream> {
-        self.stream_busy
-            .compare_exchange(
-                false,
-                true,
-                std::sync::atomic::Ordering::SeqCst,
-                std::sync::atomic::Ordering::SeqCst,
-            )
-            .ok()?;
-        Some(SttStream {
-            engine: self.clone(),
-            model,
-            tail: Mutex::new(Vec::new()),
-        })
+    /// A fresh Silero VAD (1 thread; the model is ~2 MB and loads in ms).
+    pub fn new_vad(&self) -> Result<VoiceActivityDetector, String> {
+        let model = self.vad_model_path()?;
+        let config = VadModelConfig {
+            silero_vad: SileroVadModelConfig {
+                model: Some(model.display().to_string()),
+                threshold: VAD_THRESHOLD,
+                min_silence_duration: VAD_MIN_SILENCE,
+                min_speech_duration: VAD_MIN_SPEECH,
+                max_speech_duration: VAD_MAX_SPEECH,
+                window_size: VAD_WINDOW,
+            },
+            sample_rate: SAMPLE_RATE,
+            num_threads: 1,
+            provider: Some("cpu".to_string()),
+            debug: false,
+            ..Default::default()
+        };
+        VoiceActivityDetector::create(&config, 60.0)
+            .ok_or_else(|| "failed to create Silero VAD".to_string())
     }
 
-    fn end_stream(&self) {
-        if let Ok(mut guard) = self.stream.lock() {
-            if let Some(inner) = guard.as_ref() {
-                inner.vad.reset();
-            }
-        }
-        self.stream_busy
-            .store(false, std::sync::atomic::Ordering::SeqCst);
+    /// Transcribe one speech segment (no VAD). Blocking.
+    pub fn decode(&self, model: SttModel, samples: &[f32]) -> Result<String, String> {
+        let rec = self.recognizer(model)?;
+        Ok(decode_with(&rec, model, samples))
     }
 
-    /// True when the small pack (VAD + default recogniser) is loaded.
-    pub fn is_ready(&self) -> bool {
-        self.get_inner()
-            .ok()
-            .and_then(|g| g.is_some())
-            .unwrap_or(false)
-    }
-
-    /// Segment + transcribe 16 kHz mono f32 audio. Blocking.
+    /// Segment with the VAD, then transcribe every segment. Blocking.
     pub fn transcribe(&self, samples: &[f32], model: SttModel) -> Result<Vec<Segment>, String> {
-        self.prepare(model)?;
-        let guard = self.get_inner()?;
-        let inner = guard.as_ref().ok_or("STT engine not initialised")?;
-        let segments = collect_vad_segments(&inner.vad, samples)?;
-
+        let rec = self.recognizer(model)?;
+        let vad = self.new_vad()?;
         let mut out = Vec::new();
-        for seg in segments {
-            let text = recognize(inner, model, &seg.samples)?;
-            let text = text.trim().to_string();
-            if text.is_empty() {
-                continue;
-            }
-            out.push(Segment {
-                start: seg.start,
-                end: seg.end,
-                text,
-            });
+        let mut prev_end = 0usize;
+        // Feed one VAD window at a time: sherpa-onnx dates a segment's start
+        // from the end of the chunk in which speech was confirmed, so big
+        // chunks make onsets late by up to a chunk (1 s chunks cost the
+        // first word of most utterances).
+        for chunk in samples.chunks(VAD_WINDOW as usize) {
+            vad.accept_waveform(chunk);
+            drain_finals(&vad, &rec, model, samples, &mut prev_end, &mut out);
         }
+        vad.flush();
+        drain_finals(&vad, &rec, model, samples, &mut prev_end, &mut out);
         Ok(out)
     }
 
-    /// Transcribe a single speech segment without running the VAD
-    /// (used for streaming partials on the in-progress segment).
-    pub fn transcribe_segment(&self, samples: &[f32], model: SttModel) -> Result<String, String> {
-        self.prepare(model)?;
-        let guard = self.get_inner()?;
-        let inner = guard.as_ref().ok_or("STT engine not initialised")?;
-        let seg = VadSegment {
-            start: 0.0,
-            end: samples.len() as f32 / 16_000.0,
-            samples: samples.to_vec(),
-        };
-        Ok(recognize(inner, model, &seg.samples)?.trim().to_string())
+    /// Start a streaming session. Several sessions can run at once; each has
+    /// its own VAD. Blocking (may download/load models on first use).
+    pub fn stream(self: &Arc<Self>, model: SttModel) -> Result<SttStream, String> {
+        let rec = self.recognizer(model)?;
+        let vad = self.new_vad()?;
+        Ok(SttStream {
+            rec,
+            model,
+            vad,
+            history: Vec::new(),
+            history_start: 0,
+            fed: 0,
+            in_speech: false,
+            speech_start: 0,
+            prev_end: 0,
+            last_partial_at: 0,
+            last_partial: String::new(),
+        })
     }
 }
 
-struct VadSegment {
-    start: f32,
-    end: f32,
-    samples: Vec<f32>,
-}
+/// Longest input Moonshine v2 tiny decodes reliably. Above ~9.3 s its
+/// merged decoder fails inside onnxruntime (encoder_attn broadcast error)
+/// and sherpa-onnx returns an empty result, so longer segments are split.
+const MOONSHINE_MAX: usize = SAMPLE_RATE as usize * 8;
+const MOONSHINE_MIN_SPLIT: usize = SAMPLE_RATE as usize * 5;
 
-/// Run the VAD over the whole buffer and return finished speech segments.
-/// `start` is in seconds, relative to the start of `samples`.
-pub(crate) fn collect_vad_segments(
-    vad: &VoiceActivityDetector,
-    samples: &[f32],
-) -> Result<Vec<VadSegment>, String> {
-    const CHUNK: usize = 16_000; // feed 1 s at a time
-    vad.reset();
-    let mut out = Vec::new();
-
-    let mut offset = 0usize;
-    while offset < samples.len() {
-        let end = (offset + CHUNK).min(samples.len());
-        vad.accept_waveform(&samples[offset..end]);
-        drain_segments(vad, &mut out);
-        offset = end;
+fn decode_with(rec: &OfflineRecognizer, model: SttModel, samples: &[f32]) -> String {
+    if model == SttModel::Moonshine && samples.len() > MOONSHINE_MAX {
+        return split_for_moonshine(samples)
+            .into_iter()
+            .map(|part| decode_one(rec, part))
+            .filter(|t| !t.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
     }
-    vad.flush();
-    drain_segments(vad, &mut out);
-    Ok(out)
+    decode_one(rec, samples)
 }
 
-fn drain_segments(vad: &VoiceActivityDetector, out: &mut Vec<VadSegment>) {
-    // SpeechSegment.start() is relative to all input since the last reset.
-    while let Some(front) = vad.front() {
-        let start = front.start() as f32 / 16_000.0;
-        let end = start + front.n() as f32 / 16_000.0;
-        out.push(VadSegment {
-            start,
-            end,
-            samples: front.samples().to_vec(),
-        });
-        vad.pop();
+/// Cut `samples` into pieces of at most `MOONSHINE_MAX`, each cut at the
+/// quietest 100 ms window between 5 s and 8 s into the remaining audio
+/// (the pause between words or phrases), so words are rarely split.
+fn split_for_moonshine(samples: &[f32]) -> Vec<&[f32]> {
+    const WIN: usize = SAMPLE_RATE as usize / 10;
+    let mut parts = Vec::new();
+    let mut rest = samples;
+    while rest.len() > MOONSHINE_MAX {
+        let mut best = MOONSHINE_MAX;
+        let mut best_energy = f32::MAX;
+        let mut at = MOONSHINE_MIN_SPLIT;
+        while at + WIN <= MOONSHINE_MAX {
+            let e: f32 = rest[at..at + WIN].iter().map(|x| x * x).sum();
+            if e < best_energy {
+                best_energy = e;
+                best = at + WIN / 2;
+            }
+            at += WIN / 2;
+        }
+        let (head, tail) = rest.split_at(best);
+        parts.push(head);
+        rest = tail;
     }
+    parts.push(rest);
+    parts
 }
 
-fn recognize(inner: &SttInner, model: SttModel, samples: &[f32]) -> Result<String, String> {
-    let rec = match model {
-        SttModel::Moonshine => &inner.moonshine,
-        SttModel::Parakeet => inner
-            .parakeet
-            .as_ref()
-            .ok_or("parakeet recogniser not loaded (request model=moonshine or download the accurate pack)")?,
-    };
+fn decode_one(rec: &OfflineRecognizer, samples: &[f32]) -> String {
+    if samples.is_empty() {
+        return String::new();
+    }
+    let _guard = inference_lock();
     let stream = rec.create_stream();
-    stream.accept_waveform(16_000, samples);
+    stream.accept_waveform(SAMPLE_RATE, samples);
     rec.decode(&stream);
     stream
         .get_result()
-        .map(|r| r.text)
-        .ok_or_else(|| "recogniser returned no result".to_string())
+        .map(|r| r.text.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Pop every finished VAD segment and transcribe it. `source` is the whole
+/// utterance, used to add the pre-roll the VAD cut off.
+fn drain_finals(
+    vad: &VoiceActivityDetector,
+    rec: &OfflineRecognizer,
+    model: SttModel,
+    source: &[f32],
+    prev_end: &mut usize,
+    out: &mut Vec<Segment>,
+) {
+    while let Some(seg) = vad.front() {
+        let start = seg.start().max(0) as usize;
+        let end = start + seg.n().max(0) as usize;
+        vad.pop();
+        let from = start.saturating_sub(PRE_ROLL).max(*prev_end);
+        *prev_end = end;
+        let to = end.min(source.len());
+        if from >= to {
+            continue;
+        }
+        let text = decode_with(rec, model, &source[from..to]);
+        if !text.is_empty() {
+            out.push(Segment {
+                start: start as f32 / SAMPLE_RATE as f32,
+                end: end as f32 / SAMPLE_RATE as f32,
+                text,
+            });
+        }
+    }
+}
+
+/// Seconds of in-progress speech between partial transcripts.
+const PARTIAL_EVERY: usize = SAMPLE_RATE as usize * 6 / 10;
+/// Partials re-decode at most the last 15 s of speech.
+const PARTIAL_MAX: usize = SAMPLE_RATE as usize * 15;
+
+/// A streaming STT session: feed 16 kHz mono chunks, get partial and final
+/// events back. Drop it to cancel.
+pub struct SttStream {
+    rec: Arc<OfflineRecognizer>,
+    model: SttModel,
+    vad: VoiceActivityDetector,
+    /// Recent audio (pre-roll + speech in progress), starting at absolute
+    /// sample `history_start`.
+    history: Vec<f32>,
+    history_start: usize,
+    /// Total samples fed.
+    fed: usize,
+    in_speech: bool,
+    speech_start: usize,
+    /// End of the last finished segment (pre-roll never reaches before it).
+    prev_end: usize,
+    last_partial_at: usize,
+    last_partial: String,
+}
+
+impl SttStream {
+    /// Feed one chunk of 16 kHz mono audio. Blocking (runs inference when a
+    /// segment finishes or a partial is due).
+    pub fn feed(&mut self, samples: &[f32]) -> Vec<SttEvent> {
+        self.history.extend_from_slice(samples);
+        let mut events = Vec::new();
+        // One VAD window per call (see `transcribe`), so onsets are exact.
+        for chunk in samples.chunks(VAD_WINDOW as usize) {
+            self.fed += chunk.len();
+            self.vad.accept_waveform(chunk);
+            events.extend(self.drain());
+        }
+
+        if !self.in_speech && self.vad.detected() {
+            self.in_speech = true;
+            self.speech_start = self.fed.saturating_sub(samples.len());
+            self.last_partial_at = self.fed;
+            self.last_partial.clear();
+        }
+        if self.in_speech && self.fed - self.last_partial_at >= PARTIAL_EVERY {
+            self.last_partial_at = self.fed;
+            let from = self
+                .speech_start
+                .saturating_sub(PRE_ROLL)
+                .max(self.prev_end)
+                .max(self.fed.saturating_sub(PARTIAL_MAX));
+            let text = decode_with(&self.rec, self.model, self.slice(from, self.fed));
+            if !text.is_empty() && text != self.last_partial {
+                self.last_partial = text.clone();
+                events.push(SttEvent::Partial(text));
+            }
+        }
+        if !self.in_speech {
+            self.trim_history(self.fed.saturating_sub(PRE_ROLL));
+        }
+        events
+    }
+
+    /// End of input: flush trailing speech. Blocking.
+    pub fn finish(mut self) -> Vec<SttEvent> {
+        self.vad.flush();
+        self.drain()
+    }
+
+    /// Seconds of audio fed so far.
+    pub fn duration_secs(&self) -> f32 {
+        self.fed as f32 / SAMPLE_RATE as f32
+    }
+
+    fn drain(&mut self) -> Vec<SttEvent> {
+        let mut events = Vec::new();
+        while let Some(seg) = self.vad.front() {
+            let start = seg.start().max(0) as usize;
+            let end = start + seg.n().max(0) as usize;
+            // Prefer our own history (adds pre-roll); fall back to the VAD's
+            // copy if the history was already trimmed past the onset.
+            let from = start
+                .saturating_sub(PRE_ROLL)
+                .max(self.prev_end)
+                .max(self.history_start);
+            let text = if from < end && end <= self.history_start + self.history.len() {
+                decode_with(&self.rec, self.model, self.slice(from, end))
+            } else {
+                decode_with(&self.rec, self.model, seg.samples())
+            };
+            self.vad.pop();
+            self.prev_end = end;
+            self.in_speech = false;
+            self.last_partial.clear();
+            self.trim_history(end.saturating_sub(PRE_ROLL).max(self.history_start));
+            if !text.is_empty() {
+                events.push(SttEvent::Final(Segment {
+                    start: start as f32 / SAMPLE_RATE as f32,
+                    end: end as f32 / SAMPLE_RATE as f32,
+                    text,
+                }));
+            }
+        }
+        events
+    }
+
+    fn slice(&self, from: usize, to: usize) -> &[f32] {
+        let a = from.saturating_sub(self.history_start).min(self.history.len());
+        let b = to.saturating_sub(self.history_start).min(self.history.len());
+        &self.history[a..b]
+    }
+
+    /// Drop history before absolute sample `keep_from`.
+    fn trim_history(&mut self, keep_from: usize) {
+        if keep_from > self.history_start {
+            let n = (keep_from - self.history_start).min(self.history.len());
+            self.history.drain(..n);
+            self.history_start += n;
+        }
+    }
 }
 
 fn base_model_config(threads: i32) -> OfflineModelConfig {
@@ -283,276 +451,42 @@ fn base_model_config(threads: i32) -> OfflineModelConfig {
     }
 }
 
-fn build_vad(dir: &Path, threads: i32) -> Result<VoiceActivityDetector, String> {
-    let model = find_file(dir, &["silero_vad.onnx"])
-        .ok_or_else(|| format!("silero_vad.onnx not found in {}", dir.display()))?;
-    let silero = SileroVadModelConfig {
-        model: Some(model.display().to_string()),
-        threshold: 0.5,
-        min_silence_duration: 0.5,
-        min_speech_duration: 0.25,
-        max_speech_duration: 20.0,
-        window_size: 512,
-    };
-    let config = VadModelConfig {
-        silero_vad: silero,
-        sample_rate: 16_000,
-        num_threads: threads,
-        provider: Some("cpu".to_string()),
-        debug: false,
-        ..Default::default()
-    };
-    VoiceActivityDetector::create(&config, 90.0)
-        .ok_or_else(|| "failed to create Silero VAD".to_string())
+fn path_of(dir: &Path, names: &[&str], what: &str) -> Result<String, String> {
+    find_file(dir, names)
+        .map(|p| p.display().to_string())
+        .ok_or_else(|| format!("{what} missing in {}", dir.display()))
 }
 
 fn build_moonshine(dir: &Path, threads: i32) -> Result<OfflineRecognizer, String> {
-    // Support both upstream layouts:
-    // - 2026 quantized: `encoder_model.ort` + `decoder_model_merged.ort`
-    // - classic int8: `preprocess.onnx` + `encode.int8.onnx` + decoders
-    let enc_quant = find_file(dir, &["encoder_model.ort"]);
-    let moonshine = if let Some(encoder) = enc_quant {
-        let decoder = find_file(dir, &["decoder_model_merged.ort"])
-            .ok_or_else(|| "decoder_model_merged.ort missing".to_string())?;
-        OfflineMoonshineModelConfig {
-            encoder: Some(encoder.display().to_string()),
-            merged_decoder: Some(decoder.display().to_string()),
-            ..Default::default()
-        }
-    } else {
-        let preprocessor = find_file(dir, &["preprocess.onnx"])
-            .ok_or_else(|| "moonshine preprocess.onnx missing".to_string())?;
-        let encoder = find_file(dir, &["encode.int8.onnx", "encode.onnx"])
-            .ok_or_else(|| "moonshine encoder missing".to_string())?;
-        let uncached = find_file(dir, &["uncached_decode.int8.onnx", "uncached_decode.onnx"])
-            .ok_or_else(|| "moonshine uncached decoder missing".to_string())?;
-        let cached = find_file(dir, &["cached_decode.int8.onnx", "cached_decode.onnx"])
-            .ok_or_else(|| "moonshine cached decoder missing".to_string())?;
-        OfflineMoonshineModelConfig {
-            preprocessor: Some(preprocessor.display().to_string()),
-            encoder: Some(encoder.display().to_string()),
-            uncached_decoder: Some(uncached.display().to_string()),
-            cached_decoder: Some(cached.display().to_string()),
-            ..Default::default()
-        }
-    };
-    let tokens = find_file(dir, &["tokens.txt"])
-        .ok_or_else(|| "moonshine tokens.txt missing".to_string())?;
+    // Moonshine v2 export (2026-02-27): encoder + merged decoder, .ort format.
     let mut model_config = base_model_config(threads);
-    model_config.moonshine = moonshine;
-    model_config.tokens = Some(tokens.display().to_string());
+    model_config.moonshine = OfflineMoonshineModelConfig {
+        encoder: Some(path_of(dir, &["encoder_model.ort"], "moonshine encoder")?),
+        merged_decoder: Some(path_of(dir, &["decoder_model_merged.ort"], "moonshine decoder")?),
+        ..Default::default()
+    };
+    model_config.tokens = Some(path_of(dir, &["tokens.txt"], "moonshine tokens.txt")?);
     let config = OfflineRecognizerConfig {
         model_config,
         ..Default::default()
     };
-    OfflineRecognizer::create(&config)
-        .ok_or_else(|| "failed to create Moonshine recogniser".to_string())
+    OfflineRecognizer::create(&config).ok_or_else(|| "failed to create Moonshine recogniser".into())
 }
 
 fn build_parakeet(dir: &Path, threads: i32) -> Result<OfflineRecognizer, String> {
-    let encoder = find_file(dir, &["encoder.int8.onnx", "encoder.onnx"])
-        .ok_or_else(|| "parakeet encoder missing".to_string())?;
-    let decoder = find_file(dir, &["decoder.int8.onnx", "decoder.onnx"])
-        .ok_or_else(|| "parakeet decoder missing".to_string())?;
-    let joiner = find_file(dir, &["joiner.int8.onnx", "joiner.onnx"])
-        .ok_or_else(|| "parakeet joiner missing".to_string())?;
-    let tokens =
-        find_file(dir, &["tokens.txt"]).ok_or_else(|| "parakeet tokens.txt missing".to_string())?;
     let mut model_config = base_model_config(threads);
     model_config.transducer = OfflineTransducerModelConfig {
-        encoder: Some(encoder.display().to_string()),
-        decoder: Some(decoder.display().to_string()),
-        joiner: Some(joiner.display().to_string()),
+        encoder: Some(path_of(dir, &["encoder.int8.onnx"], "parakeet encoder")?),
+        decoder: Some(path_of(dir, &["decoder.int8.onnx"], "parakeet decoder")?),
+        joiner: Some(path_of(dir, &["joiner.int8.onnx"], "parakeet joiner")?),
     };
-    model_config.tokens = Some(tokens.display().to_string());
+    model_config.tokens = Some(path_of(dir, &["tokens.txt"], "parakeet tokens.txt")?);
     model_config.model_type = Some("nemo_transducer".to_string());
     let config = OfflineRecognizerConfig {
         model_config,
         ..Default::default()
     };
-    OfflineRecognizer::create(&config)
-        .ok_or_else(|| "failed to create Parakeet recogniser".to_string())
-}
-
-/// An active streaming STT session. Feed 16 kHz mono f32 chunks; finished
-/// speech segments come back from `feed`/`finish` with transcripts attached.
-/// Dropping the session resets the VAD and frees the stream slot.
-pub struct SttStream {
-    engine: Arc<SttEngine>,
-    model: SttModel,
-    /// Rolling copy of audio not yet covered by a final segment; used for
-    /// throttled partial transcripts.
-    tail: Mutex<Vec<f32>>,
-}
-
-impl SttStream {
-    /// Feed one chunk; returns finished (transcribed) segments, if any.
-    pub fn feed(&self, samples: &[f32]) -> Result<Vec<Segment>, String> {
-        self.engine.prepare_stream(self.model)?;
-        {
-            let mut tail = self
-                .tail
-                .lock()
-                .map_err(|e| format!("tail lock poisoned: {e}"))?;
-            tail.extend_from_slice(samples);
-            const MAX_TAIL: usize = 16_000 * 15;
-            if tail.len() > MAX_TAIL {
-                let drop = tail.len() - MAX_TAIL;
-                tail.drain(0..drop);
-            }
-        }
-        let guard = self
-            .engine
-            .stream
-            .lock()
-            .map_err(|e| format!("stream lock poisoned: {e}"))?;
-        let inner = guard.as_ref().ok_or("stream not initialised")?;
-        inner.vad.accept_waveform(samples);
-        let raw = drain_segments_vec(&inner.vad);
-        let segments = transcribe_all(inner, self.model, raw)?;
-        if !segments.is_empty() {
-            if let Ok(mut tail) = self.tail.lock() {
-                tail.clear();
-            }
-        }
-        Ok(segments)
-    }
-
-    /// Throttled partial transcript of the in-progress speech (None when
-    /// there is not enough un-finalised audio yet).
-    pub fn partial(&self) -> Result<Option<String>, String> {
-        let tail = self
-            .tail
-            .lock()
-            .map_err(|e| format!("tail lock poisoned: {e}"))?;
-        if tail.len() < 16_000 {
-            return Ok(None);
-        }
-        self.engine.stream_transcribe(tail.as_slice(), self.model)
-    }
-
-    /// End of input: flush trailing speech and return its segments.
-    pub fn finish(self) -> Result<Vec<Segment>, String> {
-        let result = (|| {
-            let guard = self
-                .engine
-                .stream
-                .lock()
-                .map_err(|e| format!("stream lock poisoned: {e}"))?;
-            if let Some(inner) = guard.as_ref() {
-                inner.vad.flush();
-                let raw = drain_segments_vec(&inner.vad);
-                return transcribe_all(inner, self.model, raw);
-            }
-            Ok(Vec::new())
-        })();
-        self.engine.end_stream();
-        result
-    }
-}
-
-impl Drop for SttStream {
-    fn drop(&mut self) {
-        self.engine.end_stream();
-    }
-}
-
-impl SttEngine {
-    fn prepare_stream(&self, model: SttModel) -> Result<(), String> {
-        let mut guard = self
-            .stream
-            .lock()
-            .map_err(|e| format!("stream lock poisoned: {e}"))?;
-        match guard.as_ref() {
-            Some(inner) => {
-                if model == SttModel::Parakeet && inner.parakeet.is_none() {
-                    let dir = self
-                        .manager
-                        .ensure_blocking("accurate")
-                        .map_err(|e| format!("accurate pack: {e}"))?;
-                    let rec = build_parakeet(&dir, self.threads)?;
-                    guard.as_mut().unwrap().parakeet = Some(rec);
-                }
-                Ok(())
-            }
-            None => {
-                let fresh = self.build_inner(model)?;
-                info!("streaming STT engine ready");
-                *guard = Some(fresh);
-                Ok(())
-            }
-        }
-    }
-
-    /// Transcribe an arbitrary sample buffer with the streaming engine's
-    /// recogniser (used for partials; models stay hot).
-    pub fn stream_transcribe(
-        &self,
-        samples: &[f32],
-        model: SttModel,
-    ) -> Result<Option<String>, String> {
-        self.prepare_stream(model)?;
-        if samples.is_empty() {
-            return Ok(None);
-        }
-        let guard = self
-            .stream
-            .lock()
-            .map_err(|e| format!("stream lock poisoned: {e}"))?;
-        let inner = guard.as_ref().ok_or("stream not initialised")?;
-        let text = recognize(inner, model, samples)?;
-        Ok(Some(text.trim().to_string()))
-    }
-}
-
-fn drain_segments_vec(vad: &VoiceActivityDetector) -> Vec<VadSegment> {
-    let mut out = Vec::new();
-    while let Some(front) = vad.front() {
-        let start = front.start() as f32 / 16_000.0;
-        let end = start + front.n() as f32 / 16_000.0;
-        out.push(VadSegment {
-            start,
-            end,
-            samples: front.samples().to_vec(),
-        });
-        vad.pop();
-    }
-    out
-}
-
-fn transcribe_all(
-    inner: &SttInner,
-    model: SttModel,
-    raw: Vec<VadSegment>,
-) -> Result<Vec<Segment>, String> {
-    let mut out = Vec::new();
-    for seg in raw {
-        let text = recognize(inner, model, &seg.samples)?.trim().to_string();
-        if text.is_empty() {
-            continue;
-        }
-        out.push(Segment {
-            start: seg.start,
-            end: seg.end,
-            text,
-        });
-    }
-    Ok(out)
-}
-
-/// Helper: locate model files for the bench harness (e.g. tokens path).
-pub fn model_files_hint(dir: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    for suffix in [
-        "encoder_model.ort",
-        "decoder_model_merged.ort",
-        "tokens.txt",
-    ] {
-        if let Some(p) = find_file(dir, &[suffix]) {
-            out.push(p);
-        }
-    }
-    out
+    OfflineRecognizer::create(&config).ok_or_else(|| "failed to create Parakeet recogniser".into())
 }
 
 #[cfg(test)]
@@ -565,16 +499,43 @@ mod tests {
         assert_eq!(SttModel::parse(Some("")).unwrap(), SttModel::Moonshine);
         assert_eq!(SttModel::parse(Some("small")).unwrap(), SttModel::Moonshine);
         assert_eq!(
+            SttModel::parse(Some("moonshine-tiny-en")).unwrap(),
+            SttModel::Moonshine
+        );
+        assert_eq!(
             SttModel::parse(Some("parakeet")).unwrap(),
+            SttModel::Parakeet
+        );
+        assert_eq!(
+            SttModel::parse(Some("parakeet-tdt-0.6b-v3-int8")).unwrap(),
             SttModel::Parakeet
         );
         assert!(SttModel::parse(Some("whisper")).is_err());
     }
 
     #[test]
-    fn default_threads_is_two() {
-        // num_threads must default to 2 for the target-machine standard.
-        let engine = SttEngine::new(PackManager::new());
-        assert_eq!(engine.num_threads(), 2);
+    fn moonshine_split_caps_length_and_cuts_at_pauses() {
+        // 20 s of tone with a silent gap at 6.5 s and another at 13 s.
+        let sr = SAMPLE_RATE as usize;
+        let mut x: Vec<f32> = (0..20 * sr).map(|i| (i as f32 * 0.05).sin()).collect();
+        for gap in [6 * sr + sr / 2, 13 * sr] {
+            x[gap..gap + sr / 5].iter_mut().for_each(|s| *s = 0.0);
+        }
+        let parts = split_for_moonshine(&x);
+        assert!(parts.iter().all(|p| p.len() <= MOONSHINE_MAX));
+        assert_eq!(parts.iter().map(|p| p.len()).sum::<usize>(), x.len());
+        // First cut lands inside the first gap.
+        let first = parts[0].len();
+        assert!(first > 6 * sr + sr / 2 && first < 6 * sr + sr / 2 + sr / 5, "{first}");
+        assert!(split_for_moonshine(&x[..4 * sr]).len() == 1);
+    }
+
+    #[test]
+    fn engine_starts_unloaded_without_touching_disk() {
+        let tmp = tempfile::tempdir().unwrap();
+        let engine = SttEngine::new(Arc::new(PackManager::with_root(tmp.path().into())));
+        assert!(!engine.is_ready(SttModel::Moonshine));
+        assert!(!engine.is_ready(SttModel::Parakeet));
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 0);
     }
 }

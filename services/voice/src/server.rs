@@ -11,7 +11,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use base64::b64_encode;
+use self::base64::b64_encode;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,10 +21,10 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt as _;
 use tracing::{info, warn};
 
-use crate::audio::{decode_any, f32_to_pcm16le, resample_to_16k};
+use crate::audio::{decode_any, f32_to_pcm16le, resample_to_16k, StreamResampler};
 use crate::models::PackManager;
-use crate::stt::{Segment, SttEngine, SttModel};
-use crate::tts::{TtsEngine, KOKORO_SAMPLE_RATE, VOICES};
+use crate::stt::{Segment, SttEngine, SttEvent, SttModel};
+use crate::tts::{TtsEngine, VoiceDef, KOKORO_SAMPLE_RATE, VOICES};
 
 /// Voice Service State
 #[derive(Clone)]
@@ -43,14 +43,30 @@ pub struct VoiceServiceState {
 
 impl VoiceServiceState {
     pub fn new() -> Self {
-        let packs = PackManager::new();
+        Self::with_packs(Arc::new(PackManager::new()))
+    }
+
+    /// State over an explicit pack manager (tests point it at a temp dir).
+    pub fn with_packs(packs: Arc<PackManager>) -> Self {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             request_count: Arc::new(RwLock::new(0)),
             stt: Arc::new(SttEngine::new(packs.clone())),
             tts: Arc::new(TtsEngine::new(packs.clone())),
-            packs: Arc::new(packs),
+            packs,
         }
+    }
+
+    pub fn stt(&self) -> Arc<SttEngine> {
+        self.stt.clone()
+    }
+
+    pub fn tts(&self) -> Arc<TtsEngine> {
+        self.tts.clone()
+    }
+
+    pub fn packs(&self) -> Arc<PackManager> {
+        self.packs.clone()
     }
 }
 
@@ -78,7 +94,9 @@ pub enum SessionMode {
     Both,
 }
 
-/// Voice model for TTS (shape unchanged since the stub era)
+/// Voice model for TTS. `id/name/language/gender/sample_rate` is the
+/// original shape; `label`, `engine` and `assetReady` are added for the
+/// allternit-ai voice pickers, which read those names.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VoiceModel {
     pub id: String,
@@ -86,6 +104,41 @@ pub struct VoiceModel {
     pub language: String,
     pub gender: String,
     pub sample_rate: u32,
+    pub label: String,
+    pub engine: String,
+    #[serde(rename = "assetReady")]
+    pub asset_ready: bool,
+}
+
+impl VoiceModel {
+    fn from_def(v: &VoiceDef, asset_ready: bool) -> Self {
+        Self {
+            id: v.id.to_string(),
+            name: v.name.to_string(),
+            language: v.language.to_string(),
+            gender: v.gender.to_string(),
+            sample_rate: KOKORO_SAMPLE_RATE,
+            label: v.name.to_string(),
+            engine: "kokoro".to_string(),
+            asset_ready,
+        }
+    }
+}
+
+/// JSON error body `{ "error": "..." }` with a status.
+fn error_response(status: StatusCode, message: impl Into<String>) -> Response {
+    (status, Json(serde_json::json!({ "error": message.into() }))).into_response()
+}
+
+/// Engine errors: a bad voice/model name is the caller's fault (400);
+/// anything else (download failed, model failed to load) is 503.
+fn engine_error(e: String) -> Response {
+    warn!("voice engine error: {e}");
+    if e.starts_with("unknown voice") || e.starts_with("unknown STT model") {
+        error_response(StatusCode::BAD_REQUEST, e)
+    } else {
+        error_response(StatusCode::SERVICE_UNAVAILABLE, e)
+    }
 }
 
 /// STT model (shape unchanged since the stub era)
@@ -107,16 +160,6 @@ pub struct TtsRequest {
     pub speed: Option<f32>,
     /// "wav" (default) or "pcm16".
     pub format: Option<String>,
-}
-
-/// TTS non-streaming JSON fallback metadata (returned as headers on the
-/// binary response; kept for callers that probe the old shape via HEAD-ish
-/// flows). The primary response is the audio bytes themselves.
-#[derive(Debug, Serialize)]
-pub struct TtsResponse {
-    pub duration_secs: f32,
-    pub sample_rate: u32,
-    pub format: String,
 }
 
 /// STT response (shape unchanged since the whisper era)
@@ -152,9 +195,10 @@ pub enum StreamEvent {
     Partial { text: String },
     /// STT: a finalised speech segment.
     Final { text: String, start: f32, end: f32 },
-    /// TTS: one sentence's audio (pcm16le base64).
+    /// TTS: one sentence's audio (pcm16le mono, base64).
     Audio {
         index: usize,
+        text: String,
         sample_rate: u32,
         format: String,
         audio_b64: String,
@@ -178,6 +222,7 @@ pub fn create_router(state: VoiceServiceState) -> Router {
         .route("/v1/stt/models", get(list_stt_models))
         // Model packs (download state)
         .route("/v1/models", get(list_packs))
+        .route("/v1/models/:pack", post(download_pack))
         // TTS endpoints
         .route("/v1/tts", post(text_to_speech))
         .route("/v1/tts/stream", post(text_to_speech_stream))
@@ -203,45 +248,30 @@ async fn health_check(State(state): State<VoiceServiceState>) -> Json<serde_json
         "timestamp": chrono::Utc::now().timestamp_millis(),
         "features": ["tts", "stt", "streaming"],
         "engine": "sherpa-onnx",
-        "stt_ready": state.stt.is_ready(),
+        "stt_ready": state.stt.is_ready(SttModel::Moonshine),
+        "stt_accurate_ready": state.stt.is_ready(SttModel::Parakeet),
         "tts_ready": state.tts.is_ready(),
         "num_threads": state.stt.num_threads(),
         "packs": packs,
     }))
 }
 
-/// List available voices (real Kokoro voices, installed with the small pack)
-async fn list_voices() -> Json<Vec<VoiceModel>> {
-    Json(
-        VOICES
-            .iter()
-            .map(|v| VoiceModel {
-                id: v.id.to_string(),
-                name: v.name.to_string(),
-                language: v.language.to_string(),
-                gender: v.gender.to_string(),
-                sample_rate: KOKORO_SAMPLE_RATE,
-            })
-            .collect(),
-    )
+/// List available voices (the real Kokoro voices of the small pack).
+async fn list_voices(State(state): State<VoiceServiceState>) -> Json<Vec<VoiceModel>> {
+    let ready = state.packs.is_installed("small");
+    Json(VOICES.iter().map(|v| VoiceModel::from_def(v, ready)).collect())
 }
 
 /// Get specific voice
 async fn get_voice(
+    State(state): State<VoiceServiceState>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<Json<VoiceModel>, StatusCode> {
+    let ready = state.packs.is_installed("small");
     VOICES
         .iter()
         .find(|v| v.id == id)
-        .map(|v| {
-            Json(VoiceModel {
-                id: v.id.to_string(),
-                name: v.name.to_string(),
-                language: v.language.to_string(),
-                gender: v.gender.to_string(),
-                sample_rate: KOKORO_SAMPLE_RATE,
-            })
-        })
+        .map(|v| Json(VoiceModel::from_def(v, ready)))
         .ok_or(StatusCode::NOT_FOUND)
 }
 
@@ -256,8 +286,8 @@ async fn list_stt_models() -> Json<Vec<SttModelInfo>> {
         },
         SttModelInfo {
             id: "parakeet-tdt-0.6b-v3-int8".to_string(),
-            name: "Parakeet TDT 0.6B v3 int8 (English, CC-BY-4.0)".to_string(),
-            language: "en".to_string(),
+            name: "Parakeet TDT 0.6B v3 int8 (25 European languages, CC-BY-4.0)".to_string(),
+            language: "multi".to_string(),
             supports_streaming: true,
         },
     ])
@@ -268,153 +298,224 @@ async fn list_packs(State(state): State<VoiceServiceState>) -> Json<serde_json::
     Json(serde_json::json!({ "packs": state.packs.statuses().await }))
 }
 
+/// Start downloading a pack in the background (idempotent). Returns 202
+/// with the pack's current status; poll `GET /v1/models` for progress. For
+/// Settings → Voice; normal use downloads on first request instead.
+async fn download_pack(
+    State(state): State<VoiceServiceState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> Response {
+    if crate::models::pack(&name).is_none() {
+        return error_response(StatusCode::NOT_FOUND, format!("unknown pack: {name}"));
+    }
+    if !state.packs.is_installed(&name) {
+        let packs = state.packs.clone();
+        let pack_name = name.clone();
+        tokio::spawn(async move {
+            if let Err(e) = packs.ensure(&pack_name).await {
+                warn!("pack {pack_name} download failed: {e}");
+            }
+        });
+    }
+    let status = state
+        .packs
+        .statuses()
+        .await
+        .into_iter()
+        .find(|p| p.name == name);
+    (StatusCode::ACCEPTED, Json(serde_json::json!(status))).into_response()
+}
+
 // ─── TTS ────────────────────────────────────────────────────────────────────
 
-/// Text-to-speech: returns real audio (WAV by default, `format=pcm16` for
-/// raw s16le). The old stub returned a JSON descriptor with a dangling
-/// `audio_url`; that shape was a documented bug (see docs/specs/tts-product.md
-/// acceptance #7) and is replaced by actual bytes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AudioFormat {
+    Wav,
+    Pcm16,
+}
+
+impl AudioFormat {
+    fn parse(s: Option<&str>) -> Result<Self, String> {
+        match s.map(str::trim).unwrap_or("") {
+            "" | "wav" => Ok(AudioFormat::Wav),
+            "pcm16" | "pcm" | "s16le" => Ok(AudioFormat::Pcm16),
+            other => Err(format!(
+                "unsupported format '{other}' (expected 'wav' or 'pcm16')"
+            )),
+        }
+    }
+}
+
+/// Text-to-speech: returns the audio bytes (`audio/wav` by default,
+/// `format: "pcm16"` for raw s16le mono with `X-Sample-Rate`). The stub this
+/// replaces returned a JSON descriptor with a dangling `audio_url`.
 async fn text_to_speech(
     State(state): State<VoiceServiceState>,
     Json(request): Json<TtsRequest>,
-) -> Result<Response, StatusCode> {
+) -> Response {
     {
         let mut count = state.request_count.write().await;
         *count += 1;
     }
     if request.text.trim().is_empty() {
-        return Err(StatusCode::BAD_REQUEST);
+        return error_response(StatusCode::BAD_REQUEST, "text is empty");
     }
-    let format = request.format.clone().unwrap_or_else(|| "wav".to_string());
-    let stt_tts = state.tts.clone();
-    let text = request.text.clone();
-    let voice = request.voice.clone();
-    let speed = request.speed;
-    let result =
-        tokio::task::spawn_blocking(move || stt_tts.synthesize(&text, voice.as_deref(), speed))
-            .await
-            .map_err(|e| {
-                warn!("TTS task failed: {e}");
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
-    let (samples, sample_rate) = result.map_err(|e| {
-        warn!("TTS failed: {e}");
-        StatusCode::SERVICE_UNAVAILABLE
-    })?;
+    let format = match AudioFormat::parse(request.format.as_deref()) {
+        Ok(f) => f,
+        Err(e) => return error_response(StatusCode::BAD_REQUEST, e),
+    };
+    let tts = state.tts.clone();
+    let TtsRequest {
+        text, voice, speed, ..
+    } = request;
+    let result = tokio::task::spawn_blocking(move || {
+        // One sentence per generate call keeps each inference short, so a
+        // long text does not hold the inference lock against STT.
+        let mut all = Vec::new();
+        let mut rate = KOKORO_SAMPLE_RATE;
+        for sentence in crate::tts::split_sentences(&text) {
+            let (samples, r) = tts.synthesize(&sentence, voice.as_deref(), speed)?;
+            rate = r;
+            all.extend_from_slice(&samples);
+        }
+        Ok::<_, String>((all, rate))
+    })
+    .await;
+    let (samples, sample_rate) = match result {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => return engine_error(e),
+        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    };
 
     let duration_secs = samples.len() as f32 / sample_rate as f32;
-    let meta = TtsResponse {
-        duration_secs,
-        sample_rate: sample_rate as u32,
-        format: format.clone(),
+    let (bytes, content_type, format_name) = match format {
+        AudioFormat::Pcm16 => (f32_to_pcm16le(&samples), "application/octet-stream", "pcm16"),
+        AudioFormat::Wav => (
+            crate::audio::wav_from_f32(&samples, sample_rate),
+            "audio/wav",
+            "wav",
+        ),
     };
-    let bytes = if format == "pcm16" {
-        f32_to_pcm16le(&samples)
-    } else {
-        crate::audio::wav_from_f32(&samples, sample_rate as u32)
-    };
-    let content_type = if format == "pcm16" {
-        "application/octet-stream"
-    } else {
-        "audio/wav"
-    };
-    Ok(Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, content_type)
         .header("X-Duration-Seconds", format!("{duration_secs:.3}"))
         .header("X-Sample-Rate", sample_rate.to_string())
-        .header("X-Format", &meta.format)
+        .header("X-Format", format_name)
         .body(Body::from(bytes))
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?)
+        .unwrap_or_else(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
 }
 
-/// Streaming TTS (NDJSON): each sentence is synthesised and emitted as soon
-/// as it is ready, so playback can start before the whole text is done.
+/// Streaming TTS (NDJSON): the text is split into sentences and each
+/// sentence's audio is sent as soon as it is synthesised.
 async fn text_to_speech_stream(
     State(state): State<VoiceServiceState>,
     Json(request): Json<TtsRequest>,
-) -> Result<Response, StatusCode> {
+) -> Response {
     if request.text.trim().is_empty() {
-        return Err(StatusCode::BAD_REQUEST);
+        return error_response(StatusCode::BAD_REQUEST, "text is empty");
+    }
+    if let Err(e) = crate::tts::resolve_voice(request.voice.as_deref()) {
+        return error_response(StatusCode::BAD_REQUEST, e);
     }
     let sentences = crate::tts::split_sentences(&request.text);
-    let stt_tts = state.tts.clone();
+    let tts = state.tts.clone();
     let voice = request.voice.clone();
     let speed = request.speed;
 
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<String, std::convert::Infallible>>(32);
     tokio::task::spawn_blocking(move || {
-        let total_start = Instant::now();
+        let started = Instant::now();
         let mut total_samples = 0usize;
+        let mut sample_rate = KOKORO_SAMPLE_RATE;
         for (i, sentence) in sentences.iter().enumerate() {
-            let audio = stt_tts.synthesize(sentence, voice.as_deref(), speed);
-            let line = match audio {
-                Ok((samples, sample_rate)) => {
+            let event = match tts.synthesize(sentence, voice.as_deref(), speed) {
+                Ok((samples, rate)) => {
                     total_samples += samples.len();
-                    serde_json::to_string(&StreamEvent::Audio {
+                    sample_rate = rate;
+                    StreamEvent::Audio {
                         index: i,
-                        sample_rate: sample_rate as u32,
+                        text: sentence.clone(),
+                        sample_rate: rate,
                         format: "pcm16".to_string(),
                         audio_b64: b64_encode(&f32_to_pcm16le(&samples)),
-                    })
+                    }
                 }
-                Err(e) => serde_json::to_string(&StreamEvent::Error { error: e }),
+                Err(error) => {
+                    let _ = send_event(&tx, &StreamEvent::Error { error });
+                    return;
+                }
             };
-            if let Ok(line) = line {
-                if tx.blocking_send(Ok(line)).is_err() {
-                    return; // client went away
-                }
+            if send_event(&tx, &event).is_err() {
+                return; // client went away: stop synthesising
             }
         }
-        let sample_rate = KOKORO_SAMPLE_RATE;
-        let _ = tx.blocking_send(Ok(serde_json::to_string(&StreamEvent::Done {
-            duration_secs: total_samples as f32 / sample_rate as f32,
-        })
-        .unwrap()));
+        let _ = send_event(
+            &tx,
+            &StreamEvent::Done {
+                duration_secs: total_samples as f32 / sample_rate as f32,
+            },
+        );
         info!(
-            "TTS stream finished: {} sentences in {:?}",
+            "TTS stream: {} sentences in {:?}",
             sentences.len(),
-            total_start.elapsed()
+            started.elapsed()
         );
     });
 
-    Ok(ndjson_response(rx))
+    ndjson_response(rx)
+}
+
+type EventTx = tokio::sync::mpsc::Sender<Result<String, std::convert::Infallible>>;
+
+/// Send one NDJSON event from a blocking thread. Err = client gone.
+fn send_event(tx: &EventTx, event: &StreamEvent) -> Result<(), ()> {
+    let line = serde_json::to_string(event).map_err(|_| ())?;
+    tx.blocking_send(Ok(line)).map_err(|_| ())
 }
 
 // ─── STT ────────────────────────────────────────────────────────────────────
 
-async fn read_stt_multipart(
-    mut multipart: Multipart,
-) -> Result<(Vec<u8>, Option<String>, Option<String>), StatusCode> {
-    let mut audio_data = Vec::new();
-    let mut language = None;
-    let mut model = None;
+struct SttForm {
+    audio: Vec<u8>,
+    language: Option<String>,
+    model: Option<String>,
+    sample_rate: Option<u32>,
+}
+
+async fn read_stt_multipart(mut multipart: Multipart) -> Result<SttForm, Response> {
+    let mut form = SttForm {
+        audio: Vec::new(),
+        language: None,
+        model: None,
+        sample_rate: None,
+    };
     loop {
         match multipart.next_field().await {
             Ok(Some(field)) => {
                 let name = field.name().unwrap_or("").to_string();
-                let data = match field.bytes().await {
-                    Ok(bytes) => bytes,
-                    Err(err) => {
-                        warn!("STT multipart field read failed: {err}");
-                        return Err(StatusCode::BAD_REQUEST);
-                    }
-                };
+                let data = field.bytes().await.map_err(|e| {
+                    error_response(StatusCode::BAD_REQUEST, format!("multipart field: {e}"))
+                })?;
+                let text = || String::from_utf8_lossy(&data).trim().to_string();
                 match name.as_str() {
-                    "audio" | "file" => audio_data = data.to_vec(),
-                    "language" => language = Some(String::from_utf8_lossy(&data).to_string()),
-                    "model" => model = Some(String::from_utf8_lossy(&data).to_string()),
+                    "audio" | "file" => form.audio = data.to_vec(),
+                    "language" => form.language = Some(text()),
+                    "model" => form.model = Some(text()),
+                    "sample_rate" => form.sample_rate = text().parse().ok(),
                     _ => {}
                 }
             }
             Ok(None) => break,
-            Err(err) => {
-                warn!("STT multipart parse failed: {err}");
-                return Err(StatusCode::BAD_REQUEST);
+            Err(e) => {
+                return Err(error_response(
+                    StatusCode::BAD_REQUEST,
+                    format!("multipart: {e}"),
+                ))
             }
         }
     }
-    Ok((audio_data, language, model))
+    Ok(form)
 }
 
 fn segments_to_response(segments: Vec<Segment>, language: &str) -> SttResponse {
@@ -423,9 +524,11 @@ fn segments_to_response(segments: Vec<Segment>, language: &str) -> SttResponse {
         .map(|s| s.text.as_str())
         .collect::<Vec<_>>()
         .join(" ");
+    // The offline recognisers do not expose a calibrated score; keep the
+    // field (callers read it) with a fixed value for non-empty output.
     let confidence = if text.is_empty() { 0.0 } else { 0.9 };
     SttResponse {
-        text: text.clone(),
+        text,
         confidence,
         language: language.to_string(),
         segments: segments
@@ -440,67 +543,84 @@ fn segments_to_response(segments: Vec<Segment>, language: &str) -> SttResponse {
     }
 }
 
-/// Speech-to-text (multipart, same response shape as the whisper era).
-async fn speech_to_text(
-    State(state): State<VoiceServiceState>,
-    multipart: Multipart,
-) -> Result<Json<SttResponse>, StatusCode> {
+async fn run_stt(state: &VoiceServiceState, form: SttForm) -> Result<SttResponse, Response> {
     {
         let mut count = state.request_count.write().await;
         *count += 1;
     }
-    let (audio_data, language, model) = read_stt_multipart(multipart).await?;
-    if audio_data.is_empty() {
-        return Err(StatusCode::BAD_REQUEST);
+    if form.audio.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "missing 'audio' field",
+        ));
     }
-    let lang = language.unwrap_or_else(|| "en".to_string());
-
-    let (samples, rate) = decode_any(&audio_data).map_err(|e| {
-        warn!("STT decode failed: {e}");
-        StatusCode::UNSUPPORTED_MEDIA_TYPE
-    })?;
-    let samples = resample_to_16k(&samples, rate);
-    let audio_secs = samples.len() as f32 / 16_000.0;
-    info!(
-        "STT request: {} bytes -> {:.2}s @ {} Hz ({} samples)",
-        audio_data.len(),
-        audio_secs,
-        rate,
-        samples.len()
-    );
-
-    let stt_model = SttModel::parse(model.as_deref()).map_err(|e| {
-        warn!("STT model param: {e}");
-        StatusCode::BAD_REQUEST
-    })?;
+    let lang = form.language.unwrap_or_else(|| "en".to_string());
+    let model = SttModel::parse(form.model.as_deref())
+        .map_err(|e| error_response(StatusCode::BAD_REQUEST, e))?;
+    let (samples, decoded_rate) = decode_any(&form.audio)
+        .map_err(|e| error_response(StatusCode::UNSUPPORTED_MEDIA_TYPE, e.to_string()))?;
+    // Raw PCM has no header: honour an explicit `sample_rate` field.
+    let is_wav = form.audio.starts_with(b"RIFF");
+    let rate = if is_wav {
+        decoded_rate
+    } else {
+        form.sample_rate.unwrap_or(decoded_rate)
+    };
     let engine = state.stt.clone();
-    let segments = tokio::task::spawn_blocking(move || engine.transcribe(&samples, stt_model))
-        .await
-        .map_err(|e| {
-            warn!("STT task failed: {e}");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
-        .map_err(|e| {
-            warn!("STT failed: {e}");
-            StatusCode::SERVICE_UNAVAILABLE
-        })?;
-
-    Ok(Json(segments_to_response(segments, &lang)))
+    let started = Instant::now();
+    let segments = tokio::task::spawn_blocking(move || {
+        let samples = resample_to_16k(&samples, rate);
+        engine.transcribe(&samples, model)
+    })
+    .await
+    .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(engine_error)?;
+    info!(
+        "STT {}: {} bytes @ {rate} Hz -> {} segments in {:?}",
+        model.id(),
+        form.audio.len(),
+        segments.len(),
+        started.elapsed()
+    );
+    Ok(segments_to_response(segments, &lang))
 }
 
-/// Legacy alias used by allternit-ai's SpeechToText.ts, which POSTs to
+/// Speech-to-text (multipart; response shape unchanged since the whisper era).
+async fn speech_to_text(State(state): State<VoiceServiceState>, multipart: Multipart) -> Response {
+    let form = match read_stt_multipart(multipart).await {
+        Ok(f) => f,
+        Err(r) => return r,
+    };
+    match run_stt(&state, form).await {
+        Ok(resp) => Json(resp).into_response(),
+        Err(r) => r,
+    }
+}
+
+/// Alias used by allternit-ai's SpeechToText.ts, which POSTs to
 /// `/v1/stt/transcribe` and reads `{ "transcript": "..." }`.
 async fn speech_to_text_transcribe(
     State(state): State<VoiceServiceState>,
     multipart: Multipart,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let response = speech_to_text(State(state), multipart).await?;
-    Ok(Json(serde_json::json!({ "transcript": response.0.text })))
+) -> Response {
+    let form = match read_stt_multipart(multipart).await {
+        Ok(f) => f,
+        Err(r) => return r,
+    };
+    match run_stt(&state, form).await {
+        Ok(resp) => Json(serde_json::json!({
+            "transcript": resp.text,
+            "text": resp.text,
+            "segments": resp.segments,
+        }))
+        .into_response(),
+        Err(r) => r,
+    }
 }
 
-/// Streaming STT (NDJSON): chunked 16 kHz s16le mono PCM in; partial and
-/// final segments out. One stream at a time (409 while busy). Documented in
-/// spec/API.md.
+/// Streaming STT (NDJSON). Body: raw s16le mono PCM, sent in chunks
+/// (`?sample_rate=` default 16000, `?model=` moonshine|parakeet). Out:
+/// `partial`, `final`, then `done` (or `error`). See spec/API.md.
 async fn speech_to_text_stream(
     State(state): State<VoiceServiceState>,
     axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
@@ -508,136 +628,92 @@ async fn speech_to_text_stream(
 ) -> Response {
     let model = match SttModel::parse(params.get("model").map(String::as_str)) {
         Ok(m) => m,
-        Err(e) => {
-            return (
+        Err(e) => return error_response(StatusCode::BAD_REQUEST, e),
+    };
+    let rate: u32 = match params.get("sample_rate").map(|s| s.parse::<u32>()) {
+        None => 16_000,
+        Some(Ok(r)) if (4_000..=192_000).contains(&r) => r,
+        Some(_) => {
+            return error_response(
                 StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": e })),
+                "sample_rate must be an integer between 4000 and 192000",
             )
-                .into_response();
         }
     };
-    let engine = state.stt.clone();
-    let Some(stream) = engine.begin_stream(model) else {
-        return (
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({ "error": "a streaming STT session is already active" })),
-        )
-            .into_response();
-    };
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<String, std::convert::Infallible>>(64);
-    let (sample_tx, sample_rx) = std::sync::mpsc::channel::<Vec<f32>>();
+    let (pcm_tx, pcm_rx) = std::sync::mpsc::sync_channel::<Vec<f32>>(64);
 
-    // Async side: pull PCM chunks off the request body.
+    // Async side: request body -> f32 chunks (carrying an odd trailing byte
+    // over to the next chunk so samples never shift).
     tokio::spawn(async move {
-        use futures_util::StreamExt;
-        let mut stream = body.into_data_stream();
-        while let Some(chunk) = stream.next().await {
-            match chunk {
-                Ok(bytes) => {
-                    let mut samples = Vec::with_capacity(bytes.len() / 2);
-                    for c in bytes.chunks_exact(2) {
-                        samples.push(i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0);
-                    }
-                    if sample_tx.send(samples).is_err() {
-                        return;
-                    }
-                }
+        let mut data = body.into_data_stream();
+        let mut carry: Option<u8> = None;
+        while let Some(chunk) = futures_util::StreamExt::next(&mut data).await {
+            let bytes = match chunk {
+                Ok(b) => b,
                 Err(e) => {
-                    warn!("STT stream body read failed: {e}");
+                    warn!("STT stream body: {e}");
                     return;
                 }
+            };
+            let mut buf = Vec::with_capacity(bytes.len() + 1);
+            buf.extend(carry.take());
+            buf.extend_from_slice(&bytes);
+            if buf.len() % 2 == 1 {
+                carry = buf.pop();
+            }
+            let samples: Vec<f32> = buf
+                .chunks_exact(2)
+                .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0)
+                .collect();
+            let pcm_tx = pcm_tx.clone();
+            let sent = tokio::task::spawn_blocking(move || pcm_tx.send(samples)).await;
+            if !matches!(sent, Ok(Ok(()))) {
+                return;
             }
         }
     });
 
-    // Blocking side: own the stream session; feed VAD, emit NDJSON events.
+    // Blocking side: own the session; feed it and emit events.
+    let engine = state.stt.clone();
     tokio::task::spawn_blocking(move || {
-        let send = |tx: &tokio::sync::mpsc::Sender<Result<String, std::convert::Infallible>>,
-                    event: &StreamEvent| {
-            let line = serde_json::to_string(event).unwrap_or_else(|e| {
-                serde_json::to_string(&StreamEvent::Error {
-                    error: e.to_string(),
-                })
-                .unwrap()
-            });
-            tx.blocking_send(Ok(line))
-                .map_err(|_| "client gone".to_string())
+        let mut stream = match engine.stream(model) {
+            Ok(s) => s,
+            Err(error) => {
+                let _ = send_event(&tx, &StreamEvent::Error { error });
+                return;
+            }
         };
-        let stream = stream;
-        let mut total_samples = 0usize;
-        let mut last_partial = std::time::Instant::now()
-            .checked_sub(std::time::Duration::from_secs(1))
-            .unwrap_or_else(std::time::Instant::now);
-        let mut failed = false;
-        while let Ok(chunk) = sample_rx.recv() {
-            total_samples += chunk.len();
-            match stream.feed(&chunk) {
-                Ok(segments) => {
-                    for seg in segments {
-                        if send(
-                            &tx,
-                            &StreamEvent::Final {
-                                text: seg.text,
-                                start: seg.start,
-                                end: seg.end,
-                            },
-                        )
-                        .is_err()
-                        {
-                            failed = true;
-                            break;
-                        }
-                    }
-                    if failed {
-                        break;
-                    }
-                    if last_partial.elapsed() >= std::time::Duration::from_millis(800) {
-                        if let Ok(Some(text)) = stream.partial() {
-                            if !text.is_empty()
-                                && send(&tx, &StreamEvent::Partial { text }).is_err()
-                            {
-                                break;
-                            }
-                        }
-                        last_partial = std::time::Instant::now();
-                    }
-                }
-                Err(e) => {
-                    let _ = send(&tx, &StreamEvent::Error { error: e });
-                    break;
-                }
+        let resampler = StreamResampler::new(rate);
+        let emit = |events: Vec<SttEvent>| -> Result<(), ()> {
+            for e in events {
+                let event = match e {
+                    SttEvent::Partial(text) => StreamEvent::Partial { text },
+                    SttEvent::Final(seg) => StreamEvent::Final {
+                        text: seg.text,
+                        start: seg.start,
+                        end: seg.end,
+                    },
+                };
+                send_event(&tx, &event)?;
+            }
+            Ok(())
+        };
+        while let Ok(chunk) = pcm_rx.recv() {
+            let samples = resampler.push(&chunk, false);
+            if emit(stream.feed(&samples)).is_err() {
+                return; // client gone
             }
         }
-        if !failed {
-            match stream.finish() {
-                Ok(segments) => {
-                    for seg in segments {
-                        if send(
-                            &tx,
-                            &StreamEvent::Final {
-                                text: seg.text,
-                                start: seg.start,
-                                end: seg.end,
-                            },
-                        )
-                        .is_err()
-                        {
-                            return;
-                        }
-                    }
-                }
-                Err(e) => {
-                    let _ = send(&tx, &StreamEvent::Error { error: e });
-                    return;
-                }
-            }
-            let _ = send(
-                &tx,
-                &StreamEvent::Done {
-                    duration_secs: total_samples as f32 / 16_000.0,
-                },
-            );
+        let tail = resampler.push(&[], true);
+        if !tail.is_empty() && emit(stream.feed(&tail)).is_err() {
+            return;
         }
+        let duration_secs = stream.duration_secs();
+        if emit(stream.finish()).is_err() {
+            return;
+        }
+        let _ = send_event(&tx, &StreamEvent::Done { duration_secs });
     });
 
     ndjson_response(rx)
@@ -735,7 +811,7 @@ mod base64 {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
     pub fn b64_encode(data: &[u8]) -> String {
-        let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+        let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
         for chunk in data.chunks(3) {
             let b0 = chunk[0] as u32;
             let b1 = *chunk.get(1).unwrap_or(&0) as u32;

@@ -8,7 +8,7 @@ tokio = { workspace = true }
 axum = { workspace = true, features = ["multipart"] }
 serde = { workspace = true }
 serde_json = { workspace =true }
-reqwest = { workspace = true, features = ["json", "rustls-tls", "multipart"] }
+reqwest = { workspace = true, features = ["rustls-tls", "stream"] }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
@@ -20,13 +20,16 @@ tempfile = { workspace = true }
 sherpa-onnx = "1.13"
 sha2 = "0.10"
 tar = { workspace = true }
-bzip2 = "0.4"
-libc = "0.2"
+bzip2 = { version = "0.4", features = ["static"] }
 tokio-stream = { workspace = true }
 futures-util = { workspace = true }
 
 [dev-dependencies]
 tower = { workspace = true }
+
+# The bench reads peak RSS via getrusage.
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2"
 
 [[example]]
 name = "voice_bench"

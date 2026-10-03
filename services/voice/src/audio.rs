@@ -155,12 +155,8 @@ pub fn decode_mulaw(b: u8) -> f32 {
     let sign = u & 0x80;
     let exponent = ((u >> 4) & 0x07) as i32;
     let mantissa = (u & 0x0F) as i32;
-    let sample = ((1 << 7) + (mantissa << 3)) << exponent;
-    let v = if sign != 0 {
-        BIAS - sample
-    } else {
-        sample - BIAS
-    };
+    let magnitude = (((mantissa << 3) + BIAS) << exponent) - BIAS;
+    let v = if sign != 0 { -magnitude } else { magnitude };
     v as f32 / 32768.0
 }
 
@@ -179,58 +175,48 @@ pub fn decode_alaw(a: u8) -> f32 {
     v as f32 / 32768.0
 }
 
-/// Resample to 16 kHz using a Blackman-windowed sinc filter (24 taps/side,
-/// 0.45·min-rate cutoff). Good enough for ASR: preserves the 300–3400 Hz
-/// PSTN band without the harsh HF rolloff of linear interpolation.
+/// Resample to 16 kHz with sherpa-onnx's windowed-sinc resampler (Kaldi's
+/// `LinearResample`: a proper low-pass filter despite the name). Keeps the
+/// whole 300–3400 Hz PSTN band for 8 kHz input.
 pub fn resample_to_16k(input: &[f32], from_rate: u32) -> Vec<f32> {
-    const TARGET: u32 = 16_000;
-    if from_rate == TARGET || input.is_empty() {
-        return input.to_vec();
-    }
-    if from_rate == 0 {
-        return Vec::new();
-    }
-    let ratio = from_rate as f64 / TARGET as f64;
-    let out_len = (input.len() as f64 / ratio) as usize;
-    let mut out = Vec::with_capacity(out_len);
-    let cutoff = 0.45f64 * (from_rate.min(TARGET) as f64) / (from_rate as f64);
-    let taps = 24usize;
-
-    for i in 0..out_len {
-        let src_pos = i as f64 * ratio;
-        let center = src_pos.floor() as isize;
-        let frac = src_pos - center as f64;
-        let mut acc = 0.0f64;
-        let mut norm = 0.0f64;
-        for k in 0..(2 * taps + 1) {
-            let offset = k as isize - taps as isize;
-            let t = offset as f64 - frac;
-            // windowed sinc: argument scaled by cutoff (in source-rate units)
-            let x = t * cutoff;
-            let sinc = if x.abs() < 1e-9 {
-                1.0
-            } else {
-                (std::f64::consts::PI * x).sin() / (std::f64::consts::PI * x)
-            };
-            let window = blackman((k as f64) / (2.0 * taps as f64));
-            let w = sinc * window;
-            let idx = center + offset;
-            let sample = if idx < 0 || idx as usize >= input.len() {
-                0.0
-            } else {
-                input[idx as usize] as f64
-            };
-            acc += w * sample;
-            norm += w;
-        }
-        out.push((acc / norm.max(1e-9)) as f32);
-    }
-    out
+    resample(input, from_rate, 16_000)
 }
 
-fn blackman(x: f64) -> f64 {
-    0.42 - 0.5 * (2.0 * std::f64::consts::PI * x).cos()
-        + 0.08 * (4.0 * std::f64::consts::PI * x).cos()
+/// Resample between arbitrary rates (one shot, flushes the filter tail).
+pub fn resample(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+    if from_rate == to_rate || input.is_empty() {
+        return input.to_vec();
+    }
+    if from_rate == 0 || to_rate == 0 {
+        return Vec::new();
+    }
+    match sherpa_onnx::LinearResampler::create(from_rate as i32, to_rate as i32) {
+        Some(r) => r.resample(input, true),
+        None => Vec::new(),
+    }
+}
+
+/// Streaming resampler to 16 kHz (keeps filter state between chunks).
+pub struct StreamResampler {
+    inner: Option<sherpa_onnx::LinearResampler>,
+}
+
+impl StreamResampler {
+    pub fn new(from_rate: u32) -> Self {
+        let inner = if from_rate == 16_000 || from_rate == 0 {
+            None
+        } else {
+            sherpa_onnx::LinearResampler::create(from_rate as i32, 16_000)
+        };
+        Self { inner }
+    }
+
+    pub fn push(&self, samples: &[f32], flush: bool) -> Vec<f32> {
+        match &self.inner {
+            Some(r) => r.resample(samples, flush),
+            None => samples.to_vec(),
+        }
+    }
 }
 
 /// Wrap raw s16le PCM in a WAV header.
@@ -314,27 +300,67 @@ mod tests {
         assert_eq!(decoded.len(), 8000);
         assert!(decoded.iter().all(|s| s.abs() < 0.01));
         let resampled = resample_to_16k(&decoded, 8_000);
-        assert_eq!(resampled.len(), 16_000);
+        assert!((resampled.len() as i64 - 16_000).abs() <= 16, "{}", resampled.len());
     }
 
     #[test]
     fn resample_48k_length_and_silence() {
         let input = vec![0.0f32; 48_000];
         let out = resample_to_16k(&input, 48_000);
-        assert_eq!(out.len(), 16_000);
+        assert!((out.len() as i64 - 16_000).abs() <= 16, "{}", out.len());
         assert!(out.iter().all(|s| s.abs() < 1e-6));
     }
 
+    fn tone(freq: f32, rate: u32, secs: f32) -> Vec<f32> {
+        (0..(rate as f32 * secs) as usize)
+            .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / rate as f32).sin())
+            .collect()
+    }
+
+    fn rms(x: &[f32]) -> f32 {
+        (x.iter().map(|s| s * s).sum::<f32>() / x.len().max(1) as f32).sqrt()
+    }
+
     #[test]
-    fn resample_preserves_sine_energy() {
-        // 1 s of 440 Hz at 8 kHz → resample to 16 kHz; peak should survive.
-        let input: Vec<f32> = (0..8_000)
-            .map(|i| (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 8_000.0).sin())
-            .collect();
-        let out = resample_to_16k(&input, 8_000);
-        assert_eq!(out.len(), 16_000);
-        let peak = out.iter().fold(0.0f32, |m, s| m.max(s.abs()));
-        assert!(peak > 0.9, "sinc resampler lost the tone (peak {peak})");
+    fn resample_8k_keeps_whole_phone_band() {
+        // 300 Hz and 3.4 kHz (the PSTN band edges) must both survive
+        // 8 kHz -> 16 kHz. A full-scale sine has RMS 0.707.
+        for f in [300.0, 1000.0, 3400.0] {
+            let out = resample_to_16k(&tone(f, 8_000, 1.0), 8_000);
+            let r = rms(&out[2_000..14_000]);
+            assert!(r > 0.6, "{f} Hz attenuated to rms {r}");
+        }
+    }
+
+    #[test]
+    fn resample_48k_rejects_above_nyquist() {
+        // 12 kHz at 48 kHz must be filtered out (16 kHz output has an 8 kHz
+        // Nyquist), while 1 kHz passes.
+        let hi = resample_to_16k(&tone(12_000.0, 48_000, 1.0), 48_000);
+        let lo = resample_to_16k(&tone(1_000.0, 48_000, 1.0), 48_000);
+        assert!(rms(&hi[2_000..14_000]) < 0.05);
+        assert!(rms(&lo[2_000..14_000]) > 0.6);
+    }
+
+    #[test]
+    fn stream_resampler_matches_one_shot_length() {
+        let input = tone(440.0, 8_000, 2.0);
+        let r = StreamResampler::new(8_000);
+        let chunks: Vec<&[f32]> = input.chunks(1_000).collect();
+        let mut out = Vec::new();
+        for (i, c) in chunks.iter().enumerate() {
+            out.extend(r.push(c, i + 1 == chunks.len()));
+        }
+        assert!((out.len() as i64 - 32_000).abs() <= 32, "{}", out.len());
+    }
+
+    #[test]
+    fn mulaw_matches_g711_table() {
+        // Reference values from the ITU G.711 μ-law decode table (16-bit).
+        for (code, expect) in [(0x00u8, -32124i32), (0x7F, 0), (0x80, 32124), (0xFF, 0), (0xEF, 132), (0xDE, 428)] {
+            let got = (decode_mulaw(code) * 32768.0).round() as i32;
+            assert_eq!(got, expect, "code {code:#04x}");
+        }
     }
 
     #[test]

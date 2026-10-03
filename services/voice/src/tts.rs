@@ -1,15 +1,18 @@
 //! Text-to-speech: Kokoro-82M (int8 English v0.19) through sherpa-onnx.
 //!
-//! Voice names and their speaker ids (`sid`) are pinned from the upstream
-//! kLegacy v0.19 release (`hexgrad/kLegacy`, folder `v0.19/voices/`): 11
-//! voices, alphabetical order, matching `voices.bin` layout
-//! (num_speakers × 511 × 256 float32).
+//! Voice names and their speaker ids (`sid`) follow the sherpa-onnx
+//! `kokoro-en-v0_19` model card: sid 0..10 = af, af_bella, af_nicole,
+//! af_sarah, af_sky, am_adam, am_michael, bf_emma, bf_isabella, bm_george,
+//! bm_lewis (the order of `voices.bin`).
 
-use sherpa_onnx::{GenerationConfig, OfflineTts, OfflineTtsConfig, OfflineTtsKokoroModelConfig};
-use std::sync::Mutex;
+use sherpa_onnx::{
+    GenerationConfig, OfflineTts, OfflineTtsConfig, OfflineTtsKokoroModelConfig,
+    OfflineTtsModelConfig,
+};
+use std::sync::{Arc, Mutex};
 use tracing::info;
 
-use crate::models::{find_file, PackManager};
+use crate::models::{inference_lock, inference_threads, PackManager, KOKORO_DIR};
 
 /// One installed Kokoro voice (sid == index in this array).
 #[derive(Debug, Clone, Copy)]
@@ -94,15 +97,14 @@ pub const VOICES: &[VoiceDef] = &[
 
 pub const DEFAULT_VOICE: &str = "af";
 
-/// Resolve a requested voice id ("default" and legacy stub ids map to `af`).
+/// Resolve a requested voice id. "default" and the old stub ids
+/// (`en-us-female`, `en-us-male`) map to real Kokoro voices.
 pub fn resolve_voice(requested: Option<&str>) -> Result<&'static VoiceDef, String> {
-    let id = requested.map(str::trim).unwrap_or("");
-    match id {
-        "" | "default" | "en-us-female" | "en-us-male" => {
-            return Ok(&VOICES[0]);
-        }
-        _ => {}
-    }
+    let id = match requested.map(str::trim).unwrap_or("") {
+        "" | "default" | "en-us-female" => DEFAULT_VOICE,
+        "en-us-male" => "am_adam",
+        other => other,
+    };
     VOICES
         .iter()
         .find(|v| v.id == id)
@@ -115,20 +117,16 @@ pub fn voice_sid(v: &VoiceDef) -> i32 {
 }
 
 pub struct TtsEngine {
-    pub manager: PackManager,
+    packs: Arc<PackManager>,
     threads: i32,
-    inner: Mutex<Option<(OfflineTts, i32)>>,
+    inner: Mutex<Option<Arc<OfflineTts>>>,
 }
 
 impl TtsEngine {
-    pub fn new(manager: PackManager) -> Self {
-        let threads = std::env::var("ALLTERNIT_VOICE_THREADS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(2);
+    pub fn new(packs: Arc<PackManager>) -> Self {
         Self {
-            manager,
-            threads,
+            packs,
+            threads: inference_threads(),
             inner: Mutex::new(None),
         }
     }
@@ -137,91 +135,90 @@ impl TtsEngine {
         self.threads
     }
 
-    /// Build (or reuse) the Kokoro engine. Blocking.
+    pub fn is_ready(&self) -> bool {
+        self.inner.lock().map(|g| g.is_some()).unwrap_or(false)
+    }
+
+    /// Download (first use) and load Kokoro. Blocking.
     pub fn prepare(&self) -> Result<(), String> {
+        self.engine().map(|_| ())
+    }
+
+    fn engine(&self) -> Result<Arc<OfflineTts>, String> {
         let mut guard = self
             .inner
             .lock()
             .map_err(|e| format!("TTS engine lock poisoned: {e}"))?;
-        if guard.is_some() {
-            return Ok(());
+        if let Some(tts) = guard.as_ref() {
+            return Ok(tts.clone());
         }
-        let dir = self
-            .manager
-            .ensure_blocking("small")
-            .map_err(|e| format!("small pack: {e}"))?;
-        let model = find_file(&dir, &["model.int8.onnx", "model.onnx"])
-            .ok_or_else(|| "kokoro model.onnx missing".to_string())?;
-        let voices = find_file(&dir, &["voices.bin"])
-            .ok_or_else(|| "kokoro voices.bin missing".to_string())?;
-        let tokens = find_file(&dir, &["tokens.txt"])
-            .ok_or_else(|| "kokoro tokens.txt missing".to_string())?;
-        let data_dir = find_file(&dir, &["espeak-ng-data"])
-            .map(|p| p.display().to_string())
-            .or_else(|| Some(dir.display().to_string()));
-
+        let dir = self.packs.ensure_blocking("small")?.join(KOKORO_DIR);
+        let file = |name: &str| -> Result<String, String> {
+            let p = dir.join(name);
+            if p.exists() {
+                Ok(p.display().to_string())
+            } else {
+                Err(format!("kokoro {name} missing in {}", dir.display()))
+            }
+        };
         let config = OfflineTtsConfig {
-            model: sherpa_onnx::OfflineTtsModelConfig {
+            model: OfflineTtsModelConfig {
                 kokoro: OfflineTtsKokoroModelConfig {
-                    model: Some(model.display().to_string()),
-                    voices: Some(voices.display().to_string()),
-                    tokens: Some(tokens.display().to_string()),
-                    data_dir,
-                    lexicon: None,
-                    lang: Some("en-us".to_string()),
+                    model: Some(file("model.int8.onnx")?),
+                    voices: Some(file("voices.bin")?),
+                    tokens: Some(file("tokens.txt")?),
+                    data_dir: Some(file("espeak-ng-data")?),
                     length_scale: 1.0,
-                    dict_dir: None,
+                    ..Default::default()
                 },
                 num_threads: self.threads,
                 provider: Some("cpu".to_string()),
                 debug: false,
                 ..Default::default()
             },
+            max_num_sentences: 1,
             ..Default::default()
         };
-        let tts = OfflineTts::create(&config).ok_or_else(|| "failed to create Kokoro TTS")?;
-        let sample_rate = tts.sample_rate();
+        let tts = OfflineTts::create(&config).ok_or("failed to create Kokoro TTS")?;
         info!(
-            "TTS ready: kokoro-en-v0_19, {} speakers, {} Hz",
+            "TTS ready: kokoro-en-v0_19, {} speakers, {} Hz, {} threads",
             tts.num_speakers(),
-            sample_rate
+            tts.sample_rate(),
+            self.threads
         );
-        *guard = Some((tts, sample_rate));
-        Ok(())
+        if tts.num_speakers() < VOICES.len() as i32 {
+            return Err(format!(
+                "kokoro voices.bin has {} speakers, expected {}",
+                tts.num_speakers(),
+                VOICES.len()
+            ));
+        }
+        let tts = Arc::new(tts);
+        *guard = Some(tts.clone());
+        Ok(tts)
     }
 
-    pub fn is_ready(&self) -> bool {
-        self.inner
-            .lock()
-            .ok()
-            .and_then(|g| g.is_some())
-            .unwrap_or(false)
-    }
-
-    /// Synthesise one text block. Returns (samples f32 -1..1, sample_rate).
-    /// Blocking.
+    /// Synthesise `text` in one go. Returns (samples in -1..1, sample rate).
+    /// Blocking. For long text prefer [`split_sentences`] + one call per
+    /// sentence, so the first audio is ready early and STT can interleave.
     pub fn synthesize(
         &self,
         text: &str,
         voice: Option<&str>,
         speed: Option<f32>,
-    ) -> Result<(Vec<f32>, i32), String> {
-        self.prepare()?;
-        let guard = self
-            .inner
-            .lock()
-            .map_err(|e| format!("TTS engine lock poisoned: {e}"))?;
-        let (tts, sample_rate) = guard.as_ref().ok_or("TTS engine not initialised")?;
+    ) -> Result<(Vec<f32>, u32), String> {
         let voice_def = resolve_voice(voice)?;
+        let tts = self.engine()?;
         let config = GenerationConfig {
-            speed: speed.unwrap_or(1.0),
+            speed: speed.unwrap_or(1.0).clamp(0.5, 2.0),
             sid: voice_sid(voice_def),
             ..Default::default()
         };
+        let _guard = inference_lock();
         let audio = tts
             .generate_with_config(text, &config, None::<fn(&[f32], f32) -> bool>)
             .ok_or_else(|| "Kokoro generation failed".to_string())?;
-        Ok((audio.samples().to_vec(), *sample_rate))
+        Ok((audio.samples().to_vec(), audio.sample_rate() as u32))
     }
 }
 
@@ -317,7 +314,8 @@ mod tests {
     fn resolve_voice_accepts_legacy_and_rejects_unknown() {
         assert_eq!(resolve_voice(None).unwrap().id, "af");
         assert_eq!(resolve_voice(Some("default")).unwrap().id, "af");
-        assert_eq!(resolve_voice(Some("en-us-male")).unwrap().id, "af");
+        assert_eq!(resolve_voice(Some("en-us-female")).unwrap().id, "af");
+        assert_eq!(resolve_voice(Some("en-us-male")).unwrap().id, "am_adam");
         assert_eq!(resolve_voice(Some("bm_george")).unwrap().id, "bm_george");
         assert!(resolve_voice(Some("x")).is_err());
     }

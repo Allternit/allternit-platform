@@ -8,10 +8,47 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use serde_json::json;
 use tower::ServiceExt;
+use std::sync::Arc;
+use voice_service::models::PackManager;
 use voice_service::{create_router, VoiceServiceState};
 
+/// Router over an empty temp model dir: no test can download or load models
+/// by accident, and pack state is deterministic ("missing").
 fn app() -> axum::Router {
+    let dir = tempfile::tempdir().unwrap().keep();
+    create_router(VoiceServiceState::with_packs(Arc::new(
+        PackManager::with_root(dir),
+    )))
+}
+
+/// Router over the real model dir (`~/.allternit/models/voice`), for the
+/// gated model tests.
+fn model_app() -> axum::Router {
     create_router(VoiceServiceState::new())
+}
+
+async fn json_body(response: axum::response::Response) -> serde_json::Value {
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    serde_json::from_slice(&body).unwrap()
+}
+
+fn multipart_wav(wav: &[u8], extra: &[(&str, &str)]) -> (String, Vec<u8>) {
+    let boundary = "----allternittest";
+    let mut body: Vec<u8> = Vec::new();
+    for (k, v) in extra {
+        body.extend_from_slice(
+            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n")
+                .as_bytes(),
+        );
+    }
+    body.extend_from_slice(
+        format!("--{boundary}\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"a.wav\"\r\nContent-Type: audio/wav\r\n\r\n").as_bytes(),
+    );
+    body.extend_from_slice(wav);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    (format!("multipart/form-data; boundary={boundary}"), body)
 }
 
 #[tokio::test]
@@ -84,12 +121,24 @@ async fn list_voices_returns_real_kokoro_voices() {
     assert_eq!(voices.len(), 11);
     assert!(voices.iter().any(|v| v["id"] == "af"));
     assert!(voices.iter().any(|v| v["id"] == "bm_george"));
-    // Shape compatibility: id/name/language/gender/sample_rate preserved.
+    // Shape compatibility: id/name/language/gender/sample_rate preserved,
+    // plus label/engine/assetReady that the allternit-ai pickers read.
     let first = &voices[0];
-    for key in ["id", "name", "language", "gender", "sample_rate"] {
+    for key in [
+        "id",
+        "name",
+        "language",
+        "gender",
+        "sample_rate",
+        "label",
+        "engine",
+        "assetReady",
+    ] {
         assert!(first.get(key).is_some(), "missing key {key}");
     }
     assert_eq!(first["sample_rate"], 24000);
+    assert_eq!(first["engine"], "kokoro");
+    assert_eq!(first["assetReady"], false);
 }
 
 #[tokio::test]
@@ -169,6 +218,21 @@ async fn list_packs_reports_state_without_downloading() {
 }
 
 #[tokio::test]
+async fn download_unknown_pack_is_404() {
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/models/huge")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn stt_rejects_empty_audio() {
     let response = app()
         .oneshot(
@@ -204,6 +268,61 @@ async fn tts_rejects_empty_text() {
         .await
         .unwrap();
 
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn tts_rejects_unknown_voice_and_format_without_models() {
+    for body in [
+        json!({ "text": "hi", "voice": "nobody" }),
+        json!({ "text": "hi", "format": "mp3" }),
+    ] {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/tts")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(json_body(response).await["error"].is_string());
+    }
+}
+
+#[tokio::test]
+async fn stt_rejects_unsupported_container() {
+    // WebM/Matroska magic: no decoder in the service, must be a clear 415.
+    let (ct, body) = multipart_wav(&[0x1A, 0x45, 0xDF, 0xA3, 0, 0, 0, 0], &[]);
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/stt")
+                .header("content-type", ct)
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+}
+
+#[tokio::test]
+async fn stt_stream_rejects_bad_sample_rate() {
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/stt/stream?sample_rate=12")
+                .body(Body::from(vec![0u8; 64]))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -320,7 +439,7 @@ async fn tts_synthesizes_real_audio() {
         eprintln!("skipping: set ALLTERNIT_VOICE_MODEL_TESTS=1");
         return;
     }
-    let response = app()
+    let response = model_app()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -357,7 +476,7 @@ async fn stt_transcribes_tts_audio() {
         return;
     }
     // Synthesize a short sentence and transcribe it back.
-    let tts = app();
+    let tts = model_app();
     let response = tts
         .oneshot(
             Request::builder()
@@ -388,7 +507,7 @@ async fn stt_transcribes_tts_audio() {
     body.extend_from_slice(&wav);
     body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
 
-    let response = app()
+    let response = model_app()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -414,4 +533,142 @@ async fn stt_transcribes_tts_audio() {
     }
     let text = json["text"].as_str().unwrap().to_lowercase();
     assert!(text.contains("hello"), "unexpected transcript: {text}");
+}
+
+/// Synthesise `text` as pcm16 at 24 kHz through /v1/tts.
+async fn tts_pcm(text: &str) -> Vec<f32> {
+    let response = model_app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/tts")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "text": text, "voice": "am_adam", "format": "pcm16" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["x-sample-rate"], "24000");
+    let pcm = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    pcm.chunks_exact(2)
+        .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0)
+        .collect()
+}
+
+#[tokio::test]
+async fn stt_transcribes_8k_phone_audio() {
+    if !model_tests_enabled() {
+        eprintln!("skipping: set ALLTERNIT_VOICE_MODEL_TESTS=1");
+        return;
+    }
+    let samples = tts_pcm("The weather is lovely today.").await;
+    // 24 kHz -> 8 kHz, as a phone line would deliver it.
+    let phone = voice_service::audio::resample(&samples, 24_000, 8_000);
+    let wav = voice_service::audio::wav_from_f32(&phone, 8_000);
+    for model in ["moonshine", "parakeet"] {
+        let (ct, body) = multipart_wav(&wav, &[("model", model)]);
+        let response = model_app()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/stt")
+                    .header("content-type", ct)
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let text = json_body(response).await["text"]
+            .as_str()
+            .unwrap()
+            .to_lowercase();
+        assert!(text.contains("weather"), "{model}: unexpected transcript: {text}");
+    }
+}
+
+#[tokio::test]
+async fn stt_stream_emits_final_and_done() {
+    if !model_tests_enabled() {
+        eprintln!("skipping: set ALLTERNIT_VOICE_MODEL_TESTS=1");
+        return;
+    }
+    let mut samples = tts_pcm("Please open the settings page.").await;
+    samples.extend(std::iter::repeat_n(0.0, 24_000)); // 1 s trailing silence
+    let pcm = voice_service::audio::f32_to_pcm16le(&samples);
+    // Odd-sized chunks: the server must carry the split sample over.
+    let chunks: Vec<Result<Vec<u8>, std::io::Error>> =
+        pcm.chunks(4_801).map(|c| Ok(c.to_vec())).collect();
+    let body = Body::from_stream(futures_util::stream::iter(chunks));
+    let response = model_app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/stt/stream?sample_rate=24000")
+                .body(body)
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["content-type"], "application/x-ndjson");
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let events: Vec<serde_json::Value> = String::from_utf8_lossy(&body)
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let finals: Vec<String> = events
+        .iter()
+        .filter(|e| e["type"] == "final")
+        .map(|e| e["text"].as_str().unwrap().to_lowercase())
+        .collect();
+    assert!(
+        finals.iter().any(|t| t.contains("settings")),
+        "events: {events:?}"
+    );
+    assert_eq!(events.last().unwrap()["type"], "done");
+}
+
+#[tokio::test]
+async fn tts_stream_sends_one_audio_event_per_sentence() {
+    if !model_tests_enabled() {
+        eprintln!("skipping: set ALLTERNIT_VOICE_MODEL_TESTS=1");
+        return;
+    }
+    let response = model_app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/tts/stream")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "text": "First sentence. Second one! Third?" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let events: Vec<serde_json::Value> = String::from_utf8_lossy(&body)
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let audio: Vec<_> = events.iter().filter(|e| e["type"] == "audio").collect();
+    assert_eq!(audio.len(), 3, "events: {events:?}");
+    for (i, e) in audio.iter().enumerate() {
+        assert_eq!(e["index"], i);
+        assert_eq!(e["sample_rate"], 24000);
+        assert!(e["audio_b64"].as_str().unwrap().len() > 1000);
+    }
+    assert_eq!(events.last().unwrap()["type"], "done");
 }

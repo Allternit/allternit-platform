@@ -22,6 +22,8 @@ const DEFAULT_BASE_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/d
 pub struct PackFile {
     pub asset: &'static str,
     pub sha256: &'static str,
+    /// Pinned size in bytes (progress reporting; the sha256 is the check).
+    pub size: u64,
 }
 
 /// A named model pack.
@@ -41,14 +43,17 @@ pub const PACKS: &[Pack] = &[
             PackFile {
                 asset: "asr-models/silero_vad.onnx",
                 sha256: "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
+                size: 643_854,
             },
             PackFile {
                 asset: "asr-models/sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27.tar.bz2",
                 sha256: "9ec31b342d8fa3240c3b81b8f82e1cf7e3ac467c93ca5a999b741d5887164f8d",
+                size: 29_858_559,
             },
             PackFile {
                 asset: "tts-models/kokoro-int8-en-v0_19.tar.bz2",
                 sha256: "c9f0dd393615805b0bab050c340834d5e684e732aec91c0e860cd30e982c08bd",
+                size: 103_248_205,
             },
         ],
     },
@@ -58,9 +63,38 @@ pub const PACKS: &[Pack] = &[
         files: &[PackFile {
             asset: "asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
             sha256: "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf",
+            size: 487_170_055,
         }],
     },
 ];
+
+/// Top-level directories the archives extract to (inside the pack dir).
+/// Engines look for model files only inside their own component dir, so
+/// e.g. Moonshine's and Kokoro's `tokens.txt` never get mixed up.
+pub const VAD_FILE: &str = "silero_vad.onnx";
+pub const MOONSHINE_DIR: &str = "sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27";
+pub const KOKORO_DIR: &str = "kokoro-int8-en-v0_19";
+pub const PARAKEET_DIR: &str = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8";
+
+/// Inference threads per model (`ALLTERNIT_VOICE_THREADS`, default 2: the
+/// target machine is a 4-core laptop that must stay usable while talking).
+pub fn inference_threads() -> i32 {
+    std::env::var("ALLTERNIT_VOICE_THREADS")
+        .ok()
+        .and_then(|s| s.trim().parse::<i32>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(2)
+}
+
+static INFERENCE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Held around every recogniser decode and TTS generation so the whole
+/// service runs one model at a time, i.e. at most `inference_threads()`
+/// inference threads. Calls are short (one VAD segment, one sentence), so
+/// STT and TTS interleave instead of piling up cores.
+pub fn inference_lock() -> std::sync::MutexGuard<'static, ()> {
+    INFERENCE.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 pub fn pack(name: &str) -> Option<&'static Pack> {
     PACKS.iter().find(|p| p.name == name)
@@ -97,6 +131,12 @@ impl PackStatus {
     }
 }
 
+impl Default for PackManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Download+extract manager with per-pack locking and live progress.
 pub struct PackManager {
     root: PathBuf,
@@ -108,7 +148,11 @@ pub struct PackManager {
 
 impl PackManager {
     pub fn new() -> Self {
-        let root = model_root();
+        Self::with_root(model_root())
+    }
+
+    /// Manager rooted at an explicit directory (tests, bench).
+    pub fn with_root(root: PathBuf) -> Self {
         let base = std::env::var("ALLTERNIT_VOICE_MODEL_BASE")
             .unwrap_or_else(|_| DEFAULT_BASE_URL.to_string())
             .trim_end_matches('/')
@@ -135,13 +179,39 @@ impl PackManager {
         let statuses = self.statuses.read().await;
         for p in PACKS {
             out.push(
-                statuses
-                    .get(p.name)
-                    .cloned()
-                    .unwrap_or_else(|| PackStatus::missing(p.name)),
+                statuses.get(p.name).cloned().unwrap_or_else(|| {
+                    if self.is_installed(p.name) {
+                        PackStatus {
+                            name: p.name.to_string(),
+                            state: PackStateKind::Ready,
+                            pct: None,
+                            error: None,
+                            size_bytes: Some(dir_size(&self.pack_dir(p.name))),
+                        }
+                    } else {
+                        PackStatus::missing(p.name)
+                    }
+                }),
             );
         }
         out
+    }
+
+    /// Cheap on-disk check (no hashing): every plain file is present and
+    /// every archive has its extraction marker. Hashes were verified before
+    /// the files were moved into place.
+    pub fn is_installed(&self, name: &str) -> bool {
+        let Some(p) = pack(name) else {
+            return false;
+        };
+        let dir = self.pack_dir(name);
+        p.files.iter().all(|f| {
+            if is_archive(f) {
+                extraction_marker(&dir, f).is_file()
+            } else {
+                dir.join(file_name(f)).is_file()
+            }
+        })
     }
 
     async fn set_status(&self, status: PackStatus) {
@@ -151,10 +221,15 @@ impl PackManager {
             .insert(status.name.clone(), status);
     }
 
-    /// Blocking variant for use inside `spawn_blocking` / bench threads.
+    /// Blocking variant for `spawn_blocking` / plain threads. Skips the
+    /// async path entirely when the pack is already installed; otherwise it
+    /// needs a tokio runtime context (any `spawn_blocking` thread has one).
     pub fn ensure_blocking(&self, name: &str) -> Result<PathBuf, String> {
+        if self.is_installed(name) {
+            return Ok(self.pack_dir(name));
+        }
         tokio::runtime::Handle::try_current()
-            .map_err(|e| format!("no tokio runtime: {e}"))?
+            .map_err(|e| format!("voice pack '{name}' not installed and no tokio runtime: {e}"))?
             .block_on(self.ensure(name))
     }
 
@@ -176,7 +251,18 @@ impl PackManager {
             .map_err(|e| format!("create pack dir: {e}"))?;
 
         for file in p.files {
-            self.ensure_file(&dir, file).await?;
+            if let Err(e) = self.ensure_file(&dir, file).await {
+                warn!("voice pack {name}: {e}");
+                self.set_status(PackStatus {
+                    name: name.to_string(),
+                    state: PackStateKind::Error,
+                    pct: None,
+                    error: Some(e.clone()),
+                    size_bytes: None,
+                })
+                .await;
+                return Err(e);
+            }
         }
         self.set_status(PackStatus {
             name: name.to_string(),
@@ -210,8 +296,8 @@ impl PackManager {
     async fn download(
         &self,
         url: &str,
-        part_path: &PathBuf,
-        final_path: &PathBuf,
+        part_path: &Path,
+        final_path: &Path,
         dir: &Path,
         file: &PackFile,
     ) -> Result<(), String> {
@@ -230,9 +316,20 @@ impl PackManager {
             .await
             .map_err(|e| format!("GET {url}: {e}"))?;
         let status = response.status();
+        if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE && existing > 0 {
+            // The `.part` already holds the whole file (crash after the last
+            // byte, before verification). Verify it as-is below.
+            drop(response);
+            return self.finish_file(part_path, final_path, dir, file).await;
+        }
+        if !status.is_success() {
+            return Err(format!("GET {url}: HTTP {status}"));
+        }
         let mut file_handle;
         let mut downloaded = existing;
+        let mut total = response.content_length().unwrap_or(0);
         if status == reqwest::StatusCode::PARTIAL_CONTENT {
+            total += existing;
             file_handle = tokio::fs::OpenOptions::new()
                 .append(true)
                 .open(part_path)
@@ -247,11 +344,7 @@ impl PackManager {
                 .await
                 .map_err(|e| format!("create partial: {e}"))?;
         }
-        if !status.is_success() && status != reqwest::StatusCode::PARTIAL_CONTENT {
-            return Err(format!("GET {url}: HTTP {status}"));
-        }
 
-        let total = existing + response.content_length().unwrap_or(0);
         self.set_status_downloading(downloaded, total, file).await;
 
         use futures_util::StreamExt;
@@ -264,23 +357,29 @@ impl PackManager {
             downloaded += chunk.len() as u64;
             self.set_status_downloading(downloaded, total, file).await;
         }
+        tokio::io::AsyncWriteExt::flush(&mut file_handle)
+            .await
+            .map_err(|e| format!("flush partial: {e}"))?;
         drop(file_handle);
+        self.finish_file(part_path, final_path, dir, file).await
+    }
 
+    /// Verify a fully-downloaded `.part`, then extract it (archives) or
+    /// rename it into place (plain files).
+    async fn finish_file(
+        &self,
+        part_path: &Path,
+        final_path: &Path,
+        dir: &Path,
+        file: &PackFile,
+    ) -> Result<(), String> {
         let actual = sha256_file(part_path).await?;
         if actual != file.sha256 {
             let _ = tokio::fs::remove_file(part_path).await;
-            self.set_status(PackStatus {
-                name: pack_name_of(file).to_string(),
-                state: PackStateKind::Error,
-                pct: None,
-                error: Some(format!(
-                    "sha256 mismatch for {}: expected {}, got {}",
-                    file.asset, file.sha256, actual
-                )),
-                size_bytes: None,
-            })
-            .await;
-            return Err(format!("sha256 mismatch for {}", file.asset));
+            return Err(format!(
+                "sha256 mismatch for {}: expected {}, got {actual}",
+                file.asset, file.sha256
+            ));
         }
 
         if is_archive(file) {
@@ -291,8 +390,17 @@ impl PackManager {
             tokio::fs::create_dir_all(&tmp_extract)
                 .await
                 .map_err(|e| format!("create extract dir: {e}"))?;
-            extract_tar_bz2(part_path, &tmp_extract).await?;
-            merge_extracted(&tmp_extract, dir)?;
+            let (archive, dest, to) = (
+                part_path.to_path_buf(),
+                tmp_extract.clone(),
+                dir.to_path_buf(),
+            );
+            tokio::task::spawn_blocking(move || {
+                extract_tar_bz2(&archive, &dest)?;
+                merge_extracted(&dest, &to)
+            })
+            .await
+            .map_err(|e| format!("extract task: {e}"))??;
             tokio::fs::remove_dir_all(&tmp_extract)
                 .await
                 .map_err(|e| format!("clean extract dir: {e}"))?;
@@ -311,34 +419,22 @@ impl PackManager {
         Ok(())
     }
 
-    async fn set_status_downloading(&self, done: u64, total_hint: u64, file: &PackFile) {
-        // Fall back to pinned upstream sizes when the server omits length.
-        let totals: BTreeMap<&str, u64> = [
-            ("asr-models/silero_vad.onnx", 643_854),
-            (
-                "asr-models/sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27.tar.bz2",
-                29_858_559,
-            ),
-            ("tts-models/kokoro-int8-en-v0_19.tar.bz2", 103_248_205),
-            (
-                "asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
-                487_170_055,
-            ),
-        ]
-        .into_iter()
-        .collect();
-        let total = if total_hint > 0 {
-            total_hint
-        } else {
-            totals.get(file.asset).copied().unwrap_or(0)
-        };
-        let pct = if total > 0 {
-            Some((done as f32 / total as f32).clamp(0.0, 1.0))
-        } else {
-            None
-        };
+    /// Progress across the whole pack: finished files + bytes of this one,
+    /// over the pinned pack size.
+    async fn set_status_downloading(&self, done: u64, _total_hint: u64, file: &PackFile) {
+        let name = pack_name_of(file);
+        let pct = pack(name).and_then(|p| {
+            let total: u64 = p.files.iter().map(|f| f.size).sum();
+            let before: u64 = p
+                .files
+                .iter()
+                .take_while(|f| f.asset != file.asset)
+                .map(|f| f.size)
+                .sum();
+            (total > 0).then(|| ((before + done) as f32 / total as f32).clamp(0.0, 1.0))
+        });
         self.set_status(PackStatus {
-            name: pack_name_of(file).to_string(),
+            name: name.to_string(),
             state: PackStateKind::Downloading,
             pct,
             error: None,
@@ -409,26 +505,18 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-async fn extract_tar_bz2(archive: &Path, dest: &Path) -> Result<(), String> {
-    use tokio::io::AsyncReadExt;
-    let f = tokio::fs::File::open(archive)
-        .await
-        .map_err(|e| format!("open archive: {e}"))?;
-    let mut reader = f;
-    let mut raw = Vec::new();
-    reader
-        .read_to_end(&mut raw)
-        .await
-        .map_err(|e| format!("read archive: {e}"))?;
-    let bz = bzip2::read::BzDecoder::new(&raw[..]);
-    let mut archive = tar::Archive::new(bz);
-    archive
+/// Stream-decompress a `.tar.bz2` (never buffers the whole archive: the
+/// accurate pack is ~490 MB and the RAM budget is ~1 GB). Blocking.
+fn extract_tar_bz2(archive: &Path, dest: &Path) -> Result<(), String> {
+    let f = std::fs::File::open(archive).map_err(|e| format!("open archive: {e}"))?;
+    let bz = bzip2::read::BzDecoder::new(std::io::BufReader::new(f));
+    tar::Archive::new(bz)
         .unpack(dest)
-        .map_err(|e| format!("unpack {}: {e}", dest.display()))?;
-    Ok(())
+        .map_err(|e| format!("unpack {}: {e}", dest.display()))
 }
 
-/// Move extracted `<top-dir>/*` into the pack dir (flatten one level).
+/// Move the extracted top-level entries (e.g. `kokoro-int8-en-v0_19/`) into
+/// the pack dir, merging into any directory a previous attempt left behind.
 fn merge_extracted(from: &Path, to: &Path) -> Result<(), String> {
     let entries: Vec<_> = std::fs::read_dir(from)
         .map_err(|e| format!("read extract dir: {e}"))?
@@ -520,6 +608,25 @@ mod tests {
     }
 
     #[test]
+    fn small_pack_download_fits_budget() {
+        // Standard: small pack <= ~150 MB on first use.
+        let small: u64 = pack("small").unwrap().files.iter().map(|f| f.size).sum();
+        assert!(small <= 150 * 1024 * 1024, "small pack is {small} bytes");
+    }
+
+    #[tokio::test]
+    async fn progress_spans_the_whole_pack() {
+        let m = PackManager::with_root(tempfile::tempdir().unwrap().keep());
+        let small = pack("small").unwrap();
+        // Halfway through the last file => well past half of the pack.
+        let last = &small.files[2];
+        m.set_status_downloading(last.size / 2, 0, last).await;
+        let st = m.statuses().await;
+        let pct = st.iter().find(|p| p.name == "small").unwrap().pct.unwrap();
+        assert!(pct > 0.55 && pct < 0.65, "{pct}");
+    }
+
+    #[test]
     fn sha256_bytes_matches_known_vector() {
         // SHA-256("") — sanity check for the hasher plumbing.
         assert_eq!(
@@ -538,6 +645,58 @@ mod tests {
         let path = dir.path().join("x.bin");
         tokio::fs::write(&path, b"abc").await.unwrap();
         assert_eq!(sha256_file(&path).await.unwrap(), sha256_bytes(b"abc"));
+    }
+
+    const ABC: PackFile = PackFile {
+        asset: "test/abc.bin",
+        sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        size: 3,
+    };
+    const ABC_WRONG: PackFile = PackFile {
+        asset: "test/abc.bin",
+        sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+        size: 3,
+    };
+
+    #[tokio::test]
+    async fn verified_part_is_renamed_into_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let part = dir.path().join("abc.bin.part");
+        let fin = dir.path().join("abc.bin");
+        tokio::fs::write(&part, b"abc").await.unwrap();
+        let m = PackManager::new();
+        m.finish_file(&part, &fin, dir.path(), &ABC).await.unwrap();
+        assert!(fin.is_file());
+        assert!(!part.exists());
+    }
+
+    #[tokio::test]
+    async fn sha_mismatch_rejects_and_deletes_part() {
+        let dir = tempfile::tempdir().unwrap();
+        let part = dir.path().join("abc.bin.part");
+        let fin = dir.path().join("abc.bin");
+        tokio::fs::write(&part, b"abc").await.unwrap();
+        let m = PackManager::new();
+        let err = m
+            .finish_file(&part, &fin, dir.path(), &ABC_WRONG)
+            .await
+            .unwrap_err();
+        assert!(err.contains("sha256 mismatch"), "{err}");
+        assert!(!fin.exists(), "unverified file must never be moved into place");
+        assert!(!part.exists(), "corrupt partial must be discarded");
+    }
+
+    #[test]
+    fn install_check_uses_markers() {
+        assert!(pack("small").is_some() && pack("accurate").is_some());
+        let tmp = tempfile::tempdir().unwrap();
+        let m = PackManager::with_root(tmp.path().to_path_buf());
+        assert!(!m.is_installed("accurate"));
+        let dir = m.pack_dir("accurate");
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = extraction_marker(&dir, &pack("accurate").unwrap().files[0]);
+        std::fs::write(marker, b"ok").unwrap();
+        assert!(m.is_installed("accurate"));
     }
 
     #[test]
