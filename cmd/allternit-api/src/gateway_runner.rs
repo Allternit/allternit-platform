@@ -981,6 +981,12 @@ pub async fn intercept_turn(session_id: &str, text: &str, opts: TurnOpts) -> Opt
     }
 }
 
+/// Whether the session's thread runs on a vendor (Agent Gateway) binding, so a
+/// turn there goes through [`intercept_turn`] and has no gizzi event stream.
+pub(crate) fn is_vendor_session(db: &DbHandle, session_id: &str) -> bool {
+    matches!(resolve(db, session_id), Ok(Some(_)))
+}
+
 /// Stop on a vendor-bound session: cancel the turn running in the vendor's active remote context.
 /// `None` = not a vendor session (the caller's native abort applies); `Some(confirmed)` otherwise.
 pub(crate) async fn cancel_vendor_turn(db: &DbHandle, tx: &dyn AaiTransport, session_id: &str) -> Result<Option<bool>, RunErr> {
