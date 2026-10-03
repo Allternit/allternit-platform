@@ -140,6 +140,10 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (mdxPath.endsWith('surfaces/subscriptions.mdx')) continue;
       if (mdxPath.endsWith('guides/subscriptions.mdx')) continue;
       if (mdxPath.endsWith('guides/platform-workflows.mdx')) continue;
+      // Vendor bots connect to named vendor accounts; photo avatars run on the
+      // named subscription/key lanes and quote their on-screen button labels.
+      if (mdxPath.endsWith('guides/vendor-bots.mdx')) continue;
+      if (mdxPath.endsWith('guides/bot-avatars.mdx')) continue;
       // Porting an MCP App from another host has to name that host and its globals.
       if (mdxPath.endsWith('plugins/guides/porting.mdx')) continue;
       // Provider env vars (OPENAI_API_KEY etc.) are configuration, not endorsement.

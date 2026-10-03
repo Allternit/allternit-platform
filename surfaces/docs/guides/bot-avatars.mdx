@@ -1,0 +1,41 @@
+---
+title: Bot avatars
+description: Pick an avatar pack, make one from a photo, and see your selected bot on screen.
+---
+
+Every bot has an avatar. It shows in bot chips, the rail, thread headers, and as the on-screen guide when the bot is selected.
+
+## The guide follows your bot
+
+When you pick a bot (in the Bots top deck, the launchpad, or the chat composer), the guide on screen changes from Gizzi to that bot's avatar. Bots with an animated sprite sheet animate while they work. Image and vendor avatars get a gentle motion while the bot is active. With no bot selected, Gizzi stays as before. If your system is set to reduce motion, the avatar stays still.
+
+## Avatar packs
+
+In **Create bot** or **Edit bot → Look**, choose a pack and a character. Some characters have animated sheets (idle, walk, run, jump, sad, sleep, action, and a signature move); the rest are still portraits.
+
+Vendor bots use their vendor's own mark or the avatar the vendor supplies. See [Vendor bots](/guides/vendor-bots).
+
+## Make an avatar from a photo
+
+Open the bot's **Config → Edit bot → Look → From photo** (or choose **From photo** while creating a bot).
+
+1. Upload a PNG, JPEG, or WebP (up to 15 MB). On a phone you can pick from your camera roll.
+2. Choose a style: **Pixel sprite**, **Chibi**, or **Mascot**.
+3. Confirm that the photo is of you, or that you have the person's permission.
+4. Choose a lane:
+   - **ChatGPT subscription:** needs a running Sessions computer, accepted ChatGPT terms in **Settings → Subscriptions**, and a ready ChatGPT account. If ChatGPT shows a security check, open ChatGPT on your Sessions computer, finish the check, then press **Check ChatGPT again**.
+   - **OpenAI key:** uses your connected key and shows the estimated cost per try. Each approved try can be billed.
+5. Press **Make sprite**. This prepares an approval card and sends nothing yet. Only **Approve and make avatar** sends the photo. **Cancel** sends nothing.
+6. Keep the editor open while it runs, review the square portrait, then save the bot.
+
+The photo itself is not saved on the bot. The bot keeps the generated image, the style, and the time you confirmed permission. **Make another** needs a fresh approval. If a try fails, the editor shows what to do. It never switches to a different (paid) lane on its own.
+
+Photo avatars are still portraits; animated sheets aren't made from photos.
+
+## For developers
+
+- **Resolution:** `resolveBotAvatarConfig` (`src/lib/agents/bot-avatar-config.ts`) reads the edited `config.avatar` first, then the decoded legacy column, then the deterministic profile. `BotAvatar` and `ActiveAgentMascot` share it.
+- **Mascot:** `useActiveSurfaceAgent(surface)` (`src/lib/agents/surface-agent-context.ts`) resolves which bot represents a surface (surface selection, then open bot-thread metadata, then none). `<ActiveAgentMascot>` (`src/views/bots/ActiveAgentMascot.tsx`) renders `VendorAgentAvatar` for vendor bots, animates sheet avatars (`avatar.pet.spriteUrl`) on canvas driven by `MascotActivityState`, and otherwise delegates to `BotAvatar`. Callers: `AgentModeGizzi` and `LaunchHeader`.
+- **Packs:** the manifest is `src/views/agent-view/components/create-bot/avatar-packs.ts`; files live in `public/avatar-packs/<pack>/<sprite>.webp` (512×512 portrait) and `<sprite>-sheet.webp` (1536×1872, 8 columns × 9 rows of 192×208 frames, rows in the order listed above, base anchored bottom-center). The asset spec is `AVATAR_PACKS.md` beside the manifest.
+- **Photo pipeline:** **Make sprite** only prepares the card. Approval is the only call site of `generatePhotoSprite` (`src/lib/bots/photo-sprite.ts`). The ChatGPT lane mints a single-use person proof for `avatar.photo_sprite` and submits an `image.generate` task with an image input. The OpenAI lane uses `generateImagesMediaPlane` with `referenceImage`. Output is center-cropped to a PNG of at most 256 px, keeping hard edges for pixel style. `buildAvatarConfigFromEditor` writes `{ type: "image", uri, likeness: { source: "photo", style, consentAttestedAt } }`.
+- **Tests:** use synthetic non-face fixtures. Never commit real source photos, generated likenesses, or screenshots containing them.
