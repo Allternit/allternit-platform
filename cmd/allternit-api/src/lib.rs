@@ -79,6 +79,7 @@ pub mod channel_gateway;
 pub mod channel_relay;
 pub mod channel_transports;
 pub mod channel_whatsapp_personal;
+pub mod channel_whatsapp_app;
 pub mod spend_limits;
 pub mod channel_tools;
 pub mod templates_routes;
