@@ -36,6 +36,7 @@ pub mod mcp_edge;
 pub mod mesh;
 pub mod channel_inbound;
 pub mod phone;
+pub mod phone_invites;
 pub mod channel_onboarding;
 pub mod paired_computers;
 pub mod mirror;

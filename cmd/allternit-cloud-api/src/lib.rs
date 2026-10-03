@@ -348,6 +348,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::mcp_edge::routes())
         // Phone numbers + SMS: Clerk-checked per request; 503 phone_not_configured when the carrier env is unset.
         .merge(routes::phone::routes())
+        // Invite links for a bot's phone: owner routes check the Clerk session; /i/:code/* is
+        // public, scoped by the unguessable code and rate limited per invite and number.
+        .merge(routes::phone_invites::routes())
         // WhatsApp Embedded Signup + 24h-window send; each handler resolves the user itself.
         .merge(routes::whatsapp_es::routes())
         // Voice tickets + minutes metering: user routes check the Clerk session; the

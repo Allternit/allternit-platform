@@ -174,7 +174,7 @@ pub struct NumberRow {
     pub created_at: DateTime<Utc>,
 }
 
-const NUMBER_COLS: &str = "id, user_id, runtime_id, bot_id, e164, carrier, carrier_number_id, messaging_ref, type, sms_state, voice_state, inbound_route_id, port_order_id, port_state, created_at";
+pub(crate) const NUMBER_COLS: &str = "id, user_id, runtime_id, bot_id, e164, carrier, carrier_number_id, messaging_ref, type, sms_state, voice_state, inbound_route_id, port_order_id, port_state, created_at";
 
 impl NumberRow {
     fn to_json(&self) -> Value {
@@ -186,7 +186,7 @@ impl NumberRow {
     }
 }
 
-async fn number_for_user(db: &PgPool, user: &str, id: &str) -> PResult<NumberRow> {
+pub(crate) async fn number_for_user(db: &PgPool, user: &str, id: &str) -> PResult<NumberRow> {
     sqlx::query_as::<_, NumberRow>(&format!("SELECT {NUMBER_COLS} FROM phone_numbers WHERE id = $1 AND user_id = $2 AND released_at IS NULL"))
         .bind(id)
         .bind(user)
@@ -199,7 +199,7 @@ fn http() -> Arc<dyn carriers::CarrierHttp> {
     Arc::new(ReqwestHttp::new())
 }
 
-fn carrier() -> PResult<Arc<dyn Carrier>> {
+pub(crate) fn carrier() -> PResult<Arc<dyn Carrier>> {
     Ok(carriers::from_env(http())?)
 }
 
@@ -673,7 +673,7 @@ pub fn classify_keyword(text: &str) -> Option<Keyword> {
     }
 }
 
-async fn log_consent(db: &PgPool, number_id: &str, e164: &str, kind: &str, source: Option<&str>, evidence: Option<&str>) -> Result<(), sqlx::Error> {
+pub(crate) async fn log_consent(db: &PgPool, number_id: &str, e164: &str, kind: &str, source: Option<&str>, evidence: Option<&str>) -> Result<(), sqlx::Error> {
     sqlx::query("INSERT INTO sms_consent_log (number_id, e164, kind, source, evidence) VALUES ($1, $2, $3, $4, $5)")
         .bind(number_id)
         .bind(e164)
@@ -685,12 +685,12 @@ async fn log_consent(db: &PgPool, number_id: &str, e164: &str, kind: &str, sourc
     Ok(())
 }
 
-async fn is_opted_out(db: &PgPool, number_id: &str, e164: &str) -> Result<bool, sqlx::Error> {
+pub(crate) async fn is_opted_out(db: &PgPool, number_id: &str, e164: &str) -> Result<bool, sqlx::Error> {
     Ok(sqlx::query_scalar::<_, i64>("SELECT count(*) FROM sms_opt_outs WHERE number_id = $1 AND e164 = $2").bind(number_id).bind(e164).fetch_one(db).await? > 0)
 }
 
 /// The latest consent basis for a counterparty, if any.
-async fn consent_basis(db: &PgPool, number_id: &str, e164: &str) -> Result<Option<String>, sqlx::Error> {
+pub(crate) async fn consent_basis(db: &PgPool, number_id: &str, e164: &str) -> Result<Option<String>, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT kind FROM sms_consent_log WHERE number_id = $1 AND e164 = $2 AND kind IN ('inbound_text', 'inbound_call', 'opt_in', 'explicit') ORDER BY id DESC LIMIT 1",
     )

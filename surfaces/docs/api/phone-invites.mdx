@@ -1,0 +1,40 @@
+---
+title: Phone invites
+description: Invite one person to your bot's phone with a single-use link; they confirm their number and consent is recorded.
+---
+
+An owner can invite someone to reach their bot. The invitee opens a link, confirms their phone number with a texted code, and may also create an Allternit account to reach the bot in the app. Confirming the code is the consent record: the bot may then text that number first.
+
+The owner routes are on `api.allternit.com` and take a Clerk session or a `compute`-scoped API key. The `/i/:code/*` routes are public: the unguessable code is the credential, and they are rate limited per IP, per invite and per phone number. The invite page itself is served from `allternit.com/i/<code>` (it redirects to `m.allternit.com/i/<code>`).
+
+Migration `035_phone_invites.sql` is applied by hand to the production database. Sending the code needs the carrier env from [Phone numbers and SMS](/api/phone-numbers); without it the phone step answers `503 {"error":"phone_not_configured"}`. Creating, listing and revoking invites works without it.
+
+| Env var | What |
+|---|---|
+| `ALLTERNIT_INVITE_BASE_URL` | Public origin of invite links (default `https://allternit.com`) |
+| `ALLTERNIT_INVITE_APP_URL` | App that hosts the sign-up step (default `https://m.allternit.com`) |
+| `ALLTERNIT_INVITE_IP_SALT` | Optional salt for the IP hash kept as consent evidence |
+| `ALLTERNIT_INVITE_OTP_PER_INVITE_HOUR`, `ALLTERNIT_INVITE_OTP_PER_PHONE_HOUR` | Codes per invite (default 5) and per phone number (default 3) per hour |
+| `ALLTERNIT_LIVEKIT_OUTBOUND_TRUNK_ID` | When set with the LiveKit env, a code that can't be texted is read aloud on a call instead |
+
+## Owner routes
+
+- `POST /api/v1/invites` with `{botId, numberId?, label, about, botName?}` returns `201 {id, url, expiresAt}`. `numberId` defaults to the bot's number; a bot with no number gets `409 bot_has_no_number`. The link is single use and expires after 14 days. The code appears only in `url`, once.
+- `GET /api/v1/invites?botId=` returns `{invites:[{id, botId, numberId, label, about, status, phoneLast4, expiresAt, createdAt}]}`. `status` is `pending`, `verified`, `joining`, `joined`, `declined`, `revoked` or `expired`.
+- `DELETE /api/v1/invites/:id` revokes a link that is not yet joined or declined. Returns `{ok:true}`.
+- `GET /api/v1/phone/contacts?botId=` returns an array of `{e164?, userId?, label, reach:{app, sms, call, email}, consent:{basis, at}|null, invite:{status}}`. It merges people who confirmed through an invite, people who joined the app through one, invites still waiting (`consent` is `null`), and anyone else the number has a consent record for (`invite.status` is `none`). `reach.sms` and `reach.call` turn off after STOP.
+- `POST /api/v1/invites/claim` with `{joinToken}` links the signed-in user as an in-app contact of the owner. `409 own_invite` if the owner uses their own link.
+
+## Public routes
+
+- `GET /i/:code/info` returns `{ownerFirstName, botName, about, numberE164, channels, status}`. `channels` is a subset of `app`, `sms`, `call`.
+- `POST /i/:code/phone` with `{e164, consentText, consent:true}` texts a 6-digit code from the bot's number and returns `{sent:true, channel:"sms"|"call", expiresAt}`. The code lasts 10 minutes and only the newest one works. If the carrier refuses the text (for example registration is still pending) and LiveKit is configured, the code is read aloud on a call from the bot's number (`channel:"call"`). A number that texted STOP gets `403 opted_out`.
+- `POST /i/:code/verify` with `{e164, code}` returns `{ok:true, optedOut}` and uses the invite up. Five wrong tries burn the code (`429 too_many_attempts`).
+- `POST /i/:code/decline` ends the invite and records no consent.
+- `POST /i/:code/join` returns `{url, joinToken}`. `url` is the sign-up page on the app with a redirect back to `/i/<code>/welcome?jt=<joinToken>`; after sign-up the app calls `POST /api/v1/invites/claim` with that token.
+
+An unknown code is `404 invite_not_found`. A link that is used, revoked or expired is `410` with `invite_used`, `invite_revoked` or `invite_expired`. Too many codes is `429 otp_rate_limited`; a code that could not be delivered by text or call is `502 carrier_error`.
+
+## Consent record
+
+A verified code writes one row to `sms_consent_log` with `kind` `explicit` and `source` `invite`. The evidence is JSON: `{inviteId, ipHash, userAgent, consentText, timestamp}`. The IP is stored only as a hash. Verifying never lifts a STOP; only the person's own START does.
