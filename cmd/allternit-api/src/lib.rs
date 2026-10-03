@@ -76,6 +76,7 @@ pub mod agency_api;
 pub mod kernel_ui;
 pub mod teams_auth;
 pub mod discord_gateway;
+pub mod channel_discord_app;
 pub mod channel_gateway;
 pub mod channel_phone;
 pub mod channel_relay;
