@@ -54,6 +54,7 @@
               "plugins/guides/vendor-packs",
               "guides/artifact-modes",
               "guides/computers-and-apps",
+              "guides/phone-for-your-bot",
               "guides/mcp-apps-status"
             ],
             "icon": "/icons/window.svg"

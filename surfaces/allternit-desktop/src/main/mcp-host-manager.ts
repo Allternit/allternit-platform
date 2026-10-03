@@ -134,6 +134,16 @@ class McpHostManager {
     if (!config.disabled) this.startServer(id, config);
   }
 
+  /**
+   * Run a server owned by Desktop itself (e.g. the phone shim). Not written to
+   * mcp-config.json: its command path changes with every app update, so it is
+   * re-registered at each launch instead of persisted stale.
+   */
+  registerRuntimeServer(id: string, config: McpServerConfig): void {
+    if (this.servers.has(id)) return;
+    this.startServer(id, { ...config, alwaysAllow: [] });
+  }
+
   async removeServer(id: string): Promise<void> {
     this.stopServer(id);
     const fullConfig = this.loadConfig();

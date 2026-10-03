@@ -598,6 +598,50 @@ export interface VoiceAPI {
   onTranscript(handler: (event: { text: string; isFinal: boolean }) => void): () => void;
 }
 
+export type PhoneConnState = 'connecting' | 'online' | 'unauthorized' | 'lost' | 'reconnecting';
+
+export interface PhoneSimInfo { subscriptionId: number | null; slot: number | null; carrier: string }
+
+export interface PhoneInfoData {
+  serial: string;
+  id: string;
+  name: string;
+  model: string | null;
+  androidVersion: string | null;
+  battery: number | null;
+  sims: PhoneSimInfo[];
+  state: PhoneConnState;
+  host: string;
+  port: number;
+  streaming: boolean;
+}
+
+export interface PhonePairingStatus {
+  phase: 'idle' | 'waiting_for_scan' | 'pairing' | 'connecting' | 'done' | 'failed';
+  qrPayload?: string;
+  serial?: string;
+  error?: string;
+}
+
+export type PhoneStatusSnapshot =
+  | { ready: true; phones: PhoneInfoData[]; pairing: PhonePairingStatus; scrcpy: boolean; artemis: { state: 'not_installed' | 'installing' | 'ready' | 'error'; error?: string } | null }
+  | { ready: false; error: string; phones: PhoneInfoData[]; artemis: { state: 'not_installed' | 'installing' | 'ready' | 'error'; error?: string } | null };
+
+export interface PhonesAPI {
+  status(): Promise<PhoneStatusSnapshot>;
+  startQrPairing(): Promise<{ payload: string }>;
+  pairWithCode(hostPort: string, code: string): Promise<PhonePairingStatus>;
+  cancelPairing(): Promise<void>;
+  forget(id: string): Promise<void>;
+  startScrcpy(serial: string): Promise<{ ok: boolean; error?: string }>;
+  stopScrcpy(serial: string): Promise<void>;
+  tryOpenApp(serial: string, app: string): Promise<{ ok: boolean; message?: string }>;
+  screenshot(serial: string): Promise<{ ok: boolean; dataBase64?: string; message?: string }>;
+  installArtemis(): Promise<unknown>;
+  onDevices(handler: (phones: PhoneInfoData[]) => void): () => void;
+  onPairing(handler: (status: PhonePairingStatus) => void): () => void;
+}
+
 export interface AllternitDesktopAPI {
   sdk: { getBackendUrl(): Promise<string> };
   connection: ConnectionAPI;
@@ -619,6 +663,7 @@ export interface AllternitDesktopAPI {
   extension: ExtensionAPI;
   tunnel: TunnelAPI;
   permissionGuide: PermissionGuideAPI;
+  phones: PhonesAPI;
   featureFlags: FeatureFlagsAPI;
   siwc: SiwcAPI;
   findInPage: FindInPageAPI;

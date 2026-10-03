@@ -133,6 +133,10 @@
         "to": "build-info.json"
       },
       {
+        "from": "resources/phone/",
+        "to": "phone/"
+      },
+      {
         "from": "resources/runtime.json",
         "to": "runtime.json"
       },
