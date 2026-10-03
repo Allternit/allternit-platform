@@ -1,0 +1,61 @@
+---
+title: Messaging channels for your bots
+description: Connect Telegram, Email, a phone number, Discord, Slack, Teams or WhatsApp once, switch it on per bot, and use @mentions to pick who answers.
+---
+
+Connect a messaging channel once and your bots can answer there. A connection belongs to you; each bot has its own on/off switch for it.
+
+Everything on this page works on **Allternit Desktop**, on **ai.allternit.com**, and on the **m.allternit.com** phone app. On a phone the connect wizards open as full-height sheets; the one exception is [connecting an Android phone](/guides/phone-for-your-bot), which is Desktop only.
+
+## Connect a channel
+
+Open **Customize → Connectors → Messaging**, or open a bot's **Agent Gateway → Messaging** and use **Connect…**. A connection made from a bot's settings is switched on for that bot straight away. One made from Customize is not: open the bot and switch it on.
+
+Each channel has a short wizard: intro, one action (usually the platform's own authorize page), live status while it connects, and a **Done** step with **Send test message**. You never paste a secret unless the channel needs one, and you can cancel at any step.
+
+| Channel | What you do | Status |
+| --- | --- | --- |
+| **Telegram** | Name the bot, tap **Confirm** in Telegram once. If managed bots are not available yet, the wizard asks for a BotFather token instead. | Available |
+| **Email** | Your bot gets a shared address (for example `researcher@mail.allternit.com`) that is live as soon as the wizard finishes. Add your own domain later for branded addresses. | Coming soon |
+| **Phone number** | Buy a local or toll-free number, or port yours. Calls work immediately; texting follows carrier registration. See [Calls and texts in threads](/guides/calls-and-texts). | Coming soon |
+| **Discord** | Add the Allternit app to your server, then choose which channels the bots may use. | Coming soon |
+| **Slack** | Install the Allternit app in your workspace. | Coming soon |
+| **Microsoft Teams** | Install the app. If your organisation requires it, the wizard gives you a link for your admin. | Coming soon |
+| **WhatsApp** | Business number through Meta, or a personal number by QR code ("Linked devices"). Personal numbers carry a warning you must read first. | Coming soon |
+
+"Coming soon" means the connection service for that channel has not reached your Allternit yet. The wizard checks, and shows a disabled **Coming soon** panel instead of an error. Nothing is broken; the button turns into a working wizard after an update.
+
+## Switch it on per bot
+
+Open a bot, then **Agent Gateway → Messaging**. Each connection has a switch.
+
+- **On** means this bot answers on that connection.
+- **Answers new chats** marks the one bot that takes every new conversation. Other bots on the same connection answer only when named.
+- **Off** with "Used by 2 other bots" tells you who else is using it.
+
+Several bots can share one connection.
+
+## @mentions
+
+In a chat on a shared connection, start or include `@name` and that bot answers, for example `@engineer can you check the build?`. Without a mention, the bot marked **Answers new chats** answers.
+
+### The "Turn on" card
+
+If you mention a bot that is not switched on for that connection, it cannot answer. The thread shows a card: "*engineer* was mentioned but isn't switched on for this Telegram chat" with a **Turn on engineer** button. Tap it, then mention the bot again. If it fails, the card tells you where to switch it on by hand (bot → Agent Gateway → Messaging).
+
+## Email replies
+
+Email wizards include a reply setting for each bot:
+
+| Mode | Behavior |
+| --- | --- |
+| **Approve** | The bot drafts and you approve every reply. |
+| **Known senders** | Replies send automatically to senders on your allowlist; everyone else waits for approval. |
+| **Auto** | The bot replies without approval. |
+
+Email reply modes are **coming soon** together with the Email channel.
+
+## Limits
+
+- Replies to regulated or consequential messages should be checked by a person; set Email to **Approve** while you are testing.
+- Allternit cannot guarantee delivery. Each platform decides what it delivers.
