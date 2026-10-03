@@ -38,3 +38,12 @@ An unknown code is `404 invite_not_found`. A link that is used, revoked or expir
 ## Consent record
 
 A verified code writes one row to `sms_consent_log` with `kind` `explicit` and `source` `invite`. The evidence is JSON: `{inviteId, ipHash, userAgent, consentText, timestamp}`. The IP is stored only as a hash. Verifying never lifts a STOP; only the person's own START does.
+
+## App client
+
+The invite page, Contacts and the new-text consent step live in the allternit-ai app (`src/lib/gateway/invites.ts`, `src/components/invites/`) and are shared by Desktop, ai.allternit.com and the m.allternit.com phone app. The page is route `/i/:code` and the sign-up step is `/i/:code/welcome?jt=`, which calls `POST /api/v1/invites/claim` once the user is signed in. On the phone app both routes work signed out.
+
+Messaging and ringing a contact who joined Allternit use two owner routes the client calls and the control plane still needs to serve; until it does the app says the feature isn't available yet (404, 405 and 501 are all treated that way):
+
+- `POST /api/v1/phone/contacts/:userId/thread` with `{botId}` returns `{threadId}`: the direct thread between the bot and that user, created once and reused.
+- `POST /api/v1/phone/contacts/:userId/ring` with `{botId}` returns `{callId, threadId?, room?}`: rings the user's app or bot phone. The call then runs on the existing voice path and shows in the thread as a `call.*` event stream.
