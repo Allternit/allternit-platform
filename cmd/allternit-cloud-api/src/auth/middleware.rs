@@ -533,7 +533,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn legacy_middleware_rejects_dev_token_by_default() {
-        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var(ALLOW_DEV_TOKEN_ENV);
         std::env::remove_var("ALLTERNIT_DEV_MODE");
         std::env::remove_var("ALLTERNIT_DEV_BEARER");
@@ -551,7 +551,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn legacy_middleware_accepts_dev_token_only_when_gate_env_set() {
-        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
 
         let user = legacy_validator()
@@ -699,7 +699,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn legacy_dev_token_shape_is_rejected_by_default() {
-        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("ALLTERNIT_DEV_MODE");
         std::env::remove_var("ALLTERNIT_DEV_BEARER");
         std::env::remove_var("ALLTERNIT_ALLOW_DEV_API_TOKEN");
@@ -716,7 +716,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn dev_override_requires_dev_mode_and_env_bearer() {
-        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let pool = test_pool().await;
 
         // ALLTERNIT_DEV_BEARER alone (no DEV_MODE) does not enable anything.
@@ -758,7 +758,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn dev_override_is_refused_in_production() {
-        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let pool = test_pool().await;
         std::env::set_var("ALLTERNIT_DEV_MODE", "1");
         std::env::set_var("ALLTERNIT_DEV_BEARER", LEGACY_DEV_TOKEN);

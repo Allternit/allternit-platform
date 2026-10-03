@@ -246,7 +246,7 @@ mod tests {
     async fn dev_token_fallback_is_gated_by_explicit_env() {
         // The dev-token backdoor is also gated by ALLTERNIT_ALLOW_DEV_TOKEN
         // (default OFF) — open the gate for this test like a dev box would.
-        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap();
+        let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
         let pool = test_pool().await;
 
