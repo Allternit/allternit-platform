@@ -63,6 +63,10 @@ fn assert_no_vendor(body: &str) {
         let tail = t.rsplit('_').next().unwrap_or(t);
         (t.contains('_') && tail.len() >= 10 && tail.chars().all(|c| c.is_ascii_alphanumeric()))
             || (t.len() >= 32 && t.chars().all(|c| c.is_ascii_hexdigit() || c == '-'))
+            // Signatures and other base64url blobs (ed25519 receipt values).
+            || (t.len() >= 40
+                && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                && t.chars().any(|c| c.is_ascii_digit()))
     };
     for token in l.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-')).filter(|t| !t.is_empty() && !looks_generated(t)) {
         for w in VENDOR_WORDS {
@@ -74,6 +78,8 @@ fn assert_no_vendor(body: &str) {
 #[test]
 fn vendor_scan_ignores_generated_ids_but_not_names() {
     assert_no_vendor(r#"{"id":"run_9xGptQz81LmN","receipt":"rcpt_abcgptdef123"}"#);
+    // A base64url receipt signature once spelled "gpt" by chance (CI run on 317ef3e1).
+    assert_no_vendor(r#"{"value":"dyfm6fsjiwle2paa06cv3xiy9vgpt5du-rm27nwtae8nplfvwhnlypy9zjjl3ytadkvjxookl3i1y9uzbqflcg"}"#);
     assert!(std::panic::catch_unwind(|| assert_no_vendor(r#"{"model":"gpt-4o"}"#)).is_err());
     assert!(std::panic::catch_unwind(|| assert_no_vendor(r#"{"note":"via claude"}"#)).is_err());
 }
