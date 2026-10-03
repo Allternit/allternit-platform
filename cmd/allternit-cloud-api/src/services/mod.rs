@@ -20,6 +20,7 @@ pub mod run_service;
 pub mod scheduler_service;
 pub mod task_service;
 pub mod user_trust;
+pub mod voice_usage;
 
 pub use contabo_runtime_service::{
     ContaboContainerState, ContaboRuntimeService, HostedInstanceRow, ProvisionedContaboRuntime,
