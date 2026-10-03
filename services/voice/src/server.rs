@@ -258,7 +258,7 @@ async fn health_check(State(state): State<VoiceServiceState>) -> Json<serde_json
 
 /// List available voices (the real Kokoro voices of the small pack).
 async fn list_voices(State(state): State<VoiceServiceState>) -> Json<Vec<VoiceModel>> {
-    let ready = state.packs.is_installed("small");
+    let ready = state.packs.is_installed("tts");
     Json(VOICES.iter().map(|v| VoiceModel::from_def(v, ready)).collect())
 }
 
@@ -267,7 +267,7 @@ async fn get_voice(
     State(state): State<VoiceServiceState>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<Json<VoiceModel>, StatusCode> {
-    let ready = state.packs.is_installed("small");
+    let ready = state.packs.is_installed("tts");
     VOICES
         .iter()
         .find(|v| v.id == id)
@@ -368,18 +368,7 @@ async fn text_to_speech(
     let TtsRequest {
         text, voice, speed, ..
     } = request;
-    let result = tokio::task::spawn_blocking(move || {
-        // One sentence per generate call keeps each inference short, so a
-        // long text does not hold the inference lock against STT.
-        let mut all = Vec::new();
-        let mut rate = KOKORO_SAMPLE_RATE;
-        for sentence in crate::tts::split_sentences(&text) {
-            let (samples, r) = tts.synthesize(&sentence, voice.as_deref(), speed)?;
-            rate = r;
-            all.extend_from_slice(&samples);
-        }
-        Ok::<_, String>((all, rate))
-    })
+    let result = tokio::task::spawn_blocking(move || tts.synthesize(&text, voice.as_deref(), speed))
     .await;
     let (samples, sample_rate) = match result {
         Ok(Ok(v)) => v,
@@ -418,7 +407,7 @@ async fn text_to_speech_stream(
     if let Err(e) = crate::tts::resolve_voice(request.voice.as_deref()) {
         return error_response(StatusCode::BAD_REQUEST, e);
     }
-    let sentences = crate::tts::split_sentences(&request.text);
+    let text = request.text.clone();
     let tts = state.tts.clone();
     let voice = request.voice.clone();
     let speed = request.speed;
@@ -428,27 +417,26 @@ async fn text_to_speech_stream(
         let started = Instant::now();
         let mut total_samples = 0usize;
         let mut sample_rate = KOKORO_SAMPLE_RATE;
-        for (i, sentence) in sentences.iter().enumerate() {
-            let event = match tts.synthesize(sentence, voice.as_deref(), speed) {
-                Ok((samples, rate)) => {
-                    total_samples += samples.len();
-                    sample_rate = rate;
-                    StreamEvent::Audio {
-                        index: i,
-                        text: sentence.clone(),
-                        sample_rate: rate,
-                        format: "pcm16".to_string(),
-                        audio_b64: b64_encode(&f32_to_pcm16le(&samples)),
-                    }
-                }
-                Err(error) => {
-                    let _ = send_event(&tx, &StreamEvent::Error { error });
-                    return;
-                }
+        let mut client_gone = false;
+        let result = tts.synthesize_stream(&text, voice.as_deref(), speed, |i, chunk, samples, rate| {
+            total_samples += samples.len();
+            sample_rate = rate;
+            let event = StreamEvent::Audio {
+                index: i,
+                text: chunk.to_string(),
+                sample_rate: rate,
+                format: "pcm16".to_string(),
+                audio_b64: b64_encode(&f32_to_pcm16le(samples)),
             };
-            if send_event(&tx, &event).is_err() {
-                return; // client went away: stop synthesising
-            }
+            client_gone = send_event(&tx, &event).is_err();
+            !client_gone // stop synthesising when the client went away
+        });
+        if client_gone {
+            return;
+        }
+        if let Err(error) = result {
+            let _ = send_event(&tx, &StreamEvent::Error { error });
+            return;
         }
         let _ = send_event(
             &tx,
@@ -456,11 +444,7 @@ async fn text_to_speech_stream(
                 duration_secs: total_samples as f32 / sample_rate as f32,
             },
         );
-        info!(
-            "TTS stream: {} sentences in {:?}",
-            sentences.len(),
-            started.elapsed()
-        );
+        info!("TTS stream done in {:?}", started.elapsed());
     });
 
     ndjson_response(rx)

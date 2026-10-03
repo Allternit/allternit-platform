@@ -95,7 +95,7 @@ async fn health_reports_sherpa_engine_and_packs() {
     assert!(json["tts_ready"].is_boolean());
     // Pack list must be present with both packs, no downloads triggered.
     let packs = json["packs"].as_array().expect("packs array");
-    assert_eq!(packs.len(), 2);
+    assert_eq!(packs.len(), 3);
     assert!(packs.iter().all(|p| p["state"] == "missing"));
 }
 
@@ -118,8 +118,8 @@ async fn list_voices_returns_real_kokoro_voices() {
         .unwrap();
     let voices: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let voices = voices.as_array().unwrap();
-    assert_eq!(voices.len(), 11);
-    assert!(voices.iter().any(|v| v["id"] == "af"));
+    assert_eq!(voices.len(), 28);
+    assert!(voices.iter().any(|v| v["id"] == "af_heart"));
     assert!(voices.iter().any(|v| v["id"] == "bm_george"));
     // Shape compatibility: id/name/language/gender/sample_rate preserved,
     // plus label/engine/assetReady that the allternit-ai pickers read.
@@ -210,7 +210,7 @@ async fn list_packs_reports_state_without_downloading() {
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let packs = json["packs"].as_array().unwrap();
-    assert_eq!(packs.len(), 2);
+    assert_eq!(packs.len(), 3);
     for p in packs {
         assert!(p["state"].is_string());
         assert!(!p["state"].as_str().unwrap().is_empty());
@@ -423,7 +423,7 @@ async fn stats_reflect_request_count() {
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["total_requests"], 1);
-    assert_eq!(json["tts_models"], 11);
+    assert_eq!(json["tts_models"], 28);
     assert_eq!(json["stt_models"], 2);
 }
 

@@ -1,20 +1,26 @@
-//! Text-to-speech: Kokoro-82M (int8 English v0.19) through sherpa-onnx.
+//! Text-to-speech: Kokoro-82M v1.0 (fp32) through the `allternit-tts` child
+//! process.
 //!
-//! Voice names and their speaker ids (`sid`) follow the sherpa-onnx
-//! `kokoro-en-v0_19` model card: sid 0..10 = af, af_bella, af_nicole,
-//! af_sarah, af_sky, am_adam, am_michael, bf_emma, bf_isabella, bm_george,
-//! bm_lewis (the order of `voices.bin`).
+//! sherpa-onnx's Kokoro frontend links espeak-ng (GPL-3.0-or-later), so the
+//! TTS engine runs as a separate GPL program (`services/voice-tts`, binary
+//! `allternit-tts`) and this module is its client: it owns the voice table,
+//! splits text into short chunks, and streams each chunk's audio back as the
+//! child renders it. This crate (and `allternit-voice-service`) contains no
+//! espeak-ng code.
+//!
+//! Voices and speaker ids (`sid`) are the English voices of the sherpa-onnx
+//! `kokoro-multi-lang-v1_0` export, in the order of the model's
+//! `speaker_names` metadata (sid 0..27).
 
-use sherpa_onnx::{
-    GenerationConfig, OfflineTts, OfflineTtsConfig, OfflineTtsKokoroModelConfig,
-    OfflineTtsModelConfig,
-};
+use std::io::{BufReader, Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::models::{inference_lock, inference_threads, PackManager, KOKORO_DIR};
 
-/// One installed Kokoro voice (sid == index in this array).
+/// One Kokoro voice (sid == index in [`VOICES`]).
 #[derive(Debug, Clone, Copy)]
 pub struct VoiceDef {
     pub id: &'static str,
@@ -23,13 +29,19 @@ pub struct VoiceDef {
     pub gender: &'static str,
 }
 
-/// 24 kHz output, matching the Kokoro model metadata (`sample_rate`).
+/// Kokoro output rate.
 pub const KOKORO_SAMPLE_RATE: u32 = 24_000;
 
 pub const VOICES: &[VoiceDef] = &[
     VoiceDef {
-        id: "af",
-        name: "Default (US Female)",
+        id: "af_alloy",
+        name: "Alloy",
+        language: "en-US",
+        gender: "female",
+    },
+    VoiceDef {
+        id: "af_aoede",
+        name: "Aoede",
         language: "en-US",
         gender: "female",
     },
@@ -40,8 +52,38 @@ pub const VOICES: &[VoiceDef] = &[
         gender: "female",
     },
     VoiceDef {
+        id: "af_heart",
+        name: "Heart",
+        language: "en-US",
+        gender: "female",
+    },
+    VoiceDef {
+        id: "af_jessica",
+        name: "Jessica",
+        language: "en-US",
+        gender: "female",
+    },
+    VoiceDef {
+        id: "af_kore",
+        name: "Kore",
+        language: "en-US",
+        gender: "female",
+    },
+    VoiceDef {
         id: "af_nicole",
         name: "Nicole",
+        language: "en-US",
+        gender: "female",
+    },
+    VoiceDef {
+        id: "af_nova",
+        name: "Nova",
+        language: "en-US",
+        gender: "female",
+    },
+    VoiceDef {
+        id: "af_river",
+        name: "River",
         language: "en-US",
         gender: "female",
     },
@@ -64,10 +106,58 @@ pub const VOICES: &[VoiceDef] = &[
         gender: "male",
     },
     VoiceDef {
+        id: "am_echo",
+        name: "Echo",
+        language: "en-US",
+        gender: "male",
+    },
+    VoiceDef {
+        id: "am_eric",
+        name: "Eric",
+        language: "en-US",
+        gender: "male",
+    },
+    VoiceDef {
+        id: "am_fenrir",
+        name: "Fenrir",
+        language: "en-US",
+        gender: "male",
+    },
+    VoiceDef {
+        id: "am_liam",
+        name: "Liam",
+        language: "en-US",
+        gender: "male",
+    },
+    VoiceDef {
         id: "am_michael",
         name: "Michael",
         language: "en-US",
         gender: "male",
+    },
+    VoiceDef {
+        id: "am_onyx",
+        name: "Onyx",
+        language: "en-US",
+        gender: "male",
+    },
+    VoiceDef {
+        id: "am_puck",
+        name: "Puck",
+        language: "en-US",
+        gender: "male",
+    },
+    VoiceDef {
+        id: "am_santa",
+        name: "Santa",
+        language: "en-US",
+        gender: "male",
+    },
+    VoiceDef {
+        id: "bf_alice",
+        name: "Alice",
+        language: "en-GB",
+        gender: "female",
     },
     VoiceDef {
         id: "bf_emma",
@@ -80,6 +170,24 @@ pub const VOICES: &[VoiceDef] = &[
         name: "Isabella",
         language: "en-GB",
         gender: "female",
+    },
+    VoiceDef {
+        id: "bf_lily",
+        name: "Lily",
+        language: "en-GB",
+        gender: "female",
+    },
+    VoiceDef {
+        id: "bm_daniel",
+        name: "Daniel",
+        language: "en-GB",
+        gender: "male",
+    },
+    VoiceDef {
+        id: "bm_fable",
+        name: "Fable",
+        language: "en-GB",
+        gender: "male",
     },
     VoiceDef {
         id: "bm_george",
@@ -95,13 +203,15 @@ pub const VOICES: &[VoiceDef] = &[
     },
 ];
 
-pub const DEFAULT_VOICE: &str = "af";
+/// Kokoro v1.0's recommended voice.
+pub const DEFAULT_VOICE: &str = "af_heart";
 
-/// Resolve a requested voice id. "default" and the old stub ids
-/// (`en-us-female`, `en-us-male`) map to real Kokoro voices.
+/// Resolve a requested voice id. "default", the old stub ids
+/// (`en-us-female`, `en-us-male`) and the v0.19 default `af` map to real
+/// voices.
 pub fn resolve_voice(requested: Option<&str>) -> Result<&'static VoiceDef, String> {
     let id = match requested.map(str::trim).unwrap_or("") {
-        "" | "default" | "en-us-female" => DEFAULT_VOICE,
+        "" | "default" | "en-us-female" | "af" => DEFAULT_VOICE,
         "en-us-male" => "am_adam",
         other => other,
     };
@@ -111,15 +221,157 @@ pub fn resolve_voice(requested: Option<&str>) -> Result<&'static VoiceDef, Strin
         .ok_or_else(|| format!("unknown voice '{id}' (see GET /v1/voices)"))
 }
 
-/// Map a voice id to its Kokoro speaker index (sid).
+/// Kokoro speaker index (sid) of a voice.
 pub fn voice_sid(v: &VoiceDef) -> i32 {
     VOICES.iter().position(|x| x.id == v.id).unwrap_or(0) as i32
+}
+
+/// Path of the `allternit-tts` program: `ALLTERNIT_TTS_BIN`, else next to
+/// this executable (Desktop ships both in `resources/bin`; cargo builds both
+/// into the same target dir), else one directory up (cargo test binaries
+/// live in `target/<profile>/deps`).
+pub fn tts_binary() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("ALLTERNIT_TTS_BIN") {
+        return Some(PathBuf::from(p));
+    }
+    let name = format!("allternit-tts{}", std::env::consts::EXE_SUFFIX);
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let found = [Some(dir), dir.parent()]
+        .into_iter()
+        .flatten()
+        .map(|d| d.join(&name))
+        .find(|p| p.is_file());
+    found
+}
+
+/// A running `allternit-tts`. Killed when dropped; it also exits on its own
+/// when our end of its stdin closes (e.g. this process dies).
+struct TtsChild {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+    sample_rate: u32,
+    next_id: u64,
+}
+
+impl Drop for TtsChild {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn read_frame(r: &mut impl Read) -> std::io::Result<(u8, Vec<u8>)> {
+    let mut head = [0u8; 5];
+    r.read_exact(&mut head)?;
+    let len = u32::from_le_bytes([head[1], head[2], head[3], head[4]]) as usize;
+    let mut payload = vec![0u8; len];
+    r.read_exact(&mut payload)?;
+    Ok((head[0], payload))
+}
+
+fn read_json(r: &mut impl Read) -> Result<serde_json::Value, String> {
+    let (kind, payload) = read_frame(r).map_err(|e| format!("allternit-tts read: {e}"))?;
+    if kind != b'J' {
+        return Err(format!("allternit-tts: expected a JSON frame, got {kind:#x}"));
+    }
+    serde_json::from_slice(&payload).map_err(|e| format!("allternit-tts sent bad JSON: {e}"))
+}
+
+/// Why a request failed: the child is broken (restart it) or the request
+/// itself was rejected.
+enum ChildError {
+    Dead(String),
+    Rejected(String),
+}
+
+impl TtsChild {
+    fn spawn(bin: &Path, model_dir: &Path, threads: i32) -> Result<Self, String> {
+        let mut child = Command::new(bin)
+            .arg("--model-dir")
+            .arg(model_dir)
+            .arg("--threads")
+            .arg(threads.to_string())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .map_err(|e| format!("start {}: {e}", bin.display()))?;
+        let stdin = child.stdin.take().ok_or("allternit-tts: no stdin")?;
+        let mut stdout = BufReader::new(child.stdout.take().ok_or("allternit-tts: no stdout")?);
+        let ready = read_json(&mut stdout)?;
+        if ready["type"] != "ready" {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "allternit-tts failed to start: {}",
+                ready["error"].as_str().unwrap_or("unknown error")
+            ));
+        }
+        let sample_rate = ready["sample_rate"].as_u64().unwrap_or(KOKORO_SAMPLE_RATE as u64) as u32;
+        info!(
+            "allternit-tts ready ({} speakers, {sample_rate} Hz, {threads} threads)",
+            ready["num_speakers"]
+        );
+        Ok(Self {
+            child,
+            stdin,
+            stdout,
+            sample_rate,
+            next_id: 0,
+        })
+    }
+
+    /// Synthesise one chunk; `on_audio` gets each piece as it arrives and
+    /// returns how many pieces it has seen. `streamed` reports whether any
+    /// audio was delivered (a crash after that must not retry).
+    fn request(
+        &mut self,
+        text: &str,
+        sid: i32,
+        speed: f32,
+        streamed: &mut bool,
+        on_audio: &mut dyn FnMut(&[f32]),
+    ) -> Result<(), ChildError> {
+        self.next_id += 1;
+        let id = self.next_id.to_string();
+        let line = serde_json::json!({"id": id, "text": text, "sid": sid, "speed": speed});
+        writeln!(self.stdin, "{line}")
+            .and_then(|_| self.stdin.flush())
+            .map_err(|e| ChildError::Dead(format!("allternit-tts write: {e}")))?;
+        loop {
+            let event = read_json(&mut self.stdout).map_err(ChildError::Dead)?;
+            match event["type"].as_str() {
+                Some("chunk") => {
+                    let (kind, pcm) = read_frame(&mut self.stdout)
+                        .map_err(|e| ChildError::Dead(format!("allternit-tts read: {e}")))?;
+                    if kind != b'P' {
+                        return Err(ChildError::Dead("allternit-tts: missing PCM frame".into()));
+                    }
+                    let samples: Vec<f32> = pcm
+                        .chunks_exact(2)
+                        .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0)
+                        .collect();
+                    *streamed = true;
+                    on_audio(&samples);
+                }
+                Some("done") => return Ok(()),
+                Some("error") => {
+                    return Err(ChildError::Rejected(
+                        event["error"].as_str().unwrap_or("allternit-tts error").to_string(),
+                    ))
+                }
+                _ => return Err(ChildError::Dead(format!("allternit-tts: unexpected {event}"))),
+            }
+        }
+    }
 }
 
 pub struct TtsEngine {
     packs: Arc<PackManager>,
     threads: i32,
-    inner: Mutex<Option<Arc<OfflineTts>>>,
+    child: Mutex<Option<TtsChild>>,
 }
 
 impl TtsEngine {
@@ -127,7 +379,7 @@ impl TtsEngine {
         Self {
             packs,
             threads: inference_threads(),
-            inner: Mutex::new(None),
+            child: Mutex::new(None),
         }
     }
 
@@ -135,97 +387,62 @@ impl TtsEngine {
         self.threads
     }
 
+    /// True while an `allternit-tts` child is running with the model loaded.
     pub fn is_ready(&self) -> bool {
-        self.inner.lock().map(|g| g.is_some()).unwrap_or(false)
+        self.child.lock().map(|g| g.is_some()).unwrap_or(false)
     }
 
-    /// Download (first use) and load Kokoro. Blocking.
+    /// Download the `tts` pack (first use) and start `allternit-tts`.
+    /// Blocking.
     pub fn prepare(&self) -> Result<(), String> {
-        self.engine().map(|_| ())
+        let mut guard = self.lock_child()?;
+        self.ensure_child(&mut guard).map(|_| ())
     }
 
-    fn engine(&self) -> Result<Arc<OfflineTts>, String> {
-        let mut guard = self
-            .inner
+    fn lock_child(&self) -> Result<std::sync::MutexGuard<'_, Option<TtsChild>>, String> {
+        self.child
             .lock()
-            .map_err(|e| format!("TTS engine lock poisoned: {e}"))?;
-        if let Some(tts) = guard.as_ref() {
-            return Ok(tts.clone());
+            .map_err(|e| format!("TTS engine lock poisoned: {e}"))
+    }
+
+    fn ensure_child<'a>(
+        &self,
+        guard: &'a mut Option<TtsChild>,
+    ) -> Result<&'a mut TtsChild, String> {
+        if guard.is_none() {
+            let dir = self.packs.ensure_blocking("tts")?.join(KOKORO_DIR);
+            let bin = tts_binary().ok_or(
+                "allternit-tts not found next to allternit-voice-service (set ALLTERNIT_TTS_BIN)",
+            )?;
+            *guard = Some(TtsChild::spawn(&bin, &dir, self.threads)?);
         }
-        let dir = self.packs.ensure_blocking("small")?.join(KOKORO_DIR);
-        let file = |name: &str| -> Result<String, String> {
-            let p = dir.join(name);
-            if p.exists() {
-                Ok(p.display().to_string())
-            } else {
-                Err(format!("kokoro {name} missing in {}", dir.display()))
-            }
-        };
-        let config = OfflineTtsConfig {
-            model: OfflineTtsModelConfig {
-                kokoro: OfflineTtsKokoroModelConfig {
-                    model: Some(file("model.int8.onnx")?),
-                    voices: Some(file("voices.bin")?),
-                    tokens: Some(file("tokens.txt")?),
-                    data_dir: Some(file("espeak-ng-data")?),
-                    length_scale: 1.0,
-                    ..Default::default()
-                },
-                num_threads: self.threads,
-                provider: Some("cpu".to_string()),
-                debug: false,
-                ..Default::default()
-            },
-            max_num_sentences: 1,
-            ..Default::default()
-        };
-        let tts = OfflineTts::create(&config).ok_or("failed to create Kokoro TTS")?;
-        info!(
-            "TTS ready: kokoro-en-v0_19, {} speakers, {} Hz, {} threads",
-            tts.num_speakers(),
-            tts.sample_rate(),
-            self.threads
-        );
-        if tts.num_speakers() < VOICES.len() as i32 {
-            return Err(format!(
-                "kokoro voices.bin has {} speakers, expected {}",
-                tts.num_speakers(),
-                VOICES.len()
-            ));
-        }
-        let tts = Arc::new(tts);
-        *guard = Some(tts.clone());
-        Ok(tts)
+        Ok(guard.as_mut().expect("child just set"))
     }
 
     /// Synthesise `text` in one go. Returns (samples in -1..1, sample rate).
-    /// Blocking. For long text prefer [`split_sentences`] + one call per
-    /// sentence, so the first audio is ready early and STT can interleave.
+    /// Blocking.
     pub fn synthesize(
         &self,
         text: &str,
         voice: Option<&str>,
         speed: Option<f32>,
     ) -> Result<(Vec<f32>, u32), String> {
-        let voice_def = resolve_voice(voice)?;
-        let tts = self.engine()?;
-        let config = GenerationConfig {
-            speed: speed.unwrap_or(1.0).clamp(0.5, 2.0),
-            sid: voice_sid(voice_def),
-            ..Default::default()
-        };
-        let _guard = inference_lock();
-        let audio = tts
-            .generate_with_config(text, &config, None::<fn(&[f32], f32) -> bool>)
-            .ok_or_else(|| "Kokoro generation failed".to_string())?;
-        Ok((audio.samples().to_vec(), audio.sample_rate() as u32))
+        let mut all = Vec::new();
+        let mut rate = KOKORO_SAMPLE_RATE;
+        self.synthesize_stream(text, voice, speed, |_, _, samples, r| {
+            all.extend_from_slice(samples);
+            rate = r;
+            true
+        })?;
+        Ok((all, rate))
     }
 
-    /// Streaming synthesis: splits `text` into sentences and calls
-    /// `on_chunk(index, sentence, samples, sample_rate)` as soon as each
-    /// sentence is synthesised. Return `false` from the callback to stop
-    /// (e.g. barge-in). Blocking. Kokoro produces a sentence in one pass, so
-    /// the sentence is the natural streaming unit.
+    /// Streaming synthesis. The text is split for streaming (sentences, and
+    /// the first sentence cut at its first clause, see
+    /// [`split_for_streaming`]); `on_chunk(index, chunk_text, samples,
+    /// sample_rate)` is called for every piece of audio as soon as the
+    /// child renders it. Return `false` to stop after the current chunk
+    /// (e.g. barge-in). Blocking.
     pub fn synthesize_stream<F>(
         &self,
         text: &str,
@@ -236,14 +453,96 @@ impl TtsEngine {
     where
         F: FnMut(usize, &str, &[f32], u32) -> bool,
     {
-        for (i, sentence) in split_sentences(text).iter().enumerate() {
-            let (samples, rate) = self.synthesize(sentence, voice, speed)?;
-            if !on_chunk(i, sentence, &samples, rate) {
+        let sid = voice_sid(resolve_voice(voice)?);
+        let speed = speed.unwrap_or(1.0).clamp(0.5, 2.0);
+        let mut index = 0usize;
+        let mut keep_going = true;
+        for chunk in split_for_streaming(text) {
+            if !keep_going {
                 break;
+            }
+            // One chunk at a time under the service-wide inference lock, so
+            // TTS and STT never run their models at the same moment.
+            let _infer = inference_lock();
+            let mut guard = self.lock_child()?;
+            let mut attempt = 0;
+            loop {
+                attempt += 1;
+                let child = self.ensure_child(&mut guard)?;
+                let rate = child.sample_rate;
+                let mut streamed = false;
+                let mut on_audio = |samples: &[f32]| {
+                    if keep_going {
+                        keep_going = on_chunk(index, &chunk, samples, rate);
+                    }
+                    index += 1;
+                };
+                match child.request(&chunk, sid, speed, &mut streamed, &mut on_audio) {
+                    Ok(()) => break,
+                    Err(ChildError::Rejected(e)) => return Err(e),
+                    Err(ChildError::Dead(e)) => {
+                        warn!("allternit-tts died: {e}; restarting");
+                        *guard = None; // drop = kill + reap
+                        if streamed || attempt >= 2 {
+                            return Err(e);
+                        }
+                    }
+                }
             }
         }
         Ok(())
     }
+}
+
+/// Words allowed in the first streamed chunk.
+const FIRST_CHUNK_MAX_WORDS: usize = 8;
+
+/// Words a phrase naturally starts with; cutting just before one keeps the
+/// prosody of both halves natural.
+const BREAK_BEFORE: &[&str] = &[
+    "and", "but", "or", "so", "because", "that", "which", "who", "when", "while", "if", "to",
+    "for", "of", "in", "on", "at", "by", "with", "from", "over", "under", "after", "before",
+    "about", "into", "the", "a", "an", "your", "this", "my",
+];
+
+/// Split text for streaming TTS: sentences (see [`split_sentences`]), with
+/// the first sentence cut short so first audio arrives early. Kokoro's cost
+/// grows with the chunk, so the first chunk is: up to the first clause mark
+/// (`,` `;` `:` or a dash, at least 2 words in, within 8 words); otherwise,
+/// for a first sentence over 8 words, about half of it (3–8 words), cut
+/// before a phrase-starting word where possible.
+pub fn split_for_streaming(text: &str) -> Vec<String> {
+    let mut sentences = split_sentences(text);
+    if sentences.is_empty() {
+        return sentences;
+    }
+    let first = sentences.remove(0);
+    let words: Vec<&str> = first.split_whitespace().collect();
+    let n = words.len();
+    let mut cut = None;
+    for (i, w) in words.iter().enumerate().take(FIRST_CHUNK_MAX_WORDS) {
+        let clause_end = w.ends_with([',', ';', ':']) || w.ends_with('—') || w.ends_with('–');
+        let dash = matches!(*w, "-" | "—" | "–");
+        if i + 1 >= 2 && i + 1 < n && (clause_end || dash) {
+            cut = Some(i + 1);
+            break;
+        }
+    }
+    if cut.is_none() && n > FIRST_CHUNK_MAX_WORDS {
+        let target = (n / 2).clamp(3, 6) as i64;
+        let hi = FIRST_CHUNK_MAX_WORDS.min(n - 2);
+        cut = (3..=hi).min_by_key(|&k| {
+            let next = words[k].trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
+            let bonus = if BREAK_BEFORE.contains(&next.as_str()) { 2 } else { 0 };
+            ((k as i64 - target).abs() - bonus, k)
+        });
+    }
+    let mut out = match cut {
+        Some(k) => vec![words[..k].join(" "), words[k..].join(" ")],
+        None => vec![first],
+    };
+    out.extend(sentences);
+    out
 }
 
 /// Common abbreviations whose trailing period must not split a sentence.
@@ -325,24 +624,57 @@ mod tests {
     use super::*;
 
     #[test]
-    fn voices_cover_11_with_default_first() {
-        assert_eq!(VOICES.len(), 11);
-        assert_eq!(VOICES[0].id, DEFAULT_VOICE);
-        // sids must be the alphabetical positions matching voices.bin
-        for (i, v) in VOICES.iter().enumerate() {
-            assert_eq!(voice_sid(v), i as i32);
-        }
+    fn voices_are_the_28_english_kokoro_v1_voices() {
+        assert_eq!(VOICES.len(), 28);
+        assert_eq!(voice_sid(resolve_voice(None).unwrap()), 3); // af_heart
+        assert_eq!(VOICES[27].id, "bm_lewis");
+        let mut ids: Vec<_> = VOICES.iter().map(|v| v.id).collect();
+        ids.sort();
+        assert_eq!(ids, VOICES.iter().map(|v| v.id).collect::<Vec<_>>(), "sid order is alphabetical");
     }
 
     #[test]
     fn resolve_voice_accepts_legacy_and_rejects_unknown() {
-        assert_eq!(resolve_voice(None).unwrap().id, "af");
-        assert_eq!(resolve_voice(Some("default")).unwrap().id, "af");
-        assert_eq!(resolve_voice(Some("en-us-female")).unwrap().id, "af");
+        assert_eq!(resolve_voice(None).unwrap().id, "af_heart");
+        assert_eq!(resolve_voice(Some("default")).unwrap().id, "af_heart");
+        assert_eq!(resolve_voice(Some("af")).unwrap().id, "af_heart");
+        assert_eq!(resolve_voice(Some("en-us-female")).unwrap().id, "af_heart");
         assert_eq!(resolve_voice(Some("en-us-male")).unwrap().id, "am_adam");
         assert_eq!(resolve_voice(Some("bm_george")).unwrap().id, "bm_george");
         assert!(resolve_voice(Some("x")).is_err());
     }
+
+    #[test]
+    fn first_chunk_cut_at_first_clause() {
+        assert_eq!(
+            split_for_streaming("Thank you for calling, how can I help you today? Bye."),
+            vec!["Thank you for calling,", "how can I help you today?", "Bye."]
+        );
+    }
+
+    #[test]
+    fn long_first_sentence_cut_near_middle_before_phrase_word() {
+        assert_eq!(
+            split_for_streaming("The quick brown fox jumps over the lazy dog."),
+            vec!["The quick brown fox jumps", "over the lazy dog."]
+        );
+        let s = split_for_streaming(
+            "one two three four five six seven eight nine ten eleven twelve thirteen fourteen.",
+        );
+        assert!(s[0].split_whitespace().count() <= 8 && s[0].split_whitespace().count() >= 3);
+        assert_eq!(s.join(" ").split_whitespace().count(), 14);
+    }
+
+    #[test]
+    fn short_first_sentence_and_one_word_clause_not_cut() {
+        assert_eq!(split_for_streaming("Hello world."), vec!["Hello world."]);
+        assert_eq!(
+            split_for_streaming("Well, I think so."),
+            vec!["Well, I think so."]
+        );
+        assert!(split_for_streaming("  ").is_empty());
+    }
+
 
     #[test]
     fn split_basic_sentences() {

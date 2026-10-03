@@ -2277,6 +2277,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "allternit-tts"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sherpa-onnx",
+]
+
+[[package]]
 name = "allternit-vendor-wrappers"
 version = "0.1.0"
 dependencies = [

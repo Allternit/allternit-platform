@@ -38,6 +38,7 @@ members = [
     "services/orchestration/control-plane/allternit-agent-orchestration/workflows",
     "services/orchestration/policy-service",
     "services/voice",
+    "services/voice-tts",
     "services/workspace-service",
     "services/orchestration/control-plane/unified-registry/registry",
     "domains/agent/allternit-agent-workspace/allternit-agent-workspace",

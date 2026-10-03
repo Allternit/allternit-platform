@@ -14,7 +14,8 @@
 //! RSS reported for a model is that model's alone. Output is JSONL, default
 //! `services/voice/bench/results-<host>.jsonl`:
 //! - `{"kind":"stt", model, cond, n, wer, fin_p50_ms, fin_p95_ms, rtf, peak_rss_mb, threads}`
-//! - `{"kind":"tts", model, n, ttfa_p50_ms, ttfa_p95_ms, ttfa_max_ms, rtf, peak_rss_mb, threads}`
+//! - `{"kind":"tts", model, n, ttfa_p50_ms, ttfa_p95_ms, ttfa_max_ms, rtf, peak_rss_mb, child_peak_rss_mb, threads}`
+//!   (`child_peak_rss_mb` is the `allternit-tts` process, where Kokoro runs)
 //!
 //! Definitions:
 //! - WER: corpus WER (total edits / total reference words) after lowercase,
@@ -25,8 +26,11 @@
 //!   to the final transcript being available. Excludes the VAD's 0.3 s
 //!   end-of-speech hangover (end-of-turn detection is Phase 1b's job).
 //! - STT RTF: batch `transcribe()` wall time / audio duration.
-//! - TTS time to first audio (ttfa): wall time of synthesising the first
-//!   sentence of each of 10 fixed sentences, as `/v1/tts/stream` does.
+//! - TTS time to first audio (ttfa): for each of 10 fixed sentences, wall
+//!   time until `TtsEngine::synthesize_stream` delivers its first audio
+//!   (the first clause, rendered by the `allternit-tts` child), as
+//!   `/v1/tts/stream` does. Needs `allternit-tts` built next to the bench
+//!   (`cargo build --release -p allternit-tts`).
 //! - TTS RTF: synthesis wall time / audio duration.
 
 use std::collections::BTreeMap;
@@ -37,7 +41,7 @@ use std::time::Instant;
 use voice_service::audio::{decode_wav, resample_to_16k};
 use voice_service::models::PackManager;
 use voice_service::stt::{SttEngine, SttEvent, SttModel};
-use voice_service::tts::{split_sentences, TtsEngine};
+use voice_service::tts::TtsEngine;
 
 const TTS_SENTENCES: &[&str] = &[
     "The quick brown fox jumps over the lazy dog.",
@@ -272,34 +276,56 @@ fn bench_tts(packs: Arc<PackManager>, args: &Args) -> anyhow::Result<()> {
     let mut ttfa = Vec::new();
     let (mut proc_secs, mut audio_secs) = (0f64, 0f64);
     for text in TTS_SENTENCES {
-        let sentences = split_sentences(text);
         let t = Instant::now();
         let mut first = None;
-        for s in &sentences {
-            let (samples, rate) = engine
-                .synthesize(s, None, None)
-                .map_err(anyhow::Error::msg)?;
-            first.get_or_insert(t.elapsed().as_secs_f64() * 1000.0);
-            audio_secs += samples.len() as f64 / rate as f64;
-        }
+        engine
+            .synthesize_stream(text, None, None, |_, _, samples, rate| {
+                first.get_or_insert(t.elapsed().as_secs_f64() * 1000.0);
+                audio_secs += samples.len() as f64 / rate as f64;
+                true
+            })
+            .map_err(anyhow::Error::msg)?;
         proc_secs += t.elapsed().as_secs_f64();
         ttfa.push(first.unwrap_or(0.0));
     }
+    // Kokoro runs in the allternit-tts child: stop it (drop = kill + wait)
+    // so its peak RSS is reported through RUSAGE_CHILDREN.
+    drop(engine);
+    let child_rss = peak_rss_children_mb();
     let max = ttfa.iter().cloned().fold(0.0, f64::max);
     let row = serde_json::json!({
         "kind": "tts",
-        "model": "kokoro-int8-en-v0_19",
+        "model": "kokoro-multi-lang-v1_0 (fp32, allternit-tts)",
         "n": ttfa.len(),
         "ttfa_p50_ms": percentile(&mut ttfa, 50.0).round(),
         "ttfa_p95_ms": percentile(&mut ttfa, 95.0).round(),
         "ttfa_max_ms": max.round(),
         "rtf": round3(proc_secs / audio_secs.max(1e-9)),
         "peak_rss_mb": peak_rss_mb(),
+        "child_peak_rss_mb": child_rss,
         "threads": args.threads,
     });
     eprintln!("{row}");
     println!("{row}");
     Ok(())
+}
+
+/// Peak RSS of reaped child processes in MB (None on Windows).
+fn peak_rss_children_mb() -> Option<f64> {
+    #[cfg(unix)]
+    {
+        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+        if unsafe { libc::getrusage(libc::RUSAGE_CHILDREN, &mut usage) } != 0 {
+            return None;
+        }
+        let raw = usage.ru_maxrss as f64;
+        let bytes = if cfg!(target_os = "macos") { raw } else { raw * 1024.0 };
+        Some((bytes / 1_048_576.0).round())
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
 }
 
 fn list_wavs(dir: &Path, raw8k: bool, limit: Option<usize>) -> anyhow::Result<Vec<PathBuf>> {

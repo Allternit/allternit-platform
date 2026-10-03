@@ -42,7 +42,7 @@ pub struct Pack {
 pub const PACKS: &[Pack] = &[
     Pack {
         name: "small",
-        description: "Silero VAD + Moonshine tiny EN (quantized) + Kokoro-82M int8 EN + Smart Turn v3.2",
+        description: "Silero VAD + Moonshine tiny EN (quantized) + Smart Turn v3.2",
         files: &[
             PackFile {
                 asset: "asr-models/silero_vad.onnx",
@@ -57,12 +57,6 @@ pub const PACKS: &[Pack] = &[
                 upstream: None,
             },
             PackFile {
-                asset: "tts-models/kokoro-int8-en-v0_19.tar.bz2",
-                sha256: "c9f0dd393615805b0bab050c340834d5e684e732aec91c0e860cd30e982c08bd",
-                size: 103_248_205,
-                upstream: None,
-            },
-            PackFile {
                 // Smart Turn v3.2 end-of-turn model (BSD-2-Clause), used by
                 // the voice session layer, not by the HTTP STT/TTS routes.
                 asset: "smart-turn/smart-turn-v3.2-cpu.onnx",
@@ -73,6 +67,16 @@ pub const PACKS: &[Pack] = &[
                 ),
             },
         ],
+    },
+    Pack {
+        name: "tts",
+        description: "Kokoro-82M v1.0 fp32 (Apache-2.0), run by the allternit-tts program",
+        files: &[PackFile {
+            asset: "tts-models/kokoro-multi-lang-v1_0.tar.bz2",
+            sha256: "c5f7e2d2caf082bc1d20fb70334a61d99d20b484500aad32e7cf84c128ea3298",
+            size: 349_906_910,
+            upstream: None,
+        }],
     },
     Pack {
         name: "accurate",
@@ -93,7 +97,7 @@ pub const VAD_FILE: &str = "silero_vad.onnx";
 /// Smart Turn v3.2 end-of-turn model (plain file in the small pack dir).
 pub const SMART_TURN_FILE: &str = "smart-turn-v3.2-cpu.onnx";
 pub const MOONSHINE_DIR: &str = "sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27";
-pub const KOKORO_DIR: &str = "kokoro-int8-en-v0_19";
+pub const KOKORO_DIR: &str = "kokoro-multi-lang-v1_0";
 pub const PARAKEET_DIR: &str = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8";
 
 /// Inference threads per model (`ALLTERNIT_VOICE_THREADS`, default 2: the
@@ -634,23 +638,31 @@ mod tests {
         }
     }
 
+    fn pack_bytes(name: &str) -> u64 {
+        pack(name).unwrap().files.iter().map(|f| f.size).sum()
+    }
+
     #[test]
-    fn small_pack_download_fits_budget() {
-        // Standard: small pack <= ~150 MB on first use.
-        let small: u64 = pack("small").unwrap().files.iter().map(|f| f.size).sum();
-        assert!(small <= 150 * 1024 * 1024, "small pack is {small} bytes");
+    fn pack_downloads_fit_their_budgets() {
+        // Dictation (small) stays light; TTS is Kokoro fp32 (Eoj 2026-10-03:
+        // full-size Kokoro, budget = its actual size, ~350 MB).
+        assert!(pack_bytes("small") <= 40_000_000, "small: {}", pack_bytes("small"));
+        assert!(pack_bytes("tts") <= 350_000_000, "tts: {}", pack_bytes("tts"));
+        assert!(pack_bytes("accurate") <= 490_000_000, "accurate: {}", pack_bytes("accurate"));
     }
 
     #[tokio::test]
     async fn progress_spans_the_whole_pack() {
         let m = PackManager::with_root(tempfile::tempdir().unwrap().keep());
         let small = pack("small").unwrap();
-        // Halfway through the last file => well past half of the pack.
-        let last = &small.files[2];
-        m.set_status_downloading(last.size / 2, 0, last).await;
+        // Halfway through Moonshine (2nd file): VAD done + half of it.
+        let f = &small.files[1];
+        m.set_status_downloading(f.size / 2, 0, f).await;
         let st = m.statuses().await;
         let pct = st.iter().find(|p| p.name == "small").unwrap().pct.unwrap();
-        assert!(pct > 0.55 && pct < 0.65, "{pct}");
+        let total = pack_bytes("small") as f32;
+        let want = (small.files[0].size + f.size / 2) as f32 / total;
+        assert!((pct - want).abs() < 1e-4, "{pct} vs {want}");
     }
 
     #[test]
