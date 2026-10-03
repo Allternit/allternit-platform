@@ -88,9 +88,35 @@ const VAD_MIN_SILENCE: f32 = 0.3;
 const VAD_MIN_SPEECH: f32 = 0.25;
 const VAD_MAX_SPEECH: f32 = 20.0;
 const VAD_WINDOW: i32 = 512;
+/// Largest chunk to pass to `VoiceActivityDetector::accept_waveform`.
+pub const VAD_WINDOW_SAMPLES: usize = VAD_WINDOW as usize;
 /// Audio added before the VAD's reported onset so soft word starts are not
 /// clipped. Never reaches back past the previous segment's end.
 const PRE_ROLL: usize = 16_000 * 3 / 10;
+
+/// Silero VAD tuning. `Default` is what the HTTP routes use.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VadConfig {
+    /// Speech probability threshold (0..1).
+    pub threshold: f32,
+    /// Seconds of silence that end a segment.
+    pub min_silence: f32,
+    /// Shortest speech (seconds) that counts as a segment.
+    pub min_speech: f32,
+    /// Longest segment (seconds) before the VAD forces a split.
+    pub max_speech: f32,
+}
+
+impl Default for VadConfig {
+    fn default() -> Self {
+        Self {
+            threshold: VAD_THRESHOLD,
+            min_silence: VAD_MIN_SILENCE,
+            min_speech: VAD_MIN_SPEECH,
+            max_speech: VAD_MAX_SPEECH,
+        }
+    }
+}
 
 pub struct SttEngine {
     packs: Arc<PackManager>,
@@ -162,16 +188,25 @@ impl SttEngine {
         Ok(rec)
     }
 
-    /// A fresh Silero VAD (1 thread; the model is ~2 MB and loads in ms).
+    /// A fresh Silero VAD with the default tuning.
     pub fn new_vad(&self) -> Result<VoiceActivityDetector, String> {
+        self.new_vad_with(VadConfig::default())
+    }
+
+    /// A fresh Silero VAD (1 thread; the model is ~2 MB and loads in ms).
+    /// Downloads the small pack on first use. Feed it at most
+    /// [`VAD_WINDOW_SAMPLES`] samples per `accept_waveform` call: sherpa-onnx
+    /// dates a segment's start from the end of the chunk in which speech was
+    /// confirmed.
+    pub fn new_vad_with(&self, cfg: VadConfig) -> Result<VoiceActivityDetector, String> {
         let model = self.vad_model_path()?;
         let config = VadModelConfig {
             silero_vad: SileroVadModelConfig {
                 model: Some(model.display().to_string()),
-                threshold: VAD_THRESHOLD,
-                min_silence_duration: VAD_MIN_SILENCE,
-                min_speech_duration: VAD_MIN_SPEECH,
-                max_speech_duration: VAD_MAX_SPEECH,
+                threshold: cfg.threshold,
+                min_silence_duration: cfg.min_silence,
+                min_speech_duration: cfg.min_speech,
+                max_speech_duration: cfg.max_speech,
                 window_size: VAD_WINDOW,
             },
             sample_rate: SAMPLE_RATE,
@@ -188,6 +223,22 @@ impl SttEngine {
     pub fn decode(&self, model: SttModel, samples: &[f32]) -> Result<String, String> {
         let rec = self.recognizer(model)?;
         Ok(decode_with(&rec, model, samples))
+    }
+
+    /// Same as [`decode`](Self::decode), argument order of the old API.
+    pub fn transcribe_segment(&self, samples: &[f32], model: SttModel) -> Result<String, String> {
+        self.decode(model, samples)
+    }
+
+    /// A VAD-less streaming entry for callers that run their own VAD/turn
+    /// detection: feed the samples of one utterance, ask for partials, then
+    /// `finish()` for the final text. Blocking (loads the model on first use).
+    pub fn segment_stream(&self, model: SttModel) -> Result<SegmentStream, String> {
+        Ok(SegmentStream {
+            rec: self.recognizer(model)?,
+            model,
+            samples: Vec::new(),
+        })
     }
 
     /// Segment with the VAD, then transcribe every segment. Blocking.
@@ -317,6 +368,46 @@ fn drain_finals(
                 text,
             });
         }
+    }
+}
+
+/// Audio of one utterance, collected without a VAD (see
+/// [`SttEngine::segment_stream`]).
+pub struct SegmentStream {
+    rec: Arc<OfflineRecognizer>,
+    model: SttModel,
+    samples: Vec<f32>,
+}
+
+impl SegmentStream {
+    /// Append 16 kHz mono samples.
+    pub fn feed(&mut self, samples: &[f32]) {
+        self.samples.extend_from_slice(samples);
+    }
+
+    /// Interim transcript of everything fed so far (the last 15 s at most).
+    /// Blocking; `None` before 0.3 s of audio.
+    pub fn partial(&self) -> Option<String> {
+        if self.samples.len() < SAMPLE_RATE as usize * 3 / 10 {
+            return None;
+        }
+        let from = self.samples.len().saturating_sub(PARTIAL_MAX);
+        Some(decode_with(&self.rec, self.model, &self.samples[from..]))
+    }
+
+    /// Final transcript of the whole utterance. Blocking.
+    pub fn finish(self) -> String {
+        decode_with(&self.rec, self.model, &self.samples)
+    }
+
+    /// Seconds of audio fed so far.
+    pub fn duration_secs(&self) -> f32 {
+        self.samples.len() as f32 / SAMPLE_RATE as f32
+    }
+
+    /// Drop the audio and start a new utterance.
+    pub fn reset(&mut self) {
+        self.samples.clear();
     }
 }
 

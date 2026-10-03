@@ -24,6 +24,10 @@ pub struct PackFile {
     pub sha256: &'static str,
     /// Pinned size in bytes (progress reporting; the sha256 is the check).
     pub size: u64,
+    /// Full upstream URL, for files not hosted on the sherpa-onnx releases.
+    /// Used only while `ALLTERNIT_VOICE_MODEL_BASE` is unset; a custom base
+    /// (a mirror) serves every file at `<base>/<asset>`.
+    pub upstream: Option<&'static str>,
 }
 
 /// A named model pack.
@@ -38,22 +42,35 @@ pub struct Pack {
 pub const PACKS: &[Pack] = &[
     Pack {
         name: "small",
-        description: "Silero VAD + Moonshine tiny EN (quantized) + Kokoro-82M int8 EN",
+        description: "Silero VAD + Moonshine tiny EN (quantized) + Kokoro-82M int8 EN + Smart Turn v3.2",
         files: &[
             PackFile {
                 asset: "asr-models/silero_vad.onnx",
                 sha256: "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
                 size: 643_854,
+                upstream: None,
             },
             PackFile {
                 asset: "asr-models/sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27.tar.bz2",
                 sha256: "9ec31b342d8fa3240c3b81b8f82e1cf7e3ac467c93ca5a999b741d5887164f8d",
                 size: 29_858_559,
+                upstream: None,
             },
             PackFile {
                 asset: "tts-models/kokoro-int8-en-v0_19.tar.bz2",
                 sha256: "c9f0dd393615805b0bab050c340834d5e684e732aec91c0e860cd30e982c08bd",
                 size: 103_248_205,
+                upstream: None,
+            },
+            PackFile {
+                // Smart Turn v3.2 end-of-turn model (BSD-2-Clause), used by
+                // the voice session layer, not by the HTTP STT/TTS routes.
+                asset: "smart-turn/smart-turn-v3.2-cpu.onnx",
+                sha256: "2bb026316b14a660486a75b1733cd3fbab8c2fd0314dc9af7be49f8cca967e4f",
+                size: 8_679_182,
+                upstream: Some(
+                    "https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/f766f81d3cfdf7737ac64aad813d91bbfd56bf93/smart-turn-v3.2-cpu.onnx",
+                ),
             },
         ],
     },
@@ -64,6 +81,7 @@ pub const PACKS: &[Pack] = &[
             asset: "asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
             sha256: "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf",
             size: 487_170_055,
+            upstream: None,
         }],
     },
 ];
@@ -72,6 +90,8 @@ pub const PACKS: &[Pack] = &[
 /// Engines look for model files only inside their own component dir, so
 /// e.g. Moonshine's and Kokoro's `tokens.txt` never get mixed up.
 pub const VAD_FILE: &str = "silero_vad.onnx";
+/// Smart Turn v3.2 end-of-turn model (plain file in the small pack dir).
+pub const SMART_TURN_FILE: &str = "smart-turn-v3.2-cpu.onnx";
 pub const MOONSHINE_DIR: &str = "sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27";
 pub const KOKORO_DIR: &str = "kokoro-int8-en-v0_19";
 pub const PARAKEET_DIR: &str = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8";
@@ -138,9 +158,12 @@ impl Default for PackManager {
 }
 
 /// Download+extract manager with per-pack locking and live progress.
+/// Cloning is cheap and clones share status and locks.
+#[derive(Clone)]
 pub struct PackManager {
     root: PathBuf,
     base: String,
+    custom_base: bool,
     client: reqwest::Client,
     statuses: Arc<RwLock<BTreeMap<String, PackStatus>>>,
     locks: Arc<Mutex<BTreeMap<String, Arc<Mutex<()>>>>>,
@@ -153,13 +176,14 @@ impl PackManager {
 
     /// Manager rooted at an explicit directory (tests, bench).
     pub fn with_root(root: PathBuf) -> Self {
-        let base = std::env::var("ALLTERNIT_VOICE_MODEL_BASE")
-            .unwrap_or_else(|_| DEFAULT_BASE_URL.to_string())
-            .trim_end_matches('/')
-            .to_string();
+        let custom = std::env::var("ALLTERNIT_VOICE_MODEL_BASE")
+            .ok()
+            .map(|b| b.trim().trim_end_matches('/').to_string())
+            .filter(|b| !b.is_empty());
         Self {
             root,
-            base,
+            custom_base: custom.is_some(),
+            base: custom.unwrap_or_else(|| DEFAULT_BASE_URL.to_string()),
             client: reqwest::Client::builder()
                 .user_agent("allternit-voice-service/0.1")
                 .build()
@@ -287,7 +311,10 @@ impl PackManager {
             }
         }
 
-        let url = format!("{}/{}", self.base, file.asset);
+        let url = match file.upstream {
+            Some(full) if !self.custom_base => full.to_string(),
+            _ => format!("{}/{}", self.base, file.asset),
+        };
         let part_path = dir.join(format!("{}.part", file_name(file)));
         self.download(&url, &part_path, &final_path, dir, file)
             .await
@@ -651,11 +678,13 @@ mod tests {
         asset: "test/abc.bin",
         sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
         size: 3,
+        upstream: None,
     };
     const ABC_WRONG: PackFile = PackFile {
         asset: "test/abc.bin",
         sha256: "0000000000000000000000000000000000000000000000000000000000000000",
         size: 3,
+        upstream: None,
     };
 
     #[tokio::test]

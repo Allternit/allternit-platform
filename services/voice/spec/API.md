@@ -6,7 +6,10 @@ The Rust voice service is the only in-tree voice sidecar. STT and TTS are
 real and run on [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx):
 Silero VAD + Moonshine/Parakeet (STT) and Kokoro-82M (TTS). Models download
 on first use into `~/.allternit/models/voice/<pack>/` (sha256-verified).
-Inference uses `ALLTERNIT_VOICE_THREADS` threads (default 2), CPU provider.
+Inference uses `ALLTERNIT_VOICE_THREADS` threads (default 2), CPU provider,
+and runs one model at a time service-wide (STT segments and TTS sentences
+interleave), so voice never uses more than that many inference threads.
+Silero VAD runs on 1 thread per active request or stream.
 
 Response shapes for `/v1/stt`, `/v1/voices`, and `/v1/stt/models` are
 unchanged from the previous (whisper-era) contract; `/v1/tts` now returns
@@ -34,6 +37,9 @@ a dangling `audio_url` and was a documented bug — see
 | `language` | string | Language code (`en-US`, `en-GB`) |
 | `gender` | string | Gender tag |
 | `sample_rate` | integer | Output sample rate in Hz (24000) |
+| `label` | string | Same as `name` (field the allternit-ai voice pickers read) |
+| `engine` | string | `kokoro` |
+| `assetReady` | boolean | `true` once the `small` pack is installed |
 
 ### SttModel
 
@@ -60,7 +66,7 @@ a dangling `audio_url` and was a documented bug — see
 |-------|------|-------------|
 | `name` | string | `small` or `accurate` |
 | `state` | string | `missing` \| `downloading` \| `ready` \| `error` |
-| `pct` | number? | 0..1 download progress while `downloading` |
+| `pct` | number? | 0..1 progress across the whole pack while `downloading` |
 | `error` | string? | Error message when `state=error` |
 | `size_bytes` | integer? | On-disk size once `ready` |
 
@@ -81,7 +87,8 @@ pack states. Never triggers downloads.
   "timestamp": 1234567890000,
   "features": ["tts", "stt", "streaming"],
   "engine": "sherpa-onnx",
-  "stt_ready": false,
+  "stt_ready": false,           // Moonshine loaded
+  "stt_accurate_ready": false,  // Parakeet loaded
   "tts_ready": false,
   "num_threads": 2,
   "packs": [ /* PackStatus */ ]
@@ -93,6 +100,25 @@ pack states. Never triggers downloads.
 Model pack download states (see PackStatus). Never triggers downloads.
 
 **Response 200:** `{ "packs": [ /* PackStatus */ ] }`
+
+Packs: `small` (default, ~142 MB download: Silero VAD + Moonshine tiny EN +
+Kokoro-82M int8 EN + Smart Turn v3.2, the end-of-turn model the voice
+session layer uses; fetched from its pinned Hugging Face revision unless
+`ALLTERNIT_VOICE_MODEL_BASE` points at a mirror) and `accurate` (~487 MB: Parakeet TDT 0.6B v3 int8).
+Files are sha256-checked against hashes pinned in `src/models.rs`, downloaded
+to `<file>.part` (resumed with HTTP Range after an interruption) and only
+moved/extracted into place after the hash matches. Base URL:
+`ALLTERNIT_VOICE_MODEL_BASE` (default: the k2-fsa sherpa-onnx GitHub release
+assets). Model dir: `ALLTERNIT_VOICE_MODEL_DIR` (default
+`~/.allternit/models/voice`).
+
+### `POST /v1/models/:pack`
+
+Start downloading `small` or `accurate` in the background (idempotent; does
+nothing if installed). For a settings screen that pre-fetches packs; normal
+requests download on first use.
+
+**Response 202:** the pack's `PackStatus`. **404:** unknown pack.
 
 ### `GET /v1/voices`
 
@@ -135,7 +161,11 @@ Synthesise speech. Returns real audio bytes.
 s16le mono 24 kHz) with headers `X-Duration-Seconds`, `X-Sample-Rate`,
 `X-Format`.
 
-**Response 400:** Empty text. **503:** TTS engine unavailable.
+**Response 400:** empty text, unknown `voice`, or unsupported `format`.
+**503:** TTS engine unavailable (e.g. the model download failed). Error
+bodies are `{ "error": "..." }`.
+
+Long text is synthesised sentence by sentence and concatenated.
 
 The first request triggers the `small` pack download if not present; poll
 `GET /v1/models` for progress.
@@ -151,10 +181,14 @@ ready.
 **Response 200:** `application/x-ndjson` stream of events:
 
 ```jsonl
-{"type":"audio","index":0,"sample_rate":24000,"format":"pcm16","audio_b64":"<s16le base64>"}
-{"type":"audio","index":1,"sample_rate":24000,"format":"pcm16","audio_b64":"<...>"}
+{"type":"audio","index":0,"text":"Hello there.","sample_rate":24000,"format":"pcm16","audio_b64":"<s16le base64>"}
+{"type":"audio","index":1,"text":"How can I help?","sample_rate":24000,"format":"pcm16","audio_b64":"<...>"}
 {"type":"done","duration_secs":4.32}
 ```
+
+An unknown voice is rejected up front with 400. A failure mid-stream sends
+`{"type":"error","error":"..."}` and ends the stream. If the client
+disconnects, synthesis stops after the current sentence.
 
 `audio_b64` decodes to raw s16le mono PCM at `sample_rate`. Concatenating
 all chunks yields the full utterance (same samples as non-streaming, split
@@ -171,7 +205,13 @@ recogniser (`model` field or `moonshine` default) transcribes each.
 - `audio` (required): audio bytes
 - `language` (optional): language hint (echoed back)
 - `model` (optional): `moonshine` (default, small pack) | `parakeet`
-  (accurate pack; triggers its download on first use)
+  (accurate pack; triggers its download on first use). The ids from
+  `GET /v1/stt/models` and the pack names `small`/`accurate` also work.
+- `sample_rate` (optional): only for raw PCM uploads (no WAV header);
+  default 16000. 8 kHz phone audio works.
+
+Moonshine v2 tiny cannot decode segments longer than ~9 s, so longer VAD
+segments are split at the quietest point between 5 and 8 s before decoding.
 
 **Response 200:**
 
@@ -197,14 +237,21 @@ not emit per-word confidence.
 ### `POST /v1/stt/transcribe`
 
 Compatibility alias for `POST /v1/stt` used by allternit-ai's
-`SpeechToText.ts`: same multipart input, response is `{ "transcript": "..." }`.
+`SpeechToText.ts`: same multipart input, response is
+`{ "transcript": "...", "text": "...", "segments": [...] }`. Note that
+`SpeechToText.ts` uploads WebM/Opus, which gets 415 (no WebM decoder in the
+service); the client must send WAV or PCM.
 
 ### `POST /v1/stt/stream`
 
-Streaming STT. **Request body:** raw chunked s16le mono **16 kHz** PCM
-(`Content-Type: application/octet-stream`; `?model=moonshine|parakeet`).
-Feed audio in chunks as it is captured; responses arrive as
-`application/x-ndjson` events:
+Streaming STT over one chunked HTTP request.
+
+**Request:** body = raw s16le mono PCM, sent in chunks as it is captured
+(any `Content-Type`; the API gateway forces `application/json`, which is
+ignored). Query: `?sample_rate=` (default 16000, 4000–192000; resampled to
+16 kHz internally), `?model=moonshine|parakeet`.
+
+**Response 200:** `application/x-ndjson` events:
 
 ```jsonl
 {"type":"partial","text":"hello wor"}
@@ -212,13 +259,15 @@ Feed audio in chunks as it is captured; responses arrive as
 {"type":"done","duration_secs":6.1}
 ```
 
-- `partial`: throttled (~every 800 ms) interim transcript of the
-  in-progress speech.
-- `final`: a finished VAD segment with absolute timestamps (seconds).
-- `done`: input fully consumed (client closed the request body).
+- `partial`: interim transcript of the speech in progress, re-decoded about
+  every 0.6 s of audio while the VAD hears speech. Each replaces the last.
+- `final`: a finished speech segment (the VAD heard 0.3 s of silence), with
+  start/end in seconds from the start of the stream.
+- `done`: the client closed the request body and all audio is transcribed.
+- `error`: model download/load failed; the stream ends.
 
-One streaming STT session at a time — a concurrent request gets
-**409 Conflict**. Unknown `?model=` gets **400**.
+Several streams can run at once (each has its own VAD); inference is shared
+and serialised. **400** for an unknown `model` or bad `sample_rate`.
 
 ### `GET /v1/sessions`
 
@@ -273,8 +322,8 @@ Service metrics.
 
 ## Error Handling
 
-Error responses use standard HTTP status codes: `400` for malformed requests
-(missing audio, empty text, unknown model/voice), `404` for missing
-resources, `409` for a busy streaming STT session, `415` for unsupported
-audio containers, `503` when an engine cannot be initialised (e.g. model
-download failure).
+Errors use standard HTTP status codes with a `{ "error": "..." }` body:
+`400` for malformed requests (missing audio, empty text, unknown
+model/voice/format), `404` for missing resources, `415` for unsupported audio
+containers, `503` when an engine cannot be initialised (e.g. model download
+failure; `GET /v1/models` then shows the pack in `error` state).

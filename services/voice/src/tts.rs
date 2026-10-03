@@ -220,6 +220,30 @@ impl TtsEngine {
             .ok_or_else(|| "Kokoro generation failed".to_string())?;
         Ok((audio.samples().to_vec(), audio.sample_rate() as u32))
     }
+
+    /// Streaming synthesis: splits `text` into sentences and calls
+    /// `on_chunk(index, sentence, samples, sample_rate)` as soon as each
+    /// sentence is synthesised. Return `false` from the callback to stop
+    /// (e.g. barge-in). Blocking. Kokoro produces a sentence in one pass, so
+    /// the sentence is the natural streaming unit.
+    pub fn synthesize_stream<F>(
+        &self,
+        text: &str,
+        voice: Option<&str>,
+        speed: Option<f32>,
+        mut on_chunk: F,
+    ) -> Result<(), String>
+    where
+        F: FnMut(usize, &str, &[f32], u32) -> bool,
+    {
+        for (i, sentence) in split_sentences(text).iter().enumerate() {
+            let (samples, rate) = self.synthesize(sentence, voice, speed)?;
+            if !on_chunk(i, sentence, &samples, rate) {
+                break;
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Common abbreviations whose trailing period must not split a sentence.
