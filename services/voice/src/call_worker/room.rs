@@ -112,10 +112,11 @@ async fn handle_job(cfg: WorkerConfig, cloud: CloudClient, job: JobInfo, cancel:
     let room_name = job.room_name.clone();
     let api_host = http_base(&cfg.livekit_url);
     let rooms = RoomClient::with_api_key(&api_host, &cfg.livekit_api_key, &cfg.livekit_api_secret);
-    let sip = SIPClient::with_api_key(&api_host, &cfg.livekit_api_key, &cfg.livekit_api_secret);
+    let sip = Arc::new(SIPClient::with_api_key(&api_host, &cfg.livekit_api_key, &cfg.livekit_api_secret));
 
     let (room, mut lk_events) =
         Room::connect(&url, &job.token, RoomOptions::default()).await.context("join call room")?;
+    let room = Arc::new(room);
     tracing::info!(room = %room_name, job = %job.job_id, "joined call room");
 
     // Bot track first, so the opening plays the moment it's synthesized.
@@ -256,7 +257,7 @@ fn audio_track_of(p: &RemoteParticipant) -> Option<RemoteAudioTrack> {
 
 /// Caller audio → 16 kHz mono → the call.
 async fn read_caller_audio(track: RemoteAudioTrack, tx: mpsc::Sender<RoomInput>) {
-    let mut stream = NativeAudioStream::new(track.rtc_track(), CORE_INPUT_RATE as i32, 1, None);
+    let mut stream = NativeAudioStream::new(track.rtc_track(), CORE_INPUT_RATE as i32, 1);
     let mut resampler: Option<Resampler> = None;
     while let Some(frame) = stream.next().await {
         let mono = interleaved_to_mono(&frame.data, frame.num_channels);
@@ -308,7 +309,7 @@ async fn forward_room_events(
                 }
             }
             RoomEvent::SipDTMFReceived { code, digit, participant } => {
-                let from_caller = participant.as_ref().map_or(true, |p| p.identity().to_string() == caller);
+                let from_caller = participant.as_ref().is_none_or(|p| p.identity().to_string() == caller);
                 let d = digit.filter(|d| !d.is_empty()).or_else(|| code_to_digit(code));
                 match (from_caller, d) {
                     (true, Some(d)) => Some(RoomInput::Dtmf(d)),
@@ -335,13 +336,13 @@ fn code_to_digit(code: u32) -> Option<String> {
 /// call loop never waits on real-time pacing (barge-in stays instant), and
 /// `ClearAudio` drops both the queue and the source's internal buffer.
 async fn pump(
-    room: Room,
+    room: Arc<Room>,
     source: NativeAudioSource,
     caller: String,
     mut cmds: mpsc::Receiver<RoomCommand>,
     input: mpsc::Sender<RoomInput>,
     rooms: RoomClient,
-    sip: SIPClient,
+    sip: Arc<SIPClient>,
 ) {
     let queue: Arc<Mutex<VecDeque<Vec<i16>>>> = Arc::default();
     let wake = Arc::new(Notify::new());
