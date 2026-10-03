@@ -130,6 +130,10 @@ pub trait ChannelTransport: Send + Sync {
     fn normalize(&self, payload: &Value) -> Vec<Inbound>;
     fn identity(&self, requested: Option<&str>) -> Identity;
     async fn post(&self, out: &Outbound) -> Result<Receipt, PostError>;
+    /// Post `out.text` together with files. Platforms that take no bot attachments keep this default.
+    async fn post_files(&self, _out: &Outbound, _files: &[crate::channel_files::ChannelFile]) -> Result<Receipt, PostError> {
+        Err(PostError::Rejected("attachments_unsupported".into()))
+    }
     /// Events after `cursor` for a conversation (reconnect). Default: none.
     async fn fetch_since(&self, _channel: &str, _thread: Option<&str>, _cursor: Option<&str>) -> Result<Vec<Inbound>, String> {
         Ok(vec![])
@@ -386,6 +390,9 @@ pub struct SendReq {
     pub correlation_id: Option<String>,
     pub consequential: Option<bool>,
     pub allternit_approval_id: Option<String>,
+    /// Files to send with the message, already decoded and size-checked (`channel_files::parse`).
+    #[serde(skip)]
+    pub files: Vec<crate::channel_files::ChannelFile>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -525,11 +532,11 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
     conn.execute(
         "INSERT OR REPLACE INTO channel_message_log (id, owner, binding_id, thread_id, direction, kind, remote_id, correlation_id, state, detail_json, created_at, updated_at)
          VALUES (?1,?2,?3,?4,'outbound','message',NULL,?5,'pending',?6,?7,?7)",
-        params![id("cml"), owner, b.id, thread_id, corr, json!({ "text": text, "identity": identity.id }).to_string(), now()],
+        params![id("cml"), owner, b.id, thread_id, corr, json!({ "text": text, "identity": identity.id, "attachments": crate::channel_files::names(&req.files) }).to_string(), now()],
     )
     .map_err(|e| e.to_string())?;
     let out = Outbound { workspace: b.workspace.clone(), channel: b.channel.clone().unwrap_or_default(), thread: b.external_thread.clone(), text: text.to_string(), identity: identity.id.clone() };
-    let result = tx.post(&out).await;
+    let result = if req.files.is_empty() { tx.post(&out).await } else { tx.post_files(&out, &req.files).await };
     let set = |state: &str, remote: Option<&str>| {
         let _ = conn.execute(
             "UPDATE channel_message_log SET state = ?1, remote_id = COALESCE(?2, remote_id), updated_at = ?3 WHERE binding_id = ?4 AND direction = 'outbound' AND correlation_id = ?5",
@@ -550,7 +557,7 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
                 None,
                 "channel.message.sent",
                 ("bot", &bot_id),
-                json!({ "provider": b.provider, "bindingId": b.id, "remoteId": r.remote_id, "correlationId": corr, "text": text, "state": "confirmed", "delivery": "sent", "relayed": r.relayed, "postingIdentityId": identity.id }),
+                json!({ "provider": b.provider, "bindingId": b.id, "remoteId": r.remote_id, "correlationId": corr, "text": text, "state": "confirmed", "delivery": "sent", "relayed": r.relayed, "postingIdentityId": identity.id, "attachments": crate::channel_files::names(&req.files) }),
                 Some(format!("chan:{}:out:{corr}", b.id)),
             );
             Ok(SendOutcome::Sent { remote_id: r.remote_id, relayed: r.relayed, correlation_id: corr })
@@ -590,7 +597,7 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
 
 pub fn channel_gateway_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/gateway/threads/:thread_id/channel-send", post(channel_send_h))
+        .route("/gateway/threads/:thread_id/channel-send", post(channel_send_h).layer(axum::extract::DefaultBodyLimit::max(crate::channel_files::MAX_REQUEST_BYTES)))
         .route("/gateway/channel-accounts/:id/telegram-webhook", post(telegram_webhook_h))
         .route("/gateway/channel-accounts/telegram", post(telegram_connect_h))
         .route("/gateway/channel-accounts/telegram/managed/available", get(telegram_managed_available_h))
@@ -990,6 +997,9 @@ struct SendBody {
     correlation_id: Option<String>,
     consequential: Option<bool>,
     allternit_approval_id: Option<String>,
+    /// `{ filename, mimeType, dataBase64 }` each; see `channel_files`.
+    #[serde(default)]
+    attachments: Option<Vec<Value>>,
 }
 
 /// The transport for a thread's binding (production: real platform clients).
@@ -1004,7 +1014,11 @@ async fn channel_send_h(State(state): State<Arc<AppState>>, Extension(user): Ext
     let Some(tx) = transport_for(&state, &binding) else {
         return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": format!("{} is not configured", binding.provider), "code": "CHANNEL_OFFLINE" }))).into_response();
     };
-    let req = SendReq { text: b.text, posting_identity_id: b.posting_identity_id, correlation_id: b.correlation_id, consequential: b.consequential, allternit_approval_id: b.allternit_approval_id };
+    let files = match crate::channel_files::parse(&binding.provider, b.attachments.as_deref().unwrap_or_default()) {
+        Ok(f) => f,
+        Err(e) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": e.sentence(&binding.provider), "code": e.code().to_uppercase() }))).into_response(),
+    };
+    let req = SendReq { text: b.text, posting_identity_id: b.posting_identity_id, correlation_id: b.correlation_id, consequential: b.consequential, allternit_approval_id: b.allternit_approval_id, files };
     outcome_response(send(&state.db, tx.as_ref(), &user.user_id, &thread_id, &req).await)
 }
 

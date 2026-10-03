@@ -35,7 +35,8 @@
         "im:write",
         "assistant:write",
         "commands",
-        "users:read"
+        "users:read",
+        "files:write"
       ]
     }
   },

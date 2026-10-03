@@ -202,11 +202,23 @@ struct SendEmailExtra<'a> {
     headers: Option<&'a std::collections::HashMap<String, String>>,
     /// Deliver without human approval (admin key only).
     skip_approval: bool,
+    /// Files to attach (already size-checked by `channel_files::parse`).
+    attachments: &'a [crate::channel_files::ChannelFile],
 }
 
 /// Approval-gated outbound send, shared by the REST route and the internal MCP
 /// `allternit_mail.send` tool. Enforces agent ownership by `user_id`, records
 /// the outbound row, and returns the same JSON payload either way.
+/// [`send_email_for_user`] with files attached (a bot starting an email thread).
+pub(crate) async fn send_email_with_files(
+    state: &Arc<AppState>,
+    user_id: &str,
+    req: SendAgentEmailRequest,
+    attachments: &[crate::channel_files::ChannelFile],
+) -> Result<Value, ApiError> {
+    send_email_inner(state, user_id, req, SendEmailExtra { attachments, ..SendEmailExtra::default() }).await
+}
+
 pub(crate) async fn send_email_for_user(
     state: &Arc<AppState>,
     user_id: &str,
@@ -317,6 +329,14 @@ async fn send_email_inner(
         .map_err(internal)?;
     }
 
+    let mail_attachments: Vec<crate::mailflare_client::MailAttachment> = {
+        use base64::Engine as _;
+        extra
+            .attachments
+            .iter()
+            .map(|f| crate::mailflare_client::MailAttachment { filename: f.filename.clone(), mime: f.mime.clone(), content_base64: base64::engine::general_purpose::STANDARD.encode(&f.data) })
+            .collect()
+    };
     let send_result = client
         .send_with_options(
             &api_key,
@@ -328,6 +348,7 @@ async fn send_email_inner(
                 html: req.html.as_deref(),
                 mailbox_id: &mailbox_id,
                 headers: extra.headers,
+                attachments: &mail_attachments,
             },
             &idempotency_key,
             extra.skip_approval,
@@ -579,6 +600,7 @@ async fn send_reply_for_turn(
             reply_inbound_id: Some(inbound_id),
             headers: Some(&headers),
             skip_approval: plan == ReplyPlan::Direct,
+            ..SendEmailExtra::default()
         },
     )
     .await

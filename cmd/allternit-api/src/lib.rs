@@ -85,6 +85,8 @@ pub mod relay_auth;
 pub mod voice_calls;
 pub mod voice_turn_stream;
 pub mod channel_relay;
+pub mod channel_discord_dm;
+pub mod channel_files;
 pub mod channel_start;
 pub mod channel_teams_app;
 pub mod channel_slack_app;

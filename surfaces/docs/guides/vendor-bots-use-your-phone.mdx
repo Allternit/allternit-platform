@@ -78,7 +78,7 @@ An access token must have `aud` equal to that resource and the scope `bots:act`.
 - `send_text` is a message in the `phone:<botE164>:<to>` thread, sent by the `sms` transport to the cloud's `POST /api/v1/channels/sms/send`. The cloud enforces opt-out, consent, registration state and the daily cap (`ALLTERNIT_SMS_DAILY_CAP`).
 - `start_call` calls `POST /api/v1/phone/calls/outbound`; `403 no_consent` becomes a tool error.
 - `send_email` is `send_email_for_user`, which always queues a mailflare approval.
-- `post_message` calls the runtime's channel-start path when it is built in, and otherwise says "Starting a conversation on a channel isn't available yet."
+- `post_message` calls the runtime's channel-start path (`channel_start::VendorStarter`, registered at boot), so each platform's rules, the bot's channel policy and approvals apply. A refusal comes back as one plain sentence. See [Starting conversations](/guides/starting-conversations).
 - `ask_bot` is `agent_send` to the directing bot, so its approval flow applies.
 
 **Audit.** Every `tools/call` writes a `vendor_bot_audit` row: owner, vendor bot, directing bot, OAuth client, tool, a SHA-256 hash of the arguments (never the arguments), `ok` and a short result. Migration `V220`.
