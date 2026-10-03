@@ -187,6 +187,7 @@
 		8CB3086625EE546687479195 /* BotDesktopClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DBFFF88C78C5BA8F77511B1 /* BotDesktopClient.swift */; };
 		8E503582F336C015BACE6BFC /* LoopActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6878E4CDD256FFFAF91E6A26 /* LoopActivityAttributes.swift */; };
 		9015854D670C028EB89F1D40 /* OnDeviceChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 140469A615D1A17EB2A25A40 /* OnDeviceChatView.swift */; };
+		901F2C44D602963E7FD3C213 /* OpenChatSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24E3AA6351A169F22F41E61C /* OpenChatSessionTests.swift */; };
 		90479EDA461BD0B88CB8718E /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59F0F883C961CE5C29AD0B21 /* SettingsView.swift */; };
 		9063AB02142DA8BE2ED9C9F1 /* SafariView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7F3B173705B7F5941BDC4FE /* SafariView.swift */; };
 		90DB240D20C48C996AFF0008 /* SpeechSentenceChunker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60CDC4288E01300A67F614B4 /* SpeechSentenceChunker.swift */; };
@@ -420,6 +421,7 @@
 		22A98A22F0D4B4A2007A2BFE /* BrainCaptureSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrainCaptureSheet.swift; sourceTree = "<group>"; };
 		2379C3D1BE4210564BD1A258 /* IntelliScheduleStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntelliScheduleStore.swift; sourceTree = "<group>"; };
 		2381F311EC679E52A7820C09 /* ACIAgentClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ACIAgentClient.swift; sourceTree = "<group>"; };
+		24E3AA6351A169F22F41E61C /* OpenChatSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenChatSessionTests.swift; sourceTree = "<group>"; };
 		24F1FEA9FD4180E459C606F4 /* VoiceSessionClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSessionClient.swift; sourceTree = "<group>"; };
 		267918D8AD2CDF5412795ECE /* RoutinesClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoutinesClient.swift; sourceTree = "<group>"; };
 		27522796D66DD8598AF0E758 /* LocalVoiceBackends.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalVoiceBackends.swift; sourceTree = "<group>"; };
@@ -1017,6 +1019,7 @@
 			isa = PBXGroup;
 			children = (
 				4D3988B903632B3ADBE8074A /* LiveActivityManagerTests.swift */,
+				24E3AA6351A169F22F41E61C /* OpenChatSessionTests.swift */,
 				5BE0D69148A6704E388F4890 /* VoiceSessionProtocolTests.swift */,
 			);
 			path = Tests;
@@ -1630,6 +1633,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D3F8D1E73F813E13DAAFF1D2 /* LiveActivityManagerTests.swift in Sources */,
+				901F2C44D602963E7FD3C213 /* OpenChatSessionTests.swift in Sources */,
 				A06384AC4D74A5073384FC5A /* VoiceSessionProtocolTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
