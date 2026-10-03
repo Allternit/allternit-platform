@@ -48,6 +48,7 @@
             "pages": [
               "guides/platform-workflows",
               "guides/bot-threads",
+              "guides/phone-sms-runtime",
               "guides/project-coordination",
               "guides/bot-templates",
               "guides/whatsapp-business",

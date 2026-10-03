@@ -35,7 +35,7 @@ use crate::AppState;
 
 type HmacSha256 = Hmac<Sha256>;
 
-pub const PROVIDERS: [&str; 6] = ["slack", "teams", "discord", "whatsapp", "telegram", "whatsapp-personal"];
+pub const PROVIDERS: [&str; 7] = ["slack", "teams", "discord", "whatsapp", "telegram", "whatsapp-personal", "sms"];
 
 // ---------------------------------------------------------------- http seam
 
@@ -584,6 +584,7 @@ pub fn build_transport(provider: &str, secret: &str, http: Arc<dyn HttpSend>) ->
         "whatsapp" => Arc::new(WhatsAppTransport { http, access_token: token("accessToken"), own_identity: token("phoneNumberId") }),
         "telegram" => Arc::new(TelegramTransport { http, bot_token: token("botToken"), own_identity: token("botUsername") }),
         "whatsapp-personal" if crate::channel_whatsapp_personal::enabled() => Arc::new(crate::channel_whatsapp_personal::WhatsAppPersonalTransport::from_secret(secret, http)),
+        "sms" => Arc::new(crate::channel_phone::build_sms(http, secret)),
         _ => return None,
     })
 }
