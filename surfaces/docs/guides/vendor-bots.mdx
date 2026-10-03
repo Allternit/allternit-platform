@@ -1,0 +1,68 @@
+---
+title: Vendor bots
+description: Connect a vendor account, pick the bots it already has, and use them in threads, group chats, and messaging channels.
+---
+
+A **vendor bot** is an Allternit bot whose turns run on a vendor platform you already use, such as a Claude Project, a ChatGPT GPT, a Gemini Gem, or a local Hermes or OpenClaw agent. It keeps the vendor's look and avatar, and it works everywhere your other bots do.
+
+## Add a vendor bot
+
+In Bots, choose **Add a vendor bot…**, or open **Create bot → Bring a vendor's bot**. The vendor directory lists every vendor Allternit supports, in three groups:
+
+- **Connected:** an account is ready. Pick it to see its bots.
+- **Ready to connect:** pick it to connect an account first.
+- **Needs setup on this runtime:** this runtime doesn't have that vendor's adapter yet.
+
+Search filters by vendor or account name.
+
+## Connect an account
+
+The connection has five screens: **Choose method → Review & consent → Sign in → Pick your bots → Done**. On Desktop the left rail shows your progress and your chosen method and account. On a phone the current step appears in the header and the flow fills the screen.
+
+### Choose method
+
+Each way to connect is a card that shows what it needs and how reliable it is:
+
+- **Browser sign-in:** drives the vendor's own website on your Sessions computer, with your own subscription.
+- **Desktop app:** drives the vendor's desktop app on this computer. Allternit Desktop only.
+- **API key:** uses your own key from the vendor console. This is the official, exact path.
+- **Local runtime:** connects to an agent running on your Sessions gateway (Hermes, OpenClaw).
+- **QR pairing:** used by messaging-style vendors.
+
+### Review & consent
+
+This screen shows what Allternit will and won't do with the account, and the risks of the method you picked. Browser and desktop-app methods can conflict with a vendor's terms, can break when the vendor changes its site or app, and use your own plan's limits. You must tick **both** acknowledgements before **Connect** is enabled. Allternit never accepts consent or approves vendor requests for you.
+
+### Sign in
+
+- **Browser sign-in:** pick a login you already connected in **Settings → Subscriptions**, or sign in on the vendor's site in the live Sessions computer view. Allternit never sees your password. If the vendor shows a bot check, you finish it yourself in that view. Allternit never solves it for you.
+- **API key:** the field is a password field and clears as soon as the key is submitted.
+- **Local runtime:** shows the configured address and a **Test connection** button that reads the agent list without sending a message.
+- **QR pairing:** scan the code with the vendor's app.
+
+The checklist on this screen shows each stage (permissions, sign-in, reading bots, saving the connection) as it happens. A failed stage shows its cause and a **Retry** button. **Cancel** closes the flow without disconnecting anything.
+
+### Pick your bots
+
+Allternit asks the vendor adapter for the bots on that account. It doesn't send a chat message to do this. The list starts with the default chat, then groups such as Projects, GPTs, Gems, Agents, or Profiles, depending on the vendor. The header names the adapter that read the list and when it last checked. **Refresh** reconnects the login without sending a message, then reads the list again.
+
+If a bot is missing, pin it or open it once on the vendor, then press **Refresh**. Vendors sometimes leave out bots you haven't opened recently. If the login needs attention, the screen links to the live Sessions view to fix it.
+
+## Use vendor bots
+
+- **Threads:** start a thread with a vendor bot exactly like any other bot, from the launchpad's **To:** menu, the rail's **⋯** menu, or an @-mention in the composer.
+- **Group chats:** when you create a group, you can select vendor account bots alongside your Allternit bots. They become members when you save.
+- **Messaging channels:** in **Customize → Connectors → Messaging**, or a bot's **Messaging** settings, choose **Choose a vendor bot…**, pick one, then choose **Use bot for new chats**. If assigning it fails, **Retry assignment** reuses the bot it already created.
+- **Linked channel threads:** in a thread's **Link a channel** form, choose **A vendor account bot** as the responder.
+
+If attaching a new vendor bot fails, Allternit removes the half-made bot so you can try again cleanly.
+
+Everything here works the same on Desktop, the ai.allternit.com phone layout, and the m.allternit.com app.
+
+## For developers
+
+- **Wizard:** `ConnectionWizard` (`src/components/gateway/ConnectionWizard.tsx`) keeps the existing reducer (`src/lib/gateway/wizard.ts`) and its consent and terms transitions, and presents its twelve machine steps as five screens. `select_pack` and `method` map to Choose method; `consent` and `terms` to Review & consent; `authenticate` and `verify` to Sign in; `discover`, `pick_agents` and `binding` to Pick your bots; `create`, `health` and `ready` to Done. The wizard never creates a second account for a vendor: `pickResumableAccount` and `resumeStepFor` resume the best existing account.
+- **Discovery:** linked Sessions refresh calls the non-spending `POST /v1/accounts/:id/connect` probe and then `listAgents`; local adapters re-read their account bot discovery endpoint. Results are keyed by account, so the same external agent ID on two accounts stays distinct.
+- **Pickers:** `VendorBotsPicker` and `VendorBotChooser` are the shared pickers used by Create bot (`VendorBotStep`), `GroupChatChannelDialog`, `MessagingConnectors`/`BotMessagingToggles`, and `LinkChannelForm`.
+- **Binding:** `bindVendorAgent` (`src/lib/gateway/vendor-bot.ts`) issues `PUT …/execution-binding` plus `PATCH {state:'READY'}`, copying the chosen agent's external ID, name and avatar. If that fails, the bot is rolled back with `deleteAgent`. `createVendorBot` shares the same path.
+- **Look:** `BotAvatar`'s vendor branch (`useVendorIdentity`) and `VendorAgentAvatar` render vendor marks. Thread looks come from [vendor packs](/plugins/guides/vendor-packs).
