@@ -24,6 +24,7 @@ pub mod admin_spend_limit_routes;
 pub mod admin_workspace_routes;
 pub mod agent_execution;
 pub mod agent_operations_routes;
+pub mod agent_email_reply;
 pub mod agent_email_routes;
 pub mod agent_preferences_routes;
 pub mod agent_cloud_routes;

@@ -109,6 +109,25 @@ pub struct SendEmailRequest<'a> {
     pub html: Option<&'a str>,
     #[serde(rename = "mailboxId")]
     pub mailbox_id: &'a str,
+    /// Reply threading / auto-reply markers. mailflare only accepts the
+    /// allow-listed set (In-Reply-To, References, Auto-Submitted,
+    /// List-Unsubscribe); anything else fails the send with a 400.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headers: Option<&'a std::collections::HashMap<String, String>>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+#[derive(Debug, Serialize)]
+struct SendBody<'a> {
+    #[serde(flatten)]
+    request: &'a SendEmailRequest<'a>,
+    /// Admin-scope keys only: deliver this one message without the approval
+    /// gate. mailflare ignores it for mailbox-scoped keys.
+    #[serde(skip_serializing_if = "is_false")]
+    skip_approval: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -343,12 +362,30 @@ impl MailflareClient {
         request: &SendEmailRequest<'_>,
         idempotency_key: &str,
     ) -> Result<SendEmailResponse, MailflareError> {
+        self.send_with_options(api_key, request, idempotency_key, false)
+            .await
+    }
+
+    /// Like [`send`], with the admin-only approval bypass. Only allternit-api's
+    /// admin key may set `skip_approval`; mailflare ignores the flag for
+    /// mailbox-scoped keys, so a wrong key here degrades to approval-gated.
+    pub async fn send_with_options(
+        &self,
+        api_key: &str,
+        request: &SendEmailRequest<'_>,
+        idempotency_key: &str,
+        skip_approval: bool,
+    ) -> Result<SendEmailResponse, MailflareError> {
+        let body = SendBody {
+            request,
+            skip_approval,
+        };
         let response = Self::check(
             self.http
                 .post(self.url("/api/v1/send"))
                 .bearer_auth(api_key)
                 .header("Idempotency-Key", idempotency_key)
-                .json(request)
+                .json(&body)
                 .send()
                 .await
                 .map_err(|e| MailflareError {

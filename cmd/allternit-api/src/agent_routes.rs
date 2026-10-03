@@ -751,15 +751,19 @@ fn persist_agent_identity_channels(
         "INSERT INTO agent_identity_channels (
             id, agent_id, user_id,
             email_address, email_provider, email_send_enabled, email_receive_enabled,
+            email_reply_mode, email_reply_allowlist, email_reply_enabled,
             phone_number, phone_provider, phone_voice_enabled, phone_sms_enabled,
             wallet_address, wallet_provider, wallet_chain_id, wallet_allowed_methods,
             updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, CURRENT_TIMESTAMP)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, CURRENT_TIMESTAMP)
         ON CONFLICT(agent_id) DO UPDATE SET
             email_address = COALESCE(excluded.email_address, email_address),
             email_provider = COALESCE(excluded.email_provider, email_provider),
             email_send_enabled = COALESCE(excluded.email_send_enabled, email_send_enabled),
             email_receive_enabled = COALESCE(excluded.email_receive_enabled, email_receive_enabled),
+            email_reply_mode = COALESCE(excluded.email_reply_mode, email_reply_mode),
+            email_reply_allowlist = COALESCE(excluded.email_reply_allowlist, email_reply_allowlist),
+            email_reply_enabled = COALESCE(excluded.email_reply_enabled, email_reply_enabled),
             phone_number = COALESCE(excluded.phone_number, phone_number),
             phone_provider = COALESCE(excluded.phone_provider, phone_provider),
             phone_voice_enabled = COALESCE(excluded.phone_voice_enabled, phone_voice_enabled),
@@ -777,6 +781,18 @@ fn persist_agent_identity_channels(
             email.and_then(|v| as_str(v.get("provider"))).or(Some("custom".to_string())),
             email.and_then(|v| v.get("sendEnabled").and_then(|x| x.as_bool())).unwrap_or(false) as i32,
             email.and_then(|v| v.get("receiveEnabled").and_then(|x| x.as_bool())).unwrap_or(false) as i32,
+            // Bot email reply policy (bot email that replies). Omitted fields
+            // keep their value; an empty allowlist array clears it. Mode strings
+            // outside the known set are ignored rather than persisted.
+            email
+                .and_then(|v| as_str(v.get("replyMode")))
+                .filter(|m| crate::agent_email_reply::ReplyMode::parse(m).is_some()),
+            email.and_then(|v| {
+                v.get("replyAllowlist")
+                    .and_then(|a| a.as_array())
+                    .map(|arr| serde_json::to_string(&arr.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>()).unwrap_or_default())
+            }),
+            email.and_then(|v| v.get("replyEnabled").and_then(|x| x.as_bool())).map(|b| b as i32),
             phone.and_then(|v| as_str(v.get("number"))),
             phone.and_then(|v| as_str(v.get("provider"))).or(Some("vapi".to_string())),
             phone.and_then(|v| v.get("voiceEnabled").and_then(|x| x.as_bool())).unwrap_or(false) as i32,

@@ -18,6 +18,8 @@ export type TransportMessage = {
 	subject: string;
 	html?: string;
 	text?: string;
+	/** Custom headers already restricted to the send allow-list. */
+	headers?: Record<string, string>;
 	attachments: AttachmentContent[];
 };
 
@@ -52,6 +54,7 @@ async function deliverViaCloudflare(
 		subject: message.subject,
 		html: message.html,
 		text: message.text,
+		...(message.headers && Object.keys(message.headers).length > 0 ? { headers: message.headers } : {}),
 		attachments: message.attachments.map((attachment) =>
 			attachment.disposition === "inline" && attachment.contentId
 				? {
@@ -83,6 +86,7 @@ type ResendEmailBody = {
 	subject: string;
 	html?: string;
 	text?: string;
+	headers?: Record<string, string>;
 	attachments?: ResendAttachment[];
 };
 
@@ -109,6 +113,9 @@ async function deliverViaResend(
 		html: message.html,
 		text: message.text,
 	};
+	if (message.headers && Object.keys(message.headers).length > 0) {
+		body.headers = message.headers;
+	}
 
 	if (message.attachments.length > 0) {
 		body.attachments = await Promise.all(

@@ -62,6 +62,8 @@ pub fn target_path(provider: &str) -> Option<&'static str> {
         "teams" => Some("/webhooks/channels/teams"),
         "discord" => Some("/webhooks/channels/discord"),
         "sms" => Some("/webhooks/channels/sms"),
+        // Bot email: the platform's mailflare webhook, HMAC-verified by the runtime.
+        "email" => Some("/api/v1/agent-email/inbound"),
         _ => None,
     }
 }
@@ -83,6 +85,9 @@ pub fn channel_headers(headers: &HeaderMap) -> HashMap<String, String> {
         "telnyx-timestamp",
         // Teams: the Bot Framework JWT or the outgoing-webhook HMAC.
         "authorization",
+        // Email: mailflare's HMAC of the webhook body (same name the runtime's
+        // verify_mailflare_signature checks).
+        "x-email-platform-signature",
     ];
     headers
         .iter()
@@ -330,6 +335,7 @@ fn channel_header_names() -> &'static [&'static str] {
         "x-hub-signature-256",
         "x-signature-ed25519",
         "x-signature-timestamp",
+        "x-email-platform-signature",
     ]
 }
 
@@ -563,6 +569,7 @@ mod tests {
         assert_eq!(target_path("slack"), Some("/webhooks/slack/events"));
         assert_eq!(target_path("telegram"), Some("/webhooks/channels/telegram"));
         assert_eq!(target_path("sms"), Some("/webhooks/channels/sms"));
+        assert_eq!(target_path("email"), Some("/api/v1/agent-email/inbound"));
         assert_eq!(target_path("photon"), None);
         assert_eq!(relay_path("whatsapp", "hub.mode=subscribe"), Some("/webhooks/channels/whatsapp?hub.mode=subscribe".into()));
     }
@@ -571,12 +578,14 @@ mod tests {
     fn keeps_only_signature_headers() {
         let mut h = HeaderMap::new();
         h.insert("X-Telegram-Bot-Api-Secret-Token", HeaderValue::from_static("s"));
+        h.insert("X-Email-Platform-Signature", HeaderValue::from_static("sig"));
         h.insert("content-type", HeaderValue::from_static("application/json"));
         h.insert("cookie", HeaderValue::from_static("nope"));
         h.insert("x-allternit-channel-queued-at", HeaderValue::from_static("1"));
         let kept = channel_headers(&h);
-        assert_eq!(kept.len(), 2);
+        assert_eq!(kept.len(), 3);
         assert_eq!(kept.get("x-telegram-bot-api-secret-token").map(String::as_str), Some("s"));
+        assert_eq!(kept.get("x-email-platform-signature").map(String::as_str), Some("sig"));
         assert!(!kept.contains_key(QUEUED_AT_HEADER), "a public caller can't claim a queue time");
     }
 

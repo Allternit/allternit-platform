@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
+    "test": "node --test src/lib/email/custom-headers.test.ts",
     "deploy": "opennextjs-cloudflare build && npm run deploy:worker",
     "deploy:worker": "OPEN_NEXT_DEPLOY=true wrangler deploy",
     "deploy:with-migrations": "npm run db:migrate:remote && npm run deploy",

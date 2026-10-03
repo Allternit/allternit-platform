@@ -130,7 +130,20 @@ export async function processInboundMessage(
 			subject: parsed.subject,
 			messageId: parsed.messageId,
 			date: parsed.date ? parsed.date.toISOString() : null,
+			references: parsed.references,
+			inReplyTo: parsed.inReplyTo,
+			replyTo: parsed.replyTo,
+			precedence: parsed.precedence,
+			autoSubmitted: parsed.autoSubmitted,
+			listId: parsed.listId,
+			listUnsubscribe: parsed.listUnsubscribe,
+			xAutoreply: parsed.xAutoreply,
+			xAutorespond: parsed.xAutorespond,
+			xAutoResponseSuppress: parsed.xAutoResponseSuppress,
 		},
+		// SPF/DKIM/DMARC verdicts from the receiving platform; bots must not
+		// reply to a forged sender, so consumers can gate on dmarc=fail.
+		authResults: parsed.authenticationResults,
 	});
 }
 
