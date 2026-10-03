@@ -349,6 +349,12 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Discord shared app: install/send/commands check the Clerk session; the OAuth
         // callback and interactions are public (state / Ed25519 signature).
         .merge(routes::discord_app::routes())
+        // Telegram Managed Bots onboarding: management routes verify the
+        // Clerk session per-request (like channel-inbound); the manager bot
+        // webhook gates itself on its path secret + Telegram's secret_token
+        // echo, and every route 503s telegram_managed_not_configured when the
+        // manager bot env is unset.
+        .merge(routes::channel_onboarding::routes())
         // These handlers verify Clerk or billing credentials themselves. They
         // must not pass through the legacy allternit_* API-token middleware.
         .merge(routes::hosted_runtimes::routes())

@@ -33,6 +33,7 @@ pub mod me_usage;
 pub mod mesh;
 pub mod channel_inbound;
 pub mod phone;
+pub mod channel_onboarding;
 pub mod paired_computers;
 pub mod mirror;
 pub mod model_router;

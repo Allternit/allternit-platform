@@ -593,9 +593,19 @@ pub fn channel_gateway_router() -> Router<Arc<AppState>> {
         .route("/gateway/threads/:thread_id/channel-send", post(channel_send_h))
         .route("/gateway/channel-accounts/:id/telegram-webhook", post(telegram_webhook_h))
         .route("/gateway/channel-accounts/telegram", post(telegram_connect_h))
+        .route("/gateway/channel-accounts/telegram/managed/available", get(telegram_managed_available_h))
         .route("/gateway/channel-accounts/:id/conversations", get(conversations_h))
         .route("/gateway/bots/:bot_id/channels", get(bot_channels_h))
         .route("/gateway/bots/:bot_id/channels/:account_id", put(set_bot_channel_h))
+}
+
+/// The managed onboarding token delivery. Merged on the PUBLIC router (not
+/// behind the Clerk middleware): cloud-api reaches it through the runtime
+/// relay, and the handler authenticates the cloud's data-plane JWT itself —
+/// nothing else (no Clerk session, no device token) can present one.
+pub fn telegram_managed_public_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/api/v1/gateway/channel-accounts/telegram/managed", post(telegram_managed_connect_h))
 }
 
 // ---------------------------------------------------------------- messaging connectors
@@ -741,18 +751,35 @@ async fn telegram_connect_h(State(state): State<Arc<AppState>>, Extension(user):
 }
 
 pub(crate) async fn telegram_connect(state: &Arc<AppState>, owner: &str, b: TelegramConnectBody, http: &dyn crate::channel_transports::HttpSend) -> Response {
-    let token = b.bot_token.trim().to_string();
+    match telegram_connect_account(state, owner, &b.bot_token, b.display_name, http).await {
+        Ok(account) => Json(json!({ "account": account })).into_response(),
+        Err(response) => response,
+    }
+}
+
+/// The account upsert behind both the paste-a-token form and the managed
+/// onboarding delivery: validate the token with Telegram, seal it, and insert
+/// or replace the owner's telegram connection. Returns the account JSON (or
+/// the error response to hand back unchanged).
+pub(crate) async fn telegram_connect_account(
+    state: &Arc<AppState>,
+    owner: &str,
+    bot_token: &str,
+    display_name: Option<String>,
+    http: &dyn crate::channel_transports::HttpSend,
+) -> Result<Value, Response> {
+    let token = bot_token.trim().to_string();
     if token.is_empty() || token.contains('/') || token.chars().any(char::is_whitespace) {
-        return api_err(StatusCode::BAD_REQUEST, "Paste the bot token from @BotFather (it looks like 123456:ABC-DEF…).");
+        return Err(api_err(StatusCode::BAD_REQUEST, "Paste the bot token from @BotFather (it looks like 123456:ABC-DEF…)."));
     }
     let me = match http.get_json(&format!("https://api.telegram.org/bot{token}/getMe")).await {
         Ok(r) if r.status == 200 && r.body["ok"].as_bool() == Some(true) => r.body["result"].clone(),
-        Ok(_) => return api_err(StatusCode::BAD_REQUEST, "Telegram didn't accept that token. Copy it again from @BotFather."),
-        Err(e) => return api_err(StatusCode::BAD_GATEWAY, format!("Couldn't reach Telegram: {e}")),
+        Ok(_) => return Err(api_err(StatusCode::BAD_REQUEST, "Telegram didn't accept that token. Copy it again from @BotFather.")),
+        Err(e) => return Err(api_err(StatusCode::BAD_GATEWAY, format!("Couldn't reach Telegram: {e}"))),
     };
     let username = me["username"].as_str().unwrap_or_default().to_string();
-    let name = b.display_name.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).or_else(|| me["first_name"].as_str().map(str::to_string)).unwrap_or_else(|| format!("@{username}"));
-    let Ok(conn) = state.db.connect() else { return api_err(StatusCode::SERVICE_UNAVAILABLE, "database unavailable") };
+    let name = display_name.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).or_else(|| me["first_name"].as_str().map(str::to_string)).unwrap_or_else(|| format!("@{username}"));
+    let Ok(conn) = state.db.connect() else { return Err(api_err(StatusCode::SERVICE_UNAVAILABLE, "database unavailable")) };
     let existing: Option<(String, String)> = conn
         .query_row(
             "SELECT id, secret_ref FROM provider_account_bindings WHERE owner = ?1 AND vendor = 'telegram' AND auth_type = 'channel_oauth' AND external_account_id = ?2 ORDER BY created_at LIMIT 1",
@@ -767,7 +794,7 @@ pub(crate) async fn telegram_connect(state: &Arc<AppState>, owner: &str, b: Tele
     let webhook_secret = prior_secret.unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
     let keys = json!({ "botToken": token, "botUsername": username, "webhookSecret": webhook_secret }).to_string();
     let Some(sealed) = crate::agent_gateway_routes::seal_strict(&keys) else {
-        return api_err(StatusCode::SERVICE_UNAVAILABLE, "no encryption key is configured; the token was not stored");
+        return Err(api_err(StatusCode::SERVICE_UNAVAILABLE, "no encryption key is configured; the token was not stored"));
     };
     let t = now();
     let res = match &existing {
@@ -788,9 +815,108 @@ pub(crate) async fn telegram_connect(state: &Arc<AppState>, owner: &str, b: Tele
         }
     };
     match res {
-        Ok(aid) => Json(json!({ "account": { "id": aid, "vendor": "telegram", "displayName": name, "handle": username, "state": "CONNECTED", "replaced": existing.is_some() } })).into_response(),
-        Err(e) => api_err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        Ok(aid) => Ok(json!({ "id": aid, "vendor": "telegram", "displayName": name, "handle": username, "state": "CONNECTED", "replaced": existing.is_some() })),
+        Err(e) => Err(api_err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
     }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ManagedConnectBody {
+    pub(crate) bot_token: String,
+    pub(crate) allternit_bot_id: String,
+    pub(crate) pair_nonce: String,
+    pub(crate) onboarding_id: String,
+}
+
+/// Managed Bots onboarding delivery: cloud-api ran the manager-bot wizard,
+/// fetched the child bot's token with `getManagedBotToken`, and relays it
+/// here signed as the owner with a short-lived data-plane JWT. This handler
+/// accepts ONLY that JWT — no Clerk session, no runtime-device token — so
+/// the child token lands on the owner's runtime exclusively through the
+/// relay's authenticated path. The pairing nonce is sealed into the account
+/// row and consumed by the first `/start <nonce>` on the child bot
+/// ([`crate::channel_transports::pair_telegram_start]).
+async fn telegram_managed_connect_h(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(b): Json<ManagedConnectBody>,
+) -> Response {
+    let Some(token) = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .filter(|t| !t.starts_with("at-") && !t.starts_with("allternit_"))
+    else {
+        return api_err(StatusCode::UNAUTHORIZED, "data-plane token required");
+    };
+    let Some(claims) = state.dp_jwks.authenticate(token).await else {
+        return api_err(StatusCode::UNAUTHORIZED, "invalid data-plane token");
+    };
+    let user = AuthUser {
+        user_id: claims.sub,
+        email: None,
+        name: None,
+        avatar_url: None,
+        tenant_id: None,
+        organization_id: None,
+        organization_role: None,
+        organization_slug: None,
+    };
+    if let Err(e) = crate::auth::ensure_user_in_db(&state.db, &user) {
+        return e.into_response();
+    }
+    telegram_managed_connect(&state, &user.user_id, b, &crate::channel_transports::ReqwestSend).await
+}
+
+/// The body of the delivery once the caller is authenticated (the http seam
+/// keeps tests off api.telegram.org).
+pub(crate) async fn telegram_managed_connect(
+    state: &Arc<AppState>,
+    owner: &str,
+    b: ManagedConnectBody,
+    http: &dyn crate::channel_transports::HttpSend,
+) -> Response {
+    if b.allternit_bot_id.trim().is_empty() || b.pair_nonce.trim().is_empty() {
+        return api_err(StatusCode::BAD_REQUEST, "allternitBotId and pairNonce are required");
+    }
+    let account = match telegram_connect_account(state, owner, &b.bot_token, None, http).await {
+        Ok(account) => account,
+        Err(response) => return response,
+    };
+    let account_id = account["id"].as_str().unwrap_or_default().to_string();
+    let Ok(conn) = state.db.connect() else { return api_err(StatusCode::SERVICE_UNAVAILABLE, "database unavailable") };
+    if let Err(e) = conn.execute(
+        "UPDATE provider_account_bindings SET pair_nonce = ?2, pair_onboarding_id = ?3, updated_at = ?4 WHERE id = ?1 AND owner = ?5",
+        params![account_id, b.pair_nonce, b.onboarding_id, now(), owner],
+    ) {
+        return api_err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
+    }
+    // The wizard picked which Allternit bot answers this Telegram account:
+    // switch it on and make it the default.
+    match set_bot_channel(&conn, owner, &b.allternit_bot_id, &account_id, true, true) {
+        Ok(_) => Json(json!({ "ok": true, "account": account })).into_response(),
+        Err((status, msg)) => api_err(status, msg),
+    }
+}
+
+/// Whether cloud-api offers managed Telegram onboarding, proxied so the UI
+/// can offer "open Telegram" vs "paste a token". Any failure — no cloud
+/// configured, unreachable, non-2xx — reads as unavailable.
+async fn telegram_managed_available_h(State(state): State<Arc<AppState>>) -> Response {
+    let available = match state.config.cloud_api_url() {
+        Some(base) => {
+            let url = format!("{}/api/v1/channel-onboarding/telegram/available", base.trim_end_matches('/'));
+            match reqwest::Client::new().get(&url).timeout(std::time::Duration::from_secs(5)).send().await {
+                Ok(response) if response.status().is_success() => {
+                    response.json::<Value>().await.ok().and_then(|v| v["available"].as_bool()).unwrap_or(false)
+                }
+                _ => false,
+            }
+        }
+        None => false,
+    };
+    Json(json!({ "available": available })).into_response()
 }
 
 /// Conversations seen on a connection, newest first: "Link a channel" picks
@@ -1390,5 +1516,254 @@ mod tests {
         let b = bound(&st, &f);
         st.db.connect().unwrap().execute("UPDATE channel_conversation_bindings SET read_only=1 WHERE id=?1", params![b.id]).unwrap();
         assert_eq!(send(&st.db, &f, "user-a", "th-1", &req).await.unwrap(), SendOutcome::ReadOnly);
+    }
+
+    // ---- Telegram Managed Bots onboarding (phase 1 backend)
+
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    use ed25519_dalek::{Signature, Signer, SigningKey};
+    use sha2::Digest as _;
+    use tower::ServiceExt as _;
+
+    /// Answers every HTTP call with a canned body — the managed delivery only
+    /// makes the getMe confirmation call through this seam.
+    struct JsonHttp(crate::channel_transports::HttpResp);
+
+    #[async_trait]
+    impl crate::channel_transports::HttpSend for JsonHttp {
+        async fn post_json(&self, _req: crate::channel_transports::HttpReq) -> Result<crate::channel_transports::HttpResp, String> {
+            Ok(self.0.clone())
+        }
+        async fn get_json(&self, _url: &str) -> Result<crate::channel_transports::HttpResp, String> {
+            Ok(self.0.clone())
+        }
+    }
+
+    fn telegram_me_http() -> JsonHttp {
+        JsonHttp(crate::channel_transports::HttpResp {
+            status: 200,
+            body: json!({ "ok": true, "result": { "id": 555123, "is_bot": true, "first_name": "Acme Support", "username": "acme_support_bot" } }),
+        })
+    }
+
+    /// Stands in for cloud-api's `GET /api/v1/auth/dp-jwks`.
+    struct DpJwksServer {
+        url: String,
+    }
+
+    fn dp_kid(signing: &SigningKey) -> String {
+        URL_SAFE_NO_PAD.encode(sha2::Sha256::digest(signing.verifying_key().to_bytes()))
+    }
+
+    fn dp_jwks_server(signing: &SigningKey) -> DpJwksServer {
+        let body = json!({
+            "keys": [{
+                "kty": "OKP",
+                "use": "sig",
+                "alg": "EdDSA",
+                "crv": "Ed25519",
+                "kid": dp_kid(signing),
+                "x": URL_SAFE_NO_PAD.encode(signing.verifying_key().to_bytes()),
+            }],
+        })
+        .to_string();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let app = axum::Router::new().route(
+                "/api/v1/auth/dp-jwks",
+                axum::routing::get(move || {
+                    let body = body.clone();
+                    async move { axum::Json(serde_json::from_str::<Value>(&body).unwrap()) }
+                }),
+            );
+            let _ = axum::serve(listener, app).await;
+        });
+        DpJwksServer { url }
+    }
+
+    /// Mint a data-plane JWT the way allternit-cloud-api does.
+    fn dp_mint(signing: &SigningKey, user_id: &str) -> String {
+        let header = URL_SAFE_NO_PAD.encode(
+            serde_json::to_string(&json!({ "alg": "EdDSA", "typ": "JWT", "kid": dp_kid(signing) })).unwrap(),
+        );
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let payload = URL_SAFE_NO_PAD.encode(
+            serde_json::to_string(&crate::auth_dp_jwt::DataPlaneClaims {
+                iss: "allternit-cloud-api".into(),
+                sub: user_id.into(),
+                aud: "rt_node_1".into(),
+                iat: now,
+                nbf: now,
+                exp: now + 600,
+                scope: "runtime:execute".into(),
+                jti: uuid::Uuid::new_v4().to_string(),
+            })
+            .unwrap(),
+        );
+        let signature: Signature = signing.sign(format!("{header}.{payload}").as_bytes());
+        format!("{header}.{payload}.{}", URL_SAFE_NO_PAD.encode(signature.to_bytes()))
+    }
+
+    async fn managed_state(tag: &str, server: &DpJwksServer) -> Arc<AppState> {
+        let dir = std::env::temp_dir().join(format!("allternit-chan-{tag}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let base = crate::test_helpers::app_state(&dir).await;
+        let base = Arc::into_inner(base).expect("fresh app_state has one owner");
+        Arc::new(AppState {
+            dp_jwks: crate::auth_dp_jwt::DataPlaneJwks::new(
+                format!("{}/api/v1/auth/dp-jwks", server.url),
+                "allternit-cloud-api".into(),
+                None,
+            ),
+            ..base
+        })
+    }
+
+    #[tokio::test]
+    async fn managed_delivery_connects_the_account_and_switches_the_bot_on() {
+        let signing = SigningKey::from_bytes(&[7u8; 32]);
+        let server = dp_jwks_server(&signing);
+        let st = managed_state("managed", &server).await;
+        st.db.connect().unwrap().execute(
+            "INSERT INTO agents (id, user_id, name, model, provider, is_bot, config) VALUES ('bot-1','user_123','assistant','m','p',1,'{}')",
+            [],
+        ).unwrap();
+
+        let response = telegram_managed_connect(
+            &st,
+            "user_123",
+            ManagedConnectBody {
+                bot_token: "555123:AAHchild".into(),
+                allternit_bot_id: "bot-1".into(),
+                pair_nonce: "nonce-1".into(),
+                onboarding_id: "onb-9".into(),
+            },
+            &telegram_me_http(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body();
+        let bytes = http_body_util::BodyExt::collect(body).await.unwrap().to_bytes();
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["ok"], true);
+        assert_eq!(body["account"]["handle"], "acme_support_bot");
+
+        let c = st.db.connect().unwrap();
+        let (aid, nonce, onboarding, state): (String, String, String, String) = c
+            .query_row(
+                "SELECT id, COALESCE(pair_nonce,''), COALESCE(pair_onboarding_id,''), state FROM provider_account_bindings WHERE owner='user_123' AND vendor='telegram'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert!(!aid.is_empty());
+        assert_eq!((nonce.as_str(), onboarding.as_str(), state.as_str()), ("nonce-1", "onb-9", "CONNECTED"));
+        let (bot, is_default): (String, i64) = c
+            .query_row("SELECT bot_id, is_default FROM channel_account_bots WHERE account_id=?1", params![aid], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!((bot.as_str(), is_default), ("bot-1", 1), "the wizard's bot is the default on the new connection");
+    }
+
+    #[tokio::test]
+    async fn managed_delivery_requires_the_callers_bot() {
+        let signing = SigningKey::from_bytes(&[7u8; 32]);
+        let server = dp_jwks_server(&signing);
+        let st = managed_state("managed-other", &server).await;
+        // bot-1 belongs to someone else — the delivery must not switch it on.
+        st.db.connect().unwrap().execute(
+            "INSERT INTO agents (id, user_id, name, model, provider, is_bot, config) VALUES ('bot-1','someone-else','assistant','m','p',1,'{}')",
+            [],
+        ).unwrap();
+        let response = telegram_managed_connect(
+            &st,
+            "user_123",
+            ManagedConnectBody {
+                bot_token: "555123:AAHchild".into(),
+                allternit_bot_id: "bot-1".into(),
+                pair_nonce: "nonce-1".into(),
+                onboarding_id: "onb-9".into(),
+            },
+            &telegram_me_http(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let n: i64 = st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM channel_account_bots", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[tokio::test]
+    async fn managed_public_route_accepts_only_valid_dp_jwts() {
+        let signing = SigningKey::from_bytes(&[7u8; 32]);
+        let server = dp_jwks_server(&signing);
+        let st = managed_state("managed-auth", &server).await;
+        let app = telegram_managed_public_router().with_state(st);
+        let body = r#"{"botToken":"555123:AAHchild","allternitBotId":"bot-1","pairNonce":"nonce-1","onboardingId":"onb-9"}"#;
+
+        let send = |authz: Option<String>| {
+            let app = app.clone();
+            let body = body.to_string();
+            async move {
+                let mut builder = axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/gateway/channel-accounts/telegram/managed")
+                    .header("content-type", "application/json");
+                if let Some(authz) = authz {
+                    builder = builder.header("authorization", authz);
+                }
+                app.oneshot(builder.body(axum::body::Body::from(body)).unwrap()).await.unwrap()
+            }
+        };
+
+        // No header / garbage / a Clerk-shaped prefix: all refused before any
+        // Telegram or DB work.
+        assert_eq!(send(None).await.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(send(Some("Bearer garbage".into())).await.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(send(Some("Bearer at-clerk-token".into())).await.status(), StatusCode::UNAUTHORIZED);
+        // Signed by an unknown key: refused.
+        let other = SigningKey::from_bytes(&[9u8; 32]);
+        assert_eq!(send(Some(format!("Bearer {}", dp_mint(&other, "user_123")))).await.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn managed_public_route_authenticates_before_touching_telegram() {
+        let signing = SigningKey::from_bytes(&[7u8; 32]);
+        let server = dp_jwks_server(&signing);
+        let st = managed_state("managed-relay", &server).await;
+        st.db.connect().unwrap().execute(
+            "INSERT INTO agents (id, user_id, name, model, provider, is_bot, config) VALUES ('bot-1','user_123','assistant','m','p',1,'{}')",
+            [],
+        ).unwrap();
+        let app = telegram_managed_public_router().with_state(st);
+        let token = dp_mint(&signing, "user_123");
+        // A syntactically invalid token fails validation BEFORE any Telegram
+        // call, so this route-level test stays offline; combined with the
+        // JsonHttp test above it pins the whole chain: route → DP-JWT auth →
+        // user provisioning → account connect.
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/gateway/channel-accounts/telegram/managed")
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(axum::body::Body::from(
+                        r#"{"botToken":"not a token","allternitBotId":"bot-1","pairNonce":"nonce-1","onboardingId":"onb-9"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "authenticated, then refused the malformed token offline");
+    }
+
+    #[tokio::test]
+    async fn managed_available_is_false_without_a_configured_cloud() {
+        let st = setup("avail").await;
+        let response = telegram_managed_available_h(State(st)).await;
+        let bytes = http_body_util::BodyExt::collect(response.into_body()).await.unwrap().to_bytes();
+        assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), json!({ "available": false }));
     }
 }

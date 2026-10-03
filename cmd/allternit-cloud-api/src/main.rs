@@ -321,6 +321,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Discord shared app gateway (a no-op until the ALLTERNIT_DISCORD_* env is set).
     allternit_cloud_api::routes::discord_app::start_discord_gateway(state.clone());
 
+    // Telegram manager bot: point it at /channels/telegram-manager/<secret>
+    // (no-op when ALLTERNIT_TELEGRAM_MANAGER_BOT_TOKEN is unset).
+    allternit_cloud_api::routes::channel_onboarding::start_telegram_manager_onboarding();
+
     // Start stale gizzi-instance garbage collection (startup sweep + hourly)
     allternit_cloud_api::routes::gizzi_instances::start_gizzi_instance_gc_task(state.db.clone());
 
