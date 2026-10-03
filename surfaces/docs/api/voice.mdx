@@ -9,8 +9,8 @@ The Voice API provides text-to-speech (TTS), speech-to-text (STT), voice session
 
 - **STT:** Silero VAD segments the audio, then Moonshine tiny (default) or Parakeet TDT 0.6B v3 (accurate) transcribes each segment. Any sample rate is accepted and resampled to 16 kHz; 8 kHz phone audio (including G.711 μ-law WAV) works.
 - **TTS:** Kokoro-82M int8 (English v0.19), 11 voices, 24 kHz output.
-- **Models download on first use** into `~/.allternit/models/voice/<pack>/` (sha256-verified). The `small` pack (~134 MB: VAD + Moonshine + Kokoro) is the default; the `accurate` pack (~487 MB, Parakeet, CC-BY-4.0) downloads on first accurate-STT request. Poll `GET /v1/models` for `missing | downloading | ready | error` state. Override the download base with `ALLTERNIT_VOICE_MODEL_BASE`.
-- Inference uses `ALLTERNIT_VOICE_THREADS` threads (default **2**), CPU provider.
+- **Models download on first use** into `~/.allternit/models/voice/<pack>/` (sha256-verified). The `small` pack (~142 MB: VAD + Moonshine + Kokoro) is the default; the `accurate` pack (~487 MB, Parakeet, CC-BY-4.0) downloads on first accurate-STT request. Poll `GET /v1/models` for `missing | downloading | ready | error` state. Override the download base with `ALLTERNIT_VOICE_MODEL_BASE`.
+- Inference uses `ALLTERNIT_VOICE_THREADS` threads (default **2**), CPU provider, one model at a time, so voice stays light on a 4-core laptop.
 
 Licences and attributions: `services/voice/THIRD_PARTY_NOTICES.md` (sherpa-onnx Apache-2.0; Moonshine MIT; Kokoro Apache-2.0; Silero VAD MIT; Parakeet CC-BY-4.0, attribution required; onnxruntime MIT).
 
@@ -37,6 +37,9 @@ The standalone voice service does not require authentication in local developmen
 | `language` | string | Language code (`en-US`, `en-GB`). |
 | `gender` | string | Gender tag. |
 | `sample_rate` | integer | Output sample rate in Hz (24000). |
+| `label` | string | Same as `name`. |
+| `engine` | string | `kokoro`. |
+| `assetReady` | boolean | `true` once the `small` pack is installed. |
 
 ### SttModel
 
@@ -53,7 +56,7 @@ The standalone voice service does not require authentication in local developmen
 |-------|------|-------------|
 | `name` | string | `small` or `accurate`. |
 | `state` | string | `missing`, `downloading`, `ready`, or `error`. |
-| `pct` | number | Download progress 0–1 while downloading. |
+| `pct` | number | Progress 0–1 across the whole pack while downloading. |
 | `error` | string | Error message when `state` is `error`. |
 
 ### VoiceSession
@@ -73,13 +76,14 @@ The standalone voice service does not require authentication in local developmen
 | `GET` | `/health` | Service liveness, engine readiness, pack states. |
 | `GET` | `/v1/health` | Versioned service liveness. |
 | `GET` | `/v1/models` | Model pack download states. |
+| `POST` | `/v1/models/:pack` | Start a pack download in the background. |
 | `GET` | `/v1/voices` | List installed TTS voices. |
 | `GET` | `/v1/voices/:id` | Get a specific voice. |
 | `GET` | `/v1/stt/models` | List STT models. |
 | `POST` | `/v1/tts` | Synthesise speech → audio bytes. |
 | `POST` | `/v1/tts/stream` | Streaming TTS (NDJSON, per-sentence audio). |
 | `POST` | `/v1/stt` | Transcribe audio (multipart, any sample rate). |
-| `POST` | `/v1/stt/stream` | Streaming STT (NDJSON, chunked 16 kHz PCM in). |
+| `POST` | `/v1/stt/stream` | Streaming STT (NDJSON, chunked PCM in). |
 | `GET` | `/v1/sessions` | List active sessions. |
 | `POST` | `/v1/sessions` | Create a session. |
 | `GET` | `/v1/sessions/:id` | Get a session. |
@@ -103,10 +107,12 @@ GET /v1/health
   "features": ["tts", "stt", "streaming"],
   "engine": "sherpa-onnx",
   "stt_ready": true,
+  "stt_accurate_ready": false,
   "tts_ready": true,
   "num_threads": 2,
   "packs": [
-    { "name": "small", "state": "ready", "pct": null, "error": null, "size_bytes": 314572800 }
+    { "name": "small", "state": "ready", "pct": null, "error": null, "size_bytes": 203032121 },
+    { "name": "accurate", "state": "missing", "pct": null, "error": null, "size_bytes": null }
   ]
 }
 ```
@@ -126,14 +132,20 @@ GET /v1/voices
     "name": "Default (US Female)",
     "language": "en-US",
     "gender": "female",
-    "sample_rate": 24000
+    "sample_rate": 24000,
+    "label": "Default (US Female)",
+    "engine": "kokoro",
+    "assetReady": true
   },
   {
     "id": "bm_george",
     "name": "George",
     "language": "en-GB",
     "gender": "male",
-    "sample_rate": 24000
+    "sample_rate": 24000,
+    "label": "George",
+    "engine": "kokoro",
+    "assetReady": true
   }
 ]
 ```
@@ -169,8 +181,10 @@ curl -X POST http://localhost:8001/v1/tts \
 
 ### Response
 
-`200 OK` — `audio/wav` bytes with `X-Duration-Seconds`, `X-Sample-Rate`,
-and `X-Format` headers.
+`200 OK`: `audio/wav` bytes (or raw pcm16 with `format: "pcm16"`) with
+`X-Duration-Seconds`, `X-Sample-Rate`, and `X-Format` headers. `400` for
+empty text, an unknown voice or an unsupported format; `503` if the model
+could not be downloaded or loaded. Errors are JSON: `{ "error": "..." }`.
 
 ## Streaming text-to-speech
 
@@ -187,9 +201,13 @@ the whole text is done.
 `200 OK` — `application/x-ndjson` stream:
 
 ```jsonl
-{"type":"audio","index":0,"sample_rate":24000,"format":"pcm16","audio_b64":"<s16le base64>"}
+{"type":"audio","index":0,"text":"Hello there.","sample_rate":24000,"format":"pcm16","audio_b64":"<s16le base64>"}
+{"type":"audio","index":1,"text":"How can I help?","sample_rate":24000,"format":"pcm16","audio_b64":"<s16le base64>"}
 {"type":"done","duration_secs":4.32}
 ```
+
+A failure mid-stream sends `{"type":"error","error":"..."}` and ends the
+stream.
 
 Decode each `audio_b64` to raw s16le mono PCM at `sample_rate`; concatenating
 all chunks yields the full utterance.
@@ -212,6 +230,7 @@ by Silero VAD; each segment is transcribed with the selected model.
 | `audio` | bytes | Yes | Audio bytes (`.wav` or raw pcm16). |
 | `language` | string | No | Language hint (echoed back). |
 | `model` | string | No | `moonshine` (default) or `parakeet` (accurate pack). |
+| `sample_rate` | integer | No | Only for raw PCM without a WAV header; default 16000. |
 
 ### Example request
 
@@ -248,9 +267,9 @@ the offline recognisers do not emit per-word confidence.
 POST /v1/stt/stream
 ```
 
-Streaming STT: send raw chunked s16le mono **16 kHz** PCM
-(`Content-Type: application/octet-stream`; `?model=moonshine|parakeet`);
-receive `application/x-ndjson` events as speech is segmented:
+Streaming STT: send raw s16le mono PCM in chunks as you capture it
+(`?sample_rate=`, default 16000; `?model=moonshine|parakeet`) and read
+`application/x-ndjson` events as speech is segmented:
 
 ```jsonl
 {"type":"partial","text":"hello wor"}
@@ -258,9 +277,10 @@ receive `application/x-ndjson` events as speech is segmented:
 {"type":"done","duration_secs":6.1}
 ```
 
-One streaming STT session at a time; a concurrent request gets
-`409 Conflict`. Finish the request body (or close the connection) to flush
-trailing speech.
+`partial` is an interim transcript of the speech in progress (each replaces
+the last); `final` is a finished segment, sent after 0.3 s of silence, with
+times in seconds from the start of the stream. Finish the request body to
+flush trailing speech and get `done`. Several streams can run at once.
 
 ## Model packs
 
@@ -278,6 +298,9 @@ GET /v1/models
   ]
 }
 ```
+
+`POST /v1/models/small` or `POST /v1/models/accurate` starts that download
+in the background and returns `202` with the pack's status.
 
 ## Create a session
 
@@ -336,9 +359,9 @@ GET /v1/stats
 |--------|---------|
 | `200 OK` | Success. |
 | `204 No Content` | Session deleted successfully. |
-| `400 Bad Request` | Missing audio, empty text, or unknown model/voice. |
+| `202 Accepted` | Pack download started. |
+| `400 Bad Request` | Missing audio, empty text, unknown model/voice/format, or bad `sample_rate`. |
 | `404 Not Found` | Voice or session not found. |
-| `409 Conflict` | A streaming STT session is already active. |
 | `415 Unsupported Media Type` | Unsupported audio container (e.g. WebM/Opus — decode to WAV client-side). |
 | `503 Service Unavailable` | Engine failed to initialise (e.g. model download/verify failure). |
 

@@ -14,7 +14,9 @@ this spec is done. `POST /v1/tts` returns real Kokoro audio bytes (WAV or
 NDJSON, and `GET /v1/voices` lists the 11 installed Kokoro voices — engine
 acceptance items **7, 8, 9** below are satisfied, and **15/16** hold
 (sherpa-onnx in the Rust binary, static linking, notices in
-`services/voice/THIRD_PARTY_NOTICES.md`). The **user-visible product** items
+`services/voice/THIRD_PARTY_NOTICES.md`; note espeak-ng, Kokoro's
+phonemiser, is GPL-3.0-or-later and statically linked, an open licensing
+decision). The **user-visible product** items
 (1–6, 10–12: Desktop speak button, voice picker UI, Gizzi `/speak`,
 auto-play, doctor, path aliasing, first-run UX) are **not** part of Phase 1
 and remain open — Phase 2 per `HANDOFF-realtime-voice-2026-10-02.md`. STT is
@@ -27,7 +29,7 @@ same service, same `/v1/stt` shape.
 
 When this lands, Allternit **speaks**. Assistant replies can be read aloud on Desktop. Voice call mode is STT in and TTS out. Gizzi can read the last answer. The sidecar returns **real audio**, not a fake `audio_url`. Packaging ships a local engine. Users do not create a third-party account, pay a metered TTS API, or run Docker to hear a sentence.
 
-STT (whisper.cpp, `/voice`, Ctrl+Space / F8) already exists. TTS is the missing half of the same product.
+STT (`/voice`, Ctrl+Space / F8; whisper.cpp until 2026-10-02, now sherpa-onnx Moonshine/Parakeet) already exists. TTS is the missing half of the same product.
 
 ## Why this is not “add Piper”
 
@@ -43,7 +45,7 @@ The last two PRs (#192, #194) made a hard cut: dictation first, Chatterbox Pytho
 | `POST /v1/stt` | Real STT via sherpa-onnx (Silero VAD + Moonshine default / Parakeet accurate). Whisper.cpp removed. |
 | Desktop `VoiceService.speak()` | `POST ${base}/v1/voice/tts` — **different path** than the sidecar’s `/v1/tts`. Still open (item 10). |
 | `allternit-api` `/api/v1/voice/tts/stream` | Proxies sidecar `/v1/tts/stream`. Upstream is now real. |
-| Chat Speak / voice-call / auto-play | UI exists. Wired to real audio bytes, but product polish (picker, stop, barge-in) is Phase 2. |
+| Chat Speak / voice-call / auto-play | UI exists but is **not** wired to real audio yet: allternit-ai `VoiceService.speak()` and `voice.service.ts previewVoice()` call `/v1/voice/tts` / `/api/v1/voice/tts` (paths that do not exist) and parse a JSON `audio_url`; they must switch to `/v1/tts` (or `/v1/tts/stream`) and read audio bytes. Phase 2. |
 | Gizzi `/voice` | STT only. No read-aloud yet (item 4). |
 | Chatterbox / FastAPI / pyinstaller | **Removed** (#194). Do not resurrect the Python tree. |
 
@@ -149,7 +151,7 @@ Voice call   ─┘         POST /v1/tts
 - **Runtime** (one binary we own the spawn of): e.g. sherpa-onnx, piper-cli, kokoro-onnx C ABI, or a thin Rust crate that dlopens ONNX. Chosen by bake-off.
 - **Default model** (one file we download): English, preset speaker, CPU-real-time on M-series and x86_64.
 - **Catalog** (optional extra voices): same runtime, more files. Never require a second engine for v1 extras.
-- STT stays whisper.cpp. Do not merge STT and TTS models. Do share the **process** (`voice-service`) and port 8001.
+- ~~STT stays whisper.cpp.~~ Superseded 2026-10-02: STT and TTS both run on sherpa-onnx (separate models) in the one `voice-service` process on port 8001.
 
 ## Bake-off (mandatory before writing product code)
 
@@ -167,7 +169,7 @@ Do not skip step 4. MOS from blogs is not a product decision.
 After the pick:
 
 - `services/voice/src/server.rs` — real TTS, real audio GET, health `tts_ok`
-- `services/voice/src/whisper.rs` pattern — a `tts.rs` sibling (resolve binary, resolve model, temp wav)
+- ~~`services/voice/src/whisper.rs` pattern~~ (removed): `src/tts.rs` runs Kokoro in-process via sherpa-onnx; models come from `src/models.rs` packs
 - `services/voice/build-*.sh` — build the TTS binary with `MACOSX_DEPLOYMENT_TARGET=13.0`
 - `scripts/build-desktop.sh` + `verify-packaged-resources.cjs` — stage TTS binary + default voice
 - `surfaces/allternit-desktop/src/main/voice-manager.ts` — already spawns the sidecar; pass `TTS_BIN` / `TTS_MODEL` env

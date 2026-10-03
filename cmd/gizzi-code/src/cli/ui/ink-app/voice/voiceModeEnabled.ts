@@ -9,7 +9,7 @@
  * should be *visible* (e.g., command registration, config UI).
  */
 export function isVoiceGrowthBookEnabled(): boolean {
-  // Local whisper.cpp dictation is always eligible. The Anthropic
+  // Local (sherpa-onnx voice sidecar) dictation is always eligible. The Anthropic
   // GrowthBook kill-switch only applies to the gated voice_stream path.
   return true
 }

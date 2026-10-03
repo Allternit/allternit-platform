@@ -33,42 +33,39 @@ export async function checkVoiceEngine(): Promise<DoctorCheck> {
     if (res.ok) {
       const json = (await res.json().catch(() => ({}))) as {
         engine?: string
-        cli_ok?: boolean
-        model_ok?: boolean
+        packs?: { name: string; state: string; error?: string | null }[]
       }
       const engine = json.engine ?? "unknown"
-      const ready = json.cli_ok !== false && json.model_ok !== false
+      const failed = (json.packs ?? []).filter((p) => p.state === "error")
+      const small = (json.packs ?? []).find((p) => p.name === "small")
+      if (failed.length > 0) {
+        return {
+          id: "voice-engine",
+          section: "Voice",
+          status: "warn",
+          message: `Voice sidecar up at ${sidecar} but voice pack download failed: ${failed
+            .map((p) => `${p.name}: ${p.error ?? "error"}`)
+            .join("; ")}`,
+        }
+      }
       return {
         id: "voice-engine",
         section: "Voice",
-        status: ready ? "pass" : "warn",
-        message: ready
-          ? `Local voice sidecar healthy (${engine} at ${sidecar})`
-          : `Voice sidecar up at ${sidecar} but whisper-cli/model not ready`,
+        status: "pass",
+        message:
+          small && small.state !== "ready"
+            ? `Local voice sidecar healthy (${engine} at ${sidecar}); voice models download on first use`
+            : `Local voice sidecar healthy (${engine} at ${sidecar})`,
       }
     }
   } catch {
-    // Fall through to CLI probe.
-  }
-  const cli =
-    process.env.WHISPER_CLI ||
-    ["/opt/homebrew/bin/whisper-cli", "/usr/local/bin/whisper-cli"].find((p) =>
-      fs.existsSync(p),
-    )
-  if (cli && fs.existsSync(cli)) {
-    return {
-      id: "voice-engine",
-      section: "Voice",
-      status: "pass",
-      message: `whisper-cli found at ${cli} (sidecar not running)`,
-    }
+    // Sidecar not reachable.
   }
   return {
     id: "voice-engine",
     section: "Voice",
     status: "warn",
-    message:
-      "Local voice engine not found. Start Allternit Desktop or install whisper.cpp (whisper-cli).",
+    message: `Local voice engine not running at ${sidecar}. Start Allternit Desktop or run services/voice.`,
   }
 }
 

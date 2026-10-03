@@ -1,4 +1,4 @@
-// Hold-to-talk dictation using local whisper.cpp STT.
+// Hold-to-talk dictation using the local voice sidecar (sherpa-onnx STT).
 // Same return shape as useVoice so useVoiceIntegration can swap backends.
 
 import { useCallback, useEffect, useRef, useState } from 'react'

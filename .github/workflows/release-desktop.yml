@@ -458,7 +458,12 @@ jobs:
         # prepare-platform-static requires resources/bin/allternit-voice-service.exe
         # on win32. The x86_64-pc-windows-msvc target is installed by the
         # dtolnay/rust-toolchain step above.
+        # sherpa-onnx's Windows libs are built with the static CRT (/MT), so
+        # this binary links the static CRT too (+crt-static; also means no
+        # VC++ redistributable is needed). Scoped to this step only.
         shell: bash
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
         run: |
           cargo build --release -p voice-service --target x86_64-pc-windows-msvc
           mkdir -p surfaces/allternit-desktop/resources/bin
@@ -603,6 +608,19 @@ jobs:
           cp target/x86_64-unknown-linux-gnu/release/allternit-api \
              surfaces/allternit-desktop/resources/bin/allternit-api
           chmod +x surfaces/allternit-desktop/resources/bin/allternit-api
+
+      - name: Build voice service sidecar (Linux)
+        # Same Rust sidecar as macOS/Windows: STT + TTS on sherpa-onnx, native
+        # libs (incl. onnxruntime) statically linked, models download on first
+        # use into ~/.allternit/models/voice/. Without this step the Linux
+        # build shipped with no voice sidecar at all.
+        run: |
+          cargo build --release -p voice-service --target x86_64-unknown-linux-gnu
+          mkdir -p surfaces/allternit-desktop/resources/bin
+          cp target/x86_64-unknown-linux-gnu/release/voice-service \
+             surfaces/allternit-desktop/resources/bin/allternit-voice-service
+          chmod +x surfaces/allternit-desktop/resources/bin/allternit-voice-service
+          ls -lh surfaces/allternit-desktop/resources/bin/allternit-voice-service
 
       - name: Setup Go
         # Needed to build the mesh-node sidecar from source (the vendor tree

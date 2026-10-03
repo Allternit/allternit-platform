@@ -29,7 +29,7 @@ export const call: LocalCommandCall = async () => {
     return {
       type: 'text',
       value:
-        'Voice dictation on, but the local engine is not ready. Start Allternit Desktop or install whisper.cpp (whisper-cli) and place ggml-tiny.en.bin in ~/.allternit/models/whisper/. Hold Ctrl+Space or F8 to talk once it is available.',
+        'Voice dictation on, but the local voice engine is not running. Start Allternit Desktop (or run services/voice); voice models download on first use. Hold Ctrl+Space or F8 to talk once it is available.',
     }
   }
   return {

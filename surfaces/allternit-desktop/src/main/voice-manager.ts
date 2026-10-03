@@ -33,11 +33,8 @@ class VoiceManager {
     const env = {
       ...process.env,
       PORT: String(PORTS.VOICE),
-      AUDIO_OUTPUT_DIR: path.join(app.getPath('userData'), 'voice-audio'),
-      PRELOAD_MODEL: 'false',
       PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}`,
     };
-    fs.mkdirSync(env.AUDIO_OUTPUT_DIR, { recursive: true });
 
     log.info(`[VoiceManager] Starting voice service: ${command.file} ${command.args.join(' ')}`);
     this.proc = spawnSidecar(command.file, command.args, {
@@ -143,10 +140,13 @@ class VoiceManager {
       const response = await fetch(`${URLS.VOICE}/v1/stt`, {
         method: 'POST',
         body,
-        signal: AbortSignal.timeout(60_000),
+        // The first request downloads the small voice pack (~142 MB) into
+        // ~/.allternit/models/voice/, so allow well over a minute.
+        signal: AbortSignal.timeout(300_000),
       });
       if (!response.ok) {
-        return { error: `Voice sidecar HTTP ${response.status}` };
+        const detail = (await response.json().catch(() => ({}))) as { error?: string };
+        return { error: `Voice sidecar HTTP ${response.status}${detail.error ? `: ${detail.error}` : ''}` };
       }
       const json = (await response.json()) as { text?: string };
       return { text: (json.text ?? '').trim() };

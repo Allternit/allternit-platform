@@ -23,12 +23,30 @@ installer. Poll `GET /v1/models` for state (`missing`, `downloading` with
 
 | Pack | Contents | Size |
 |------|----------|------|
-| `small` (default) | Silero VAD + Moonshine tiny EN + Kokoro-82M int8 | ~134 MB |
+| `small` (default) | Silero VAD + Moonshine tiny EN + Kokoro-82M int8 + Smart Turn v3.2 | ~142 MB |
 | `accurate` | Parakeet TDT 0.6B v3 int8 (CC-BY-4.0) | ~487 MB |
 
 - `ALLTERNIT_VOICE_MODEL_BASE` overrides the download base URL.
 - `ALLTERNIT_VOICE_THREADS` sets inference threads (default **2**), CPU provider — sized for a ~5-year-old 8 GB laptop.
-- Licences and attributions: `services/voice/THIRD_PARTY_NOTICES.md` (Parakeet is CC-BY-4.0 and requires attribution).
+- `ALLTERNIT_VOICE_MODEL_DIR` moves the pack directory.
+- `POST /v1/models/<pack>` starts a download ahead of first use.
+
+## Licences
+
+| Component | Licence |
+|-----------|---------|
+| sherpa-onnx (engine) | Apache-2.0 |
+| onnxruntime | MIT |
+| Silero VAD | MIT |
+| Moonshine tiny EN | MIT |
+| Kokoro-82M | Apache-2.0 |
+| Smart Turn v3.2 | BSD-2-Clause |
+| Parakeet TDT 0.6B v3 | CC-BY-4.0, attribution required |
+| espeak-ng (Kokoro phonemiser, linked into the binary) | GPL-3.0-or-later |
+
+Parakeet attribution: *Speech recognition by Parakeet TDT 0.6B v3 by
+NVIDIA, licensed under CC-BY-4.0.* Show it wherever the accurate option is
+offered. Full list: `services/voice/THIRD_PARTY_NOTICES.md`.
 
 ## Base URL
 
@@ -45,8 +63,9 @@ cargo run -p voice-service
 ```
 
 The sherpa-onnx and onnxruntime native libraries link **statically** into the
-binary (crate `sherpa-onnx` default `static` feature), so the packaged sidecar
-has no accompanying dylib/DLL.
+binary (crate `sherpa-onnx` default `static` feature) on macOS, Windows
+(static CRT) and Linux, so the packaged sidecar is one file with no
+accompanying dylib/DLL.
 
 ## REST endpoints
 
@@ -54,13 +73,14 @@ has no accompanying dylib/DLL.
 |--------|------|-------------|
 | GET | `/health`, `/v1/health` | Health: engine, threads, readiness, pack states |
 | GET | `/v1/models` | Pack download states |
+| POST | `/v1/models/:pack` | Start a pack download in the background |
 | GET | `/v1/voices` | List the 11 installed Kokoro voices |
 | GET | `/v1/voices/:id` | Get one voice (404 if unknown) |
 | GET | `/v1/stt/models` | List STT models (moonshine, parakeet) |
 | POST | `/v1/tts` | Synthesise → `audio/wav` bytes (or `format: "pcm16"`) |
 | POST | `/v1/tts/stream` | Sentence-streaming TTS (NDJSON per-sentence pcm16) |
-| POST | `/v1/stt` | Transcribe uploaded audio (multipart; WAV any rate, or raw 16 kHz pcm16) |
-| POST | `/v1/stt/stream` | Streaming STT: chunked 16 kHz pcm16 in, NDJSON partial/final out |
+| POST | `/v1/stt` | Transcribe uploaded audio (multipart; WAV any rate, or raw pcm16 + `sample_rate`) |
+| POST | `/v1/stt/stream` | Streaming STT: chunked pcm16 in (`?sample_rate=`), NDJSON partial/final out |
 | GET, POST | `/v1/sessions` | List or create sessions |
 | GET, DELETE | `/v1/sessions/:id` | Get or delete a session |
 | GET | `/v1/stats` | Service metrics |
@@ -80,10 +100,12 @@ curl http://127.0.0.1:8001/v1/health
   "features": ["tts", "stt", "streaming"],
   "engine": "sherpa-onnx",
   "stt_ready": true,
+  "stt_accurate_ready": false,
   "tts_ready": true,
   "num_threads": 2,
   "packs": [
-    { "name": "small", "state": "ready", "pct": null, "error": null, "size_bytes": 314572800 }
+    { "name": "small", "state": "ready", "pct": null, "error": null, "size_bytes": 203032121 },
+    { "name": "accurate", "state": "missing", "pct": null, "error": null, "size_bytes": null }
   ]
 }
 ```
@@ -118,8 +140,18 @@ curl -X POST http://127.0.0.1:8001/v1/tts \
   --output hello.wav
 ```
 
-The first TTS/STT request downloads the `small` pack; poll `GET /v1/models`
-for progress.
+The first TTS/STT request downloads the `small` pack (about a minute on a
+typical connection, including unpacking); poll `GET /v1/models` for
+progress. Gizzi Code's `/voice` and Desktop dictation wait up to 5 minutes
+for that first request.
+
+## Performance
+
+Measured with `examples/voice_bench.rs` (CPU only, 2 threads, 40
+LibriSpeech test-clean utterances; clean 16 kHz, phone line, and raw 8 kHz
+μ-law). Per-host results: `services/voice/bench/results-<host>.jsonl`.
+The numbers for the reference Mac are in
+`docs/VOICE_ENGINE_PHASE_1_NOTES.md`.
 
 ## Related pages
 
