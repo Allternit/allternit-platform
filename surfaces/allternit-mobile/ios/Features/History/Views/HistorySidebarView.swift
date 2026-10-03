@@ -453,3 +453,11 @@ extension Notification.Name {
     /// Posted by Bot Home to open a chat session (userInfo: sessionId, agentId).
     static let openChatSession = Notification.Name("com.allternit.openChatSession")
 }
+
+extension Notification {
+    /// The non-empty `sessionId` of an `.openChatSession` post, else nil.
+    var openChatSessionId: String? {
+        guard let id = userInfo?["sessionId"] as? String, !id.isEmpty else { return nil }
+        return id
+    }
+}

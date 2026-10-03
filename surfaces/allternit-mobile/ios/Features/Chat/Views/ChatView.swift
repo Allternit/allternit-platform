@@ -125,6 +125,16 @@ struct MainWorkspaceView: View {
                 }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .openChatSession)) { note in
+            // Bot Home posts this when a bot thread is tapped: land on Chats
+            // with that session loaded, from whichever tab is showing.
+            guard let sessionId = note.openChatSessionId else { return }
+            selectedSessionId = sessionId
+            modeStore.selectBarItem(.chats)
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.86, blendDuration: 0)) {
+                isSidebarOpen = false
+            }
+        }
         .onAppear {
             // Projects feed the cowork top deck and the Projects tab; load
             // once per launch (ProjectStore dedupes).
