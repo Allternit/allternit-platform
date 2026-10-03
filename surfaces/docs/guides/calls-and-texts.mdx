@@ -15,7 +15,7 @@ A thread on a phone number looks like a text conversation: your contact's messag
 
 ## Start a text or a call
 
-You don't have to wait for someone to text first. In the bot's chat, under its conversations, choose **New text** or **Have <bot> call…** (shown when the bot has a number).
+You don't have to wait for someone to text first. In the bot's chat, under its conversations, choose **New text** or **Have &lt;bot&gt; call…** (shown when the bot has a number).
 
 1. Type the number. It formats as you go: ten digits are a US number, and `+` starts an international one.
 2. For a text, write the message. For a call, say what it's about — that is the bot's brief for the call.
@@ -45,6 +45,23 @@ A live call also opens the **call screen** by itself. It shows the number, a cal
 
 Buttons show what the call is actually doing (confirmed by the voice service), not what you tapped a moment ago, so a button may take a second to change. When a call ends the screen becomes a summary with the reason, duration, and whether it was recorded. Every call begins with a fixed line that says the caller is speaking with an AI and whether the call is recorded.
 
+## Texting and calling out
+
+Your bot can start a text or a call from its own number, and so can you.
+
+- **Ask the bot.** Say "text Sam that I'm running late" or "call the dentist to confirm Friday". Any bot with a phone number has two tools, `phone_text` and `phone_call`.
+- **Do it yourself.** The runtime has routes for starting a text or call and adding contacts (see [Phone numbers and SMS (runtime)](/guides/phone-sms-runtime)); the **Text** and **Call** buttons on Desktop, ai.allternit.com and the m.allternit.com phone app are coming in a UI update. A text you start appears in the thread as a message from the bot; a call appears as a call card.
+
+### Who the bot may contact
+
+The bot only texts or calls people who **texted or called this number first**, or that you **added as a contact**. Anyone else is refused, and the bot tells you so ("+1 415 555 0123 hasn't texted or called this number and isn't on your allowed contacts"). To allow someone, add them under the number's contacts; that records your consent for that person on that number.
+
+**STOP always wins.** If a person texts STOP, the bot can't text or call them again, even if they are a contact, until they text START.
+
+### Texting pending carrier approval
+
+US texting needs carrier registration (10DLC). Until your number is approved, texts out are held back and the composer says so. Calls don't need it. Outbound calling is switched on per deployment; where it isn't on yet, the bot says outbound calling isn't available.
+
 ## On a phone
 
 On **ai.allternit.com** on a phone and in the **m.allternit.com** app:
@@ -52,7 +69,7 @@ On **ai.allternit.com** on a phone and in the **m.allternit.com** app:
 - The call screen takes the whole screen, with large round buttons and a bigger keypad. Close it with **✕** at the top; the call carries on and the card stays in the thread.
 - Call cards and text bubbles fit a 390 px screen: long numbers wrap and **Open call** is a full-width button under the card.
 - Text composers are sized so the phone does not zoom when you tap them.
-- **New text**, **Have <bot> call…** and the thread's **Call** button are full-height touch targets, and their fields are sized so the phone does not zoom.
+- **New text**, **Have &lt;bot&gt; call…** and the thread's **Call** button are full-height touch targets, and their fields are sized so the phone does not zoom.
 
 ## Connect an Android phone
 

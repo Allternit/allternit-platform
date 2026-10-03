@@ -346,6 +346,16 @@ async fn handle_rpc_inner(
     Json(handle_rpc_inner_value(state, user_id, org_id, req, agents_only).await).into_response()
 }
 
+/// The agents server for a call the cloud edge already verified (OAuth token
+/// checked for `aud` and `agents:read`): always the read-only agent tools, as for
+/// any OAuth caller. See [`crate::mcp_edge_relay`].
+pub async fn relayed_agents_rpc(state: &Arc<AppState>, user_id: &str, body: &[u8]) -> axum::response::Response {
+    match serde_json::from_slice::<JsonRpcRequest>(body) {
+        Ok(req) => handle_rpc_inner(state, user_id, None, req, true).await,
+        Err(e) => Json(rpc_error(serde_json::Value::Null, -32700, format!("Parse error: {e}"))).into_response(),
+    }
+}
+
 /// Value-returning core so the stdio binary can reuse the same dispatch logic
 /// without constructing Axum responses.
 async fn handle_rpc_inner_value(

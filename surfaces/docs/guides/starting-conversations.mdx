@@ -1,0 +1,93 @@
+---
+title: Starting conversations on a channel (developers)
+description: How a bot starts a chat on Telegram, Slack, Discord, Teams, WhatsApp, SMS or email, the rule each platform enforces, and the mail thread list.
+---
+
+A bot normally replies to a conversation someone else began. The runtime (`allternit-api`) can also start one. These routes are what the phone's **Start new** sheet calls. User docs: [Your bot's phone](/guides/bot-phone), [Messaging channels](/guides/messaging-channels).
+
+All routes sit under `/api/v1` and need the signed-in user. The bot must be yours, and switched on for a connection of that channel (**Agent Gateway → Messaging**). Nothing here needs new environment variables: a channel that isn't connected answers `409 not_connected`, and a connection whose transport has no credentials answers `503 <provider>_not_configured`.
+
+## List who a bot can start with
+
+```http
+GET /api/v1/channels/{provider}/targets?botId={botId}
+```
+
+```json
+{
+  "targets": [
+    { "kind": "user", "id": "777", "name": "Eoj", "sub": "2026-10-02T09:12:00Z" },
+    { "kind": "group", "id": "-1001234", "name": "Ops chat", "sub": "2026-10-01T18:00:00Z" }
+  ],
+  "canStartWith": ["user", "group", "channel", "username"],
+  "connected": true,
+  "notes": "Telegram only lets a bot message a person who has messaged it first. …"
+}
+```
+
+`provider` is `telegram`, `slack`, `discord`, `teams`, `whatsapp`, `whatsapp-personal`, `sms` (alias `phone`) or `email`. Targets come from what the runtime already knows: conversations stored for the bot's connections, plus (Slack, when the runtime holds a bot token) the channels the bot has joined. `canStartWith` lists the kinds that can be listed (`user`, `group`, `channel`) and the ways to type one in (`username`, `phone`, `email`). `notes` is the platform's rule in one line. A bot with no connection gets `connected: false` and an empty list, not an error. WhatsApp lists only people inside the 24-hour window.
+
+## Start one
+
+```http
+POST /api/v1/channels/{provider}/start
+```
+
+```json
+{
+  "botId": "bot_123",
+  "target": { "kind": "user", "id": "777" },
+  "text": "Following up on the invoice.",
+  "subject": "Invoice 42"
+}
+```
+
+`target` takes `kind` plus one of `id`, `username`, `email` or `phone`. `subject` is for email only. `attachments` is accepted but refused with `400 attachments_unsupported` until the channels can carry them. On success:
+
+```json
+{ "threadId": "bt_…", "conversationId": "777", "bindingId": "ccb_…", "provider": "telegram", "state": "sent", "remoteId": "777:42", "existing": false }
+```
+
+`state` is `sent` (200), or `unconfirmed` / `pending_approval` (202, still on its way). `existing: true` means the person already had a conversation with this bot and the message went into that thread.
+
+The started conversation is a normal Allternit thread with a channel binding. The binding uses the same conversation key the platform's inbound events use, so the person's reply lands in the same thread. The bot's first message is stored as its outbound message, so it shows in the main thread list and in Messages. It goes out through the same send path as any reply, so the bot's channel tool policy (a send rule set to `ask` returns `428 approval_required` with the `threadId` and `approvalId`), the delivery log and the `channel.message.*` events all apply.
+
+A refused start never leaves an empty thread when the platform's rule can be checked first (everything in the table except a refusal from the platform itself). Errors are `{ "error": "<code>", "message": "…" }`:
+
+### Rules per channel
+
+| Channel | Who | Rule | Refusal |
+| --- | --- | --- | --- |
+| Telegram | a chat id the bot has seen, or a group/channel the bot is in | People must have messaged the bot first. A group or channel is checked with `getChatMember`. `username` resolves public chats through `getChat`. | `user_never_messaged_bot`, `bot_not_in_group` |
+| Slack | a channel id (`C…`, `G…`) or a user id (`U…`, `W…`) | Posts with `chat.postMessage`. A user id opens a direct message from the app. The post is top-level and the conversation is bound to its `ts`, so replies in that Slack thread continue it. A person's reply in a DM starts its own conversation. | `bot_not_in_channel`, `channel_not_found`, `invalid_target` |
+| Discord | a server channel id | Posts through the Allternit app's channel webhook (the channel must be in the connected server). Direct messages are not supported. A legacy single-webhook connection can only continue conversations it has seen. | `channel_not_in_guild`, `discord_dm_unavailable`, `discord_webhook_fixed_channel` |
+| Teams | a conversation id | Needs a stored conversation reference: someone installed or messaged the bot. Proactive sending to anyone else is off on the shared app. | `no_conversation_reference` |
+| WhatsApp (Business) | a phone number | Free-form text only within 24 hours of the person's last message. Template messages are not supported yet. | `outside_24h_window` |
+| WhatsApp (personal number) | a phone number or chat id | Unofficial linked device: no window, but WhatsApp can ban numbers that message people who didn't ask. Only when `ALLTERNIT_WA_PERSONAL=1`. | `whatsapp_personal_disabled` (503) |
+| SMS / phone | an E.164 number | Uses the same path as `POST /api/v1/phone/text`: texts from the bot's number through the cloud, which enforces consent (the person must have texted or called first, or be an allowed contact) and the STOP list. A text and a later call share one thread. | `no_consent` (403), `invalid_target`, `not_connected` |
+| Email | an address | Composes a new message from the bot's mailbox through mailflare. The approval gate stays on: the response is `202 pending_approval` with an `approvalThread` you approve from Mail → Needs OK. The thread uses the same key as an inbound reply, so an answer continues it. | `email_send_disabled`, `not_connected` |
+
+Other codes: `unknown_provider` (404), `bot_not_found` (404), `not_connected` (409), `text_required` (400), `invalid_target` (400), `no_consent` (403), `conversation_belongs_to_other_bot` (409), `channel_policy` (403), `read_only` (403), `channel_rejected` (502, the platform said no; the message says why).
+
+## Mail threads
+
+```http
+GET /api/v1/mail/threads?botId={botId}&folder=inbox|needs_ok|sent
+```
+
+```json
+{ "threads": [
+  { "id": "bt_…", "subject": "Pricing", "from": "pat@example.com", "preview": "…", "at": "2026-10-02T09:00:00Z", "unread": true },
+  { "id": "mail:email-out-…", "subject": "Quote", "from": "scout@bots.allternit.com", "to": "pat@example.com", "preview": "…", "at": "2026-10-02T12:00:00Z", "unread": true, "needsApproval": true }
+] }
+```
+
+- `inbox`: mail the bot received, one entry per sender and subject (without `Re:`), newest first. `unread` is true until the bot's reply was sent or is waiting for approval. Mail dropped by the loop guards is left out. `id` is the bot's thread when one exists.
+- `needs_ok`: outbound mail waiting for approval. `id` is the review thread; approve or reject it with `POST /api/rails/mail/decide`.
+- `sent`: mail that went out.
+
+An invalid `folder` is `400 invalid_folder`.
+
+## Source
+
+`cmd/allternit-api/src/channel_start.rs`. The first message uses `channel_gateway::send`; email uses `agent_email_routes::send_email_for_user`.

@@ -2493,21 +2493,11 @@ pub(crate) async fn create_bot_thread_session(
     Ok(session.id)
 }
 
-/// Run one user turn in a session and return the assistant's text.
-pub(crate) async fn send_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str, text: &str) -> Result<String, String> {
-    // Vendor-bound bots run through the Agent Gateway; never a native brain.
-    if let Some(vendor) = crate::gateway_runner::intercept_turn(session_id, text, Default::default()).await {
-        return vendor;
-    }
-    if let Some(target) = crate::placement::session_target(db, session_id) {
-        let mut body = json!({ "text": text, "metadata": { "model": bot_turn_model(db, session_id, bot_id) } });
-        if let Some(system) = bot_turn_system(db, session_id, bot_id) {
-            body["system"] = json!(format!("+{system}"));
-        }
-        let path = format!("/agent-sessions/{}/messages", urlencoding::encode(session_id));
-        let reply = crate::placement::call(&target, reqwest::Method::POST, &path, Some(body)).await?;
-        return placed_turn_report(&reply);
-    }
+/// What a native (non-vendor, non-placed) channel turn sends to gizzi: the
+/// client, the message path and the payload. Shared by [`send_bot_turn`] and
+/// the streaming phone-call turn so both keep the same session directory,
+/// project permission mode, model and bot identity/memory.
+pub(crate) async fn native_turn_request(db: &DbHandle, session_id: &str, bot_id: &str, text: &str) -> Result<(Client, String, serde_json::Value), String> {
     let mut headers = HeaderMap::new();
     if let Some(directory) = db.get_session_metadata(session_id).ok().flatten().and_then(|bag| bag["directory"].as_str().map(str::to_owned)) {
         if let Ok(value) = axum::http::HeaderValue::from_str(&directory) { headers.insert("x-gizzi-directory", value); }
@@ -2528,6 +2518,41 @@ pub(crate) async fn send_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str,
     if let Some(system) = bot_turn_system(db, session_id, bot_id) {
         payload["system"] = json!(format!("+{system}"));
     }
+    Ok((client, path, payload))
+}
+
+/// The reply (or error) in a gizzi message response body, as [`send_bot_turn`]
+/// reads it.
+pub(crate) fn gizzi_message_reply(body: &[u8]) -> Result<String, String> {
+    let message: GizziMessage = serde_json::from_slice(body).map_err(|e| format!("gizzi returned an unreadable turn: {e}"))?;
+    if let Some(error) = message.info.error.as_ref().and_then(|e| e.message.clone()) {
+        return Err(error);
+    }
+    turn_report(&message.parts)
+}
+
+/// The error a gizzi message response carries, if any (a streamed turn that
+/// already spoke its text still has to surface a model error).
+pub(crate) fn gizzi_message_error(body: &[u8]) -> Option<String> {
+    serde_json::from_slice::<GizziMessage>(body).ok()?.info.error.and_then(|e| e.message)
+}
+
+/// Run one user turn in a session and return the assistant's text.
+pub(crate) async fn send_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str, text: &str) -> Result<String, String> {
+    // Vendor-bound bots run through the Agent Gateway; never a native brain.
+    if let Some(vendor) = crate::gateway_runner::intercept_turn(session_id, text, Default::default()).await {
+        return vendor;
+    }
+    if let Some(target) = crate::placement::session_target(db, session_id) {
+        let mut body = json!({ "text": text, "metadata": { "model": bot_turn_model(db, session_id, bot_id) } });
+        if let Some(system) = bot_turn_system(db, session_id, bot_id) {
+            body["system"] = json!(format!("+{system}"));
+        }
+        let path = format!("/agent-sessions/{}/messages", urlencoding::encode(session_id));
+        let reply = crate::placement::call(&target, reqwest::Method::POST, &path, Some(body)).await?;
+        return placed_turn_report(&reply);
+    }
+    let (client, path, payload) = native_turn_request(db, session_id, bot_id, text).await?;
     match gizzi_json::<GizziMessage>(&client, reqwest::Method::POST, &path, Some(payload)).await {
         Ok(message) => {
             if let Some(error) = message.info.error.as_ref().and_then(|e| e.message.clone()) {

@@ -1,0 +1,62 @@
+---
+title: Your bot's phone
+description: "One place to see and use everything a bot can be reached on: texts, calls, email, messaging channels and MCP Apps, in a floating phone on Desktop and full screen on your phone."
+---
+
+Every bot that has a phone number, an email address or a messaging channel gets a **phone** in Allternit. It collects the bot's conversations, its calls and mail, the channels you turned on, and the MCP Apps you installed, on a home screen of apps. It is the same phone on Allternit Desktop, on ai.allternit.com and on the m.allternit.com phone app.
+
+## Open a bot's phone
+
+- **Desktop and the web app:** click the **Phones** button at the bottom of the left rail (it shows the total number of unread conversations). A list called **Your bots' phones** shows one row per bot that has any channel, number or email. Choose a bot to open its phone over whatever you were doing.
+- **Phone:** open the menu and tap **Phones**. The phone opens full screen.
+- **No phone yet?** Choose **Give a bot a phone** at the bottom of the list. It starts the same flow as connecting a number in [Messaging channels](/guides/messaging-channels).
+
+## The floating phone (Desktop and web)
+
+The phone is a 390 px window that floats over the current view. It is not a tab.
+
+- **Drag** the title strip to move it. Where you leave it is remembered for next time. With the title strip focused, the arrow keys move it too.
+- **Switch bots** from the name in the title strip.
+- **Minimize** turns it into a pill in the bottom-right corner. The pill shows a live call, or the latest message, and new messages pop up briefly as notifications. Click the pill to bring the phone back.
+- **Pop out** opens the phone as a larger window in the middle of the screen. Click it again to dock it.
+- **Close**, or press **Esc**. Focus stays inside the phone while it is open and returns to where you were when it closes.
+
+## The home screen
+
+The top shows the bot's name with its number and email address. A green banner appears while there is a live call. Below, in order:
+
+- **Talk:** Messages, Phone, Mail and Contacts. They sit in the dock at the bottom too.
+- **Channels you turned on:** one app for each messaging channel the bot is connected to (Telegram, WhatsApp, Discord, Slack, Microsoft Teams). A channel that is switched off or has lost its connection looks dimmed. Tap it to reconnect.
+- **Vendor bots:** if the bot is bound to a vendor agent such as Grok or Claude, its tile is here.
+- **MCP Apps:** the MCP Apps you installed. They open full screen inside the phone. **Add app** opens the MCP Apps catalog.
+- **\<Bot\> settings:** the bot's own voice, personality and connection settings. Allternit's global Settings stay in the rail.
+
+Tap **Home** (or the bar at the bottom) to go back from any app.
+
+## The core apps
+
+**Messages** lists every conversation the bot has, grouped by person, with a chip for each channel they use. Filters: All, Texts, Calls, Allternit, Email and one per connected channel. **Calls** takes you to the Phone app. Opening a conversation shows it inside the phone in that channel's own look, with the full composer.
+
+**Phone** shows a live call with Listen and Take over, then recent calls, and a keypad. Enter a number, then choose **Have the bot call** or **Text**. The bot can only reach numbers that have contacted it first or that you added as a contact.
+
+**Mail** is the bot's mailbox with three folders: **Inbox**, **Needs OK** (replies waiting for your approval, with **Approve send** and **Reject**) and **Sent**. Until your Allternit runtime offers the mail folders, Inbox is built from the email conversations and the other two folders say they aren't available yet.
+
+**Contacts** lists the people the bot has conversations with and which channels it can reach them on.
+
+## Channel apps and Start new
+
+A channel app lists that channel's conversations for this bot, with **All**, **Groups**, **Direct** and **Mentions** filters, and opens each one in the channel's own look.
+
+**Start new** lets the bot open a conversation. Choose a person, group or channel the bot can see (or enter a username, email or phone number when the channel allows it), write the first message and send. Channels have their own rules:
+
+- Telegram and WhatsApp won't let a bot write first to someone who never messaged it, or after the 24-hour reply window has closed. The phone tells you when that is the reason.
+- A bot can only post in a group or channel it is a member of.
+- Teams only lets the bot write to a conversation it already has (someone installed or messaged it). Discord direct messages aren't supported. Slack needs a channel the bot was invited to, or a person's Slack user id.
+- Email you start waits under **Needs OK** until you approve it. A text goes out from the bot's number, but only to someone who has texted or called that number first or is one of your allowed contacts.
+- If your Allternit runtime doesn't support starting conversations on a channel yet, the sheet says so.
+
+Nothing is sent without you tapping **Send**. Developers: see [Starting conversations on a channel](/guides/starting-conversations).
+
+## Unread
+
+A conversation counts as unread when it has new activity since you last opened it on this device. The Phones button, the pills on the home screen and the badges on app tiles all use the same count.

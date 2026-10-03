@@ -67,17 +67,19 @@ The runtime resolves the thread with the caller's number (`from` for inbound, `t
 | `{"type":"done"}` | The reply is complete. `{"type":"done","aborted":true}` means the turn was aborted. |
 | `{"type":"error","message":"…"}` | The turn failed. |
 
-The turn runs through the same path channel messages use (`send_bot_turn`, which goes through the Agent Gateway for vendor bots), so tools, memory and approvals behave as they do in Slack or texts. The runtime adds a short spoken-style instruction server-side so replies stay brief. A call that has ended answers 409.
+A native bot session is streamed: the runtime subscribes to the Gizzi session's event stream and forwards `text.delta` as words arrive (cut at word boundaries) and a `tool` event when a tool starts and when it finishes (`done` or `error`). Each tool step is also written to the thread as `agent.tool.started`, `agent.tool.completed` or `agent.tool.failed`. The turn is sent exactly as channel messages are (same model, bot instructions, memory and project permissions). The runtime adds a short spoken-style instruction server-side so replies stay brief. A call that has ended answers 409.
+
+A caller cannot click an approval, so a tool that asks for one stops the turn and the stream carries a spoken-friendly `error` telling the caller to approve it in the app. A turn that runs longer than 120 seconds is aborted with an `error`.
 
 Only one turn runs per call. A new turn aborts the running one first, and closing the stream aborts it too.
 
 <Note>
-The reply is currently produced whole and then streamed sentence by sentence, and `tool` events are not emitted yet, because the channel turn path reports only the final reply. The stream shape will not change when true token streaming lands.
+A vendor-bound session or one placed on another Allternit has no local event stream. Those turns run the channel path and answer once, so the reply arrives as sentence chunks of the finished text and no `tool` events are sent. The runtime logs that fallback. The stream shape is the same either way.
 </Note>
 
 ### Abort (barge-in)
 
-`DELETE /api/v1/voice/calls/{callId}/turn` aborts the running turn the way the Stop button does and always returns 204, even when nothing was running.
+`DELETE /api/v1/voice/calls/{callId}/turn` aborts the running turn the way the Stop button does (the Gizzi turn is stopped and the stream closes within 100 ms) and always returns 204, even when nothing was running.
 
 ## Where the device token comes from
 

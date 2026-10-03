@@ -52,6 +52,8 @@
               "guides/project-coordination",
               "guides/bot-templates",
               "guides/vendor-bots",
+              "guides/vendor-bots-use-your-phone",
+              "guides/keep-vendor-bots-online",
               "guides/bot-avatars",
               "guides/whatsapp-business",
               "guides/subscriptions",
@@ -60,8 +62,10 @@
               "guides/computers-and-apps",
               "guides/phone-for-your-bot",
               "guides/vendor-bots-on-the-phone",
+              "guides/bot-phone",
               "guides/messaging-channels",
               "guides/calls-and-texts",
+              "guides/voice",
               "guides/mcp-apps-status"
             ],
             "icon": "/icons/window.svg"
@@ -306,6 +310,7 @@
               "tools/local-engine",
               "tools/voice",
               "tools/voice-calls",
+              "surfaces/voice",
               "tools/android-bridge",
               "tools/office-cli",
               "tools/office-engine",
@@ -430,6 +435,7 @@
               "guides/token-budgets",
               "guides/webhooks",
               "guides/channel-events-and-connect-api",
+              "guides/starting-conversations",
               "guides/voice-call-runtime-routes",
               "guides/custom-voices",
               "guides/pdf-citations"

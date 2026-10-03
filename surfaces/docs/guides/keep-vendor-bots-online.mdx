@@ -1,0 +1,68 @@
+---
+title: Keep vendor bots online with a cloud computer
+description: Run a vendor account's browser on your Allternit cloud computer so its bots keep answering while your Mac sleeps.
+---
+
+A vendor bot that uses your **browser sign-in** (Grok, ChatGPT, Claude, Gemini, Copilot) works by driving the vendor's website in a browser. By default that browser lives on the computer you use, so when your Mac sleeps or is closed, those bots go quiet. Give the account a **host** on your Allternit cloud computer and its browser runs there instead, with its own saved sign-in.
+
+Your cloud computer sleeps when idle and wakes by itself when a message arrives. The first message after a long quiet spell can take about 20 seconds while it wakes; Allternit retries for you.
+
+## What you need
+
+- An Allternit plan with a cloud computer, paired to your account. It shows up as a runtime in **Settings → Computers**.
+- A vendor account connected with **Browser sign-in** (see [Vendor bots](/guides/vendor-bots)). API-key accounts do not use a browser and cannot move.
+
+## Move an account to the cloud computer
+
+Each account has one host: `this_device` (the computer running Allternit, today's behaviour) or `cloud_computer`. Moving the host **never copies your sign-in**. A session is tied to the machine that made it, and Allternit does not copy cookies between machines. After a move the account shows **Needs sign-in** and its bots wait until you sign in on the new host.
+
+1. Choose the cloud computer as the account's host (`POST /api/v1/gateway/provider-accounts/:id/host`, below).
+2. Start the sign-in. Allternit opens the vendor's login page in the cloud computer's browser and returns its viewer.
+3. In the viewer, sign in to the vendor yourself, including any code or bot check. Allternit never sees your password and never completes a check for you.
+4. Check the session. When the vendor reports it ready, the account becomes **Connected** and its bots resume.
+
+Moving the account back to **this device** works the same way: you sign in again on that computer. When you move off a cloud computer, Allternit signs the account out there and deletes that browser profile, so no old session is left behind. If the cloud computer can't be reached at that moment, the move still happens and the response says the old sign-out was skipped.
+
+## While it runs
+
+- **Status:** `GET /api/v1/gateway/provider-accounts/:id` includes a `host` block with `kind`, `runtimeId`, `online`, `lastSeen`, `needsSignIn` and `wakeable`. `online: false` with `wakeable: true` means the computer is asleep and will wake on the next message.
+- **Needs sign-in:** if the vendor signs you out, the account moves to **Expired** and its bots show **Needs sign-in**. Sign in again from step 2.
+- **A vendor check or restriction** (a bot check, a limited account) is never worked around. The account stays blocked until you resolve it in the viewer.
+- Vendor terms still apply. Running a subscription in a browser can conflict with a vendor's terms, exactly as it can on your own computer. See the disclosure in [Vendor bots](/guides/vendor-bots).
+
+## For developers
+
+Everything lives in `cmd/allternit-api/src/gateway_vendor_host.rs` (runtime side, migration `V221__vendor_account_host.sql`). The cloud API needs no change: it already relays to a runtime and wakes a sleeping cloud computer.
+
+### Data
+
+`provider_account_bindings` gains `host_kind` (`this_device` | `cloud_computer`), `host_runtime_id`, `host_state` (`ready` | `needs_sign_in` | `signing_in`), `host_remote_account_id`, `host_last_seen_at`, `host_changed_at`. They surface camelCase on every account (`hostKind`, `hostRuntimeId`, `hostState`, …).
+
+### Dispatch
+
+`HostRoutedTransport` wraps the runner's `AaiTransport` (outside the channel-lane and subscription transports). For a binding whose account has `host_kind = cloud_computer` it relays the call to the cloud computer's gateway:
+
+```
+POST {cloud}/api/v1/runtime-devices/{runtimeId}/proxy
+  { "method": "POST", "path": "/api/v1/subscriptions/gateway/aai/call", "body": "{op, binding, input}" }
+```
+
+The cloud relay wakes a sleeping computer first. Answers map to the runner's errors: `503 runtime_warming` → retryable `GATEWAY_UNAVAILABLE` with `retryAfterMs`, `503 runtime_offline` → retryable `GATEWAY_OFFLINE`. If `host_state` is not `ready` the call fails with `AUTH_REQUIRED` and never reaches (or wakes) the computer. Every other account passes straight through, and a runtime started with `ALLTERNIT_PROVISIONED=1` (the cloud computer itself) always runs locally. The cloud call uses the caller's own bearer when there is one, else `ALLTERNIT_CLOUD_API_TOKEN`; the base URL is `ALLTERNIT_CLOUD_API_URL` (default `https://api.allternit.com`).
+
+### Routes (under `/api/v1/gateway`)
+
+| Route | Body | Result |
+|---|---|---|
+| `POST /provider-accounts/:id/host` | `{ "host": "this_device" }` or `{ "host": "cloud_computer", "runtimeId": "rt_…" }` | `{ moved, needsSignIn, oldHostSession: "signed_out"\|"skipped"\|"none", host }`. `moved:false` when nothing changed. 400 bad shape, 404 unknown account or runtime, 409 not a browser-session account / not a cloud computer. |
+| `POST /provider-accounts/:id/host/sign-in` | none | Creates the account in the cloud computer's gateway if needed, opens its login window and returns `{ state: "login_window_open", login, viewer: { kind, runtimeId, provisionedInstanceId, name, hint }, needsSignIn: true }`. Moves the account to `AUTHENTICATING` and `host_state` to `signing_in`. |
+| `POST /provider-accounts/:id/host/check` | none | Asks the gateway for the session health, as Subscriptions does. `ready` → `CONNECTED` and `host_state = ready`; `auth_required` or no account → still owed; a challenge or restriction → needs sign-in, not connected. Returns `{ sessionHealth, connection, host }`. |
+| `GET /provider-accounts/:id` and `…/host/status` | none | The account plus `host`: `{ kind, runtimeId, state, needsSignIn, online, lastSeen, wakeable, name? }`. For a cloud host, `online` comes from the cloud's runtime list; `error` is `runtime_not_found`, `cloud_auth_required` or `cloud_unreachable` when it cannot be read. |
+
+Moving host sets `host_state = needs_sign_in`, drops a `CONNECTED`/`DEGRADED` account to `EXPIRED` (which cascades dependent bots to `NEEDS_AUTH`) and writes a `host.moved` row to `connection_audit`. A move off a cloud computer deletes that gateway account (its browser profiles) best-effort.
+
+The gateway provider id sent for an account is its vendor mapped by `gateway_provider` (`openai`→`chatgpt`, `anthropic`→`claude`, `xai`→`grok`, `google`, `microsoft`).
+
+### Not done yet
+
+- Nothing sweeps cloud-hosted accounts in the background: a periodic check would wake the computer and defeat its sleep. Checks run when you ask (or after a sign-in).
+- Settings UI for choosing the host and showing the viewer ships separately in allternit-ai.

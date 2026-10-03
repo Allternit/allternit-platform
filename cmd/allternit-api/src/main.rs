@@ -588,7 +588,10 @@ async fn main() {
     });
     allternit_api::gateway_runner::install(
         state.db.clone(),
-        Arc::new(allternit_api::channel_transports::ChannelLaneTransport::new(state.clone(), Arc::new(allternit_api::gateway_runner::SubsTransport(state.clone())))),
+        Arc::new(allternit_api::gateway_vendor_host::HostRoutedTransport::new(
+            state.db.clone(),
+            Arc::new(allternit_api::channel_transports::ChannelLaneTransport::new(state.clone(), Arc::new(allternit_api::gateway_runner::SubsTransport(state.clone())))),
+        )),
     );
     allternit_api::channel_discord_app::init(state.db.clone());
     allternit_api::discord_gateway::spawn_bound(state.clone());
@@ -963,6 +966,8 @@ async fn main() {
         .merge(allternit_api::a2a_routes::a2a_router())
         .merge(allternit_api::channel_gateway::channel_gateway_router())
         .merge(allternit_api::channel_phone::phone_router())
+        .merge(allternit_api::phone_outbound::phone_outbound_router())
+        .merge(allternit_api::channel_start::channel_start_router())
         .merge(allternit_api::channel_slack_app::slack_app_connect_router())
         .merge(allternit_api::spend_limits::spend_limit_router())
         .merge(allternit_api::channel_tools::channel_tools_router())
@@ -1088,7 +1093,10 @@ async fn main() {
         )
         .nest(
             "/mcp",
-            mcp_router().merge(allternit_api::mcp_server_routes::mcp_server_router()),
+            mcp_router()
+                .merge(allternit_api::mcp_server_routes::mcp_server_router())
+                // Vendor-bot connector: /mcp/bots/:vendorBotId (scope bots:act).
+                .merge(allternit_api::mcp_vendor_bots::mcp_bots_router()),
         )
         // The web client calls the connector routes as /api/v1/mcp/*.
         .nest("/api/v1/mcp", mcp_router())
@@ -1113,6 +1121,8 @@ async fn main() {
         .nest("/api", checkpoints_router())
         .nest("/api", design_connector_router())
         .nest("/api", allternit_api::mcp_apps::mcp_apps_router())
+        // Keys page for the vendor-bot connector: /api/v1/vendor-bots/:id/connector*.
+        .nest("/api", allternit_api::mcp_vendor_bots::connector_router())
         .nest("/api", office_engine_router())
         .nest("/api", provider_router())
         // Idempotency replay for POST/PUT/PATCH on the protected surface.
@@ -1189,6 +1199,9 @@ async fn main() {
         // Discord shared-app envelopes: cloud-api checks Discord's signature,
         // then signs the relay with the device token (RelayedAuth verifies).
         .merge(allternit_api::channel_discord_app::discord_app_router())
+        // Public MCP edge: cloud-api verifies the OAuth token, then relays the
+        // JSON-RPC call here signed with the device token (RelayedAuth verifies).
+        .merge(allternit_api::mcp_edge_relay::mcp_edge_router())
         // Relayed phone calls: cloud-api signs each request with the runtime's
         // device token; `RelayedVoiceAuth` verifies it per handler (no Clerk session).
         .merge(allternit_api::voice_calls::voice_calls_router())

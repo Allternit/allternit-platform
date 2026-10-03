@@ -40,6 +40,7 @@ use std::sync::Arc;
 use crate::{error::ApiError, ApiState};
 
 const STRIPE_CHECKOUT_SESSIONS_URL: &str = "https://api.stripe.com/v1/checkout/sessions";
+const STRIPE_INVOICE_ITEMS_URL: &str = "https://api.stripe.com/v1/invoiceitems";
 const STRIPE_PORTAL_SESSIONS_URL: &str = "https://api.stripe.com/v1/billing_portal/sessions";
 pub(crate) const DEFAULT_SUCCESS_URL: &str = "https://platform.allternit.com/billing?checkout=success";
 pub(crate) const DEFAULT_CANCEL_URL: &str = "https://platform.allternit.com/billing?checkout=cancelled";
@@ -285,6 +286,18 @@ pub trait StripeCheckout: Send + Sync {
         secret_key: &str,
         form: &[(String, String)],
     ) -> Result<String, ApiError>;
+
+    /// Create a Stripe invoice item (`POST /v1/invoiceitems`) from the pre-encoded form fields and
+    /// return its id. `idempotency_key` makes a retry return the same item instead of a second
+    /// charge. Used by the admin-approved voice overage billing; not available on every impl.
+    async fn create_invoice_item(
+        &self,
+        _secret_key: &str,
+        _idempotency_key: &str,
+        _form: &[(String, String)],
+    ) -> Result<String, ApiError> {
+        Err(ApiError::Internal("invoice items are not supported by this Stripe client".to_string()))
+    }
 }
 
 /// Build the Checkout Session for a validated pack purchase and return its hosted URL.
@@ -366,10 +379,28 @@ impl ReqwestStripeCheckout {
     }
 
     async fn post_form(&self, url: &str, secret_key: &str, form: &[(String, String)]) -> Result<String, ApiError> {
-        let response = reqwest::Client::new()
+        let body = self.post_form_value(url, secret_key, None, form).await?;
+        body["url"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| ApiError::Internal("Stripe returned no session URL".to_string()))
+    }
+
+    async fn post_form_value(
+        &self,
+        url: &str,
+        secret_key: &str,
+        idempotency_key: Option<&str>,
+        form: &[(String, String)],
+    ) -> Result<Value, ApiError> {
+        let mut request = reqwest::Client::new()
             .post(url)
             .basic_auth(secret_key, None::<&str>)
-            .form(form)
+            .form(form);
+        if let Some(key) = idempotency_key {
+            request = request.header("Idempotency-Key", key);
+        }
+        let response = request
             .send()
             .await
             .map_err(|error| ApiError::Internal(format!("Failed to reach Stripe: {error}")))?;
@@ -380,14 +411,10 @@ impl ReqwestStripeCheckout {
                 .unwrap_or_else(|| "Unknown Stripe error".to_string());
             return Err(ApiError::Internal(format!("Stripe rejected the session: {message}")));
         }
-        let body = response
+        response
             .json::<Value>()
             .await
-            .map_err(|error| ApiError::Internal(format!("Failed to parse the Stripe response: {error}")))?;
-        body["url"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| ApiError::Internal("Stripe returned no session URL".to_string()))
+            .map_err(|error| ApiError::Internal(format!("Failed to parse the Stripe response: {error}")))
     }
 }
 
@@ -407,6 +434,21 @@ impl StripeCheckout for ReqwestStripeCheckout {
         form: &[(String, String)],
     ) -> Result<String, ApiError> {
         self.post_form(STRIPE_PORTAL_SESSIONS_URL, secret_key, form).await
+    }
+
+    async fn create_invoice_item(
+        &self,
+        secret_key: &str,
+        idempotency_key: &str,
+        form: &[(String, String)],
+    ) -> Result<String, ApiError> {
+        let body = self
+            .post_form_value(STRIPE_INVOICE_ITEMS_URL, secret_key, Some(idempotency_key), form)
+            .await?;
+        body["id"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| ApiError::Internal("Stripe returned no invoice item id".to_string()))
     }
 }
 
