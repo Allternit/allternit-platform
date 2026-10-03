@@ -4,6 +4,9 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 
+use super::recording::RecordingEnv;
+use super::transfer::{DEFAULT_ACCEPT_TIMEOUT, DEFAULT_RING_TIMEOUT};
+
 #[derive(Clone)]
 pub struct WorkerConfig {
     /// `LIVEKIT_URL`, e.g. `http://100.83.199.24:7880` or `wss://livekit.allternit.com`.
@@ -24,6 +27,16 @@ pub struct WorkerConfig {
     /// `CALL_WORKER_START_TIMEOUT_MS`: how long call start may wait on
     /// cloud-api before the bot speaks the fallback disclosure anyway.
     pub start_timeout: Duration,
+    /// `ALLTERNIT_OUTBOUND_TRUNK_ID`: LiveKit outbound SIP trunk (to the
+    /// carrier) used to dial a warm-transfer target. Unset: warm transfer
+    /// answers `ok:false` with the reason.
+    pub outbound_trunk_id: Option<String>,
+    /// `CALL_WORKER_TRANSFER_RING_MS`: how long the transfer target rings.
+    pub transfer_ring_timeout: Duration,
+    /// `CALL_WORKER_TRANSFER_ACCEPT_MS`: how long the target has to press 1.
+    pub transfer_accept_timeout: Duration,
+    /// `ALLTERNIT_RECORDING_S3_*`: bucket for call recordings (via LiveKit Egress).
+    pub recording: RecordingEnv,
 }
 
 impl std::fmt::Debug for WorkerConfig {
@@ -35,6 +48,10 @@ impl std::fmt::Debug for WorkerConfig {
             .field("voice_session_url", &self.voice_session_url)
             .field("max_calls", &self.max_calls)
             .field("start_timeout", &self.start_timeout)
+            .field("outbound_trunk_id", &self.outbound_trunk_id)
+            .field("transfer_ring_timeout", &self.transfer_ring_timeout)
+            .field("transfer_accept_timeout", &self.transfer_accept_timeout)
+            .field("recording", &self.recording)
             .finish_non_exhaustive()
     }
 }
@@ -71,6 +88,20 @@ impl WorkerConfig {
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(900),
             ),
+            outbound_trunk_id: get("ALLTERNIT_OUTBOUND_TRUNK_ID").filter(|v| !v.trim().is_empty()),
+            transfer_ring_timeout: Duration::from_millis(
+                get("CALL_WORKER_TRANSFER_RING_MS")
+                    .and_then(|v| v.parse().ok())
+                    .filter(|n| *n > 0)
+                    .unwrap_or(DEFAULT_RING_TIMEOUT.as_millis() as u64),
+            ),
+            transfer_accept_timeout: Duration::from_millis(
+                get("CALL_WORKER_TRANSFER_ACCEPT_MS")
+                    .and_then(|v| v.parse().ok())
+                    .filter(|n| *n > 0)
+                    .unwrap_or(DEFAULT_ACCEPT_TIMEOUT.as_millis() as u64),
+            ),
+            recording: RecordingEnv::from_lookup(&get),
         })
     }
 }
@@ -131,6 +162,30 @@ mod tests {
         assert_eq!(c.max_calls, 8);
         assert_eq!(c.voice_session_url, "ws://127.0.0.1:8001/v1/voice/session");
         assert!(!format!("{c:?}").contains("\"s\""));
+    }
+
+    #[test]
+    fn transfer_and_recording_settings() {
+        let c = WorkerConfig::from_lookup(env(BASE)).unwrap();
+        assert_eq!(c.outbound_trunk_id, None);
+        assert_eq!(c.transfer_ring_timeout, Duration::from_secs(25));
+        assert_eq!(c.transfer_accept_timeout, Duration::from_secs(20));
+        assert!(matches!(c.recording, RecordingEnv::Missing(ref v) if v.len() == 5));
+        let mut pairs = BASE.to_vec();
+        pairs.extend([
+            ("ALLTERNIT_OUTBOUND_TRUNK_ID", "ST_out"),
+            ("CALL_WORKER_TRANSFER_RING_MS", "10000"),
+            ("ALLTERNIT_RECORDING_S3_ENDPOINT", "https://r2"),
+            ("ALLTERNIT_RECORDING_S3_BUCKET", "b"),
+            ("ALLTERNIT_RECORDING_S3_ACCESS_KEY", "SECRET-AK"),
+            ("ALLTERNIT_RECORDING_S3_SECRET", "SECRET-SK"),
+            ("ALLTERNIT_RECORDING_S3_REGION", "auto"),
+        ]);
+        let c = WorkerConfig::from_lookup(env(&pairs)).unwrap();
+        assert_eq!(c.outbound_trunk_id.as_deref(), Some("ST_out"));
+        assert_eq!(c.transfer_ring_timeout, Duration::from_secs(10));
+        assert!(matches!(c.recording, RecordingEnv::Configured(_)));
+        assert!(!format!("{c:?}").contains("SECRET"));
     }
 
     #[test]

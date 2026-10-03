@@ -24,7 +24,10 @@
 //! - [`brain`]: `CallBrain` trait, `RelayBrain`, honest fallback line.
 //! - [`session_adapter`]: the one binding to the Voice Session core.
 //! - [`call`]: the per-call state machine.
-//! - [`voicemail`]: outbound voicemail detection hook (not built yet).
+//! - [`voicemail`]: outbound answering-machine detection (text, VAD, beep).
+//! - [`hold_music`]: the synthesized hold loop.
+//! - [`transfer`]: warm transfer state machine and briefing wording.
+//! - [`recording`]: Egress recording decision (the disclosure follows it).
 //! - [`room`] (`call-worker` feature): LiveKit media + server API binding.
 
 pub mod audio;
@@ -36,9 +39,14 @@ pub mod controls;
 pub mod disclosure;
 pub mod dispatch;
 pub mod events;
+pub mod hold_music;
+pub mod recording;
 pub mod session_adapter;
+pub mod transfer;
 pub mod voicemail;
 
+#[cfg(feature = "call-worker")]
+pub mod consult;
 #[cfg(feature = "call-worker")]
 pub mod room;
 

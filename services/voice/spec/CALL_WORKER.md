@@ -26,6 +26,8 @@ allternit-voice-service worker     # call worker (separate process, same binary)
 | `VOICE_SESSION_TOKEN` | no | Token for that socket, if it requires one. |
 | `CALL_WORKER_MAX_CALLS` | no | Concurrent calls before the worker declines offers. Default 8. |
 | `CALL_WORKER_START_TIMEOUT_MS` | no | Longest wait for cloud-api's call-start answer before the fallback opening plays. Default 900. |
+| `ALLTERNIT_OUTBOUND_TRUNK_ID` | for warm transfer | LiveKit **outbound** SIP trunk id (`ST_…`). Without it a warm transfer answers `ok:false` with the reason. |
+| `ALLTERNIT_RECORDING_S3_ENDPOINT` / `_BUCKET` / `_ACCESS_KEY` / `_SECRET` / `_REGION` | for recording | S3-compatible bucket (Cloudflare R2: region `auto`) the egress service uploads call audio to. All five, or recording is unavailable. |
 
 Secrets are never logged; `WorkerConfig`'s `Debug` output leaves them out.
 
@@ -65,9 +67,9 @@ A single task per call delivers events in order:
 | `call.transcript.delta` | `speaker: caller\|bot, text, final, segmentId` | Caller interim (`final:false`, live only) and final segments; bot utterances (final) when spoken or interrupted. |
 | `call.dtmf` | `digits, from` | Caller keypad (`from` = caller), or DTMF the UI sent (`from` = bot number, as the ack). |
 | `call.state.changed` | `held, mutedBot, mutedCaller, speaker` | Ack for mute, unmute, hold, resume, listen, and invalid controls. |
-| `call.transferred` | `to, mode, ok, reason?` | Transfer result. A warm transfer returns `ok:false` (not supported yet). |
+| `call.transferred` | `to, mode, ok, reason?` | Transfer result. `mode:"warm"` is the consult-and-connect transfer below; `ok:false` carries an honest `reason`. |
 | `call.takeover` | `by, active` | Takeover (`active:true`) and release (`active:false`). |
-| `call.voicemail.detected` | `action` | Outbound only. The hook exists, but nothing fires it yet. |
+| `call.voicemail.detected` | `action` | Outbound only. `left_message` or `hung_up`. |
 | `call.ended` | `durationSec, reason, recordingRef?` | Always last. `reason` is one of `caller_hangup`, `hangup_control`, `transferred`, `room_closed`, `voice_engine_error`. |
 
 ## Controls
@@ -79,10 +81,10 @@ cloud-api sends controls with RoomService `SendData` on topic `allternit.call.co
 | `hangup` | Delete the room. | `call.ended` |
 | `mute` / `unmute` `target: bot` (default) | Bot audio is dropped or allowed. | `call.state.changed` |
 | `mute` / `unmute` `target: caller` | Caller audio stops or resumes reaching the core. | `call.state.changed` |
-| `hold` / `resume` | Hold: bot goes silent, in-flight turn aborted, caller audio ignored (silence on the line; no hold music yet). Resume reverses it. | `call.state.changed` |
+| `hold` / `resume` | Hold: bot goes silent, in-flight turn aborted, caller audio ignored (a synthesized chord pad plays to the caller). Resume reverses it. | `call.state.changed` |
 | `dtmf` `digits` (0-9, `*`, `#`, A-D; up to 32) | Sent to the caller as SIP DTMF. | `call.dtmf` |
 | `transfer` `to` (E.164 or `sip:`/`tel:`), `mode: cold` | SIP REFER via `TransferSIPParticipant`. | `call.transferred` |
-| `takeover` `by` | Bot goes quiet and stops answering turns; caller transcription continues. | `call.takeover {active:true}` |
+| `takeover` `by` | Bot goes quiet and stops answering turns; caller transcription continues, and the human's speech is transcribed too. | `call.takeover {active:true}` |
 | `release` `by` | Bot resumes with the same transcript context. | `call.takeover {active:false}` |
 | `listen` | Nothing changes on the worker side; cloud-api minted the receive-only token. | `call.state.changed` |
 
@@ -116,5 +118,46 @@ You don't need to place a call to check registration. `livekit-cli` shows the wo
 ## Known gaps
 
 - **Voice Session core.** The core (`services/voice/src/session/` and the WS route) is being built separately. The worker drives it through the protocol socket in `session_adapter.rs`; an in-process binding would only touch that file.
-- **Human speech during a takeover** isn't transcribed. Only the SIP caller's track feeds the core.
-- **No hold audio**, **no warm transfer**, **no voicemail detection** (outbound isn't enabled), and **no recording** (`recordingRef` is never set).
+
+## Takeover, hold, warm transfer, voicemail, recording
+
+- **Takeover transcription.** While `takeover` is active the call opens a second, transcription-only Voice Session for the human who joined the room (VAD and STT only: no turn-taking, no brain, no TTS). Final text is emitted as `call.transcript.delta` with `speaker:"human"`; the caller's pipeline keeps running. `release` closes it and the bot resumes. If no core can be opened, the worker logs that the human isn't transcribed.
+- **Hold music.** `hold` plays a looped chord pad synthesized in code (`hold_music.rs`; no audio files, no licensing). The loop is whole periods of every partial, so it repeats seamlessly. `resume` stops it at once. The bot stays silent during hold.
+- **Warm transfer** (`transfer` mode `warm`, `transfer.rs` and `consult.rs`): (1) hold the caller with music; (2) `CreateSIPParticipant` on `ALLTERNIT_OUTBOUND_TRUNK_ID` dials the target into a separate `consult-*` room; (3) the bot briefs the target by voice from a template over the transcript and asks them to press 1 to accept; (4) on accept, `MoveParticipant` moves the target into the caller's room (SIP REFER of the caller is the fallback) and the bot leaves, leaving the room standing; (5) on no answer, decline or error the caller comes off hold and the bot says so. `call.transferred {mode:"warm", ok, reason?}` reports it. Warm transfer dials out, so the control must carry the consent gate's `consentRef`; without it, or without an outbound trunk, it fails with `ok:false` and the reason.
+- **Voicemail detection** (outbound with `consentRef`, `voicemail.rs`): for the first seconds after answer, the worker classifies human or machine from STT text ("leave a message", "after the tone"), greeting length, and a Goertzel beep detector (about 1 kHz for more than 300 ms). A person gets the normal opening. A machine: wait for the beep, leave the bot's `voicemailMessage` (or the default: who is calling and the callback number), hang up, and emit `call.voicemail.detected {action:"left_message"}`; a full or unavailable mailbox gives `hung_up`.
+- **Recording** (`recording.rs`): only when the bot's `recording` is true. The worker starts a LiveKit Egress audio-only room composite (OGG) into the bucket at `calls/<callId>.ogg` and stops it at the end; `call.ended.recordingRef` is that key. If egress or the bucket settings are missing, the call is **not** recorded, an error is logged, `call.state.changed` carries `recording:false`, and the disclosure says "this call isn't recorded". The disclosure follows what is really happening, never only the config.
+
+### Deploy notes (egress and outbound trunk)
+
+Outbound trunk, created once on LiveKit (`lk sip outbound create`), with the Telnyx credentials joe-07 holds:
+
+```json
+{ "trunk": { "name": "allternit-outbound", "address": "sip.telnyx.com",
+  "numbers": ["<a Telnyx number owned by the account>"],
+  "authUsername": "<telnyx sip user>", "authPassword": "<telnyx sip password>" } }
+```
+
+Set the returned `ST_…` id as `ALLTERNIT_OUTBOUND_TRUNK_ID` on the worker. Egress needs its own service next to LiveKit, on the same Redis:
+
+```yaml
+  egress:
+    image: livekit/egress:latest
+    restart: unless-stopped
+    network_mode: host
+    cpus: "1.0"
+    environment:
+      EGRESS_CONFIG_BODY: |
+        api_key: ${LIVEKIT_API_KEY}
+        api_secret: ${LIVEKIT_API_SECRET}
+        ws_url: ws://127.0.0.1:7880
+        redis: { address: 127.0.0.1:6379 }
+        health_port: 9090
+        cpu_cost: { room_composite_cpu_cost: 1.0 }
+```
+
+The worker passes the bucket settings (`ALLTERNIT_RECORDING_S3_*`) to egress per request, so the bucket keys live only in the worker's environment.
+
+## Known gaps
+
+- **Voice Session core.** The core (`services/voice/src/session/` and the WS route) is being built separately. The worker drives it through the protocol socket in `session_adapter.rs`; an in-process binding would only touch that file.
+- **Live verification pending.** The warm-transfer dial-out, `MoveParticipant` of a SIP participant, and egress need the outbound trunk and the egress service above; they are covered by fakes in tests, not yet by a real call.

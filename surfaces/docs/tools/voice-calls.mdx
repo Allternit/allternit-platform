@@ -17,7 +17,7 @@ Every call opens with a fixed line that bot settings can't change. The line says
 
 > Hi, you've reached Acme Plumbing. I'm an AI assistant, and this call isn't recorded. How can I help?
 
-Recording is off unless the bot owner has configured recording consent. The opening is spoken from cloud-api's cached copy of the bot's settings, so it starts within about a second even if the bot's cloud computer is asleep.
+Recording is off unless the bot owner has configured recording consent. If recording is configured but isn't available at that moment, the line says the call isn't recorded, and nothing is recorded. The opening is spoken from cloud-api's cached copy of the bot's settings, so it starts within about a second even if the bot's cloud computer is asleep.
 
 The caller can interrupt the bot at any time; the bot stops talking immediately. Each turn goes to the bot's own runtime, so the bot uses its normal tools, memory and thread on a call. If the runtime can't be reached, the bot says "I can't reach my tools right now; I'll have someone follow up." It never improvises an answer.
 
@@ -31,7 +31,7 @@ The caller can interrupt the bot at any time; the bot stops talking immediately.
 
 ## Controls from the phone screen
 
-The thread's phone screen sends **hang up**, **mute** (bot or caller), **hold/resume**, **keypad (DTMF)**, **transfer** (cold, to a phone number), **take over**, **hand back**, and **listen**. cloud-api forwards each one to the worker over the room's data channel, and the worker confirms it with an event so the screen updates. During a takeover the bot goes quiet and keeps transcribing the caller. After hand back, the bot picks up with the same context.
+The thread's phone screen sends **hang up**, **mute** (bot or caller), **hold/resume**, **keypad (DTMF)**, **transfer** (cold, or warm: the bot briefs the person you're sending the call to and connects them only if they accept), **take over**, **hand back**, and **listen**. cloud-api forwards each one to the worker over the room's data channel, and the worker confirms it with an event so the screen updates. Hold plays soft music to the caller. During a takeover the bot goes quiet and the thread transcribes both the caller and you. After hand back, the bot picks up with the same context.
 
 ## Events written to the thread
 
