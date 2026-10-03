@@ -17,6 +17,15 @@ uuid = { workspace = true, features = ["v4", "serde"] }
 chrono = { workspace = true, features = ["serde"] }
 tower-http = { workspace = true, features = ["cors"] }
 tempfile = { workspace = true }
+futures-util = { workspace = true }
+# Voice Session Smart Turn: runs on sherpa-onnx's own onnxruntime (no second copy).
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "alternative-backend", "api-24"], optional = true }
+sha2 = { version = "0.10", optional = true }
+
+[features]
+# Voice Session engine over the Phase 1 sherpa-onnx engine (crate::stt/tts/models).
+sherpa = ["dep:ort", "dep:sha2"]
 
 [dev-dependencies]
 tower = { workspace = true }
+tokio-tungstenite = { workspace = true }

@@ -35,36 +35,36 @@ pub struct VoiceServiceState {
 
 impl VoiceServiceState {
     pub fn new() -> Self {
-        let mut tts_models = Vec::new();
-        tts_models.push(VoiceModel {
+        let tts_models = vec![
+            VoiceModel {
             id: "default".to_string(),
             name: "Default Voice".to_string(),
             language: "en".to_string(),
             gender: "neutral".to_string(),
             sample_rate: 24000,
-        });
-        tts_models.push(VoiceModel {
+            },
+            VoiceModel {
             id: "en-us-female".to_string(),
             name: "US English Female".to_string(),
             language: "en-US".to_string(),
             gender: "female".to_string(),
             sample_rate: 24000,
-        });
-        tts_models.push(VoiceModel {
+            },
+            VoiceModel {
             id: "en-us-male".to_string(),
             name: "US English Male".to_string(),
             language: "en-US".to_string(),
             gender: "male".to_string(),
             sample_rate: 24000,
-        });
+            },
+        ];
 
-        let mut stt_models = Vec::new();
-        stt_models.push(SttModel {
+        let stt_models = vec![SttModel {
             id: "whisper-base".to_string(),
             name: "Whisper Base".to_string(),
             language: "multilingual".to_string(),
             supports_streaming: true,
-        });
+        }];
 
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
@@ -192,6 +192,7 @@ pub fn create_router(state: VoiceServiceState) -> Router {
         .route("/v1/stats", get(get_stats))
         
         .with_state(state)
+        .merge(crate::session::ws::router())
 }
 
 /// Health check endpoint
