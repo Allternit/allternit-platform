@@ -159,6 +159,7 @@ PY
     # pre-approved) pairing is consumable; poll a few times to absorb races.
     device_token=""
     runtime_id=""
+    owner_id=""
     for _ in 1 2 3 4 5; do
         exchange_response="$(curl -sS -X POST "$API_BASE/api/v1/runtime-pairings/exchange" \
             -H 'content-type: application/json' \
@@ -174,16 +175,19 @@ PY
         if printf '%s' "$exchange_response" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if "deviceToken" in d else 1)' 2>/dev/null; then
             device_token="$(printf '%s' "$exchange_response" | python3 -c 'import json,sys;print(json.load(sys.stdin)["deviceToken"])')"
             runtime_id="$(printf '%s' "$exchange_response" | python3 -c 'import json,sys;print(json.load(sys.stdin)["runtimeId"])')"
+            owner_id="$(printf '%s' "$exchange_response" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("userId",""))')"
             break
         fi
         sleep 2
     done
     [ -n "$device_token" ] && [ -n "$runtime_id" ] || die "pairing exchange did not yield a device credential"
+    [ -n "$owner_id" ] || log "WARNING: pairing exchange returned no userId; relayed voice calls will answer 503 until ALLTERNIT_RUNTIME_OWNER_ID is set"
 
     umask 077
     cat > "$ENV_FILE" <<EOF
 ALLTERNIT_NODE_DEVICE_ID=$runtime_id
 ALLTERNIT_RUNTIME_DEVICE_TOKEN=$device_token
+ALLTERNIT_RUNTIME_OWNER_ID=$owner_id
 ALLTERNIT_CLOUD_API_BASE=$API_BASE
 ALLTERNIT_CLOUD_JWKS_URL=$JWKS_URL
 ALLTERNIT_NODE_DATA_DIR=$DATA_DIR

@@ -4,7 +4,7 @@
 //! The voice worker never talks to this runtime directly: cloud-api relays a
 //! call's start, its events and its bot turns here, signed with the runtime's
 //! device token. Four routes (all `/api/v1/voice/calls*`, public to the Clerk
-//! middleware because they authenticate themselves, see [`RelayedVoiceAuth`]):
+//! middleware because they authenticate themselves, see [`crate::relay_auth`]):
 //!
 //! * `POST   /api/v1/voice/calls`                  start a call, resolve its thread
 //! * `POST   /api/v1/voice/calls/{callId}/events`  write `call.*` events to the thread
@@ -14,8 +14,8 @@
 //! Auth: `x-allternit-runtime-sig: v1=<hex HMAC-SHA256(device_token,
 //! "<ts>.<METHOD>.<path>.<hex sha256(body)>")>`, `x-allternit-runtime-ts` (unix
 //! seconds, ±300 s) and `x-allternit-owner`. Unsigned requests are never
-//! accepted. allternit-api cannot read its own device token today (see
-//! [`VoiceRelaySecret`]), so until that is wired the routes answer 503 to
+//! accepted. The verifier and the device-token source live in
+//! [`crate::relay_auth`]; with no token available the routes answer 503 to
 //! signed requests and 401 to unsigned ones.
 
 use std::collections::HashMap;
@@ -25,153 +25,31 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use axum::body::Body;
-use axum::extract::{FromRequest, Path, Request, State};
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Extension, Json, Router};
-use hmac::{Hmac, Mac};
 use rusqlite::{params, OptionalExtension};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 use tracing::warn;
 
 use crate::db::DbHandle;
 use crate::gateway_runner::led;
+use crate::relay_auth::{unix_now, EnvOrFileRelaySecret, RelayedAuth, RelaySecret};
 use crate::AppState;
 
-pub const SIG_HEADER: &str = "x-allternit-runtime-sig";
-pub const TS_HEADER: &str = "x-allternit-runtime-ts";
-pub const OWNER_HEADER: &str = "x-allternit-owner";
-/// Allowed clock skew between cloud-api and this runtime, either direction.
-pub const MAX_SKEW_SECS: i64 = 300;
-const MAX_BODY: usize = 1024 * 1024;
 const MAX_EVENTS: usize = 200;
 const MAX_TURN_CHARS: usize = 4000;
 
 /// Kept server-side so a phone bot answers the way a person talks on the phone.
 const SPOKEN_PREFACE: &str = "[Live phone call. Answer the way you would speak aloud: one to three short sentences, plain words, no markdown, lists or emoji. If you need a tool, use it, then say the result briefly.]";
 
-// ---------------------------------------------------------------- relay secret
-
-/// What this runtime signs/verifies relayed voice requests with: the device
-/// token cloud-api issued when this runtime paired, and the owner it paired as.
-///
-/// **Gap:** allternit-api does not hold its own device token. Callers present
-/// `allternit_runtime_…` tokens to it (`connector_routes::verify_runtime_device_token`
-/// introspects them against cloud-api), but the runtime's own copy lives in
-/// gizzi's environment (`ALLTERNIT_API_TOKEN`) and cloud-api's `runtime_devices`
-/// table. Until a pairing step hands the token to this process, the production
-/// impl ([`UnconfiguredRelaySecret`]) returns `None` and the routes answer 503.
-pub trait VoiceRelaySecret: Send + Sync {
-    fn device_token(&self) -> Option<String>;
-    fn paired_owner(&self) -> Option<String>;
-}
-
-pub struct UnconfiguredRelaySecret;
-
-impl VoiceRelaySecret for UnconfiguredRelaySecret {
-    fn device_token(&self) -> Option<String> {
-        None
-    }
-    fn paired_owner(&self) -> Option<String> {
-        None
-    }
-}
-
-// ---------------------------------------------------------------- signature
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum AuthError {
-    /// Missing or malformed signature headers, bad signature, stale ts, wrong owner.
-    Unauthorized(&'static str),
-    /// A signature was presented but this runtime has no token to check it with.
-    NotConfigured,
-}
-
-pub fn body_sha256_hex(body: &[u8]) -> String {
-    hex::encode(Sha256::digest(body))
-}
-
-/// The hex signature for `(ts, method, path, body)`. Cloud-api computes the same.
-pub fn sign_relay(device_token: &str, ts: i64, method: &str, path: &str, body: &[u8]) -> String {
-    let mut mac = Hmac::<Sha256>::new_from_slice(device_token.as_bytes()).expect("hmac takes any key length");
-    mac.update(format!("{ts}.{method}.{path}.{}", body_sha256_hex(body)).as_bytes());
-    hex::encode(mac.finalize().into_bytes())
-}
-
-/// Verify one relayed request; returns the owner it acts for. The compare is
-/// constant-time (`Mac::verify_slice`).
-pub fn verify_relay(
-    secret: &dyn VoiceRelaySecret,
-    headers: &HeaderMap,
-    method: &str,
-    path: &str,
-    body: &[u8],
-    now: i64,
-) -> Result<String, AuthError> {
-    let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok()).map(str::trim).filter(|v| !v.is_empty());
-    let sig = header(SIG_HEADER).ok_or(AuthError::Unauthorized("missing signature"))?;
-    let ts = header(TS_HEADER).ok_or(AuthError::Unauthorized("missing timestamp"))?;
-    let owner = header(OWNER_HEADER).ok_or(AuthError::Unauthorized("missing owner"))?;
-    let sig_hex = sig.strip_prefix("v1=").ok_or(AuthError::Unauthorized("unsupported signature version"))?;
-    let sig_bytes = hex::decode(sig_hex).map_err(|_| AuthError::Unauthorized("malformed signature"))?;
-    let ts: i64 = ts.parse().map_err(|_| AuthError::Unauthorized("malformed timestamp"))?;
-    let (Some(token), Some(paired)) = (secret.device_token(), secret.paired_owner()) else {
-        return Err(AuthError::NotConfigured);
-    };
-    if (now - ts).abs() > MAX_SKEW_SECS {
-        return Err(AuthError::Unauthorized("stale timestamp"));
-    }
-    let mut mac = Hmac::<Sha256>::new_from_slice(token.as_bytes()).expect("hmac takes any key length");
-    mac.update(format!("{ts}.{method}.{path}.{}", body_sha256_hex(body)).as_bytes());
-    mac.verify_slice(&sig_bytes).map_err(|_| AuthError::Unauthorized("bad signature"))?;
-    if owner != paired {
-        return Err(AuthError::Unauthorized("owner does not match this runtime"));
-    }
-    Ok(owner.to_string())
-}
-
 fn fail(status: StatusCode, msg: &str) -> Response {
     (status, Json(json!({ "error": msg }))).into_response()
-}
-
-fn unix_now() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
-}
-
-/// Extractor for the four voice routes: reads the raw body, verifies the relay
-/// signature over it, and yields the owner plus the verified bytes.
-pub struct RelayedVoiceAuth {
-    pub owner: String,
-    pub body: bytes::Bytes,
-}
-
-impl RelayedVoiceAuth {
-    fn json<T: serde::de::DeserializeOwned>(&self) -> Result<T, Response> {
-        serde_json::from_slice(&self.body).map_err(|e| fail(StatusCode::BAD_REQUEST, &format!("invalid body: {e}")))
-    }
-}
-
-#[async_trait]
-impl<S: Send + Sync> FromRequest<S> for RelayedVoiceAuth {
-    type Rejection = Response;
-
-    async fn from_request(req: Request, _state: &S) -> Result<Self, Self::Rejection> {
-        let (parts, body) = req.into_parts();
-        let deps = parts.extensions.get::<Arc<VoiceDeps>>().cloned().ok_or_else(|| fail(StatusCode::SERVICE_UNAVAILABLE, "voice relay not configured"))?;
-        let body = axum::body::to_bytes(Body::new(body), MAX_BODY).await.map_err(|_| fail(StatusCode::PAYLOAD_TOO_LARGE, "body too large"))?;
-        let path = parts.extensions.get::<axum::extract::OriginalUri>().map(|u| u.0.path().to_string()).unwrap_or_else(|| parts.uri.path().to_string());
-        match verify_relay(deps.secret.as_ref(), &parts.headers, parts.method.as_str(), &path, &body, unix_now()) {
-            Ok(owner) => Ok(Self { owner, body }),
-            Err(AuthError::Unauthorized(why)) => Err(fail(StatusCode::UNAUTHORIZED, why)),
-            Err(AuthError::NotConfigured) => Err(fail(StatusCode::SERVICE_UNAVAILABLE, "voice relay not configured")),
-        }
-    }
 }
 
 // ---------------------------------------------------------------- seams
@@ -235,7 +113,7 @@ struct InFlight {
 }
 
 pub struct VoiceDeps {
-    pub secret: Box<dyn VoiceRelaySecret>,
+    pub secret: Arc<dyn RelaySecret>,
     pub resolver: Box<dyn ThreadResolver>,
     pub turner: Arc<dyn VoiceTurner>,
     turns: Mutex<HashMap<String, InFlight>>,
@@ -243,12 +121,12 @@ pub struct VoiceDeps {
 }
 
 impl VoiceDeps {
-    pub fn new(secret: Box<dyn VoiceRelaySecret>, resolver: Box<dyn ThreadResolver>, turner: Arc<dyn VoiceTurner>) -> Self {
+    pub fn new(secret: Arc<dyn RelaySecret>, resolver: Box<dyn ThreadResolver>, turner: Arc<dyn VoiceTurner>) -> Self {
         Self { secret, resolver, turner, turns: Mutex::new(HashMap::new()), next_generation: AtomicU64::new(1) }
     }
 
     pub fn production() -> Self {
-        Self::new(Box::new(UnconfiguredRelaySecret), Box::new(GizziResolver), Arc::new(ChannelTurner))
+        Self::new(Arc::new(EnvOrFileRelaySecret::from_process_env()), Box::new(GizziResolver), Arc::new(ChannelTurner))
     }
 
     /// Stop the call's running turn, if any (optionally only a given generation).
@@ -322,7 +200,7 @@ struct CreateBody {
     started_at: String,
 }
 
-async fn create_h(State(state): State<Arc<AppState>>, Extension(deps): Extension<Arc<VoiceDeps>>, auth: RelayedVoiceAuth) -> Response {
+async fn create_h(State(state): State<Arc<AppState>>, Extension(deps): Extension<Arc<VoiceDeps>>, auth: RelayedAuth) -> Response {
     let b: CreateBody = match auth.json() {
         Ok(b) => b,
         Err(r) => return r,
@@ -400,7 +278,7 @@ fn actor_for<'a>(call: &'a CallRow, ev: &'a EventIn, owner: &'a str) -> (&'stati
     }
 }
 
-async fn events_h(State(state): State<Arc<AppState>>, Extension(deps): Extension<Arc<VoiceDeps>>, Path(call_id): Path<String>, auth: RelayedVoiceAuth) -> Response {
+async fn events_h(State(state): State<Arc<AppState>>, Extension(deps): Extension<Arc<VoiceDeps>>, Path(call_id): Path<String>, auth: RelayedAuth) -> Response {
     let call = match owned_call(&state.db, &call_id, &auth.owner) {
         Ok(c) => c,
         Err(r) => return r,
@@ -495,7 +373,7 @@ impl Drop for StreamGuard {
     }
 }
 
-async fn turn_h(State(state): State<Arc<AppState>>, Extension(deps): Extension<Arc<VoiceDeps>>, Path(call_id): Path<String>, auth: RelayedVoiceAuth) -> Response {
+async fn turn_h(State(state): State<Arc<AppState>>, Extension(deps): Extension<Arc<VoiceDeps>>, Path(call_id): Path<String>, auth: RelayedAuth) -> Response {
     let call = match owned_call(&state.db, &call_id, &auth.owner) {
         Ok(c) => c,
         Err(r) => return r,
@@ -552,7 +430,7 @@ async fn turn_h(State(state): State<Arc<AppState>>, Extension(deps): Extension<A
     Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
 }
 
-async fn abort_h(State(state): State<Arc<AppState>>, Extension(deps): Extension<Arc<VoiceDeps>>, Path(call_id): Path<String>, auth: RelayedVoiceAuth) -> Response {
+async fn abort_h(State(state): State<Arc<AppState>>, Extension(deps): Extension<Arc<VoiceDeps>>, Path(call_id): Path<String>, auth: RelayedAuth) -> Response {
     if let Err(r) = owned_call(&state.db, &call_id, &auth.owner) {
         return r;
     }
@@ -571,13 +449,16 @@ pub fn voice_calls_router_with(deps: Arc<VoiceDeps>) -> Router<Arc<AppState>> {
         .route("/api/v1/voice/calls", post(create_h))
         .route("/api/v1/voice/calls/:call_id/events", post(events_h))
         .route("/api/v1/voice/calls/:call_id/turn", post(turn_h).delete(abort_h))
+        .layer(Extension(deps.secret.clone()))
         .layer(Extension(deps))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::http::Request;
+    use crate::relay_auth::{sign_relay, OWNER_HEADER, SIG_HEADER, TS_HEADER};
+    use axum::body::Body;
+    use axum::http::{HeaderMap, Request};
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
@@ -585,7 +466,7 @@ mod tests {
     const OWNER: &str = "user-a";
 
     struct Secret(Option<(&'static str, &'static str)>);
-    impl VoiceRelaySecret for Secret {
+    impl RelaySecret for Secret {
         fn device_token(&self) -> Option<String> {
             self.0.map(|s| s.0.to_string())
         }
@@ -642,52 +523,6 @@ mod tests {
         headers(&format!("v1={}", sign_relay(token, ts, method, path, body)), ts, owner)
     }
 
-    // ---------------------------------------------------------- verifier
-
-    #[test]
-    fn verifier_accepts_a_good_signature_and_returns_the_owner() {
-        let (secret, now, body) = (Secret(Some((TOKEN, OWNER))), now_ts(), br#"{"a":1}"#);
-        let h = signed(TOKEN, now, OWNER, "POST", "/api/v1/voice/calls", body);
-        assert_eq!(verify_relay(&secret, &h, "POST", "/api/v1/voice/calls", body, now), Ok(OWNER.to_string()));
-    }
-
-    #[test]
-    fn verifier_rejects_bad_stale_future_wrong_owner_and_tampered() {
-        let (secret, now, body) = (Secret(Some((TOKEN, OWNER))), now_ts(), br#"{"a":1}"#);
-        let path = "/api/v1/voice/calls";
-        let bad = |r: Result<String, AuthError>| matches!(r, Err(AuthError::Unauthorized(_)));
-        // wrong key
-        assert!(bad(verify_relay(&secret, &signed("other", now, OWNER, "POST", path, body), "POST", path, body, now)));
-        // stale and future timestamps (validly signed for their own ts)
-        assert!(bad(verify_relay(&secret, &signed(TOKEN, now - 301, OWNER, "POST", path, body), "POST", path, body, now)));
-        assert!(bad(verify_relay(&secret, &signed(TOKEN, now + 301, OWNER, "POST", path, body), "POST", path, body, now)));
-        assert!(verify_relay(&secret, &signed(TOKEN, now - 299, OWNER, "POST", path, body), "POST", path, body, now).is_ok());
-        // wrong owner header, validly signed
-        assert!(bad(verify_relay(&secret, &signed(TOKEN, now, "user-b", "POST", path, body), "POST", path, body, now)));
-        // body, method and path tamper
-        let h = signed(TOKEN, now, OWNER, "POST", path, body);
-        assert!(bad(verify_relay(&secret, &h, "POST", path, br#"{"a":2}"#, now)));
-        assert!(bad(verify_relay(&secret, &h, "DELETE", path, body, now)));
-        assert!(bad(verify_relay(&secret, &h, "POST", "/api/v1/voice/calls/x/turn", body, now)));
-        // missing headers, wrong version, non-hex, bad ts
-        assert!(bad(verify_relay(&secret, &HeaderMap::new(), "POST", path, body, now)));
-        let sig = sign_relay(TOKEN, now, "POST", path, body);
-        assert!(bad(verify_relay(&secret, &headers(&format!("v2={sig}"), now, OWNER), "POST", path, body, now)));
-        assert!(bad(verify_relay(&secret, &headers("v1=zz", now, OWNER), "POST", path, body, now)));
-        let mut h = headers(&format!("v1={sig}"), now, OWNER);
-        h.insert(TS_HEADER, "soon".parse().unwrap());
-        assert!(bad(verify_relay(&secret, &h, "POST", path, body, now)));
-    }
-
-    #[test]
-    fn verifier_without_a_device_token_never_accepts() {
-        let (now, body) = (now_ts(), b"{}");
-        let h = signed(TOKEN, now, OWNER, "POST", "/p", body);
-        assert_eq!(verify_relay(&Secret(None), &h, "POST", "/p", body, now), Err(AuthError::NotConfigured));
-        // Unsigned stays a 401-class error even when unconfigured.
-        assert!(matches!(verify_relay(&Secret(None), &HeaderMap::new(), "POST", "/p", body, now), Err(AuthError::Unauthorized(_))));
-    }
-
     // ---------------------------------------------------------- routes
 
     struct H {
@@ -703,7 +538,7 @@ mod tests {
         state.db.connect().unwrap().execute("INSERT INTO agents (id, user_id, name, model, provider, is_bot, config) VALUES ('bot-1','user-a','b','m','p',1,'{}')", []).unwrap();
         crate::channel_phone::upsert_number(&state.db, "num-1", OWNER, "bot-1", "+14155550100", None).unwrap();
         let turner = Arc::new(FakeTurner::default());
-        let deps = Arc::new(VoiceDeps::new(Box::new(Secret(secret)), Box::new(FakeResolver), turner.clone()));
+        let deps = Arc::new(VoiceDeps::new(Arc::new(Secret(secret)), Box::new(FakeResolver), turner.clone()));
         let app = voice_calls_router_with(deps).with_state(state.clone());
         H { app, state, turner }
     }

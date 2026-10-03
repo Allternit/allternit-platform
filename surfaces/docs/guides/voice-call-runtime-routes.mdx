@@ -20,7 +20,7 @@ These four routes skip the Clerk session check. Each request carries:
 | Status | Meaning |
 | --- | --- |
 | 401 | Missing or malformed headers, bad signature, stale timestamp, or wrong owner. |
-| 503 | `voice relay not configured`: a signed request arrived but this runtime cannot read its own device token yet. |
+| 503 | `relay not configured`: a signed request arrived but this runtime has no device token and owner (see below). |
 
 ## Routes
 
@@ -70,6 +70,6 @@ The reply is currently produced whole and then streamed sentence by sentence, an
 
 `DELETE /api/v1/voice/calls/{callId}/turn` aborts the running turn the way the Stop button does and always returns 204, even when nothing was running.
 
-## Not configured yet
+## Where the device token comes from
 
-allternit-api does not hold its own device token (gizzi holds it as `ALLTERNIT_API_TOKEN`; the registry is in cloud-api). Until a pairing step hands the token and paired owner to this process, every signed request answers 503. See `cmd/allternit-api/docs/VOICE_CALLS.md`.
+The runtime reads its own device token from env `ALLTERNIT_RUNTIME_DEVICE_TOKEN` plus `ALLTERNIT_RUNTIME_OWNER_ID`, or else from the shared `runtime-identity.json` (`$ALLTERNIT_RUNTIME_IDENTITY_PATH`, default `~/.config/allternit/runtime-identity.json`), re-reading it when allternit-node rotates the token. An expired identity counts as absent. With no source, signed requests answer 503. Provisioned cloud computers get both env vars at pairing time. The verifier is the shared `relay_auth` module, also used by other relayed envelopes. See `cmd/allternit-api/docs/VOICE_CALLS.md`.
