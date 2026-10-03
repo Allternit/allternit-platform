@@ -243,7 +243,14 @@ impl Ear {
         if self.turn.mode == TurnMode::Smart {
             if let Some(det) = self.detector.as_mut() {
                 let window: Vec<f32> = self.ring.iter().copied().collect();
-                match det.predict(&window) {
+                let started = std::time::Instant::now();
+                let result = det.predict(&window);
+                debug!(
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    ?result,
+                    "smart turn"
+                );
+                match result {
                     Ok(p) if p >= TURN_THRESHOLD => {
                         self.end_turn(p);
                         return;

@@ -269,17 +269,23 @@ mod onnx {
     impl SmartTurn {
         pub fn load(model: &Path, threads: usize) -> Result<Self, EngineError> {
             ensure_api()?;
-            let fail = |e: ort::Error| EngineError::unavailable(format!("smart turn model: {e}"));
+            fn fail(e: impl std::fmt::Display) -> EngineError {
+                EngineError::unavailable(format!("smart turn model: {e}"))
+            }
             let session = ort::session::Session::builder()
                 .map_err(fail)?
                 .with_intra_threads(threads.max(1))
                 .map_err(fail)?
                 .commit_from_file(model)
                 .map_err(fail)?;
-            Ok(Self {
+            let mut detector = Self {
                 session,
                 features: WhisperFeatures::new(),
-            })
+            };
+            // The first run allocates and optimises lazily (~1 s); pay for it
+            // here, not on the user's first turn.
+            detector.predict(&[0.0; 16_000])?;
+            Ok(detector)
         }
 
         /// Download (if missing) and verify the pinned model under `dir`.
