@@ -430,6 +430,7 @@
               "guides/webhooks",
               "guides/channel-events-and-connect-api",
               "guides/voice-call-runtime-routes",
+              "guides/custom-voices",
               "guides/pdf-citations"
             ],
             "icon": "/icons/book.svg"
