@@ -63,8 +63,9 @@ async fn teams_app_webhook(State(state): State<Arc<AppState>>, headers: HeaderMa
     let st = state.clone();
     let owner = owner.to_string();
     tokio::spawn(async move {
-        let events = normalize_activity(&activity);
         if let (Some(acct), Some(tx)) = (ensure_account(&st.db, &owner), cloud_transport(&st, &owner)) {
+            let names: Vec<String> = crate::channel_transports::member_bots(&st.db, &acct).iter().map(|b| b.name.clone()).collect();
+            let events = normalize_activity(&activity, &names);
             dispatch_events(&st, &acct, tx, events).await;
         }
     });
@@ -73,11 +74,11 @@ async fn teams_app_webhook(State(state): State<Arc<AppState>>, headers: HeaderMa
 
 /// Normalize one relayed Bot Framework activity into channel inbounds, with
 /// this provider's mention hook applied to message text.
-fn normalize_activity(activity: &Value) -> Vec<Inbound> {
+fn normalize_activity(activity: &Value, member_names: &[String]) -> Vec<Inbound> {
     let mut events = teams_normalize(activity);
     for e in &mut events {
         if let Some(text) = e.text.take() {
-            e.text = Some(rewrite_app_mention(&text));
+            e.text = Some(rewrite_app_mention(&text, member_names));
         }
     }
     events
@@ -86,7 +87,7 @@ fn normalize_activity(activity: &Value) -> Vec<Inbound> {
 /// Strip the addressing of the shared app itself so "@Allternit <name> hi"
 /// (or Teams' rendered "<at>Allternit</at> <name> hi") reads as "@name hi"
 /// and the shared "@name" member-bot routing picks it up.
-fn rewrite_app_mention(text: &str) -> String {
+fn rewrite_app_mention(text: &str, member_names: &[String]) -> String {
     let mut out = text.to_string();
     loop {
         let Some(start) = out.to_ascii_lowercase().find("<at>allternit") else { break };
@@ -97,18 +98,30 @@ fn rewrite_app_mention(text: &str) -> String {
         let skip = rest.chars().next().map(|c| if c == ' ' || c == '\t' { c.len_utf8() } else { 0 }).unwrap_or(0);
         out.replace_range(start..end + skip, "");
     }
-    let mut words = out.split_whitespace();
-    let mut rest_words: Vec<&str> = vec![];
+    let mut rest_words: Vec<String> = vec![];
     let mut dropped = false;
-    for w in &mut words {
+    // "@Allternit Scout ..." addresses Scout: the word right after a typed app
+    // mention becomes "@Scout" for route_inbound when it names a member bot.
+    let mut name_next = false;
+    for w in out.split_whitespace() {
         if !dropped {
             let handle = w.trim_start_matches('@').to_ascii_lowercase();
             if handle == "allternit" || handle == "allternitbot" {
                 dropped = true;
+                name_next = true;
                 continue;
             }
         }
-        rest_words.push(w);
+        let is_member = |word: &str| {
+            let handle = |x: &str| x.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect::<String>();
+            member_names.iter().any(|n| handle(n) == handle(word))
+        };
+        if name_next && !w.starts_with('@') && is_member(w) {
+            rest_words.push(format!("@{w}"));
+        } else {
+            rest_words.push(w.to_string());
+        }
+        name_next = false;
     }
     rest_words.join(" ")
 }
@@ -229,13 +242,13 @@ mod tests {
 
     #[test]
     fn strips_the_app_mention_and_keeps_a_bot_mention() {
-        assert_eq!(rewrite_app_mention("@Allternit Scout fix the build"), "@Scout fix the build");
-        assert_eq!(rewrite_app_mention("@allternitbot @Engineer hi"), "@Engineer hi");
-        assert_eq!(rewrite_app_mention("<at>Allternit</at> @engineer ping"), "@engineer ping");
-        assert_eq!(rewrite_app_mention("<at>Allternit</at>\t@engineer ping"), "@engineer ping");
-        assert_eq!(rewrite_app_mention("@someone else"), "@someone else");
-        assert_eq!(rewrite_app_mention("plain message"), "plain message");
-        assert_eq!(rewrite_app_mention("@Allternit"), "");
+        assert_eq!(rewrite_app_mention("@Allternit Scout fix the build", &["Scout".to_string(), "Engineer".to_string()]), "@Scout fix the build");
+        assert_eq!(rewrite_app_mention("@allternitbot @Engineer hi", &["Scout".to_string(), "Engineer".to_string()]), "@Engineer hi");
+        assert_eq!(rewrite_app_mention("<at>Allternit</at> @engineer ping", &["Scout".to_string(), "Engineer".to_string()]), "@engineer ping");
+        assert_eq!(rewrite_app_mention("<at>Allternit</at>\t@engineer ping", &[]), "@engineer ping");
+        assert_eq!(rewrite_app_mention("@someone else", &["Scout".to_string(), "Engineer".to_string()]), "@someone else");
+        assert_eq!(rewrite_app_mention("plain message", &["Scout".to_string(), "Engineer".to_string()]), "plain message");
+        assert_eq!(rewrite_app_mention("@Allternit", &["Scout".to_string(), "Engineer".to_string()]), "");
     }
 
     #[test]
@@ -244,7 +257,7 @@ mod tests {
             "channelId": "msteams", "from": { "id": "29:user" },
             "conversation": { "id": "19:abc@thread.tacv2", "tenantId": "t1" },
             "text": "<at>Allternit</at> @Scout hello there" });
-        let events = normalize_activity(&activity);
+        let events = normalize_activity(&activity, &[]);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].text.as_deref(), Some("@Scout hello there"));
         assert_eq!(events[0].conversation, "teams:19:abc@thread.tacv2");
@@ -306,7 +319,7 @@ mod tests {
             "channelId": "msteams", "from": { "id": "29:user", "name": "Sam" },
             "conversation": { "id": "19:abc@thread.tacv2", "tenantId": "t1" },
             "text": "@Allternit hello" });
-        let e = normalize_activity(&activity).remove(0);
+        let e = normalize_activity(&activity, &[]).remove(0);
         assert_eq!(e.text.as_deref(), Some("hello"));
         let routed = crate::channel_transports::route_inbound(&st.db, &Rt, &acct, "teams", &e).await.unwrap();
         assert_eq!(routed.recorded, crate::channel_gateway::Recorded::New);

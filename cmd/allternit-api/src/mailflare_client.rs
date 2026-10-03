@@ -126,7 +126,7 @@ struct SendBody<'a> {
     request: &'a SendEmailRequest<'a>,
     /// Admin-scope keys only: deliver this one message without the approval
     /// gate. mailflare ignores it for mailbox-scoped keys.
-    #[serde(skip_serializing_if = "is_false")]
+    #[serde(rename = "skipApproval", skip_serializing_if = "is_false")]
     skip_approval: bool,
 }
 

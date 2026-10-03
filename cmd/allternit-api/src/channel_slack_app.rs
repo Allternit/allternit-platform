@@ -97,8 +97,12 @@ impl SlackAppTransport {
 
     /// The bot's display name and avatar for a posting identity, when known.
     fn bot_identity(&self, identity: Option<&str>) -> (Option<String>, Option<String>) {
-        let (Some(id), Some(db)) = (identity, self.db.as_ref()) else { return (None, None) };
-        let Ok(conn) = db.connect() else { return (None, None) };
+        let Some(id) = identity else { return (None, None) };
+        // No bot row to look up: post under the identity as given rather than
+        // dropping it (the name still beats the app's default).
+        let fallback = (Some(id.to_string()), None);
+        let Some(db) = self.db.as_ref() else { return fallback };
+        let Ok(conn) = db.connect() else { return fallback };
         let row: Option<(String, Option<String>)> = conn
             .query_row(
                 "SELECT COALESCE(NULLIF(name, ''), id), avatar FROM agents WHERE id = ?1",
@@ -106,7 +110,7 @@ impl SlackAppTransport {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .ok();
-        row.map(|(name, avatar)| (Some(name), avatar.filter(|a| a.starts_with("https://")))).unwrap_or((None, None))
+        row.map(|(name, avatar)| (Some(name), avatar.filter(|a| a.starts_with("https://")))).unwrap_or(fallback)
     }
 }
 
@@ -185,36 +189,14 @@ impl ChannelTransport for SlackAppTransport {
 ///
 /// Everything else passes through unchanged. Names keep their original case;
 /// `mentioned_bot` compares without case or punctuation.
-pub fn rewrite_slack_mentions(text: &str) -> String {
+pub fn rewrite_slack_mentions(text: &str, member_names: &[String]) -> String {
     let trimmed = text.trim_start();
-    if let Some(rest) = trimmed.strip_prefix("/allternit") {
-        let rest = rest.trim_start();
-        let mut words = rest.splitn(2, char::is_whitespace);
-        let first = words.next().unwrap_or_default();
-        let after = words.next().unwrap_or_default();
-        if first.is_empty() {
-            return after.trim_start().to_string();
+    for prefix in ["/allternit", "@Allternit"] {
+        if let Some(rest) = trimmed.strip_prefix(prefix) {
+            // The first word becomes "@name" only when it is a bot switched on
+            // here; otherwise it is part of the message for the default bot.
+            return name_first_word_when_a_bot(rest.trim(), member_names);
         }
-        // "/allternit ship it" with no bot name reads as "ship it" to the
-        // default bot only when the first word is not a known bot — the
-        // caller passes member names; "@name" of an unknown bot is a no-op in
-        // routing, and the default bot answering "@word text" would echo a
-        // spurious tag. So only tag when a name follows; otherwise strip.
-        return if after.is_empty() { first.to_string() } else { format!("@{first} {after}") };
-    }
-    if let Some(rest) = trimmed.strip_prefix("@Allternit") {
-        let rest = rest.trim_start();
-        if rest.is_empty() {
-            return String::new();
-        }
-        let mut words = rest.splitn(2, char::is_whitespace);
-        let first = words.next().unwrap_or_default();
-        let after = words.next().unwrap_or_default();
-        if after.is_empty() {
-            // "@Allternit ship it": no bot name → default bot, command word kept.
-            return rest.to_string();
-        }
-        return format!("@{first} {after}");
     }
     text.to_string()
 }
@@ -326,7 +308,7 @@ fn name_first_word_when_a_bot(text: &str, member_names: &[String]) -> String {
     let handle = |s: &str| s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect::<String>();
     let is_bot = member_names.iter().any(|n| handle(n) == handle(first));
     match (is_bot, words.next()) {
-        (true, Some(rest)) => format!("@{first} {rest}"),
+        (true, Some(rest)) => format!("@{first} {}", rest.trim_start()),
         (true, None) => format!("@{first}"),
         _ => text.to_string(),
     }
@@ -394,7 +376,8 @@ async fn shared_events_h(State(state): State<Arc<AppState>>, body: Bytes) -> Res
         // and "/allternit <bot>" become "@<bot>" before routing.
         if e.kind == InboundKind::Message {
             if let Some(text) = e.text.take() {
-                e.text = Some(rewrite_slack_mentions(&text));
+                let names: Vec<String> = crate::channel_transports::member_bots(&state.db, &acct).iter().map(|b| b.name.clone()).collect();
+                e.text = Some(rewrite_slack_mentions(&text, &names));
             }
         }
     }
@@ -544,14 +527,14 @@ mod tests {
 
     #[test]
     fn mention_forms_become_at_name_for_route_inbound() {
-        assert_eq!(rewrite_slack_mentions("/allternit engineer ship it"), "@engineer ship it");
-        assert_eq!(rewrite_slack_mentions("/allternit ship it"), "ship it", "no name: the command word is the message");
-        assert_eq!(rewrite_slack_mentions("/allternit"), "", "bare command: default bot, empty message");
-        assert_eq!(rewrite_slack_mentions("@Allternit engineer ship it"), "@engineer ship it");
-        assert_eq!(rewrite_slack_mentions("@Allternit ship it"), "ship it", "no name: default bot keeps the text");
-        assert_eq!(rewrite_slack_mentions("@Allternit"), "");
-        assert_eq!(rewrite_slack_mentions("plain message, no mention"), "plain message, no mention");
-        assert_eq!(rewrite_slack_mentions("  /allternit   ops   restart the build  "), "@ops restart the build");
+        assert_eq!(rewrite_slack_mentions("/allternit engineer ship it", &["engineer".to_string(), "ops".to_string()]), "@engineer ship it");
+        assert_eq!(rewrite_slack_mentions("/allternit ship it", &["engineer".to_string(), "ops".to_string()]), "ship it", "no name: the command word is the message");
+        assert_eq!(rewrite_slack_mentions("/allternit", &["engineer".to_string(), "ops".to_string()]), "", "bare command: default bot, empty message");
+        assert_eq!(rewrite_slack_mentions("@Allternit engineer ship it", &["engineer".to_string(), "ops".to_string()]), "@engineer ship it");
+        assert_eq!(rewrite_slack_mentions("@Allternit ship it", &["engineer".to_string(), "ops".to_string()]), "ship it", "no name: default bot keeps the text");
+        assert_eq!(rewrite_slack_mentions("@Allternit", &["engineer".to_string(), "ops".to_string()]), "");
+        assert_eq!(rewrite_slack_mentions("plain message, no mention", &["engineer".to_string(), "ops".to_string()]), "plain message, no mention");
+        assert_eq!(rewrite_slack_mentions("  /allternit   ops   restart the build  ", &["engineer".to_string(), "ops".to_string()]), "@ops restart the build");
     }
 
     #[test]

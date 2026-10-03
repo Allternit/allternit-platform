@@ -107,6 +107,7 @@ async fn inbound_turns_into_one_threaded_reply_and_guards_hold() {
 
     // Fake mailflare: records sends; approval-gated unless skipApproval is set.
     let mf_rec = recorded.clone();
+    let gw_rec = recorded.clone();
     let mailflare = Router::new()
         .route(
             "/api/v1/send",
@@ -140,8 +141,13 @@ async fn inbound_turns_into_one_threaded_reply_and_guards_hold() {
             apost(move |Json(_body): Json<Value>| {
                 let rec = rt_rec.clone();
                 async move {
-                    *rec.session_creates.lock().unwrap() += 1;
-                    Json(json!({"id": "ses_remote1"}))
+                    let n = {
+                        let mut count = rec.session_creates.lock().unwrap();
+                        *count += 1;
+                        *count
+                    };
+                    // Session ids are unique per thread, like the real runtime's.
+                    Json(json!({"id": format!("ses_remote{n}")}))
                 }
             }),
         )
@@ -149,7 +155,7 @@ async fn inbound_turns_into_one_threaded_reply_and_guards_hold() {
             "/api/v1/agent-sessions/:id/messages",
             apost(
                 move |AxumPath(id): AxumPath<String>, Json(body): Json<Value>| {
-                    let rec = recorded.clone();
+                    let rec = gw_rec.clone();
                     async move {
                         rec.turns.lock().unwrap().push(json!({"session": id, "body": body}));
                         Json(json!({"id": "m2", "role": "assistant", "content": "The bot's reply"}))
