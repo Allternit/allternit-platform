@@ -1125,6 +1125,9 @@ async fn main() {
         .nest("/api", allternit_api::mcp_apps::mcp_apps_router())
         // Keys page for the vendor-bot connector: /api/v1/vendor-bots/:id/connector*.
         .nest("/api", allternit_api::mcp_vendor_bots::connector_router())
+        // Vendor tickets, lane ranking, thread attribution and the one-click local connector.
+        .nest("/api", allternit_api::vendor_tickets::router())
+        .nest("/api", allternit_api::vendor_local_connector::router())
         .nest("/api", office_engine_router())
         .nest("/api", provider_router())
         // Idempotency replay for POST/PUT/PATCH on the protected surface.

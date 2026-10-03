@@ -38,6 +38,11 @@ impl CredentialContext {
     }
 
     pub fn allows_request(&self, method: &axum::http::Method, path: &str) -> bool {
+        // A vendor-bot key (`vendor-bot:<id>`) opens that one bot's connector and nothing else.
+        if let Some(rest) = path.strip_prefix("/mcp/bots/").or_else(|| path.strip_prefix("/api/v1/mcp/bots/")) {
+            let bot = rest.split('/').next().unwrap_or_default();
+            return method == axum::http::Method::POST && !bot.is_empty() && self.allows(&format!("vendor-bot:{bot}"));
+        }
         let action = if method == axum::http::Method::GET || method == axum::http::Method::HEAD {
             "read"
         } else {
@@ -61,6 +66,22 @@ fn generate_token(prefix: &str) -> String {
     bytes[..16].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
     bytes[16..].copy_from_slice(&uuid::Uuid::new_v4().as_bytes()[..8]);
     format!("{prefix}{}", URL_SAFE_NO_PAD.encode(bytes))
+}
+
+/// Mint an access token limited to `scopes`, valid for `days`. Returns `(id, plaintext)`; only
+/// the hash is stored.
+pub fn mint_scoped_key(db: &crate::db::DbHandle, user: &AuthUser, name: &str, scopes: &[String], days: i64) -> Result<(String, String), String> {
+    let conn = db.connect().map_err(|e| e.to_string())?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let plaintext = generate_token(ACCESS_PREFIX);
+    let prefix: String = plaintext.chars().take(23).collect();
+    let expires = (chrono::Utc::now() + chrono::Duration::days(days)).format("%Y-%m-%d %H:%M:%S").to_string();
+    conn.execute(
+        "INSERT INTO access_tokens (id, user_id, organization_id, token_hash, token_prefix, name, scopes, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![id, user.user_id, user.organization_id, hash_token(&plaintext), prefix, name, serde_json::to_string(scopes).unwrap(), expires],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok((id, plaintext))
 }
 
 pub fn router() -> Router<Arc<AppState>> {

@@ -57,7 +57,8 @@ const MAX_TEXT_CHARS: usize = 4000;
 
 pub const SERVER_INSTRUCTIONS: &str = "You act through your directing bot's phone and mailbox. send_text and start_call \
 only reach people who contacted that number first or were added as contacts; STOP always wins. send_email is queued \
-for the owner's approval. If a tool refuses, tell the user why in the refusal's words.";
+for the owner's approval. If a tool refuses, tell the user why in the refusal's words. When told to run an Allternit ticket, call \
+get_ticket, do the work, then post_result.";
 
 // ─── URLs and OAuth metadata ───────────────────────────────────────────────────
 
@@ -222,6 +223,28 @@ pub fn tool_descriptors() -> Vec<Value> {
             "description": "Hand off to your directing bot (Gizzi) with a message, and get its reply.",
             "inputSchema": { "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"], "additionalProperties": false },
             "annotations": annotations(false, false)
+        }),
+        json!({
+            "name": "get_ticket", "title": "Get a ticket",
+            "description": "Read an Allternit task ticket (like T-3): the instructions, the tools you may use, and the deadline. When your chat says \"Run Allternit ticket T-n\", call this first.",
+            "inputSchema": { "type": "object", "properties": { "id": { "type": "string", "description": "The ticket id, like T-3." } }, "required": ["id"], "additionalProperties": false },
+            "annotations": annotations(true, false)
+        }),
+        json!({
+            "name": "post_result", "title": "Post a ticket's result",
+            "description": "Finish an Allternit ticket: a short summary, optional structured data and optional https attachments. It lands in the thread as a result card. Call it once, when the work is done.",
+            "inputSchema": { "type": "object", "properties": {
+                "id": { "type": "string" }, "summary": { "type": "string" },
+                "data": { "type": "object", "description": "Structured result, if any." },
+                "attachments": { "type": "array", "items": { "type": "object", "properties": { "name": { "type": "string" }, "url": { "type": "string", "description": "https only" } } } }
+            }, "required": ["id", "summary"], "additionalProperties": false },
+            "annotations": annotations(false, false)
+        }),
+        json!({
+            "name": "list_open_tickets", "title": "List open tickets",
+            "description": "List the Allternit tickets waiting on you.",
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+            "annotations": annotations(true, false)
         }),
     ]
 }
@@ -485,6 +508,9 @@ pub async fn call_tool(db: &DbHandle, actions: &dyn Actions, s: &Session, name: 
     let outcome: Result<Value, String> = match name {
         "list_threads" => list_threads(db, s, &args),
         "read_thread" => read_thread(db, s, &args),
+        "get_ticket" => crate::vendor_tickets::tool_get_ticket(db, &s.owner, &s.vendor_bot_id, &args),
+        "post_result" => crate::vendor_tickets::tool_post_result(db, &s.owner, &s.vendor_bot_id, &args),
+        "list_open_tickets" => crate::vendor_tickets::tool_list_open_tickets(db, &s.owner, &s.vendor_bot_id),
         "send_text" | "start_call" | "send_email" | "post_message" | "ask_bot" => {
             let long = ["text", "body", "purpose"].iter().any(|k| args[k].as_str().is_some_and(|v| v.chars().count() > MAX_TEXT_CHARS));
             if long {
@@ -518,6 +544,12 @@ pub async fn call_tool(db: &DbHandle, actions: &dyn Actions, s: &Session, name: 
         other => Err(format!("Unknown tool: {other}")),
     };
     audit(db, s, name, &args, &outcome);
+    // Attribution: a thread this call read or wrote is one the vendor bot took part in.
+    if let Ok(v) = &outcome {
+        if let Some(thread) = str_arg(&args, "threadId").or_else(|| v["threadId"].as_str()) {
+            crate::vendor_tickets::record_participation(db, &s.owner, &s.vendor_bot_id, thread, &format!("tool:{name}"));
+        }
+    }
     match outcome {
         Ok(v) => json!({ "content": [{ "type": "text", "text": v.to_string() }], "structuredContent": v, "isError": false }),
         Err(e) => json!({ "content": [{ "type": "text", "text": e }], "isError": true }),
@@ -624,12 +656,23 @@ async fn handle_bot_rpc(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(vendor_bot_id): Path<String>,
+    credential: Option<Extension<crate::enterprise_auth::CredentialContext>>,
     headers: HeaderMap,
     Json(req): Json<Value>,
 ) -> Response {
     let client = match authorize_bot_bearer(&state, &headers, &user, &vendor_bot_id).await {
         Ok(c) => c,
         Err(resp) => return resp,
+    };
+    // A scoped local-connector key counts as a client, so revoking it works like revoking an OAuth client.
+    let client = match credential {
+        Some(Extension(c)) => {
+            if !c.allows(&crate::vendor_local_connector::key_scope(&vendor_bot_id)) {
+                return (StatusCode::FORBIDDEN, Json(json!({ "error": "insufficient_scope" }))).into_response();
+            }
+            Some(format!("local-key:{}", c.credential_id))
+        }
+        None => client,
     };
     serve_bot_rpc(&state, &user.user_id, &vendor_bot_id, client, &req).await
 }
@@ -1154,7 +1197,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rpc_lists_seven_tools_and_refuses_unknown_ones() {
+    async fn rpc_lists_ten_tools_and_refuses_unknown_ones() {
         let st = setup("rpc").await;
         let (s, fake) = (session(&st), Fake::default());
         let init = handle_rpc(&st.db, &fake, &s, &json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "protocolVersion": "2025-03-26" } })).await.unwrap();
@@ -1162,7 +1205,7 @@ mod tests {
         assert!(SERVER_INSTRUCTIONS.len() < 512);
         let list = handle_rpc(&st.db, &fake, &s, &json!({ "id": 2, "method": "tools/list" })).await.unwrap();
         let names: Vec<_> = list["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["list_threads", "read_thread", "send_text", "start_call", "send_email", "post_message", "ask_bot"]);
+        assert_eq!(names, ["list_threads", "read_thread", "send_text", "start_call", "send_email", "post_message", "ask_bot", "get_ticket", "post_result", "list_open_tickets"]);
         for t in list["result"]["tools"].as_array().unwrap() {
             assert_eq!(t["inputSchema"]["type"], "object");
             assert_eq!(t["annotations"]["destructiveHint"], false);
