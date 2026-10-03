@@ -52,3 +52,15 @@ Bot records use the [Agents API](/api/agents). Durable thread, project coordinat
 - [Bot and team templates](/guides/bot-templates)
 - [Computers and ACI](/guides/computers-and-apps)
 - [Automation API](/api/automation)
+
+## Thread and project panes
+
+A thread's one-row top keeps the bot avatar, vendor provenance chip, and controls together. The avatar opens bot home; the pill opens the pane. Use the pane menu for Thread, Browser, or Computer. On the phone, **⋯** includes Computer, the pane opens full screen, and **Back** returns to chat. See [Thread controls and history](/guides/bot-threads).
+
+Bot Mode and **Projects → Bot** share one server project list. Projects support pin/archive, shared server context files, a per-device folder, coordinator instructions, and a pane for Threads, Library, Routines, and Browser. A thread's model and permissions come from its bot; bot projects have no separate model or permission selectors. See [Project context and panes](/guides/project-coordination).
+
+## Vendor and channel appearance
+
+Every carried vendor (see [Subscriptions](/surfaces/subscriptions)) has its own thread look, with a neutral fallback for any vendor that has none yet. Slack, Telegram, Discord, WhatsApp, Microsoft Teams, email, and SMS have channel looks. Appearance does not change the connection lane or its availability. The composer remains Allternit's by default; a vendor composer skin is an opt-in developer flag. See [Vendor looks and composer setting](/plugins/guides/vendor-packs).
+
+Gemini and Copilot are new carried vendors and are not yet verified against the live services. Sign in under **Settings → Subscriptions**, read the provider-terms warning, and inspect the connection before relying on it. Their connection lane is `ui_bridge` and best effort.

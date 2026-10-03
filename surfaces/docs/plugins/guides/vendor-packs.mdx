@@ -138,3 +138,31 @@ Use real, contrasting colors. Allternit does not adjust a pack for accessibility
 - Persisting packs on the server. The registry is in memory.
 - A submission or review flow for vendor packs.
 - Look-profile fields beyond those listed above, such as approval-card and computer-view styling.
+
+## Built-in thread looks
+
+The workspace also carries compiled React look packs in `src/lib/gateway/look-packs/`, separate from the JSON pack format above. Built-ins cover every vendor listed under [Subscriptions](/surfaces/subscriptions), including each vendor's adapter aliases. Unrecognised vendors use a neutral default look. Channel threads have looks for Slack, Telegram, Discord, WhatsApp, Microsoft Teams, email, and SMS.
+
+The host keeps the **via Vendor** provenance chip outside pack styling. Packed threads omit the decorative dot-grid backdrop. Bubbles wrap long text and fenced code scrolls inside its block at phone width. A vendor look does not establish that its connection is working: Gemini and Copilot are new, use best-effort `ui_bridge`, and have not yet been verified against the live services. Connect them under [Settings → Subscriptions](/surfaces/subscriptions) after reading the terms warning.
+
+### Opt-in host composer skin
+
+Vendor threads keep Allternit's composer by default, including send, stop, attachment, voice, and action behaviour. The single opt-in flag is `useVendorComposerSkin.enabled` in `src/lib/gateway/look-packs/composer-skin.ts`, default `false`.
+
+Application code can turn it on with:
+
+```ts
+import { useVendorComposerSkin } from '@/lib/gateway/look-packs/composer-skin';
+
+useVendorComposerSkin.getState().setEnabled(true);
+// Return to Allternit's composer:
+useVendorComposerSkin.getState().setEnabled(false);
+```
+
+This is an in-memory developer setting, not a persistent Settings toggle. It resets on reload. `isVendorComposerSkinEnabled()` reads the flag outside React. `composerSkinFor()` supplies a supported pack's radius, colours, placeholder, send style, leading mark, and optional model-name slot. Packs without a skin keep the host composer. Neither the flag nor a JSON `composerStyle` replaces the host's interaction behaviour.
+
+### Add a compiled vendor look
+
+Use `createLookPack` from `src/lib/gateway/look-packs/pack-kit.tsx`. Supply a `CreateLookPackSpec`: stable `vendorId` and `surfaceKey`, wordmark and logo or monogram, status vocabulary, light tokens and light/dark page colours, user/agent row shapes, and composer shape. The factory builds transcript, message, activity, approval, content, and composer components.
+
+Define the pack's scoped light and dark CSS variables in `look-packs.css`; register it with `registerLookPack()` in `builtin.ts`. Register carried vendor aliases against the same `surfaceKey`. Keep host provenance visible, retain actual approval handlers, and verify narrow screens, long unbroken text, fenced code, streaming, and the default host composer. Phone pane controls belong to the host, outside the pack; both phone surfaces use those controls.
