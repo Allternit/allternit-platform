@@ -1184,8 +1184,11 @@ async fn main() {
         // data-plane JWT (no Clerk session exists on this hop).
         .merge(allternit_api::channel_gateway::telegram_managed_public_router())
         // Teams shared app deliveries arrive only from cloud-api's relay
-        // (which stamps x-allternit-user-id); never from the public internet.
+        // (signed with the device token; RelayedAuth names the owner); never from the public internet.
         .merge(allternit_api::channel_teams_app::teams_app_router())
+        // Discord shared-app envelopes: cloud-api checks Discord's signature,
+        // then signs the relay with the device token (RelayedAuth verifies).
+        .merge(allternit_api::channel_discord_app::discord_app_router())
         // Relayed phone calls: cloud-api signs each request with the runtime's
         // device token; `RelayedVoiceAuth` verifies it per handler (no Clerk session).
         .merge(allternit_api::voice_calls::voice_calls_router())

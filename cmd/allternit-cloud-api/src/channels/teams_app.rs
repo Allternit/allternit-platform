@@ -43,12 +43,13 @@ use std::time::{Duration, Instant};
 
 use crate::auth::resolve_user_scoped;
 use crate::routes::channel_inbound::{backoff_secs, classify, Delivery, QUEUED_AT_HEADER};
-use crate::routes::runtime_relay::{relay_request_to_runtime_with, RelayRequest};
+use crate::routes::runtime_relay::{relay_signed_request_to_runtime_with, RelayRequest};
 use crate::{ApiError, ApiState};
 
 /// Where the runtime receives queued Teams-app activities (trusted relay only).
 pub(crate) const RUNTIME_PATH: &str = "/webhooks/teams-app";
-/// Trusted header carrying the owning user id on relayed deliveries.
+/// Still sent so a runtime that predates signed relays keeps working through a
+/// staggered rollout. Updated runtimes ignore it: the owner is the signed one.
 const USER_HEADER: &str = "x-allternit-user-id";
 
 const OPENID_URL: &str = "https://login.botframework.com/v1/.well-known/openidconfiguration";
@@ -949,7 +950,7 @@ async fn deliver_one(state: &Arc<ApiState>, id: i64) -> Result<(), ApiError> {
     let Some((user_id, Some(runtime_id))) = install else {
         return retry_or_dead(state, id, received_at, attempts, None, "no runtime registered for this tenant").await;
     };
-    let outcome = relay_request_to_runtime_with(
+    let outcome = relay_signed_request_to_runtime_with(
         &state.db,
         &state.contabo_runtime_service,
         &state.quota_service,

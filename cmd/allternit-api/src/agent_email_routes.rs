@@ -60,7 +60,15 @@ pub fn agent_email_router() -> Router<Arc<AppState>> {
 /// no Clerk session exists, so requests are authenticated by the HMAC
 /// signature instead (same shape as the Slack/Photon webhooks).
 pub fn agent_email_webhook_router() -> Router<Arc<AppState>> {
-    Router::new().route("/api/v1/agent-email/inbound", post(receive_inbound_email))
+    agent_email_webhook_router_with(crate::relay_auth::process_secret())
+}
+
+/// The inbound webhook reaches the runtime only through cloud-api's relay, so
+/// it needs the relay signature ([`RelayedAuth`]) on top of mailflare's HMAC.
+pub fn agent_email_webhook_router_with(secret: Arc<dyn crate::relay_auth::RelaySecret>) -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/api/v1/agent-email/inbound", post(receive_inbound_email))
+        .layer(crate::relay_auth::secret_layer(secret))
 }
 
 /// Verify the agent exists and is owned by the given user (same contract
@@ -756,8 +764,9 @@ fn verify_mailflare_signature(
 async fn receive_inbound_email(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    body: axum::body::Bytes,
+    relayed: crate::relay_auth::RelayedAuth,
 ) -> Response {
+    let body = relayed.body.clone();
     let config = match crate::mailflare_client::MailflareConfig::from_env() {
         Some(config) => config,
         None => {
@@ -836,6 +845,9 @@ async fn receive_inbound_email(
         }
         Err(e) => return internal(e).into_response(),
     };
+    if let Err((status, body)) = require_agent_owner_id(&state, &relayed.owner, &agent_id) {
+        return (status, body).into_response();
+    }
     if !receive_enabled {
         info!(agent_id = %agent_id, "agent-email: inbound for agent with receive disabled; acknowledged");
         return (StatusCode::ACCEPTED, Json(json!({"accepted": true, "delivered": false})))

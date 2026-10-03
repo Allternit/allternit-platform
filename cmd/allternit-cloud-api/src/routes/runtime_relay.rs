@@ -88,6 +88,8 @@ use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
+use sha2::{Digest, Sha256};
+
 use super::runtime_pairing::authenticate_runtime_token;
 use crate::{ApiError, ApiState};
 
@@ -1272,6 +1274,94 @@ pub(crate) async fn relay_request_to_runtime_with(
     }
 }
 
+pub(crate) const RELAY_SIG_HEADER: &str = "x-allternit-runtime-sig";
+pub(crate) const RELAY_TS_HEADER: &str = "x-allternit-runtime-ts";
+pub(crate) const RELAY_OWNER_HEADER: &str = "x-allternit-owner";
+
+/// `v1=<hex HMAC-SHA256(key, "<ts>.<METHOD>.<path>.<sha256_hex(body)>")>`, the
+/// scheme allternit-api's `relay_auth` verifies. `relay_key` is the lowercase
+/// `sha256_hex(device_token)` (our `runtime_devices.credential_hash`), used as
+/// its ASCII bytes. `path` carries no query string.
+pub(crate) fn sign_runtime_request(
+    relay_key: &str,
+    ts: i64,
+    method: &str,
+    path: &str,
+    body: &[u8],
+) -> String {
+    use hmac::{Hmac, Mac};
+    let mut mac = Hmac::<Sha256>::new_from_slice(relay_key.as_bytes())
+        .expect("hmac takes any key length");
+    mac.update(format!("{ts}.{method}.{path}.{}", sha256_hex_bytes(body)).as_bytes());
+    format!("v1={}", hex::encode(mac.finalize().into_bytes()))
+}
+
+fn sha256_hex_bytes(body: &[u8]) -> String {
+    hex::encode(Sha256::digest(body))
+}
+
+/// The three signature headers for one relayed request to `runtime_id`, keyed
+/// with that runtime's stored `credential_hash`.
+pub(crate) async fn runtime_signature_headers(
+    db: &sqlx::PgPool,
+    user_id: &str,
+    runtime_id: &str,
+    method: &str,
+    path: &str,
+    body: &[u8],
+) -> Result<HashMap<String, String>, ApiError> {
+    let key: Option<String> = sqlx::query_scalar(
+        "SELECT credential_hash FROM runtime_devices WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
+    )
+    .bind(runtime_id)
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?;
+    let key = key.ok_or_else(|| ApiError::NotFound("Runtime not found".to_string()))?;
+    let ts = chrono::Utc::now().timestamp();
+    let path = path.split('?').next().unwrap_or(path);
+    let method = method.to_ascii_uppercase();
+    Ok(HashMap::from([
+        (RELAY_SIG_HEADER.to_string(), sign_runtime_request(&key, ts, &method, path, body)),
+        (RELAY_TS_HEADER.to_string(), ts.to_string()),
+        (RELAY_OWNER_HEADER.to_string(), user_id.to_string()),
+    ]))
+}
+
+/// [`relay_request_to_runtime_with`], with the request signed for the
+/// runtime's `relay_auth` verifier. Use for every relay to a runtime path that
+/// trusts cloud-api instead of a platform signature.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn relay_signed_request_to_runtime_with(
+    db: &sqlx::PgPool,
+    contabo_runtime_service: &std::sync::Arc<crate::services::ContaboRuntimeService>,
+    quota_service: &crate::services::SharedQuotaService,
+    provisioning: &std::sync::Arc<crate::services::ProvisioningService>,
+    user_id: &str,
+    runtime_id: &str,
+    request: RelayRequest,
+    extra_allowed: &[&str],
+    mut trusted: HashMap<String, String>,
+) -> Result<Response, ApiError> {
+    let body = decode_relay_body(&request.body, &request.body_encoding);
+    trusted.extend(
+        runtime_signature_headers(db, user_id, runtime_id, &request.method, &request.path, &body)
+            .await?,
+    );
+    relay_request_to_runtime_with(
+        db,
+        contabo_runtime_service,
+        quota_service,
+        provisioning,
+        user_id,
+        runtime_id,
+        request,
+        extra_allowed,
+        trusted,
+    )
+    .await
+}
+
 async fn services_touch_runtime(db: &sqlx::PgPool, runtime_id: &str) {
     if let Err(error) = crate::services::touch_runtime_activity(db, runtime_id).await {
         tracing::debug!(%runtime_id, "Unable to record hosted runtime activity: {}", error);
@@ -1480,6 +1570,19 @@ pub(crate) fn relay_headers_from_http(headers: &HeaderMap) -> HashMap<String, St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// joe-9e's known-answer vector from allternit-api `relay_auth.rs`: the
+    /// runtime derives the same key (`sha256_hex("tok-123")`), so a signature
+    /// made here verifies there byte for byte.
+    #[test]
+    fn relay_signature_matches_the_runtime_known_answer_vector() {
+        let key = super::super::runtime_pairing::sha256_hex(b"tok-123");
+        assert_eq!(key, "c8963414bf6c4c869eeac5f8a057c3dc574d422f1b108397b66f67bab3d2f981");
+        assert_eq!(
+            sign_runtime_request(&key, 1_700_000_000, "POST", "/api/v1/voice/calls", b"{}"),
+            "v1=34edb38cb1c7839397d5993a055972d2f352b42164bcdfd935264cdcae1d1576"
+        );
+    }
 
     #[test]
     fn browser_text_frames_encode_as_utf8_socket_data() {

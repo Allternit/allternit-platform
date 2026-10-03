@@ -28,7 +28,6 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use axum::body::Bytes;
 use axum::extract::{Extension, State};
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
@@ -218,7 +217,13 @@ struct RelayEnvelope {
 }
 
 pub fn slack_app_webhook_router() -> Router<Arc<AppState>> {
-    Router::new().route(SLACK_APP_EVENTS_PATH, post(shared_events_h))
+    slack_app_webhook_router_with(crate::relay_auth::process_secret())
+}
+
+/// Cloud-api already checked Slack's signature; it signs the relay to this
+/// runtime with the device token, and [`RelayedAuth`] verifies that.
+pub fn slack_app_webhook_router_with(secret: Arc<dyn crate::relay_auth::RelaySecret>) -> Router<Arc<AppState>> {
+    Router::new().route(SLACK_APP_EVENTS_PATH, post(shared_events_h)).layer(crate::relay_auth::secret_layer(secret))
 }
 
 /// The connection an inbound team maps to: a shared-app connection whose
@@ -328,8 +333,8 @@ fn is_plain_channel_root(ev: &Value) -> bool {
             .unwrap_or(false)
 }
 
-async fn shared_events_h(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
-    let Ok(envelope) = serde_json::from_slice::<RelayEnvelope>(&body) else {
+async fn shared_events_h(State(state): State<Arc<AppState>>, auth: crate::relay_auth::RelayedAuth) -> Response {
+    let Ok(envelope) = serde_json::from_slice::<RelayEnvelope>(&auth.body) else {
         return (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid_json" }))).into_response();
     };
     let Some(team_id) = envelope.team_id.as_deref() else {
@@ -339,6 +344,9 @@ async fn shared_events_h(State(state): State<Arc<AppState>>, body: Bytes) -> Res
         tracing::warn!(%team_id, "slack shared-app event for a team with no connection; ignored");
         return Json(json!({ "ok": true, "ignored": true })).into_response();
     };
+    if acct.owner != auth.owner {
+        return (StatusCode::FORBIDDEN, Json(json!({ "error": "team belongs to another owner" }))).into_response();
+    }
     let Some(tx) = transport_for_account(&state, &acct) else {
         return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "slack_not_configured" }))).into_response();
     };
@@ -712,5 +720,24 @@ mod tests {
         c.execute_batch(v216).unwrap();
         let n2: i64 = c.query_row("SELECT COUNT(*) FROM channel_account_bots", [], |r| r.get(0)).unwrap();
         assert_eq!(n2, 3);
+    }
+
+    #[tokio::test]
+    async fn shared_events_need_the_relay_signature() {
+        use tower::ServiceExt;
+        let dir = std::env::temp_dir().join(format!("allternit-sa-sig-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = crate::test_helpers::app_state(&dir).await;
+        let secret = Arc::new(crate::relay_auth::StaticRelaySecret { token: "tok".into(), owner: "user-a".into() });
+        let app = slack_app_webhook_router_with(secret).with_state(st);
+        let body = br#"{"team_id":"T-none","event":{"type":"message"}}"#;
+        let status = |req: axum::http::Request<axum::body::Body>| {
+            let app = app.clone();
+            async move { app.oneshot(req).await.unwrap().status() }
+        };
+        assert_eq!(status(crate::relay_auth::relayed_post(SLACK_APP_EVENTS_PATH, body, None)).await, StatusCode::UNAUTHORIZED);
+        assert_eq!(status(crate::relay_auth::relayed_post(SLACK_APP_EVENTS_PATH, body, Some(("other", "user-a")))).await, StatusCode::UNAUTHORIZED);
+        // Signed, but the team has no connection here: acknowledged and ignored.
+        assert_eq!(status(crate::relay_auth::relayed_post(SLACK_APP_EVENTS_PATH, body, Some(("tok", "user-a")))).await, StatusCode::OK);
     }
 }

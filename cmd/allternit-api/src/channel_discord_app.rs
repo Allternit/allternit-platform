@@ -36,6 +36,85 @@ use crate::db::DbHandle;
 
 static DB: OnceLock<DbHandle> = OnceLock::new();
 
+/// Where cloud-api delivers shared-app events (`target_path("discord_app")`).
+pub const DISCORD_APP_EVENTS_PATH: &str = "/webhooks/channels/discord-app";
+
+/// The delivery address for cloud-built Discord envelopes. Cloud-api already
+/// checked Discord's signature; it signs the relay to this runtime with the
+/// device token and [`RelayedAuth`] verifies that, so only the relay can reach
+/// it (a raw Discord payload never can).
+pub fn discord_app_router() -> axum::Router<Arc<crate::AppState>> {
+    discord_app_router_with(crate::relay_auth::process_secret())
+}
+
+pub fn discord_app_router_with(secret: Arc<dyn crate::relay_auth::RelaySecret>) -> axum::Router<Arc<crate::AppState>> {
+    axum::Router::new().route(DISCORD_APP_EVENTS_PATH, axum::routing::post(discord_app_webhook)).layer(crate::relay_auth::secret_layer(secret))
+}
+
+async fn discord_app_webhook(axum::extract::State(state): axum::extract::State<Arc<crate::AppState>>, auth: crate::relay_auth::RelayedAuth) -> axum::response::Response {
+    use axum::{http::StatusCode, response::IntoResponse, Json};
+    let Ok(envelope) = serde_json::from_slice::<Value>(&auth.body) else {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid_json" }))).into_response();
+    };
+    if envelope["source"].as_str() != Some("allternit-discord-app") {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "not a discord app envelope" }))).into_response();
+    }
+    init(state.db.clone());
+    let guild = envelope["guildId"].as_str().unwrap_or_default();
+    // The owner's app-mode connection, preferring the one for this server.
+    let candidates: Vec<Account> = crate::channel_transports::accounts(&state.db, "discord", None)
+        .into_iter()
+        .filter(|a| a.owner == auth.owner && is_app_secret(&a.secret))
+        .collect();
+    let Some(acct) = candidates.iter().find(|a| !guild.is_empty() && pick(&a.secret, "guildId") == guild).or_else(|| candidates.first()).cloned() else {
+        return Json(json!({ "ok": true, "ignored": true })).into_response();
+    };
+    let events = envelope_events(&state.db, &envelope);
+    if events.is_empty() {
+        return Json(json!({ "ok": true, "ignored": true })).into_response();
+    }
+    let Some(tx) = crate::channel_transports::build_transport("discord", &acct.secret, Arc::new(crate::channel_transports::ReqwestSend)) else {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "discord_not_configured" }))).into_response();
+    };
+    // Ack fast: bot turns can outlive the relay's wait. The queue retries.
+    tokio::spawn(async move { crate::channel_transports::dispatch_events(&state, &acct, tx, events).await });
+    Json(json!({ "ok": true })).into_response()
+}
+
+/// One cloud envelope as the "@name text" message `route_inbound` understands.
+fn envelope_events(db: &DbHandle, env: &Value) -> Vec<Inbound> {
+    let s = |k: &str| env[k].as_str().filter(|v| !v.is_empty()).map(str::to_string);
+    let Some(channel) = s("channelId") else { return vec![] };
+    let Some(user) = s("authorId") else { return vec![] };
+    let mut text = env["content"].as_str().unwrap_or_default().trim().to_string();
+    let id = if env["kind"].as_str() == Some("command") { s("interactionId") } else { s("messageId") }.unwrap_or_default();
+    if env["kind"].as_str() == Some("command") {
+        let Some(name) = s("commandName") else { return vec![] };
+        let rest = if text.is_empty() { "hi".to_string() } else { text };
+        text = format!("@{} {rest}", name.replace(' ', ""));
+    } else if let Some(bot) = s("replyToMessageId").and_then(|m| bot_of_message(db, &m)) {
+        text = format!("@{} {text}", clean(&bot));
+    }
+    if text.is_empty() {
+        return vec![];
+    }
+    vec![Inbound {
+        kind: InboundKind::Message,
+        workspace: s("guildId"),
+        conversation: format!("discord:{channel}"),
+        channel,
+        thread: s("threadId"),
+        remote_id: id.clone(),
+        message_id: id.clone(),
+        text: Some(text),
+        user: Some(user),
+        reaction: None,
+        added: None,
+        cursor: Some(id),
+        own: false,
+    }]
+}
+
 /// Register the runtime database (called once at boot; [`rewrite`] also does it).
 pub fn init(db: DbHandle) {
     let _ = DB.set(db);
@@ -283,6 +362,7 @@ impl ChannelTransport for DiscordAppTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::StatusCode;
     use std::sync::Mutex;
 
     use crate::channel_transports::HttpResp;
@@ -394,5 +474,63 @@ mod tests {
         assert!(t.verify("", &h, body).is_ok());
         assert!(t.verify("", &h, b"tampered").is_err());
         assert!(t.verify("", &HeaderMap::new(), body).is_err());
+    }
+
+    fn env(extra: Value) -> Value {
+        let mut e = json!({ "source": "allternit-discord-app", "kind": "message", "guildId": "g1", "channelId": "c1",
+            "authorId": "u1", "content": "<@app> scout hello", "messageId": "m1", "threadId": null,
+            "replyToMessageId": null, "commandName": null, "interactionId": null });
+        for (k, v) in extra.as_object().unwrap() {
+            e[k] = v.clone();
+        }
+        e
+    }
+
+    #[tokio::test]
+    async fn envelopes_become_message_inbounds() {
+        let dir = std::env::temp_dir().join(format!("allternit-da-env-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = crate::test_helpers::app_state(&dir).await;
+        // A plain message keeps its text; the mention hook rewrites it later.
+        let e = envelope_events(&st.db, &env(json!({}))).remove(0);
+        assert_eq!((e.conversation.as_str(), e.channel.as_str(), e.workspace.as_deref()), ("discord:c1", "c1", Some("g1")));
+        assert_eq!((e.text.as_deref(), e.user.as_deref(), e.remote_id.as_str()), (Some("<@app> scout hello"), Some("u1"), "m1"));
+        assert!(!e.own);
+        // A thread keeps the parent channel for the conversation.
+        let e = envelope_events(&st.db, &env(json!({ "threadId": "t9" }))).remove(0);
+        assert_eq!((e.channel.as_str(), e.thread.as_deref()), ("c1", Some("t9")));
+        // A slash command is "@name text", keyed by the interaction id.
+        let e = envelope_events(&st.db, &env(json!({ "kind": "command", "commandName": "Scout Bot", "content": "", "interactionId": "i1" }))).remove(0);
+        assert_eq!((e.text.as_deref(), e.remote_id.as_str()), (Some("@ScoutBot hi"), "i1"));
+        // A reply to a message one of our bots posted goes to that bot.
+        st.db.connect().unwrap().execute("INSERT INTO discord_app_messages (message_id, channel_id, bot_name) VALUES ('bm1','c1','Scout')", []).unwrap();
+        let e = envelope_events(&st.db, &env(json!({ "content": "thanks", "replyToMessageId": "bm1" }))).remove(0);
+        assert_eq!(e.text.as_deref(), Some("@scout thanks"));
+        // Nothing to say, or no author: dropped.
+        assert!(envelope_events(&st.db, &env(json!({ "content": "  " }))).is_empty());
+        assert!(envelope_events(&st.db, &env(json!({ "authorId": null }))).is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_route_only_accepts_signed_cloud_envelopes() {
+        use tower::ServiceExt;
+        let dir = std::env::temp_dir().join(format!("allternit-da-sig-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = crate::test_helpers::app_state(&dir).await;
+        let secret = Arc::new(crate::relay_auth::StaticRelaySecret { token: "tok".into(), owner: "user-a".into() });
+        let app = discord_app_router_with(secret).with_state(st);
+        let good = env(json!({})).to_string();
+        let status = |req: axum::http::Request<axum::body::Body>| {
+            let app = app.clone();
+            async move { app.oneshot(req).await.unwrap().status() }
+        };
+        // A raw (unsigned) body, even a well-formed envelope, never gets in.
+        assert_eq!(status(crate::relay_auth::relayed_post(DISCORD_APP_EVENTS_PATH, good.as_bytes(), None)).await, StatusCode::UNAUTHORIZED);
+        assert_eq!(status(crate::relay_auth::relayed_post(DISCORD_APP_EVENTS_PATH, good.as_bytes(), Some(("tok", "user-b")))).await, StatusCode::UNAUTHORIZED);
+        // Signed: only an allternit envelope is accepted, and with no app-mode
+        // connection for this owner it is acknowledged and ignored.
+        let foreign = json!({ "t": "MESSAGE_CREATE", "d": {} }).to_string();
+        assert_eq!(status(crate::relay_auth::relayed_post(DISCORD_APP_EVENTS_PATH, foreign.as_bytes(), Some(("tok", "user-a")))).await, StatusCode::BAD_REQUEST);
+        assert_eq!(status(crate::relay_auth::relayed_post(DISCORD_APP_EVENTS_PATH, good.as_bytes(), Some(("tok", "user-a")))).await, StatusCode::OK);
     }
 }

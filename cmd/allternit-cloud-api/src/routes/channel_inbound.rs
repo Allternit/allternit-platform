@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::runtime_relay::{relay_request_to_runtime_with, RelayRequest};
+use super::runtime_relay::{relay_request_to_runtime_with, relay_signed_request_to_runtime_with, RelayRequest};
 use crate::{ApiError, ApiState};
 
 /// Header carrying when cloud-api received a queued request (unix seconds).
@@ -302,24 +302,48 @@ async fn relay(
     if let Some(at) = queued_at {
         trusted.insert(QUEUED_AT_HEADER.to_string(), at.to_string());
     }
-    relay_request_to_runtime_with(
-        &state.db,
-        &state.contabo_runtime_service,
-        &state.quota_service,
-        &state.provisioning_service,
-        &route.user_id,
-        &route.runtime_id,
-        RelayRequest {
-            method: method.to_string(),
-            path,
-            headers,
-            body: base64_encode(body),
-            body_encoding: "base64".to_string(),
-        },
-        channel_header_names(),
-        trusted,
-    )
-    .await
+    let request = RelayRequest {
+        method: method.to_string(),
+        path,
+        headers,
+        body: base64_encode(body),
+        body_encoding: "base64".to_string(),
+    };
+    if is_trusted_envelope(&route.provider) {
+        relay_signed_request_to_runtime_with(
+            &state.db,
+            &state.contabo_runtime_service,
+            &state.quota_service,
+            &state.provisioning_service,
+            &route.user_id,
+            &route.runtime_id,
+            request,
+            channel_header_names(),
+            trusted,
+        )
+        .await
+    } else {
+        relay_request_to_runtime_with(
+            &state.db,
+            &state.contabo_runtime_service,
+            &state.quota_service,
+            &state.provisioning_service,
+            &route.user_id,
+            &route.runtime_id,
+            request,
+            channel_header_names(),
+            trusted,
+        )
+        .await
+    }
+}
+
+/// Providers whose runtime path trusts cloud-api rather than a platform
+/// signature (cloud-built envelopes, or the mailflare webhook cloud-api
+/// already checked). Their relays are signed with the runtime's device-token
+/// key; the runtime verifies with `relay_auth::RelayedAuth`.
+pub fn is_trusted_envelope(provider: &str) -> bool {
+    matches!(provider, "discord_app" | "email" | "sms")
 }
 
 fn base64_encode(body: &[u8]) -> String {
