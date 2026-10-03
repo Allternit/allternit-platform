@@ -149,3 +149,114 @@ $ bun test test/commands/doctor.test.ts   (cmd/gizzi-code)
 - Merging ai main does not ship any of this. The sidecar ships in the next Desktop build. No UI changed in this phase, so the three-surface rule does not apply yet; Phase 2 must fix the allternit-ai TTS callers listed above.
 - Model files on this Mac: `~/.allternit/models/voice/{small,accurate}` (874 MB unpacked). Kimi's `~/.allternit/voice-models-dl/` (~730 MB) is now redundant and can be deleted.
 - Rust builds used the shared target (`.shared-target`). There is no `target/` or `node_modules/` in this worktree.
+
+---
+
+# Phase 1.1 results (Eoj's decisions, 2026-10-03)
+
+**Status: done.** Both decisions are implemented, tested and pushed. TTS is much faster than in Phase 1, but it still misses the strict ~300 ms first-audio target on this machine (numbers below).
+
+## Commits (on `ao/voice-engine-p1`, pushed)
+
+```
+<docs commit>  docs(voice): Phase 1.1 results
+96e3c6616 docs(voice): Kokoro v1.0 fp32, the tts pack and the GPL allternit-tts split
+fc17cf868 build(voice): ship allternit-tts next to the voice service on mac/win/linux
+377ef7765 feat(voice): Kokoro v1.0 fp32 in a GPL-3.0 allternit-tts child; no espeak in the voice service
+```
+
+## 1. Kokoro full-size (fp32)
+
+Bench of both fp32 candidates, 2 threads, same 5 sentences, standalone probe:
+
+| Model | RTF | Download | Voices |
+|---|---|---|---|
+| `kokoro-en-v0_19` fp32 | 0.579 | 319.6 MB | 11 |
+| **`kokoro-multi-lang-v1_0` fp32 (shipped)** | **0.538** | 349.9 MB | 54 (28 English exposed) |
+
+v1.0 is faster and has more and better voices (RTF ≤ 0.7, so v1.0 as the spec prefers). Its speaker order was read from the model's own `speaker_names` metadata. The default voice is `af_heart`; the old ids `af`, `default` and `en-us-female` map to it, and `en-us-male` maps to `am_adam`. Pinned sha256 is `c5f7e2d2…3298`, size 349,906,910 bytes.
+
+**Packs re-split** so dictation stays light:
+
+| Pack | Contents | Download | Budget test |
+|---|---|---|---|
+| `small` | VAD + Moonshine + Smart Turn | 39.2 MB | ≤ 40 MB |
+| `tts` | Kokoro v1.0 fp32 | 349.9 MB | ≤ 350 MB (actual size, per Eoj) |
+| `accurate` | Parakeet | 487.2 MB | ≤ 490 MB |
+
+**First-audio work:**
+- The first sentence is cut at its first clause (`,` `;` `:` or a dash, 2–8 words in). Otherwise, if it is over 8 words, it is cut near the middle (3–8 words), before a phrase-starting word: "The quick brown fox jumps | over the lazy dog."
+- Every piece sherpa-onnx hands to `generate_with_config`'s progress callback is streamed out at once. With Kokoro (non-autoregressive) that is one piece per sentence per call, so the short first chunk is what moves first audio.
+
+**TTS bench** (`--only tts`, 10 fixed sentences, 2 threads, machine load average ~11):
+
+| | First audio p50 / p95 / max | RTF | Peak RSS |
+|---|---|---|---|
+| Phase 1: Kokoro int8 v0.19, whole sentence | 5229 / 6143 / 6143 ms | 1.533 | 348 MB |
+| **Phase 1.1: Kokoro v1.0 fp32 via allternit-tts, clause-split** | **1376 / 1974 / 1974 ms** | **0.821** | 605 MB (child) + 8 MB (parent) |
+
+- **Faster than real time:** yes, overall RTF 0.82 under load. Splitting adds a per-call overhead, so the RTF is above the probe's 0.54.
+- **First audio ≤ ~300 ms:** no. Kokoro has roughly 0.4 s of fixed cost per call on 2 threads here, plus about 0.4× the chunk's audio length. A 3–5 word chunk therefore takes ≥ 0.8 s even on an idle machine. Reaching ~300 ms on a 4-core laptop would take a smaller or streaming TTS model (or Cloud Voice), not more tuning of Kokoro.
+- **RAM:** the voice service plus the TTS child stay under ~1 GB with the small and tts packs (193 + 605 MB). Model load takes ~4 s on the first TTS request.
+
+## 2. GPL split: `allternit-tts`
+
+- **New crate** `services/voice-tts` → binary `allternit-tts`, `license = "GPL-3.0-or-later"`, with `LICENSE` (the canonical gnu.org GPL-3.0 text), `README.md` (purpose, build, protocol) and `THIRD_PARTY_NOTICES.md`. It only loads Kokoro from the pack dir it is given and synthesises; it has no network access and does no downloads.
+- **Protocol:** stdin takes JSON lines `{"id","text","sid","speed"}`. stdout sends frames of the form `[kind u8][len u32 LE][payload]`: `J` frames carry a JSON event (`ready`, `chunk`, `done`, `error`) and `P` frames carry s16le PCM for the preceding `chunk`. Documented in its README.
+- **Parent** (`services/voice/src/tts.rs`, a client now):
+  - It spawns the child from its own directory (override with `ALLTERNIT_TTS_BIN`), passing `--model-dir` and `--threads`.
+  - One chunk at a time is sent under the service-wide inference lock, so TTS and STT still never run a model at the same moment.
+  - `/v1/tts`, `/v1/tts/stream` and the `synthesize` / `synthesize_stream` signatures (Track B's `Tts` adapter) are unchanged.
+- **Lifeline and restart, verified live:**
+  - `kill -9` of the child: the next request logs `allternit-tts died: … Broken pipe; restarting`, restarts the child and returns 200 WAV.
+  - `kill -9` of the parent: the child exits too (stdin EOF).
+  - The child is also killed and reaped when the engine is dropped.
+- **Keeping espeak out of the main binary.** Dropping the TTS code was enough on macOS (`-dead_strip`), but not on Linux. In the upstream `linux-x64` static libs, `SherpaOnnxCreateOfflineTts` and `SherpaOnnxCreateOfflineRecognizer` sit in the same `.text` section of `c-api.cc.o` (checked with `objdump -t`), so `--gc-sections` cannot drop the TTS path and `libespeak-ng.a` would be pulled in. The only espeak symbols any other sherpa/piper/onnxruntime library references are `espeak_Initialize`, `espeak_SetVoiceByName` and `espeak_TextToPhonemesWithTerminator`. The voice-service binary now defines those three (`no_espeak` in `src/main.rs`; inert, never called), so the linker never pulls an espeak-ng member. If sherpa-onnx ever needs another espeak symbol, the link fails on a duplicate definition instead of silently shipping GPL code. There is no cargo feature for an STT-only sherpa-onnx build.
+- **`nm` result** (macOS arm64, unstripped release build, `CARGO_PROFILE_RELEASE_STRIP=false`):
+  ```
+  == voice-service:   95055 symbols; espeak: 0; piper: 2; OfflineTts: 0
+  == allternit-tts:   63725 symbols; espeak: 29; piper: 33; OfflineTts: 658
+  ```
+  The 2 "piper" symbols in voice-service are `__GLOBAL__sub_I_piper_phonemize_lexicon.cc` and `piper::DEFAULT_PHONEME_MAP`: sherpa-onnx's lexicon code and piper-phonemize's phoneme table, Apache-2.0/MIT, not espeak. `grep -a -ci espeak` gives voice-service 0 and allternit-tts 10.
+- **CI guard:** `scripts/check-voice-no-gpl.sh <binary>` fails if the voice-service binary contains any `espeak` bytes. Every release job (mac universal, Windows, Linux) and `build-desktop.sh` run it. Linux and Windows have not been built here (no Docker, no cross-compile), so the first `release-desktop.yml` run is the real check there.
+- **Packaging:**
+  - `build-desktop.sh` builds and stages `allternit-tts` and runs the guard.
+  - `release-desktop.yml` builds both binaries in the mac (lipo'd universal), Windows (`+crt-static`) and Linux jobs.
+  - `prepare-platform-static.cjs` and `verify-packaged-resources.cjs` require `allternit-tts`.
+  - `release-preflight.mjs` checks every job that ships voice-service also builds and stages `allternit-tts` and runs the guard: 56 passed, 0 failed.
+  - electron-builder already ships all of `resources/bin/`.
+  - The app now bundles `licenses/allternit-tts-GPL-3.0.txt`, and `THIRD-PARTY-NOTICES.md` has a voice section naming the corresponding source.
+
+## Files changed in 1.1
+
+- **New:** `services/voice-tts/{Cargo.toml, LICENSE, README.md, THIRD_PARTY_NOTICES.md, src/main.rs}`, `scripts/check-voice-no-gpl.sh`.
+- **Changed:**
+  - Workspace: `Cargo.toml`, `Cargo.lock`.
+  - Voice service: `services/voice/src/{tts.rs, models.rs, server.rs, main.rs}`, `services/voice/{tests/integration.rs, examples/voice_bench.rs, bench/results-joes-MBP.jsonl, README.md, spec/API.md, THIRD_PARTY_NOTICES.md}`.
+  - Packaging: `scripts/build-desktop.sh`, `scripts/release-preflight.mjs`, `.github/workflows/release-desktop.yml`, `surfaces/allternit-desktop/{package.json, scripts/prepare-platform-static.cjs, scripts/verify-packaged-resources.cjs, docs/KNOWN-ISSUES.md, src/main/voice-manager.ts}`, `THIRD-PARTY-NOTICES.md`.
+  - Other callers and docs: `cmd/gizzi-code/src/cli/ui/ink-app/services/localVoiceSTT.ts`, `surfaces/docs/api/voice.mdx`, `surfaces/docs/tools/voice.mdx`, `docs/specs/tts-product.md`, `docs/public/parity/chatgpt-voice.md`.
+
+## Verification (last lines)
+
+```
+$ cargo clippy -p voice-service -p allternit-tts --all-targets -- -D warnings
+Finished `dev` profile [unoptimized + debuginfo] target(s)
+$ cargo test -p voice-service -p allternit-tts
+test result: ok. 33 passed; 0 failed   (unit)
+test result: ok. 20 passed; 0 failed   (integration)
+$ ALLTERNIT_VOICE_MODEL_TESTS=1 cargo test --release -p voice-service --test integration
+test result: ok. 20 passed; 0 failed; 0 ignored; finished in 14.43s   (TTS through allternit-tts)
+$ node scripts/release-preflight.mjs
+release-preflight: 56 passed, 0 failed
+$ python3 surfaces/docs/scripts/check_links.py
+checked 413 nav entries, 411 pages: 0 problem(s)
+$ scripts/check-voice-no-gpl.sh <release>/voice-service
+check-voice-no-gpl: OK: no espeak-ng in .../voice-service
+```
+
+## Still open
+
+- **First audio is ~1.4 s, not ~300 ms** (see above). That takes a model decision: a smaller or streaming TTS on weak devices, or Cloud Voice.
+- **GPL source availability.** `allternit-tts` is GPL-3.0-or-later, so whoever distributes Desktop must make its corresponding source available: `services/voice-tts/` plus sherpa-onnx v1.13.8. If the platform repo is private, that means publishing `services/voice-tts` (and the build recipe) or shipping a written offer. Eoj's call.
+- **Linux and Windows builds** are verified only by the first release workflow run, including `check-voice-no-gpl.sh` on Linux, where the `no_espeak` stubs do the real work.
+- The upgrade from Phase 1 leaves an orphaned `small/kokoro-int8-en-v0_19` directory (~200 MB) on any machine that ran the Phase 1 build. Phase 1 never shipped to users, so nothing cleans it up automatically; I deleted it on this Mac.
