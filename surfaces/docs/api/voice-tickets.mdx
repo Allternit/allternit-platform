@@ -1,0 +1,96 @@
+---
+title: 'Voice Tickets and Usage API'
+description: 'Cloud Voice tickets, single-use redemption, and voice minutes metering in the Allternit cloud API.'
+---
+
+## Overview
+
+Allternit Cloud Voice runs on Allternit servers. The app asks the cloud API for a short-lived signed **ticket**, then opens the voice session WebSocket with it. The voice service redeems the ticket (single use) and reports the session's seconds when it ends. The cloud API only meters and exposes usage: it does not charge anyone or write to Stripe.
+
+For the voice service itself (TTS, STT, sessions), see [Voice API](/api/voice).
+
+## Base URL
+
+```
+https://api.allternit.com
+```
+
+## Pricing constants
+
+Defined once in `cmd/allternit-cloud-api/src/services/voice_usage.rs` and reused by the phone path.
+
+| Constant | Value |
+|----------|-------|
+| `PLUS_INCLUDED_CLOUD_VOICE_SECONDS` | 6000 (100 min per calendar month, UTC) |
+| `CLOUD_VOICE_RATE_USD_PER_MIN` | 0.08 |
+| `PHONE_RATE_USD_PER_MIN` | 0.08 |
+| `PHONE_NUMBER_USD_PER_MONTH` | 2.0 |
+
+The plan comes from the account's active subscription (the same lookup as `GET /api/v1/me/usage`). Plus, Super and Ultra include 100 Cloud Voice minutes a month and can continue into overage. Free includes none and cannot use Cloud Voice.
+
+## Endpoints
+
+### Mint a ticket
+
+`POST /api/v1/voice/tickets` — Clerk session.
+
+Returns 200:
+
+```json
+{
+  "ticket": "v1.<payload>.<signature>",
+  "wsUrl": "wss://voice.allternit.com/v1/voice/session",
+  "expiresAt": "2026-10-03T12:00:00+00:00"
+}
+```
+
+The ticket is valid for 60 seconds. `payload` is base64url JSON `{sub, plan, exp, nonce, maxSeconds}` (`exp` in Unix seconds, `maxSeconds` 1800), and `signature` is base64url HMAC-SHA256 of `"v1." + payload` with `ALLTERNIT_VOICE_TICKET_SECRET`.
+
+| Status | `code` | Meaning |
+|--------|--------|---------|
+| 402 | `no-cloud-minutes` | The plan has no Cloud Voice minutes and cannot go into overage (Free). |
+| 503 | `cloud-unavailable` | The ticket secret or the WebSocket URL is not configured. A ticket is never minted unsigned. |
+
+### Redeem a ticket
+
+`POST /api/v1/voice/tickets/redeem` — voice service only, `Authorization: Bearer <ALLTERNIT_VOICE_WORKER_TOKEN>`.
+
+Body `{"ticket": "..."}`. Verifies the signature and expiry, then records the nonce so the ticket works once. Returns `{"sub", "plan", "maxSeconds"}`. A bad, expired or already-used ticket returns 401 (`invalid-ticket` or `ticket-used`). A wrong bearer token returns 401; an unconfigured token or secret returns 503 `cloud-unavailable`. The voice service can also verify the signature locally; this endpoint adds the single-use check.
+
+### Report usage
+
+`POST /api/v1/voice/usage` — voice service only, same bearer token.
+
+```json
+{ "sub": "user_123", "sessionId": "sess_abc", "seconds": 312, "engine": "cloud" }
+```
+
+Idempotent on `(engine, sessionId)`: retrying a report does not double count. `engine` must be `cloud`; `seconds` is 0 to 21600.
+
+### This month's usage
+
+`GET /api/v1/voice/usage/month` — Clerk session.
+
+```json
+{
+  "engine": "cloud",
+  "usedSeconds": 312,
+  "includedSeconds": 6000,
+  "overageRateUsdPerMin": 0.08,
+  "phone": { "usedSeconds": 120, "rateUsdPerMin": 0.08 }
+}
+```
+
+The month is the UTC calendar month.
+
+## Environment variables
+
+| Variable | Purpose |
+|----------|---------|
+| `ALLTERNIT_VOICE_TICKET_SECRET` | HMAC secret, at least 32 characters. Shared with the voice service. |
+| `ALLTERNIT_VOICE_CLOUD_WS_URL` | WebSocket URL returned as `wsUrl`, e.g. `wss://voice.allternit.com/v1/voice/session`. |
+| `ALLTERNIT_VOICE_WORKER_TOKEN` | Bearer token, at least 32 characters, for the redeem and usage endpoints. |
+
+## Database
+
+Migration `029_voice_usage.sql` adds `voice_usage` (one row per session or call, unique on `(engine, ref)`, indexed on `(user_id, occurred_at)`) and `voice_tickets_used` (redeemed nonces; expired rows are purged on redeem). Prod migrations are applied by hand.

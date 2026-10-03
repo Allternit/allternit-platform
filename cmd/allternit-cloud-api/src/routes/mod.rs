@@ -51,6 +51,7 @@ pub mod slack_app;
 pub mod tasks;
 #[cfg(test)]
 pub mod test_support;
+pub mod voice_tickets;
 pub mod whatsapp_es;
 pub mod voice_calls_cloud;
 pub mod wizard;
