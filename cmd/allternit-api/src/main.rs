@@ -1088,7 +1088,10 @@ async fn main() {
         )
         .nest(
             "/mcp",
-            mcp_router().merge(allternit_api::mcp_server_routes::mcp_server_router()),
+            mcp_router()
+                .merge(allternit_api::mcp_server_routes::mcp_server_router())
+                // Vendor-bot connector: /mcp/bots/:vendorBotId (scope bots:act).
+                .merge(allternit_api::mcp_vendor_bots::mcp_bots_router()),
         )
         // The web client calls the connector routes as /api/v1/mcp/*.
         .nest("/api/v1/mcp", mcp_router())
@@ -1113,6 +1116,8 @@ async fn main() {
         .nest("/api", checkpoints_router())
         .nest("/api", design_connector_router())
         .nest("/api", allternit_api::mcp_apps::mcp_apps_router())
+        // Keys page for the vendor-bot connector: /api/v1/vendor-bots/:id/connector*.
+        .nest("/api", allternit_api::mcp_vendor_bots::connector_router())
         .nest("/api", office_engine_router())
         .nest("/api", provider_router())
         // Idempotency replay for POST/PUT/PATCH on the protected surface.

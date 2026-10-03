@@ -1,0 +1,81 @@
+---
+title: Let your vendor bots use your bot's phone
+description: Connect Claude or ChatGPT to a vendor bot so it can text, call, email and read the threads you share, through your bot's own phone and mailbox.
+---
+
+A [vendor bot](/guides/vendor-bots) does not get a phone number of its own. It borrows the phone and mailbox of the bot that directs it, and it acts through **tools**, the same way your bot does. It never drives Allternit's screens.
+
+Because the tools go through the same paths as your bot, the same rules hold:
+
+- **Texts and calls only reach people who contacted the number first, or whom you added as contacts.** Anyone who replied STOP stays blocked. See [Calls and texts in threads](/guides/calls-and-texts).
+- **Email is always a draft.** `send_email` waits for your OK before anything is sent.
+- **The daily text limit and carrier registration apply.** If a tool is refused, the vendor bot gets one plain sentence saying why.
+- **Every message says where it came from:** "Sent by Claude via Gizzi". Calls open with that same line in their brief.
+
+## Connect
+
+1. In Allternit, open **Settings → Keys → Connectors** and pick the vendor bot.
+2. Choose its **directing bot**, the bot whose phone and mailbox it uses. If you have only one bot with a phone, it is picked for you.
+3. Copy the connector address, which looks like `https://mcp.allternit.com/mcp/bots/<vendor bot id>`.
+4. Add it where the vendor lets you:
+   - **Claude:** Settings → Connectors → **Add custom connector**. Paste the address and sign in to Allternit when asked.
+   - **ChatGPT:** turn on developer mode, then add the address as a connector and sign in to Allternit when asked.
+   - **Grok:** Grok has no custom connectors, so Gizzi relays instead: ask Gizzi to pass the message to your bot.
+
+Under **Connected apps** you can see each app that has used the connector and when. **Revoke** cuts one off at once: its next call is refused.
+
+## What the vendor bot can do
+
+| Tool | What it does |
+| --- | --- |
+| `list_threads` | Lists the conversations it can see, optionally by channel or search word. |
+| `read_thread` | Reads the latest messages of one of those threads. |
+| `send_text` | Texts a number from your bot's phone. |
+| `start_call` | Has your bot's phone call a number, with a brief. |
+| `send_email` | Drafts an email from your bot's address. It waits for your OK. |
+| `post_message` | Starts a conversation on a messaging channel through your bot. |
+| `ask_bot` | Hands off to your bot and returns its reply. |
+
+**Their view.** A vendor bot sees only threads it is attached to, plus threads you share with it. In the connector's settings, share a thread to add it. Your bot's other conversations stay private.
+
+Everything works the same on Desktop, the ai.allternit.com phone layout and the m.allternit.com app.
+
+## For developers
+
+**Endpoint.** `POST /mcp/bots/:vendorBotId` (MCP Streamable HTTP, JSON-RPC, protocol `2025-06-18`), served by `cmd/allternit-api/src/mcp_vendor_bots.rs` next to the agents server in `mcp_agents.rs`. The public host `mcp.allternit.com` must pass `/mcp/bots/*` through to the API; the edge rule lives outside this repo.
+
+**OAuth.** Clerk is the authorization server, as for the agents server. Protected-resource metadata is per path (RFC 9728): `GET /.well-known/oauth-protected-resource/mcp/bots/<id>` returns
+
+```json
+{
+  "resource": "https://mcp.allternit.com/mcp/bots/<id>",
+  "authorization_servers": ["https://allternit.com/__clerk"],
+  "scopes_supported": ["bots:act"],
+  "bearer_methods_supported": ["header"],
+  "resource_name": "Allternit vendor bot"
+}
+```
+
+An access token must have `aud` equal to that resource and the scope `bots:act`. A token minted for `/mcp/server` (`agents:read`) or for another bot is refused with `401`; a token with the wrong scope gets `403`; both carry the `WWW-Authenticate` challenge. The caller must own the vendor bot's execution binding (`bot_execution_bindings.type = 'vendor'`), otherwise the answer is `404`.
+
+**Gates.** The tools call the paths the bot itself uses:
+
+- `send_text` is a message in the `phone:<botE164>:<to>` thread, sent by the `sms` transport to the cloud's `POST /api/v1/channels/sms/send`. The cloud enforces opt-out, consent, registration state and the daily cap (`ALLTERNIT_SMS_DAILY_CAP`).
+- `start_call` calls `POST /api/v1/phone/calls/outbound`; `403 no_consent` becomes a tool error.
+- `send_email` is `send_email_for_user`, which always queues a mailflare approval.
+- `post_message` calls the runtime's channel-start path when it is built in, and otherwise says "Starting a conversation on a channel isn't available yet."
+- `ask_bot` is `agent_send` to the directing bot, so its approval flow applies.
+
+**Audit.** Every `tools/call` writes a `vendor_bot_audit` row: owner, vendor bot, directing bot, OAuth client, tool, a SHA-256 hash of the arguments (never the arguments), `ok` and a short result. Migration `V220`.
+
+**Keys page API** (signed-in owner, under `/api`):
+
+| Route | Result |
+| --- | --- |
+| `GET /v1/vendor-bots/:id/connector` | `{url, metadataUrl, scopes, directingBotId, directingBotName, sharedThreadIds, connectedClients:[{id, client, firstSeenAt, lastUsedAt}]}` |
+| `PUT /v1/vendor-bots/:id/connector` `{directingBotId}` | The same document, after setting the directing bot. |
+| `DELETE /v1/vendor-bots/:id/connector/clients/:clientId` | `{ok:true}`. The client's next call gets `401`. |
+| `GET /v1/vendor-bots/:id/connector/audit` | `{audit:[{id, client, tool, argsHash, ok, result, at}]}`, newest first. |
+| `PUT` / `DELETE /v1/vendor-bots/:id/connector/threads/:threadId` | Shares or unshares a thread. |
+
+The connector needs no environment of its own. `MCP_PUBLIC_URL` and `MCP_OAUTH_ISSUER` (see the agents server) set its address and issuer.

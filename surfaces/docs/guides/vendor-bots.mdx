@@ -59,6 +59,8 @@ If attaching a new vendor bot fails, Allternit removes the half-made bot so you 
 
 Everything here works the same on Desktop, the ai.allternit.com phone layout, and the m.allternit.com app.
 
+A vendor bot has no number of its own. To let Claude or ChatGPT text, call and email through your bot's phone, see [Let your vendor bots use your bot's phone](/guides/vendor-bots-use-your-phone).
+
 ## For developers
 
 - **Wizard:** `ConnectionWizard` (`src/components/gateway/ConnectionWizard.tsx`) keeps the existing reducer (`src/lib/gateway/wizard.ts`) and its consent and terms transitions, and presents its twelve machine steps as five screens. `select_pack` and `method` map to Choose method; `consent` and `terms` to Review & consent; `authenticate` and `verify` to Sign in; `discover`, `pick_agents` and `binding` to Pick your bots; `create`, `health` and `ready` to Done. The wizard never creates a second account for a vendor: `pickResumableAccount` and `resumeStepFor` resume the best existing account.
