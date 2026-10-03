@@ -33,7 +33,8 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use crate::channel_gateway::{Identity, Inbound, Outbound, PostError, Receipt};
-use crate::channel_transports::{dispatch_events, teams_normalize, Account, ChannelTransport, HttpReq, HttpSend};
+use crate::channel_gateway::ChannelTransport;
+use crate::channel_transports::{dispatch_events, teams_normalize, Account, HttpReq, HttpSend};
 use crate::db::DbHandle;
 use crate::AppState;
 
