@@ -327,6 +327,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Voice calls: deliver queued call.* events to runtimes (wake on demand).
     allternit_cloud_api::routes::voice_calls_cloud::start_voice_calls_worker(state.clone());
+    // Teams shared app: deliver queued Bot Framework activities to runtimes.
+    allternit_cloud_api::channels::teams_app::start_teams_app_worker(state.clone());
 
     // Start stale gizzi-instance garbage collection (startup sweep + hourly)
     allternit_cloud_api::routes::gizzi_instances::start_gizzi_instance_gc_task(state.db.clone());

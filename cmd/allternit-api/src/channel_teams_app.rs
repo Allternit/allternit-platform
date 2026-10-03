@@ -5,7 +5,7 @@
 //! through cloud-api: the bot's messaging endpoint lives there, and inbound
 //! activities are queued and relayed to this runtime over its relay, waking it
 //! if it sleeps. This module is the delivery address
-//! (`POST /webhooks/channels/teams-app`): the cloud stamps the owning user in
+//! (`POST /webhooks/teams-app`): the cloud stamps the owning user in
 //! the trusted `x-allternit-user-id` header (only the relay may set it), the
 //! activity is normalized with the shared [`crate::channel_transports::teams_normalize`],
 //! routed through [`crate::channel_transports::route_inbound`] exactly like
@@ -32,8 +32,8 @@ use axum::{
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-use crate::channel_gateway::{ChannelTransport, Identity, Inbound, Outbound, PostError, Receipt};
-use crate::channel_transports::{dispatch_events, teams_normalize, Account, HttpReq, HttpSend};
+use crate::channel_gateway::{Identity, Inbound, Outbound, PostError, Receipt};
+use crate::channel_transports::{dispatch_events, teams_normalize, Account, ChannelTransport, HttpReq, HttpSend};
 use crate::db::DbHandle;
 use crate::AppState;
 
@@ -46,7 +46,9 @@ const USER_HEADER: &str = "x-allternit-user-id";
 const CLOUD_TOKEN_ENV: &str = "ALLTERNIT_CLOUD_TOKEN";
 
 pub fn teams_app_router() -> Router<Arc<AppState>> {
-    Router::new().route("/webhooks/channels/teams-app", post(teams_app_webhook))
+    // Not under /webhooks/channels/:provider — a static segment sibling of
+    // that param route panics at router build on older axum/matchit.
+    Router::new().route("/webhooks/teams-app", post(teams_app_webhook))
 }
 
 async fn teams_app_webhook(State(state): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Response {
