@@ -961,6 +961,7 @@ async fn main() {
         .merge(allternit_api::gateway_runner::gateway_runner_router())
         .merge(allternit_api::a2a_routes::a2a_router())
         .merge(allternit_api::channel_gateway::channel_gateway_router())
+        .merge(allternit_api::channel_phone::phone_router())
         .merge(allternit_api::spend_limits::spend_limit_router())
         .merge(allternit_api::channel_tools::channel_tools_router())
         .merge(allternit_api::templates_routes::templates_router())

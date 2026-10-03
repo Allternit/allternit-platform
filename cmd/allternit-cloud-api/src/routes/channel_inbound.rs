@@ -78,6 +78,9 @@ pub fn channel_headers(headers: &HeaderMap) -> HashMap<String, String> {
         "x-hub-signature-256",
         "x-signature-ed25519",
         "x-signature-timestamp",
+        // SMS (Telnyx Ed25519).
+        "telnyx-signature-ed25519",
+        "telnyx-timestamp",
         // Teams: the Bot Framework JWT or the outgoing-webhook HMAC.
         "authorization",
     ];
