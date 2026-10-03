@@ -51,9 +51,11 @@ A channel app lists that channel's conversations for this bot, with **All**, **G
 
 - Telegram and WhatsApp won't let a bot write first to someone who never messaged it, or after the 24-hour reply window has closed. The phone tells you when that is the reason.
 - A bot can only post in a group or channel it is a member of.
+- Teams only lets the bot write to a conversation it already has (someone installed or messaged it). Discord direct messages aren't supported. Slack needs a channel the bot was invited to, or a person's Slack user id.
+- Email you start waits under **Needs OK** until you approve it. A text goes out from the bot's number, but only to someone who has texted or called that number first or is one of your allowed contacts.
 - If your Allternit runtime doesn't support starting conversations on a channel yet, the sheet says so.
 
-Nothing is sent without you tapping **Send**.
+Nothing is sent without you tapping **Send**. Developers: see [Starting conversations on a channel](/guides/starting-conversations).
 
 ## Unread
 
