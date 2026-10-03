@@ -62,6 +62,7 @@
               "guides/vendor-bots-on-the-phone",
               "guides/messaging-channels",
               "guides/calls-and-texts",
+              "guides/voice",
               "guides/mcp-apps-status"
             ],
             "icon": "/icons/window.svg"
@@ -306,6 +307,7 @@
               "tools/local-engine",
               "tools/voice",
               "tools/voice-calls",
+              "surfaces/voice",
               "tools/android-bridge",
               "tools/office-cli",
               "tools/office-engine",
