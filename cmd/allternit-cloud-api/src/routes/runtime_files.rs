@@ -84,6 +84,14 @@ mod tests {
     async fn only_a_device_credential_reaches_the_owner_and_storage_must_be_configured() {
         let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
         sqlx::query("ALTER TABLE runtime_devices ADD COLUMN IF NOT EXISTS previous_credential_hash TEXT, ADD COLUMN IF NOT EXISTS previous_credential_expires_at TIMESTAMPTZ").execute(&state.db).await.unwrap();
+        // The plan lookup (caps) reads billing_subscriptions.
+        sqlx::raw_sql(
+            "CREATE TABLE IF NOT EXISTS billing_subscriptions (user_id TEXT, plan_id TEXT, plan_tier TEXT, \
+             status TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+        )
+        .execute(&state.db)
+        .await
+        .unwrap();
         seed_runtime_device(&state.db, "rtf", "user_f").await;
         let hash = super::super::runtime_pairing::sha256_hex(b"allternit_runtime_rtf");
         sqlx::query("UPDATE runtime_devices SET credential_hash = $1 WHERE id = 'rtf'").bind(hash).execute(&state.db).await.unwrap();

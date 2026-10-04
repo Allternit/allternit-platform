@@ -1115,6 +1115,9 @@ async fn reply(db: &PgPool, carrier: &dyn Carrier, number: &NumberRow, to: &str,
     }
 }
 
+/// Each MMS item gets at most this long to be copied into storage.
+const MMS_ITEM_BUDGET: std::time::Duration = std::time::Duration::from_secs(8);
+
 /// MMS media items (`url`, `contentType`) of a carrier webhook body. Telnyx lists them under
 /// `data.payload.media`; the carrier's signature was verified before this is read.
 fn webhook_media(body: &[u8]) -> Vec<(String, String)> {
@@ -1138,24 +1141,38 @@ async fn inbound_media(db: &PgPool, user_id: &str, body: &[u8]) -> Vec<Value> {
     // Without a link secret a stored copy has no permanent URL to hand on, so don't store one.
     let store = crate::services::r2::R2Client::from_env().ok().filter(|_| crate::services::user_files::links_configured());
     let plan = crate::services::voice_usage::plan_for_user(db, user_id).await.unwrap_or_else(|_| "free".into());
-    let mut out = Vec::new();
-    for (url, ct) in items {
-        let stored = match &store {
-            Some(r2) => crate::services::user_files::ingest_remote(db, r2, &crate::services::user_files::HttpFetcher, user_id, &plan, &url, &ct, Utc::now()).await,
-            None => Err("file storage or permanent links are not configured".into()),
-        };
-        match stored {
-            Ok(f) if f.link_url.is_some() => out.push(json!({ "url": f.link_url, "contentType": f.content_type, "name": f.name, "bytes": f.bytes, "stored": true })),
-            Ok(f) => {
-                tracing::warn!(user = user_id, file = %f.file_id, "mms media stored but permanent links are not configured; passing the carrier url");
-                out.push(json!({ "url": url, "contentType": f.content_type, "name": f.name, "bytes": f.bytes, "stored": false }));
-            }
-            Err(e) => {
-                tracing::warn!(user = user_id, "mms media kept at the carrier url: {e}");
-                out.push(json!({ "url": url, "contentType": ct, "stored": false }));
+    // All items at once, each capped, so a slow carrier CDN can't hold the
+    // webhook (the carrier retries slow webhooks; retries are deduped above).
+    let fetches = items.into_iter().map(|(url, ct)| {
+        let store = store.clone();
+        let plan = plan.clone();
+        async move {
+            let stored = match &store {
+                Some(r2) => match tokio::time::timeout(
+                    MMS_ITEM_BUDGET,
+                    crate::services::user_files::ingest_remote(db, r2, &crate::services::user_files::HttpFetcher, user_id, &plan, &url, &ct, Utc::now()),
+                )
+                .await
+                {
+                    Ok(r) => r,
+                    Err(_) => Err(format!("took longer than {} s", MMS_ITEM_BUDGET.as_secs())),
+                },
+                None => Err("file storage or permanent links are not configured".into()),
+            };
+            match stored {
+                Ok(f) if f.link_url.is_some() => json!({ "url": f.link_url, "contentType": f.content_type, "name": f.name, "bytes": f.bytes, "stored": true }),
+                Ok(f) => {
+                    tracing::warn!(user = user_id, file = %f.file_id, "mms media stored but permanent links are not configured; passing the carrier url");
+                    json!({ "url": url, "contentType": f.content_type, "name": f.name, "bytes": f.bytes, "stored": false })
+                }
+                Err(e) => {
+                    tracing::warn!(user = user_id, "mms media kept at the carrier url: {e}");
+                    json!({ "url": url, "contentType": ct, "stored": false })
+                }
             }
         }
-    }
+    });
+    let out: Vec<Value> = futures::future::join_all(fetches).await;
     out
 }
 
