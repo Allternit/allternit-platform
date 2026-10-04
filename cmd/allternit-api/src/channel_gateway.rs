@@ -944,7 +944,8 @@ async fn conversations_h(State(state): State<Arc<AppState>>, Extension(user): Ex
     let rows = conn
         .prepare(
             "SELECT b.external_conversation_id, COALESCE(b.channel_name, t.title), b.thread_id, b.updated_at,
-                    (SELECT json_extract(l.detail_json, '$.text') FROM channel_message_log l WHERE l.binding_id = b.id AND l.direction = 'inbound' ORDER BY l.created_at DESC LIMIT 1)
+                    (SELECT json_extract(l.detail_json, '$.text') FROM channel_message_log l WHERE l.binding_id = b.id AND l.direction = 'inbound' ORDER BY l.created_at DESC LIMIT 1),
+                    (SELECT COALESCE(p.merged_into, p.id) FROM person_threads pt JOIN people p ON p.id = pt.person_id WHERE pt.thread_id = b.thread_id)
              FROM channel_conversation_bindings b LEFT JOIN bot_threads t ON t.id = b.thread_id
              WHERE b.owner = ?1 AND b.account_binding_id = ?2
              ORDER BY b.updated_at DESC LIMIT 50",
@@ -959,12 +960,23 @@ async fn conversations_h(State(state): State<Arc<AppState>>, Extension(user): Ex
                     "threadId": r.get::<_, String>(2)?,
                     "updatedAt": r.get::<_, Option<String>>(3)?,
                     "lastText": r.get::<_, Option<String>>(4)?,
+                    // The person this chat belongs to (src/people.rs); Messages groups by it.
+                    "personId": r.get::<_, Option<String>>(5)?,
                 }))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()
         });
     match rows {
-        Ok(conversations) => Json(json!({ "conversations": conversations })).into_response(),
+        Ok(mut conversations) => {
+            for c in conversations.iter_mut() {
+                if let Some(person) = c["personId"].as_str().and_then(|p| crate::people::get_person(&state.db, &user.user_id, p)) {
+                    c["personId"] = json!(person.id);
+                    c["name"] = json!(person.display_name);
+                    c["avatar"] = json!(person.avatar);
+                }
+            }
+            Json(json!({ "conversations": conversations })).into_response()
+        }
         Err(e) => api_err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }

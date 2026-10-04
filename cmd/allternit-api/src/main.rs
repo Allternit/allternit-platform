@@ -596,6 +596,11 @@ async fn main() {
     allternit_api::channel_discord_app::init(state.db.clone());
     // Vendor bots' `post_message` start conversations through the same path as the app.
     allternit_api::channel_start::register_vendor_starter(&state);
+    // Chats from before People existed become people (idempotent; a no-op once done).
+    let adopted = allternit_api::people::backfill(&state.db, None);
+    if adopted > 0 {
+        tracing::info!(adopted, "people: adopted existing chats");
+    }
     allternit_api::discord_gateway::spawn_bound(state.clone());
     // Keep this runtime's phone numbers in step with the cloud (inert until the runtime is paired).
     allternit_api::phone_sync::spawn(state.clone());
@@ -973,6 +978,7 @@ async fn main() {
         .merge(allternit_api::channel_phone::phone_router())
         .merge(allternit_api::phone_outbound::phone_outbound_router())
         .merge(allternit_api::channel_start::channel_start_router())
+        .merge(allternit_api::people::people_router())
         .merge(allternit_api::channel_slack_app::slack_app_connect_router())
         .merge(allternit_api::spend_limits::spend_limit_router())
         .merge(allternit_api::channel_tools::channel_tools_router())
