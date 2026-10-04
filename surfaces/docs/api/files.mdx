@@ -63,6 +63,10 @@ POST /api/v1/runtime-devices/me/files/{fileId}/complete  # same body -> 201 { fi
 
 `Authorization: Bearer allternit_runtime_…`; a user token is refused (401). The errors are the same as for `/files/uploads`. `linkUrl` is the permanent link, or `null` when the server has no `ALLTERNIT_FILE_LINK_SECRET`. `allternit-api` wraps the three steps as `cloud_files::upload_file` / `upload_bytes`. MMS pictures received on a number are copied into the same storage; see [Phone numbers and SMS (runtime)](/guides/phone-sms-runtime).
 
+## Channel attachments
+
+Files a bot sends on a channel, and files people send it on Telegram or Slack, are kept in the owner's files under the same plan limits. The runtime stores them with the runtime upload above; a Slack file from the shared Allternit app is downloaded and stored by the cloud (`POST /api/v1/channels/slack/file`, runtime credential), because the install's token never leaves the cloud. Each thread message then carries `files: [{ name, mime, size, url }]`, where `url` is the permanent link, so the app shows a download chip that keeps working in old messages. A file that couldn't be kept (no cloud pairing, over the plan cap, the platform refused the download) carries `name` and a short `error` instead of `url`, and still shows by name.
+
 ## Errors
 
 Errors are `{ "code", "message" }`.

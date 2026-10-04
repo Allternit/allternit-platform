@@ -113,6 +113,29 @@ Discord docs: [Create DM](https://discord.com/developers/docs/resources/user#cre
 
 Every channel: 10 MB per file, 20 MB per message. Refusals: `400 attachments_unsupported` (the channel takes none), `400 invalid_attachment` (no data, empty or bad base64), `413 attachment_too_large` (size or count). Start and channel-send accept request bodies up to 30 MB for this. The cloud's Slack send route takes the same `files` list (`{ "channel", "text", "threadTs", "files": [...] }`) and enforces the same caps. If the text posts but the upload fails, the send is reported as unconfirmed rather than failed, so it isn't posted twice.
 
+### Files in the thread
+
+Files are kept so the thread can offer them as downloads, on Desktop, the ai.allternit.com phone layout and the m.allternit.com app alike. When a bot sends files, and when someone sends a file in Telegram or Slack, the runtime stores each one in the user's files at the cloud ([Files API](/api/files#channel-attachments), plan limits apply) and the thread message event carries:
+
+```json
+"files": [
+  { "name": "q3.pdf", "mime": "application/pdf", "size": 2516582, "url": "https://api.allternit.com/api/v1/files/<id>/raw?k=<token>" },
+  { "name": "huge.mov", "mime": "video/quicktime", "size": 50000000, "error": "too_large" }
+]
+```
+
+`size` is bytes. `url` is the file's permanent link, so the chip is a real download link and an old message never has an expired one (deleting the file in Settings > Files kills the link). A file that couldn't be kept (`error`: `too_large`, `storage-quota-exceeded`, `file-too-large`, `not_paired`, `slack_reauthorize_required`, or a platform refusal) shows by name with the reason, and the message is never blocked by it. The older `attachments: [name]` list stays on the event.
+
+Inbound, per platform:
+
+| Channel | How the file is fetched |
+| --- | --- |
+| Telegram | The runtime calls `getFile`, then downloads from `https://api.telegram.org/file/bot<token>/<file_path>` with the connection's bot token. Documents, photos (largest size), video, audio, voice, animations and video notes; Telegram lets bots download up to 20 MB, we keep up to 10 MB. |
+| Slack (shared app) | The bot token never leaves the cloud, so the runtime asks `POST /api/v1/channels/slack/file` `{ url, name, mimeType }`; the cloud downloads the `url_private_download` from `files.slack.com` with the install's token and stores it (`201 { fileId, name, contentType, bytes }`). Needs the `files:read` scope: an install without it answers `slack_reauthorize_required`, and the owner re-installs the app ([owner setup](/internal/channel-apps-owner-setup)). |
+| Email | Inbound mail attachments are not kept yet: mailflare's inbound webhook carries no attachment list, and that path belongs to the mail rail. Outbound email attachments are kept like the others. |
+
+A message that is only a file (no text) arrives as `[file: name]` so it still reaches a thread and the bot sees that something came. Up to 5 files per message; a platform retry of a message already logged is not downloaded again.
+
 ## Teams proactive messages
 
 Not built. Starting a Teams chat with someone the bot has no conversation reference for needs the two-tenant proactive-messaging spike, which needs a second Microsoft tenant to test against. Until then the start route answers `409 no_conversation_reference`: "Teams only lets the bot message a conversation it already has a reference for. Have the person install or message the bot in Teams first."

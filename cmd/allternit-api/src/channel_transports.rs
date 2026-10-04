@@ -64,6 +64,10 @@ pub trait HttpSend: Send + Sync {
     async fn post_form(&self, _url: &str, _form: Vec<(String, String)>) -> Result<HttpResp, String> {
         Err("form POST is not supported by this transport".into())
     }
+    /// GET raw bytes, reading at most `limit` (a platform's file download). `(status, body)`.
+    async fn get_bytes(&self, _url: &str, _headers: Vec<(String, String)>, _limit: usize) -> Result<(u16, Vec<u8>), String> {
+        Err("file download is not supported by this transport".into())
+    }
     /// POST `multipart/form-data`: the text `fields` and one file part named `file_field` (Telegram uploads).
     async fn post_multipart(&self, _url: &str, _fields: Vec<(String, String)>, _file_field: &str, _file: &crate::channel_files::ChannelFile) -> Result<HttpResp, String> {
         Err("file upload is not supported by this transport".into())
@@ -97,7 +101,7 @@ fn guarded_client(url: &str) -> Result<reqwest::Client, String> {
 impl HttpSend for ReqwestSend {
     async fn post_json(&self, req: HttpReq) -> Result<HttpResp, String> {
         // A post that carries files (cloud relays them to the platform) needs longer than a text one.
-        let secs = if req.body.get("files").is_some() { 60 } else { 15 };
+        let secs = if req.body.get("files").is_some() || req.body.get("dataBase64").is_some() { 60 } else { 15 };
         let mut r = guarded_client(&req.url)?.post(&req.url).timeout(std::time::Duration::from_secs(secs)).json(&req.body);
         for (k, v) in &req.headers {
             r = r.header(k, v);
@@ -111,6 +115,22 @@ impl HttpSend for ReqwestSend {
         let resp = guarded_client(url)?.get(url).timeout(std::time::Duration::from_secs(15)).send().await.map_err(|e| e.to_string())?;
         let status = resp.status().as_u16();
         Ok(HttpResp { status, body: resp.json::<Value>().await.unwrap_or(Value::Null) })
+    }
+    async fn get_bytes(&self, url: &str, headers: Vec<(String, String)>, limit: usize) -> Result<(u16, Vec<u8>), String> {
+        let mut req = guarded_client(url)?.get(url).timeout(std::time::Duration::from_secs(60));
+        for (k, v) in &headers {
+            req = req.header(k, v);
+        }
+        let mut resp = req.send().await.map_err(|e| e.to_string())?;
+        let status = resp.status().as_u16();
+        let mut out = Vec::new();
+        while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
+            if out.len() + chunk.len() > limit {
+                return Err("too_large".into());
+            }
+            out.extend_from_slice(&chunk);
+        }
+        Ok((status, out))
     }
     async fn post_form(&self, url: &str, form: Vec<(String, String)>) -> Result<HttpResp, String> {
         let resp = guarded_client(url)?.post(url).timeout(std::time::Duration::from_secs(15)).form(&form).send().await.map_err(|e| e.to_string())?;
@@ -868,8 +888,22 @@ pub(crate) fn failure_notice(speaker: Option<&str>, err: &str) -> String {
 }
 
 pub async fn dispatch_events(st: &Arc<AppState>, acct: &Account, tx: Arc<dyn ChannelTransport>, events: Vec<Inbound>) {
+    dispatch_events_with_files(st, acct, tx, events, Default::default()).await
+}
+
+/// [`dispatch_events`] for a payload that carried files (`channel_attachments::inbound_files`):
+/// each message's files are downloaded and kept in the user's files before it is
+/// recorded, so the thread message shows them as downloads.
+pub async fn dispatch_events_with_files(st: &Arc<AppState>, acct: &Account, tx: Arc<dyn ChannelTransport>, events: Vec<Inbound>, files: crate::channel_attachments::InboundFiles) {
     let rt = crate::thread_routes::GizziRuntime { db: st.db.clone() };
-    for e in events {
+    for mut e in events {
+        if let Some(remote) = files.get(&e.remote_id) {
+            let http: Arc<dyn HttpSend> = Arc::new(ReqwestSend);
+            let cloud = crate::channel_attachments::CloudFiles::from_env(http.clone());
+            let fetcher = crate::channel_attachments::Fetcher::for_account(tx.provider(), &acct.secret);
+            let logged = message_already_logged(&st.db, tx.provider(), &e.remote_id);
+            crate::channel_attachments::ingest_for_event(http, &cloud, &fetcher, tx.provider(), &mut e, remote, logged).await;
+        }
         // Managed Bots onboarding: a /start <nonce> to a freshly delivered
         // child bot pairs the Telegram user, answers in the chat, and never
         // reaches the bots below.
@@ -892,7 +926,10 @@ pub async fn dispatch_events(st: &Arc<AppState>, acct: &Account, tx: Arc<dyn Cha
                 continue;
             }
         }
-        match route_inbound(&st.db, &rt, acct, tx.provider(), &e).await {
+        let routed = route_inbound(&st.db, &rt, acct, tx.provider(), &e).await;
+        // Files kept for a message that was not recorded (a replay) are dropped, not left behind.
+        crate::channel_attachments::discard_kept(tx.provider(), &e.remote_id);
+        match routed {
             Ok(Routed { binding: Some(b), turn: Some((session, bot, text)), speaker, person, .. }) => {
                 let reply = match crate::agent_session_routes::send_bot_turn(&st.db, &session, &bot, &text).await {
                     Ok(reply) => speaker.as_ref().map(|n| format!("{n}: {reply}")).unwrap_or(reply),
@@ -932,6 +969,14 @@ pub async fn dispatch_events(st: &Arc<AppState>, acct: &Account, tx: Arc<dyn Cha
             Err(err) => warn!("channel inbound failed: {err}"),
         }
     }
+}
+
+/// Whether this platform message already has a row in the log (a retry of a delivery we handled).
+fn message_already_logged(db: &DbHandle, provider: &str, remote_id: &str) -> bool {
+    db.connect()
+        .ok()
+        .and_then(|c| c.query_row("SELECT 1 FROM channel_message_log WHERE correlation_id = ?1 AND direction = 'inbound' LIMIT 1", params![format!("{provider}:{remote_id}")], |_| Ok(())).ok())
+        .is_some()
 }
 
 /// What a managed-onboarding `/start <nonce>` produced.
@@ -1055,8 +1100,9 @@ async fn webhook_h(State(state): State<Arc<AppState>>, Path(provider): Path<Stri
         return (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid_json" }))).into_response();
     };
     let events = tx.normalize(&payload);
+    let files = crate::channel_attachments::inbound_files(&provider, &payload);
     let st = state.clone();
-    tokio::spawn(async move { dispatch_events(&st, &acct, tx, events).await });
+    tokio::spawn(async move { dispatch_events_with_files(&st, &acct, tx, events, files).await });
     Json(json!({ "ok": true })).into_response()
 }
 
@@ -1583,6 +1629,53 @@ mod tests {
 
     fn tg(update_id: i64, chat: i64, text: &str) -> Inbound {
         telegram_normalize(&json!({ "update_id": update_id, "message": { "message_id": update_id, "chat": { "id": chat, "type": "private" }, "from": { "id": chat, "username": "eoj" }, "text": text } })).remove(0)
+    }
+
+    /// Telegram getFile + file download, and the cloud's `files/ingest`.
+    struct FileHttp;
+    #[async_trait]
+    impl HttpSend for FileHttp {
+        async fn post_json(&self, req: HttpReq) -> Result<HttpResp, String> {
+            Ok(if req.url.ends_with("/getFile") {
+                HttpResp { status: 200, body: json!({ "ok": true, "result": { "file_path": "documents/q3.pdf" } }) }
+            } else {
+                HttpResp { status: 201, body: json!({ "fileId": "file-9", "name": req.body["name"], "contentType": req.body["contentType"], "bytes": 6 }) }
+            })
+        }
+        async fn get_bytes(&self, _url: &str, _headers: Vec<(String, String)>, _limit: usize) -> Result<(u16, Vec<u8>), String> {
+            Ok((200, b"%PDF-1".to_vec()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_file_only_message_opens_a_thread_whose_event_carries_the_kept_file() {
+        let (st, acct) = setup("tgfile", "s", "telegram", Some("bot-1")).await;
+        let update = json!({ "update_id": 40, "message": { "message_id": 40, "chat": { "id": 55, "type": "private" }, "from": { "id": 55 },
+            "document": { "file_id": "D1", "file_name": "q3.pdf", "mime_type": "application/pdf", "file_size": 6 } } });
+        let mut e = telegram_normalize(&update).remove(0);
+        assert!(e.text.is_none(), "a document with no caption has no text of its own");
+        let remote = crate::channel_attachments::inbound_files("telegram", &update).remove(&e.remote_id).expect("the document is found under the message's remote id");
+        let http: Arc<dyn HttpSend> = Arc::new(FileHttp);
+        let cloud = crate::channel_attachments::CloudFiles::new(http.clone(), Arc::new(crate::cloud_files::fakes::FakeUploader::default()), "https://api.test".into(), Some("rt".into()));
+        let fetcher = crate::channel_attachments::Fetcher::Telegram { token: "1:a".into() };
+        crate::channel_attachments::ingest_for_event(http, &cloud, &fetcher, "telegram", &mut e, &remote, false).await;
+        assert_eq!(e.text.as_deref(), Some("[file: q3.pdf]"));
+
+        let routed = route_inbound(&st.db, &Rt, &acct, "telegram", &e).await.unwrap();
+        assert_eq!(routed.recorded, Recorded::New);
+        assert!(routed.turn.expect("the bot sees that a file came").2.contains("[file: q3.pdf]"));
+        let b = routed.binding.unwrap();
+        let c = st.db.connect().unwrap();
+        let payload: String = c.query_row("SELECT payload FROM bot_events WHERE thread_id=?1 AND event_type='channel.message.received'", params![b.thread_id], |r| r.get(0)).unwrap();
+        let payload: Value = serde_json::from_str(&payload).unwrap();
+        let files = payload.pointer("/files").or_else(|| payload.pointer("/payload/files")).expect("the event carries files").clone();
+        assert_eq!(files, json!([{ "name": "q3.pdf", "mime": "application/pdf", "size": 6, "url": "https://api.test/api/v1/files/q3.pdf/raw?k=t" }]));
+        let detail: String = c.query_row("SELECT detail_json FROM channel_message_log WHERE binding_id=?1 AND direction='inbound'", params![b.id], |r| r.get(0)).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&detail).unwrap()["files"], files);
+        // Taken once: a replay of the same message neither re-records nor leaves files behind.
+        assert!(crate::channel_attachments::take_kept("telegram", &e.remote_id).is_none());
+        assert!(message_already_logged(&st.db, "telegram", &e.remote_id));
+        assert!(!message_already_logged(&st.db, "telegram", "55:999"));
     }
 
     fn add_bot(st: &Arc<AppState>, id: &str, name: &str) {

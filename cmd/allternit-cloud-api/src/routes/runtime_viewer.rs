@@ -20,6 +20,15 @@
 //! `purpose` = `"vnc"`, TTL 300 s. The response's `wsUrl` carries a 30 s relay
 //! socket ticket and is for immediate use; ask again to reconnect.
 //!
+//! `GET /api/v1/runtime-devices/:id/viewer-check` is the automated self-check for
+//! the same path, so it can be verified without a person at a browser: it does
+//! the same ownership, cloud-computer and wake steps, then asks the runtime (over
+//! the relay, with a 60 s view-only token) to connect to its VNC socket and read
+//! the RFB banner. 200 `{ok:true, runtimeId, relay:"connected", vnc:{reachable:true,
+//! rfb, latencyMs}, checkedAt}`; on a failure `{ok:false, runtimeId, stage, reason}`
+//! with `stage` one of `wake` (503), `relay` (502/504) or `vnc` (502). Nothing is
+//! opened or changed on the computer. See surfaces/docs/api/cloud-api.mdx ("Checking the live desktop without a browser").
+//!
 //! Rules:
 //! - Auth is the sibling runtime-devices convention (`resolve_user_scoped(..,
 //!   "compute")`); no/invalid credentials answer 401.
@@ -38,7 +47,7 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
     Json, Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -47,7 +56,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::sync::Arc;
 
-use super::runtime_relay::{connect_or_wake_runtime, issue_socket_ticket, RelayConnect};
+use super::runtime_relay::{connect_or_wake_runtime, issue_socket_ticket, RelayConnect, RelayRequest};
 use crate::{ApiError, ApiState};
 
 /// Same lifetime as the Sessions computers ws-token (300 s); never longer.
@@ -57,7 +66,104 @@ pub const VIEWER_RUNTIME_PATH: &str = "/api/v1/runtime-viewer/vnc";
 const WS_BASE_ENV: &str = "ALLTERNIT_VIEWER_WS_BASE";
 
 pub fn routes() -> Router<Arc<ApiState>> {
-    Router::new().route("/api/v1/runtime-devices/:id/viewer-token", post(issue_viewer_token))
+    Router::new()
+        .route("/api/v1/runtime-devices/:id/viewer-token", post(issue_viewer_token))
+        .route("/api/v1/runtime-devices/:id/viewer-check", get(viewer_check))
+}
+
+/// The runtime-side self-check route (allternit-api `runtime_viewer`).
+pub const VIEWER_CHECK_RUNTIME_PATH: &str = "/api/v1/runtime-viewer/vnc-check";
+
+/// Turn the runtime's answer to the VNC probe into the check's reply.
+fn interpret_probe(runtime_id: &str, status: u16, body: &serde_json::Value) -> (StatusCode, serde_json::Value) {
+    match (status, body.get("ok").and_then(serde_json::Value::as_bool)) {
+        (200, Some(true)) => (
+            StatusCode::OK,
+            serde_json::json!({
+                "ok": true,
+                "runtimeId": runtime_id,
+                "relay": "connected",
+                "vnc": { "reachable": true, "rfb": body["rfb"], "latencyMs": body["latencyMs"] },
+                "checkedAt": chrono::Utc::now().to_rfc3339(),
+            }),
+        ),
+        (502, Some(false)) => (
+            StatusCode::BAD_GATEWAY,
+            serde_json::json!({ "ok": false, "runtimeId": runtime_id, "stage": "vnc", "reason": body["reason"] }),
+        ),
+        (404, _) => (
+            StatusCode::BAD_GATEWAY,
+            serde_json::json!({ "ok": false, "runtimeId": runtime_id, "stage": "relay", "reason": "runtime_has_no_viewer", "message": "The runtime is too old to have a live desktop view. Update it." }),
+        ),
+        (403, _) => (
+            StatusCode::BAD_GATEWAY,
+            serde_json::json!({ "ok": false, "runtimeId": runtime_id, "stage": "relay", "reason": "runtime_rejected_token", "message": "The runtime did not accept the viewer token; its relay key may be out of date." }),
+        ),
+        (other, _) => (
+            StatusCode::BAD_GATEWAY,
+            serde_json::json!({ "ok": false, "runtimeId": runtime_id, "stage": "relay", "reason": format!("runtime_answered_{other}") }),
+        ),
+    }
+}
+
+async fn viewer_check(State(state): State<Arc<ApiState>>, headers: HeaderMap, Path(runtime_id): Path<String>) -> Result<Response, ApiError> {
+    let user_id = crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await?.id;
+    let relay_key: Option<String> = sqlx::query_scalar("SELECT credential_hash FROM runtime_devices WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL")
+        .bind(&runtime_id)
+        .bind(&user_id)
+        .fetch_optional(&state.db)
+        .await?;
+    let Some(relay_key) = relay_key else {
+        return Ok(coded_error(StatusCode::NOT_FOUND, "not_found", "Runtime not found"));
+    };
+    let is_cloud = sqlx::query_scalar::<_, String>("SELECT id FROM provisioned_instances WHERE device_id = $1 AND user_id = $2 AND status <> 'deleted' LIMIT 1")
+        .bind(&runtime_id)
+        .bind(&user_id)
+        .fetch_optional(&state.db)
+        .await?;
+    if is_cloud.is_none() {
+        return Ok(coded_error(StatusCode::CONFLICT, "not_a_cloud_computer", "Only a cloud computer has a live desktop view"));
+    }
+    let exp = (chrono::Utc::now() + chrono::Duration::seconds(60)).timestamp() as u64;
+    let token = sign_viewer_token(&relay_key, &runtime_id, &user_id, true, exp);
+    let request = RelayRequest {
+        method: "GET".into(),
+        path: format!("{VIEWER_CHECK_RUNTIME_PATH}?token={token}"),
+        headers: Default::default(),
+        body: String::new(),
+        body_encoding: "utf8".into(),
+    };
+    let response = super::runtime_relay::relay_request_to_runtime(
+        &state.db,
+        &state.contabo_runtime_service,
+        &state.quota_service,
+        &state.provisioning_service,
+        &user_id,
+        &runtime_id,
+        request,
+    )
+    .await?;
+    let status = response.status().as_u16();
+    let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024).await.unwrap_or_default();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    // The relay answers these itself when the computer is asleep or gone.
+    if status == 503 {
+        let reason = body.get("error").and_then(serde_json::Value::as_str).unwrap_or("runtime_offline");
+        return Ok((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "ok": false, "runtimeId": runtime_id, "stage": "wake", "reason": reason })),
+        )
+            .into_response());
+    }
+    if status == 504 {
+        return Ok((
+            StatusCode::GATEWAY_TIMEOUT,
+            Json(serde_json::json!({ "ok": false, "runtimeId": runtime_id, "stage": "relay", "reason": "runtime_timeout" })),
+        )
+            .into_response());
+    }
+    let (code, out) = interpret_probe(&runtime_id, status, &body);
+    Ok((code, Json(out)).into_response())
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -432,6 +538,35 @@ mod tests {
             .unwrap();
         let response = router.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        cleanup();
+    }
+
+    #[test]
+    fn the_runtimes_probe_answer_becomes_a_stage_and_reason() {
+        let (code, ok) = interpret_probe("rt", 200, &serde_json::json!({ "ok": true, "rfb": "RFB 003.008", "latencyMs": 3 }));
+        assert_eq!((code, ok["ok"].as_bool(), ok["vnc"]["rfb"].as_str(), ok["relay"].as_str()), (StatusCode::OK, Some(true), Some("RFB 003.008"), Some("connected")));
+        let (code, vnc) = interpret_probe("rt", 502, &serde_json::json!({ "ok": false, "reason": "vnc_unreachable" }));
+        assert_eq!((code, vnc["stage"].as_str(), vnc["reason"].as_str()), (StatusCode::BAD_GATEWAY, Some("vnc"), Some("vnc_unreachable")));
+        for (status, reason) in [(404, "runtime_has_no_viewer"), (403, "runtime_rejected_token"), (500, "runtime_answered_500")] {
+            let (code, out) = interpret_probe("rt", status, &serde_json::Value::Null);
+            assert_eq!((code, out["stage"].as_str(), out["reason"].as_str(), out["ok"].as_bool()), (StatusCode::BAD_GATEWAY, Some("relay"), Some(reason), Some(false)));
+        }
+    }
+
+    #[tokio::test]
+    async fn the_check_has_the_same_404_409_and_401_as_the_token() {
+        let _g = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (router, db) = setup().await;
+        let check = "/api/v1/runtime-devices/rt_v1/viewer-check";
+        cloud_computer(&db, "rt_foreign", "someone-else").await;
+        let unknown = router.clone().oneshot(authed_request("GET", "/api/v1/runtime-devices/rt_foreign/viewer-check", "")).await.unwrap();
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        seed_runtime_device(&db, "rt_v1", DEV_USER).await;
+        let desktop = router.clone().oneshot(authed_request("GET", check, "")).await.unwrap();
+        assert_eq!(desktop.status(), StatusCode::CONFLICT);
+        assert_eq!(json_body(desktop).await["error"], "not_a_cloud_computer");
+        let anon = Request::builder().method("GET").uri(check).body(Body::empty()).unwrap();
+        assert_eq!(router.oneshot(anon).await.unwrap().status(), StatusCode::UNAUTHORIZED);
         cleanup();
     }
 }

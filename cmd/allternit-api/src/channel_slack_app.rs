@@ -339,7 +339,7 @@ fn name_first_word_when_a_bot(text: &str, member_names: &[String]) -> String {
 /// thread. DMs (`D…`) and app mentions are not affected.
 fn is_plain_channel_root(ev: &Value) -> bool {
     ev.get("type").and_then(Value::as_str) == Some("message")
-        && ev.get("subtype").is_none()
+        && matches!(ev.get("subtype").and_then(Value::as_str), None | Some("file_share"))
         && ev.get("thread_ts").is_none()
         && ev
             .get("channel")
@@ -404,9 +404,10 @@ async fn shared_events_h(State(state): State<Arc<AppState>>, auth: crate::relay_
             }
         }
     }
+    let files = crate::channel_attachments::inbound_files("slack", &envelope.event.clone().unwrap_or(Value::Null));
     let st = state.clone();
     tokio::spawn(async move {
-        crate::channel_transports::dispatch_events(&st, &acct, tx, events).await;
+        crate::channel_transports::dispatch_events_with_files(&st, &acct, tx, events, files).await;
     });
     Json(json!({ "ok": true })).into_response()
 }

@@ -17,6 +17,12 @@
 //! => 503, so it is inert on an unpaired runtime.
 //!
 //! The VNC server is `ALLTERNIT_RUNTIME_VNC_ADDR` (default `127.0.0.1:5900`).
+//!
+//! `GET /api/v1/runtime-viewer/vnc-check?token=…` is the automated self-check
+//! behind cloud-api's `GET /api/v1/runtime-devices/:id/viewer-check`: same token
+//! rules, but instead of upgrading it connects to the local VNC socket, reads the
+//! RFB banner and answers `{ok, rfb, latencyMs}` (200) or `{ok:false, reason}`
+//! (502). It opens no session and sends nothing to the VNC server.
 
 use std::sync::Arc;
 
@@ -54,6 +60,47 @@ pub(crate) fn authorize_viewer(relay_key: &str, owner: &str, token: &str) -> Res
     Ok(claims.read_only)
 }
 
+/// What a reachable VNC socket said.
+#[derive(Debug, PartialEq)]
+pub(crate) struct VncProbe {
+    pub rfb: String,
+    pub latency_ms: u64,
+}
+
+/// Connect to `addr` and read the RFB protocol banner (`RFB 003.008\n`, 12 bytes)
+/// the server sends first. `Err` is a short reason: `vnc_unreachable`,
+/// `vnc_timeout` or `not_rfb`.
+pub(crate) async fn probe_vnc(addr: &str, wait: std::time::Duration) -> Result<VncProbe, &'static str> {
+    use tokio::io::AsyncReadExt;
+    let started = std::time::Instant::now();
+    let work = async {
+        let mut stream = tokio::net::TcpStream::connect(addr).await.map_err(|_| "vnc_unreachable")?;
+        let mut banner = [0u8; 12];
+        stream.read_exact(&mut banner).await.map_err(|_| "not_rfb")?;
+        Ok::<_, &'static str>(banner)
+    };
+    let banner = tokio::time::timeout(wait, work).await.map_err(|_| "vnc_timeout")??;
+    let text = String::from_utf8_lossy(&banner).trim_end().to_string();
+    if !text.starts_with("RFB ") {
+        return Err("not_rfb");
+    }
+    Ok(VncProbe { rfb: text, latency_ms: started.elapsed().as_millis() as u64 })
+}
+
+async fn runtime_vnc_check_handler(Extension(secret): Extension<Arc<dyn RelaySecret>>, Query(query): Query<ViewerQuery>) -> Response {
+    let Some((relay_key, owner)) = secret.credentials() else {
+        return fail(StatusCode::SERVICE_UNAVAILABLE, "runtime viewer not configured");
+    };
+    if let Err(why) = authorize_viewer(&relay_key, &owner, &query.token) {
+        return fail(StatusCode::FORBIDDEN, why);
+    }
+    let addr = std::env::var(VNC_ADDR_ENV).ok().filter(|v| !v.trim().is_empty()).unwrap_or_else(|| DEFAULT_VNC_ADDR.to_string());
+    match probe_vnc(&addr, std::time::Duration::from_secs(5)).await {
+        Ok(p) => Json(json!({ "ok": true, "rfb": p.rfb, "latencyMs": p.latency_ms })).into_response(),
+        Err(reason) => (StatusCode::BAD_GATEWAY, Json(json!({ "ok": false, "reason": reason }))).into_response(),
+    }
+}
+
 fn fail(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({ "error": message }))).into_response()
 }
@@ -89,6 +136,7 @@ pub fn runtime_viewer_router<S: Clone + Send + Sync + 'static>() -> Router<S> {
 pub fn runtime_viewer_router_with<S: Clone + Send + Sync + 'static>(secret: Arc<dyn RelaySecret>) -> Router<S> {
     Router::new()
         .route("/api/v1/runtime-viewer/vnc", get(runtime_vnc_ws_handler))
+        .route("/api/v1/runtime-viewer/vnc-check", get(runtime_vnc_check_handler))
         .layer(Extension(secret))
 }
 
@@ -208,5 +256,65 @@ mod tests {
             tokio_tungstenite::tungstenite::Error::Http(r) => assert_eq!(r.status(), 503),
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn the_check_reads_the_rfb_banner_and_says_why_when_it_cannot() {
+        let wait = std::time::Duration::from_millis(500);
+        // A VNC server that greets.
+        let vnc = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = vnc.local_addr().unwrap().to_string();
+        tokio::spawn(async move {
+            loop {
+                let (mut s, _) = vnc.accept().await.unwrap();
+                tokio::spawn(async move { let _ = s.write_all(b"RFB 003.008\n").await; });
+            }
+        });
+        let ok = probe_vnc(&addr, wait).await.unwrap();
+        assert_eq!(ok.rfb, "RFB 003.008");
+        // Something else listening on the port: reachable but not VNC.
+        let web = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let web_addr = web.local_addr().unwrap().to_string();
+        tokio::spawn(async move {
+            loop {
+                let (mut s, _) = web.accept().await.unwrap();
+                tokio::spawn(async move { let _ = s.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n").await; });
+            }
+        });
+        assert_eq!(probe_vnc(&web_addr, wait).await, Err("not_rfb"));
+        // A socket that accepts and says nothing.
+        let mute = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mute_addr = mute.local_addr().unwrap().to_string();
+        tokio::spawn(async move {
+            let mut held = vec![];
+            loop {
+                held.push(mute.accept().await.unwrap());
+            }
+        });
+        assert_eq!(probe_vnc(&mute_addr, std::time::Duration::from_millis(150)).await, Err("vnc_timeout"));
+        // Nothing listening.
+        let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let closed_addr = closed.local_addr().unwrap().to_string();
+        drop(closed);
+        assert_eq!(probe_vnc(&closed_addr, wait).await, Err("vnc_unreachable"));
+    }
+
+    #[tokio::test]
+    async fn the_check_route_wants_the_same_token_as_the_viewer() {
+        let addr = serve(Arc::new(StaticRelaySecret { token: TOKEN.into(), owner: OWNER.into() })).await;
+        let http = reqwest::Client::new();
+        let status = |q: String| {
+            let http = http.clone();
+            async move { http.get(format!("http://{addr}/api/v1/runtime-viewer/vnc-check?token={q}")).send().await.unwrap().status().as_u16() }
+        };
+        assert_eq!(status(String::new()).await, 403);
+        assert_eq!(status(token_for("other-key", OWNER, "vnc", false, 60)).await, 403);
+        // A valid token reaches the probe: 200 with a VNC server, 502 without one (never 403).
+        let good = token_for(&key(), OWNER, "vnc", true, 60);
+        let unreachable = status(good).await;
+        assert!(matches!(unreachable, 200 | 502), "{unreachable}");
+        let unpaired = serve(Arc::new(UnconfiguredRelaySecret)).await;
+        let r = http.get(format!("http://{unpaired}/api/v1/runtime-viewer/vnc-check?token=x")).send().await.unwrap();
+        assert_eq!(r.status().as_u16(), 503);
     }
 }

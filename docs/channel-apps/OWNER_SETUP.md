@@ -39,10 +39,11 @@ Env names are namespaced (`ALLTERNIT_<CHANNEL>_*`). The old bare names (`APP_ID`
 
 ## Slack (about 15 minutes; Marketplace review optional)
 
-- Portal: https://api.slack.com/apps, Create New App, From a manifest, paste `docs/channel-apps/slack-app-manifest.json` (events, `/allternit` command, OAuth redirect and scopes including `files:write` are in it; interactivity is off because the cloud has no block-action handler yet).
+- Portal: https://api.slack.com/apps, Create New App, From a manifest, paste `docs/channel-apps/slack-app-manifest.json` (events, `/allternit` command, OAuth redirect and scopes including `files:write` (bots send files) and `files:read` (files people share are kept in their Allternit files) are in it; interactivity is off because the cloud has no block-action handler yet).
 - Basic Information: copy Client ID, Client Secret, Signing Secret. Manage Distribution: activate public distribution so other workspaces can install.
 - Keychain fields: `client_id`, `client_secret`, `signing_secret`; optional `bot_token` (a test install's `xoxb-` token) lets setup.mjs run `auth.test`.
 - Env: `ALLTERNIT_SLACK_CLIENT_ID`, `ALLTERNIT_SLACK_CLIENT_SECRET`, `ALLTERNIT_SLACK_SIGNING_SECRET`.
+- **Existing installs must re-authorize.** Slack scopes are fixed at install time: a workspace that installed before `files:write` / `files:read` was added keeps the old token, so bots can't send files and shared files can't be saved until a workspace admin re-runs the install link (Settings, Channels, Slack, Reinstall). Update the app's scopes first (re-paste the manifest under App Manifest), then ask each workspace to reinstall. Until they do, the cloud answers `slack_reauthorize_required` for incoming files and the thread shows the file name only.
 - Review wait: none to install in any workspace via the OAuth link. A Slack Marketplace listing is optional and a vendor review (typically weeks); it only adds discoverability.
 - While pending: users install through Allternit's own link; Slack may show the app as not Marketplace-listed.
 

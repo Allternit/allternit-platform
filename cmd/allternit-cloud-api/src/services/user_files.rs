@@ -191,6 +191,44 @@ pub async fn begin_upload(
     Ok(Upload { file_id, key, put_url })
 }
 
+/// Store bytes the server already holds (a channel attachment the runtime or a
+/// platform hands us) under the same plan caps as a client upload. The row is
+/// recorded only after the object is stored; a failed insert removes it again.
+#[allow(clippy::too_many_arguments)]
+pub async fn store_bytes(
+    db: &PgPool,
+    store: &dyn ObjectStore,
+    user_id: &str,
+    plan_id: &str,
+    name: &str,
+    content_type: &str,
+    data: Vec<u8>,
+    now: DateTime<Utc>,
+) -> Result<Value, Failure> {
+    let size = data.len() as u64;
+    check_caps(db, store, user_id, plan_id, size).await?;
+    let file_id = Uuid::new_v4();
+    let name = safe_name(name);
+    let key = file_key(user_id, file_id, &name);
+    let ct = if content_type.trim().is_empty() { "application/octet-stream" } else { content_type.trim() };
+    store.put(BUCKET, &key, data, ct).await.map_err(r2_failure)?;
+    let inserted = sqlx::query("INSERT INTO user_files (id, user_id, key, name, content_type, bytes, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)")
+        .bind(file_id)
+        .bind(user_id)
+        .bind(&key)
+        .bind(&name)
+        .bind(ct)
+        .bind(size as i64)
+        .bind(now)
+        .execute(db)
+        .await;
+    if let Err(e) = inserted {
+        let _ = store.delete(BUCKET, &key).await;
+        return Err(e.into());
+    }
+    Ok(json!({ "fileId": file_id, "name": name, "contentType": ct, "bytes": size, "createdAt": now, "linkUrl": capability_url(file_id) }))
+}
+
 /// Re-derives the key from the user + id + name the client sends back, so the
 /// client never names an arbitrary object.
 #[allow(clippy::too_many_arguments)]
@@ -397,6 +435,7 @@ async fn raw_redirect_with(secret: Option<&str>, db: &PgPool, store: &dyn Object
     let (key,) = row.ok_or_else(|| Failure::from(refuse(404, "not-found", "No such file.")))?;
     store.presign_get(BUCKET, &key, GET_TTL).map_err(r2_failure)
 }
+
 
 /// Deletes the object first; the row is only marked deleted once R2 confirms,
 /// so a failed delete can be retried and never leaves an uncounted object.
@@ -637,6 +676,26 @@ mod db_tests {
         // Deleted file: the same valid token now answers 404.
         delete_file(&state.db, &store, "u1", id, Utc::now()).await.ok().unwrap();
         assert_eq!(refusal(raw_redirect_with(Some("s3cret"), &state.db, &store, id, &tok).await), (404, "not-found"));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn stored_bytes_follow_the_plan_caps() {
+        let state = db().await;
+        let store = Fake::default();
+        let a = store_bytes(&state.db, &store, "u1", "free", "../r.pdf", "application/pdf", vec![7u8; 1024], Utc::now()).await.ok().unwrap();
+        assert_eq!((a["name"].as_str(), a["bytes"].as_u64()), (Some("r.pdf"), Some(1024)));
+        let id: Uuid = serde_json::from_value(a["fileId"].clone()).unwrap();
+        assert_eq!(used_bytes(&state.db, "u1").await.unwrap(), 1024);
+        assert_eq!(store.objects.lock().unwrap().len(), 1);
+        // Over the per-file cap, or empty: nothing is stored.
+        assert_eq!(refusal(store_bytes(&state.db, &store, "u1", "free", "big", "", vec![0u8; (10 * MB + 1) as usize], Utc::now()).await), (413, "file-too-large"));
+        assert!(matches!(store_bytes(&state.db, &store, "u1", "free", "empty", "", vec![], Utc::now()).await, Err(Failure::Api(_))));
+        assert_eq!(store.objects.lock().unwrap().len(), 1);
+        // The stored file gets a permanent link when links are configured, and its record is the owner's.
+        assert!(a.get("linkUrl").is_some());
+        delete_file(&state.db, &store, "u1", id, Utc::now()).await.ok().unwrap();
+        assert_eq!(used_bytes(&state.db, "u1").await.unwrap(), 0);
     }
 }
 
