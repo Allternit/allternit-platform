@@ -453,7 +453,15 @@ pub async fn dispatch(db: &DbHandle, sender: &dyn Sender, owner: &str, id: &str)
         set_status(db, owner, id, &["open"], "failed", None, Some("No lane is available for this vendor account."));
         return get_ticket(db, owner, id)?.ok_or_else(|| "ticket missing".into());
     };
-    let text = nudge(lane, &t, &local::local_mcp_url(&vendor_bot));
+    let mut text = nudge(lane, &t, &local::local_mcp_url(&vendor_bot));
+    // The owner's twin: a lane with no connector gets it inline (shared facts only), the others a pointer.
+    if let Some(block) = db.connect().ok().and_then(|c| crate::twin_persona::context_block(&c, owner, crate::twin_persona::Audience::Vendor)) {
+        if lane == LANE_WEBSITE_ONLY {
+            text.push_str(&format!("\n\n{block}"));
+        } else {
+            text.push_str(" Call twin_context first for how to speak for the owner.");
+        }
+    }
     if !set_status(db, owner, id, &["open"], "sent", Some(lane), None) {
         return get_ticket(db, owner, id)?.ok_or_else(|| "ticket missing".into());
     }

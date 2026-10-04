@@ -256,6 +256,22 @@ fn base_tool_descriptors() -> Vec<Value> {
             "annotations": annotations(false, false)
         }),
         json!({
+            "name": "twin_context", "title": "The owner's twin",
+            "description": "Read how to speak for the owner (name, tone, signature, what you may say about them) and the shared facts they allow you to know. Call it before writing anything on their behalf.",
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+            "annotations": annotations(true, false)
+        }),
+        json!({
+            "name": "twin_propose", "title": "Suggest something to remember",
+            "description": "Suggest a fact, preference or decision you learned about the owner. It is only a suggestion: the owner reviews it before any bot uses it.",
+            "inputSchema": { "type": "object", "properties": {
+                "content": { "type": "string" }, "kind": { "type": "string", "enum": ["fact", "preference", "schedule_rule", "person", "decision"] },
+                "subject": { "type": "string" }, "visibility": { "type": "string", "enum": ["all", "bot"], "description": "all = every bot; bot = only you." },
+                "confidence": { "type": "number", "description": "0 to 1." }
+            }, "required": ["content"], "additionalProperties": false },
+            "annotations": annotations(false, false)
+        }),
+        json!({
             "name": "list_open_tickets", "title": "List open tickets",
             "description": "List the Allternit tickets waiting on you.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
@@ -526,6 +542,8 @@ pub async fn call_tool(db: &DbHandle, actions: &dyn Actions, s: &Session, name: 
         "get_ticket" => crate::vendor_tickets::tool_get_ticket(db, &s.owner, &s.vendor_bot_id, &args),
         "post_result" => crate::vendor_tickets::tool_post_result(db, &s.owner, &s.vendor_bot_id, &args),
         "list_open_tickets" => crate::vendor_tickets::tool_list_open_tickets(db, &s.owner, &s.vendor_bot_id),
+        "twin_context" => crate::twin_persona::tool_twin_context(db, &s.owner),
+        "twin_propose" => crate::twin_persona::tool_twin_propose(db, &s.owner, &s.vendor_bot_id, &args),
         "send_text" | "start_call" | "send_email" | "post_message" | "ask_bot" => {
             let long = ["text", "body", "purpose"].iter().any(|k| args[k].as_str().is_some_and(|v| v.chars().count() > MAX_TEXT_CHARS));
             if long {
@@ -1233,7 +1251,7 @@ mod tests {
         assert!(SERVER_INSTRUCTIONS.len() < 512);
         let list = handle_rpc(&st.db, &fake, &s, &json!({ "id": 2, "method": "tools/list" })).await.unwrap();
         let names: Vec<_> = list["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["list_threads", "read_thread", "send_text", "start_call", "send_email", "post_message", "ask_bot", "get_ticket", "post_result", "list_open_tickets"]);
+        assert_eq!(names, ["list_threads", "read_thread", "send_text", "start_call", "send_email", "post_message", "ask_bot", "get_ticket", "post_result", "twin_context", "twin_propose", "list_open_tickets"]);
         for t in list["result"]["tools"].as_array().unwrap() {
             assert_eq!(t["inputSchema"]["type"], "object");
             assert_eq!(t["annotations"]["destructiveHint"], false);

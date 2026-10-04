@@ -1,0 +1,70 @@
+---
+title: Your twin
+description: One voice and one shared memory for all your bots and their vendor bots: how they speak for you, what they may say, what they know, and where they learned it.
+---
+
+Your twin is the part of Allternit that stays the same across every bot you run. Instead of each bot knowing you a little differently, they share:
+
+- **A voice.** The name your bots speak for, how they speak, how they sign, and what they may say about you.
+- **A memory.** Facts, preferences, schedule rules, people and decisions, each with where it came from and who may see it.
+
+Nothing is set up until you do it. With an empty twin, bots behave exactly as before.
+
+## Open it
+
+- **Desktop:** the account menu in the rail → **Your twin**, or **Settings → Customize → Your twin**.
+- **ai.allternit.com on a phone and the m.allternit.com app:** **Settings → Customize → Your twin**.
+- **On a bot's phone:** the **Your twin** app on the home screen.
+
+All of these show the same page.
+
+## Voice
+
+| Field | What it does |
+| --- | --- |
+| Name your bots speak for | "You speak for Eoj." |
+| How it speaks | Tone and style, in your words. |
+| Signature | How messages are signed. |
+| What bots may say about you | The disclosure rule. Left empty, bots share nothing about you beyond what the task needs. |
+
+Changes apply from each bot's next turn.
+
+## What your bots know
+
+Each fact has a type (fact, preference, schedule rule, person, decision), an optional subject, and **who can see it**:
+
+| Visibility | Who reads it |
+| --- | --- |
+| **All bots** | Every bot you run, and the vendor bots (Claude, ChatGPT and others) working for them. |
+| **One bot** | Only that bot. Vendor bots never see it. |
+| **Only me** | Nobody but you. It is never given to a bot. |
+
+Every fact shows **where it came from**: added by you, or learned by a bot, on which channel, when, and how sure the bot was.
+
+### Suggestions from your bots
+
+When a vendor bot (or any client of your runtime) learns something in a conversation, it **suggests** it: vendor bots do it with the `twin_propose` tool. A suggestion is not used by any bot until you **Accept** it. You can **Edit** it first (saving an edit accepts it) or **Dismiss** it. Up to 50 suggestions can wait for review; after that bots must wait.
+
+## Where the twin is used
+
+- **Every bot turn** the server runs for a bot: channel messages, routines and phone-call replies get the voice and the facts that bot may see.
+- **Vendor tickets.** A ticket sent to a vendor app with no connector carries the voice and the shared (all bots) facts in its text. Connected vendor apps are told to call `twin_context` first.
+- **Not yet:** the spoken greeting of a phone call is still written by the call worker and does not read the twin; the reply turns do.
+
+## For developers
+
+Routes on the runtime (allternit-api), all signed in as the owner:
+
+| Route | Purpose |
+| --- | --- |
+| `GET /api/v1/twin/profile` | `{ "profile": { displayName, speakingStyle, signature, ownerDisclosure, updatedAt } }` |
+| `PUT /api/v1/twin/profile` | Partial update; omitted fields are kept. 400 if a field is over 2,000 characters. |
+| `GET /api/v1/twin/memory?status=active\|proposed` | `{ "memory": [ { id, kind, subject, content, visibility, botId, status, provenance: { source, botId, channel, threadId, confidence, learnedAt }, createdAt, updatedAt, reviewedAt } ] }` |
+| `POST /api/v1/twin/memory` | The owner adds a fact; it is active at once. Body: `{ kind?, subject?, content, visibility?, botId? }`. `botId` is required when `visibility` is `bot`. |
+| `POST /api/v1/twin/memory/propose` | A bot suggests a fact (status `proposed`). Also takes `sourceBotId`, `sourceChannel`, `sourceThreadId`, `confidence` (0–1). An identical fact is returned, not duplicated. 429 when 50 are waiting. |
+| `PATCH /api/v1/twin/memory/:id` | Edit; also accepts a proposal. |
+| `POST /api/v1/twin/memory/:id/accept` | Accept as is. |
+| `DELETE /api/v1/twin/memory/:id` | Delete or dismiss. |
+| `GET /api/v1/twin/context[?botId=]` | Preview of what a bot (with `botId`) or a vendor bot (without) is told: `{ configured, context }`. |
+
+Vendor connector tools: `twin_context` (read only) returns `{ configured, context }` for the vendor audience: the voice plus **All bots** facts. `twin_propose` `{ content, kind?, subject?, visibility?: all|bot, confidence? }` suggests a fact; it is always a proposal, never `owner`-only, and a `bot` fact is limited to that vendor bot.
