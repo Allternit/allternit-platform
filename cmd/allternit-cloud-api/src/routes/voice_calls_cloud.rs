@@ -40,7 +40,7 @@ use std::time::Duration;
 
 use futures_util::{Stream, StreamExt};
 
-use super::channel_inbound::{backoff_secs, classify, Delivery};
+use super::channel_inbound::{attempt_error, backoff_secs, classify, is_dead, Delivery};
 use super::phone::{clean_transfer_targets, record_transfer_targets, transfer_consent_ref, transfer_targets_for_bot, PhoneError, TransferInitiator, TransferTarget};
 use super::livekit_admin::{
     LiveKitAdminClient, LiveKitConfig, LiveKitError, LiveKitHttpAdmin, CONTROL_TOPIC,
@@ -1205,8 +1205,15 @@ async fn deliver_call(
             .await?;
             continue;
         }
-        let give_up =
-            chrono::Utc::now() - received_at > chrono::Duration::hours(GIVE_UP_AFTER_HOURS);
+        let error = attempt_error(status, error);
+        let give_up = is_dead(
+            status,
+            attempts,
+            chrono::Utc::now() - received_at > chrono::Duration::hours(GIVE_UP_AFTER_HOURS),
+        );
+        if give_up {
+            tracing::warn!(%call_id, event_id = id, %event_type, ?status, attempts, error = ?error, "voice call event dead: not delivered to the runtime");
+        }
         sqlx::query(
             "UPDATE voice_call_events
                 SET locked_until = NULL, last_status = $2, last_error = $3,
@@ -1634,6 +1641,77 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(delivered.0, 3);
+    }
+
+    /// A runtime 404 ("that number / call isn't known here yet") is not "delivered": it retries
+    /// while the number may still sync, then the event goes dead with the reason; an auth refusal
+    /// dies at once. Events behind a dead one still go through in order.
+    #[tokio::test]
+    async fn runtime_404_retries_then_dies_and_auth_refusals_die_at_once() {
+        for (refusal, passes) in [(404u16, crate::routes::channel_inbound::NOT_FOUND_MAX_ATTEMPTS), (401u16, 1)] {
+            let state = voice_test_state().await;
+            save_bot_config(&state, "bot-1", "consented").await;
+            let directory = FakeDirectory::default();
+            directory.owners.lock().unwrap().insert(
+                "number-9".to_string(),
+                NumberOwner { user_id: "user-1".to_string(), runtime_id: "rt-1".to_string() },
+            );
+            let response = start_call_inner(&state, &directory, start_body("number-9", "bot-1")).await.unwrap();
+            let answer: Value = serde_json::from_slice(&axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap()).unwrap();
+            let call_id = answer["callId"].as_str().unwrap().to_string();
+            let dtmf = worker_event(&call_id, "call.dtmf", 1, 2, json!({ "digits": "5", "from": "caller" }));
+            let key = dtmf.idempotency_key.clone();
+            post_events_inner(&state, &call_id, Some(&key), dtmf).await.unwrap();
+            // Let the background delivery passes (no runtime in tests) settle, then start counting from zero.
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            let reset = || async {
+                sqlx::query("UPDATE voice_call_events SET next_attempt_at = now(), locked_until = NULL, attempts = 0 WHERE call_id = $1 AND delivered_at IS NULL AND dead_at IS NULL")
+                    .bind(&call_id)
+                    .execute(&state.db)
+                    .await
+                    .unwrap();
+            };
+            let relay = FakeRelay::default();
+            relay.statuses.lock().unwrap().extend(std::iter::repeat(refusal).take(passes as usize));
+            reset().await;
+            let started_state = || async {
+                sqlx::query_as::<_, (Option<chrono::DateTime<chrono::Utc>>, Option<i32>, Option<String>)>(
+                    "SELECT dead_at, last_status, last_error FROM voice_call_events WHERE call_id = $1 AND event_type = 'call.started'",
+                )
+                .bind(&call_id)
+                .fetch_one(&state.db)
+                .await
+                .unwrap()
+            };
+            for pass in 1..=passes {
+                assert!(started_state().await.0.is_none(), "{refusal}: still retrying before pass {pass}");
+                deliver_call(&state, &call_id, &relay).await.unwrap();
+                if pass < passes {
+                    sqlx::query("UPDATE voice_call_events SET next_attempt_at = now(), locked_until = NULL WHERE call_id = $1 AND delivered_at IS NULL AND dead_at IS NULL")
+                        .bind(&call_id)
+                        .execute(&state.db)
+                        .await
+                        .unwrap();
+                }
+            }
+            let (dead_at, last_status, last_error) = started_state().await;
+            assert!(dead_at.is_some(), "{refusal}: dead after {passes} attempt(s)");
+            assert_eq!(last_status, Some(i32::from(refusal)));
+            assert_eq!(last_error.as_deref(), Some(format!("runtime answered {refusal}").as_str()));
+            let delivered_started: i64 = sqlx::query_scalar("SELECT count(*) FROM voice_call_events WHERE call_id = $1 AND event_type = 'call.started' AND delivered_at IS NOT NULL")
+                .bind(&call_id)
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+            assert_eq!(delivered_started, 0, "{refusal}: never reported delivered");
+            // The next event was not held hostage by the dead one.
+            let behind: i64 = sqlx::query_scalar("SELECT count(*) FROM voice_call_events WHERE call_id = $1 AND event_type = 'call.dtmf' AND delivered_at IS NOT NULL")
+                .bind(&call_id)
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+            assert_eq!(behind, 1, "{refusal}: later events still delivered");
+        }
     }
 
     #[tokio::test]

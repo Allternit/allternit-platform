@@ -133,8 +133,8 @@ fn cloud_for(db: &DbHandle, n: &PhoneNumber) -> Result<(String, String, String),
         .and_then(|c| c.query_row("SELECT account_id FROM channel_phone_numbers WHERE number_id = ?1", params![n.number_id], |r| r.get::<_, Option<String>>(0)).optional().ok().flatten().flatten())
         .ok_or_else(|| OutError::NotFound("This phone number isn't connected here yet.".into()))?;
     let acct = crate::channel_transports::accounts(db, "sms", Some(&account)).into_iter().next().ok_or_else(|| OutError::NotFound("This phone number isn't connected here yet.".into()))?;
-    let tx = build_sms(Arc::new(ReqwestSend), &acct.secret);
-    let token = tx.token.clone().ok_or_else(|| OutError::NotFound("This phone number has no Allternit sign-in stored.".into()))?;
+    let tx = build_sms(Arc::new(ReqwestSend), &acct.secret).with_runtime_token(crate::phone_sync::runtime_bearer());
+    let token = tx.bearer().ok_or_else(|| OutError::NotFound("This phone number has no Allternit sign-in stored, and this computer isn't paired.".into()))?;
     Ok((tx.cloud_url.clone(), token, acct.secret))
 }
 

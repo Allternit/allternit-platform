@@ -20,6 +20,10 @@
 //! - `POST   /api/v1/channels/sms/send` {numberId, to, text}               SMS out
 //! - `POST   /api/v1/phone/webhooks/:carrier`                              carrier status events (signed)
 //!
+//! The runtime-facing routes (`calls/outbound`, `channels/sms/send`, `numbers/:id/consent`) also accept the
+//! runtime's own device credential, limited to numbers assigned to that runtime (see [`Caller`] and
+//! [`super::phone_sync`], which also serves `GET /api/v1/runtime-devices/me/phone-numbers`).
+//!
 //! Unset carrier env → 503 `{"error":"phone_not_configured"}`; nothing here runs at boot.
 
 use axum::{
@@ -207,6 +211,33 @@ async fn user_id(state: &ApiState, headers: &HeaderMap) -> PResult<String> {
     Ok(crate::auth::resolve_user_scoped(&state.db, headers, "compute").await?.id)
 }
 
+/// Who is calling a phone route: a signed-in user, or a runtime acting as
+/// itself with its device credential (no user token needed). A runtime may only
+/// touch numbers assigned to it; see [`Caller::own`].
+pub(crate) struct Caller {
+    pub user: String,
+    runtime_id: Option<String>,
+}
+
+impl Caller {
+    /// The number `id`, 404 `number_not_found` unless it is this user's and, for a runtime, assigned to that runtime.
+    pub(crate) async fn own(&self, db: &PgPool, id: &str) -> PResult<NumberRow> {
+        let row = number_for_user(db, &self.user, id).await?;
+        match &self.runtime_id {
+            Some(rt) if *rt != row.runtime_id => Err(PhoneError::NotFound("number_not_found")),
+            _ => Ok(row),
+        }
+    }
+}
+
+async fn caller(db: &PgPool, headers: &HeaderMap) -> PResult<Caller> {
+    if let Some(token) = super::runtime_pairing::device_token_from_headers(headers) {
+        let device = super::runtime_pairing::runtime_device_for_token(db, token, None).await?;
+        return Ok(Caller { user: device.user_id, runtime_id: Some(device.id) });
+    }
+    Ok(Caller { user: crate::auth::resolve_user_scoped(db, headers, "compute").await?.id, runtime_id: None })
+}
+
 fn env_i64(name: &str, default: i64) -> i64 {
     std::env::var(name).ok().and_then(|v| v.trim().parse().ok()).filter(|v| *v > 0).unwrap_or(default)
 }
@@ -367,6 +398,7 @@ async fn buy_number_route(State(state): State<Arc<ApiState>>, headers: HeaderMap
             None => infer_type(&body.e164),
         };
         let row = buy_number(&state.db, carrier.as_ref(), &user, &BuyInputs { e164: body.e164, runtime_id: body.runtime_id, bot_id: body.bot_id, kind, plan }).await?;
+        super::phone_sync::notify_changed(&state, &user, &row.runtime_id);
         Ok::<_, PhoneError>((StatusCode::CREATED, Json(json!({ "number": row.to_json() }))).into_response())
     };
     run.await.unwrap_or_else(IntoResponse::into_response)
@@ -398,7 +430,9 @@ async fn release_number_route(State(state): State<Arc<ApiState>>, headers: Heade
     let run = async {
         let user = user_id(&state, &headers).await?;
         let carrier = carrier()?;
+        let runtime_id = number_for_user(&state.db, &user, &id).await?.runtime_id;
         release_number(&state.db, carrier.as_ref(), &user, &id).await?;
+        super::phone_sync::notify_changed(&state, &user, &runtime_id);
         Ok::<_, PhoneError>(StatusCode::NO_CONTENT.into_response())
     };
     run.await.unwrap_or_else(IntoResponse::into_response)
@@ -622,6 +656,7 @@ async fn port_create_route(State(state): State<Arc<ApiState>>, headers: HeaderMa
             None => infer_type(&body.e164),
         };
         let row = port_create(&state.db, carrier.as_ref(), &user, &BuyInputs { e164: body.e164, runtime_id: body.runtime_id, bot_id: body.bot_id, kind, plan }).await?;
+        super::phone_sync::notify_changed(&state, &user, &row.runtime_id);
         Ok::<_, PhoneError>((StatusCode::CREATED, Json(json!({ "number": row.to_json() }))).into_response())
     };
     run.await.unwrap_or_else(IntoResponse::into_response)
@@ -929,7 +964,9 @@ async fn call_outbound_inner(db: &PgPool, user: &str, body: &CallBody, livekit: 
 
 async fn call_outbound_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(body): Json<CallBody>) -> Response {
     let run = async {
-        let user = user_id(&state, &headers).await?;
+        let caller = caller(&state.db, &headers).await?;
+        caller.own(&state.db, &body.number_id).await?;
+        let user = caller.user;
         let trunk = std::env::var(OUTBOUND_TRUNK_ENV).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
         let admin = match (trunk, LiveKitConfig::from_env()) {
             (Some(t), Some(c)) => Some((LiveKitHttpAdmin::new(c), t)),
@@ -950,8 +987,9 @@ struct ConsentBody {
 
 async fn consent_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, Path(id): Path<String>, Json(body): Json<ConsentBody>) -> Response {
     let run = async {
-        let user = user_id(&state, &headers).await?;
-        let number = number_for_user(&state.db, &user, &id).await?;
+        let caller = caller(&state.db, &headers).await?;
+        let number = caller.own(&state.db, &id).await?;
+        let user = caller.user;
         if !carriers::is_e164(&body.e164) || body.source.trim().is_empty() {
             return Err(PhoneError::BadRequest("e164 and source are required".into()));
         }
@@ -1015,9 +1053,10 @@ pub async fn send_sms(db: &PgPool, carrier: &dyn Carrier, user: &str, number_id:
 
 async fn sms_send_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(body): Json<SendBody>) -> Response {
     let run = async {
-        let user = user_id(&state, &headers).await?;
+        let caller = caller(&state.db, &headers).await?;
+        caller.own(&state.db, &body.number_id).await?;
         let carrier = carrier()?;
-        let out = send_sms(&state.db, carrier.as_ref(), &user, &body.number_id, &body.to, &body.text).await?;
+        let out = send_sms(&state.db, carrier.as_ref(), &caller.user, &body.number_id, &body.to, &body.text).await?;
         Ok::<_, PhoneError>(Json(out).into_response())
     };
     run.await.unwrap_or_else(IntoResponse::into_response)
@@ -1337,6 +1376,43 @@ mod tests {
         assert_eq!(held, 0);
         let body = axum::body::to_bytes(PhoneError::PlanRequired.into_response().into_body(), 1 << 16).await.unwrap();
         assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["error"], "phone_requires_plan");
+    }
+
+    /// Device credential `allternit_runtime_<id>` for a seeded device.
+    async fn give_device_credential(db: &PgPool, device_id: &str) -> HeaderMap {
+        let token = format!("{}{device_id}", super::super::runtime_pairing::DEVICE_TOKEN_PREFIX);
+        sqlx::query("UPDATE runtime_devices SET credential_hash = $2 WHERE id = $1").bind(device_id).bind(super::super::runtime_pairing::sha256_hex(token.as_bytes())).execute(db).await.unwrap();
+        let mut h = HeaderMap::new();
+        h.insert(axum::http::header::AUTHORIZATION, format!("Bearer {token}").parse().unwrap());
+        h
+    }
+
+    async fn runtime_ready_pool() -> PgPool {
+        let db = pool().await;
+        // The columns the credential grace-window lookup reads (a minimal runtime_devices in tests).
+        sqlx::query("ALTER TABLE runtime_devices ADD COLUMN previous_credential_hash TEXT, ADD COLUMN previous_credential_expires_at TIMESTAMPTZ").execute(&db).await.unwrap();
+        db
+    }
+
+    #[tokio::test]
+    async fn a_runtime_credential_acts_only_on_numbers_assigned_to_it() {
+        let db = runtime_ready_pool().await;
+        let c = FakeCarrier::default();
+        let mine = buy(&db, &c, &e164(40)).await.unwrap();
+        seed_runtime_device(&db, "rt2", USER).await;
+        let theirs = buy_number(&db, &c, USER, &BuyInputs { e164: e164(41), runtime_id: "rt2".into(), bot_id: "bot2".into(), kind: NumberType::Local, plan: "plus".into() }).await.unwrap();
+        let rt1 = give_device_credential(&db, "rt1").await;
+        let who = caller(&db, &rt1).await.unwrap();
+        assert_eq!(who.user, USER);
+        assert_eq!(who.own(&db, &mine.id).await.unwrap().id, mine.id);
+        assert!(matches!(who.own(&db, &theirs.id).await, Err(PhoneError::NotFound("number_not_found"))), "another runtime's number, same owner");
+        assert!(matches!(who.own(&db, "nope").await, Err(PhoneError::NotFound("number_not_found"))));
+        // A revoked or unknown credential is a 401, not a fallthrough to some other identity.
+        let mut bad = HeaderMap::new();
+        bad.insert(axum::http::header::AUTHORIZATION, "Bearer allternit_runtime_unknown".parse().unwrap());
+        assert!(matches!(caller(&db, &bad).await, Err(PhoneError::Auth(ApiError::Unauthorized(_)))));
+        sqlx::query("UPDATE runtime_devices SET revoked_at = now() WHERE id = 'rt1'").execute(&db).await.unwrap();
+        assert!(caller(&db, &rt1).await.is_err());
     }
 
     #[test]

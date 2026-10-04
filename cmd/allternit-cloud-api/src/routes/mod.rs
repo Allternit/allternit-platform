@@ -36,6 +36,7 @@ pub mod mcp_edge;
 pub mod mesh;
 pub mod channel_inbound;
 pub mod phone;
+pub mod phone_sync;
 pub mod phone_invites;
 pub mod inapp_calls;
 pub mod vendor_bot_keys;

@@ -120,19 +120,43 @@ pub fn needs_live_answer(provider: &str, method: &Method, body: &[u8]) -> bool {
 /// What a delivery attempt's response means.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Delivery {
-    /// The runtime took it (2xx), or refused it for good (signature or shape: 4xx).
+    /// The runtime took it (2xx). Only this counts as delivered.
     Done,
-    /// Try again later: computer waking or offline, runtime error, timeout.
+    /// Try again later: computer waking or offline, runtime error, timeout, or a 404
+    /// (the number or call may not have synced to the runtime yet; see [`is_dead`]).
     Retry,
+    /// The runtime refused it for good (auth, signature or shape: 4xx). Never delivered:
+    /// marked dead with the error so the loss is visible.
+    Dead,
 }
+
+/// Attempts a runtime 404 gets before the event is given up on.
+pub const NOT_FOUND_MAX_ATTEMPTS: i32 = 5;
 
 pub fn classify(status: u16) -> Delivery {
     match status {
         200..=299 => Delivery::Done,
-        408 | 425 | 429 => Delivery::Retry,
-        400..=499 => Delivery::Done,
+        404 | 408 | 425 | 429 => Delivery::Retry,
+        400..=499 => Delivery::Dead,
         _ => Delivery::Retry,
     }
+}
+
+/// Whether an attempt that was not delivered ends the event: a definite refusal, a 404 that
+/// outlasted [`NOT_FOUND_MAX_ATTEMPTS`] tries (the backoff gives a number time to sync), or
+/// an event older than the give-up age.
+pub fn is_dead(status: Option<u16>, attempts: i32, too_old: bool) -> bool {
+    too_old
+        || match status.map(classify) {
+            Some(Delivery::Dead) => true,
+            Some(Delivery::Retry) => status == Some(404) && attempts >= NOT_FOUND_MAX_ATTEMPTS,
+            _ => false,
+        }
+}
+
+/// The `last_error` to store for an attempt that was not delivered: the transport error, else the status.
+pub fn attempt_error(status: Option<u16>, error: Option<String>) -> Option<String> {
+    error.or_else(|| status.map(|s| format!("runtime answered {s}")))
 }
 
 /// Seconds before attempt `attempts` (1-based) is retried: 5s, 15s, 30s, 1m, 2m, then every 5m.
@@ -564,7 +588,11 @@ pub(crate) async fn deliver_route(state: &Arc<ApiState>, route_id: &str) -> Resu
             super::web_push::notify_channel_message(&state.db, &route.user_id, &route.id, &route.provider);
             continue;
         }
-        let give_up = Utc::now() - received_at > chrono::Duration::hours(GIVE_UP_AFTER_HOURS);
+        let error = attempt_error(status, error);
+        let give_up = is_dead(status, attempts, Utc::now() - received_at > chrono::Duration::hours(GIVE_UP_AFTER_HOURS));
+        if give_up {
+            tracing::warn!(route_id = %route.id, queue_id = id, provider = %route.provider, ?status, attempts, error = ?error, "channel event dead: not delivered to the runtime");
+        }
         sqlx::query(
             "UPDATE channel_inbound_queue
                 SET locked_until = NULL, last_status = $2, last_error = $3,
@@ -628,10 +656,19 @@ mod tests {
     #[test]
     fn delivery_outcomes() {
         assert_eq!(classify(200), Delivery::Done);
-        assert_eq!(classify(401), Delivery::Done, "bad signature never gets better");
+        assert_eq!(classify(401), Delivery::Dead, "bad signature never gets better, and is never reported delivered");
+        assert_eq!(classify(403), Delivery::Dead);
+        assert_eq!(classify(404), Delivery::Retry, "the number or call may not have synced yet");
         assert_eq!(classify(429), Delivery::Retry);
         assert_eq!(classify(503), Delivery::Retry, "waking or offline");
         assert_eq!(classify(504), Delivery::Retry);
+        assert!(!is_dead(Some(404), 1, false) && !is_dead(Some(404), NOT_FOUND_MAX_ATTEMPTS - 1, false));
+        assert!(is_dead(Some(404), NOT_FOUND_MAX_ATTEMPTS, false), "a 404 that never heals goes dead");
+        assert!(is_dead(Some(401), 1, false) && is_dead(Some(403), 1, false), "auth failures die at once");
+        assert!(!is_dead(Some(503), 50, false) && !is_dead(None, 50, false), "outages keep retrying");
+        assert!(is_dead(Some(503), 50, true), "until the give-up age");
+        assert_eq!(attempt_error(Some(404), None).as_deref(), Some("runtime answered 404"));
+        assert_eq!(attempt_error(None, Some("timeout".into())).as_deref(), Some("timeout"));
         assert_eq!(backoff_secs(1), 5);
         assert_eq!(backoff_secs(4), 60);
         assert_eq!(backoff_secs(40), 300);

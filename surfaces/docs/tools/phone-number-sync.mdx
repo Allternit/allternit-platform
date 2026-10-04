@@ -1,0 +1,94 @@
+---
+title: 'Phone Number Sync and Runtime Auth'
+description: 'How a bot''s phone number reaches its runtime on its own, how the runtime signs in to the cloud as itself, and what happens when delivery fails.'
+---
+
+## Overview
+
+A bot's number is bought and held in the cloud (`phone_numbers` in cloud-api). A call or text for it is then delivered to the runtime that runs the bot: a Desktop, or a cloud computer. That runtime keeps its own copy of the numbers assigned to it (`channel_phone_numbers`, plus one `sms` connection per number), so an inbound call or text can find its bot.
+
+The runtime keeps that copy up to date itself. Nobody has to re-attach a number by hand, and no user token is involved.
+
+## Pull: the runtime asks the cloud
+
+The runtime authenticates with its **device credential**, the same one it uses for heartbeats and relay signatures (`Bearer allternit_runtime_…`).
+
+```http
+GET /api/v1/runtime-devices/me/phone-numbers
+Authorization: Bearer allternit_runtime_…
+```
+
+```json
+{
+  "runtimeId": "rt_…",
+  "userId": "user_…",
+  "numbers": [
+    {
+      "id": "cdcca5fd-4b1f-4c06-96fe-7e12c172254e",
+      "e164": "+16512686010",
+      "botId": "…",
+      "smsState": "active",
+      "voiceState": "active",
+      "messagingRef": "…",
+      "carrier": "telnyx",
+      "type": "local",
+      "portState": null,
+      "webhookPublicKey": "…"
+    }
+  ]
+}
+```
+
+Only live numbers (not released) assigned to that runtime are listed. A user token is refused: it has no single runtime to answer for. `webhookPublicKey` is the carrier's public webhook verifying key, which the runtime needs to re-check texts the cloud relays.
+
+The runtime (allternit-api) pulls:
+
+- on boot, then every 10 minutes (a failed pull retries after 1 minute);
+- immediately when the cloud sends a push (below).
+
+Each listed number is applied with `channel_phone::upsert_number` and given its `sms` connection with the carrier key. A number whose bot isn't on this runtime yet is skipped and logged, and it is retried on the next pull. A number the sync created that the cloud stops listing is **released**: its row and connection are removed. Numbers the sync never touched are left alone. A runtime that isn't paired (no device token) does nothing.
+
+## Push: the cloud tells the runtime
+
+When a number is bought, ported or released, cloud-api sends the runtime a signed relay request:
+
+```http
+POST /webhooks/phone/numbers-changed
+{ "type": "phone.numbers.changed", "runtimeId": "rt_…" }
+```
+
+It is signed with the device token like every relayed request (`x-allternit-runtime-sig`), and the runtime answers `202 {"ok":true}` and pulls. A push that doesn't arrive (the runtime is asleep or offline) costs nothing: the next pull heals it.
+
+## Runtime to cloud: no user token
+
+The runtime's calls to the cloud's phone routes accept the device credential as well as a user token:
+
+| Route | Use |
+|---|---|
+| `POST /api/v1/channels/sms/send` | Send a text. |
+| `POST /api/v1/phone/calls/outbound` | Place a call. |
+| `POST /api/v1/phone/numbers/:id/consent` | Record a contact's consent. |
+
+With a device credential the number must be **assigned to that runtime** (and belong to its owner). Anything else answers `404 number_not_found`. A revoked or unknown credential answers `401`. A runtime sends with its own credential when no user token is sealed for the number, which is the case for every synced number. A user token sealed by the older "attach number" flow is kept and still preferred.
+
+## Delivery: failures are not "delivered"
+
+cloud-api queues events for a runtime (`call.*` events, inbound channel messages, Slack and Teams events) and delivers them in order with backoff. A runtime answer is read like this:
+
+| Runtime answer | Result |
+|---|---|
+| 2xx | Delivered. |
+| 404 | Retried with backoff up to 5 attempts (the number may still be syncing), then **dead** with `last_error`. |
+| 408, 425, 429, 5xx, timeout | Retried until the 24-hour give-up age. |
+| 401, 403 and other 4xx | **Dead** at once, with `last_error = "runtime answered <status>"`. |
+
+A dead event is never marked delivered. It is logged at `WARN` with the call or route id, and `last_status` and `last_error` stay on the row for support. Events behind a dead one still go through in order.
+
+## Turning it on
+
+Nothing new has to be configured. The runtime sync is inert until the runtime is paired. Cloud uses the existing `ALLTERNIT_TELNYX_PUBLIC_KEY` for `webhookPublicKey`. `ALLTERNIT_CLOUD_API_URL` on the runtime (default `https://api.allternit.com`) sets where it pulls from.
+
+## Related pages
+
+- [Voice Calls (Call Worker)](/tools/voice-calls)
+- [Gateway](/tools/gateway)
