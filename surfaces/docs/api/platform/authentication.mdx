@@ -14,7 +14,7 @@ Authorization: Bearer alt_live_3f9c…
 | `alt_test_<64 hex>` | `sandbox` | Building and testing. No real numbers, calls or texts to unverified numbers. |
 | `alt_live_<64 hex>` | `live` | Production traffic. |
 
-Keys are created in the console, which uses your signed-in session (`POST /api/v1/platform/projects/{id}/keys`). The full key is shown once; only its hash is stored. A key can never create another key. Revoke a key with `DELETE /api/v1/platform/projects/{id}/keys/{key_id}`. Only the project owner, or an admin of the project's organization, can manage its keys.
+Keys are created in the console at **platform.allternit.com → API Keys → Platform API**: create a project (sandbox or live), then **Create key**, pick its scopes and, optionally, one account. The console calls `POST /api/v1/platform/projects/{id}/keys` with your signed-in session. The full key is shown once; only its hash is stored. A key can never create another key. Revoke a key with `DELETE /api/v1/platform/projects/{id}/keys/{key_id}`. Only the project owner, or an admin of the project's organization, can manage its keys.
 
 Older `alt_` keys (account keys, not project keys) keep working for the routes they always reached; they don't authenticate on the Platform API.
 
