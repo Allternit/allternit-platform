@@ -384,8 +384,66 @@ pub async fn run_turn<R: ThreadRuntime>(
     // finds its context gone (CONTEXT_NOT_FOUND: nothing was sent). The lost-context handoff has
     // already started a new generation from the checkpoint; send the same message there once
     // instead of asking the person to resend it.
-    match run_turn_once(db, tx, rt, session_id, text, opts.clone()).await {
-        Err(e) if e.code == "CONTEXT_LOST" => run_turn_once(db, tx, rt, session_id, text, opts).await,
+    run_turn_streaming(db, tx, rt, session_id, text, opts, None).await
+}
+
+/// How often the vendor's event log is read while a turn is still running.
+const STREAM_POLL: std::time::Duration = std::time::Duration::from_millis(350);
+
+/// Where a streaming turn's reply text goes as it arrives. `push` forwards a
+/// vendor `agent.message.delta`; `finish` emits whatever the final reply holds
+/// beyond what was streamed (all of it for a lane that sends no deltas).
+pub struct DeltaSink {
+    tx: tokio::sync::mpsc::UnboundedSender<String>,
+    sent: std::sync::Mutex<String>,
+}
+
+impl DeltaSink {
+    pub fn new(tx: tokio::sync::mpsc::UnboundedSender<String>) -> Self {
+        Self { tx, sent: Default::default() }
+    }
+    fn push(&self, chunk: &str) {
+        if chunk.is_empty() {
+            return;
+        }
+        self.sent.lock().unwrap().push_str(chunk);
+        let _ = self.tx.send(chunk.to_string());
+    }
+    fn finish(&self, reply: &str) {
+        let sent = self.sent.lock().unwrap().clone();
+        if let Some(tail) = reply_tail(&sent, reply) {
+            self.push(&tail);
+        }
+    }
+}
+
+/// What of `reply` is still unsent after `sent` was streamed. A reply that does
+/// not continue the streamed text (the lane rewrote it) adds nothing: repeating
+/// words the caller already heard is worse than ending a sentence early.
+fn reply_tail(sent: &str, reply: &str) -> Option<String> {
+    let tail = match reply.strip_prefix(sent) {
+        Some(t) => t,
+        None if sent.is_empty() => reply,
+        None => return None,
+    };
+    (!tail.is_empty()).then(|| tail.to_string())
+}
+
+/// [`run_turn`] that forwards the reply to `sink` while the vendor is still
+/// producing it: the event log is read alongside the (blocking) send, and every
+/// new `agent.message.delta` goes out as it appears. Lanes that send no deltas
+/// get the whole reply from `sink.finish` once the turn completes.
+pub async fn run_turn_streaming<R: ThreadRuntime>(
+    db: &DbHandle,
+    tx: &dyn AaiTransport,
+    rt: &R,
+    session_id: &str,
+    text: &str,
+    opts: TurnOpts,
+    sink: Option<&DeltaSink>,
+) -> Result<Option<TurnReport>, RunErr> {
+    match run_turn_once(db, tx, rt, session_id, text, opts.clone(), sink).await {
+        Err(e) if e.code == "CONTEXT_LOST" => run_turn_once(db, tx, rt, session_id, text, opts, sink).await,
         r => r,
     }
 }
@@ -397,6 +455,7 @@ async fn run_turn_once<R: ThreadRuntime>(
     session_id: &str,
     text: &str,
     opts: TurnOpts,
+    sink: Option<&DeltaSink>,
 ) -> Result<Option<TurnReport>, RunErr> {
     let Some(mut cx) = resolve(db, session_id)? else { return Ok(None) };
     let corr = opts.correlation_id.clone().unwrap_or_else(|| id("corr"));
@@ -452,8 +511,31 @@ async fn run_turn_once<R: ThreadRuntime>(
     }
 
     let turn_started = std::time::Instant::now();
+    let (mut streamed_reply, mut sent_reply): (Option<String>, Option<String>) = (None, None);
     if !already_sent {
-        let sent = vcall(db, tx, &cx.owner, "agent.context.message", &cx.exec, json!({ "contextId": ctx_id, "text": text, "correlationId": corr })).await;
+        let send = vcall(db, tx, &cx.owner, "agent.context.message", &cx.exec, json!({ "contextId": ctx_id, "text": text, "correlationId": corr }));
+        let sent = match sink {
+            None => send.await,
+            Some(sink) => {
+                // The send blocks until the vendor has answered; its deltas land in the event log meanwhile.
+                tokio::pin!(send);
+                loop {
+                    tokio::select! {
+                        r = &mut send => break r,
+                        _ = tokio::time::sleep(STREAM_POLL) => {
+                            if let Ok(Some(live)) = remote_for(db, &cx.thread_id, cx.generation) {
+                                if let Ok((_, Some(r))) = pull_events_into(db, tx, &cx, &live, Some(sink)).await {
+                                    streamed_reply = Some(r);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        if let Ok(v) = &sent {
+            sent_reply = v["reply"].as_str().map(str::to_string);
+        }
         if let Err(e) = &sent {
             if e.code != "CONTEXT_NOT_FOUND" {
                 crate::gateway_routing::record_turn(db, &cx.owner, &s(&cx.exec, "vendor"), &corr, turn_started.elapsed().as_millis() as u64, false);
@@ -478,7 +560,15 @@ async fn run_turn_once<R: ThreadRuntime>(
         }
     }
 
-    let (events, reply) = pull_events(db, tx, &cx, &remote_row).await?;
+    // A streaming turn already moved the cursor: continue from the stored row, not the one read before the send.
+    let remote_now = if sink.is_some() { remote_for(db, &cx.thread_id, cx.generation)?.unwrap_or_else(|| remote_row.clone()) } else { remote_row.clone() };
+    let (events, mut reply) = pull_events_into(db, tx, &cx, &remote_now, sink).await?;
+    if let Some(sink) = sink {
+        reply = reply.or(streamed_reply).or(sent_reply);
+        if let Some(r) = &reply {
+            sink.finish(r);
+        }
+    }
     if !already_sent {
         let tools: Vec<String> = db.connect().ok().and_then(|c| {
             let mut st = c.prepare("SELECT event_type, payload FROM bot_events WHERE bot_id = ?1 AND thread_id = ?2 AND seq > ?3").ok()?;
@@ -712,6 +802,19 @@ pub async fn close_stale(db: &DbHandle, tx: &dyn AaiTransport, thread_id: &str, 
 /// Pull `agent.events` from the binding's cursor and bridge them. Returns
 /// (new events, latest completed assistant message text).
 pub(crate) async fn pull_events(db: &DbHandle, tx: &dyn AaiTransport, cx: &Cx, remote: &Value) -> Result<(usize, Option<String>), RunErr> {
+    pull_events_into(db, tx, cx, remote, None).await
+}
+
+/// The text a vendor `agent.message.delta` carries: `chunk` (API/SSE lanes, claude-subscription) or
+/// `text` (desktop apps). A `replace` delta rewrites earlier text rather than extending it, so it is not a chunk.
+fn delta_chunk(payload: &Value) -> Option<&str> {
+    if payload["replace"].as_bool() == Some(true) {
+        return None;
+    }
+    payload["chunk"].as_str().or_else(|| payload["text"].as_str())
+}
+
+pub(crate) async fn pull_events_into(db: &DbHandle, tx: &dyn AaiTransport, cx: &Cx, remote: &Value, sink: Option<&DeltaSink>) -> Result<(usize, Option<String>), RunErr> {
     let rid = s(remote, "id");
     let mut cursor = remote["syncCursor"].as_str().map(str::to_string);
     let (mut new, mut reply) = (0usize, None);
@@ -729,6 +832,11 @@ pub(crate) async fn pull_events(db: &DbHandle, tx: &dyn AaiTransport, cx: &Cx, r
             }
             if bridge_event(db, cx, remote, ev)? {
                 new += 1;
+                if let (Some(sink), "agent.message.delta") = (sink, ev["type"].as_str().unwrap_or_default()) {
+                    if let Some(chunk) = delta_chunk(&ev["payload"]) {
+                        sink.push(chunk);
+                    }
+                }
                 if ev["type"] == "agent.message.completed" {
                     // Adapters name the finished text `text` (desktop apps, managed agents) or `reply`
                     // (subscription, Hermes, loopback); `content` is a string only on older ones.
@@ -984,6 +1092,19 @@ pub async fn intercept_turn(session_id: &str, text: &str, opts: TurnOpts) -> Opt
     }
 }
 
+/// [`intercept_turn`] that streams: reply text goes to `deltas` as the vendor produces it, and the
+/// returned `Ok` is the final reply (already fully delivered on `deltas`). `None` = native path.
+pub async fn intercept_turn_streaming(session_id: &str, text: &str, opts: TurnOpts, deltas: tokio::sync::mpsc::UnboundedSender<String>) -> Option<Result<String, String>> {
+    let rt = RUNTIME.get()?;
+    let runtime = crate::thread_routes::GizziRuntime { db: rt.db.clone() };
+    let sink = DeltaSink::new(deltas);
+    match run_turn_streaming(&rt.db, rt.tx.as_ref(), &runtime, session_id, text, opts, Some(&sink)).await {
+        Ok(None) => None,
+        Ok(Some(r)) => Some(r.reply.ok_or_else(|| "the vendor accepted the turn and has not replied yet".to_string())),
+        Err(e) => Some(Err(e.message)),
+    }
+}
+
 /// Whether the session's thread runs on a vendor (Agent Gateway) binding, so a
 /// turn there goes through [`intercept_turn`] and has no gizzi event stream.
 pub(crate) fn is_vendor_session(db: &DbHandle, session_id: &str) -> bool {
@@ -1122,6 +1243,7 @@ mod tests {
     use http_body_util::BodyExt;
     use std::collections::HashMap;
     use std::sync::Mutex;
+    use std::time::Duration;
     use tower::ServiceExt;
 
     /// Fake AAI gateway: records calls, serves a scripted event log by index
@@ -1256,6 +1378,106 @@ mod tests {
     }
     fn count_events(st: &Arc<AppState>, ty: &str) -> i64 {
         st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM bot_events WHERE thread_id='th-vendor' AND event_type=?1", params![ty], |r| r.get(0)).unwrap()
+    }
+
+    /// A lane whose `agent.context.message` blocks until released, like a real vendor mid-reply.
+    struct Slow {
+        inner: Arc<Fake>,
+        gate: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait]
+    impl AaiTransport for Slow {
+        async fn call(&self, owner: &str, op: &str, binding: &Value, input: Value) -> Result<Value, AaiError> {
+            if op == "agent.context.message" {
+                self.gate.notified().await;
+            }
+            self.inner.call(owner, op, binding, input).await
+        }
+    }
+
+    fn delta(id: &str, key: &str, chunk: &str) -> Value {
+        json!({ "type": "agent.message.delta", "remote_event_id": id, "payload": { key: chunk } })
+    }
+
+    async fn collect(rx: &mut tokio::sync::mpsc::UnboundedReceiver<String>) -> Vec<String> {
+        let mut out = Vec::new();
+        while let Ok(d) = rx.try_recv() {
+            out.push(d);
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn deltas_reach_the_sink_in_order_while_the_vendor_is_still_answering() {
+        let st = setup("stream").await;
+        let f = Arc::new(Fake::default());
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let slow = Slow { inner: f.clone(), gate: gate.clone() };
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let sink = DeltaSink::new(tx);
+        f.push(delta("d1", "chunk", "Sure. "));
+        f.push(delta("d2", "text", "Your day "));
+        let run = run_turn_streaming(&st.db, &slow, &Rt, "s-th-vendor", "hi", key("k1"), Some(&sink));
+        tokio::pin!(run);
+        // The send is blocked: the first sentence still arrives.
+        let early = tokio::select! {
+            _ = &mut run => panic!("turn finished before the vendor answered"),
+            got = async { loop { tokio::time::sleep(Duration::from_millis(50)).await; let g = collect(&mut rx).await; if !g.is_empty() { break g; } } } => got,
+        };
+        assert_eq!(early.concat().chars().take(6).collect::<String>(), "Sure. ");
+        f.push(delta("d3", "chunk", "is clear."));
+        f.push(done("e1", "Sure. Your day is clear."));
+        gate.notify_one();
+        let r = run.await.unwrap().unwrap();
+        assert_eq!(r.reply.as_deref(), Some("Sure. Your day is clear."));
+        let mut all = early;
+        all.extend(collect(&mut rx).await);
+        assert_eq!(all.concat(), "Sure. Your day is clear.", "each word once, in order: {all:?}");
+        assert_eq!(count_events(&st, "agent.message.delta"), 3, "deltas are bridged once even though read twice");
+    }
+
+    #[tokio::test]
+    async fn a_lane_without_deltas_delivers_the_final_reply_once() {
+        let st = setup("stream-final").await;
+        let f = Fake::default();
+        f.push(done("e1", "All set."));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let sink = DeltaSink::new(tx);
+        let r = run_turn_streaming(&st.db, &f, &Rt, "s-th-vendor", "hi", key("k1"), Some(&sink)).await.unwrap().unwrap();
+        assert_eq!(r.reply.as_deref(), Some("All set."));
+        assert_eq!(collect(&mut rx).await, vec!["All set.".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn the_tail_after_the_deltas_is_sent_and_rewrites_are_not_repeated() {
+        let st = setup("stream-tail").await;
+        let f = Fake::default();
+        f.push(delta("d1", "chunk", "Hello "));
+        f.push(json!({ "type": "agent.message.delta", "remote_event_id": "d2", "payload": { "text": "Hi there", "replace": true } }));
+        f.push(done("e1", "Hello world."));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        run_turn_streaming(&st.db, &f, &Rt, "s-th-vendor", "hi", key("k1"), Some(&DeltaSink::new(tx))).await.unwrap().unwrap();
+        assert_eq!(collect(&mut rx).await, vec!["Hello ".to_string(), "world.".to_string()]);
+        // A final reply that does not continue what was spoken adds nothing.
+        assert_eq!(reply_tail("Hello ", "Goodbye."), None);
+        assert_eq!(reply_tail("", "Goodbye."), Some("Goodbye.".into()));
+        assert_eq!(reply_tail("Done.", "Done."), None);
+    }
+
+    #[tokio::test]
+    async fn a_barge_in_drops_the_turn_and_the_vendor_is_cancelled() {
+        let st = setup("stream-cancel").await;
+        let f = Arc::new(Fake::default());
+        let slow = Slow { inner: f.clone(), gate: Arc::new(tokio::sync::Notify::new()) };
+        f.push(delta("d1", "chunk", "Let me "));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let sink = DeltaSink::new(tx);
+        let run = run_turn_streaming(&st.db, &slow, &Rt, "s-th-vendor", "hi", key("k1"), Some(&sink));
+        assert!(tokio::time::timeout(Duration::from_secs(5), run).await.is_err(), "the vendor never answered");
+        assert_eq!(collect(&mut rx).await, vec!["Let me ".to_string()]);
+        cancel_vendor_turn(&st.db, &*f, "s-th-vendor").await.unwrap();
+        assert_eq!(f.count("agent.context.cancel"), 1);
     }
 
     #[test]

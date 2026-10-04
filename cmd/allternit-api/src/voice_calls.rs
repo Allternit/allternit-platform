@@ -117,18 +117,35 @@ impl VoiceTurner for ChannelTurner {
 }
 
 /// The production turner: a native gizzi session is streamed (deltas and tool
-/// steps as they happen, see [`crate::voice_turn_stream`]); a vendor-bound or
-/// placed (remote) session has no local event stream, so it runs the channel
-/// path and answers once it is done. That fallback is logged, never silent.
+/// steps as they happen, see [`crate::voice_turn_stream`]); a vendor-bound session streams the
+/// lane's deltas; a placed (remote) session has no local event stream, so it
+/// runs the channel path and answers once it is done. That fallback is logged, never silent.
 struct GizziStreamTurner {
     fallback: ChannelTurner,
 }
 
+/// A vendor-bound session's turn: the Agent Gateway lane's reply text goes to the
+/// call as it arrives (a lane that sends no deltas delivers the whole reply once
+/// the turn is done), so the first sentence is spoken without waiting for the rest.
+async fn stream_vendor_turn(session_id: &str, text: &str, events: &mpsc::UnboundedSender<Value>) -> Result<TurnReply, String> {
+    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+    let forward = async {
+        while let Some(d) = rx.recv().await {
+            let _ = events.send(json!({ "type": "text.delta", "text": d }));
+        }
+    };
+    let turn = crate::gateway_runner::intercept_turn_streaming(session_id, text, Default::default(), tx);
+    let (reply, ()) = tokio::join!(turn, forward);
+    match reply {
+        Some(Ok(_)) => Ok(TurnReply::Streamed),
+        Some(Err(e)) => Err(e),
+        None => Err("the vendor gateway is not running".to_string()),
+    }
+}
+
 /// Why a session cannot be streamed locally, if it cannot.
 fn no_stream_reason(db: &DbHandle, session_id: &str) -> Option<&'static str> {
-    if crate::gateway_runner::is_vendor_session(db, session_id) {
-        Some("vendor-bound")
-    } else if crate::placement::session_target(db, session_id).is_some() {
+    if crate::placement::session_target(db, session_id).is_some() {
         Some("placed on another Allternit")
     } else {
         None
@@ -138,6 +155,9 @@ fn no_stream_reason(db: &DbHandle, session_id: &str) -> Option<&'static str> {
 #[async_trait]
 impl VoiceTurner for GizziStreamTurner {
     async fn run(&self, db: &DbHandle, session_id: &str, bot_id: &str, text: &str, events: mpsc::UnboundedSender<Value>) -> Result<TurnReply, String> {
+        if crate::gateway_runner::is_vendor_session(db, session_id) {
+            return stream_vendor_turn(session_id, text, &events).await;
+        }
         if let Some(why) = no_stream_reason(db, session_id) {
             tracing::info!(session_id, "voice turn: session is {why}; answering with the final reply instead of streaming");
             return self.fallback.run(db, session_id, bot_id, text, events).await;
