@@ -24,9 +24,10 @@ jobs:
           - { os: macos-14, target: x86_64-apple-darwin, asset: darwin-x86_64 }
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+      # rust-toolchain.toml pins the toolchain (1.94.1); add the target to THAT toolchain.
+      # dtolnay/rust-toolchain@stable added it to `stable`, which cargo never used (E0463 no `core`).
+      - name: Add target to the pinned toolchain
+        run: rustup target add ${{ matrix.target }}
       - name: Install musl tools
         if: contains(matrix.target, 'musl')
         run: sudo apt-get update && sudo apt-get install -y musl-tools
