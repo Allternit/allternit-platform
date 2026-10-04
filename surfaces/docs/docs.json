@@ -224,6 +224,7 @@
               "operations/overview",
               "operations/rollout",
               "operations/recovery",
+              "operations/owned-downloads",
               "internal/channel-apps-owner-setup"
             ],
             "icon": "/icons/screen.svg"

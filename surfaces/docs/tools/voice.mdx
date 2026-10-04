@@ -27,7 +27,7 @@ installer. Poll `GET /v1/models` for state (`missing`, `downloading` with
 | `tts` | Kokoro-82M v1.0 fp32 (first text-to-speech use) | ~350 MB |
 | `accurate` | Parakeet TDT 0.6B v3 int8 (CC-BY-4.0) | ~487 MB |
 
-- `ALLTERNIT_VOICE_MODEL_BASE` overrides the download base URL.
+- Packs download from our own mirror, `https://runtime.allternit.com/voice-packs/v1/<file>`, and fall back to the upstream URL (GitHub or Hugging Face) if the mirror fails (logged once). The same pinned sha256 is checked either way. `ALLTERNIT_VOICE_MODEL_BASE` overrides the base and is then used alone, at `<base>/<asset>`. See [Owned downloads](/operations/owned-downloads).
 - `ALLTERNIT_VOICE_THREADS` sets inference threads (default **2**), CPU provider — sized for a ~5-year-old 8 GB laptop.
 - `ALLTERNIT_VOICE_MODEL_DIR` moves the pack directory.
 - `POST /v1/models/<pack>` starts a download ahead of first use.

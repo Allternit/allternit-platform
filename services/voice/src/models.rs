@@ -3,18 +3,25 @@
 //!
 //! Packs live under `~/.allternit/models/voice/<pack>/` and download on
 //! first use. The base URL is configurable via `ALLTERNIT_VOICE_MODEL_BASE`
-//! (Phase 2 moves hosting to runtime.allternit.com); hashes are pinned here
+//! (default: our mirror at runtime.allternit.com, falling back to the
+//! upstream URLs); hashes are pinned here
 //! in code and verified before a file is considered usable.
 
 use serde::Serialize;
 use sha2::Digest;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{info, warn};
 
+/// Upstream sherpa-onnx releases, used as the fallback source.
 const DEFAULT_BASE_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download";
+
+/// Our own mirror (R2 bucket `allternit-runtime`), tried first. Files sit
+/// flat under it by file name; see `scripts/mirror-voice-packs.sh`.
+const MIRROR_BASE_URL: &str = "https://runtime.allternit.com/voice-packs/v1";
 
 /// One downloadable file of a pack. `asset` is the release-asset path
 /// (`<tag>/<file name>`) appended to the base URL. Archives (`.tar.bz2`)
@@ -264,21 +271,19 @@ impl PackManager {
         let mut out = Vec::new();
         let statuses = self.statuses.read().await;
         for p in PACKS {
-            out.push(
-                statuses.get(p.name).cloned().unwrap_or_else(|| {
-                    if self.is_installed(p.name) {
-                        PackStatus {
-                            name: p.name.to_string(),
-                            state: PackStateKind::Ready,
-                            pct: None,
-                            error: None,
-                            size_bytes: Some(dir_size(&self.pack_dir(p.name))),
-                        }
-                    } else {
-                        PackStatus::missing(p.name)
+            out.push(statuses.get(p.name).cloned().unwrap_or_else(|| {
+                if self.is_installed(p.name) {
+                    PackStatus {
+                        name: p.name.to_string(),
+                        state: PackStateKind::Ready,
+                        pct: None,
+                        error: None,
+                        size_bytes: Some(dir_size(&self.pack_dir(p.name))),
                     }
-                }),
-            );
+                } else {
+                    PackStatus::missing(p.name)
+                }
+            }));
         }
         out
     }
@@ -373,13 +378,22 @@ impl PackManager {
             }
         }
 
-        let url = match file.upstream {
-            Some(full) if !self.custom_base => full.to_string(),
-            _ => format!("{}/{}", self.base, file.asset),
-        };
+        let urls = candidate_urls(file, self.custom_base.then_some(self.base.as_str()));
         let part_path = dir.join(format!("{}.part", file_name(file)));
-        self.download(&url, &part_path, &final_path, dir, file)
-            .await
+        let mut last_err = String::new();
+        for (i, url) in urls.iter().enumerate() {
+            match self.download(url, &part_path, &final_path, dir, file).await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    // A hash-mismatching mirror copy was already deleted.
+                    if i + 1 < urls.len() && !MIRROR_FALLBACK_LOGGED.swap(true, Ordering::Relaxed) {
+                        warn!("voice pack mirror failed ({e}); falling back to upstream");
+                    }
+                    last_err = e;
+                }
+            }
+        }
+        Err(last_err)
     }
 
     async fn download(
@@ -533,6 +547,22 @@ impl PackManager {
     }
 }
 
+static MIRROR_FALLBACK_LOGGED: AtomicBool = AtomicBool::new(false);
+
+/// Source URLs for a file, in the order to try them. A custom base
+/// (`ALLTERNIT_VOICE_MODEL_BASE`) is used alone at `<base>/<asset>`;
+/// otherwise our mirror (flat file name) first, then the upstream URL.
+fn candidate_urls(file: &PackFile, custom_base: Option<&str>) -> Vec<String> {
+    if let Some(base) = custom_base {
+        return vec![format!("{base}/{}", file.asset)];
+    }
+    let upstream = match file.upstream {
+        Some(full) => full.to_string(),
+        None => format!("{DEFAULT_BASE_URL}/{}", file.asset),
+    };
+    vec![format!("{MIRROR_BASE_URL}/{}", file_name(file)), upstream]
+}
+
 fn model_root() -> PathBuf {
     if let Ok(explicit) = std::env::var("ALLTERNIT_VOICE_MODEL_DIR") {
         return PathBuf::from(explicit);
@@ -684,6 +714,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn urls_default_to_mirror_then_upstream() {
+        let small = pack("small").unwrap();
+        let vad = candidate_urls(&small.files[0], None);
+        assert_eq!(
+            vad,
+            vec![
+                "https://runtime.allternit.com/voice-packs/v1/silero_vad.onnx".to_string(),
+                format!("{DEFAULT_BASE_URL}/asr-models/silero_vad.onnx"),
+            ]
+        );
+        let turn = candidate_urls(&small.files[2], None);
+        assert!(turn[0].ends_with("/voice-packs/v1/smart-turn-v3.2-cpu.onnx"));
+        assert!(turn[1].starts_with("https://huggingface.co/"));
+    }
+
+    #[test]
+    fn custom_base_is_used_alone() {
+        let small = pack("small").unwrap();
+        let urls = candidate_urls(&small.files[0], Some("http://m.test/x"));
+        assert_eq!(
+            urls,
+            vec!["http://m.test/x/asr-models/silero_vad.onnx".to_string()]
+        );
+    }
+
+    #[test]
     fn manifest_hashes_are_hex_and_files_unique() {
         for p in PACKS {
             let mut seen = std::collections::HashSet::new();
@@ -704,9 +760,21 @@ mod tests {
     fn pack_downloads_fit_their_budgets() {
         // Dictation (small) stays light; TTS is Kokoro fp32 (Eoj 2026-10-03:
         // full-size Kokoro, budget = its actual size, ~350 MB).
-        assert!(pack_bytes("small") <= 40_000_000, "small: {}", pack_bytes("small"));
-        assert!(pack_bytes("tts") <= 350_000_000, "tts: {}", pack_bytes("tts"));
-        assert!(pack_bytes("accurate") <= 490_000_000, "accurate: {}", pack_bytes("accurate"));
+        assert!(
+            pack_bytes("small") <= 40_000_000,
+            "small: {}",
+            pack_bytes("small")
+        );
+        assert!(
+            pack_bytes("tts") <= 350_000_000,
+            "tts: {}",
+            pack_bytes("tts")
+        );
+        assert!(
+            pack_bytes("accurate") <= 490_000_000,
+            "accurate: {}",
+            pack_bytes("accurate")
+        );
     }
 
     #[tokio::test]
@@ -781,7 +849,10 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("sha256 mismatch"), "{err}");
-        assert!(!fin.exists(), "unverified file must never be moved into place");
+        assert!(
+            !fin.exists(),
+            "unverified file must never be moved into place"
+        );
         assert!(!part.exists(), "corrupt partial must be discarded");
     }
 
