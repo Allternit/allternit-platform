@@ -45,8 +45,9 @@ export interface Config {
   // SUBS_GATEWAY_AAI_LOOPBACK_BASE / _BOTS csv; bearer via SUBS_GATEWAY_AAI_LOOPBACK_TOKEN).
   aai: { disabled: string[]; loopbackBaseUrl: string; loopbackBots: string[] };
   // Close a subscription's Chrome after this many idle minutes (no task in
-  // flight for the account); the next task relaunches it. 0 keeps Chrome
-  // resident (the default). Env: SUBS_GATEWAY_LANE_IDLE_MIN.
+  // flight for the account); the next task relaunches it. Default 10 (same as the cloud computer image): resident
+  // Chromes for every account pinned a Sessions computer at load ~190 and hung
+  // the gateway (2026-10-04). 0 keeps Chrome resident. Env: SUBS_GATEWAY_LANE_IDLE_MIN.
   laneIdleCloseMin: number;
 }
 
@@ -178,6 +179,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       loopbackBaseUrl: env[`${ENV_PREFIX}AAI_LOOPBACK_BASE`] ?? `${env[`${ENV_PREFIX}API_BASE`] ?? "http://127.0.0.1:18013"}/api/v1`,
       loopbackBots: csvList(env[`${ENV_PREFIX}AAI_LOOPBACK_BOTS`]),
     },
-    laneIdleCloseMin: nonNegativeInt(env[`${ENV_PREFIX}LANE_IDLE_MIN`], 0, `${ENV_PREFIX}LANE_IDLE_MIN`),
+    laneIdleCloseMin: nonNegativeInt(env[`${ENV_PREFIX}LANE_IDLE_MIN`], 10, `${ENV_PREFIX}LANE_IDLE_MIN`),
   };
 }
