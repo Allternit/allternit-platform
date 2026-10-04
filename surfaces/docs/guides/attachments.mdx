@@ -1,0 +1,19 @@
+---
+title: 'Attachments and storage limits'
+description: 'How file attachments in the chat composer are stored, and how much space each plan has.'
+---
+
+Attach files in the composer the same way on the desktop app, on ai.allternit.com (including the phone layout) and in the m.allternit.com app.
+
+- **Small files** (under 1 MB) travel inside the message.
+- **Larger files** are uploaded to your private Allternit Cloud storage when you are signed in, and the agent receives a link that works for 7 days. Signed-out or local-only sessions keep sending the file inside the message.
+
+## Storage by plan
+
+| Plan | Total storage | Largest file |
+| --- | --- | --- |
+| Free | 100 MB | 10 MB |
+| Plus | 2 GB | 100 MB |
+| Super and Ultra | 10 GB | 500 MB |
+
+If a file is over your plan's limits, the message is not sent and a notice says why. Nothing is cut off silently. If shared storage is temporarily full, uploads pause and you see the same kind of notice. See the [Files API](/api/files) for the developer view.

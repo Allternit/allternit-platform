@@ -20,6 +20,7 @@ pub mod r2;
 pub mod run_service;
 pub mod scheduler_service;
 pub mod task_service;
+pub mod user_files;
 pub mod user_trust;
 pub mod voice_billing;
 pub mod voice_usage;

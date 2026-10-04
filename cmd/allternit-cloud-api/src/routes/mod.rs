@@ -59,6 +59,7 @@ pub mod slack_app;
 pub mod tasks;
 #[cfg(test)]
 pub mod test_support;
+pub mod files;
 pub mod voice_consent;
 pub mod voice_recordings;
 pub mod voice_tickets;
