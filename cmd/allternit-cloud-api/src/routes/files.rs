@@ -7,11 +7,12 @@
 //!   507 `storage-full`, 503 `storage-unavailable`.
 //! * `POST   /api/v1/files/:id/complete` `{name, contentType, bytes}`: HEAD-verifies
 //!   the size, then records the file. 409 `size-mismatch` / `upload-missing`.
-//! * `GET    /api/v1/files/:id`: owner gets a 10-minute presigned GET.
+//! * `GET    /api/v1/files/:id[?expires=SECONDS]`: owner gets a presigned GET
+//!   (10 minutes, or up to 7 days when `expires` is given).
 //! * `DELETE /api/v1/files/:id`: deletes the object, then the record.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -103,13 +104,19 @@ async fn complete(State(state): State<Arc<ApiState>>, headers: HeaderMap, Path(i
     }
 }
 
-async fn download(State(state): State<Arc<ApiState>>, headers: HeaderMap, Path(id): Path<Uuid>) -> Result<Response, ApiError> {
+#[derive(Debug, Deserialize)]
+struct DownloadQuery {
+    /// Link lifetime in seconds (60 to 7 days). Default 10 minutes.
+    expires: Option<u64>,
+}
+
+async fn download(State(state): State<Arc<ApiState>>, headers: HeaderMap, Path(id): Path<Uuid>, Query(q): Query<DownloadQuery>) -> Result<Response, ApiError> {
     let user = auth::resolve_user_id(&state.db, &headers).await?;
     let r2 = match store() {
         Ok(r) => r,
         Err(f) => return reply(f),
     };
-    match user_files::download_url(&state.db, &r2, &user, id).await {
+    match user_files::download_url(&state.db, &r2, &user, id, q.expires).await {
         Ok(v) => Ok(Json(v).into_response()),
         Err(f) => reply(f),
     }

@@ -38,6 +38,8 @@ const USAGE_BUCKET: &str = "allternit-backups";
 const USAGE_KEY: &str = "status/r2-usage.json";
 pub const PUT_TTL: Duration = Duration::from_secs(15 * 60);
 pub const GET_TTL: Duration = Duration::from_secs(10 * 60);
+/// A caller may ask for a longer link (a message that carries the file), up to 7 days.
+pub const MAX_GET_TTL_SECS: u64 = 7 * 24 * 3600;
 
 /// A refusal the route turns into `{code, message}` with this status.
 #[derive(Debug, PartialEq)]
@@ -180,6 +182,7 @@ pub async fn begin_upload(
 
 /// Re-derives the key from the user + id + name the client sends back, so the
 /// client never names an arbitrary object.
+#[allow(clippy::too_many_arguments)]
 pub async fn complete_upload(
     db: &PgPool,
     store: &dyn ObjectStore,
@@ -229,10 +232,11 @@ async fn owned(db: &PgPool, user_id: &str, id: Uuid) -> Result<(String, String),
     row.ok_or_else(|| refuse(404, "not-found", "No such file.").into())
 }
 
-pub async fn download_url(db: &PgPool, store: &dyn ObjectStore, user_id: &str, id: Uuid) -> Result<Value, Failure> {
+pub async fn download_url(db: &PgPool, store: &dyn ObjectStore, user_id: &str, id: Uuid, expires: Option<u64>) -> Result<Value, Failure> {
     let (key, name) = owned(db, user_id, id).await?;
-    let url = store.presign_get(BUCKET, &key, GET_TTL).map_err(r2_failure)?;
-    Ok(json!({ "fileId": id, "name": name, "url": url, "expiresInSeconds": GET_TTL.as_secs() }))
+    let ttl = expires.map(|s| Duration::from_secs(s.clamp(60, MAX_GET_TTL_SECS))).unwrap_or(GET_TTL);
+    let url = store.presign_get(BUCKET, &key, ttl).map_err(r2_failure)?;
+    Ok(json!({ "fileId": id, "name": name, "url": url, "expiresInSeconds": ttl.as_secs() }))
 }
 
 /// Deletes the object first; the row is only marked deleted once R2 confirms,
@@ -404,14 +408,14 @@ mod db_tests {
         let v = upload(&state, &store, "u1", "free", "../evil/n.txt", 50).await.ok().unwrap();
         assert_eq!(v["name"], "n.txt");
         let id: Uuid = serde_json::from_value(v["fileId"].clone()).unwrap();
-        assert_eq!(refusal(download_url(&state.db, &store, "u2", id).await), (404, "not-found"));
+        assert_eq!(refusal(download_url(&state.db, &store, "u2", id, None).await), (404, "not-found"));
         assert_eq!(refusal(delete_file(&state.db, &store, "u2", id, Utc::now()).await.map(|_| ())), (404, "not-found"));
-        let d = download_url(&state.db, &store, "u1", id).await.ok().unwrap();
+        let d = download_url(&state.db, &store, "u1", id, None).await.ok().unwrap();
         assert!(d["url"].as_str().unwrap().contains(&format!("u/u1/{id}/n.txt")));
         delete_file(&state.db, &store, "u1", id, Utc::now()).await.ok().unwrap();
         assert!(store.objects.lock().unwrap().is_empty(), "the object is deleted");
         assert_eq!(used_bytes(&state.db, "u1").await.unwrap(), 0);
-        assert_eq!(refusal(download_url(&state.db, &store, "u1", id).await), (404, "not-found"));
+        assert_eq!(refusal(download_url(&state.db, &store, "u1", id, None).await), (404, "not-found"));
         assert_eq!(refusal(delete_file(&state.db, &store, "u1", id, Utc::now()).await.map(|_| ())), (404, "not-found"));
     }
 }
