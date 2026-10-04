@@ -174,6 +174,323 @@ paths:
                   has_more: { type: boolean }
                   next_cursor: { type: [string, "null"] }
         default: { $ref: "#/components/responses/Error" }
+  /v1/numbers/available:
+    get:
+      operationId: listAvailableNumbers
+      summary: Search numbers to buy (live projects)
+      tags: [Numbers]
+      parameters:
+        - { name: country, in: query, schema: { type: string, default: US } }
+        - { name: area_code, in: query, schema: { type: string } }
+        - { name: locality, in: query, schema: { type: string } }
+        - { name: type, in: query, schema: { type: string, enum: [local, toll_free] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 10 } }
+      responses:
+        "200":
+          description: Numbers the carrier offers now.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { type: object, properties: { e164: { type: string }, type: { type: string }, locality: { type: [string, "null"] }, monthlyCost: { type: [string, "null"] } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/numbers:
+    get:
+      operationId: listNumbers
+      summary: List numbers
+      tags: [Numbers]
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/After" }
+        - { name: account_id, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: A page of numbers.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PhoneNumberList" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createNumber
+      summary: Get a number for an account
+      description: Sandbox projects get a simulated number (no `e164`). Live projects buy `e164` from `/v1/numbers/available`; needs a paid plan.
+      tags: [Numbers]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [account_id]
+              properties:
+                account_id: { type: string }
+                e164: { type: string }
+                type: { type: string, enum: [local, toll_free] }
+      responses:
+        "201":
+          description: The number.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PhoneNumber" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/numbers/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get:
+      operationId: getNumber
+      summary: Retrieve a number
+      tags: [Numbers]
+      responses:
+        "200":
+          description: The number.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PhoneNumber" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: releaseNumber
+      summary: Release a number
+      tags: [Numbers]
+      responses:
+        "200":
+          description: Released.
+          content:
+            application/json:
+              schema: { type: object, properties: { id: { type: string }, object: { type: string, const: phone_number }, deleted: { type: boolean, const: true } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/numbers/{id}/registration:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get:
+      operationId: getNumberRegistration
+      summary: Carrier registration status
+      tags: [Numbers]
+      responses:
+        "200":
+          description: Registration state, refreshed from the carrier while pending.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: submitNumberRegistration
+      summary: Register the number for US texting (10DLC or toll-free)
+      description: The end-customer business's own details. The campaign files itself once the brand is verified.
+      tags: [Numbers]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "201":
+          description: Submitted.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/numbers/{id}/consent:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post:
+      operationId: recordConsent
+      summary: Record that a person agreed to be contacted
+      tags: [Numbers]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [e164, source]
+              properties:
+                e164: { type: string }
+                source: { type: string, description: "How they agreed: a form, a call, an existing customer record." }
+                evidence: { type: string }
+      responses:
+        "201":
+          description: Recorded. `opted_out` true means the person's STOP still stands.
+          content:
+            application/json:
+              schema: { type: object, properties: { number_id: { type: string }, e164: { type: string }, recorded: { type: boolean }, opted_out: { type: boolean } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/numbers/{id}/simulate_inbound:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post:
+      operationId: simulateInbound
+      summary: Sandbox only — play a text arriving
+      tags: [Numbers]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [from, body], properties: { from: { type: string }, body: { type: string } } }
+      responses:
+        "200":
+          description: What happened (`received`, `opted_out`, `opted_in`, `help`, `ignored_opted_out`).
+          content:
+            application/json:
+              schema: { type: object, properties: { number_id: { type: string }, handled: { type: string } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/messages:
+    get:
+      operationId: listMessages
+      summary: List texts
+      tags: [Messaging]
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/After" }
+        - { name: number_id, in: query, schema: { type: string } }
+        - { name: account_id, in: query, schema: { type: string } }
+        - { name: direction, in: query, schema: { type: string, enum: [inbound, outbound] } }
+      responses:
+        "200":
+          description: A page of messages.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageList" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: sendMessage
+      summary: Send a text
+      description: Refused when texting isn't active on the number, the person sent STOP, or they never texted first and have no consent recorded.
+      tags: [Messaging]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [number_id, to, body], properties: { number_id: { type: string }, to: { type: string }, body: { type: string, maxLength: 1600 } } }
+      responses:
+        "201":
+          description: The message.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/messages/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get:
+      operationId: getMessage
+      summary: Retrieve a text
+      tags: [Messaging]
+      responses:
+        "200":
+          description: The message.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/webhooks:
+    get:
+      operationId: listWebhooks
+      summary: List webhook endpoints
+      tags: [Webhooks]
+      parameters: [{ $ref: "#/components/parameters/Limit" }, { $ref: "#/components/parameters/After" }]
+      responses:
+        "200":
+          description: A page of endpoints.
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { type: array, items: { $ref: "#/components/schemas/WebhookEndpoint" } }, has_more: { type: boolean }, next_cursor: { type: [string, "null"] } } }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createWebhook
+      summary: Create a webhook endpoint
+      description: "`url` must be public https. The response carries `secret` once."
+      tags: [Webhooks]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, events]
+              properties:
+                url: { type: string, format: uri }
+                events: { type: array, items: { type: string, enum: ["*", message.received, message.status, registration.updated] } }
+                description: { type: string, maxLength: 200 }
+      responses:
+        "201":
+          description: The endpoint, with its signing secret.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/WebhookEndpoint" }
+                  - { type: object, properties: { secret: { type: string } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/webhooks/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get:
+      operationId: getWebhook
+      summary: Retrieve a webhook endpoint
+      tags: [Webhooks]
+      responses:
+        "200":
+          description: The endpoint.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebhookEndpoint" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteWebhook
+      summary: Delete a webhook endpoint
+      tags: [Webhooks]
+      responses:
+        "200":
+          description: Deleted; pending deliveries to it stop.
+          content:
+            application/json:
+              schema: { type: object, properties: { id: { type: string }, object: { type: string }, deleted: { type: boolean } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/webhooks/{id}/test:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post:
+      operationId: testWebhook
+      summary: Send a webhook.test event to this endpoint
+      tags: [Webhooks]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      responses:
+        "202":
+          description: Queued.
+          content:
+            application/json:
+              schema: { type: object, properties: { event_id: { type: string }, webhook_id: { type: string }, queued: { type: boolean } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/webhooks/{id}/deliveries:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get:
+      operationId: listWebhookDeliveries
+      summary: Delivery log for an endpoint
+      tags: [Webhooks]
+      parameters: [{ $ref: "#/components/parameters/Limit" }, { $ref: "#/components/parameters/After" }]
+      responses:
+        "200":
+          description: A page of deliveries.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/webhooks/{id}/deliveries/{delivery_id}/redeliver:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: delivery_id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: redeliverWebhook
+      summary: Try a delivery again now
+      tags: [Webhooks]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      responses:
+        "202":
+          description: Queued.
+          content:
+            application/json:
+              schema: { type: object, properties: { id: { type: string }, queued: { type: boolean } } }
+        default: { $ref: "#/components/responses/Error" }
 components:
   securitySchemes:
     bearerAuth:
@@ -267,3 +584,66 @@ components:
         unit: { type: [string, "null"] }
         quantity: { type: number }
         events: { type: integer }
+    PhoneNumber:
+      type: object
+      required: [id, object, account_id, e164, type, sms_state, simulated, created_at]
+      properties:
+        id: { type: string }
+        object: { type: string, const: phone_number }
+        account_id: { type: [string, "null"] }
+        e164: { type: string }
+        type: { type: string, enum: [local, toll_free] }
+        sms_state: { type: string, enum: [pending_registration, active, rejected, blocked] }
+        simulated: { type: boolean }
+        created_at: { type: string, format: date-time }
+    PhoneNumberList:
+      type: object
+      properties:
+        data: { type: array, items: { $ref: "#/components/schemas/PhoneNumber" } }
+        has_more: { type: boolean }
+        next_cursor: { type: [string, "null"] }
+    Message:
+      type: object
+      required: [id, object, number_id, direction, from, to, body, segments, status, created_at]
+      properties:
+        id: { type: string }
+        object: { type: string, const: message }
+        account_id: { type: [string, "null"] }
+        number_id: { type: string }
+        direction: { type: string, enum: [inbound, outbound] }
+        from: { type: string }
+        to: { type: string }
+        body: { type: string }
+        segments: { type: integer }
+        status: { type: string, enum: [sent, simulated, received, failed] }
+        error_code: { type: [string, "null"] }
+        media: { type: array, items: { type: object, additionalProperties: true } }
+        created_at: { type: string, format: date-time }
+    MessageList:
+      type: object
+      properties:
+        data: { type: array, items: { $ref: "#/components/schemas/Message" } }
+        has_more: { type: boolean }
+        next_cursor: { type: [string, "null"] }
+    WebhookEndpoint:
+      type: object
+      required: [id, object, url, events, created_at]
+      properties:
+        id: { type: string }
+        object: { type: string, const: webhook_endpoint }
+        url: { type: string }
+        events: { type: array, items: { type: string } }
+        description: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+    Event:
+      type: object
+      description: "What a webhook receives. Header `allternit-signature: t=<ts>,v1=<hex HMAC-SHA256(secret, \"<ts>.<body>\")>`."
+      required: [id, object, type, created, project_id, data]
+      properties:
+        id: { type: string }
+        object: { type: string, const: event }
+        type: { type: string, enum: [message.received, message.status, registration.updated, webhook.test] }
+        created: { type: integer, description: Unix seconds. }
+        project_id: { type: string }
+        account_id: { type: [string, "null"] }
+        data: { type: object, additionalProperties: true }

@@ -296,13 +296,20 @@ async fn owns_runtime(db: &PgPool, user: &str, runtime_id: &str) -> PResult<()> 
 
 /// Create the number's relay address; returns (route id, public url).
 async fn create_sms_route(db: &PgPool, user: &str, runtime_id: &str, e164: &str) -> PResult<(String, String)> {
+    create_inbound_route(db, user, runtime_id, "sms", e164).await
+}
+
+/// `provider` is `sms` (texts go to the owner's runtime) or `platform_sms`
+/// (a Platform API number: texts are kept by the cloud and sent as webhooks).
+async fn create_inbound_route(db: &PgPool, user: &str, runtime_id: &str, provider: &str, e164: &str) -> PResult<(String, String)> {
     let key = super::channel_inbound::new_key();
     let route_id = uuid::Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO channel_inbound_routes (id, key_hash, user_id, runtime_id, provider, label) VALUES ($1, $2, $3, $4, 'sms', $5)")
+    sqlx::query("INSERT INTO channel_inbound_routes (id, key_hash, user_id, runtime_id, provider, label) VALUES ($1, $2, $3, $4, $5, $6)")
         .bind(&route_id)
         .bind(super::channel_inbound::sha256_hex(&key))
         .bind(user)
         .bind(runtime_id)
+        .bind(provider)
         .bind(e164)
         .execute(db)
         .await?;
@@ -327,7 +334,7 @@ pub async fn buy_number(db: &PgPool, carrier: &dyn Carrier, user: &str, body: &B
         return Err(PhoneError::BadRequest("botId is required".into()));
     }
     owns_runtime(db, user, &body.runtime_id).await?;
-    let held: i64 = sqlx::query_scalar("SELECT count(*) FROM phone_numbers WHERE user_id = $1 AND released_at IS NULL").bind(user).fetch_one(db).await?;
+    let held: i64 = sqlx::query_scalar("SELECT count(*) FROM phone_numbers WHERE user_id = $1 AND released_at IS NULL AND project_id IS NULL").bind(user).fetch_one(db).await?;
     let limit = number_limit_for_plan(&body.plan).ok_or(PhoneError::PlanRequired)?;
     if held >= limit {
         return Err(PhoneError::Forbidden("number_limit"));
@@ -370,6 +377,82 @@ pub async fn buy_number(db: &PgPool, carrier: &dyn Carrier, user: &str, body: &B
     sqlx::query_as::<_, NumberRow>(&format!("SELECT {NUMBER_COLS} FROM phone_numbers WHERE id = $1")).bind(&id).fetch_one(db).await.map_err(Into::into)
 }
 
+/// A Platform API number: owned by a developer project and one of its accounts
+/// (`user` is the project owner, so consent, STOP, caps and registration all go
+/// through the same code as the app's numbers). It has no runtime: inbound texts
+/// arrive on a `platform_sms` route, are kept by the cloud and sent as webhooks.
+/// A simulated (sandbox) number never touches the carrier.
+pub async fn buy_platform_number(db: &PgPool, carrier: Option<&dyn Carrier>, user: &str, project_id: &str, account_id: &str, e164: Option<&str>, kind: NumberType) -> PResult<NumberRow> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let Some(carrier) = carrier else {
+        // Sandbox: a fictional +1 555-01xx number, active at once, never billed by a carrier.
+        let fake = format!("+1555{:07}", 100_0000 + (uuid::Uuid::new_v4().as_u128() % 99_9999) as u32);
+        sqlx::query(
+            "INSERT INTO phone_numbers (id, user_id, runtime_id, bot_id, e164, carrier, type, sms_state, project_id, account_id, simulated) \
+             VALUES ($1, $2, '', '', $3, 'simulated', $4, 'active', $5, $6, true)",
+        )
+        .bind(&id)
+        .bind(user)
+        .bind(&fake)
+        .bind(kind.as_str())
+        .bind(project_id)
+        .bind(account_id)
+        .execute(db)
+        .await
+        .map_err(|e| if is_unique_violation(&e) { PhoneError::Conflict("number_taken") } else { e.into() })?;
+        return sqlx::query_as::<_, NumberRow>(&format!("SELECT {NUMBER_COLS} FROM phone_numbers WHERE id = $1")).bind(&id).fetch_one(db).await.map_err(Into::into);
+    };
+    let e164 = e164.ok_or_else(|| PhoneError::BadRequest("e164 is required; pick one from /v1/numbers/available".into()))?;
+    if !carriers::is_e164(e164) {
+        return Err(PhoneError::BadRequest("e164 must be a number like +14155550101".into()));
+    }
+    let (route_id, webhook_url) = create_inbound_route(db, user, "", "platform_sms", e164).await?;
+    let reserved = sqlx::query(
+        "INSERT INTO phone_numbers (id, user_id, runtime_id, bot_id, e164, carrier, type, inbound_route_id, project_id, account_id) VALUES ($1, $2, '', '', $3, $4, $5, $6, $7, $8)",
+    )
+    .bind(&id)
+    .bind(user)
+    .bind(e164)
+    .bind(carrier.name())
+    .bind(kind.as_str())
+    .bind(&route_id)
+    .bind(project_id)
+    .bind(account_id)
+    .execute(db)
+    .await;
+    if let Err(e) = reserved {
+        revoke_route(db, &route_id).await;
+        return Err(if is_unique_violation(&e) { PhoneError::Conflict("number_taken") } else { e.into() });
+    }
+    let bought = match carrier.buy(&carriers::BuyRequest { e164: e164.to_string(), kind, webhook_url, reference: id.clone() }).await {
+        Ok(b) => b,
+        Err(e) => {
+            let _ = sqlx::query("DELETE FROM phone_numbers WHERE id = $1").bind(&id).execute(db).await;
+            revoke_route(db, &route_id).await;
+            return Err(e.into());
+        }
+    };
+    sqlx::query("UPDATE phone_numbers SET carrier_number_id = $2, messaging_ref = $3 WHERE id = $1")
+        .bind(&id)
+        .bind(&bought.carrier_number_id)
+        .bind(&bought.messaging_ref)
+        .execute(db)
+        .await?;
+    sqlx::query_as::<_, NumberRow>(&format!("SELECT {NUMBER_COLS} FROM phone_numbers WHERE id = $1")).bind(&id).fetch_one(db).await.map_err(Into::into)
+}
+
+/// Give back a Platform API number (a simulated one only needs its row closed).
+pub async fn release_platform_number(db: &PgPool, carrier: Option<&dyn Carrier>, number: &NumberRow) -> PResult<()> {
+    if let Some(carrier) = carrier {
+        carrier.release(&number.e164, number.carrier_number_id.as_deref(), number.messaging_ref.as_deref()).await?;
+    }
+    sqlx::query("UPDATE phone_numbers SET released_at = now() WHERE id = $1").bind(&number.id).execute(db).await?;
+    if let Some(route) = &number.inbound_route_id {
+        revoke_route(db, route).await;
+    }
+    Ok(())
+}
+
 pub struct BuyInputs {
     pub e164: String,
     pub runtime_id: String,
@@ -379,7 +462,7 @@ pub struct BuyInputs {
     pub plan: String,
 }
 
-fn infer_type(e164: &str) -> NumberType {
+pub(crate) fn infer_type(e164: &str) -> NumberType {
     // North American toll-free area codes.
     const TOLL_FREE: [&str; 8] = ["800", "833", "844", "855", "866", "877", "888", "889"];
     match e164.strip_prefix("+1").and_then(|r| r.get(..3)) {
@@ -407,7 +490,7 @@ async fn buy_number_route(State(state): State<Arc<ApiState>>, headers: HeaderMap
 async fn list_numbers(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Response {
     let run = async {
         let user = user_id(&state, &headers).await?;
-        let rows: Vec<NumberRow> = sqlx::query_as(&format!("SELECT {NUMBER_COLS} FROM phone_numbers WHERE user_id = $1 AND released_at IS NULL ORDER BY created_at"))
+        let rows: Vec<NumberRow> = sqlx::query_as(&format!("SELECT {NUMBER_COLS} FROM phone_numbers WHERE user_id = $1 AND released_at IS NULL AND project_id IS NULL ORDER BY created_at"))
             .bind(&user)
             .fetch_all(&state.db)
             .await?;
@@ -568,7 +651,30 @@ pub async fn refresh_registration(db: &PgPool, carrier: &dyn Carrier, number: &N
         .execute(db)
         .await?;
     sqlx::query("UPDATE phone_numbers SET sms_state = $2 WHERE id = $1 AND sms_state <> 'blocked'").bind(&number.id).bind(sms_state_for(status.state.as_str())).execute(db).await?;
+    // A Platform API number tells its developer (no-op for the app's numbers).
+    super::platform_v1::events::emit_for_number(
+        db,
+        &number.id,
+        "registration.updated",
+        json!({ "number_id": number.id, "state": status.state.as_str(), "rejection_reason": status.reason, "sms_state": sms_state_for(status.state.as_str()) }),
+    )
+    .await;
     Ok(())
+}
+
+/// The latest registration for a number the user owns, refreshed from the
+/// carrier while pending (what `GET …/registration` answers).
+pub async fn registration_status(db: &PgPool, carrier: Option<&dyn Carrier>, user: &str, number_id: &str) -> PResult<Value> {
+    let number = number_for_user(db, user, number_id).await?;
+    let reg = latest_registration(db, number_id).await?.ok_or(PhoneError::NotFound("no_registration"))?;
+    if let Some(carrier) = carrier {
+        if refresh_registration(db, carrier, &number, &reg).await.is_err() {
+            tracing::warn!(number = %number_id, "registration refresh failed");
+        }
+    }
+    let number = number_for_user(db, user, number_id).await?;
+    let reg = latest_registration(db, number_id).await?.ok_or(PhoneError::NotFound("no_registration"))?;
+    Ok(reg_json(&reg, &number))
 }
 
 async fn registration_post_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, Path(id): Path<String>, Json(body): Json<RegBody>) -> Response {
@@ -614,7 +720,7 @@ pub async fn port_create(db: &PgPool, carrier: &dyn Carrier, user: &str, body: &
         return Err(PhoneError::BadRequest("botId is required".into()));
     }
     owns_runtime(db, user, &body.runtime_id).await?;
-    let held: i64 = sqlx::query_scalar("SELECT count(*) FROM phone_numbers WHERE user_id = $1 AND released_at IS NULL").bind(user).fetch_one(db).await?;
+    let held: i64 = sqlx::query_scalar("SELECT count(*) FROM phone_numbers WHERE user_id = $1 AND released_at IS NULL AND project_id IS NULL").bind(user).fetch_one(db).await?;
     let limit = number_limit_for_plan(&body.plan).ok_or(PhoneError::PlanRequired)?;
     if held >= limit {
         return Err(PhoneError::Forbidden("number_limit"));
@@ -1400,7 +1506,7 @@ mod tests {
     /// A schema-per-test pool with the real 020 (relay) and 024 (phone) migrations.
     async fn pool() -> PgPool {
         let db = test_pool().await;
-        for sql in [include_str!("../../migrations_pg/020_channel_inbound_queue.sql"), include_str!("../../migrations_pg/024_phone_numbers.sql")] {
+        for sql in [include_str!("../../migrations_pg/003_api_keys.sql"), include_str!("../../migrations_pg/020_channel_inbound_queue.sql"), include_str!("../../migrations_pg/024_phone_numbers.sql"), include_str!("../../migrations_pg/050_platform_api_foundation.sql"), include_str!("../../migrations_pg/051_platform_numbers_messaging.sql")] {
             sqlx::raw_sql(&sql.replace("public.", "")).execute(&db).await.unwrap();
         }
         seed_runtime_device(&db, "rt1", USER).await;

@@ -1,0 +1,70 @@
+---
+title: 'Numbers'
+description: 'Phone numbers for an account: simulated in sandbox, bought from the carrier in live, with carrier registration and consent.'
+---
+
+Every number belongs to one [account](/api/platform/accounts). Scope `numbers` (consent also accepts `messaging`).
+
+| Method | Path | |
+|---|---|---|
+| `GET` | `/v1/numbers/available` | Numbers you can buy now (live projects): `country` (default `US`), `area_code`, `locality`, `type` (`local` / `toll_free`), `limit` (≤ 50) |
+| `POST` | `/v1/numbers` | Get a number: `{ "account_id", "e164"?, "type"? }` |
+| `GET` | `/v1/numbers` | List (cursor pagination, `account_id` filter) |
+| `GET` | `/v1/numbers/{id}` | Retrieve |
+| `DELETE` | `/v1/numbers/{id}` | Release |
+| `POST` / `GET` | `/v1/numbers/{id}/registration` | US texting registration (live numbers) |
+| `POST` | `/v1/numbers/{id}/consent` | Record that a person agreed to be contacted |
+| `POST` | `/v1/numbers/{id}/simulate_inbound` | Sandbox only: play a text arriving |
+
+```json
+{ "id": "6f1c…", "object": "phone_number", "account_id": "acct_7Hq…", "e164": "+16125550142", "type": "local", "sms_state": "pending_registration", "simulated": false, "created_at": "2026-10-04T18:12:03Z" }
+```
+
+## Sandbox: simulated numbers
+
+In a sandbox project, `POST /v1/numbers` with just an `account_id` returns a **simulated** number: a fictional `+1 555` number, active at once, that never reaches a carrier and is never billed. Texts you send from it are recorded with status `simulated`; nothing is delivered.
+
+To test the inbound side, play a text arriving:
+
+```bash
+curl https://api.allternit.com/v1/numbers/$NUMBER/simulate_inbound \
+  -H "Authorization: Bearer $ALLTERNIT_TEST_KEY" -H "Content-Type: application/json" \
+  -d '{ "from": "+14155550123", "body": "Do you have time Tuesday?" }'
+```
+
+It behaves like a real carrier text: `STOP`, `START` and `HELP` are handled, anything else is kept and sent to your webhooks as `message.received`, and it counts as the person texting first.
+
+## Live: real numbers
+
+Pick a number from `/v1/numbers/available` and `POST /v1/numbers` with its `e164`. Buying real numbers needs a paid plan with a card on file (`403 plan_required` otherwise). Each number is billed per month while you hold it (meters `number_local_month` / `number_tollfree_month`); see [Usage](/api/platform/usage).
+
+Calls work as soon as a number is bought. **Texting in the US** starts when its carrier registration is approved; until then `sms_state` is `pending_registration` and sends are refused with `sms_not_active`.
+
+## Carrier registration (US texting)
+
+US carriers require every business that texts to register. Submit the **end customer's** business details, not yours:
+
+```bash
+curl https://api.allternit.com/v1/numbers/$NUMBER/registration \
+  -H "Authorization: Bearer $ALLTERNIT_LIVE_KEY" -H "Content-Type: application/json" \
+  -d '{ "entityType": "PRIVATE_PROFIT", "legalName": "Lakeside Dental LLC", "displayName": "Lakeside Dental", "ein": "123456789",
+        "website": "https://lakesidedental.example", "vertical": "HEALTHCARE", "street": "1 Main St", "city": "Saint Paul", "state": "MN",
+        "postalCode": "55101", "country": "US", "contactEmail": "office@lakesidedental.example", "contactPhone": "+16515550100",
+        "useCase": "CUSTOMER_CARE", "useCaseSummary": "Appointment questions and reminders for patients who text us.",
+        "sampleMessages": ["Lakeside Dental: your cleaning is tomorrow at 2 pm. Reply STOP to opt out."],
+        "optInWorkflow": "Patients text our number first, or agree on the intake form.",
+        "privacyPolicyUrl": "https://lakesidedental.example/privacy", "termsUrl": "https://lakesidedental.example/terms" }'
+```
+
+Local numbers register for 10DLC, toll-free numbers for toll-free verification. 10DLC is two steps at the carrier: the brand is verified first, then the campaign is reviewed; the campaign is filed automatically once the brand clears. `GET …/registration` refreshes the status, and every change is sent as `registration.updated`. Carrier review usually takes days to a few weeks; that is controlled by the carriers, not promised by us.
+
+## Consent
+
+You may text or call someone only if they texted or called the number first, or you recorded their consent:
+
+```json
+POST /v1/numbers/{id}/consent
+{ "e164": "+14155550199", "source": "intake form", "evidence": "form #4821, signed 2026-10-01" }
+```
+
+`source` is required (how they agreed). **STOP always wins:** recorded consent never lifts an opt-out (the response says `"opted_out": true`); only the person texting `START` does.

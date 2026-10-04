@@ -440,6 +440,29 @@ async fn inbound_inner(
             Err(error) => return Ok(error.into_response()),
         }
     }
+    // A Platform API number: same verification, dedupe and STOP/HELP/START as above,
+    // then the cloud keeps the text and sends it to the developer as a webhook.
+    // Nothing is queued for a runtime (these numbers have none).
+    if route.provider == "platform_sms" {
+        if method != Method::POST {
+            return Ok(StatusCode::METHOD_NOT_ALLOWED.into_response());
+        }
+        return Ok(match super::phone::sms_edge(state, &route.id, key, headers, &body).await {
+            Ok(super::phone::Edge::Respond(response)) => response,
+            Ok(super::phone::Edge::Deliver { body: normalised, number_id, message_id }) => {
+                match super::platform_v1::messages::record_inbound(&state.db, &number_id, &normalised).await {
+                    Ok(()) => StatusCode::OK.into_response(),
+                    Err(e) => {
+                        // Let the carrier retry: undo the dedupe mark.
+                        tracing::error!(number = %number_id, "platform inbound text not kept: {e:?}");
+                        super::phone::forget_inbound(&state.db, &number_id, &message_id).await;
+                        StatusCode::SERVICE_UNAVAILABLE.into_response()
+                    }
+                }
+            }
+            Err(error) => error.into_response(),
+        });
+    }
     if route.provider == "whatsapp" {
         use super::whatsapp_es::Edge;
         match super::whatsapp_es::edge(state, &route.id, &method, &query, &forwarded, &body).await? {
