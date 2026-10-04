@@ -86,6 +86,10 @@ Lane 1 needs a connected runnable local app and an account hosted on this device
 
 The local connector's key is an access token whose only scope is `vendor-bot:<vendorBotId>`. It opens `POST /mcp/bots/<vendorBotId>` and nothing else. Its calls show up in the connector's audit under `local-key:<id>`, and revoking the key stops them.
 
+### Signing in from Claude, ChatGPT or Claude Code
+
+When a vendor app connects to the public connector URL it signs you in with Allternit (Clerk) and registers itself. The first call is then refused with `approval_required` and a link, because you have to approve that app for that bot once. After that it works until you revoke it. Details and routes are in [Use your vendor bots on the phone](/guides/vendor-bots-use-your-phone).
+
 ### App settings that Allternit writes
 
 | App | File or command | Entry |

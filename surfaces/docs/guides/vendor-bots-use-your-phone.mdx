@@ -56,7 +56,7 @@ Everything works the same on Desktop, the ai.allternit.com phone layout and the 
 
 **How the edge forwards.**
 
-1. It verifies the Clerk token: signature, issuer, expiry, `aud` equal to the connector's URL, and the scope (`bots:act` for a bot, `agents:read` for the agents server). Nothing is forwarded until all of that passes.
+1. It verifies the Clerk token (signature, issuer, expiry) and then the sign-in model described under **OAuth** below: either a token for this connector with `aud` and its own scope, or a Clerk token with scope `profile` whose OAuth client you approved for this connector. Nothing is forwarded until all of that passes.
 2. It lists the token owner's paired runtimes (connected ones first, then most recently seen) and calls `POST /webhooks/mcp-edge/bots/:vendorBotId` on the first. The call goes over the signed runtime relay (`x-allternit-runtime-sig`, `x-allternit-runtime-ts`, `x-allternit-owner` = the verified user, `x-allternit-mcp-client` = the OAuth client), and the relay wakes a sleeping computer. The runtime accepts only that signature, and only as the owner it is paired as; its own owner checks, revoked-client check and audit run unchanged.
 3. A runtime that doesn't hold the bot answers `404 {"error":"not_found"}` and the next runtime is tried. The runtime that answered is remembered for 10 minutes. If none holds the bot the caller gets the same `404` as for someone else's bot id, so there is no way to probe for bot ids. The agents server uses only the best runtime.
 4. The whole attempt, including waking a computer, has a 25 second budget. When it is exceeded, or every candidate is offline or still waking, the answer is HTTP `200` with a JSON-RPC error carrying the caller's request id: `{"jsonrpc":"2.0","id":<id>,"error":{"code":-32000,"message":"Your Allternit computer is offline; it will be woken — try again in a minute."}}`.
@@ -70,13 +70,29 @@ Until `MCP_PUBLIC_URL` is set on cloud-api, every edge route answers `503 {"erro
 {
   "resource": "https://mcp.allternit.com/mcp/bots/<id>",
   "authorization_servers": ["https://allternit.com/__clerk"],
-  "scopes_supported": ["bots:act"],
+  "scopes_supported": ["profile"],
   "bearer_methods_supported": ["header"],
   "resource_name": "Allternit vendor bot"
 }
 ```
 
-An access token must have `aud` equal to that resource and the scope `bots:act`. A token minted for `/mcp/server` (`agents:read`) or for another bot is refused with `401`; a token with the wrong scope gets `403`; both carry the `WWW-Authenticate` challenge. The caller must own the vendor bot's execution binding (`bot_execution_bindings.type = 'vendor'`), otherwise the answer is `404`.
+**Why `profile`.** Clerk can only issue its own scopes (`openid`, `profile`, `email`, `public_metadata`, …), not `bots:act` or `agents:read`, so the edge advertises `profile` and the sign-in is two checks: Clerk proves who you are, and **your approval** says which app may act on this bot. Clerk's dynamic client registration is switched on for the instance (`dynamic_oauth_client_registration`, set through `PATCH /v1/instance/oauth_application_settings`), so `registration_endpoint` is `https://allternit.com/__clerk/oauth/register` and clients such as Claude, ChatGPT and Claude Code register themselves. Clerk also supports client ID metadata documents.
+
+**Approval.** A Clerk token with scope `profile` and a client id (`azp` / `client_id`) is accepted only when its owner approved that client for that target (`bot:<vendorBotId>`, or `agents` for `/mcp`). Without an approval the edge answers `403` and nothing is forwarded:
+
+```json
+{ "error": "approval_required", "client": "<client id>", "target": "bot:<id>", "approve_url": "https://ai.allternit.com/mcp/approve?client=…&target=bot:<id>", "message": "The owner has not approved this app (…) for this connector. Approve it here, then retry: …" }
+```
+
+`MCP_APPROVE_URL` overrides the base of `approve_url`. Approvals are one row per owner, client and target (cloud migration `043_mcp_oauth_approvals.sql`), so approving Claude for one bot approves nothing else. Routes (Clerk session or `compute` API key):
+
+| Route | Answer |
+|---|---|
+| `POST /api/v1/mcp/approvals` `{client, target, label?}` | `201 {id, client, target}`; repeating it is harmless. `400 {"error":"invalid_request"}` for a bad target. |
+| `GET /api/v1/mcp/approvals?target=` | `{approvals:[{id, client, target, label, createdAt, lastUsedAt}]}` |
+| `DELETE /api/v1/mcp/approvals/:id` | `{ok:true}`; the client is refused on its next call. `404` for one that isn't yours. |
+
+A token minted for this connector (`aud` equal to the resource and scope `bots:act`, or `agents:read` for `/mcp`) still works without an approval. A token for another connector with our own scope is refused with `401`; a token with neither our scope nor `profile` gets `403`; both carry the `WWW-Authenticate` challenge. The caller must own the vendor bot's execution binding (`bot_execution_bindings.type = 'vendor'`), otherwise the answer is `404`.
 
 **Gates.** The tools call the paths the bot itself uses:
 

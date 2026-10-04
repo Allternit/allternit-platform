@@ -48,6 +48,9 @@ use crate::ApiState;
 
 pub const BOT_SCOPE: &str = "bots:act";
 pub const AGENTS_SCOPE: &str = "agents:read";
+/// The one scope Clerk can issue that we accept (Clerk can't mint `bots:act` / `agents:read`).
+/// A token carrying it is honoured only for a client its owner approved (`mcp_oauth_approvals`).
+pub const CLERK_SCOPE: &str = "profile";
 /// Everything, including waking a sleeping computer, must fit in this.
 pub const BUDGET: Duration = Duration::from_secs(25);
 const DEFAULT_ISSUER: &str = "https://allternit.com/__clerk";
@@ -112,6 +115,13 @@ impl Target {
             Target::Agents => base.to_string(),
         }
     }
+    /// `mcp_oauth_approvals.target`.
+    fn approval_target(&self) -> String {
+        match self {
+            Target::Bot(id) => format!("bot:{id}"),
+            Target::Agents => "agents".to_string(),
+        }
+    }
     fn scope(&self) -> &'static str {
         match self {
             Target::Bot(_) => BOT_SCOPE,
@@ -136,7 +146,7 @@ fn metadata(target: &Target, base: &str) -> Value {
     json!({
         "resource": target.resource(base),
         "authorization_servers": [oauth_issuer()],
-        "scopes_supported": [target.scope()],
+        "scopes_supported": [CLERK_SCOPE],
         "bearer_methods_supported": ["header"],
         "resource_name": match target { Target::Bot(_) => "Allternit vendor bot", Target::Agents => "Allternit Agents" }
     })
@@ -191,22 +201,52 @@ fn refusal(resource: &str, status: StatusCode, body: Value, error: Option<(&str,
 struct Caller {
     user_id: String,
     client: String,
+    /// A Clerk-scoped token: only valid once the owner approved `client` for this target.
+    needs_approval: bool,
+}
+
+/// The 403 for an unapproved client, with where the owner approves it.
+fn approval_required(resource: &str, target: &Target, client: &str) -> Response {
+    let url = approve_url(target, client);
+    let msg = format!("The owner has not approved this app ({client}) for this connector. Approve it here, then retry: {url}");
+    refusal(
+        resource,
+        StatusCode::FORBIDDEN,
+        json!({ "error": "approval_required", "client": client, "target": target.approval_target(), "approve_url": url, "message": msg }),
+        Some(("insufficient_scope", &msg.replace('"', "'"))),
+    )
+}
+
+/// Where the owner approves a client: `MCP_APPROVE_URL` (default the ai app's approve page).
+fn approve_url(target: &Target, client: &str) -> String {
+    let base = std::env::var("MCP_APPROVE_URL").ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).unwrap_or_else(|| "https://ai.allternit.com/mcp/approve".to_string());
+    let enc = |s: &str| s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-_.~:".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect::<String>();
+    format!("{base}?client={}&target={}", enc(client), enc(&target.approval_target()))
 }
 
 /// The caller behind a bearer token, or a ready 401/403 with the OAuth challenge.
 fn check_claims(claims: &Value, target: &Target, base: &str) -> Result<Caller, Response> {
     let resource = target.resource(base);
     let invalid = |msg: &str| refusal(&resource, StatusCode::UNAUTHORIZED, json!({ "error": "invalid_token", "message": msg }), Some(("invalid_token", "The access token is invalid")));
+    let scopes = claim_scopes(claims);
+    let own_scope = claim_has_audience(claims, &resource) && scopes.iter().any(|s| s == target.scope());
+    if !own_scope && scopes.iter().any(|s| s == CLERK_SCOPE) {
+        // A Clerk token: no `aud` for us, and the client must be named so the owner's approval can bind to it.
+        let (Some(user_id), Some(client)) = (claims.get("sub").and_then(Value::as_str).filter(|s| !s.is_empty()), ["azp", "client_id", "cid"].iter().find_map(|k| claims[k].as_str()).filter(|c| !c.is_empty())) else {
+            return Err(invalid("Token has no subject or client"));
+        };
+        return Ok(Caller { user_id: user_id.to_string(), client: client.to_string(), needs_approval: true });
+    }
     if !claim_has_audience(claims, &resource) {
         return Err(invalid("Invalid audience"));
     }
-    if !claim_scopes(claims).iter().any(|s| s == target.scope()) {
+    if !scopes.iter().any(|s| s == target.scope()) {
         return Err(refusal(&resource, StatusCode::FORBIDDEN, json!({ "error": "insufficient_scope", "scope": target.scope() }), Some(("insufficient_scope", &format!("{} is required", target.scope())))));
     }
     let Some(user_id) = claims.get("sub").and_then(Value::as_str).filter(|s| !s.is_empty()) else {
         return Err(invalid("Token has no subject"));
     };
-    Ok(Caller { user_id: user_id.to_string(), client: client_label(claims) })
+    Ok(Caller { user_id: user_id.to_string(), client: client_label(claims), needs_approval: false })
 }
 
 // ─── backend seam ─────────────────────────────────────────────────────────────
@@ -230,6 +270,8 @@ pub trait EdgeBackend: Send + Sync {
     async fn runtimes(&self, user_id: &str) -> Result<Vec<String>, String>;
     /// One signed, synchronous call to `path` on the runtime, as `user_id`.
     async fn forward(&self, user_id: &str, runtime_id: &str, path: &str, client: &str, body: &[u8]) -> Result<(u16, Vec<u8>), Unreached>;
+    /// `true` = `user_id` approved OAuth `client` for `target` (`bot:<id>` / `agents`).
+    async fn is_approved(&self, user_id: &str, client: &str, target: &str) -> Result<bool, String>;
     /// `(owner, key id)` when `token` is a live `allternit-bot` CLI key (`abk_…`) for exactly this vendor bot.
     async fn verify_cli_key(&self, _token: &str, _vendor_bot_id: &str) -> Result<Option<(String, String)>, String> {
         Ok(None)
@@ -333,7 +375,7 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
         let invalid = |msg: &str| refusal(&resource, StatusCode::UNAUTHORIZED, json!({ "error": "invalid_token", "message": msg }), Some(("invalid_token", "The key is invalid")));
         let Target::Bot(bot) = &target else { return invalid("This key opens one vendor bot only") };
         match backend.verify_cli_key(token, bot).await {
-            Ok(Some((user_id, key_id))) => Caller { user_id, client: format!("cli-key:{key_id}") },
+            Ok(Some((user_id, key_id))) => Caller { user_id, client: format!("cli-key:{key_id}"), needs_approval: false },
             Ok(None) => return invalid("Invalid or revoked key"),
             Err(error) => {
                 tracing::warn!("mcp edge: cli key lookup failed: {error}");
@@ -350,6 +392,16 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
             Err(resp) => return resp,
         }
     };
+    if caller.needs_approval {
+        match backend.is_approved(&caller.user_id, &caller.client, &target.approval_target()).await {
+            Ok(true) => {}
+            Ok(false) => return approval_required(&resource, &target, &caller.client),
+            Err(error) => {
+                tracing::warn!("mcp edge: approval lookup failed: {error}");
+                return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "unavailable" }))).into_response();
+            }
+        }
+    }
     if *method != Method::POST {
         let mut resp = (StatusCode::METHOD_NOT_ALLOWED, Json(json!({ "error": "method_not_allowed" }))).into_response();
         resp.headers_mut().insert(header::ALLOW, HeaderValue::from_static("POST"));
@@ -419,6 +471,10 @@ struct ProdBackend<'a> {
 impl EdgeBackend for ProdBackend<'_> {
     async fn verify_cli_key(&self, token: &str, vendor_bot_id: &str) -> Result<Option<(String, String)>, String> {
         crate::routes::vendor_bot_keys::verify_key(&self.state.db, token, vendor_bot_id).await.map_err(|e| e.to_string())
+    }
+
+    async fn is_approved(&self, user_id: &str, client: &str, target: &str) -> Result<bool, String> {
+        crate::routes::mcp_oauth_approvals::is_approved(&self.state.db, user_id, client, target).await.map_err(|e| e.to_string())
     }
 
     async fn verify(&self, token: &str) -> Result<Value, String> {
@@ -497,11 +553,17 @@ mod tests {
         verified: AtomicUsize,
         /// CLI key → (vendor bot, owner, key id).
         cli_keys: HashMap<String, (String, String, String)>,
+        /// (owner, client, target) the owner approved.
+        approvals: Vec<(String, String, String)>,
     }
 
     impl Fake {
         fn new(runtimes: &[&str]) -> Self {
-            Self { tokens: HashMap::new(), runtimes: runtimes.iter().map(|r| r.to_string()).collect(), replies: Mutex::new(HashMap::new()), calls: Mutex::new(vec![]), verified: AtomicUsize::new(0), cli_keys: HashMap::new() }
+            Self { tokens: HashMap::new(), runtimes: runtimes.iter().map(|r| r.to_string()).collect(), replies: Mutex::new(HashMap::new()), calls: Mutex::new(vec![]), verified: AtomicUsize::new(0), cli_keys: HashMap::new(), approvals: vec![] }
+        }
+        fn approved(mut self, user: &str, client: &str, target: &str) -> Self {
+            self.approvals.push((user.into(), client.into(), target.into()));
+            self
         }
         fn token(mut self, t: &str, c: Value) -> Self {
             self.tokens.insert(t.to_string(), c);
@@ -525,6 +587,9 @@ mod tests {
         async fn verify(&self, token: &str) -> Result<Value, String> {
             self.verified.fetch_add(1, Ordering::SeqCst);
             self.tokens.get(token).cloned().ok_or_else(|| "Invalid Clerk signature".to_string())
+        }
+        async fn is_approved(&self, user_id: &str, client: &str, target: &str) -> Result<bool, String> {
+            Ok(self.approvals.contains(&(user_id.to_string(), client.to_string(), target.to_string())))
         }
         async fn verify_cli_key(&self, token: &str, vendor_bot_id: &str) -> Result<Option<(String, String)>, String> {
             Ok(self.cli_keys.get(token).filter(|k| k.0 == vendor_bot_id).map(|k| (k.1.clone(), k.2.clone())))
@@ -559,6 +624,57 @@ mod tests {
 
     fn bot(id: &str) -> Target {
         Target::Bot(id.to_string())
+    }
+
+    // ── Clerk tokens (scope `profile`) + owner approval ──────────────────────
+
+    fn clerk_claims(sub: &str, client: Option<&str>) -> Value {
+        let mut c = json!({ "iss": DEFAULT_ISSUER, "sub": sub, "scope": "openid profile" });
+        if let Some(client) = client {
+            c["client_id"] = json!(client);
+        }
+        c
+    }
+
+    #[tokio::test]
+    async fn a_clerk_token_is_refused_with_an_approve_link_until_the_owner_approves_that_client_for_that_bot() {
+        let f = Fake::new(&["rt1"]).token("tok", clerk_claims("user_c", Some("client-abc")));
+        let (status, headers, body) = post(&f, bot("b1"), &bearer("tok"), LIST).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body["error"], "approval_required");
+        assert!(body["message"].as_str().unwrap().contains("client=client-abc&target=bot:b1"), "{body}");
+        assert!(headers.contains_key(header::WWW_AUTHENTICATE));
+        assert!(f.calls.lock().unwrap().is_empty(), "nothing is forwarded before approval");
+
+        let f = Fake::new(&["rt1"]).token("tok", clerk_claims("user_c", Some("client-abc"))).approved("user_c", "client-abc", "bot:b1");
+        let (status, _, _) = post(&f, bot("b1"), &bearer("tok"), LIST).await;
+        assert_eq!(status, StatusCode::OK);
+        let calls = f.calls.lock().unwrap();
+        assert_eq!((calls[0].0.as_str(), calls[0].3.as_str()), ("user_c", "client-abc"));
+    }
+
+    #[tokio::test]
+    async fn approval_does_not_carry_to_another_bot_client_owner_or_the_agents_server() {
+        let approved = |f: Fake| f.approved("user_c", "client-abc", "bot:b1");
+        for (target, sub, client) in [(bot("b2"), "user_c", "client-abc"), (bot("b1"), "user_c", "client-xyz"), (bot("b1"), "user_d", "client-abc"), (Target::Agents, "user_c", "client-abc")] {
+            let f = approved(Fake::new(&["rt1"]).token("tok", clerk_claims(sub, Some(client))));
+            let (status, _, body) = post(&f, target, &bearer("tok"), LIST).await;
+            assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("approval_required")));
+            assert!(f.calls.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_clerk_token_without_a_client_or_subject_is_invalid_and_agents_need_their_own_approval() {
+        let f = Fake::new(&["rt1"]).token("noclient", clerk_claims("user_c", None)).token("agents", clerk_claims("user_c", Some("c1"))).approved("user_c", "c1", "agents");
+        assert_eq!(post(&f, bot("b1"), &bearer("noclient"), LIST).await.0, StatusCode::UNAUTHORIZED);
+        assert_eq!(post(&f, Target::Agents, &bearer("agents"), LIST).await.0, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn a_token_with_neither_our_scope_nor_profile_is_still_refused() {
+        let f = Fake::new(&["rt1"]).token("t", json!({ "sub": "u", "scope": "openid email", "client_id": "c", "aud": "https://mcp.allternit.com/mcp/bots/b1" }));
+        assert_eq!(post(&f, bot("b1"), &bearer("t"), LIST).await.0, StatusCode::FORBIDDEN);
     }
 
     // ── CLI keys ──────────────────────────────────────────────────────────────
@@ -718,6 +834,9 @@ mod tests {
         struct Stuck;
         #[async_trait::async_trait]
         impl EdgeBackend for Stuck {
+            async fn is_approved(&self, _: &str, _: &str, _: &str) -> Result<bool, String> {
+                Ok(true)
+            }
             async fn verify(&self, _: &str) -> Result<Value, String> {
                 Ok(claims("https://mcp.allternit.com/mcp/bots/b-stuck", BOT_SCOPE, "user-a"))
             }
@@ -757,10 +876,10 @@ mod tests {
     #[test]
     fn metadata_is_per_bot_with_its_own_scope_and_the_agents_server_keeps_its_own() {
         let m = metadata(&bot("b1"), BASE);
-        assert_eq!((m["resource"].as_str(), m["scopes_supported"][0].as_str()), (Some("https://mcp.allternit.com/mcp/bots/b1"), Some("bots:act")));
+        assert_eq!((m["resource"].as_str(), m["scopes_supported"][0].as_str()), (Some("https://mcp.allternit.com/mcp/bots/b1"), Some("profile")));
         assert_eq!(m["authorization_servers"][0], oauth_issuer());
         let a = metadata(&Target::Agents, BASE);
-        assert_eq!((a["resource"].as_str(), a["scopes_supported"][0].as_str()), (Some(BASE), Some("agents:read")));
+        assert_eq!((a["resource"].as_str(), a["scopes_supported"][0].as_str()), (Some(BASE), Some("profile")));
         assert_eq!(bot_id_from_resource_path("mcp/bots/b1"), Some("b1"));
         assert_eq!(bot_id_from_resource_path("/mcp/bots/b1/"), Some("b1"));
         assert_eq!(bot_id_from_resource_path("mcp/server"), None);
@@ -844,10 +963,10 @@ mod tests {
         std::env::set_var("MCP_PUBLIC_URL", BASE);
         std::env::remove_var("MCP_OAUTH_ISSUER");
         let (status, _, doc) = send("GET", "/.well-known/oauth-protected-resource/mcp/bots/b1").await;
-        assert_eq!((status, doc["resource"].as_str(), doc["scopes_supported"][0].as_str()), (StatusCode::OK, Some("https://mcp.allternit.com/mcp/bots/b1"), Some("bots:act")));
+        assert_eq!((status, doc["resource"].as_str(), doc["scopes_supported"][0].as_str()), (StatusCode::OK, Some("https://mcp.allternit.com/mcp/bots/b1"), Some("profile")));
         assert_eq!(doc["authorization_servers"][0], "https://allternit.com/__clerk");
         let (_, _, doc) = send("GET", "/.well-known/oauth-protected-resource").await;
-        assert_eq!((doc["resource"].as_str(), doc["scopes_supported"][0].as_str()), (Some(BASE), Some("agents:read")));
+        assert_eq!((doc["resource"].as_str(), doc["scopes_supported"][0].as_str()), (Some(BASE), Some("profile")));
         let (_, _, doc) = send("GET", "/.well-known/oauth-protected-resource/mcp/server").await;
         assert_eq!(doc["resource"].as_str(), Some(BASE));
         // A real route with no token: the OAuth challenge, via the same paths on the mcp host.
