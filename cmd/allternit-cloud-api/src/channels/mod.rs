@@ -5,4 +5,6 @@
 //! its own module, registered in `lib.rs`. See
 //! `docs/CHANNELS_CONTRACTS.md` for the ownership rules.
 
+pub mod app_env;
+pub mod channel_apps;
 pub mod teams_app;

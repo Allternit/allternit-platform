@@ -91,9 +91,9 @@ pub struct SlackAppConfig {
 
 /// Shared-app credentials: cloud env only, never per-user, never Postgres.
 pub fn app_config() -> Option<SlackAppConfig> {
-    let client_id = std::env::var("SLACK_CLIENT_ID").ok().filter(|s| !s.is_empty());
-    let client_secret = std::env::var("SLACK_CLIENT_SECRET").ok().filter(|s| !s.is_empty());
-    let signing_secret = std::env::var("SLACK_SIGNING_SECRET").ok().filter(|s| !s.is_empty());
+    let client_id = crate::channels::app_env::first(crate::channels::app_env::SLACK_CLIENT_ID);
+    let client_secret = crate::channels::app_env::first(crate::channels::app_env::SLACK_CLIENT_SECRET);
+    let signing_secret = crate::channels::app_env::first(crate::channels::app_env::SLACK_SIGNING_SECRET);
     match (client_id, client_secret, signing_secret) {
         (Some(client_id), Some(client_secret), Some(signing_secret)) => Some(SlackAppConfig { client_id, client_secret, signing_secret }),
         _ => None,
