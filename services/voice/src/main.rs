@@ -31,6 +31,24 @@ async fn main() -> anyhow::Result<()> {
     info!("Starting Voice API Service on port {port}...");
 
     let state = VoiceServiceState::new();
+    if warm_on_boot(std::env::var("ALLTERNIT_VOICE_WARM").ok().as_deref()) {
+        // A server that takes calls loads the default speech models now, so
+        // the first call after a restart doesn't wait seconds for them (the
+        // call worker gives a session a few seconds to be ready). Desktop
+        // leaves this off and loads on first use.
+        let (stt, tts) = (state.stt(), state.tts());
+        tokio::task::spawn_blocking(move || {
+            let t = std::time::Instant::now();
+            if let Err(e) = stt.prepare(voice_service::stt::SttModel::Moonshine) {
+                tracing::warn!("warm-up: STT not loaded: {e}");
+            }
+            if let Err(e) = tts.prepare() {
+                tracing::warn!("warm-up: TTS not loaded: {e}");
+            }
+            tts.prewarm_fixed_phrases(None);
+            info!("warm-up done in {} ms", t.elapsed().as_millis());
+        });
+    }
     let app = create_router(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
@@ -40,6 +58,22 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
 
     Ok(())
+}
+
+/// `ALLTERNIT_VOICE_WARM=1|true` loads the default models at startup.
+fn warm_on_boot(v: Option<&str>) -> bool {
+    matches!(v.map(|v| v.trim().to_ascii_lowercase()).as_deref(), Some("1" | "true" | "yes"))
+}
+
+#[cfg(test)]
+mod warm_tests {
+    #[test]
+    fn warm_only_when_asked() {
+        assert!(super::warm_on_boot(Some("1")));
+        assert!(super::warm_on_boot(Some("true")));
+        assert!(!super::warm_on_boot(None));
+        assert!(!super::warm_on_boot(Some("0")));
+    }
 }
 
 /// Keep espeak-ng (GPL-3.0-or-later) out of this binary.

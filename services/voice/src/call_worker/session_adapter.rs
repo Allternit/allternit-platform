@@ -118,6 +118,11 @@ pub fn parse_event(text: &str) -> Option<CoreEvent> {
     })
 }
 
+/// How long a call waits for the voice core's `session.ready`. Loading the
+/// models cold takes ~5 s on the voice host; servers warm them at boot
+/// (`ALLTERNIT_VOICE_WARM`), and this leaves room for a cold start anyway.
+const SESSION_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
+
 /// Open a Voice Session over WebSocket and wait for `session.ready`.
 pub async fn connect_ws(url: &str, token: Option<&str>, voice: Option<&str>) -> Result<CoreHandle> {
     let full = match token {
@@ -131,7 +136,7 @@ pub async fn connect_ws(url: &str, token: Option<&str>, voice: Option<&str>) -> 
     let (mut sink, mut stream) = ws.split();
     sink.send(Message::Text(session_start(voice).to_string())).await?;
 
-    let output_sample_rate = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    let output_sample_rate = tokio::time::timeout(SESSION_READY_TIMEOUT, async {
         while let Some(msg) = stream.next().await {
             if let Message::Text(t) = msg? {
                 let v: Value = serde_json::from_str(&t).unwrap_or(Value::Null);
