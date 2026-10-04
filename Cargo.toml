@@ -4,6 +4,7 @@ resolver = "2"
 members = [
     "services/orchestration/platform-orchestration-service",
     "cmd/allternit-api",
+    "cmd/allternit-bot",
     "cmd/allternit-mux",
     "cmd/allternit-cloud-api",
     "cmd/allternit-node",

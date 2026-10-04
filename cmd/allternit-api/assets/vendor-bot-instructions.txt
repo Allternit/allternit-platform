@@ -35,4 +35,6 @@ From a shell (the allternit-bot command)
   allternit-bot ticket <T-n>
   allternit-bot result <T-n> <summary...>
   allternit-bot help
-Set ALLTERNIT_BOT_KEY (the key from the owner's connector page) and ALLTERNIT_BOT_ID. Add --json to any command for raw output. Exit code 0 means done, 1 means Allternit refused (the reason is printed), 2 means it could not be reached.
+Setup: the owner gives you a key (abk_...) and the bot id. Either export ALLTERNIT_BOT_KEY and ALLTERNIT_BOT_ID, or save them once:
+  echo "$KEY" | allternit-bot login <bot id>
+Use "-" as the last argument to read long text from stdin. Add --json to any command for raw output. Exit code 0 means done, 1 means Allternit refused (the reason is printed; tell the user, do not retry around it), 2 means it could not be reached or the command was wrong.
