@@ -1,0 +1,57 @@
+---
+title: Web Push
+description: Ring and notify people whose Allternit app is closed. Subscription routes, VAPID setup and the notification payloads.
+---
+
+Web Push lets cloud-api reach a person whose app isn't open: an incoming [in-app call](/api/inapp-calls) rings, a missed call replaces the ringing notification, a thread message arrives, and a message that reaches a bot through a channel (Slack, Telegram, text and so on) says so. Payloads are encrypted for the browser (RFC 8291) and signed with VAPID (RFC 8292); the push service never sees the text.
+
+It is off until the keys below are set. With them unset every route here answers `503 {"error":"push_not_configured"}` and nothing is sent, so a deploy without the env is safe. Migration `039_push_subscriptions.sql` is applied by hand to the production database.
+
+## Turn it on
+
+Set these on `allternit-cloud-api`:
+
+| Variable | Value |
+|---|---|
+| `ALLTERNIT_VAPID_PUBLIC_KEY` | 65-byte uncompressed P-256 public key, base64url without padding |
+| `ALLTERNIT_VAPID_PRIVATE_KEY` | 32-byte private scalar, base64url without padding |
+| `ALLTERNIT_VAPID_SUBJECT` | Optional. Contact the push services see. Default `mailto:support@allternit.com` |
+
+`npx web-push generate-vapid-keys` prints a pair in this format. Generate one pair for production and keep the private half in the secret store; changing it later drops every existing subscription (the browsers must subscribe again).
+
+## Routes
+
+Subscription routes take a Clerk session or a `compute`-scoped API key.
+
+- `GET /api/v1/push/vapid-key` (public) returns `{"publicKey": "B…"}`. Clients pass it to `pushManager.subscribe` as `applicationServerKey`.
+- `POST /api/v1/push/subscriptions`:
+
+```json
+{
+  "deviceId": "d_7f3a…",
+  "subscription": { "endpoint": "https://fcm.googleapis.com/fcm/send/…", "keys": { "p256dh": "B…", "auth": "…" } }
+}
+```
+
+returns `201 {"ok": true, "id": "ps_…"}`. `deviceId` is a random id the app keeps in local storage; subscribing again from the same device replaces its row. The endpoint must be a public `https` host. A person may register 10 devices. If someone else signs in on the same browser, the endpoint moves to them. Errors: `400 bad_device_id | bad_endpoint | bad_keys`, `429 too_many_devices`.
+
+- `DELETE /api/v1/push/subscriptions` with `{"deviceId": "d_7f3a…"}` returns `{"ok": true, "removed": true}`. Apps call it on sign-out and when the person turns notifications off.
+
+A push service answering `404` or `410` means the browser dropped the subscription, and cloud-api deletes the row. Other failures are counted, and a subscription is removed after 8 in a row.
+
+## What gets pushed
+
+The service worker receives JSON `{type, title, body, url, tag, data}`. `url` is a path on the app's own origin; opening it lands on the call or thread.
+
+| `type` | When | `url` | Notes |
+|---|---|---|---|
+| `call` | Someone rings you | `/?allternit_call=<room>&from=<userId>&thread=<threadId>&bot=<botId>` | `Urgency: high`, TTL 45 s. `data` has `room`, `from`, `threadId`, `botId`, `label`, `expiresAt` |
+| `missed_call` | A ring ended unanswered or was cancelled | `/?allternit_thread=<threadId>&bot=<botId>&from=<userId>` | Same `tag` as the ring, so it replaces it |
+| `message` | A new in-app thread message | `/?allternit_thread=<threadId>&bot=<botId>&from=<userId>` | One push per thread per 20 seconds |
+| `channel_message` | A message reached your bot through a channel | `/?allternit_channel=<provider>` | One push per address per 20 seconds. Says where it came from, not the text |
+
+Message-type pushes are also capped at 40 an hour per person. Calls are not (rings are already limited to 5 per person in 10 minutes). The `tag` is also sent as the push `Topic`, so a push service holds only the latest of each.
+
+## Where it lives
+
+`cmd/allternit-cloud-api/src/routes/web_push.rs`. Senders: `spawn_notify` (background, does nothing without the env) and `send_to_user`. `inapp_calls.rs` calls them for rings, missed calls and messages; `channel_inbound.rs` calls `notify_channel_message` after a relayed message is delivered to the runtime. Tests use a fake transport and the RFC 8291 appendix A test vector.

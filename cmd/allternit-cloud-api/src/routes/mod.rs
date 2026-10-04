@@ -38,6 +38,7 @@ pub mod channel_inbound;
 pub mod phone;
 pub mod phone_invites;
 pub mod inapp_calls;
+pub mod web_push;
 pub mod channel_onboarding;
 pub mod paired_computers;
 pub mod mirror;
