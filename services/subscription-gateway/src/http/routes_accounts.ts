@@ -140,6 +140,14 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
 
   const loginState = (accountId: string) => {
     const s = logins.get(accountId);
+    // After a bot check the tracker waits while the adapter keeps probing; once the
+    // account itself reads ready, the login is done even if the watch never flipped it
+    // (Eoj, 2026-10-04: the app kept saying "waiting" after the check was cleared).
+    if (s && s.state === "waiting" && getAccount(deps.db, accountId)?.session_health === "ready") {
+      stopWatch(s);
+      s.state = "signed_in";
+      s.detail = null;
+    }
     const done = s?.state === "signed_in" || s?.state === "failed";
     const account = done ? getAccount(deps.db, accountId) : null;
     return {
