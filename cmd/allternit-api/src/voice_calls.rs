@@ -135,13 +135,22 @@ async fn stream_vendor_turn(session_id: &str, text: &str, events: &mpsc::Unbound
         }
     };
     let turn = crate::gateway_runner::intercept_turn_streaming(session_id, text, Default::default(), tx);
-    let (reply, ()) = tokio::join!(turn, forward);
-    match reply {
-        Some(Ok(_)) => Ok(TurnReply::Streamed),
-        Some(Err(e)) => Err(e),
-        None => Err("the vendor gateway is not running".to_string()),
+    // Same upper bound as a native turn: a lane that streams a few words and then
+    // stalls must not hold the call forever. On expiry the vendor turn is cancelled.
+    let joined = tokio::time::timeout(VENDOR_TURN_DEADLINE, async { tokio::join!(turn, forward).0 }).await;
+    match joined {
+        Ok(Some(Ok(_))) => Ok(TurnReply::Streamed),
+        Ok(Some(Err(e))) => Err(e),
+        Ok(None) => Err("the vendor gateway is not running".to_string()),
+        Err(_) => {
+            let _ = crate::gateway_runner::intercept_abort(session_id).await;
+            Err(format!("the vendor turn took longer than {}s and was cancelled", VENDOR_TURN_DEADLINE.as_secs()))
+        }
     }
 }
+
+/// Upper bound for a vendor-bound voice turn, matching the native turn deadline.
+const VENDOR_TURN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// Why a session cannot be streamed locally, if it cannot.
 fn no_stream_reason(db: &DbHandle, session_id: &str) -> Option<&'static str> {
