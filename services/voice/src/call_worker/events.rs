@@ -44,7 +44,7 @@ pub enum CallEvent {
     Transferred { to: String, mode: TransferMode, ok: bool, reason: Option<String> },
     Takeover { by: String, active: bool },
     VoicemailDetected { action: String },
-    Ended { duration_sec: u64, reason: String, recording_ref: Option<String> },
+    Ended { duration_sec: u64, reason: String, recording_ref: Option<String>, answered: bool, missed: bool },
 }
 
 impl CallEvent {
@@ -84,8 +84,11 @@ impl CallEvent {
             }
             CallEvent::Takeover { by, active } => json!({"by": by, "active": active}),
             CallEvent::VoicemailDetected { action } => json!({"action": action}),
-            CallEvent::Ended { duration_sec, reason, recording_ref } => {
-                let mut v = json!({"durationSec": duration_sec, "reason": reason});
+            CallEvent::Ended { duration_sec, reason, recording_ref, answered, missed } => {
+                let mut v = json!({"durationSec": duration_sec, "reason": reason, "answered": answered});
+                if *missed {
+                    v["missed"] = json!(true);
+                }
                 if let Some(r) = recording_ref {
                     v["recordingRef"] = json!(r);
                 }
@@ -279,9 +282,12 @@ mod tests {
             p,
             json!({"held":true,"mutedBot":false,"mutedCaller":true,"speaker":null,"recording":false,"callId":"c"})
         );
-        let p = CallEvent::Ended { duration_sec: 42, reason: "caller_hangup".into(), recording_ref: None }
+        let p = CallEvent::Ended { duration_sec: 42, reason: "caller_hangup".into(), recording_ref: None, answered: true, missed: false }
             .payload("c");
-        assert_eq!(p, json!({"durationSec":42,"reason":"caller_hangup","callId":"c"}));
+        assert_eq!(p, json!({"durationSec":42,"reason":"caller_hangup","answered":true,"callId":"c"}));
+        let p = CallEvent::Ended { duration_sec: 1, reason: "caller_hangup".into(), recording_ref: None, answered: true, missed: true }
+            .payload("c");
+        assert_eq!(p["missed"], true);
         let p = CallEvent::Transferred { to: "+1".into(), mode: TransferMode::Cold, ok: false, reason: Some("x".into()) }
             .payload("c");
         assert_eq!(p["mode"], "cold");

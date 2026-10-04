@@ -270,8 +270,21 @@ async fn create_h(State(state): State<Arc<AppState>>, Extension(deps): Extension
         Ok(None) => {}
         Err(e) => return fail(StatusCode::INTERNAL_SERVER_ERROR, &e),
     }
-    let Some(number) = crate::channel_phone::number(&state.db, &b.number_id) else {
-        return fail(StatusCode::NOT_FOUND, "that phone number isn't set up on this runtime");
+    // Backstop: the runtime's number table can be empty (fresh or restored computer). The body is
+    // signed by cloud-api for this owner, so register the number from it instead of failing every call.
+    let number = match crate::channel_phone::number(&state.db, &b.number_id) {
+        Some(n) => n,
+        None => {
+            let bot_e164 = if b.direction == "inbound" { &b.to } else { &b.from };
+            if let Err(e) = crate::channel_phone::upsert_number(&state.db, &b.number_id, &auth.owner, &b.bot_id, bot_e164, None) {
+                return fail(StatusCode::UNPROCESSABLE_ENTITY, &format!("couldn't set up that phone number on this runtime: {e}"));
+            }
+            tracing::info!(number_id = %b.number_id, bot_id = %b.bot_id, "voice call: registered unknown phone number from the signed call start");
+            match crate::channel_phone::number(&state.db, &b.number_id) {
+                Some(n) => n,
+                None => return fail(StatusCode::INTERNAL_SERVER_ERROR, "phone number was not stored"),
+            }
+        }
     };
     if number.owner != auth.owner || number.bot_id != b.bot_id {
         return fail(StatusCode::FORBIDDEN, "that number does not belong to this owner and bot");
@@ -683,7 +696,8 @@ mod tests {
         assert_eq!(send(&h.app, "POST", CALLS, bad, true).await.0, StatusCode::FORBIDDEN);
         let mut bad = call_body("c3");
         bad["numberId"] = json!("nope");
-        assert_eq!(send(&h.app, "POST", CALLS, bad, true).await.0, StatusCode::NOT_FOUND);
+        bad["botId"] = json!("bot-2");
+        assert_eq!(send(&h.app, "POST", CALLS, bad, true).await.0, StatusCode::UNPROCESSABLE_ENTITY);
         let mut bad = call_body("c3");
         bad["botId"] = json!("bot-2");
         assert_eq!(send(&h.app, "POST", CALLS, bad, true).await.0, StatusCode::FORBIDDEN);
@@ -691,6 +705,28 @@ mod tests {
         bad["from"] = json!("4155550123");
         assert_eq!(send(&h.app, "POST", CALLS, bad, true).await.0, StatusCode::BAD_REQUEST);
         assert_eq!(send(&h.app, "POST", CALLS, json!({ "nope": 1 }), true).await.0, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn unknown_number_is_registered_from_the_signed_start() {
+        let h = setup("backstop", Some((TOKEN, OWNER))).await;
+        let mut body = call_body("c1");
+        (body["numberId"], body["to"]) = (json!("num-new"), json!("+14155550120"));
+        let (s, b) = send(&h.app, "POST", CALLS, body, true).await;
+        assert_eq!(s, StatusCode::OK, "{b}");
+        let n = crate::channel_phone::number(&h.state.db, "num-new").expect("registered");
+        assert_eq!((n.owner.as_str(), n.bot_id.as_str(), n.e164.as_str()), (OWNER, "bot-1", "+14155550120"));
+        // Outbound registers the bot's number from `from`.
+        let mut out = call_body("c2");
+        (out["numberId"], out["direction"], out["from"], out["to"]) = (json!("num-out"), json!("outbound"), json!("+14155550111"), json!("+14155550199"));
+        assert_eq!(send(&h.app, "POST", CALLS, out, true).await.0, StatusCode::OK);
+        assert_eq!(crate::channel_phone::number(&h.state.db, "num-out").unwrap().e164, "+14155550111");
+        // A bot that isn't the owner's is refused with 422 and nothing is registered.
+        let mut foreign = call_body("c3");
+        (foreign["numberId"], foreign["botId"], foreign["to"]) = (json!("num-x"), json!("bot-9"), json!("+14155550130"));
+        let (s, b) = send(&h.app, "POST", CALLS, foreign, true).await;
+        assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{b}");
+        assert!(crate::channel_phone::number(&h.state.db, "num-x").is_none());
     }
 
     fn ledger(h: &H, call: &str) -> Vec<(String, String, String, Value)> {
