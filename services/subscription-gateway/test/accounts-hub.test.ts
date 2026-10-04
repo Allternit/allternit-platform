@@ -210,6 +210,19 @@ describe("subscriptions hub", () => {
     await until(async () => (await api("get", `/v1/accounts/${id}/login`)).body.state === "signed_in");
   });
 
+  it("a waiting login reports signed_in as soon as the account itself reads ready", async () => {
+    // Eoj, 2026-10-04: the check was cleared and the account turned ready through another
+    // probe, but the login tracker kept answering "waiting", so the app never finished.
+    const { api, jar, host, provider } = setup({ probe: "challenge_presented" });
+    const id = (await api("post", "/v1/accounts").send({ provider, login: true })).body.account_id as string;
+    jar.cookies = [cookie("session-token", "abc", host)];
+    await until(async () => (await api("get", `/v1/accounts/${id}/login`)).body.state === "waiting" && /security check/.test((await api("get", `/v1/accounts/${id}/login`)).body.detail ?? ""));
+    upsertAccount(deps.db, { ...getAccount(deps.db, id)!, session_health: "ready" as never });
+    const st = (await api("get", `/v1/accounts/${id}/login`)).body;
+    expect(st.state).toBe("signed_in");
+    expect(st.account.session_health).toBe("ready");
+  });
+
   it("a sign-in the probe doesn't accept is failed, with what to do", async () => {
     const { api, jar, host, provider } = setup({ probe: "auth_required" });
     const id = (await api("post", "/v1/accounts").send({ provider, login: true })).body.account_id as string;
