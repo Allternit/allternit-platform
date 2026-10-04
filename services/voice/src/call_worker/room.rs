@@ -149,8 +149,7 @@ async fn handle_job(cfg: WorkerConfig, cloud: CloudClient, job: JobInfo, cancel:
         let _ = rooms.delete_room(&room_name).await;
         anyhow::bail!("outbound call without consentRef");
     }
-    let remote = get(SIP_PHONE).unwrap_or_default();
-    let local = get("to").or_else(|| get(SIP_TRUNK_PHONE)).unwrap_or_default();
+    let (remote, local) = call_parties(&direction, &get);
     let start_req = StartCallRequest {
         bot_id: get("botId").unwrap_or_default(),
         number_id: get("numberId").unwrap_or_default(),
@@ -559,8 +558,47 @@ async fn hangup(rooms: &RoomClient, room_name: &str, caller: &str) {
     }
 }
 
+/// `(remote, local)`: the other party and the bot's own number. LiveKit's
+/// `sip.phoneNumber` is always the remote party and `sip.trunkPhoneNumber` the
+/// trunk (bot) side. cloud-api's attributes are call-shaped: inbound `to` is the
+/// bot's number; outbound `from` is the bot's number and `to` the callee.
+fn call_parties(direction: &Direction, get: &dyn Fn(&str) -> Option<String>) -> (String, String) {
+    match direction {
+        Direction::Inbound => (
+            get(SIP_PHONE).or_else(|| get("from")).unwrap_or_default(),
+            get("to").or_else(|| get(SIP_TRUNK_PHONE)).unwrap_or_default(),
+        ),
+        Direction::Outbound => (
+            get("to").or_else(|| get(SIP_PHONE)).unwrap_or_default(),
+            get("from").or_else(|| get(SIP_TRUNK_PHONE)).unwrap_or_default(),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn outbound_from_is_the_bots_number_not_the_callee() {
+        use std::collections::HashMap;
+        let attrs: HashMap<&str, &str> = HashMap::from([
+            ("direction", "outbound"),
+            ("from", "+16512686010"),
+            ("to", "+17735520158"),
+            (super::SIP_PHONE, "+17735520158"),
+        ]);
+        let get = |k: &str| attrs.get(k).map(|v| v.to_string());
+        let (remote, local) = super::call_parties(&super::Direction::Outbound, &get);
+        assert_eq!((remote.as_str(), local.as_str()), ("+17735520158", "+16512686010"));
+        // Only LiveKit's SIP attributes: the trunk side is still the bot.
+        let sip: HashMap<&str, &str> = HashMap::from([(super::SIP_PHONE, "+17735520158"), (super::SIP_TRUNK_PHONE, "+16512686010")]);
+        let get = |k: &str| sip.get(k).map(|v| v.to_string());
+        assert_eq!(super::call_parties(&super::Direction::Outbound, &get), ("+17735520158".into(), "+16512686010".into()));
+        // Inbound: remote = caller (sip.phoneNumber), local = `to` (bot).
+        let inbound: HashMap<&str, &str> = HashMap::from([(super::SIP_PHONE, "+14155550123"), ("to", "+16512686010")]);
+        let get = |k: &str| inbound.get(k).map(|v| v.to_string());
+        assert_eq!(super::call_parties(&super::Direction::Inbound, &get), ("+14155550123".into(), "+16512686010".into()));
+    }
+
     use super::*;
 
     #[test]
