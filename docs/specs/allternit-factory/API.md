@@ -1,0 +1,120 @@
+# Allternit Factory: interface contract (v0, 2026-10-04)
+
+Every workstream builds against this. If you need a change, write it in your notes file under "Contract change requested". Don't silently diverge.
+
+Spec: `SPEC.md` (same folder). Types as code (allternit-ai): `src/lib/factory/types.ts` on `factory/integration`.
+
+## 1. Processes
+
+- **Engine:** `allternit-factory` (Rust, `cmd/allternit-factory`, crates under `factory/`). It serves HTTP on `127.0.0.1:3011` (the port the old Rails Service had) and a Unix socket at `~/.allternit/factory/factory.sock`. State root: `~/.allternit/factory/`. Workspace ledger: the workspace's `.allternit/` (unchanged layout).
+- **Gizzi** (`cmd/gizzi-code`): the product CLI/TUI. `gizzi <part> <verb> …` runs `allternit-factory <part> <verb> … --json` and renders the result. It finds the engine binary in this order: next to the `gizzi` executable, then `$ALLTERNIT_FACTORY_BIN`, then `~/.allternit/bin/allternit-factory`, then `PATH`. If no engine is found, it says so with exit code 3 and tells the user how to install it. Never fall back silently.
+- **allternit-api** (`cmd/allternit-api`): proxies `/api/factory/*` to the engine for Desktop, web and phone, except **approvals** (`/api/factory/approvals*`), which allternit-api owns because push and channels live there. It links the engine crates in-process for ledger and Gate access.
+
+## 2. CLI contract (engine and Gizzi share it)
+
+The four parts and their verbs are exactly SPEC §7. Rules:
+- Every command accepts `--json`. With `--json`, stdout is one JSON document and nothing else.
+- Every mutation accepts `--dry-run` and prints exactly what would change.
+- Exit codes: `0` ok · `1` refused by Gate · `2` not found · `3` transport broken / engine missing · `4` timeout · `5` needs a person · `64` usage error.
+- On error with `--json`, stdout is `{"error":{"code":"refused|not_found|transport|timeout|needs_person|usage","fact":"…","action":"…"}}`.
+- A verb that's specified but not implemented yet returns exit `2` with code `not_found` and the fact `"<part> <verb> is not built yet"`. Never pretend.
+
+## 3. HTTP resources (`/api/factory`)
+
+All JSON uses camelCase. Times are RFC 3339. IDs are opaque strings.
+
+### Agents
+- `GET /api/factory/agents?team=<name>` → `{ agents: Agent[] }`
+- `GET /api/factory/agents/:id` → `Agent`
+- `GET /api/factory/agents/:id/capture?lines=80` → `{ text: string, at: string }`
+- `GET /api/factory/agents/:id/transcript?cursor=` → `{ chunks: {at:string,text:string}[], next: string|null }`
+- `GET /api/factory/teams` → `{ teams: Team[] }`
+- `POST /api/factory/teams/:name/up` body `{ preset?: string, on?: string, dryRun?: boolean }` → `{ plan: TeamPlanStep[], applied: boolean }`
+- `POST /api/factory/teams/:name/down` → `{ stopped: string[] }`
+
+```
+Agent {
+  id, slug, name, team: string|null, address: string /* "slug@team" or slug */,
+  avatar: { type: 'pet'|'geometric'|'image', data: unknown } | null,
+  role: string|null,
+  binding: {
+    type: 'hosted'|'terminal'|'vendor',
+    harness?: 'gizzi'|'claude'|'codex'|'kimi'|'grok'|'agy'|string,   // terminal
+    vendor?: string, mode?: 'hosted'|'linked'|'mirror',               // vendor
+    lane?: 'official'|'channel'|'ui_bridge'|'local',
+    guarantee?: 'exact'|'best_effort'|'read_only',
+    directingBotId?: string|null
+  },
+  state: 'idle'|'working'|'blocked'|'needs_you'|'done'|'failed'|'offline',
+  machine: { id: string, name: string } | null,
+  pane: { id: string, attachable: boolean } | null,          // terminal only
+  currentNode: { dagId: string, nodeId: string, title: string } | null,
+  proof: { proven: number, total: number } | null,
+  context: { usedPct: number|null, tokens: number|null },
+  reach: string[],                                           // 'telegram','slack','sms','email','push','phone'
+  fields: Record<'persona'|'memory'|'skills'|'tools'|'model'|'permissions', 'delivered'|'guidance'|'partial'|'unavailable'>
+}
+Team { name, preset: string|null, presets: string[], agents: string[] /* ids */,
+       edges: { kind: 'delegates_to'|'checks'|'directs', from: string, to: string }[] }
+TeamPlanStep { action: 'spawn'|'bind'|'skip'|'stop', agent: string, harness?: string, machine?: string, reason: string }
+```
+
+### Orchestration
+- `POST /api/factory/send` body `{ to: string /* address or agent id */, text: string, queue?: boolean, threadId?: string }` → `Delivery`
+- `GET /api/factory/deliveries?agent=&thread=&node=` → `{ deliveries: Delivery[] }`
+- `GET /api/factory/events` (Server-Sent Events). Event types: `agent.state`, `node.status`, `delivery`, `approval.requested`, `approval.resolved`, `proof.recorded`, `team.changed`. Each has `{ type, at, data }`. It supports `Last-Event-ID` replay.
+
+```
+Delivery { id, to: string, via: 'session'|'pane'|'pane_queue'|'vendor_ticket'|'channel',
+           state: 'verified'|'queued'|'best_effort'|'read_only'|'failed',
+           ticket: string|null /* 'T-14' */, threadId: string|null, nodeId: string|null,
+           at: string, detail: string|null }
+```
+
+### Workflows
+- `GET /api/factory/templates` → `{ templates: TemplateSummary[] }`
+- `GET /api/factory/templates/:id` → `Template`
+- `POST /api/factory/runs` body `{ template: string, params?: Record<string,string>, campaignId?: string, dryRun?: boolean }` → `{ dagId: string, nodes: NodeCard[] }`
+- `GET /api/factory/dags/:dagId` → `Flow`
+
+```
+Template { id, name, description, params: {name, description?, default?}[],
+  steps: { id, title, executor: string|null /* 'bot:<slug>' | 'role:<role>' | 'ao:<harness>' */, blockedBy: string[],
+           onFail: string|null, waitGate: { kind: string, evidence?: string } | null, retry: 'safe'|null }[],
+  maxRounds: number|null, closure: { success?: string, degraded?: string, failed?: string } | null }
+Flow { dagId, title, nodes: NodeCard[], edges: { from: string, to: string, type: 'blocked_by'|'on_fail' }[] }
+```
+
+### Workspace
+- `GET /api/factory/campaigns` → `{ campaigns: { id, title, intent, status, proven: number, total: number, needsYou: number }[] }`
+- `GET /api/factory/campaigns/:id/board` → `Board`
+- `GET /api/factory/nodes/:dagId/:nodeId` → `NodePage`
+- `POST /api/factory/nodes/:dagId/:nodeId/proof` (multipart: `line`, `file`) → `{ path, receiptId }`
+
+```
+NodeCard { dagId, nodeId, title, status: 'new'|'ready'|'working'|'checking'|'needs_you'|'done'|'failed'|'blocked',
+           assignee: string|null /* address */, bindingType: 'hosted'|'terminal'|'vendor'|null,
+           proof: { proven: number, total: number }, blockedBy: string[], needsYou: boolean, depth: number }
+Board { campaign: { id, title, intent }, summary: { now: NodeCard[], next: NodeCard[], proven: {k: number, n: number}, needsYou: NodeCard[] },
+        waves: { depth: number, nodes: NodeCard[] }[] }
+NodePage { card: NodeCard,
+  spec: { intent: string|null, miniRequirements: string[], proofContract: { line: string, checkedBy: string|null,
+          evidence: { path: string, receiptId: string|null, verdict: 'accomplished'|'not_accomplished'|'needs_human'|null }[] }[] } | null,
+  progressMd: string|null, proofMd: string|null, files: { path: string, size: number }[],
+  deliveries: Delivery[], wih: { id: string, status: string } | null, approval: Approval | null }
+```
+
+### Approvals (owned by allternit-api)
+- `GET /api/factory/approvals?state=pending` → `{ approvals: Approval[] }`
+- `POST /api/factory/approvals/:id/resolve` body `{ decision: 'approve'|'reject', note?: string }`. Called in-app, with the session's owner as actor.
+- Push action endpoint and channel inbound hooks: internal to allternit-api (see stream F5).
+
+```
+Approval { id, dagId, nodeId, title, summary, evidenceRef: string|null, risk: 'normal'|'high',
+           requestedAt, surfaces: ('app'|'push'|'telegram'|'slack'|'sms'|'email')[],
+           state: 'pending'|'approved'|'rejected'|'expired',
+           resolvedBy: string|null, resolvedVia: string|null, resolvedAt: string|null, expiresAt: string }
+```
+
+### Errors
+HTTP errors use status 400/403/404/409/502/504 with the body `{ error: { code, fact, action } }`, using the same codes as the CLI.
