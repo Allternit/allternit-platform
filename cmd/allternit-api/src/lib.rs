@@ -221,6 +221,7 @@ pub mod studio_apps_routes;
 pub mod mcp_routes;
 pub mod mcp_agents;
 pub mod mcp_vendor_bots;
+pub mod mcp_vendor_cards;
 pub mod vendor_local_connector;
 pub mod vendor_tickets;
 pub mod mcp_edge_relay;

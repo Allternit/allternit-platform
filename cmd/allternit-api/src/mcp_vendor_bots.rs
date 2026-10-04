@@ -162,7 +162,22 @@ fn annotations(read_only: bool, open_world: bool) -> Value {
     json!({ "readOnlyHint": read_only, "destructiveHint": false, "idempotentHint": read_only, "openWorldHint": open_world })
 }
 
+/// The ten tools; the ones with a card carry its `ui://` resource in `_meta`.
 pub fn tool_descriptors() -> Vec<Value> {
+    let mut tools = base_tool_descriptors();
+    for t in &mut tools {
+        if let Some(uri) = t["name"].as_str().and_then(crate::mcp_vendor_cards::card_uri) {
+            t["_meta"] = crate::mcp_vendor_cards::tool_meta(uri);
+        }
+    }
+    tools
+}
+
+/// Plain-text instructions an agent can read to learn the tools (also served by the cloud edge
+/// at `/bots/:id/instructions` and printed by `allternit-bot help`).
+pub const BOT_INSTRUCTIONS: &str = include_str!("../assets/vendor-bot-instructions.txt");
+
+fn base_tool_descriptors() -> Vec<Value> {
     vec![
         json!({
             "name": "list_threads", "title": "List threads",
@@ -550,10 +565,16 @@ pub async fn call_tool(db: &DbHandle, actions: &dyn Actions, s: &Session, name: 
             crate::vendor_tickets::record_participation(db, &s.owner, &s.vendor_bot_id, thread, &format!("tool:{name}"));
         }
     }
-    match outcome {
+    let card = crate::mcp_vendor_cards::card_uri(name);
+    let mut result = match &outcome {
         Ok(v) => json!({ "content": [{ "type": "text", "text": v.to_string() }], "structuredContent": v, "isError": false }),
         Err(e) => json!({ "content": [{ "type": "text", "text": e }], "isError": true }),
+    };
+    if let Some(uri) = card {
+        result["structuredContent"] = crate::mcp_vendor_cards::structured(name, &args, &outcome);
+        result["_meta"] = json!({ "ui": { "resourceUri": uri } });
     }
+    result
 }
 
 fn rpc_ok(id: Value, result: Value) -> Value {
@@ -576,7 +597,7 @@ pub async fn handle_rpc(db: &DbHandle, actions: &dyn Actions, s: &Session, req: 
                 id,
                 json!({
                     "protocolVersion": version,
-                    "capabilities": { "tools": { "listChanged": false } },
+                    "capabilities": { "tools": { "listChanged": false }, "resources": { "subscribe": false, "listChanged": false } },
                     "serverInfo": { "name": "allternit-vendor-bot", "version": env!("CARGO_PKG_VERSION") },
                     "instructions": SERVER_INSTRUCTIONS
                 }),
@@ -584,7 +605,14 @@ pub async fn handle_rpc(db: &DbHandle, actions: &dyn Actions, s: &Session, req: 
         }
         "ping" => rpc_ok(id, json!({})),
         "tools/list" => rpc_ok(id, json!({ "tools": tool_descriptors() })),
-        "resources/list" => rpc_ok(id, json!({ "resources": [] })),
+        "resources/list" => rpc_ok(id, json!({ "resources": crate::mcp_vendor_cards::resource_descriptors() })),
+        "resources/read" => {
+            let uri = req["params"]["uri"].as_str().unwrap_or_default();
+            match crate::mcp_vendor_cards::read_resource(uri) {
+                Some(result) => rpc_ok(id, result),
+                None => rpc_err(id, -32002, format!("Resource not found: {uri}")),
+            }
+        }
         "resources/templates/list" => rpc_ok(id, json!({ "resourceTemplates": [] })),
         "tools/call" => {
             let name = req["params"]["name"].as_str().unwrap_or_default();
@@ -1215,6 +1243,49 @@ mod tests {
         assert!(handle_rpc(&st.db, &fake, &s, &json!({ "method": "notifications/initialized" })).await.is_none());
         assert_eq!(handle_rpc(&st.db, &fake, &s, &json!({ "id": 4, "method": "nope" })).await.unwrap()["error"]["code"], -32601);
         assert!(audit_rows(&st).is_empty(), "protocol calls are not tool calls");
+    }
+
+    #[tokio::test]
+    async fn card_tools_name_their_ui_resource_and_answer_with_card_data_even_when_refused() {
+        let st = setup("cards").await;
+        let (s, fake) = (session(&st), Fake::default());
+        let list = handle_rpc(&st.db, &fake, &s, &json!({ "id": 1, "method": "tools/list" })).await.unwrap();
+        for t in list["result"]["tools"].as_array().unwrap() {
+            let name = t["name"].as_str().unwrap();
+            match crate::mcp_vendor_cards::card_uri(name) {
+                Some(uri) => assert_eq!(t["_meta"]["ui"]["resourceUri"], uri, "{name}"),
+                None => assert!(t.get("_meta").is_none(), "{name}"),
+            }
+        }
+        let res = handle_rpc(&st.db, &fake, &s, &json!({ "id": 2, "method": "resources/list" })).await.unwrap();
+        let uris: Vec<_> = res["result"]["resources"].as_array().unwrap().iter().map(|r| r["uri"].as_str().unwrap().to_string()).collect();
+        assert_eq!(uris.len(), 4);
+        for uri in &uris {
+            let read = handle_rpc(&st.db, &fake, &s, &json!({ "id": 3, "method": "resources/read", "params": { "uri": uri } })).await.unwrap();
+            assert_eq!(read["result"]["contents"][0]["mimeType"], "text/html;profile=mcp-app");
+        }
+        let missing = handle_rpc(&st.db, &fake, &s, &json!({ "id": 4, "method": "resources/read", "params": { "uri": "ui://allternit/nope" } })).await.unwrap();
+        assert_eq!(missing["error"]["code"], -32002);
+        let ok = call_tool(&st.db, &fake, &s, "send_text", json!({ "to": "+14155550123", "text": "hello" })).await;
+        assert_eq!(ok["structuredContent"]["request"]["text"], "hello");
+        assert_eq!(ok["_meta"]["ui"]["resourceUri"], crate::mcp_vendor_cards::RESULT_URI);
+        let no = call_tool(&st.db, &fake, &s, "send_text", json!({ "to": "+14155550123", "text": "refuse" })).await;
+        assert_eq!(no["isError"], true);
+        assert_eq!(no["content"][0]["text"], "nope");
+        assert_eq!(no["structuredContent"]["refused"], true);
+        let tickets = call_tool(&st.db, &fake, &s, "list_open_tickets", json!({})).await;
+        assert!(tickets.get("_meta").is_none());
+    }
+
+    #[test]
+    fn the_plain_instructions_name_every_tool_and_every_cli_command() {
+        for t in tool_descriptors() {
+            let name = t["name"].as_str().unwrap();
+            assert!(BOT_INSTRUCTIONS.contains(name), "{name} missing from the instructions");
+        }
+        for cmd in ["threads", "read", "text", "call", "email", "post", "ask", "tickets", "ticket", "result", "help"] {
+            assert!(BOT_INSTRUCTIONS.contains(&format!("allternit-bot {cmd}")), "{cmd}");
+        }
     }
 
     #[tokio::test]

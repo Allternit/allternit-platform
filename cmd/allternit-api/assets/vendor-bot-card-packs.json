@@ -1,0 +1,9 @@
+{
+  "default": { "name": "Allternit", "accent": "#18181b", "onAccent": "#ffffff", "muted": "#f4f4f5", "border": "#e4e4e7", "dark": "#18181b" },
+  "packs": {
+    "claude": { "name": "Claude", "match": ["claude", "anthropic"], "accent": "#cc785c", "onAccent": "#ffffff", "muted": "#f5f4ef", "border": "#e3e0d6", "dark": "#211f1d" },
+    "chatgpt": { "name": "ChatGPT", "match": ["chatgpt", "openai", "codex"], "accent": "#10a37f", "onAccent": "#ffffff", "muted": "#f4f4f4", "border": "#e5e5e5", "dark": "#212121" },
+    "gemini": { "name": "Gemini", "match": ["gemini", "google"], "accent": "#1b72e8", "onAccent": "#ffffff", "muted": "#f0f4f9", "border": "#d3dce6", "dark": "#1e1f20" },
+    "hermes": { "name": "Hermes", "match": ["hermes"], "accent": "#3fb950", "onAccent": "#0d1117", "muted": "#eff1f3", "border": "#d5d9df", "dark": "#0d1117" }
+  }
+}

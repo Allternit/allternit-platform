@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Allternit</title>
+<style>
+  :root {
+    --neutral-fill: #f4f4f5;
+    --accent: #18181b;
+    --on-accent: #ffffff;
+    --muted-fill: var(--neutral-fill);
+    --bg: var(--color-background-primary, #ffffff);
+    --fg: var(--color-text-primary, #111111);
+    --muted: var(--color-text-secondary, #5f6368);
+    --line: var(--color-border-primary, #e4e4e7);
+    font-family: var(--font-sans, system-ui, -apple-system, "Segoe UI", sans-serif);
+  }
+  :root[data-theme="dark"] { --bg: var(--color-background-primary, #18181b); --fg: var(--color-text-primary, #f4f4f5); --muted: var(--color-text-secondary, #a1a1aa); --line: var(--color-border-primary, #3f3f46); --muted-fill: #27272a; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); }
+  body { padding: 12px; font-size: 14px; line-height: 1.45; }
+  .card { background: var(--muted-fill); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .title { font-weight: 600; font-size: 15px; overflow-wrap: anywhere; }
+  .kicker { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .pill { background: var(--accent); color: var(--on-accent); border-radius: 999px; padding: 2px 10px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .pill.off { background: var(--bg); color: var(--fg); border: 1px solid var(--line); }
+  .body { margin-top: 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 10px 0 0; }
+  dt { color: var(--muted); }
+  dd { margin: 0; overflow-wrap: anywhere; }
+  .note { margin-top: 10px; color: var(--muted); font-size: 13px; }
+  ul { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+  li { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; display: flex; justify-content: space-between; gap: 10px; }
+  li .t { overflow-wrap: anywhere; }
+  li .m { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .msg { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
+  .msg .who { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
+  .msgs { margin-top: 10px; display: grid; gap: 6px; }
+  .empty { color: var(--muted); }
+  .ver { border-left: 3px solid var(--accent); }
+</style>
+</head>
+<body>
+<div id="root" class="card"><span class="empty">Waiting for data…</span></div>
+<script>
+(function () {
+  var KIND = "__KIND__";
+  var PACKS = __PACKS__;
+  var root = document.getElementById("root");
+  var nextId = 1;
+  var pending = {};
+
+  function send(msg) { window.parent.postMessage(msg, "*"); }
+  function request(method, params) {
+    var id = nextId++;
+    return new Promise(function (resolve, reject) {
+      pending[id] = { resolve: resolve, reject: reject };
+      send({ jsonrpc: "2.0", id: id, method: method, params: params });
+    });
+  }
+  function notify(method, params) { send({ jsonrpc: "2.0", method: method, params: params || {} }); }
+
+  function pickPack(name) {
+    var n = String(name || "").toLowerCase();
+    var keys = Object.keys(PACKS.packs);
+    for (var i = 0; i < keys.length; i++) {
+      var p = PACKS.packs[keys[i]];
+      for (var j = 0; j < p.match.length; j++) if (n.indexOf(p.match[j]) !== -1) return p;
+    }
+    return PACKS["default"];
+  }
+
+  function applyHost(result) {
+    var ctx = result && result.hostContext;
+    if (result && result.hostInfo) {
+      var p = pickPack(result.hostInfo.name);
+      var s = document.documentElement.style;
+      s.setProperty("--accent", p.accent);
+      s.setProperty("--on-accent", p.onAccent);
+      s.setProperty("--neutral-fill", p.muted);
+      s.setProperty("--line", p.border);
+    }
+    if (!ctx) return;
+    var vars = ctx.styles && ctx.styles.variables;
+    if (vars) Object.keys(vars).forEach(function (k) { if (vars[k]) document.documentElement.style.setProperty(k, vars[k]); });
+    if (ctx.theme) { document.documentElement.setAttribute("data-theme", ctx.theme); document.documentElement.style.colorScheme = ctx.theme; }
+  }
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined && text !== null) e.textContent = String(text);
+    return e;
+  }
+  function head(title, pill, off, kicker) {
+    var h = el("div", "head");
+    var left = el("div");
+    left.appendChild(el("div", "title", title));
+    if (kicker) left.appendChild(el("div", "kicker", kicker));
+    h.appendChild(left);
+    h.appendChild(el("span", off ? "pill off" : "pill", pill));
+    return h;
+  }
+  function row(dl, label, value) {
+    if (value === null || value === undefined || value === "") return;
+    dl.appendChild(el("dt", null, label));
+    dl.appendChild(el("dd", null, value));
+  }
+  function short(s, n) { s = String(s || ""); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+
+  function refused(d, title) {
+    root.appendChild(head(title, "Not sent", true));
+    root.appendChild(el("div", "body", d.message || "Allternit did not do that."));
+    root.appendChild(el("div", "note", "Allternit's rules for this bot said no. Nothing went out."));
+  }
+
+  function renderThread(d) {
+    if (Array.isArray(d.threads)) {
+      root.appendChild(head("Threads", d.threads.length + (d.threads.length === 1 ? " thread" : " threads"), true));
+      if (!d.threads.length) { root.appendChild(el("div", "note", "No threads are shared with this bot yet.")); return; }
+      var ul = el("ul");
+      d.threads.forEach(function (t) {
+        var li = el("li");
+        li.appendChild(el("span", "t", t.title || t.threadId));
+        li.appendChild(el("span", "m", [t.channel, t.status].filter(Boolean).join(" · ")));
+        ul.appendChild(li);
+      });
+      root.appendChild(ul);
+      return;
+    }
+    root.appendChild(head(d.title || "Thread", (d.messages || []).length + " messages", true));
+    var box = el("div", "msgs");
+    (d.messages || []).forEach(function (m) {
+      var b = el("div", "msg");
+      b.appendChild(el("div", "who", [(m.actor && m.actor.type) || "", m.at || ""].filter(Boolean).join(" · ")));
+      b.appendChild(el("div", null, m.text || m.type || ""));
+      box.appendChild(b);
+    });
+    if (!(d.messages || []).length) box.appendChild(el("div", "note", "Nothing in this thread yet."));
+    root.appendChild(box);
+  }
+
+  function renderResult(d) {
+    var call = d.tool === "start_call";
+    var title = call ? "Phone call" : "Text message";
+    if (d.refused) return refused(d, title);
+    var req = d.request || {};
+    root.appendChild(head(title, call ? "Calling" : "Sent", false, req.to ? "to " + req.to : ""));
+    var text = call ? req.purpose : req.text;
+    if (text) root.appendChild(el("div", "body", short(text, 600)));
+    var dl = el("dl");
+    row(dl, "From", d.from);
+    row(dl, "Consent", "This person contacted the bot first or is on its contacts.");
+    root.appendChild(dl);
+  }
+
+  function renderEmail(d) {
+    if (d.refused) return refused(d, "Email draft");
+    var req = d.request || {};
+    var waiting = d.status === "pending_approval";
+    root.appendChild(head("Email draft", waiting ? "Waiting for the owner's OK" : "Queued", !waiting, req.to ? "to " + req.to : ""));
+    var dl = el("dl");
+    row(dl, "Subject", req.subject);
+    root.appendChild(dl);
+    if (req.body) root.appendChild(el("div", "body ver", short(req.body, 1200)));
+    root.appendChild(el("div", "note", waiting ? "It has not been sent. It goes out only after the owner approves it in Allternit." : "Allternit has it."));
+  }
+
+  function renderPost(d) {
+    var req = d.request || {};
+    var prov = req.provider ? req.provider.charAt(0).toUpperCase() + req.provider.slice(1) : "Channel";
+    if (d.refused) return refused(d, prov + " post");
+    root.appendChild(head(prov + " post", "Posted", false, req.target ? short(JSON.stringify(req.target), 80) : ""));
+    if (req.text) root.appendChild(el("div", "body", short(req.text, 800)));
+  }
+
+  function render(d) {
+    root.textContent = "";
+    if (!d || typeof d !== "object") { root.appendChild(el("span", "empty", "No data.")); return; }
+    ({ thread: renderThread, result: renderResult, email: renderEmail, post: renderPost })[KIND](d);
+    notify("ui/notifications/size-changed", { width: Math.ceil(document.documentElement.scrollWidth), height: Math.ceil(document.documentElement.scrollHeight) });
+  }
+
+  window.addEventListener("message", function (event) {
+    if (event.source !== window.parent) return;
+    var msg = event.data;
+    if (!msg || msg.jsonrpc !== "2.0") return;
+    if (msg.id !== undefined && !msg.method) {
+      var p = pending[msg.id];
+      if (p) { delete pending[msg.id]; msg.error ? p.reject(msg.error) : p.resolve(msg.result); }
+      return;
+    }
+    if (msg.method === "ui/notifications/tool-result") {
+      render((msg.params || {}).structuredContent);
+    } else if (msg.method === "ui/notifications/host-context-changed") {
+      applyHost({ hostContext: msg.params });
+    } else if (msg.method === "ui/resource-teardown" && msg.id !== undefined) {
+      send({ jsonrpc: "2.0", id: msg.id, result: {} });
+    }
+  });
+
+  request("ui/initialize", {
+    appInfo: { name: "allternit-vendor-bot-" + KIND, version: "1.0.0" },
+    appCapabilities: {},
+    protocolVersion: "2026-01-26"
+  }).then(function (result) {
+    applyHost(result);
+    notify("ui/notifications/initialized");
+  }).catch(function () {});
+})();
+</script>
+</body>
+</html>
