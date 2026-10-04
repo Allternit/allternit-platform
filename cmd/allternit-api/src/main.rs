@@ -963,6 +963,7 @@ async fn main() {
         .merge(inference_router_router())
         .merge(bot_event_router())
         .merge(allternit_api::thread_routes::thread_router())
+        .merge(allternit_api::events_feed::events_feed_router())
         .merge(allternit_api::agent_gateway_routes::agent_gateway_router())
         .merge(allternit_api::gateway_runner::gateway_runner_router())
         .merge(allternit_api::a2a_routes::a2a_router())
