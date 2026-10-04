@@ -1137,6 +1137,8 @@ async fn main() {
         .nest("/api", allternit_api::mcp_vendor_bots::connector_router())
         // Vendor tickets, lane ranking, thread attribution and the one-click local connector.
         .nest("/api", allternit_api::vendor_tickets::router())
+        // The twin: one persona and shared memory across every bot.
+        .nest("/api", allternit_api::twin_persona::router())
         .nest("/api", allternit_api::vendor_local_connector::router())
         .nest("/api", office_engine_router())
         .nest("/api", provider_router())

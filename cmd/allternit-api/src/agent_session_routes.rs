@@ -2418,6 +2418,10 @@ pub(crate) fn bot_turn_system(db: &DbHandle, session_id: &str, bot_id: &str) -> 
             out.push_str(&format!("\n\n## What you remember\n\n{}", lines.join("\n")));
         }
     }
+    // One persona and shared memory across every bot of the owner (the twin).
+    if let Some(twin) = crate::twin_persona::context_block(&conn, &user_id, crate::twin_persona::Audience::Bot(bot_id)) {
+        out.push_str(&format!("\n\n{twin}"));
+    }
     Some(out)
 }
 
