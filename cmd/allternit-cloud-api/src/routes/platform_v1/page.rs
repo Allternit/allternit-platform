@@ -13,6 +13,9 @@ pub const MAX_LIMIT: i64 = 100;
 
 #[derive(Debug, Default, Deserialize)]
 pub struct PageParams {
+    /// A number, or a numeric string: query strings reach a `#[serde(flatten)]`ed
+    /// `PageParams` as strings, so both must parse.
+    #[serde(default, deserialize_with = "number_or_string")]
     pub limit: Option<i64>,
     pub after: Option<String>,
 }
@@ -46,6 +49,22 @@ impl PageParams {
                     .with_param("after")
             }),
         }
+    }
+}
+
+fn number_or_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<i64>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Raw {
+        N(i64),
+        S(String),
+    }
+    match Option::<Raw>::deserialize(d)? {
+        None => Ok(None),
+        Some(Raw::N(n)) => Ok(Some(n)),
+        Some(Raw::S(s)) if s.trim().is_empty() => Ok(None),
+        // A non-number is kept out of range so `limit()` answers `invalid_limit`.
+        Some(Raw::S(s)) => Ok(Some(s.trim().parse().unwrap_or(-1))),
     }
 }
 
