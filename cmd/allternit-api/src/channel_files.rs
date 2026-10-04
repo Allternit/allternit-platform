@@ -168,7 +168,10 @@ mod tests {
 
     #[test]
     fn limits_and_unsupported_providers_say_why() {
-        assert_eq!(parse("sms", &[one("a.png", b"x")]), Err(FileError::Unsupported));
+        // SMS carries files as permanent links (no MMS), up to 3.
+        assert!(parse("sms", &[one("a.png", b"x")]).is_ok());
+        let four: Vec<Value> = (0..4).map(|i| one(&format!("{i}.png"), b"x")).collect();
+        assert_eq!(parse("sms", &four), Err(FileError::TooMany(3)));
         assert_eq!(parse("discord", &[one("a.png", b"x")]), Err(FileError::Unsupported));
         let six: Vec<Value> = (0..6).map(|i| one(&format!("{i}.png"), b"x")).collect();
         assert_eq!(parse("slack", &six), Err(FileError::TooMany(5)));
