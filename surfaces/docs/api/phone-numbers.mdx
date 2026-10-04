@@ -34,6 +34,8 @@ US carriers require registration before a number can text at volume.
 
 - `POST /api/v1/phone/numbers/:id/registration` takes the business form (legal name, EIN, website, address, contact, use case, sample messages, opt-in workflow). Local numbers register for 10DLC, toll-free numbers for toll-free verification; `kind` overrides. The stored copy masks the EIN.
 - `GET /api/v1/phone/numbers/:id/registration` returns the state (`pending`, `approved`, `rejected`, with `rejectionReason`) and the number's `smsState`. It re-reads a pending registration from the carrier. A rejected registration can be submitted again.
+- 10DLC is two steps at the carrier: the business **brand** is verified first (usually hours to a few days), then the texting **campaign** is reviewed. The submit files the brand right away; if the brand is still being verified, the campaign is filed automatically as soon as the brand clears (on the carrier's status webhook or the next `GET`). `campaignId` stays `null` until then. A campaign the carrier refuses outright turns the registration `rejected` with a `rejectionReason` starting `campaign:`.
+- The campaign sent to the carrier includes the HELP, STOP and START replies (naming the business display name and contact email), and declares that messages may include links and phone numbers.
 
 See [Phone invites](/api/phone-invites) for single-use invite links that record explicit consent.
 

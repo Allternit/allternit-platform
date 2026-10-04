@@ -306,6 +306,12 @@ pub trait Carrier: Send + Sync {
         form: &RegistrationForm,
     ) -> Result<RegistrationHandle, CarrierError>;
     async fn registration_status(&self, kind: RegistrationKind, e164: &str, handle: &RegistrationHandle, messaging_ref: Option<&str>) -> Result<RegistrationStatus, CarrierError>;
+    /// File the 10DLC campaign for a brand that was still being verified at
+    /// submit time. `Ok(None)` means the brand isn't ready yet; try again later.
+    async fn file_pending_campaign(&self, brand_id: &str, form: &RegistrationForm) -> Result<Option<String>, CarrierError> {
+        let _ = (brand_id, form);
+        Ok(None)
+    }
 
     async fn port_in_create(&self, e164s: &[String], reference: &str, webhook_url: &str) -> Result<PortStatus, CarrierError>;
     async fn port_in_status(&self, order_id: &str) -> Result<PortStatus, CarrierError>;
@@ -335,10 +341,12 @@ pub fn is_e164(s: &str) -> bool {
 /// Pull an error message out of a carrier error body without echoing request data.
 pub(crate) fn error_message(body: &Value) -> String {
     let pick = |v: &Value| -> Option<String> {
-        v.get("detail").or_else(|| v.get("title")).or_else(|| v.get("message")).and_then(|m| m.as_str()).map(str::to_string)
+        v.get("detail").or_else(|| v.get("title")).or_else(|| v.get("message")).or_else(|| v.get("description")).and_then(|m| m.as_str()).map(str::to_string)
     };
     body.get("errors")
         .and_then(|e| e.get(0))
+        // Telnyx 10DLC answers some errors with a bare array.
+        .or_else(|| body.get(0))
         .and_then(pick)
         .or_else(|| pick(body))
         .unwrap_or_else(|| "request failed".to_string())

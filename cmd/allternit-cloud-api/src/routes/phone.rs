@@ -42,7 +42,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::carriers::{
-    self, Carrier, CarrierError, InboundEvent, NumberType, RegState, RegistrationForm, RegistrationHandle, RegistrationKind, ReqwestHttp, SearchQuery,
+    self, Carrier, CarrierError, InboundEvent, NumberType, RegState, RegistrationForm, RegistrationHandle, RegistrationKind, RegistrationStatus, ReqwestHttp, SearchQuery,
 };
 use super::livekit_admin::{CreateSipParticipantRequest, LiveKitAdminClient, LiveKitConfig, LiveKitError, LiveKitHttpAdmin, CALL_ROOM_PREFIX, SIP_AGENT_NAME};
 use crate::services::voice_usage::plan_for_user;
@@ -537,8 +537,27 @@ pub async fn refresh_registration(db: &PgPool, carrier: &dyn Carrier, number: &N
         return Ok(());
     }
     let kind = if reg.kind == "tollfree" { RegistrationKind::TollFree } else { RegistrationKind::TenDlc };
-    let handle = RegistrationHandle { brand_id: reg.brand_id.clone(), campaign_id: reg.campaign_id.clone(), tfv_id: reg.tfv_id.clone() };
-    let status = carrier.registration_status(kind, &number.e164, &handle, number.messaging_ref.as_deref()).await?;
+    let mut handle = RegistrationHandle { brand_id: reg.brand_id.clone(), campaign_id: reg.campaign_id.clone(), tfv_id: reg.tfv_id.clone() };
+    let mut status = carrier.registration_status(kind, &number.e164, &handle, number.messaging_ref.as_deref()).await?;
+    // The brand was still being verified at submit, so its campaign is filed now.
+    if status.state == RegState::Pending && kind == RegistrationKind::TenDlc && handle.campaign_id.is_none() {
+        if let Some(brand_id) = handle.brand_id.clone() {
+            let fields: Option<Value> = sqlx::query_scalar("SELECT fields FROM sms_registrations WHERE id = $1").bind(&reg.id).fetch_one(db).await?;
+            let form: RegistrationForm = fields.and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
+            match carrier.file_pending_campaign(&brand_id, &form).await {
+                Ok(None) => return Ok(()),
+                Ok(Some(campaign_id)) => {
+                    sqlx::query("UPDATE sms_registrations SET campaign_id = $2, updated_at = now() WHERE id = $1").bind(&reg.id).bind(&campaign_id).execute(db).await?;
+                    handle.campaign_id = Some(campaign_id);
+                    status = carrier.registration_status(kind, &number.e164, &handle, number.messaging_ref.as_deref()).await?;
+                }
+                Err(CarrierError::Upstream(_, reason)) | Err(CarrierError::Invalid(reason)) => {
+                    status = RegistrationStatus { state: RegState::Rejected, reason: Some(format!("campaign: {reason}")) };
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+    }
     if status.state == RegState::Pending {
         return Ok(());
     }
@@ -1250,6 +1269,9 @@ mod tests {
         bought: Mutex<Vec<String>>,
         buy_fails: bool,
         reg_state: Mutex<Option<RegState>>,
+        /// Submit returns no campaign (brand still verifying); `Some(ready)` once set.
+        defer_campaign: bool,
+        campaign_ready: Mutex<Option<Result<String, String>>>,
     }
 
     #[async_trait]
@@ -1287,7 +1309,16 @@ mod tests {
             Ok(InboundEvent::Message { id: s("id"), from: s("from"), to: s("to"), text: s("text") })
         }
         async fn submit_registration(&self, _k: RegistrationKind, _e: &str, _c: Option<&str>, _m: Option<&str>, _f: &RegistrationForm) -> Result<RegistrationHandle, CarrierError> {
-            Ok(RegistrationHandle { brand_id: Some("brand-1".into()), campaign_id: Some("camp-1".into()), tfv_id: None })
+            let campaign_id = (!self.defer_campaign).then(|| "camp-1".to_string());
+            Ok(RegistrationHandle { brand_id: Some("brand-1".into()), campaign_id, tfv_id: None })
+        }
+        async fn file_pending_campaign(&self, _b: &str, form: &RegistrationForm) -> Result<Option<String>, CarrierError> {
+            assert_eq!(form.use_case, "CUSTOMER_CARE", "the stored form is passed back");
+            match self.campaign_ready.lock().unwrap().clone() {
+                None => Ok(None),
+                Some(Ok(id)) => Ok(Some(id)),
+                Some(Err(reason)) => Err(CarrierError::Upstream(400, reason)),
+            }
         }
         async fn registration_status(&self, _k: RegistrationKind, _e: &str, _h: &RegistrationHandle, _m: Option<&str>) -> Result<RegistrationStatus, CarrierError> {
             let state = self.reg_state.lock().unwrap().unwrap_or(RegState::Pending);
@@ -1566,6 +1597,42 @@ mod tests {
         let reg = latest_registration(&db, &n.id).await.unwrap().unwrap();
         refresh_registration(&db, &c, &number, &reg).await.unwrap();
         assert_eq!(number_for_user(&db, USER, &n.id).await.unwrap().sms_state, "active");
+    }
+
+    #[tokio::test]
+    async fn campaign_is_filed_once_the_brand_clears() {
+        let db = pool().await;
+        let c = FakeCarrier { defer_campaign: true, ..Default::default() };
+        let n = buy(&db, &c, &e164(52)).await.unwrap();
+        let form = RegistrationForm { use_case: "CUSTOMER_CARE".into(), ..Default::default() };
+        submit_registration(&db, &c, USER, &n.id, None, form.clone()).await.unwrap();
+        let number = number_for_user(&db, USER, &n.id).await.unwrap();
+        let reg = latest_registration(&db, &n.id).await.unwrap().unwrap();
+        assert_eq!((reg.brand_id.as_deref(), reg.campaign_id.as_deref()), (Some("brand-1"), None));
+
+        refresh_registration(&db, &c, &number, &reg).await.unwrap();
+        assert_eq!(latest_registration(&db, &n.id).await.unwrap().unwrap().campaign_id, None, "brand still verifying: nothing filed");
+
+        *c.campaign_ready.lock().unwrap() = Some(Ok("camp-9".into()));
+        refresh_registration(&db, &c, &number, &reg).await.unwrap();
+        let reg = latest_registration(&db, &n.id).await.unwrap().unwrap();
+        assert_eq!((reg.campaign_id.as_deref(), reg.state.as_str()), (Some("camp-9"), "pending"));
+
+        *c.reg_state.lock().unwrap() = Some(RegState::Approved);
+        refresh_registration(&db, &c, &number, &reg).await.unwrap();
+        assert_eq!(number_for_user(&db, USER, &n.id).await.unwrap().sms_state, "active");
+
+        // A campaign the carrier refuses outright shows its reason.
+        let n2 = buy(&db, &c, &e164(53)).await.unwrap();
+        *c.reg_state.lock().unwrap() = None;
+        submit_registration(&db, &c, USER, &n2.id, None, form).await.unwrap();
+        *c.campaign_ready.lock().unwrap() = Some(Err("sample1 is required".into()));
+        let number2 = number_for_user(&db, USER, &n2.id).await.unwrap();
+        let reg2 = latest_registration(&db, &n2.id).await.unwrap().unwrap();
+        refresh_registration(&db, &c, &number2, &reg2).await.unwrap();
+        let reg2 = latest_registration(&db, &n2.id).await.unwrap().unwrap();
+        assert_eq!((reg2.state.as_str(), reg2.rejection_reason.as_deref()), ("rejected", Some("campaign: sample1 is required")));
+        assert_eq!(number_for_user(&db, USER, &n2.id).await.unwrap().sms_state, "rejected");
     }
 
     #[tokio::test]
