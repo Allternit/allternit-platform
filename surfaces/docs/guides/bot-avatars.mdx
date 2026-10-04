@@ -74,17 +74,19 @@ Photo avatars are still portraits; animated sheets aren't made from photos.
 - **Tests:** use synthetic non-face fixtures. Never commit real source photos, generated likenesses, or screenshots containing them.
 - **Build a character:**
   
-  The builder saves a normal image avatar with an animated sheet and its recipe:
+  The builder saves a normal image avatar (`uri` is the 512×512 transparent portrait) with an animated sheet and its recipe:
   
-      {
-        "type": "image",
-        "uri": "data:image/webp;base64,…",          // 512×512 transparent portrait
-        "pet": { "spriteUrl": "data:image/webp;base64,…",
-                 "frameWidth": 192, "frameHeight": 208, "columns": 8, "rows": 9 },
-        "character": { "source": "builder", "version": 1,
-                       "shape": "bunny", "color": "#60a5fa",
-                       "finish": "plush", "accessory": "scarf" }
-      }
+  ```json
+  {
+    "type": "image",
+    "uri": "data:image/webp;base64,…",
+    "pet": { "spriteUrl": "data:image/webp;base64,…",
+             "frameWidth": 192, "frameHeight": 208, "columns": 8, "rows": 9 },
+    "character": { "source": "builder", "version": 1,
+                   "shape": "bunny", "color": "#60a5fa",
+                   "finish": "plush", "accessory": "scarf" }
+  }
+  ```
   
   The sheet is 1536×1872: 8 columns by 9 rows of 192×208 cells, with rows idle,
   blink, walk, run, jump, sad, sleep, action and special. That is the same layout

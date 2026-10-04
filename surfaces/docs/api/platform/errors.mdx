@@ -11,11 +11,12 @@ Every error has the same body:
 
 | `type` | HTTP | When |
 |---|---|---|
-| `invalid_request_error` | 400 / 404 / 422 | The request is malformed, a field is missing or invalid, or the thing doesn't exist. `404 platform_api_disabled` means the API isn't switched on for this deployment. |
+| `invalid_request_error` | 400 / 422 | The request is malformed, or a field is missing or invalid. |
+| `not_found_error` | 404 | The thing doesn't exist, or isn't visible to this key. `platform_api_disabled` means the API isn't switched on for this deployment. |
 | `authentication_error` | 401 | No key, an unknown or revoked key, or a key that isn't a project key. |
 | `permission_error` | 403 | The key lacks the scope, or is bound to another account. |
 | `conflict_error` | 409 | `idempotency_conflict` (same key, different request), `idempotency_in_progress` (the first request is still running) or a duplicate `external_ref`. |
 | `rate_limit_error` | 429 | Over the per-key or per-project limit, or the concurrent-call cap. Retry after `retry-after` seconds. |
-| `api_error` | 500 / 503 | Something failed on our side. Safe to retry with the same `Idempotency-Key`. |
+| `api_error` | 500 / 503 | Something failed on our side (`code` is usually `internal_error`). Safe to retry with the same `Idempotency-Key`. |
 
 `code` is stable and safe to branch on; `message` is for people and may change.
