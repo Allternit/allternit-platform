@@ -983,6 +983,7 @@ async fn deliver_one(state: &Arc<ApiState>, id: i64) -> Result<(), ApiError> {
             .await?;
         return Ok(());
     }
+    let error = crate::routes::channel_inbound::attempt_error(status, error);
     retry_or_dead(state, id, received_at, attempts, status, error.as_deref().unwrap_or("delivery failed")).await
 }
 
@@ -994,7 +995,10 @@ async fn retry_or_dead(
     status: Option<u16>,
     error: &str,
 ) -> Result<(), ApiError> {
-    let give_up = chrono::Utc::now() - received_at > chrono::Duration::hours(GIVE_UP_AFTER_HOURS);
+    let give_up = crate::routes::channel_inbound::is_dead(status, attempts, chrono::Utc::now() - received_at > chrono::Duration::hours(GIVE_UP_AFTER_HOURS));
+    if give_up {
+        tracing::warn!(queue_id = id, ?status, attempts, error, "teams event dead: not delivered to the runtime");
+    }
     sqlx::query(
         "UPDATE teams_app_queue
             SET locked_until = NULL, last_status = $2, last_error = $3,

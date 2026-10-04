@@ -635,7 +635,7 @@ pub fn build_transport(provider: &str, secret: &str, http: Arc<dyn HttpSend>) ->
         "whatsapp" => Arc::new(WhatsAppTransport { http, access_token: token("accessToken"), own_identity: token("phoneNumberId") }),
         "telegram" => Arc::new(TelegramTransport { http, bot_token: token("botToken"), own_identity: token("botUsername") }),
         "whatsapp-personal" if crate::channel_whatsapp_personal::enabled() => Arc::new(crate::channel_whatsapp_personal::WhatsAppPersonalTransport::from_secret(secret, http)),
-        "sms" => Arc::new(crate::channel_phone::build_sms(http, secret)),
+        "sms" => Arc::new(crate::channel_phone::build_sms(http, secret).with_runtime_token(crate::phone_sync::runtime_bearer())),
         _ => return None,
     })
 }

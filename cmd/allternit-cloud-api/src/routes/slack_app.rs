@@ -643,7 +643,11 @@ pub async fn deliver_team(state: &ApiState, team_id: &str) -> Result<(), ApiErro
                 .await?;
             continue;
         }
-        let give_up = chrono::Utc::now() - received_at > chrono::Duration::hours(GIVE_UP_AFTER_HOURS);
+        let error = super::channel_inbound::attempt_error(status, error);
+        let give_up = super::channel_inbound::is_dead(status, attempts, chrono::Utc::now() - received_at > chrono::Duration::hours(GIVE_UP_AFTER_HOURS));
+        if give_up {
+            tracing::warn!(queue_id = id, ?status, attempts, error = ?error, "slack event dead: not delivered to the runtime");
+        }
         sqlx::query(
             "UPDATE slack_event_queue SET locked_until = NULL, last_status = $2, last_error = $3,
                 next_attempt_at = NOW() + make_interval(secs => $4), dead_at = CASE WHEN $5 THEN NOW() ELSE NULL END

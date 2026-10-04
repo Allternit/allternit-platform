@@ -7,7 +7,8 @@
 //!   Ed25519 signature with the public key in the connection's secret.
 //! * Outbound: the Allternit-owned carrier key never reaches the runtime, so a
 //!   reply is `POST <cloud>/api/v1/channels/sms/send {numberId, to, text}` →
-//!   `{messageId, status}`, bearer-authenticated as the user. The cloud refuses
+//!   `{messageId, status}`, bearer-authenticated as the user, or as the runtime itself
+//!   (device credential, [`crate::phone_sync`]) when a synced number has no user token. The cloud refuses
 //!   opted-out recipients, inactive numbers and cold outreach.
 //! * Threads: key `phone:<botE164>:<callerE164>` ([`resolve_thread`]), the same
 //!   for a text and a call from one caller.
@@ -222,7 +223,21 @@ pub struct SmsTransport {
     pub http: Arc<dyn HttpSend>,
     pub cloud_url: String,
     pub token: Option<String>,
+    /// The runtime's own device credential, used when no user token is sealed for the number
+    /// (a number synced from the cloud has none). See [`crate::phone_sync`].
+    pub runtime_token: Option<String>,
     pub number_id: Option<String>,
+}
+
+impl SmsTransport {
+    pub fn with_runtime_token(mut self, runtime_token: Option<String>) -> Self {
+        self.runtime_token = runtime_token;
+        self
+    }
+    /// The bearer a cloud send authenticates with: the sealed user token if there is one, else the runtime's.
+    pub fn bearer(&self) -> Option<String> {
+        self.token.clone().or_else(|| self.runtime_token.clone())
+    }
 }
 
 pub fn build_sms(http: Arc<dyn HttpSend>, secret: &str) -> SmsTransport {
@@ -230,7 +245,7 @@ pub fn build_sms(http: Arc<dyn HttpSend>, secret: &str) -> SmsTransport {
     let cloud_url = field("cloudUrl")
         .or_else(|| std::env::var("ALLTERNIT_CLOUD_API_URL").ok().filter(|s| !s.is_empty()))
         .unwrap_or_else(|| "https://api.allternit.com".into());
-    SmsTransport { http, cloud_url: cloud_url.trim_end_matches('/').to_string(), token: field("token"), number_id: field("numberId") }
+    SmsTransport { http, cloud_url: cloud_url.trim_end_matches('/').to_string(), token: field("token"), runtime_token: None, number_id: field("numberId") }
 }
 
 /// Telnyx `message.received` → one inbound message. Conversation = the shared
@@ -321,7 +336,7 @@ impl ChannelTransport for SmsTransport {
         Identity { id: requested.map(str::to_string), exact: true }
     }
     async fn post(&self, out: &Outbound) -> Result<Receipt, PostError> {
-        let token = self.token.clone().ok_or_else(|| PostError::Rejected("no Allternit token is configured for this number".into()))?;
+        let token = self.bearer().ok_or_else(|| PostError::Rejected("no Allternit token is configured for this number".into()))?;
         let number_id = self.number_id.clone().ok_or_else(|| PostError::Rejected("this connection has no phone number id".into()))?;
         let to = out.thread.clone().filter(|t| is_e164(t)).ok_or_else(|| PostError::Rejected("no phone number to text for this conversation".into()))?;
         let url = format!("{}/api/v1/channels/sms/send", self.cloud_url);
@@ -442,6 +457,25 @@ mod tests {
         assert_eq!(sent[0].url, "https://cloud.test/api/v1/channels/sms/send");
         assert_eq!(sent[0].body, json!({ "numberId": "num-1", "to": "+14155550123", "text": "hello" }));
         assert_eq!(sent[0].headers, vec![("Authorization".to_string(), "Bearer tok".to_string())]);
+    }
+
+    #[tokio::test]
+    async fn a_synced_number_sends_as_the_runtime_and_a_user_token_still_wins() {
+        let out = || Outbound { workspace: None, channel: String::new(), thread: Some("+14155550123".into()), text: "hi".into(), identity: None };
+        // Synced: the connection holds no user token, so the runtime's own credential authenticates.
+        let secret = json!({ "numberId": "num-1", "cloudUrl": "https://cloud.test" }).to_string();
+        let http = Arc::new(FakeHttp::default());
+        build_sms(http.clone(), &secret).with_runtime_token(Some("allternit_runtime_x".into())).post(&out()).await.unwrap();
+        assert_eq!(http.sent.lock().unwrap()[0].headers, vec![("Authorization".to_string(), "Bearer allternit_runtime_x".to_string())]);
+        // A sealed user token (the UI flow) is preferred.
+        let both = json!({ "token": "user-tok", "numberId": "num-1", "cloudUrl": "https://cloud.test" }).to_string();
+        let http = Arc::new(FakeHttp::default());
+        build_sms(http.clone(), &both).with_runtime_token(Some("allternit_runtime_x".into())).post(&out()).await.unwrap();
+        assert_eq!(http.sent.lock().unwrap()[0].headers[0].1, "Bearer user-tok");
+        // Neither: refused before any request.
+        let http = Arc::new(FakeHttp::default());
+        assert!(matches!(build_sms(http.clone(), &secret).post(&out()).await, Err(PostError::Rejected(_))));
+        assert!(http.sent.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

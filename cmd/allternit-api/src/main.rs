@@ -597,6 +597,8 @@ async fn main() {
     // Vendor bots' `post_message` start conversations through the same path as the app.
     allternit_api::channel_start::register_vendor_starter(&state);
     allternit_api::discord_gateway::spawn_bound(state.clone());
+    // Keep this runtime's phone numbers in step with the cloud (inert until the runtime is paired).
+    allternit_api::phone_sync::spawn(state.clone());
     allternit_api::computer_idle::spawn_idle_sweeper(state.clone(), shutdown_tx.subscribe());
 
     // BYOK credential revalidation sweep (P1.7): re-probe every active
@@ -1215,6 +1217,8 @@ async fn main() {
         // by cloud-api's relay; the viewer token (signed with the per-runtime
         // relay key) is the credential, no Clerk session on this hop.
         .merge(allternit_api::runtime_viewer::runtime_viewer_router())
+        // Cloud pushes `phone.numbers.changed` here (signed with the device token); triggers a number pull.
+        .merge(allternit_api::phone_sync::phone_sync_router())
         // Photon.codes inbound-message webhook is also server-to-server and
         // carries no Clerk session; route it to the recipient bot's inbox.
         .merge(allternit_bus_webhook_router())
