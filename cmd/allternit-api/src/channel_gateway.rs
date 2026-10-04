@@ -1843,6 +1843,7 @@ mod tests {
 
     #[tokio::test]
     async fn managed_available_is_false_without_a_configured_cloud() {
+        let _cloud_url = crate::test_helpers::cloud_url_env(None);
         let st = setup("avail").await;
         let response = telegram_managed_available_h(State(st)).await;
         let bytes = http_body_util::BodyExt::collect(response.into_body()).await.unwrap().to_bytes();

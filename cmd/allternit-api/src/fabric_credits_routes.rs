@@ -680,6 +680,7 @@ mod tests {
 
     #[tokio::test]
     async fn purchase_refuses_409_when_checkout_flag_unset() {
+        let _cloud_url = crate::test_helpers::cloud_url_env(None);
         let temp = tempfile::tempdir().unwrap().keep();
         // Default config: no ALLTERNIT_CREDITS_CHECKOUT_ENABLED → the gate is
         // closed and the endpoint must not self-credit.
@@ -716,6 +717,7 @@ mod tests {
 
     #[tokio::test]
     async fn purchase_delegates_to_checkout_url_when_flag_set_and_hosted() {
+        let _cloud_url = crate::test_helpers::cloud_url_env(None);
         let temp = tempfile::tempdir().unwrap().keep();
         let state = crate::test_helpers::app_state_with_config(
             &temp,
@@ -761,6 +763,7 @@ mod tests {
 
     #[tokio::test]
     async fn purchase_refuses_409_when_flag_set_but_no_checkout_backend() {
+        let _cloud_url = crate::test_helpers::cloud_url_env(None);
         let temp = tempfile::tempdir().unwrap().keep();
         let state = crate::test_helpers::app_state_with_config(
             &temp,
@@ -798,6 +801,7 @@ mod tests {
 
     #[test]
     fn purchase_mode_self_hosted_by_default() {
+        let _cloud_url = crate::test_helpers::cloud_url_env(None);
         let config = crate::config::AppConfig {
             company: crate::config::CompanyConfig::default(),
             user: crate::config::UserConfig::default(),
@@ -807,6 +811,7 @@ mod tests {
 
     #[test]
     fn purchase_mode_hosted_when_cloud_billing_configured() {
+        let _cloud_url = crate::test_helpers::cloud_url_env(None);
         let config = crate::config::AppConfig {
             company: crate::config::CompanyConfig {
                 cloud_api_url: Some("https://api.allternit.com".to_string()),

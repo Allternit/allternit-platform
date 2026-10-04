@@ -1235,7 +1235,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn discord_dm_opens_the_channel_first_and_binds_replies_to_it() {
-        std::env::set_var("ALLTERNIT_CLOUD_API_URL", "https://api.test");
+        let _cloud_url = crate::test_helpers::cloud_url_env(Some("https://api.test"));
         let st = state("dm1").await;
         account(&st, "acct-dc", "discord", json!({ "mode": "app", "guildId": "G1", "cloudToken": "t" }));
         let (http, tx, mail) = (Arc::new(FakeHttp::default()), FakeTx::new("discord"), FakeMail::new());
@@ -1258,7 +1258,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn discord_dm_refusals_leave_nothing_behind() {
-        std::env::set_var("ALLTERNIT_CLOUD_API_URL", "https://api.test");
+        let _cloud_url = crate::test_helpers::cloud_url_env(Some("https://api.test"));
         let st = state("dm2").await;
         account(&st, "acct-dc", "discord", json!({ "mode": "app", "guildId": "G1", "cloudToken": "t" }));
         let (http, tx, mail) = (Arc::new(FakeHttp::default()), FakeTx::new("discord"), FakeMail::new());
