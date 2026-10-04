@@ -175,6 +175,11 @@ pub async fn authenticate_api_key(
     db: &PgPool,
     token: &str,
 ) -> Result<Option<ApiKey>, ApiError> {
+    // Project keys (`alt_live_…` / `alt_test_…`) authenticate only on the
+    // Platform API (`routes::platform_v1`), never as the owning user here.
+    if crate::routes::platform_v1::caller::is_project_key_token(token) {
+        return Ok(None);
+    }
     let token_hash = hash_token(token);
 
     let row = sqlx::query_as::<_, ApiKeyRow>(
@@ -190,6 +195,144 @@ pub async fn authenticate_api_key(
     .await?;
 
     Ok(row.map(into_api_key))
+}
+
+/// A project-bound key as shown to the console (no hash).
+#[derive(Debug, Clone, Serialize, FromRow)]
+pub struct ProjectKey {
+    pub id: String,
+    pub project_id: String,
+    pub account_id: Option<String>,
+    pub env: String,
+    pub name: String,
+    pub prefix: String,
+    pub scopes: Vec<String>,
+    pub last_used_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// The plaintext token is returned exactly once, at creation.
+#[derive(Debug, Clone, Serialize)]
+pub struct CreatedProjectKey {
+    #[serde(flatten)]
+    pub key: ProjectKey,
+    pub token: String,
+}
+
+pub struct CreateProjectKeyInput {
+    pub user_id: String,
+    pub organization_id: Option<String>,
+    pub project_id: String,
+    pub account_id: Option<String>,
+    /// `sandbox` mints `alt_test_…`, `live` mints `alt_live_…`.
+    pub env: crate::routes::platform_v1::ProjectEnv,
+    pub name: String,
+    pub scopes: Vec<String>,
+}
+
+/// Validate project-key scopes: lowercase, de-duplicated, non-empty, all known.
+/// Unlike [`normalize_scopes`] there is no default: a project key must say
+/// what it may do.
+pub fn normalize_project_scopes(scopes: Vec<String>) -> Result<Vec<String>, ApiError> {
+    use crate::routes::platform_v1::caller::PLATFORM_SCOPES;
+    let mut out: Vec<String> = Vec::new();
+    for scope in scopes {
+        let scope = scope.trim().to_lowercase();
+        if scope.is_empty() {
+            continue;
+        }
+        if !PLATFORM_SCOPES.contains(&scope.as_str()) {
+            return Err(ApiError::BadRequest(format!(
+                "Unknown scope '{scope}'. Valid scopes: {}",
+                PLATFORM_SCOPES.join(", ")
+            )));
+        }
+        if !out.contains(&scope) {
+            out.push(scope);
+        }
+    }
+    if out.is_empty() {
+        return Err(ApiError::BadRequest(
+            "At least one scope is required.".to_string(),
+        ));
+    }
+    Ok(out)
+}
+
+fn generate_project_token(prefix: &str) -> String {
+    let mut entropy = [0u8; TOKEN_ENTROPY_BYTES];
+    rand::thread_rng().fill_bytes(&mut entropy);
+    format!("{}{}", prefix, hex::encode(entropy))
+}
+
+const PROJECT_KEY_COLUMNS: &str =
+    "id, project_id, account_id, env, name, prefix, scopes, last_used_at, created_at";
+
+/// Mint a project-bound key (`alt_live_<64hex>` / `alt_test_<64hex>`), stored
+/// hashed exactly like legacy keys. The caller has already checked that the
+/// user may manage the project and that `account_id` belongs to it.
+pub async fn create_project_key(
+    db: &PgPool,
+    input: CreateProjectKeyInput,
+) -> Result<CreatedProjectKey, ApiError> {
+    let name = input.name.trim();
+    if name.is_empty() || name.chars().count() > 120 {
+        return Err(ApiError::BadRequest(
+            "API key name must be 1 to 120 characters".to_string(),
+        ));
+    }
+    let scopes = normalize_project_scopes(input.scopes)?;
+    let token = generate_project_token(input.env.key_prefix());
+    let prefix = token.chars().take(16).collect::<String>();
+
+    let key = sqlx::query_as::<_, ProjectKey>(&format!(
+        r#"
+        INSERT INTO api_keys (id, user_id, organization_id, name, token_hash, prefix, scopes, project_id, account_id, env)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        RETURNING {PROJECT_KEY_COLUMNS}
+        "#
+    ))
+    .bind(generate_id())
+    .bind(&input.user_id)
+    .bind(&input.organization_id)
+    .bind(name)
+    .bind(hash_token(&token))
+    .bind(&prefix)
+    .bind(&scopes)
+    .bind(&input.project_id)
+    .bind(&input.account_id)
+    .bind(input.env.as_str())
+    .fetch_one(db)
+    .await?;
+
+    Ok(CreatedProjectKey { key, token })
+}
+
+/// Active (non-revoked) keys of one project, newest first.
+pub async fn list_project_keys(db: &PgPool, project_id: &str) -> Result<Vec<ProjectKey>, ApiError> {
+    Ok(sqlx::query_as::<_, ProjectKey>(&format!(
+        "SELECT {PROJECT_KEY_COLUMNS} FROM api_keys \
+         WHERE project_id = $1 AND revoked_at IS NULL ORDER BY created_at DESC, id"
+    ))
+    .bind(project_id)
+    .fetch_all(db)
+    .await?)
+}
+
+/// Revoke one key of a project (the project check is the caller's job).
+pub async fn revoke_project_key(db: &PgPool, project_id: &str, key_id: &str) -> Result<(), ApiError> {
+    let result = sqlx::query(
+        "UPDATE api_keys SET revoked_at = NOW(), updated_at = NOW() \
+         WHERE id = $1 AND project_id = $2 AND revoked_at IS NULL",
+    )
+    .bind(key_id)
+    .bind(project_id)
+    .execute(db)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound("API key not found or already revoked".to_string()));
+    }
+    Ok(())
 }
 
 fn into_api_key(row: ApiKeyRow) -> ApiKey {

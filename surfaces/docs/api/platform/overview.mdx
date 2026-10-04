@@ -1,0 +1,42 @@
+---
+title: 'Platform API overview'
+description: 'The developer API for agents, voice, messaging, numbers, channels and the twin layer: projects, accounts, keys, limits and usage.'
+---
+
+The Allternit Platform API lets developers build on the same agents, phone numbers, voice, texting, channels and twin layer that Allternit runs for its own users. Everything lives under `https://api.allternit.com/v1`.
+
+<Note>
+The Platform API is in private beta. It answers `404 platform_api_disabled` on every `/v1` route except `/v1/chat/completions` and `/v1/models` until it is switched on for the deployment (`ALLTERNIT_PLATFORM_API=1`).
+</Note>
+
+## How it fits together
+
+| Concept | What it is |
+|---|---|
+| **Project** | Your app. Holds agents, numbers, channels, webhooks, keys and usage. Each project is `sandbox` (test keys, no real numbers or calls) or `live`. Created in the console. |
+| **Account** | One end-customer business you serve. Every agent, number, person and inbox item belongs to exactly one account, and one account never sees another's data. See [Accounts](/api/platform/accounts). |
+| **API key** | `alt_test_…` (sandbox) or `alt_live_…` (live), bound to one project, with scopes, optionally bound to one account. See [Authentication](/api/platform/authentication). |
+| **Usage** | Every billable action records a usage event against a meter. See [Usage](/api/platform/usage). |
+
+## Conventions
+
+- JSON in and out; IDs are prefixed (`proj_`, `acct_`, `agent_`, `call_`, `num_`, `msg_`, `wh_`, `evt_`).
+- Lists use cursor pagination: `?limit=&after=` and `{ "data": [...], "has_more": true, "next_cursor": "…" }`.
+- Every `POST` accepts an `Idempotency-Key`. See [Idempotency and limits](/api/platform/idempotency-and-limits).
+- Errors share one shape. See [Errors](/api/platform/errors).
+- The OpenAPI 3.1 description is `cmd/allternit-cloud-api/openapi/platform-v1.yaml`; a test fails if a `/v1` route and the spec disagree.
+
+## Plans
+
+| Plan | Requests per minute | Concurrent calls |
+|---|---|---|
+| Sandbox | 60 | 1 |
+| Pay as you go | 300 | 5 |
+| Growth | 1,000 | 25 |
+| Enterprise | contracted (default 3,000) | contracted (default 100) |
+
+Prices and what each plan includes are on the pricing page. Uptime figures are targets, not guarantees, unless a contract says otherwise.
+
+## Rules built in
+
+Every call says it is an AI assistant (you can reword it, not remove it). Calls and texts out go only to people who contacted the number first or whose consent was recorded; STOP is always honored. Recording is off by default. Only stock voices are available. Healthcare data and other regulated uses are out of scope during the beta.

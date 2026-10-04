@@ -1,0 +1,42 @@
+---
+title: 'Authentication'
+description: 'Project API keys, scopes and account-bound keys for the Platform API.'
+---
+
+Send a project key as a bearer token:
+
+```http
+Authorization: Bearer alt_live_3f9c…
+```
+
+| Key | Project | Use |
+|---|---|---|
+| `alt_test_<64 hex>` | `sandbox` | Building and testing. No real numbers, calls or texts to unverified numbers. |
+| `alt_live_<64 hex>` | `live` | Production traffic. |
+
+Keys are created in the console, which uses your signed-in session (`POST /api/v1/platform/projects/{id}/keys`). The full key is shown once; only its hash is stored. A key can never create another key. Revoke a key with `DELETE /api/v1/platform/projects/{id}/keys/{key_id}`. Only the project owner, or an admin of the project's organization, can manage its keys.
+
+Older `alt_` keys (account keys, not project keys) keep working for the routes they always reached; they don't authenticate on the Platform API.
+
+## Scopes
+
+A key carries one or more scopes. A route that needs a scope the key lacks answers `403 permission_error`.
+
+| Scope | Allows |
+|---|---|
+| `agents` | Agents and conversations |
+| `voice` | Calls and realtime sessions |
+| `messaging` | Texts |
+| `numbers` | Phone numbers and carrier registration |
+| `channels` | Channel connections |
+| `twin` | People, inbox, approvals, autonomy, memory |
+| `webhooks` | Webhook endpoints |
+| `usage` | Usage reports |
+| `inference` | `/v1/chat/completions` |
+| `compute` | Existing compute routes |
+
+Accounts can be managed with any resource scope (`agents`, `voice`, `messaging`, `numbers`, `channels`, `twin` or `webhooks`).
+
+## Account-bound keys
+
+Create a key with an `account_id` to hand it to one customer's backend. That key sees only its own account: it can read and rename that account, it can't create or delete accounts, and every list it reads is filtered to the account.

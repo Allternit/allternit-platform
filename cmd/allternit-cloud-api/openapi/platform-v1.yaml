@@ -1,0 +1,269 @@
+openapi: 3.1.0
+info:
+  title: Allternit Platform API
+  version: "1.0.0"
+  summary: Agents, voice, messaging, numbers, channels and the twin layer, for developers.
+  description: |
+    The Allternit Platform API. Base URL `https://api.allternit.com`.
+
+    Authenticate with a project API key: `Authorization: Bearer alt_live_…` (live
+    project) or `alt_test_…` (sandbox project). Every POST accepts an
+    `Idempotency-Key` header (stored per key for 24 hours). Responses carry
+    `x-ratelimit-limit`, `x-ratelimit-remaining` and `x-ratelimit-reset` headers.
+
+    This file is the source of truth for the `/v1` routes: a test fails if the
+    router and this file disagree.
+servers:
+  - url: https://api.allternit.com
+security:
+  - bearerAuth: []
+paths:
+  /v1/accounts:
+    get:
+      operationId: listAccounts
+      summary: List accounts
+      description: Accounts in the project, oldest first. A key bound to an account sees only that account. Requires a resource scope.
+      tags: [Accounts]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
+        - name: external_ref
+          in: query
+          description: Only the account with this external_ref.
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of accounts.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Account" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createAccount
+      summary: Create an account
+      description: One account per end-customer business. Not available to account-bound keys.
+      tags: [Accounts]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+                external_ref:
+                  type: string
+                  maxLength: 255
+                  description: Your own id for this customer. Unique within the project.
+                metadata:
+                  type: object
+                  description: Free-form JSON object, at most 8 KB.
+                  additionalProperties: true
+      responses:
+        "201":
+          description: The new account.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/accounts/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, examples: ["acct_0123456789abcdef01234567"] }
+    get:
+      operationId: getAccount
+      summary: Retrieve an account
+      tags: [Accounts]
+      responses:
+        "200":
+          description: The account.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        default: { $ref: "#/components/responses/Error" }
+    patch:
+      operationId: updateAccount
+      summary: Update an account
+      description: "Absent fields are unchanged; `external_ref: null` clears it; `metadata` replaces the object."
+      tags: [Accounts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+                external_ref: { type: [string, "null"], maxLength: 255 }
+                metadata: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: The updated account.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteAccount
+      summary: Delete an account
+      description: Soft delete. Also revokes the API keys bound to the account. Not available to account-bound keys.
+      tags: [Accounts]
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, object, deleted]
+                properties:
+                  id: { type: string }
+                  object: { type: string, const: account }
+                  deleted: { type: boolean, const: true }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/usage:
+    get:
+      operationId: getUsage
+      summary: Usage by meter, key or account
+      description: Sums of recorded usage events in `[from, to)`. Requires the `usage` scope.
+      tags: [Usage]
+      parameters:
+        - name: group_by
+          in: query
+          schema: { type: string, enum: [meter, key, account], default: meter }
+        - name: from
+          in: query
+          description: RFC 3339 timestamp or YYYY-MM-DD. Defaults to 30 days before `to`.
+          schema: { type: string }
+        - name: to
+          in: query
+          description: RFC 3339 timestamp or YYYY-MM-DD. Defaults to now.
+          schema: { type: string }
+        - name: account_id
+          in: query
+          description: Only this account's usage.
+          schema: { type: string }
+      responses:
+        "200":
+          description: Usage rows.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [object, group_by, from, to, data, has_more, next_cursor]
+                properties:
+                  object: { type: string, const: usage }
+                  group_by: { type: string }
+                  from: { type: string, format: date-time }
+                  to: { type: string, format: date-time }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/UsageRow" }
+                  has_more: { type: boolean }
+                  next_cursor: { type: [string, "null"] }
+        default: { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: A project API key, `alt_live_…` or `alt_test_…`.
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      description: Page size, 1 to 100 (default 20).
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    After:
+      name: after
+      in: query
+      description: Opaque cursor from `next_cursor` of the previous page.
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      description: Up to 255 characters. Repeating a request with the same key replays the stored response for 24 hours; the same key with a different request is a 409.
+      schema: { type: string, maxLength: 255 }
+  responses:
+    Error:
+      description: Error. The HTTP status says which kind; the body is the Error object.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [type, code, message, param]
+          properties:
+            type:
+              type: string
+              enum:
+                - invalid_request_error
+                - authentication_error
+                - permission_error
+                - not_found_error
+                - rate_limit_error
+                - conflict_error
+                - api_error
+            code: { type: string }
+            message: { type: string }
+            param: { type: [string, "null"] }
+    ListEnvelope:
+      type: object
+      required: [data, has_more, next_cursor]
+      properties:
+        data: { type: array, items: {} }
+        has_more: { type: boolean }
+        next_cursor:
+          type: [string, "null"]
+          description: Pass as `after` to get the next page; null on the last page.
+    Account:
+      type: object
+      required: [id, object, name, external_ref, metadata, created_at]
+      properties:
+        id: { type: string }
+        object: { type: string, const: account }
+        name: { type: string }
+        external_ref: { type: [string, "null"] }
+        metadata: { type: object, additionalProperties: true }
+        created_at: { type: string, format: date-time }
+    UsageRow:
+      type: object
+      required: [group, meter, unit, quantity, events]
+      properties:
+        group:
+          type: [string, "null"]
+          description: The meter, key id or account id, per `group_by`. Null for usage with no account.
+        meter:
+          type: string
+          enum:
+            - voice_min_allternit
+            - voice_min_byok
+            - agent_month
+            - tokens_in
+            - tokens_out
+            - number_local_month
+            - number_tollfree_month
+            - sms_segment
+            - mms
+            - registration_passthrough_cents
+            - recording_min_month
+        unit: { type: [string, "null"] }
+        quantity: { type: number }
+        events: { type: integer }

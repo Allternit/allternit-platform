@@ -1,0 +1,28 @@
+---
+title: 'Idempotency and limits'
+description: 'Idempotency keys, rate limits and concurrency caps on the Platform API.'
+---
+
+## Idempotency
+
+Send `Idempotency-Key: <your unique string>` on any `POST`. The response is stored per API key for 24 hours:
+
+- The same key with the same request replays the stored response, with `idempotent-replayed: true`.
+- The same key with a different request is `409 idempotency_conflict`.
+- A retry that arrives while the first request is still running is `409 idempotency_in_progress`; retry it shortly and it replays the finished response.
+
+## Rate limits
+
+Limits count per key and per project in one-minute windows, and hold across all of our servers. Every response carries:
+
+```http
+x-ratelimit-limit: 300
+x-ratelimit-remaining: 297
+x-ratelimit-reset: 1759600860
+```
+
+`x-ratelimit-reset` is the unix time the window ends. Over the limit is `429 rate_limit_error` with `retry-after`. Defaults by plan are on the [overview](/api/platform/overview#plans); a project can have its own limit.
+
+## Concurrent calls
+
+Live calls per project are capped by plan (1 / 5 / 25), with a deployment-wide cap on top. A call over the cap is refused with `429 rate_limit_error` before it starts, and a slot is freed as soon as a call ends.
