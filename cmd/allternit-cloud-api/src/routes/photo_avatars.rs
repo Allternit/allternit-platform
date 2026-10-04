@@ -273,6 +273,12 @@ impl OpenAiImagesEdit {
     }
 }
 
+impl Default for OpenAiImagesEdit {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// multipart/form-data body for images/edits (built by hand; reqwest's multipart feature is off
 /// in this workspace).
 pub fn edit_form(boundary: &str, png: &[u8], prompt: &str) -> Vec<u8> {
@@ -419,6 +425,7 @@ pub enum ReserveOutcome {
 /// Take one slot of this month's allowance and budget, or report which ran out. A lane-wide
 /// advisory lock makes check-then-insert atomic across parallel requests (and users), so neither
 /// the per-user limit nor the global budget can be overrun.
+#[allow(clippy::too_many_arguments)]
 pub async fn reserve(
     db: &PgPool,
     user_id: &str,
