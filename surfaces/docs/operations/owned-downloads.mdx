@@ -20,7 +20,7 @@ Without those variables the script downloads and verifies every file, then print
 
 ## Desktop installers
 
-`scripts/mirror-desktop-release.sh <version>` copies the published `Gizziio/desktop` release `v<version>` (dmg, zip, exe, AppImage, deb, `latest*.yml`, blockmaps) to `desktop/v<version>/`, writes `desktop/latest.json`, and deletes any `desktop/v*` older than the previous version (current plus previous are kept, to bound storage). By default it prints a plan; `--apply` uploads. Credentials come from `R2_ENDPOINT`, `R2_ACCESS_KEY` and `R2_SECRET`, and it needs an authenticated `gh`.
+`scripts/mirror-desktop-release.sh <version>` copies the published `Gizziio/desktop` release `v<version>` installers (dmg, exe, AppImage, deb; about 1.9 GB a version) to `desktop/v<version>/`, writes `desktop/latest.json`, and deletes every other `desktop/v*`, so only the current version is kept. Auto-update zips, blockmaps and `latest*.yml` stay on GitHub only. This keeps R2 inside the 10 GB monthly allowance. By default it prints a plan; `--apply` uploads. Credentials come from `R2_ENDPOINT`, `R2_ACCESS_KEY` and `R2_SECRET`, and it needs an authenticated `gh`.
 
 `latest.json` looks like `{"version": "1.1.3", "assets": {"mac_arm64": "<url>", "mac_x64": "<url>", "win_x64": "<url>", ...}}`. The installer script (`install.allternit.com`) reads it first and falls back to the GitHub API and GitHub release URLs.
 

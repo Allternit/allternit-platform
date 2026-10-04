@@ -2,7 +2,9 @@
 # Mirror a published Allternit Desktop release (Gizziio/desktop v<version>) to R2:
 #   allternit-runtime/desktop/v<version>/<assets>   (served at runtime.allternit.com)
 #   allternit-runtime/desktop/latest.json           {version, assets:{...}: url}
-# and delete desktop/v* older than the previous version (keeps current + previous).
+# and delete every other desktop/v* (keeps only the current version).
+# Installers only (dmg/exe/AppImage/deb, ~1.9 GB a version): auto-update zips and
+# blockmaps stay on GitHub, so the mirror fits the 10 GB R2 allowance.
 #
 #   scripts/mirror-desktop-release.sh 1.1.3            # dry-run plan (default)
 #   R2_ENDPOINT=https://<acct>.r2.cloudflarestorage.com R2_ACCESS_KEY=... R2_SECRET=... \
@@ -33,7 +35,7 @@ r2() { # r2 <curl args...> ; signs the request
 
 echo "== download $REPO $tag assets"
 gh release download "$tag" -R "$REPO" -D "$work" \
-  -p '*.dmg' -p '*.zip' -p '*.exe' -p '*.AppImage' -p '*.deb' -p '*.yml' -p '*.blockmap'
+  -p '*.dmg' -p '*.exe' -p '*.AppImage' -p '*.deb'
 shopt -s nullglob
 files=("$work"/*)
 if [[ ${#files[@]} -eq 0 ]]; then echo "no assets found for $tag" >&2; exit 1; fi
@@ -63,8 +65,6 @@ for n in sorted(os.listdir(d)):
         slots["linux_arm64" if ("arm64" in low or "aarch64" in low) else "linux_x64"] = url
     elif low.endswith(".deb"):
         slots["linux_deb_arm64" if ("arm64" in low or "aarch64" in low) else "linux_deb_x64"] = url
-    elif low in ("latest.yml", "latest-mac.yml", "latest-linux.yml"):
-        slots["manifest_" + low[:-4].replace("-", "_")] = url
 print(json.dumps({"version": version, "assets": slots}, indent=2))
 PY
 echo "== latest.json"; cat "$work/latest.json.out"
@@ -73,18 +73,16 @@ if [[ $apply -eq 1 ]]; then
     -T "$work/latest.json.out" "$R2_ENDPOINT/$BUCKET/desktop/latest.json"
 fi
 
-echo "== prune (keep $tag + previous version)"
+echo "== prune (keep only $tag)"
 if [[ $apply -eq 1 ]]; then
   listing="$(r2 "$R2_ENDPOINT/$BUCKET?list-type=2&prefix=desktop/&delimiter=/")"
 else
   listing=""
-  echo "  (dry run: remote listing skipped; --apply deletes desktop/v* older than the previous version)"
+  echo "  (dry run: remote listing skipped; --apply deletes every older desktop/v*)"
 fi
 all="$(printf '%s' "$listing" | grep -o '<Prefix>desktop/v[^<]*/</Prefix>' | sed -E 's#<Prefix>desktop/v([^<]*)/</Prefix>#\1#' || true)"
 others="$(printf '%s\n' "$all" | grep -vxF "$version" | grep -v '^$' | sort -V || true)"
-# previous = highest remaining version below the one being published
-previous="$(printf '%s\n%s\n' "$others" "$version" | grep -v '^$' | sort -V | grep -xF -B1 "$version" | head -1 || true)"
-[[ "$previous" == "$version" ]] && previous=""
+previous=""  # storage budget: keep only the current version
 for v in $others; do
   if [[ "$v" == "$previous" ]]; then echo "  keep   desktop/v$v/ (previous)"; continue; fi
   if [[ "$(printf '%s\n%s\n' "$v" "$version" | sort -V | tail -1)" == "$v" ]]; then
