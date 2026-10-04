@@ -37,6 +37,7 @@ pub mod mesh;
 pub mod channel_inbound;
 pub mod phone;
 pub mod phone_sync;
+pub mod runtime_files;
 pub mod phone_invites;
 pub mod inapp_calls;
 pub mod mcp_oauth_approvals;

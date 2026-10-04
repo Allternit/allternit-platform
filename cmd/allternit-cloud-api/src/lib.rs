@@ -374,6 +374,7 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::voice_recordings::routes())
         // User file uploads to R2 with per-plan caps (presigned PUT/GET); 503 when ALLTERNIT_R2_* is unset.
         .merge(routes::files::routes())
+        .merge(routes::runtime_files::routes())
         // Discord shared app: install/send/commands check the Clerk session; the OAuth
         // callback and interactions are public (state / Ed25519 signature).
         .merge(routes::discord_app::routes())

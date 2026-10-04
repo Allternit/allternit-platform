@@ -227,11 +227,17 @@ pub struct SmsTransport {
     /// (a number synced from the cloud has none). See [`crate::phone_sync`].
     pub runtime_token: Option<String>,
     pub number_id: Option<String>,
+    /// Where bot files go to become links (SMS carries no attachments).
+    pub uploader: Arc<dyn crate::cloud_files::FileUploader>,
 }
 
 impl SmsTransport {
     pub fn with_runtime_token(mut self, runtime_token: Option<String>) -> Self {
         self.runtime_token = runtime_token;
+        self
+    }
+    pub fn with_uploader(mut self, uploader: Arc<dyn crate::cloud_files::FileUploader>) -> Self {
+        self.uploader = uploader;
         self
     }
     /// The bearer a cloud send authenticates with: the sealed user token if there is one, else the runtime's.
@@ -245,7 +251,7 @@ pub fn build_sms(http: Arc<dyn HttpSend>, secret: &str) -> SmsTransport {
     let cloud_url = field("cloudUrl")
         .or_else(|| std::env::var("ALLTERNIT_CLOUD_API_URL").ok().filter(|s| !s.is_empty()))
         .unwrap_or_else(|| "https://api.allternit.com".into());
-    SmsTransport { http, cloud_url: cloud_url.trim_end_matches('/').to_string(), token: field("token"), runtime_token: None, number_id: field("numberId") }
+    SmsTransport { http, cloud_url: cloud_url.trim_end_matches('/').to_string(), token: field("token"), runtime_token: None, number_id: field("numberId"), uploader: Arc::new(crate::cloud_files::CloudUploader) }
 }
 
 /// Telnyx `message.received` → one inbound message. Conversation = the shared
@@ -362,6 +368,21 @@ impl ChannelTransport for SmsTransport {
         }
         last.map(|remote_id| Receipt { remote_id, relayed: false }).ok_or_else(|| PostError::Rejected("nothing to send".into()))
     }
+    /// SMS takes no attachments: each file goes to the owner's cloud storage (the runtime's own credential,
+    /// charged to the owner's plan) and its permanent link is appended to the text. If any upload fails
+    /// nothing is sent, so a person never gets a message that promises a file it lacks.
+    async fn post_files(&self, out: &Outbound, files: &[crate::channel_files::ChannelFile]) -> Result<Receipt, PostError> {
+        let bearer = self.runtime_token.clone().ok_or_else(|| PostError::Rejected("this runtime is not paired, so it cannot store files to send".into()))?;
+        let mut text = out.text.trim_end().to_string();
+        for f in files {
+            let link = self.uploader.upload(&self.cloud_url, &bearer, &f.filename, &f.mime, f.data.clone()).await.map_err(|e| PostError::Rejected(format!("could not store {}: {e}", f.filename)))?;
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(&format!("{}: {link}", f.filename));
+        }
+        self.post(&Outbound { text, ..out.clone() }).await
+    }
 }
 
 #[cfg(test)]
@@ -445,6 +466,27 @@ mod tests {
         // Multibyte text with no break points still splits on char boundaries.
         let wide = "é".repeat(4000);
         assert!(split_sms(&wide, 1600).iter().all(|p| p.chars().count() <= 1600));
+    }
+
+    #[tokio::test]
+    async fn sms_attachments_become_permanent_links_in_the_text() {
+        use crate::cloud_files::fakes::FakeUploader;
+        let http = Arc::new(FakeHttp::default());
+        let up = Arc::new(FakeUploader::default());
+        let tx = build_sms(http.clone(), &json!({ "numberId": "num-1", "cloudUrl": "https://cloud.test" }).to_string()).with_runtime_token(Some("allternit_runtime_x".into())).with_uploader(up.clone());
+        let out = Outbound { workspace: None, channel: String::new(), thread: Some("+14155550123".into()), text: "Here is the report".into(), identity: None };
+        let file = |n: &str| crate::channel_files::ChannelFile { filename: n.into(), mime: "application/pdf".into(), data: b"%PDF".to_vec() };
+        tx.post_files(&out, &[file("r.pdf")]).await.unwrap();
+        assert_eq!(up.seen.lock().unwrap()[0], ("https://cloud.test".to_string(), "allternit_runtime_x".to_string(), "r.pdf".to_string(), 4));
+        assert_eq!(http.sent.lock().unwrap()[0].body["text"], "Here is the report\nr.pdf: https://api.test/api/v1/files/r.pdf/raw?k=t");
+        // A failed upload sends nothing.
+        *up.fail.lock().unwrap() = Some("over your plan".into());
+        let before = http.sent.lock().unwrap().len();
+        assert!(matches!(tx.post_files(&out, &[file("b.pdf")]).await, Err(PostError::Rejected(m)) if m.contains("over your plan")));
+        assert_eq!(http.sent.lock().unwrap().len(), before);
+        // Unpaired: refused before any upload.
+        let unpaired = build_sms(http.clone(), &json!({ "numberId": "num-1" }).to_string()).with_uploader(up);
+        assert!(matches!(unpaired.post_files(&out, &[file("c.pdf")]).await, Err(PostError::Rejected(_))));
     }
 
     #[tokio::test]

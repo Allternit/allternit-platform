@@ -108,7 +108,7 @@ Discord docs: [Create DM](https://discord.com/developers/docs/resources/user#cre
 | Telegram | `sendPhoto` for JPEG/PNG, `sendDocument` for everything else. One file carries the text as its caption (up to 1024 characters); more files, or a longer text, send the text first. | 5 files |
 | Slack (shared app) | The cloud posts the text as the bot, then uploads the files into that message's thread with `files.getUploadURLExternal` and `files.completeUploadExternal`. The app needs the `files:write` scope, which new installs request; a workspace that installed earlier has to re-authorize before files upload. | 5 files |
 | Email | Sent through mailflare's `attachments`. The approval gate stays on. | 10 files |
-| SMS | Not supported: MMS needs the carrier to fetch a public media URL and we host none. | none |
+| SMS | Not sent as MMS. Each file is uploaded to the owner's cloud storage with the runtime's own credential (plan caps apply) and its permanent link is added to the text, one `name: link` line per file. If any upload fails (not paired, over the plan, links not enabled) nothing is sent and the send is rejected. | 3 files |
 | Discord, Teams, WhatsApp | Not supported yet. | none |
 
 Every channel: 10 MB per file, 20 MB per message. Refusals: `400 attachments_unsupported` (the channel takes none), `400 invalid_attachment` (no data, empty or bad base64), `413 attachment_too_large` (size or count). Start and channel-send accept request bodies up to 30 MB for this. The cloud's Slack send route takes the same `files` list (`{ "channel", "text", "threadTs", "files": [...] }`) and enforces the same caps. If the text posts but the upload fails, the send is reported as unconfirmed rather than failed, so it isn't posted twice.

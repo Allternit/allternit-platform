@@ -9,11 +9,15 @@
 //!   the size, then records the file. 409 `size-mismatch` / `upload-missing`.
 //! * `GET    /api/v1/files/:id[?expires=SECONDS]`: owner gets a presigned GET
 //!   (10 minutes, or up to 7 days when `expires` is given).
+//! * `GET    /api/v1/files/:id/raw?k=TOKEN`: no login; a permanent capability link
+//!   (HMAC of the file id, secret `ALLTERNIT_FILE_LINK_SECRET`). 302 to a fresh
+//!   10-minute presigned GET; 404 for a bad token or deleted file; 503
+//!   `file-links-unavailable` when the secret is unset.
 //! * `DELETE /api/v1/files/:id`: deletes the object, then the record.
 
 use axum::{
     extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -40,19 +44,20 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/api/v1/files/usage", get(usage))
         .route("/api/v1/files/uploads", post(begin))
         .route("/api/v1/files/:id/complete", post(complete))
+        .route("/api/v1/files/:id/raw", get(raw))
         .route("/api/v1/files/:id", get(download).delete(remove))
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct FileBody {
-    name: String,
+pub(crate) struct FileBody {
+    pub name: String,
     #[serde(default)]
-    content_type: String,
-    bytes: u64,
+    pub content_type: String,
+    pub bytes: u64,
 }
 
-fn reply(f: Failure) -> Result<Response, ApiError> {
+pub(crate) fn reply(f: Failure) -> Result<Response, ApiError> {
     match f {
         Failure::Api(e) => Err(e),
         Failure::Refused(r) => Ok((
@@ -63,7 +68,7 @@ fn reply(f: Failure) -> Result<Response, ApiError> {
     }
 }
 
-fn store() -> Result<R2Client, Failure> {
+pub(crate) fn store() -> Result<R2Client, Failure> {
     R2Client::from_env().map_err(|_| {
         Failure::Refused(user_files::Refusal {
             status: 503,
@@ -118,6 +123,23 @@ async fn download(State(state): State<Arc<ApiState>>, headers: HeaderMap, Path(i
     };
     match user_files::download_url(&state.db, &r2, &user, id, q.expires).await {
         Ok(v) => Ok(Json(v).into_response()),
+        Err(f) => reply(f),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawQuery {
+    #[serde(default)]
+    k: String,
+}
+
+async fn raw(State(state): State<Arc<ApiState>>, Path(id): Path<Uuid>, Query(q): Query<RawQuery>) -> Result<Response, ApiError> {
+    let r2 = match store() {
+        Ok(r) => r,
+        Err(f) => return reply(f),
+    };
+    match user_files::raw_redirect_url(&state.db, &r2, id, &q.k).await {
+        Ok(url) => Ok((StatusCode::FOUND, [(header::LOCATION, url), (header::CACHE_CONTROL, "private, max-age=300".to_string())]).into_response()),
         Err(f) => reply(f),
     }
 }
