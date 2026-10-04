@@ -99,6 +99,7 @@ pub mod channel_transports;
 pub mod channel_whatsapp_personal;
 pub mod channel_whatsapp_app;
 pub mod spend_limits;
+pub mod autonomy;
 pub mod channel_tools;
 pub mod templates_routes;
 pub mod memory_curation;

@@ -69,6 +69,7 @@
               "guides/invite-someone",
               "guides/call-notifications",
               "guides/messaging-channels",
+              "guides/bot-autonomy",
               "guides/calls-and-texts",
               "guides/voice",
               "guides/mcp-apps-status"
@@ -562,6 +563,7 @@
               "api/phone-numbers",
               "api/phone-invites",
               "api/people",
+              "api/autonomy",
               "api/inapp-calls",
               "api/web-push",
               "api/allternit-api",

@@ -1,0 +1,85 @@
+---
+title: Autonomy API
+description: Per-bot, per-channel, per-person autonomy levels that every outbound path of the runtime checks.
+---
+
+## Overview
+
+An owner decides how far a bot may go on its own: `draft`, `ask`, `tell` or `limits`. The runtime (allternit-api) checks the policy before every outbound action. The API below is how clients read and change it. See [What your bot can do on its own](/guides/bot-autonomy) for the owner's view.
+
+All routes are under `/api/v1` and need the owner's session.
+
+## Levels
+
+| `level` | Effect |
+| --- | --- |
+| `draft` | Nothing is sent. The send is refused with `CHANNEL_POLICY` and an `autonomy.draft` Inbox card holds the text. |
+| `ask` | The send waits for an approval (`APPROVAL_REQUIRED`, HTTP 428) and an `autonomy.ask` Inbox card is created. |
+| `tell` | The send goes out and an `autonomy.digest` Inbox card is added. |
+| `limits` | The send goes out silently while inside `limits`; past them it behaves like `ask`. |
+
+The action `payment` is held at every level except `draft`, which keeps it a draft.
+
+## Scope and precedence
+
+A policy has `botId`, `channel` and `person`. Each can be empty, which means "all". `channel` is a provider (`telegram`, `slack`, `email`, `sms`, `call`, ...) or a class: `email`, `sms`, `call`, `chat` (every other provider). The most specific match wins: person, then bot, then provider, then class, then everything. With no match the default applies: `email` is `ask`, `sms` and `call` are `tell`, `chat` is `limits` with `maxMessagesPerDay: 200`.
+
+## Endpoints
+
+### `GET /autonomy/policies?botId=<id>`
+
+```json
+{
+  "policies": [
+    { "id": "pol_1", "botId": "bot-1", "channel": "email", "person": "", "level": "ask",
+      "limits": { "maxMessagesPerDay": null, "maxSpendCentsPerDay": null, "allowedActions": ["message", "call"] } }
+  ],
+  "defaults": [{ "channel": "email", "level": "ask", "limits": { "maxMessagesPerDay": null, "maxSpendCentsPerDay": null, "allowedActions": ["message", "call"] } }],
+  "levels": ["draft", "ask", "tell", "limits"]
+}
+```
+
+### `PUT /autonomy/policies`
+
+Creates or replaces the policy for `(botId, channel, person)`.
+
+```json
+{ "botId": "bot-1", "channel": "telegram", "person": "", "level": "limits",
+  "limits": { "maxMessagesPerDay": 50, "maxSpendCentsPerDay": 2000, "allowedActions": ["message", "booking"] } }
+```
+
+Answers the saved policy. `400` for an unknown level, `404` for a bot that is not the caller's.
+
+### `DELETE /autonomy/policies/{id}`
+
+`{ "ok": true }`, or `404`. The place goes back to the default.
+
+### `GET /autonomy/effective?botId=<id>&channel=<channel>&person=<id>`
+
+```json
+{ "level": "limits", "source": "policy", "policyId": "pol_1", "limits": { "maxMessagesPerDay": 50, "maxSpendCentsPerDay": null, "allowedActions": ["message"] },
+  "today": { "messages": 12, "spendCents": 0 }, "wouldHold": false }
+```
+
+### `GET /autonomy/usage?botId=<id>`
+
+Today's actions (UTC day) by channel and outcome (`sent`, `held`, `drafted`).
+
+## Where the check runs
+
+| Path | Where |
+| --- | --- |
+| Channel replies and starts, SMS text | `channel_gateway::send` |
+| Phone calls | `phone_outbound::call` |
+| Email sends and bot replies | `agent_email_routes::send_email_inner` and the reply plan |
+| AI app and vendor bot tools (`send_text`, `start_call`, `send_email`, `post_message`) | They run through the paths above |
+
+Email only reads an explicit policy; with none set, the mailbox's reply mode stays in charge. A policy can tighten any email send and can loosen a bot reply to direct only on a verified domain, under the reply caps.
+
+## Inbox cards
+
+Held, drafted and told actions are written to `inbox_items` with `type` `autonomy.ask`, `autonomy.draft` or `autonomy.digest`. The id is derived from the correlation id, so a retry never makes a second card. `metadata` carries `channel`, `to`, `level`, `threadId` and, for holds, `approvalId`.
+
+## Storage
+
+Runtime migration `V233__autonomy_policies.sql`: `autonomy_policies` (the settings) and `autonomy_actions` (what was done, used for the daily limits). Both are in the runtime database. There is no cloud-side table.

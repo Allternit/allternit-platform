@@ -409,6 +409,15 @@ pub enum SendOutcome {
     Replay { state: String, remote_id: Option<String> },
 }
 
+/// Every id the other party is known by on this binding (for per-person autonomy).
+fn binding_persons(b: &BindingRow) -> Vec<String> {
+    let mut v: Vec<String> = [b.external_thread.clone(), b.channel.clone(), Some(b.conversation.clone())].into_iter().flatten().filter(|s| !s.is_empty()).collect();
+    if let Some(last) = b.conversation.rsplit(':').next().filter(|s| !s.is_empty()) {
+        v.push(last.to_string());
+    }
+    v
+}
+
 /// `Some("deny" | "ask")` for this bot's `channel.send` rule on the provider.
 fn send_policy(db: &DbHandle, bot_id: &str, provider: &str) -> Option<String> {
     let rules = crate::channel_tools::channel_rules(db, bot_id, provider)?;
@@ -480,7 +489,7 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
         .map_err(|e| e.to_string())?;
     if let Some((state, remote_id)) = prior {
         // Held or refused sends are re-evaluated (policy may have changed, approval may have landed).
-        if state != "awaiting_approval" && state != "denied" {
+        if state != "awaiting_approval" && state != "denied" && state != "drafted" {
             return Ok(SendOutcome::Replay { state, remote_id });
         }
     }
@@ -492,7 +501,19 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
         log_unposted(&conn, db, owner, &b, &bot_id, thread_id, &corr, text, "denied", "failed", &why);
         return Ok(SendOutcome::Denied(why));
     }
-    let needs_approval = policy.as_deref() == Some("ask") || req.consequential.unwrap_or(false);
+    // Autonomy: the owner's level for this bot x channel x person (draft / ask / tell / limits).
+    let act = crate::autonomy::Action { owner, bot_id: &bot_id, channel: &b.provider, persons: binding_persons(&b), action: "message", amount_cents: 0 };
+    let aut = crate::autonomy::evaluate(db, &act, false);
+    if let Some(crate::autonomy::Eval { verdict: crate::autonomy::Verdict::Draft { reason }, .. }) = &aut {
+        log_unposted(&conn, db, owner, &b, &bot_id, thread_id, &corr, text, "drafted", "pending", reason);
+        crate::autonomy::finish(db, &act, aut.as_ref(), "drafted", &corr, text, reason, Some(thread_id), json!({ "correlationId": corr, "text": text }));
+        return Ok(SendOutcome::Denied(format!("{reason} It's saved in the owner's Inbox.")));
+    }
+    let aut_hold = aut.as_ref().and_then(|e| match &e.verdict {
+        crate::autonomy::Verdict::Hold { reason } => Some(reason.clone()),
+        _ => None,
+    });
+    let needs_approval = policy.as_deref() == Some("ask") || req.consequential.unwrap_or(false) || aut_hold.is_some();
     let mut consume: Option<String> = None;
     if needs_approval {
         let ok = match &req.allternit_approval_id {
@@ -519,7 +540,11 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
                 Some(a) => a,
                 None => {
                     let cx = Cx { owner: owner.into(), thread_id: thread_id.into(), bot_id: bot_id.clone(), generation, session_id, exec: json!({ "vendor": b.provider }) };
-                    create_approval(db, &cx, "allternit", &format!("post to {}", b.provider), None, json!({ "text": text, "channel": b.channel }), Some(&corr)).map_err(|e| e.message)?
+                    let made = create_approval(db, &cx, "allternit", &format!("post to {}", b.provider), None, json!({ "text": text, "channel": b.channel }), Some(&corr)).map_err(|e| e.message)?;
+                    if let Some(why) = &aut_hold {
+                        crate::autonomy::finish(db, &act, aut.as_ref(), "held", &corr, text, why, Some(thread_id), json!({ "correlationId": corr, "approvalId": made, "text": text }));
+                    }
+                    made
                 }
             };
             log_unposted(&conn, db, owner, &b, &bot_id, thread_id, &corr, text, "awaiting_approval", "pending", &format!("waiting for approval {aid}"));
@@ -547,6 +572,7 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
         Ok(r) => {
             set("confirmed", Some(&r.remote_id));
             advance(&conn, &b.id, "last_outbound_cursor", &r.remote_id);
+            crate::autonomy::finish(db, &act, aut.as_ref(), "sent", &corr, text, "", Some(thread_id), json!({ "correlationId": corr, "remoteId": r.remote_id }));
             if let Some(a) = consume {
                 let _ = conn.execute("UPDATE gateway_approvals SET consumed = 1 WHERE id = ?1", params![a]);
             }
@@ -578,6 +604,7 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
         }
         Err(PostError::Uncertain(why)) => {
             set("unconfirmed", None);
+            crate::autonomy::record(db, &act, aut.as_ref().map(|e| e.level.as_str()).unwrap_or("default"), "sent", "delivery unconfirmed");
             led(
                 db,
                 &bot_id,
@@ -1404,6 +1431,58 @@ mod tests {
         assert!(payload.contains("\"relayed\":true"));
         // Another user's thread, or one with no binding, cannot be posted to.
         assert!(send(&st.db, &f, "user-b", "th-1", &SendReq { text: "x".into(), ..Default::default() }).await.is_err());
+    }
+
+    fn autonomy(st: &Arc<AppState>, level: &str, limits: Value) {
+        let c = st.db.connect().unwrap();
+        c.execute("DELETE FROM autonomy_policies", []).unwrap();
+        c.execute(
+            "INSERT INTO autonomy_policies (id, owner, bot_id, channel, person, level, limits_json, created_at, updated_at) VALUES ('p1','user-a','bot-1','slack','',?1,?2,'t','t')",
+            params![level, limits.to_string()],
+        )
+        .unwrap();
+    }
+    fn cards(st: &Arc<AppState>, ty: &str) -> i64 {
+        st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM inbox_items WHERE user_id='user-a' AND type=?1", params![ty], |r| r.get(0)).unwrap()
+    }
+
+    /// Autonomy levels: every level changes what `send` does, and the Inbox hears about it.
+    #[tokio::test]
+    async fn autonomy_levels_govern_every_send() {
+        let st = setup("autonomy").await;
+        let f = Fake::default();
+        bound(&st, &f);
+        let req = |t: &str| SendReq { text: t.into(), correlation_id: Some(format!("c-{t}")), ..Default::default() };
+
+        // Draft only: nothing posts, the draft is in the Inbox, and a retry doesn't repeat it.
+        autonomy(&st, "draft", json!({}));
+        assert!(matches!(send(&st.db, &f, "user-a", "th-1", &req("d1")).await.unwrap(), SendOutcome::Denied(m) if m.contains("Draft only")));
+        assert!(matches!(send(&st.db, &f, "user-a", "th-1", &req("d1")).await.unwrap(), SendOutcome::Denied(_)));
+        assert!(f.posted.lock().unwrap().is_empty());
+        assert_eq!(cards(&st, "autonomy.draft"), 1);
+
+        // Ask first: holds behind the existing approval, one Inbox card, then the approval releases it once.
+        autonomy(&st, "ask", json!({}));
+        let SendOutcome::ApprovalRequired { approval_id } = send(&st.db, &f, "user-a", "th-1", &req("a1")).await.unwrap() else { panic!("ask holds") };
+        assert!(matches!(send(&st.db, &f, "user-a", "th-1", &req("a1")).await.unwrap(), SendOutcome::ApprovalRequired { .. }));
+        assert_eq!(cards(&st, "autonomy.ask"), 1);
+        assert!(f.posted.lock().unwrap().is_empty());
+        st.db.connect().unwrap().execute("UPDATE gateway_approvals SET state='approved' WHERE id=?1", params![approval_id]).unwrap();
+        let ok = SendReq { allternit_approval_id: Some(approval_id), ..req("a1") };
+        assert!(matches!(send(&st.db, &f, "user-a", "th-1", &ok).await.unwrap(), SendOutcome::Sent { .. }));
+
+        // Send and tell me: posts, plus one digest line.
+        autonomy(&st, "tell", json!({}));
+        assert!(matches!(send(&st.db, &f, "user-a", "th-1", &req("t1")).await.unwrap(), SendOutcome::Sent { .. }));
+        assert_eq!(cards(&st, "autonomy.digest"), 1);
+
+        // Act within limits: silent while inside the cap, then back to asking.
+        autonomy(&st, "limits", json!({ "maxMessagesPerDay": 3 }));
+        let before = cards(&st, "autonomy.digest");
+        assert!(matches!(send(&st.db, &f, "user-a", "th-1", &req("l1")).await.unwrap(), SendOutcome::Sent { .. }));
+        assert_eq!(cards(&st, "autonomy.digest"), before, "no digest inside limits");
+        assert!(matches!(send(&st.db, &f, "user-a", "th-1", &req("l2")).await.unwrap(), SendOutcome::ApprovalRequired { .. }), "3 sent today (a1, t1, l1)");
+        assert_eq!(f.posted.lock().unwrap().len(), 3);
     }
 
     #[tokio::test]
