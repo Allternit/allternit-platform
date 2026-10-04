@@ -325,6 +325,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // (no-op when ALLTERNIT_TELEGRAM_MANAGER_BOT_TOKEN is unset).
     allternit_cloud_api::routes::channel_onboarding::start_telegram_manager_onboarding();
 
+    // Platform API: signed webhook delivery + monthly number usage (only when switched on).
+    if allternit_cloud_api::routes::platform_v1::platform_api_enabled() {
+        allternit_cloud_api::routes::platform_v1::events::spawn_worker(state.db.clone());
+    }
+
     // Voice calls: deliver queued call.* events to runtimes (wake on demand).
     allternit_cloud_api::routes::voice_calls_cloud::start_voice_calls_worker(state.clone());
     allternit_cloud_api::routes::inapp_calls::start_inapp_calls_worker(state.clone());

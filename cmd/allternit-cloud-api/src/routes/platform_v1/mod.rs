@@ -18,12 +18,16 @@ pub mod accounts;
 pub mod caller;
 pub mod console;
 pub mod error;
+pub mod events;
 pub mod limits;
+pub mod messages;
+pub mod numbers;
 pub mod page;
 pub mod projects;
 pub mod slots;
 pub mod usage;
 pub mod usage_events;
+pub mod webhooks;
 
 use std::sync::Arc;
 
@@ -109,6 +113,9 @@ fn build_table() -> RouteTable {
     // One line per area. Later phases add theirs here.
     let table = RouteTable::new();
     let table = accounts::register(table);
+    let table = numbers::register(table);
+    let table = messages::register(table);
+    let table = webhooks::register(table);
     usage::register(table)
 }
 
@@ -242,3 +249,5 @@ pub fn new_id(prefix: &str) -> String {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_p1;

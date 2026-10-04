@@ -1,0 +1,70 @@
+---
+title: 'Webhooks'
+description: 'Get events on your server, signed and retried.'
+---
+
+Scope `webhooks`. Endpoints are project-wide, so account-bound keys can't manage them.
+
+| Method | Path | |
+|---|---|---|
+| `POST` | `/v1/webhooks` | Create: `{ "url", "events", "description"? }` (the response includes `secret` once) |
+| `GET` | `/v1/webhooks` | List |
+| `GET` / `DELETE` | `/v1/webhooks/{id}` | Retrieve / delete (pending deliveries stop) |
+| `POST` | `/v1/webhooks/{id}/test` | Send a `webhook.test` event to this endpoint |
+| `GET` | `/v1/webhooks/{id}/deliveries` | Delivery log |
+| `POST` | `/v1/webhooks/{id}/deliveries/{delivery_id}/redeliver` | Try again now |
+
+`url` must be public `https` (not a private, loopback or link-local address). `events` lists what you want, or `["*"]` for everything:
+
+| Event | When |
+|---|---|
+| `message.received` | A text arrived on one of your numbers (`data.message`). |
+| `message.status` | A text you sent was recorded (`data.message`). |
+| `registration.updated` | A number's carrier registration changed (`data.number_id`, `data.state`, `data.rejection_reason`, `data.sms_state`). |
+
+```json
+{ "id": "evt_3b1…", "object": "event", "type": "message.received", "created": 1759601822,
+  "project_id": "proj_…", "account_id": "acct_7Hq…", "data": { "message": { "id": "msg_…", "body": "Do you have time Tuesday?" } } }
+```
+
+## Delivery and retries
+
+We POST each event to each matching endpoint. Any `2xx` answer within 10 seconds counts as delivered. Anything else is retried after 30 s, 2 min, 10 min, 30 min, 1 h, then every 2 h, for 24 hours; after that the delivery is marked `failed` (redeliver it from the log). Redirects aren't followed. Events can arrive more than once and out of order: deduplicate on `id`.
+
+## Verify the signature
+
+Every request carries:
+
+```http
+allternit-signature: t=1759601822,v1=5f2b…
+```
+
+`v1` is the hex HMAC-SHA256 of `"<t>.<raw request body>"` with your endpoint's `secret`. Check it against the raw body, before parsing, and reject requests whose `t` is more than five minutes old.
+
+<CodeGroup>
+```js Node
+import crypto from "node:crypto";
+
+export function verify(rawBody, header, secret, toleranceSec = 300) {
+  const parts = Object.fromEntries(header.split(",").map((p) => p.split("=")));
+  const t = Number(parts.t);
+  if (!t || Math.abs(Date.now() / 1000 - t) > toleranceSec) return false;
+  const expected = crypto.createHmac("sha256", secret).update(`${t}.${rawBody}`).digest("hex");
+  const given = Buffer.from(parts.v1 ?? "", "hex");
+  const want = Buffer.from(expected, "hex");
+  return given.length === want.length && crypto.timingSafeEqual(given, want);
+}
+```
+
+```python Python
+import hashlib, hmac, time
+
+def verify(raw_body: bytes, header: str, secret: str, tolerance_sec: int = 300) -> bool:
+    parts = dict(p.split("=", 1) for p in header.split(","))
+    t = int(parts.get("t", "0"))
+    if not t or abs(time.time() - t) > tolerance_sec:
+        return False
+    expected = hmac.new(secret.encode(), f"{t}.".encode() + raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, parts.get("v1", ""))
+```
+</CodeGroup>

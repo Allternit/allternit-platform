@@ -1,0 +1,38 @@
+---
+title: 'Messaging'
+description: 'Send and receive texts on a project’s numbers.'
+---
+
+Scope `messaging`.
+
+| Method | Path | |
+|---|---|---|
+| `POST` | `/v1/messages` | Send: `{ "number_id", "to", "body" }` |
+| `GET` | `/v1/messages` | List (cursor pagination; filters `number_id`, `account_id`, `direction`) |
+| `GET` | `/v1/messages/{id}` | Retrieve |
+
+```json
+{ "id": "msg_9f2…", "object": "message", "account_id": "acct_7Hq…", "number_id": "6f1c…", "direction": "outbound",
+  "from": "+16125550142", "to": "+14155550123", "body": "Yes, 2 pm works.", "segments": 1, "status": "sent",
+  "error_code": null, "media": [], "created_at": "2026-10-04T18:20:44Z" }
+```
+
+`status` is `sent`, `simulated` (sandbox), `received` (inbound) or `failed`.
+
+## When a send is refused
+
+| `403` code | Why |
+|---|---|
+| `sms_not_active` | The number's carrier registration isn't approved yet. |
+| `recipient_opted_out` | The person replied STOP. Only their START lifts it. |
+| `no_consent` | The person never texted this number and has no [consent](/api/platform/numbers#consent) recorded. |
+
+`429 daily_limit` means the number reached its daily sending cap.
+
+## Receiving texts
+
+Texts that arrive on your numbers are kept and sent to your [webhooks](/api/platform/webhooks) as `message.received`. `STOP`, `START` and `HELP` are answered for you and never reach you as messages; a STOP also means future sends to that person are refused.
+
+## Billing
+
+Each text counts as one or more `sms_segment` (160 characters, or 70 with emoji and other non-GSM characters; longer texts split into 153 / 67 character parts), sent and received alike. Simulated texts are free.

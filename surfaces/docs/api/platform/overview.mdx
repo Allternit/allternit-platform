@@ -16,6 +16,8 @@ The Platform API is in private beta. It answers `404 not_found_error` with code 
 | **Project** | Your app. Holds agents, numbers, channels, webhooks, keys and usage. Each project is `sandbox` (test keys, no real numbers or calls) or `live`. Created in the console. |
 | **Account** | One end-customer business you serve. Every agent, number, person and inbox item belongs to exactly one account, and one account never sees another's data. See [Accounts](/api/platform/accounts). |
 | **API key** | `alt_test_…` (sandbox) or `alt_live_…` (live), bound to one project, with scopes, optionally bound to one account. See [Authentication](/api/platform/authentication). |
+| **Numbers and texts** | Phone numbers per account, texting with consent and STOP built in, carrier registration. Sandbox numbers are simulated. See [Numbers](/api/platform/numbers) and [Messaging](/api/platform/messaging). |
+| **Webhooks** | Signed, retried events to your server. See [Webhooks](/api/platform/webhooks). |
 | **Usage** | Every billable action records a usage event against a meter. See [Usage](/api/platform/usage). |
 
 ## Conventions
