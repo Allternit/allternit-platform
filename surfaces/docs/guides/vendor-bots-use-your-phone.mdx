@@ -37,6 +37,11 @@ Under **Use the phone** you can see each app that has used the connector and whe
 | `send_email` | Drafts an email from your bot's address. It waits for your OK. |
 | `post_message` | Starts a conversation on a messaging channel through your bot. |
 | `ask_bot` | Hands off to your bot and returns its reply. |
+| `list_open_tickets`, `get_ticket`, `post_result` | Lists, reads and finishes the [tickets](/guides/how-vendor-bots-connect) assigned to it. |
+
+**Cards.** In Claude and ChatGPT the results show as cards, not raw text: a thread card for `list_threads` and `read_thread`, a result card for `send_text` and `start_call` (it says the person contacted the bot first, or is a contact), an email card that reads "Waiting for the owner's OK", and a channel post card for `post_message`. A refused call still gets a card that says why nothing went out. The card takes its accent from the app it appears in (Claude, ChatGPT, Gemini or Hermes) and falls back to Allternit's neutral look in any other app.
+
+**No browser to sign in with?** An agent that runs in its own sandbox with a shell can use the `allternit-bot` command instead. See [Give a shell agent your bot's phone with allternit-bot](/guides/allternit-bot-cli).
 
 **Their view.** A vendor bot sees only threads it is attached to, plus threads you share with it. Sharing a thread adds it to that view (a developer shares it with the connector API below). Your bot's other conversations stay private.
 
@@ -80,6 +85,8 @@ An access token must have `aud` equal to that resource and the scope `bots:act`.
 - `send_email` is `send_email_for_user`, which always queues a mailflare approval.
 - `post_message` calls the runtime's channel-start path (`channel_start::VendorStarter`, registered at boot), so each platform's rules, the bot's channel policy and approvals apply. A refusal comes back as one plain sentence. See [Starting conversations](/guides/starting-conversations).
 - `ask_bot` is `agent_send` to the directing bot, so its approval flow applies.
+
+**Cards.** The tools that have a card carry `_meta.ui.resourceUri` (SEP-1865 MCP Apps) and the server answers `resources/list` and `resources/read` for four resources, all `text/html;profile=mcp-app` with no network access: `ui://allternit/vendor-thread.v1.html` (`list_threads`, `read_thread`), `vendor-result.v1.html` (`send_text`, `start_call`), `vendor-email.v1.html` (`send_email`) and `vendor-post.v1.html` (`post_message`). They share one template (`assets/vendor-bot-card.v1.html`) with the kind filled in when the resource is read. The card renders the call's `structuredContent`: the tool's own answer plus `request` (the arguments echoed back, only `to`, `text`, `purpose`, `subject`, `body`, `provider`, `target`) and `tool`; a refusal is `{refused:true, message, request, tool}` while the result stays `isError` with the plain sentence for the model. The card styles itself from the host's name in `ui/initialize` (`hostInfo.name`) using `assets/vendor-bot-card-packs.json`, a small table of the accents of the allternit-ai look packs (claude, chatgpt, gemini, hermes). Code: `mcp_vendor_cards.rs`.
 
 **Audit.** Every `tools/call` writes a `vendor_bot_audit` row: owner, vendor bot, directing bot, OAuth client, tool, a SHA-256 hash of the arguments (never the arguments), `ok` and a short result. Migration `V220`.
 

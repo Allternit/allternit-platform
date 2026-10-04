@@ -383,3 +383,12 @@ protoc-bin-vendored = "3"
 # keep crates.io 0.8 and are unaffected.
 [patch.crates-io]
 portable-pty = { path = "infrastructure/executor/ao-engine/vendor/portable-pty" }
+
+# `allternit-bot` ships as one small static binary (.github/workflows/publish-allternit-bot.yml).
+[profile.bot-dist]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
