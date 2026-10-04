@@ -79,6 +79,8 @@ pub enum RoomInput {
     TransferResult { to: String, ok: bool, reason: Option<String> },
     /// The SIP participant left (caller hung up, or a transfer completed).
     CallerLeft,
+    /// The SIP participant's `sip.callStatus` changed (`dialing`, `ringing`, `active`, ...).
+    SipStatus(String),
     /// The worker lost the room.
     Disconnected,
 }
@@ -93,6 +95,9 @@ pub struct CallContext {
     pub direction: String,
     pub number_id: String,
     pub bot: BotConfig,
+    /// The SIP leg was already answered when the worker joined (always true
+    /// inbound). An outbound leg that is still ringing flips on `SipStatus("active")`.
+    pub sip_answered: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -224,6 +229,8 @@ struct Xfer {
     brief_id: Option<String>,
 }
 
+/// An outbound leg that hasn't been answered by now is given up on.
+const DIAL_TIMEOUT_MS: u64 = 60_000;
 /// Voicemail utterance id.
 const VM_ID: &str = "vm-0";
 /// An invite-code call that hasn't finished by now hangs up.
@@ -257,6 +264,10 @@ struct Call {
     drop_audio: bool,
     dest: Dest,
     answer: Answer,
+    /// The callee picked up (inbound: always). Unanswered outbound ends as `no_answer`.
+    sip_answered: bool,
+    /// The bot's first audio frame reached the caller.
+    bot_audio_sent: bool,
     voicemail: Box<dyn VoicemailDetector>,
     /// The opening, held back on outbound calls until a person is confirmed.
     pending_opening: Option<String>,
@@ -315,6 +326,8 @@ pub async fn run_call(
         speech: Speech::new(output_sample_rate),
         drop_audio: false,
         dest: Dest::Caller,
+        sip_answered: ctx.sip_answered,
+        bot_audio_sent: false,
         answer: if screening { Answer::Screening } else { Answer::Person },
         voicemail,
         pending_opening: None,
@@ -398,7 +411,12 @@ pub async fn run_call(
     call.cancel_transfer("the call ended").await;
     call.end_human_pipeline().await;
     let _ = call.core_tx.send(CoreCommand::End).await;
-    let reason = call.end_reason.take().unwrap_or_default();
+    let mut reason = call.end_reason.take().unwrap_or_default();
+    let answered = call.sip_answered;
+    if !answered {
+        reason = "no_answer".into();
+    }
+    let missed = answered && call.ctx.direction == "inbound" && reason == "caller_hangup" && !call.bot_audio_sent;
     let duration_sec = call.started.elapsed().as_secs();
     let recording_ref = match call.recording.take() {
         Some(r) => tokio::time::timeout(Duration::from_secs(5), r.finish(&call.ctx.call_id)).await.unwrap_or_else(|_| {
@@ -407,7 +425,7 @@ pub async fn run_call(
         }),
         None => None,
     };
-    call.events.emit(CallEvent::Ended { duration_sec, reason: reason.clone(), recording_ref });
+    call.events.emit(CallEvent::Ended { duration_sec, reason: reason.clone(), recording_ref, answered, missed });
     let keep_room = call.keep_room;
     (CallOutcome { reason, duration_sec, keep_room }, call.events.close())
 }
@@ -472,6 +490,12 @@ impl Call {
     }
 
     async fn on_tick(&mut self) {
+        if !self.sip_answered && self.at_ms() > DIAL_TIMEOUT_MS {
+            // Ringing too long: stop dialing.
+            let _ = self.room_tx.send(RoomCommand::Hangup).await;
+            self.end("no_answer");
+            return;
+        }
         if self.invite.is_some() && self.at_ms() > INVITE_MAX_MS {
             // Nobody to read to (or the voice stalled): don't hold the line.
             let _ = self.room_tx.send(RoomCommand::Hangup).await;
@@ -575,6 +599,11 @@ impl Call {
             RoomInput::CallerLeft => {
                 self.cancel_transfer("the caller hung up").await;
                 self.end(if self.transferred { "transferred" } else { "caller_hangup" })
+            }
+            RoomInput::SipStatus(s) => {
+                if s == "active" {
+                    self.sip_answered = true;
+                }
             }
             RoomInput::Disconnected => self.end("room_closed"),
         }
@@ -1005,6 +1034,7 @@ impl Call {
                     return;
                 }
                 for f in self.speech.frames(&bytes) {
+                    self.bot_audio_sent = true;
                     let _ = self.room_tx.send(RoomCommand::PublishFrame(f)).await;
                 }
             }
@@ -1243,6 +1273,7 @@ mod tests {
             local: "+16512686010".into(),
             direction: "inbound".into(),
             number_id: "num_1".into(),
+            sip_answered: true,
             bot: BotConfig {
                 name: Some("Acme Plumbing".into()),
                 greeting: Some("How can I help?".into()),
@@ -1289,6 +1320,59 @@ mod tests {
         drain.await.unwrap();
         let evs = h.rec.0.lock().unwrap().clone();
         (outcome, evs)
+    }
+
+    fn ended(evs: &[EventEnvelope]) -> serde_json::Value {
+        evs.last().unwrap().payload.clone()
+    }
+
+    #[tokio::test]
+    async fn outbound_unanswered_ends_as_no_answer() {
+        let mut c = ctx(false);
+        (c.direction, c.sip_answered) = ("outbound".into(), false);
+        let h = start_with(CallDeps::bare(Box::new(NoScreening)), c, vec![]);
+        h.room_input.send(RoomInput::SipStatus("ringing".into())).await.unwrap();
+        h.room_input.send(RoomInput::CallerLeft).await.unwrap();
+        let (outcome, evs) = finish(h).await;
+        assert_eq!(outcome.reason, "no_answer");
+        let p = ended(&evs);
+        assert_eq!((&p["answered"], &p["reason"]), (&json!(false), &json!("no_answer")));
+        assert!(p.get("missed").is_none());
+    }
+
+    #[tokio::test]
+    async fn outbound_answered_after_ringing_is_answered() {
+        let mut c = ctx(false);
+        (c.direction, c.sip_answered) = ("outbound".into(), false);
+        let h = start_with(CallDeps::bare(Box::new(NoScreening)), c, vec![]);
+        h.room_input.send(RoomInput::SipStatus("active".into())).await.unwrap();
+        h.room_input.send(RoomInput::CallerLeft).await.unwrap();
+        let (outcome, evs) = finish(h).await;
+        assert_eq!(outcome.reason, "caller_hangup");
+        assert_eq!(ended(&evs)["answered"], true);
+    }
+
+    #[tokio::test]
+    async fn inbound_hangup_before_first_audio_is_missed() {
+        let h = start(false, vec![]);
+        h.room_input.send(RoomInput::CallerLeft).await.unwrap();
+        let (outcome, evs) = finish(h).await;
+        assert_eq!(outcome.reason, "caller_hangup");
+        let p = ended(&evs);
+        assert_eq!((&p["answered"], &p["missed"]), (&json!(true), &json!(true)));
+    }
+
+    #[tokio::test]
+    async fn inbound_hangup_after_bot_audio_is_not_missed() {
+        let mut h = start(false, vec![]);
+        h.core_events.send(CoreEvent::SpeakAudio(to_pcm16le(&[100i16; 480]))).await.unwrap();
+        h.core_events.send(CoreEvent::SpeakEnded { id: "u-0".into() }).await.unwrap();
+        let RoomCommand::PublishFrame(_) = h.room_cmds.recv().await.unwrap() else { panic!() };
+        h.room_input.send(RoomInput::CallerLeft).await.unwrap();
+        let (_, evs) = finish(h).await;
+        let p = ended(&evs);
+        assert_eq!(p["answered"], true);
+        assert!(p.get("missed").is_none());
     }
 
     #[tokio::test]

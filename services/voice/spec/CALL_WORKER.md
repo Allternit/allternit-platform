@@ -70,7 +70,7 @@ A single task per call delivers events in order:
 | `call.transferred` | `to, mode, ok, reason?` | Transfer result. `mode:"warm"` is the consult-and-connect transfer below; `ok:false` carries an honest `reason`. |
 | `call.takeover` | `by, active` | Takeover (`active:true`) and release (`active:false`). |
 | `call.voicemail.detected` | `action` | Outbound only. `left_message` or `hung_up`. |
-| `call.ended` | `durationSec, reason, recordingRef?` | Always last. `reason` is one of `caller_hangup`, `hangup_control`, `transferred`, `room_closed`, `voice_engine_error`, `bot_hangup` (invite-code call finished), `failed` (invite-code call with a bad `otp`). |
+| `call.ended` | `durationSec, reason, answered, missed?, recordingRef?` | Always last. `answered` is false when an outbound callee never picked up (reason `no_answer`: the SIP leg never reached `active` before it ended or the 60 s dial timeout); `missed:true` is set on an inbound call the caller dropped before the bot's first audio frame (reason stays `caller_hangup`). `reason` is one of `caller_hangup`, `hangup_control`, `transferred`, `room_closed`, `voice_engine_error`, `bot_hangup` (invite-code call finished), `failed` (invite-code call with a bad `otp`). |
 
 ## Controls
 

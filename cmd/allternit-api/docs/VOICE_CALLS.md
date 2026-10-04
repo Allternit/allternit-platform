@@ -6,7 +6,7 @@ cloud-api relays a phone call's start, its events and its bot turns to the runti
 
 | Route | Purpose |
 | --- | --- |
-| `POST /api/v1/voice/calls` | Start. Body `{callId, botId, ownerId, numberId, from, to, direction, room, startedAt}`. Returns `{threadId, sessionId}`. Idempotent per `callId`. |
+| `POST /api/v1/voice/calls` | Start. Body `{callId, botId, ownerId, numberId, from, to, direction, room, startedAt}`. Returns `{threadId, sessionId}`. Idempotent per `callId`. If `numberId` is unknown on this runtime, it is registered from the signed body (bot number = `to` inbound, `from` outbound); a bot that isn't the owner's returns 422. `call.ended` carries `answered` / `missed` (see CALL_WORKER.md §4.1). |
 | `POST /api/v1/voice/calls/{callId}/events` | Body `{events:[{type, n, payload, occurredAt}]}`. Writes `call.*` events to the call's thread. |
 | `POST /api/v1/voice/calls/{callId}/turn` | Body `{text, segmentId}`. Runs a bot turn, streams SSE (`text.delta`, `tool`, `done`, `error`). |
 | `DELETE /api/v1/voice/calls/{callId}/turn` | Barge-in. Always 204. |

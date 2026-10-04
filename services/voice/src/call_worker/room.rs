@@ -45,6 +45,7 @@ use super::{AGENT_NAME, CONTROL_TOPIC};
 const SIP_PHONE: &str = "sip.phoneNumber";
 const SIP_TRUNK_PHONE: &str = "sip.trunkPhoneNumber";
 const SIP_CALL_ID: &str = "sip.callID";
+const SIP_CALL_STATUS: &str = "sip.callStatus";
 
 pub async fn run(cfg: WorkerConfig) -> Result<()> {
     tracing::info!(?cfg, "starting call worker");
@@ -209,6 +210,7 @@ async fn handle_job(cfg: WorkerConfig, cloud: CloudClient, job: JobInfo, cancel:
                 direction: direction.as_str().into(),
                 number_id: start_req.number_id.clone(),
                 bot: resp.bot,
+                sip_answered: get(SIP_CALL_STATUS).is_none_or(|s| s == "active"),
             };
             let events = EventQueue::start(&resp.call_id, Arc::new(cloud.clone()), Backoff::default());
             let brain = Arc::new(RelayBrain::new(cloud.clone(), DEFAULT_TURN_TIMEOUT));
@@ -387,6 +389,9 @@ async fn forward_room_events(
                 }
             }
             RoomEvent::ParticipantDisconnected(p) if p.identity().to_string() == caller => Some(RoomInput::CallerLeft),
+            RoomEvent::ParticipantAttributesChanged { participant, changed_attributes } if participant.identity().to_string() == caller => {
+                changed_attributes.get(SIP_CALL_STATUS).map(|s| RoomInput::SipStatus(s.clone()))
+            }
             RoomEvent::Disconnected { .. } => Some(RoomInput::Disconnected),
             _ => None,
         };
