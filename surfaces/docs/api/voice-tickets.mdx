@@ -84,7 +84,7 @@ Idempotent on `(engine, sessionId)`: retrying a report does not double count. `e
 }
 ```
 
-The month is the UTC calendar month. `estimatedOverageCents` is the running estimate of this month's voice charges; `billingEnabled` is false while overage billing is off, so clients should hide the estimate rather than promise a charge.
+The month is the UTC calendar month. `estimatedOverageCents` is the running estimate of this month's voice charges; `billingEnabled` is true only when overage billing is live (`ALLTERNIT_VOICE_BILLING_MODE=live`); while it is off or in `dry_run` (charges computed, never sent to Stripe) it is false, so clients should hide the estimate rather than promise a charge.
 
 ## Overage billing (admin-approved)
 
