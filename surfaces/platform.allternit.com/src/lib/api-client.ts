@@ -140,10 +140,12 @@ class AllternitApiClient {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
+      // Platform API errors nest as { error: { type, code, message, param } }.
+      const nested = errorData.error && typeof errorData.error === 'object' ? errorData.error : null;
       throw new AllternitApiError(
-        errorData.error || errorData.message || `HTTP ${response.status}`,
+        (nested ? nested.message : errorData.error) || errorData.message || `HTTP ${response.status}`,
         response.status,
-        errorData.code,
+        (nested ? nested.code : undefined) ?? errorData.code,
         errorData.details
       );
     }

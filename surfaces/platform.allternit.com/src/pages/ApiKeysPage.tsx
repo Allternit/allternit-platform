@@ -22,6 +22,7 @@ import { formatApiError } from "@/lib/api-client";
 import { EmptyState } from "@/components/settings/EmptyState";
 import { QUIET_BUTTON_CLASS, DESTRUCTIVE_BUTTON_CLASS } from "@/components/settings/buttonStyles";
 import { GatewayKeysPanel } from "@/pages/console/api-keys/GatewayKeysPanel";
+import { PlatformProjectsPanel } from "@/pages/console/api-keys/PlatformProjectsPanel";
 
 const AVAILABLE_SCOPES = [
   { value: "read", label: "Read" },
@@ -40,7 +41,7 @@ function formatDate(iso?: string | null): string {
 }
 
 export function ApiKeysPage() {
-  const [tab, setTab] = useState<"scoped" | "gateway">("scoped");
+  const [tab, setTab] = useState<"scoped" | "gateway" | "platform">("scoped");
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -120,13 +121,14 @@ export function ApiKeysPage() {
             API Keys
           </h1>
           <p className="text-[13px] text-[var(--text-secondary)] mt-1">
-            Create scoped keys for the Allternit cloud API and gateway keys for the LLM gateway.
+            Create scoped keys for the Allternit cloud API, gateway keys for the LLM gateway, and project keys for the developer Platform API.
           </p>
           <div className="mt-3 inline-flex rounded-lg border border-solid border-[var(--border-subtle)] p-0.5">
             {(
               [
                 { id: "scoped", label: "Scoped keys" },
                 { id: "gateway", label: "Gateway keys" },
+                { id: "platform", label: "Platform API" },
               ] as const
             ).map((item) => (
               <button
@@ -161,6 +163,8 @@ export function ApiKeysPage() {
 
       {tab === "gateway" ? (
         <GatewayKeysPanel />
+      ) : tab === "platform" ? (
+        <PlatformProjectsPanel />
       ) : (
         <>
       {showCreate && (
