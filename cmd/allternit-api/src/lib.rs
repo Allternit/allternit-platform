@@ -206,6 +206,7 @@ pub mod inference_router_executor;
 pub mod health;
 pub mod hud_routes;
 pub mod idempotency;
+pub mod inbox_needs;
 pub mod inbox_routes;
 pub mod internal_auth;
 pub mod internal_routes;

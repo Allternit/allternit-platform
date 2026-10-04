@@ -14,10 +14,12 @@ use crate::auth::AuthUser;
 use crate::AppState;
 
 pub fn inbox_router() -> Router<Arc<AppState>> {
-    Router::new().route(
-        "/inbox",
-        get(list_inbox).patch(update_inbox).post(create_inbox),
-    )
+    Router::new()
+        .route(
+            "/inbox",
+            get(list_inbox).patch(update_inbox).post(create_inbox),
+        )
+        .merge(crate::inbox_needs::needs_router())
 }
 
 #[derive(Deserialize)]
@@ -26,6 +28,10 @@ struct ListQuery {
     #[serde(rename = "type")]
     item_type: Option<String>,
     limit: Option<i64>,
+    /// `needs_you` returns only the aggregated owner inbox (`needsYou`).
+    scope: Option<String>,
+    /// How long an inbound message may sit before it counts as unanswered.
+    minutes: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -68,6 +74,25 @@ async fn list_inbox(
             )
         }
     };
+
+    // The owner-level "Needs you" list, derived live from every source (inbox_needs.rs).
+    let minutes = params.minutes.unwrap_or(crate::inbox_needs::DEFAULT_UNANSWERED_MINUTES).clamp(1, 60 * 24);
+    let needs_you = match crate::inbox_needs::collect(&conn, &user.user_id, minutes) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("inbox: needs-you collect failed: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"items": [], "unreadCount": 0, "needsYou": [], "needsYouCount": 0})),
+            );
+        }
+    };
+    if params.scope.as_deref() == Some("needs_you") {
+        return (
+            StatusCode::OK,
+            Json(json!({"needsYou": needs_you, "needsYouCount": needs_you.len()})),
+        );
+    }
 
     let limit = params.limit.unwrap_or(50);
     let user_id = user.user_id.clone();
@@ -128,7 +153,7 @@ async fn list_inbox(
 
     (
         StatusCode::OK,
-        Json(json!({"items": items, "unreadCount": unread_count})),
+        Json(json!({"items": items, "unreadCount": unread_count, "needsYou": needs_you, "needsYouCount": needs_you.len()})),
     )
 }
 

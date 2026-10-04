@@ -67,6 +67,7 @@
               "guides/bot-phone",
               "guides/people",
               "guides/your-twin",
+              "guides/needs-you-inbox",
               "guides/invite-someone",
               "guides/call-notifications",
               "guides/messaging-channels",
@@ -572,6 +573,7 @@
               "api/endpoints",
               "api/rate-limits",
               "api/event-stream",
+              "api/inbox",
               "api/status",
               "api/me",
               "api/quickstart"

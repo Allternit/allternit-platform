@@ -1,0 +1,43 @@
+---
+title: The Needs you inbox
+description: "One list of everything across your bots, channels and vendor bots that is waiting on you, with Send, Approve, Reply and Call back right in the list."
+---
+
+Your bots work on their own until something needs a person. The **Needs you** inbox collects all of those moments in one place, for every bot you own, so you don't have to open each bot's phone to find them.
+
+## What shows up
+
+| Item | What it means | Main button |
+|---|---|---|
+| **Email** | A bot wrote an email that waits for your OK before it is sent. | **Send** (or **Don't send**) |
+| **Held message** | A bot wants to post in a channel (Slack, Telegram, …) and your settings ask you first. | **Send** (or **Deny**) |
+| **Approval** | A tool or a vendor bot is asking permission to do something. | **Approve** (or **Deny**) |
+| **Waiting** | A bot's task is waiting on you, or ready for your review. | **Open** / **Review** |
+| **Missed call** | Someone called a bot's number and nobody picked up, or left a voicemail. | **Call back** |
+| **Unanswered** | A person messaged a bot and nobody has answered for 30 minutes. | **Reply** |
+| **Not delivered** | A message from a bot failed to send, or may not have gone through. | **Open** |
+| **Vendor result** | A vendor bot finished, failed or ran out of time on a ticket you directed. | **Review** |
+| **Draft** | A bot wrote a message but kept it as a draft, because its [autonomy level](/guides/bot-autonomy) on that channel is *Draft only*. | **Review** |
+
+Send, Approve and Deny act on the real thing. **Send** on a held message posts it right away. **Send** on an email sends it. Nothing is a copy that can fall out of step.
+
+## Where to find it
+
+- **Desktop and the web app:** the **Inbox** button in the left rail, next to **Phones**. The number on it is how many items need you.
+- **Phone and the m.allternit.com phone app:** open the menu and tap **Inbox**. It opens as a full-screen sheet.
+- **A bot's phone:** when something needs you from that bot, a banner at the top of its home screen says so ("2 things need you"). Tap it to see just that bot's items.
+
+## Handling items
+
+- The main button does the job and the item leaves the list. If it can't be done (for example email isn't connected), the item stays and says why.
+- **Dismiss** (the ×) hides an item. **Snooze** (the clock) hides it for an hour.
+- A dismissed or snoozed item comes back if it changes: a person writes again, a task asks for you again.
+- Handling an item on one device updates the others. Items also leave on their own once they are dealt with somewhere else (you approved it in the thread, the person got an answer).
+
+## Notifications
+
+On Allternit Desktop a new item raises the same system notification as before (new message, missed call, something waiting for approval) while the window is hidden, and the Inbox count updates at once. In the browser and on the phone app, the count refreshes every minute and whenever you come back to Allternit. Push notifications for messages and calls on those devices work as described in [Call and message notifications](/guides/call-notifications).
+
+## For developers
+
+The inbox is computed on read from the tables that already hold each kind of work, so it can't drift. Routes and JSON are in the [Inbox API](/api/inbox). The client is `src/lib/inbox/` (API client and store) and `src/components/inbox/` (panel and rail button) in `allternit-ai`; the bot phone banner is in `PhoneOS.tsx`. Desktop refreshes the list from the [notification feed](/api/event-stream#notification-feed) (`inbox_changed` and every other kind).

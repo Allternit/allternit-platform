@@ -50,6 +50,8 @@ fn classify(event_type: &str, payload: &Value) -> Option<&'static str> {
         }
         // Includes an outbound email held for human approval (request_review).
         "thread.needs_user" => Some("needs_you"),
+        // The owner handled an inbox item (another device): refresh, never notify.
+        "inbox.changed" => Some("inbox_changed"),
         _ => None,
     }
 }
@@ -71,7 +73,7 @@ pub fn fetch_batch(conn: &Connection, user_id: &str, after: i64) -> rusqlite::Re
          JOIN agents a ON a.id = e.bot_id
          LEFT JOIN bot_threads t ON t.id = e.thread_id
          WHERE a.user_id = ?1 AND e.rowid > ?2
-           AND e.event_type IN ('channel.message.received', 'call.ended', 'thread.needs_user')
+           AND e.event_type IN ('channel.message.received', 'call.ended', 'thread.needs_user', 'inbox.changed')
          ORDER BY e.rowid LIMIT ?3",
     )?;
     let rows = stmt.query_map(params![user_id, after, BATCH], |r| {

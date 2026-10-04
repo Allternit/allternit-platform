@@ -87,7 +87,7 @@ Each message is a JSON object:
 }
 ```
 
-`kind` is `channel_message` (a message reached a bot through a channel), `missed_call` (a `call.ended` marked `missed`, `answered: false` or reason `missed`/`no_answer`) or `needs_you` (`thread.needs_user`, which includes an email held for approval). It reads `bot_events`, so only the caller's own bots appear and nothing is replayed on a fresh connection. Reconnect with `Last-Event-ID` (or `?after=`) to resume. A keep-alive comment is sent every 20 seconds.
+`kind` is `channel_message` (a message reached a bot through a channel), `missed_call` (a `call.ended` marked `missed`, `answered: false` or reason `missed`/`no_answer`) `needs_you` (`thread.needs_user`, which includes an email held for approval) or `inbox_changed` (the owner dismissed, snoozed or approved an item in the [Needs you inbox](/api/inbox); clients refresh the list and never notify). It reads `bot_events`, so only the caller's own bots appear and nothing is replayed on a fresh connection. Reconnect with `Last-Event-ID` (or `?after=`) to resume. A keep-alive comment is sent every 20 seconds.
 
 ## Related pages
 

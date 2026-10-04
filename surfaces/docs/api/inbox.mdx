@@ -1,163 +1,57 @@
 ---
 title: Inbox API
-description: Read, create, and update user inbox notifications on the Allternit platform.
+description: "GET /api/v1/inbox returns everything waiting on the owner across all bots; approve, dismiss and snooze act on one item."
 ---
 
-## Overview
+The **Needs you** inbox (allternit-api, Clerk session or API key). The list is derived live from where the work already lives: held email (`agent_email_outbound`), approvals (`gateway_approvals`), threads in `needs_you`/`review`, missed calls and unanswered messages (`bot_events`), failed sends (`channel_message_log`) and vendor tickets (`vendor_tickets`). Only the caller's own bots appear. Migration `V232__inbox_needs_you.sql` adds `inbox_state`, which remembers dismissals and snoozes; nothing else is stored.
 
-The Inbox API stores per-user notification items. Items are created by agents or platform flows and surfaced to the user with a severity and status. Clients can list items, mark them read, or create new items programmatically.
+`GET /api/v1/inbox` also still returns the older notification items (`items`, `unreadCount`) unchanged.
 
-## Base URL
+## List
 
-```text
-https://api.allternit.com/api/v1
-```
+`GET /api/v1/inbox?scope=needs_you&minutes=30`
 
-For local development:
-
-```text
-http://127.0.0.1:8013/api/v1
-```
-
-## Authentication
-
-All requests require a valid bearer token in the `Authorization` header. See [Authentication](/api/authentication) for details.
-
-## Inbox item object
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Unique item identifier. |
-| `agent_id` | string \| null | Agent that generated the item. |
-| `type` | string | Item type label. |
-| `title` | string | Short title. |
-| `body` | string \| null | Optional body text. |
-| `severity` | string | `info`, `warning`, or `critical`. |
-| `status` | string | `unread`, `read`, `dismissed`, etc. |
-| `action_url` | string \| null | Optional deep link. |
-| `metadata` | object \| null | Optional JSON metadata. |
-| `created_at` | string | ISO 8601 creation timestamp. |
-
-## Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/inbox` | List inbox items with unread count. |
-| `PATCH` | `/inbox` | Update an item's status. |
-| `POST` | `/inbox` | Create a new inbox item. |
-
-## List inbox items
-
-```bash
-curl "https://api.allternit.com/api/v1/inbox?status=unread&type=agent_alert&limit=10" \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-### Query parameters
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `status` | string | Filter by status. |
-| `type` | string | Filter by item type. |
-| `limit` | integer | Maximum items to return, default `50`. |
-
-### Response
+`scope=needs_you` returns only the aggregate. Without it the older fields come back too. `minutes` (1 to 1440, default 30) is how long an inbound message may wait before it counts as unanswered.
 
 ```json
 {
-  "items": [
+  "needsYou": [
     {
-      "id": "inb_01hqx8x7x7x7x7x7x7x7x7x",
-      "agent_id": "agent_018f3a7c...",
-      "type": "agent_alert",
-      "title": "Cowork session completed",
-      "body": "The overnight cowork run finished with 3 warnings.",
-      "severity": "warning",
-      "status": "unread",
-      "action_url": "/cowork/exec_01hqx8x7x7x7x7x7x7x7x7x",
-      "metadata": {"run_id": "exec_01hqx8x7x7x7x7x7x7x7x7x"},
-      "created_at": "2026-08-13T18:00:00Z"
+      "id": "email:5b1c…",
+      "kind": "email_draft",
+      "source": "email",
+      "botId": "bot-1",
+      "botName": "Ledger",
+      "threadId": null,
+      "person": "sam@example.com",
+      "summary": "Email to sam@example.com is waiting for your OK: Quote",
+      "at": "2026-10-04T10:00:00+00:00",
+      "primary": { "action": "approve", "label": "Send" },
+      "actions": ["approve", "dismiss", "snooze"]
     }
   ],
-  "unreadCount": 1
+  "needsYouCount": 1
 }
 ```
 
-## Update inbox item
+Newest first. `kind` is `email_draft`, `approval`, `held_send`, `thread`, `missed_call`, `unanswered`, `failed_send`, `vendor_result` or `draft` (a message a bot's [autonomy level](/guides/bot-autonomy) kept as a draft instead of sending; `source` is its channel, `person` who it was for). `id` is stable and prefixed by its source (`email:`, `approval:`, `thread:`, `call:`, `reply:` per thread, `failed:`, `ticket:`, `draft:`). `primary.action` is `approve` (run the approval; the client calls `approve`), or `open`, `reply`, `callback` (the client opens the bot's phone). `actions` lists which of the three POST routes apply: `approve` is absent for kinds that can only be opened.
 
-```bash
-curl -X PATCH https://api.allternit.com/api/v1/inbox \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "item_id": "inb_01hqx8x7x7x7x7x7x7x7x7x",
-    "status": "read"
-  }'
-```
+## Act
 
-### Request body
+All three are `POST /api/v1/inbox/:id/<action>`; `:id` is URL-encoded (`approval%3Aap1`). A missing, already handled or foreign item answers `404 {"error", "code":"NOT_FOUND"}`.
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `item_id` | string | yes | Inbox item identifier. |
-| `status` | string | yes | New status value. |
+- `approve` with an optional `{"decision":"deny"}` (default `approve`; anything else is `400 BAD_DECISION`).
+  - `email_draft`: approves or rejects the held mail (`decide_outbound_for_thread`). `200 {"id","result":{"state":"sent"|"rejected"}}`; `502 EMAIL_DECISION_FAILED` when mailflare can't action it.
+  - `approval`: answers the gateway approval as the signed-in person (`respond_approval`). `200 {"id","result":{"approvalId","state":"approved"|"denied"}}`.
+  - `held_send`: same, and on approve the held text is posted through the channel gateway under the same correlation id: `result.send.state` is `sent`, `unconfirmed`, `rejected`, `channel_offline`, `no_binding`, `not_sent` or `error`.
+  - any other kind: `400 {"code":"NOT_APPROVABLE"}`.
+- `dismiss`: `200 {"id","state":"dismissed"}`.
+- `snooze` with optional `{"minutes":60}` (1 to 20160): `200 {"id","state":"snoozed","until":"<RFC 3339>"}`.
 
-### Response
+A dismissed or snoozed item reappears when its `at` moves past the time it was handled (a newer message, a thread asking again), or when a snooze runs out.
 
-```json
-{
-  "success": true
-}
-```
+Every action writes an `inbox.changed` event (`{"itemId","action"}`) on the item's bot. The [notification feed](/api/event-stream#notification-feed) sends it as `kind: "inbox_changed"` so other devices refresh; clients never raise a notification for it.
 
-## Create inbox item
+## Turning it on
 
-```bash
-curl -X POST https://api.allternit.com/api/v1/inbox \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agent_id": "agent_018f3a7c...",
-    "type": "agent_alert",
-    "title": "Deployment succeeded",
-    "body": "BYOC runtime rolled out version 1.2.0.",
-    "severity": "info",
-    "action_url": "/byoc/runtimes/runtime_01hqx8x7x7x7x7x7x7x7x7x",
-    "metadata": {"version": "1.2.0"}
-  }'
-```
-
-### Request body
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `type` | string | yes | Item type. |
-| `title` | string | yes | Item title. |
-| `agent_id` | string | no | Source agent id. |
-| `body` | string | no | Body text. |
-| `severity` | string | no | `info`, `warning`, `critical`; default `info`. |
-| `action_url` | string | no | Optional deep link. |
-| `metadata` | object | no | Optional JSON metadata. |
-
-### Response
-
-```json
-{
-  "success": true,
-  "id": "inb_02hqx8x7x7x7x7x7x7x7x7x"
-}
-```
-
-## Error codes
-
-| Status | Code | Description |
-|--------|------|-------------|
-| `401` | `Unauthorized` | Missing or invalid bearer token. |
-| `403` | `Access denied` | Item belongs to another user. |
-| `500` | `DB error` | Database or server error. |
-
-## Related pages
-
-- [Agents API](/api/agents)
-- [Cowork](/api/cowork)
-- [Boards](/api/boards)
+Nothing to configure and no new environment variables. Held email needs the same mailflare setup the bot's email address uses (see [Starting conversations](/guides/starting-conversations)); with it unset, approving an email answers `502 EMAIL_DECISION_FAILED` and the item stays. A channel whose credentials aren't set answers `channel_offline` in `result.send`, and the approval itself is still recorded.
