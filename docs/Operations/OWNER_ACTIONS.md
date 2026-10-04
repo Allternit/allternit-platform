@@ -37,6 +37,16 @@
 | **How** | `\dt computer_pairing_codes paired_computers webhook_events cowork_handoffs` to see what's missing, then `psql -d allternit -f <file>` for each missing one (all idempotent: `IF NOT EXISTS`). No restart needed. |
 | **Verify** | Signed in on Desktop: Settings → Computers → *Pair a remote computer* shows a code (not "Database error"). |
 
+## 2c. Apply cloud migration 044 on `mail` (pending, 2026-10-04)
+
+| | |
+|---|---|
+| **Status** | **Pending.** Needed by photo avatars included with a plan (`routes::photo_avatars`). Until it's applied, `GET /api/v1/avatars/photo/allowance` answers 500 and the app hides the Included lane (no paid call is made). |
+| **What** | `044_photo_avatar_usage.sql` (the `photo_avatar_usage` ledger) |
+| **Where** | `mail`; DB `allternit`; file in `cmd/allternit-cloud-api/migrations_pg/` |
+| **How** | `sudo -u postgres psql -d allternit -f 044_photo_avatar_usage.sql` (idempotent: `IF NOT EXISTS`), then `GRANT ALL ON photo_avatar_usage TO allternit;` if the service role doesn't own new tables. No restart needed. Optional: set `ALLTERNIT_AVATAR_MONTHLY_BUDGET_USD` in `/opt/allternit-cloud-api/.env` (default 4.00) and restart cloud-api. The key is the existing `OPENAI_API_KEY`. |
+| **Verify** | `SELECT COUNT(*) FROM photo_avatar_usage;` works. Spend this month: `SELECT COALESCE(SUM(cost_estimate_usd),0) FROM photo_avatar_usage WHERE period_start = date_trunc('month', now() at time zone 'utc')::date AND status = 'used';` |
+
 ## 3. Retire the live 8013 nginx proxy on `mail`
 
 | | |

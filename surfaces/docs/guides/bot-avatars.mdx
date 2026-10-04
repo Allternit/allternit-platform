@@ -15,6 +15,36 @@ In **Create bot** or **Edit bot → Look**, choose a pack and a character. Some 
 
 Vendor bots use their vendor's own mark or the avatar the vendor supplies. See [Vendor bots](/guides/vendor-bots).
 
+## Build a character
+
+Make an original 3D character for your bot in a few seconds, with no account,
+key, upload or AI. It's drawn by your browser on your device and is free.
+
+1. Open **Create bot** (or **Edit bot**) and go to **Look**.
+2. Choose **Build a character**. Drag the preview (or focus it and use the arrow
+   keys) to turn it.
+3. Work through **Shape → Color → Finish → Accessory**:
+   - **Shape:** Round, Bean, Cloud, Star, Heart, Droplet, Cube bot, Cat, Bear,
+     Bunny, Owl, Ghost
+   - **Color:** nine swatches, or **Custom color**
+   - **Finish:** Matte clay, Soft plush, Glossy vinyl, Glazed ceramic, Jelly,
+     Brushed metal
+   - **Accessory:** None, Cap, Beanie, Headphones, Glasses, Bow, Crown, Leaf
+     sprout, Antenna, Scarf, Star badge, Flower
+4. Press **Use as avatar**, then **Create** or **Save**. If you change the
+   character afterwards, press **Use as avatar** again. Create and Save wait
+   until you do.
+
+Your character becomes the bot's picture everywhere (chips, the bot rail, thread
+headers). Above the composer it animates like the sprite packs: idle, blink,
+walk, run, jump, sad, sleep, and a spin. **Edit bot** reopens the builder on the
+same character. With *reduce motion* on, the preview stays still.
+
+<Note>
+The builder needs WebGL. If your browser can't draw 3D graphics, the tab says so
+and offers the sprite packs, which work everywhere.
+</Note>
+
 ## Make an avatar from a photo
 
 Open the bot's **Config → Edit bot → Look → From photo** (or choose **From photo** while creating a bot).
@@ -23,6 +53,7 @@ Open the bot's **Config → Edit bot → Look → From photo** (or choose **From
 2. Choose a style: **Pixel sprite**, **Chibi**, or **Mascot**.
 3. Confirm that the photo is of you, or that you have the person's permission.
 4. Choose a lane:
+   - **Included with your plan:** shown first when you're signed in. Plus includes 5 photo avatars a month, Super 25, Ultra 50. Allternit pays for these; they don't use your money or your credits. The lane shows how many are left this month ("3 of 5 left this month"). An avatar only counts if one is made, so a failed try doesn't use one. When they're used up, the lane shows the date they come back (the 1st of the next month, UTC) and you can still use the other two lanes. Without a Plus, Super or Ultra plan the lane is shown turned off with **See plans**. If it says **Included avatars are paused this month**, Allternit has paused the included lane for everyone; use another lane.
    - **ChatGPT subscription:** needs a running Sessions computer, accepted ChatGPT terms in **Settings → Subscriptions**, and a ready ChatGPT account. If ChatGPT shows a security check, open ChatGPT on your Sessions computer, finish the check, then press **Check ChatGPT again**.
    - **OpenAI key:** uses your connected key and shows the estimated cost per try. Each approved try can be billed.
 5. Press **Make sprite**. This prepares an approval card and sends nothing yet. Only **Approve and make avatar** sends the photo. **Cancel** sends nothing.
@@ -38,4 +69,26 @@ Photo avatars are still portraits; animated sheets aren't made from photos.
 - **Mascot:** `useActiveSurfaceAgent(surface)` (`src/lib/agents/surface-agent-context.ts`) resolves which bot represents a surface (surface selection, then open bot-thread metadata, then none). `<ActiveAgentMascot>` (`src/views/bots/ActiveAgentMascot.tsx`) renders `VendorAgentAvatar` for vendor bots, animates sheet avatars (`avatar.pet.spriteUrl`) on canvas driven by `MascotActivityState`, and otherwise delegates to `BotAvatar`. Callers: `AgentModeGizzi` and `LaunchHeader`.
 - **Packs:** the manifest is `src/views/agent-view/components/create-bot/avatar-packs.ts`; files live in `public/avatar-packs/<pack>/<sprite>.webp` (512×512 portrait) and `<sprite>-sheet.webp` (1536×1872, 8 columns × 9 rows of 192×208 frames, rows in the order listed above, base anchored bottom-center). The asset spec is `AVATAR_PACKS.md` beside the manifest.
 - **Photo pipeline:** **Make sprite** only prepares the card. Approval is the only call site of `generatePhotoSprite` (`src/lib/bots/photo-sprite.ts`). The ChatGPT lane mints a single-use person proof for `avatar.photo_sprite` and submits an `image.generate` task with an image input. The OpenAI lane uses `generateImagesMediaPlane` with `referenceImage`. Output is center-cropped to a PNG of at most 256 px, keeping hard edges for pixel style. `buildAvatarConfigFromEditor` writes `{ type: "image", uri, likeness: { source: "photo", style, consentAttestedAt } }`.
+- **Included lane (cloud API):** `GET /api/v1/avatars/photo/allowance` returns `{ available, reason, plan, limit, used, remaining, resetsAt }`, where `reason` is `not_configured`, `no_subscription`, `paused` or `allowance_exhausted`. `POST /api/v1/avatars/photo` takes `{ photo, style, consentAttestedAt }` and returns `{ image, remaining, limit, resetsAt }` (`image` is a base64 PNG). Errors: 400 bad input or no consent, 402 `no_subscription`, 429 `allowance_exhausted`, 503 `not_configured` or `paused`, 422 `provider_rejected`, 502 `provider_error`. Both take a Clerk session or an API token with the `compute` scope. The code is `cmd/allternit-cloud-api/src/routes/photo_avatars.rs`. Monthly limits are `photo_avatars_per_month` on the plan list in `billing_subscriptions.rs`. The server builds the prompt from the style, downscales the photo to 1024 px or less in memory, and calls OpenAI images edit (`gpt-image-1`, 1024×1024, medium). The source photo is never stored or logged. Each use is reserved in `photo_avatar_usage` (migration `044`) under a lane-wide advisory lock. It's marked `used` only when an image comes back and `released` otherwise. A reservation that's never settled stops counting after 10 minutes.
+- **Included lane spend guard:** every reservation also checks the lane's total for the month across all users. Each image is counted at $0.042, against `ALLTERNIT_AVATAR_MONTHLY_BUDGET_USD` (default `4.00`). At the cap the lane reports `paused` instead of making a paid call. An OpenAI `insufficient_quota` or billing error releases the reservation and pauses the lane for 30 minutes. The key is `OPENAI_API_KEY` from the service's EnvironmentFile; `ALLTERNIT_AVATAR_OPENAI_API_KEY` overrides it. With no key, the allowance reports `not_configured` and the app hides the lane.
 - **Tests:** use synthetic non-face fixtures. Never commit real source photos, generated likenesses, or screenshots containing them.
+- **Build a character:**
+  
+  The builder saves a normal image avatar with an animated sheet and its recipe:
+  
+      {
+        "type": "image",
+        "uri": "data:image/webp;base64,…",          // 512×512 transparent portrait
+        "pet": { "spriteUrl": "data:image/webp;base64,…",
+                 "frameWidth": 192, "frameHeight": 208, "columns": 8, "rows": 9 },
+        "character": { "source": "builder", "version": 1,
+                       "shape": "bunny", "color": "#60a5fa",
+                       "finish": "plush", "accessory": "scarf" }
+      }
+  
+  The sheet is 1536×1872: 8 columns by 9 rows of 192×208 cells, with rows idle,
+  blink, walk, run, jump, sad, sleep, action and special. That is the same layout
+  as the pack sheets. Avatar renderers need no special case: the portrait is
+  `uri` and the animation is `pet`. `character` is only read by the editor to
+  reopen the builder. Unknown ids or colors fall back to defaults. three.js loads
+  lazily, only when the tab opens. Source: `allternit-ai/src/lib/bots/character-builder/`.

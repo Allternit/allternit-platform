@@ -56,12 +56,15 @@ pub struct SubscriptionPlan {
     pub plan_tier: &'static str,
     /// Env var holding this plan's Stripe price id (differs per Stripe account/mode).
     pub price_env: &'static str,
+    /// Photo avatars Allternit pays for each UTC calendar month (`routes::photo_avatars`).
+    /// No active subscription gets 0.
+    pub photo_avatars_per_month: i64,
 }
 
 const SUBSCRIPTION_PLANS: &[SubscriptionPlan] = &[
-    SubscriptionPlan { id: "plus", label: "Plus", price_usd: 20.00, monthly_credits_usd: 22.00, rollover_cap_usd: 10.00, plan_tier: "pro", price_env: "STRIPE_PRICE_PLUS" },
-    SubscriptionPlan { id: "super", label: "Super", price_usd: 100.00, monthly_credits_usd: 110.00, rollover_cap_usd: 50.00, plan_tier: "team", price_env: "STRIPE_PRICE_SUPER" },
-    SubscriptionPlan { id: "ultra", label: "Ultra", price_usd: 200.00, monthly_credits_usd: 220.00, rollover_cap_usd: 100.00, plan_tier: "team", price_env: "STRIPE_PRICE_ULTRA" },
+    SubscriptionPlan { id: "plus", label: "Plus", price_usd: 20.00, monthly_credits_usd: 22.00, rollover_cap_usd: 10.00, plan_tier: "pro", price_env: "STRIPE_PRICE_PLUS", photo_avatars_per_month: 5 },
+    SubscriptionPlan { id: "super", label: "Super", price_usd: 100.00, monthly_credits_usd: 110.00, rollover_cap_usd: 50.00, plan_tier: "team", price_env: "STRIPE_PRICE_SUPER", photo_avatars_per_month: 25 },
+    SubscriptionPlan { id: "ultra", label: "Ultra", price_usd: 200.00, monthly_credits_usd: 220.00, rollover_cap_usd: 100.00, plan_tier: "team", price_env: "STRIPE_PRICE_ULTRA", photo_avatars_per_month: 50 },
 ];
 
 /// Wire shape of the plan catalog — Stripe price ids deliberately stay server-side.

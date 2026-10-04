@@ -413,6 +413,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Desktop device tokens and Clerk sessions both read Allternit
         // subscription remaining compute here (plan + credits).
         .merge(routes::me_usage::routes())
+        // Photo avatars included with a plan (Allternit-paid, per-plan monthly
+        // allowance); Clerk session or `compute` API token per-request.
+        .merge(routes::photo_avatars::routes())
         // The pack catalog is public; checkout creation verifies the Clerk
         // session per-request and answers 503 billing_not_configured when
         // STRIPE_SECRET_KEY is unset.
