@@ -185,7 +185,9 @@ fn lower_priority() {}
 
 async fn ffmpeg_decode(audio: Vec<u8>) -> Result<Vec<f32>, String> {
     use tokio::io::AsyncWriteExt;
-    let mut cmd = tokio::process::Command::new("ffmpeg");
+    // `ALLTERNIT_FFMPEG` points at a standalone binary on hosts without a system ffmpeg.
+    let bin = std::env::var("ALLTERNIT_FFMPEG").ok().filter(|v| !v.trim().is_empty()).unwrap_or_else(|| "ffmpeg".into());
+    let mut cmd = tokio::process::Command::new(bin);
     cmd.args(["-nostdin", "-loglevel", "error", "-i", "pipe:0", "-f", "f32le", "-ac", "1", "-ar", "16000", "pipe:1"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -291,6 +293,19 @@ mod tests {
         assert!(!auth.contains("TOPSECRET"));
         let other = sigv4_get(&RecordingConfig { secret: "OTHER".into(), ..cfg }, "calls/c_1.ogg", at);
         assert_ne!(auth, &other.headers.iter().find(|h| h.0 == "authorization").unwrap().1);
+    }
+
+    /// Real R2 + ffmpeg: fetch an ogg the test uploads, then decode it. Opt-in:
+    /// `ALLTERNIT_RECORDING_S3_* REVISE_LIVE_KEY=calls/x.ogg cargo test ... revise_live -- --ignored`.
+    #[tokio::test]
+    #[ignore]
+    async fn revise_live_fetch_and_decode() {
+        let crate::call_worker::recording::RecordingEnv::Configured(bucket) = crate::call_worker::recording::RecordingEnv::from_env() else { panic!("ALLTERNIT_RECORDING_S3_* not set") };
+        let key = std::env::var("REVISE_LIVE_KEY").expect("REVISE_LIVE_KEY");
+        let io = ProductionIo { bucket, http: reqwest::Client::new() };
+        let audio = io.fetch(&key).await.expect("fetch");
+        let samples = io.decode(audio).await.expect("decode");
+        assert!(samples.len() > 16_000, "decoded {} samples", samples.len());
     }
 
     struct Io {
