@@ -182,7 +182,7 @@ wscat -c "wss://api.allternit.com/api/v1/runtime-devices/rt_xyz789/socket?ticket
 
 ### Live desktop viewer token
 
-"Sign in on the cloud computer" opens the computer's desktop in the browser. The viewer token uses the same signed format as the Sessions `computers` ws-token (purpose `vnc`, `computer_id` set to the runtime id) and lives 300 seconds.
+"Sign in on the cloud computer" opens the computer's desktop in the browser. The desktop is served by the cloud computer itself and tunnelled through its outbound relay connection, so no Sessions computer record and no shared secret are involved. The viewer token uses the same signed format as the Sessions `computers` ws-token (purpose `vnc`, `computer_id` set to the runtime id), is signed with that runtime's own relay key (the digest cloud-api already stores for it, `credential_hash`), and lives 300 seconds. The runtime's allternit-api checks it at `GET /api/v1/runtime-viewer/vnc?token=…` and proxies to its local VNC server (`ALLTERNIT_RUNTIME_VNC_ADDR`, default `127.0.0.1:5900`). `wsUrl` carries a 30-second relay socket ticket: connect right away, and ask again to reconnect.
 
 ```bash
 curl -X POST https://api.allternit.com/api/v1/runtime-devices/rt_xyz789/viewer-token \
@@ -195,12 +195,12 @@ curl -X POST https://api.allternit.com/api/v1/runtime-devices/rt_xyz789/viewer-t
 {
   "token": "<signed token>",
   "expiresAt": "2026-10-03T12:05:00+00:00",
-  "wsUrl": "wss://api.allternit.com/api/v1/computers/rt_xyz789/vnc?token=<signed token>",
+  "wsUrl": "wss://api.allternit.com/api/v1/runtime-devices/rt_xyz789/socket?ticket=<30 s ticket>",
   "runtimeId": "rt_xyz789"
 }
 ```
 
-`readOnly` is optional and defaults to `false` (signing in needs keyboard and mouse). Errors: `401` unauthenticated; `404` for an unknown, revoked, or someone else's runtime (the same answer for all three); `409 not_a_cloud_computer` for a Desktop or BYO runtime; `503 runtime_warming` or `runtime_offline` when the computer is still waking or unreachable (a sleeping computer is woken the same way the relay proxy wakes it); `503 viewer_not_configured` when the server has no `ALLTERNIT_DESKTOP_WS_SECRET` or `ALLTERNIT_VIEWER_WS_BASE`.
+`readOnly` is optional and defaults to `false` (signing in needs keyboard and mouse). Errors: `401` unauthenticated; `404` for an unknown, revoked, or someone else's runtime (the same answer for all three); `409 not_a_cloud_computer` for a Desktop or BYO runtime; `503 runtime_warming` or `runtime_offline` when the computer is still waking or unreachable (a sleeping computer is woken the same way the relay proxy wakes it); `400 no_host` when the request carries no host to build the public address from. No environment variable is required; `ALLTERNIT_VIEWER_WS_BASE` optionally overrides the public ws base (default: the request's own host over `wss://`).
 
 ### Allowed relay paths
 
@@ -571,8 +571,7 @@ X-RateLimit-Reset: 1723575600
 | `FLY_API_TOKEN` / `FLY_ORG_SLUG` | Hosted runtime provisioning. |
 | `HEADSCALE_API_KEY` | Mesh enrollment service. |
 | `STRIPE_WEBHOOK_SECRET` | Billing webhook verification. |
-| `ALLTERNIT_DESKTOP_WS_SECRET` | HMAC key for desktop/viewer ws tokens (shared with the Allternit API). |
-| `ALLTERNIT_VIEWER_WS_BASE` | Base ws URL for the cloud computer viewer, e.g. `wss://api.allternit.com/api/v1/computers`. |
+| `ALLTERNIT_VIEWER_WS_BASE` | Optional. Public ws base for the cloud computer viewer, e.g. `wss://api.allternit.com`. Default: the request's host. |
 
 ## Related pages
 

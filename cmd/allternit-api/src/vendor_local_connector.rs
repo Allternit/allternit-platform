@@ -19,6 +19,12 @@
 //!   `npx mcp-remote`) (<https://modelcontextprotocol.io/quickstart/user>);
 //!   Hermes `~/.hermes/config.yaml` `mcp_servers.<name>.url` + `headers`
 //!   (<https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp>).
+//! * Headless approval (least privilege, scoped to OUR server entry only, never a global
+//!   "approve everything"): Codex `default_tools_approval_mode = "approve"` in
+//!   `[mcp_servers.<name>]` (same Codex MCP doc); Gemini CLI `"trust": true` on our
+//!   `mcpServers.<name>` entry (bypasses confirmations for that server only, Gemini MCP doc
+//!   above); Claude Code `--allowedTools mcp__<name>`. Hermes documents no MCP approval gate
+//!   (tools are filtered by `tools.include/exclude`, never prompted), so it needs nothing.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -219,7 +225,8 @@ fn json_entry(app: &str, e: &Entry) -> Value {
         // Claude Desktop's file takes stdio servers only; mcp-remote bridges to our HTTP endpoint.
         json!({ "command": "npx", "args": ["-y", "mcp-remote", e.url, "--allow-http", "--header", "Authorization:${ALLTERNIT_AUTH}"], "env": { "ALLTERNIT_AUTH": format!("Bearer {}", e.key) } })
     } else {
-        json!({ "httpUrl": e.url, "headers": { "Authorization": format!("Bearer {}", e.key) } })
+        // `trust` skips tool-call confirmations for this server only, so a headless `gemini -p` can run it.
+        json!({ "httpUrl": e.url, "headers": { "Authorization": format!("Bearer {}", e.key) }, "trust": true })
     }
 }
 
@@ -276,7 +283,8 @@ pub fn write_toml_entry(existing: &str, e: &Entry) -> String {
     if !base.is_empty() {
         base.push_str("\n\n");
     }
-    format!("{base}[mcp_servers.{}]\nurl = {}\nhttp_headers = {{ Authorization = {} }}\n", e.name, toml_str(e.url), toml_str(&format!("Bearer {}", e.key)))
+    // `approve` for this server's tools only, so a headless `codex exec` doesn't stall on a prompt.
+    format!("{base}[mcp_servers.{}]\nurl = {}\nhttp_headers = {{ Authorization = {} }}\ndefault_tools_approval_mode = \"approve\"\n", e.name, toml_str(e.url), toml_str(&format!("Bearer {}", e.key)))
 }
 
 pub fn remove_toml_entry(existing: &str, name: &str) -> String {
@@ -706,6 +714,28 @@ mod tests {
         // a table that merely starts with the same letters is not ours
         let other = "[mcp_servers.allternit-vb2]\nurl = \"keep\"\n";
         assert!(remove_toml_entry(other, "allternit-vb").contains("allternit-vb2"));
+    }
+
+    #[test]
+    fn headless_approval_is_scoped_to_our_server_entry_only() {
+        // Codex: approve mode inside our own table, and nowhere global.
+        let existing = "approval_policy = \"on-request\"\n\n[mcp_servers.docs]\nurl = \"https://docs.test/mcp\"\n";
+        let out = write_toml_entry(existing, &entry());
+        let (head, ours) = out.split_once("[mcp_servers.allternit-vb]").unwrap();
+        assert!(ours.contains("default_tools_approval_mode = \"approve\""));
+        assert!(!head.contains("default_tools_approval_mode"), "other tables and the root stay untouched");
+        assert!(head.contains("approval_policy = \"on-request\""));
+        assert_eq!(out.matches("default_tools_approval_mode").count(), 1);
+        // Removing our entry removes the approval with it.
+        assert!(!remove_toml_entry(&out, "allternit-vb").contains("default_tools_approval_mode"));
+        // Gemini: `trust` on our entry only; other servers keep their own setting.
+        let g: Value = serde_json::from_str(&write_json_entry(r#"{"mcpServers":{"fs":{"command":"x"}}}"#, "gemini_cli", &entry()).unwrap()).unwrap();
+        assert_eq!(g["mcpServers"]["allternit-vb"]["trust"], true);
+        assert!(g["mcpServers"]["fs"].get("trust").is_none());
+        assert!(g.get("trust").is_none());
+        // Claude Desktop's bridge entry carries no trust flag.
+        let d: Value = serde_json::from_str(&write_json_entry("{}", "claude_desktop", &entry()).unwrap()).unwrap();
+        assert!(d["mcpServers"]["allternit-vb"].get("trust").is_none());
     }
 
     #[test]

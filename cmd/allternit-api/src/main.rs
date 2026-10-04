@@ -1211,6 +1211,10 @@ async fn main() {
         // Relayed phone calls: cloud-api signs each request with the runtime's
         // device token; `RelayedVoiceAuth` verifies it per handler (no Clerk session).
         .merge(allternit_api::voice_calls::voice_calls_router())
+        // Live desktop for a cloud computer: the browser's ws is tunnelled here
+        // by cloud-api's relay; the viewer token (signed with the per-runtime
+        // relay key) is the credential, no Clerk session on this hop.
+        .merge(allternit_api::runtime_viewer::runtime_viewer_router())
         // Photon.codes inbound-message webhook is also server-to-server and
         // carries no Clerk session; route it to the recipient bot's inbox.
         .merge(allternit_bus_webhook_router())

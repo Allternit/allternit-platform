@@ -936,9 +936,22 @@ async fn handle_vnc_socket(
         }
     };
 
-    info!(computer_id = %computer.id, %tcp_addr, read_only, "Opening VNC WebSocket proxy");
+    pump_vnc(socket, &computer.id, &tcp_addr, vnc_password, read_only).await;
+}
 
-    let tcp = match TcpStream::connect(&tcp_addr).await {
+/// The binary WS <-> TCP pump behind [`handle_vnc_socket`], split out so a
+/// runtime that serves its own desktop (`runtime_viewer`) shares the exact
+/// same RFB handling (guest-password interception, read-only filter).
+pub(crate) async fn pump_vnc(
+    socket: WebSocket,
+    computer_id: &str,
+    tcp_addr: &str,
+    vnc_password: Option<String>,
+    read_only: bool,
+) {
+    info!(%computer_id, %tcp_addr, read_only, "Opening VNC WebSocket proxy");
+
+    let tcp = match TcpStream::connect(tcp_addr).await {
         Ok(stream) => stream,
         Err(e) => {
             error!(error = %e, %tcp_addr, "failed to connect to VNC endpoint");
@@ -979,7 +992,7 @@ async fn handle_vnc_socket(
     // Channel for messages that need to go to the browser.
     let (ws_tx, mut ws_rx) = mpsc::channel::<Message>(128);
     let ws_tx2 = ws_tx.clone();
-    let computer_id_for_filter = computer.id.clone();
+    let computer_id_for_filter = computer_id.to_string();
 
     // Forward channel -> WebSocket sender.
     let mut forward_to_ws = tokio::spawn(async move {
@@ -1128,7 +1141,7 @@ async fn handle_vnc_socket(
     ws_to_tcp.abort();
     tcp_to_ws.abort();
 
-    info!(computer_id = %computer.id, "VNC WebSocket proxy closed");
+    info!(%computer_id, "VNC WebSocket proxy closed");
 }
 
 // ── D. Guest event stream ────────────────────────────────────────────────────

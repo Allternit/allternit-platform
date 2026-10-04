@@ -83,6 +83,7 @@ pub mod channel_gateway;
 pub mod channel_phone;
 pub mod phone_outbound;
 pub mod relay_auth;
+pub mod runtime_viewer;
 pub mod voice_calls;
 pub mod voice_turn_stream;
 pub mod channel_relay;
