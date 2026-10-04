@@ -1115,6 +1115,50 @@ async fn reply(db: &PgPool, carrier: &dyn Carrier, number: &NumberRow, to: &str,
     }
 }
 
+/// MMS media items (`url`, `contentType`) of a carrier webhook body. Telnyx lists them under
+/// `data.payload.media`; the carrier's signature was verified before this is read.
+fn webhook_media(body: &[u8]) -> Vec<(String, String)> {
+    let Ok(v) = serde_json::from_slice::<Value>(body) else { return vec![] };
+    let items = v.pointer("/data/payload/media").and_then(Value::as_array).cloned().unwrap_or_default();
+    items
+        .iter()
+        .filter_map(|m| Some((m.get("url")?.as_str()?.to_string(), m.get("content_type").and_then(Value::as_str).unwrap_or("").to_string())))
+        .take(10)
+        .collect()
+}
+
+/// Copies each MMS item into the owner's cloud storage and returns `{url, contentType, name, bytes, stored}`
+/// per item, with the permanent link as `url` when stored. An item that can't be stored (no storage or link
+/// secret, over the plan's caps, fetch failed) keeps the carrier's URL, which expires, and is logged.
+async fn inbound_media(db: &PgPool, user_id: &str, body: &[u8]) -> Vec<Value> {
+    let items = webhook_media(body);
+    if items.is_empty() {
+        return vec![];
+    }
+    // Without a link secret a stored copy has no permanent URL to hand on, so don't store one.
+    let store = crate::services::r2::R2Client::from_env().ok().filter(|_| crate::services::user_files::links_configured());
+    let plan = crate::services::voice_usage::plan_for_user(db, user_id).await.unwrap_or_else(|_| "free".into());
+    let mut out = Vec::new();
+    for (url, ct) in items {
+        let stored = match &store {
+            Some(r2) => crate::services::user_files::ingest_remote(db, r2, &crate::services::user_files::HttpFetcher, user_id, &plan, &url, &ct, Utc::now()).await,
+            None => Err("file storage or permanent links are not configured".into()),
+        };
+        match stored {
+            Ok(f) if f.link_url.is_some() => out.push(json!({ "url": f.link_url, "contentType": f.content_type, "name": f.name, "bytes": f.bytes, "stored": true })),
+            Ok(f) => {
+                tracing::warn!(user = user_id, file = %f.file_id, "mms media stored but permanent links are not configured; passing the carrier url");
+                out.push(json!({ "url": url, "contentType": f.content_type, "name": f.name, "bytes": f.bytes, "stored": false }));
+            }
+            Err(e) => {
+                tracing::warn!(user = user_id, "mms media kept at the carrier url: {e}");
+                out.push(json!({ "url": url, "contentType": ct, "stored": false }));
+            }
+        }
+    }
+    out
+}
+
 pub async fn edge_core(db: &PgPool, carrier: &dyn Carrier, number: &NumberRow, headers: &HashMap<String, String>, url: &str, body: &[u8]) -> PResult<Edge> {
     let event = match carrier.parse_inbound(headers, url, body) {
         Ok(e) => e,
@@ -1158,10 +1202,14 @@ pub async fn edge_core(db: &PgPool, carrier: &dyn Carrier, number: &NumberRow, h
     if consent_basis(db, &number.id, &from).await?.is_none() {
         log_consent(db, &number.id, &from, "inbound_text", Some("sms"), None).await?;
     }
-    let normalised = json!({
+    let mut normalised = json!({
         "provider": "sms", "messageId": id, "numberId": number.id, "botId": number.bot_id,
         "from": from, "to": to, "text": text, "receivedAt": Utc::now(),
     });
+    let media = inbound_media(db, &number.user_id, body).await;
+    if !media.is_empty() {
+        normalised["media"] = json!(media);
+    }
     Ok(Edge::Deliver { body: serde_json::to_vec(&normalised).unwrap_or_default(), number_id: number.id.clone(), message_id: id })
 }
 
@@ -1804,6 +1852,17 @@ mod tests {
         assert_eq!(revoked, 1);
         let again = buy(&db, &c, &e164(70)).await;
         assert!(again.is_ok(), "a released number can be bought again");
+    }
+
+    #[test]
+    fn mms_media_is_read_from_the_telnyx_webhook_body() {
+        let body = json!({"data":{"payload":{"media":[
+            {"url":"https://media.telnyx.test/a.jpg","content_type":"image/jpeg","size":123},
+            {"content_type":"image/png"},
+            {"url":"https://media.telnyx.test/b"}]}}}).to_string();
+        assert_eq!(webhook_media(body.as_bytes()), vec![("https://media.telnyx.test/a.jpg".to_string(), "image/jpeg".to_string()), ("https://media.telnyx.test/b".to_string(), String::new())]);
+        assert!(webhook_media(br#"{"data":{"payload":{"text":"hi"}}}"#).is_empty());
+        assert!(webhook_media(b"nope").is_empty());
     }
 
     /// The whole inbound path through the public relay address with the real Telnyx adapter:

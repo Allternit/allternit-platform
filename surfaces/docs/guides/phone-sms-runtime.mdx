@@ -24,6 +24,12 @@ The carrier side (buying numbers, registration, STOP/HELP handling, opt-outs, co
 
 Replies are plain text. A reply over 1,600 characters is split at a paragraph, line, sentence or word break, and each part ends with `(1/3)`. If a later part is refused after an earlier one went out, the send is reported as uncertain, never as rejected, so nothing is sent twice.
 
+## Pictures and files
+
+**In.** When a text arrives with MMS media, the cloud copies each item (at most 10; 25 MB each, 15 s per fetch, content type kept) into the owner's cloud storage before the text is queued, and the queued request carries `media: [{ url, contentType, name, bytes, stored }]` where `url` is a permanent file link (see [Files](/api/files)) instead of the carrier's expiring URL. Plan caps apply. An item that can't be stored (storage or links not configured, over the caps, fetch failed) keeps the carrier's URL with `stored: false` and the reason is logged.
+
+**Out.** A bot's attachments on an SMS become permanent links in the text (see [Starting conversations](/guides/starting-conversations)); the runtime uploads them through `POST /api/v1/runtime-devices/me/files/uploads` ([Files](/api/files)). No MMS is sent. Other bot-made files (artifacts, share paths) can call `cloud_files::upload_file(&CloudUploader, path)` in `allternit-api` to get a link; only the SMS path uses it today.
+
 ## Connect a number to a bot
 
 `PUT /gateway/phone-numbers/:numberId` (signed in):

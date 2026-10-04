@@ -142,18 +142,8 @@ pub struct Upload {
     pub put_url: String,
 }
 
-pub async fn begin_upload(
-    db: &PgPool,
-    store: &dyn ObjectStore,
-    user_id: &str,
-    plan_id: &str,
-    name: &str,
-    content_type: &str,
-    bytes: u64,
-) -> Result<Upload, Failure> {
-    if bytes == 0 {
-        return Err(Failure::Api(ApiError::BadRequest("bytes must be greater than zero.".into())));
-    }
+/// Plan caps (per file, total) and the global R2 guard for adding `bytes`.
+async fn check_caps(db: &PgPool, store: &dyn ObjectStore, user_id: &str, plan_id: &str, bytes: u64) -> Result<(), Failure> {
     let caps = caps_for_plan(plan_id);
     if bytes > caps.file_bytes {
         return Err(refuse(
@@ -177,6 +167,22 @@ pub async fn begin_upload(
             return Err(refuse(507, "storage-full", "File storage is full right now. Try again later.").into());
         }
     }
+    Ok(())
+}
+
+pub async fn begin_upload(
+    db: &PgPool,
+    store: &dyn ObjectStore,
+    user_id: &str,
+    plan_id: &str,
+    name: &str,
+    content_type: &str,
+    bytes: u64,
+) -> Result<Upload, Failure> {
+    if bytes == 0 {
+        return Err(Failure::Api(ApiError::BadRequest("bytes must be greater than zero.".into())));
+    }
+    check_caps(db, store, user_id, plan_id, bytes).await?;
     let file_id = Uuid::new_v4();
     let name = safe_name(name);
     let key = file_key(user_id, file_id, &name);
@@ -224,7 +230,7 @@ pub async fn complete_upload(
     .bind(now)
     .execute(db)
     .await?;
-    Ok(json!({ "fileId": file_id, "name": name, "contentType": ct, "bytes": declared, "createdAt": now }))
+    Ok(json!({ "fileId": file_id, "name": name, "contentType": ct, "bytes": declared, "createdAt": now, "linkUrl": capability_url(file_id) }))
 }
 
 async fn owned(db: &PgPool, user_id: &str, id: Uuid) -> Result<(String, String), Failure> {
@@ -241,7 +247,155 @@ pub async fn download_url(db: &PgPool, store: &dyn ObjectStore, user_id: &str, i
     let (key, name) = owned(db, user_id, id).await?;
     let ttl = expires.map(|s| Duration::from_secs(s.clamp(60, MAX_GET_TTL_SECS))).unwrap_or(GET_TTL);
     let url = store.presign_get(BUCKET, &key, ttl).map_err(r2_failure)?;
-    Ok(json!({ "fileId": id, "name": name, "url": url, "expiresInSeconds": ttl.as_secs() }))
+    Ok(json!({ "fileId": id, "name": name, "url": url, "linkUrl": capability_url(id), "expiresInSeconds": ttl.as_secs() }))
+}
+
+/// Largest media item copied in from a carrier message.
+pub const MAX_REMOTE_BYTES: u64 = 25 * MB;
+pub const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Fetches a remote file for [`ingest_remote`]; tests substitute a fake.
+#[async_trait::async_trait]
+pub trait Fetcher: Send + Sync {
+    /// Body bytes and content type; an error for anything over `max` bytes.
+    async fn fetch(&self, url: &str, max: u64) -> Result<(Vec<u8>, String), String>;
+}
+
+pub struct HttpFetcher;
+
+#[async_trait::async_trait]
+impl Fetcher for HttpFetcher {
+    async fn fetch(&self, url: &str, max: u64) -> Result<(Vec<u8>, String), String> {
+        let u = reqwest::Url::parse(url).map_err(|e| e.to_string())?;
+        if u.scheme() != "https" {
+            return Err("media url is not https".into());
+        }
+        let mut resp = reqwest::Client::builder().timeout(FETCH_TIMEOUT).build().map_err(|e| e.to_string())?.get(u).send().await.map_err(|e| e.to_string())?;
+        if !resp.status().is_success() {
+            return Err(format!("media host answered {}", resp.status().as_u16()));
+        }
+        if resp.content_length().is_some_and(|n| n > max) {
+            return Err("media item is too large".into());
+        }
+        let ct = resp.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+        let mut out = Vec::new();
+        while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
+            if out.len() as u64 + chunk.len() as u64 > max {
+                return Err("media item is too large".into());
+            }
+            out.extend_from_slice(&chunk);
+        }
+        Ok((out, ct))
+    }
+}
+
+/// A remote file copied into the owner's cloud storage.
+#[derive(Debug, Clone)]
+pub struct Ingested {
+    pub file_id: Uuid,
+    pub name: String,
+    pub content_type: String,
+    pub bytes: u64,
+    /// Permanent link; `None` when `ALLTERNIT_FILE_LINK_SECRET` is unset.
+    pub link_url: Option<String>,
+}
+
+/// Copies `url` into `allternit-user-files` as `user_id` (plan caps apply, at most
+/// [`MAX_REMOTE_BYTES`], content type kept). `Err` carries the reason so the caller
+/// can keep the original URL and log it.
+#[allow(clippy::too_many_arguments)]
+pub async fn ingest_remote(
+    db: &PgPool,
+    store: &dyn ObjectStore,
+    fetcher: &dyn Fetcher,
+    user_id: &str,
+    plan_id: &str,
+    url: &str,
+    hint_content_type: &str,
+    now: DateTime<Utc>,
+) -> Result<Ingested, String> {
+    let (data, fetched_ct) = fetcher.fetch(url, MAX_REMOTE_BYTES).await?;
+    if data.is_empty() {
+        return Err("media item is empty".into());
+    }
+    let bytes = data.len() as u64;
+    let ct = [fetched_ct.trim(), hint_content_type.trim()].into_iter().find(|c| !c.is_empty()).unwrap_or("application/octet-stream").to_string();
+    check_caps(db, store, user_id, plan_id, bytes).await.map_err(|f| match f {
+        Failure::Refused(r) => format!("{} ({})", r.message, r.code),
+        Failure::Api(e) => e.to_string(),
+    })?;
+    let raw_name = reqwest::Url::parse(url).ok().and_then(|u| u.path_segments().and_then(|s| s.last().map(str::to_string))).unwrap_or_default();
+    let name = safe_name(if raw_name.is_empty() { "media" } else { &raw_name });
+    let file_id = Uuid::new_v4();
+    let key = file_key(user_id, file_id, &name);
+    store.put(BUCKET, &key, data, &ct).await.map_err(|e| e.to_string())?;
+    complete_upload(db, store, user_id, file_id, &name, &ct, bytes, now).await.map_err(|f| match f {
+        Failure::Refused(r) => r.message,
+        Failure::Api(e) => e.to_string(),
+    })?;
+    Ok(Ingested { file_id, name, content_type: ct, bytes, link_url: capability_url(file_id) })
+}
+
+const LINK_SECRET_ENV: &str = "ALLTERNIT_FILE_LINK_SECRET";
+const DEFAULT_PUBLIC_API: &str = "https://api.allternit.com";
+
+fn link_secret() -> Option<String> {
+    std::env::var(LINK_SECRET_ENV).ok().filter(|s| !s.trim().is_empty())
+}
+
+/// `base64url(HMAC-SHA256(secret, fileId))`: the capability token in a file link.
+pub fn link_token(secret: &str, file_id: Uuid) -> String {
+    use base64::Engine;
+    use hmac::{Hmac, Mac};
+    let mut m = Hmac::<sha2::Sha256>::new_from_slice(secret.as_bytes()).expect("hmac accepts any key length");
+    m.update(file_id.to_string().as_bytes());
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(m.finalize().into_bytes())
+}
+
+/// Constant-time check of a presented token.
+pub fn verify_link_token(secret: &str, file_id: Uuid, token: &str) -> bool {
+    use base64::Engine;
+    use hmac::{Hmac, Mac};
+    let Ok(raw) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(token.trim_end_matches('=')) else {
+        return false;
+    };
+    let mut m = Hmac::<sha2::Sha256>::new_from_slice(secret.as_bytes()).expect("hmac accepts any key length");
+    m.update(file_id.to_string().as_bytes());
+    m.verify_slice(&raw).is_ok()
+}
+
+fn capability_url_with(secret: Option<&str>, base: &str, file_id: Uuid) -> Option<String> {
+    let secret = secret?;
+    Some(format!("{}/api/v1/files/{}/raw?k={}", base.trim_end_matches('/'), file_id, link_token(secret, file_id)))
+}
+
+/// Whether permanent file links are configured (`ALLTERNIT_FILE_LINK_SECRET` set).
+pub fn links_configured() -> bool {
+    link_secret().is_some()
+}
+
+/// The permanent link for a file, or `None` when `ALLTERNIT_FILE_LINK_SECRET` is unset.
+pub fn capability_url(file_id: Uuid) -> Option<String> {
+    let base = std::env::var("ALLTERNIT_PUBLIC_API_URL").ok().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| DEFAULT_PUBLIC_API.to_string());
+    capability_url_with(link_secret().as_deref(), &base, file_id)
+}
+
+/// Resolves a capability link to a fresh 10-minute presigned GET. 503 when links
+/// are not configured; 404 for a bad token or a deleted file (no distinction).
+pub async fn raw_redirect_url(db: &PgPool, store: &dyn ObjectStore, id: Uuid, token: &str) -> Result<String, Failure> {
+    raw_redirect_with(link_secret().as_deref(), db, store, id, token).await
+}
+
+async fn raw_redirect_with(secret: Option<&str>, db: &PgPool, store: &dyn ObjectStore, id: Uuid, token: &str) -> Result<String, Failure> {
+    let Some(secret) = secret else {
+        return Err(refuse(503, "file-links-unavailable", "Permanent file links are not configured.").into());
+    };
+    if !verify_link_token(secret, id, token) {
+        return Err(refuse(404, "not-found", "No such file.").into());
+    }
+    let row: Option<(String,)> = sqlx::query_as("SELECT key FROM user_files WHERE id = $1 AND deleted_at IS NULL").bind(id).fetch_optional(db).await?;
+    let (key,) = row.ok_or_else(|| Failure::from(refuse(404, "not-found", "No such file.")))?;
+    store.presign_get(BUCKET, &key, GET_TTL).map_err(r2_failure)
 }
 
 /// Deletes the object first; the row is only marked deleted once R2 confirms,
@@ -323,6 +477,10 @@ mod db_tests {
         }
         async fn head(&self, _b: &str, k: &str) -> Result<Option<u64>, R2Error> {
             Ok(self.objects.lock().unwrap().get(k).copied())
+        }
+        async fn put(&self, _b: &str, k: &str, bytes: Vec<u8>, _c: &str) -> Result<(), R2Error> {
+            self.objects.lock().unwrap().insert(k.to_string(), bytes.len() as u64);
+            Ok(())
         }
         async fn delete(&self, _b: &str, k: &str) -> Result<(), R2Error> {
             self.objects.lock().unwrap().remove(k);
@@ -425,5 +583,79 @@ mod db_tests {
         assert_eq!(used_bytes(&state.db, "u1").await.unwrap(), 0);
         assert_eq!(refusal(download_url(&state.db, &store, "u1", id, None).await), (404, "not-found"));
         assert_eq!(refusal(delete_file(&state.db, &store, "u1", id, Utc::now()).await.map(|_| ())), (404, "not-found"));
+    }
+
+    struct FakeFetch(Result<(Vec<u8>, String), String>);
+    #[async_trait]
+    impl Fetcher for FakeFetch {
+        async fn fetch(&self, _u: &str, _m: u64) -> Result<(Vec<u8>, String), String> {
+            self.0.clone()
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn remote_media_is_copied_under_the_owner_and_respects_caps() {
+        let state = db().await;
+        let store = Fake::default();
+        let ok = FakeFetch(Ok((vec![7u8; 1000], "image/jpeg".into())));
+        let got = ingest_remote(&state.db, &store, &ok, "u1", "free", "https://media.test/a/b/pic.jpg?sig=1", "", Utc::now()).await.unwrap();
+        assert_eq!((got.name.as_str(), got.content_type.as_str(), got.bytes), ("pic.jpg", "image/jpeg", 1000));
+        assert_eq!(used_bytes(&state.db, "u1").await.unwrap(), 1000);
+        assert!(store.objects.lock().unwrap().contains_key(&format!("u/u1/{}/pic.jpg", got.file_id)));
+        // The carrier's content type is a fallback only when the host sends none.
+        let none = FakeFetch(Ok((vec![1u8; 10], String::new())));
+        let g2 = ingest_remote(&state.db, &store, &none, "u1", "free", "https://media.test/x", "image/png", Utc::now()).await.unwrap();
+        assert_eq!((g2.name.as_str(), g2.content_type.as_str()), ("x", "image/png"));
+        // Over the plan's per-file cap (free: 10 MB): refused, nothing stored.
+        let big = FakeFetch(Ok((vec![0u8; (10 * MB + 1) as usize], "video/mp4".into())));
+        let before = used_bytes(&state.db, "u1").await.unwrap();
+        let err = ingest_remote(&state.db, &store, &big, "u1", "free", "https://media.test/v.mp4", "", Utc::now()).await.unwrap_err();
+        assert!(err.contains("file-too-large"), "{err}");
+        assert_eq!(used_bytes(&state.db, "u1").await.unwrap(), before);
+        // Fetch failures and empty bodies are errors too, so the caller keeps the original URL.
+        assert!(ingest_remote(&state.db, &store, &FakeFetch(Err("timeout".into())), "u1", "free", "https://m.test/a", "", Utc::now()).await.is_err());
+        assert!(ingest_remote(&state.db, &store, &FakeFetch(Ok((vec![], "image/png".into()))), "u1", "free", "https://m.test/a", "", Utc::now()).await.is_err());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn capability_links_redirect_and_die_with_the_file() {
+        let state = db().await;
+        let store = Fake::default();
+        let v = upload(&state, &store, "u1", "free", "n.txt", 50).await.ok().unwrap();
+        let id: Uuid = serde_json::from_value(v["fileId"].clone()).unwrap();
+        let tok = link_token("s3cret", id);
+        // Unset secret: 503.
+        assert_eq!(refusal(raw_redirect_with(None, &state.db, &store, id, &tok).await), (503, "file-links-unavailable"));
+        // Bad token (and a token from another secret): 404.
+        assert_eq!(refusal(raw_redirect_with(Some("s3cret"), &state.db, &store, id, "bogus").await), (404, "not-found"));
+        assert_eq!(refusal(raw_redirect_with(Some("s3cret"), &state.db, &store, id, &link_token("other", id)).await), (404, "not-found"));
+        // Good token: a fresh presigned GET for the object.
+        let url = raw_redirect_with(Some("s3cret"), &state.db, &store, id, &tok).await.ok().unwrap();
+        assert_eq!(url, format!("https://r2.test/{BUCKET}/u/u1/{id}/n.txt?get"));
+        // Deleted file: the same valid token now answers 404.
+        delete_file(&state.db, &store, "u1", id, Utc::now()).await.ok().unwrap();
+        assert_eq!(refusal(raw_redirect_with(Some("s3cret"), &state.db, &store, id, &tok).await), (404, "not-found"));
+    }
+}
+
+#[cfg(test)]
+mod link_tests {
+    use super::*;
+
+    #[test]
+    fn tokens_verify_only_for_their_file_and_secret() {
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        let t = link_token("k", a);
+        assert!(verify_link_token("k", a, &t));
+        assert!(!verify_link_token("k", b, &t));
+        assert!(!verify_link_token("k2", a, &t));
+        assert!(!verify_link_token("k", a, ""));
+        assert!(!verify_link_token("k", a, "!!!"));
+        let url = capability_url_with(Some("k"), "https://x.test/", a).unwrap();
+        assert_eq!(url, format!("https://x.test/api/v1/files/{a}/raw?k={t}"));
+        assert!(capability_url_with(None, "https://x.test", a).is_none());
     }
 }

@@ -59,6 +59,8 @@ pub fn max_files(provider: &str) -> Option<usize> {
     match provider {
         "telegram" | "slack" => Some(5),
         "email" => Some(10),
+        // No MMS: each file is uploaded to cloud storage and its permanent link is added to the text.
+        "sms" => Some(3),
         _ => None,
     }
 }

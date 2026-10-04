@@ -1311,7 +1311,7 @@ mod tests {
         // Platforms with no bot-attachment path say so and create nothing.
         let before = threads(&st);
         let dc = FakeTx::new("discord");
-        for provider in ["discord", "sms", "teams", "whatsapp"] {
+        for provider in ["discord", "teams", "whatsapp"] {
             let mut b = body("bot-1", json!({ "kind": "user", "id": "+14155550123" }), "x");
             b.attachments = Some(vec![file("a.png", "image/png", b"x")]);
             assert_eq!(err_code(run_start(&st, &http, &dc, &mail, provider, b)), (400, "attachments_unsupported".into()), "{provider}");

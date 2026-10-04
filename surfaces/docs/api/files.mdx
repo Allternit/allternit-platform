@@ -42,6 +42,27 @@ DELETE /api/v1/files/{fileId}            # deletes the object, then the record (
 GET /api/v1/files/usage                  # { plan, usedBytes, totalBytes, maxFileBytes }
 ```
 
+## Permanent links
+
+The presigned URLs above expire, so a link stored in an old message would stop loading. `GET /api/v1/files/{fileId}` therefore also returns `linkUrl`, a permanent capability link:
+
+```http
+GET https://api.allternit.com/api/v1/files/{fileId}/raw?k=<token>   # no login
+```
+
+`token` is `base64url(HMAC-SHA256(secret, fileId))`. Opening the link answers `302` to a fresh 10-minute presigned GET (`Cache-Control: private, max-age=300`), so the link itself never expires. Anyone holding the link can read that one file, so treat it like the file. Deleting the file kills its link: the same URL then answers `404`, as does a wrong token. When the server has no `ALLTERNIT_FILE_LINK_SECRET`, `linkUrl` is `null` and `/raw` answers `503 file-links-unavailable`; clients keep using the presigned `url`. `ALLTERNIT_PUBLIC_API_URL` overrides the base (default `https://api.allternit.com`).
+
+## Runtime uploads
+
+A runtime (a bot's own files) uploads with its device credential instead of a user session, charged to the device owner's plan and caps:
+
+```http
+POST /api/v1/runtime-devices/me/files/uploads        # { name, contentType, bytes } -> { fileId, key, putUrl, expiresInSeconds }
+POST /api/v1/runtime-devices/me/files/{fileId}/complete  # same body -> 201 { fileId, name, contentType, bytes, createdAt, linkUrl }
+```
+
+`Authorization: Bearer allternit_runtime_…`; a user token is refused (401). The errors are the same as for `/files/uploads`. `linkUrl` is the permanent link, or `null` when the server has no `ALLTERNIT_FILE_LINK_SECRET`. `allternit-api` wraps the three steps as `cloud_files::upload_file` / `upload_bytes`. MMS pictures received on a number are copied into the same storage; see [Phone numbers and SMS (runtime)](/guides/phone-sms-runtime).
+
 ## Errors
 
 Errors are `{ "code", "message" }`.
@@ -53,6 +74,7 @@ Errors are `{ "code", "message" }`.
 | 507 | `storage-full` | Allternit's shared storage is at its ceiling (9.5 GB of 10 GB). Uploads pause; downloads and deletes still work |
 | 409 | `upload-missing`, `size-mismatch` | `complete` found no object, or one of a different size (it is discarded) |
 | 404 | `not-found` | Not your file, or already deleted |
+| 503 | `file-links-unavailable` | Permanent links are not configured on this server |
 | 503 | `storage-unavailable` | Storage is not configured or reachable |
 
 ## Custom voice recordings
