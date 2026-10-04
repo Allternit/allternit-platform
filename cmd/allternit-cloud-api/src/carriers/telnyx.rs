@@ -87,6 +87,41 @@ fn registration_state_from_campaign(campaign: &Value) -> RegistrationStatus {
     }
 }
 
+/// The campaignBuilder body for a 10DLC registration.
+fn campaign_body(brand_id: &str, f: &RegistrationForm) -> Value {
+    let name = if f.display_name.trim().is_empty() { f.legal_name.as_str() } else { f.display_name.as_str() };
+    let mut campaign = json!({
+        "brandId": brand_id, "usecase": f.use_case, "description": f.use_case_summary,
+        "messageFlow": f.opt_in_workflow,
+        "optinKeywords": "START", "optoutKeywords": "STOP,STOPALL,UNSUBSCRIBE,CANCEL,END,QUIT", "helpKeywords": "HELP",
+        "optinMessage": format!("{name}: You're subscribed to messages from this AI assistant. Msg frequency varies. Msg & data rates may apply. Reply HELP for help, STOP to opt out."),
+        "optoutMessage": format!("{name}: You're unsubscribed and will get no more messages. Reply START to resubscribe."),
+        "helpMessage": format!("{name}: This number is answered by an AI assistant. For help email {}. Msg & data rates may apply. Reply STOP to opt out.", f.contact_email),
+        "subscriberOptin": true, "subscriberOptout": true, "subscriberHelp": true,
+        // Assistant replies can carry links (shared files) and phone numbers.
+        "embeddedLink": true, "embeddedPhone": true,
+        "numberPool": false, "ageGated": false, "directLending": false,
+        "termsAndConditions": true, "autoRenewal": true,
+        "webhookURL": super::status_webhook_url("telnyx"),
+    });
+    for (i, sample) in f.sample_messages.iter().take(5).enumerate() {
+        campaign[format!("sample{}", i + 1)] = json!(sample);
+    }
+    if let Some(url) = &f.privacy_policy_url {
+        campaign["privacyPolicyLink"] = json!(url);
+    }
+    if let Some(url) = &f.terms_url {
+        campaign["termsAndConditionsLink"] = json!(url);
+    }
+    campaign
+}
+
+/// Telnyx refuses a campaign while its brand is still being verified
+/// (campaignBuilder 400, code 527 "Brand registration status pending").
+fn brand_not_ready(e: &CarrierError) -> bool {
+    matches!(e, CarrierError::Upstream(400, msg) if msg.to_ascii_lowercase().contains("registration status pending"))
+}
+
 fn require(form: &RegistrationForm, pairs: &[(&str, &str)]) -> Result<(), CarrierError> {
     let _ = form;
     let missing: Vec<&str> = pairs.iter().filter(|(_, v)| v.trim().is_empty()).map(|(k, _)| *k).collect();
@@ -293,29 +328,16 @@ impl Carrier for Telnyx {
                     )
                     .await?;
                 let brand_id = str_at(&brand, &["brandId"]).ok_or_else(|| CarrierError::Upstream(502, "brand has no id".into()))?.to_string();
-                let mut campaign = json!({
-                    "brandId": brand_id, "usecase": f.use_case, "description": f.use_case_summary,
-                    "messageFlow": f.opt_in_workflow,
-                    "optoutKeywords": "STOP, STOPALL, UNSUBSCRIBE, CANCEL, END, QUIT", "helpKeywords": "HELP",
-                    "subscriberOptin": true, "subscriberOptout": true, "subscriberHelp": true,
-                    "webhookURL": super::status_webhook_url("telnyx"),
-                });
-                for (i, sample) in f.sample_messages.iter().take(5).enumerate() {
-                    campaign[format!("sample{}", i + 1)] = json!(sample);
-                }
-                if let Some(url) = &f.privacy_policy_url {
-                    campaign["privacyPolicyLink"] = json!(url);
-                }
-                if let Some(url) = &f.terms_url {
-                    campaign["termsAndConditionsLink"] = json!(url);
-                }
-                let campaign = self.call("POST", "/10dlc/campaignBuilder", Some(campaign)).await?;
                 let _ = e164;
-                Ok(RegistrationHandle {
-                    brand_id: Some(brand_id),
-                    campaign_id: str_at(&campaign, &["campaignId"]).map(str::to_string),
-                    tfv_id: None,
-                })
+                // A new brand is still being verified, and the carrier refuses
+                // campaigns until it is. Keep the brand and file the campaign
+                // from the status refresh once it clears.
+                let campaign_id = match self.call("POST", "/10dlc/campaignBuilder", Some(campaign_body(&brand_id, f))).await {
+                    Ok(campaign) => str_at(&campaign, &["campaignId"]).map(str::to_string),
+                    Err(e) if brand_not_ready(&e) => None,
+                    Err(e) => return Err(e),
+                };
+                Ok(RegistrationHandle { brand_id: Some(brand_id), campaign_id, tfv_id: None })
             }
             RegistrationKind::TollFree => {
                 require(
@@ -404,6 +426,14 @@ impl Carrier for Telnyx {
                     _ => RegistrationStatus { state: RegState::Pending, reason: None },
                 })
             }
+        }
+    }
+
+    async fn file_pending_campaign(&self, brand_id: &str, form: &RegistrationForm) -> Result<Option<String>, CarrierError> {
+        match self.call("POST", "/10dlc/campaignBuilder", Some(campaign_body(brand_id, form))).await {
+            Ok(campaign) => Ok(str_at(&campaign, &["campaignId"]).map(str::to_string)),
+            Err(e) if brand_not_ready(&e) => Ok(None),
+            Err(e) => Err(e),
         }
     }
 
@@ -599,4 +629,27 @@ mod tests {
         assert_eq!(http.requests()[2].json.as_ref().unwrap()["phone_number_configuration"]["messaging_profile_id"], "prof-9");
         assert!(t.port_in_status("po-1").await.unwrap().done);
     }
+
+    #[tokio::test]
+    async fn campaign_waits_for_a_pending_brand() {
+        let pending = json!([{ "code": 527, "fields": null, "description": "Brand registration status pending" }]);
+        let http = FakeHttp::with(vec![(200, json!({ "brandId": "b-1" })), (400, pending.clone())]);
+        let t = Telnyx::new(http.clone(), "k".into(), None).unwrap();
+        let form = RegistrationForm {
+            entity_type: "PRIVATE_PROFIT".into(), display_name: "Acme".into(), contact_email: "ops@acme.test".into(), vertical: "TECHNOLOGY".into(),
+            country: "US".into(), use_case: "CUSTOMER_CARE".into(), use_case_summary: "assistant".into(), opt_in_workflow: "texts us first".into(),
+            sample_messages: vec!["hi".into()], ..Default::default()
+        };
+        let h = t.submit_registration(RegistrationKind::TenDlc, "+15550001111", None, None, &form).await.unwrap();
+        assert_eq!((h.brand_id.as_deref(), h.campaign_id.as_deref()), (Some("b-1"), None), "the brand is kept, the campaign waits");
+        let body = http.requests()[1].json.clone().unwrap();
+        assert_eq!((body["helpMessage"].as_str().map(|m| m.contains("ops@acme.test")), body["optoutMessage"].is_string(), body["sample1"].as_str()), (Some(true), true, Some("hi")));
+
+        let http = FakeHttp::with(vec![(400, pending), (200, json!({ "campaignId": "c-1" })), (422, json!({ "errors": [{ "detail": "bad sample" }] }))]);
+        let t = Telnyx::new(http, "k".into(), None).unwrap();
+        assert_eq!(t.file_pending_campaign("b-1", &form).await.unwrap(), None);
+        assert_eq!(t.file_pending_campaign("b-1", &form).await.unwrap().as_deref(), Some("c-1"));
+        assert!(matches!(t.file_pending_campaign("b-1", &form).await, Err(CarrierError::Upstream(422, m)) if m == "bad sample"));
+    }
+
 }
