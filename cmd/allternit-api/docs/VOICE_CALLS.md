@@ -44,3 +44,11 @@ The same signature (verified with `relay_auth::RelayedAuth`) now guards every ot
 ## Streaming turns
 
 `voice_turn_stream.rs` streams a native Gizzi session: it subscribes to `/event` before sending the same message the channel path sends (`native_turn_request`), then folds `message.part.delta` and `message.part.updated` (`part.type == "tool"`) events for that session into `text.delta` (whole words) and `tool` (`started|done|error`) events. Tool steps are written to the thread as `agent.tool.*` by the call route (the native channel path writes none, so nothing is doubled). A `permission.asked` event aborts the turn and answers a spoken error, because nobody can approve on a call. Turns are capped at 120 s. `DELETE /turn` cancels the turn task and aborts the Gizzi session. Vendor-bound and placed sessions fall back to the channel path (final reply, no tool events) with an info log line `voice turn: session is ...`.
+
+## Call summaries
+
+When a `call.ended` event lands for a call that has at least one final transcript segment, the runtime writes a `call.summary` event to the thread in the background: `{callId, text, followUps: [..]}`, idempotency key `call:<callId>:call.summary:0`, actor the bot. The text covers who called, what they wanted, what the bot did (tool steps included) and the follow-ups for the owner.
+
+It is generated with the bot's own model (`bot_turn_model`) in an ephemeral gizzi session that is deleted afterwards (`structured_output::complete_structured`, schema-constrained, tools off), so it never touches the call's session or the thread's history. Input is the call's own ledger rows (transcript lines and `agent.tool.*` steps, capped at 24k characters). A call with no final segment (missed, silent) gets no summary. A failure or a 150 s timeout is logged and dropped: no event, no retry. The seam is `CallSummarizer` on `VoiceDeps`; tests use a fake.
+
+`call.transcript.revised` (`{callId, segments:[{text, startMs, endMs}]}`) is posted by the voice worker after a recorded call; the runtime writes it like any other `call.*` event. See `services/voice/spec/CALL_WORKER.md`.

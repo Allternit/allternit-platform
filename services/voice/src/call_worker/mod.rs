@@ -43,6 +43,7 @@ pub mod events;
 pub mod hold_music;
 pub mod invite_code;
 pub mod recording;
+pub mod revise;
 pub mod session_adapter;
 pub mod transfer;
 pub mod voicemail;

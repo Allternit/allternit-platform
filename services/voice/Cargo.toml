@@ -46,8 +46,8 @@ call-worker = ["dep:livekit", "dep:livekit-api"]
 tower = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 
-# The bench reads peak RSS via getrusage.
-[target.'cfg(unix)'.dev-dependencies]
+# The bench reads peak RSS via getrusage; the call worker's revise job lowers its priority.
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [[example]]

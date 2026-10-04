@@ -269,7 +269,21 @@ async fn handle_job(cfg: WorkerConfig, cloud: CloudClient, job: JobInfo, cancel:
             keep_room = outcome.keep_room;
             tracing::info!(room = %room_name, reason = %outcome.reason, secs = outcome.duration_sec, "call ended");
             // Events keep retrying in the background until delivered.
-            tokio::spawn(drain);
+            let revise = match (&cfg.recording, outcome.recording_ref.clone()) {
+                (RecordingEnv::Configured(b), Some(recording_ref)) => Some((
+                    super::revise::ReviseJob { call_id: resp.call_id.clone(), recording_ref: Some(recording_ref), duration_sec: outcome.duration_sec, last_seq: outcome.last_seq },
+                    Arc::new(super::revise::ProductionIo { bucket: b.clone(), http: reqwest::Client::new() }) as Arc<dyn super::revise::ReviseIo>,
+                    Arc::new(cloud.clone()) as Arc<dyn super::events::EventTransport>,
+                )),
+                _ => None,
+            };
+            tokio::spawn(async move {
+                let _ = drain.await;
+                // The cleaner transcript follows the call's own events, in order.
+                if let Some((job, io, transport)) = revise {
+                    super::revise::revise_call(job, io, transport).await;
+                }
+            });
         }
         Err(e) => {
             tracing::error!(room = %room_name, "call start failed, speaking fallback: {e}");

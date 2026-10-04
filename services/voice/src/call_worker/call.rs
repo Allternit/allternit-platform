@@ -107,6 +107,10 @@ pub struct CallOutcome {
     /// The bot should leave the room without deleting it (a warm transfer
     /// connected the caller and the target there).
     pub keep_room: bool,
+    /// The recording's bucket key (`call.ended.recordingRef`), when one was made.
+    pub recording_ref: Option<String>,
+    /// `seq` of the call's last event, so a later event can follow it in order.
+    pub last_seq: u64,
 }
 
 /// How long a turn waits for the first reply byte before the fallback line.
@@ -425,9 +429,10 @@ pub async fn run_call(
         }),
         None => None,
     };
-    call.events.emit(CallEvent::Ended { duration_sec, reason: reason.clone(), recording_ref, answered, missed });
+    call.events.emit(CallEvent::Ended { duration_sec, reason: reason.clone(), recording_ref: recording_ref.clone(), answered, missed });
     let keep_room = call.keep_room;
-    (CallOutcome { reason, duration_sec, keep_room }, call.events.close())
+    let last_seq = call.events.last_seq();
+    (CallOutcome { reason, duration_sec, keep_room, recording_ref, last_seq }, call.events.close())
 }
 
 impl Call {
