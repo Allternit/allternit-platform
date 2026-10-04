@@ -68,7 +68,7 @@ const START_CALL_BUDGET: Duration = Duration::from_millis(850);
 /// Cache read inside that budget; past it the safe defaults answer instead.
 const BOT_CONFIG_BUDGET: Duration = Duration::from_millis(400);
 /// The first byte of a turn reply goes out within this, or the turn fails.
-const TURN_FIRST_BYTE: Duration = Duration::from_secs(20);
+const TURN_FIRST_BYTE: Duration = Duration::from_secs(60);
 
 const DEFAULT_PERSONA: &str = "A helpful AI assistant.";
 const DEFAULT_VOICE_ID: &str = "allternit-default";

@@ -114,7 +114,7 @@ pub struct CallOutcome {
 }
 
 /// How long a turn waits for the first reply byte before the fallback line.
-pub const DEFAULT_TURN_TIMEOUT: Duration = Duration::from_secs(20);
+pub const DEFAULT_TURN_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Opens a transcription-only Voice Session for a human who took over.
 pub type HumanCoreFactory = Arc<dyn Fn() -> BoxFuture<'static, anyhow::Result<CoreHandle>> + Send + Sync>;

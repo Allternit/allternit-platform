@@ -689,6 +689,41 @@ async fn filler_plays_once_when_no_reply_arrives_and_never_twice_in_a_row() {
 }
 
 #[tokio::test]
+async fn a_slow_reply_gets_a_spaced_second_filler_and_the_reply_stops_them() {
+    // Vendor-bound sessions answer with the whole reply after 20 s or more: the
+    // caller hears a filler, another ~6 s later, and none once the reply starts.
+    let mut t = Harness::new(filler_engine(), CoreConfig::default());
+    t.start(SessionOptions {
+        turn: vad_turn(300),
+        fillers: Some(true),
+        filler_ms: Some(300),
+        ..Default::default()
+    })
+    .await;
+    one_turn(&mut t).await;
+    let ServerEvent::SpeakStarted { id: first } = t.expect("speak.started").await else { unreachable!() };
+    t.expect("speak.ended").await;
+    let evs = t.drain(Duration::from_millis(7500)).await;
+    let second = evs.iter().find_map(|e| match e {
+        ServerEvent::SpeakStarted { id } => Some(id.clone()),
+        _ => None,
+    });
+    let second = second.expect("a second filler during a long wait");
+    assert!(first.starts_with("filler-") && second.starts_with("filler-") && first != second, "{first} {second}");
+    t.send(ClientMessage::SpeakDelta { id: "r1".into(), text: "Here it is.".into() }).await;
+    t.send(ClientMessage::SpeakDone { id: "r1".into() }).await;
+    let evs = t.drain(Duration::from_millis(7500)).await;
+    let started: Vec<String> = evs
+        .iter()
+        .filter_map(|e| match e {
+            ServerEvent::SpeakStarted { id } => Some(id.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(started, vec!["r1".to_string()], "only the reply after it starts");
+}
+
+#[tokio::test]
 async fn no_filler_when_reply_text_arrives_in_time_or_fillers_are_off() {
     // Off by default.
     let mut t = Harness::new(filler_engine(), CoreConfig::default());

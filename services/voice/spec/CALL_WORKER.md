@@ -44,7 +44,8 @@ Secrets are never logged; `WorkerConfig`'s `Debug` output leaves them out.
    - On `turn.ended`, the text goes to `POST /api/v1/voice/calls/{callId}/turns` (cloud-api → relay → runtime), and the streamed reply text goes into the core's speak path.
    - Bot speech is resampled to 48 kHz and published in 10 ms frames through a playout queue, so the call loop never waits on real-time pacing.
    - **Barge-in:** on `speak.interrupted`, the playout queue and the LiveKit source buffer are cleared at once and the in-flight turn is aborted.
-   - **Relay unavailable:** if the relay fails, or sends nothing within 20 s, the bot says the fixed line "I can't reach my tools right now; I'll have someone follow up." and logs the error. There is no scripted or fake reply path outside tests.
+   - **Slow replies:** a session that can't stream (vendor-bound, final reply only) can take 20 s or more. While the caller waits, the voice core plays a short filler ("One moment.") 1.2 s after the turn ends, then another every 6 s, at most 3 per turn. Fillers stop when the reply's first text arrives or the caller speaks again.
+   - **Relay unavailable:** if the relay fails, or sends nothing within 60 s (the worker's turn budget; cloud-api's first-byte limit is also 60 s), the bot says the fixed line "I can't reach my tools right now; I'll have someone follow up." and logs the error. There is no scripted or fake reply path outside tests.
 6. **End.** When the caller hangs up, a hangup control arrives, a transfer completes, or the room closes, the worker emits `call.ended` and deletes the room, which tears down the SIP leg.
 
 ## Events

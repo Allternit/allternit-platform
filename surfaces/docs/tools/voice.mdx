@@ -164,7 +164,7 @@ Kokoro takes a fraction of a second to a couple of seconds to render the first w
 - **Short first chunk.** The first sentence is cut after 2–4 words, so the first audio is a very small render.
 - **Phrase cache.** Common acknowledgements ("Sure.", "Okay.", "Got it.") and the lines a call opens with are rendered once per voice and kept in `phrase-cache/` inside the model directory. A cached phrase plays in about a millisecond. The cache is capped by `ALLTERNIT_VOICE_PHRASE_CACHE_MB` (default 64, `0` turns it off), and only fixed phrases are stored; ordinary replies are never written to disk.
 - **Warm start.** The speech engine renders a short sentence at startup, so your first reply isn't a cold start.
-- **Fillers.** A Voice Session started with `fillers: true` says a short phrase such as "One moment." if the reply hasn't started 1.2 seconds after you stop talking. Phone calls turn this on; the in-app voice session leaves it off. See `services/voice/spec/VOICE_SESSION.md` for the protocol.
+- **Fillers.** A Voice Session started with `fillers: true` says a short phrase such as "One moment." if the reply hasn't started 1.2 seconds after you stop talking, and another every 6 seconds (up to 3) while a slow reply is still pending. Phone calls turn this on; the in-app voice session leaves it off. See `services/voice/spec/VOICE_SESSION.md` for the protocol.
 
 ## Related pages
 
