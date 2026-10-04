@@ -667,6 +667,8 @@ pub struct Routed {
     pub speaker: Option<String>,
     /// Said in the chat instead of a turn: why no bot answered and how to fix it.
     pub notice: Option<String>,
+    /// The person behind a direct message (see `people`); replies may go to another of their channels.
+    pub person: Option<String>,
 }
 
 /// A bot switched on for a channel connection.
@@ -753,12 +755,21 @@ fn lane_conversation(db: &DbHandle, thread_id: &str) -> bool {
 /// "@name" in a message routes it to that bot instead, in a sub-thread of the
 /// conversation's thread.
 pub async fn route_inbound<R: crate::thread_routes::ThreadRuntime>(db: &DbHandle, rt: &R, acct: &Account, provider: &str, e: &Inbound) -> Result<Routed, String> {
-    let none = |recorded| Ok(Routed { binding: None, recorded, turn: None, speaker: None, notice: None });
+    let none = |recorded| Ok(Routed { binding: None, recorded, turn: None, speaker: None, notice: None, person: None });
     let bots = member_bots(db, acct);
     // Shared Discord app: "@Allternit name", "/name" and replies become "@name".
     let hooked;
     let e = if provider == "discord" { hooked = crate::channel_discord_app::rewrite(db, acct, &bots, e); &hooked } else { e };
     let mut binding = find_binding(db, provider, &e.conversation).filter(|b| b.owner == acct.owner);
+    let who = crate::people::sender(db, &acct.owner, provider, e);
+    if let (Some(b), Some(s)) = (&binding, &who) {
+        // A conversation whose person was split off, or merged away, follows the sender.
+        if let Some(bot) = bots.first().map(|m| m.id.as_str()).or(acct.restricted_bot.as_deref()) {
+            if let Some(moved) = crate::people::rebind_if_moved(db, rt, &acct.owner, b, s, bot, provider, e.text.as_deref().unwrap_or("")).await? {
+                binding = Some(moved);
+            }
+        }
+    }
     if binding.is_none() && !e.own && e.kind == InboundKind::Message {
         let text = e.text.clone().unwrap_or_default();
         if text.trim().is_empty() {
@@ -767,10 +778,15 @@ pub async fn route_inbound<R: crate::thread_routes::ThreadRuntime>(db: &DbHandle
         let Some(default) = bots.first() else {
             // Silence reads as "broken": say once per conversation that no bot is on.
             let first = NO_BOT_TOLD.lock().map(|mut told| told.insert(format!("{}:{}", acct.id, e.conversation))).unwrap_or(false);
-            return Ok(Routed { binding: None, recorded: Recorded::Duplicate, turn: None, speaker: None, notice: first.then(|| NO_BOT_NOTICE.to_string()) });
+            return Ok(Routed { binding: None, recorded: Recorded::Duplicate, turn: None, speaker: None, notice: first.then(|| NO_BOT_NOTICE.to_string()), person: None });
         };
         let title: String = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("Message").trim().chars().take(80).collect();
-        let session = crate::thread_routes::channel_thread(db, rt, &default.id, provider, &e.conversation, &title, &text).await?;
+        // A direct message lands in the sender's one thread for this bot (every channel they use),
+        // not in a thread of its own for this chat.
+        let session = match who.as_ref().filter(|s| s.direct) {
+            Some(s) => crate::people::person_thread(db, rt, &acct.owner, &s.person, &default.id, provider, &e.conversation, &s.name, &text).await?,
+            None => crate::thread_routes::channel_thread(db, rt, &default.id, provider, &e.conversation, &title, &text).await?,
+        };
         let thread_id: String = db
             .connect()
             .map_err(|x| x.to_string())?
@@ -818,10 +834,10 @@ pub async fn route_inbound<R: crate::thread_routes::ThreadRuntime>(db: &DbHandle
             if bots.len() > 1 {
                 speaker = bots.iter().find(|m| m.id == bot).map(|m| m.name.clone());
             }
-            turn = Some((session, bot, format!("[{provider} from {}] {text}", e.user.clone().unwrap_or_else(|| "someone".into()))));
+            turn = Some((session, bot, crate::people::turn_prefix(db, &acct.owner, provider, who.as_ref(), e.user.as_deref(), &text)));
         }
     }
-    Ok(Routed { binding: Some(b), recorded, turn, speaker, notice })
+    Ok(Routed { binding: Some(b), recorded, turn, speaker, notice, person: who.filter(|s| s.direct).map(|s| s.person) })
 }
 
 /// Conversations already told that no bot is switched on (once per process).
@@ -877,7 +893,7 @@ pub async fn dispatch_events(st: &Arc<AppState>, acct: &Account, tx: Arc<dyn Cha
             }
         }
         match route_inbound(&st.db, &rt, acct, tx.provider(), &e).await {
-            Ok(Routed { binding: Some(b), turn: Some((session, bot, text)), speaker, .. }) => {
+            Ok(Routed { binding: Some(b), turn: Some((session, bot, text)), speaker, person, .. }) => {
                 let reply = match crate::agent_session_routes::send_bot_turn(&st.db, &session, &bot, &text).await {
                     Ok(reply) => speaker.as_ref().map(|n| format!("{n}: {reply}")).unwrap_or(reply),
                     // Say so in the chat: silence reads as "the bot is broken".
@@ -885,6 +901,14 @@ pub async fn dispatch_events(st: &Arc<AppState>, acct: &Account, tx: Arc<dyn Cha
                         warn!("channel turn failed: {err}");
                         failure_notice(speaker.as_deref(), &err.to_string())
                     }
+                };
+                // The person may have asked for replies elsewhere (pinned channel); a group chat answers in place.
+                let (b, tx) = match person.as_deref().and_then(|p| crate::people::choose_reply(&st.db, &b.owner, p, Some(&b), None)) {
+                    Some(c) if c.binding.id != b.id => match transport_for(st, &c.binding) {
+                        Some(other) => (c.binding, other),
+                        None => (b, tx.clone()),
+                    },
+                    _ => (b, tx.clone()),
                 };
                 let thread = b.external_thread.clone().unwrap_or_default();
                 if let Err(err) = post_reply(&st.db, tx.as_ref(), &b, &thread, &reply).await {

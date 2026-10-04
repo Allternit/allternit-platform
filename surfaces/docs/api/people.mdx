@@ -1,0 +1,39 @@
+---
+title: People API
+description: Owner-scoped routes on the bot's runtime for people, their identities, link proposals, merge, split and what the bot remembers.
+---
+
+Served by `allternit-api` (cloud computer or Desktop) under `/api/v1`, for the signed-in owner. Everything is owner-scoped: one owner never sees or matches another's people. The feature needs no env var; with no inbound messages there are no people. Migration `V231__people.sql` creates `people`, `person_identities`, `person_link_proposals`, `person_merges`, `person_threads` and `person_facts`, and runs with the other runtime migrations.
+
+## How inbound messages use it
+
+Every inbound message is resolved before routing (`people::sender`). The sender's handle is normalised (E.164 for `sms`, `whatsapp`, `whatsapp-personal`; lower-case for email; `team:user` for Slack) and matched:
+
+1. A known `(provider, id)` is that person.
+2. A phone or email already on another channel links on the spot (`source: exact_match`).
+3. In a **direct** conversation an unknown handle makes a new person; in a group it is left unknown.
+
+A direct message lands in the person's main thread for the bot (`channel_thread` key `person:<id>`). `person_threads` records `main` and `sub` threads; at boot and on `GET /people` the runtime adopts chats that existed before (a direct binding whose inbound log has exactly one sender), parenting their threads under the main thread. A conversation bound to a person who was split or merged away follows the sender on the next message.
+
+Replies use `people::choose_reply`: a channel the bot requests (only if the person has a bound conversation there), else `replyPin`, else the channel the message arrived on; a bot-started message uses the identity seen last. The turn text starts `[<provider> from <name>]` and, when the person has notes, ends with `(Known about <name>, from every channel: …)`.
+
+## Routes
+
+| Method and path | Body | Response |
+|---|---|---|
+| `GET /people` | | `{ "people": [Person] }` |
+| `POST /people` | `{ "displayName", "org"?, "identities"?: [{ "provider", "value" }], "source"?: "contact" \| "invite" }` | `201 Person`. A handle that already exists joins that person |
+| `GET /people/:id` | | `Person` plus `"facts": [string]` |
+| `PATCH /people/:id` | any of `displayName`, `avatar`, `notes`, `org`, `replyPin` (`null` clears) | `Person`. A pin on a channel the person lacks is `400` |
+| `POST /people/:id/identities` | `{ "provider", "value" }` | `{ "linked": bool, "person": Person }`; `409 belongs_to_another_person` with `personId` when the handle is someone else's (a proposal is queued) |
+| `POST /people/:id/merge` | `{ "fromId" }` | the surviving `Person` |
+| `POST /people/:id/split` | `{ "identityId" }` | `{ "person": Person, "split": Person }` |
+| `POST /people/:id/facts` | `{ "fact", "botId"?, "threadId"? }` | `{ "personId", "facts": [string] }` |
+| `POST /people/:id/message` | `{ "text", "channel"? }` | `{ "sent": true, "provider", "reason": "requested" \| "pinned" \| "last_used" \| "fallback" }`; `409 no_channel`, `503 not_configured` |
+| `GET /people-links` | | `{ "links": [{ "id", "reason", "score", "a": Person, "b": Person }] }` |
+| `POST /people-links/:id/confirm` | | the surviving `Person` (the older one) |
+| `POST /people-links/:id/dismiss` | | `{ "dismissed": true }` |
+
+`Person` is `{ id, displayName, nameSource: "auto" | "contact" | "owner", avatar, notes, org, replyPin, identities: [{ id, provider, kind, externalId, label, confidence, source, lastSeenAt }], channels, lastChannel, lastSeenAt, threads: [{ threadId, botId, role }] }`.
+
+`GET /gateway/channel-accounts/:id/conversations` now also returns `personId` (and the person's `name` and `avatar`) for each chat, which is how Messages groups by person.

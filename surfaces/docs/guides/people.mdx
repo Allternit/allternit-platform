@@ -1,0 +1,35 @@
+---
+title: People: one person across every channel
+description: Dana on Telegram, by text and by email is one person with one thread and one memory. How people are linked, merged and split, and where replies go.
+---
+
+A bot talks to people on many channels. Before People, each chat was its own thread, so Dana on Telegram and Dana by text were strangers. Now the bot knows they are one person.
+
+## What a person is
+
+A **person** has a name, an optional photo, notes and organisation, and a list of **identities**: a Telegram user, a phone number (on text and WhatsApp), an email address, a Slack, Discord or Teams user. Open the **People** app on the bot's phone (it used to be called Contacts) to see everyone, the channels they use, and why each identity is linked.
+
+## How people are linked
+
+- **Automatically, on an exact match.** The same phone number on text and WhatsApp, the same email, or a contact or invite that carries a number the bot already knows: these are the same human, so they link without asking. The identity says *Linked automatically: same number or email*.
+- **By your confirmation, on a likely match.** Two people with the same name and the same organisation, and no handle in common, appear under **Might be the same person**. Choose **Same person** to merge them or **Not the same** to dismiss it for good. Nothing is merged on a guess.
+- **Group chats stay separate.** Someone you already know is named correctly in a group, but a stranger in a big channel is not added to People.
+
+## One thread per person
+
+A direct message from a person lands in that person's one thread with the bot, whichever channel it came in on. Chats that already had a thread of their own before People existed are kept as sub-threads under it, so no history is lost. Group chats stay their own threads, with each message attributed to the person who wrote it.
+
+## Where replies go
+
+By default the bot replies on the channel the person just used. Under **Reply on** in a person's details you can pin one channel instead. The bot can also choose another channel for a person, but only one they have already written to you on, so consent rules are unchanged: a number that never texted you is still off limits.
+
+## What the bot remembers
+
+The bot's notes about a person belong to the person, not to a chat. What it learns on Telegram is known when they text, and the bot sees it at the top of each of their turns.
+
+## Merge and split
+
+- **Merge with** folds another person into this one: identities, notes and threads move, and the other person's old thread becomes a sub-thread.
+- **Split** takes one identity off a person and makes it a person of its own, for when a link was wrong. A pair you split is not proposed again. A person's last identity can't be split off.
+
+On the web app and the m.allternit.com phone app the People list is the same, at phone size. The runtime applies the same rules wherever the bot runs; the developer reference is [People API](/api/people).

@@ -91,6 +91,7 @@ pub mod channel_relay;
 pub mod channel_discord_dm;
 pub mod channel_files;
 pub mod channel_start;
+pub mod people;
 pub mod channel_teams_app;
 pub mod channel_slack_app;
 pub mod channel_transports;
