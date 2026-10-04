@@ -50,6 +50,7 @@ pub mod regions;
 pub mod runs;
 pub mod runtime_pairing;
 pub mod runtime_relay;
+pub mod runtime_viewer;
 pub mod schedules;
 pub mod slack_app;
 pub mod tasks;

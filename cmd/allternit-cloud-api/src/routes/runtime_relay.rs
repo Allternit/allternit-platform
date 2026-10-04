@@ -408,7 +408,7 @@ pub(crate) async fn relay_connection_presence(runtime_id: &str) -> Vec<serde_jso
 }
 
 /// Result of resolving a runtime's relay connection, with wake-on-demand.
-enum RelayConnect {
+pub(crate) enum RelayConnect {
     /// The runtime has a live relay connection.
     Connected(Arc<RuntimeConnection>),
     /// A hosted machine start was issued but the daemon did not reconnect in
@@ -422,7 +422,7 @@ enum RelayConnect {
 /// (any connection when the multi-connection flag is off), starting its
 /// hosted machine first when the device maps to a stopped hosted runtime
 /// instance.
-async fn connect_or_wake_runtime(
+pub(crate) async fn connect_or_wake_runtime(
     db: &sqlx::PgPool,
     contabo_runtime_service: &std::sync::Arc<crate::services::ContaboRuntimeService>,
     quota_service: &crate::services::SharedQuotaService,

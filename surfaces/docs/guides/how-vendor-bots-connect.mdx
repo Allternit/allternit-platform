@@ -1,0 +1,99 @@
+---
+title: How vendor bots connect
+description: How a task reaches a vendor bot (Claude, ChatGPT, Grok and others) on your own subscription, and how the result gets back to Allternit.
+---
+
+A vendor bot does its work in the vendor's own product, on your subscription. Allternit hands it work as a **ticket** and gets the answer back through a **connector**, so the vendor's chat only has to carry one short line.
+
+## Tickets
+
+A ticket is a task your bot gives a vendor bot: what to do, which Allternit tools it may use, and a deadline. Tickets are numbered `T-1`, `T-2` and so on. The ticket's instructions travel through the connector; the vendor's chat only sees `Run Allternit ticket T-3.`
+
+When the vendor finishes it posts the result back. The result shows up in the thread as a result card with a summary, any data, and any links. If the vendor never posts a result by the deadline, Allternit reads the vendor's reply instead and marks the card as read from the reply. With neither, the ticket expires, and nothing is made up.
+
+## Lanes
+
+Allternit picks the best way to reach each vendor account, highest first. It shows the one it picked on the account.
+
+| Lane | How it works | What you need |
+| --- | --- | --- |
+| 1. Local app | The vendor's app on your computer runs the ticket (`claude -p`, `codex exec`, `gemini -p`, `hermes chat -q`) on your own subscription. | The app installed, and **Connect Allternit to the app** done once. |
+| 2. Website and connector | The vendor's website, with Allternit added as a connector in the vendor's account (Claude.ai, ChatGPT developer mode). | A signed-in account and the connector added. |
+| 3. Website only | Allternit drives the vendor's website. The whole task goes in the chat, and the reply is the result. | A signed-in account. |
+| 4. API key | An API key with a remote connector (xAI, Anthropic, OpenAI). | A key on the account. |
+
+A lane only counts when it is available and healthy: a signed-out account, a removed connector or a broken local app drops to the next lane down.
+
+### Which vendors support which lane
+
+| Vendor | Local app | Website and connector | Website only | API key |
+| --- | --- | --- | --- | --- |
+| Claude | Claude Code (Claude Desktop connects but cannot run a ticket on its own) | Yes | Yes | Yes |
+| ChatGPT | Codex | Yes | Yes | Yes |
+| Gemini | Gemini CLI | No | Yes | No |
+| Grok | No | No | Yes | Yes |
+| Hermes | Hermes | No | No | No |
+
+<Warning>
+Vendors set their own terms for using a consumer subscription from automated tools, and those terms change. Check each vendor's current terms before you turn on a lane that drives a website or runs a subscription app unattended. Allternit never works around a vendor's check or restriction.
+</Warning>
+
+## Connect Allternit to an app
+
+On the account's **Account** tab choose **Connect Allternit to** the app. Allternit:
+
+1. Makes a key that works for that one vendor bot's connector and nothing else.
+2. Adds Allternit's local server to the app's own settings, next to what is already there. It never touches your other entries.
+3. Saves a copy of the settings file first, named `<file>.allternit-backup-<time>`, in the same folder.
+4. Checks that the app's settings list the connector and that Allternit answers on it. If the check fails, the change is undone.
+
+**Undo** removes only the Allternit entry and turns the key off. The backup copy stays where it is. Claude Desktop only takes local programs in its settings, so Allternit adds a small bridge (`npx mcp-remote`), which needs Node.js.
+
+## For developers
+
+### Endpoints
+
+All under `/api/v1`, for the signed-in owner. Anything that isn't yours answers 404.
+
+| Route | Purpose |
+| --- | --- |
+| `POST /vendor-bots/:id/tickets` | Create a ticket and send it. Body `{instructions, threadId, allowedTools?, directingBotId?, deadlineSeconds?, hold?}`. Deadline 30 s to 24 h, default 10 min. `hold: true` creates it without sending. |
+| `GET /vendor-bots/:id/tickets`, `GET /vendor-bots/:id/tickets/:ticketId` | List and read tickets. |
+| `POST /vendor-bots/:id/tickets/:ticketId/cancel` | Cancel an open or sent ticket. |
+| `GET /provider-accounts/:id/lanes` | `{selected, lanes: [{lane, rank, label, available}], localApp}`. |
+| `GET /vendor-bots?directingBotId=` | `{deployed: [...], found: [...], discoveryErrors}`: vendor bots deployed for a directing bot, and agents found on your accounts that aren't deployed yet. |
+| `GET /vendor-bots/:id/threads` | The threads this vendor bot took part in (from tickets and connector tool calls). |
+| `GET /vendor-local-connectors` | Which apps are installed and which are connected. |
+| `POST /vendor-bots/:id/local-connectors/:app`, `…/check`, `DELETE …` | Connect, health-check, undo. `:app` is `claude_desktop`, `claude_code`, `codex`, `gemini_cli` or `hermes`. |
+
+The deploy call `PUT /bots/:botId/execution-binding` takes `directingBotId`. It is stored on the binding and also sets the connector's directing bot.
+
+A ticket goes `open` → `sent` → `done` | `expired` | `failed` | `cancelled`. `resultVia` is `connector` or `reply`.
+
+### Connector tools
+
+The vendor-bot connector (`/mcp/bots/:vendorBotId`) gained three tools:
+
+- `get_ticket {id}` returns the ticket for that vendor bot only.
+- `post_result {id, summary, data?, attachments?}` finishes it once. Summary up to 4,000 characters, data up to 64 KB, up to 10 attachments, attachment URLs must be https.
+- `list_open_tickets {}`.
+
+### Lane choice and the nudge
+
+Lane 1 needs a connected runnable local app and an account hosted on this device. Lane 2 needs a healthy browser account and a live remote connector client. Lane 3 needs a healthy browser account. Lane 4 needs a healthy API-key account with a key. Lanes 1, 2 and 4 send `Run Allternit ticket T-n.` plus the connector address; lane 3 sends the full task.
+
+### The scoped key
+
+The local connector's key is an access token whose only scope is `vendor-bot:<vendorBotId>`. It opens `POST /mcp/bots/<vendorBotId>` and nothing else. Its calls show up in the connector's audit under `local-key:<id>`, and revoking the key stops them.
+
+### App settings that Allternit writes
+
+| App | File or command | Entry |
+| --- | --- | --- |
+| Claude Code | `claude mcp add --transport http --scope user <name> <url> --header "Authorization: Bearer …"` | Added with Claude Code's own CLI. |
+| Claude Desktop | `claude_desktop_config.json` | `mcpServers.<name>` with `npx mcp-remote`. |
+| Codex | `~/.codex/config.toml` | `[mcp_servers.<name>]` with `url` and `http_headers`. |
+| Gemini CLI | `~/.gemini/settings.json` | `mcpServers.<name>` with `httpUrl` and `headers`. |
+| Hermes | `~/.hermes/config.yaml` | `mcp_servers.<name>` with `url` and `headers`. |
+
+The entry name is `allternit-<bot id>`. Hermes' YAML file is rewritten as a whole, so its comments are not kept (the backup copy has them).

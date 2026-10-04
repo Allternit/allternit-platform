@@ -245,7 +245,7 @@ const ACCT_COLS: &str = "id, owner, vendor, auth_type, external_account_id, disp
     restricted_bot_id, state, verified_at, expires_at, created_at, updated_at, \
     host_kind, host_runtime_id, host_state, host_remote_account_id, host_last_seen_at, host_changed_at";
 pub(crate) const EXEC_COLS: &str = "id, owner, bot_id, type, mode, vendor, adapter_id, account_binding_id, preferred_lane, \
-    external_agent_id, external_agent_name, external_agent_avatar, capabilities_json, health_json, state, created_at, updated_at";
+    external_agent_id, external_agent_name, external_agent_avatar, capabilities_json, health_json, state, created_at, updated_at, directing_bot_id";
 pub(crate) const REMOTE_COLS: &str = "id, owner, thread_id, generation, bot_id, execution_binding_id, external_context_id, \
     external_task_id, continuation_token, sync_cursor, last_remote_event_id, capability_snapshot, lane, state, \
     created_at, updated_at, closed_at";
@@ -736,6 +736,8 @@ struct PutExec {
     external_agent_id: Option<String>,
     external_agent_name: Option<String>,
     external_agent_avatar: Option<String>,
+    /// The bot that directs this vendor bot (set on deploy).
+    directing_bot_id: Option<String>,
     capabilities: Option<Value>,
     health: Option<Value>,
 }
@@ -821,6 +823,19 @@ async fn put_exec(State(state): State<Arc<AppState>>, Extension(user): Extension
                 (StatusCode::CREATED, bid)
             }
         };
+        if let Some(d) = b.directing_bot_id.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+            let mine: i64 = conn.query_row("SELECT COUNT(*) FROM agents WHERE id = ?1 AND user_id = ?2 AND id <> ?3", params![d, owner, bot_id], |r| r.get(0))?;
+            if mine == 0 {
+                return Err(ApiErr::bad("directingBotId must be one of your own bots, other than this vendor bot"));
+            }
+            conn.execute("UPDATE bot_execution_bindings SET directing_bot_id = ?1 WHERE id = ?2", params![d, bid])?;
+            // The connector reads the same relation (whose phone and mailbox the vendor bot uses).
+            conn.execute(
+                "INSERT INTO vendor_bot_connectors (vendor_bot_id, owner, directing_bot_id, created_at, updated_at) VALUES (?1,?2,?3,?4,?4)
+                 ON CONFLICT(vendor_bot_id) DO UPDATE SET directing_bot_id = excluded.directing_bot_id, updated_at = excluded.updated_at WHERE owner = excluded.owner",
+                params![bot_id, owner, d, now()],
+            )?;
+        }
         let row = one(&conn, &format!("SELECT {EXEC_COLS} FROM bot_execution_bindings WHERE id = ?1"), &[&bid])?;
         Ok((status, json!({ "binding": row })))
     })
