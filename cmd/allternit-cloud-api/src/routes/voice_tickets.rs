@@ -314,7 +314,7 @@ pub(crate) async fn month_for_user(
     let phone = voice_usage::month_usage_at(&state.db, user_id, ENGINE_PHONE, now).await?;
     // Estimate of this month's voice charges (cloud minutes over the allowance,
     // phone minutes, phone numbers). `billingEnabled` is false while overage
-    // billing is off, so clients can hide the line instead of promising a charge.
+    // billing isn't live, so clients can hide the line instead of promising a charge.
     // A display-only figure must not take the usage endpoint down with it.
     let est = voice_billing::estimate_month(&state.db, user_id, now).await.unwrap_or_else(|e| {
         tracing::warn!(error = %e, "voice overage estimate unavailable");
@@ -328,7 +328,8 @@ pub(crate) async fn month_for_user(
         "phone": { "usedSeconds": phone, "rateUsdPerMin": PHONE_RATE_USD_PER_MIN },
         "estimatedOverageCents": est.amount_cents,
         "estimatedCloudOverageCents": est.cloud_cents,
-        "billingEnabled": voice_billing::Mode::from_env() != voice_billing::Mode::Off,
+        // Only live billing can charge; dry_run computes periods but never calls Stripe.
+        "billingEnabled": voice_billing::Mode::from_env() == voice_billing::Mode::Live,
     }))
 }
 
