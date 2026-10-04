@@ -88,7 +88,7 @@ Until `MCP_PUBLIC_URL` is set on cloud-api, every edge route answers `503 {"erro
 
 `MCP_APPROVE_URL` overrides the base of `approve_url`. Approvals are one row per owner, client and target (cloud migration `043_mcp_oauth_approvals.sql`), so approving Claude for one bot approves nothing else. Routes (Clerk session or `compute` API key):
 
-**Approving in the app.** The `approve_url` opens `/mcp/approve` on ai.allternit.com (Desktop, the phone layout and the m.allternit.com app all show the same page; signed out, it asks you to sign in and brings you back). It names the app and what it gets (act as the bot through its phone, or read your agents and runs) with **Approve** and **Deny**. After Approve it says to go back to Claude or ChatGPT and retry. Approved apps are listed, with **Revoke**, under **Use the phone** on each vendor bot and in **Settings › Connected apps**.
+**Approving in the app.** The `approve_url` opens `/mcp/approve` on ai.allternit.com (Desktop, the phone layout and the m.allternit.com app all show the same page; signed out, it asks you to sign in and brings you back). It names the app and what it gets (act as the bot through its phone, for example "Act as Raven through Gizzi's phone": the vendor bot's name and the bot whose phone it uses, from `GET /api/v1/vendor-bots/:id/connector` `botName` and `directingBotName`; "your bot through its phone" until they load, or read your agents and runs) with **Approve** and **Deny**. After Approve it says to go back to Claude or ChatGPT and retry. Approved apps are listed, with **Revoke**, under **Use the phone** on each vendor bot and in **Settings › Connected apps**.
 
 | Route | Answer |
 |---|---|

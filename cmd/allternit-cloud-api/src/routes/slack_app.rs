@@ -62,7 +62,7 @@ type HmacSha256 = Hmac<Sha256>;
 pub const RUNTIME_EVENTS_PATH: &str = "/webhooks/channels/slack-app";
 /// Bot scopes the shared app requests at install (mirror of
 /// `docs/slack-app-manifest.json`).
-pub const SCOPES: &str = "chat:write,chat:write.customize,app_mentions:read,channels:history,groups:history,im:history,im:write,assistant:write,commands,users:read,files:write";
+pub const SCOPES: &str = "chat:write,chat:write.customize,app_mentions:read,channels:history,groups:history,im:history,im:write,assistant:write,commands,users:read,files:write,files:read";
 /// A signed OAuth state lives this long.
 const STATE_TTL_SECS: i64 = 600;
 /// Give up on a queued event this long after it arrived.
@@ -76,6 +76,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/api/v1/channels/slack/events", post(events_h))
         .route("/api/v1/channels/slack/commands", post(commands_h))
         .route("/api/v1/channels/slack/send", post(send_h).layer(axum::extract::DefaultBodyLimit::max(30 * 1024 * 1024)))
+        .route("/api/v1/channels/slack/file", post(fetch_file_h))
         .route("/api/v1/channels/slack/installs", get(list_installs_h))
         .route("/api/v1/channels/slack/installs/:team_id/claim", post(claim_h))
 }
@@ -115,6 +116,11 @@ pub trait SlackHttp: Send + Sync {
     /// POST a form with the bot token as bearer (`files.getUploadURLExternal`).
     async fn post_form_bearer(&self, _url: &str, _bearer: &str, _form: &[(String, String)]) -> Result<(u16, Value), String> {
         Err("form upload is not supported by this client".into())
+    }
+    /// GET a file Slack hosts (`url_private_download`) with the bot token; `(status, bytes)`.
+    /// At most `limit` bytes are read; a longer body is an error.
+    async fn get_bytes(&self, _url: &str, _bearer: &str, _limit: usize) -> Result<(u16, Vec<u8>), String> {
+        Err("file download is not supported by this client".into())
     }
     /// POST raw file bytes to a one-time upload URL Slack handed out.
     async fn post_bytes(&self, _url: &str, _content_type: &str, _bytes: Vec<u8>) -> Result<u16, String> {
@@ -158,6 +164,21 @@ impl SlackHttp for ReqwestSlackHttp {
         let resp = reqwest::Client::new().post(url).timeout(Duration::from_secs(15)).bearer_auth(bearer).form(form).send().await.map_err(|e| e.to_string())?;
         let status = resp.status().as_u16();
         Ok((status, resp.json::<Value>().await.unwrap_or(Value::Null)))
+    }
+
+    async fn get_bytes(&self, url: &str, bearer: &str, limit: usize) -> Result<(u16, Vec<u8>), String> {
+        // No redirects: the bearer must never follow a redirect off files.slack.com.
+        let client = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().map_err(|e| e.to_string())?;
+        let mut resp = client.get(url).timeout(Duration::from_secs(60)).bearer_auth(bearer).send().await.map_err(|e| e.to_string())?;
+        let status = resp.status().as_u16();
+        let mut out = Vec::new();
+        while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
+            if out.len() + chunk.len() > limit {
+                return Err("file is larger than the limit".into());
+            }
+            out.extend_from_slice(&chunk);
+        }
+        Ok((status, out))
     }
 
     async fn post_bytes(&self, url: &str, content_type: &str, bytes: Vec<u8>) -> Result<u16, String> {
@@ -964,6 +985,77 @@ async fn upload_files(http: &dyn SlackHttp, token: &str, channel: &str, thread_t
     }
 }
 
+/// A file someone shared in Slack, to keep in the user's files.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileBody {
+    /// The file's `url_private_download` (or `url_private`) from the event.
+    pub url: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+}
+
+/// Slack serves private files only from here; anything else is refused so the
+/// bot token is never sent to another host.
+fn is_slack_file_url(url: &str) -> bool {
+    reqwest::Url::parse(url).is_ok_and(|u| u.scheme() == "https" && u.host_str() == Some("files.slack.com") && u.username().is_empty() && u.port().is_none())
+}
+
+/// Download one Slack-hosted file with the user's install token and keep it in
+/// their files (same plan caps as an upload). Needs the `files:read` scope; an
+/// install that predates it gets `slack_reauthorize_required`.
+pub async fn ingest_file(
+    state: &ApiState,
+    http: &dyn SlackHttp,
+    store: &dyn crate::services::r2::ObjectStore,
+    user_id: &str,
+    body: &FileBody,
+) -> Result<Value, ApiError> {
+    use crate::services::user_files::{self, Failure};
+    if !is_slack_file_url(&body.url) {
+        return Err(ApiError::BadRequest("not_a_slack_file_url".to_string()));
+    }
+    let team: Option<(String,)> = sqlx::query_as("SELECT team_id FROM slack_installs WHERE user_id = $1 ORDER BY installed_at DESC LIMIT 1")
+        .bind(user_id)
+        .fetch_optional(&state.db)
+        .await?;
+    let Some((team_id,)) = team else { return Err(ApiError::BadRequest("slack_not_installed".to_string())) };
+    let Some(token) = install_token(state, &team_id).await? else { return Err(ApiError::BadRequest("slack_not_installed".to_string())) };
+    let (status, data) = http
+        .get_bytes(&body.url, &token.token, MAX_FILE_BYTES)
+        .await
+        .map_err(|e| ApiError::ServiceUnavailable(format!("slack_file_download_failed: {e}")))?;
+    // Without `files:read` Slack answers with its HTML sign-in page instead of the file.
+    if matches!(status, 401 | 403) || data.starts_with(b"<!DOCTYPE html") {
+        return Err(ApiError::BadRequest("slack_reauthorize_required".to_string()));
+    }
+    if !(200..300).contains(&status) || data.is_empty() {
+        return Err(ApiError::ServiceUnavailable(format!("slack_file_download_failed: status {status}")));
+    }
+    let name = body.name.clone().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| body.url.rsplit('/').next().unwrap_or("file").to_string());
+    let mime = body.mime_type.clone().unwrap_or_default();
+    let plan = crate::services::voice_usage::plan_for_user(&state.db, user_id).await?;
+    match user_files::store_bytes(&state.db, store, user_id, &plan, &name, &mime, data, chrono::Utc::now()).await {
+        Ok(v) => Ok(v),
+        Err(Failure::Api(e)) => Err(e),
+        Err(Failure::Refused(r)) => Err(ApiError::BadRequest(r.code.to_string())),
+    }
+}
+
+async fn fetch_file_h(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(body): Json<FileBody>) -> Result<Response, ApiError> {
+    if app_config().is_none() {
+        return Ok(not_configured());
+    }
+    let user = resolve_user_scoped(&state.db, &headers, "compute").await?;
+    let Ok(r2) = crate::services::r2::R2Client::from_env() else {
+        return Ok((StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "storage-unavailable" }))).into_response());
+    };
+    let stored = ingest_file(&state, &ReqwestSlackHttp, &r2, &user.id, &body).await?;
+    Ok((StatusCode::CREATED, Json(stored)).into_response())
+}
+
 async fn send_h(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(body): Json<SendBody>) -> Result<Response, ApiError> {
     let Some(cfg) = app_config() else { return Ok(not_configured()) };
     let user = resolve_user_scoped(&state.db, &headers, "compute").await?;
@@ -1222,5 +1314,76 @@ mod tests {
         assert!(err.to_string().contains("channel_not_found"), "{err}");
         // A user with no install gets a clear 400.
         assert!(send_message(&state, &http, &cfg, "user-2", &SendBody { channel: "C1".into(), text: "x".into(), thread_ts: None, username: None, icon_url: None, files: vec![] }).await.is_err());
+    }
+
+    #[test]
+    fn only_slacks_own_file_host_gets_the_bot_token() {
+        assert!(is_slack_file_url("https://files.slack.com/files-pri/T1-F1/download/report.pdf"));
+        for bad in ["http://files.slack.com/x", "https://files.slack.com.evil.test/x", "https://evil.test/files.slack.com", "https://u:p@files.slack.com/x", "https://files.slack.com:8443/x", "file:///etc/passwd", "nope"] {
+            assert!(!is_slack_file_url(bad), "{bad}");
+        }
+        assert!(SCOPES.split(',').any(|s| s == "files:read") && SCOPES.split(',').any(|s| s == "files:write"));
+    }
+
+    struct FileHttp(Mutex<Vec<(String, String)>>, (u16, Vec<u8>));
+    #[async_trait]
+    impl SlackHttp for FileHttp {
+        async fn post_json(&self, _u: &str, _b: Option<&str>, _body: &Value) -> Result<(u16, Value), String> {
+            Ok((200, json!({ "ok": true })))
+        }
+        async fn post_form(&self, _u: &str, _b: Option<(&str, &str)>, _f: &[(String, String)]) -> Result<(u16, Value), String> {
+            Ok((200, json!({ "ok": true })))
+        }
+        async fn get_bytes(&self, url: &str, bearer: &str, _limit: usize) -> Result<(u16, Vec<u8>), String> {
+            self.0.lock().unwrap().push((url.into(), bearer.into()));
+            Ok(self.1.clone())
+        }
+    }
+
+    #[derive(Default)]
+    struct MemStore(Mutex<Vec<(String, usize)>>);
+    #[async_trait]
+    impl crate::services::r2::ObjectStore for MemStore {
+        fn presign_get(&self, _b: &str, _k: &str, _t: Duration) -> Result<String, crate::services::r2::R2Error> {
+            Ok("https://r2.test/x".into())
+        }
+        async fn head(&self, _b: &str, _k: &str) -> Result<Option<u64>, crate::services::r2::R2Error> {
+            Ok(None)
+        }
+        async fn put(&self, _b: &str, k: &str, bytes: Vec<u8>, _c: &str) -> Result<(), crate::services::r2::R2Error> {
+            self.0.lock().unwrap().push((k.into(), bytes.len()));
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_shared_slack_file_is_kept_with_the_install_token_or_asks_to_reauthorize() {
+        let state = test_state().await;
+        sqlx::raw_sql(&include_str!("../../migrations_pg/042_user_files.sql").replace("public.", "")).execute(&state.db).await.unwrap();
+        // The plan lookup reads subscriptions: no row means the free plan.
+        sqlx::raw_sql("CREATE TABLE IF NOT EXISTS billing_subscriptions (user_id text, plan_id text, status text, updated_at timestamptz DEFAULT now())").execute(&state.db).await.unwrap();
+        let http = FakeHttp::default();
+        *http.reply.lock().unwrap() = Some((200, json!({ "ok": true, "access_token": "xoxb-1", "team": { "name": "Acme", "id": "T1" }, "bot_user_id": "UBOT" })));
+        let cfg = SlackAppConfig { client_id: "c".into(), client_secret: SECRET.into(), signing_secret: SECRET.into() };
+        complete_install(&state, &http, &cfg, "code", "user-1").await.unwrap();
+        let body = FileBody { url: "https://files.slack.com/files-pri/T1-F1/download/q3.pdf".into(), name: Some("q3.pdf".into()), mime_type: Some("application/pdf".into()) };
+        let store = MemStore::default();
+
+        let ok = FileHttp(Mutex::default(), (200, b"%PDF-1.7 body".to_vec()));
+        let stored = ingest_file(&state, &ok, &store, "user-1", &body).await.unwrap();
+        assert_eq!((stored["name"].as_str(), stored["bytes"].as_u64()), (Some("q3.pdf"), Some(13)));
+        assert_eq!(ok.0.lock().unwrap()[0], (body.url.clone(), "xoxb-1".to_string()), "the install's token goes with the download");
+        assert!(store.0.lock().unwrap()[0].0.starts_with("u/user-1/"));
+
+        // Not Slack's host: refused before any token is sent. No install: a clear 400.
+        let off = FileBody { url: "https://evil.test/x".into(), name: None, mime_type: None };
+        assert!(ingest_file(&state, &ok, &store, "user-1", &off).await.unwrap_err().to_string().contains("not_a_slack_file_url"));
+        assert!(ingest_file(&state, &ok, &store, "user-2", &body).await.unwrap_err().to_string().contains("slack_not_installed"));
+        assert_eq!(ok.0.lock().unwrap().len(), 1);
+
+        // An install without files:read gets Slack's sign-in page: tell the owner to re-authorize.
+        let page = FileHttp(Mutex::default(), (200, b"<!DOCTYPE html><html>".to_vec()));
+        assert!(ingest_file(&state, &page, &store, "user-1", &body).await.unwrap_err().to_string().contains("slack_reauthorize_required"));
+        assert_eq!(store.0.lock().unwrap().len(), 1);
     }
 }

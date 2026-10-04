@@ -23,7 +23,8 @@
 //! * Attribution: every outbound message says it came from the vendor bot via
 //!   the directing bot, and every call writes a `vendor_bot_audit` row (who,
 //!   tool, a hash of the arguments, result).
-//! * Keys page: `GET /api/v1/vendor-bots/:id/connector`, `PUT` to set the
+//! * Keys page: `GET /api/v1/vendor-bots/:id/connector` (also `botName`, the vendor
+//!   bot's own name, and `directingBotName`; the approve page reads both), `PUT` to set the
 //!   directing bot, `DELETE .../connector/clients/:clientId` to revoke.
 
 use std::sync::Arc;
@@ -776,6 +777,7 @@ pub fn connector_view(db: &DbHandle, s: &Session) -> Result<Value, String> {
         "url": bot_resource_url(&s.vendor_bot_id),
         "metadataUrl": resource_metadata_url(&bot_resource_url(&s.vendor_bot_id)),
         "scopes": [BOT_SCOPE],
+        "botName": s.vendor_name,
         "directingBotId": s.directing_bot_id,
         "directingBotName": s.directing_name,
         "sharedThreadIds": shared,
@@ -1028,6 +1030,10 @@ mod tests {
         assert_eq!(view["connectedClients"].as_array().unwrap().len(), 2);
         assert_eq!(view["url"], "https://mcp.allternit.com/mcp/bots/bot-vendor");
         assert_eq!(view["scopes"], json!(["bots:act"]));
+        // The approve page reads both names: the vendor bot's own and the bot whose phone it uses.
+        let s = session(&st);
+        assert_eq!((view["botName"].as_str(), view["directingBotName"].as_str()), (Some(s.vendor_name.as_str()), s.directing_name.as_deref()));
+        assert!(!s.vendor_name.is_empty());
         let id = view["connectedClients"].as_array().unwrap().iter().find(|c| c["client"] == "chatgpt").unwrap()["id"].as_str().unwrap().to_string();
         let n = st.db.connect().unwrap().execute("UPDATE vendor_connector_clients SET revoked_at = 'now' WHERE id = ?1", params![id]).unwrap();
         assert_eq!(n, 1);

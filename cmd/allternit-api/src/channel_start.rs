@@ -629,6 +629,7 @@ async fn start_email<R: ThreadRuntime>(deps: &Deps<'_, R>, owner: &str, bot: &st
     let thread_id = thread_of_session(deps.db, &session)?;
     let pending = state == "pending_approval";
     let outbound = sent["id"].as_str().unwrap_or_default();
+    let kept = crate::channel_attachments::sent_entries_prod(files).await;
     crate::gateway_runner::led(
         deps.db,
         bot,
@@ -636,7 +637,7 @@ async fn start_email<R: ThreadRuntime>(deps: &Deps<'_, R>, owner: &str, bot: &st
         None,
         if pending { "channel.message.pending" } else { "channel.message.sent" },
         ("bot", bot),
-        json!({ "provider": "email", "to": to, "subject": subject, "text": text, "attachments": crate::channel_files::names(files), "state": if pending { "awaiting_approval" } else { "confirmed" }, "outboundId": outbound, "approvalThread": sent["thread"], "messageId": sent["messageId"] }),
+        json!({ "provider": "email", "to": to, "subject": subject, "text": text, "attachments": crate::channel_files::names(files), "files": kept, "state": if pending { "awaiting_approval" } else { "confirmed" }, "outboundId": outbound, "approvalThread": sent["thread"], "messageId": sent["messageId"] }),
         Some(format!("email:start:{outbound}")),
     );
     Ok((

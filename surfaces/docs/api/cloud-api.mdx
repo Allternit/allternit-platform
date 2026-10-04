@@ -136,6 +136,7 @@ Once paired, a runtime opens an outbound WebSocket to the cloud API. A Clerk-aut
 | POST | `/api/v1/runtime-devices/:id/socket-ticket` | Clerk | Create a one-time WebSocket ticket. |
 | WS | `/api/v1/runtime-devices/:id/socket?ticket=...` | Ticket | Browser WebSocket to the runtime. |
 | POST | `/api/v1/runtime-devices/:id/viewer-token` | Clerk | Mint a live desktop (VNC) viewer token for a cloud computer. |
+| GET | `/api/v1/runtime-devices/:id/viewer-check` | Clerk or `compute` token | Automated self-check of the live desktop path: is the cloud computer's VNC socket reachable? |
 
 ### Proxy a request to a runtime
 
@@ -201,6 +202,32 @@ curl -X POST https://api.allternit.com/api/v1/runtime-devices/rt_xyz789/viewer-t
 ```
 
 `readOnly` is optional and defaults to `false` (signing in needs keyboard and mouse). Errors: `401` unauthenticated; `404` for an unknown, revoked, or someone else's runtime (the same answer for all three); `409 not_a_cloud_computer` for a Desktop or BYO runtime; `503 runtime_warming` or `runtime_offline` when the computer is still waking or unreachable (a sleeping computer is woken the same way the relay proxy wakes it); `400 no_host` when the request carries no host to build the public address from. No environment variable is required; `ALLTERNIT_VIEWER_WS_BASE` optionally overrides the public ws base (default: the request's own host over `wss://`).
+
+#### Checking the live desktop without a browser
+
+`GET /api/v1/runtime-devices/:id/viewer-check` verifies the whole path a person would use, so it can be tested against any real cloud computer by a script or an orchestrator. It does the same ownership, cloud-computer and wake steps as `viewer-token`, then asks the runtime, over the relay with a 60-second view-only token, to connect to its VNC socket and read the RFB banner (`GET /api/v1/runtime-viewer/vnc-check?token=…` on the runtime, same token rules as the viewer). Nothing is opened or sent to the VNC server, and no session is created.
+
+```bash
+curl -s https://api.allternit.com/api/v1/runtime-devices/rt_xyz789/viewer-check \
+  -H "Authorization: Bearer $ALLTERNIT_API_TOKEN"
+```
+
+```json
+{ "ok": true, "runtimeId": "rt_xyz789", "relay": "connected",
+  "vnc": { "reachable": true, "rfb": "RFB 003.008", "latencyMs": 4 }, "checkedAt": "2026-10-04T12:00:00+00:00" }
+```
+
+On failure the body is `{ "ok": false, "runtimeId", "stage", "reason" }` and the status says where it stopped:
+
+| Status | `stage` / `reason` | Meaning |
+| --- | --- | --- |
+| 401 / 404 / 409 | none | Same as `viewer-token`: not signed in; unknown, revoked or someone else's runtime; `not_a_cloud_computer`. |
+| 503 | `wake` / `runtime_warming`, `runtime_offline` | The computer is still waking or can't be reached. Retry in a minute. |
+| 504 | `relay` / `runtime_timeout` | The runtime didn't answer through the relay. |
+| 502 | `relay` / `runtime_has_no_viewer`, `runtime_rejected_token`, `runtime_answered_<status>` | The runtime is too old to have the viewer route, or its relay key is out of date. |
+| 502 | `vnc` / `vnc_unreachable`, `vnc_timeout`, `not_rfb` | The runtime is up but nothing (or something other than VNC) answers on `ALLTERNIT_RUNTIME_VNC_ADDR`. |
+
+A green check proves the relay, the token and the VNC server; it can't prove a human can see pixels, so the first real "Sign in on the cloud computer" on a new image is still worth one look. Run it after provisioning a cloud computer and after changing the desktop image.
 
 ### Allowed relay paths
 

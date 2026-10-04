@@ -292,6 +292,8 @@ pub fn record_inbound(db: &DbHandle, b: &BindingRow, ev: &Inbound) -> Result<Rec
         return Ok(Recorded::Echo);
     }
     let corr = format!("{}:{}", b.provider, ev.remote_id);
+    // Files the cloud kept for this message (`channel_attachments`), shown as downloads in the thread.
+    let kept_files = crate::channel_attachments::take_kept(&b.provider, &ev.remote_id).unwrap_or_default();
     let inserted = conn
         .execute(
             "INSERT OR IGNORE INTO channel_message_log (id, owner, binding_id, thread_id, direction, kind, remote_id, correlation_id, state, detail_json, created_at, updated_at)
@@ -304,7 +306,7 @@ pub fn record_inbound(db: &DbHandle, b: &BindingRow, ev: &Inbound) -> Result<Rec
                 ev.kind.as_str(),
                 ev.remote_id,
                 corr,
-                json!({ "text": ev.text, "user": ev.user, "reaction": ev.reaction, "added": ev.added, "messageId": ev.message_id }).to_string(),
+                json!({ "text": ev.text, "user": ev.user, "reaction": ev.reaction, "added": ev.added, "messageId": ev.message_id, "files": kept_files }).to_string(),
                 now()
             ],
         )
@@ -347,6 +349,9 @@ pub fn record_inbound(db: &DbHandle, b: &BindingRow, ev: &Inbound) -> Result<Rec
                 if let Some(to) = delivery_state {
                     p["state"] = json!(to);
                     p["delivery"] = json!(ev.text);
+                }
+                if !kept_files.is_empty() {
+                    p["files"] = json!(kept_files);
                 }
                 p
             },
@@ -562,6 +567,8 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
     .map_err(|e| e.to_string())?;
     let out = Outbound { workspace: b.workspace.clone(), channel: b.channel.clone().unwrap_or_default(), thread: b.external_thread.clone(), text: text.to_string(), identity: identity.id.clone() };
     let result = if req.files.is_empty() { tx.post(&out).await } else { tx.post_files(&out, &req.files).await };
+    // Kept before `set` borrows the connection: nothing non-Send may live across this await.
+    let kept = if result.is_ok() { crate::channel_attachments::sent_entries_prod(&req.files).await } else { vec![] };
     let set = |state: &str, remote: Option<&str>| {
         let _ = conn.execute(
             "UPDATE channel_message_log SET state = ?1, remote_id = COALESCE(?2, remote_id), updated_at = ?3 WHERE binding_id = ?4 AND direction = 'outbound' AND correlation_id = ?5",
@@ -583,7 +590,7 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
                 None,
                 "channel.message.sent",
                 ("bot", &bot_id),
-                json!({ "provider": b.provider, "bindingId": b.id, "remoteId": r.remote_id, "correlationId": corr, "text": text, "state": "confirmed", "delivery": "sent", "relayed": r.relayed, "postingIdentityId": identity.id, "attachments": crate::channel_files::names(&req.files) }),
+                json!({ "provider": b.provider, "bindingId": b.id, "remoteId": r.remote_id, "correlationId": corr, "text": text, "state": "confirmed", "delivery": "sent", "relayed": r.relayed, "postingIdentityId": identity.id, "attachments": crate::channel_files::names(&req.files), "files": kept }),
                 Some(format!("chan:{}:out:{corr}", b.id)),
             );
             Ok(SendOutcome::Sent { remote_id: r.remote_id, relayed: r.relayed, correlation_id: corr })
@@ -1097,7 +1104,8 @@ fn slack_one(ev: &Value, own: bool) -> Option<Inbound> {
         "message" => {
             let channel = s(ev, "channel")?;
             match ev.get("subtype").and_then(Value::as_str) {
-                None | Some("bot_message") | Some("thread_broadcast") => {
+                // `file_share`: a message that carries files (kept by `channel_attachments`).
+                None | Some("bot_message") | Some("thread_broadcast") | Some("file_share") => {
                     let ts = s(ev, "ts")?;
                     let root = s(ev, "thread_ts").unwrap_or_else(|| ts.clone());
                     Some(Inbound {
