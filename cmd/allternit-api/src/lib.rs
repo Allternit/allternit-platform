@@ -392,6 +392,41 @@ pub mod test_helpers {
             .unwrap_or_else(|e| e.into_inner())
     }
 
+    static CLOUD_URL_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Holds `ALLTERNIT_CLOUD_API_URL` at a known value for one test, then
+    /// restores whatever was there before. `AppConfig::cloud_api_url()` and the
+    /// channel transports read that var at call time, so a test that sets it
+    /// without restoring leaks a cloud URL into every later test in the
+    /// process (the `purchase_mode_self_hosted_by_default` failure on the
+    /// deploy gate). Every test that sets the var, or depends on it being
+    /// absent, takes this guard; the lock serializes them. Not reentrant:
+    /// take it once per test.
+    pub struct CloudUrlEnvGuard {
+        previous: Option<std::ffi::OsString>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    pub fn cloud_url_env(value: Option<&str>) -> CloudUrlEnvGuard {
+        const VAR: &str = "ALLTERNIT_CLOUD_API_URL";
+        let lock = CLOUD_URL_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = std::env::var_os(VAR);
+        match value {
+            Some(v) => std::env::set_var(VAR, v),
+            None => std::env::remove_var(VAR),
+        }
+        CloudUrlEnvGuard { previous, _lock: lock }
+    }
+
+    impl Drop for CloudUrlEnvGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(v) => std::env::set_var("ALLTERNIT_CLOUD_API_URL", v),
+                None => std::env::remove_var("ALLTERNIT_CLOUD_API_URL"),
+            }
+        }
+    }
+
     async fn app_state_with_config_and_os(
         temp: &Path,
         config: AppConfig,

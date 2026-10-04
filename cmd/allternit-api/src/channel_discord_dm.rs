@@ -129,7 +129,7 @@ mod tests {
 
     #[tokio::test]
     async fn open_asks_the_cloud_with_the_guild_and_returns_the_channel() {
-        std::env::set_var("ALLTERNIT_CLOUD_API_URL", "https://api.test/");
+        let _cloud_url = crate::test_helpers::cloud_url_env(Some("https://api.test/"));
         let http = Fake { sent: Mutex::new(vec![]), reply: (200, json!({ "channelId": "dm-9" })) };
         assert_eq!(open(&http, &secret(), "42").await.unwrap(), "dm-9");
         let sent = http.sent.lock().unwrap()[0].clone();
