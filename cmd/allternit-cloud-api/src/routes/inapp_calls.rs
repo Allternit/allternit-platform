@@ -20,6 +20,11 @@
 //! ("We'll let them know you called", a missed-call event lands in the thread), 409 `callee_busy`,
 //! 429 `too_many_rings`, 503 `livekit_not_configured`.
 //!
+//! With Web Push configured (`web_push`), a callee whose app is closed but who has a device registered is
+//! rung by push instead of getting an instant missed call; a ring nobody answers, and a cancelled one,
+//! become a "Missed call" push that replaces the ringing notification, and a thread message pushes the
+//! other person (one per thread per 20 s).
+//!
 //! The thread log and the call state live in the cloud, so a sleeping runtime never blocks a ring.
 //! Rooms are `call-app-<uuid>`; LiveKit creates them when the caller joins, or up front with the
 //! `allternit-voice` agent when the callee has auto-answer on.
@@ -39,6 +44,7 @@ use std::time::Duration;
 
 use super::livekit_admin::{LiveKitAdminClient, LiveKitConfig, LiveKitError, LiveKitHttpAdmin, SIP_AGENT_NAME};
 use super::phone::PhoneError;
+use super::web_push::{self, PushMessage};
 use crate::{ApiError, ApiState};
 
 /// A person counts as online when their app asked for incoming calls this recently.
@@ -228,7 +234,82 @@ pub async fn send_message(db: &PgPool, me: &str, thread_id: &str, text: &str) ->
         return Err(bad("text must be 1 to 4000 characters"));
     }
     thread_member(db, me, thread_id).await?;
-    Ok(json!({ "event": push_event(db, thread_id, "message", me, text, None).await? }))
+    let event = push_event(db, thread_id, "message", me, text, None).await?;
+    notify_message(db, me, thread_id, text).await;
+    Ok(json!({ "event": event }))
+}
+
+/// Push the other person in the thread about a new message. Never fails the send.
+async fn notify_message(db: &PgPool, me: &str, thread_id: &str, text: &str) {
+    let row: Option<(String, String, String)> = sqlx::query_as("SELECT owner_user_id, bot_id, contact_user_id FROM inapp_threads WHERE id = $1").bind(thread_id).fetch_optional(db).await.ok().flatten();
+    let Some((owner, bot_id, contact)) = row else { return };
+    let other = if owner == me { contact.clone() } else { owner.clone() };
+    let label = match link_between(db, &other, me, &bot_id).await {
+        Ok(link) => display_name(db, &other, &link, me).await,
+        Err(_) => "Someone".to_string(),
+    };
+    web_push::spawn_notify(
+        db.clone(),
+        other,
+        PushMessage {
+            kind: "message",
+            title: label,
+            body: text.to_string(),
+            url: format!("/?allternit_thread={thread_id}&bot={bot_id}&from={me}"),
+            tag: format!("dm-{thread_id}"),
+            data: json!({ "threadId": thread_id, "botId": bot_id, "from": me }),
+            ttl_secs: 24 * 3600,
+            high_urgency: false,
+        },
+        true,
+    );
+}
+
+/// The "Incoming call" push for a ring, the same tag as its later "Missed call" so one replaces the other.
+async fn notify_ring(db: &PgPool, call: &CallRow) {
+    let label = caller_label(db, call).await;
+    web_push::spawn_notify(
+        db.clone(),
+        call.callee_user_id.clone(),
+        PushMessage {
+            kind: "call",
+            title: format!("Incoming call from {label}"),
+            body: "Tap to answer".to_string(),
+            url: format!("/?allternit_call={}&from={}&thread={}&bot={}", call.room, call.caller_user_id, call.thread_id, call.bot_id),
+            tag: format!("call-{}", call.room),
+            data: json!({ "room": call.room, "from": call.caller_user_id, "threadId": call.thread_id, "botId": call.bot_id, "label": label, "expiresAt": call.expires_at }),
+            ttl_secs: RING_SECS as u32,
+            high_urgency: true,
+        },
+        false,
+    );
+}
+
+/// "Missed call from X" for the callee; replaces the ringing notification (same tag).
+async fn notify_missed(db: &PgPool, call: &CallRow) {
+    let label = caller_label(db, call).await;
+    web_push::spawn_notify(
+        db.clone(),
+        call.callee_user_id.clone(),
+        PushMessage {
+            kind: "missed_call",
+            title: format!("Missed call from {label}"),
+            body: "Tap to open the conversation".to_string(),
+            url: format!("/?allternit_thread={}&bot={}&from={}", call.thread_id, call.bot_id, call.caller_user_id),
+            tag: format!("call-{}", call.room),
+            data: json!({ "room": call.room, "from": call.caller_user_id, "threadId": call.thread_id, "botId": call.bot_id, "label": label }),
+            ttl_secs: 24 * 3600,
+            high_urgency: false,
+        },
+        false,
+    );
+}
+
+async fn caller_label(db: &PgPool, call: &CallRow) -> String {
+    match link_between(db, &call.callee_user_id, &call.caller_user_id, &call.bot_id).await {
+        Ok(link) => display_name(db, &call.callee_user_id, &link, &call.caller_user_id).await,
+        Err(_) => "Someone".to_string(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -275,11 +356,12 @@ const CALL_COLS: &str = "room, thread_id, caller_user_id, callee_user_id, bot_id
 
 /// Rings nobody answered in time become missed calls; the thread gets one `call.missed` each.
 pub async fn expire_stale(db: &PgPool) -> CResult<usize> {
-    let rows: Vec<(String, String, String)> = sqlx::query_as("UPDATE inapp_calls SET state = 'missed', ended_at = now() WHERE state = 'ringing' AND expires_at <= now() RETURNING room, thread_id, caller_user_id")
+    let rows: Vec<CallRow> = sqlx::query_as(&format!("UPDATE inapp_calls SET state = 'missed', ended_at = now() WHERE state = 'ringing' AND expires_at <= now() RETURNING {CALL_COLS}"))
         .fetch_all(db)
         .await?;
-    for (room, thread_id, caller) in &rows {
-        push_event(db, thread_id, "call.missed", caller, "", Some(room)).await?;
+    for call in &rows {
+        push_event(db, &call.thread_id, "call.missed", &call.caller_user_id, "", Some(&call.room)).await?;
+        notify_missed(db, call).await;
     }
     Ok(rows.len())
 }
@@ -326,7 +408,8 @@ pub async fn ring(db: &PgPool, lk: &dyn LiveKitAdminClient, me: &str, other: &st
         return Ok(json!({ "callId": room, "threadId": thread_id, "room": room, "token": token, "url": url, "state": "answered", "answeredBy": "agent" }));
     }
 
-    if !is_online(db, other).await? {
+    // App closed: with a pushable device registered they still get rung; otherwise it's a missed call now.
+    if !is_online(db, other).await? && !web_push::can_reach(db, other).await {
         sqlx::query("INSERT INTO inapp_calls (room, thread_id, caller_user_id, callee_user_id, bot_id, state, expires_at, ended_at) VALUES ($1, $2, $3, $4, $5, 'missed', now(), now())")
             .bind(&room)
             .bind(&thread_id)
@@ -354,6 +437,7 @@ pub async fn ring(db: &PgPool, lk: &dyn LiveKitAdminClient, me: &str, other: &st
         .execute(db)
         .await?;
     push_event(db, &thread_id, "call.ring", me, "", Some(&room)).await?;
+    notify_ring(db, &CallRow { room: room.clone(), thread_id: thread_id.clone(), caller_user_id: me.to_string(), callee_user_id: other.to_string(), bot_id: link.bot_id.clone(), state: "ringing".into(), expires_at }).await;
     Ok(json!({ "callId": room, "threadId": thread_id, "room": room, "token": token, "url": url, "state": "ringing", "expiresAt": expires_at }))
 }
 
@@ -400,6 +484,7 @@ pub async fn cancel(db: &PgPool, me: &str, other: &str, room: &str) -> CResult<V
     let call = finish_ring(db, me, other, room, "cancelled", false).await?;
     // A ring cancelled before they picked up is a missed call for the callee.
     push_event(db, &call.thread_id, "call.cancelled", me, "", Some(room)).await?;
+    notify_missed(db, &call).await;
     Ok(json!({ "ok": true }))
 }
 
@@ -632,6 +717,7 @@ mod tests {
         }
         // the test pool is a private schema, so the migration runs unqualified
         sqlx::raw_sql(&include_str!("../../migrations_pg/038_inapp_calls.sql").replace("public.", "")).execute(&db).await.unwrap();
+        sqlx::raw_sql(&include_str!("../../migrations_pg/039_push_subscriptions.sql").replace("public.", "")).execute(&db).await.unwrap();
         sqlx::query("INSERT INTO invite_contacts (invite_id, owner_user_id, bot_id, contact_user_id, label) VALUES ('inv1', $1, $2, $3, 'Sam')").bind(OWNER).bind(BOT).bind(FRIEND).execute(&db).await.unwrap();
         sqlx::query("INSERT INTO users (id, name) VALUES ($1, 'Olive Owner'), ($2, 'Fran Friend')").bind(OWNER).bind(FRIEND).execute(&db).await.unwrap();
         db
@@ -838,5 +924,82 @@ mod tests {
             cancel(&db, OWNER, FRIEND, r["room"].as_str().unwrap()).await.unwrap();
         }
         assert!(matches!(ring(&db, &lk, OWNER, FRIEND, BOT, "voice").await, Err(CallError::Phone(PhoneError::TooMany("too_many_rings")))));
+    }
+
+    /// Wait for the background push tasks to hand `n` pushes to the recorder.
+    async fn wait_for_pushes(rec: &crate::routes::web_push::tests::Recorder, n: usize) {
+        for _ in 0..100 {
+            if rec.sent.lock().unwrap().len() >= n {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("expected {n} pushes, saw {}", rec.sent.lock().unwrap().len());
+    }
+
+    /// Decrypt the `n`th recorded push the way the friend's browser would.
+    fn pushed(rec: &crate::routes::web_push::tests::Recorder, n: usize, key: &aws_lc_rs::agreement::PrivateKey, public: &[u8], auth: &[u8]) -> Value {
+        let sent = rec.sent.lock().unwrap();
+        serde_json::from_slice(&crate::routes::web_push::tests::decrypt(&sent[n].2, key, public, auth)).unwrap()
+    }
+
+    #[tokio::test]
+    async fn closed_app_with_a_push_device_rings_then_shows_missed_call_and_messages() {
+        let (public, private) = crate::routes::web_push::tests::fixture_keys();
+        std::env::set_var("ALLTERNIT_VAPID_PUBLIC_KEY", public);
+        std::env::set_var("ALLTERNIT_VAPID_PRIVATE_KEY", private);
+        let rec = Arc::new(crate::routes::web_push::tests::Recorder::default());
+        *crate::routes::web_push::TEST_TRANSPORT.lock().unwrap() = Some(rec.clone());
+
+        let db = pool().await;
+        let lk = FakeLiveKit::default();
+        let (p256dh, auth_b64, key, auth) = crate::routes::web_push::tests::browser_sub();
+        let ua_public = base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, &p256dh).unwrap();
+
+        // no device registered: still an instant missed call, nothing pushed
+        assert!(matches!(ring(&db, &lk, OWNER, FRIEND, BOT, "voice").await, Err(CallError::Offline { .. })));
+        assert!(rec.sent.lock().unwrap().is_empty());
+
+        // the friend registers a device; their app is closed (no presence), yet the ring goes through
+        crate::routes::web_push::subscribe(&db, FRIEND, "phone", "https://push.example.com/friend", &p256dh, &auth_b64, "test").await.unwrap();
+        let rung = ring(&db, &lk, OWNER, FRIEND, BOT, "voice").await.unwrap();
+        assert_eq!(rung["state"], "ringing");
+        let room = rung["room"].as_str().unwrap().to_string();
+        let thread = rung["threadId"].as_str().unwrap().to_string();
+        wait_for_pushes(&rec, 1).await;
+        let ring_push = pushed(&rec, 0, &key, &ua_public, &auth);
+        assert_eq!(ring_push["type"], "call");
+        assert_eq!(ring_push["title"], "Incoming call from Olive");
+        assert_eq!(ring_push["url"], format!("/?allternit_call={room}&from={OWNER}&thread={thread}&bot={BOT}"));
+        assert_eq!(ring_push["tag"], format!("call-{room}"));
+
+        // the caller hangs up first: the ringing notification is replaced by a missed call
+        cancel(&db, OWNER, FRIEND, &room).await.unwrap();
+        wait_for_pushes(&rec, 2).await;
+        let missed = pushed(&rec, 1, &key, &ua_public, &auth);
+        assert_eq!((missed["type"].as_str(), missed["tag"].as_str()), (Some("missed_call"), Some(format!("call-{room}").as_str())));
+        assert_eq!(missed["title"], "Missed call from Olive");
+
+        // a ring nobody answers in time also ends as a missed call push
+        let again = ring(&db, &lk, OWNER, FRIEND, BOT, "voice").await.unwrap();
+        wait_for_pushes(&rec, 3).await;
+        sqlx::query("UPDATE inapp_calls SET expires_at = now() - interval '1 second' WHERE room = $1").bind(again["room"].as_str().unwrap()).execute(&db).await.unwrap();
+        expire_stale(&db).await.unwrap();
+        wait_for_pushes(&rec, 4).await;
+        assert_eq!(pushed(&rec, 3, &key, &ua_public, &auth)["type"], "missed_call");
+
+        // a thread message pushes the other person, once per 20 s per thread
+        send_message(&db, OWNER, &thread, "are you there?").await.unwrap();
+        wait_for_pushes(&rec, 5).await;
+        let msg = pushed(&rec, 4, &key, &ua_public, &auth);
+        assert_eq!((msg["type"].as_str(), msg["title"].as_str(), msg["body"].as_str()), (Some("message"), Some("Olive"), Some("are you there?")));
+        assert_eq!(msg["url"], format!("/?allternit_thread={thread}&bot={BOT}&from={OWNER}"));
+        send_message(&db, OWNER, &thread, "hello?").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(rec.sent.lock().unwrap().len(), 5, "second message inside the window is collapsed");
+        // the author is never pushed about their own message, and the owner has no device registered
+        send_message(&db, FRIEND, &thread, "here!").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(rec.sent.lock().unwrap().len(), 5);
     }
 }

@@ -39,13 +39,15 @@ The caller joins `room` with `token` at `url` straight away. A ring lasts 45 sec
 | Status | `error` | Meaning |
 |---|---|---|
 | 403 | `not_a_contact` | The two people aren't linked |
-| 409 | `callee_offline` | Their app wasn't open in the last 60 seconds. The body has `message: "We'll let them know you called"` and `threadId`; a `call.missed` event is already in the thread |
+| 409 | `callee_offline` | Their app wasn't open in the last 60 seconds *and* they have no device registered for [Web Push](/api/web-push) (or push isn't configured). The body has `message: "We'll let them know you called"` and `threadId`; a `call.missed` event is already in the thread |
 | 409 | `callee_busy` | They already have a ring waiting |
 | 429 | `too_many_rings` | More than 5 rings to the same person in 10 minutes |
 | 400 | `bad_request` | `mode` isn't `"voice"`, or you rang yourself |
 | 503 | `livekit_not_configured` | LiveKit env is unset |
 
 If the callee has turned on **Let my bot answer** (`PUT /api/v1/phone/call-prefs {"autoAnswerBotId": "bot_9"}`; `null` turns it off, and the bot must be theirs), nobody rings: the room is created with the `allternit-voice` agent, the call is `answered` at once and the response has `"state": "answered", "answeredBy": "agent"`. That works even when the callee is offline.
+
+If the callee's app is closed but they registered a device for [Web Push](/api/web-push), the ring goes through anyway: the response is the normal `ringing` one and their devices get an "Incoming call" notification. When the ring ends unanswered (45 seconds) or the caller cancels, the same notification is replaced by "Missed call from …". A new thread message also pushes the other person, at most one push per thread per 20 seconds.
 
 ### Presence
 

@@ -561,6 +561,7 @@ pub(crate) async fn deliver_route(state: &Arc<ApiState>, route_id: &str) -> Resu
                 .bind(status.map(i32::from))
                 .execute(&state.db)
                 .await?;
+            super::web_push::notify_channel_message(&state.db, &route.user_id, &route.id, &route.provider);
             continue;
         }
         let give_up = Utc::now() - received_at > chrono::Duration::hours(GIVE_UP_AFTER_HOURS);
