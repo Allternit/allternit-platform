@@ -1,0 +1,53 @@
+---
+title: 'Call Recordings API'
+description: 'Play back a recorded call with a short-lived presigned URL from private R2 storage.'
+---
+
+## Overview
+
+When a bot has recording enabled (and consent is on file), the voice service records the call room with LiveKit Egress into the private R2 bucket `allternit-call-recordings` as `calls/<callId>.ogg`, and reports the key as `recordingRef` in the `call.ended` event. Objects are deleted automatically after 90 days.
+
+Voicemail the bot leaves on an answering machine is part of the same room recording, so it plays from the same endpoint. There is no separate voicemail audio.
+
+The cloud API never streams the audio. It checks that the call is yours, confirms the object still exists, and returns a presigned URL that is valid for 10 minutes.
+
+## Get a recording
+
+```http
+GET /api/v1/voice/calls/{callId}/recording
+Authorization: Bearer <Clerk session token>
+```
+
+```json
+{
+  "url": "https://<account>.r2.cloudflarestorage.com/allternit-call-recordings/calls/<callId>.ogg?X-Amz-...",
+  "expiresAt": "2026-10-03T20:10:00Z",
+  "durationSec": 42,
+  "contentType": "audio/ogg"
+}
+```
+
+`durationSec` is omitted when the call's `call.ended` event is no longer stored. Treat the URL as a secret: do not log it or share it. Ask again when it expires.
+
+| Status | `code` | Meaning |
+| --- | --- | --- |
+| 403 | `forbidden` | The call belongs to another account. |
+| 404 | `not-found` | No such call. |
+| 404 | `no-recording` | The call was not recorded. |
+| 410 | `recording-expired` | The recording was deleted (90-day retention). |
+| 502 | `recordings-error` | The recording store could not be reached. Retry. |
+| 503 | `recordings-unavailable` | R2 is not configured on this deployment. |
+
+## Configuration
+
+The cloud API needs these environment variables:
+
+| Variable | Value |
+| --- | --- |
+| `ALLTERNIT_R2_ENDPOINT` | `https://<account>.r2.cloudflarestorage.com` |
+| `ALLTERNIT_R2_ACCESS_KEY` | R2 API token access key id (read access to the recordings bucket) |
+| `ALLTERNIT_R2_SECRET` | R2 API token secret |
+
+## For developers: the R2 client
+
+`services/r2.rs` is a small SigV4 client (region `auto`, path-style URLs, no SDK) that other features reuse: `presign_get`, `presign_put`, `put`, `delete`, `head` and `list_prefix_size`. Without the variables above, `R2Client::from_env()` returns `R2Error::Unavailable` and routes answer 503. Secrets and signed URLs are never logged.

@@ -58,6 +58,7 @@ pub mod tasks;
 #[cfg(test)]
 pub mod test_support;
 pub mod voice_consent;
+pub mod voice_recordings;
 pub mod voice_tickets;
 pub mod whatsapp_es;
 pub mod voice_calls_cloud;
