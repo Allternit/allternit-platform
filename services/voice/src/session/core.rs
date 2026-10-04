@@ -454,6 +454,10 @@ struct Settings {
 }
 
 const DEFAULT_FILLER_MS: u64 = 1200;
+/// A reply that still hasn't started gets another filler this long after the last.
+const FILLER_REPEAT: Duration = Duration::from_secs(6);
+/// At most this many fillers per turn, so a stuck reply isn't a loop of "one moment".
+const MAX_FILLERS_PER_TURN: usize = 3;
 
 struct Utterance {
     id: String,
@@ -498,6 +502,8 @@ struct Running {
     /// The last utterance played was a filler (never two in a row).
     last_was_filler: bool,
     filler_count: usize,
+    /// Fillers played for the current turn (a slow reply gets a few, spaced).
+    turn_fillers: usize,
 }
 
 struct Ctx {
@@ -842,6 +848,7 @@ async fn start(ctx: &Ctx, opts: &SessionOptions) -> Result<Running, ServerEvent>
         filler_at: None,
         last_was_filler: false,
         filler_count: 0,
+        turn_fillers: 0,
     })
 }
 
@@ -1021,16 +1028,27 @@ fn maybe_play_filler(s: &mut Running) {
         return;
     }
     s.filler_at = None;
-    if !s.settings.fillers || s.last_was_filler || !s.utterances.is_empty() {
+    if !s.settings.fillers || (s.turn_fillers == 0 && s.last_was_filler) {
+        return;
+    }
+    if !s.utterances.is_empty() {
+        // A repeat that comes due while the previous filler is still playing waits a moment.
+        if s.turn_fillers > 0 && s.turn_fillers < MAX_FILLERS_PER_TURN {
+            s.filler_at = Some(Instant::now() + Duration::from_secs(1));
+        }
         return;
     }
     let phrase = crate::phrase_cache::FILLERS[s.filler_count % crate::phrase_cache::FILLERS.len()];
     s.filler_count += 1;
+    s.turn_fillers += 1;
     s.last_was_filler = true;
     let id = format!("filler-{}", s.filler_count);
     let idx = utterance_index(s, &id);
     s.utterances[idx].done = true;
     queue_sentences(s, idx, vec![phrase.to_string()]);
+    if s.turn_fillers < MAX_FILLERS_PER_TURN {
+        s.filler_at = Some(Instant::now() + FILLER_REPEAT);
+    }
 }
 
 fn queue_sentences(s: &mut Running, idx: usize, sentences: Vec<String>) {
@@ -1061,6 +1079,7 @@ fn retire(s: &mut Running, id: &str) {
 async fn internal(ctx: &Ctx, s: &mut Running, msg: Internal) -> bool {
     match msg {
         Internal::SpeechStarted { at_ms } => {
+            s.filler_at = None; // the caller is talking again
             if !ctx.emit(ServerEvent::SpeechStarted { at_ms }).await {
                 return false;
             }
@@ -1083,6 +1102,7 @@ async fn internal(ctx: &Ctx, s: &mut Running, msg: Internal) -> bool {
                 .await
         }
         Internal::TurnEnded { text, confidence } => {
+            s.turn_fillers = 0;
             if s.settings.fillers {
                 s.filler_at = Some(Instant::now() + Duration::from_millis(s.settings.filler_ms));
             }
