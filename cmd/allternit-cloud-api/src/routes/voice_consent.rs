@@ -30,7 +30,24 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::{auth, error::ApiError, routes::voice_tickets::require_worker, ApiState};
+use crate::{
+    auth,
+    error::ApiError,
+    routes::voice_tickets::require_worker,
+    services::{
+        r2::{ObjectStore, R2Client, R2Error},
+        user_files::BUCKET,
+    },
+    ApiState,
+};
+
+fn clip_key(user_id: &str, id: Uuid) -> String {
+    format!("voices/{user_id}/{id}.wav")
+}
+
+fn storage_unavailable() -> Response {
+    coded(StatusCode::SERVICE_UNAVAILABLE, "storage-unavailable", "Voice storage is not available right now.")
+}
 
 /// Bumped whenever the statement changes; stored with every record.
 pub const CONSENT_VERSION: &str = "2026-10-03";
@@ -55,6 +72,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/api/v1/voice/custom-voices/:id", axum::routing::delete(revoke_voice))
         .route("/api/v1/voice/custom-voices/:id/consent", get(worker_consent))
         .route("/api/v1/voice/custom-voices/:id/clip", get(worker_clip))
+        .route("/api/v1/admin/voice/custom-voices/backfill-r2", axum::routing::post(backfill_r2))
 }
 
 fn coded(status: StatusCode, code: &str, message: &str) -> Response {
@@ -170,6 +188,7 @@ pub(crate) async fn create_for_user(
     user_id: &str,
     headers: &HeaderMap,
     body: CreateVoice,
+    store: Option<&dyn ObjectStore>,
     now: DateTime<Utc>,
 ) -> Result<Response, ApiError> {
     let name = body.name.trim();
@@ -219,13 +238,25 @@ pub(crate) async fn create_for_user(
             "You have reached the limit of custom voices. Revoke one to add another.",
         ));
     }
+    let Some(store) = store else {
+        return Ok(storage_unavailable());
+    };
     let id = Uuid::new_v4();
     let sha = hex::encode(Sha256::digest(&wav));
-    sqlx::query(
+    let key = clip_key(user_id, id);
+    match store.put(BUCKET, &key, wav.clone(), "audio/wav").await {
+        Ok(()) => {}
+        Err(R2Error::Unavailable) => return Ok(storage_unavailable()),
+        Err(e) => {
+            tracing::warn!(error = %e, "custom voice: clip upload failed");
+            return Ok(coded(StatusCode::BAD_GATEWAY, "storage-error", "The recording could not be saved. Try again."));
+        }
+    }
+    let inserted = sqlx::query(
         r#"INSERT INTO voice_custom_voices
            (id, user_id, name, speaker_name, relationship, consent_version, consent_text,
             consent_accepted_at, consent_ip, consent_user_agent,
-            clip_sha256, clip_bytes, clip_seconds, clip)
+            clip_sha256, clip_bytes, clip_seconds, clip_key)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)"#,
     )
     .bind(id)
@@ -241,9 +272,18 @@ pub(crate) async fn create_for_user(
     .bind(&sha)
     .bind(wav.len() as i32)
     .bind(info.seconds)
-    .bind(&wav)
+    .bind(&key)
     .execute(&state.db)
-    .await?;
+    .await
+    .map_err(|e| {
+        // Do not leave an unrecorded object behind; the delete is best effort.
+        tracing::warn!(error = %e, "custom voice: row insert failed after upload");
+        e
+    });
+    if let Err(e) = inserted {
+        let _ = store.delete(BUCKET, &key).await;
+        return Err(e.into());
+    }
     Ok((StatusCode::CREATED, Json(voice_json(id, name, speaker, &body.relationship, info.seconds, &sha, now))).into_response())
 }
 
@@ -267,7 +307,8 @@ async fn create_voice(
     Json(body): Json<CreateVoice>,
 ) -> Result<Response, ApiError> {
     let user_id = auth::resolve_user_id(&state.db, &headers).await?;
-    create_for_user(&state, &user_id, &headers, body, Utc::now()).await
+    let r2 = R2Client::from_env();
+    create_for_user(&state, &user_id, &headers, body, r2.as_ref().ok().map(|c| c as &dyn ObjectStore), Utc::now()).await
 }
 
 type ListRow = (Uuid, String, String, String, f32, String, DateTime<Utc>);
@@ -292,7 +333,7 @@ async fn list_voices(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> 
     Ok(Json(list_for_user(&state, &user_id).await?))
 }
 
-pub(crate) async fn revoke_for_user(state: &ApiState, user_id: &str, id: Uuid, now: DateTime<Utc>) -> Result<Response, ApiError> {
+pub(crate) async fn revoke_for_user(state: &ApiState, user_id: &str, id: Uuid, store: Option<&dyn ObjectStore>, now: DateTime<Utc>) -> Result<Response, ApiError> {
     // Revoking deletes the audio in the same statement. Idempotent: an
     // already-revoked voice of this user answers 204 as well.
     let owned: Option<String> = sqlx::query_scalar("SELECT status FROM voice_custom_voices WHERE id = $1 AND user_id = $2")
@@ -323,6 +364,27 @@ pub(crate) async fn revoke_for_user(state: &ApiState, user_id: &str, id: Uuid, n
     {
         tracing::warn!(error = %e, "revoke: could not reset bot voice settings");
     }
+    // Delete the stored clip, then drop the reference. A failed delete keeps
+    // clip_key so a repeated revoke retries it; the voice is already unusable.
+    let key: Option<String> = sqlx::query_scalar("SELECT clip_key FROM voice_custom_voices WHERE id = $1 AND user_id = $2")
+        .bind(id)
+        .bind(user_id)
+        .fetch_one(&state.db)
+        .await?;
+    if let Some(key) = key {
+        let Some(store) = store else {
+            return Ok(storage_unavailable());
+        };
+        if let Err(e) = store.delete(BUCKET, &key).await {
+            tracing::warn!(error = %e, "revoke: could not delete the clip object");
+            return Ok(coded(StatusCode::BAD_GATEWAY, "storage-error", "The voice is revoked but its recording could not be deleted yet. Try again."));
+        }
+        sqlx::query("UPDATE voice_custom_voices SET clip_key = NULL WHERE id = $1 AND user_id = $2")
+            .bind(id)
+            .bind(user_id)
+            .execute(&state.db)
+            .await?;
+    }
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -332,7 +394,8 @@ async fn revoke_voice(
     Path(id): Path<Uuid>,
 ) -> Result<Response, ApiError> {
     let user_id = auth::resolve_user_id(&state.db, &headers).await?;
-    revoke_for_user(&state, &user_id, id, Utc::now()).await
+    let r2 = R2Client::from_env();
+    revoke_for_user(&state, &user_id, id, r2.as_ref().ok().map(|c| c as &dyn ObjectStore), Utc::now()).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -374,18 +437,34 @@ async fn worker_consent(
     worker_consent_for(&state, &q.owner, id).await
 }
 
-pub(crate) async fn worker_clip_for(state: &ApiState, owner: &str, id: Uuid) -> Result<Response, ApiError> {
-    let row: Option<(Vec<u8>,)> = sqlx::query_as(
-        "SELECT clip FROM voice_custom_voices WHERE id = $1 AND user_id = $2 AND status = 'active' AND clip IS NOT NULL",
+pub(crate) async fn worker_clip_for(state: &ApiState, owner: &str, id: Uuid, store: Option<&dyn ObjectStore>) -> Result<Response, ApiError> {
+    let row: Option<(Option<Vec<u8>>, Option<String>)> = sqlx::query_as(
+        "SELECT clip, clip_key FROM voice_custom_voices WHERE id = $1 AND user_id = $2 AND status = 'active' \
+         AND (clip IS NOT NULL OR clip_key IS NOT NULL)",
     )
     .bind(id)
     .bind(owner)
     .fetch_optional(&state.db)
     .await?;
-    Ok(match row {
-        Some((clip,)) => ([(header::CONTENT_TYPE, "audio/wav"), (header::CACHE_CONTROL, "no-store")], clip).into_response(),
-        None => not_on_file(),
-    })
+    let clip = match row {
+        Some((Some(clip), _)) => clip,
+        Some((None, Some(key))) => {
+            let Some(store) = store else {
+                return Ok(storage_unavailable());
+            };
+            match store.get(BUCKET, &key).await {
+                Ok(Some(bytes)) => bytes,
+                Ok(None) => return Ok(not_on_file()),
+                Err(R2Error::Unavailable) => return Ok(storage_unavailable()),
+                Err(e) => {
+                    tracing::warn!(error = %e, "custom voice: could not read the clip object");
+                    return Ok(coded(StatusCode::BAD_GATEWAY, "storage-error", "The recording could not be read."));
+                }
+            }
+        }
+        _ => return Ok(not_on_file()),
+    };
+    Ok(([(header::CONTENT_TYPE, "audio/wav"), (header::CACHE_CONTROL, "no-store")], clip).into_response())
 }
 
 async fn worker_clip(
@@ -397,7 +476,44 @@ async fn worker_clip(
     if let Err(response) = require_worker(&headers) {
         return Ok(response);
     }
-    worker_clip_for(&state, &q.owner, id).await
+    let r2 = R2Client::from_env();
+    worker_clip_for(&state, &q.owner, id, r2.as_ref().ok().map(|c| c as &dyn ObjectStore)).await
+}
+
+/// Moves every remaining bytea clip to R2. Idempotent: rows already holding a
+/// `clip_key` are skipped, and each row is only changed after its upload.
+pub(crate) async fn backfill_clips(state: &ApiState, store: &dyn ObjectStore) -> Result<serde_json::Value, ApiError> {
+    let rows: Vec<(Uuid, String, Vec<u8>)> = sqlx::query_as(
+        "SELECT id, user_id, clip FROM voice_custom_voices WHERE clip IS NOT NULL AND clip_key IS NULL AND status = 'active'",
+    )
+    .fetch_all(&state.db)
+    .await?;
+    let (mut moved, mut failed) = (0, 0);
+    for (id, user, clip) in rows {
+        let key = clip_key(&user, id);
+        if store.put(BUCKET, &key, clip, "audio/wav").await.is_err() {
+            failed += 1;
+            continue;
+        }
+        sqlx::query("UPDATE voice_custom_voices SET clip_key = $2, clip = NULL WHERE id = $1 AND clip_key IS NULL")
+            .bind(id)
+            .bind(&key)
+            .execute(&state.db)
+            .await?;
+        moved += 1;
+    }
+    Ok(json!({ "moved": moved, "failed": failed }))
+}
+
+async fn backfill_r2(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<Response, ApiError> {
+    let user = auth::resolve_user_scoped(&state.db, &headers, "account").await?;
+    if !auth::is_admin_user(&user.id) {
+        return Err(ApiError::Forbidden("Admin only.".to_string()));
+    }
+    let Ok(r2) = R2Client::from_env() else {
+        return Ok(storage_unavailable());
+    };
+    Ok(Json(backfill_clips(&state, &r2).await?).into_response())
 }
 
 #[cfg(test)]
@@ -442,9 +558,37 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct FakeStore(std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>);
+    #[async_trait::async_trait]
+    impl ObjectStore for FakeStore {
+        fn presign_get(&self, _b: &str, _k: &str, _t: std::time::Duration) -> Result<String, R2Error> {
+            Ok(String::new())
+        }
+        async fn head(&self, _b: &str, k: &str) -> Result<Option<u64>, R2Error> {
+            Ok(self.0.lock().unwrap().get(k).map(|v| v.len() as u64))
+        }
+        async fn put(&self, b: &str, k: &str, bytes: Vec<u8>, _c: &str) -> Result<(), R2Error> {
+            assert_eq!(b, BUCKET);
+            self.0.lock().unwrap().insert(k.to_string(), bytes);
+            Ok(())
+        }
+        async fn get(&self, _b: &str, k: &str) -> Result<Option<Vec<u8>>, R2Error> {
+            Ok(self.0.lock().unwrap().get(k).cloned())
+        }
+        async fn delete(&self, _b: &str, k: &str) -> Result<(), R2Error> {
+            self.0.lock().unwrap().remove(k);
+            Ok(())
+        }
+    }
+
     async fn state() -> Arc<ApiState> {
         let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
         sqlx::raw_sql(&include_str!("../../migrations_pg/032_voice_custom_voices.sql").replace("public.", ""))
+            .execute(&state.db)
+            .await
+            .unwrap();
+        sqlx::raw_sql(&include_str!("../../migrations_pg/041_voice_clip_key.sql").replace("public.", ""))
             .execute(&state.db)
             .await
             .unwrap();
@@ -488,9 +632,14 @@ mod tests {
     async fn consent_is_recorded_with_hash_ip_and_the_exact_text_then_revoke_deletes_the_clip() {
         let state = state().await;
         let clip = wav(12.0, 24_000, 0.3);
-        let (status, created) = json_of(create_for_user(&state, "u1", &headers(), body(&clip), Utc::now()).await.unwrap()).await;
+        let store = FakeStore::default();
+        let (status, created) = json_of(create_for_user(&state, "u1", &headers(), body(&clip), Some(&store), Utc::now()).await.unwrap()).await;
         assert_eq!(status, StatusCode::CREATED);
         let id: Uuid = created["id"].as_str().unwrap().parse().unwrap();
+        let key = clip_key("u1", id);
+        assert_eq!(store.0.lock().unwrap().get(&key), Some(&clip), "the clip is in R2 at voices/<user>/<id>.wav");
+        let (bytea, stored_key): (Option<Vec<u8>>, Option<String>) = sqlx::query_as("SELECT clip, clip_key FROM voice_custom_voices WHERE id = $1").bind(id).fetch_one(&state.db).await.unwrap();
+        assert_eq!((bytea, stored_key), (None, Some(key.clone())));
         assert_eq!(created["voiceId"], format!("custom:{id}"));
         let sha = hex::encode(Sha256::digest(&clip));
         assert_eq!(created["clipSha256"], sha);
@@ -512,12 +661,12 @@ mod tests {
         // The voice service's view: consent + the identical clip.
         let (s, g) = json_of(worker_consent_for(&state, "u1", id).await.unwrap()).await;
         assert_eq!((s, g["clipSha256"].as_str()), (StatusCode::OK, Some(sha.as_str())));
-        let resp = worker_clip_for(&state, "u1", id).await.unwrap();
+        let resp = worker_clip_for(&state, "u1", id, Some(&store)).await.unwrap();
         assert_eq!(to_bytes(resp.into_body(), 4 << 20).await.unwrap().to_vec(), clip);
 
         // Only the owner can use or list it.
         assert_eq!(worker_consent_for(&state, "u2", id).await.unwrap().status(), StatusCode::NOT_FOUND);
-        assert_eq!(worker_clip_for(&state, "u2", id).await.unwrap().status(), StatusCode::NOT_FOUND);
+        assert_eq!(worker_clip_for(&state, "u2", id, Some(&store)).await.unwrap().status(), StatusCode::NOT_FOUND);
         assert_eq!(list_for_user(&state, "u2").await.unwrap()["voices"].as_array().unwrap().len(), 0);
         assert_eq!(list_for_user(&state, "u1").await.unwrap()["voices"].as_array().unwrap().len(), 1);
 
@@ -527,20 +676,23 @@ mod tests {
             .execute(&state.db)
             .await
             .unwrap();
-        assert_eq!(revoke_for_user(&state, "u2", id, Utc::now()).await.unwrap().status(), StatusCode::NOT_FOUND);
-        assert_eq!(revoke_for_user(&state, "u1", id, Utc::now()).await.unwrap().status(), StatusCode::NO_CONTENT);
-        assert_eq!(revoke_for_user(&state, "u1", id, Utc::now()).await.unwrap().status(), StatusCode::NO_CONTENT, "idempotent");
+        assert_eq!(revoke_for_user(&state, "u2", id, Some(&store), Utc::now()).await.unwrap().status(), StatusCode::NOT_FOUND);
+        assert_eq!(revoke_for_user(&state, "u1", id, Some(&store), Utc::now()).await.unwrap().status(), StatusCode::NO_CONTENT);
+        assert_eq!(revoke_for_user(&state, "u1", id, Some(&store), Utc::now()).await.unwrap().status(), StatusCode::NO_CONTENT, "idempotent");
 
         // Revoke propagated: consent and clip are gone, the audio is deleted,
         // the list is empty, and this user's bots are back on the default.
         assert_eq!(worker_consent_for(&state, "u1", id).await.unwrap().status(), StatusCode::NOT_FOUND);
-        assert_eq!(worker_clip_for(&state, "u1", id).await.unwrap().status(), StatusCode::NOT_FOUND);
+        assert_eq!(worker_clip_for(&state, "u1", id, Some(&store)).await.unwrap().status(), StatusCode::NOT_FOUND);
         let left: (Option<Vec<u8>>, String) = sqlx::query_as("SELECT clip, status FROM voice_custom_voices WHERE id = $1")
             .bind(id)
             .fetch_one(&state.db)
             .await
             .unwrap();
         assert_eq!(left, (None, "revoked".to_string()));
+        assert!(store.0.lock().unwrap().is_empty(), "revoke deleted the object");
+        let key_left: Option<String> = sqlx::query_scalar("SELECT clip_key FROM voice_custom_voices WHERE id = $1").bind(id).fetch_one(&state.db).await.unwrap();
+        assert_eq!(key_left, None);
         assert_eq!(list_for_user(&state, "u1").await.unwrap()["voices"].as_array().unwrap().len(), 0);
         let bots: Vec<(String, String)> = sqlx::query_as("SELECT bot_id, voice_id FROM voice_bot_config ORDER BY bot_id")
             .fetch_all(&state.db)
@@ -559,23 +711,23 @@ mod tests {
 
         let mut b = body(&clip);
         b.consent_accepted = false;
-        let (s, j) = json_of(create_for_user(&state, "u1", &headers(), b, Utc::now()).await.unwrap()).await;
+        let (s, j) = json_of(create_for_user(&state, "u1", &headers(), b, Some(&FakeStore::default()), Utc::now()).await.unwrap()).await;
         assert_eq!((s, j["code"].as_str()), (StatusCode::UNPROCESSABLE_ENTITY, Some("consent-required")));
 
         let mut b = body(&clip);
         b.consent_version = "1999-01-01".into();
-        let (s, j) = json_of(create_for_user(&state, "u1", &headers(), b, Utc::now()).await.unwrap()).await;
+        let (s, j) = json_of(create_for_user(&state, "u1", &headers(), b, Some(&FakeStore::default()), Utc::now()).await.unwrap()).await;
         assert_eq!((s, j["code"].as_str()), (StatusCode::CONFLICT, Some("consent-text-changed")));
 
-        let (s, j) = json_of(create_for_user(&state, "u1", &headers(), body(&wav(2.0, 24_000, 0.3)), Utc::now()).await.unwrap()).await;
+        let (s, j) = json_of(create_for_user(&state, "u1", &headers(), body(&wav(2.0, 24_000, 0.3)), Some(&FakeStore::default()), Utc::now()).await.unwrap()).await;
         assert_eq!((s, j["code"].as_str()), (StatusCode::UNPROCESSABLE_ENTITY, Some("bad-clip")));
 
         let mut b = body(&clip);
         b.speaker_name = "  ".into();
-        assert!(create_for_user(&state, "u1", &headers(), b, Utc::now()).await.is_err());
+        assert!(create_for_user(&state, "u1", &headers(), b, Some(&FakeStore::default()), Utc::now()).await.is_err());
         let mut b = body(&clip);
         b.relationship = "friend-of-a-friend".into();
-        assert!(create_for_user(&state, "u1", &headers(), b, Utc::now()).await.is_err());
+        assert!(create_for_user(&state, "u1", &headers(), b, Some(&FakeStore::default()), Utc::now()).await.is_err());
 
         let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM voice_custom_voices").fetch_one(&state.db).await.unwrap();
         assert_eq!(n, 0);
@@ -587,10 +739,10 @@ mod tests {
         let state = state().await;
         let clip = wav(9.0, 24_000, 0.3);
         for _ in 0..MAX_ACTIVE_VOICES {
-            let r = create_for_user(&state, "u1", &headers(), body(&clip), Utc::now()).await.unwrap();
+            let r = create_for_user(&state, "u1", &headers(), body(&clip), Some(&FakeStore::default()), Utc::now()).await.unwrap();
             assert_eq!(r.status(), StatusCode::CREATED);
         }
-        let (s, j) = json_of(create_for_user(&state, "u1", &headers(), body(&clip), Utc::now()).await.unwrap()).await;
+        let (s, j) = json_of(create_for_user(&state, "u1", &headers(), body(&clip), Some(&FakeStore::default()), Utc::now()).await.unwrap()).await;
         assert_eq!((s, j["code"].as_str()), (StatusCode::CONFLICT, Some("too-many-voices")));
     }
 
@@ -599,5 +751,23 @@ mod tests {
         std::env::remove_var("ALLTERNIT_VOICE_WORKER_TOKEN");
         let r = require_worker(&HeaderMap::new()).unwrap_err();
         assert_eq!(r.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn backfill_moves_old_bytea_clips_and_is_idempotent() {
+        let state = state().await;
+        let clip = wav(12.0, 24_000, 0.3);
+        let id = Uuid::new_v4();
+        sqlx::query("INSERT INTO voice_custom_voices (id, user_id, name, speaker_name, relationship, consent_version, consent_text, consent_accepted_at, clip_sha256, clip_bytes, clip_seconds, clip) VALUES ($1,'u1','v','s','self','x','t',now(),'sha',$2,12,$3)")
+            .bind(id).bind(clip.len() as i32).bind(&clip).execute(&state.db).await.unwrap();
+        let store = FakeStore::default();
+        assert_eq!(backfill_clips(&state, &store).await.unwrap(), json!({ "moved": 1, "failed": 0 }));
+        assert_eq!(backfill_clips(&state, &store).await.unwrap(), json!({ "moved": 0, "failed": 0 }));
+        let resp = worker_clip_for(&state, "u1", id, Some(&store)).await.unwrap();
+        assert_eq!(to_bytes(resp.into_body(), 4 << 20).await.unwrap().to_vec(), clip);
+        let none: Option<Vec<u8>> = sqlx::query_scalar("SELECT clip FROM voice_custom_voices WHERE id = $1").bind(id).fetch_one(&state.db).await.unwrap();
+        assert!(none.is_none());
+        assert_eq!(create_for_user(&state, "u1", &headers(), body(&clip), None, Utc::now()).await.unwrap().status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 }

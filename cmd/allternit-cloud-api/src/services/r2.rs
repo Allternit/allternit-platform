@@ -45,6 +45,21 @@ pub trait ObjectStore: Send + Sync {
     fn presign_get(&self, bucket: &str, key: &str, ttl: Duration) -> Result<String, R2Error>;
     /// Size in bytes, or `None` when the object does not exist.
     async fn head(&self, bucket: &str, key: &str) -> Result<Option<u64>, R2Error>;
+    /// Presigned upload URL signed for exactly `content_length` bytes.
+    fn presign_put(&self, _bucket: &str, _key: &str, _ttl: Duration, _content_type: &str, _content_length: Option<u64>) -> Result<String, R2Error> {
+        Err(R2Error::Unavailable)
+    }
+    async fn put(&self, _bucket: &str, _key: &str, _bytes: Vec<u8>, _content_type: &str) -> Result<(), R2Error> {
+        Err(R2Error::Unavailable)
+    }
+    /// Idempotent: a missing object is not an error.
+    async fn delete(&self, _bucket: &str, _key: &str) -> Result<(), R2Error> {
+        Err(R2Error::Unavailable)
+    }
+    /// Object bytes, or `None` when it does not exist.
+    async fn get(&self, _bucket: &str, _key: &str) -> Result<Option<Vec<u8>>, R2Error> {
+        Err(R2Error::Unavailable)
+    }
 }
 
 #[derive(Clone)]
@@ -124,6 +139,18 @@ impl R2Client {
         match resp.status().as_u16() {
             404 => Ok(()),
             s => ok_status(s),
+        }
+    }
+
+    /// Object bytes; `None` when it does not exist.
+    pub async fn get(&self, bucket: &str, key: &str) -> Result<Option<Vec<u8>>, R2Error> {
+        let path = Self::object_path(bucket, key);
+        let signed = self.sign_request("GET", &path, "", &hex::encode(Sha256::digest(b"")), &[], Utc::now());
+        let resp = self.send(self.http.get(format!("{}{path}", self.endpoint)), signed).await?;
+        match resp.status().as_u16() {
+            404 => Ok(None),
+            s if (200..300).contains(&s) => Ok(Some(resp.bytes().await.map_err(|e| R2Error::Http(e.to_string()))?.to_vec())),
+            s => Err(R2Error::Status(s)),
         }
     }
 
@@ -234,6 +261,18 @@ impl ObjectStore for R2Client {
     }
     async fn head(&self, bucket: &str, key: &str) -> Result<Option<u64>, R2Error> {
         R2Client::head(self, bucket, key).await
+    }
+    fn presign_put(&self, bucket: &str, key: &str, ttl: Duration, content_type: &str, content_length: Option<u64>) -> Result<String, R2Error> {
+        R2Client::presign_put(self, bucket, key, ttl, content_type, content_length)
+    }
+    async fn put(&self, bucket: &str, key: &str, bytes: Vec<u8>, content_type: &str) -> Result<(), R2Error> {
+        R2Client::put(self, bucket, key, bytes, content_type).await
+    }
+    async fn delete(&self, bucket: &str, key: &str) -> Result<(), R2Error> {
+        R2Client::delete(self, bucket, key).await
+    }
+    async fn get(&self, bucket: &str, key: &str) -> Result<Option<Vec<u8>>, R2Error> {
+        R2Client::get(self, bucket, key).await
     }
 }
 
