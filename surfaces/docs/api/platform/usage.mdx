@@ -1,0 +1,32 @@
+---
+title: 'Usage'
+description: 'What your project used, by meter, key or account.'
+---
+
+```http
+GET /v1/usage?group_by=meter&from=2026-10-01&to=2026-11-01
+```
+
+Scope `usage`. `group_by` is `meter` (default), `key` or `account`; `from` and `to` are dates or timestamps, `to` exclusive. Each row is a sum, with how many events went into it:
+
+```json
+{ "data": [ { "group": "voice_min_allternit", "meter": "voice_min_allternit", "unit": "minute", "quantity": 412.5, "events": 38 } ] }
+```
+
+Under `group_by=account`, a row with `group: null` is project-level usage that belongs to no account. A key bound to one account only sees that account's usage.
+
+## Meters
+
+| Meter | Unit |
+|---|---|
+| `voice_min_allternit` | minute (our model) |
+| `voice_min_byok` | minute (your model key) |
+| `agent_month` | hosted agent per month |
+| `tokens_in`, `tokens_out` | tokens |
+| `number_local_month`, `number_tollfree_month` | number per month |
+| `sms_segment` | SMS segment, in or out |
+| `mms` | MMS message |
+| `registration_passthrough_cents` | carrier registration, at cost |
+| `recording_min_month` | stored recording minute per month |
+
+Prices per meter are on the pricing page.

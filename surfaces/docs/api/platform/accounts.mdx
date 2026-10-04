@@ -1,0 +1,20 @@
+---
+title: 'Accounts'
+description: 'One account per end-customer business you serve, with its data kept separate.'
+---
+
+An account is one business you serve. Everything you create for that business (agents, numbers, people, inbox items) belongs to its account, and no other account can see it.
+
+| Method | Path | |
+|---|---|---|
+| `POST` | `/v1/accounts` | Create: `{ "name", "external_ref"?, "metadata"? }` |
+| `GET` | `/v1/accounts` | List (cursor pagination) |
+| `GET` | `/v1/accounts/{id}` | Retrieve |
+| `PATCH` | `/v1/accounts/{id}` | Update `name`, `external_ref`, `metadata` |
+| `DELETE` | `/v1/accounts/{id}` | Delete |
+
+```json
+{ "id": "acct_7Hq…", "object": "account", "name": "Lakeside Dental", "external_ref": "cust_481", "metadata": {}, "created_at": "2026-10-04T15:02:11Z" }
+```
+
+`external_ref` is your own id for the business and is unique within the project. Deleting an account is a soft delete that also revokes every key bound to it. Any resource scope can manage accounts; an [account-bound key](/api/platform/authentication#account-bound-keys) can only read and rename its own.

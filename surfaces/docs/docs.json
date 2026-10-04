@@ -544,6 +544,17 @@
         "tab": "API Reference",
         "groups": [
           {
+            "group": "Platform API",
+            "pages": [
+              "api/platform/overview",
+              "api/platform/authentication",
+              "api/platform/errors",
+              "api/platform/idempotency-and-limits",
+              "api/platform/accounts",
+              "api/platform/usage"
+            ]
+          },
+          {
             "group": "Overview",
             "pages": [
               "api/overview",

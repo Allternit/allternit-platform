@@ -429,6 +429,10 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::inference_keys::routes())
         // API keys verify the Clerk session per-request and store only hashes.
         .merge(routes::api_keys::routes())
+        // Allternit Platform API (/v1/accounts, /v1/usage, … plus console
+        // /api/v1/platform/*): inert (404 platform_api_disabled) until
+        // ALLTERNIT_PLATFORM_API=1; authenticates project keys itself.
+        .merge(routes::platform_v1::router(&state))
         // The Stripe webhook verifies the Stripe-Signature HMAC itself and
         // answers 503 webhook_not_configured when STRIPE_WEBHOOK_SECRET is unset.
         .merge(routes::billing_webhooks::routes())

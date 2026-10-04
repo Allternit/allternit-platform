@@ -11,6 +11,7 @@ The only public origin is `https://api.allternit.com` ([Cloud API](/api/cloud-ap
 |------------|--------|----------|
 | Clerk session JWT | `Authorization: Bearer <sess>` | Browser console: pairing, relay, agent-sessions, office, beta, billing, provisioned instances |
 | Allternit API key (`alt_…`) | `Authorization: Bearer alt_…` | Cloud API `POST /v1/chat/completions` (`inference` scope) and key-protected routes such as phone numbers, calls and SMS (`compute` scope); keys are created at `/api/v1/api-keys` while signed in |
+| Platform API project key (`alt_live_…` / `alt_test_…`) | `Authorization: Bearer alt_live_…` | The developer [Platform API](/api/platform/overview) under `/v1` (accounts, usage, and the agent, voice and messaging routes as they ship); bound to one project, optionally one account. See [Platform API authentication](/api/platform/authentication) |
 | Virtual key (`ak-`) | `Authorization: Bearer ak-…` | LLM gateway on the data-plane node (`http://127.0.0.1:8013/v1`): chat completions, embeddings, files, batches, caches |
 | Runtime device token (`allternit_runtime_…`) | `Authorization: Bearer allternit_runtime_…` | Node → Cloud API: heartbeat, relay connect, rotate |
 
