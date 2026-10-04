@@ -92,8 +92,10 @@ The local connector's key is an access token whose only scope is `vendor-bot:<ve
 | --- | --- | --- |
 | Claude Code | `claude mcp add --transport http --scope user <name> <url> --header "Authorization: Bearer …"` | Added with Claude Code's own CLI. |
 | Claude Desktop | `claude_desktop_config.json` | `mcpServers.<name>` with `npx mcp-remote`. |
-| Codex | `~/.codex/config.toml` | `[mcp_servers.<name>]` with `url` and `http_headers`. |
-| Gemini CLI | `~/.gemini/settings.json` | `mcpServers.<name>` with `httpUrl` and `headers`. |
+| Codex | `~/.codex/config.toml` | `[mcp_servers.<name>]` with `url`, `http_headers` and `default_tools_approval_mode = "approve"`. |
+| Gemini CLI | `~/.gemini/settings.json` | `mcpServers.<name>` with `httpUrl`, `headers` and `trust: true`. |
 | Hermes | `~/.hermes/config.yaml` | `mcp_servers.<name>` with `url` and `headers`. |
 
-The entry name is `allternit-<bot id>`. Hermes' YAML file is rewritten as a whole, so its comments are not kept (the backup copy has them).
+The entry name is `allternit-<bot id>`.
+
+Headless runs can't answer a prompt, so each entry pre-approves only Allternit's own tools: Codex's `default_tools_approval_mode = "approve"` and Gemini CLI's `trust: true` sit inside the Allternit entry, and Claude Code is run with `--allowedTools mcp__<name>`. Nothing global is changed (no "approve everything", no sandbox or approval-policy edits), other servers keep their own settings, and Undo removes the approval with the entry. Hermes has no per-tool approval prompt for MCP tools, so it needs nothing. Hermes' YAML file is rewritten as a whole, so its comments are not kept (the backup copy has them).

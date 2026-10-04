@@ -1,15 +1,24 @@
 //! `POST /api/v1/runtime-devices/:id/viewer-token` — short-lived live-desktop
-//! (VNC) viewer token for a provisioned cloud computer, used by "Sign in on
+//! (VNC) viewer ticket for a provisioned cloud computer, used by "Sign in on
 //! the cloud computer" (vendor-account sign-in) to open the computer's
 //! desktop in the browser.
 //!
-//! The token is the SAME signed format the Sessions `computers` ws-token mints
-//! (`allternit-api` `bot_desktop_stream::sign_computer_token`: HS256, header
+//! The desktop is served by the runtime itself, through the same outbound
+//! relay socket tunnel every other browser-facing runtime WebSocket uses (see
+//! `runtime_relay`): the browser connects to cloud-api, cloud-api tunnels the
+//! frames to the runtime, and the runtime's allternit-api
+//! (`runtime_viewer::runtime_vnc_ws_handler`, path
+//! `/api/v1/runtime-viewer/vnc?token=…`) proxies to its local VNC server. No
+//! Sessions computer record and no shared desktop secret are involved.
+//!
+//! The viewer token is the Sessions ws-token format (HS256, header
 //! `{"alg":"HS256","typ":"DT"}`, claims `{bot_id, computer_id, purpose,
-//! read_only, sandbox_id, user_id, exp}`, URL-safe base64 without padding,
-//! HMAC key `ALLTERNIT_DESKTOP_WS_SECRET`), with `computer_id` = the runtime
-//! device id and `purpose` = `"vnc"`, so the existing VNC ws verifier accepts
-//! it. TTL is 300 s, the same as the Sessions path.
+//! read_only, sandbox_id, user_id, exp}`, URL-safe base64 without padding)
+//! signed with the **per-runtime relay key** (`runtime_devices.credential_hash`
+//! = `sha256_hex(device_token)`), the same key that signs every relayed
+//! request, which the runtime already holds. `computer_id` = the runtime id,
+//! `purpose` = `"vnc"`, TTL 300 s. The response's `wsUrl` carries a 30 s relay
+//! socket ticket and is for immediate use; ask again to reconnect.
 //!
 //! Rules:
 //! - Auth is the sibling runtime-devices convention (`resolve_user_scoped(..,
@@ -22,10 +31,8 @@
 //! - A sleeping computer is woken exactly like the relay proxy wakes it
 //!   (`connect_or_wake_runtime`); if it is still booting the answer is 503
 //!   `runtime_warming`, if it cannot be reached 503 `runtime_offline`.
-//! - Inert when unconfigured: without `ALLTERNIT_DESKTOP_WS_SECRET` and
-//!   `ALLTERNIT_VIEWER_WS_BASE` the route answers 503 `viewer_not_configured`
-//!   (checked before any wake, so nothing is started for a token we cannot
-//!   mint). Nothing is read at boot.
+//! - No env is required. `ALLTERNIT_VIEWER_WS_BASE` (optional) overrides the
+//!   public ws base (default: the request's own host, `wss://`).
 
 use axum::{
     extract::{Path, State},
@@ -40,12 +47,13 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::sync::Arc;
 
-use super::runtime_relay::{connect_or_wake_runtime, RelayConnect};
+use super::runtime_relay::{connect_or_wake_runtime, issue_socket_ticket, RelayConnect};
 use crate::{ApiError, ApiState};
 
 /// Same lifetime as the Sessions computers ws-token (300 s); never longer.
 pub const VIEWER_TOKEN_TTL_SECONDS: u64 = 300;
-const SECRET_ENV: &str = "ALLTERNIT_DESKTOP_WS_SECRET";
+/// The runtime-side allternit-api route the relay tunnel dials.
+pub const VIEWER_RUNTIME_PATH: &str = "/api/v1/runtime-viewer/vnc";
 const WS_BASE_ENV: &str = "ALLTERNIT_VIEWER_WS_BASE";
 
 pub fn routes() -> Router<Arc<ApiState>> {
@@ -129,14 +137,29 @@ fn coded_error(status: StatusCode, code: &str, message: &str) -> Response {
     (status, Json(serde_json::json!({ "error": code, "code": code, "message": message }))).into_response()
 }
 
-fn viewer_config() -> Option<(String, String)> {
-    let secret = std::env::var(SECRET_ENV).ok().filter(|v| !v.is_empty())?;
-    let base = std::env::var(WS_BASE_ENV).ok().filter(|v| !v.trim().is_empty())?;
-    Some((secret, base.trim().trim_end_matches('/').to_string()))
+/// Public ws base for the browser: the optional env override, else the host
+/// the request came in on (`x-forwarded-host` behind the proxy). `ws://` only
+/// for a loopback host.
+fn ws_base(headers: &HeaderMap) -> Option<String> {
+    if let Some(base) = std::env::var(WS_BASE_ENV).ok().filter(|v| !v.trim().is_empty()) {
+        return Some(base.trim().trim_end_matches('/').to_string());
+    }
+    let host = headers
+        .get("x-forwarded-host")
+        .or_else(|| headers.get(axum::http::header::HOST))
+        .and_then(|v| v.to_str().ok())
+        .map(|h| h.split(',').next().unwrap_or(h).trim())
+        .filter(|h| !h.is_empty())?;
+    let local = host.starts_with("localhost") || host.starts_with("127.0.0.1") || host.starts_with("[::1]");
+    Some(format!("{}://{host}", if local { "ws" } else { "wss" }))
 }
 
-fn ws_url(base: &str, runtime_id: &str, token: &str) -> String {
-    format!("{base}/{}/vnc?token={token}", urlencoding::encode(runtime_id))
+fn ws_url(base: &str, runtime_id: &str, ticket: &str) -> String {
+    format!(
+        "{base}/api/v1/runtime-devices/{}/socket?ticket={}",
+        urlencoding::encode(runtime_id),
+        urlencoding::encode(ticket)
+    )
 }
 
 async fn issue_viewer_token(
@@ -173,11 +196,11 @@ async fn issue_viewer_token(
             "Only a cloud computer has a live desktop view",
         ));
     }
-    let Some((secret, base)) = viewer_config() else {
+    let Some(base) = ws_base(&headers) else {
         return Ok(coded_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "viewer_not_configured",
-            "The live desktop view is not configured on this server",
+            StatusCode::BAD_REQUEST,
+            "no_host",
+            "Cannot work out the public address for the live desktop view",
         ));
     };
 
@@ -210,12 +233,26 @@ async fn issue_viewer_token(
         }
     }
 
+    // Per-runtime key: the same digest that signs relayed requests.
+    let relay_key: Option<String> = sqlx::query_scalar(
+        "SELECT credential_hash FROM runtime_devices WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
+    )
+    .bind(&runtime_id)
+    .bind(&user_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some(relay_key) = relay_key else {
+        return Ok(coded_error(StatusCode::NOT_FOUND, "not_found", "Runtime not found"));
+    };
     let expires = chrono::Utc::now() + chrono::Duration::seconds(VIEWER_TOKEN_TTL_SECONDS as i64);
-    let token = sign_viewer_token(&secret, &runtime_id, &user_id, read_only, expires.timestamp() as u64);
+    let token = sign_viewer_token(&relay_key, &runtime_id, &user_id, read_only, expires.timestamp() as u64);
+    let tunnel_path = format!("{VIEWER_RUNTIME_PATH}?token={token}");
+    let ticket = issue_socket_ticket(&state, &user_id, &runtime_id, tunnel_path).await?;
+    let ticket = ticket["ticket"].as_str().unwrap_or_default().to_string();
     Ok(Json(serde_json::json!({
         "token": token,
         "expiresAt": expires.to_rfc3339(),
-        "wsUrl": ws_url(&base, &runtime_id, &token),
+        "wsUrl": ws_url(&base, &runtime_id, &ticket),
         "runtimeId": runtime_id,
     }))
     .into_response())
@@ -237,8 +274,7 @@ mod tests {
 
     async fn setup() -> (Router, sqlx::PgPool) {
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
-        std::env::set_var(SECRET_ENV, "unit-test-secret");
-        std::env::set_var(WS_BASE_ENV, "wss://api.test/api/v1/computers/");
+        std::env::remove_var(WS_BASE_ENV);
         let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
         sqlx::query(
             "CREATE TABLE provisioned_instances (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, device_id TEXT, status TEXT NOT NULL DEFAULT 'running', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
@@ -268,7 +304,6 @@ mod tests {
 
     fn cleanup() {
         std::env::remove_var(ALLOW_DEV_TOKEN_ENV);
-        std::env::remove_var(SECRET_ENV);
         std::env::remove_var(WS_BASE_ENV);
     }
 
@@ -291,8 +326,26 @@ mod tests {
     }
 
     #[test]
-    fn ws_url_encodes_the_runtime_id() {
-        assert_eq!(ws_url("wss://h/c", "a b", "T"), "wss://h/c/a%20b/vnc?token=T");
+    fn ws_url_targets_the_relay_socket_and_encodes_the_runtime_id() {
+        assert_eq!(
+            ws_url("wss://h", "a b", "T"),
+            "wss://h/api/v1/runtime-devices/a%20b/socket?ticket=T"
+        );
+    }
+
+    #[test]
+    fn ws_base_comes_from_the_request_host_or_the_env_override() {
+        let _g = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var(WS_BASE_ENV);
+        let mut h = HeaderMap::new();
+        assert_eq!(ws_base(&h), None);
+        h.insert("host", "localhost:8080".parse().unwrap());
+        assert_eq!(ws_base(&h).as_deref(), Some("ws://localhost:8080"));
+        h.insert("x-forwarded-host", "api.allternit.com".parse().unwrap());
+        assert_eq!(ws_base(&h).as_deref(), Some("wss://api.allternit.com"));
+        std::env::set_var(WS_BASE_ENV, "wss://edge.test/");
+        assert_eq!(ws_base(&h).as_deref(), Some("wss://edge.test"));
+        std::env::remove_var(WS_BASE_ENV);
     }
 
     #[tokio::test]
@@ -301,13 +354,24 @@ mod tests {
         let (router, db) = setup().await;
         cloud_computer(&db, "rt_v1", DEV_USER).await;
         let _conn = crate::routes::runtime_relay::register_test_connection("rt_v1").await;
-        let response = router.oneshot(authed_request("POST", PATH, "{}")).await.unwrap();
+        let mut request = authed_request("POST", PATH, "{}");
+        request.headers_mut().insert("x-forwarded-host", "api.test".parse().unwrap());
+        let response = router.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let body = json_body(response).await;
         let token = body["token"].as_str().unwrap();
         assert_eq!(body["runtimeId"], "rt_v1");
-        assert_eq!(body["wsUrl"], format!("wss://api.test/api/v1/computers/rt_v1/vnc?token={token}"));
-        let claims = verify_viewer_token("unit-test-secret", token, "rt_v1").unwrap();
+        let ws_url = body["wsUrl"].as_str().unwrap();
+        let ticket = ws_url
+            .strip_prefix("wss://api.test/api/v1/runtime-devices/rt_v1/socket?ticket=")
+            .expect("ws url targets the relay socket");
+        // The ticket tunnels to the runtime-side viewer route, carrying the token.
+        let t = crate::routes::runtime_relay::take_socket_ticket(ticket).await.unwrap();
+        assert_eq!(t.runtime_id, "rt_v1");
+        assert_eq!(t.path, format!("{VIEWER_RUNTIME_PATH}?token={token}"));
+        // Signed with the per-runtime relay key, not a shared env secret.
+        let relay_key = crate::routes::runtime_pairing::sha256_hex(b"token-of-rt_v1");
+        let claims = verify_viewer_token(&relay_key, token, "rt_v1").unwrap();
         assert_eq!(claims.user_id, DEV_USER);
         assert!(!claims.read_only);
         let ttl = claims.exp as i64 - chrono::Utc::now().timestamp();
@@ -345,14 +409,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unconfigured_viewer_is_503_viewer_not_configured() {
+    async fn needs_no_env_and_asks_for_a_host_when_there_is_none() {
         let _g = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (router, db) = setup().await;
         cloud_computer(&db, "rt_v1", DEV_USER).await;
-        std::env::remove_var(WS_BASE_ENV);
         let response = router.oneshot(authed_request("POST", PATH, "{}")).await.unwrap();
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(json_body(response).await["error"], "viewer_not_configured");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(response).await["error"], "no_host");
         cleanup();
     }
 
