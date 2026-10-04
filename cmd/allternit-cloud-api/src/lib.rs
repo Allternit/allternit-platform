@@ -365,6 +365,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Custom voices with consent on file: user routes check the Clerk session; the
         // consent/clip routes take the voice service's bearer token.
         .merge(routes::voice_consent::routes())
+        // Call recording playback: 10-minute presigned R2 URL for the caller's own call; 503 when ALLTERNIT_R2_* is unset.
+        .merge(routes::voice_recordings::routes())
         // Discord shared app: install/send/commands check the Clerk session; the OAuth
         // callback and interactions are public (state / Ed25519 signature).
         .merge(routes::discord_app::routes())

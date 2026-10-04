@@ -659,6 +659,7 @@
               "api/office-engine",
               "api/voice",
               "api/voice-tickets",
+              "api/voice-recordings",
               "api/server-tools",
               "api/mcp-servers",
               "api/design-connector",

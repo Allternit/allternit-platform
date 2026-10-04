@@ -16,6 +16,7 @@ pub mod node_resolution;
 pub mod ops_alert;
 pub mod provisioning;
 pub mod quota_service;
+pub mod r2;
 pub mod run_service;
 pub mod scheduler_service;
 pub mod task_service;
