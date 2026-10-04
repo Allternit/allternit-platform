@@ -41,7 +41,7 @@
 
 | | |
 |---|---|
-| **Status** | **Pending.** Needed by photo avatars included with a plan (`routes::photo_avatars`). Until it's applied, `GET /api/v1/avatars/photo/allowance` answers 500 and the app hides the Included lane (no paid call is made). |
+| **Status** | **Done 2026-10-04** (applied as postgres, `GRANT ALL ON photo_avatar_usage TO allternit`). Needed by photo avatars included with a plan (`routes::photo_avatars`). Until it's applied, `GET /api/v1/avatars/photo/allowance` answers 500 and the app hides the Included lane (no paid call is made). |
 | **What** | `044_photo_avatar_usage.sql` (the `photo_avatar_usage` ledger) |
 | **Where** | `mail`; DB `allternit`; file in `cmd/allternit-cloud-api/migrations_pg/` |
 | **How** | `sudo -u postgres psql -d allternit -f 044_photo_avatar_usage.sql` (idempotent: `IF NOT EXISTS`), then `GRANT ALL ON photo_avatar_usage TO allternit;` if the service role doesn't own new tables. No restart needed. Optional: set `ALLTERNIT_AVATAR_MONTHLY_BUDGET_USD` in `/opt/allternit-cloud-api/.env` (default 4.00) and restart cloud-api. The key is the existing `OPENAI_API_KEY`. |
