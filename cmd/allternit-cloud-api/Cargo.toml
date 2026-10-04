@@ -70,6 +70,8 @@ cron = "0.12"
 tempfile = { workspace = true }
 regex = { workspace = true }
 lazy_static = { workspace = true }
+# Photo avatars: decode + downscale the uploaded photo in memory (routes::photo_avatars).
+image = { version = "0.24", default-features = false, features = ["png", "jpeg", "webp"] }
 
 # gRPC (Headscale admin API)
 tonic = { workspace = true }

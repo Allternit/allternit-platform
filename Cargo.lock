@@ -446,6 +446,7 @@ dependencies = [
  "hmac 0.12.1",
  "http-body-util",
  "hyper 1.10.1",
+ "image",
  "jsonwebtoken",
  "lazy_static",
  "md5",

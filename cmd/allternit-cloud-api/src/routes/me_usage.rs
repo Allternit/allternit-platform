@@ -68,7 +68,7 @@ async fn caller_user_id(state: &ApiState, headers: &HeaderMap) -> Result<String,
     }
 }
 
-fn next_month_start(now: DateTime<Utc>) -> DateTime<Utc> {
+pub(crate) fn next_month_start(now: DateTime<Utc>) -> DateTime<Utc> {
     let year = now.year();
     let month = now.month();
     if month == 12 {

@@ -36,6 +36,7 @@ pub mod mcp_edge;
 pub mod mesh;
 pub mod channel_inbound;
 pub mod phone;
+pub mod photo_avatars;
 pub mod phone_sync;
 pub mod runtime_files;
 pub mod phone_invites;
