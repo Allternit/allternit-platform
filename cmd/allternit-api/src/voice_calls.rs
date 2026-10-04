@@ -151,6 +151,131 @@ impl VoiceTurner for GizziStreamTurner {
     }
 }
 
+/// Writes the owner-facing summary of a finished call. Production runs the
+/// bot's own model in an ephemeral gizzi session (never the call's session,
+/// never in thread history); tests plug in a fake.
+#[async_trait]
+pub trait CallSummarizer: Send + Sync {
+    /// `Ok` = the model's JSON `{ "text": .., "followUps": [..] }`.
+    async fn summarize(&self, db: &DbHandle, session_id: &str, bot_id: &str, prompt: &str) -> Result<Value, String>;
+}
+
+struct GizziSummarizer;
+
+#[async_trait]
+impl CallSummarizer for GizziSummarizer {
+    async fn summarize(&self, db: &DbHandle, session_id: &str, bot_id: &str, prompt: &str) -> Result<Value, String> {
+        let model = crate::agent_session_routes::bot_turn_model(db, session_id, bot_id);
+        let pair = match (model["providerID"].as_str(), model["modelID"].as_str()) {
+            (Some(p), Some(m)) => Some((p.to_string(), m.to_string())),
+            _ => None,
+        };
+        let schema = summary_schema();
+        let reply = crate::usage_ledger::scope(crate::usage_ledger::LedgerCtx::surface("bot"), async {
+            crate::structured_output::complete_structured(prompt, Some(SUMMARY_SYSTEM), pair.as_ref(), &schema).await
+        })
+        .await
+        .ok_or_else(|| "gizzi gave no summary".to_string())?;
+        reply.value.ok_or_else(|| reply.error.unwrap_or_else(|| "the model returned no valid summary".to_string()))
+    }
+}
+
+const SUMMARY_SYSTEM: &str = "You write short owner-facing summaries of phone calls a bot took. Plain words, no markdown. Never invent anything that is not in the transcript or the tool log.";
+
+fn summary_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "text": { "type": "string", "description": "3-6 sentences: who called, what they wanted, what the bot did (including tool steps), and how the call ended." },
+            "followUps": { "type": "array", "items": { "type": "string" }, "description": "Concrete follow-ups for the owner; empty when there are none." }
+        },
+        "required": ["text", "followUps"],
+        "additionalProperties": false
+    })
+}
+
+const MAX_SUMMARY_TRANSCRIPT_CHARS: usize = 24_000;
+
+/// The call's transcript and tool steps, from its own ledger rows, as the prompt.
+fn summary_prompt(db: &DbHandle, call: &CallRow, call_id: &str) -> Result<Option<String>, String> {
+    let conn = db.connect().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT event_type, actor_type, payload FROM bot_events WHERE bot_id = ?1 AND thread_id = ?2 AND idempotency_key LIKE ?3 ORDER BY rowid")
+        .map_err(|e| e.to_string())?;
+    let like = format!("call:{call_id}:%");
+    let rows = stmt
+        .query_map(params![call.bot_id, call.thread_id, like], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))
+        .map_err(|e| e.to_string())?;
+    let caller = if call.direction == "inbound" { &call.from_e164 } else { &call.to_e164 };
+    let (mut lines, mut finals, mut reason, mut duration) = (Vec::new(), 0, String::new(), None);
+    for row in rows {
+        let (kind, actor, payload) = row.map_err(|e| e.to_string())?;
+        let p: Value = serde_json::from_str(&payload).unwrap_or(Value::Null);
+        match kind.as_str() {
+            "call.transcript.delta" => {
+                let text = p["text"].as_str().unwrap_or("").trim();
+                if !text.is_empty() {
+                    finals += 1;
+                    let who = match actor.as_str() {
+                        "caller" => "Caller",
+                        "human" => "Owner (took over)",
+                        _ => "Bot",
+                    };
+                    lines.push(format!("{who}: {text}"));
+                }
+            }
+            "agent.tool.started" => lines.push(format!("[Bot used tool: {}]", p["data"]["name"].as_str().unwrap_or("tool"))),
+            "agent.tool.failed" => lines.push(format!("[Tool failed: {}]", p["data"]["name"].as_str().unwrap_or("tool"))),
+            "call.ended" => {
+                reason = p["reason"].as_str().unwrap_or("").to_string();
+                duration = p["durationSec"].as_u64();
+            }
+            _ => {}
+        }
+    }
+    if finals == 0 {
+        return Ok(None);
+    }
+    let mut transcript = lines.join("\n");
+    if transcript.len() > MAX_SUMMARY_TRANSCRIPT_CHARS {
+        let mut cut = transcript.len() - MAX_SUMMARY_TRANSCRIPT_CHARS;
+        while !transcript.is_char_boundary(cut) {
+            cut += 1;
+        }
+        transcript = format!("[earlier part of the call omitted]\n{}", &transcript[cut..]);
+    }
+    Ok(Some(format!(
+        "Summarize this {} phone call for the bot's owner. Caller number: {caller}. Duration: {} seconds. Ended: {}.\n\nTranscript and tool log:\n{transcript}",
+        call.direction,
+        duration.map_or("unknown".to_string(), |d| d.to_string()),
+        if reason.is_empty() { "unknown" } else { &reason },
+    )))
+}
+
+/// Background: summarise an ended call and write `call.summary` to the thread.
+/// A call with no final transcript segment gets none; any failure is logged
+/// and dropped (no event, no retry).
+async fn write_call_summary(db: DbHandle, summarizer: Arc<dyn CallSummarizer>, call: CallRow, call_id: String) {
+    let prompt = match summary_prompt(&db, &call, &call_id) {
+        Ok(Some(p)) => p,
+        Ok(None) => return,
+        Err(e) => return warn!(call_id, "call summary: couldn't read the call's events: {e}"),
+    };
+    let done = tokio::time::timeout(Duration::from_secs(150), summarizer.summarize(&db, &call.session_id, &call.bot_id, &prompt)).await;
+    let value = match done {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => return warn!(call_id, "call summary failed: {e}"),
+        Err(_) => return warn!(call_id, "call summary timed out"),
+    };
+    let text = value["text"].as_str().unwrap_or("").trim().to_string();
+    if text.is_empty() {
+        return warn!(call_id, "call summary: the model returned no text");
+    }
+    let follow_ups: Vec<String> = value["followUps"].as_array().map(|a| a.iter().filter_map(|v| v.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).take(10).collect()).unwrap_or_default();
+    let payload = json!({ "callId": call_id, "text": text, "followUps": follow_ups, "n": 0 });
+    led(&db, &call.bot_id, &call.thread_id, Some(&call.session_id), "call.summary", ("bot", &call.bot_id), payload, Some(format!("call:{call_id}:call.summary:0")));
+}
+
 struct InFlight {
     generation: u64,
     session_id: String,
@@ -162,17 +287,18 @@ pub struct VoiceDeps {
     pub secret: Arc<dyn RelaySecret>,
     pub resolver: Box<dyn ThreadResolver>,
     pub turner: Arc<dyn VoiceTurner>,
+    pub summarizer: Arc<dyn CallSummarizer>,
     turns: Mutex<HashMap<String, InFlight>>,
     next_generation: AtomicU64,
 }
 
 impl VoiceDeps {
-    pub fn new(secret: Arc<dyn RelaySecret>, resolver: Box<dyn ThreadResolver>, turner: Arc<dyn VoiceTurner>) -> Self {
-        Self { secret, resolver, turner, turns: Mutex::new(HashMap::new()), next_generation: AtomicU64::new(1) }
+    pub fn new(secret: Arc<dyn RelaySecret>, resolver: Box<dyn ThreadResolver>, turner: Arc<dyn VoiceTurner>, summarizer: Arc<dyn CallSummarizer>) -> Self {
+        Self { secret, resolver, turner, summarizer, turns: Mutex::new(HashMap::new()), next_generation: AtomicU64::new(1) }
     }
 
     pub fn production() -> Self {
-        Self::new(Arc::new(EnvOrFileRelaySecret::from_process_env()), Box::new(GizziResolver), Arc::new(GizziStreamTurner { fallback: ChannelTurner }))
+        Self::new(Arc::new(EnvOrFileRelaySecret::from_process_env()), Box::new(GizziResolver), Arc::new(GizziStreamTurner { fallback: ChannelTurner }), Arc::new(GizziSummarizer))
     }
 
     /// Stop the call's running turn, if any (optionally only a given generation).
@@ -377,6 +503,9 @@ async fn events_h(State(state): State<Arc<AppState>>, Extension(deps): Extension
             let _ = state.db.connect().and_then(|c| c.execute("UPDATE voice_calls SET state='ended', ended_at=COALESCE(ended_at, ?1) WHERE call_id=?2", params![at, call_id]));
             // A call that ended with a turn still running has nobody to speak to.
             deps.abort_turn(&call_id, None).await;
+            // Only the first call.ended of a call spawns a summary (the key makes a replay a no-op anyway).
+            let (db, summarizer, call, id) = (state.db.clone(), deps.summarizer.clone(), call.clone(), call_id.clone());
+            tokio::spawn(write_call_summary(db, summarizer, call, id));
         }
     }
     Json(json!({ "written": written, "duplicates": duplicates, "ignored": ignored })).into_response()
@@ -577,6 +706,19 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct FakeSummarizer {
+        reply: Mutex<Option<Result<Value, String>>>,
+        prompts: Mutex<Vec<(String, String)>>,
+    }
+    #[async_trait]
+    impl CallSummarizer for FakeSummarizer {
+        async fn summarize(&self, _db: &DbHandle, session_id: &str, _bot: &str, prompt: &str) -> Result<Value, String> {
+            self.prompts.lock().unwrap().push((session_id.into(), prompt.into()));
+            self.reply.lock().unwrap().clone().unwrap_or_else(|| Ok(json!({ "text": "A customer asked about Friday. The bot checked the calendar.", "followUps": ["Call back to confirm Friday", "  "] })))
+        }
+    }
+
+    #[derive(Default)]
     struct FakeTurner {
         reply: Mutex<Option<Result<String, String>>>,
         /// When set, the turner streams these deltas itself (and returns `Streamed`).
@@ -631,6 +773,7 @@ mod tests {
         app: Router,
         state: Arc<AppState>,
         turner: Arc<FakeTurner>,
+        summarizer: Arc<FakeSummarizer>,
     }
 
     async fn setup(tag: &str, secret: Option<(&'static str, &'static str)>) -> H {
@@ -640,9 +783,10 @@ mod tests {
         state.db.connect().unwrap().execute("INSERT INTO agents (id, user_id, name, model, provider, is_bot, config) VALUES ('bot-1','user-a','b','m','p',1,'{}')", []).unwrap();
         crate::channel_phone::upsert_number(&state.db, "num-1", OWNER, "bot-1", "+14155550100", None).unwrap();
         let turner = Arc::new(FakeTurner::default());
-        let deps = Arc::new(VoiceDeps::new(Arc::new(Secret(secret)), Box::new(FakeResolver), turner.clone()));
+        let summarizer = Arc::new(FakeSummarizer::default());
+        let deps = Arc::new(VoiceDeps::new(Arc::new(Secret(secret)), Box::new(FakeResolver), turner.clone(), summarizer.clone()));
         let app = voice_calls_router_with(deps).with_state(state.clone());
-        H { app, state, turner }
+        H { app, state, turner, summarizer }
     }
 
     async fn send(app: &Router, method: &str, path: &str, body: Value, sign: bool) -> (StatusCode, String) {
@@ -775,6 +919,64 @@ mod tests {
         // Unknown call, bad type.
         assert_eq!(send(&h.app, "POST", &format!("{CALLS}/nope/events"), batch_of("call.started"), true).await.0, StatusCode::NOT_FOUND);
         assert_eq!(send(&h.app, "POST", &path, batch_of("agent.tool.started"), true).await.0, StatusCode::BAD_REQUEST);
+    }
+
+    async fn wait_for_summary_rows(h: &H, call: &str, want: usize) -> Vec<(String, String, String, Value)> {
+        for _ in 0..100 {
+            let rows: Vec<_> = ledger(h, call).into_iter().filter(|r| r.0 == "call.summary").collect();
+            if rows.len() >= want {
+                return rows;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        Vec::new()
+    }
+
+    #[tokio::test]
+    async fn an_ended_call_gets_one_summary_in_an_ephemeral_session() {
+        let h = setup("summary", Some((TOKEN, OWNER))).await;
+        send(&h.app, "POST", CALLS, call_body("c1"), true).await;
+        let path = format!("{CALLS}/c1/events");
+        let batch = json!({ "events": [
+            { "type": "call.transcript.delta", "n": 1, "payload": { "speaker": "caller", "text": "Are you open Friday?", "final": true } },
+            { "type": "call.transcript.delta", "n": 2, "payload": { "speaker": "bot", "text": "Let me check.", "final": true } },
+            { "type": "call.ended", "n": 3, "payload": { "durationSec": 40, "reason": "hangup" } },
+        ] });
+        send(&h.app, "POST", &path, batch.clone(), true).await;
+        let rows = wait_for_summary_rows(&h, "c1", 1).await;
+        assert_eq!(rows.len(), 1);
+        assert_eq!((rows[0].1.as_str(), rows[0].2.as_str()), ("bot", "bot-1"));
+        assert_eq!(rows[0].3["text"], "A customer asked about Friday. The bot checked the calendar.");
+        assert_eq!(rows[0].3["followUps"], json!(["Call back to confirm Friday"]));
+        assert_eq!(rows[0].3["callId"], "c1");
+        let prompts = h.summarizer.prompts.lock().unwrap().clone();
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].1.contains("Caller: Are you open Friday?") && prompts[0].1.contains("Bot: Let me check."), "{}", prompts[0].1);
+        // A replayed call.ended does not write a second summary.
+        send(&h.app, "POST", &path, batch, true).await;
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert_eq!(ledger(&h, "c1").iter().filter(|r| r.0 == "call.summary").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn no_summary_without_a_final_segment_or_when_the_model_fails() {
+        let h = setup("nosummary", Some((TOKEN, OWNER))).await;
+        send(&h.app, "POST", CALLS, call_body("c1"), true).await;
+        send(&h.app, "POST", &format!("{CALLS}/c1/events"), json!({ "events": [{ "type": "call.ended", "n": 1, "payload": { "reason": "missed" } }] }), true).await;
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert!(h.summarizer.prompts.lock().unwrap().is_empty());
+        assert!(ledger(&h, "c1").iter().all(|r| r.0 != "call.summary"));
+
+        send(&h.app, "POST", CALLS, call_body("c2"), true).await;
+        *h.summarizer.reply.lock().unwrap() = Some(Err("gizzi down".into()));
+        let batch = json!({ "events": [
+            { "type": "call.transcript.delta", "n": 1, "payload": { "speaker": "caller", "text": "hi", "final": true } },
+            { "type": "call.ended", "n": 2, "payload": {} },
+        ] });
+        assert_eq!(send(&h.app, "POST", &format!("{CALLS}/c2/events"), batch, true).await.0, StatusCode::OK);
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert_eq!(h.summarizer.prompts.lock().unwrap().len(), 1);
+        assert!(ledger(&h, "c2").iter().all(|r| r.0 != "call.summary"));
     }
 
     fn batch_of(kind: &str) -> Value {

@@ -202,6 +202,11 @@ impl EventQueue {
         }
     }
 
+    /// `seq` of the last event queued so far.
+    pub fn last_seq(&self) -> u64 {
+        self.seq.seq
+    }
+
     /// Stop accepting events and return a handle that resolves once every
     /// queued event is delivered (or permanently rejected).
     pub fn close(mut self) -> JoinHandle<()> {

@@ -2288,7 +2288,7 @@ async fn get_native_origin(headers: HeaderMap, Path(id): Path<String>) -> Respon
 /// Model for a server-initiated turn: the thread's stored model (what the
 /// user picked), else the bot's own `agents.provider/model`, else the
 /// platform default — a routine never silently changes the bot's brain.
-fn bot_turn_model(db: &DbHandle, session_id: &str, bot_id: &str) -> serde_json::Value {
+pub(crate) fn bot_turn_model(db: &DbHandle, session_id: &str, bot_id: &str) -> serde_json::Value {
     let stored = db.get_session_metadata(session_id).ok().flatten();
     if let Some(pick) = stored.as_ref().and_then(|bag| bag.get("projectModel")) {
         if let (Some(provider), Some(model)) = (pick["providerId"].as_str(), pick["modelId"].as_str()) {
