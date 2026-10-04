@@ -68,6 +68,27 @@ Each message is a JSON object:
 }
 ```
 
+## Notification feed
+
+`GET /api/v1/events/stream` (allternit-api) is one SSE feed across all of the caller's bots. Allternit Desktop uses it to raise native notifications while the window is hidden. It sends only events worth interrupting someone for, as `event: notify` with `id:` set to a ledger cursor:
+
+```json
+{
+  "kind": "channel_message",
+  "eventType": "channel.message.received",
+  "botId": "bot-1",
+  "botName": "Ledger",
+  "threadId": "th-1",
+  "threadTitle": "Sam on Telegram",
+  "text": "first 240 characters",
+  "from": null,
+  "channel": "telegram",
+  "occurredAt": "2026-10-03T10:00:00Z"
+}
+```
+
+`kind` is `channel_message` (a message reached a bot through a channel), `missed_call` (a `call.ended` marked `missed`, `answered: false` or reason `missed`/`no_answer`) or `needs_you` (`thread.needs_user`, which includes an email held for approval). It reads `bot_events`, so only the caller's own bots appear and nothing is replayed on a fresh connection. Reconnect with `Last-Event-ID` (or `?after=`) to resume. A keep-alive comment is sent every 20 seconds.
+
 ## Related pages
 
 - [Sessions API](/api/sessions)
