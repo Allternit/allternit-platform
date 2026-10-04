@@ -6,7 +6,7 @@ description: 'The developer API for agents, voice, messaging, numbers, channels 
 The Allternit Platform API lets developers build on the same agents, phone numbers, voice, texting, channels and twin layer that Allternit runs for its own users. Everything lives under `https://api.allternit.com/v1`.
 
 <Note>
-The Platform API is in private beta. It answers `404 platform_api_disabled` on every `/v1` route except `/v1/chat/completions` and `/v1/models` until it is switched on for the deployment (`ALLTERNIT_PLATFORM_API=1`).
+The Platform API is in private beta. It answers `404 not_found_error` with code `platform_api_disabled` on every `/v1` route except `/v1/chat/completions` and `/v1/models` until it is switched on for the deployment (`ALLTERNIT_PLATFORM_API=1`).
 </Note>
 
 ## How it fits together
