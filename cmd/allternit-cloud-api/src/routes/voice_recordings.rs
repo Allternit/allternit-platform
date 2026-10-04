@@ -36,7 +36,7 @@ const RETENTION_DAYS: i64 = 90;
 const CONTENT_TYPE: &str = "audio/ogg";
 
 pub fn routes() -> Router<Arc<ApiState>> {
-    Router::new().route("/api/v1/voice/calls/:call_id/recording", get(get_recording))
+    Router::new().route("/api/v1/voice/calls/:callId/recording", get(get_recording))
 }
 
 fn coded(status: StatusCode, code: &str, message: &str) -> Response {
@@ -204,5 +204,20 @@ mod tests {
         assert_eq!(run(&state, "u1", "c6", None).await.0, StatusCode::SERVICE_UNAVAILABLE);
         call(&state, "c7", "u1", Some(json!({"recordingRef": "../secrets/x"})), 0).await;
         assert_eq!(run(&state, "u1", "c7", Some(&Fake(Some(1)))).await.0, StatusCode::NOT_FOUND);
+    }
+}
+
+#[cfg(test)]
+mod router_tests {
+    use crate::routes::test_support::{test_state, MockGateway};
+    use std::sync::Arc;
+
+    /// Building the full router panics on a route conflict (e.g. `:call_id`
+    /// next to `:callId` at the same segment), which would crash-loop prod.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn full_router_builds() {
+        let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
+        let _ = crate::create_router(state);
     }
 }
