@@ -234,6 +234,10 @@ async fn send_email_inner(
     extra: SendEmailExtra<'_>,
 ) -> Result<Value, ApiError> {
     require_agent_owner_id(state, user_id, &req.agent_id)?;
+    // Autonomy (the owner's per-place level) can only tighten here: a hold means mailflare's review.
+    let autonomy = crate::autonomy::email_eval(&state.db, user_id, &req.agent_id, &req.to);
+    let held = autonomy.as_ref().is_some_and(|e| e.held());
+    let extra = SendEmailExtra { skip_approval: extra.skip_approval && !held, ..extra };
 
     if req.subject.trim().is_empty() {
         return Err(err(
@@ -393,6 +397,15 @@ async fn send_email_inner(
         }
 
         info!(agent_id = %req.agent_id, to = %req.to, "agent-email: outbound pending approval");
+        if let Some(e) = autonomy.as_ref().filter(|e| e.held()) {
+            let (outcome, reason) = match &e.verdict {
+                crate::autonomy::Verdict::Draft { reason } => ("drafted", reason.clone()),
+                crate::autonomy::Verdict::Hold { reason } => ("held", reason.clone()),
+                _ => ("held", String::new()),
+            };
+            let act = crate::autonomy::Action { owner: user_id, bot_id: &req.agent_id, channel: "email", persons: vec![req.to.clone()], action: "message", amount_cents: 0 };
+            crate::autonomy::finish(&state.db, &act, autonomy.as_ref(), outcome, &outbound_id, &format!("{}\n{}", req.subject, snippet), &reason, Some(&thread_id), json!({ "outboundId": outbound_id, "subject": req.subject }));
+        }
         return Ok(json!({
             "status": "pending_approval",
             "id": outbound_id,
@@ -409,6 +422,10 @@ async fn send_email_inner(
         params![send_response.job_id, send_response.message_id, outbound_id],
     )
     .map_err(internal)?;
+    {
+        let act = crate::autonomy::Action { owner: user_id, bot_id: &req.agent_id, channel: "email", persons: vec![req.to.clone()], action: "message", amount_cents: 0 };
+        crate::autonomy::finish(&state.db, &act, autonomy.as_ref(), "sent", &outbound_id, &format!("{}\n{}", req.subject, snippet), "", None, json!({ "outboundId": outbound_id, "subject": req.subject }));
+    }
     Ok(json!({
         "status": "sent",
         "id": outbound_id,
@@ -563,7 +580,14 @@ async fn send_reply_for_turn(
             "agent-email: reply cap reached; reply falls back to approval"
         );
     }
-    let plan = decide_reply_plan(mode, channel.domain_verified, sender_known, domain_allowed, over_cap);
+    let mut plan = decide_reply_plan(mode, channel.domain_verified, sender_known, domain_allowed, over_cap);
+    // An explicit autonomy level for this place overrides the reply mode: Send and tell me /
+    // Act within limits answer directly (never past the reply caps or on an unverified domain).
+    if let Some(e) = crate::autonomy::email_eval(db, &owner, agent_id, &reply_recipient(from, reply_to.as_deref())) {
+        if !e.held() && !over_cap && channel.domain_verified {
+            plan = ReplyPlan::Direct;
+        }
+    }
     info!(
         agent_id = %agent_id,
         from = %from,

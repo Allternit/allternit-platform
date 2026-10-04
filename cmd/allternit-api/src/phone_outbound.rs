@@ -223,6 +223,39 @@ pub async fn call<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<dyn HttpSen
     }
     let (base, token, _) = cloud_for(db, n)?;
     let (thread_id, _) = resolve_thread_async(db, rt, &n.number_id, to).await.map_err(OutError::Failed)?;
+    // Autonomy: Ask first / Draft only / limits hold the call until the owner approves it.
+    let act = crate::autonomy::Action { owner: &n.owner, bot_id: &n.bot_id, channel: "call", persons: vec![to.to_string()], action: "call", amount_cents: 0 };
+    let aut = crate::autonomy::evaluate(db, &act, false);
+    let corr = format!("call:{to}");
+    let mut consume: Option<String> = None;
+    if let Some(e) = aut.as_ref().filter(|e| e.held()) {
+        let reason = match &e.verdict {
+            crate::autonomy::Verdict::Hold { reason } | crate::autonomy::Verdict::Draft { reason } => reason.clone(),
+            _ => String::new(),
+        };
+        let conn = db.connect().map_err(|e| OutError::Failed(e.to_string()))?;
+        let approved: Option<String> = conn
+            .query_row("SELECT id FROM gateway_approvals WHERE owner = ?1 AND thread_id = ?2 AND authority = 'allternit' AND state = 'approved' AND consumed = 0 AND correlation_id = ?3", params![n.owner, thread_id, corr], |r| r.get(0))
+            .ok();
+        match (approved, &e.verdict) {
+            (Some(a), crate::autonomy::Verdict::Hold { .. }) => consume = Some(a),
+            (_, crate::autonomy::Verdict::Draft { .. }) => {
+                crate::autonomy::finish(db, &act, aut.as_ref(), "drafted", &format!("{corr}:{purpose}"), purpose, &reason, Some(&thread_id), json!({ "to": to, "purpose": purpose }));
+                return Err(OutError::Failed(format!("{reason} The call plan is saved in the owner's Inbox.")));
+            }
+            _ => {
+                let pending: Option<String> = conn
+                    .query_row("SELECT id FROM gateway_approvals WHERE owner = ?1 AND thread_id = ?2 AND authority = 'allternit' AND state = 'pending' AND correlation_id = ?3", params![n.owner, thread_id, corr], |r| r.get(0))
+                    .ok();
+                if pending.is_none() {
+                    let cx = crate::gateway_runner::Cx { owner: n.owner.clone(), thread_id: thread_id.clone(), bot_id: n.bot_id.clone(), generation: 1, session_id: String::new(), exec: json!({ "vendor": "call" }) };
+                    let aid = crate::gateway_runner::create_approval(db, &cx, "allternit", &format!("call {to}"), None, json!({ "to": to, "purpose": purpose }), Some(&corr)).map_err(|e| OutError::Failed(e.message))?;
+                    crate::autonomy::finish(db, &act, aut.as_ref(), "held", &aid, purpose, &reason, Some(&thread_id), json!({ "approvalId": aid, "to": to, "purpose": purpose }));
+                }
+                return Err(OutError::Failed(format!("{reason} The owner has been asked; try again once they approve.")));
+            }
+        }
+    }
     let (status, body) = cloud_post(http.as_ref(), format!("{base}/api/v1/phone/calls/outbound"), &token, json!({ "numberId": n.number_id, "to": to, "botId": n.bot_id, "purpose": purpose })).await?;
     match status {
         200..=299 => {}
@@ -230,6 +263,12 @@ pub async fn call<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<dyn HttpSen
         s => return Err(OutError::Failed(format!("The call wasn't placed (Allternit answered {s}: {}).", body["error"].as_str().unwrap_or("refused")))),
     }
     let Some(room) = body["room"].as_str().filter(|_| body["dialing"].as_bool() == Some(true)) else { return Err(OutError::CallsUnavailable) };
+    if let Some(a) = consume {
+        if let Ok(c) = db.connect() {
+            let _ = c.execute("UPDATE gateway_approvals SET consumed = 1 WHERE id = ?1", params![a]);
+        }
+    }
+    crate::autonomy::finish(db, &act, aut.as_ref(), "sent", room, purpose, "", Some(&thread_id), json!({ "room": room, "purpose": purpose }));
     crate::gateway_runner::led(
         db,
         &n.bot_id,

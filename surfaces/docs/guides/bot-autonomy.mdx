@@ -1,0 +1,64 @@
+---
+title: What your bot can do on its own
+description: "Choose, for each place your bot talks, whether it drafts, asks first, sends and tells you, or acts within limits you set. Payments always need your OK."
+---
+
+Your bot can text, call, email and post in chat channels for you. **Autonomy** is how far it goes without checking with you, set separately for each place, and for particular people if you want.
+
+The same controls are on Allternit Desktop, on ai.allternit.com and on the m.allternit.com phone app.
+
+## The four levels
+
+| Level | What the bot does | What you get |
+| --- | --- | --- |
+| **Draft only** | Writes the message and stops. Nothing is sent. | The draft in your Inbox, so you can send it yourself. |
+| **Ask first** | Holds every message until you approve it. | A card in your Inbox with the message and an approval. Approve and it goes out once. |
+| **Send and tell me** | Sends right away. | A line in your Inbox saying what was sent and to whom. |
+| **Act within limits** | Sends on its own while inside your limits, then asks. | Nothing while it is inside the limits. Past a limit it behaves like Ask first. |
+
+**Payments always need your approval**, at every level. Draft only keeps a payment as a draft. The other three ask you first.
+
+## Defaults
+
+If you have not set anything, a bot uses these:
+
+| Place | Default |
+| --- | --- |
+| Email | Ask first |
+| Texts | Send and tell me |
+| Calls | Send and tell me |
+| Chat channels (Telegram, Slack, Discord, Teams, WhatsApp) | Act within limits, up to 200 messages a day |
+
+## Set it for a place
+
+1. Open the bot's phone (see [Your bot's phone](/guides/bot-phone)).
+2. In an app such as **Mail**, **Messages**, **Phone** or a channel like **Telegram**, tap the chip under the header. It shows the current level, for example **Ask first**.
+3. Pick a level. It saves straight away.
+
+To set every place in one list, open the phone's **Settings** app and use **What your bot can do on its own**. **Use the default** puts a place back to the table above.
+
+## Limits
+
+Choosing **Act within limits** shows three settings:
+
+- **Messages per day.** Counted per bot and place, per UTC day. Messages you approve count too. Leave it empty for no cap.
+- **Spend per day.** In dollars. Leave it empty for no cap.
+- **Allowed actions.** Messages, calls and booking. Anything not ticked is held for your approval.
+
+When a limit is reached the bot does not stop working. The next item waits in your Inbox as **needs your OK**.
+
+## Exceptions for a person
+
+In **Settings → What your bot can do on its own → Exceptions for a person**, enter a phone number, email address or handle, choose where, and press **Add (Ask first)**. Then change that person's level in the same place. A person's setting beats the bot's setting for that place, which beats the all-bots setting.
+
+## Where you see it
+
+Everything the bot held, drafted or told you about lands in your Inbox. Open the card to go to the conversation. Holds that need your OK also appear as the usual approval card.
+
+## Good to know
+
+- A call that needs your OK is not placed until you approve it. The bot is told to try again once you have.
+- Email keeps the mailbox's own reply mode until you choose a level for it. Once you choose one, your level decides: **Send and tell me** and **Act within limits** reply directly, but only for a verified domain and never past the reply caps. **Ask first** and **Draft only** send the email to the review queue.
+- AI apps and vendor bots that text, call or email through your bot follow the same levels.
+
+See [Autonomy API](/api/autonomy) for developers.

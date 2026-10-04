@@ -982,6 +982,7 @@ async fn main() {
         .merge(allternit_api::channel_slack_app::slack_app_connect_router())
         .merge(allternit_api::spend_limits::spend_limit_router())
         .merge(allternit_api::channel_tools::channel_tools_router())
+        .merge(allternit_api::autonomy::autonomy_router())
         .merge(allternit_api::templates_routes::templates_router())
         .merge(allternit_api::memory_curation::memory_curation_router())
         .merge(allternit_api::coordinator_routes::coordinator_router())
