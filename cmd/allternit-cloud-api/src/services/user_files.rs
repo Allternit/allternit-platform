@@ -381,9 +381,9 @@ mod db_tests {
     #[serial]
     async fn the_global_guard_answers_507_at_9_5_gb_and_not_below() {
         let state = db().await;
-        let full = Fake { usage: Some(br#"{"totalBytes": 9500000000}"#.to_vec()), ..Default::default() };
+        let full = Fake { usage: Some(br#"{"total_gb": 9.5, "buckets": {"allternit-backups": {"bytes": 9500000000, "objects": 1}}}"#.to_vec()), ..Default::default() };
         assert_eq!(refusal(begin_upload(&state.db, &full, "u1", "ultra", "a", "", 5).await.map(|_| ())), (507, "storage-full"));
-        let ok = Fake { usage: Some(br#"{"totalBytes": 9499999999}"#.to_vec()), ..Default::default() };
+        let ok = Fake { usage: Some(br#"{"total_gb": 9.5, "buckets": {"allternit-backups": {"bytes": 9499999999, "objects": 1}}}"#.to_vec()), ..Default::default() };
         assert!(begin_upload(&state.db, &ok, "u1", "ultra", "a", "", 5).await.is_ok());
     }
 
