@@ -1336,7 +1336,7 @@ mod tests {
         let (outcome, evs) = finish(h).await;
         assert_eq!(outcome.reason, "no_answer");
         let p = ended(&evs);
-        assert_eq!((&p["answered"], &p["reason"]), (&json!(false), &json!("no_answer")));
+        assert_eq!((&p["answered"], &p["reason"]), (&serde_json::json!(false), &serde_json::json!("no_answer")));
         assert!(p.get("missed").is_none());
     }
 
@@ -1359,7 +1359,7 @@ mod tests {
         let (outcome, evs) = finish(h).await;
         assert_eq!(outcome.reason, "caller_hangup");
         let p = ended(&evs);
-        assert_eq!((&p["answered"], &p["missed"]), (&json!(true), &json!(true)));
+        assert_eq!((&p["answered"], &p["missed"]), (&serde_json::json!(true), &serde_json::json!(true)));
     }
 
     #[tokio::test]
