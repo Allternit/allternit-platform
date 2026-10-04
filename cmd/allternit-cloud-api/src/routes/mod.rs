@@ -39,6 +39,7 @@ pub mod phone;
 pub mod phone_sync;
 pub mod phone_invites;
 pub mod inapp_calls;
+pub mod mcp_oauth_approvals;
 pub mod vendor_bot_keys;
 pub mod web_push;
 pub mod channel_onboarding;
