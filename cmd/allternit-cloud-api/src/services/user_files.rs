@@ -101,15 +101,20 @@ pub fn file_key(user_id: &str, file_id: Uuid, name: &str) -> String {
     format!("u/{user_id}/{file_id}/{name}")
 }
 
-/// Total bytes of R2 in use from the daily `r2-usage.json`. Accepts a bare
-/// number or an object with `totalBytes` / `total_bytes` / `bytes` / `total`.
+/// Total bytes of R2 in use from the daily `r2-usage.json`, written by the
+/// R2 guard (`allternit-r2-guard.py`, after the nightly backup):
+/// `{"total_gb": 4.4, "buckets": {"<name>": {"bytes": N, "objects": N}}, ...}`.
+/// The per-bucket byte sum is exact; `total_gb` is the fallback.
 /// `None` when the report is missing or unreadable.
 pub fn parse_total_usage(raw: &[u8]) -> Option<u64> {
     let v: Value = serde_json::from_slice(raw).ok()?;
-    if let Some(n) = v.as_u64() {
-        return Some(n);
+    if let Some(buckets) = v.get("buckets").and_then(Value::as_object) {
+        let sum: Option<u64> = buckets.values().map(|b| b.get("bytes").and_then(Value::as_u64)).sum();
+        if sum.is_some() {
+            return sum;
+        }
     }
-    ["totalBytes", "total_bytes", "bytes", "total"].iter().find_map(|k| v.get(k).and_then(Value::as_u64))
+    v.get("total_gb").and_then(Value::as_f64).filter(|g| *g >= 0.0).map(|g| (g * 1e9) as u64)
 }
 
 pub async fn global_usage(store: &dyn ObjectStore) -> Option<u64> {
@@ -283,8 +288,11 @@ mod unit {
 
     #[test]
     fn usage_report_shapes() {
-        assert_eq!(parse_total_usage(b"123"), Some(123));
-        assert_eq!(parse_total_usage(br#"{"totalBytes": 9600000000}"#), Some(9_600_000_000));
+        // The guard's real shape: exact per-bucket bytes win over total_gb.
+        let real = br#"{"at": "2026-10-04T03:40:00Z", "total_gb": 4.4, "warn_gb": 8.0, "allowance_gb": 10,
+            "buckets": {"allternit-runtime": {"bytes": 3000000000, "objects": 20}, "allternit-backups": {"bytes": 1400000000, "objects": 40}}, "errors": {}}"#;
+        assert_eq!(parse_total_usage(real), Some(4_400_000_000));
+        assert_eq!(parse_total_usage(br#"{"total_gb": 9.6}"#), Some(9_600_000_000));
         assert_eq!(parse_total_usage(br#"{"x": 1}"#), None);
         assert_eq!(parse_total_usage(b"nope"), None);
     }
