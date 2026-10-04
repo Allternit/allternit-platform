@@ -1,0 +1,66 @@
+---
+title: Give a shell agent your bot's phone with allternit-bot
+description: Install the allternit-bot command so a vendor agent that runs in its own sandbox can read threads, text, call, draft email and work tickets through your bot, under the same rules.
+---
+
+Claude and ChatGPT reach your bot through a [connector](/guides/vendor-bots-use-your-phone) they sign in to. An agent that runs in **its own sandbox with a shell** (a coding agent in a container, a hosted worker) has no browser to sign in with. It uses `allternit-bot` instead: one small command, one key you issue and can revoke.
+
+Everything the command does goes through the same server-side checks as the connector. It can't do more than the connector can:
+
+- **Texts and calls only reach people who contacted the number first, or whom you added as contacts.** STOP always wins.
+- **Email is always a draft.** It waits for your OK.
+- **The agent only sees threads it is attached to or you shared with it.**
+- **Every message says where it came from:** "Sent by Claude via Gizzi".
+
+## Set it up
+
+1. In Allternit, open the vendor bot, then **Use the phone**, then **Shell access**. The panel works the same on Desktop, the ai.allternit.com phone layout and the m.allternit.com app.
+2. Choose **Issue a key**. The key (it starts with `abk_`) is shown once. Copy it now: only a fingerprint is kept, so it can't be shown again.
+3. In the agent's shell, install the command and save the key:
+
+```bash
+curl -fsSL https://install.allternit.com/bot | sh
+echo "abk_…your key…" | allternit-bot login <vendor bot id>
+allternit-bot help
+```
+
+The installer works on macOS and Linux (Intel and ARM), checks the download's SHA-256, and installs into `~/.local/bin` without root (`--dir` picks another folder). `login` saves the key and bot id in `~/.config/allternit-bot/config.json`, readable only by that user. Instead of `login` you can set `ALLTERNIT_BOT_KEY` and `ALLTERNIT_BOT_ID` in the environment. The key is never taken from the command line, where other processes could see it.
+
+To cut an agent off, choose **Revoke** next to its key. Its next call is refused.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `allternit-bot threads [--channel sms] [--query word]` | Lists the conversations it can see. |
+| `allternit-bot read <threadId> [--limit 30]` | Reads the latest messages of a thread. |
+| `allternit-bot text <+E164> <text…>` | Texts a number from your bot's phone. |
+| `allternit-bot call <+E164> <purpose…>` | Has your bot's phone call a number, with the purpose as the brief. |
+| `allternit-bot email <to> <subject> <body…>` | Drafts an email. It waits for your OK. |
+| `allternit-bot post <provider> <target-json> <text…>` | Starts a conversation on telegram, slack, discord, teams or whatsapp. |
+| `allternit-bot ask <text…>` | Hands off to your bot and prints its reply. |
+| `allternit-bot tickets` / `ticket <T-n>` / `result <T-n> <summary…> [--data json]` | Lists, reads and finishes [tickets](/guides/how-vendor-bots-connect). |
+| `allternit-bot help` | Prints plain instructions an agent can follow. |
+
+Put `-` as the last argument to read long text from standard input, and add `--json` to any command for raw output. The exit code is `0` when it worked, `1` when Allternit refused (the reason is printed, so tell the person; don't retry around it) and `2` when Allternit couldn't be reached or the command was wrong. If your computer is asleep, Allternit wakes it first; if that takes too long the command says so and you can run it again.
+
+An agent that can fetch a URL can also read the same instructions from `https://mcp.allternit.com/bots/<vendor bot id>/instructions`, sending its key as `Authorization: Bearer abk_…`.
+
+## For developers
+
+**The CLI** is `cmd/allternit-bot` (Rust, `reqwest` with rustls, no OpenSSL). Each command is one JSON-RPC `tools/call` to `<url>/bots/<id>` with the key as Bearer, where `<url>` defaults to `https://mcp.allternit.com/mcp` (`ALLTERNIT_BOT_URL` or `--url` overrides it, for example to point at a local runtime). Its `help` text is `cmd/allternit-api/assets/vendor-bot-instructions.txt`, the same file the instructions route serves; a test checks it names every tool.
+
+**Keys** live in cloud-api (migration `040_vendor_bot_keys.sql`, `cmd/allternit-cloud-api/src/routes/vendor_bot_keys.rs`), because the public edge has to check them. Only the SHA-256 is stored. A key opens exactly one vendor bot, at most 10 live keys per bot. Routes, authenticated as the signed-in owner (Clerk session or a `compute`-scoped API key):
+
+| Route | Result |
+| --- | --- |
+| `POST /api/v1/vendor-bots/:id/cli-keys` `{label?}` | `201 {id, key, prefix, label, createdAt, mcpUrl, instructionsUrl}`. The only time `key` is returned. `429 {"error":"too_many_keys"}` at 10. |
+| `GET /api/v1/vendor-bots/:id/cli-keys` | `{keys:[{id, label, prefix, createdAt, lastUsedAt}]}`, revoked keys omitted. |
+| `DELETE /api/v1/vendor-bots/:id/cli-keys/:keyId` | `{ok:true}`; `404` for a key that isn't the caller's or is already revoked. |
+| `GET /bots/:id/instructions` (also `/mcp/bots/:id/instructions`), key as Bearer | `text/plain`: the instructions plus the bot's MCP endpoint. `401 {"error":"invalid_key"}` for a missing, wrong, revoked or other-bot key. |
+
+All of these answer `503 {"error":"mcp_edge_not_configured"}` until `MCP_PUBLIC_URL` is set on cloud-api. Prod cloud migration `040` is applied by hand.
+
+**At the edge**, a Bearer token that starts with `abk_` skips Clerk and is looked up by hash for that bot id; the agents server and other bots' paths refuse it. A live key is relayed to the owner's runtime exactly like an OAuth call, with the client label `cli-key:<key id>`. That label shows up under Connected clients and in the audit, and revoking it there is refused on the runtime's next call too, so revoking in either place works.
+
+**Release.** `.github/workflows/publish-allternit-bot.yml` (run by hand with `workflow_dispatch`, or by pushing a tag `allternit-bot-v*`; it never runs on merge) builds static binaries for linux and macOS on x86_64 and aarch64 with the `bot-dist` profile and publishes them, with `.sha256` files, to the rolling release `allternit-bot-latest`. The installer served at `install.allternit.com/bot` (the `install.allternit.com` Pages project) downloads from there; `ALLTERNIT_BOT_DOWNLOAD_URL` points it elsewhere.

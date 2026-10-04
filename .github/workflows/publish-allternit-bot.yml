@@ -1,0 +1,69 @@
+name: Publish allternit-bot CLI
+
+# Builds the `allternit-bot` CLI (cmd/allternit-bot) as one small binary per platform and publishes it
+# to the rolling GitHub release `allternit-bot-latest` (public: a vendor agent's sandbox downloads it
+# with the curl | sh installer at https://install.allternit.com/bot). Run by hand (workflow_dispatch)
+# or by pushing a tag `allternit-bot-v*`; it never runs on its own, so merging a CLI change publishes nothing.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["allternit-bot-v*"]
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, asset: linux-x86_64 }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, asset: linux-aarch64 }
+          - { os: macos-14, target: aarch64-apple-darwin, asset: darwin-aarch64 }
+          - { os: macos-14, target: x86_64-apple-darwin, asset: darwin-x86_64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install musl tools
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build
+        run: cargo build --profile bot-dist --locked -p allternit-bot --target ${{ matrix.target }}
+      - name: Self-check the binary
+        if: matrix.target != 'x86_64-apple-darwin'
+        run: target/${{ matrix.target }}/bot-dist/allternit-bot version
+      - name: Package
+        run: |
+          mkdir -p out
+          cp target/${{ matrix.target }}/bot-dist/allternit-bot out/allternit-bot
+          tar -C out -czf allternit-bot-${{ matrix.asset }}.tar.gz allternit-bot
+          shasum -a 256 allternit-bot-${{ matrix.asset }}.tar.gz > allternit-bot-${{ matrix.asset }}.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: allternit-bot-${{ matrix.asset }}
+          path: allternit-bot-${{ matrix.asset }}.tar.gz*
+
+  release:
+    name: Publish allternit-bot-latest
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ls -l dist
+          gh release delete allternit-bot-latest --cleanup-tag --yes || true
+          gh release create allternit-bot-latest dist/* \
+            --title "allternit-bot (latest)" \
+            --notes "The allternit-bot CLI for vendor agents. Install: curl -fsSL https://install.allternit.com/bot | sh"

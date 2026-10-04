@@ -78,6 +78,11 @@ fn public_mcp_url() -> Option<String> {
     std::env::var("MCP_PUBLIC_URL").ok().map(|v| v.trim().trim_end_matches('/').to_string()).filter(|v| !v.is_empty())
 }
 
+/// The edge's public base for the CLI-key routes (`vendor_bot_keys`); `None` = the edge is off.
+pub fn public_mcp_url_for_keys() -> Option<String> {
+    public_mcp_url()
+}
+
 fn oauth_issuer() -> String {
     std::env::var("MCP_OAUTH_ISSUER").ok().map(|v| v.trim().trim_end_matches('/').to_string()).filter(|v| !v.is_empty()).unwrap_or_else(|| DEFAULT_ISSUER.to_string())
 }
@@ -225,6 +230,10 @@ pub trait EdgeBackend: Send + Sync {
     async fn runtimes(&self, user_id: &str) -> Result<Vec<String>, String>;
     /// One signed, synchronous call to `path` on the runtime, as `user_id`.
     async fn forward(&self, user_id: &str, runtime_id: &str, path: &str, client: &str, body: &[u8]) -> Result<(u16, Vec<u8>), Unreached>;
+    /// `(owner, key id)` when `token` is a live `allternit-bot` CLI key (`abk_…`) for exactly this vendor bot.
+    async fn verify_cli_key(&self, _token: &str, _vendor_bot_id: &str) -> Result<Option<(String, String)>, String> {
+        Ok(None)
+    }
 }
 
 /// Which of the owner's runtimes answered for a bot last time.
@@ -319,13 +328,27 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
     let Some(token) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer ")).map(str::trim).filter(|t| !t.is_empty()) else {
         return refusal(&resource, StatusCode::UNAUTHORIZED, json!({ "error": "unauthorized" }), None);
     };
-    let claims = match backend.verify(token).await {
-        Ok(c) => c,
-        Err(msg) => return refusal(&resource, StatusCode::UNAUTHORIZED, json!({ "error": "invalid_token", "message": msg }), Some(("invalid_token", "The access token is invalid"))),
-    };
-    let caller = match check_claims(&claims, &target, base) {
-        Ok(c) => c,
-        Err(resp) => return resp,
+    let caller = if token.starts_with(crate::routes::vendor_bot_keys::KEY_PREFIX) {
+        // An `allternit-bot` CLI key opens one vendor bot and nothing else.
+        let invalid = |msg: &str| refusal(&resource, StatusCode::UNAUTHORIZED, json!({ "error": "invalid_token", "message": msg }), Some(("invalid_token", "The key is invalid")));
+        let Target::Bot(bot) = &target else { return invalid("This key opens one vendor bot only") };
+        match backend.verify_cli_key(token, bot).await {
+            Ok(Some((user_id, key_id))) => Caller { user_id, client: format!("cli-key:{key_id}") },
+            Ok(None) => return invalid("Invalid or revoked key"),
+            Err(error) => {
+                tracing::warn!("mcp edge: cli key lookup failed: {error}");
+                return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "unavailable" }))).into_response();
+            }
+        }
+    } else {
+        let claims = match backend.verify(token).await {
+            Ok(c) => c,
+            Err(msg) => return refusal(&resource, StatusCode::UNAUTHORIZED, json!({ "error": "invalid_token", "message": msg }), Some(("invalid_token", "The access token is invalid"))),
+        };
+        match check_claims(&claims, &target, base) {
+            Ok(c) => c,
+            Err(resp) => return resp,
+        }
     };
     if *method != Method::POST {
         let mut resp = (StatusCode::METHOD_NOT_ALLOWED, Json(json!({ "error": "method_not_allowed" }))).into_response();
@@ -394,6 +417,10 @@ struct ProdBackend<'a> {
 
 #[async_trait::async_trait]
 impl EdgeBackend for ProdBackend<'_> {
+    async fn verify_cli_key(&self, token: &str, vendor_bot_id: &str) -> Result<Option<(String, String)>, String> {
+        crate::routes::vendor_bot_keys::verify_key(&self.state.db, token, vendor_bot_id).await.map_err(|e| e.to_string())
+    }
+
     async fn verify(&self, token: &str) -> Result<Value, String> {
         crate::auth::clerk::verified_claims(token).await.map_err(|e| e.to_string())
     }
@@ -468,14 +495,20 @@ mod tests {
         replies: Mutex<HashMap<String, Result<(u16, String), Unreached>>>,
         calls: Mutex<Vec<(String, String, String, String, Vec<u8>)>>,
         verified: AtomicUsize,
+        /// CLI key → (vendor bot, owner, key id).
+        cli_keys: HashMap<String, (String, String, String)>,
     }
 
     impl Fake {
         fn new(runtimes: &[&str]) -> Self {
-            Self { tokens: HashMap::new(), runtimes: runtimes.iter().map(|r| r.to_string()).collect(), replies: Mutex::new(HashMap::new()), calls: Mutex::new(vec![]), verified: AtomicUsize::new(0) }
+            Self { tokens: HashMap::new(), runtimes: runtimes.iter().map(|r| r.to_string()).collect(), replies: Mutex::new(HashMap::new()), calls: Mutex::new(vec![]), verified: AtomicUsize::new(0), cli_keys: HashMap::new() }
         }
         fn token(mut self, t: &str, c: Value) -> Self {
             self.tokens.insert(t.to_string(), c);
+            self
+        }
+        fn cli_key(mut self, key: &str, bot: &str, owner: &str, id: &str) -> Self {
+            self.cli_keys.insert(key.to_string(), (bot.to_string(), owner.to_string(), id.to_string()));
             self
         }
         fn reply(self, runtime: &str, r: Result<(u16, &str), Unreached>) -> Self {
@@ -492,6 +525,9 @@ mod tests {
         async fn verify(&self, token: &str) -> Result<Value, String> {
             self.verified.fetch_add(1, Ordering::SeqCst);
             self.tokens.get(token).cloned().ok_or_else(|| "Invalid Clerk signature".to_string())
+        }
+        async fn verify_cli_key(&self, token: &str, vendor_bot_id: &str) -> Result<Option<(String, String)>, String> {
+            Ok(self.cli_keys.get(token).filter(|k| k.0 == vendor_bot_id).map(|k| (k.1.clone(), k.2.clone())))
         }
         async fn runtimes(&self, _user: &str) -> Result<Vec<String>, String> {
             Ok(self.runtimes.clone())
@@ -523,6 +559,30 @@ mod tests {
 
     fn bot(id: &str) -> Target {
         Target::Bot(id.to_string())
+    }
+
+    // ── CLI keys ──────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn a_cli_key_for_this_bot_is_relayed_as_its_owner_with_a_key_client_label() {
+        let f = Fake::new(&["rt1"]).cli_key("abk_good", "b-key-1", "user_k", "vbk_1");
+        let (status, _, _) = post(&f, bot("b-key-1"), &bearer("abk_good"), LIST).await;
+        assert_eq!(status, StatusCode::OK);
+        let calls = f.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!((calls[0].0.as_str(), calls[0].3.as_str()), ("user_k", "cli-key:vbk_1"));
+        assert_eq!(f.verified.load(Ordering::SeqCst), 0, "a CLI key is never treated as a Clerk token");
+    }
+
+    #[tokio::test]
+    async fn a_cli_key_for_another_bot_or_the_agents_server_or_an_unknown_key_is_refused_and_nothing_is_forwarded() {
+        let f = Fake::new(&["rt1"]).cli_key("abk_good", "b-key-2", "user_k", "vbk_1");
+        for (target, token) in [(bot("b-other"), "abk_good"), (Target::Agents, "abk_good"), (bot("b-key-2"), "abk_forged")] {
+            let (status, headers, _) = post(&f, target, &bearer(token), LIST).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED);
+            assert!(headers.contains_key(header::WWW_AUTHENTICATE));
+        }
+        assert!(f.calls.lock().unwrap().is_empty());
     }
 
     // ── auth at the edge ──────────────────────────────────────────────────────

@@ -1,0 +1,20 @@
+[package]
+name = "allternit-bot"
+version = "0.1.0"
+edition = "2021"
+authors = ["Allternit Team <team@allternit.io>"]
+license = "MIT OR Apache-2.0"
+description = "allternit-bot: act through your Allternit bot's phone and mailbox from a vendor agent's shell (threads, text, call, email, post, ask, tickets)."
+publish = false
+
+[[bin]]
+name = "allternit-bot"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1.0"
+# rustls, not openssl: the binary has to run static in a bare sandbox.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }
+
+[dev-dependencies]
+tempfile = "3.10"
