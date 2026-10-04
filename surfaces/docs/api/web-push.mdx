@@ -55,3 +55,9 @@ Message-type pushes are also capped at 40 an hour per person. Calls are not (rin
 ## Where it lives
 
 `cmd/allternit-cloud-api/src/routes/web_push.rs`. Senders: `spawn_notify` (background, does nothing without the env) and `send_to_user`. `inapp_calls.rs` calls them for rings, missed calls and messages; `channel_inbound.rs` calls `notify_channel_message` after a relayed message is delivered to the runtime. Tests use a fake transport and the RFC 8291 appendix A test vector.
+
+## Clients
+
+The apps register through `allternit-ai/src/lib/gateway/web-push.ts` and the worker `public/allternit-push-sw.js`. The worker has its own scope (`/allternit-push/`) because a service worker registration holds one push subscription, and the app and phone workers already hold one for approvals under a different VAPID key. A client that finds a subscription made under another key replaces it.
+
+Clicking a notification opens the app on `url`, or posts `{type: "ALLTERNIT_OPEN", url}` to a running window. Allternit Desktop has no web push: it polls for rings while running and shows a system notification. Signing out calls `DELETE /api/v1/push/subscriptions` for the device.
