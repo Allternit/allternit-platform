@@ -10,7 +10,7 @@ The only public origin is `https://api.allternit.com` ([Cloud API](/api/cloud-ap
 | Credential | Header | Used for |
 |------------|--------|----------|
 | Clerk session JWT | `Authorization: Bearer <sess>` | Browser console: pairing, relay, agent-sessions, office, beta, billing, provisioned instances |
-| Allternit API token (`allternit_…`) | `Authorization: Bearer allternit_…` | Cloud API `POST /v1/chat/completions` and API-key protected routes; keys are managed at `/api/v1/api-keys` |
+| Allternit API key (`alt_…`) | `Authorization: Bearer alt_…` | Cloud API `POST /v1/chat/completions` (`inference` scope) and key-protected routes such as phone numbers, calls and SMS (`compute` scope); keys are created at `/api/v1/api-keys` while signed in |
 | Virtual key (`ak-`) | `Authorization: Bearer ak-…` | LLM gateway on the data-plane node (`http://127.0.0.1:8013/v1`): chat completions, embeddings, files, batches, caches |
 | Runtime device token (`allternit_runtime_…`) | `Authorization: Bearer allternit_runtime_…` | Node → Cloud API: heartbeat, relay connect, rotate |
 
@@ -24,7 +24,7 @@ Local development may call `http://127.0.0.1:8013` on the same machine. That is 
 
 ## LLM gateway virtual keys
 
-The Allternit LLM gateway uses virtual keys for authentication. Each virtual key is a scoped, rotatable credential that maps to a tenant, organization, or user profile. Virtual keys are used for the `/v1` gateway routes served by the Allternit API node, including chat completions, embeddings, files, and batches. The hosted Cloud API at `api.allternit.com` serves only `POST /v1/chat/completions` and `GET /v1/models` under `/v1`, and authenticates them with an `allternit_` token.
+The Allternit LLM gateway uses virtual keys for authentication. Each virtual key is a scoped, rotatable credential that maps to a tenant, organization, or user profile. Virtual keys are used for the `/v1` gateway routes served by the Allternit API node, including chat completions, embeddings, files, and batches. The hosted Cloud API at `api.allternit.com` serves only `POST /v1/chat/completions` and `GET /v1/models` under `/v1`, and authenticates them with an `alt_` API key.
 
 ## Virtual keys
 
