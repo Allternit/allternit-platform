@@ -369,3 +369,25 @@ mod tests {
         assert_eq!(parse_list("<R><IsTruncated>false</IsTruncated><Contents><Size>7</Size></Contents></R>"), (7, None));
     }
 }
+
+/// Round trip against real R2 (put, head, presigned GET, delete). Opt-in:
+/// `ALLTERNIT_R2_* cargo test -p allternit-cloud-api --lib r2_live -- --ignored`.
+#[cfg(test)]
+mod live {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore]
+    async fn r2_live_round_trip() {
+        let c = R2Client::from_env().expect("ALLTERNIT_R2_* not set");
+        let (b, k) = ("allternit-call-recordings", "calls/live-check-r2-client.ogg");
+        c.put(b, k, b"hello".to_vec(), "audio/ogg").await.unwrap();
+        assert_eq!(c.head(b, k).await.unwrap(), Some(5));
+        let url = c.presign_get(b, k, Duration::from_secs(60)).unwrap();
+        let got = reqwest::get(&url).await.unwrap();
+        assert!(got.status().is_success(), "presigned GET: {}", got.status());
+        assert_eq!(&got.bytes().await.unwrap()[..], b"hello");
+        c.delete(b, k).await.unwrap();
+        assert_eq!(c.head(b, k).await.unwrap(), None);
+    }
+}
