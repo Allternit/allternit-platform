@@ -93,6 +93,7 @@ pub const INTENTS: u64 = (1 << 0) | (1 << 9) | (1 << 12);
 pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
         .route("/api/v1/channels/discord/install", post(install))
+        .route("/api/v1/channels/discord/installs", get(list_installs))
         .route("/api/v1/channels/discord/send", post(send))
         .route("/api/v1/channels/discord/dm", post(dm))
         .route("/api/v1/channels/discord/commands", put(commands))
@@ -277,6 +278,26 @@ pub fn install_url(cfg: &DiscordConfig, state: &str) -> String {
 
 async fn user_id(state: &ApiState, headers: &HeaderMap) -> Result<String, ApiError> {
     crate::auth::resolve_user_scoped(&state.db, headers, "compute").await.map(|u| u.id)
+}
+
+/// `GET /api/v1/channels/discord/installs`: the servers this user added the
+/// shared app to, so their runtime can record each as a connection.
+async fn list_installs(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<Response, ApiError> {
+    if DiscordConfig::from_env().is_none() {
+        return Ok(not_configured());
+    }
+    let user = user_id(&state, &headers).await?;
+    let rows: Vec<(String, Option<String>, String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT guild_id, guild_name, runtime_id, installed_at FROM discord_installs WHERE user_id = $1 AND revoked_at IS NULL ORDER BY installed_at",
+    )
+    .bind(&user)
+    .fetch_all(&state.db)
+    .await?;
+    let installs: Vec<Value> = rows
+        .into_iter()
+        .map(|(guild_id, guild_name, runtime_id, installed_at)| json!({ "guildId": guild_id, "guildName": guild_name, "runtimeId": runtime_id, "installedAt": installed_at }))
+        .collect();
+    Ok(Json(json!({ "installs": installs })).into_response())
 }
 
 async fn owns_runtime(db: &sqlx::PgPool, user: &str, runtime_id: &str) -> Result<bool, ApiError> {
