@@ -537,11 +537,11 @@ async fn relay_content_artifact(
     let _ = state
         .rails
         .ledger
-        .append(allternit_commrails::core::types::AllternitEvent {
-            event_id: allternit_commrails::core::ids::create_event_id(),
+        .append(allternit_factory_engine::core::types::AllternitEvent {
+            event_id: allternit_factory_engine::core::ids::create_event_id(),
             ts: now_rfc3339(),
-            actor: allternit_commrails::core::types::Actor {
-                r#type: allternit_commrails::core::types::ActorType::Gate,
+            actor: allternit_factory_engine::core::types::Actor {
+                r#type: allternit_factory_engine::core::types::ActorType::Gate,
                 id: gateway_name(),
             },
             scope: None,
@@ -731,11 +731,11 @@ async fn relay_inbox(
             let _ = state
                 .rails
                 .ledger
-                .append(allternit_commrails::core::types::AllternitEvent {
-                    event_id: allternit_commrails::core::ids::create_event_id(),
+                .append(allternit_factory_engine::core::types::AllternitEvent {
+                    event_id: allternit_factory_engine::core::ids::create_event_id(),
                     ts: now_rfc3339(),
-                    actor: allternit_commrails::core::types::Actor {
-                        r#type: allternit_commrails::core::types::ActorType::Gate,
+                    actor: allternit_factory_engine::core::types::Actor {
+                        r#type: allternit_factory_engine::core::types::ActorType::Gate,
                         id: gateway_name(),
                     },
                     scope: None,

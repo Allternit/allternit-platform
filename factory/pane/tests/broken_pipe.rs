@@ -16,7 +16,7 @@ fn closed_pipe_writer() -> Stdio {
 }
 
 fn run_with_closed_stdout(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_ao"))
+    Command::new(env!("CARGO_BIN_EXE_allternit-factory-pane"))
         .args(args)
         .stdout(closed_pipe_writer())
         .stderr(Stdio::piped())

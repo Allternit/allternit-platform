@@ -9,16 +9,16 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-WORKSPACE_ROOT="$(cd "$REPO_ROOT/../.." && pwd)"
+WORKSPACE_ROOT="$(cd "$REPO_ROOT/.." && pwd)"
 TARGET_DIR="${CARGO_TARGET_DIR:-$WORKSPACE_ROOT/target}"
-AO_BIN="${AO_BIN:-$TARGET_DIR/debug/ao}"
+AO_BIN="${AO_BIN:-$TARGET_DIR/debug/allternit-factory-pane}"
 GATE="${AO_SPAWN_GATE:-$WORKSPACE_ROOT/tools/agent-orchestrator/scripts/ao-spawn-gate}"
 VERBOSE=0
 [ "${1:-}" = "-v" ] && VERBOSE=1
 
 if [ ! -x "$AO_BIN" ]; then
   echo "building ao engine..." >&2
-  (cd "$WORKSPACE_ROOT" && export ZIG="${ZIG:-/opt/homebrew/opt/zig@0.15/bin/zig}" && cargo build -p herdr --bin ao) >&2
+  (cd "$WORKSPACE_ROOT" && export ZIG="${ZIG:-/opt/homebrew/opt/zig@0.15/bin/zig}" && cargo build -p allternit-factory-pane --bin allternit-factory-pane) >&2
 fi
 [ -x "$GATE" ] || { echo "FAIL: $GATE not found"; exit 1; }
 

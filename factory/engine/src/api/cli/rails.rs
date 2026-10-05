@@ -9,48 +9,48 @@ use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use allternit_commrails::bus::{Bus, BusMessage, BusOptions, NewBusMessage};
-use allternit_commrails::cli::judge::{
+use crate::bus::{Bus, BusMessage, BusOptions, NewBusMessage};
+use crate::cli::judge::{
     run_judge_command, run_leases_command, JudgeCmd, JudgeContext, LeasesCmd,
 };
-use allternit_commrails::cli::lessons::{run_lessons_command, LessonsCmd};
-use allternit_commrails::cli::observe::{run_observe_command, ObserveArgs};
-use allternit_commrails::cli::campaign::{
+use crate::cli::lessons::{run_lessons_command, LessonsCmd};
+use crate::cli::observe::{run_observe_command, ObserveArgs};
+use crate::cli::campaign::{
     run_attention_command, run_campaign_command, run_wake_command, AttentionCmd,
     AutomationCliContext, CampaignCmd, WakeCmd,
 };
-use allternit_commrails::cli::work::{run_work_command, WorkCmd, WorkContext};
-use allternit_commrails::observer;
-use allternit_commrails::core::ids::{create_event_id, create_lease_id};
-use allternit_commrails::core::io::{ensure_dir, write_json_atomic};
-use allternit_commrails::dependencies::load_graph;
-use allternit_commrails::drive::hooks::NoHooks;
-use allternit_commrails::drive::{DriveOptions, Driver};
-use allternit_commrails::gate::gate::{GateOptions, WihPickupOptions};
-use allternit_commrails::gate::GateError;
-use allternit_commrails::templates::{parse_param_args, plan_from_template, TemplateStore};
-use allternit_commrails::wait_gates::{GateOutcome, WaitGateKind};
-use allternit_commrails::work::needs_you::pending_manual_gates;
-use allternit_commrails::leases::leases::LeasesOptions;
-use allternit_commrails::ledger::ledger::LedgerOptions;
-use allternit_commrails::graph::{views, GraphAnalytics, GraphView, InsightsConfig};
-use allternit_commrails::policy;
-use allternit_commrails::rails_id::TicketId;
-use allternit_commrails::tickets::{self, TicketStore};
-use allternit_commrails::wait_gates::WaitGateStore;
-use allternit_commrails::wih::projection::project_wih;
-use allternit_commrails::wih::types::LoopPolicy;
-use allternit_commrails::work::graph::{has_cycle_edges, ready_nodes};
-use allternit_commrails::work::projection::project_dag;
-use allternit_commrails::work::types::DagState;
-use allternit_commrails::{
+use crate::cli::work::{run_work_command, WorkCmd, WorkContext};
+use crate::observer;
+use crate::core::ids::{create_event_id, create_lease_id};
+use crate::core::io::{ensure_dir, write_json_atomic};
+use crate::dependencies::load_graph;
+use crate::drive::hooks::NoHooks;
+use crate::drive::{DriveOptions, Driver};
+use crate::gate::gate::{GateOptions, WihPickupOptions};
+use crate::gate::GateError;
+use crate::templates::{parse_param_args, plan_from_template, TemplateStore};
+use crate::wait_gates::{GateOutcome, WaitGateKind};
+use crate::work::needs_you::pending_manual_gates;
+use crate::leases::leases::LeasesOptions;
+use crate::ledger::ledger::LedgerOptions;
+use crate::graph::{views, GraphAnalytics, GraphView, InsightsConfig};
+use crate::policy;
+use crate::rails_id::TicketId;
+use crate::tickets::{self, TicketStore};
+use crate::wait_gates::WaitGateStore;
+use crate::wih::projection::project_wih;
+use crate::wih::types::LoopPolicy;
+use crate::work::graph::{has_cycle_edges, ready_nodes};
+use crate::work::projection::project_dag;
+use crate::work::types::DagState;
+use crate::{
     AllternitEvent, Actor, ActorType, DagMutation, EventScope, Gate, Index, IndexOptions, LeaseRequest,
     Leases, Ledger, LedgerQuery, Mail, MailOptions, Orchestrator, PeerEnvelope, PeerRegistry,
     ReceiptStore, ReceiptStoreOptions, SpawnOptions, Steer, Vault, VaultOptions, WatchOutcome,
     WorkOps, send_envelope,
 };
 #[cfg(unix)]
-use allternit_commrails::PeerSocket;
+use crate::PeerSocket;
 #[cfg(unix)]
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 #[cfg(unix)]
@@ -60,8 +60,8 @@ use tokio::sync::OnceCell;
 use tokio::time::{sleep, Duration as TokioDuration};
 
 #[derive(Parser)]
-#[command(name = "allternit-commrails")]
-#[command(about = "Allternit CommRails CLI", long_about = None)]
+#[command(name = "allternit-factory internal rails")]
+#[command(about = "Allternit Factory engine maintenance commands (ledger, gate, vault, …)", long_about = None)]
 struct Cli {
     #[arg(long)]
     root: Option<PathBuf>,
@@ -255,7 +255,7 @@ enum BridgeCmd {
     Serve {
         /// IP:port. Non-loopback needs --allow-remote and >=1 identity;
         /// 0.0.0.0 / :: are always refused.
-        #[arg(long, default_value = allternit_commrails::bridge::DEFAULT_BRIDGE_BIND)]
+        #[arg(long, default_value = crate::bridge::DEFAULT_BRIDGE_BIND)]
         bind: String,
         /// Workspace root whose ledger the bridge reads and writes.
         #[arg(long)]
@@ -264,13 +264,13 @@ enum BridgeCmd {
         allow_remote: bool,
         #[arg(long)]
         identities: Option<PathBuf>,
-        #[arg(long, default_value_t = allternit_commrails::bridge::DEFAULT_RATE_LIMIT_PER_MIN)]
+        #[arg(long, default_value_t = crate::bridge::DEFAULT_RATE_LIMIT_PER_MIN)]
         rate_limit_per_min: u32,
     },
 }
 
 fn run_identity_command(cmd: IdentityCmd) -> Result<()> {
-    use allternit_commrails::bridge::{default_identities_path, parse_grant_scopes, IdentityStore};
+    use crate::bridge::{default_identities_path, parse_grant_scopes, IdentityStore};
     let store_for = |p: Option<PathBuf>| IdentityStore::new(p.unwrap_or_else(default_identities_path));
     match cmd {
         IdentityCmd::Add {
@@ -887,27 +887,31 @@ enum TransportCmd {
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    match run().await {
-        Ok(()) => Ok(()),
-        Err(err) => {
-            // Structured gate denials: human line + JSON on stderr, exit 2.
-            if let Some(gate_err) = GateError::from_anyhow(&err) {
-                eprintln!("error: {gate_err}");
-                eprintln!(
-                    "{}",
-                    serde_json::to_string_pretty(gate_err).unwrap_or_default()
-                );
-                std::process::exit(2);
-            }
-            Err(err)
-        }
-    }
+/// Print a structured Gate denial (human line + JSON on stderr). Returns
+/// `false` when `err` is not a Gate denial.
+pub fn report_gate_error(err: &anyhow::Error) -> bool {
+    let Some(gate_err) = GateError::from_anyhow(err) else {
+        return false;
+    };
+    eprintln!("error: {gate_err}");
+    eprintln!(
+        "{}",
+        serde_json::to_string_pretty(gate_err).unwrap_or_default()
+    );
+    true
 }
 
-async fn run() -> Result<()> {
-    let cli = Cli::parse();
+/// Run the engine maintenance CLI with its own argv (`args[0]` is the program
+/// name). A parse failure comes back as a `clap::Error` inside the anyhow error
+/// (help and version included), a Gate denial as a [`GateError`]; the caller
+/// owns printing those and choosing the exit code. Some hook/watch commands
+/// keep their documented exit codes and exit the process themselves.
+pub async fn run_args<I, T>(args: I) -> Result<()>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    let cli = Cli::try_parse_from(args)?;
     let root = cli.root.unwrap_or_else(|| std::env::current_dir().unwrap());
 
     // Ledger and Mail are pure path/config holders (no disk I/O in their
@@ -1162,7 +1166,7 @@ async fn run() -> Result<()> {
                 // person; same rule as `judge resolve` (review finding #8).
                 if let Some(c) = &closer {
                     use std::io::IsTerminal;
-                    allternit_commrails::cli::judge::check_human_channel(
+                    crate::cli::judge::check_human_channel(
                         c,
                         std::env::var("ALLTERNIT_COMMRAILS_WIH").ok().as_deref(),
                         std::io::stdin().is_terminal(),
@@ -1547,8 +1551,8 @@ async fn run() -> Result<()> {
             let cs = receipts.chain_store()?;
             match cmd {
                 ReplayCmd::Record { run_id, graph_id, graph_version, out } => {
-                    let c = allternit_commrails::replay::record_cassette(&cs, &run_id, graph_id.as_deref(), graph_version)?;
-                    let p = allternit_commrails::replay::save_cassette(&receipts.receipts_dir().join("_cassettes"), &c)?;
+                    let c = crate::replay::record_cassette(&cs, &run_id, graph_id.as_deref(), graph_version)?;
+                    let p = crate::replay::save_cassette(&receipts.receipts_dir().join("_cassettes"), &c)?;
                     if let Some(o) = out {
                         std::fs::write(&o, serde_json::to_vec_pretty(&c)?)?;
                     }
@@ -1556,15 +1560,15 @@ async fn run() -> Result<()> {
                     println!("{}", serde_json::to_string_pretty(&c)?);
                 }
                 ReplayCmd::Check { cassette, steps, replay_run_id } => {
-                    let c = allternit_commrails::replay::load_cassette(&cassette)?;
+                    let c = crate::replay::load_cassette(&cassette)?;
                     let steps = match steps {
                         Some(p) => Some(serde_json::from_slice(&std::fs::read(p)?)?),
                         None => None,
                     };
                     let rid = replay_run_id.unwrap_or_else(|| format!("replay_{}", uuid::Uuid::new_v4().simple()));
-                    let rep = allternit_commrails::replay::replay_report(&cs, c, steps, &rid)?;
+                    let rep = crate::replay::replay_report(&cs, c, steps, &rid)?;
                     println!("{}", serde_json::to_string_pretty(&rep)?);
-                    if rep.verdict == allternit_commrails::replay::Verdict::UnexpectedDivergence {
+                    if rep.verdict == crate::replay::Verdict::UnexpectedDivergence {
                         anyhow::bail!("replay diverged: {} divergence(s)", rep.divergences.len());
                     }
                 }
@@ -1831,7 +1835,7 @@ async fn run() -> Result<()> {
                 GraphCmd::Impact { ticket_id } => {
                     let id: TicketId = ticket_id
                         .parse()
-                        .map_err(|e: allternit_commrails::rails_id::InvalidTicketId| {
+                        .map_err(|e: crate::rails_id::InvalidTicketId| {
                             anyhow::anyhow!(e)
                         })?;
                     match views::build_impact_view(&insights, &view, &all, &id) {
@@ -1871,11 +1875,11 @@ async fn run() -> Result<()> {
                 let bind: std::net::SocketAddr = bind
                     .parse()
                     .with_context(|| format!("--bind {bind:?} must be an IP:port literal"))?;
-                allternit_commrails::bridge::serve(allternit_commrails::bridge::BridgeConfig {
+                crate::bridge::serve(crate::bridge::BridgeConfig {
                     bind,
                     root: bridge_root,
                     identities_path: identities
-                        .unwrap_or_else(allternit_commrails::bridge::default_identities_path),
+                        .unwrap_or_else(crate::bridge::default_identities_path),
                     allow_remote,
                     rate_limit_per_min,
                 })
@@ -2036,7 +2040,7 @@ async fn run() -> Result<()> {
 }
 
 async fn run_hook_command(root: &Path, stores: &Stores, ledger: &Arc<Ledger>, cmd: HookCmd) -> Result<()> {
-    use allternit_commrails::hook;
+    use crate::hook;
     match cmd {
         HookCmd::ClaudePretool { wih, harness, workspace } => {
             let lease_root = workspace.unwrap_or_else(|| root.to_path_buf());
@@ -2096,7 +2100,7 @@ async fn run_hook_command(root: &Path, stores: &Stores, ledger: &Arc<Ledger>, cm
             }
         }
         HookCmd::ClaudeSettings { wih, out, workspace } => {
-            let bin = std::env::current_exe().context("locating allternit-commrails")?;
+            let bin = hook::find_commrails_bin().context("locating the allternit-factory gate binary")?;
             let settings = hook::claude_settings(hook::HookTarget {
                 commrails_bin: &bin,
                 root,
@@ -3648,7 +3652,7 @@ fn matches_trace(
 fn project_wih_from_events(
     events: &[AllternitEvent],
     wih_id: &str,
-) -> Option<allternit_commrails::wih::types::WihState> {
+) -> Option<crate::wih::types::WihState> {
     let filtered: Vec<AllternitEvent> = events
         .iter()
         .filter(|evt| evt.payload.get("wih_id").and_then(|v| v.as_str()) == Some(wih_id))

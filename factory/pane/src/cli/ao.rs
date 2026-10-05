@@ -42,6 +42,7 @@ const USAGE_QUEUE: &str =
     "usage: ao queue <slug> [prompt...] [--root <dir>] [--lead <id>] [--as-human]";
 const USAGE_DRAIN: &str = "usage: ao drain <slug> [--all] [--root <dir>] [--lead <id>] [--as-human]";
 const USAGE_RECOVER: &str = "usage: ao recover [slug] [--apply] [--lead <id>] [--as-human]";
+const USAGE_TRANSCRIPT: &str = "usage: ao transcript <slug> [--tail <lines>]";
 
 const AO_DIR: &str = ".agent-orchestrator";
 const LOGS_DIR: &str = "logs";
@@ -64,6 +65,7 @@ pub(super) fn run_ao_command(args: &[String]) -> std::io::Result<i32> {
         "queue" => queue(rest),
         "drain" => drain(rest),
         "recover" => recover(rest),
+        "transcript" => transcript(rest),
         "--help" | "-h" | "help" => {
             print_ao_help();
             Ok(0)
@@ -88,6 +90,7 @@ fn print_ao_help() {
          {USAGE_QUEUE}\n\
          {USAGE_DRAIN}\n\
          {USAGE_RECOVER}\n\
+         {USAGE_TRANSCRIPT}\n\
          \n\
          Dispatch semantics (additive to the parity contract):\n\
          - spawn records a dispatch-registry entry in ~/.agent-orchestrator/state.json\n\
@@ -1088,6 +1091,72 @@ fn mark_dead(session: &str) {
 }
 
 // ---------------------------------------------------------------------------
+// ao transcript (Allternit Factory: `orchestration transcript`)
+// ---------------------------------------------------------------------------
+
+/// Print the raw PTY transcript recorded for a spawned session (the log path
+/// `spawn` registered in state.json). Exit 2 when the session or its log is
+/// unknown; never substitutes a live capture for the transcript.
+fn transcript(args: &[String]) -> std::io::Result<i32> {
+    let mut slug: Option<&str> = None;
+    let mut tail: Option<usize> = None;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--tail" => match iter.next().and_then(|n| n.parse().ok()) {
+                Some(n) => tail = Some(n),
+                None => {
+                    eprintln!("{USAGE_TRANSCRIPT}");
+                    return Ok(2);
+                }
+            },
+            "-h" | "--help" | "help" => {
+                println!("{USAGE_TRANSCRIPT}");
+                return Ok(0);
+            }
+            other if slug.is_none() && !other.starts_with('-') => slug = Some(other),
+            _ => {
+                eprintln!("{USAGE_TRANSCRIPT}");
+                return Ok(2);
+            }
+        }
+    }
+    let Some(slug) = slug else {
+        eprintln!("{USAGE_TRANSCRIPT}");
+        return Ok(2);
+    };
+    let session = session_of(slug);
+    let state = load_state();
+    let Some(entry) = state.sessions.get(&session) else {
+        eprintln!("error: no session {session} in {}", state_path().display());
+        return Ok(2);
+    };
+    let Some(log) = entry.log.as_deref() else {
+        eprintln!("error: session {session} has no transcript log recorded");
+        return Ok(2);
+    };
+    let bytes = match std::fs::read(log) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            eprintln!("error: transcript {log} not readable: {err}");
+            return Ok(2);
+        }
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    let out: String = match tail {
+        Some(n) => {
+            let lines: Vec<&str> = text.lines().collect();
+            lines[lines.len().saturating_sub(n)..].join("\n") + "\n"
+        }
+        None => text.into_owned(),
+    };
+    use std::io::Write as _;
+    let mut stdout = std::io::stdout().lock();
+    let _ = stdout.write_all(out.as_bytes());
+    Ok(0)
+}
+
+// ---------------------------------------------------------------------------
 // ao status
 // ---------------------------------------------------------------------------
 
@@ -1564,7 +1633,7 @@ fn recover(args: &[String]) -> std::io::Result<i32> {
                     println!("RECOVERED {session} — transcript {}", log.display());
                     if let Some(sentinel) = &entry.sentinel {
                         if let Ok(exe) = std::env::current_exe() {
-                            let _ = Command::new(exe)
+                            let _ = crate::factory_host::self_command(exe)
                                 .arg("watch")
                                 .arg(&slug)
                                 .arg(sentinel)

@@ -10,29 +10,29 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use allternit_commrails::drive::hooks::NoHooks;
-use allternit_commrails::drive::{DriveOptions, Driver, ATTEMPT_FINISHED, ATTEMPT_STARTED};
-use allternit_commrails::egress::{host_is_forbidden_literal, is_public_ip};
-use allternit_commrails::gate::gate::DagMutation as Mutation;
-use allternit_commrails::judge::policy::{CloseBy, JudgePolicy, PolicyOrigin, VerifyMode};
-use allternit_commrails::judge::{StubJudge, ToolDecision, ToolDecisionSource};
-use allternit_commrails::kernel::graph::{validate, ComputeGraph};
-use allternit_commrails::kernel::registry::PrimitiveRegistry;
-use allternit_commrails::kernel::router::{
+use allternit_factory_engine::drive::hooks::NoHooks;
+use allternit_factory_engine::drive::{DriveOptions, Driver, ATTEMPT_FINISHED, ATTEMPT_STARTED};
+use allternit_factory_engine::egress::{host_is_forbidden_literal, is_public_ip};
+use allternit_factory_engine::gate::gate::DagMutation as Mutation;
+use allternit_factory_engine::judge::policy::{CloseBy, JudgePolicy, PolicyOrigin, VerifyMode};
+use allternit_factory_engine::judge::{StubJudge, ToolDecision, ToolDecisionSource};
+use allternit_factory_engine::kernel::graph::{validate, ComputeGraph};
+use allternit_factory_engine::kernel::registry::PrimitiveRegistry;
+use allternit_factory_engine::kernel::router::{
     BudgetLedger, ExecutionPlan, Mode, PoolEntry, RouteError, Role, Router, RouterConfig,
     StaticModelPool,
 };
-use allternit_commrails::leases::leases::LeasesOptions;
-use allternit_commrails::ledger::ledger::LedgerOptions;
-use allternit_commrails::receipts::chain::{ChainStore, EffectContext, EffectOutcome, EffectRequest};
-use allternit_commrails::receipts::jcs::{hash_value, sha256_tagged};
-use allternit_commrails::receipts::sign::ReceiptSigner;
-use allternit_commrails::replay::{
+use allternit_factory_engine::leases::leases::LeasesOptions;
+use allternit_factory_engine::ledger::ledger::LedgerOptions;
+use allternit_factory_engine::receipts::chain::{ChainStore, EffectContext, EffectOutcome, EffectRequest};
+use allternit_factory_engine::receipts::jcs::{hash_value, sha256_tagged};
+use allternit_factory_engine::receipts::sign::ReceiptSigner;
+use allternit_factory_engine::replay::{
     record_cassette, replay_report, Boundary, EffectsMode, ReplayStep, Replayer, StepOutcome, Verdict,
 };
-use allternit_commrails::templates::RETRY_SAFE_LABEL;
-use allternit_commrails::work::{project_dag, DagState};
-use allternit_commrails::{
+use allternit_factory_engine::templates::RETRY_SAFE_LABEL;
+use allternit_factory_engine::work::{project_dag, DagState};
+use allternit_factory_engine::{
     Actor, ActorType, AllternitEvent, Gate, GateError, GateOptions, Leases, Ledger, LedgerQuery,
     ReceiptStore, ReceiptStoreOptions,
 };
@@ -48,7 +48,7 @@ fn test_root() -> TempDir {
 }
 
 async fn build_gate(root: &Path) -> (Arc<Ledger>, Arc<Gate>) {
-    std::env::set_var("ALLTERNIT_COMMRAILS_BIN", env!("CARGO_BIN_EXE_allternit-commrails"));
+    std::env::set_var("ALLTERNIT_COMMRAILS_BIN", env!("CARGO_BIN_EXE_allternit-factory"));
     let ledger = Arc::new(Ledger::new(LedgerOptions {
         root_dir: Some(root.to_path_buf()),
         ledger_dir: Some(PathBuf::from(".allternit/ledger")),
@@ -265,7 +265,7 @@ fn live_run(s: &ChainStore, run: &str) -> u32 {
 fn policy_step() -> ReplayStep {
     ReplayStep {
         boundary: Boundary::Policy, node_id: "gate".into(),
-        request_hash: allternit_commrails::replay::boundary_request_hash(Boundary::Policy, "gate", "allternit.kernel.PolicyReceiptV1").unwrap(),
+        request_hash: allternit_factory_engine::replay::boundary_request_hash(Boundary::Policy, "gate", "allternit.kernel.PolicyReceiptV1").unwrap(),
         branch: Some("ALLOW".into()), result_hash: None, idempotency_key: None,
     }
 }
@@ -281,7 +281,7 @@ fn pool_entry(id: &str, role: Role, mode: Mode, cap: &str, conf: f64, cost: f64,
     }))
     .unwrap()
 }
-fn graph_node(id: &str, role: &str, cap: &str) -> allternit_commrails::kernel::graph::GraphNode {
+fn graph_node(id: &str, role: &str, cap: &str) -> allternit_factory_engine::kernel::graph::GraphNode {
     serde_json::from_value(json!({
         "node_id": id, "primitive_id": "generate.patch", "node_kind": "COMPUTE", "cognitive_role": role,
         "inputs": [], "outputs": [], "read_set": [], "write_set": [], "lock_scope": [],
@@ -644,7 +644,7 @@ fn security_egress_guard_blocks_private_and_metadata_addresses() {
 
 #[test]
 fn security_no_vendor_names_in_contract_data_or_plans() {
-    let abi = concat!(env!("CARGO_MANIFEST_DIR"), "/../spec/Contracts/kernel/v1");
+    let abi = concat!(env!("CARGO_MANIFEST_DIR"), "/../../spec/Contracts/kernel/v1");
     for dir in ["data", "conformance/examples/valid"] {
         for e in std::fs::read_dir(format!("{abi}/{dir}")).unwrap().flatten() {
             if e.path().extension().is_some_and(|x| x == "json") {
@@ -696,7 +696,7 @@ fn model_swap_does_not_change_plan_shape_or_graph() {
     }
     // The graph never names a model, so no swap can edit it (invariant I7).
     let g = ComputeGraph::from_json(&std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"), "/../spec/Contracts/kernel/v1/conformance/examples/valid/ComputeGraphIRV1.json")).unwrap()).unwrap();
+        env!("CARGO_MANIFEST_DIR"), "/../../spec/Contracts/kernel/v1/conformance/examples/valid/ComputeGraphIRV1.json")).unwrap()).unwrap();
     let violations = validate(&g, PrimitiveRegistry::global());
     assert!(!violations.iter().any(|v| format!("{v:?}").contains("I7NoModelPinning")), "{violations:?}");
 }

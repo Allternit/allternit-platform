@@ -9,19 +9,19 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use allternit_commrails::drive::hooks::NoHooks;
-use allternit_commrails::drive::{
+use allternit_factory_engine::drive::hooks::NoHooks;
+use allternit_factory_engine::drive::{
     DriveExit, DriveOptions, DriveReport, Driver, ATTEMPT_FINISHED, ATTEMPT_STARTED, BOT_NOTIFIED,
     NEEDS_YOU, SPAWN_DEFERRED,
 };
-use allternit_commrails::gate::gate::DagMutation as Mutation;
-use allternit_commrails::leases::leases::LeasesOptions;
-use allternit_commrails::ledger::ledger::LedgerOptions;
-use allternit_commrails::templates::RETRY_SAFE_LABEL;
-use allternit_commrails::wait_gates::GateOutcome;
-use allternit_commrails::work::needs_you::pending_manual_gates;
-use allternit_commrails::work::{project_dag, DagState};
-use allternit_commrails::{
+use allternit_factory_engine::gate::gate::DagMutation as Mutation;
+use allternit_factory_engine::leases::leases::LeasesOptions;
+use allternit_factory_engine::ledger::ledger::LedgerOptions;
+use allternit_factory_engine::templates::RETRY_SAFE_LABEL;
+use allternit_factory_engine::wait_gates::GateOutcome;
+use allternit_factory_engine::work::needs_you::pending_manual_gates;
+use allternit_factory_engine::work::{project_dag, DagState};
+use allternit_factory_engine::{
     Actor, ActorType, AllternitEvent, Gate, GateOptions, Leases, Ledger, LedgerQuery, ReceiptStore,
     ReceiptStoreOptions,
 };
@@ -35,7 +35,7 @@ fn test_root() -> TempDir {
 }
 
 fn commrails_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_allternit-commrails")
+    env!("CARGO_BIN_EXE_allternit-factory")
 }
 
 async fn build_gate(root: &Path) -> (Arc<Ledger>, Arc<Gate>) {
@@ -328,7 +328,7 @@ async fn global_caps_are_shared_across_two_drive_processes() {
         let root = root.clone();
         tokio::process::Command::new(commrails_bin())
             .env("ALLTERNIT_COMMRAILS_BIN", commrails_bin())
-            .args(["--root", root.to_str().unwrap(), "drive", &dag])
+            .args(["internal", "rails", "--root", root.to_str().unwrap(), "drive", &dag])
             .output()
     };
     let (o1, o2) = tokio::join!(run(dag1.clone()), run(dag2.clone()));
@@ -351,7 +351,7 @@ async fn global_caps_are_shared_across_two_drive_processes() {
     // Hourly: 4 of 4 global spawns used. A third DAG is deferred, not spawned.
     let (dag3, _) = plan(&gate, vec![node("g3_a", "", Some("ao:claude"), None)]).await;
     let out = tokio::process::Command::new(commrails_bin())
-        .args(["--root", root.to_str().unwrap(), "drive", &dag3, "--once"])
+        .args(["internal", "rails", "--root", root.to_str().unwrap(), "drive", &dag3, "--once"])
         .output()
         .await
         .unwrap();
@@ -368,13 +368,13 @@ async fn global_caps_are_shared_across_two_drive_processes() {
     assert!(dag(&ledger, &dag3).await.nodes["g3_a"].current_wih_id.is_none(), "no pickup when deferred");
 
     // A second process on the same DAG is refused by the per-DAG lock.
-    let lock = allternit_commrails::drive::caps::FileLock::try_exclusive(
+    let lock = allternit_factory_engine::drive::caps::FileLock::try_exclusive(
         &root.join(format!(".allternit/drive/dags/{dag3}.lock")),
     )
     .unwrap()
     .unwrap();
     let out = tokio::process::Command::new(commrails_bin())
-        .args(["--root", root.to_str().unwrap(), "drive", &dag3, "--once"])
+        .args(["internal", "rails", "--root", root.to_str().unwrap(), "drive", &dag3, "--once"])
         .output()
         .await
         .unwrap();
@@ -599,7 +599,7 @@ async fn capacity_admission_refuses_to_start() {
 
 #[tokio::test]
 async fn template_retry_safe_becomes_a_node_label() {
-    use allternit_commrails::templates::{parse_markdown_template, plan_from_template};
+    use allternit_factory_engine::templates::{parse_markdown_template, plan_from_template};
     let tmp = test_root();
     let (ledger, gate) = build_gate(tmp.path()).await;
     let tpl = |retry: &str| {

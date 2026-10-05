@@ -87,11 +87,11 @@ fn guarded_client(url: &str) -> Result<reqwest::Client, String> {
         return Err("blocked: only http(s) destinations are allowed".into());
     }
     let host = parsed.host_str().ok_or_else(|| "blocked: URL has no host".to_string())?;
-    if allternit_commrails::egress::host_is_forbidden_literal(host) {
+    if allternit_factory_engine::egress::host_is_forbidden_literal(host) {
         return Err("blocked non-public destination".into());
     }
     reqwest::Client::builder()
-        .dns_resolver(Arc::new(allternit_commrails::egress::PublicOnlyResolver))
+        .dns_resolver(Arc::new(allternit_factory_engine::egress::PublicOnlyResolver))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| e.to_string())

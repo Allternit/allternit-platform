@@ -281,7 +281,7 @@ pub fn s1_curation_request(entries: &[(String, String)], i: usize) -> Value {
 /// error swallowed, never changes the plan. Capped at 64 entries a run.
 /// `ALLTERNIT_S1_CURATION_SHADOW=0` turns it off.
 fn s1_shadow_curation(entries: &[(String, String)], plan: &CurationPlan) {
-    use allternit_commrails::kernel::{router::DecisionResultView, s1_outcome::OutcomeReporter};
+    use allternit_factory_engine::kernel::{router::DecisionResultView, s1_outcome::OutcomeReporter};
     let reporter = OutcomeReporter::from_env();
     if !reporter.enabled || std::env::var("ALLTERNIT_S1_CURATION_SHADOW").is_ok_and(|v| v == "0") {
         return;

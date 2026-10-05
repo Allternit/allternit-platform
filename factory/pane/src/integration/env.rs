@@ -27,7 +27,7 @@ pub(crate) const HERMES_HOME_ENV_VAR: &str = "HERMES_HOME";
 
 pub(crate) fn apply_pane_base_env(cmd: &mut CommandBuilder) {
     cmd.env(crate::api::SOCKET_PATH_ENV_VAR, crate::api::socket_path());
-    if let Ok(executable) = std::env::current_exe() {
+    if let Ok(executable) = crate::factory_host::bin_path() {
         cmd.env("HERDR_BIN_PATH", executable);
     }
 }

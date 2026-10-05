@@ -5,17 +5,17 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use allternit_commrails::attention::{open_needs_you, AttentionConfig, QuietHoursConfig};
-use allternit_commrails::campaign::{
+use allternit_factory_engine::attention::{open_needs_you, AttentionConfig, QuietHoursConfig};
+use allternit_factory_engine::campaign::{
     BudgetDecl, BudgetMode, CampaignDefinition, CampaignOps, CampaignStatus, Rearm, SpendEntry,
 };
-use allternit_commrails::gate::gate::DagMutation as Mutation;
-use allternit_commrails::leases::leases::LeasesOptions;
-use allternit_commrails::ledger::ledger::LedgerOptions;
-use allternit_commrails::wait_gates::WaitGateKind;
-use allternit_commrails::wake::runner::{run_due, NodeTimerHandler, SweepContext};
-use allternit_commrails::wake::{self, AutomationConfig, WakeQueue};
-use allternit_commrails::{
+use allternit_factory_engine::gate::gate::DagMutation as Mutation;
+use allternit_factory_engine::leases::leases::LeasesOptions;
+use allternit_factory_engine::ledger::ledger::LedgerOptions;
+use allternit_factory_engine::wait_gates::WaitGateKind;
+use allternit_factory_engine::wake::runner::{run_due, NodeTimerHandler, SweepContext};
+use allternit_factory_engine::wake::{self, AutomationConfig, WakeQueue};
+use allternit_factory_engine::{
     Gate, GateOptions, Leases, Ledger, LedgerQuery, ReceiptStore, ReceiptStoreOptions,
 };
 use chrono::{DateTime, Duration, Utc};
@@ -367,11 +367,11 @@ async fn claimed_but_uncompleted_wake_is_not_refired() {
         .await
         .unwrap();
     // Simulate a sweep that claimed the wake and died.
-    l.append(allternit_commrails::AllternitEvent {
+    l.append(allternit_factory_engine::AllternitEvent {
         event_id: String::new(),
         ts: String::new(),
-        actor: allternit_commrails::Actor {
-            r#type: allternit_commrails::ActorType::Gate,
+        actor: allternit_factory_engine::Actor {
+            r#type: allternit_factory_engine::ActorType::Gate,
             id: "wake".into(),
         },
         scope: None,

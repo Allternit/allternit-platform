@@ -12,7 +12,7 @@ set -euo pipefail
 
 PARITY_DIR="$(cd "$(dirname "$0")" && pwd)"
 AOE_ROOT="$(cd "$PARITY_DIR/../.." && pwd)"
-REPO_ROOT="$(cd "$PARITY_DIR/../../../../.." && pwd)"
+REPO_ROOT="$(cd "$PARITY_DIR/../../../.." && pwd)"
 FP_TS="$REPO_ROOT/platform/packages/native-sessions/src/fingerprint.ts"
 
 FIXTURE="$(mktemp -d /tmp/ao-visibility-parity.XXXXXX)"
@@ -39,6 +39,6 @@ AO_FP_PARITY_SINGLE="$EXPECTED_SINGLE" \
 AO_FP_PARITY_MULTI="$EXPECTED_MULTI" \
 AO_FP_PARITY_TARGET="$FIXTURE/sub/dir" \
 AO_FP_PARITY_TARGET2="$FIXTURE/state.json" \
-cargo test -p herdr fingerprint_parity_with_ts -- --exact --nocapture
+cargo test -p allternit-factory-pane fingerprint_parity_with_ts -- --exact --nocapture
 
 echo "PARITY OK: Rust port matches fingerprint.ts byte-for-byte"

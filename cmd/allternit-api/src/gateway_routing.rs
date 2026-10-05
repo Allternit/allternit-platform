@@ -88,7 +88,7 @@ pub fn tool_name(event_type: &str, payload: &Value) -> Option<String> {
 }
 
 fn s1_base() -> (String, Option<String>) {
-    let r = allternit_commrails::kernel::s1_outcome::OutcomeReporter::from_env();
+    let r = allternit_factory_engine::kernel::s1_outcome::OutcomeReporter::from_env();
     (r.base_url, r.token)
 }
 
@@ -181,7 +181,7 @@ pub fn after_events(corr: &str, tools: Vec<String>) {
 }
 
 fn report(decision_id: &str, truth: &str, source: &str) {
-    allternit_commrails::kernel::s1_outcome::OutcomeReporter::from_env()
+    allternit_factory_engine::kernel::s1_outcome::OutcomeReporter::from_env()
         .spawn_report(decision_id.to_string(), truth.to_string(), source.to_string());
 }
 

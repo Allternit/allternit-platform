@@ -1,9 +1,9 @@
 //! Review #18: lifecycle validation at real mutation/CLI/projection boundaries.
-use allternit_commrails::gate::gate::DagMutation as Mutation;
-use allternit_commrails::leases::leases::LeasesOptions;
-use allternit_commrails::ledger::ledger::LedgerOptions;
-use allternit_commrails::work::project_dag;
-use allternit_commrails::{
+use allternit_factory_engine::gate::gate::DagMutation as Mutation;
+use allternit_factory_engine::leases::leases::LeasesOptions;
+use allternit_factory_engine::ledger::ledger::LedgerOptions;
+use allternit_factory_engine::work::project_dag;
+use allternit_factory_engine::{
     Actor, ActorType, AllternitEvent, Gate, GateOptions, Leases, Ledger, LedgerQuery, ReceiptStore,
     ReceiptStoreOptions,
 };
@@ -207,7 +207,8 @@ async fn status_cli_reads_current_source_and_rejects_weird() {
     let (ledger, gate) = build_gate(root.path()).await;
     let (_, dag, node) = gate.plan_new("review", None).await.unwrap();
     let run = |args: &[&str]| {
-        std::process::Command::new(env!("CARGO_BIN_EXE_allternit-commrails"))
+        std::process::Command::new(env!("CARGO_BIN_EXE_allternit-factory"))
+            .args(["internal", "rails"])
             .arg("--root")
             .arg(root.path())
             .arg("work")

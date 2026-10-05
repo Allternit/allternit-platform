@@ -327,10 +327,12 @@ pub(crate) fn remote_reattach_program(program: &str) -> String {
         .ok()
         .filter(|path| path.is_absolute())
         .unwrap_or_else(|| PathBuf::from(program));
-    format!(
-        "& {}",
-        remote_reattach_argument(&path.display().to_string())
-    )
+    let mut program = format!("& {}", remote_reattach_argument(&path.display().to_string()));
+    for part in crate::factory_host::argv_prefix() {
+        program.push(' ');
+        program.push_str(&remote_reattach_argument(part));
+    }
+    program
 }
 
 pub(crate) fn remote_reattach_argument(value: &str) -> String {

@@ -1,5 +1,5 @@
 [package]
-name = "herdr"
+name = "allternit-factory-pane"
 version = "0.9.0"
 edition = "2021"
 build = "build.rs"
@@ -20,10 +20,18 @@ include = [
     "Cargo.toml",
 ]
 
-# Internal crate name stays `herdr` (upstream mergeability); the user-facing
-# binary target is `ao` per the ao v3 engine fork plan (P0).
+# The pane engine is a library: the product binary is `allternit-factory`
+# (cmd/allternit-factory), which runs it as `allternit-factory pane …`.
+# Internal module layout stays herdr's (upstream mergeability).
+[lib]
+name = "allternit_factory_pane"
+path = "src/lib.rs"
+
+# Dev/test harness only (never shipped): the same entry point as
+# `allternit-factory pane`, so the herdr integration tests and the parity
+# scripts can drive the engine with herdr's own argv.
 [[bin]]
-name = "ao"
+name = "allternit-factory-pane"
 path = "src/main.rs"
 
 [dependencies]
@@ -69,15 +77,15 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 
 # P5 visibility panel (src/ao/peers/*, src/ao/visibility/*) and P6a Bus mailbox
 # (src/ao/mailbox.rs): durable SQLite Bus + Ledger shim crate.
-allternit-commrails = { workspace = true }
+allternit-factory-engine = { workspace = true }
 
 # P6a UHP gateway (src/ao/serve.rs): `ao serve` mounts the UHP HTTP surface
 # in-process (not a sidecar); the gateway drives the engine over the socket API.
-uhp-gateway = { path = "../uhp-gateway" }
+uhp-gateway = { path = "../../infrastructure/executor/uhp-gateway" }
 
 # NOTE: cargo only honors [patch] in the WORKSPACE ROOT manifest. The
 # portable-pty patch was ported to the workspace root Cargo.toml
-# ([patch.crates-io] portable-pty = { path = "infrastructure/executor/ao-engine/vendor/portable-pty" }).
+# ([patch.crates-io] portable-pty = { path = "factory/pane/vendor/portable-pty" }).
 # It applies only to dependents requesting portable-pty 0.9.x (this crate pins =0.9.0);
 # other workspace members requesting 0.8 are unaffected.
 

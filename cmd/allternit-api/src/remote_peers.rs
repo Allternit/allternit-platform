@@ -970,7 +970,7 @@ impl RemotePeersState {
                 kind: "local-peer".to_string(),
                 source: "local".to_string(),
                 url: None,
-                source_reachable: peer.status != allternit_commrails::PeerStatus::Dead,
+                source_reachable: peer.status != allternit_factory_engine::PeerStatus::Dead,
                 last_seen_at: peer.last_heartbeat_at,
             });
         }
@@ -1574,7 +1574,7 @@ async fn fabric_send_inner(
                 .peers
                 .list()
                 .into_iter()
-                .find(|p| p.status != allternit_commrails::PeerStatus::Dead)
+                .find(|p| p.status != allternit_factory_engine::PeerStatus::Dead)
                 .map(|p| p.name)
         }) {
         Some(name) => name,
@@ -1629,7 +1629,7 @@ async fn fabric_send_inner(
         FABRIC_REPLY_PEER,
         inbound_id,
     );
-    let bus_msg = allternit_commrails::bus::NewBusMessage {
+    let bus_msg = allternit_factory_engine::bus::NewBusMessage {
         correlation_id: uuid::Uuid::new_v4().to_string(),
         to: format!("peer:{}", peer.name),
         from: format!("remote:{}", request.from.name),
@@ -2354,7 +2354,7 @@ mod tests {
         app_state_b
             .rails
             .bus
-            .send_message(allternit_commrails::bus::NewBusMessage {
+            .send_message(allternit_factory_engine::bus::NewBusMessage {
                 correlation_id: uuid::Uuid::new_v4().to_string(),
                 to: format!("peer:{FABRIC_REPLY_PEER}"),
                 from: "gizmo".to_string(),

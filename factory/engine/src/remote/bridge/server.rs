@@ -1,4 +1,4 @@
-//! `allternit-commrails bridge serve`: the scoped remote listener.
+//! `allternit-factory internal rails bridge serve`: the scoped remote listener.
 //!
 //! Every request is authenticated (bearer token -> [`Identity`]), rate
 //! limited per identity, classified against a fixed route table
@@ -90,7 +90,7 @@ pub fn check_bind(cfg: &BridgeConfig, store: &IdentityStore) -> Result<()> {
     if active == 0 {
         bail!(
             "refusing to bind non-loopback address {}: no active identities in {} \
-             (run `allternit-commrails identity add` first)",
+             (run `allternit-factory internal rails identity add` first)",
             cfg.bind,
             store.path().display()
         );

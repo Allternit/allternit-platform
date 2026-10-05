@@ -73,14 +73,14 @@ fn setup(installed: &str, answer: &str, handoff: bool) -> SetupResult {
         "onboarding = false\n[remote]\nmanage_ssh_config = false\n",
     )
     .unwrap();
-    let status = Command::new(env!("CARGO_BIN_EXE_ao"))
+    let status = Command::new(env!("CARGO_BIN_EXE_allternit-factory-pane"))
         .args(["status", "client", "--json"])
         .output()
         .unwrap();
     assert!(status.status.success());
 
     let pair = native_pty_system().openpty(PtySize::default()).unwrap();
-    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_ao"));
+    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_allternit-factory-pane"));
     if handoff {
         command.args(["--remote", "fake-host", "--handoff"]);
     } else {

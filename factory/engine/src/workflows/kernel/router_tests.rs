@@ -336,7 +336,7 @@ fn serialized_plans_contain_no_vendor_or_model_names() {
 
 #[test]
 fn serialized_plans_fit_the_frozen_execution_plan_schema() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../spec/Contracts/kernel/v1/schemas/capability.schema.json");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../spec/Contracts/kernel/v1/schemas/capability.schema.json");
     let schema: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let def = &schema["$defs"]["ExecutionPlanV1"];
     let props = def["properties"].as_object().unwrap();

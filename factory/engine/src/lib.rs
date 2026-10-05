@@ -1,59 +1,37 @@
-pub mod attention;
-pub mod bridge;
-pub mod bus;
-pub mod batch;
-pub mod campaign;
-pub mod cli;
-pub mod compact;
-pub mod constraints;
-pub mod context;
+//! Allternit Factory engine (`allternit-factory-engine`).
+//!
+//! Modules are grouped by job (SPEC §5): `core`, `gate`, and the four parts
+//! `agents`, `orchestration`, `workflows`, `workspace`, plus the `api` and
+//! `remote` surfaces. `tickets` is the internal foreign-repo ticket area.
+//!
+//! The flat re-exports below keep the pre-grouping `crate::x::y` paths
+//! compiling (internal compatibility only, not a public naming scheme).
+
+pub mod agents;
+pub mod api;
 pub mod core;
-pub mod dependencies;
-pub mod doctor;
-#[cfg(feature = "dolt")]
-pub mod dolt;
-pub mod drive;
-pub mod echoes;
-pub mod egress;
-pub mod execenv;
-pub mod fence;
 pub mod gate;
-pub mod graph;
-pub mod hook;
-pub mod index;
-pub mod judge;
-pub mod kernel;
-pub mod killswitch;
-pub mod leases;
-pub mod ledger;
-pub mod lessons;
-pub mod mail;
-pub mod mcp;
-pub mod observer;
-pub mod memory;
-pub mod merge_locks;
-pub mod orchestrator;
-pub mod peer;
-pub mod policy;
-pub mod projections;
-pub mod templates;
-pub mod prompt;
-pub mod query;
-pub mod rails_id;
-pub mod receipts;
-pub mod replay;
-pub mod service;
-pub mod setup;
-pub mod steer;
-pub mod sync;
+pub mod orchestration;
+pub mod remote;
 pub mod tickets;
-pub mod vault;
-pub mod verification;
-pub mod wait_gates;
-pub mod wake;
-pub mod wih;
-pub mod work;
+pub mod workflows;
 pub mod workspace;
+
+pub use crate::agents::{execenv, orchestrator, peer};
+pub use crate::api::{cli, mcp, service};
+#[cfg(feature = "dolt")]
+pub use crate::core::dolt;
+pub use crate::core::{compact, index, ledger, projections, prompt, query, replay};
+pub use crate::gate::{constraints, egress, fence, hook, killswitch, policy};
+pub use crate::orchestration::{attention, bus, mail, observer, steer};
+pub use crate::remote::bridge;
+pub use crate::tickets::{batch, doctor, graph, rails_id, setup, sync};
+pub use crate::workflows::{
+    dependencies, drive, kernel, leases, merge_locks, templates, wait_gates, wake,
+};
+pub use crate::workspace::{
+    campaign, context, echoes, judge, lessons, memory, receipts, vault, verification, wih, work,
+};
 
 pub use crate::context::{
     generate_pack_id, ContextPackInputs, ContextPackQuery, ContextPackSeal, ContextPackStore,

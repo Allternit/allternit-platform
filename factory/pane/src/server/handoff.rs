@@ -7,7 +7,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 #[cfg(unix)]
 use std::path::{Path, PathBuf};
 #[cfg(unix)]
-use std::process::{Child, Command};
+use std::process::Child;
 #[cfg(unix)]
 use std::time::Duration;
 
@@ -76,7 +76,7 @@ pub(crate) fn spawn_handoff_import(
         })?;
         &fallback_exe
     };
-    let mut command = Command::new(exe);
+    let mut command = crate::factory_host::self_command(exe);
     command
         .arg("server")
         .arg("--handoff-import")

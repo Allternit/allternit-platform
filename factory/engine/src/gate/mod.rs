@@ -1,3 +1,10 @@
+// Factory part `gate`: the only writer (SPEC §5).
+pub mod constraints;
+pub mod egress;
+pub mod fence;
+pub mod hook;
+pub mod killswitch;
+pub mod policy;
 pub mod errors;
 pub mod gate;
 #[cfg(test)]

@@ -5,16 +5,16 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use allternit_commrails::fence::Fence;
-use allternit_commrails::gate::gate::DagMutation as Mutation;
-use allternit_commrails::leases::leases::LeasesOptions;
-use allternit_commrails::ledger::ledger::LedgerOptions;
-use allternit_commrails::lessons::sink::{MemorySink, VaultCandidateSink};
-use allternit_commrails::lessons::triage::{triage_dag, TriageConfig, Verdict};
-use allternit_commrails::observer::{
+use allternit_factory_engine::fence::Fence;
+use allternit_factory_engine::gate::gate::DagMutation as Mutation;
+use allternit_factory_engine::leases::leases::LeasesOptions;
+use allternit_factory_engine::ledger::ledger::LedgerOptions;
+use allternit_factory_engine::lessons::sink::{MemorySink, VaultCandidateSink};
+use allternit_factory_engine::lessons::triage::{triage_dag, TriageConfig, Verdict};
+use allternit_factory_engine::observer::{
     self, observe, ObserveRequest, ObserverConfig, Trigger, OBSERVER_AGENT,
 };
-use allternit_commrails::{
+use allternit_factory_engine::{
     Gate, GateOptions, Leases, Ledger, LedgerQuery, ReceiptStore, ReceiptStoreOptions, Vault,
     VaultOptions, WihPickupOptions,
 };
@@ -202,7 +202,7 @@ fn stub_cmd(prompt_file: &Path) -> String {
     )
 }
 
-fn count(events: &[allternit_commrails::AllternitEvent], ty: &str) -> usize {
+fn count(events: &[allternit_factory_engine::AllternitEvent], ty: &str) -> usize {
     events.iter().filter(|e| e.r#type == ty).count()
 }
 
@@ -335,7 +335,7 @@ async fn repeat_identical_failure_triggers_observer_once() {
     let (ledger, gate) = build_gate(tmp.path(), false).await;
     let dag_id = plan_ab(&gate, "rp_a", "rp_b").await;
     let cfg = stub_cfg(&stub_cmd(&tmp.path().join("p.txt")));
-    let observer_msgs = |events: &[allternit_commrails::AllternitEvent]| {
+    let observer_msgs = |events: &[allternit_factory_engine::AllternitEvent]| {
         events
             .iter()
             .filter(|e| {

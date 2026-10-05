@@ -110,7 +110,7 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
         // ao contract commands take priority over the engine's own words
         // (notably `status`); see src/cli/ao.rs.
         "spawn" | "send" | "watch" | "status" | "kill" | "doctor" | "queue" | "drain"
-        | "recover" => ao::run_ao_command(&args[1..])?,
+        | "recover" | "transcript" => ao::run_ao_command(&args[1..])?,
         "fabric" => crate::ao::fabric::cli::run(&args[2..])?,
         "harness" => crate::ao::harness::run(&args[2..])?,
         "serve" => crate::ao::serve::run(&args[2..])?,

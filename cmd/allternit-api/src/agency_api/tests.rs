@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::test_helpers::app_state;
-use allternit_commrails::judge::policy::{effective_policy, CloseBy, PolicyOrigin, VerifyMode};
+use allternit_factory_engine::judge::policy::{effective_policy, CloseBy, PolicyOrigin, VerifyMode};
 use axum::body::Body;
 use axum::http::Request;
 use tower::ServiceExt;
@@ -105,7 +105,7 @@ async fn agency_goal_only_creates_durable_run_with_resolved_defaults() {
 
     // Durable: a fresh store over the same on-disk ledger (≈ restart) sees it,
     // with the TaskIR that was compiled for it.
-    let fresh = AgencyStore::new(Arc::new(allternit_commrails::ledger::Ledger::new(allternit_commrails::ledger::LedgerOptions {
+    let fresh = AgencyStore::new(Arc::new(allternit_factory_engine::ledger::Ledger::new(allternit_factory_engine::ledger::LedgerOptions {
         root_dir: Some(t.st.rails.root_dir.clone()),
         ledger_dir: Some(std::path::PathBuf::from(".allternit/ledger")),
     })));
@@ -401,7 +401,7 @@ fn agency_runs_always_use_the_strict_fence() {
     let c = compiler::compile(&json!({ "goal": "g", "workspace": { "repo": "https://example.com/r.git" } }), "run_f", &reg).unwrap();
     assert_eq!(c.task_ir["wih_policy"]["fence"], "strict");
     assert_eq!(c.task_ir["judge_policy"]["fence"], "strict");
-    assert_eq!(c.judge_policy.fence, Some(allternit_commrails::judge::policy::Fence::Strict));
+    assert_eq!(c.judge_policy.fence, Some(allternit_factory_engine::judge::policy::Fence::Strict));
     assert_eq!(c.resolved["enforcement"]["fence"], "strict");
     // A template cannot switch the fence off either.
     assert_eq!(compiler::enforce_wih_policy(&json!({ "fence": "guardrail" }))["fence"], "strict");
@@ -409,8 +409,8 @@ fn agency_runs_always_use_the_strict_fence() {
 
 #[test]
 fn agency_models_constraints_filter_the_pool_by_class_and_locality() {
-    use allternit_commrails::kernel::router::Residency;
-    let g = allternit_commrails::kernel::bug_fix::instantiate("t", &["fs:repo".into()]).unwrap();
+    use allternit_factory_engine::kernel::router::Residency;
+    let g = allternit_factory_engine::kernel::bug_fix::instantiate("t", &["fs:repo".into()]).unwrap();
     let full = executor::tests_support::scripted_pool(&g);
     let n = full.entries.len();
     let (local, _) = executor::constrain(full.clone(), &json!({ "allow_classes": ["mc.local"] }));
@@ -503,7 +503,7 @@ async fn agency_executor_drives_bug_fix_to_verified_completion() {
 
 #[tokio::test]
 async fn agency_store_index_does_not_rescan_ledger() {
-    use allternit_commrails::ledger::{Ledger, LedgerOptions};
+    use allternit_factory_engine::ledger::{Ledger, LedgerOptions};
     let dir = tempfile::tempdir().unwrap();
     let open = || Arc::new(Ledger::new(LedgerOptions { root_dir: Some(dir.path().to_path_buf()), ledger_dir: Some(std::path::PathBuf::from("ledger")) }));
     let s = AgencyStore::new(open());
@@ -539,7 +539,7 @@ async fn agency_store_index_does_not_rescan_ledger() {
 #[tokio::test]
 #[ignore]
 async fn agency_store_bench_large_ledger() {
-    use allternit_commrails::ledger::{Ledger, LedgerOptions};
+    use allternit_factory_engine::ledger::{Ledger, LedgerOptions};
     let dir = tempfile::tempdir().unwrap();
     let open = || Arc::new(Ledger::new(LedgerOptions { root_dir: Some(dir.path().to_path_buf()), ledger_dir: Some(std::path::PathBuf::from("ledger")) }));
     let s = AgencyStore::new(open());
@@ -762,8 +762,8 @@ async fn agency_real_model_local_e2e() {
 
 #[test]
 fn agency_live_pool_bridges_task_caps_to_generic_model_caps() {
-    use allternit_commrails::kernel::router::Role;
-    let g = allternit_commrails::kernel::bug_fix::instantiate("task.bug_fix", &["fs:math.js".to_string()]).unwrap();
+    use allternit_factory_engine::kernel::router::Role;
+    let g = allternit_factory_engine::kernel::bug_fix::instantiate("task.bug_fix", &["fs:math.js".to_string()]).unwrap();
     let mut pool = executor::tests_support::scripted_pool(&g);
     for e in pool.entries.iter_mut() {
         e.capabilities = vec!["cap.text.generate".into()];

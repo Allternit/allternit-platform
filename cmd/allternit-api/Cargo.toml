@@ -42,7 +42,7 @@ des = "0.8"
 cipher = "0.4"
 
 # Internal crates - CommRails & Cowork
-allternit-commrails = { path = "../../commrails" }
+allternit-factory-engine = { path = "../../factory/engine" }
 allternit-cowork-runtime = { path = "../../infrastructure/executor/cowork/cowork/allternit-cowork-runtime" }
 allternit-cowork-scheduler = { path = "../../infrastructure/executor/cowork/cowork/allternit-cowork-scheduler" }
 allternit-gc-agents = { workspace = true }

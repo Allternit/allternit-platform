@@ -1,4 +1,4 @@
-//! `allternit-commrails drive <dag_id>`: the opt-in, foreground runner that
+//! `allternit-factory workflows drive <dag_id>`: the opt-in, foreground runner that
 //! walks a WIH DAG and spawns the harness named by each READY node's
 //! `executor` (spec/DRIVE.md).
 //!
@@ -527,7 +527,7 @@ impl Driver {
                         let who = if g.kind == WaitGateKind::Manual { "needs you" } else { "waiting" };
                         out.push(Action::Wait {
                             line: format!(
-                                "{}: {who} — {} gate {} \"{}\" (resolve: allternit-commrails wait-gate resolve --node {}/{} {} --actor user:<you>)",
+                                "{}: {who} — {} gate {} \"{}\" (resolve: allternit-factory workspace approve {}/{} {} --actor user:<you>)",
                                 node.node_id, g.kind, g.gate_id, g.description, dag.dag_id, node.node_id, g.gate_id
                             ),
                         });
@@ -1124,7 +1124,7 @@ impl Driver {
         let thread = mail.ensure_thread(&format!("dag:{}", self.dag_id())).await?;
         let body = format!(
             "Node `{node_id}` (\"{}\") in `dag:{}` is READY and assigned to `bot:{slug}`.\n\n\
-             `drive` does not spawn bots. Pick it up with:\n\n    allternit-commrails wih pickup {node_id} --dag {} --agent bot:{slug}\n",
+             `drive` does not spawn bots. Pick it up with:\n\n    allternit-factory workspace node claim {node_id} --dag {} --agent bot:{slug}\n",
             node.title,
             self.dag_id(),
             self.dag_id()
@@ -1237,7 +1237,7 @@ fn build_prompt(dag_id: &str, node: &DagNode, wih_id: &str, body: Option<&str>) 
     format!(
         "# {title}\n\n{body}\n\n---\nCommRails: dag {dag_id}, node {node_id}, WIH {wih_id}. \
          Your final answer on stdout becomes this node's output (`wih close --output`). \
-         Writes need a lease: `allternit-commrails lease request {wih_id} <agent> <paths...>`.\n",
+         Writes need a lease: `allternit-factory internal rails lease request {wih_id} <agent> <paths...>`.\n",
         title = node.title,
         body = body.unwrap_or("(no description)"),
         node_id = node.node_id,

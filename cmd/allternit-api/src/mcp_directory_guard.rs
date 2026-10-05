@@ -23,7 +23,7 @@ const CHALLENGE_MAX_BYTES: usize = 4 * 1024;
 /// True when `ip` is a globally routable unicast address. Delegates to the
 /// shared egress policy so every server-side fetch agrees on the ranges.
 pub fn is_public_ip(ip: IpAddr) -> bool {
-    allternit_commrails::egress::is_public_ip(ip)
+    allternit_factory_engine::egress::is_public_ip(ip)
 }
 
 /// Name-level screen for a registrable-looking DNS name. The resolved

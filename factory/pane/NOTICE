@@ -1,0 +1,12 @@
+allternit-factory-pane
+Copyright 2026 Allternit LLC
+
+This crate is a fork of Herdr v0.9.0 (https://github.com/herdrdev/herdr),
+"terminal workspace manager for AI coding agents", licensed under the
+Apache License, Version 2.0 (see LICENSE in this directory).
+
+Original work: Copyright the Herdr authors.
+Modifications: Copyright Allternit LLC, also licensed under Apache-2.0.
+
+The vendored crates under vendor/ (portable-pty, libghostty-vt) keep their
+own upstream licenses and notices.

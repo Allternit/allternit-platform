@@ -5,15 +5,15 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use allternit_commrails::fence::Fence;
-use allternit_commrails::gate::gate::DagMutation as Mutation;
-use allternit_commrails::leases::leases::LeasesOptions;
-use allternit_commrails::ledger::ledger::LedgerOptions;
-use allternit_commrails::templates::{parse_markdown_template, plan_from_template};
-use allternit_commrails::wait_gates::{GateOutcome, WaitGateKind};
-use allternit_commrails::work::needs_you::pending_manual_gates;
-use allternit_commrails::work::{project_dag, ready_nodes, DagState};
-use allternit_commrails::{
+use allternit_factory_engine::fence::Fence;
+use allternit_factory_engine::gate::gate::DagMutation as Mutation;
+use allternit_factory_engine::leases::leases::LeasesOptions;
+use allternit_factory_engine::ledger::ledger::LedgerOptions;
+use allternit_factory_engine::templates::{parse_markdown_template, plan_from_template};
+use allternit_factory_engine::wait_gates::{GateOutcome, WaitGateKind};
+use allternit_factory_engine::work::needs_you::pending_manual_gates;
+use allternit_factory_engine::work::{project_dag, ready_nodes, DagState};
+use allternit_factory_engine::{
     Actor, ActorType, Gate, GateError, GateOptions, Leases, Ledger, LedgerQuery, ReceiptStore,
     ReceiptStoreOptions, WihPickupOptions, AllternitEvent,
 };
@@ -355,7 +355,7 @@ async fn context_pack_truncates_large_outputs() {
     let (_ledger, gate) = build_gate(&root).await;
     let (a, b, c) = ids("big");
     let (dag_id, _) = plan_abc(&gate, &a, &b, &c, None, None).await;
-    let big = "é".repeat(allternit_commrails::gate::CONTEXT_PACK_OUTPUT_INLINE_CAP);
+    let big = "é".repeat(allternit_factory_engine::gate::CONTEXT_PACK_OUTPUT_INLINE_CAP);
     run_to_done(&gate, &dag_id, &a, Some(&big)).await;
     let pickup = gate
         .wih_pickup_detailed(&dag_id, &b, "agent", WihPickupOptions { role: None, fresh: true })
@@ -371,7 +371,7 @@ async fn context_pack_truncates_large_outputs() {
     let overhead = fence.wrap(&format!("node:{a}"), "").len();
     assert!(
         out["text"].as_str().unwrap().len()
-            <= allternit_commrails::gate::CONTEXT_PACK_OUTPUT_INLINE_CAP + overhead
+            <= allternit_factory_engine::gate::CONTEXT_PACK_OUTPUT_INLINE_CAP + overhead
     );
     assert_eq!(out["size_bytes"], json!(big.len()));
 }

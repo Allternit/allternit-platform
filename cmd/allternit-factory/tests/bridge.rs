@@ -6,13 +6,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 
-use allternit_commrails::bridge::{
+use allternit_factory_engine::bridge::{
     serve_listener, BridgeState, IdentityStore, Scope, GRANTABLE_SCOPES,
 };
-use allternit_commrails::gate::gate::DagMutation;
-use allternit_commrails::leases::leases::LeasesOptions;
-use allternit_commrails::ledger::ledger::LedgerOptions;
-use allternit_commrails::{
+use allternit_factory_engine::gate::gate::DagMutation;
+use allternit_factory_engine::leases::leases::LeasesOptions;
+use allternit_factory_engine::ledger::ledger::LedgerOptions;
+use allternit_factory_engine::{
     ActorType, AllternitEvent, Gate, GateOptions, Leases, Ledger, LedgerQuery, ReceiptStore,
     ReceiptStoreOptions,
 };
@@ -303,10 +303,10 @@ async fn missing_scope_is_403() {
 async fn non_loopback_bind_is_refused_by_the_cli() {
     let tmp = test_root();
     let ids = tmp.path().join("identities.json");
-    let bin = env!("CARGO_BIN_EXE_allternit-commrails");
+    let bin = env!("CARGO_BIN_EXE_allternit-factory");
     let serve = |bind: &str, allow_remote: bool| {
         let mut cmd = Command::new(bin);
-        cmd.args(["bridge", "serve", "--bind", bind, "--root"])
+        cmd.args(["internal", "rails", "bridge", "serve", "--bind", bind, "--root"])
             .arg(tmp.path())
             .arg("--identities")
             .arg(&ids);
@@ -330,6 +330,8 @@ async fn non_loopback_bind_is_refused_by_the_cli() {
     // Forbidden scopes are refused at grant time by the CLI.
     let out = Command::new(bin)
         .args([
+            "internal",
+            "rails",
             "identity",
             "add",
             "--actor",
@@ -346,6 +348,8 @@ async fn non_loopback_bind_is_refused_by_the_cli() {
     // A valid grant prints the token once on stdout.
     let out = Command::new(bin)
         .args([
+            "internal",
+            "rails",
             "identity",
             "add",
             "--actor",
@@ -606,7 +610,7 @@ fn python3() -> Option<PathBuf> {
 
 fn client_script() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../tools/commrails-bridge-client/commrails-bridge")
+        .join("../../tools/commrails-bridge-client/commrails-bridge")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

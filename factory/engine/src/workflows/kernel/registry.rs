@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 
 const REGISTRY_JSON: &str =
-    include_str!("../../../spec/Contracts/kernel/v1/registry/primitives.json");
+    include_str!("../../../../../spec/Contracts/kernel/v1/registry/primitives.json");
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct Primitive {

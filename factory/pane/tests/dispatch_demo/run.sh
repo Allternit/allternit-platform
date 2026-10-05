@@ -22,15 +22,15 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-WORKSPACE_ROOT="$(cd "$REPO_ROOT/../.." && pwd)"
-AO_BIN="${AO_BIN:-$WORKSPACE_ROOT/target/debug/ao}"
+WORKSPACE_ROOT="$(cd "$REPO_ROOT/.." && pwd)"
+AO_BIN="${AO_BIN:-${CARGO_TARGET_DIR:-$WORKSPACE_ROOT/target}/debug/allternit-factory-pane}"
 SCRIPTS="$HOME/.claude/skills/agent-orchestrator/scripts"
 VERBOSE=0
 [ "${1:-}" = "-v" ] && VERBOSE=1
 
 if [ ! -x "$AO_BIN" ]; then
   echo "building ao engine..." >&2
-  (cd "$WORKSPACE_ROOT" && export ZIG="${ZIG:-/opt/homebrew/opt/zig@0.15/bin/zig}" && cargo build -p herdr) >&2
+  (cd "$WORKSPACE_ROOT" && export ZIG="${ZIG:-/opt/homebrew/opt/zig@0.15/bin/zig}" && cargo build -p allternit-factory-pane --bin allternit-factory-pane) >&2
 fi
 
 PASS=0; FAIL=0

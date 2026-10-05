@@ -3102,6 +3102,19 @@ pub fn create_router(state: Arc<ServiceState>) -> Router {
 
 /// Run the HTTP service
 pub async fn run_service(bind_addr: &str, root_dir: PathBuf) -> anyhow::Result<()> {
+    run_service_on(bind_addr, None, root_dir).await
+}
+
+/// [`run_service`] that also serves the same router on a Unix socket
+/// (`allternit-factory serve --socket`). The socket's parent directory is
+/// created 0700. A stale socket file (nothing listening) is replaced; a live
+/// one is an error, never silently shared. Requests over the socket carry no
+/// TCP peer, so loopback-only routes (external receipt append) refuse them.
+pub async fn run_service_on(
+    bind_addr: &str,
+    socket: Option<&std::path::Path>,
+    root_dir: PathBuf,
+) -> anyhow::Result<()> {
     // Initialize stores
     init_stores(&root_dir).await?;
 
@@ -3126,8 +3139,56 @@ pub async fn run_service(bind_addr: &str, root_dir: PathBuf) -> anyhow::Result<(
         bind_addr
     );
 
+    #[cfg(unix)]
+    if let Some(path) = socket {
+        let uds = bind_unix_socket(path).await?;
+        tracing::info!("also listening on unix socket {}", path.display());
+        let uds_app = app.clone();
+        tokio::spawn(async move {
+            if let Err(e) = serve_unix(uds, uds_app).await {
+                tracing::error!("unix socket listener stopped: {}", e);
+            }
+        });
+    }
+    #[cfg(not(unix))]
+    if let Some(path) = socket {
+        anyhow::bail!("unix socket {} is not supported on this platform", path.display());
+    }
+
     axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await?;
     Ok(())
+}
+
+#[cfg(unix)]
+async fn bind_unix_socket(path: &std::path::Path) -> anyhow::Result<tokio::net::UnixListener> {
+    use std::os::unix::fs::PermissionsExt;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    if path.exists() {
+        if tokio::net::UnixStream::connect(path).await.is_ok() {
+            anyhow::bail!("another engine is already listening on {}", path.display());
+        }
+        std::fs::remove_file(path)?;
+    }
+    Ok(tokio::net::UnixListener::bind(path)?)
+}
+
+#[cfg(unix)]
+async fn serve_unix(listener: tokio::net::UnixListener, app: Router) -> anyhow::Result<()> {
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+    use hyper_util::service::TowerToHyperService;
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let service = TowerToHyperService::new(app.clone());
+        tokio::spawn(async move {
+            let builder = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
+            if let Err(e) = builder.serve_connection(TokioIo::new(stream), service).await {
+                tracing::debug!("unix socket connection ended: {}", e);
+            }
+        });
+    }
 }
 
 /// Poll pending UDS bus messages and attempt delivery to local peer sockets.

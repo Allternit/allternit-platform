@@ -1,3 +1,6 @@
+//! Allternit Factory pane engine (`allternit-factory-pane`): the herdr v0.9.0
+//! fork, run by `allternit-factory pane …`. See NOTICE.
+
 use std::io;
 
 pub(crate) const HERDR_ENV_VAR: &str = "HERDR_ENV";
@@ -23,6 +26,7 @@ mod config;
 mod copy_mode;
 mod detect;
 mod events;
+pub mod factory_host;
 mod ghostty;
 mod handoff_runtime;
 mod input;
@@ -492,8 +496,14 @@ where
         .collect()
 }
 
-fn main() -> io::Result<()> {
-    let raw_args: Vec<String> = match args_as_utf8(std::env::args_os()) {
+/// Run the pane engine with herdr's argv (`argv[0]` is the program name).
+/// Hosts that need an argv prefix to reach this entry point call
+/// [`factory_host::set_argv_prefix`] first.
+pub fn run<I>(argv: I) -> io::Result<()>
+where
+    I: IntoIterator<Item = std::ffi::OsString>,
+{
+    let raw_args: Vec<String> = match args_as_utf8(argv) {
         Ok(args) => args,
         Err(err) => {
             eprintln!("error: {err}");

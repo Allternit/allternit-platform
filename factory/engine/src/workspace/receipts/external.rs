@@ -9,8 +9,8 @@ use super::store::ReceiptStore;
 fn schemas() -> &'static [Value; 2] {
     static S: OnceLock<[Value; 2]> = OnceLock::new();
     S.get_or_init(|| [
-        serde_json::from_str(include_str!("../../../spec/Contracts/kernel/v1/schemas/tool.schema.json")).unwrap(),
-        serde_json::from_str(include_str!("../../../spec/Contracts/kernel/v1/schemas/common.schema.json")).unwrap(),
+        serde_json::from_str(include_str!("../../../../../spec/Contracts/kernel/v1/schemas/tool.schema.json")).unwrap(),
+        serde_json::from_str(include_str!("../../../../../spec/Contracts/kernel/v1/schemas/common.schema.json")).unwrap(),
     ])
 }
 

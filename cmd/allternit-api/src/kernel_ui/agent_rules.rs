@@ -128,8 +128,8 @@ pub async fn delete_field(State(st): State<Arc<AppState>>, Extension(u): Extensi
 
 /// Fold effective rules into a run's (or session's) JudgePolicy. Pure.
 /// Stricter wins: `strict` raises the fence, never lowers it.
-pub fn rules_to_policy(e: &Value, policy: &mut allternit_commrails::judge::policy::JudgePolicy) {
-    use allternit_commrails::judge::policy::{CustomRule, Fence, VerifyMode};
+pub fn rules_to_policy(e: &Value, policy: &mut allternit_factory_engine::judge::policy::JudgePolicy) {
+    use allternit_factory_engine::judge::policy::{CustomRule, Fence, VerifyMode};
     let level = e["guardrails"]["level"].as_str().unwrap_or("guardrails");
     if level == "strict" {
         policy.fence = Some(Fence::Strict);
@@ -186,7 +186,7 @@ pub fn resolve(conn: &Connection, chain: &[String]) -> Result<Value, KErr> {
 /// every other rule resolved over `org` and the optional workspace/project
 /// scopes, folded into the JudgePolicy and `task_ir.rules`. A failure to read
 /// rules never loosens anything.
-pub async fn apply_to_run(st: &AppState, org: &str, extra: Vec<String>, policy: &mut allternit_commrails::judge::policy::JudgePolicy, task_ir: &mut Value) {
+pub async fn apply_to_run(st: &AppState, org: &str, extra: Vec<String>, policy: &mut allternit_factory_engine::judge::policy::JudgePolicy, task_ir: &mut Value) {
     let org_scope = format!("org:{org}");
     if scope_kind(&org_scope).is_err() {
         return;
@@ -210,6 +210,6 @@ pub async fn apply_to_run(st: &AppState, org: &str, extra: Vec<String>, policy: 
 }
 
 /// Org-only convenience wrapper (credential reads + policy, no task_ir).
-pub async fn apply_to_policy(st: &AppState, org: &str, policy: &mut allternit_commrails::judge::policy::JudgePolicy) {
+pub async fn apply_to_policy(st: &AppState, org: &str, policy: &mut allternit_factory_engine::judge::policy::JudgePolicy) {
     apply_to_run(st, org, Vec::new(), policy, &mut Value::Null).await;
 }

@@ -837,11 +837,11 @@ mod tests {
         for (name, text) in [
             (
                 "research-pipeline-sweep",
-                include_str!("../../docs/examples/campaigns/research-pipeline-sweep.yaml"),
+                include_str!("../../../docs/examples/campaigns/research-pipeline-sweep.yaml"),
             ),
             (
                 "nightly-audit",
-                include_str!("../../docs/examples/campaigns/nightly-audit.yaml"),
+                include_str!("../../../docs/examples/campaigns/nightly-audit.yaml"),
             ),
         ] {
             let def: CampaignDefinition = serde_yaml::from_str(text).unwrap();

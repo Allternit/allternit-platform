@@ -25,7 +25,7 @@ set -uo pipefail
 
 PARITY_DIR="$(cd "$(dirname "$0")" && pwd)"
 AOE_ROOT="$(cd "$PARITY_DIR/../.." && pwd)"
-REPO_ROOT="$(cd "$PARITY_DIR/../../../../.." && pwd)"
+REPO_ROOT="$(cd "$PARITY_DIR/../../../.." && pwd)"
 BRAIN_OPS="${BRAIN_OPS:-$HOME/Desktop/Allternit/Allternit Brain/Ops}"
 VERBOSE=0
 SKIP_LIVE=0
@@ -39,10 +39,10 @@ NODE_BIN="$(command -v node)" || { echo "SKIP: node not found"; exit 2; }
 export LC_ALL=en_US.UTF-8
 
 if [ -z "${AO_BIN:-}" ]; then
-  AO_BIN="$REPO_ROOT/target/debug/ao"
+  AO_BIN="${CARGO_TARGET_DIR:-$REPO_ROOT/target}/debug/allternit-factory-pane"
   if [ ! -x "$AO_BIN" ]; then
     echo "building ao binary..." >&2
-    (cd "$REPO_ROOT" && cargo build -p herdr --bin ao) >&2 || { echo "BUILD FAILED"; exit 2; }
+    (cd "$REPO_ROOT" && cargo build -p allternit-factory-pane --bin allternit-factory-pane) >&2 || { echo "BUILD FAILED"; exit 2; }
   fi
 fi
 

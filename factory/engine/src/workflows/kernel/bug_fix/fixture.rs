@@ -15,11 +15,11 @@ pub(super) struct Fixture {
 
 impl Fixture {
     pub fn new() -> Result<Self> {
-        let parent = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.allternit/wp10-fixtures");
+        let parent = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.allternit/wp10-fixtures");
         std::fs::create_dir_all(&parent)?;
         let dir = tempfile::Builder::new().prefix("bug-fix-").tempdir_in(parent)?;
         let deps = std::env::var_os("WP10_NODE_MODULES").map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../node_modules"));
+            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../node_modules"));
         let deps = deps.canonicalize().context("WP10 needs existing root node_modules (pnpm install); never downloads during tests")?;
         for tool in ["vitest/vitest.mjs", "typescript/lib/typescript.js"] {
             if !deps.join(tool).exists() { bail!("WP10 missing offline dependency: {tool}"); }

@@ -265,7 +265,7 @@ async fn admission_admits_every_harness_in_auto_approve() {
 #[test]
 fn claude_settings_carry_hook_in_bypass_mode() {
     let s = claude_settings(HookTarget {
-        commrails_bin: Path::new("/opt/bin/allternit-commrails"),
+        commrails_bin: Path::new("/opt/bin/allternit-factory"),
         root: Path::new("/w/it's"),
         workspace: Some(Path::new("/w/wt")),
         wih_id: Some("wih_1"),
@@ -274,7 +274,7 @@ fn claude_settings_carry_hook_in_bypass_mode() {
     let hook = &s["hooks"]["PreToolUse"][0];
     assert_eq!(hook["matcher"], "*");
     let cmd = hook["hooks"][0]["command"].as_str().unwrap();
-    assert!(cmd.starts_with("'/opt/bin/allternit-commrails' --root '/w/it'\\''s' hook claude-pretool"));
+    assert!(cmd.starts_with("'/opt/bin/allternit-factory' internal rails --root '/w/it'\\''s' hook claude-pretool"));
     assert!(cmd.ends_with("--workspace '/w/wt' --wih 'wih_1'"));
 }
 
@@ -319,7 +319,7 @@ fn codex_array_commands_are_unwrapped() {
 
 fn target() -> HookTarget<'static> {
     HookTarget {
-        commrails_bin: Path::new("/bin/allternit-commrails"),
+        commrails_bin: Path::new("/bin/allternit-factory"),
         root: Path::new("/r"),
         workspace: Some(Path::new("/w")),
         wih_id: Some("wih_1"),
@@ -844,7 +844,7 @@ fn hook_request_carries_the_harness_tool_call_id() {
 
 #[test]
 fn claude_settings_register_the_s1_outcome_hooks_when_given() {
-    let t = HookTarget { commrails_bin: Path::new("/opt/bin/allternit-commrails"), root: Path::new("/w"), workspace: None, wih_id: None };
+    let t = HookTarget { commrails_bin: Path::new("/opt/bin/allternit-factory"), root: Path::new("/w"), workspace: None, wih_id: None };
     let s = claude_settings_with_outcome(t, Some("'/opt/bin/system-one' hook-outcome"));
     for ev in ["PermissionRequest", "PostToolUse", "PostToolUseFailure"] {
         assert_eq!(s["hooks"][ev][0]["matcher"], "*", "{ev}");

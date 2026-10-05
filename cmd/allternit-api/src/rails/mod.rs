@@ -24,21 +24,21 @@ use std::time::Duration;
 use tracing::{debug, error, info};
 
 use crate::AppState;
-use allternit_commrails::bus::{Bus, NewBusMessage};
-use allternit_commrails::dependencies::{
+use allternit_factory_engine::bus::{Bus, NewBusMessage};
+use allternit_factory_engine::dependencies::{
     self, DependencyEdge, DependencyKind,
 };
-use allternit_commrails::graph::{views, GraphAnalytics, GraphView, InsightsConfig};
-use allternit_commrails::rails_id::{HierarchicalId, TicketId};
-use allternit_commrails::receipts::ReceiptQuery;
-use allternit_commrails::tickets::{
+use allternit_factory_engine::graph::{views, GraphAnalytics, GraphView, InsightsConfig};
+use allternit_factory_engine::rails_id::{HierarchicalId, TicketId};
+use allternit_factory_engine::receipts::ReceiptQuery;
+use allternit_factory_engine::tickets::{
     self, BlockedTicket, Ticket, TicketKind, TicketPriority, TicketStatus, TicketStore,
     TicketUpdate,
 };
-use allternit_commrails::wait_gates::WaitGateStore;
-use allternit_commrails::wih::{WihState, active_wihs, project_wih};
-use allternit_commrails::work::{DagNode, ready_nodes};
-use allternit_commrails::{
+use allternit_factory_engine::wait_gates::WaitGateStore;
+use allternit_factory_engine::wih::{WihState, active_wihs, project_wih};
+use allternit_factory_engine::work::{DagNode, ready_nodes};
+use allternit_factory_engine::{
     Actor, ActorType, AllternitEvent, ContextPackSeal, ContextPackStore, ContextPackStoreOptions,
     DagMutation, EventScope, Gate, GateOptions, Index, IndexOptions, LeaseRecord, Leases,
     LeasesOptions, Ledger, LedgerOptions, LedgerQuery, Mail, MailImportance, MailIndex,
@@ -162,7 +162,7 @@ impl RailsState {
         // Initialize peer registry + bus for cross-session messaging.
         let peers = Arc::new(PeerRegistry::new(root_dir.clone())?);
         let bus = Arc::new(
-            Bus::new(allternit_commrails::bus::BusOptions {
+            Bus::new(allternit_factory_engine::bus::BusOptions {
                 root_dir: root_dir.clone(),
                 ledger: ledger.clone(),
                 actor_id: Some("api".to_string()),
@@ -387,10 +387,10 @@ struct PeerSendResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PeerInboxResponse {
-    messages: Vec<allternit_commrails::bus::BusMessage>,
+    messages: Vec<allternit_factory_engine::bus::BusMessage>,
 }
 
-fn peer_to_response(peer: &allternit_commrails::peer::Peer) -> PeerInfoResponse {
+fn peer_to_response(peer: &allternit_factory_engine::peer::Peer) -> PeerInfoResponse {
     PeerInfoResponse {
         peer_id: peer.peer_id.clone(),
         name: peer.name.clone(),
@@ -847,7 +847,7 @@ async fn query_ledger(
 ) -> impl IntoResponse {
     debug!(?params, "Querying ledger");
 
-    let mut scope = allternit_commrails::EventScope::default();
+    let mut scope = allternit_factory_engine::EventScope::default();
     if let Some(dag_id) = params.dag_id {
         scope.dag_id = Some(dag_id);
     }
@@ -1156,7 +1156,7 @@ fn parse_importance(priority: Option<&str>, importance: Option<MailImportance>) 
     }
 }
 
-fn message_to_json(msg: &allternit_commrails::mail::MailMessage, root_dir: &std::path::Path) -> serde_json::Value {
+fn message_to_json(msg: &allternit_factory_engine::mail::MailMessage, root_dir: &std::path::Path) -> serde_json::Value {
     let body = if let Some(path) = &msg.body_path {
         let abs = root_dir.join(path);
         std::fs::read_to_string(&abs).unwrap_or_default()
@@ -1516,7 +1516,7 @@ async fn read_mail_thread(
                     if evt.r#type != "MessageSent" {
                         return None;
                     }
-                    let msg = allternit_commrails::mail::MailMessage::from_event(&evt)?;
+                    let msg = allternit_factory_engine::mail::MailMessage::from_event(&evt)?;
                     Some(message_to_json(&msg, &state.rails.root_dir))
                 })
                 .collect();
@@ -1574,7 +1574,7 @@ async fn mail_share(
                 .unwrap_or(&thread_id)
                 .to_string();
             let receipt = ReceiptRecord {
-                receipt_id: allternit_commrails::core::ids::create_receipt_id(),
+                receipt_id: allternit_factory_engine::core::ids::create_receipt_id(),
                 run_id,
                 step: None,
                 tool: "executor".to_string(),
@@ -1693,7 +1693,7 @@ async fn write_receipt(
     Json(req): Json<ReceiptWriteRequest>,
 ) -> impl IntoResponse {
     let exit = if req.exit_code.is_some() || req.summary.is_some() {
-        Some(allternit_commrails::core::types::ReceiptExit {
+        Some(allternit_factory_engine::core::types::ReceiptExit {
             code: req.exit_code,
             summary: req.summary,
         })
@@ -1701,7 +1701,7 @@ async fn write_receipt(
         None
     };
     let receipt = ReceiptRecord {
-        receipt_id: allternit_commrails::core::ids::create_receipt_id(),
+        receipt_id: allternit_factory_engine::core::ids::create_receipt_id(),
         run_id: req.run_id.unwrap_or_else(|| "run_orchestrator".to_string()),
         step: None,
         tool: req.tool.unwrap_or_else(|| "executor".to_string()),
@@ -1818,7 +1818,7 @@ async fn pickup_wih(
             .into_response(),
         Err(e) => {
             // Structured Gate 1 denial (wait-gate, blockers, placeholder refs).
-            let gate_error = allternit_commrails::GateError::from_anyhow(&e)
+            let gate_error = allternit_factory_engine::GateError::from_anyhow(&e)
                 .and_then(|g| serde_json::to_value(g).ok());
             (
                 StatusCode::CONFLICT,
@@ -1958,7 +1958,7 @@ async fn close_wih(
     let evidence = req.evidence.clone().unwrap_or_default();
     // Read-only observer hooks (commrails/spec/OBSERVER.md): opt-in pre-close
     // advice, repeat-failure advice after the close. Advisory only.
-    allternit_commrails::observer::hook_before_close(
+    allternit_factory_engine::observer::hook_before_close(
         state.rails.root_dir.clone(),
         state.rails.ledger.clone(),
         wih_id.clone(),
@@ -1974,15 +1974,15 @@ async fn close_wih(
             &status,
             &evidence,
             req.output.as_deref(),
-            Some(&allternit_commrails::Actor {
-                r#type: allternit_commrails::ActorType::Agent,
+            Some(&allternit_factory_engine::Actor {
+                r#type: allternit_factory_engine::ActorType::Agent,
                 id: req.agent_id.clone(),
             }),
         )
         .await
     {
         Ok(outcome) => {
-            allternit_commrails::observer::spawn_after_close(
+            allternit_factory_engine::observer::spawn_after_close(
                 state.rails.root_dir.clone(),
                 state.rails.ledger.clone(),
                 wih_id.clone(),
@@ -1998,7 +1998,7 @@ async fn close_wih(
                 .into_response()
         }
         Err(e) => {
-            if let Some(gate_error) = allternit_commrails::GateError::from_anyhow(&e) {
+            if let Some(gate_error) = allternit_factory_engine::GateError::from_anyhow(&e) {
                 // Structured Gate 4 refusal (close_by_verifier, wih_already_closed).
                 return (
                     StatusCode::CONFLICT,
@@ -2020,7 +2020,7 @@ async fn ensure_policy_injected(
     state: &AppState,
     scope: Option<EventScope>,
 ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    allternit_commrails::policy::inject_policy(
+    allternit_factory_engine::policy::inject_policy(
         &state.rails.root_dir,
         &state.rails.ledger,
         scope,
@@ -2272,7 +2272,7 @@ async fn request_lease(
 ) -> impl IntoResponse {
     info!(wih_id = req.wih_id, "Requesting lease");
 
-    let lease_req = allternit_commrails::LeaseRequest {
+    let lease_req = allternit_factory_engine::LeaseRequest {
         lease_id: uuid::Uuid::new_v4().to_string(),
         wih_id: req.wih_id,
         agent_id: req.agent_id,
@@ -2796,7 +2796,7 @@ async fn plan_new(
 ) -> impl IntoResponse {
     match state.rails.gate.plan_new(&request.text, None).await {
         Ok((prompt_id, dag_id, node_id)) => {
-            allternit_commrails::observer::spawn_on_plan(
+            allternit_factory_engine::observer::spawn_on_plan(
                 state.rails.root_dir.clone(),
                 state.rails.ledger.clone(),
                 dag_id.clone(),
@@ -3415,7 +3415,7 @@ async fn dag_render(
     }
 }
 
-fn render_dag_markdown(dag: &allternit_commrails::work::types::DagState) -> String {
+fn render_dag_markdown(dag: &allternit_factory_engine::work::types::DagState) -> String {
     let mut out = String::new();
     out.push_str(&format!("# DAG {}\n", dag.dag_id));
     out.push_str("Nodes:\n");
@@ -3517,7 +3517,7 @@ async fn run_cancel(
     Path(run_id): Path<String>,
 ) -> impl IntoResponse {
     let event = AllternitEvent {
-        event_id: allternit_commrails::core::ids::create_event_id(),
+        event_id: allternit_factory_engine::core::ids::create_event_id(),
         ts: chrono::Utc::now().to_rfc3339(),
         actor: Actor {
             r#type: ActorType::Gate,
@@ -3764,7 +3764,7 @@ async fn seal_context_pack(
     }
 
     let event = AllternitEvent {
-        event_id: allternit_commrails::core::ids::create_event_id(),
+        event_id: allternit_factory_engine::core::ids::create_event_id(),
         ts: stored_at.clone(),
         actor: Actor {
             r#type: ActorType::Gate,
@@ -4045,7 +4045,7 @@ async fn gate_verify(
                     .cloned()
                     .collect();
                 let dag = project_dag(&dag_events, &dag_id);
-                if allternit_commrails::work::graph::has_cycle_edges(&dag.edges) {
+                if allternit_factory_engine::work::graph::has_cycle_edges(&dag.edges) {
                     cycle_dags.push(dag_id);
                 }
             }

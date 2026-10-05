@@ -171,17 +171,30 @@ pub(super) fn rewrite(line: &str, class: GateClass, settings: &str) -> (String, 
     }
 }
 
-/// `$ALLTERNIT_COMMRAILS_BIN` (must be a file), else `allternit-commrails` on
-/// PATH — uhp-gateway `spawn_gate::commrails_bin`.
+/// Argv the gate binary needs before the maintenance CLI's own argv.
+const GATE_ARGV_PREFIX: [&str; 2] = ["internal", "rails"];
+
+/// `$ALLTERNIT_COMMRAILS_BIN` (must be a file), else the current executable
+/// when it is `allternit-factory`, else a sibling `allternit-factory`, else
+/// `allternit-factory` on PATH — uhp-gateway `spawn_gate::commrails_bin`.
 fn commrails_bin() -> Option<PathBuf> {
+    const NAME: &str = "allternit-factory";
     if let Some(p) = std::env::var_os("ALLTERNIT_COMMRAILS_BIN").filter(|p| !p.is_empty()) {
         let p = PathBuf::from(p);
         return p.is_file().then_some(p);
     }
+    if let Ok(exe) = std::env::current_exe() {
+        if exe.file_stem().and_then(|n| n.to_str()) == Some(NAME) {
+            return Some(exe);
+        }
+        if let Some(sibling) = exe.parent().map(|d| d.join(NAME)).filter(|p| p.is_file()) {
+            return Some(sibling);
+        }
+    }
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
         .filter(|d| !d.as_os_str().is_empty())
-        .map(|d| d.join("allternit-commrails"))
+        .map(|d| d.join(NAME))
         .find(|c| c.is_file())
 }
 
@@ -205,7 +218,7 @@ pub(super) fn gate(session: &str, workdir: &str, line: &str, logs_dir: &Path, ao
             Some(found) => bin = Some(found),
             None => {
                 eprintln!(
-                    "error: spawn gate: allternit-commrails not found (set ALLTERNIT_COMMRAILS_BIN); refusing to run {shown} without its gate"
+                    "error: spawn gate: allternit-factory not found (set ALLTERNIT_COMMRAILS_BIN); refusing to run {shown} without its gate"
                 );
                 return Err(());
             }
@@ -215,6 +228,7 @@ pub(super) fn gate(session: &str, workdir: &str, line: &str, logs_dir: &Path, ao
         if let (Some(wih), Some(bin)) = (wih.as_deref(), bin.as_ref()) {
             let harness_arg = if harness.is_empty() { "-" } else { harness.as_str() };
             let output = Command::new(bin)
+                .args(GATE_ARGV_PREFIX)
                 .arg("--root")
                 .arg(&root)
                 .args(["hook", "spawn-check", "--harness", harness_arg, "--wih", wih])
@@ -235,6 +249,7 @@ pub(super) fn gate(session: &str, workdir: &str, line: &str, logs_dir: &Path, ao
         let bin = bin.as_ref().expect("hook class resolved the binary");
         let _ = std::fs::create_dir_all(logs_dir);
         let ok = Command::new(bin)
+            .args(GATE_ARGV_PREFIX)
             .arg("--root")
             .arg(&root)
             .args(["hook", "claude-settings", "--workspace"])

@@ -38,18 +38,18 @@ mod effects_c3b; // WP-C3b: computer:/campaign: connector glue
 use super::guard::Limits;
 use super::store::{now, new_id, AgencyStore, EffectDenied, TERMINAL};
 use crate::AppState;
-use allternit_commrails::judge::completion::{load_policy, missing_evidence};
-use allternit_commrails::judge::policy::{effective_policy, CloseBy};
-use allternit_commrails::kernel::bug_fix;
-use allternit_commrails::kernel::graph::ComputeGraph;
-use allternit_commrails::kernel::lifecycle::{try_close, try_transition};
-use allternit_commrails::kernel::router::{
+use allternit_factory_engine::judge::completion::{load_policy, missing_evidence};
+use allternit_factory_engine::judge::policy::{effective_policy, CloseBy};
+use allternit_factory_engine::kernel::bug_fix;
+use allternit_factory_engine::kernel::graph::ComputeGraph;
+use allternit_factory_engine::kernel::lifecycle::{try_close, try_transition};
+use allternit_factory_engine::kernel::router::{
     fetch_model_pool, BudgetLedger, ExecutionPlan, Mode, PoolEntry, Residency, Role, RouteError, Router, RouterConfig,
     RouterPolicy, StaticModelPool, POOL_ENTRY_SCHEMA_ID, SCHEMA_VERSION,
 };
-use allternit_commrails::kernel::router::{apply_s1_result_recording, DecisionResultView};
-use allternit_commrails::kernel::s1_outcome::OutcomeReporter;
-use allternit_commrails::kernel::{CloseOutcome, NodeState};
+use allternit_factory_engine::kernel::router::{apply_s1_result_recording, DecisionResultView};
+use allternit_factory_engine::kernel::s1_outcome::OutcomeReporter;
+use allternit_factory_engine::kernel::{CloseOutcome, NodeState};
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
@@ -262,10 +262,10 @@ pub(crate) async fn finish(s: &AgencyStore, run_id: &str, to: &str, reason: &str
 // ── model pool / router ──────────────────────────────────────────────────────
 
 fn class_of(e: &PoolEntry) -> String {
-    allternit_commrails::kernel::router::model_class(e)
+    allternit_factory_engine::kernel::router::model_class(e)
 }
 
-use allternit_commrails::kernel::router::class_matches;
+use allternit_factory_engine::kernel::router::class_matches;
 
 pub const EV_ROUTING: &str = "agency.exec.routing";
 
@@ -467,10 +467,10 @@ fn resolve_source(h: &Handle, repo: &str) -> Result<Source, String> {
     if repo.starts_with("https://") {
         let url = url::Url::parse(repo).map_err(|e| format!("workspace.repo is not a valid URL: {e}"))?;
         let host = url.host_str().ok_or("workspace.repo has no host")?.to_string();
-        if allternit_commrails::egress::host_is_forbidden_literal(&host) {
+        if allternit_factory_engine::egress::host_is_forbidden_literal(&host) {
             return Err("egress guard refused the repository host".into());
         }
-        h.block_on(allternit_commrails::egress::resolve_public(&host))
+        h.block_on(allternit_factory_engine::egress::resolve_public(&host))
             .map_err(|e| format!("egress guard refused the repository host: {e}"))?;
         return Ok(Source::Remote(repo.to_string()));
     }
@@ -823,7 +823,7 @@ impl Exec<'_> {
 
     fn effect_with(&mut self, node: &str, tool: &str, class: &str, args: Value, retry_safe: bool, f: impl FnOnce(&Ws) -> Result<String>) -> Step<String> {
         use super::safety::{self, Prepared};
-        use allternit_commrails::receipts::store::ToolEffectAdmission;
+        use allternit_factory_engine::receipts::store::ToolEffectAdmission;
         self.admit()?;
         self.seq += 1;
         let key = self.next_key(node, tool);
@@ -831,7 +831,7 @@ impl Exec<'_> {
         payload["effect_class"] = json!(class);
         payload["node_id"] = json!(node);
         payload["fence"] = json!(FENCE);
-        let args_hash = allternit_commrails::receipts::jcs::hash_value(&payload).map_err(|e| anyhow!("hash {tool} args: {e}"))?;
+        let args_hash = allternit_factory_engine::receipts::jcs::hash_value(&payload).map_err(|e| anyhow!("hash {tool} args: {e}"))?;
         let action = format!("{node}:{tool}:{args_hash}");
         let db = &self.st.db;
         let wih = self.run_id.strip_prefix("run_").unwrap_or(&self.run_id).to_string();
@@ -975,7 +975,7 @@ impl Exec<'_> {
         let id = self.effect(node, "tool.test_run", "EXECUTE", json!({ "phase": phase, "command": cmd }), |ws| {
             let (ok, out) = ws.cmd(&ws.repo, &cmd)?;
             captured = out.clone();
-            let digest = allternit_commrails::receipts::jcs::sha256_tagged(out.as_bytes());
+            let digest = allternit_factory_engine::receipts::jcs::sha256_tagged(out.as_bytes());
             Ok(format!("tests:{phase}:{}:{digest}", if ok { "PASS" } else { "FAIL" }))
         })?;
         self.last_test_output = captured;
@@ -1296,7 +1296,7 @@ impl Exec<'_> {
     /// N21: verifier-owned completion. `close_by` must resolve to `verifier`
     /// for this DAG, and every blocking criterion needs receipt evidence.
     fn verify_and_close(&mut self, evidence: &[String], path: &str, diff: &str) -> Step<()> {
-        let events = self.h.block_on(self.s.events_of_type(allternit_commrails::judge::events::POLICY_SET))?;
+        let events = self.h.block_on(self.s.events_of_type(allternit_factory_engine::judge::events::POLICY_SET))?;
         let eff = effective_policy(&events, &self.dag_id, Some("N21"));
         if eff.close_by != CloseBy::Verifier {
             return Err(StepErr::Fail(anyhow!("completion is not verifier-owned for this run (fail closed)")));
@@ -1328,7 +1328,7 @@ impl Exec<'_> {
             self.h.block_on(finish(self.s, &self.run_id, "failed", &format!("verifier: missing evidence for {}", missing.join(", ")), Some(patch)))?;
             return Ok(());
         }
-        let hash = allternit_commrails::receipts::jcs::sha256_tagged(diff.as_bytes());
+        let hash = allternit_factory_engine::receipts::jcs::sha256_tagged(diff.as_bytes());
         let art = json!({ "id": new_id("art"), "object": "artifact", "run_id": self.run_id, "name": format!("{path}.patch"),
             "kind": "patch", "mime_type": "text/x-diff", "hash": hash, "size_bytes": diff.len(),
             "verification_status": "verified", "receipt_id": vid, "created_at": now(),
@@ -1537,12 +1537,12 @@ mod s1_shadow_tests {
         e
     }
 
-    fn gen_node(id: &str, role: &str, cap: &str) -> allternit_commrails::kernel::graph::GraphNode {
+    fn gen_node(id: &str, role: &str, cap: &str) -> allternit_factory_engine::kernel::graph::GraphNode {
         serde_json::from_value(json!({ "node_id": id, "primitive_id": "prim.t", "node_kind": "COMPUTE", "cognitive_role": role,
             "capability_request": { "capability": cap }, "on_failure": { "strategy": "fail" } })).unwrap()
     }
 
-    fn route(pool: &StaticModelPool, cfg: &RouterConfig, n: &allternit_commrails::kernel::graph::GraphNode) -> ExecutionPlan {
+    fn route(pool: &StaticModelPool, cfg: &RouterConfig, n: &allternit_factory_engine::kernel::graph::GraphNode) -> ExecutionPlan {
         Router::new(pool, cfg).route(n, &BudgetLedger { remaining_cost_units: 1.0e9, remaining_wall_ms: None }).unwrap()
     }
 

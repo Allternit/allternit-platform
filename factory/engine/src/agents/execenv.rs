@@ -177,7 +177,7 @@ mod tests {
 
     #[test]
     fn matches_the_conformance_example_shape() {
-        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/../spec/Contracts/kernel/v1/conformance/examples/valid/ExecutionEnvironmentV1.json");
+        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/../../spec/Contracts/kernel/v1/conformance/examples/valid/ExecutionEnvironmentV1.json");
         let ex: Value = serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap();
         validate(&ex).unwrap();
         let mine = resolve(&req(&[], &[]));

@@ -213,7 +213,7 @@ pub fn spawn_server_daemon() -> io::Result<u32> {
 }
 
 fn build_server_daemon_command(exe: PathBuf) -> Command {
-    let mut command = Command::new(&exe);
+    let mut command = crate::factory_host::self_command(&exe);
     command
         .arg("server")
         // Redirect stdio to /dev/null

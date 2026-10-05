@@ -122,7 +122,7 @@ fn spawn_client_process_with_args_and_env(
         })
         .unwrap();
 
-    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_ao"));
+    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_allternit-factory-pane"));
     cmd.args(args);
     cmd.env("HERDR_DISABLE_SOUND", "1");
     cmd.env("XDG_STATE_HOME", runtime_dir.join("state"));
@@ -182,7 +182,7 @@ fn spawn_server_with_config(
         })
         .unwrap();
 
-    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_ao"));
+    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_allternit-factory-pane"));
     cmd.arg("server");
     cmd.env("XDG_CONFIG_HOME", config_home);
     cmd.env("XDG_RUNTIME_DIR", runtime_dir);
@@ -427,7 +427,7 @@ fn client_sees_headless_startup_config_diagnostic() {
         })
         .unwrap();
 
-    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_ao"));
+    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_allternit-factory-pane"));
     cmd.arg("server");
     cmd.env("XDG_CONFIG_HOME", &config_home);
     cmd.env("XDG_RUNTIME_DIR", &runtime_dir);
@@ -488,7 +488,7 @@ fn server_unreachable_shows_clear_error() {
     )
     .unwrap();
 
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_ao"))
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_allternit-factory-pane"))
         .arg("client")
         .env("HERDR_DISABLE_SOUND", "1")
         .env("XDG_CONFIG_HOME", &config_home)
@@ -879,7 +879,7 @@ fn federated_client_starts_without_local_and_survives_its_restart() {
     let bin = base.join("bin");
     fs::create_dir_all(&bin).unwrap();
     fs::create_dir_all(base.join("home")).unwrap();
-    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_ao"), bin.join("herdr")).unwrap();
+    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_allternit-factory-pane"), bin.join("herdr")).unwrap();
     let quote =
         |path: &std::path::Path| format!("'{}'", path.display().to_string().replace('\'', "'\\''"));
     fs::write(bin.join("ssh"), format!(
@@ -1781,7 +1781,7 @@ fn client_receives_notify_on_agent_state_change() {
         })
         .unwrap();
 
-    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_ao"));
+    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_allternit-factory-pane"));
     cmd.arg("server");
     cmd.env("XDG_CONFIG_HOME", &config_home);
     cmd.env("XDG_RUNTIME_DIR", &runtime_dir);

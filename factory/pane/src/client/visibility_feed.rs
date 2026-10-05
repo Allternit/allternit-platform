@@ -29,7 +29,7 @@ pub(super) fn watch_visibility(
         let client = crate::api::client::ApiClient::local();
         let mut tick = 0_u32;
         let mut cached_native: Vec<crate::ao::native::NativeSession> = Vec::new();
-        let mut cached_peers: Vec<allternit_commrails::peer::Peer> = Vec::new();
+        let mut cached_peers: Vec<allternit_factory_engine::peer::Peer> = Vec::new();
         while !should_quit.load(Ordering::Acquire) {
             tick = tick.wrapping_add(1);
             let refresh_slow = tick == 1

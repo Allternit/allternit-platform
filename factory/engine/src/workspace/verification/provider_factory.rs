@@ -26,12 +26,12 @@ impl ProviderFactory {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use allternit_commrails::verification::ProviderFactory;
+    /// use allternit_factory_engine::verification::ProviderFactory;
     /// use std::path::PathBuf;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// // Create a file-based provider
-    /// let config = allternit_commrails::verification::types::FileBasedConfig {
+    /// let config = allternit_factory_engine::verification::types::FileBasedConfig {
     ///     evidences_dir: PathBuf::from(".allternit/evidence"),
     ///     timeout_secs: 30,
     ///     poll_interval_ms: 100,

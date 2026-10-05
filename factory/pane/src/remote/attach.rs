@@ -30,9 +30,9 @@ pub(crate) fn run_remote(remote: RemoteLaunch) -> io::Result<()> {
     let session_name = crate::session::active_name()
         .unwrap_or_else(|| crate::session::DEFAULT_SESSION_NAME.to_string());
     let local_socket = local_forward_socket_path(&remote.target, &session_name);
-    let program = std::env::args()
-        .next()
-        .unwrap_or_else(|| "ao".to_string());
+    let program = crate::factory_host::shell_program(
+        &std::env::args().next().unwrap_or_else(|| "ao".to_string()),
+    );
     let reattach_command = reattach_command(
         &program,
         &remote.target,
@@ -869,11 +869,18 @@ fn resolve_install_source(
         return Ok(InstallSource::persistent(path));
     }
 
-    if *platform == RemotePlatform::local() {
+    if *platform == RemotePlatform::local() && crate::factory_host::argv_prefix().is_empty() {
         let path = std::env::current_exe()?;
         if !crate::update::is_package_manager_managed_exe_path(&path) {
             return Ok(InstallSource::persistent(path));
         }
+    }
+
+    if !crate::factory_host::argv_prefix().is_empty() {
+        return Err(io::Error::other(format!(
+            "allternit-factory cannot seed a remote pane install from itself (it runs the pane engine as `allternit-factory pane`); \
+             install the pane engine on the remote host or set {REMOTE_BINARY_ENV_VAR}=<path>"
+        )));
     }
 
     // ao P0: downloading release assets rode the herdr.dev update manifests,
@@ -886,7 +893,7 @@ fn resolve_install_source(
 }
 
 fn local_binary_can_seed_remote(platform: &RemotePlatform) -> bool {
-    if *platform != RemotePlatform::local() {
+    if *platform != RemotePlatform::local() || !crate::factory_host::argv_prefix().is_empty() {
         return false;
     }
 
@@ -1921,7 +1928,7 @@ fn run_client_process(
     keybindings: RemoteKeybindings,
 ) -> io::Result<()> {
     let exe = std::env::current_exe()?;
-    let status = Command::new(exe)
+    let status = crate::factory_host::self_command(exe)
         .arg("client")
         .env(
             crate::server::socket_paths::CLIENT_SOCKET_PATH_ENV_VAR,

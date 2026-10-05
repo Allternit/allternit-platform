@@ -1,4 +1,4 @@
-//! `allternit-commrails observe` — run the read-only observer once.
+//! `allternit-factory internal rails observe` — run the read-only observer once.
 
 use std::path::Path;
 use std::sync::Arc;

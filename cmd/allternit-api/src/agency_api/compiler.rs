@@ -16,7 +16,7 @@
 //! closed without a declared workspace/write set, which maps to a 422.
 
 use super::catalog;
-use allternit_commrails::judge::policy::{CloseBy, Fence, JudgePolicy, PolicyOrigin, VerifyMode};
+use allternit_factory_engine::judge::policy::{CloseBy, Fence, JudgePolicy, PolicyOrigin, VerifyMode};
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
 
@@ -73,7 +73,7 @@ impl RunTemplate for KernelBugFixTemplate {
     fn source(&self) -> &'static str { "kernel" }
     fn completion_policy(&self) -> &'static str { "completion.bug_fix" }
     fn instantiate(&self, goal: &str, params: &Value) -> Result<TemplateGraph, String> {
-        let g = allternit_commrails::kernel::bug_fix::agency_graph(goal, params).map_err(|e| e.to_string())?;
+        let g = allternit_factory_engine::kernel::bug_fix::agency_graph(goal, params).map_err(|e| e.to_string())?;
         Ok(TemplateGraph { nodes: g.nodes, edges: g.edges, wih_policy: g.wih_policy })
     }
 }

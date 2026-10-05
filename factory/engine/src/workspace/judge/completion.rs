@@ -29,7 +29,7 @@ pub struct CompletionPolicy {
 
 /// Embedded policy files; add a line here for a new template's policy.
 const BUILTIN: &[&str] = &[include_str!(
-    "../../../spec/Contracts/kernel/v1/data/completion_policy.bug_fix.v1.json"
+    "../../../../../spec/Contracts/kernel/v1/data/completion_policy.bug_fix.v1.json"
 )];
 
 pub fn load_policy(policy_id: &str) -> Option<CompletionPolicy> {

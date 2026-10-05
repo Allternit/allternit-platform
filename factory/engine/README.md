@@ -1,8 +1,15 @@
-# Allternit CommRails
+# Allternit Factory engine (`allternit-factory-engine`)
 
 Unified system for **work execution under policy gates** across DAG/WIH/runs/leases/ledger/vault.
+It is the library half of the Allternit Factory; the binary is `allternit-factory`
+(`cmd/allternit-factory`), which also runs the pane engine (`factory/pane`).
 
-> Renamed from `allternit-agent-system-rails` (BA-0b). Package `allternit-commrails`, lib `allternit_commrails`, bins `allternit-commrails` / `allternit-commrails-service`. The old bin names (`allternit-rails`, `allternit-rails-service`, `rails`) remain as one-release shims pointing at the same sources.
+> Formerly CommRails (`allternit-commrails`, before that `allternit-agent-system-rails`).
+> The old binaries (`allternit-commrails`, `allternit-rails`, `allternit-commrails-service`,
+> `allternit-rails-service`, and the portable `commrails`/`rails` CLI) are gone, not aliased:
+> `allternit-factory serve` is the service, the four parts (`agents`, `orchestration`,
+> `workflows`, `workspace`) are the commands, and every maintenance command lives under the
+> hidden `allternit-factory internal rails …`.
 
 ## Naming Locks
 
@@ -12,10 +19,26 @@ Unified system for **work execution under policy gates** across DAG/WIH/runs/lea
 
 ## Structure
 
-All code for this system lives under this folder.
+All code for this system lives under this folder. `src/` is grouped by job (SPEC §5):
 
 ```
-allternit-commrails/
+src/
+  core/           events, IDs, state: ledger, index, projections, replay, prompt, query, compact, dolt
+  gate/           the only writer: gate, hook (spawn gate), policy, killswitch, egress, fence, constraints
+  agents/         peer, orchestrator, execenv
+  orchestration/  mail, bus, attention, steer, observer
+  workflows/      templates, kernel (the template compiler), drive, wake, wait_gates, leases, merge_locks, dependencies
+  workspace/      work, wih, campaign, receipts, judge, verification, vault, lessons, context, memory, echoes
+  api/            service (HTTP), mcp, workspace-service client, cli (command implementations)
+  remote/         bridge (scoped remote listener + identities)
+  tickets/        internal foreign-repo ticket area: tickets, graph, sync, batch, doctor, setup, rails_id
+```
+
+`lib.rs` re-exports every module at its old flat path (`crate::ledger`, `crate::hook`, …) so
+callers keep compiling.
+
+```
+factory/engine/
   docs/
     architecture/      # layered breakdown + CLI command mapping
     runner/            # runner mutation catalog + README

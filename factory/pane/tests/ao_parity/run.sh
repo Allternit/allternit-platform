@@ -28,15 +28,15 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-WORKSPACE_ROOT="$(cd "$REPO_ROOT/../.." && pwd)"
-AO_BIN="${AO_BIN:-${CARGO_TARGET_DIR:-$WORKSPACE_ROOT/target}/debug/ao}"
+WORKSPACE_ROOT="$(cd "$REPO_ROOT/.." && pwd)"
+AO_BIN="${AO_BIN:-${CARGO_TARGET_DIR:-$WORKSPACE_ROOT/target}/debug/allternit-factory-pane}"
 SCRIPTS="${AO_SCRIPTS_DIR:-$HOME/.claude/skills/agent-orchestrator/scripts}"
 VERBOSE=0
 [ "${1:-}" = "-v" ] && VERBOSE=1
 
 if [ ! -x "$AO_BIN" ]; then
   echo "building ao engine (ZIG=$ZIG)..." >&2
-  (cd "$WORKSPACE_ROOT" && export ZIG="${ZIG:-/opt/homebrew/opt/zig@0.15/bin/zig}" && cargo build -p herdr) >&2
+  (cd "$WORKSPACE_ROOT" && export ZIG="${ZIG:-/opt/homebrew/opt/zig@0.15/bin/zig}" && cargo build -p allternit-factory-pane --bin allternit-factory-pane) >&2
 fi
 for s in ao-spawn ao-send ao-watch ao-status ao-kill ao-doctor; do
   [ -x "$SCRIPTS/$s" ] || { echo "SKIP: $SCRIPTS/$s not found"; exit 2; }
@@ -59,8 +59,11 @@ GATE_CASES=0
 GATEBIN="$TDIR/gatebin"
 mkdir -p "$GATEBIN"
 # Fake allternit-commrails: `hook claude-settings --out F` writes its argv to F.
+# The engine world calls the gate as `allternit-factory internal rails …`; the
+# fake drops that prefix so both worlds record the same argv.
 cat > "$GATEBIN/allternit-commrails" <<'FAKE'
 #!/bin/sh
+[ "${1:-} ${2:-}" = "internal rails" ] && shift 2
 out=""; prev=""
 for a in "$@"; do [ "$prev" = "--out" ] && out=$a; prev=$a; done
 case " $* " in

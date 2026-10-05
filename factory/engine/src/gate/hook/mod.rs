@@ -6,7 +6,7 @@
 //!
 //! * Harnesses with a PreToolUse hook mechanism (Claude Code, codex, qwen) get
 //!   a per-spawn hook (settings file, or `-c` for codex) that runs
-//!   `allternit-commrails hook {claude,codex,qwen}-pretool` (one decision
+//!   `allternit-factory internal rails hook {claude,codex,qwen}-pretool` (one decision
 //!   path), which evaluates every tool
 //!   call against the hard floor and, when a WIH is bound, against Gate 2 and
 //!   the WIH's own lease. Denials are written to the ledger.
@@ -710,7 +710,7 @@ impl HookFlavor {
             _ => None,
         }
     }
-    /// Subcommand of `allternit-commrails hook`. All three run the same
+    /// Subcommand of `allternit-factory internal rails hook`. All three run the same
     /// decision path (`decide`); the names only label the harness.
     pub fn subcommand(self) -> &'static str {
         match self {
@@ -839,6 +839,13 @@ pub const CLAUDE_ALLOWED_TOOLS: &[&str] = &[
     "Agent",
 ];
 
+/// Argv the gate binary (`allternit-factory`) needs before the maintenance
+/// CLI's own argv (`--root …`, `hook …`).
+pub const GATE_ARGV_PREFIX: [&str; 2] = ["internal", "rails"];
+
+/// File name of the engine binary that carries the gate.
+pub const GATE_BIN_NAME: &str = "allternit-factory";
+
 /// Single-quote a word for `/bin/sh`.
 pub fn sh_quote(word: &str) -> String {
     format!("'{}'", word.replace('\'', "'\\''"))
@@ -847,7 +854,8 @@ pub fn sh_quote(word: &str) -> String {
 /// Where a spawned session's hook points.
 #[derive(Debug, Clone, Copy)]
 pub struct HookTarget<'a> {
-    /// The `allternit-commrails` binary the hook runs.
+    /// The `allternit-factory` binary the hook runs (as
+    /// `allternit-factory internal rails … hook …`, see [`GATE_ARGV_PREFIX`]).
     pub commrails_bin: &'a Path,
     /// CommRails root holding `.allternit/` (ledger, leases).
     pub root: &'a Path,
@@ -866,8 +874,9 @@ pub fn claude_hook_command(target: HookTarget<'_>) -> String {
 /// The hook command line for any hooked harness.
 pub fn hook_command(flavor: HookFlavor, target: HookTarget<'_>) -> String {
     let mut cmd = format!(
-        "{} --root {} hook {} --harness {}",
+        "{} {} --root {} hook {} --harness {}",
         sh_quote(&target.commrails_bin.to_string_lossy()),
+        GATE_ARGV_PREFIX.join(" "),
         sh_quote(&target.root.to_string_lossy()),
         flavor.subcommand(),
         flavor.label()
@@ -1012,10 +1021,11 @@ pub fn hook_settings_file(harness: &str, target: HookTarget<'_>) -> Option<(&'st
     }
 }
 
-/// Locate the `allternit-commrails` binary a hook should run:
-/// `$ALLTERNIT_COMMRAILS_BIN`, then a sibling of the current executable,
-/// then `PATH`. `None` means no hook can be installed — callers must not fall
-/// back to an unhooked bypass run.
+/// Locate the `allternit-factory` binary a hook should run:
+/// `$ALLTERNIT_COMMRAILS_BIN`, then the current executable when it is
+/// `allternit-factory`, then a sibling of the current executable, then `PATH`.
+/// The hook runs it with [`GATE_ARGV_PREFIX`]. `None` means no hook can be
+/// installed — callers must not fall back to an unhooked bypass run.
 pub fn find_commrails_bin() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("ALLTERNIT_COMMRAILS_BIN") {
         let p = PathBuf::from(p);
@@ -1024,18 +1034,20 @@ pub fn find_commrails_bin() -> Option<PathBuf> {
         }
     }
     if let Ok(exe) = std::env::current_exe() {
+        let name = exe.file_stem().and_then(|n| n.to_str());
+        if name == Some(GATE_BIN_NAME) {
+            return Some(exe);
+        }
         if let Some(dir) = exe.parent() {
-            for name in ["allternit-commrails", "allternit-rails"] {
-                let cand = dir.join(name);
-                if cand.is_file() {
-                    return Some(cand);
-                }
+            let cand = dir.join(GATE_BIN_NAME);
+            if cand.is_file() {
+                return Some(cand);
             }
         }
     }
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
-        .map(|d| d.join("allternit-commrails"))
+        .map(|d| d.join(GATE_BIN_NAME))
         .find(|c| c.is_file())
 }
 

@@ -4,6 +4,14 @@
 //! append-only event log in the workspace and projected into current state
 //! on read.
 
+// Internal `tickets` area (foreign-repo ticket CLI support; SPEC §5 "Not moved in").
+pub mod batch;
+pub mod doctor;
+pub mod graph;
+pub mod rails_id;
+pub mod setup;
+pub mod sync;
+
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};

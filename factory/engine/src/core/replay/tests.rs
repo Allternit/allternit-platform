@@ -5,7 +5,7 @@ use crate::receipts::sign::ReceiptSigner;
 use crate::receipts::{ReceiptStore, ReceiptStoreOptions};
 use std::cell::Cell;
 
-const ABI: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../spec/Contracts/kernel/v1/conformance/examples");
+const ABI: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../spec/Contracts/kernel/v1/conformance/examples");
 
 fn store() -> (tempfile::TempDir, ChainStore) {
     let d = tempfile::tempdir().unwrap();

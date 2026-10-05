@@ -145,7 +145,7 @@ impl Orchestrator {
         let commrails_bin = if gate == HarnessGate::Hook {
             Some(hook::find_commrails_bin().ok_or_else(|| {
                 anyhow::anyhow!(
-                    "cannot install the spawn-gate hook for {harness}: allternit-commrails binary not found (set ALLTERNIT_COMMRAILS_BIN)"
+                    "cannot install the spawn-gate hook for {harness}: allternit-factory binary not found (set ALLTERNIT_COMMRAILS_BIN)"
                 )
             })?)
         } else {

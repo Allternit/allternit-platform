@@ -1,3 +1,13 @@
+// Factory part `core`: events, IDs and state (SPEC §5).
+pub mod compact;
+#[cfg(feature = "dolt")]
+pub mod dolt;
+pub mod index;
+pub mod ledger;
+pub mod projections;
+pub mod prompt;
+pub mod query;
+pub mod replay;
 pub mod ids;
 pub mod io;
 pub mod types;

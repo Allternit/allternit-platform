@@ -105,7 +105,7 @@ fn spawn_server(
         })
         .unwrap();
 
-    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_ao"));
+    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_allternit-factory-pane"));
     cmd.arg("server");
     cmd.env("XDG_CONFIG_HOME", config_home);
     cmd.env("XDG_RUNTIME_DIR", runtime_dir);
@@ -149,7 +149,7 @@ fn spawn_herdr_auto(
         })
         .unwrap();
 
-    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_ao"));
+    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_allternit-factory-pane"));
     // No subcommand → auto-detect launch.
     cmd.env("XDG_CONFIG_HOME", config_home);
     cmd.env("XDG_RUNTIME_DIR", runtime_dir);
@@ -200,7 +200,7 @@ fn wait_for_log_contains(path: &Path, needle: &str, timeout: Duration) {
 }
 
 fn run_cli(socket_path: &Path, args: &[&str]) -> std::process::Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_ao"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_allternit-factory-pane"));
     command.args(args);
     command.env("HERDR_SOCKET_PATH", socket_path);
     command.output().unwrap()
@@ -532,7 +532,7 @@ fn auto_detect_default_socket_path_from_config_dir() {
         })
         .unwrap();
 
-    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_ao"));
+    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_allternit-factory-pane"));
     cmd.arg("server");
     cmd.env("XDG_CONFIG_HOME", &config_home);
     cmd.env("XDG_RUNTIME_DIR", &runtime_dir);
@@ -641,7 +641,7 @@ fn auto_detect_respects_nested_guard_before_auto_attach() {
         .map(|workspaces| workspaces.len())
         .unwrap_or(0);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_ao"))
+    let output = Command::new(env!("CARGO_BIN_EXE_allternit-factory-pane"))
         .env("XDG_CONFIG_HOME", &config_home)
         .env("XDG_RUNTIME_DIR", &runtime_dir)
         .env("HERDR_SOCKET_PATH", &api_socket)
