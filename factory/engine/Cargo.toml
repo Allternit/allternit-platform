@@ -28,7 +28,8 @@ hex = { workspace = true }
 tempfile = { workspace = true }
 serde_json = { workspace = true }
 clap = { workspace = true }
-axum = { workspace = true }
+# multipart: POST /api/factory/nodes/:dag/:node/proof (workspace::http).
+axum = { workspace = true, features = ["multipart"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tower-http = { workspace = true }
@@ -54,6 +55,10 @@ worktree-manager = { path = "../../worktree-manager" }
 [target.'cfg(unix)'.dependencies]
 # getuid() for the per-user 0700 peer-socket fallback dir.
 libc = "0.2"
+
+[dev-dependencies]
+# Router tests (tower::ServiceExt::oneshot).
+tower = { workspace = true, features = ["util"] }
 
 [build-dependencies]
 tonic-build = { workspace = true }
