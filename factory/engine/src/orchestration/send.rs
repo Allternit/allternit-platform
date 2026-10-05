@@ -170,7 +170,10 @@ const MAILBOX_EVENT: &str = "BusMessageSent";
 
 enum Target {
     Terminal(Agent),
-    Remote(String),
+    /// A hosted bot (no vendor binding) that has a thread to post into.
+    Hosted(String),
+    /// A vendor bot (its execution binding says `vendor`).
+    Vendor(String),
     Channel(String),
 }
 
@@ -230,7 +233,7 @@ async fn resolve(ctx: &SendCtx, req: &SendRequest) -> std::result::Result<Target
         return Ok(Target::Terminal(agent.clone()));
     }
     if ctx.api.base.is_some() {
-        return Ok(Target::Remote(req.to.clone()));
+        return resolve_remote(&ctx.api, &req.to).await;
     }
     Err(SendError::new(
         "not_found",
@@ -248,7 +251,8 @@ pub async fn plan(ctx: &SendCtx, req: &SendRequest) -> std::result::Result<SendP
             agent.id.clone(),
             if req.queue || agent.pane.is_none() { "pane_queue" } else { "pane" }.to_string(),
         ),
-        Target::Remote(bot) => (bot.clone(), "session|vendor_ticket (decided by the bot's binding)".to_string()),
+        Target::Hosted(bot) => (bot.clone(), "session".to_string()),
+        Target::Vendor(bot) => (bot.clone(), "vendor_ticket".to_string()),
         Target::Channel(thread) => (format!("channel:{thread}"), "channel".to_string()),
     };
     let base = |extra: Option<&str>| -> Vec<String> {
@@ -288,7 +292,7 @@ pub async fn send(ctx: &SendCtx, req: &SendRequest) -> std::result::Result<Deliv
     let target = resolve(ctx, req).await?;
     let to = match &target {
         Target::Terminal(agent) => agent.id.clone(),
-        Target::Remote(bot) => bot.clone(),
+        Target::Hosted(bot) | Target::Vendor(bot) => bot.clone(),
         Target::Channel(thread) => format!("channel:{thread}"),
     };
     let thread_id = thread_for(req, &to);
@@ -312,7 +316,8 @@ pub async fn send(ctx: &SendCtx, req: &SendRequest) -> std::result::Result<Deliv
 
     let (via, state, ticket, detail) = match &target {
         Target::Terminal(agent) => deliver_terminal(ctx, agent, req).await,
-        Target::Remote(bot) => deliver_remote(&ctx.api, bot, req).await,
+        Target::Hosted(bot) => deliver_hosted(&ctx.api, bot, req).await,
+        Target::Vendor(bot) => deliver_vendor(&ctx.api, bot, req).await,
         Target::Channel(thread) => deliver_channel(&ctx.api, thread, req, &message_id).await,
     };
     let delivery = Delivery {
@@ -391,54 +396,69 @@ fn api_error(v: &Value) -> String {
         .unwrap_or_else(|| v.to_string())
 }
 
-async fn deliver_remote(api: &ApiLink, bot: &str, req: &SendRequest) -> Outcome {
+fn transport_err(fact: String) -> SendError {
+    SendError::new("transport", fact, "Check that allternit-api is running and reachable, then send again.")
+}
+
+/// A bot that isn't on this computer, looked up through allternit-api: its
+/// execution binding says vendor; with no binding it is hosted, if it has a
+/// thread. Unknown → `not_found`; allternit-api unusable → `transport`.
+/// Nothing is recorded until this succeeds.
+async fn resolve_remote(api: &ApiLink, bot: &str) -> std::result::Result<Target, SendError> {
     let enc = urlencoding::encode(bot);
-    let binding = match api_call(api, reqwest::Method::GET, &format!("/api/v1/bots/{enc}/execution-binding"), None).await {
-        Ok((200, v)) => Some(v["binding"].clone()),
-        Ok((404, _)) => None,
-        Ok((status, v)) => {
-            return ("session".into(), "failed".into(), None, Some(format!("binding lookup {status}: {}", api_error(&v))))
-        }
-        Err(e) => return ("session".into(), "failed".into(), None, Some(e)),
-    };
-    let is_vendor = binding
-        .as_ref()
-        .and_then(|b| b.get("type").and_then(Value::as_str))
-        .is_some_and(|t| t == "vendor");
-    if is_vendor {
-        let Some(thread) = req.thread_id.as_deref() else {
-            return (
-                "vendor_ticket".into(),
-                "failed".into(),
-                None,
-                Some("a vendor ticket needs the bot thread it belongs to (threadId)".into()),
-            );
-        };
-        let body = json!({ "instructions": req.text, "threadId": thread });
-        return match api_call(api, reqwest::Method::POST, &format!("/api/v1/vendor-bots/{enc}/tickets"), Some(body)).await {
-            Ok((200..=299, v)) => {
-                let t = &v["ticket"];
-                let ticket = t["n"].as_i64().map(|n| format!("T-{n}"));
-                let id = t["id"].as_str().unwrap_or_default();
-                ("vendor_ticket".into(), "queued".into(), ticket, Some(format!("ticket {id} created; dispatching on the vendor's lane")))
-            }
-            Ok((status, v)) => ("vendor_ticket".into(), "failed".into(), None, Some(format!("vendor ticket {status}: {}", api_error(&v)))),
-            Err(e) => ("vendor_ticket".into(), "failed".into(), None, Some(e)),
-        };
+    match api_call(api, reqwest::Method::GET, &format!("/api/v1/gateway/bots/{enc}/execution-binding"), None).await {
+        Ok((200, v)) if v["binding"]["type"] == "vendor" => return Ok(Target::Vendor(bot.to_string())),
+        Ok((200, _)) | Ok((404, _)) => {}
+        Ok((status, v)) => return Err(transport_err(format!("allternit-api could not look up bot {bot} ({status}: {})", api_error(&v)))),
+        Err(e) => return Err(transport_err(e)),
     }
-    // Hosted: a turn in the bot's Gizzi session (its thread's current session).
+    match api_call(api, reqwest::Method::GET, &format!("/api/v1/threads?botId={enc}"), None).await {
+        Ok((200, v)) if v["threads"].as_array().is_some_and(|t| !t.is_empty()) => Ok(Target::Hosted(bot.to_string())),
+        Ok((200, _)) | Ok((404, _)) => Err(SendError::new(
+            "not_found",
+            format!("no agent or bot {bot}"),
+            "List agents with `gizzi agents ps`; a hosted bot needs a thread before it can be sent to.",
+        )),
+        Ok((status, v)) => Err(transport_err(format!("allternit-api could not list threads for {bot} ({status}: {})", api_error(&v)))),
+        Err(e) => Err(transport_err(e)),
+    }
+}
+
+async fn deliver_vendor(api: &ApiLink, bot: &str, req: &SendRequest) -> Outcome {
+    let enc = urlencoding::encode(bot);
+    let Some(thread) = req.thread_id.as_deref() else {
+        return (
+            "vendor_ticket".into(),
+            "failed".into(),
+            None,
+            Some("a vendor ticket needs the bot thread it belongs to (threadId)".into()),
+        );
+    };
+    let body = json!({ "instructions": req.text, "threadId": thread });
+    match api_call(api, reqwest::Method::POST, &format!("/api/v1/vendor-bots/{enc}/tickets"), Some(body)).await {
+        Ok((200..=299, v)) => {
+            let t = &v["ticket"];
+            let ticket = t["n"].as_i64().map(|n| format!("T-{n}"));
+            let id = t["id"].as_str().unwrap_or_default();
+            ("vendor_ticket".into(), "queued".into(), ticket, Some(format!("ticket {id} created; dispatching on the vendor's lane")))
+        }
+        Ok((status, v)) => ("vendor_ticket".into(), "failed".into(), None, Some(format!("vendor ticket {status}: {}", api_error(&v)))),
+        Err(e) => ("vendor_ticket".into(), "failed".into(), None, Some(e)),
+    }
+}
+
+/// Hosted: a turn in the bot's Gizzi session (its thread's current session).
+async fn deliver_hosted(api: &ApiLink, bot: &str, req: &SendRequest) -> Outcome {
+    let enc = urlencoding::encode(bot);
     let thread = match &req.thread_id {
         Some(t) => Some(t.clone()),
         None => match api_call(api, reqwest::Method::GET, &format!("/api/v1/threads?botId={enc}"), None).await {
-            Ok((200, v)) => v["threads"]
-                .as_array()
-                .and_then(|ts| {
-                    ts.iter()
-                        .find(|t| t["kind"] == "standing")
-                        .or_else(|| ts.first())
-                        .and_then(|t| t["id"].as_str().map(str::to_string))
-                }),
-            Ok((404, _)) => None,
+            Ok((200, v)) => v["threads"].as_array().and_then(|ts| {
+                ts.iter()
+                    .find(|t| t["kind"] == "standing")
+                    .or_else(|| ts.first())
+                    .and_then(|t| t["id"].as_str().map(str::to_string))
+            }),
             Ok((status, v)) => {
                 return ("session".into(), "failed".into(), None, Some(format!("thread lookup {status}: {}", api_error(&v))))
             }
