@@ -1323,7 +1323,7 @@ mod tests {
     #[test]
     fn claude_walker_skips_runtime_files_and_dash_projects() {
         let home = fixture_home();
-        let proj = home.path().join(".claude").join("projects").join("-Users-joe-demo");
+        let proj = home.path().join(".claude").join("projects").join("-home-dev-demo");
         std::fs::create_dir_all(&proj).unwrap();
         std::fs::write(proj.join("11111111-2222-3333-4444-555555555555.jsonl"), "{}\n").unwrap();
         std::fs::write(proj.join("66666666-2222-3333-4444-555555555555.runtime.jsonl"), "{}\n").unwrap();
@@ -1388,14 +1388,14 @@ mod tests {
             .path()
             .join(".claude")
             .join("projects")
-            .join("-Users-joe-demo");
+            .join("-home-dev-demo");
         std::fs::create_dir_all(&proj).unwrap();
         std::fs::write(proj.join("s1.jsonl"), "{}\n").unwrap();
         let other = home.path().join(".claude").join("projects").join("-tmp-other");
         std::fs::create_dir_all(&other).unwrap();
         std::fs::write(other.join("s2.jsonl"), "{}\n").unwrap();
 
-        let rows = list_native_sessions(home.path(), Some(&["claude"]), Some("~/demo"));
+        let rows = list_native_sessions(home.path(), Some(&["claude"]), Some("/home/dev/demo"));
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].session_id, "s1");
     }

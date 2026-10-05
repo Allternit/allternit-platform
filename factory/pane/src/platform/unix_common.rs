@@ -43,6 +43,11 @@ fn set_sigpipe_disposition(handler: libc::sighandler_t) {
 }
 
 pub(crate) fn begin_cli_output() {
+    // Allternit: unit tests run CLI paths in the shared test-harness process,
+    // where a default SIGPIPE kills the whole run on the first closed pipe.
+    if cfg!(test) {
+        return;
+    }
     set_sigpipe_disposition(libc::SIG_DFL);
 }
 

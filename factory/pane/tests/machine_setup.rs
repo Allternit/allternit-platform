@@ -60,7 +60,7 @@ fn setup(installed: &str, answer: &str, handoff: bool) -> SetupResult {
         handoff
     ));
     let app = if cfg!(debug_assertions) {
-        "herdr-dev"
+        "ao-dev"
     } else {
         "herdr"
     };

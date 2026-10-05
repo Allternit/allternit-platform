@@ -207,7 +207,7 @@ mod tests {
 
     #[test]
     fn claude_cwd_encoding_matches_ts() {
-        assert_eq!(encode_claude_cwd("~/work space"), "-Users-joe-work-space");
+        assert_eq!(encode_claude_cwd("/home/dev/work space"), "-home-dev-work-space");
         assert_eq!(encode_claude_cwd("/tmp/demo_1"), "-tmp-demo-1");
     }
 

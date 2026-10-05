@@ -298,7 +298,10 @@ mod tests {
     #[test]
     fn release_notes_preview_lines_show_update_steps() {
         let palette = Palette::catppuccin();
-        let lines = release_notes_preview_line_entries("herdr update", &palette)
+        let lines = release_notes_preview_line_entries(
+            "detach, run `herdr update`, then run Herdr again to reconnect",
+            &palette,
+        )
             .into_iter()
             .map(|(_, line)| line)
             .collect::<Vec<_>>();
@@ -326,7 +329,11 @@ mod tests {
             preview: true,
         };
 
-        let lines = release_notes_display_lines(&notes, "herdr update", &palette);
+        let lines = release_notes_display_lines(
+            &notes,
+            "detach, run `herdr update`, then run Herdr again to reconnect",
+            &palette,
+        );
 
         assert_eq!(line_text(&lines[0].1), " ● update ready");
         assert_eq!(

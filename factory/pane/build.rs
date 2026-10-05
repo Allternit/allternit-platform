@@ -116,13 +116,24 @@ fn main() {
     );
 
     let lib_dir = vendored_dir.join("zig-out/lib");
-    println!("cargo:rustc-link-search=native={}", lib_dir.display());
     // Allternit: this crate is a library linked into `allternit-factory`, and
-    // `rustc-link-arg` does not reach dependents, so macOS links the archive as
-    // a static lib like Linux (rustc picks `libghostty-vt.a`, not the dylib).
+    // `rustc-link-arg` does not reach dependents, so every target links the
+    // archive with `rustc-link-lib=static`. zig-out/lib also holds the dylib,
+    // which ld64 prefers for `-l`, so on macOS link from a directory under
+    // OUT_DIR that holds only the archive.
     if target.contains("windows-msvc") {
+        println!("cargo:rustc-link-search=native={}", lib_dir.display());
         println!("cargo:rustc-link-lib=static=ghostty-vt-static");
+    } else if target.contains("apple-darwin") {
+        let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
+        let static_dir = out_dir.join("libghostty-vt-static");
+        fs::create_dir_all(&static_dir).expect("create libghostty-vt static dir");
+        fs::copy(lib_dir.join("libghostty-vt.a"), static_dir.join("libghostty-vt.a"))
+            .expect("copy libghostty-vt.a");
+        println!("cargo:rustc-link-search=native={}", static_dir.display());
+        println!("cargo:rustc-link-lib=static=ghostty-vt");
     } else {
+        println!("cargo:rustc-link-search=native={}", lib_dir.display());
         println!("cargo:rustc-link-lib=static=ghostty-vt");
     }
 }
